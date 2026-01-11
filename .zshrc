@@ -494,6 +494,11 @@ if [[ -z "$DISPLAY" ]] && [[ "$(tty)" == "/dev/tty1" ]]; then
   fi
 fi
 
+# Start fastfetch if installed and in an interactive shell
+if [[ $- == *i* ]] && command -v fastfetch &> /dev/null; then
+    fastfetch
+fi
+
 # =============================================================================
 # End of ~/.zshrc
 # =============================================================================
