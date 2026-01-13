@@ -132,6 +132,8 @@ declare -ra UPDATE_SEQUENCE=(
 #    "S | 080_btrfs_zstd_compression_stats.sh"
 #    "U | 081_key_sound_wayclick_setup.sh"
 #    "U | 082_config_bat_notify.sh --default"
+    "U | 083_set_thunar_terminal_kitty.sh"
+    "U | 084_package_removal.sh --auto"
 )
 
 # ==============================================================================
