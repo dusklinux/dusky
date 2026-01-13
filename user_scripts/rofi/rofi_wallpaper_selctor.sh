@@ -77,7 +77,7 @@ cleanup_orphans() {
 }
 
 refresh_cache() {
-    notify-send "Wallpaper Menu" "Refreshing cache..." -u low -t 1000
+    notify-send -a "Wallpaper Menu" "Refreshing Wallpaper cache" "Please wait. CPU usage may be high during this process." -u low -t 1000
     ensure_placeholder
     
     # 1. Update Thumbnails (Parallel)
