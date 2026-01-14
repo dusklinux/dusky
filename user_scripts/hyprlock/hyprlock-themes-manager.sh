@@ -132,7 +132,11 @@ for dir in "${theme_dirs[@]}"; do
     dir="${dir%/}"
     if [[ -f "${dir}/hyprlock.conf" ]]; then
         themes+=("$dir")
-        theme_names+=("${dir##*/}")
+        if [[ -f "$dir/theme.json" ]]; then 
+          theme_names+=("$(jq .name "$dir/theme.json")${*/}")
+        else
+            theme_names+=("${dir##*/}")
+        fi
     fi
 done
 
@@ -222,7 +226,7 @@ else
             printf '%sHyprlock Theme Selector%s (Use %sArrows/jk%s to browse, %sEnter%s to select, %sq%s to quit)\n\n' \
                 "$BOLD" "$NC" "$Y" "$NC" "$G" "$NC" "$R" "$NC"
 
-            for (( i = 0; i < total; i++ )); do
+            for (( i = 0; i < total; i++ )); do 
                 if (( i == selected_idx )); then
                     printf '%s> %s%s%s\n' "$C" "$BOLD" "${theme_names[i]}" "$NC"
                 else
