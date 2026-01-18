@@ -23,7 +23,6 @@ readonly LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/persistence_manager_${UID}.lock"
 readonly TARGETS=(
     "${HOME}/.local/share/rofi-cliphist:rofi-cliphist"
     "${HOME}/.local/share/errands:errands"
-    "${HOME}/.cache/cliphist:cliphist_db"
 )
 
 # Systemd services that must be paused to prevent DB corruption
