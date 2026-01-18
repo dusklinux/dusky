@@ -1,20 +1,24 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   MODERN HORIZONTAL WAYBAR THEME - GTK COMPATIBLE
+   COMPACT HORIZONTAL WAYBAR THEME - GTK CSS COMPATIBLE
    Uses Matugen colors via @import
+   
+   OPTIMIZED FOR MINIMAL HEIGHT - Target: ~28px
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @import url("../../.config/matugen/generated/waybar-colors.css");
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESET & BASE - COMPACT
+   ═══════════════════════════════════════════════════════════════════════════ */
 * {
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono NF", "JetBrains Mono", "Symbols Nerd Font", "Noto Sans", "DejaVu Sans", sans-serif;
-    font-size: 13px;
-    font-weight: 600;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono NF", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
+    font-size: 11px;
+    font-weight: 500;
     min-height: 0;
     border: none;
     border-radius: 0;
     padding: 0;
     margin: 0;
-    transition: background-color 150ms ease-in-out, color 150ms ease-in-out, opacity 150ms ease-in-out;
 }
 
 window#waybar {
@@ -26,44 +30,36 @@ window#waybar.hidden {
     opacity: 0.2;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   TOOLTIPS
+   ═══════════════════════════════════════════════════════════════════════════ */
 tooltip {
     background-color: @surface_container_high;
     color: @on_surface;
-    border: 2px solid @outline_variant;
-    border-radius: 12px;
-    padding: 8px 12px;
+    border: 1px solid @outline_variant;
+    border-radius: 8px;
+    padding: 6px 10px;
 }
 
 tooltip label {
     color: @on_surface;
-    padding: 4px;
+    padding: 2px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   MAIN BAR SECTIONS
+   MAIN BAR SECTIONS - TIGHT SPACING
    ═══════════════════════════════════════════════════════════════════════════ */
 .modules-left,
 .modules-center,
 .modules-right {
     background-color: @surface_container;
-    border-radius: 12px;
-    padding: 0 6px;
+    border-radius: 8px;
+    padding: 0 2px;
     margin: 2px 0;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
-}
-
-.modules-left {
-    margin-left: 2px;
-    padding-left: 3px;
-}
-
-.modules-right {
-    margin-right: 2px;
-    padding-right: 3px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BASE MODULE STYLES
+   BASE MODULE STYLES - MINIMAL PADDING
    ═══════════════════════════════════════════════════════════════════════════ */
 #custom-launcher,
 #workspaces,
@@ -88,13 +84,14 @@ tooltip label {
 #custom-power,
 #custom-separator,
 #custom-separator-2 {
-    padding: 0 10px;
-    margin: 2px 2px;
-    border-radius: 8px;
+    padding: 0 6px;
+    margin: 2px 1px;
+    border-radius: 6px;
     background: transparent;
     color: @on_surface;
 }
 
+/* Hover states */
 #custom-launcher:hover,
 #clock:hover,
 #custom-net-speed:hover,
@@ -120,23 +117,23 @@ tooltip label {
 #custom-separator,
 #custom-separator-2 {
     color: @outline_variant;
-    font-size: 12px;
+    font-size: 10px;
     padding: 0 2px;
-    margin: 3px 0;
-    opacity: 0.4;
+    margin: 2px 2px;
+    opacity: 0.3;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   LEFT SECTION - LAUNCHER
+   LAUNCHER - COMPACT
    ═══════════════════════════════════════════════════════════════════════════ */
 #custom-launcher {
-    font-size: 16px;
-    padding: 0 10px;
+    font-size: 14px;
+    padding: 0px 13px 0px 10px;
     color: @primary;
     background-color: @primary_container;
-    border-radius: 10px;
+    border-radius: 6px;
     margin-left: 2px;
-    margin-right: 4px;
+    margin-right: 2px;
 }
 
 #custom-launcher:hover {
@@ -145,24 +142,25 @@ tooltip label {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   WORKSPACES
+   WORKSPACES - COMPACT BUTTONS
    ═══════════════════════════════════════════════════════════════════════════ */
 #workspaces {
     background-color: @surface_container_low;
-    padding: 0 4px;
-    border-radius: 10px;
+    padding: 0 2px;
+    margin: 2px 1px;
+    border-radius: 6px;
 }
 
 #workspaces button {
-    padding: 0;
-    margin: 3px 2px;
-    border-radius: 50px;
+    padding: 0px 2px 0px 3px;
+    margin: 2px 1px;
+    border-radius: 4px;
     color: @on_surface_variant;
     background: transparent;
-    min-width: 22px;
-    min-height: 22px;
-    font-size: 11px;
-    font-weight: 700;
+    min-width: 16px;
+    min-height: 16px;
+    font-size: 10px;
+    font-weight: 600;
 }
 
 #workspaces button:hover {
@@ -173,7 +171,6 @@ tooltip label {
 #workspaces button.active {
     background-color: @primary;
     color: @on_primary;
-    font-weight: 700;
 }
 
 #workspaces button.urgent {
@@ -184,50 +181,55 @@ tooltip label {
 #workspaces button.special {
     background-color: @tertiary_container;
     color: @on_tertiary_container;
-    font-size: 12px;
+    font-size: 11px;
 }
 
 #workspaces button.empty {
     color: @outline;
-    opacity: 0.5;
+    opacity: 0.4;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SUBMAP & WINDOW & NET SPEED
+   SUBMAP & WINDOW
    ═══════════════════════════════════════════════════════════════════════════ */
 #submap {
     background-color: @tertiary_container;
     color: @on_tertiary_container;
-    padding: 0 12px;
-    border-radius: 8px;
-    font-weight: 700;
-    font-size: 11px;
+    padding: 0 8px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 10px;
 }
 
 #window {
     color: @on_surface_variant;
-    padding: 0 12px;
-    font-size: 14px;
-    opacity: 0.9;
-}
-
-#custom-net-speed {
-    color: @tertiary;
-    font-family: "JetBrainsMono Nerd Font Mono", monospace;
-    font-size: 11px;
     padding: 0 8px;
+    font-size: 11px;
+    opacity: 0.85;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   CENTER SECTION
+   NETWORK SPEED (CUSTOM)
+   ═══════════════════════════════════════════════════════════════════════════ */
+#custom-net-speed {
+    color: @tertiary;
+    font-family: "JetBrainsMono Nerd Font Mono", monospace;
+    font-size: 10px;
+    padding: 0 6px;
+    min-width: 70px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CLOCK - CENTER PIECE
    ═══════════════════════════════════════════════════════════════════════════ */
 #clock {
     background-color: @primary_container;
     color: @on_primary_container;
-    font-size: 13px;
-    font-weight: 700;
-    padding: 0 16px;
-    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 0px 16px 0px 9px;
+    border-radius: 6px;
+    margin: 2px 2px;
 }
 
 #clock:hover {
@@ -235,41 +237,47 @@ tooltip label {
     color: @on_primary;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   PRIVACY
+   ═══════════════════════════════════════════════════════════════════════════ */
 #privacy {
-    padding: 0 4px;
-    margin: 2px 2px;
+    padding: 0px 4px 0px 2px;
+    margin: 2px 1px;
 }
 
 #privacy-item {
     color: @error;
-    padding: 0 2px;
+    padding: 0px 2px 0px 0px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   HARDWARE STATS GROUP
+   GROUPS - TIGHT CONTAINER
    ═══════════════════════════════════════════════════════════════════════════ */
-#group-hardware {
+#group-hardware,
+#group-connectivity,
+#group-system {
     background-color: @surface_container_low;
-    border-radius: 10px;
-    padding: 0 2px;
-    margin: 2px 2px;
+    border-radius: 6px;
+    padding: 0px 2px 0px 1px;
+    margin: 2px 1px;
 }
 
-#group-hardware:hover {
-    background-color: @surface_container;
-}
-
-/* REDUCED PADDING FOR THINNER LOOK */
+/* ═══════════════════════════════════════════════════════════════════════════
+   HARDWARE STATS - COMPACT
+   ═══════════════════════════════════════════════════════════════════════════ */
 #cpu,
 #memory,
 #disk,
 #temperature {
-    padding: 0 4px; /* Reduced from 8px */
-    font-size: 11px;
+    padding: 0 5px;
+    margin: 2px 0;
+    font-size: 10px;
+    border-radius: 4px;
 }
 
 #cpu {
     color: @tertiary;
+    padding: 0px 7px 0px 2px
 }
 
 #cpu:hover {
@@ -297,13 +305,20 @@ tooltip label {
 
 #temperature {
     color: @on_surface_variant;
+    padding: 0px 2px 0px 7px
 }
 
+#temperature:hover {
+    color: @on_surface;
+    background-color: @surface_container_highest;
+}
+
+/* Warning & Critical States */
 #cpu.warning,
 #memory.warning,
 #disk.warning {
     color: @error;
-    opacity: 0.85;
+    opacity: 0.9;
 }
 
 #cpu.critical,
@@ -312,28 +327,24 @@ tooltip label {
 #temperature.critical {
     color: @on_error;
     background-color: @error;
-    font-weight: 700;
+    font-weight: 600;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   CONNECTIVITY GROUP
+   CONNECTIVITY - COMPACT
    ═══════════════════════════════════════════════════════════════════════════ */
-#group-connectivity {
-    background-color: @surface_container_high;
-    border-radius: 10px;
-    padding: 0 2px;
-    margin: 2px 2px;
-}
-
-#group-connectivity:hover {
-    background-color: @surface_container_highest;
+#backlight,
+#network,
+#pulseaudio,
+#battery {
+    font-size: 10px;
+    padding: 0 5px;
+    margin: 2px 0;
+    border-radius: 4px;
 }
 
 #backlight {
     color: @tertiary;
-    font-size: 11px;
-    min-width: 0;
-    padding: 0 4px;
 }
 
 #backlight:hover {
@@ -343,9 +354,6 @@ tooltip label {
 
 #network {
     color: @primary;
-    font-size: 11px;
-    min-width: 0;
-    padding: 0 4px;
 }
 
 #network:hover {
@@ -355,11 +363,12 @@ tooltip label {
 
 #network.disconnected {
     color: @outline;
+    opacity: 0.6;
 }
 
 #network.disabled {
     color: @error;
-    opacity: 0.6;
+    opacity: 0.5;
 }
 
 #network.linked {
@@ -368,8 +377,10 @@ tooltip label {
 
 #bluetooth {
     color: @secondary;
-    font-size: 13px;
-    padding: 0 2px;
+    font-size: 12px;
+    padding: 0px 4px 0px 3px;
+    margin: 2px 0;
+    border-radius: 4px;
 }
 
 #bluetooth:hover {
@@ -380,7 +391,7 @@ tooltip label {
 #bluetooth.off,
 #bluetooth.disabled {
     color: @outline;
-    opacity: 0.5;
+    opacity: 0.4;
 }
 
 #bluetooth.connected {
@@ -389,9 +400,6 @@ tooltip label {
 
 #pulseaudio {
     color: @tertiary;
-    font-size: 11px;
-    min-width: 0;
-    padding: 0 4px;
 }
 
 #pulseaudio:hover {
@@ -401,14 +409,11 @@ tooltip label {
 
 #pulseaudio.muted {
     color: @outline;
-    opacity: 0.5;
+    opacity: 0.4;
 }
 
 #battery {
     color: @primary;
-    font-size: 11px;
-    min-width: 0;
-    padding: 0 4px;
 }
 
 #battery:hover {
@@ -436,37 +441,28 @@ tooltip label {
 #battery.critical {
     color: @on_error;
     background-color: @error;
-    font-weight: 700;
+    font-weight: 600;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SYSTEM GROUP
+   SYSTEM CONTROLS - COMPACT
    ═══════════════════════════════════════════════════════════════════════════ */
-#group-system {
-    background-color: @surface_container_low;
-    border-radius: 10px;
-    padding: 0 2px;
-    margin: 2px 2px;
-}
-
-#group-system:hover {
-    background-color: @surface_container;
+#custom-theme,
+#custom-inhibit-suspend,
+#custom-notification {
+    font-size: 12px;
+    padding: 0 6px;
+    margin: 2px 0;
+    border-radius: 4px;
 }
 
 #custom-theme {
     color: @secondary;
-    font-size: 14px;
-    padding: 0 8px;
 }
 
 #custom-theme:hover {
     background-color: @secondary_container;
     color: @on_secondary_container;
-}
-
-#custom-inhibit-suspend {
-    font-size: 13px;
-    padding: 0 8px;
 }
 
 #custom-inhibit-suspend.enabled {
@@ -476,7 +472,6 @@ tooltip label {
 #custom-inhibit-suspend.disabled {
     color: @tertiary;
     background-color: @tertiary_container;
-    border-radius: 8px;
 }
 
 #custom-inhibit-suspend:hover {
@@ -484,9 +479,8 @@ tooltip label {
 }
 
 #custom-notification {
-    font-size: 14px;
-    padding: 0 8px;
     color: @secondary;
+    padding: 0px 6px 0px 4px
 }
 
 #custom-notification:hover {
@@ -495,11 +489,11 @@ tooltip label {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SYSTEM TRAY
+   SYSTEM TRAY - COMPACT
    ═══════════════════════════════════════════════════════════════════════════ */
 #tray {
-    padding: 0 4px; /* Reduced from 8px to reduce wasted space */
-    margin: 3px 3px;
+    padding: 0 4px;
+    margin: 2px 2px;
 }
 
 #tray > .passive {
@@ -509,19 +503,19 @@ tooltip label {
 #tray > .needs-attention {
     -gtk-icon-effect: highlight;
     background-color: @error_container;
-    border-radius: 8px;
+    border-radius: 4px;
 }
 
 #tray menu {
     background-color: @surface_container_high;
-    border: 2px solid @outline_variant;
-    border-radius: 12px;
-    padding: 8px;
+    border: 1px solid @outline_variant;
+    border-radius: 8px;
+    padding: 4px;
 }
 
 #tray menu menuitem {
-    padding: 6px 12px;
-    border-radius: 6px;
+    padding: 4px 10px;
+    border-radius: 4px;
     color: @on_surface;
 }
 
@@ -530,16 +524,15 @@ tooltip label {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   POWER BUTTON
+   POWER BUTTON - COMPACT
    ═══════════════════════════════════════════════════════════════════════════ */
 #custom-power {
-    font-size: 14px;
-    padding: 0 12px;
-    margin-right: 2px;
-    margin-left: 3px;
+    font-size: 12px;
+    padding: 0px 10px 0px 7px;
+    margin: 2px 2px 2px 4px;
     color: @error;
     background-color: @error_container;
-    border-radius: 8px;
+    border-radius: 6px;
 }
 
 #custom-power:hover {
