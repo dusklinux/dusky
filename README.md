@@ -5,7 +5,8 @@ I'm currently overwhelmed with messages, emails, and comments. i'll get to every
 
 [discord]: https://discord.gg/Nv2a7yTBQS
 
-## Updated demo video now out on YouTube with all major features covered! (since this video around 5 major features have been added, see below for details)
+## Updated demo video now out on YouTube with all major features covered! 
+(since the release of this video around 5 major features have been added, see below for details)
 
 [Watch now][video]
 
