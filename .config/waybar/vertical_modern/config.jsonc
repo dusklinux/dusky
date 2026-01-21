@@ -1,9 +1,8 @@
-//Modern Vertical
 {
     "layer": "top",
-    "position": "right",
+    "position": "left",
     "spacing": 0,
-    "width": 30, // Slightly wider to fit the numbers comfortably
+    "width": 32, // Adjusted for new group layout
     "margin-top": 5,
     "margin-bottom": 5,
     "margin-left": 4,
@@ -16,7 +15,9 @@
     // ===================================================================
     "modules-left": [ 
         "clock", 
-        "group/stats",        
+        "group/cpu",
+        "group/memory",
+        "group/temp",
         "custom/notification"
     ],
     
@@ -25,9 +26,9 @@
     ],
     
     "modules-right": [ 
-        "custom/network",      
-        "pulseaudio",
-        "battery",
+        "group/network",       
+        "group/audio",
+        "group/bat",
         "custom/power"
     ],
 
@@ -35,44 +36,12 @@
     // MODULE CONFIGURATION
     // ===================================================================
 
+    // --- WORKSPACES & CLOCK ---
     "hyprland/workspaces": {
         "format": "{name}",
         "on-click": "activate",
         "sort-by-number": true,
         "persistent-workspaces": {}
-    },
-
-    "group/stats": {
-        "orientation": "vertical",
-        "modules": [ "cpu", "memory", "temperature" ]
-    },
-
-    "cpu": {
-        "format": "\n{usage}",
-        "interval": 2,
-        "on-click": "uwsm-app -- kitty --class htop -e htop",
-        "tooltip-format": "CPU: {usage}%",
-        "states": {
-            "critical": 80
-        }
-    },
-
-    "memory": {
-        "format": "\n{percentage}",
-        "interval": 2,
-        "on-click": "uwsm-app -- kitty --class io_monitor.sh -e $HOME/user_scripts/drives/io_monitor.sh",
-        "tooltip-format": "Used: {used}GiB",
-        "states": {
-            "critical": 80
-        }
-    },
-
-    "temperature": {
-        "thermal-zone": 6,
-        "format": "\n{temperatureC}",
-        "critical-threshold": 80,
-        "format-critical": "🔥\n{temperatureC}",
-        "tooltip-format": "Temp: {temperatureC}°C"
     },
 
     "clock": {
@@ -85,13 +54,13 @@
     "custom/notification": {
         "format": "{icon}",
         "format-icons": {
-            "notification": "<span foreground='red'><sup></sup></span>",
+            "notification": "󱅫",
             "none": "",
-            "dnd-notification": "<span foreground='red'><sup></sup></span>",
+            "dnd-notification": "",
             "dnd-none": "",
-            "inhibited-notification": "<span foreground='red'><sup></sup></span>",
+            "inhibited-notification": "",
             "inhibited-none": "",
-            "dnd-inhibited-notification": "<span foreground='red'><sup></sup></span>",
+            "dnd-inhibited-notification": "",
             "dnd-inhibited-none": ""
         },
         "return-type": "json",
@@ -101,30 +70,130 @@
         "escape": true
     },
 
-    // --- UPDATED MODULES WITH NUMBERS ---
-
-    "pulseaudio": {
-        // Stacked: Icon on top, Volume % below
-        "format": "{icon}\n{volume}",
-        "format-muted": "󰖁\nMute",
-        "on-click": "uwsm-app -- pavucontrol",
-        "format-icons": ["", "", ""],
-        "tooltip-format": "Volume: {volume}%"
+    // ===================================================================
+    // GROUP: CPU (Icon + Text)
+    // ===================================================================
+    "group/cpu": {
+        "orientation": "vertical",
+        "modules": ["cpu#cpu-icon", "cpu#cpu-text"]
+    },
+    "cpu#cpu-icon": {
+        "format": "",
+        "tooltip": false,
+        "on-click": "uwsm-app -- kitty --class htop -e htop"
+    },
+    "cpu#cpu-text": {
+        "format": "{usage}",
+        "interval": 2,
+        "on-click": "uwsm-app -- kitty --class htop -e htop"
     },
 
-    "battery": {
-        // Stacked: Icon on top, Capacity % below
-        "format": " {icon}\n{capacity}",
-        "format-charging": "\n{capacity}",
+    // ===================================================================
+    // GROUP: MEMORY (Icon + Text)
+    // ===================================================================
+    "group/memory": {
+        "orientation": "vertical",
+        "modules": ["memory#memory-icon", "memory#memory-text"]
+    },
+    "memory#memory-icon": {
+        "format": "󰍛",
+        "tooltip": false,
+        "on-click": "uwsm-app -- kitty --class io_monitor.sh -e $HOME/user_scripts/drives/io_monitor.sh"
+    },
+    "memory#memory-text": {
+        "format": "{percentage}",
+        "interval": 2,
+        "on-click": "uwsm-app -- kitty --class io_monitor.sh -e $HOME/user_scripts/drives/io_monitor.sh",
+        "tooltip-format": "Used: {used}GiB"
+    },
+
+    // ===================================================================
+    // GROUP: TEMPERATURE (Icon + Text)
+    // ===================================================================
+    "group/temp": {
+        "orientation": "vertical",
+        "modules": ["temperature#temperature-icon", "temperature#temperature-text"]
+    },
+    "temperature#temperature-icon": {
+        "thermal-zone": 6,
+        "format": "󱃃",
+        "format-critical": "🔥",
+        "critical-threshold": 80,
+        "tooltip": false
+    },
+    "temperature#temperature-text": {
+        "thermal-zone": 6,
+        "format": "{temperatureC}",
+        "critical-threshold": 80,
+        "tooltip-format": "Temp: {temperatureC}°C"
+    },
+
+    // ===================================================================
+    // GROUP: AUDIO (Icon + Text)
+    // ===================================================================
+    "group/audio": {
+        "orientation": "vertical",
+        "modules": ["pulseaudio#pulseaudio-icon", "pulseaudio#pulseaudio-text"]
+    },
+    "pulseaudio#pulseaudio-icon": {
+        "format": "{icon}",
+        "format-muted": "󰖁",
+        "format-icons": ["", "", ""],
+        "tooltip": false,
+        "on-click": "uwsm-app -- pavucontrol"
+    },
+    "pulseaudio#pulseaudio-text": {
+        "format": "{volume}",
+        "format-muted": "Mute",
+        "tooltip-format": "Volume: {volume}%",
+        "on-click": "uwsm-app -- pavucontrol"
+    },
+
+    // ===================================================================
+    // GROUP: BATTERY (Icon + Text)
+    // ===================================================================
+    "group/bat": {
+        "orientation": "vertical",
+        "modules": ["battery#battery-icon", "battery#battery-text"]
+    },
+    "battery#battery-icon": {
+        "format": "{icon}",
+        "format-charging": "",
         "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
+        "interval": 5,
+        "tooltip": false
+    },
+    "battery#battery-text": {
+        "format": "{capacity}",
         "interval": 5,
         "tooltip-format": "{timeTo}\nHealth: {health}%"
     },
 
-    "custom/network": {
+    // --- OTHER ---
+    "group/network": {
+            "orientation": "vertical",
+            "modules": ["custom/network-up", "custom/network-unit", "custom/network-down"]
+    },
+    "custom/network-up": {
         "return-type": "json",
-        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh vertical",
-        "interval": 1, 
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh upload",
+        "interval": 1,
+        "on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
+        "on-click-right": "nmcli radio wifi on",
+        "on-click-middle": "nmcli radio wifi off"
+    },
+    "custom/network-unit": {
+        "return-type": "json",
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh unit",
+        "interval": 1,
+        "on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
+        "on-click-right": "nmcli radio wifi on",
+        "on-click-middle": "nmcli radio wifi off"
+    },
+    "custom/network-down": {
+        "return-type": "json",
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh download",
+        "interval": 1,
         "on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
         "on-click-right": "nmcli radio wifi on",
         "on-click-middle": "nmcli radio wifi off"
@@ -136,3 +205,4 @@
         "on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh"
     }
 }
+

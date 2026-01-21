@@ -4,12 +4,12 @@
   "reload_style_on_change": true,
   "position": "top",
   "spacing": 0,
-  "height": 44,
-  "margin-top": 0,
-  "margin-left": 2,
-  "margin-right": 2,
+  "height": 44, 
+  "margin-top": 2,
+  "margin-left": 8,
+  "margin-right": 8,
   "modules-left": [
-    "group/left1",
+    "group/left1", 
     "group/left2",
     "group/left3"
   ],
@@ -17,10 +17,10 @@
     "hyprland/workspaces"
   ],
   "modules-right": [
-    "group/right3",
-    "group/right2",
+    "mpris", 
     "group/right1"
   ],
+
   // --- GROUPS ---
   "group/left1": {
     "orientation": "horizontal",
@@ -33,42 +33,28 @@
   },
   "group/left2": {
     "orientation": "horizontal",
-    "modules": [
-      "tray"
-    ]
+    "modules": ["tray"]
   },
   "group/left3": {
     "orientation": "horizontal",
-    "modules": [
-      "custom/theme-toggle"
-    ]
+    "modules": ["custom/theme-toggle"]
   },
   "group/right1": {
     "orientation": "horizontal",
     "modules": [
-      "custom/power"
-    ]
-  },
-  "group/right2": {
-    "orientation": "horizontal",
-    "modules": [
-      "backlight",
-      /*"network",*/
-      /*"bluetooth",*/
+      "custom/notification",
+      "backlight", 
+      "network",
+      "bluetooth",
       "pulseaudio#output",
-      /*"pulseaudio#input",*/
+      "pulseaudio#input",
       "memory",
       "cpu",
       "battery",
-      "custom/notification"
+      "custom/power"
     ]
   },
-  "group/right3": {
-    "orientation": "horizontal",
-    "modules": [
-      "mpris"
-    ]
-  },
+
   // --- MODULES ---
   "custom/launcher": {
     "format": "",
@@ -93,28 +79,48 @@
     "format-window-separator": " ",
     "window-rewrite-default": "",
     "window-rewrite": {
-      "class<zen>": "",
-      "class<firefox>": "",
-      "class<kitty>": "",
-      "class<vesktop>": "",
-      "class<vlc>": "󰕼",
-      "class<Code>": "󰨞",
-      "class<thunar>": "󰝰",
-      "class<nvim>": "",
-      "class<vim>": "",
-      "class<Alacritty>": "",
-      "class<Spotify>": "",
-      "class<discord>": "",
-      "class<org.telegram.desktop>": "",
-      "class<com.obsproject.Studio>": "󰑋",
-      "class<obsidian>": ""
+        "class<zen>": "",
+        "class<firefox>": "",
+        "class<kitty>": "",
+        "class<vesktop>": "",
+        "class<vlc>": "󰕼",
+        "class<Code>": "󰨞",
+        "class<thunar>": "󰝰",
+        "class<nvim>": "",
+        "class<vim>": "",
+        "class<Alacritty>": "",
+        "class<Spotify>": "",
+        "class<discord>": "",
+        "class<org.telegram.desktop>": "",
+        "class<com.obsproject.Studio>": "󰑋",
+        "class<obsidian>": ""
     }
   },
+  "custom/notification": {
+          "format": "{icon}",
+          "format-icons": {
+              "notification": "󱅫",
+              "none": "󰂚",
+              "dnd-notification": "󱏧",
+              "dnd-none": "󰂛",
+              "inhibited-notification": "󱅫",
+              "inhibited-none": "󰂚",
+              "dnd-inhibited-notification": "󱏧",
+              "dnd-inhibited-none": "󰂛"
+          },
+          "return-type": "json",
+          "exec-if": "which swaync-client",
+          "exec": "swaync-client -swb",
+          "on-click": "swaync-client -t -sw",
+          "on-click-right": "swaync-client -d -sw",
+          "escape": true,
+          "tooltip-format": "Notifications\n\nLMB: Toggle Panel\nRMB: Do Not Disturb"
+      },
   "custom/updates": {
     "format": " {}",
-    "exec": "checkupdates 2>/dev/null | wc -l || echo 0",
+    "exec": "checkupdates 2>/dev/null | wc -l || echo 0", 
     "interval": 3600,
-    "on-click": "kitty sh -c 'command -v yay >/dev/null && yay || paru'",
+    "on-click": "kitty sh -c 'command -v yay >/dev/null && yay || paru'", 
     "tooltip-format": "Updates Available"
   },
   "idle_inhibitor": {
@@ -142,17 +148,7 @@
     "on-click-middle": "uwsm-app -- ~/user_scripts/rofi/shader_menu.sh",
     "on-scroll-up": "swayosd-client --brightness raise",
     "on-scroll-down": "swayosd-client --brightness lower",
-    "format-icons": [
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      ""
-    ]
+    "format-icons": ["", "", "", "", "", "", "", "", ""]
   },
   "clock": {
     "format": " {:%H:%M}",
@@ -191,18 +187,7 @@
     "format-charging": "󰂄 {capacity}%",
     "tooltip-format": "{timeTo}\nHealth 󱟦 {health}%\nPower Draw {power:.2f} Watts",
     "format-plugged": " {capacity}%",
-    "format-icons": [
-      "󰁺",
-      "󰁻",
-      "󰁼",
-      "󰁽",
-      "󰁾",
-      "󰁿",
-      "󰂀",
-      "󰂁",
-      "󰂂",
-      "󰁹"
-    ]
+    "format-icons": ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
   },
   "bluetooth": {
     "format": "",
@@ -216,11 +201,7 @@
     "format": "{icon}",
     "format-muted": "󰖁",
     "format-icons": {
-      "default": [
-        "",
-        "",
-        ""
-      ]
+      "default": ["", "", ""]
     },
     "on-click": "uwsm-app -- pavucontrol",
     "on-click-middle": "swayosd-client --output-volume mute-toggle",
@@ -237,8 +218,9 @@
     "tooltip-format": "Input: {source_volume}%"
   },
   "mpris": {
-    "format": "{player_icon} {title}",
+  	"format": "{player_icon} {title}",
     "format-paused": "{status_icon} <i>{title}</i>",
+    "format-stopped": "",
     "max-length": 30,
     "player-icons": {
       "default": "",
@@ -252,25 +234,5 @@
   "tray": {
     "icon-size": 14,
     "spacing": 8
-  },
-  "custom/notification": {
-    "tooltip-format": "Left: Notifications\nRight: Do not disturb",
-    "format": "{icon}",
-    "format-icons": {
-      "notification": "<span rise='0pt'><span foreground='red'><sup></sup></span></span>",
-      "none": "",
-      "dnd-notification": "<span rise='0pt'><span foreground='red'><sup></sup></span></span>",
-      "dnd-none": "",
-      "inhibited-notification": "<span rise='0pt'><span foreground='red'><sup></sup></span></span>",
-      "inhibited-none": "",
-      "dnd-inhibited-notification": "<span rise='0pt'><span foreground='red'><sup></sup></span></span>",
-      "dnd-inhibited-none": ""
-    },
-    "return-type": "json",
-    "exec-if": "which swaync-client",
-    "exec": "swaync-client -swb",
-    "on-click": "swaync-client -t -sw",
-    "on-click-right": "swaync-client -d -sw",
-    "escape": true
   }
 }

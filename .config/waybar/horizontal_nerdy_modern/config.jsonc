@@ -150,10 +150,10 @@
     // CENTER MODULES
     // ===================================================================
     "clock": {
-        "format": " {:%I:%M %p}",
-        "format-alt": " {:%A, %d %B %Y  •  %I:%M:%S %p}",
+        "format": "{:%I:%M %p}",
+        "format-alt": "{:%A, %d %B %Y  •  %I:%M:%S %p}",
         "tooltip-format": "<big>{:%A, %d %B %Y}</big>\n<tt><small>{calendar}</small></tt>",
-        "timezone": "Asia/Kolkata",
+        "timezone": "Asia/Ho_Chi_Minh",
         "interval": 1,
         "calendar": {
             "mode": "year",
@@ -338,7 +338,9 @@
         "tooltip-format": "Theme Switcher\n\nSwitch wallpapers with waypaper\nor Super + ' after toggling\nfor theme uniformity.\n\nLMB: Dark Mode\nRMB: Light Mode\nMMB: Waypaper",
         "on-click": "uwsm-app -- ~/user_scripts/theme_matugen/matugen_config.sh --mode dark",
         "on-click-right": "uwsm-app -- ~/user_scripts/theme_matugen/matugen_config.sh --mode light",
-        "on-click-middle": "uwsm-app -- waypaper"
+        "on-click-middle": "uwsm-app -- waypaper",
+        "on-scroll-up": "hyprctl dispatch workspace e-1",
+        "on-scroll-down": "hyprctl dispatch workspace e+1"
     },
 
     "custom/inhibit-suspend": {

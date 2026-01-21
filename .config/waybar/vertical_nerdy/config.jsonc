@@ -18,12 +18,12 @@
     // MODULE ORDERING
     // ===================================================================
     "modules-left": [
-        "battery",
-        "pulseaudio",
-        "backlight",
-        "memory",
-        "cpu",
-        "temperature"
+        "group/bat",
+        "group/audio",
+        "group/backlight",
+        "group/memory",
+        "group/cpu",
+        "group/temp"
     ],
     
     "modules-center": [
@@ -34,7 +34,7 @@
         "custom/theme",
         "bluetooth",
         "custom/app-tray",
-        "custom/network",      // CHANGED: Replaced 3 modules with 1 optimized module
+        "group/network",      // CHANGED: Separate 1 module into 3 for better alignment
         "custom/inhibit-suspend",
         "custom/notification",
         "clock",
@@ -59,76 +59,131 @@
         "rotate": 90
     },
 
-    "battery": {
-        "format": " {icon}\n{capacity}%\n {power:.0f}W",
-        "format-charging": " \n+{capacity}\n{power:.0f}W",
-        "format-plugged": "\n{capacity}",
+    "group/bat": {
+        "orientation": "vertical",
+        "modules": ["battery#battery-icon", "battery#battery-text"]
+    },
+    "battery#battery-icon": {
+        "format": "{icon}",
+        "format-charging": "󰂄",
+        "format-plugged": "󰂄",
+        "format-full": "󱟢",
+        "format-warning": "{icon} {capacity}%",
+        "format-critical": "󰂃 {capacity}%",
         "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
-        "on-click": "uwsm-app -- kitty --class power_saver.sh --hold -e $HOME/user_scripts/battery/power_saving/power_saver.sh",
-        "on-click-right": "uwsm-app -- kitty --class timeout.sh -e $HOME/user_scripts/hypridle/timeout.sh",
         "interval": 5,
         "states": {
-            "warning": 40,
-            "critical": 20
+            "warning": 30,
+            "critical": 15
         },
-        "tooltip-format": "{timeTo}\nHealth 󱟦 {health}%\nPower Draw {power:.2f} Watts"
+        "tooltip-format": "{timeTo}\nHealth: {health}%\nPower Draw: {power:.2f} W\nCycles: {cycles}\n\nLMB: Toggle Format\nRMB: Timeout Settings",
+    },
+    "battery#battery-text": {
+        "format": "{capacity}",
+        "interval": 5,
+        "tooltip-format": "{timeTo}\nHealth: {health}%"
     },
 
-    "pulseaudio":{
-        "format": "{icon}\n{volume}",
-        "format-muted": "󰖁\nX",
-        "on-click": "uwsm-app -- pavucontrol",
-        "on-click-middle": "swayosd-client --output-volume mute-toggle",
-        "on-click-right": "uwsm-app -- kitty --class cava -e cava",
-        "on-scroll-up": "swayosd-client --output-volume raise",
-        "on-scroll-down": "swayosd-client --output-volume lower",
-        "format-icons": ["󰖁", "", ""],
-        "tooltip": true,
-        "tooltip-format": "{desc}\n\nLMB: pavucontrol\nRMB: cava\nMMB: Mute"
+    "group/audio": {
+        "orientation": "vertical",
+        "modules": ["pulseaudio#pulseaudio-icon", "pulseaudio#pulseaudio-text"]
+    },
+    "pulseaudio#pulseaudio-icon": {
+        "format": "{icon}",
+        "format-muted": "󰖁",
+        "format-icons": ["", "", ""],
+        "tooltip": false,
+        "on-click": "uwsm-app -- pavucontrol"
+    },
+    "pulseaudio#pulseaudio-text": {
+        "format": "{volume}",
+        "format-muted": "Mute",
+        "tooltip-format": "Volume: {volume}%",
+        "on-click": "uwsm-app -- pavucontrol"
     },
 
-    "backlight": {
-        "device": "intel_backlight",
-        "format": "{icon}\n{percent}",
+    "group/backlight": {
+        "orientation": "vertical",
+        "modules": ["backlight#backlight-icon", "backlight#backlight-text"]
+     },
+	"backlight#backlight-icon": {
+		"device": "intel_backlight",
+        "format": "{icon}",
         "format-icons": ["","","","","","","","","","","","","","",""],
-        "tooltip": true,
-        "tooltip-format": "LMB: Brightness Slider\nRMB: hyprsunset Slider\nMMB: Shaders",
-        "on-click": "uwsm-app -- ~/user_scripts/sliders/brightness_slider.sh",
+		"tooltip": true,
+		"tooltip-format": "LMB: Brightness Slider\nRMB: hyprsunset Slider\nMMB: Shaders",
+		"on-click": "uwsm-app -- ~/user_scripts/sliders/brightness_slider.sh",
         "on-click-right": "uwsm-app -- ~/user_scripts/sliders/hyprsunset_slider.sh",
         "on-click-middle": "uwsm-app -- ~/user_scripts/rofi/shader_menu.sh",
         "on-scroll-up": "swayosd-client --brightness raise",
-        "on-scroll-down": "swayosd-client --brightness lower",
-        "min-length": 4,
-        "interval": 60
+        "on-scroll-down": "swayosd-client --brightness lower"
+    },
+    "backlight#backlight-text": {
+    	"device": "intel_backlight",
+    	"format": "{percent}",
+    	"min-length": 4,
+    	"interval": 60,
+    	"tooltip": true,
+		"tooltip-format": "LMB: Brightness Slider\nRMB: hyprsunset Slider\nMMB: Shaders",
+		"on-click": "uwsm-app -- ~/user_scripts/sliders/brightness_slider.sh",
+        "on-click-right": "uwsm-app -- ~/user_scripts/sliders/hyprsunset_slider.sh",
+        "on-click-middle": "uwsm-app -- ~/user_scripts/rofi/shader_menu.sh",
+        "on-scroll-up": "swayosd-client --brightness raise",
+        "on-scroll-down": "swayosd-client --brightness lower"
     },
 
-    "cpu": {
-        "format": "\n{usage}",
-        "tooltip": true,
+    "group/cpu": {
+        "orientation": "vertical",
+        "modules": ["cpu#cpu-icon", "cpu#cpu-text"]
+    },
+    "cpu#cpu-icon": {
+        "format": "",
+        "tooltip": false,
+        "on-click": "uwsm-app -- kitty --class htop -e htop",
+        "on-click-right": "uwsm-app -- kitty --class sysbench_benchmark.sh -e $HOME/user_scripts/performance/sysbench_benchmark.sh",
+        "tooltip-format": "CPU: {usage}%\nAvg Freq: {avg_frequency}GHz",
+        "interval": 2
+    },
+    "cpu#cpu-text": {
+        "format": "{usage}",
         "on-click": "uwsm-app -- kitty --class htop -e htop",
         "on-click-right": "uwsm-app -- kitty --class sysbench_benchmark.sh -e $HOME/user_scripts/performance/sysbench_benchmark.sh",
         "tooltip-format": "CPU: {usage}%\nAvg Freq: {avg_frequency}GHz",
         "interval": 2
     },
 
-    "memory": {
-        "format": "\n{percentage}",
+    "group/memory": {
+        "orientation": "vertical",
+        "modules": ["memory#memory-icon", "memory#memory-text"]
+    },
+    "memory#memory-icon": {
+        "format": "󰍛",
+        "tooltip": false,
+        "on-click": "uwsm-app -- kitty --class io_monitor.sh -e $HOME/user_scripts/drives/io_monitor.sh"
+    },
+    "memory#memory-text": {
+        "format": "{percentage}",
         "interval": 2,
         "on-click": "uwsm-app -- kitty --class io_monitor.sh -e $HOME/user_scripts/drives/io_monitor.sh",
-        "states": {
-            "critical": 80
-        },
-        "tooltip": true,
-        "tooltip-format":"Used {used} GiB\nAvail {avail} Gib\nSwap {swapUsed} GiB"
+        "tooltip-format": "Used: {used}GiB"
     },
 
-    "temperature": {
-        "thermal-zone": "/sys/class/thermal/thermal_zone6/type:x86_pkg_temp",
-        "critical-threshold": 65,
-        "format-critical": "🔥\n{temperatureC}",
-        "format": "°\n{temperatureC}",
-        "interval": 2,
-        "tooltip-format": "Package: {temperatureC}"
+    "group/temp": {
+        "orientation": "vertical",
+        "modules": ["temperature#temperature-icon", "temperature#temperature-text"]
+    },
+    "temperature#temperature-icon": {
+        "thermal-zone": 6,
+        "format": "󱃃",
+        "format-critical": "🔥",
+        "critical-threshold": 80,
+        "tooltip": false
+    },
+    "temperature#temperature-text": {
+        "thermal-zone": 6,
+        "format": "{temperatureC}",
+        "critical-threshold": 80,
+        "tooltip-format": "Temp: {temperatureC}°C"
     },
 
     "bluetooth": {
@@ -172,33 +227,47 @@
     // ===================================================================
     // CUSTOM MODULES
     // ===================================================================
-
-    "custom/network": {
+	"group/network": {
+        "orientation": "vertical",
+        "modules": ["custom/network-up", "custom/network-unit", "custom/network-down"]
+	},
+    "custom/network-up": {
         "return-type": "json",
-        "tooltip": true,
-        "tooltip-format": "LMB: wifitui\nRMB: WiFi ON\nMMB: WiFi OFF",
-        "on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
-        "on-click-right": "systemctl --user restart network_meter.service && nmcli radio wifi on && notify-send 'Turned ON WiFi'",
-        "on-click-middle": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh upload",
         "interval": 1,
-        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --vertical"
+        "on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
+        "on-click-right": "nmcli radio wifi on",
+        "on-click-middle": "nmcli radio wifi off"
     },
-
+    "custom/network-unit": {
+        "return-type": "json",
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh unit",
+        "interval": 1,
+        "on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
+        "on-click-right": "nmcli radio wifi on",
+        "on-click-middle": "nmcli radio wifi off"
+    },
+    "custom/network-down": {
+        "return-type": "json",
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh download",
+        "interval": 1,
+        "on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
+        "on-click-right": "nmcli radio wifi on",
+        "on-click-middle": "nmcli radio wifi off"
+    },
     "custom/notification": {
-        "tooltip-format": "Left: Notifications\nRight: Do not disturb",
         "format": "{icon}",
         "format-icons": {
-            "notification": "<span rise='8pt'><span foreground='red'><sup></sup></span></span>",
+            "notification": "󱅫",
             "none": "",
-            "dnd-notification": "<span rise='8pt'><span foreground='red'><sup></sup></span></span>",
+            "dnd-notification": "",
             "dnd-none": "",
-            "inhibited-notification": "<span rise='8pt'><span foreground='red'><sup></sup></span></span>",
+            "inhibited-notification": "",
             "inhibited-none": "",
-            "dnd-inhibited-notification": "<span rise='8pt'><span foreground='red'><sup></sup></span></span>",
+            "dnd-inhibited-notification": "",
             "dnd-inhibited-none": ""
         },
         "return-type": "json",
-        "exec-if": "which swaync-client",
         "exec": "swaync-client -swb",
         "on-click": "swaync-client -t -sw",
         "on-click-right": "swaync-client -d -sw",
@@ -237,3 +306,4 @@
         "on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh"
     }
 }
+

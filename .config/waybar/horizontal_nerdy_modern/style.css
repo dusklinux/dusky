@@ -6,8 +6,8 @@
 @import url("../../.config/matugen/generated/waybar-colors.css");
 
 * {
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono NF", "JetBrains Mono", "Symbols Nerd Font", "Noto Sans", "DejaVu Sans", sans-serif;
-    font-size: 13px;
+    font-family: "JetBrainsMono Nerd Font Propo", "JetBrainsMono Nerd Font", "JetBrains Mono NF", "JetBrains Mono", "Symbols Nerd Font", "Noto Sans", "DejaVu Sans", sans-serif;
+    font-size: 10px;
     font-weight: 600;
     min-height: 0;
     border: none;
@@ -31,7 +31,7 @@ tooltip {
     color: @on_surface;
     border: 2px solid @outline_variant;
     border-radius: 12px;
-    padding: 8px 12px;
+    padding: 8px 1px;
 }
 
 tooltip label {
@@ -88,8 +88,8 @@ tooltip label {
 #custom-power,
 #custom-separator,
 #custom-separator-2 {
-    padding: 0 10px;
-    margin: 2px 2px;
+    padding: 0 1px;
+    margin: 3px 2px;
     border-radius: 8px;
     background: transparent;
     color: @on_surface;
@@ -120,7 +120,7 @@ tooltip label {
 #custom-separator,
 #custom-separator-2 {
     color: @outline_variant;
-    font-size: 12px;
+    font-size: 10px;
     padding: 0 2px;
     margin: 3px 0;
     opacity: 0.4;
@@ -130,8 +130,8 @@ tooltip label {
    LEFT SECTION - LAUNCHER
    ═══════════════════════════════════════════════════════════════════════════ */
 #custom-launcher {
-    font-size: 16px;
-    padding: 0px 13px 0px 10px;
+    font-size: 14px;
+    padding: 0 8px;
     color: @primary;
     background-color: @primary_container;
     border-radius: 10px;
@@ -154,14 +154,14 @@ tooltip label {
 }
 
 #workspaces button {
-    padding: 0px 2px 0px 3px;
+    padding: 0 4px;
     margin: 3px 2px;
     border-radius: 50px;
     color: @on_surface_variant;
     background: transparent;
-    min-width: 22px;
-    min-height: 22px;
-    font-size: 11px;
+    min-width: 14px;
+    min-height: 10px;
+    font-size: 10px;
     font-weight: 700;
 }
 
@@ -184,7 +184,7 @@ tooltip label {
 #workspaces button.special {
     background-color: @tertiary_container;
     color: @on_tertiary_container;
-    font-size: 12px;
+    font-size: 10px;
 }
 
 #workspaces button.empty {
@@ -198,24 +198,23 @@ tooltip label {
 #submap {
     background-color: @tertiary_container;
     color: @on_tertiary_container;
-    padding: 0 12px;
+    padding: 0 1px;
     border-radius: 8px;
     font-weight: 700;
-    font-size: 11px;
+    font-size: 10px;
 }
 
 #window {
     color: @on_surface_variant;
-    padding: 0 12px;
-    font-size: 14px;
+    padding: 0 1px;
+    font-size: 10px;
     opacity: 0.9;
 }
 
 #custom-net-speed {
     color: @tertiary;
-    font-family: "JetBrainsMono Nerd Font Mono", monospace;
-    font-size: 11px;
-    padding: 0px 8px 0px 7px;
+    font-size: 10px;
+    padding: 0 8px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -224,9 +223,9 @@ tooltip label {
 #clock {
     background-color: @primary_container;
     color: @on_primary_container;
-    font-size: 13px;
+    font-size: 10px;
     font-weight: 700;
-    padding: 0px 16px 0px 8px;
+    padding: 0 8px;
     border-radius: 10px;
 }
 
@@ -251,7 +250,7 @@ tooltip label {
 #group-hardware {
     background-color: @surface_container_low;
     border-radius: 10px;
-    padding: 0px 2px 0px 1px;
+    padding: 0 2px;
     margin: 2px 2px;
 }
 
@@ -264,8 +263,8 @@ tooltip label {
 #memory,
 #disk,
 #temperature {
-    padding: 0px 4px 0px 5px; /* Reduced from 8px */
-    font-size: 11px;
+    padding: 0 4px; /* Reduced from 8px */
+    font-size: 10px;
     border-radius: 10px
 }
 
@@ -322,7 +321,7 @@ tooltip label {
 #group-connectivity {
     background-color: @surface_container_high;
     border-radius: 10px;
-    padding: 0px 2px 0px 1px;
+    padding: 0 2px;
     margin: 2px 2px;
 }
 
@@ -332,9 +331,9 @@ tooltip label {
 
 #backlight {
     color: @tertiary;
-    font-size: 11px;
+    font-size: 10px;
     min-width: 0;
-    padding: 0px 4px 0px 3px;
+    padding: 0 3px;
 }
 
 #backlight:hover {
@@ -344,9 +343,9 @@ tooltip label {
 
 #network {
     color: @primary;
-    font-size: 11px;
+    font-size: 10px;
     min-width: 0;
-    padding: 0px 3px 0px 4px;
+    padding: 0 4px;
 }
 
 #network:hover {
@@ -369,8 +368,8 @@ tooltip label {
 
 #bluetooth {
     color: @secondary;
-    font-size: 13px;
-    padding: 0px 3px 0px 2px;
+    font-size: 10px;
+    padding: 0 3px;
 }
 
 #bluetooth:hover {
@@ -390,9 +389,9 @@ tooltip label {
 
 #pulseaudio {
     color: @tertiary;
-    font-size: 11px;
+    font-size: 10px;
     min-width: 0;
-    padding: 0px 3px 0px 4px;
+    padding: 0 4px;
 }
 
 #pulseaudio:hover {
@@ -407,7 +406,7 @@ tooltip label {
 
 #battery {
     color: @primary;
-    font-size: 11px;
+    font-size: 10px;
     min-width: 0;
     padding: 0 4px;
 }
@@ -456,8 +455,8 @@ tooltip label {
 
 #custom-theme {
     color: @secondary;
-    font-size: 14px;
-    padding: 0px 10px 0px 7px;
+    font-size: 10px;
+    padding: 0 7px;
 }
 
 #custom-theme:hover {
@@ -466,8 +465,8 @@ tooltip label {
 }
 
 #custom-inhibit-suspend {
-    font-size: 13px;
-    padding: 0px 8px 0px 7px;
+    font-size: 10px;
+    padding: 0 8px;
 }
 
 #custom-inhibit-suspend.enabled {
@@ -485,8 +484,8 @@ tooltip label {
 }
 
 #custom-notification {
-    font-size: 14px;
-    padding: 0px 9px 0px 7px;
+    font-size: 10px;
+    padding: 0 9px;
     color: @secondary;
 }
 
@@ -499,8 +498,8 @@ tooltip label {
    SYSTEM TRAY
    ═══════════════════════════════════════════════════════════════════════════ */
 #tray {
-    padding: 0px 4px 0px 3px; /* Reduced from 8px to reduce wasted space */
-    margin: 0px 4px 0px 3px;
+    padding: 0 4px; /* Reduced from 8px to reduce wasted space */
+    margin: 0 3px;
 }
 
 #tray > .passive {
@@ -517,11 +516,11 @@ tooltip label {
     background-color: @surface_container_high;
     border: 2px solid @outline_variant;
     border-radius: 12px;
-    padding: 8px;
+    padding: 0 8px;
 }
 
 #tray menu menuitem {
-    padding: 6px 12px;
+    padding: 0px 1px;
     border-radius: 6px;
     color: @on_surface;
 }
@@ -534,8 +533,8 @@ tooltip label {
    POWER BUTTON
    ═══════════════════════════════════════════════════════════════════════════ */
 #custom-power {
-    font-size: 14px;
-    padding: 0px 14px 0px 11px;
+    font-size: 10px;
+    padding: 0 11px;
     margin-right: 2px;
     margin-left: 3px;
     color: @error;
