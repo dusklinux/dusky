@@ -1,8 +1,8 @@
 @import url("../../.config/matugen/generated/waybar-colors.css");
 
 * {
-    font-family: "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
-    font-size: 13px;
+    font-family: "JetBrainsMono Nerd Font Propo", "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
+    font-size: 10px;
     font-weight: bold;
     min-height: 0;
     border: none;
@@ -47,30 +47,25 @@ window#waybar {
     padding: 8px 0;
 }
 
-#cpu, #memory, #temperature {
-    background: transparent;
-    box-shadow: none;
-    margin: 4px 0;
-    padding: 0;
-    font-size: 10px;
-    color: @on_surface_variant;
-    
-    /* ADDED: Strong black text-shadow for visibility on light backgrounds */
-    text-shadow: 1px 1px 2px rgba(0, 0, 0, 1.0);
-}
-
-/* ADDED: Critical State Coloring (Red when > 80%) */
-#cpu.critical, 
-#memory.critical, 
-#temperature.critical {
-    color: @error;
-}
-
 #custom-notification {
     color: @on_surface_variant;
-	padding: 6px 4px 6px 3px;
+	padding: 6px 4px;
 	border-radius: 30px;
+	font-size: 11px;
 }
+
+#custom-notification:hover, #pulseaudio:hover, #battery:hover{
+	background-color: @on_primary_fixed_variant;
+}
+
+#pulseaudio, #battery {
+    /* CHANGED: 10px guarantees '100' fits in 38px width */
+    font-size: 10px; 
+    padding: 8px 0;
+}
+
+#battery.charging { color: @tertiary; }
+#battery.warning { color: @error; }
 
 /* --- CENTER SECTION --- */
 #workspaces {
@@ -82,7 +77,7 @@ window#waybar {
     padding: 0;
     /* CHANGED: Reduced horizontal margin */
     margin: 2px 4px;
-    padding: 2px 0;
+    padding: 2px 0px;
     border-radius: 16px;
     color: @on_surface_variant;
     background-color: @surface_container_highest;
@@ -91,7 +86,7 @@ window#waybar {
 
 #workspaces button.active {
     background-color: @primary;
-    padding: 8px 0;
+    padding: 2px 0;
     color: @on_primary;
 }
 
@@ -122,10 +117,10 @@ window#waybar {
 #custom-power {
     /*background-color: @error_container;
     color: @on_error_container;*/
-    font-size: 16px; /* Slightly smaller icon to match narrow width */
+    font-size: 10px; /* Slightly smaller icon to match narrow width */
     border-radius: 100px;
     margin: 3px 1px;
-    padding: 3px 4px 3px 0px;
+    padding: 3px 0px;
 }
 
 #custom-power:hover {

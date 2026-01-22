@@ -150,10 +150,9 @@
     // CENTER MODULES
     // ===================================================================
     "clock": {
-        "format": " {:%I:%M %p}",
-        "format-alt": " {:%A, %d %B %Y  •  %I:%M:%S %p}",
+        "format": "{:%I:%M %p}",
+        "format-alt": "{:%A, %d %B %Y  •  %I:%M:%S %p}",
         "tooltip-format": "<big>{:%A, %d %B %Y}</big>\n<tt><small>{calendar}</small></tt>",
-        "timezone": "Asia/Kolkata",
         "interval": 1,
         "calendar": {
             "mode": "year",

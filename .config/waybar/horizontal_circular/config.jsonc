@@ -82,18 +82,18 @@
     },
     "temperature#cpu": {
         "hwmon-path": "/sys/class/thermal/thermal_zone6/type:x86_pkg_temp",
-        "format": " {temperatureC}°C",
+        "format": "{temperatureC}°C",
         "tooltip-format": "CPU: {temperatureC}°C"
     },
     "custom/gpu": {
         "exec": "nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null || echo 'N/A'",
-        "format": " {}°C",
+        "format": "{}°C",
         "interval": 5,
         "tooltip-format": "GPU: {}°C"
     },
     "temperature#system": {
         "hwmon-path": "/sys/class/hwmon/hwmon1/temp1_input",
-        "format": " {temperatureC}°C",
+        "format": "{temperatureC}°C",
         "tooltip-format": "System: {temperatureC}°C"
     },
 
@@ -117,7 +117,9 @@
         },
         "persistent-workspaces": {
             "*": 5
-        }
+        },
+        "on-scroll-up": "hyprctl dispatch workspace e-1",
+        "on-scroll-down": "hyprctl dispatch workspace e+1"
     },
 
     // === MODULES: CENTER ===
@@ -168,7 +170,7 @@
     },
     "battery": {
         "states": { "warning": 30, "critical": 15 },
-        "format": "{icon} {capacity}%",
+        "format": "{icon}{capacity}%",
         "format-charging": "󱐋 {capacity}%",
         "format-plugged": " {capacity}%",
         "format-icons": ["", "", "", "", ""],
