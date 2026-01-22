@@ -27,12 +27,12 @@
 * {
     border: none;
     border-radius: 0px;
-    font-family: "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
+    font-family: "JetBrainsMono Nerd Font Propo", "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
     font-weight: 600;
-    min-height: 0;
-    padding: 0;
-    margin: 0;
-    font-size: 13px;
+    min-height: 0px;
+    padding: 0px;
+    margin: 0px;
+    font-size: 11px;
 }
 
 window#waybar {
@@ -48,7 +48,7 @@ tooltip {
 tooltip label {
     color: @on_surface;
     padding: 8px 9px;
-    font-size: 13px;
+    font-size: 11px;
 }
 
 /* ============================================================ */
@@ -56,34 +56,30 @@ tooltip label {
 /* ============================================================ */
 #workspaces {
     background-color: @surface_container;
-    padding: 5px 14px;
-    margin: 0 6px;
+    padding: 0px 14px;
+    margin: 0px 6px;
     border-radius: 20px;
     border: 2px solid @primary-mild;
     color: @on_surface;
 }
 
 #workspaces button {
-    padding: 0px;
-    margin: 0px 3px;
+    margin: 1px 3px;
     border-radius: 45px;
     background-color: @primary-mild;
     color: transparent;
-
-    font-size: 0px;
-    min-width: 24px;
-    min-height: 15px;
-
+    font-size: 11px;
+    min-width: 20px;
+    min-height: 10px;
     transition: all 0.3s cubic-bezier(0.55, -0.04, 0.3, 1.44);
 }
 
 #workspaces button.active {
     background-color: @primary;
     color: @background;
-
-    font-size: 12px;
-    min-width: 24px;
-    padding: 0 6px;
+    font-size: 11px;
+    min-width: 20px;
+    padding: 0px 3px;
 }
 
 #workspaces button:hover {
@@ -91,17 +87,17 @@ tooltip label {
     color: @on_primary_container;
     border-radius: 16px;
     
-    font-size: 12px; 
-    min-width: 50px; 
-    padding: 0 6px;
+    font-size: 11px; 
+    min-width: 20px;
+    padding: 0px 3px;
 }
 
 #workspaces button.urgent {
     background-color: @error;
     color: @on_error;
     border-radius: 16px;
-    font-size: 12px; 
-    min-width: 40px;
+    font-size: 11px; 
+    min-width: 20px;
 }
 
 /* ============================================================ */
@@ -125,10 +121,11 @@ tooltip label {
     background-color: @surface_container;
     border-radius: 26px;
     border: 2px solid @primary-mild;
-    padding: 5px 14px;
+    padding: 0px 14px;
     margin: 0 6px;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     color: @on_surface;
+    font-size: 11px;
 }
 
 /* ============================================================ */
@@ -136,15 +133,15 @@ tooltip label {
 /* ============================================================ */
 #group-power {
     background-color: transparent;
-    padding: 0;
+    padding: 0px;
     margin: 0 6px 0 0;
 }
 
 #custom-arch {
     color: @primary;
-    font-size: 16px;
+    font-size: 13px;
     margin: 0 6px;
-    padding: 5px 14px 5px 11px;
+    padding: 0px 11px;
 }
 
 #custom-arch:hover {
@@ -157,9 +154,9 @@ tooltip label {
 #custom-logout,
 #custom-reboot,
 #custom-shutdown {
-    font-size: 14px;
+    font-size: 11px;
     margin: 0 6px;
-    padding: 5px 12px 5px 11px; 
+    padding: 0px 12px; 
     color: @primary;
     border-radius: 60px; 
     border: 2px solid @primary-mild; 
@@ -181,20 +178,20 @@ tooltip label {
 #group-temps {
     background-color: transparent;
     margin: 0 6px 0 0;
-    padding: 0;
+    padding: 0px;
 }
 
 #temperature.cpu { 
 	color: @primary; 
-	padding: 0px 12px 0px 7px;
+	padding: 0px 8px;
 }
 #custom-gpu { 
 	color: @secondary; 
-	padding: 0px 12px 0px 7px;
+	padding: 0px 7px;
 }
 #temperature.system {
 	color: @tertiary; 
-	padding: 0px 12px 0px 7px;
+	padding: 0px 7px;
 }
 
 #temperature.cpu:hover {
@@ -222,8 +219,8 @@ tooltip label {
 #clock {
     color: @primary;
     margin: 0 6px;
-    padding: 5px 20px;
-    font-size: 16px;
+    padding: 0px 20px;
+    font-size: 11px;
     font-weight: 800;
 }
 
@@ -242,7 +239,7 @@ tooltip label {
 }
 
 #pulseaudio { 
-	font-size: 14px;
+	font-size: 11px;
 	color: @secondary; 
 }
 #pulseaudio:hover {
@@ -253,10 +250,10 @@ tooltip label {
     color: @outline;
 }
 
-#network { 
-	font-size: 16px;
+#network {
+	font-size: 11px;
 	color: @primary_container; 
-  padding: 5px 14px 4px 9px;
+  	padding: 0px 14px;
 }
 	
 #network:hover {
@@ -269,9 +266,9 @@ tooltip label {
 }
 
 #bluetooth { 
-	font-size: 14px;
+	font-size: 11px;
 	color: @primary; 
-	padding: 6px 10px 6px 9px;
+	padding: 0px 9px;
 }
 #bluetooth:hover {
     background-color: @primary;
@@ -284,7 +281,7 @@ tooltip label {
 
 #battery { 
 	color: @tertiary; 
-	padding: 5px 14px 5px 8px;
+	padding: 0px 12px;
 }
 #battery:hover {
     background-color: @tertiary;
@@ -310,9 +307,9 @@ tooltip label {
 }
 
 #custom-notification { 
-	font-size: 15px;
+	font-size: 11px;
 	color: @on_surface; 
-	padding: 5px 15px 5px 12px;
+	padding: 0px 14px;
 }
 #custom-notification:hover {
     background-color: @on_surface;

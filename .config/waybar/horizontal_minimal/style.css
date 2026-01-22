@@ -1,8 +1,8 @@
 @import url("../../.config/matugen/generated/waybar-colors.css");
 
 * {
-    font-family: "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
-    font-size: 13px;
+    font-family: "JetBrainsMono Nerd Font Propo", "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
+    font-size: 11px;
     font-weight: bold;
     min-height: 0;
     border: none;
@@ -29,9 +29,9 @@ window#waybar {
     
     /* CHANGED: Reduced side margins from 2px to 1px to fit the 38px width */
     margin: 1px 3px; 
-    font-size: 15px;
+    font-size: 11px;
     
-    padding: 0px 7px 0px 8px;
+    padding: 0 7px;
     box-shadow: 0 2px 3px rgba(0, 0, 0, 0.2);
 }
 
@@ -39,7 +39,7 @@ window#waybar {
 #clock {
     background-color: @primary;
     color: @on_primary;
-    font-size: 12px; 
+    font-size: 11px; 
     padding-right: 8px;
 }
 
@@ -48,27 +48,8 @@ window#waybar {
     padding: 8px;
 }
 
-#cpu, #memory, #temperature {
-    background: transparent;
-    box-shadow: none;
-    margin: 0 4px;
-    padding: 0;
-    font-size: 12px;
-    color: @on_surface_variant;
-    
-    /* ADDED: Strong black text-shadow for visibility on light backgrounds */
-    text-shadow: 1px 1px 2px rgba(0, 0, 0, 1.0);
-}
-
-/* ADDED: Critical State Coloring (Red when > 80%) */
-#cpu.critical, 
-#memory.critical, 
-#temperature.critical {
-    color: @error;
-}
-
-#custom-notification {
-    color: @on_surface_variant;
+#custom-notification:hover, #pulseaudio:hover, #battery:hover{
+	background-color: @on_primary_fixed_variant;
 }
 
 /* --- CENTER SECTION --- */
@@ -104,12 +85,12 @@ window#waybar {
 
 /* --- RIGHT SECTION --- */
 #custom-network {
-    font-size: 12px;
+    font-size: 11px;
     padding: 0 8px;
 }
 
 #pulseaudio, #battery {
-    font-size: 12px; 
+    font-size: 11px; 
     padding: 0 8px;
 }
 
@@ -119,10 +100,10 @@ window#waybar {
 #custom-power {
     /*background-color: @error_container;
     color: @on_error_container;*/
-    font-size: 16px; /* Slightly smaller icon to match narrow width */
+    font-size: 12px; /* Slightly smaller icon to match narrow width */
     border-radius: 100px;
     margin: 3px 1px;
-    padding: 3px 4px 3px 0px;
+    padding: 3px 4px;
     min-width: 26px;
 }
 
