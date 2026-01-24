@@ -9,6 +9,30 @@ set -euo pipefail
 # --- Configuration ---
 readonly CONFIG_FILE="${HOME}/.config/hypr/source/input.conf"
 
+# Parse command-line arguments
+action=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --enable)
+            action="enable"
+            shift
+            ;;
+        --disable)
+            action="disable"
+            shift
+            ;;
+        --toggle)
+            action="toggle"
+            shift
+            ;;
+        *)
+            printf "Unknown option: %s\n" "$1" >&2
+            printf "Usage: %s [--enable|--disable|--toggle]\n" "$0" >&2
+            exit 1
+            ;;
+    esac
+done
+
 # --- Cleanup Trap ---
 cleanup() {
     [[ -f "${TEMP_FILE:-}" ]] && rm -f "$TEMP_FILE" || true
@@ -17,6 +41,7 @@ trap cleanup EXIT
 
 # --- Main ---
 main() {
+
     # Ensure file exists
     if [[ ! -f "$CONFIG_FILE" ]]; then
         mkdir -p "$(dirname "$CONFIG_FILE")"
@@ -36,14 +61,33 @@ main() {
         prompt_action="Switch to Right-Handed (Standard)"
     fi
 
-    # --- 2. Prompt User ---
-    printf "Current Status: %s\n" "$current_mode"
-    # Changed prompt to [Y/n] to indicate Yes is default
-    printf "%s? [Y/n]: " "$prompt_action"
-    
-    # Using /dev/tty ensures we read from the user even if stdin is redirected elsewhere
-    read -r -n 1 user_input < /dev/tty
-    printf "\n"
+    # --- 2. Determine Action ---
+    if [[ -n "$action" ]]; then
+        case $action in
+            enable)
+                target_val="true"
+                prompt_action="Switch to Left-Handed (Reverse)"
+                ;;
+            disable)
+                target_val="false"
+                prompt_action="Switch to Right-Handed (Standard)"
+                ;;
+            toggle)
+                # target_val is already set to the opposite
+                ;;
+        esac
+        # Skip prompt and proceed directly
+        user_input="y"
+    else
+        # --- 2. Prompt User ---
+        printf "Current Status: %s\n" "$current_mode"
+        # Changed prompt to [Y/n] to indicate Yes is default
+        printf "%s? [Y/n]: " "$prompt_action"
+        
+        # Using /dev/tty ensures we read from the user even if stdin is redirected elsewhere
+        read -r -n 1 user_input < /dev/tty
+        printf "\n"
+    fi
 
     # --- 3. Process Logic ---
     # Check for Y, y, OR empty string (-z checks for Enter key)
