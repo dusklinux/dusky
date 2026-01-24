@@ -208,9 +208,27 @@ ensure_swaync_running() {
     pgrep -x swaync >/dev/null && return 0
 
     log "Starting swaync (required for matugen hooks)..."
-    swaync &
-    disown
-    sleep 1
+
+    if command -v uwsm-app &>/dev/null; then
+        uwsm-app -- swaync &
+        disown
+    else
+        swaync &
+        disown
+    fi
+
+    local attempt=0
+    while ! pgrep -x swaync >/dev/null; do
+        sleep 0.2
+        ((++attempt))
+
+        if (( attempt > 25 )); then
+            log "WARN: swaync failed to start. Matugen may hang."
+            break
+        fi
+    done
+
+    sleep 0.5
 }
 
 apply_random_wallpaper() {
