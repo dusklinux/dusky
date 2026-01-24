@@ -17,8 +17,7 @@
     "hyprland/workspaces"
   ],
   "modules-right": [
-    "group/right3",
-    "group/right2",
+    "mpris", 
     "group/right1"
   ],
   // --- GROUPS ---
@@ -46,29 +45,19 @@
   "group/right1": {
     "orientation": "horizontal",
     "modules": [
-      "custom/power"
-    ]
-  },
-  "group/right2": {
-    "orientation": "horizontal",
-    "modules": [
-      "backlight",
-      /*"network",*/
-      /*"bluetooth",*/
+      "custom/notification",
+      "backlight", 
+      "network",
+      "bluetooth",
       "pulseaudio#output",
       /*"pulseaudio#input",*/
       "memory",
       "cpu",
       "battery",
-      "custom/notification"
+      "custom/power"
     ]
   },
-  "group/right3": {
-    "orientation": "horizontal",
-    "modules": [
-      "mpris"
-    ]
-  },
+
   // --- MODULES ---
   "custom/launcher": {
     "format": "",
@@ -108,8 +97,30 @@
       "class<org.telegram.desktop>": "",
       "class<com.obsproject.Studio>": "󰑋",
       "class<obsidian>": ""
-    }
+    },
+    "on-scroll-up": "hyprctl dispatch workspace e-1",
+    "on-scroll-down": "hyprctl dispatch workspace e+1"
   },
+  "custom/notification": {
+          "format": "{icon}",
+          "format-icons": {
+              "notification": "󱅫",
+              "none": "󰂚",
+              "dnd-notification": "󱏧",
+              "dnd-none": "󰂛",
+              "inhibited-notification": "󱅫",
+              "inhibited-none": "󰂚",
+              "dnd-inhibited-notification": "󱏧",
+              "dnd-inhibited-none": "󰂛"
+          },
+          "return-type": "json",
+          "exec-if": "which swaync-client",
+          "exec": "swaync-client -swb",
+          "on-click": "swaync-client -t -sw",
+          "on-click-right": "swaync-client -d -sw",
+          "escape": true,
+          "tooltip-format": "Notifications\n\nLMB: Toggle Panel\nRMB: Do Not Disturb"
+      },
   "custom/updates": {
     "format": " {}",
     "exec": "checkupdates 2>/dev/null | wc -l || echo 0",
@@ -239,6 +250,7 @@
   "mpris": {
     "format": "{player_icon} {title}",
     "format-paused": "{status_icon} <i>{title}</i>",
+    "format-stopped": "",
     "max-length": 30,
     "player-icons": {
       "default": "",

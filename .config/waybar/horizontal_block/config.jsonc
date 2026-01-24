@@ -42,6 +42,7 @@
   "group/right1": {
     "orientation": "horizontal",
     "modules": [
+      "custom/notification",
       "backlight", 
       "network",
       "bluetooth",
@@ -88,7 +89,29 @@
         "class<vlc>": "󰕼",
         "class<Code>": "󰨞",
         "class<thunar>": "󰝰"
-    }
+    },
+    "on-scroll-up": "hyprctl dispatch workspace e-1",
+    "on-scroll-down": "hyprctl dispatch workspace e+1"
+  },
+  "custom/notification": {
+      "format": "{icon}",
+      "format-icons": {
+          "notification": "󱅫",
+          "none": "󰂚",
+          "dnd-notification": "󱏧",
+          "dnd-none": "󰂛",
+          "inhibited-notification": "󱅫",
+          "inhibited-none": "󰂚",
+          "dnd-inhibited-notification": "󱏧",
+          "dnd-inhibited-none": "󰂛"
+      },
+      "return-type": "json",
+      "exec-if": "which swaync-client",
+      "exec": "swaync-client -swb",
+      "on-click": "swaync-client -t -sw",
+      "on-click-right": "swaync-client -d -sw",
+      "escape": true,
+      "tooltip-format": "Notifications\n\nLMB: Toggle Panel\nRMB: Do Not Disturb"
   },
   "custom/updates": {
     "format": " {}",
@@ -194,6 +217,7 @@
   "mpris": {
     "format": "{player_icon} {title}",
     "format-paused": "{status_icon} <i>{title}</i>",
+    "format-stopped": "",
     "max-length": 30,
     "player-icons": {
       "default": "",

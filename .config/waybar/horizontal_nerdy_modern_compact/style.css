@@ -11,7 +11,7 @@
    RESET & BASE - COMPACT
    ═══════════════════════════════════════════════════════════════════════════ */
 * {
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono NF", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
+    font-family: "JetBrainsMono Nerd Font Propo", "JetBrainsMono Nerd Font", "JetBrains Mono NF", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
     font-size: 11px;
     font-weight: 500;
     min-height: 0;
@@ -38,7 +38,7 @@ tooltip {
     color: @on_surface;
     border: 1px solid @outline_variant;
     border-radius: 8px;
-    padding: 6px 10px;
+    padding: 6px 1px;
 }
 
 tooltip label {
@@ -54,7 +54,7 @@ tooltip label {
 .modules-right {
     background-color: @surface_container;
     border-radius: 8px;
-    padding: 0 2px;
+    padding: 0px 2px;
     margin: 2px 0;
 }
 
@@ -84,7 +84,7 @@ tooltip label {
 #custom-power,
 #custom-separator,
 #custom-separator-2 {
-    padding: 0 6px;
+    padding: 0px 6px;
     margin: 2px 1px;
     border-radius: 6px;
     background: transparent;
@@ -118,7 +118,7 @@ tooltip label {
 #custom-separator-2 {
     color: @outline_variant;
     font-size: 10px;
-    padding: 0 2px;
+    padding: 0px 2px;
     margin: 2px 2px;
     opacity: 0.3;
 }
@@ -128,12 +128,11 @@ tooltip label {
    ═══════════════════════════════════════════════════════════════════════════ */
 #custom-launcher {
     font-size: 14px;
-    padding: 0px 10px 0px 6px;
+    padding: 0px 4px;
     color: @primary;
     background-color: @primary_container;
     border-radius: 6px;
-    margin-left: 2px;
-    margin-right: 4px;
+    margin: 2px 2px
 }
 
 #custom-launcher:hover {
@@ -147,12 +146,12 @@ tooltip label {
 #workspaces {
     background-color: @surface_container_low;
     padding: 0 2px;
-    margin: 2px 1px;
+    margin: 2px 2px;
     border-radius: 6px;
 }
 
 #workspaces button {
-    padding: 0px 1px 0px 2px;
+    padding: 0 1px;
     margin: 2px 1px;
     border-radius: 4px;
     color: @on_surface_variant;
@@ -227,9 +226,9 @@ tooltip label {
     color: @on_primary_container;
     font-size: 11px;
     font-weight: 600;
-    padding: 0px 13px 0px 7px;
+    padding: 0 6px;
     border-radius: 6px;
-    margin: 2px 4px;
+    margin: 2px 2px;
 }
 
 #clock:hover {
@@ -258,7 +257,7 @@ tooltip label {
 #group-system {
     background-color: @surface_container_low;
     border-radius: 6px;
-    padding: 0px 2px 0px 1px;
+    padding: 0 1px;
     margin: 2px 1px;
 }
 
@@ -376,7 +375,7 @@ tooltip label {
 #bluetooth {
     color: @secondary;
     font-size: 12px;
-    padding: 0px 5px 0px 4px;
+    padding: 0px 5px;
     margin: 2px 0;
     border-radius: 4px;
 }
@@ -412,7 +411,7 @@ tooltip label {
 
 #battery {
     color: @primary;
-    padding: 0px 4px 0px 5px
+    padding: 0px 5px
 }
 
 #battery:hover {
@@ -450,7 +449,7 @@ tooltip label {
 #custom-inhibit-suspend,
 #custom-notification {
     font-size: 12px;
-    padding: 0px 6px 0px 4px;
+    padding: 0px 6px;
     margin: 2px 0;
     border-radius: 4px;
 }
@@ -512,7 +511,7 @@ tooltip label {
 }
 
 #tray menu menuitem {
-    padding: 4px 10px;
+    padding: 4px 1px;
     border-radius: 4px;
     color: @on_surface;
 }
@@ -526,8 +525,8 @@ tooltip label {
    ═══════════════════════════════════════════════════════════════════════════ */
 #custom-power {
     font-size: 12px;
-    padding: 0px 8px 0px 5px;
-    margin: 2px 2px 2px 4px;
+    padding: 0px 6px;
+    margin: 2px 4px;
     color: @error;
     background-color: @error_container;
     border-radius: 6px;

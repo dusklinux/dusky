@@ -1,7 +1,7 @@
 //Minimal Vertical
 {
     "layer": "top",
-    "position": "right",
+    "position": "left",
     "spacing": 0,
     "width": 30, // Slightly wider to fit the numbers comfortably
     "margin-top": 5,
@@ -40,7 +40,9 @@
         "format": "",
         "on-click": "activate",
         "sort-by-number": true,
-        "persistent-workspaces": {}
+        "persistent-workspaces": {},
+		"on-scroll-up": "hyprctl dispatch workspace e-1",
+		"on-scroll-down": "hyprctl dispatch workspace e+1"
     },
 
     "group/stats": {
@@ -86,13 +88,13 @@
     "custom/notification": {
         "format": "{icon}",
         "format-icons": {
-            "notification": "<span foreground='red'><sup></sup></span>",
+            "notification": "󱅫",
             "none": "",
-            "dnd-notification": "<span foreground='red'><sup></sup></span>",
+            "dnd-notification": "",
             "dnd-none": "",
-            "inhibited-notification": "<span foreground='red'><sup></sup></span>",
+            "inhibited-notification": "",
             "inhibited-none": "",
-            "dnd-inhibited-notification": "<span foreground='red'><sup></sup></span>",
+            "dnd-inhibited-notification": "",
             "dnd-inhibited-none": ""
         },
         "return-type": "json",
@@ -106,7 +108,7 @@
 
     "pulseaudio": {
         // Stacked: Icon on top, Volume % below
-        "format": "{icon} ",
+        "format": "{icon}",
         "format-muted": "󰖁",
         "on-click": "uwsm-app -- pavucontrol",
         "format-icons": ["", "", ""],

@@ -1,36 +1,47 @@
 @import url("../../.config/matugen/generated/waybar-colors.css");
 
 * {
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono NF", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
-    font-size: 13px;
+    font-family: "JetBrainsMono Nerd Font Propo", "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
     font-weight: bold;
     min-height: 0;
     border: none;
     border-radius: 0;
     margin: 2px;
+    min-width: 10px;
+    font-size: 10px;
 }
 
 window#waybar {
     background: transparent;
     color: @on_surface;
+    font-size: 10px;
 }
 
 /* UNIFIED CAPSULE STYLE */
 #clock,
 #custom-notification,
 #workspaces,
-#group-stats,
-#pulseaudio,
-#battery,
-#custom-network {
+#custom-notification{
+	font-size: 10px;
     background-color: @surface_container;
     color: @on_surface;
-    border-radius: 10px; /* Slightly tighter radius for narrower bar */
-    
-    /* CHANGED: Reduced side margins from 2px to 1px to fit the 38px width */
-    margin: 3px 1px; 
-    
-    padding: 6px 2px 6px 3px;
+    border-radius: 10px;
+    margin: 3px 1px;
+    padding: 6px 0px;
+    box-shadow: 0 2px 3px rgba(0, 0, 0, 0.2);
+}
+
+box#cpu,
+box#memory,
+box#temp,
+box#audio,
+box#bat,
+box#network{
+    background-color: transparent;
+    color: @on_surface;
+    border-radius: 10px;
+    margin: 2px 0px;
+    padding: 3px 0px;
     box-shadow: 0 2px 3px rgba(0, 0, 0, 0.2);
 }
 
@@ -43,16 +54,29 @@ window#waybar {
     padding-bottom: 8px;
 }
 
-#group-stats {
-    background-color: @surface_container_low;
-    padding: 8px 0;
+label.cpu-icon,
+label.memory-icon,
+label.temperature-icon,
+label.pulseaudio-icon,
+label.battery-icon {
+    margin-bottom: -4px;
+    margin-top: 2px;
+    font-size: 10px;
+    padding-top: 0px;
+    padding-bottom: 0px;
 }
 
-#cpu label, 
-#memory label, 
-#temperature label {
-    -gtk-icon-transform: scale(1);
-    margin: 0 1;
+#clock,
+label.custom-network-up,
+label.custom-network-unit,
+label.custom-network-down,
+label.cpu-text,
+label.memory-text,
+label.temperature-text,
+label.pulseaudio-text,
+label.battery-text {
+    font-size: 10px; 
+    font-weight: 800;
 }
 
 #cpu, #memory, #temperature {
@@ -61,22 +85,41 @@ window#waybar {
     margin: 4px 0;
     padding: 0px 1px 0px 1px;
     font-size: 10px;
-    color: @on_surface_variant;
+    color: @on_surface;
     min-width: 22px;
-    
-    /* ADDED: Strong black text-shadow for visibility on light backgrounds */
-    text-shadow: 1px 1px 2px rgba(0, 0, 0, 1.0);
 }
 
 /* ADDED: Critical State Coloring (Red when > 80%) */
-#cpu.critical, 
-#memory.critical, 
-#temperature.critical {
+#temperature-icon.critical,
+#temperature-text.critical {
     color: @error;
+    animation-name: blink;
+    animation-duration: 0.5s;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
 }
 
-#custom-notification {
-    color: @on_surface_variant;
+/* Battery States */
+#battery-text.charging, #battery-icon.charging { color: @tertiary; }
+#battery-text.warning,  #battery-icon.warning  { color: @error; }
+#battery-text.critical, #battery-icon.critical { 
+    color: @error;
+    animation-name: blink;
+    animation-duration: 0.5s;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+}
+
+#custom-notification:hover, box#cpu:hover, box#temp:hover, box#bat:hover, box#audio:hover, box#memory:hover, box#network:hover{
+	background-color: @surface_container_highest;
+}
+
+@keyframes blink {
+    to {
+        color: @on_surface;
+    }
 }
 
 /* --- CENTER SECTION --- */
@@ -110,16 +153,10 @@ window#waybar {
 }
 
 /* --- BOTTOM SECTION --- */
-#custom-network {
-    font-size: 10px;
-    padding: 8px 2px 8px 0px;
-}
-
-#pulseaudio, #battery {
-    /* CHANGED: 10px guarantees '100' fits in 38px width */
-    font-size: 10px; 
-    padding: 8px 0;
-}
+/* #custom-network { */
+/*     font-size: 10px; */
+/*     padding: 8px 2px; */
+/* } */
 
 #battery.charging { color: @tertiary; }
 #battery.warning { color: @error; }
@@ -128,12 +165,14 @@ window#waybar {
     background-color: transparent;
     box-shadow: none;
     color: @error;
-    font-size: 16px; /* Slightly smaller icon to match narrow width */
-    margin-top: 6px;
-    margin-bottom: 2px;
-    padding: 0;
+    font-size: 10px; /* Slightly smaller icon to match narrow width */
+    margin-top: 4px;
+    margin-bottom: 4px;
+    padding: 4px 4px;
+    border-radius: 6px 6px;
 }
 
 #custom-power:hover {
     color: @error_container;
+    background-color: @error;
 }
