@@ -6,49 +6,15 @@ Fully UWSM-compliant for Arch Linux/Hyprland environments.
 """
 from __future__ import annotations
 
-import os
-import shlex
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+import subprocess
 
-# =============================================================================
-# PRE-FLIGHT DEPENDENCY CHECK
-# =============================================================================
-def preflight_check() -> None:
-    """Verify all dependencies are available before proceeding."""
-    missing: list[str] = []
+# Local imports
+import lib.utility as utility
 
-    try:
-        import yaml  # noqa: F401
-    except ImportError:
-        missing.append("python-yaml")
-
-    try:
-        import gi
-        gi.require_version("Gtk", "4.0")
-        gi.require_version("Adw", "1")
-        from gi.repository import Gtk, Adw  # noqa: F401
-    except (ImportError, ValueError):
-        if "python-gobject" not in missing:
-            missing.append("python-gobject")
-        missing.extend(["gtk4", "libadwaita"])
-
-    if missing:
-        unique_missing = list(dict.fromkeys(missing))
-        print("\n╭───────────────────────────────────────────────────────────╮")
-        print("│  ⚠  Missing Dependencies                                  │")
-        print("╰───────────────────────────────────────────────────────────╯")
-        print(f"\n  The following packages are required:\n")
-        for pkg in unique_missing:
-            print(f"    • {pkg}")
-        print(f"\n  Install with:\n")
-        print(f"    sudo pacman -S --needed {' '.join(unique_missing)}\n")
-        sys.exit(1)
-
-
-preflight_check()
+utility.preflight_check()
 
 # Safe to import after check
 import gi
@@ -64,6 +30,7 @@ APP_ID = "com.github.dusky.controlcenter"
 APP_TITLE = "Dusky Control Center"
 CONFIG_FILENAME = "dusky_config.yaml"
 SCRIPT_DIR = Path(__file__).resolve().parent
+CSS_FILENAME = "dusky_style.css"
 
 # =============================================================================
 # STYLESHEET (Uses System Theme Variables)
@@ -89,19 +56,21 @@ class DuskyControlCenter(Adw.Application):
         self.content_title_label: Gtk.Label | None = None
         self.toast_overlay: Adw.ToastOverlay | None = None
 
-        # Search components
+        # Slider state
+        self.slider_changing = False
         self.search_bar: Gtk.SearchBar | None = None
         self.search_entry: Gtk.SearchEntry | None = None
         self.search_page: Adw.PreferencesPage | None = None
         self.search_results_group: Adw.PreferencesGroup | None = None
         self.last_visible_page: str | None = None
+        self.last_snapped_value: float | None = None
 
     def do_activate(self) -> None:
         """Application activation entry point."""
         # Let Adwaita handle theming (respects system preference)
         Adw.StyleManager.get_default()
 
-        self.config = load_config()
+        self.config = utility.load_config(SCRIPT_DIR / CONFIG_FILENAME)
         self._apply_css()
         self._build_ui()
 
@@ -191,7 +160,7 @@ class DuskyControlCenter(Adw.Application):
             index = int(page_id.split("-", 1)[1])
             pages = self.config.get("pages", [])
             if 0 <= index < len(pages):
-                return str(pages[index].get("name", "Settings"))
+                return str(pages[index].get("title", "Settings"))
         except (ValueError, IndexError):
             pass
 
@@ -239,24 +208,25 @@ class DuskyControlCenter(Adw.Application):
         found_count = 0
 
         for page in pages:
-            page_name = str(page.get("name", "Unknown"))
+            page_name = str(page.get("title", "Unknown"))
 
-            for group in page.get("groups", []):
-                for item in group.get("items", []):
-                    title = str(item.get("title", "")).lower()
-                    desc = str(item.get("description", "")).lower()
+            for section in page.get("layout", []):
+                if section.get("type") == "section":
+                    for item in section.get("items", []):
+                        title = str(item.get("properties", {}).get("title", "")).lower()
+                        desc = str(item.get("properties", {}).get("description", "")).lower()
 
-                    if query in title or query in desc:
-                        # Create context-aware copy for display
-                        context_item = item.copy()
-                        original_desc = item.get("description", "")
-                        context_item["description"] = (
-                            f"{page_name} • {original_desc}" if original_desc else page_name
-                        )
+                        if query in title or query in desc:
+                            # Create context-aware copy for display
+                            context_item = item.copy()
+                            original_desc = item.get("properties", {}).get("description", "")
+                            context_item["properties"]["description"] = (
+                                f"{page_name} • {original_desc}" if original_desc else page_name
+                            )
 
-                        row = self._build_action_row(context_item)
-                        self.search_results_group.add(row)
-                        found_count += 1
+                            row = self._build_item_row(context_item)
+                            self.search_results_group.add(row)
+                            found_count += 1
 
         if found_count == 0:
             status = Adw.ActionRow(title="No results found")
@@ -349,7 +319,7 @@ class DuskyControlCenter(Adw.Application):
 
         if 0 <= index < len(pages):
             self.stack.set_visible_child_name(f"page-{index}")
-            page_name = str(pages[index].get("name", ""))
+            page_name = str(pages[index].get("title", ""))
             if self.content_title_label:
                 self.content_title_label.set_label(page_name)
 
@@ -388,7 +358,7 @@ class DuskyControlCenter(Adw.Application):
         first_row: Gtk.ListBoxRow | None = None
 
         for idx, page_data in enumerate(pages):
-            name = str(page_data.get("name", "Untitled"))
+            name = str(page_data.get("title", "Untitled"))
             icon = str(page_data.get("icon", "application-x-executable-symbolic"))
 
             # Sidebar entry
@@ -409,32 +379,56 @@ class DuskyControlCenter(Adw.Application):
         """Build a PreferencesPage from config data."""
         page = Adw.PreferencesPage()
 
-        for group_data in page_data.get("groups", []):
-            group = Adw.PreferencesGroup()
+        for section_data in page_data.get("layout", []):
+            if section_data.get("type") == "section":
+                group = Adw.PreferencesGroup()
 
-            title = str(group_data.get("title", ""))
-            if title:
-                group.set_title(GLib.markup_escape_text(title))
+                title = str(section_data.get("properties", {}).get("title", ""))
+                if title:
+                    group.set_title(GLib.markup_escape_text(title))
 
-            desc = str(group_data.get("description", ""))
-            if desc:
-                group.set_description(GLib.markup_escape_text(desc))
+                desc = str(section_data.get("properties", {}).get("description", ""))
+                if desc:
+                    group.set_description(GLib.markup_escape_text(desc))
 
-            for item in group_data.get("items", []):
-                group.add(self._build_action_row(item))
+                for item in section_data.get("items", []):
+                    group.add(self._build_item_row(item))
 
-            page.add(group)
+                page.add(group)
+            else:
+                # Fallback for non-section items
+                # Create a group with no title
+                group = Adw.PreferencesGroup()
+                group.add(self._build_item_row(section_data))
+                page.add(group)
 
         return page
 
-    def _build_action_row(self, item: dict[str, Any]) -> Adw.ActionRow:
+    def _build_item_row(self, item: dict[str, Any]) -> Adw.ActionRow | Adw.PreferencesRow:
+        """Build a row based on item type."""
+        item_type = item.get("type")
+        properties = item.get("properties", {})
+
+        if item_type == "button":
+            return self._build_button_row(properties, item.get("on_press", {}))
+        elif item_type == "toggle":
+            return self._build_toggle_row(properties, item.get("on_toggle", {}))
+        elif item_type == "label":
+            return self._build_label_row(properties, item.get("value", {}))
+        elif item_type == "slider":
+            return self._build_slider_row(properties, item.get("on_change", {}))
+        else:
+            # Fallback to button
+            return self._build_button_row(properties, item.get("on_press", {}))
+
+    def _build_button_row(self, properties: dict[str, Any], on_press: dict[str, Any]) -> Adw.ActionRow:
         """Build an ActionRow with run button."""
         row = Adw.ActionRow()
         row.add_css_class("action-row")
 
-        title = str(item.get("title", "Unnamed"))
-        subtitle = str(item.get("description", ""))
-        icon_name = str(item.get("icon", "utilities-terminal-symbolic"))
+        title = str(properties.get("title", "Unnamed"))
+        subtitle = str(properties.get("description", ""))
+        icon_name = str(properties.get("icon", "utilities-terminal-symbolic"))
 
         row.set_title(GLib.markup_escape_text(title))
         if subtitle:
@@ -445,37 +439,205 @@ class DuskyControlCenter(Adw.Application):
         prefix_icon.add_css_class("action-row-prefix-icon")
         row.add_prefix(prefix_icon)
 
-        # Get custom label or default to "Run"
-        btn_label = str(item.get("button_text", "Run"))
-        
         # Run button
-        run_btn = Gtk.Button(label=btn_label)
+        run_btn = Gtk.Button(label="Run")
         run_btn.add_css_class("run-btn")
         run_btn.add_css_class("suggested-action")
         run_btn.set_valign(Gtk.Align.CENTER)
-        run_btn.connect("clicked", self._on_run_clicked, item)
+        run_btn.connect("clicked", self._on_button_clicked, on_press)
 
         row.add_suffix(run_btn)
         row.set_activatable_widget(run_btn)
 
         return row
 
-    def _on_run_clicked(self, button: Gtk.Button, item: dict[str, Any]) -> None:
-        """Handle run button click - UWSM-compliant execution."""
-        command = str(item.get("command", "")).strip()
-        title = str(item.get("title", "Command"))
-        use_terminal = bool(item.get("terminal", False))
+    def _build_toggle_row(self, properties: dict[str, Any], on_toggle: dict[str, Any]) -> Adw.ActionRow:
+        """Build an ActionRow with toggle switch."""
+        row = Adw.ActionRow()
+        row.add_css_class("action-row")
 
-        if not command:
-            self._toast("⚠ No command specified", timeout=3)
+        title = str(properties.get("title", "Unnamed"))
+        subtitle = str(properties.get("description", ""))
+        icon_name = str(properties.get("icon", "utilities-terminal-symbolic"))
+
+        row.set_title(GLib.markup_escape_text(title))
+        if subtitle:
+            row.set_subtitle(GLib.markup_escape_text(subtitle))
+
+        # Prefix icon with background
+        prefix_icon = Gtk.Image.new_from_icon_name(icon_name)
+        prefix_icon.add_css_class("action-row-prefix-icon")
+        row.add_prefix(prefix_icon)
+
+        # Toggle switch
+        toggle_switch = Gtk.Switch()
+        toggle_switch.set_valign(Gtk.Align.CENTER)
+        toggle_switch.connect("state-set", self._on_toggle_changed, on_toggle)
+
+        row.add_suffix(toggle_switch)
+        row.set_activatable_widget(toggle_switch)
+
+        return row
+
+    def _build_label_row(self, properties: dict[str, Any], value: dict[str, Any]) -> Adw.ActionRow:
+        """Build an ActionRow with label and value."""
+        row = Adw.ActionRow()
+        row.add_css_class("action-row")
+
+        title = str(properties.get("title", "Unnamed"))
+        icon_name = str(properties.get("icon", "utilities-terminal-symbolic"))
+
+        row.set_title(GLib.markup_escape_text(title))
+
+        # Prefix icon with background
+        prefix_icon = Gtk.Image.new_from_icon_name(icon_name)
+        prefix_icon.add_css_class("action-row-prefix-icon")
+        row.add_prefix(prefix_icon)
+
+        # Value label
+        value_text = self._get_value_text(value)
+        value_label = Gtk.Label(label=value_text)
+        value_label.set_valign(Gtk.Align.CENTER)
+        value_label.set_halign(Gtk.Align.END)
+        value_label.set_hexpand(True)
+        value_label.set_ellipsize(Pango.EllipsizeMode.END)
+
+        row.add_suffix(value_label)
+
+        return row
+    
+    def _build_slider_row(self, properties: dict[str, Any], on_change: dict[str, Any]) -> Adw.ActionRow:
+        """Build an ActionRow with slider."""
+        row = Adw.ActionRow()
+        row.add_css_class("action-row")
+
+        title = str(properties.get("title", "Unnamed"))
+        icon_name = str(properties.get("icon", "utilities-terminal-symbolic"))
+        min_value = float(properties.get("min", 0))
+        max_value = float(properties.get("max", 100))
+        step_value = float(properties.get("step", 1))
+        initial_value = float(properties.get("initial", min_value))
+
+        row.set_title(GLib.markup_escape_text(title))
+
+        # Prefix icon with background
+        prefix_icon = Gtk.Image.new_from_icon_name(icon_name)
+        prefix_icon.add_css_class("action-row-prefix-icon")
+        row.add_prefix(prefix_icon)
+
+        # Slider
+        slider = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=Gtk.Adjustment(
+            value=initial_value,
+            lower=min_value,
+            upper=max_value,
+            step_increment=step_value,
+            page_increment=step_value * 10,
+            page_size=0,
+        ))
+        slider.set_valign(Gtk.Align.CENTER)
+        slider.set_hexpand(True)
+        slider.set_draw_value(True)
+        slider.connect("value-changed", self._on_slider_changed, on_change, step_value, min_value, max_value)
+
+        row.add_suffix(slider)
+
+        return row
+
+    def _on_button_clicked(self, button: Gtk.Button, on_press: dict[str, Any]) -> None:
+        """Handle button click."""
+        action_type = on_press.get("type")
+        if action_type == "exec":
+            command = str(on_press.get("command", "")).strip()
+            title = "Command"
+            use_terminal = bool(on_press.get("terminal", False))
+
+            if not command:
+                self._toast("⚠ No command specified", timeout=3)
+                return
+
+            success = utility.execute_command(command, title, use_terminal)
+
+            if success:
+                self._toast(f"▶ Launched: {title}")
+            else:
+                self._toast(f"✖ Failed to launch: {title}", timeout=4)
+        elif action_type == "redirect":
+            page_id = on_press.get("page")
+            if page_id and self.stack:
+                # Find the page index by id
+                pages = self.config.get("pages", [])
+                for idx, page in enumerate(pages):
+                    if page.get("id") == page_id:
+                        self.stack.set_visible_child_name(f"page-{idx}")
+                        page_name = str(page.get("title", ""))
+                        if self.content_title_label:
+                            self.content_title_label.set_label(page_name)
+                        break
+
+    def _on_toggle_changed(self, switch: Gtk.Switch, state: bool, on_toggle: dict[str, Any]) -> None:
+        """Handle toggle switch change."""
+        action = on_toggle.get("enabled" if state else "disabled", {})
+        action_type = action.get("type")
+        if action_type == "exec":
+            command = str(action.get("command", "")).strip()
+            title = "Toggle Command"
+            use_terminal = bool(action.get("terminal", False))
+
+            if command:
+                success = utility.execute_command(command, title, use_terminal)
+                if not success:
+                    self._toast(f"✖ Failed to execute toggle command", timeout=4)
+
+    def _get_value_text(self, value: dict[str, Any]) -> str:
+        """Get the text for a label value."""
+        value_type = value.get("type")
+        if value_type == "exec":
+            command = str(value.get("command", "")).strip()
+            if command:
+                try:
+                    result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=5)
+                    return result.stdout.strip() or "N/A"
+                except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+                    return "Error"
+        return "N/A"
+    
+    def _on_slider_changed(self, slider: Gtk.Scale, on_change: dict[str, Any], step_value: float, min_value: float, max_value: float) -> None:
+        """Handle slider value change."""
+        if self.slider_changing:
             return
 
-        success = execute_command(command, title, use_terminal)
+        current_value = slider.get_value()
+        snapped_value = round(current_value / step_value) * step_value
+        snapped_value = max(min_value, min(snapped_value, max_value))
 
-        if success:
-            self._toast(f"▶ Launched: {title}")
-        else:
-            self._toast(f"✖ Failed to launch: {title}", timeout=4)
+        if self.last_snapped_value is None:
+            self.last_snapped_value = snapped_value
+
+        if self.last_snapped_value == snapped_value:
+            return
+
+        if snapped_value % 1 == 0:
+            snapped_value = int(snapped_value)
+
+        if abs(snapped_value - current_value) > 1e-6:
+            self.slider_changing = True
+            slider.set_value(snapped_value)
+            self.slider_changing = False
+
+        # Execute command with snapped value
+        action_type = on_change.get("type", "")
+        print(on_change)
+        if action_type == "exec":
+            command_template = str(on_change.get("command", "")).strip()
+            title = "Slider Command"
+            use_terminal = bool(on_change.get("terminal", False))
+
+            if command_template:
+                command = command_template.replace("{value}", str(int(snapped_value)))
+                print(command)
+                success = utility.execute_command(command, title, use_terminal)
+                if not success:
+                    self._toast(f"✖ Failed to execute slider command", timeout=4)
 
     # ─────────────────────────────────────────────────────────────────────────
     # EMPTY STATE
