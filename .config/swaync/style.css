@@ -24,7 +24,7 @@
 * {
   color: @text-color;
   all: unset;
-  font-family: "JetBrains Mono Nerd Font", "Fira Sans", sans-serif;
+  font-family: "JetBrains Mono Nerd Font Propo", "Fira Sans", sans-serif;
   font-size: 14px;
   transition: 200ms ease-in-out;
 }
