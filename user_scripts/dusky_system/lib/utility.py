@@ -83,7 +83,8 @@ def execute_command(cmd_string: str, title: str, run_in_terminal: bool) -> bool:
 # PRE-FLIGHT DEPENDENCY CHECK
 # =============================================================================
 def preflight_check() -> None:
-    """Verify all dependencies are available before proceeding."""
+    """Verify all dependencies and other parts are available before proceeding."""
+    # Verify required Python packages and system libraries
     missing: list[str] = []
 
     try:
@@ -112,3 +113,78 @@ def preflight_check() -> None:
         print(f"\n  Install with:\n")
         print(f"    sudo pacman -S --needed {' '.join(unique_missing)}\n")
         sys.exit(1)
+
+    # If imports succeeded, check for .config/dusky/settings directory
+    config_dir = os.path.join(os.path.expanduser("~"), ".config", "dusky", "settings")
+    if not os.path.isdir(config_dir):
+        print(f"[INFO] Creating settings directory at: {config_dir}")
+        os.makedirs(config_dir, exist_ok=True)
+
+# =============================================================================
+# SYSTEM VALUE RETRIEVAL (e.g. Memory, CPU)
+# =============================================================================
+def get_system_value(key: str) -> str:
+    """Retrieve system information based on the provided key."""
+    try:
+        if key == "memory_total":
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        return str(round(int(line.split()[1]) / 1024 ** 2, 1)) + " GB"
+        elif key == "cpu_model":
+            with open("/proc/cpuinfo", "r") as f:
+                for line in f:
+                    if line.startswith("model name"):
+                        return line.split(":", 1)[1].strip()
+        elif key == "gpu_model":
+            lspci_output = subprocess.check_output(["lspci"], text=True)
+            for line in lspci_output.splitlines():
+                if "VGA compatible controller" in line or "3D controller" in line:
+                    return line.split(":", 2)[2].strip()
+        elif key == "kernel_version":
+            return os.uname().release
+        # Add more keys as needed
+    except Exception as e:
+        print(f"[ERROR] Could not retrieve system value for {key}: {e}")
+    
+    return "N/A"
+
+# =============================================================================
+# SAVING SETTINGS
+# =============================================================================
+KEY_LOCATION = os.path.join(os.path.expanduser("~"), ".config", "dusky", "settings")
+
+# Key files don't have an extension and contain only the value as plain text.
+# i.e. ~/.config/dusky/settings/some_setting_key
+# Boolean, file stores "true" or "false"s
+# Integer, file stores string representation of integer
+# String, file stores the string directly
+# etc.
+def save_setting(key: str, value: Any) -> None:
+    """Save a setting value to a file in the settings directory."""
+    key_path = os.path.join(KEY_LOCATION, key)
+    try:
+        with open(key_path, "w", encoding="utf-8") as f:
+            f.write(str(value))
+            print(f"[INFO] Saved setting {key} = {value}")
+    except OSError as e:
+        print(f"[ERROR] Could not save setting {key}: {e}")
+
+def load_setting(key: str, default: Any = None) -> Any:
+    """Load a setting value from a file in the settings directory."""
+    key_path = os.path.join(KEY_LOCATION, key)
+    if not os.path.isfile(key_path):
+        return default
+    try:
+        with open(key_path, "r", encoding="utf-8") as f:
+            value = f.read().strip()
+            if isinstance(default, bool):
+                return value.lower() == "true"
+            elif isinstance(default, int):
+                return int(value)
+            elif isinstance(default, float):
+                return float(value)
+            return value
+    except OSError as e:
+        print(f"[ERROR] Could not load setting {key}: {e}")
+        return default
