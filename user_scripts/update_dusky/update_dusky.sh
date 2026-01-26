@@ -791,9 +791,9 @@ main() {
     # USER INTERACTION SAFETY CHECK
     # --------------------------------------------------------------------------
     if [[ -t 0 ]]; then
-        printf '\n%s⚠️  WARNING: DO NOT INTERRUPT THIS SCRIPT! ⚠️%s\n' "${CLR_RED}" "${CLR_RST}"
-        printf 'Interrupting the orchestration process causes Git locks and inconsistent states.\n'
-        printf 'Please allow the script to complete fully before closing.\n\n'
+        printf '\n%s⚠️  WARNING: DO NOT INTERRUPT THE UPDATE WHILE ITS RUNNING! ⚠️%s\n' "${CLR_RED}" "${CLR_RST}"
+        printf 'Interrupting the process causes Git locks and inconsistent states.\n'
+        printf 'Please allow the update to complete fully before closing.\n\n'
         
         local start_confirm
         read -r -p "Do you understand and wish to start the update? [y/N] " start_confirm
