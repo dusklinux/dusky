@@ -417,9 +417,29 @@ class DuskyControlCenter(Adw.Application):
             return self._build_label_row(properties, item.get("value", {}))
         elif item_type == "slider":
             return self._build_slider_row(properties, item.get("on_change", {}))
+        elif item_type == "warning_banner":
+            return self._build_warning_banner_row(properties)
         else:
             # Fallback to button
             return self._build_button_row(properties, item.get("on_press", {}))
+
+    def _build_prefix_icon(self, icon: dict[str, Any]) -> Gtk.Image:
+        """Create a prefix icon with background styling."""
+        if isinstance(icon, dict):
+            icon_type = icon.get("type", "system")
+            if icon_type == "file":
+                file_path_template = str(icon.get("path", "")).strip()
+                if file_path_template:
+                    file_path = file_path_template.replace("~", str(Path.home()))
+                    icon = Gtk.Image.new_from_file(file_path)
+                    icon.add_css_class("action-row-prefix-icon")
+                    return icon
+            # Fallback to default icon name if type is unknown
+            icon = str(icon.get("name", "utilities-terminal-symbolic"))
+
+        prefix_icon = Gtk.Image.new_from_icon_name(icon)
+        prefix_icon.add_css_class("action-row-prefix-icon")
+        return prefix_icon
 
     def _build_button_row(self, properties: dict[str, Any], on_press: dict[str, Any]) -> Adw.ActionRow:
         """Build an ActionRow with run button."""
@@ -428,16 +448,14 @@ class DuskyControlCenter(Adw.Application):
 
         title = str(properties.get("title", "Unnamed"))
         subtitle = str(properties.get("description", ""))
-        icon_name = str(properties.get("icon", "utilities-terminal-symbolic"))
+        icon = properties.get("icon", "utilities-terminal-symbolic")
 
         row.set_title(GLib.markup_escape_text(title))
         if subtitle:
             row.set_subtitle(GLib.markup_escape_text(subtitle))
 
         # Prefix icon with background
-        prefix_icon = Gtk.Image.new_from_icon_name(icon_name)
-        prefix_icon.add_css_class("action-row-prefix-icon")
-        row.add_prefix(prefix_icon)
+        row.add_prefix(self._build_prefix_icon(icon))
 
         # Run button
         run_btn = Gtk.Button(label="Run")
@@ -473,6 +491,14 @@ class DuskyControlCenter(Adw.Application):
         toggle_switch = Gtk.Switch()
         toggle_switch.set_valign(Gtk.Align.CENTER)
         toggle_switch.connect("state-set", self._on_toggle_changed, on_toggle)
+
+        # Load from key if specified
+        if "key" in properties:
+            key = str(properties.get("key", "")).strip()
+            system_value = utility.load_setting(key, False)
+            print(f"[DEBUG] Loaded setting for key '{key}': {system_value}")
+            if isinstance(system_value, bool):
+                toggle_switch.set_active(system_value)
 
         row.add_suffix(toggle_switch)
         row.set_activatable_widget(toggle_switch)
@@ -512,6 +538,7 @@ class DuskyControlCenter(Adw.Application):
         row.add_css_class("action-row")
 
         title = str(properties.get("title", "Unnamed"))
+        description = str(properties.get("description", ""))
         icon_name = str(properties.get("icon", "utilities-terminal-symbolic"))
         min_value = float(properties.get("min", 0))
         max_value = float(properties.get("max", 100))
@@ -519,6 +546,8 @@ class DuskyControlCenter(Adw.Application):
         initial_value = float(properties.get("initial", min_value))
 
         row.set_title(GLib.markup_escape_text(title))
+        if description:
+            row.set_subtitle(GLib.markup_escape_text(description))
 
         # Prefix icon with background
         prefix_icon = Gtk.Image.new_from_icon_name(icon_name)
@@ -536,10 +565,45 @@ class DuskyControlCenter(Adw.Application):
         ))
         slider.set_valign(Gtk.Align.CENTER)
         slider.set_hexpand(True)
-        slider.set_draw_value(True)
+        slider.set_draw_value(False)
         slider.connect("value-changed", self._on_slider_changed, on_change, step_value, min_value, max_value)
 
         row.add_suffix(slider)
+
+        return row
+
+    def _build_warning_banner_row(self, properties: dict[str, Any]) -> Adw.PreferencesRow:
+        """Build a warning banner row."""
+        # Create the wrapper (Adw.PreferencesRow)
+        row = Adw.PreferencesRow()
+        row.add_css_class("action-row")
+
+        # Create the banner box
+        banner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        banner_box.add_css_class("warning-banner-box")
+
+        warning_icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+        warning_icon.set_halign(Gtk.Align.CENTER)
+        warning_icon.set_margin_bottom(8)
+        warning_icon.add_css_class("warning-banner-icon")
+
+        title = str(properties.get("title", "Warning"))
+        message = str(properties.get("message", ""))
+
+        title_label = Gtk.Label(label=GLib.markup_escape_text(title))
+        title_label.add_css_class("title-1")
+        title_label.set_halign(Gtk.Align.CENTER)
+
+        message_label = Gtk.Label(label=GLib.markup_escape_text(message))
+        message_label.add_css_class("body")
+        message_label.set_halign(Gtk.Align.CENTER)
+        message_label.set_wrap(True)
+
+        banner_box.append(warning_icon)
+        banner_box.append(title_label)
+        banner_box.append(message_label)
+
+        row.set_child(banner_box)
 
         return row
 
@@ -574,9 +638,9 @@ class DuskyControlCenter(Adw.Application):
                             self.content_title_label.set_label(page_name)
                         break
 
-    def _on_toggle_changed(self, switch: Gtk.Switch, state: bool, on_toggle: dict[str, Any]) -> None:
+    def _on_toggle_changed(self, switch: Gtk.Switch, state: bool, properties: dict[str, Any]) -> None:
         """Handle toggle switch change."""
-        action = on_toggle.get("enabled" if state else "disabled", {})
+        action = properties.get("on_toggle", {}).get("enabled" if state else "disabled", {})
         action_type = action.get("type")
         if action_type == "exec":
             command = str(action.get("command", "")).strip()
@@ -587,9 +651,15 @@ class DuskyControlCenter(Adw.Application):
                 success = utility.execute_command(command, title, use_terminal)
                 if not success:
                     self._toast(f"✖ Failed to execute toggle command", timeout=4)
+                
+        if "key" in properties:
+            # Save the new state to settings
+            utility.save_setting(properties.get("key", ""), state)
 
     def _get_value_text(self, value: dict[str, Any]) -> str:
         """Get the text for a label value."""
+        if isinstance(value, str):
+            return value
         value_type = value.get("type")
         if value_type == "exec":
             command = str(value.get("command", "")).strip()
@@ -599,6 +669,23 @@ class DuskyControlCenter(Adw.Application):
                     return result.stdout.strip() or "N/A"
                 except (subprocess.TimeoutExpired, subprocess.SubprocessError):
                     return "Error"
+        elif value_type == "static":
+            return str(value.get("text", "N/A"))
+        elif value_type == "file":
+            file_path_template = str(value.get("path", "")).strip()
+            if file_path_template:
+                file_path = file_path_template.replace("~", str(Path.home()))
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        return f.read().strip() or "N/A"
+                except (FileNotFoundError, IOError):
+                    return "N/A"
+        elif value_type == "system":
+            key = str(value.get("key", "")).strip()
+            if key:
+                system_value = utility.get_system_value(key)
+                return system_value if system_value is not None else "N/A"
+        
         return "N/A"
     
     def _on_slider_changed(self, slider: Gtk.Scale, on_change: dict[str, Any], step_value: float, min_value: float, max_value: float) -> None:
@@ -610,14 +697,14 @@ class DuskyControlCenter(Adw.Application):
         snapped_value = round(current_value / step_value) * step_value
         snapped_value = max(min_value, min(snapped_value, max_value))
 
-        if self.last_snapped_value is None:
-            self.last_snapped_value = snapped_value
-
-        if self.last_snapped_value == snapped_value:
-            return
-
         if snapped_value % 1 == 0:
             snapped_value = int(snapped_value)
+
+        # Avoid redundant execution
+        if self.last_snapped_value is not None and abs(snapped_value - self.last_snapped_value) < 1e-6:
+            return
+
+        self.last_snapped_value = snapped_value
 
         if abs(snapped_value - current_value) > 1e-6:
             self.slider_changing = True
@@ -626,7 +713,6 @@ class DuskyControlCenter(Adw.Application):
 
         # Execute command with snapped value
         action_type = on_change.get("type", "")
-        print(on_change)
         if action_type == "exec":
             command_template = str(on_change.get("command", "")).strip()
             title = "Slider Command"
@@ -634,7 +720,6 @@ class DuskyControlCenter(Adw.Application):
 
             if command_template:
                 command = command_template.replace("{value}", str(int(snapped_value)))
-                print(command)
                 success = utility.execute_command(command, title, use_terminal)
                 if not success:
                     self._toast(f"✖ Failed to execute slider command", timeout=4)
