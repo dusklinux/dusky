@@ -2,6 +2,8 @@
 # waybar-netd: Zero-fork optimized network speed daemon
 set -euo pipefail
 
+export LC_ALL=C # Force C locale to avoid porblems with various user locales and decimal separators.
+
 # Load 'sleep' as builtin (avoids fork every second)
 if [[ -f /usr/lib/bash/sleep ]]; then
     enable -f /usr/lib/bash/sleep sleep 2>/dev/null || true
