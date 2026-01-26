@@ -119,6 +119,17 @@ row.action-row:hover {
     color: @accent_color;
 }
 
+/* Warning Banners */
+.warning-banner-icon {
+    -gtk-icon-size: 28px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 6px;
+    border-radius: 8px;
+    background: alpha(@warning_color, 0.1);
+    color: @accent_color;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
    RUN BUTTON
    ───────────────────────────────────────────────────────────────────────── */
