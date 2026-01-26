@@ -263,6 +263,7 @@ pages:
         command: kitty --class tailscale_uninstall --hold sh -c "$HOME/user_scripts/networking/uninstall_tailscale.sh"
         terminal: false
     - type: toggle
+      key: cloudflare_warp_enabled
       properties:
         title: Warp
         icon: security-high-symbolic
@@ -329,6 +330,7 @@ pages:
       description: ''
     items:
     - type: toggle
+      key: power_saver_state
       properties:
         title: Power Saver
         icon: battery-level-80-symbolic
@@ -360,6 +362,7 @@ pages:
 #        command: kitty --class mouse_button_reverse.sh --hold sh -c $HOME/user_scripts/desktop_apps/mouse_button_reverse.sh
 #        terminal: false
     - type: toggle
+      key: left_handed_mouse
       properties:
         title: Left-Handed Mouse
         icon: input-mouse-symbolic
@@ -379,7 +382,7 @@ pages:
   layout:
   - type: section
     properties:
-      title: Screen Brightness
+      title: Screen
       icon: ''
       description: ''
     items:
@@ -392,17 +395,26 @@ pages:
         type: exec
         command: $HOME/user_scripts/sliders/brightness_slider.sh
         terminal: false
-#    - type: slider
-#      properties:
-#        title: Brightness
-#        description: Set screen brightness percentage
-#        icon: display-brightness-symbolic
-#        min: 1
-#        max: 100
-#        step: 1
-#      on_change:
-#        type: exec
-#        command: brightnessctl s {value}%
+    - type: slider
+      properties:
+        title: Brightness
+        description: Set screen brightness percentage
+        icon: display-brightness-symbolic
+        min: 1
+        max: 100
+        step: 1
+      on_change:
+        type: exec
+        command: brightnessctl s {value}%
+    - type: button
+      properties:
+        title: Night Light
+        description: Blue light filter slider
+        icon: weather-clear-night-symbolic
+      on_press:
+        type: exec
+        command: $HOME/user_scripts/sliders/hyprsunset_slider.sh
+        terminal: false
   - type: section
     properties:
       title: Monitor Configuration
@@ -546,6 +558,7 @@ pages:
         title: Dark Mode
         icon: weather-clear-night-symbolic
         description: Enable/Disable Dark Mode
+        key: dark_mode_enabled
       on_toggle:
         enabled:
           type: exec
@@ -633,19 +646,10 @@ pages:
         terminal: false
   - type: section
     properties:
-      title: Night Light & Shaders
+      title: Shaders
       icon: ''
       description: ''
     items:
-    - type: button
-      properties:
-        title: Hyprsunset
-        description: Blue light filter slider
-        icon: display-brightness-symbolic
-      on_press:
-        type: exec
-        command: $HOME/user_scripts/sliders/hyprsunset_slider.sh
-        terminal: false
     - type: button
       properties:
         title: Shaders
@@ -830,10 +834,10 @@ pages:
       icon: ''
       description: ''
     items:
-    - type: button
+    - type: warning_banner
       properties:
-        title: "\u26A0\uFE0F WARNING: READ ONLY \u26A0\uFE0F"
-        description: These are system defaults. Do not edit directly.
+        title: "WARNING: READ ONLY"
+        message: These are system defaults. Do not edit directly.
         icon: dialog-warning-symbolic
       on_press:
         type: exec
@@ -1020,12 +1024,45 @@ pages:
   layout:
   - type: section
     properties:
-      title: Dusky System
+      title: About Dusky
       description: Version and details about Dusky System
     items:
     - type: label
       properties:
         title: Dusky Version
       value:
+        type: file
+        path: ~/.config/dusky/version
+    - type: label
+      properties:
+        title: Hyprland Version
+        icon: window-symbolic
+      value:
         type: exec
-        command: cat ~/.config/dusky/version
+        command: hyprctl version | grep Hyprland | awk '{print $2}'
+  - type: section
+    properties:
+      title: System Information
+      description: Key details about your system
+    items:
+    - type: label
+      properties:
+        title: Kernel Version
+        icon: mintupdate-type-kernel-symbolic
+      value:
+        type: system
+        key: kernel_version
+    - type: label
+      properties:
+        title: Processor
+        icon: am-cpu-symbolic
+      value:
+        type: system
+        key: cpu_model
+    - type: label
+      properties:
+        title: Memory
+        icon: am-memory-symbolic
+      value:
+        type: system
+        key: memory_total
