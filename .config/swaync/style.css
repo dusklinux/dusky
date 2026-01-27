@@ -35,7 +35,7 @@
 
 /* --- CONTROL CENTER (Main Window) --- */
 .control-center {
-  background: alpha(@background-color, 0.90);
+  background: alpha(@background-color, 0.80);
   border-radius: 24px;
   /* FIXED: Border is now 2px thick and uses the Accent Color */
   border: 1px solid @accent-color;
@@ -115,37 +115,36 @@ progressbar {
 .notification-row {
   outline: none;
   margin: 0;
-  padding: 0px;
+  padding: 2px;
 }
 
 .floating-notifications.background .notification-row .notification-background {
-  background: @background-color;
+  background: alpha(@background-color, 0.80);
   box-shadow: 0 0 8px 0 alpha(@shadow-color, 0.6);
   border: 1px solid @primary;
-  border-radius: 24px;
-  margin: 8px;
+  border-radius: 14px;
+  margin: 4px;
   padding: 0;
 }
 
 .floating-notifications.background .notification-row .notification-background .notification {
-  padding: 3px;
+  padding: 4px;
   border-radius: 12px;
 }
 
-/* Critical Popup - FIXED RADIUS */
 .floating-notifications.background .notification-row .notification-background .notification.critical {
   background-color: @error_container;
   color: @on_error_container;
-  border: 1px solid @urgent-color;
-  border-radius: 12px;
+  border: 4px solid @urgent-color;
+  border-radius: 4px;
 }
 
 .floating-notifications.background .notification-row .notification-background .notification .notification-content {
-  margin: 7px;
+  margin: 10px;
 }
 
 .floating-notifications.background .notification-row .notification-background .notification > *:last-child > * {
-  min-height: 0.5em;
+  min-height: 2em;
 }
 
 /* Floating Actions */
@@ -163,7 +162,7 @@ progressbar {
 }
 
 .image {
-  margin: 10px 20px 10px 0px;
+  margin: 10px 20px 10px 10px;
 }
 
 .summary {
@@ -183,8 +182,8 @@ progressbar {
 }
 
 .floating-notifications.background .notification-row .notification-background .close-button {
-  margin: 6px;
-  padding: 2px;
+  margin: 10px;
+  padding: 10px;
   border-radius: 6px;
   background-color: transparent;
   color: @text-sub-color;
