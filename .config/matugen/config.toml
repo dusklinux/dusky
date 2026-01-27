@@ -54,7 +54,12 @@ notify-send -i applications-graphics-symbolic "Theme Updated"
 [templates.swaync]
 input_path  = '~/.config/matugen/templates/colors.css'
 output_path = '~/.config/matugen/generated/swaync-colors.css'
-post_hook   = 'swaync-client -rs || true'
+post_hook   = '''
+if command -v swaync-client >/dev/null 2>&1; then
+  swaync-client -R
+  swaync-client -rs
+fi
+'''
 
 [templates.swayosd]
 input_path  = '~/.config/matugen/templates/swayosd-colors.css'
