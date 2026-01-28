@@ -188,3 +188,12 @@ def load_setting(key: str, default: Any = None) -> Any:
     except OSError as e:
         print(f"[ERROR] Could not load setting {key}: {e}")
         return default
+    
+def toast(toast_overlay, message: str, timeout: int = 2) -> None:
+        """Show a toast notification."""
+        import gi
+        gi.require_version("Adw", "1")
+        from gi.repository import Adw  # noqa: F401
+        if toast_overlay:
+            toast = Adw.Toast(title=message, timeout=timeout)
+            toast_overlay.add_toast(toast)
