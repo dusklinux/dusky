@@ -160,17 +160,20 @@ KEY_LOCATION = os.path.join(os.path.expanduser("~"), ".config", "dusky", "settin
 # Integer, file stores string representation of integer
 # String, file stores the string directly
 # etc.
-def save_setting(key: str, value: Any) -> None:
+def save_setting(key: str, value: Any, as_int: bool = False) -> None:
     """Save a setting value to a file in the settings directory."""
     key_path = os.path.join(KEY_LOCATION, key)
     try:
         with open(key_path, "w", encoding="utf-8") as f:
-            f.write(str(value))
+            if as_int and isinstance(value, bool):
+                f.write(str(int(value)))
+            else:
+                f.write(str(value))
             print(f"[INFO] Saved setting {key} = {value}")
     except OSError as e:
         print(f"[ERROR] Could not save setting {key}: {e}")
 
-def load_setting(key: str, default: Any = None) -> Any:
+def load_setting(key: str, default: Any = None, is_inversed: bool = False) -> Any:
     """Load a setting value from a file in the settings directory."""
     key_path = os.path.join(KEY_LOCATION, key)
     if not os.path.isfile(key_path):
@@ -179,7 +182,10 @@ def load_setting(key: str, default: Any = None) -> Any:
         with open(key_path, "r", encoding="utf-8") as f:
             value = f.read().strip()
             if isinstance(default, bool):
-                return value.lower() == "true"
+                try: 
+                    return (int(value) != 0) ^ is_inversed
+                except ValueError:
+                    return (value.lower() == "true") ^ is_inversed
             elif isinstance(default, int):
                 return int(value)
             elif isinstance(default, float):
