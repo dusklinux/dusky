@@ -558,7 +558,9 @@ pages:
         title: Dark Mode
         icon: weather-clear-night-symbolic
         description: Enable/Disable Dark Mode
-        key: dark_mode_enabled
+        key: dusky_theme/state
+        key_inverse: true
+        save_as_int: true
       on_toggle:
         enabled:
           type: exec
