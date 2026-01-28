@@ -263,11 +263,11 @@ pages:
         command: kitty --class tailscale_uninstall --hold sh -c "$HOME/user_scripts/networking/uninstall_tailscale.sh"
         terminal: false
     - type: toggle
-      key: cloudflare_warp_enabled
       properties:
         title: Warp
         icon: security-high-symbolic
         description: Enable/Disable Cloudflare Warp
+        key: cloudflare_warp_enabled
       on_toggle:
         enabled:
           type: exec
@@ -330,11 +330,11 @@ pages:
       description: ''
     items:
     - type: toggle
-      key: power_saver_state
       properties:
         title: Power Saver
         icon: battery-level-80-symbolic
         description: Optimize for battery life (TUI)
+        key: power_saver_state
       on_toggle:
         enabled:
           type: exec
@@ -362,11 +362,11 @@ pages:
 #        command: kitty --class mouse_button_reverse.sh --hold sh -c $HOME/user_scripts/desktop_apps/mouse_button_reverse.sh
 #        terminal: false
     - type: toggle
-      key: left_handed_mouse
       properties:
         title: Left-Handed Mouse
         icon: input-mouse-symbolic
         description: Enable/Disable Left-Handed Mode
+        key: left_handed_mouse
       on_toggle:
         enabled:
           type: exec
