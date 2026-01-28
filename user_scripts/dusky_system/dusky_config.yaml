@@ -395,17 +395,17 @@ pages:
         type: exec
         command: $HOME/user_scripts/sliders/brightness_slider.sh
         terminal: false
-    - type: slider
-      properties:
-        title: Brightness
-        description: Set screen brightness percentage
-        icon: display-brightness-symbolic
-        min: 1
-        max: 100
-        step: 1
-      on_change:
-        type: exec
-        command: brightnessctl s {value}%
+#    - type: slider
+#      properties:
+#        title: Brightness
+#        description: Set screen brightness percentage
+#        icon: display-brightness-symbolic
+#        min: 1
+#        max: 100
+#        step: 1
+#      on_change:
+#        type: exec
+#        command: brightnessctl s {value}%
     - type: button
       properties:
         title: Night Light
