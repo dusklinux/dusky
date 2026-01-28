@@ -59,12 +59,12 @@ uv pip install faster-whisper
 
 # Fully Automated Shell Script
 
-For a streamlined workflow, a shell script (`faster_whisper_sst.sh`) is available to automate the entire process: recording audio, activating the Python environment, transcribing the audio, and copying the formatted text to your clipboard.
+For a streamlined workflow, a shell script (`faster_whisper_stt.sh`) is available to automate the entire process: recording audio, activating the Python environment, transcribing the audio, and copying the formatted text to your clipboard.
 
 Run the script from your terminal:
 
 ```bash
-$HOME/user_scripts/tts_stt/faster_whisper/faster_whisper_sst.sh
+$HOME/user_scripts/tts_stt/faster_whisper/faster_whisper_stt.sh
 ```
 
 > [!important] Running the script for the first time will take time cuz it needs to download the model. which is around 320 mb in size. `distil-small.en` 

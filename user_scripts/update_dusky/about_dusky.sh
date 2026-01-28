@@ -2,7 +2,7 @@
 # ==============================================================================
 #  DUSKY SETUP BANNER (ANIMATED)
 #  Optimized for Kitty Terminal & Arch/Hyprland Ecosystems
-#  Author: Dusky Maintainer
+#  Author: Dusk
 # ==============================================================================
 
 set -o errexit
@@ -10,7 +10,24 @@ set -o nounset
 set -o pipefail
 
 # --- CONFIGURATION ---
-readonly DUSKY_VERSION="v2.4.0"
+# Adhere to XDG Base Directory specification for config lookup
+readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/dusky"
+readonly VERSION_FILE="${CONFIG_DIR}/version"
+
+# Default fallback if file is missing/empty
+DUSKY_VERSION="v2.4.0"
+
+# Dynamically read version if file exists and is readable
+if [[ -r "$VERSION_FILE" ]]; then
+    # Read first line, trim leading/trailing whitespace via read behavior
+    # '|| true' ensures script doesn't exit if file is empty (read returns non-zero on empty/no-newline)
+    read -r file_ver < "$VERSION_FILE" || true
+    if [[ -n "${file_ver:-}" ]]; then
+        DUSKY_VERSION="$file_ver"
+    fi
+fi
+readonly DUSKY_VERSION
+
 readonly COLOR_START="#7F00FF"  # Deep Twilight Purple
 readonly COLOR_END="#E100FF"    # Sunset Pink/Orange
 readonly ANIMATION_DURATION_SEC="1.5"

@@ -1,330 +1,239 @@
 #!/usr/bin/env bash
 #==============================================================================
-# Enhanced Rofi Clipboard Manager with cliphist integration
-#
-# FEATURES:
-#   • Works with existing cliphist setup
-#   • Persistent pinned items (survive reboots)
-#   • Most recently pinned items appear at the top
-#   • Clean display: only pin icon shown, no hash filenames
-#   • Minimal spacing between index and content
-#   • Menu stays open after pin/unpin/delete operations
-#
-# USAGE:
-#   rofi -kb-custom-1 "ALT+U" -kb-custom-2 "ALT+Y" \
-#        -modi "clipboard:~/user_scripts/rofi/rofi_cliphist.sh" \
-#        -show clipboard
-#
-#   Or create an alias/wrapper script for convenience.
-#
-# KEYBINDINGS:
-#   Enter  → Copy selected item to clipboard (closes menu)
-#   ALT+U  → Pin item (or unpin if already pinned) (stays open)
-#   ALT+Y  → Delete item from history (stays open)
+# Enhanced Rofi Clipboard Manager - FINAL OPTIMIZED VERSION
 #==============================================================================
 
-# Defensive shell options (errexit removed intentionally - we handle errors
-# explicitly and need the script to continue for menu refresh)
 set -o nounset
 set -o pipefail
 shopt -s nullglob
 
-#==============================================================================
-# CONFIGURATION
-#==============================================================================
-
+#--- CONFIGURATION ---
 readonly XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
+readonly XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
 readonly PINS_DIR="${XDG_DATA_HOME}/rofi-cliphist/pins"
-readonly PIN_ICON=" |"
+readonly THUMB_DIR="${XDG_CACHE_HOME}/rofi-cliphist/thumbs"
+
+# RESTORED: Icons for UI clarity (The critique removed these)
+readonly PIN_ICON=" "
+readonly IMG_ICON=" "
+
 readonly MAX_PREVIEW_LENGTH=80
+readonly THUMB_SIZE="256x256"
 
-# Determine hash command once at startup (prefer fastest secure option)
-if command -v b2sum &>/dev/null; then
-    readonly HASH_CMD="b2sum"
-elif command -v sha256sum &>/dev/null; then
-    readonly HASH_CMD="sha256sum"
-else
-    readonly HASH_CMD="md5sum"
-fi
+# Rofi Protocol Delimiter (Unit Separator)
+readonly SEP=$'\x1f'
 
-#==============================================================================
-# UTILITY FUNCTIONS
-#==============================================================================
+#--- DEPENDENCY CHECK ---
+validate_dependencies() {
+    local missing=() cmd
+    for cmd in cliphist wl-copy; do
+        command -v "${cmd}" &>/dev/null || missing+=("${cmd}")
+    done
 
-log_error() {
-    printf '[ERROR] %s\n' "$*" >&2
+    if ((${#missing[@]} > 0)); then
+        # Print to stderr so it might show in logs, but return failure
+        printf 'Error: Missing dependencies: %s\n' "${missing[*]}" >&2
+        return 1
+    fi
+    return 0
 }
 
-# Generate a short hash for content identification
-# Uses pre-determined hash command for efficiency
+#--- SETUP ---
+validate_dependencies || exit 1
+mkdir -p "${PINS_DIR}" "${THUMB_DIR}"
+chmod 700 "${PINS_DIR}" "${THUMB_DIR}"
+
+#--- UTILS ---
 generate_hash() {
-    printf '%s' "$1" | "$HASH_CMD" | cut -c1-16
+    local input="$1"
+    # Prefer BLAKE2 for speed, fallback to MD5
+    if command -v b2sum &>/dev/null; then
+        printf '%s' "${input}" | b2sum | cut -c1-16
+    else
+        printf '%s' "${input}" | md5sum | cut -c1-16
+    fi
 }
 
-# Create a single-line preview suitable for rofi display
-# Strips control characters, collapses whitespace, truncates
 create_preview() {
     local content="$1"
     local preview
-    
-    # Use tr for efficient whitespace normalization and control char removal
-    # \x00 and \x1f are rofi protocol control characters
-    preview=$(printf '%s' "$content" | tr '\n\r\t\v\f\x00\x1f' ' ' | tr -s ' ')
-    
-    # Trim leading whitespace
+
+    # 1. Early Truncation: Don't process 1MB of text if we only show 80 chars
+    # We grab 2x length to account for whitespace we might collapse later
+    if ((${#content} > MAX_PREVIEW_LENGTH * 2)); then
+        content="${content:0:$((MAX_PREVIEW_LENGTH * 2))}"
+    fi
+
+    # 2. Native Bash cleanup (No external `tr` calls)
+    # Replace control chars (newlines, tabs, nulls) with spaces
+    preview="${content//[$'\n\r\t\v\f\x00\x1f']/ }"
+
+    # 3. Collapse multiple spaces into one
+    while [[ "${preview}" == *"  "* ]]; do
+        preview="${preview//  / }"
+    done
+
+    # 4. Trim leading/trailing whitespace
     preview="${preview#"${preview%%[![:space:]]*}"}"
-    # Trim trailing whitespace  
     preview="${preview%"${preview##*[![:space:]]}"}"
-    
-    # Truncate with ellipsis if too long
+
+    # 5. Final Display Truncation
     if ((${#preview} > MAX_PREVIEW_LENGTH)); then
         preview="${preview:0:MAX_PREVIEW_LENGTH}…"
     fi
-    
-    # Handle empty content
+
     printf '%s' "${preview:-[empty]}"
 }
 
-#==============================================================================
-# INITIALIZATION
-#==============================================================================
+ensure_thumbnail() {
+    local id="$1"
+    local thumb_path="${THUMB_DIR}/${id}.png"
 
-init() {
-    # Create pins directory with secure permissions
-    if [[ ! -d "${PINS_DIR}" ]]; then
-        mkdir -p "${PINS_DIR}"
-        chmod 700 "${PINS_DIR}"
+    # Cache hit: Return fast
+    if [[ -f "${thumb_path}" ]]; then
+        printf '%s' "${thumb_path}"
+        return 0
     fi
+
+    # Check for magick before attempting generation
+    if ! command -v magick &>/dev/null; then
+        return 1
+    fi
+
+    # Atomic Write: Write to temp file, then move.
+    # Prevents broken images if script is killed mid-write.
+    local tmp_path="${thumb_path}.tmp.$$"
     
-    # Verify required commands exist
-    local cmd
-    for cmd in cliphist wl-copy find; do
-        if ! command -v "${cmd}" &>/dev/null; then
-            log_error "Missing required command: ${cmd}"
-            exit 1
-        fi
-    done
+    if cliphist decode "${id}" 2>/dev/null \
+        | magick - -background none -resize "${THUMB_SIZE}" "${tmp_path}" 2>/dev/null; then
+        mv -f "${tmp_path}" "${thumb_path}" 2>/dev/null && {
+            printf '%s' "${thumb_path}"
+            return 0
+        }
+    fi
+
+    # Cleanup if failed
+    rm -f "${tmp_path}" 2>/dev/null
+    return 1
 }
 
-#==============================================================================
-# PIN MANAGEMENT
-#==============================================================================
+#--- MAIN DISPLAY ---
+display_menu() {
+    # Send headers. We use \000 for null byte to be POSIXly safe in printf format strings.
+    # Format: \000 command \x1f value \n
+    printf '\000message\x1f<b>Enter</b>: Copy  |  <b>ALT+U</b>: Pin  |  <b>ALT+Y</b>: Delete\n'
+    printf '\000use-hot-keys\x1ftrue\n'
+    printf '\000keep-selection\x1ftrue\n'
 
-# List pins sorted by modification time (newest first)
-# Uses rofi's info field to store filename metadata separately from display
-list_pins() {
+    # --- 1. Pinned Items ---
     local pin_file filename content preview
-    
-    # GNU find with -printf for mtime, sort numerically descending
+    # Find pins, sort by mtime (newest first), read safely
     while IFS= read -r pin_file; do
-        [[ -f "${pin_file}" ]] || continue
-        
+        [[ -r "${pin_file}" ]] || continue
+
         filename="${pin_file##*/}"
-        content=$(<"${pin_file}") 2>/dev/null || continue
+        # Safe read using redirection
+        content=$(<"${pin_file}") || continue
         preview=$(create_preview "${content}")
-        
-        # Format: "📌 preview text" with filename stored in rofi's info field
-        # No visible filename or excessive spacing
-        printf '%s %s\x00info\x1fpin:%s\n' \
-            "${PIN_ICON}" \
-            "${preview}" \
-            "${filename}"
+
+        # Rofi Row: Icon + Text + Invisible Info
+        printf '%s %s\000info\x1fpin:%s\n' "${PIN_ICON}" "${preview}" "${filename}"
     done < <(
         find "${PINS_DIR}" -maxdepth 1 -name '*.pin' -type f \
             -printf '%T@\t%p\n' 2>/dev/null \
         | sort -t$'\t' -k1 -rn \
         | cut -f2
     )
-}
 
-# Create or update a pin
-# If already pinned, updates mtime to make it "newest"
-create_pin() {
-    local content="$1"
-    local hash_id pin_path
-    
-    hash_id=$(generate_hash "${content}")
-    pin_path="${PINS_DIR}/${hash_id}.pin"
-    
-    if [[ -f "${pin_path}" ]]; then
-        # Already pinned - touch to update mtime (moves to top)
-        touch "${pin_path}"
-        return 0
-    fi
-    
-    # Atomic-ish write with secure permissions
-    printf '%s' "${content}" > "${pin_path}"
-    chmod 600 "${pin_path}"
-}
-
-# Safely delete a pin by filename
-delete_pin() {
-    local filename="$1"
-    
-    # Security: prevent path traversal attacks
-    if [[ "${filename}" == *'/'* || "${filename}" == '..'* ]]; then
-        log_error "Invalid pin filename: ${filename}"
-        return 1
-    fi
-    
-    local pin_path="${PINS_DIR}/${filename}"
-    [[ -f "${pin_path}" ]] && rm -f "${pin_path}"
-    return 0
-}
-
-# Retrieve pin content by filename
-get_pin_content() {
-    local filename="$1"
-    
-    # Security check
-    if [[ "${filename}" == *'/'* || "${filename}" == '..'* ]]; then
-        log_error "Invalid pin filename: ${filename}"
-        return 1
-    fi
-    
-    local pin_path="${PINS_DIR}/${filename}"
-    if [[ -f "${pin_path}" ]]; then
-        cat "${pin_path}"
-    else
-        log_error "Pin not found: ${filename}"
-        return 1
-    fi
-}
-
-#==============================================================================
-# ROFI INTERFACE
-#==============================================================================
-
-# Display the main menu with pins first, then clipboard history
-display_menu() {
-    # Rofi message bar with keybinding hints
-    printf '\x00message\x1f<b>Enter</b>: Copy  │  <b>ALT+U</b>: Pin/Unpin  │  <b>ALT+Y</b>: Delete\n'
-    
-    # Enable custom hotkeys
-    printf '\x00use-hot-keys\x1ftrue\n'
-    
-    # Attempt to keep selection position after refresh
-    printf '\x00keep-selection\x1ftrue\n'
-    
-    # List pinned items first (newest at top)
-    list_pins
-    
-    # List clipboard history from cliphist with cleaned formatting
-    local line display_line
+    # --- 2. History Items ---
+    local line id rest rest_lower thumb_path display_text
     while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        
-        # Replace tab with ": " for minimal, clean spacing
-        # Original format: "42\tSome clipboard text..."
-        # Display format:  "42: Some clipboard text..."
-        display_line="${line/$'\t'/: }"
-        
-        # Sanitize display for rofi protocol
-        display_line="${display_line//$'\x00'/}"
-        display_line="${display_line//$'\x1f'/}"
-        
-        # Store original line in info for cliphist decode/delete operations
-        printf '%s\x00info\x1fhist:%s\n' "${display_line}" "${line}"
+        [[ -z "${line}" ]] && continue
+
+        # Split ID (everything before first tab) and Content
+        id="${line%%$'\t'*}"
+        rest="${line#*$'\t'}"
+
+        # Native Bash Regex for binary detection (Case Insensitive)
+        rest_lower="${rest,,}"
+        if [[ "${rest_lower}" =~ binary.*(png|jpg|jpeg|bmp|webp) ]]; then
+            thumb_path=$(ensure_thumbnail "${id}") || thumb_path=""
+
+            if [[ -n "${thumb_path}" ]]; then
+                # IMAGE: Send icon path via \000icon protocol
+                printf '%s: %s [Image]\000icon\x1f%s\x1finfo\x1fhist:%s\n' \
+                    "${id}" "${IMG_ICON}" "${thumb_path}" "${line}"
+            else
+                # BINARY (No thumb): Text fallback
+                printf '%s: [Binary] (No Preview)\000info\x1fhist:%s\n' \
+                    "${id}" "${line}"
+            fi
+        else
+            # TEXT ITEM
+            display_text=$(create_preview "${rest}")
+            printf '%s: %s\000info\x1fhist:%s\n' "${id}" "${display_text}" "${line}"
+        fi
     done < <(cliphist list 2>/dev/null)
 }
 
-# Route selection to appropriate handler based on item type
+#--- ACTION HANDLERS ---
 handle_selection() {
     local selection="${1:-}"
     local action="${ROFI_RETV:-0}"
     local info="${ROFI_INFO:-}"
-    
-    # No selection - redisplay menu
+
+    # If nothing selected, just show menu
     if [[ -z "${selection}" ]]; then
         display_menu
         return 0
     fi
-    
-    # Parse item type and data from info field
-    local item_type="${info%%:*}"
-    local item_data="${info#*:}"
-    
-    case "${item_type}" in
-        pin)
-            handle_pinned_item "${item_data}" "${action}"
-            ;;
-        hist)
-            handle_history_item "${item_data}" "${action}"
-            ;;
-        *)
-            # Fallback for unexpected format - treat as history item
-            log_error "Unknown item type, attempting history fallback"
-            handle_history_item "${selection}" "${action}"
-            ;;
-    esac
-}
 
-# Handle actions on pinned items
-handle_pinned_item() {
-    local filename="$1"
-    local action="$2"
-    
-    case "${action}" in
-        1)  # Enter - copy to clipboard and exit
-            get_pin_content "${filename}" | wl-copy
-            # No output = rofi closes
-            ;;
-        10) # kb-custom-1 (Alt+u) - unpin item, refresh menu
-            delete_pin "${filename}"
-            display_menu
-            ;;
-        11) # kb-custom-2 (Alt+y) - delete item, refresh menu
-            delete_pin "${filename}"
-            display_menu
-            ;;
-        *)  # Unknown action - refresh menu
-            display_menu
-            ;;
-    esac
-}
+    local type="${info%%:*}"
+    local data="${info#*:}"
 
-# Handle actions on clipboard history items
-handle_history_item() {
-    local original_line="$1"
-    local action="$2"
-    local content
+    # Handle Pins
+    if [[ "${type}" == "pin" ]]; then
+        case "${action}" in
+            1)  # Enter: Copy using input redirection (avoids cat)
+                [[ -r "${PINS_DIR}/${data}" ]] && wl-copy < "${PINS_DIR}/${data}"
+                ;;
+            10|11) # Alt+U/Y: Delete pin
+                rm -f "${PINS_DIR}/${data}"
+                display_menu
+                ;;
+            *) display_menu ;;
+        esac
     
-    case "${action}" in
-        1)  # Enter - copy to clipboard and exit
-            printf '%s' "${original_line}" | cliphist decode | wl-copy
-            # No output = rofi closes
-            ;;
-        10) # kb-custom-1 (Alt+u) - pin this item, refresh menu
-            content=$(printf '%s' "${original_line}" | cliphist decode 2>/dev/null) || content=""
-            if [[ -n "${content}" ]]; then
-                create_pin "${content}"
-            fi
-            display_menu
-            ;;
-        11) # kb-custom-2 (Alt+y) - delete from history, refresh menu
-            printf '%s' "${original_line}" | cliphist delete 2>/dev/null || true
-            display_menu
-            ;;
-        *)  # Unknown action - refresh menu
-            display_menu
-            ;;
-    esac
-}
-
-#==============================================================================
-# MAIN ENTRY POINT
-#==============================================================================
-
-main() {
-    init
-    
-    if (($# == 0)); then
-        # Initial invocation - display the menu
-        display_menu
+    # Handle History
     else
-        # Called with selection - handle it
-        handle_selection "$*"
+        local id="${data%%$'\t'*}"
+        case "${action}" in
+            1)  # Enter: Decode and copy
+                cliphist decode "${id}" 2>/dev/null | wl-copy
+                ;;
+            10) # Alt+U: Pin (Text only)
+                local txt hash
+                txt=$(cliphist decode "${id}" 2>/dev/null) || txt=""
+                if [[ -n "${txt}" ]]; then
+                    hash=$(generate_hash "${txt}")
+                    printf '%s' "${txt}" > "${PINS_DIR}/${hash}.pin"
+                fi
+                display_menu
+                ;;
+            11) # Alt+Y: Delete from history + cache
+                cliphist delete "${id}" 2>/dev/null
+                rm -f "${THUMB_DIR}/${id}.png"
+                display_menu
+                ;;
+            *) display_menu ;;
+        esac
     fi
 }
 
-main "$@"
+#--- ENTRY POINT ---
+# Check for arguments. Rofi passes the selection as $1.
+if (($# == 0)); then
+    display_menu
+else
+    handle_selection "${1:-}"
+fi

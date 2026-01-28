@@ -48,13 +48,17 @@ input_path  = '~/.config/matugen/templates/colors.css'
 output_path = '~/.config/matugen/generated/waybar-colors.css'
 post_hook   = '''
 ~/user_scripts/waybar/waybar_autostart.sh || true;
-notify-send "Theme Updated"
 '''
 
 [templates.swaync]
 input_path  = '~/.config/matugen/templates/colors.css'
 output_path = '~/.config/matugen/generated/swaync-colors.css'
-post_hook   = 'swaync-client -rs || true'
+post_hook   = '''
+if command -v swaync-client >/dev/null 2>&1; then
+  swaync-client -R
+  swaync-client -rs
+fi
+'''
 
 [templates.swayosd]
 input_path  = '~/.config/matugen/templates/swayosd-colors.css'
@@ -146,6 +150,16 @@ if command -v spicetify &> /dev/null && [ -d "$HOME/.config/spicetify/Themes/Com
 fi
 '''
 
+[templates.steam]
+input_path  = '~/.config/matugen/templates/steam.json'
+output_path = '~/.config/matugen/generated/steam.json'
+post_hook   = '''
+if [[ -d "$HOME/homebrew/themes/Color Master" ]]; then
+    ln -nfs $HOME/.config/matugen/generated/steam.json $HOME/homebrew/themes/Color\ Master/config_USER.json;
+    sudo systemctl restart plugin_loader;
+fi
+'''
+
 [templates.cava]
 input_path  = '~/.config/matugen/templates/cava-colors.ini'
 output_path = '~/.config/matugen/generated/cava-colors.ini'
@@ -161,5 +175,6 @@ output_path = '~/.config/matugen/generated/btop-colors.theme'
 post_hook   = '''
 mkdir -p $HOME/.config/btop/themes;
 ln -nfs $HOME/.config/matugen/generated/btop-colors.theme $HOME/.config/btop/themes/matugen.theme
+notify-send -i applications-graphics-symbolic "Theme Updated"
 '''
 

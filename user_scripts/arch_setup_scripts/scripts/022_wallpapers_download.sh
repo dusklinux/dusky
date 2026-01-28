@@ -114,19 +114,16 @@ main() {
     # Optimizations:
     # --depth 1: History truncation (shallow clone)
     # --single-branch: Do not fetch other branches (Speed Boost)
-    git clone \
+    # --progress: Explicitly show progress bar (speed, %, data) to the user
+    if ! git clone \
         --depth 1 \
         --single-branch \
-        "$REPO_URL" "$CLONE_DIR" &>/dev/null &
-    
-    local git_pid=$!
-    show_spinner "$git_pid"
-    
-    if ! wait "$git_pid"; then
-        log_error "Download failed."
-        log_error "Check your internet connection or try manually:"
-        log_error "git clone --depth 1 $REPO_URL"
-        exit 1
+        --progress \
+        "$REPO_URL" "$CLONE_DIR"; then
+            log_error "Download failed."
+            log_error "Check your internet connection or try manually:"
+            log_error "git clone --depth 1 $REPO_URL"
+            exit 1
     fi
     log_success "Download complete."
 
@@ -138,15 +135,15 @@ main() {
         src="$CLONE_DIR/$dir"
 
         # --- LOGIC START ---
-        # 'dark' folder -> ~/Pictures/wallpapers/dark
+        # 'dark' folder -> ~/Pictures/wallpapers/active_theme
         # 'light' folder -> ~/Pictures/light
         if [[ "$dir" == "dark" ]]; then
             parent_dir="$TARGET_PARENT/wallpapers"
+            dest="$parent_dir/active_theme"
         else
             parent_dir="$TARGET_PARENT"
+            dest="$parent_dir/$dir"
         fi
-        
-        dest="$parent_dir/$dir"
         # --- LOGIC END ---
 
         if [[ -d "$src" ]]; then
@@ -156,7 +153,7 @@ main() {
             fi
 
             if [[ -d "$dest" ]]; then
-                log_warn "Directory '$dir' already exists in $(basename "$parent_dir"). Merging..."
+                log_warn "Directory '$(basename "$dest")' already exists in $(basename "$parent_dir"). Merging..."
                 
                 if command -v rsync &> /dev/null; then
                     # Rsync is safer and handles merges better
@@ -166,11 +163,11 @@ main() {
                     cp -rn "$src/." "$dest/" 2>/dev/null || true
                 fi
             else
-                # Move the folder into the correct parent directory
-                mv "$src" "$parent_dir/"
+                # Move the folder and rename it to the target destination
+                mv "$src" "$dest"
             fi
             
-            log_success "Installed: $dir -> $(basename "$parent_dir")/$dir"
+            log_success "Installed: $dir -> $(basename "$parent_dir")/$(basename "$dest")"
         else
             log_warn "Source directory '$dir' not found in repository."
         fi

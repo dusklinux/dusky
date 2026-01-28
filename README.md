@@ -22,12 +22,20 @@ YES YOU CAN HAVE HORIZONTAL WAYBAR. and you will be asked which side you want it
 - **waybar horizontal and vertical,:**  Take your pick during setup, easily toggleable from rofi as well. 
 here's what it looks like. 
 
-![New Nerdy Horizontal Waybar](Pictures/readme_assets/waybar_horizontal.png)
+![New Nerdy Horizontal Waybar](Pictures/readme_assets/waybar_horizontal.webp)
+
+![waybar block](Pictures/readme_assets/waybar_block.webp)
+
+![waybar circular](Pictures/readme_assets/waybar_circular.webp)
+
+![waybar_minimal](Pictures/readme_assets/waybar_minimal.webp)
 
 
-This repository is the result of 8 months of tinkering/breaking/fixing and polishing. Its a labor of love designed to feel as easy to install as a "standard" distribution but with the raw power and minimalism of arch. 
+### There's also a brand new Dusky Control Center that acts as a system overview gui for settings and features, it's exhaustive in it's scope, almost anything you want to set/change can be done from this one stop shop intuitive gui app. I'll keep adding more quality of life features to it over time.
 
-Since i build and maintain this all by myself, **please consider starring ⭐ this repo** as a token of support.
+![Dusky Control Center](Pictures/readme_assets/dusky_control_center.webp)
+
+This repository is the result of 8 months of tinkering/breaking/fixing and polishing. Its a labor of love designed to feel as easy to install as a "standard" distribution but with the raw power and minimalism of arch. **please consider starring ⭐ this repo** as a token of support.
 
 ## ⚠️ Prerequisites & Hardware
 

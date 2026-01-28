@@ -1,4 +1,3 @@
-//horizontal_Modern_nerdy
 {
     "layer": "top",
     "position": "top",
@@ -19,7 +18,7 @@
         "custom/launcher",
         "hyprland/workspaces",
         "hyprland/submap",
-        "hyprland/window",
+        "hyprland/window"
     ],
     
     "modules-center": [
@@ -29,32 +28,23 @@
     ],
     
     "modules-right": [
-        "group/hardware",
+        "cpu", 
+        "memory", 
+     //   "disk", 
+        "temperature",
         "custom/separator",
-        "group/connectivity",
+        "backlight", 
+        "network", 
+        "bluetooth", 
+        "pulseaudio", 
+        "battery",
         "custom/separator-2",
-        "group/system",
-        "tray",
+        "custom/theme", 
+        "custom/inhibit-suspend", 
+        "custom/notification",
+    //    "tray",
         "custom/power"
     ],
-
-    // ===================================================================
-    // GROUPS
-    // ===================================================================
-    "group/hardware": {
-        "orientation": "horizontal",
-        "modules": ["cpu", "memory", "disk", "temperature"]
-    },
-
-    "group/connectivity": {
-        "orientation": "horizontal",
-        "modules": ["backlight", "network", "bluetooth", "pulseaudio", "battery"]
-    },
-
-    "group/system": {
-        "orientation": "horizontal",
-        "modules": ["custom/theme", "custom/inhibit-suspend", "custom/notification"]
-    },
 
     // ===================================================================
     // SEPARATORS
@@ -153,7 +143,7 @@
         "format": " {:%I:%M %p}",
         "format-alt": " {:%A, %d %B %Y  •  %I:%M:%S %p}",
         "tooltip-format": "<big>{:%A, %d %B %Y}</big>\n<tt><small>{calendar}</small></tt>",
-        "timezone": "Asia/Kolkata",
+    //    "timezone": "Asia/Kolkata",
         "interval": 1,
         "calendar": {
             "mode": "year",
@@ -334,7 +324,7 @@
     // SYSTEM CONTROLS
     // ===================================================================
     "custom/theme": {
-        "format": "󰔎",
+        "format": "",
         "tooltip-format": "Theme Switcher\n\nSwitch wallpapers with waypaper\nor Super + ' after toggling\nfor theme uniformity.\n\nLMB: Dark Mode\nRMB: Light Mode\nMMB: Waypaper",
         "on-click": "uwsm-app -- ~/user_scripts/theme_matugen/theme_ctl.sh set --mode dark",
         "on-click-right": "uwsm-app -- ~/user_scripts/theme_matugen/theme_ctl.sh set --mode light",

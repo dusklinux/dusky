@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  ARCH LINUX UPDATE ORCHESTRATOR (v5.8 - Hardened & Optimized + Custom Paths)
+#  ARCH LINUX UPDATE ORCHESTRATOR (v5.9 - Hardened & Optimized + Custom Paths)
 #  Description: Manages dotfile/system updates while preserving user tweaks.
 #  Target:      Arch Linux / Hyprland / UWSM / Bash 5.0+
 #  Repo Type:   Git Bare Repository (--git-dir=~/dusky --work-tree=~)
@@ -48,6 +48,8 @@ declare -A CUSTOM_SCRIPT_PATHS=(
     # Then in UPDATE_SEQUENCE add: "S | warp_toggle.sh"
 
     ["warp_toggle.sh"]="user_scripts/networking/warp_toggle.sh"
+    ["waypaper_config_reset.sh"]="user_scripts/desktop_apps/waypaper_config_reset.sh"
+    ["fix_theme_dir.sh"]="user_scripts/misc_extra/fix_theme_dir.sh"
 )
 
 # Centralized timestamp (Separate declaration for SC2155 compliance)
@@ -263,6 +265,8 @@ declare -ra UPDATE_SEQUENCE=(
 
 
     "U | warp_toggle.sh --disconnect"
+    "U | waypaper_config_reset.sh"
+    "U | fix_theme_dir.sh"
 )
 
 # ------------------------------------------------------------------------------
@@ -786,6 +790,22 @@ run_script() {
 main() {
     # Check dependencies first (before any logging)
     check_dependencies
+
+    # --------------------------------------------------------------------------
+    # USER INTERACTION SAFETY CHECK
+    # --------------------------------------------------------------------------
+    if [[ -t 0 ]]; then
+        printf '\n%s⚠️  WARNING: DO NOT INTERRUPT THE UPDATE WHILE ITS RUNNING! ⚠️%s\n' "${CLR_RED}" "${CLR_RST}"
+        printf 'Interrupting the process causes Git locks and inconsistent states.\n'
+        printf 'Please allow the update to complete fully before closing.\n\n'
+        
+        local start_confirm
+        read -r -p "Do you understand and wish to start the update? [y/N] " start_confirm
+        if [[ ! "$start_confirm" =~ ^[Yy]$ ]]; then
+            printf 'Update cancelled. You can run it later.\n'
+            exit 0
+        fi
+    fi
 
     setup_logging
 

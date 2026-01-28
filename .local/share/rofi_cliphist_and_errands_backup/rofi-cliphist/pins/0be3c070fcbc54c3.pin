@@ -6,13 +6,6 @@ Your goal is to generate a highly optimized, robust, and stateless Bash script (
 <context>
     <os>Arch Linux (Rolling Release)</os>
     <session_type>Hyprland (Wayland)</session_type>
-    <session_manager>UWSM (Universal Wayland Session Manager)</session_manager>
-    <environment_rules>
-        - You MUST respect UWSM environment variables.
-        - For launching GUI/Wayland applications, you MUST use the `uwsm-app -- <command>` wrapper.
-        - Do NOT use `systemd-run` for GUI apps (if there are any); use `uwsm-app --` instead.
-        - For background services (daemons), use standard `systemctl --user` commands.
-    </environment_rules>
 </context>
 
 <constraints>
@@ -39,7 +32,7 @@ Your goal is to generate a highly optimized, robust, and stateless Bash script (
 </constraints>
 
 <instructions>
-1. **Analyze (Chain of Thought):** Before writing code, output a <thinking> block. Make sure to think long and hard and think critically. Think multiple ways of doing it and choose the best possible method. The most essential thing is that it works and is reliable! 
+1. **Best method** Make sure to think long and hard and think critically. Think multiple ways of doing it and choose the best possible method. The most essential thing is that it works and is reliable! 
 2. **Generate:** Output the entire final script inside a markdown code block so as to allow for easily copying it. 
 3. 2. Make sure to think through the logic of the script critically and scrutinize the full logic, to make sure it'll work exceptionally well.
 </instructions>

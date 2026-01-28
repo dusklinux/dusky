@@ -1,6 +1,7 @@
 .config/alacritty/alacritty.toml
 .config/btop/btop.conf
 .config/cava/config
+.config/dusky/version
 .config/fastfetch/
 .config/firefox_extention_export_data_backup/
 .config/fontconfig/
@@ -27,14 +28,14 @@
 .config/swappy/
 .config/uwsm/
 .config/waybar/horizontal_block/
-.config/waybar/horizontal_block_icon/
+.config/waybar/horizontal_block_compact/
 .config/waybar/horizontal_circular/
 .config/waybar/horizontal_minimal/
 .config/waybar/horizontal_nerdy_modern/
 .config/waybar/horizontal_nerdy_modern_compact/
 .config/waybar/vertical_minimal/
 .config/waybar/vertical_modern/
-.config/waybar/vertical_nerdy/
+.config/waybar/vertical_nerdy_compact/
 .config/wayclick/
 .config/wlogout/
 .config/waypaper/
@@ -64,7 +65,7 @@ Documents/pensive/.obsidian/hotkeys.json
 Documents/pensive/.obsidian/appearance.json
 Documents/pensive/.obsidian/snippets/
 Pictures/wallpapers/dusk_default.jpg
-Pictures/readme_assets/waybar_horizontal.png
+Pictures/readme_assets/
 fonts_and_old_stuff/
 user_scripts/
 README.md

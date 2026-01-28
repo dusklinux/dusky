@@ -121,9 +121,7 @@ refresh_cache() {
         -o -iname "*.webp" -o -iname "*.gif" \
     \) -print0 | sort -z)
     
-    ( cleanup_orphans ) & disown
-
-    flock -u 201
+    ( cleanup_orphans ) 201>&- & disown
 }
 
 get_matugen_flags() {
@@ -175,9 +173,9 @@ if [[ -n "$selection" ]]; then
         swww img "$full_path" \
             --transition-type grow \
             --transition-duration 2 \
-            --transition-fps 60 &
+            --transition-fps 60 201>&- &
             
-        setsid uwsm-app -- matugen $current_flags image "$full_path" &
+        setsid uwsm-app -- matugen $current_flags image "$full_path" 201>&- &
     else
         # If path resolution failed, cache might be corrupted. Delete it.
         rm -f "$CACHE_FILE"

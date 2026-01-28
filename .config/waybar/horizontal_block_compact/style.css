@@ -1,0 +1,562 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   WAYBAR PREMIUM THEME - Compact Edition (Refined)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@import url("../../.config/matugen/generated/waybar-colors.css");
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RESET & FOUNDATIONS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+* {
+  border: none;
+  border-radius: 0;
+  min-height: 0;
+  font-family: "JetBrainsMono Nerd Font", "Symbols Nerd Font", sans-serif;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+window#waybar {
+  background: transparent;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BAR CONTAINER
+   ───────────────────────────────────────────────────────────────────────────── */
+
+window#waybar > box {
+  background-color: alpha(@surface, 0.78);
+  border-radius: 10px;
+  border: 1px solid alpha(@outline_variant, 0.15);
+  box-shadow: 0 4px 16px alpha(@shadow, 0.35), 0 1px 3px alpha(@shadow, 0.2);
+  margin: 2px 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   LAUNCHER
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-launcher {
+  padding: 0px 12px 0px 8px;
+  margin: 1px 2px 1px 6px;
+  border-radius: 8px;
+  background-image: linear-gradient(135deg, @primary_container 0%, @primary_fixed_dim 100%);
+  color: @on_primary_container;
+  font-size: 15px;
+  box-shadow: 0 2px 8px alpha(@primary, 0.3);
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-launcher:hover {
+  background-image: linear-gradient(135deg, @primary_fixed_dim 0%, @primary 100%);
+  box-shadow: 0 4px 16px alpha(@primary, 0.4);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CLOCK
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#clock {
+  padding: 0px 5px 0px 5px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @on_surface;
+  font-weight: 700;
+  transition: all 0.2s ease-in-out;
+}
+
+#clock:hover {
+  padding: 0px 5px 0px 5px;
+  background-color: alpha(@surface_container_highest, 0.9);
+  border: 1px solid alpha(@primary, 0.3);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   IDLE INHIBITOR
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-inhibit-suspend {
+  padding: 0px 12px 0px 9px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @on_surface;
+  font-size: 14px;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-inhibit-suspend:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+#custom-inhibit-suspend.disabled {
+  color: @tertiary;
+  padding: 0px 12px 0px 9px;
+  background-color: alpha(@tertiary_container, 0.3);
+  border: 1px solid alpha(@tertiary, 0.2);
+}
+
+#custom-inhibit-suspend.enabled {
+  color: @on_surface_variant;
+  background-color: alpha(@surface_container, 0.6);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   UPDATES
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-updates {
+  padding: 0 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @secondary;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-updates:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   NOTIFICATIONS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-notification {
+  padding: 0px 12px 0px 9px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @on_surface;
+  font-size: 14px;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-notification:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   THEME TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-theme-toggle {
+  padding: 0 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: transparent;
+  color: @secondary;
+  font-size: 14px;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-theme-toggle:hover {
+  color: @secondary_container;
+  background-color: alpha(@secondary, 0.15);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRAY
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#tray {
+  padding: 0 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.4);
+  transition: all 0.2s ease-in-out;
+}
+
+#tray:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+#tray > .passive {
+  -gtk-icon-effect: dim;
+}
+
+#tray > .needs-attention {
+  -gtk-icon-effect: highlight;
+  background-color: alpha(@error, 0.2);
+  border-radius: 6px;
+}
+
+#tray menu {
+  background-color: @surface_container_high;
+  border: 1px solid @outline_variant;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+#tray menu menuitem {
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: @on_surface;
+}
+
+#tray menu menuitem:hover {
+  background-color: @surface_container_highest;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   WORKSPACES
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#workspaces {
+  padding: 0px 0px 0px 0px;
+  margin: 1px 6px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.5);
+  border: 1px solid alpha(@outline_variant, 0.1);
+}
+
+#workspaces button {
+  padding: 0px 8px 0px 8px;
+  margin: 1px 2px;
+  min-width: 12px;
+  border-radius: 6px;
+  background-color: alpha(@surface_container_highest, 0.4);
+  color: @on_surface_variant;
+  font-size: 12px;
+  transition: all 0.2s ease-in-out;
+}
+
+#workspaces button.empty {
+  padding: 0 6px;
+  min-width: 20px;
+  background-color: alpha(@surface_container_high, 0.2);
+  color: alpha(@on_surface_variant, 0.4);
+}
+
+#workspaces button.visible {
+  background-color: alpha(@surface_container_highest, 0.6);
+  color: @on_surface;
+}
+
+#workspaces button.active {
+  padding: 0px 1px 0px 1px;
+  min-width: 28px;
+  background-image: linear-gradient(135deg, @primary_container 0%, @primary_fixed_dim 100%);
+  color: @on_primary_container;
+  box-shadow: 0 2px 8px alpha(@primary, 0.35);
+  font-weight: 700;
+}
+
+#workspaces button:hover {
+  background-color: @surface_container_highest;
+  color: @on_surface;
+}
+
+#workspaces button.active:hover {
+  background-image: linear-gradient(135deg, @primary_fixed_dim 0%, @primary 100%);
+  box-shadow: 0 3px 12px alpha(@primary, 0.45);
+}
+
+#workspaces button.urgent {
+  background-image: linear-gradient(135deg, @error_container 0%, @error 100%);
+  color: @on_error;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MPRIS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#mpris {
+  padding: 0 10px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@secondary_container, 0.4);
+  color: @on_secondary_container;
+  font-size: 12px;
+  border: 1px solid alpha(@secondary, 0.15);
+  transition: all 0.2s ease-in-out;
+}
+
+#mpris:hover {
+  background-color: alpha(@secondary_container, 0.7);
+  border: 1px solid alpha(@secondary, 0.3);
+}
+
+#mpris.playing {
+  color: @secondary;
+}
+
+#mpris.paused {
+  color: alpha(@on_secondary_container, 0.6);
+}
+
+#mpris.stopped {
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  background-color: transparent;
+  border: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   NETWORK & CUSTOM SPEED
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-net-speed {
+  padding: 0px 12px 0px 8px;
+  margin: 1px 8px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @tertiary;
+  font-size: 10px;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-net-speed:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+#network {
+  padding: 1px 14px 0px 9px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @on_surface;
+  font-size: 14px;
+  transition: all 0.2s ease-in-out;
+}
+
+#network:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+#network.disconnected {
+  padding: 1px 14px 0px 9px;
+  color: alpha(@on_surface_variant, 0.4);
+}
+
+#network.linked,
+#network.ethernet {
+  padding: 1px 13px 0px 9px;
+  color: @tertiary;
+}
+
+#network.wifi {
+  color: @primary_fixed;
+  padding: 1px 14px 0px 9px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BLUETOOTH
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#bluetooth {
+  padding: 0px 8px 0px 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @on_surface;
+  font-size: 12px;
+  transition: all 0.2s ease-in-out;
+}
+
+#bluetooth:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+#bluetooth.disabled {
+  color: alpha(@on_surface_variant, 0.4);
+}
+
+#bluetooth.connected {
+  color: @primary_fixed;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PULSEAUDIO OUTPUT
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#pulseaudio.output {
+  padding: 0px 12px 0px 9px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @on_surface;
+  font-size: 12px;
+  transition: all 0.2s ease-in-out;
+}
+
+#pulseaudio.output:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+#pulseaudio.output.muted {
+  color: alpha(@on_surface_variant, 0.4);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BACKLIGHT
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#backlight {
+  padding: 0px 13px 0px 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @tertiary;
+  font-size: 12px;
+  transition: all 0.2s ease-in-out;
+}
+
+#backlight:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CPU
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#cpu {
+  padding: 0 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @on_surface_variant;
+  font-size: 12px;
+  transition: all 0.2s ease-in-out;
+}
+
+#cpu:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+#cpu.warning {
+  color: @tertiary;
+  background-color: alpha(@tertiary_container, 0.2);
+}
+
+#cpu.critical {
+  color: @error;
+  background-color: alpha(@error_container, 0.3);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MEMORY
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#memory {
+  padding: 0 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @on_surface_variant;
+  font-size: 11px;
+  transition: all 0.2s ease-in-out;
+}
+
+#memory:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+#memory.warning {
+  color: @tertiary;
+  background-color: alpha(@tertiary_container, 0.2);
+}
+
+#memory.critical {
+  color: @error;
+  background-color: alpha(@error_container, 0.3);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BATTERY
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#battery {
+  padding: 0px 5px 0px 5px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @on_surface;
+  font-weight: 700;
+  transition: all 0.2s ease-in-out;
+}
+
+#battery:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+#battery.good {
+  color: @tertiary;
+}
+
+#battery.charging,
+#battery.plugged,
+#battery.full {
+  color: @tertiary;
+  background-color: alpha(@tertiary_container, 0.25);
+  border: 1px solid alpha(@tertiary, 0.15);
+}
+
+#battery.warning:not(.charging) {
+  color: @primary_fixed;
+  background-color: alpha(@primary_container, 0.3);
+  border: 1px solid alpha(@primary, 0.2);
+}
+
+#battery.critical:not(.charging) {
+  color: @on_error;
+  background-image: linear-gradient(135deg, @error_container 0%, @error 100%);
+  animation: critical-blink 1s ease-in-out infinite;
+  box-shadow: 0 2px 8px alpha(@error, 0.4);
+}
+
+@keyframes critical-blink {
+  0% { opacity: 1; }
+  50% { opacity: 0.8; }
+  100% { opacity: 1; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POWER BUTTON
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-power {
+  padding: 0px 12px 0px 9px;
+  margin: 1px 6px 1px 2px;
+  border-radius: 10px;
+  background-image: linear-gradient(135deg, @primary_container 0%, @primary_fixed_dim 100%);
+  color: @on_primary_container;
+  font-size: 14px;
+  box-shadow: 0 2px 8px alpha(@error, 0.25);
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-power:hover {
+  background-color: @error;
+  background-image: none;
+  box-shadow: 0 4px 16px alpha(@error, 0.4);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TOOLTIPS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+tooltip {
+  background-color: alpha(@surface_container_high, 0.95);
+  border: 1px solid alpha(@outline_variant, 0.3);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px alpha(@shadow, 0.4);
+}
+
+tooltip label {
+  padding: 6px 10px;
+  color: @on_surface;
+  font-size: 12px;
+}

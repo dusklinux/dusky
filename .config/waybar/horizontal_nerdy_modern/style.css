@@ -6,7 +6,7 @@
 @import url("../../.config/matugen/generated/waybar-colors.css");
 
 * {
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono NF", "JetBrains Mono", "Symbols Nerd Font", "Noto Sans", "DejaVu Sans", sans-serif;
+    font-family: "JetBrains Mono Nerd Font Propo", "JetBrainsMono Nerd Font", "JetBrains Mono NF", "JetBrains Mono", "Symbols Nerd Font", "Noto Sans", "DejaVu Sans", sans-serif;
     font-size: 13px;
     font-weight: 600;
     min-height: 0;
@@ -131,7 +131,6 @@ tooltip label {
    ═══════════════════════════════════════════════════════════════════════════ */
 #custom-launcher {
     font-size: 16px;
-    padding: 0px 13px 0px 10px;
     color: @primary;
     background-color: @primary_container;
     border-radius: 10px;
@@ -154,7 +153,7 @@ tooltip label {
 }
 
 #workspaces button {
-    padding: 0px 2px 0px 3px;
+    padding: 0px 3px 0px 3px;
     margin: 3px 2px;
     border-radius: 50px;
     color: @on_surface_variant;
@@ -226,7 +225,6 @@ tooltip label {
     color: @on_primary_container;
     font-size: 13px;
     font-weight: 700;
-    padding: 0px 16px 0px 8px;
     border-radius: 10px;
 }
 
@@ -246,18 +244,8 @@ tooltip label {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   HARDWARE STATS GROUP
+   HARDWARE STATS MODULES
    ═══════════════════════════════════════════════════════════════════════════ */
-#group-hardware {
-    background-color: @surface_container_low;
-    border-radius: 10px;
-    padding: 0px 2px 0px 1px;
-    margin: 2px 2px;
-}
-
-#group-hardware:hover {
-    background-color: @surface_container;
-}
 
 /* REDUCED PADDING FOR THINNER LOOK */
 #cpu,
@@ -317,18 +305,8 @@ tooltip label {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   CONNECTIVITY GROUP
+   CONNECTIVITY MODULES
    ═══════════════════════════════════════════════════════════════════════════ */
-#group-connectivity {
-    background-color: @surface_container_high;
-    border-radius: 10px;
-    padding: 0px 2px 0px 1px;
-    margin: 2px 2px;
-}
-
-#group-connectivity:hover {
-    background-color: @surface_container_highest;
-}
 
 #backlight {
     color: @tertiary;
@@ -369,7 +347,7 @@ tooltip label {
 
 #bluetooth {
     color: @secondary;
-    font-size: 13px;
+    font-size: 11px;
     padding: 0px 3px 0px 2px;
 }
 
@@ -441,23 +419,13 @@ tooltip label {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SYSTEM GROUP
+   SYSTEM MODULES
    ═══════════════════════════════════════════════════════════════════════════ */
-#group-system {
-    background-color: @surface_container_low;
-    border-radius: 10px;
-    padding: 0 2px;
-    margin: 2px 2px;
-}
-
-#group-system:hover {
-    background-color: @surface_container;
-}
 
 #custom-theme {
     color: @secondary;
     font-size: 14px;
-    padding: 0px 10px 0px 7px;
+    padding: 0px 2px 0px 2px;
 }
 
 #custom-theme:hover {
@@ -467,7 +435,7 @@ tooltip label {
 
 #custom-inhibit-suspend {
     font-size: 13px;
-    padding: 0px 8px 0px 7px;
+    padding: 0px 2px 0px 2px;
 }
 
 #custom-inhibit-suspend.enabled {
@@ -485,8 +453,8 @@ tooltip label {
 }
 
 #custom-notification {
-    font-size: 14px;
-    padding: 0px 9px 0px 7px;
+    font-size: 13px;
+    padding: 2px 4px 0px 4px;
     color: @secondary;
 }
 
@@ -535,7 +503,6 @@ tooltip label {
    ═══════════════════════════════════════════════════════════════════════════ */
 #custom-power {
     font-size: 14px;
-    padding: 0px 14px 0px 11px;
     margin-right: 2px;
     margin-left: 3px;
     color: @error;

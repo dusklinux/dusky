@@ -18,8 +18,7 @@
         "pulseaudio"
     ],
     "modules-right": [
-        "network",
-        "bluetooth",
+        "custom/net-speed",
         "battery",
         "custom/notification"
     ],
@@ -99,22 +98,8 @@
 
     // === MODULES: LEFT ===
     "hyprland/workspaces": {
-        "format": "{icon}",
+        "format": "",
         "on-click": "activate",
-        // UPDATED: Replaced Chinese numerals with Roman Numerals supported by JetBrains Mono
-        "format-icons": {
-            "1": "I",
-            "2": "II",
-            "3": "III",
-            "4": "IV",
-            "5": "V",
-            "6": "VI",
-            "7": "VII",
-            "8": "VIII",
-            "9": "IX",
-            "10": "X",
-            "default": ""
-        },
         "persistent-workspaces": {
             "*": 5
         }
@@ -146,34 +131,23 @@
     },
 
     // === MODULES: RIGHT ===
-    "network": {
-        "format-wifi": "{icon}",
-        "format-ethernet": "󰈀",
-        "format-disconnected": "󰖪",
-        "format-disabled": "󰖪",
-        "format-icons": ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"],
-        "tooltip-format-wifi": "{essid} ({signalStrength}%)\n{ipaddr}",
-        "tooltip-format-ethernet": "{ipaddr}/{cidr}",
-        "tooltip-format-disconnected": "No Connection",
-        "on-click": "kitty --class wifitui -e wifitui",
-        "on-click-right": "systemctl restart network_meter.service"
-    },
-    "bluetooth": {
-        "format": "󰂯 {status}",
-        "format-disabled": "󰂲 Off",
-        "format-connected": "󰂱 {device_alias}",
-        "tooltip-format": "{status}",
-        "on-click": "blueman-manager",
-        "on-click-right": "kitty --class bluetui -e bluetui"
+    "custom/net-speed": {
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --horizontal",
+        "return-type": "json",
+        "format": "{}",
+        "interval": 1,
+        "tooltip": true
     },
     "battery": {
         "states": { "warning": 30, "critical": 15 },
-        "format": "{icon} {capacity}%",
-        "format-charging": "󱐋 {capacity}%",
-        "format-plugged": " {capacity}%",
-        "format-icons": ["", "", "", "", ""],
+        "format": " {icon} {capacity} -{power:.0f}W",
+        "format-charging": "  +{capacity} +{power:.0f}W",
+        "format-plugged": "󰚥 {capacity}%",
+        "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
         "on-click": "uwsm-app -- kitty --class power_saver.sh --hold -e $HOME/user_scripts/battery/power_saving/power_saver.sh",
         "on-click-right": "uwsm-app -- kitty --class timeout.sh -e $HOME/user_scripts/hypridle/timeout.sh"
+
+
     },
     "custom/notification": {
         "format": "{icon}",

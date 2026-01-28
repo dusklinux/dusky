@@ -10,13 +10,6 @@
 > <context>
 >     <os>Arch Linux (Rolling Release)</os>
 >     <session_type>Hyprland (Wayland)</session_type>
->     <session_manager>UWSM (Universal Wayland Session Manager)</session_manager>
->     <environment_rules>
->         - You MUST respect UWSM environment variables.
->         - For launching GUI/Wayland applications, you MUST use the `uwsm-app -- <command>` wrapper.
->         - Do NOT use `systemd-run` for GUI apps (if there are any); use `uwsm-app --` instead.
->         - For background services (daemons), use standard `systemctl --user` commands.
->     </environment_rules>
 > </context>
 > 
 > <constraints>
@@ -43,7 +36,7 @@
 > </constraints>
 > 
 > <instructions>
-> 1. **Analyze (Chain of Thought):** Before writing code, output a <thinking> block. Make sure to think long and hard and think critically. Think multiple ways of doing it and choose the best possible method. The most essential thing is that it works and is reliable! 
+> 1. **Best method** Make sure to think long and hard and think critically. Think multiple ways of doing it and choose the best possible method. The most essential thing is that it works and is reliable! 
 > 2. **Generate:** Output the entire final script inside a markdown code block so as to allow for easily copying it. 
 > 3. 2. Make sure to think through the logic of the script critically and scrutinize the full logic, to make sure it'll work exceptionally well.
 > </instructions>
@@ -63,52 +56,39 @@
 > <context>
 >     <os>Arch Linux (Rolling Release)</os>
 >     <session_manager>UWSM (Universal Wayland Session Manager)</session_manager>
->     <environment_rules>
->         - STRICT UWSM COMPLIANCE: 
-> 	        1. For GUI Applications: You MUST use `uwsm-app -- <command>`. Do NOT use `systemd-run` manually. 
-> 	        2. For Background Services: Use `systemctl --user start <service>`.
->         - RELIABILITY: Code must be idempotent and stateless where possible.
->         - MODERN BASH: Bash 5.0+ features only. No legacy syntax (e.g., use `[[ ]]` not `[ ]`).
->     </environment_rules>
 > </context>
 > 
 > 
 > <audit_instructions>
-> Perform a "Deep Dive" analysis in a <thinking> block before rewriting the code. You MUST follow this process:
+> Perform a "Deep Dive" analysis in before rewriting the code. You MUST follow this process:
 > 
-> 1. **Complexity & Reliability Check (Crucial):** - Identify any "over-engineered" logic (e.g., unnecessary functions, complex regex where string manipulation suffices, or fragile dependencies). - **Rule:** If it can be done with a standard Bash builtin, do not use an external tool. - **Rule:** If it breaks easily, rewrite it to be "boring" and robust. It needs to be reliable, most of all. 
+> 1. **Complexity & Reliability Check (Crucial):** - Identify any "over-engineered" logic (e.g., unnecessary functions, complex regex where string manipulation suffices, or fragile dependencies). 
+> 	- **Rule:** If it can be done with a standard Bash builtin, do not use an external tool. 
+> 	- **Rule:** If it breaks easily, rewrite it to be "boring" and robust. It needs to be reliable, most of all. 
+> 	- RELIABILITY: Code must be idempotent and stateless where possible.
+>     - MODERN BASH: Bash 5.0+ features only. No legacy syntax (e.g., use `[[ ]]` not `[ ]`).
 > 
 > 2. **Line-by-Line Forensics:**
 >    - Scan every single line for syntax errors, logic flaws, or race conditions.
 >    - Flag any usage of `echo` (replace with `printf`).
 >    - Flag any legacy backticks \`command\` (replace with `$(command)`).
 > 
-> 3. **UWSM Compliance Check:**
->    - Identify GUI applications spawned with raw `&` (e.g., `waybar &`).
->    - REFACTOR them to use `uwsm-app -- <command> &` followed by `disown`.
->    - Ensure standard system services use `systemctl` commands, not backgrounding.
->    - Do NOT use `systemd-run` for GUI apps.
-> 
-> 4. **Security & Safety Audit:**
+> 3. **Security & Safety Audit:**
 >    - Check for unquoted variables (shell injection risks).
 >    - Ensure `set -euo pipefail` is present.
 >    - Verify `mktemp` usage includes a `trap` for cleanup.
 > 
-> 5. **Optimization Strategy:**
+> 4. **Optimization Strategy:**
 >    - Identify loops that can be replaced by mapfiles or builtins.
 >    - Remove unnecessary external binary calls where possible. 
 > 
-> 6. **Complexity & Reliability Check (Crucial):**
->    - Identify any "over-engineered" logic (e.g., unnecessary functions, complex regex where string manipulation suffices, or fragile dependencies). 
->    - **Rule:** If it can be done with a standard Bash builtin, do not use an external tool. 
->    - **Rule:** If it breaks easily, rewrite it to be "boring" and robust.
->
->
+> 5. **Complexity & Reliability Check (Crucial):**
+> 	- After finishing, review the entire script at a high level to verify the overall logic and confirm it’s the optimal approach.
 > </audit_instructions>
 > 
 > <output_format>
-> 8. **The Critique:** A bulleted list of the specific flaws found in the original script.
-> 9. **The Refactored Script:** The complete, perfected, copy-pasteable script in a markdown block.
+> 6. **The Critique:** A bulleted list of the specific flaws found in the original script.
+> 7. **The Refactored Script:** The complete, perfected, copy-paste-able script in a markdown block.
 > </output_format>
 > 
 > 
@@ -119,7 +99,7 @@
 
 > [!NOTE]- I Asked
 > ```ini
-> I asked Claude Code to evaluate your script. Review its feedback with a critical eye because it might be wrong about certain things. Implement only suggestions you can verify as correct and beneficial, and explicitly justify any you discard. Return the revised script along with a concise summary of what changed and why.
+> I asked Claude Code to evaluate your script. Review its feedback with a critical eye because it might be wrong about certain things. Implement only suggestions you can verify as correct and beneficial, and explicitly justify any you discard. Return the revised script along with a concise summary of what changed and why, It's of paramount importance that you think long and hard and think critically and go over each line.
 > ```
 
 

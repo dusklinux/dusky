@@ -1,0 +1,60 @@
+{
+  "active": true,
+  "Background": {
+    "value": "_",
+    "components": {
+      "Background Dark": "{{colors.surface.default.hex}}",
+      "Background": "{{colors.surface.default.hex}}",
+      "Background Bright": "{{colors.outline.default.hex}}",
+      "Foreground": "{{colors.surface_bright.default.hex}}",
+      "Foreground Light": "{{colors.primary.default.hex}}",
+      "Midtone 1": "{{colors.surface_container_high.default.hex}}",
+      "Midtone 2": "{{colors.on_surface_variant.default.hex}}",
+      "Midtone 3": "{{colors.secondary_container.default.hex}}",
+      "Midtone 4": "{{colors.secondary.default.hex}}",
+      "Midtone 5": "{{colors.outline.default.hex}}",
+      "Highlight 1": "{{colors.on_tertiary_fixed_variant.default.hex}}",
+      "Highlight 1 Hover": "{{colors.tertiary_fixed_dim.default.hex}}",
+      "Highlight 2": "{{colors.primary_fixed_dim.default.hex}}",
+      "Warning": "{{colors.error.default.hex}}"
+    }
+  },
+  "Text": {
+    "value": "_",
+    "components": {
+      "Light": "{{colors.secondary.default.hex}}",
+      "Bright Light": "{{colors.on_secondary_container.default.hex}}",
+      "Dark": "{{colors.surface.default.hex}}",
+      "Bright Dark": "{{colors.outline.default.hex}}",
+      "Midtone 1": "{{colors.surface_container_high.default.hex}}",
+      "Midtone 4": "{{colors.secondary.default.hex}}",
+      "Midtone 5": "{{colors.outline.default.hex}}"
+    }
+  },
+  "Background Gradient": {
+    "value": "_",
+    "components": {
+      "Stop 2": "{{colors.on_surface.default.hex}}",
+      "Stop 3": "{{colors.on_surface.default.hex}}",
+      "Stop 4": "{{colors.on_surface.default.hex}}",
+      "Stop 5": "{{colors.on_surface.default.hex}}",
+      "Stop 6": "{{colors.on_surface.default.hex}}"
+    }
+  },
+  "Community Content Gradient": {
+    "value": "_",
+    "components": {
+      "Stop 1": "{{colors.on_surface.default.hex}}",
+      "Stop 2": "{{colors.on_surface.default.hex}}",
+      "Stop 3": "{{colors.on_surface.default.hex}}"
+    }
+  },
+  "Game Page Gradient": {
+    "value": "_",
+    "components": {
+      "Stop 1": "{{colors.on_surface.default.hex}}",
+      "Stop 2": "{{colors.on_surface.default.hex}}",
+      "Stop 3": "{{colors.on_surface.default.hex}}"
+    }
+  }
+}

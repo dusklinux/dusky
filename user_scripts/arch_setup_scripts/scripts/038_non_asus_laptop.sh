@@ -41,7 +41,7 @@ setup_rules() {
     # AI / TTS Tools (Updated paths)
     add_rule "$HYPR_KEYBINDS" 'bindd = $mainMod, O, TTS Kokoro GPU, exec, wl-copy "$(wl-paste -p)" && uwsm-app -- $scripts/tts_stt/kokoro_gpu/speak.sh'
     add_rule "$HYPR_KEYBINDS" 'bindd = $mainMod SHIFT, O, TTS Kokoro CPU, exec, wl-copy "$(wl-paste -p)" && uwsm-app -- $scripts/tts_stt/kokoro_cpu/kokoro.sh'
-    add_rule "$HYPR_KEYBINDS" 'bindd = $mainMod SHIFT, I, STT Whisper CPU, exec, uwsm-app -- $scripts/tts_stt/faster_whisper/faster_whisper_sst.sh'
+    add_rule "$HYPR_KEYBINDS" 'bindd = $mainMod SHIFT, I, STT Whisper CPU, exec, uwsm-app -- $scripts/tts_stt/faster_whisper/faster_whisper_stt.sh'
     add_rule "$HYPR_KEYBINDS" 'bindd = $mainMod, I, STT Parakeet GPU, exec, uwsm-app -- $scripts/tts_stt/parakeet/parakeet.sh'
 
     # --- 2. Input Configuration ---

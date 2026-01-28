@@ -3,7 +3,7 @@
 # Title:        Parakeet ASR Installer & Setup
 # Description:  Automates the setup of NVIDIA Parakeet ASR on Arch Linux/Hyprland.
 #               Handles dependencies, venv creation, and initial model caching.
-# Author:       Elite DevOps (Generated via Gemini, Refined by Code Review)
+# Author:       Elite DevOps
 # Environment:  Arch Linux | Hyprland | UWSM
 # ==============================================================================
 

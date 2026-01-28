@@ -16,16 +16,16 @@
     // ===================================================================
     "modules-left": [ 
         "clock", 
-        //"group/stats",        
+        //"group/stats",
         "custom/notification"
     ],
     
     "modules-center": [ 
-        "hyprland/workspaces" 
+        "hyprland/workspaces"
     ],
     
-    "modules-right": [ 
-        //"custom/network",      
+    "modules-right": [
+        //"custom/network",
         "pulseaudio",
         "battery",
         "custom/power"
@@ -124,8 +124,8 @@
 
     "custom/network": {
         "return-type": "json",
-        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh vertical",
-        "interval": 1, 
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --vertical",
+        "interval": 1,
         "on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
         "on-click-right": "nmcli radio wifi on",
         "on-click-middle": "nmcli radio wifi off"

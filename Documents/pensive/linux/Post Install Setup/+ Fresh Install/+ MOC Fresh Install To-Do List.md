@@ -958,7 +958,7 @@ nvim ~/.config/hypr/hyprland.conf
 > bindd = $mainMod SHIFT, O, TTS Kokoro CPU, exec, wl-copy "$(wl-paste -p)" && uwsm-app -- $scripts/kokoro_cpu/kokoro.sh
 > 
 > # FasterWhisper STT
-> bindd = $mainMod SHIFT, I, STT Whisper CPU, exec, uwsm-app -- $scripts/faster_whisper/faster_whisper_sst.sh
+> bindd = $mainMod SHIFT, I, STT Whisper CPU, exec, uwsm-app -- $scripts/faster_whisper/faster_whisper_stt.sh
 > 
 > # NVIDIA Parakeet
 > bindd = $mainMod, I, STT Parakeet GPU, exec, uwsm-app -- $scripts/parakeet/parakeet.sh

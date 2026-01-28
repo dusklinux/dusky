@@ -1,0 +1,166 @@
+/*
+ * ~/.config/waybar/style.css
+ * Precision Vertical Layout - Width 10 (Strict)
+ */
+
+@import url("../../.config/matugen/generated/waybar-colors.css");
+
+/* --- VARS --- */
+@define-color border_color @outline_variant;
+@define-color active_color @primary;
+@define-color inactive_color @surface_container_highest;
+
+/* ===================================================================
+ * GLOBAL
+ * =================================================================== */
+
+* {
+    font-family: "JetBrainsMono Nerd Font Propo", "JetBrainsMono Nerd Font", sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    font-feature-settings: "tnum"; /* Tabular numbers prevent jitter */
+    min-height: 0;
+    min-width: 0;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
+}
+
+window#waybar {
+    background: @background; 
+    color: @on_surface;
+    border-right: 1px solid alpha(@border_color, 0.3); 
+}
+
+tooltip {
+    background: alpha(@surface_container, 0.95);
+    color: @on_surface;
+    border: 1px solid @border_color;
+    border-radius: 4px;
+}
+
+tooltip label {
+    padding: 5px;
+}
+
+/* ===================================================================
+ * MODULE BASE
+ * =================================================================== */
+
+#battery, #clock, #cpu, #memory, #temperature, 
+#pulseaudio, #backlight, #network, #bluetooth, #tray,
+#custom-theme, #custom-power, #custom-notification, #custom-inhibit-suspend,
+#custom-app-tray, #custom-network {
+    padding: 4px 0px; /* Tight padding for width 10 */
+    margin: 1px 0px;
+    background-color: transparent;
+    color: @on_surface_variant;
+    transition: all 0.2s ease-in-out;
+}
+
+/* Hover effects */
+#battery:hover, #clock:hover, #cpu:hover, #memory:hover, #temperature:hover, 
+#pulseaudio:hover, #backlight:hover, #bluetooth:hover, #custom-network:hover,
+#custom-theme:hover, #custom-power:hover, #custom-notification:hover {
+    color: @primary;
+    text-shadow: 0 0 3px alpha(@primary, 0.4);
+}
+
+/* ===================================================================
+ * MODULE SPECIFIC
+ * =================================================================== */
+
+/* --- Workspaces: Vertical Pills --- */
+#workspaces {
+    margin: 0px 0;
+    background: transparent;
+    border-radius: 0px;
+}
+
+/* OCCUPIED (Windows present) */
+#workspaces button {
+    padding: 0px 0px 0px 0px;
+    margin: 9px 8px 3px 9px;
+    background-color: alpha(@secondary,0.5); 
+    border-radius: 12px;
+    color: transparent;
+    transition: all 0.2s ease-in-out;
+}
+
+/* EMPTY (No windows) */
+#workspaces button.empty {
+    padding: 0px 0px 0px 0px;
+    margin: 9px 8px 3px 9px;
+    min-height: 8px;
+    min-width: 6px;
+    /* CHANGED: Uses @outline to ensure it's a subtle grey dot in both modes */
+    background-color: alpha(@outline, 0.2); 
+    color: transparent;
+    box-shadow: none;
+}
+
+/* ACTIVE (Current workspace) */
+#workspaces button.active {
+    min-height: 24px;
+    background-color: @primary;
+    box-shadow: 0 0 4px alpha(@primary, 0.4);
+}
+
+#workspaces button.urgent {
+    background-color: @error;
+}
+
+/* --- Hardware Group --- */
+#cpu, #memory, #temperature {
+    color: @primary;
+    font-weight: bold;
+}
+
+#cpu { margin-top: 5px; }
+
+/* --- Battery --- */
+#battery {
+    font-weight: 700;
+    color: @primary;
+}
+#battery.charging, #battery.plugged { color: @tertiary; }
+#battery.warning { color: @error; animation: blink-critical 1s infinite alternate; }
+#battery.critical { color: @error_container; }
+
+/* --- Clock --- */
+#clock {
+    font-weight: 800;
+    background-color: alpha(@surface_container, 0.5); 
+    margin: 5px 0;
+    border-radius: 4px;
+    color: @on_surface;
+}
+
+/* --- Interactive Elements --- */
+#pulseaudio, #backlight {
+    color: @primary;
+    font-weight: bold;
+}
+#pulseaudio.muted { color: @error; }
+
+/* --- Custom Modules --- */
+#custom-power {
+    margin-bottom: 10px;
+    color: @error;
+    font-size: 12px;
+}
+
+#custom-theme { color: @tertiary; }
+#custom-network {
+  font-size: 9px;
+  color: @primary;
+  font-weight: bold;
+}
+
+/* ===================================================================
+ * ANIMATIONS
+ * =================================================================== */
+@keyframes blink-critical {
+    to { color: @on_surface; }
+}

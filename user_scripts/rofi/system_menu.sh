@@ -163,7 +163,7 @@ show_ai_menu() {
     case "${choice,,}" in
         *kokoro*gpu*) run_app "$SCRIPTS_DIR/tts_stt/kokoro_gpu/speak.sh" ;;
         *kokoro*cpu*) run_app "$SCRIPTS_DIR/tts_stt/kokoro_cpu/kokoro.sh" ;;
-        *whisper*)    run_app "$SCRIPTS_DIR/tts_stt/faster_whisper/faster_whisper_sst.sh" ;;
+        *whisper*)    run_app "$SCRIPTS_DIR/tts_stt/faster_whisper/faster_whisper_stt.sh" ;;
         *parakeet*)   run_app "$SCRIPTS_DIR/tts_stt/parakeet/parakeet.sh" ;;
         *ocr*)
             if region=$(slurp); then
