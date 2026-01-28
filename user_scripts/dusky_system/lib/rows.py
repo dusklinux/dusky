@@ -104,6 +104,8 @@ class ToggleRow(BaseActionRow):
 
     def __init__(self, properties: dict[str, Any], on_toggle: dict[str, Any] = {}, context=None) -> None:
         super().__init__(properties, on_toggle, context)
+        self.save_as_int = bool(properties.get("save_as_int", False))
+        self.key_inverse = bool(properties.get("key_inverse", False))
 
         # Toggle switch
         toggle_switch = Gtk.Switch()
@@ -111,7 +113,7 @@ class ToggleRow(BaseActionRow):
         if "key" in properties:
             # Load from key if specified
             key = str(properties.get("key", "")).strip()
-            system_value = utility.load_setting(key, False)
+            system_value = utility.load_setting(key, False, self.key_inverse)
             print(f"[DEBUG] Loaded setting for key '{key}': {system_value}")
             if isinstance(system_value, bool):
                 toggle_switch.set_active(system_value)
@@ -137,7 +139,7 @@ class ToggleRow(BaseActionRow):
                 
         if "key" in self.properties:
             # Save the new state to settings
-            utility.save_setting(self.properties.get("key", ""), state)
+            utility.save_setting(self.properties.get("key", ""), (state ^ self.key_inverse), self.save_as_int)
 
 class LabelRow(BaseActionRow):
     """A simple label row."""
