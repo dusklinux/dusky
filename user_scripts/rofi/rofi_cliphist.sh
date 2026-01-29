@@ -103,7 +103,7 @@ ensure_thumbnail() {
 #--- MAIN DISPLAY ---
 display_menu() {
     # Added ALT+T instruction to header
-    printf '\000message\x1f<b>Enter</b>: Copy | <b>Alt+U</b>: Pin | <b>Alt+Y</b>: Del Pin | <b>Alt+T</b>: Wipe\n'
+    printf '\000message\x1f<b>Alt+T</b>: Wipe | <b>Alt+U</b>: Pin | <b>Alt+Y</b>: UnPin\n'
     printf '\000use-hot-keys\x1ftrue\n'
     printf '\000keep-selection\x1ftrue\n'
 
