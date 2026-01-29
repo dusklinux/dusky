@@ -121,6 +121,12 @@ install_css_loader() {
 	# Create plugins directory if it doesn't exist
 	mkdir -p "$HOME/homebrew/plugins"
 
+	# Check if CSS Loader plugin already exists
+	if [[ -d "$HOME/homebrew/plugins/SDH-CssLoader" ]]; then
+		log_success "SDH-CSSLoader plugin already exists. Skipping installation."
+		return 0
+	fi
+
 	# Download and install SDH-CSSLoader plugin
 	local css_zip="$HOME/SDH-CSSLoader-Decky.zip"
 	log_info "Downloading SDH-CSSLoader..."
@@ -174,33 +180,41 @@ setup_matugen_themes() {
 		log_info "No Matugen Steam colors found. Installing default themes..."
 
 		# Download Color Master theme
-		local color_master_zip="162299bf-8027-43ee-ba02-a6cd3a79fb1b.zip"
-		log_info "Downloading Color Master theme..."
+		if [[ ! -d "$themes_dir/Color Master" ]]; then
+			local color_master_zip="162299bf-8027-43ee-ba02-a6cd3a79fb1b.zip"
+			log_info "Downloading Color Master theme..."
 
-		if ! wget -q "https://api.deckthemes.com/blobs/162299bf-8027-43ee-ba02-a6cd3a79fb1b" -O "$color_master_zip"; then
-			log_warn "Failed to download Color Master theme."
-		else
-			log_info "Extracting Color Master theme..."
-			if unzip -q "$color_master_zip" && [[ -d "Color Master" ]]; then
-				mv "Color Master" "$themes_dir/"
-				log_success "Color Master theme installed."
+			if ! wget -q "https://api.deckthemes.com/blobs/162299bf-8027-43ee-ba02-a6cd3a79fb1b" -O "$color_master_zip"; then
+				log_warn "Failed to download Color Master theme."
+			else
+				log_info "Extracting Color Master theme..."
+				if unzip -q "$color_master_zip" && [[ -d "Color Master" ]]; then
+					mv "Color Master" "$themes_dir/"
+					log_success "Color Master theme installed."
+				fi
+				rm -f "$color_master_zip"
 			fi
-			rm -f "$color_master_zip"
+		else
+			log_success "Color Master theme already exists. Skipping download."
 		fi
 
 		# Download Desktop Colored Toggles theme
-		local desktop_toggles_zip="01923bd4-078c-4453-85c7-9e9d34156589.zip"
-		log_info "Downloading Desktop Colored Toggles theme..."
+		if [[ ! -d "$themes_dir/Desktop Colored Toggles" ]]; then
+			local desktop_toggles_zip="01923bd4-078c-4453-85c7-9e9d34156589.zip"
+			log_info "Downloading Desktop Colored Toggles theme..."
 
-		if ! wget -q "https://api.deckthemes.com/blobs/01923bd4-078c-4453-85c7-9e9d34156589" -O "$desktop_toggles_zip"; then
-			log_warn "Failed to download Desktop Colored Toggles theme."
-		else
-			log_info "Extracting Desktop Colored Toggles theme..."
-			if unzip -q "$desktop_toggles_zip" && [[ -d "Desktop Colored Toggles" ]]; then
-				mv "Desktop Colored Toggles" "$themes_dir/"
-				log_success "Desktop Colored Toggles theme installed."
+			if ! wget -q "https://api.deckthemes.com/blobs/01923bd4-078c-4453-85c7-9e9d34156589" -O "$desktop_toggles_zip"; then
+				log_warn "Failed to download Desktop Colored Toggles theme."
+			else
+				log_info "Extracting Desktop Colored Toggles theme..."
+				if unzip -q "$desktop_toggles_zip" && [[ -d "Desktop Colored Toggles" ]]; then
+					mv "Desktop Colored Toggles" "$themes_dir/"
+					log_success "Desktop Colored Toggles theme installed."
+				fi
+				rm -f "$desktop_toggles_zip"
 			fi
-			rm -f "$desktop_toggles_zip"
+		else
+			log_success "Desktop Colored Toggles theme already exists. Skipping download."
 		fi
 
 		log_info "Run 'matugen' to generate Steam colors for automatic theming."
