@@ -1,5 +1,5 @@
 [config]
-# ...
+reload_apps = true
 
 # -----------------------------------------------------------------------------
 # GTK & Qt
@@ -178,15 +178,32 @@ ln -nfs $HOME/.config/matugen/generated/btop-colors.theme $HOME/.config/btop/the
 notify-send -i applications-graphics-symbolic "Theme Updated"
 '''
 
+[templates.discord]
+input_path  = '~/.config/matugen/templates/midnight-discord.css'
+output_path = '~/.config/matugen/generated/midnight-discord.css'
+post_hook   = '''
+SRC="$HOME/.config/matugen/generated/midnight-discord.css"
+for p in \
+  "$HOME/.config/vesktop/settings/quickCss.css" \
+  "$HOME/.var/app/dev.vencord.Vesktop/config/vesktop/settings/quickCss.css" \
+  "$HOME/.config/Vencord/settings/quickCss.css" \
+  "$HOME/.config/equibop/settings/quickCss.css" \
+  "$HOME/.var/app/org.equicord.equibop/config/equibop/settings/quickCss.css" \
+  "$HOME/.config/Equicord/settings/quickCss.css" 
+do
+  [ -d "$(dirname "$p")" ] && ln -nfs "$SRC" "$p"
+done
+'''
+
 # =============================================================================
-# VS Code Theme
+# VS Code Themes
 # =============================================================================
 
 [templates.vscode-theme-dark]
-input_path  = '~/.config/matugen/templates/vscode-theme-dark.json'
-output_path = '~/.vscode/extensions/danklinux.dms-theme-0.0.3/themes/dankshell-dark.json'
+input_path  = "~/.config/matugen/templates/vscode-theme-dark.json"
+output_path = "~/user_scripts/vscode/dms-theme/themes/dankshell-dark.json"
+post_hook   = '~/user_scripts/vscode/reload_theme.sh || true'
 
 [templates.vscode-theme-light]
-input_path  = '~/.config/matugen/templates/vscode-theme-light.json'
-output_path = '~/.vscode/extensions/danklinux.dms-theme-0.0.3/themes/dankshell-light.json'
-
+input_path  = "~/.config/matugen/templates/vscode-theme-light.json"
+output_path = "~/user_scripts/vscode/dms-theme/themes/dankshell-light.json"

@@ -13,7 +13,7 @@ application/x-extension-xhtml=firefox.desktop
 application/x-extension-xht=firefox.desktop
 text/plain=nvim.desktop
 text/markdown=nvim.desktop
-application/json=nvim.desktop
+application/json=org.kde.kate.desktop
 application/x-shellscript=nvim.desktop
 application/toml=nvim.desktop
 application/x-yaml=nvim.desktop
@@ -45,11 +45,12 @@ audio/ogg=mpv.desktop
 audio/wav=mpv.desktop
 application/pdf=org.pwmt.zathura.desktop
 inode/directory=thunar.desktop
-application/x-zerosize=nvim.desktop
+application/x-zerosize=org.kde.kate.desktop
+x-scheme-handler/discord=vesktop.desktop
 
 [Added Associations]
 video/mp4=mpv.desktop;vlc.desktop;fr.handbrake.ghb.desktop;
 video/x-matroska=mpv.desktop;vlc.desktop;
 text/plain=nvim.desktop;org.gnome.TextEditor.desktop;
-application/json=nvim.desktop;org.gnome.TextEditor.desktop;
-application/x-zerosize=nvim.desktop;
+application/json=nvim.desktop;org.gnome.TextEditor.desktop;org.kde.kate.desktop;
+application/x-zerosize=nvim.desktop;org.kde.kate.desktop;
