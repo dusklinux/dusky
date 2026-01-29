@@ -100,6 +100,7 @@ INSTALL_SEQUENCE=(
     "U | 084_package_removal.sh"
     "U | 087_hypr_custom_config_setup.sh"
     "U | 088_hyprctl_reload.sh"
+    "U | 090_vscode_dms_theme_setup.sh"
 )
 
 # ==============================================================================
