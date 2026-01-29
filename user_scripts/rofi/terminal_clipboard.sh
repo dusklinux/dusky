@@ -435,8 +435,7 @@ show_menu() {
         --bind="alt-y:execute-silent('$SELF' --delete {})+reload('$SELF' --list)" \
         --bind="alt-t:execute-silent('$SELF' --wipe)+reload('$SELF' --list)" \
         --bind="esc:abort" \
-        --bind="ctrl-c:abort" \
-        --color="border:#7aa2f7,label:#7aa2f7,header:italic:#565f89,pointer:#f7768e"
+        --bind="ctrl-c:abort"
     )
     
     is_kitty && kitty_clear
