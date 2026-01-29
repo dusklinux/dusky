@@ -106,27 +106,13 @@ install_decky_loader() {
 		return 0
 	fi
 
-	log_info "Installing Decky Loader..."
+	log_info "Installing Decky Loader using official installer..."
 
-	# Create the homebrew directory
-	mkdir -p "$HOME/homebrew"
-
-	# Download Decky Loader plugin (latest release)
-	log_info "Downloading Decky Loader..."
-	if ! curl -fsSL "https://github.com/SteamDeckHomebrew/decky-plugin-loader/releases/latest/download/decky_loader.tar.gz" -o "$HOME/homebrew/decky_loader.tar.gz"; then
-		die "Failed to download Decky Loader."
+	if ! curl -fsSL https://github.com/SteamDeckHomebrew/decky-installer/releases/latest/download/install_release.sh | sh; then
+		die "Decky Loader installation failed."
 	fi
 
-	# Extract the plugin
-	log_info "Extracting Decky Loader..."
-	cd "$HOME/homebrew" || die "Failed to change to homebrew directory"
-	tar -xzf decky_loader.tar.gz
-
-	# Clean up the tar file
-	rm decky_loader.tar.gz
-
 	log_success "Decky Loader installed successfully!"
-	log_info "Installation location: $HOME/homebrew"
 }
 
 install_css_loader() {
