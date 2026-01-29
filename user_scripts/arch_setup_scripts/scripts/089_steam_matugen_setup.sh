@@ -213,44 +213,36 @@ setup_matugen_themes() {
 configure_sudoers() {
 	log_info "Configuring sudoers for plugin_loader..."
 
-	local sudoers_line="ALL ALL=(ALL) NOPASSWD: /bin/systemctl restart plugin_loader"
-	local sudoers_file="/etc/sudoers"
-	local temp_file
+	local rule="ALL ALL=(ALL) NOPASSWD: /bin/systemctl restart plugin_loader"
+	local sudoers_dropin="/etc/sudoers.d/decky-plugin-loader"
 
-	# Check if the rule already exists in any sudoers file
-	if grep -Fq "$sudoers_line" /etc/sudoers /etc/sudoers.d/* 2>/dev/null; then
+	# Check if rule already exists
+	if sudo grep -Fq "$rule" "$sudoers_dropin" 2>/dev/null; then
 		log_success "Sudoers rule already exists"
 		return 0
 	fi
 
-	log_info "Adding sudoers rule for plugin_loader restart..."
+	log_info "Adding sudoers rule..."
 
-	# Create a temporary sudoers file and validate
-	temp_file=$(mktemp)
-	TEMP_FILES+=("$temp_file")
+	echo "$rule" | sudo tee "$sudoers_dropin" >/dev/null
 
-	if ! cat "$sudoers_file" >"$temp_file"; then
-		die "Failed to read current sudoers file"
-	fi
+	# Fix permissions (sudo requires 0440)
+	sudo chmod 0440 "$sudoers_dropin"
 
-	echo "$sudoers_line" >>"$temp_file"
-
-	if ! sudo visudo -cf "$temp_file"; then
-		die "Invalid sudoers syntax"
-	fi
-
-	# Append to sudoers
-	echo "$sudoers_line" | sudo tee -a "$sudoers_file" >/dev/null
-
-	# Restart plugin_loader service
-	if sudo systemctl restart plugin_loader; then
-		log_success "Plugin loader service restarted"
-	else
-		log_warn "Failed to restart plugin loader service (may not be running yet)"
+	# Validate sudoers config
+	if ! sudo visudo -cf "$sudoers_dropin"; then
+		sudo rm -f "$sudoers_dropin"
+		die "Invalid sudoers configuration — rule reverted"
 	fi
 
 	log_success "Sudoers rule added successfully"
-	log_info "Users can now run: sudo systemctl restart plugin_loader"
+
+	# Restart plugin_loader if it exists
+	if sudo systemctl restart plugin_loader 2>/dev/null; then
+		log_success "Plugin loader service restarted"
+	else
+		log_warn "plugin_loader service not found or not running yet"
+	fi
 }
 
 # --- Execution ---
