@@ -130,9 +130,9 @@ tooltip label {
 
 /* --- Clock --- */
 #clock {
-    font-weight: 800;
+    font-weight: 900;
     background-color: alpha(@surface_container, 0.5); 
-    margin: 5px 0;
+    margin: 5px;
     border-radius: 4px;
     color: @on_surface;
 }
@@ -146,7 +146,7 @@ tooltip label {
 
 /* --- Custom Modules --- */
 #custom-power {
-    margin-bottom: 10px;
+    margin-bottom: 1px;
     color: @error;
     font-size: 12px;
 }
