@@ -2,7 +2,7 @@
 Type=Application
 Name=Relink Existing Github and Push Changes
 Comment=Reconnect and push local changes to remote
-Exec=uwsm-app -- kitty --hold --class reconnect_and_push_new_changes_to_github.sh -e /home/dusk/user_scripts/desktop_apps/reconnect_and_push_new_changes_to_github.sh
+Exec=uwsm-app -- kitty --hold --class reconnect_and_push_new_changes_to_github.sh -e /home/stefan/user_scripts/desktop_apps/reconnect_and_push_new_changes_to_github.sh
 Terminal=false
 Categories=Development;RevisionControl;
 Keywords=git;push;sync;upload;github;

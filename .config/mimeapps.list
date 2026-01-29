@@ -44,7 +44,7 @@ audio/mpeg=mpv.desktop
 audio/ogg=mpv.desktop
 audio/wav=mpv.desktop
 application/pdf=org.pwmt.zathura.desktop
-inode/directory=yazi.desktop
+inode/directory=thunar.desktop
 application/x-zerosize=nvim.desktop
 
 [Added Associations]

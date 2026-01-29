@@ -2,7 +2,7 @@
 Type=Application
 Name=WiFi Airmon-ng
 Comment=Run Airmon-ng Security Tools
-Exec=uwsm-app -- kitty --hold --class wifi_testing -e sudo /home/dusk/user_scripts/networking/ax201_wifi_testing.sh
+Exec=uwsm-app -- kitty --hold --class wifi_testing -e sudo /home/stefan/user_scripts/networking/ax201_wifi_testing.sh
 Terminal=false
 Categories=Network;System;
 Icon=network-wireless-encrypted

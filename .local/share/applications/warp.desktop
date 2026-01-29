@@ -3,7 +3,7 @@
 Type=Application
 Name=Toggle Warp
 Comment=Toggle Cloudflare Warp Connection
-Exec=uwsm-app -- /home/dusk/user_scripts/networking/warp_toggle.sh
+Exec=uwsm-app -- /home/stefan/user_scripts/networking/warp_toggle.sh
 Terminal=false
 Categories=Network;
 Icon=network-vpn

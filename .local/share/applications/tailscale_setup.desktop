@@ -2,7 +2,7 @@
 Type=Application
 Name=Tailscale Setup
 Comment=Configure Tailscale VPN
-Exec=uwsm-app -- kitty --hold --class tailscale_setup -e sudo /home/dusk/user_scripts/networking/01_tailscale_setup.sh
+Exec=uwsm-app -- kitty --hold --class tailscale_setup -e sudo /home/stefan/user_scripts/networking/01_tailscale_setup.sh
 Terminal=false
 Categories=Network;
 Icon=network-vpn

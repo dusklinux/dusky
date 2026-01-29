@@ -2,7 +2,7 @@
 Type=Application
 Name=Tailscale Uninstall
 Comment=Remove Tailscale Configuration
-Exec=uwsm-app -- kitty --hold --class tailscale_uninstall -e sudo /home/dusk/user_scripts/networking/uninstall_tailscale.sh
+Exec=uwsm-app -- kitty --hold --class tailscale_uninstall -e sudo /home/stefan/user_scripts/networking/uninstall_tailscale.sh
 Terminal=false
 Categories=Network;
 Icon=edit-delete

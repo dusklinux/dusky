@@ -16,7 +16,7 @@ Categories=System;ConsoleOnly;
 # 2. kitty is called explicitly to control the class/title.
 # 3. --class and --title allow Hyprland to target this specific window.
 # 4. --hold keeps the window open if the script exits (optional, remove if script handles pauses).
-Exec=uwsm-app -- kitty --class update_dusky.sh --hold /home/dusk/user_scripts/update_dusky/update_dusky.sh
+Exec=uwsm-app -- kitty --class update_dusky.sh --hold /home/stefan/user_scripts/update_dusky/update_dusky.sh
 
 # Terminal is false because we are explicitly invoking Kitty.
 # If set to true, it would spawn the default terminal wrapper which offers less control.

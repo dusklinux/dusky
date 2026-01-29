@@ -3,7 +3,7 @@
 Type=Application
 Name=Toggle Hypridle
 Comment=Enable/Disable Hypridle
-Exec=uwsm-app -- /home/dusk/user_scripts/waybar/toggle_hypridle.sh
+Exec=uwsm-app -- /home/stefan/user_scripts/waybar/toggle_hypridle.sh
 Terminal=false
 Categories=System;
 Icon=system-suspend

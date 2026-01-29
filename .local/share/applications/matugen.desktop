@@ -4,7 +4,7 @@ Name=Matugen Theme
 GenericName=Theme Switcher
 Comment=Regenerate system colors from wallpaper
 # Direct launch - no terminal needed as it invokes Rofi itself
-Exec=uwsm-app -- /home/dusk/user_scripts/theme_matugen/theme_ctl.sh random
+Exec=uwsm-app -- /home/stefan/user_scripts/theme_matugen/theme_ctl.sh random
 Terminal=false
 Categories=Settings;Theme;
 Keywords=theme;color;wallpaper;material;

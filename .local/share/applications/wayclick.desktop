@@ -2,7 +2,7 @@
 Type=Application
 Name=Toggle Wayclick
 Comment=Key Press Sounds
-Exec=uwsm-app -- /home/dusk/user_scripts/wayclick/wayclick.sh
+Exec=uwsm-app -- /home/stefan/user_scripts/wayclick/wayclick.sh
 Terminal=false
 Categories=keyboard;sounds;
 Icon=preferences-desktop-theme

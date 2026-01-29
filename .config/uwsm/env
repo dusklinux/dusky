@@ -79,7 +79,7 @@ export CLIPHIST_DB_PATH="${XDG_RUNTIME_DIR}/cliphist.db"
 
 # ### HARDWARE: INTEL ###
 # # Force Intel media driver for VA-API (Video Decode/Encode)
-export LIBVA_DRIVER_NAME=iHD
+# export LIBVA_DRIVER_NAME=iHD
 
 # ### HARDWARE: AMD ###
 # # AMD uses the Mesa radeonsi driver

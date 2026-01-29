@@ -29,7 +29,7 @@ export HYPRCURSOR_SIZE=18
 # For laptops: Usually iGPU is the best choice for the compositor (window manager),
 # allowing the dGPU to sleep.
 #
-export AQ_DRM_DEVICES=/dev/dri/card1
+# export AQ_DRM_DEVICES=/dev/dri/card1
 
 # Legacy/Backup variable (Restored from your config)
 # This is the old wlroots equivalent of AQ_DRM_DEVICES.

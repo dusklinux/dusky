@@ -2,7 +2,7 @@
 Type=Application
 Name=Asus Control
 Comment=Asus Laptop Controls
-Exec=uwsm-app -- kitty --class asusctl.sh -e sudo /home/dusk/user_scripts/asus/asusctl.sh
+Exec=uwsm-app -- kitty --class asusctl.sh -e sudo /home/stefan/user_scripts/asus/asusctl.sh
 Terminal=false
 Categories=System;HardwareSettings;
 Icon=computer-laptop

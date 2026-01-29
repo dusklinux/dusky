@@ -3,7 +3,7 @@
 Type=Application
 Name=Scale UI Down
 Comment=Decrease display scaling
-Exec=uwsm-app -- /home/dusk/user_scripts/hypr/adjust_scale.sh -
+Exec=uwsm-app -- /home/stefan/user_scripts/hypr/adjust_scale.sh -
 Terminal=false
 Categories=Settings;
 Icon=zoom-out

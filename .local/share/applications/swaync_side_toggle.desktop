@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=SwayNC Side Toggle
 Comment=Toggle SwayNC position (Left/Right)
-Exec=uwsm-app -- kitty --class swaync_side_toggle.sh -e /home/dusk/user_scripts/swaync/swaync_side_toggle.sh
+Exec=uwsm-app -- kitty --class swaync_side_toggle.sh -e /home/stefan/user_scripts/swaync/swaync_side_toggle.sh
 Icon=preferences-system-notifications
 Type=Application
 Categories=System;Settings;Utility;
