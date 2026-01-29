@@ -178,3 +178,19 @@ ln -nfs $HOME/.config/matugen/generated/btop-colors.theme $HOME/.config/btop/the
 notify-send -i applications-graphics-symbolic "Theme Updated"
 '''
 
+[templates.discord]
+input_path  = '~/.config/matugen/templates/midnight-discord.json'
+output_path = '~/.config/matugen/generated/midnight-discord.json'
+post_hook   = '''
+SRC="$HOME/.config/generated/midnight-discord.css"
+for p in \
+  "$HOME/.config/vesktop/settings/quickCss.css" \
+  "$HOME/.var/app/dev.vencord.Vesktop/config/vesktop/settings/quickCss.css" \
+  "$HOME/.config/Vencord/settings/quickCss.css" \
+  "$HOME/.config/equibop/settings/quickCss.css" \
+  "$HOME/.var/app/org.equicord.equibop/config/equibop/settings/quickCss.css" \
+  "$HOME/.config/Equicord/settings/quickCss.css" 
+do
+  [ -d "$(dirname "$p")" ] && ln -nfs "$SRC" "$p"
+done
+'''
