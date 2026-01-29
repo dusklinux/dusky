@@ -230,6 +230,13 @@ setup_theme() {
     log_info "Configuring theme (Comfy)..."
     spicetify config current_theme Comfy color_scheme Comfy
 
+    # Check if color.ini exists (Comfy theme should have it in the repo)
+    if [[ ! -f "$comfy_dir/color.ini" ]]; then
+        log_warn "color.ini not found in Comfy theme. Run 'matugen' to generate colors."
+        log_info "Skipping spicetify apply for now."
+        return 0
+    fi
+
     # Apply
     log_info "Applying changes (Fast Reload)..."
     spicetify apply -n

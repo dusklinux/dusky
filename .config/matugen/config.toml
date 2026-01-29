@@ -178,3 +178,15 @@ ln -nfs $HOME/.config/matugen/generated/btop-colors.theme $HOME/.config/btop/the
 notify-send -i applications-graphics-symbolic "Theme Updated"
 '''
 
+# =============================================================================
+# VS Code Theme
+# =============================================================================
+
+[templates.vscode-theme-dark]
+input_path  = '~/.config/matugen/templates/vscode-theme-dark.json'
+output_path = '~/.vscode/extensions/danklinux.dms-theme-0.0.3/themes/dankshell-dark.json'
+
+[templates.vscode-theme-light]
+input_path  = '~/.config/matugen/templates/vscode-theme-light.json'
+output_path = '~/.vscode/extensions/danklinux.dms-theme-0.0.3/themes/dankshell-light.json'
+
