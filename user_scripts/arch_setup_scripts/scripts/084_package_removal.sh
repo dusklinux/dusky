@@ -77,6 +77,8 @@ cleanup() {
     if (( code != 0 )); then
         printf '\n%s[!] Script exited with code: %d%s\n' \
             "${RED}" "$code" "${RESET}" >&2
+        # Ensure we return the actual exit code
+        return "$code"
     fi
     return 0
 }
@@ -283,16 +285,29 @@ process_removal() {
     log_info "Removing ${BOLD}${#active_targets[@]}${RESET} ${label} package(s):"
     printf '         %s%s%s\n' "${CYAN}" "${active_targets[*]}" "${RESET}"
 
-    # Execute removal
-    if "${cmd[@]}"; then
+    # Execute removal with error handling
+    local -i cmd_exit=0
+    "${cmd[@]}" || cmd_exit=$?
+    
+    if (( cmd_exit == 0 )); then
         log_ok "${label} package removal completed."
+        return 0
     else
-        local -ri cmd_exit=$?
-        log_err "Failed to remove some ${label} packages (exit code: ${cmd_exit})."
+        # Distinguish between different error scenarios
+        case $cmd_exit in
+            1)
+                log_err "Failed to remove some ${label} packages (general failure)."
+                ;;
+            2)
+                log_err "Invalid usage or syntax error in ${label} removal command."
+                ;;
+            *)
+                log_err "Failed to remove some ${label} packages (exit code: ${cmd_exit})."
+                ;;
+        esac
         EXIT_CODE=1
+        return "$cmd_exit"
     fi
-
-    return 0
 }
 
 # ==============================================================================
@@ -320,12 +335,16 @@ main() {
 
     # Process official repository packages
     if (( ${#REPO_TARGETS[@]} )); then
-        process_removal "Repo" "pacman" REPO_TARGETS 1
+        process_removal "Repo" "pacman" REPO_TARGETS 1 || {
+            log_warn "Repo package removal encountered errors but continuing..."
+        }
     fi
 
     # Process AUR packages (warning already issued in detect_aur_helper if missing)
     if [[ -n $AUR_HELPER ]] && (( ${#AUR_TARGETS[@]} )); then
-        process_removal "AUR" "$AUR_HELPER" AUR_TARGETS 0
+        process_removal "AUR" "$AUR_HELPER" AUR_TARGETS 0 || {
+            log_warn "AUR package removal encountered errors but continuing..."
+        }
     fi
 
     printf '%s\n' "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
@@ -334,7 +353,7 @@ main() {
     if (( EXIT_CODE == 0 )); then
         log_ok "Cleanup completed successfully."
     else
-        log_warn "Cleanup completed with errors."
+        log_warn "Cleanup completed with errors (exit code: $EXIT_CODE)."
     fi
 
     return "$EXIT_CODE"
