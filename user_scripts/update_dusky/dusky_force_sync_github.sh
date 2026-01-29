@@ -17,7 +17,7 @@ readonly WORK_TREE="${HOME}"
 readonly BACKUP_NAME="recovery-backup-$(date +%s)"
 readonly BRANCH="main"
 # This is the Source of Truth. We enforce this URL.
-readonly REPO_URL="https://github.com/dusklinux/dusky"
+readonly REPO_URL="https://github.com/T3rr0or/dusky"
 
 # ------------------------------------------------------------------------------
 # VISUALS & LOGGING

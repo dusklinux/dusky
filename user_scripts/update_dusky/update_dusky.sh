@@ -22,7 +22,7 @@ declare -r WORK_TREE="${HOME}"
 declare -r SCRIPT_DIR="${HOME}/user_scripts/arch_setup_scripts/scripts"
 declare -r LOG_BASE_DIR="${HOME}/Documents/logs"
 declare -r LOCK_FILE="/tmp/arch-orchestrator.lock"
-declare -r REPO_URL="https://github.com/dusklinux/dusky"
+declare -r REPO_URL="https://github.com/T3rr0or/dusky"
 declare -r BRANCH="main"
 
 # ------------------------------------------------------------------------------
