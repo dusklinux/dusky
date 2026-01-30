@@ -1,26 +1,32 @@
+//horizontal_block_compact
+
 {
   "layer": "top",
   "exclusive": true,
   "reload_style_on_change": true,
   "position": "top",
   "spacing": 4,
-  "height": 31,
-  "margin-top": 2,
-  "margin-left": 10,
-  "margin-right": 10,
+  "height": 26,
+  "width": "100%",
+  "margin-top": 0,
+  "margin-left": 0,
+  "margin-right": 0,
   "margin-bottom": 0,
+
+  // --- MODULE LAYOUT ---
   "modules-left": [
     "custom/launcher",
     "clock",
     "custom/inhibit-suspend",
     "custom/updates",
     "custom/notification",
-    "custom/theme-toggle",
-    "custom/net-speed"
+    "tray"
   ],
+
   "modules-center": [
     "hyprland/workspaces"
   ],
+
   "modules-right": [
     "mpris",
     "network",
@@ -32,11 +38,15 @@
     "battery",
     "custom/power"
   ],
+
+  // --- MODULE CONFIGURATION ---
+
   "custom/launcher": {
     "format": "󰣇",
     "on-click": "rofi -show drun",
     "tooltip-format": "Application Launcher"
   },
+
   "clock": {
     "format": "󰥔 {:%I:%M}",
     "format-alt": "󰃭 {:%A, %B %d}",
@@ -57,6 +67,7 @@
       }
     }
   },
+
   "custom/inhibit-suspend": {
     "format": "{}",
     "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
@@ -66,6 +77,7 @@
     "on-click": "uwsm-app -- ~/user_scripts/waybar/toggle_hypridle.sh",
     "escape": true
   },
+
   "custom/updates": {
     "format": "󰏔 {}",
     "exec": "checkupdates 2>/dev/null | wc -l || echo 0",
@@ -73,6 +85,7 @@
     "on-click": "kitty sh -c 'command -v yay >/dev/null && yay || paru'",
     "tooltip-format": "System Updates"
   },
+
   "custom/notification": {
     "format": "{icon}",
     "format-icons": {
@@ -93,6 +106,7 @@
     "escape": true,
     "tooltip-format": "Notifications\n\n LMB Toggle Panel\n RMB  Do Not Disturb"
   },
+
   "custom/theme-toggle": {
     "format": "",
     "tooltip-format": "Theme Controls\n\n LMB  Dark Mode\n RMB  Light Mode\n MMB  Wallpaper",
@@ -100,19 +114,26 @@
     "on-click-right": "uwsm-app -- ~/user_scripts/theme_matugen/theme_ctl.sh set --mode light",
     "on-click-middle": "uwsm-app -- waypaper"
   },
+
+  "tray": {
+    "icon-size": 15,
+    "spacing": 6,
+    "show-passive-items": true
+  },
+
   "hyprland/workspaces": {
     "on-click": "activate",
     "format": "{icon}",
     "format-window-separator": " ",
-    "window-rewrite-default": " ",
+    "window-rewrite-default": "",
     "window-rewrite": {
-      "class<firefox>": " ",
-      "class<kitty>": " ",
-      "class<discord>": " ",
+      "class<firefox>": "",
+      "class<kitty>": "",
+      "class<discord>": "",
       "class<vlc>": "󰕼",
       "class<Code>": "󰨞",
       "class<thunar>": "󰝰",
-      "class<spotify>": " ",
+      "class<spotify>": "",
       "class<obsidian>": "󰎞"
     },
     "persistent-workspaces": {
@@ -121,10 +142,11 @@
     "on-scroll-up": "hyprctl dispatch workspace e-1",
     "on-scroll-down": "hyprctl dispatch workspace e+1"
   },
+
   "mpris": {
     "format": "{player_icon} {title}",
     "format-paused": "{status_icon} <i>{title}</i>",
-    "format-stopped": " ",
+    "format-stopped": "",
     "max-length": 25,
     "player-icons": {
       "default": "󰎆",
@@ -140,6 +162,8 @@
     "on-scroll-up": "playerctl next",
     "on-scroll-down": "playerctl previous"
   },
+
+  // --- CUSTOM NET SPEED ---
   "custom/net-speed": {
     "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --horizontal",
     "return-type": "json",
@@ -147,6 +171,7 @@
     "interval": 1,
     "tooltip": true
   },
+
   "network": {
     "format-wifi": "󰤨",
     "format-ethernet": "󰈀",
@@ -157,6 +182,7 @@
     "tooltip-format-disconnected": "󰤭 Disconnected",
     "on-click": "nm-connection-editor"
   },
+
   "bluetooth": {
     "format": "󰂯",
     "format-disabled": "󰂲",
@@ -169,6 +195,7 @@
     "on-click": "uwsm-app -- blueman-manager",
     "on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui"
   },
+
   "pulseaudio#output": {
     "format": "{icon} {volume}%",
     "format-muted": "󰖁",
@@ -178,9 +205,9 @@
       "headphone": "󰋋",
       "hands-free": "󰋎",
       "headset": "󰋎",
-      "phone": " ",
-      "portable": " ",
-      "car": " ",
+      "phone": "",
+      "portable": "",
+      "car": "",
       "default": ["󰕿", "󰖀", "󰕾"]
     },
     "on-click": "uwsm-app -- pavucontrol",
@@ -192,6 +219,7 @@
     "scroll-step": 5,
     "max-volume": 150
   },
+
   "backlight": {
     "format": "{icon} {percent}",
     "tooltip-format": "Brightness: {percent}%\n\n LMB  Brightness\n RMB  Night Light\n MMB  Shaders",
@@ -202,6 +230,7 @@
     "on-scroll-down": "swayosd-client --brightness lower",
     "format-icons": ["󰃞", "󰃟", "󰃠"]
   },
+
   "cpu": {
     "interval": 2,
     "format": "󰍛 {usage}%",
@@ -211,6 +240,7 @@
       "critical": 90
     }
   },
+
   "memory": {
     "interval": 2,
     "format": "󰘚 {percentage}%",
@@ -220,6 +250,7 @@
       "critical": 90
     }
   },
+
   "battery": {
     "states": {
       "good": 80,
@@ -235,9 +266,16 @@
     "tooltip-format": "{timeTo}\n\n󱟦 Health: {health}%\n󱐋 Power: {power:.2f}W",
     "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
   },
+
   "custom/power": {
     "format": "⏻",
     "on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh",
     "tooltip-format": "Power Menu"
+  },
+
+  "custom/lyrics": {
+    "exec": "lrcsnc",
+    "escape": true,
+    "min-length": 1
   }
 }
