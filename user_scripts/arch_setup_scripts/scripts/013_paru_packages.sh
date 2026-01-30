@@ -61,6 +61,7 @@ readonly PACKAGES=(
   "tray-tui"
   "wifitui-bin"
   "xdg-terminal-exec"
+  "vesktop"
 )
 
 # 5 Seconds wait time before auto-retrying

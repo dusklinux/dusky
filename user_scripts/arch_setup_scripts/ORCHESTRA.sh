@@ -102,6 +102,7 @@ INSTALL_SEQUENCE=(
 
     "U | 087_hypr_custom_config_setup.sh"
     "U | 088_hyprctl_reload.sh"
+    "U | 980_vesktop_discord_matugen_theme.sh"
     "U | 990_vscode_dms_theme_setup.sh"
 )
 
