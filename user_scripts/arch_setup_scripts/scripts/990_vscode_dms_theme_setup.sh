@@ -9,6 +9,8 @@
 #   ./016_vscode_dms_theme_setup.sh
 # ==============================================================================
 
+yay -S visual-studio-code-bin
+
 set -euo pipefail
 
 # --- FORMATTING & VISUALS ---
