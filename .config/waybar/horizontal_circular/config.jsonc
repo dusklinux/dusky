@@ -19,6 +19,7 @@
     ],
     "modules-right": [
         "custom/net-speed",
+        "custom/vpn",
         "battery",
         "custom/notification"
     ],
@@ -137,6 +138,13 @@
         "format": "{}",
         "interval": 1,
         "tooltip": true
+    },
+    "custom/vpn": {
+        "format": "{}",
+        "return-type": "json",
+        "interval": 5,
+        "exec": "if ip link show parell >/dev/null 2>&1; then echo '{\"text\": \"󰦝\", \"tooltip\": \"Work VPN: Connected\", \"class\": \"vpn-on\"}'; else echo '{\"text\": \"󰦞\", \"tooltip\": \"Work VPN: Disconnected\", \"class\": \"vpn-off\"}'; fi",
+        "on-click": "bash -c 'if ip link show parell >/dev/null 2>&1; then uwsm-app -- kitty -e sh -c \"sudo wg-quick down parell; echo; read -n 1 -s -r -p \\\"Press any key to close\\\"\"; else uwsm-app -- kitty -e sh -c \"sudo wg-quick up parell; echo; read -n 1 -s -r -p \\\"Press any key to close\\\"\"; fi'"
     },
     "battery": {
         "states": { "warning": 30, "critical": 15 },

@@ -35,6 +35,7 @@
         "bluetooth",
         "custom/app-tray",
         "custom/network",
+        "custom/vpn",
         "custom/inhibit-suspend",
         "custom/notification",
         "clock",
@@ -182,6 +183,14 @@
         "on-click-middle": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
         "interval": 2, // Optimized from 1s to 2s
         "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --vertical"
+    },
+
+    "custom/vpn": {
+        "format": "{}",
+        "return-type": "json",
+        "interval": 5,
+        "exec": "if ip link show parell >/dev/null 2>&1; then echo '{\"text\": \"󰦝\", \"tooltip\": \"Work VPN: Connected\", \"class\": \"vpn-on\"}'; else echo '{\"text\": \"󰦞\", \"tooltip\": \"Work VPN: Disconnected\", \"class\": \"vpn-off\"}'; fi",
+        "on-click": "bash -c 'if ip link show parell >/dev/null 2>&1; then uwsm-app -- kitty -e sh -c \"sudo wg-quick down parell; echo; read -n 1 -s -r -p \\\"Press any key to close\\\"\"; else uwsm-app -- kitty -e sh -c \"sudo wg-quick up parell; echo; read -n 1 -s -r -p \\\"Press any key to close\\\"\"; fi'"
     },
 
     "custom/notification": {

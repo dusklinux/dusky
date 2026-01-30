@@ -26,6 +26,7 @@
     
     "modules-right": [ 
         //"custom/network",      
+        "custom/vpn",
         "pulseaudio",
         "battery",
         "custom/power"
@@ -120,6 +121,14 @@
         "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
         "interval": 5,
         "tooltip-format": "{timeTo}\nHealth: {health}%"
+    },
+
+    "custom/vpn": {
+        "format": "{}",
+        "return-type": "json",
+        "interval": 5,
+        "exec": "if ip link show parell >/dev/null 2>&1; then echo '{\"text\": \"󰦝\", \"tooltip\": \"Work VPN: Connected\", \"class\": \"vpn-on\"}'; else echo '{\"text\": \"󰦞\", \"tooltip\": \"Work VPN: Disconnected\", \"class\": \"vpn-off\"}'; fi",
+        "on-click": "bash -c 'if ip link show parell >/dev/null 2>&1; then uwsm-app -- kitty -e sh -c \"sudo wg-quick down parell; echo; read -n 1 -s -r -p \\\"Press any key to close\\\"\"; else uwsm-app -- kitty -e sh -c \"sudo wg-quick up parell; echo; read -n 1 -s -r -p \\\"Press any key to close\\\"\"; fi'"
     },
 
     "custom/network": {

@@ -546,6 +546,35 @@ window#waybar > box {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   VPN TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-vpn {
+  padding: 0px 10px 0px 9px;
+  margin: 5px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @on_surface;
+  font-size: 14px;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-vpn:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+#custom-vpn.vpn-on {
+  color: @tertiary;
+  background-color: alpha(@tertiary_container, 0.35);
+  border: 1px solid alpha(@tertiary, 0.2);
+}
+
+#custom-vpn.vpn-off {
+  color: @on_surface_variant;
+  background-color: alpha(@surface_container, 0.6);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
    POWER BUTTON
    ───────────────────────────────────────────────────────────────────────────── */
 
