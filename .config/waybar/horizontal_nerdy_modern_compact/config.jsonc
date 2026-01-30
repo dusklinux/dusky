@@ -333,7 +333,7 @@
 
     "custom/inhibit-suspend": {
         "format": "{}",
-        "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\\\"text\\\": \\\"󰌾\\\", \\\"tooltip\\\": \\\"Auto-suspend ENABLED\\\\nClick to disable hypridle\\\", \\\"class\\\": \\\"enabled\\\"}'; else echo '{\\\"text\\\": \\\"󰅶\\\", \\\"tooltip\\\": \\\"Auto-suspend DISABLED\\\\nClick to enable hypridle\\\", \\\"class\\\": \\\"disabled\\\"}'; fi",
+        "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰌾\", \"tooltip\": \"Auto-suspend ENABLED\\nClick to disable hypridle\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Auto-suspend DISABLED\\nClick to enable hypridle\", \"class\": \"disabled\"}'; fi",
         "return-type": "json",
         "interval": 5,
         "signal": 9,

@@ -433,7 +433,12 @@ tooltip label {
    SYSTEM CONTROLS - COMPACT
    ═══════════════════════════════════════════════════════════════════════════ */
 #custom-theme,
-#custom-inhibit-suspend,
+
+#custom-inhibit-suspend {
+    font-size: 12px;
+    padding: 0px 3px 0px 4px;
+}
+
 #custom-notification {
     font-size: 12px;
     padding: 0px 4px 0px 4px;

@@ -425,7 +425,7 @@ tooltip label {
 #custom-theme {
     color: @secondary;
     font-size: 14px;
-    padding: 0px 2px 0px 2px;
+    padding: 0px 4px 0px 4px;
 }
 
 #custom-theme:hover {
@@ -434,8 +434,8 @@ tooltip label {
 }
 
 #custom-inhibit-suspend {
-    font-size: 13px;
-    padding: 0px 2px 0px 2px;
+    font-size: 12px;
+    padding: 0px 3px 0px 4px;
 }
 
 #custom-inhibit-suspend.enabled {
@@ -445,7 +445,7 @@ tooltip label {
 #custom-inhibit-suspend.disabled {
     color: @tertiary;
     background-color: @tertiary_container;
-    border-radius: 8px;
+    border-radius: 2px 8px;
 }
 
 #custom-inhibit-suspend:hover {
