@@ -106,27 +106,13 @@ install_decky_loader() {
 		return 0
 	fi
 
-	log_info "Installing Decky Loader..."
+	log_info "Installing Decky Loader using official installer..."
 
-	# Create the homebrew directory
-	mkdir -p "$HOME/homebrew"
-
-	# Download Decky Loader plugin (latest release)
-	log_info "Downloading Decky Loader..."
-	if ! curl -fsSL "https://github.com/SteamDeckHomebrew/decky-plugin-loader/releases/latest/download/decky_loader.tar.gz" -o "$HOME/homebrew/decky_loader.tar.gz"; then
-		die "Failed to download Decky Loader."
+	if ! curl -fsSL https://github.com/SteamDeckHomebrew/decky-installer/releases/latest/download/install_release.sh | sh; then
+		die "Decky Loader installation failed."
 	fi
 
-	# Extract the plugin
-	log_info "Extracting Decky Loader..."
-	cd "$HOME/homebrew" || die "Failed to change to homebrew directory"
-	tar -xzf decky_loader.tar.gz
-
-	# Clean up the tar file
-	rm decky_loader.tar.gz
-
 	log_success "Decky Loader installed successfully!"
-	log_info "Installation location: $HOME/homebrew"
 }
 
 install_css_loader() {
@@ -134,6 +120,12 @@ install_css_loader() {
 
 	# Create plugins directory if it doesn't exist
 	mkdir -p "$HOME/homebrew/plugins"
+
+	# Check if CSS Loader plugin already exists
+	if [[ -d "$HOME/homebrew/plugins/SDH-CssLoader" ]]; then
+		log_success "SDH-CSSLoader plugin already exists. Skipping installation."
+		return 0
+	fi
 
 	# Download and install SDH-CSSLoader plugin
 	local css_zip="$HOME/SDH-CSSLoader-Decky.zip"
@@ -188,33 +180,41 @@ setup_matugen_themes() {
 		log_info "No Matugen Steam colors found. Installing default themes..."
 
 		# Download Color Master theme
-		local color_master_zip="162299bf-8027-43ee-ba02-a6cd3a79fb1b.zip"
-		log_info "Downloading Color Master theme..."
+		if [[ ! -d "$themes_dir/Color Master" ]]; then
+			local color_master_zip="162299bf-8027-43ee-ba02-a6cd3a79fb1b.zip"
+			log_info "Downloading Color Master theme..."
 
-		if ! wget -q "https://api.deckthemes.com/blobs/162299bf-8027-43ee-ba02-a6cd3a79fb1b" -O "$color_master_zip"; then
-			log_warn "Failed to download Color Master theme."
-		else
-			log_info "Extracting Color Master theme..."
-			if unzip -q "$color_master_zip" && [[ -d "Color Master" ]]; then
-				mv "Color Master" "$themes_dir/"
-				log_success "Color Master theme installed."
+			if ! wget -q "https://api.deckthemes.com/blobs/162299bf-8027-43ee-ba02-a6cd3a79fb1b" -O "$color_master_zip"; then
+				log_warn "Failed to download Color Master theme."
+			else
+				log_info "Extracting Color Master theme..."
+				if unzip -q "$color_master_zip" && [[ -d "Color Master" ]]; then
+					mv "Color Master" "$themes_dir/"
+					log_success "Color Master theme installed."
+				fi
+				rm -f "$color_master_zip"
 			fi
-			rm -f "$color_master_zip"
+		else
+			log_success "Color Master theme already exists. Skipping download."
 		fi
 
 		# Download Desktop Colored Toggles theme
-		local desktop_toggles_zip="01923bd4-078c-4453-85c7-9e9d34156589.zip"
-		log_info "Downloading Desktop Colored Toggles theme..."
+		if [[ ! -d "$themes_dir/Desktop Colored Toggles" ]]; then
+			local desktop_toggles_zip="01923bd4-078c-4453-85c7-9e9d34156589.zip"
+			log_info "Downloading Desktop Colored Toggles theme..."
 
-		if ! wget -q "https://api.deckthemes.com/blobs/01923bd4-078c-4453-85c7-9e9d34156589" -O "$desktop_toggles_zip"; then
-			log_warn "Failed to download Desktop Colored Toggles theme."
-		else
-			log_info "Extracting Desktop Colored Toggles theme..."
-			if unzip -q "$desktop_toggles_zip" && [[ -d "Desktop Colored Toggles" ]]; then
-				mv "Desktop Colored Toggles" "$themes_dir/"
-				log_success "Desktop Colored Toggles theme installed."
+			if ! wget -q "https://api.deckthemes.com/blobs/01923bd4-078c-4453-85c7-9e9d34156589" -O "$desktop_toggles_zip"; then
+				log_warn "Failed to download Desktop Colored Toggles theme."
+			else
+				log_info "Extracting Desktop Colored Toggles theme..."
+				if unzip -q "$desktop_toggles_zip" && [[ -d "Desktop Colored Toggles" ]]; then
+					mv "Desktop Colored Toggles" "$themes_dir/"
+					log_success "Desktop Colored Toggles theme installed."
+				fi
+				rm -f "$desktop_toggles_zip"
 			fi
-			rm -f "$desktop_toggles_zip"
+		else
+			log_success "Desktop Colored Toggles theme already exists. Skipping download."
 		fi
 
 		log_info "Run 'matugen' to generate Steam colors for automatic theming."
@@ -227,44 +227,36 @@ setup_matugen_themes() {
 configure_sudoers() {
 	log_info "Configuring sudoers for plugin_loader..."
 
-	local sudoers_line="ALL ALL=(ALL) NOPASSWD: /bin/systemctl restart plugin_loader"
-	local sudoers_file="/etc/sudoers"
-	local temp_file
+	local rule="ALL ALL=(ALL) NOPASSWD: /bin/systemctl restart plugin_loader"
+	local sudoers_dropin="/etc/sudoers.d/decky-plugin-loader"
 
-	# Check if the rule already exists in any sudoers file
-	if grep -Fq "$sudoers_line" /etc/sudoers /etc/sudoers.d/* 2>/dev/null; then
+	# Check if rule already exists
+	if sudo grep -Fq "$rule" "$sudoers_dropin" 2>/dev/null; then
 		log_success "Sudoers rule already exists"
 		return 0
 	fi
 
-	log_info "Adding sudoers rule for plugin_loader restart..."
+	log_info "Adding sudoers rule..."
 
-	# Create a temporary sudoers file and validate
-	temp_file=$(mktemp)
-	TEMP_FILES+=("$temp_file")
+	echo "$rule" | sudo tee "$sudoers_dropin" >/dev/null
 
-	if ! cat "$sudoers_file" >"$temp_file"; then
-		die "Failed to read current sudoers file"
-	fi
+	# Fix permissions (sudo requires 0440)
+	sudo chmod 0440 "$sudoers_dropin"
 
-	echo "$sudoers_line" >>"$temp_file"
-
-	if ! sudo visudo -cf "$temp_file"; then
-		die "Invalid sudoers syntax"
-	fi
-
-	# Append to sudoers
-	echo "$sudoers_line" | sudo tee -a "$sudoers_file" >/dev/null
-
-	# Restart plugin_loader service
-	if sudo systemctl restart plugin_loader; then
-		log_success "Plugin loader service restarted"
-	else
-		log_warn "Failed to restart plugin loader service (may not be running yet)"
+	# Validate sudoers config
+	if ! sudo visudo -cf "$sudoers_dropin"; then
+		sudo rm -f "$sudoers_dropin"
+		die "Invalid sudoers configuration — rule reverted"
 	fi
 
 	log_success "Sudoers rule added successfully"
-	log_info "Users can now run: sudo systemctl restart plugin_loader"
+
+	# Restart plugin_loader if it exists
+	if sudo systemctl restart plugin_loader 2>/dev/null; then
+		log_success "Plugin loader service restarted"
+	else
+		log_warn "plugin_loader service not found or not running yet"
+	fi
 }
 
 # --- Execution ---
