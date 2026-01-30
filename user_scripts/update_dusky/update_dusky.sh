@@ -261,6 +261,8 @@ declare -ra UPDATE_SEQUENCE=(
 #    "U | 086_generate_colorfiles_for_current_wallpaer.sh"
     "U | 087_hypr_custom_config_setup.sh"
     "U | 088_hyprctl_reload.sh"
+    "U | 090_switch_clipboard.sh --terminal"
+    "S | 091_sddm_setup.sh --auto"
 
 
 
