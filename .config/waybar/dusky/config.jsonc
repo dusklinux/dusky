@@ -4,7 +4,7 @@
   "reload_style_on_change": true,
   "position": "top",
   "spacing": 4,
-  "height": 26,
+  "height": 29,
   "width": "100%",
   "margin-top": 0,
   "margin-left": 0,
@@ -18,8 +18,8 @@
     "custom/inhibit-suspend",
     "custom/updates",
     "custom/notification",
-    "tray",
-    "custom/cava"
+    "tray"
+//    "custom/cava"
   ],
 
   "modules-center": [
@@ -279,13 +279,6 @@
   },
 
   "custom/cava": {
-    "format": "{0}",
-    "exec": "$HOME/user_scripts/waybar/cava.py waybar --json",
-    "restart-interval": 1,
-    "hide-empty": true,
-    "return-type": "json",
-    "tooltip": true,
-    "on-click": "pkill -f 'cava.py waybar"
-    // "signal": 15// did no work
+    "exec": "sleep 3 && cava -p $HOME/.config/cava/config | sed -u 's/;//g;s/0/0/g;s/1/1/g;s/2/2/g;s/3/3/g;s/4/4/g;s/5/5/g;s/6/6/g;s/7/7/g;s/8/8/g;s/9/9/g;'"
   }
 }
