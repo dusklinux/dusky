@@ -1,5 +1,3 @@
-//horizontal_block_compact
-
 {
   "layer": "top",
   "exclusive": true,
@@ -20,7 +18,8 @@
     "custom/inhibit-suspend",
     "custom/updates",
     "custom/notification",
-    "tray"
+    "tray",
+    "custom/cava"
   ],
 
   "modules-center": [
@@ -277,5 +276,16 @@
     "exec": "lrcsnc",
     "escape": true,
     "min-length": 1
+  },
+
+  "custom/cava": {
+    "format": "{0}",
+    "exec": "$HOME/user_scripts/waybar/cava.py waybar --json",
+    "restart-interval": 1,
+    "hide-empty": true,
+    "return-type": "json",
+    "tooltip": true,
+    "on-click": "pkill -f 'cava.py waybar"
+    // "signal": 15// did no work
   }
 }
