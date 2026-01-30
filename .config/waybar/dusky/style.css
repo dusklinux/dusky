@@ -391,7 +391,7 @@ window#waybar > box {
 }
 
 #bluetooth.connected {
-  color: @primary_fixed;
+  color: @on_surface;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -544,6 +544,29 @@ window#waybar > box {
   0% { opacity: 1; }
   50% { opacity: 0.8; }
   100% { opacity: 1; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CAVA
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-cava {
+  padding: 0px 12px 0px 9px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: transparent;
+  color: @on_surface;
+  font-size: 12px;
+  border: 1px solid alpha(@primary, 0.2);
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-cava:hover {
+  border: 1px solid @primary;
+}
+
+#custom-cava.silent {
+  color: alpha(@on_surface_variant, 0.4);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
