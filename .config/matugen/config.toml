@@ -143,8 +143,8 @@ ln -nfs $HOME/.config/matugen/generated/obsidian-theme.css $HOME/Documents/pensi
 input_path  = '~/.config/matugen/templates/spotify-colors.ini'
 output_path = '~/.config/matugen/generated/spotify-colors.ini'
 post_hook   = '''
-if command -v spicetify &> /dev/null && [ -d "$HOME/.config/spicetify/Themes/Comfy" ]; then
-    ln -nfs $HOME/.config/matugen/generated/spotify-colors.ini $HOME/.config/spicetify/Themes/Comfy/color.ini;
+if command -v spicetify &> /dev/null && [ -d "$HOME/.config/spicetify/Themes/dusky" ]; then
+    ln -nfs $HOME/.config/matugen/generated/spotify-colors.ini $HOME/.config/spicetify/Themes/dusky/color.ini;
     spicetify apply -n;
     hyprctl dispatch sendshortcut "CTRL SHIFT, R, class:^(spotify)$" || true;
 fi
