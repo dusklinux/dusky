@@ -440,7 +440,12 @@ show_menu() {
     
     is_kitty && kitty_clear
     
-    [[ -n "$selection" ]] && cmd_copy "$selection"
+    if [[ -n "$selection" ]]; then
+        cmd_copy "$selection"
+    fi
+    
+    # Forcefully kill the parent process (the terminal) to ensure everything closes.
+    kill -9 $PPID
 }
 
 #==============================================================================

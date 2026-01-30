@@ -177,9 +177,10 @@ show_ai_menu() {
 
 show_utils_menu() {
     local choice
-    choice=$(menu "Utils" "󰖩  Wi-Fi (TUI)\n󰂯  Bluetooth\n󰕾  Audio Mixer\n󰞅  Emoji Picker\n  Screenshot (Swappy)\n󰅇  Clipboard Persistence\n󰉋  File Manager Switch\n󰍽  Mouse Handedness\n󰌌  Wayclick (Key Sounds)")
+    choice=$(menu "Utils" "  Dusky Control Center\n󰖩  Wi-Fi (TUI)\n󰂯  Bluetooth\n󰕾  Audio Mixer\n󰞅  Emoji Picker\n  Screenshot (Swappy)\n󰅇  Clipboard Persistence\n󰉋  File Manager Switch\n󰍽  Mouse Handedness\n󰌌  Wayclick (Key Sounds)")
 
     case "${choice,,}" in
+        *dusky*) run_app "$SCRIPTS_DIR/dusky_system/dusky_control_center.py" ;;
         *wi-fi*)       run_term "wifitui" wifitui ;;
         *bluetooth*)   run_app blueman-manager ;;
         *audio*)       run_app pavucontrol ;;
