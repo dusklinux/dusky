@@ -2,6 +2,34 @@
 """
 Cava Manager for Waybar
 A simplified script that runs a single cava instance and outputs formatted data for waybar
+
+Waybar Configuration Example:
+{
+    "custom/cava": {
+        "format": "{}",
+        "return-type": "json",
+        "exec": "/path/to/cava.py waybar",
+        "restart-interval": 1,
+        "config": {
+            "bar": "▁▂▃▄▅▆▇█",
+            "bar-array": ["<span color='#ff0000'>█</span>", "<span color='#00ff00'>█</span>"],
+            "width": 16,
+            "stb": 0,
+            "bars": 16,
+            "range": 15
+        }
+    }
+}
+
+Config Options:
+- bar: Unicode characters for bars (default: "▁▂▃▄▅▆▇█")
+- bar-array: Array of strings for each bar level (overrides bar)
+- width: Number of bars to display (default: auto from bar length)
+- stb: Standby mode (0=hide, 1=blank, 2=full, 3=low, string=custom)
+- bars: Number of cava bars to generate (default: width)
+- range: ASCII range for cava (default: 15)
+
+Command line args override config values.
 """
 
 import socket
@@ -477,6 +505,38 @@ class CavaWaybarClient:
         )
         self.socket_file = os.path.join(self.runtime_dir, "hyde", "cava.sock")
         self.parser = CavaDataParser()
+        self.config = self._read_waybar_config()
+
+    def _read_waybar_config(self):
+        """Read configuration from waybar stdin input"""
+        config = {}
+        try:
+            # Waybar sends initial config on stdin
+            import select
+
+            if select.select([sys.stdin], [], [], 0.1)[0]:
+                line = sys.stdin.readline()
+                if line:
+                    import json
+
+                    try:
+                        waybar_input = json.loads(line)
+                        config = waybar_input.get("config", {})
+                    except json.JSONDecodeError:
+                        pass
+        except Exception:
+            pass
+        return config
+
+    def _get_config_value(self, key, default):
+        """Get config value from waybar config, then args, then default"""
+        if (
+            hasattr(self, "args")
+            and hasattr(self.args, key)
+            and getattr(self.args, key) is not None
+        ):
+            return getattr(self.args, key)
+        return self.config.get(key, default)
 
     def _auto_start_manager_if_needed(self, bars=16, range_val=15):
         """Automatically start manager if not running"""
@@ -488,16 +548,26 @@ class CavaWaybarClient:
                 return False
         return True
 
-    def start(
-        self,
-        bar_chars="▁▂▃▄▅▆▇█",
-        width=None,
-        standby_mode=0,
-        timeout=10,
-        bars=16,
-        range_val=15,
-    ):
+    def start(self, args=None, timeout=10):
         """Start the cava waybar client"""
+        self.args = args
+
+        # Get configuration from waybar config, then args, then defaults
+        bar_chars = self._get_config_value("bar", "▁▂▃▄▅▆▇█")
+        if self._get_config_value("bar-array", None):
+            bar_chars = self._get_config_value("bar-array", None)
+
+        width = self._get_config_value("width", None)
+        if width is None:
+            width = len(bar_chars) if bar_chars else 8
+
+        standby_mode = self._get_config_value("stb", 0)
+        if isinstance(standby_mode, str) and standby_mode.isdigit():
+            standby_mode = int(standby_mode)
+
+        bars = self._get_config_value("bars", width)
+        range_val = self._get_config_value("range", 15)
+
         if not self._auto_start_manager_if_needed(bars, range_val):
             print("Error: Could not start cava manager", file=sys.stderr)
             sys.exit(1)
@@ -511,6 +581,7 @@ class CavaWaybarClient:
                 sys.exit(1)
             time.sleep(0.1)
 
+        client_socket = None
         try:
             client_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             client_socket.connect(self.socket_file)
@@ -554,10 +625,11 @@ class CavaWaybarClient:
         except KeyboardInterrupt:
             pass
         finally:
-            try:
-                client_socket.close()
-            except Exception:
-                pass
+            if client_socket:
+                try:
+                    client_socket.close()
+                except Exception:
+                    pass
 
 
 class CavaReloadClient:
@@ -636,13 +708,8 @@ def main():
             else (len(bar_chars) if bar_chars else 8)
         )
 
-        try:
-            standby_mode = int(args.stb) if args.stb.isdigit() else args.stb
-        except ValueError:
-            standby_mode = args.stb
-
         client = CavaWaybarClient()
-        client.start(bar_chars, width, standby_mode, bars=width, range_val=15)
+        client.start(args)
 
     elif args.command == "status":
         server = CavaServer()
