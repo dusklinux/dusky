@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=REMATCH
+Comment=Play this game on Steam
+Exec=steam steam://rungameid/2138720
+Icon=steam_icon_2138720
+Terminal=false
+Type=Application
+Categories=Game;

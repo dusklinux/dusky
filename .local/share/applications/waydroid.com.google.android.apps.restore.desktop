@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Android Switch
+Exec=waydroid app launch com.google.android.apps.restore
+Icon=/home/stefan/.local/share/waydroid/data/icons/com.google.android.apps.restore.png
+Categories=X-WayDroid-App;
+X-Purism-FormFactor=Workstation;Mobile;
+Actions=app-settings;
+
+[Desktop Action app-settings]
+Name=App Settings
+Exec=waydroid app intent android.settings.APPLICATION_DETAILS_SETTINGS package:com.google.android.apps.restore
+Icon=/home/stefan/.local/share/waydroid/data/icons/com.android.settings.png

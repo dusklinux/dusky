@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Wine Installer
+MimeType=application/x-wine-extension-msp;
+Exec=env "WINEPREFIX=/home/stefan/.wine" wine start /ProgIDOpen "Msi.Patch" %f
+NoDisplay=true
+StartupNotify=true
+Icon=D23E_msiexec.0

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Word
+Exec=/home/stefan/.local/bin/linoffice/linoffice.sh word %F
+Terminal=false
+Type=Application
+Icon=/home/stefan/.local/bin/linoffice/apps/word/icon.svg
+StartupWMClass=Microsoft Word
+Comment=Word processing tool for creating and editing documents.
+Categories=Office
+MimeType=application/msword;application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/vnd.openxmlformats-officedocument.wordprocessingml.template;application/vnd.ms-word.document.macroEnabled.12;application/vnd.ms-word.template.macroEnabled.12;

@@ -1,0 +1,22 @@
+[Desktop Entry]
+Name=Microbot Launcher (3.2.8)
+Exec=/home/stefan/Applications/Microbot.AppImage --no-sandbox %U
+Terminal=false
+Type=Application
+Icon=appimagekit_1b9042e1f44fa70da4241e1a11279245_microbot-launcher
+StartupWMClass=Microbot Launcher
+X-AppImage-Version=3.2.8
+Comment=Launcher for the microbot client
+Categories=Game;
+
+TryExec=/home/stefan/Applications/Microbot.AppImage
+X-AppImage-Old-Icon=microbot-launcher
+X-AppImage-Old-Name=Microbot Launcher
+X-AppImage-Identifier=1b9042e1f44fa70da4241e1a11279245
+Actions=AppImageLauncher-Remove-AppImage;
+X-AppImageLauncher-Version=3.0.0-beta-2 (git commit release/tag), built on 2026-01-25 19:07:30 UTC
+
+[Desktop Action AppImageLauncher-Remove-AppImage]
+Name=Delete this AppImage
+Icon=AppImageLauncher
+Exec=/usr/lib/appimagelauncher/remove "/home/stefan/Applications/Microbot.AppImage"

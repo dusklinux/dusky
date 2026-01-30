@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.1
+Name=My Wine App Handler
+Type=Application
+Terminal=false
+MimeType=x-scheme-handler/tpcitcgapp;
+Exec=~/Downloads/TEMP/wrapper_script.sh %u
+Icon=/path/to/your/app_icon.png
+Categories=Network;

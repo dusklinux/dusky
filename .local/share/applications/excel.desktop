@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Excel
+Exec=/home/stefan/.local/bin/linoffice/linoffice.sh excel %F
+Terminal=false
+Type=Application
+Icon=/home/stefan/.local/bin/linoffice/apps/excel/icon.svg
+StartupWMClass=Microsoft Excel
+Comment=Spreadsheet software for data analysis and visualization
+Categories=Office
+MimeType=application/vnd.ms-excel;application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;application/vnd.openxmlformats-officedocument.spreadsheetml.template;application/vnd.ms-excel.sheet.macroEnabled.12;application/vnd.ms-excel.template.macroEnabled.12;application/vnd.ms-excel.addin.macroEnabled.12;application/vnd.ms-excel.sheet.binary.macroEnabled.12;

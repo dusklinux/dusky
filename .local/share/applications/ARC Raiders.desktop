@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=ARC Raiders
+Comment=Play this game on Steam
+Exec=steam steam://rungameid/1808500
+Icon=steam_icon_1808500
+Terminal=false
+Type=Application
+Categories=Game;

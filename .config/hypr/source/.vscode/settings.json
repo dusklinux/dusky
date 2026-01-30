@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^\"\\$\\{HOME\\}/contained_apps/uv/parakeet/bin/python3\" -c \"import torch; print\\('✓ torch version:', torch\\.__version__\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Magisk Delta
+Exec=waydroid app launch io.github.huskydg.magisk
+Icon=/home/stefan/.local/share/waydroid/data/icons/io.github.huskydg.magisk.png
+Categories=X-WayDroid-App;
+X-Purism-FormFactor=Workstation;Mobile;
+Actions=app-settings;
+
+[Desktop Action app-settings]
+Name=App Settings
+Exec=waydroid app intent android.settings.APPLICATION_DETAILS_SETTINGS package:io.github.huskydg.magisk
+Icon=/home/stefan/.local/share/waydroid/data/icons/com.android.settings.png

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=LinOffice
+Exec=python3 /home/stefan/.local/bin/linoffice/gui/linoffice.py
+Terminal=false
+Type=Application
+Icon=
+StartupWMClass=LinOffice
+Comment=LinOffice launcher and settings
+Categories=Office
+MimeType=

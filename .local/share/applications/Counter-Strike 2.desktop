@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Counter-Strike 2
+Comment=Play this game on Steam
+Exec=steam steam://rungameid/730
+Icon=steam_icon_730
+Terminal=false
+Type=Application
+Categories=Game;

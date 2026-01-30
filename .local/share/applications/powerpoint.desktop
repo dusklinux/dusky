@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Powerpoint
+Exec=/home/stefan/.local/bin/linoffice/linoffice.sh powerpoint %F
+Terminal=false
+Type=Application
+Icon=/home/stefan/.local/bin/linoffice/apps/powerpoint/icon.svg
+StartupWMClass=Microsoft Powerpoint
+Comment=Presentation software for designing slideshows and visual content.
+Categories=Office
+MimeType=application/vnd.ms-powerpoint;application/vnd.openxmlformats-officedocument.presentationml.presentation;application/vnd.openxmlformats-officedocument.presentationml.template;application/vnd.openxmlformats-officedocument.presentationml.slideshow;application/vnd.ms-powerpoint.addin.macroEnabled.12;application/vnd.ms-powerpoint.presentation.macroEnabled.12;application/vnd.ms-powerpoint.template.macroEnabled.12;application/vnd.ms-powerpoint.slideshow.macroEnabled.12;

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Clock
+Exec=waydroid app launch com.android.deskclock
+Icon=/home/stefan/.local/share/waydroid/data/icons/com.android.deskclock.png
+Categories=X-WayDroid-App;
+X-Purism-FormFactor=Workstation;Mobile;
+Actions=app-settings;
+NoDisplay=true
+
+[Desktop Action app-settings]
+Name=App Settings
+Exec=waydroid app intent android.settings.APPLICATION_DETAILS_SETTINGS package:com.android.deskclock
+Icon=/home/stefan/.local/share/waydroid/data/icons/com.android.settings.png

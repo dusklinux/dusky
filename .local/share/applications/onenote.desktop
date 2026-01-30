@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=OneNote
+Exec=/home/stefan/.local/bin/linoffice/linoffice.sh onenote %F
+Terminal=false
+Type=Application
+Icon=/home/stefan/.local/bin/linoffice/apps/onenote/icon.svg
+StartupWMClass=Microsoft OneNote
+Comment=Digital notebook for note-taking and organization of information.
+Categories=Office
+MimeType=application/msonenote;

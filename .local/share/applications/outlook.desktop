@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Outlook
+Exec=/home/stefan/.local/bin/linoffice/linoffice.sh outlook %F
+Terminal=false
+Type=Application
+Icon=/home/stefan/.local/bin/linoffice/apps/outlook/icon.svg
+StartupWMClass=Microsoft Outlook
+Comment=Email client and personal information manager for scheduling and communication.
+Categories=Office
+MimeType=application/vnd.ms-outlook;application/octet-stream;

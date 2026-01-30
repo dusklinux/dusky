@@ -1,0 +1,10 @@
+[project]
+name = "kokoro-tts"
+version = "0.1.0"
+description = "Kokoro TTS streaming to speech"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24.0",
+    "onnxruntime-gpu>=1.16.0",
+    "kokoro-onnx>=0.1.0",
+]

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=wscript
+MimeType=text/vbscript;
+Exec=env "WINEPREFIX=/home/stefan/.wine" wine start /ProgIDOpen "VBSFile" %f
+NoDisplay=true
+StartupNotify=true
+Icon=2905_wscript.0
