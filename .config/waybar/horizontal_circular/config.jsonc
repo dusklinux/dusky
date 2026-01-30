@@ -19,7 +19,6 @@
     ],
     "modules-right": [
         "custom/net-speed",
-        "custom/vpn",
         "battery",
         "custom/notification"
     ],

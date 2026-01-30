@@ -105,4 +105,8 @@ source /usr/share/doc/pkgfile/command-not-found.zsh
 export FZF_BASE=/usr/share/fzf
 export PATH=$PATH:/home/stefan/.spicetify
 export PATH=$PATH:~/.spicetify
+
+
+
 alias config='nocorrect git --git-dir=$HOME/.dotfiles --work-tree=$HOME'
+alias duskygit='xdg-open https://github.com/T3rr0or/dusky'

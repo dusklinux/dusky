@@ -34,7 +34,6 @@
         "temperature",
         "custom/separator",
         "backlight", 
-        "custom/vpn",
         "network", 
         "bluetooth", 
         "pulseaudio", 

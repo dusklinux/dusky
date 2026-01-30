@@ -26,7 +26,6 @@
     
     "modules-right": [ 
         "custom/network",      
-        "custom/vpn",
         "pulseaudio",
         "battery",
         "custom/power"

@@ -47,6 +47,7 @@ application/pdf=org.pwmt.zathura.desktop
 inode/directory=thunar.desktop
 application/x-zerosize=org.kde.kate.desktop
 x-scheme-handler/discord=vesktop.desktop
+x-scheme-handler/discord-409416265891971072=discord-409416265891971072.desktop
 
 [Added Associations]
 video/mp4=mpv.desktop;vlc.desktop;fr.handbrake.ghb.desktop;

@@ -30,7 +30,6 @@
 
   "modules-right": [
     "mpris",
-    "custom/vpn",
     "network",
     "bluetooth",
     "pulseaudio#output",

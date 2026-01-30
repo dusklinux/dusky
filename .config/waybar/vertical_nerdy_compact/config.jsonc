@@ -35,7 +35,6 @@
         "bluetooth",
         "custom/app-tray",
         "custom/network",
-        "custom/vpn",
         "custom/inhibit-suspend",
         "custom/notification",
         "clock",

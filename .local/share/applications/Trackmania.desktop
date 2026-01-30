@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Trackmania
+Comment=Play this game on Steam
+Exec=steam steam://rungameid/2225070
+Icon=steam_icon_2225070
+Terminal=false
+Type=Application
+Categories=Game;
