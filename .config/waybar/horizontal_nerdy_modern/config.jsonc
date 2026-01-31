@@ -38,6 +38,7 @@
         "bluetooth", 
         "pulseaudio", 
         "battery",
+        "custom/wg",
         "custom/separator-2",
         "custom/theme", 
         "custom/inhibit-suspend", 
@@ -70,7 +71,7 @@
     },
 
     "hyprland/workspaces": {
-        "format": "{icon}",
+        "format": "{icon} {text}",
         "format-icons": {
             "1": "1",
             "2": "2",
@@ -326,6 +327,26 @@
         },
         "tooltip-format": "{timeTo}\nHealth: {health}%\nPower Draw: {power:.2f} W\nCycles: {cycles}\n\nLMB: Toggle Format\nRMB: Timeout Settings",
         "on-click-right": "uwsm-app -- kitty --class timeout.sh -e $HOME/user_scripts/hypridle/timeout.sh"
+    },
+
+    "custom/wg": {
+        "exec": "~/.local/bin/wg-toggle --status",
+        "return-type": "json",
+        "interval": 10,
+        "format": "{icon}",
+        "format-icons": {
+            "connected": "󰦝󰌾",
+            "disconnected": "󰦞",
+            "on": "󰦝󰌾",
+            "off": "󰦞",
+            "active": "󰦝󰌾",
+            "inactive": "󰦞"
+        },
+        "on-click": "~/.local/bin/wg-toggle",
+        "on-click-right": "~/.local/bin/wg-toggle next",
+        "on-scroll-up": "~/.local/bin/wg-toggle previous",
+        "on-scroll-down": "~/.local/bin/wg-toggle next",
+        "tooltip": true
     },
 
     // ===================================================================

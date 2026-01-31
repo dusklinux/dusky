@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+public_ip() {
+  curl -s --max-time 2 ifconfig.me 2>/dev/null || echo "N/A"
+}
+
+active_line=$(nmcli -t -f DEVICE,TYPE,STATE,CONNECTION dev status | awk -F: '$3=="connected" {print; exit}')
+
+if [[ -z "$active_line" ]]; then
+  text="󰤭"
+  class="disconnected"
+  tooltip=$(printf '󰤭 Disconnected\n󰩟 Public: N/A')
+else
+  IFS=':' read -r device type state connection <<< "$active_line"
+  ip_addr=$(nmcli -g IP4.ADDRESS dev show "$device" | head -n1 | cut -d/ -f1)
+  [[ -z "$ip_addr" ]] && ip_addr="N/A"
+
+  if [[ "$type" == "wifi" ]]; then
+    ssid=$(nmcli -g GENERAL.CONNECTION dev show "$device")
+    signal=$(nmcli -t -f IN-USE,SIGNAL dev wifi list --rescan no | awk -F: '$1=="*" {print $2; exit}')
+    [[ -z "$signal" ]] && signal="N/A"
+
+    text="󰤨"
+    class="wifi"
+    tooltip=$(printf '󰤨 %s\n󱑽 %s%%\n󰩟 Local: %s\n󰩟 Public: %s' "$ssid" "$signal" "$ip_addr" "$(public_ip)")
+  else
+    text="󰈀"
+    class="ethernet"
+    tooltip=$(printf '󰈀 Ethernet\n󰩟 Local: %s\n󰩟 Public: %s' "$ip_addr" "$(public_ip)")
+  fi
+fi
+
+python3 - "$text" "$tooltip" "$class" <<'PY'
+import json
+import sys
+text, tooltip, cls = sys.argv[1:4]
+print(json.dumps({"text": text, "tooltip": tooltip, "class": cls}))
+PY

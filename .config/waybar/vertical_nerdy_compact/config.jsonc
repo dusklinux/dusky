@@ -38,6 +38,7 @@
         "custom/inhibit-suspend",
         "custom/notification",
         "clock",
+        "custom/wg",
         "custom/power"
     ],
 
@@ -194,7 +195,7 @@
 
     "custom/notification": {
         "tooltip-format": "Left: Notifications\nRight: Do not disturb",
-        "format": "{icon}",
+        "format": "{icon} {text}",
         "format-icons": {
             "notification": "<span foreground='red'><sup></sup></span>",
             "none": "",
@@ -236,6 +237,26 @@
         "format": "",
         "tooltip-format": "Open Terminal App Tray!",
         "on-click": "uwsm-app -- kitty --class tray-tui -e tray-tui"
+    },
+
+    "custom/wg": {
+        "exec": "~/.local/bin/wg-toggle --status",
+        "return-type": "json",
+        "interval": 10,
+        "format": "{icon}",
+        "format-icons": {
+            "connected": "󰦝󰌾",
+            "disconnected": "󰦞",
+            "on": "󰦝󰌾",
+            "off": "󰦞",
+            "active": "󰦝󰌾",
+            "inactive": "󰦞"
+        },
+        "on-click": "~/.local/bin/wg-toggle",
+        "on-click-right": "~/.local/bin/wg-toggle next",
+        "on-scroll-up": "~/.local/bin/wg-toggle previous",
+        "on-scroll-down": "~/.local/bin/wg-toggle next",
+        "tooltip": true
     },
 
     "custom/power": {

@@ -320,7 +320,8 @@ window#waybar > box {
   background-color: alpha(@surface_container_high, 0.9);
 }
 
-#network {
+#network,
+#custom-network {
   padding: 1px 14px 0px 9px;
   margin: 1px 2px;
   border-radius: 10px;
@@ -330,22 +331,26 @@ window#waybar > box {
   transition: all 0.2s ease-in-out;
 }
 
-#network:hover {
+#network:hover,
+#custom-network:hover {
   background-color: alpha(@surface_container_high, 0.9);
 }
 
-#network.disconnected {
+#network.disconnected,
+#custom-network.disconnected {
   padding: 1px 14px 0px 9px;
   color: alpha(@on_surface_variant, 0.4);
 }
 
 #network.linked,
-#network.ethernet {
+#network.ethernet,
+#custom-network.ethernet {
   padding: 1px 13px 0px 9px;
   color: @tertiary;
 }
 
-#network.wifi {
+#network.wifi,
+#custom-network.wifi {
   color: @primary_fixed;
   padding: 1px 14px 0px 9px;
 }

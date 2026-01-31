@@ -1,0 +1,26 @@
+[Unit]
+Description=Waybar network speed daemon (UWSM Linked)
+# HOOK 1: Wait until the graphical session (Hyprland) is actually ready
+After=graphical-session.target
+
+# HOOK 2: Bind the lifecycle to the session. 
+# If Hyprland/UWSM stops, this service is legally required to stop.
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# Ensure this path matches where you saved the daemon
+ExecStart=%h/user_scripts/waybar/network/network_meter_daemon.sh
+Restart=always
+RestartSec=1s
+
+# Hardening (Keep your system safe)
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%t
+# NoNewPrivileges is good for scripts not needing sudo
+NoNewPrivileges=true
+
+[Install]
+# HOOK 3: This tells systemd to launch this ONLY when a graphical session starts
+WantedBy=graphical-session.target

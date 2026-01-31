@@ -154,8 +154,7 @@ configure_sddm() {
 Current=${THEME_NAME}
 
 [General]
-InputMethod=qtvirtualkeyboard
-GreeterEnvironment=QML2_IMPORT_PATH=${INSTALL_DIR}/components/,QT_IM_MODULE=qtvirtualkeyboard
+GreeterEnvironment=QML2_IMPORT_PATH=${INSTALL_DIR}/components/
 EOF
 
     log_success "Config saved to ${CONF_FILE}"

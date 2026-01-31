@@ -342,7 +342,8 @@ window#waybar > box {
    NETWORK
    ───────────────────────────────────────────────────────────────────────────── */
 
-#network {
+#network,
+#custom-network {
   padding: 1px 14px 0px 9px;
   margin: 5px 2px;
   border-radius: 10px;
@@ -352,22 +353,26 @@ window#waybar > box {
   transition: all 0.2s ease-in-out;
 }
 
-#network:hover {
+#network:hover,
+#custom-network:hover {
   background-color: alpha(@surface_container_high, 0.9);
 }
 
-#network.disconnected {
+#network.disconnected,
+#custom-network.disconnected {
   padding: 1px 14px 0px 9px;
   color: alpha(@on_surface_variant, 0.4);
 }
 
 #network.linked,
-#network.ethernet {
+#network.ethernet,
+#custom-network.ethernet {
   padding: 1px 13px 0px 9px;
   color: @tertiary;
 }
 
-#network.wifi {
+#network.wifi,
+#custom-network.wifi {
   color: @primary_fixed;
   padding: 1px 14px 0px 9px;
 }
@@ -570,6 +575,35 @@ window#waybar > box {
 }
 
 #custom-vpn.vpn-off {
+  color: @on_surface_variant;
+  background-color: alpha(@surface_container, 0.6);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   WIREGUARD TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-wg {
+  padding: 0px 10px 0px 9px;
+  margin: 5px 2px;
+  border-radius: 10px;
+  background-color: alpha(@surface_container, 0.6);
+  color: @on_surface;
+  font-size: 14px;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-wg:hover {
+  background-color: alpha(@surface_container_high, 0.9);
+}
+
+#custom-wg.active {
+  color: @primary_fixed;
+  background-color: alpha(@primary_container, 0.35);
+  border: 1px solid alpha(@primary, 0.2);
+}
+
+#custom-wg.inactive {
   color: @on_surface_variant;
   background-color: alpha(@surface_container, 0.6);
 }

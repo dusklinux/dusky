@@ -109,4 +109,4 @@ export PATH=$PATH:~/.spicetify
 
 
 alias config='nocorrect git --git-dir=$HOME/.dotfiles --work-tree=$HOME'
-alias duskygit='xdg-open https://github.com/T3rr0or/dusky'
+alias sourcerc='source ~/.zshrc'

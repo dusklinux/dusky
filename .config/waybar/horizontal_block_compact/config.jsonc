@@ -30,13 +30,14 @@
 
   "modules-right": [
     "mpris",
-    "network",
+    "custom/network",
     "bluetooth",
     "pulseaudio#output",
     "backlight",
     "cpu",
     "memory",
     "battery",
+    "custom/wg",
     "custom/power"
   ],
 
@@ -88,7 +89,7 @@
   },
 
   "custom/notification": {
-    "format": "{icon}",
+    "format": "{icon} {text}",
     "format-icons": {
       "notification": "󱅫",
       "none": "󰂚",
@@ -181,14 +182,11 @@
     "on-click": "bash -c 'if ip link show parell >/dev/null 2>&1; then uwsm-app -- kitty -e sh -c \"sudo wg-quick down parell; echo; read -n 1 -s -r -p \\\"Press any key to close\\\"\"; else uwsm-app -- kitty -e sh -c \"sudo wg-quick up parell; echo; read -n 1 -s -r -p \\\"Press any key to close\\\"\"; fi'"
   },
 
-  "network": {
-    "format-wifi": "󰤨",
-    "format-ethernet": "󰈀",
-    "format-disconnected": "󰤭",
-    "format-linked": "󰈁",
-    "tooltip-format-wifi": "󰤨 {essid}\n󱑽 {signalStrength}%\n󰩟 {ipaddr}",
-    "tooltip-format-ethernet": "󰈀 Ethernet\n󰩟 {ipaddr}",
-    "tooltip-format-disconnected": "󰤭 Disconnected",
+  "custom/network": {
+    "exec": "/home/stefan/user_scripts/networking/waybar-network",
+    "return-type": "json",
+    "interval": 10,
+    "tooltip": true,
     "on-click": "nm-connection-editor"
   },
 
@@ -274,6 +272,26 @@
     "format-full": "󰁹 Full",
     "tooltip-format": "{timeTo}\n\n󱟦 Health: {health}%\n󱐋 Power: {power:.2f}W",
     "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
+  },
+
+  "custom/wg": {
+    "exec": "~/.local/bin/wg-toggle --status",
+    "return-type": "json",
+    "interval": 10,
+    "format": "{text}",
+    "format-icons": {
+      "connected": "󰦝",
+      "disconnected": "󰦞",
+      "on": "󰦝",
+      "off": "󰦞",
+      "active": "󰦝",
+      "inactive": "󰦞"
+    },
+    "on-click": "~/.local/bin/wg-toggle",
+    "on-click-right": "~/.local/bin/wg-toggle next",
+    "on-scroll-up": "~/.local/bin/wg-toggle previous",
+    "on-scroll-down": "~/.local/bin/wg-toggle next",
+    "tooltip": true
   },
 
   "custom/power": {
