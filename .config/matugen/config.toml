@@ -173,10 +173,6 @@ bash -c 'mkdir -p $HOME/.config/btop/themes;
 ln -nfs $HOME/.config/matugen/generated/btop-colors.theme $HOME/.config/btop/themes/matugen.theme'
 '''
 
-[templates.discord]
-input_path  = '~/.config/matugen/templates/midnight-discord.css'
-output_path = '~/.config/Equicord/settings/quickCss.css'
-
 [templates.obs-studio]
 input_path  = '~/.config/matugen/templates/obs-studio.ovt'
 output_path = '~/.config/obs-studio/themes/matugen.ovt'
