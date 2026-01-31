@@ -15,7 +15,6 @@
 #
 # Usage:
 #   theme_ctl set --mode dark --type scheme-vibrant
-#   theme_ctl set --no-wall --mode light              # Change mode without changing wallpaper
 #   theme_ctl random
 #   theme_ctl refresh
 #   theme_ctl get
@@ -289,7 +288,7 @@ apply_random_wallpaper() {
 }
 
 regenerate_current() {
-    local swww_output current_wallpaper resolved_wallpaper filename
+    local swww_output current_wallpaper
     ensure_swww_running
 
     swww_output=$(swww query 2>&1 | head -n 1) || die "swww query failed: $swww_output"
@@ -297,32 +296,11 @@ regenerate_current() {
 
     current_wallpaper="${swww_output##*image: }"
     current_wallpaper=$(trim_trailing "$current_wallpaper")
-    
-    # Default to assuming the path is correct
-    resolved_wallpaper="$current_wallpaper"
 
-    # CRITICAL FIX: If directory swap moved the file, find it in storage
-    if [[ ! -f "$resolved_wallpaper" ]]; then
-        filename="${current_wallpaper##*/}"
-        
-        # Check if it moved to the dark or light storage directories
-        if [[ -f "${BASE_PICTURES}/dark/${filename}" ]]; then
-            resolved_wallpaper="${BASE_PICTURES}/dark/${filename}"
-        elif [[ -f "${BASE_PICTURES}/light/${filename}" ]]; then
-            resolved_wallpaper="${BASE_PICTURES}/light/${filename}"
-        fi
-    fi
+    [[ -f "$current_wallpaper" ]] || die "Image file does not exist: ${current_wallpaper}"
 
-    [[ -f "$resolved_wallpaper" ]] || die "Image file does not exist: ${current_wallpaper}"
-
-    # Log only if we had to resolve to a different path
-    if [[ "$resolved_wallpaper" != "$current_wallpaper" ]]; then
-        log "Wallpaper moved; resolved to: ${resolved_wallpaper}"
-    else
-        log "Current wallpaper: ${resolved_wallpaper##*/}"
-    fi
-
-    generate_colors "$resolved_wallpaper"
+    log "Current wallpaper: ${current_wallpaper##*/}"
+    generate_colors "$current_wallpaper"
 }
 
 generate_colors() {
@@ -358,14 +336,12 @@ Commands:
               --type <scheme-*|disable>
               --contrast <num|disable>
               --defaults  Reset all settings to defaults
-              --no-wall   Prevent wallpaper change (e.g., during refresh)
   random    Pick random wallpaper and apply theme.
   refresh   Regenerate colors for current wallpaper.
   get       Show current configuration.
 
 Examples:
   theme_ctl set --mode dark --type scheme-vibrant
-  theme_ctl set --no-wall --mode light
   theme_ctl random
   theme_ctl refresh
 EOF
@@ -383,8 +359,7 @@ cmd_get() {
 }
 
 cmd_set() {
-    # Added skip_wall=0 to initialization
-    local do_refresh=0 mode_changed=0 force_random=0 skip_wall=0
+    local do_refresh=0 mode_changed=0 force_random=0
 
     while (( $# > 0 )); do
         case "$1" in
@@ -419,11 +394,6 @@ cmd_set() {
                 mode_changed=1
                 shift
                 ;;
-            # NEW: Handle the no-wallpaper flag
-            --no-wall)
-                skip_wall=1
-                shift
-                ;;
             --help) usage; exit 0 ;;
             *) die "Unknown option: $1" ;;
         esac
@@ -431,24 +401,11 @@ cmd_set() {
 
     read_state
 
-    # UPDATED LOGIC BLOCK
-    # 1. If NOT skipping wallpaper, and we need a change (mode change or forced random), do standard swap & shuffle.
-    if (( ! skip_wall )) && (( mode_changed || force_random )); then
+    if (( mode_changed || force_random )); then
         move_directories "$THEME_MODE"
         apply_random_wallpaper
-    else
-        # 2. Fallback: We are skipping wallpaper (or didn't need to change it).
-        
-        # CRITICAL: If mode changed, we MUST still swap directories to maintain system state,
-        # even if we aren't picking a NEW wallpaper.
-        (( mode_changed )) && move_directories "$THEME_MODE"
-
-        # 3. Regenerate colors if:
-        #    - A refresh was explicitly requested (do_refresh)
-        #    - OR we suppressed a random wallpaper change (force_random/mode_changed + skip_wall)
-        if (( do_refresh || force_random || mode_changed )); then
-            regenerate_current
-        fi
+    elif (( do_refresh )); then
+        regenerate_current
     fi
 }
 
