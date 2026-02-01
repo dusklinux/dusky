@@ -336,7 +336,7 @@ input {
     force_no_accel = false
 
     # TUI: Toggle [true/false]
-    left_handed = true
+    left_handed = false
 
     # TUI: Toggle [true/false] - Useful for preventing focus stealing
     mouse_refocus = true

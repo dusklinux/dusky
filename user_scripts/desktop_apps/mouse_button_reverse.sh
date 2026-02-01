@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # --- Configuration ---
-readonly CONFIG_FILE="${HOME}/.config/hypr/source/input.conf"
+readonly CONFIG_FILE="${HOME}/.config/hypr/edit_here/source/input.conf"
 
 # --- Cleanup Trap ---
 cleanup() {
