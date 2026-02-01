@@ -4,6 +4,9 @@
 # Description: Initializes or validates the 'edit_here' user configuration 
 #              overlay for Hyprland. Ensures all template files exist.
 #              Designed for Arch Linux/Hyprland/UWSM environments.
+#
+# Usage:       ./setup_hypr_overlay.sh [--force]
+#              --force: Backs up existing 'edit_here' dir and regenerates.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -20,59 +23,17 @@ readonly RESET=$'\033[0m'
 
 # --- Paths ---
 readonly HYPR_DIR="${HOME}/.config/hypr"
-readonly SOURCE_DIR="${HYPR_DIR}/source"
 readonly EDIT_DIR="${HYPR_DIR}/edit_here"
 readonly EDIT_SOURCE_DIR="${EDIT_DIR}/source"
 readonly MAIN_CONF="${HYPR_DIR}/hyprland.conf"
 readonly NEW_CONF="${EDIT_DIR}/hyprland.conf"
 
-# The path string written into configs (Single quotes to prevent expansion)
+# Path string written into configs (single quotes prevent expansion)
 readonly INCLUDE_PATH='~/.config/hypr/edit_here/hyprland.conf'
 
-# ------------------------------------------------------------------------------
-# 2. Helper Functions
-# ------------------------------------------------------------------------------
-log_info()    { printf '%s[INFO]%s %s\n' "${BLUE}" "${RESET}" "$1"; }
-log_success() { printf '%s[OK]%s   %s\n' "${GREEN}" "${RESET}" "$1"; }
-log_warn()    { printf '%s[WARN]%s %s\n' "${YELLOW}" "${RESET}" "$1"; }
-log_error()   { printf '%s[ERR]%s  %s\n' "${RED}" "${RESET}" "$1" >&2; }
-
-# ------------------------------------------------------------------------------
-# 3. Privilege & Pre-flight Checks
-# ------------------------------------------------------------------------------
-if [[ ${EUID} -eq 0 ]]; then
-    log_error "This script must NOT be run as root."
-    log_error "It modifies user configuration files in ${HOME}."
-    exit 1
-fi
-
-if [[ ! -d ${SOURCE_DIR} ]]; then
-    log_error "Source directory not found: ${SOURCE_DIR}"
-    log_error "Cannot populate the edit_here directory. Aborting."
-    exit 1
-fi
-
-if [[ ! -f ${MAIN_CONF} ]]; then
-    log_warn "Main Hyprland config not found at ${MAIN_CONF}. Creating empty file."
-    mkdir -p -- "${HYPR_DIR}"
-    touch -- "${MAIN_CONF}"
-fi
-
-# ------------------------------------------------------------------------------
-# 4. Main Logic: Create or Verify Overlay
-# ------------------------------------------------------------------------------
-log_info "Initializing/Verifying Hyprland user configuration overlay..."
-
-# 1. Ensure Directory Structure (Idempotent: mkdir -p won't fail if it exists)
-if [[ ! -d "${EDIT_SOURCE_DIR}" ]]; then
-    log_info "Creating directory: ${EDIT_SOURCE_DIR}"
-    mkdir -p -- "${EDIT_SOURCE_DIR}"
-else
-    log_info "Directory exists: ${EDIT_SOURCE_DIR} (checking contents...)"
-fi
-
-# 2. Define list of required configuration files
-readonly CONFIG_FILES=(
+# Required configuration file templates
+# Defined here for easy visibility and maintenance
+readonly -a CONFIG_FILES=(
     "monitors.conf"
     "keybinds.conf"
     "appearance.conf"
@@ -80,38 +41,494 @@ readonly CONFIG_FILES=(
     "plugins.conf"
     "window_rules.conf"
     "environment_variables.conf"
+    "input.conf"
 )
 
-# 3. Iterate and Create Missing Files
+# ------------------------------------------------------------------------------
+# 2. Helper Functions
+# ------------------------------------------------------------------------------
+# Logging functions (Added ${1:-} to handle empty args safely)
+log_info()    { printf '%s[INFO]%s %s\n' "${BLUE}" "${RESET}" "${1:-}"; }
+log_success() { printf '%s[OK]%s   %s\n' "${GREEN}" "${RESET}" "${1:-}"; }
+log_warn()    { printf '%s[WARN]%s %s\n' "${YELLOW}" "${RESET}" "${1:-}"; }
+log_error()   { printf '%s[ERR]%s  %s\n' "${RED}" "${RESET}" "${1:-}" >&2; }
+
+# Generates content for configuration files
+# EDIT THIS FUNCTION TO HARDCODE YOUR DEFAULTS
+get_file_content() {
+    local -r filename="${1:-}"
+
+    # NOTE: We use <<'EOF' (quoted EOF) to prevent variable expansion.
+    # This ensures signs like $mainMod are written literally to the file.
+    case "${filename}" in
+        "monitors.conf")
+            cat <<'EOF'
+# ==============================================================================
+# USER CONFIGURATION: monitors.conf
+# ==============================================================================
+# Add your custom settings for monitors here.
+# These will override or add to the defaults found in ~/.config/hypr/source/monitors
+# This file can also be edited with dusky monitor from the rofi menu or from dusky control center
+# ==============================================================================
+
+EOF
+            ;;
+        "keybinds.conf")
+            cat <<'EOF'
+# ==============================================================================
+# USER CONFIGURATION: keybinds.conf
+# ==============================================================================
+# Add your custom settings for keybinds here.
+# These will override or add to the defaults found in ~/.config/hypr/source/keybinds.conf
+# This file can also be edited with dusky keybinds manager from the rofi menu or from dusky control center
+# ==============================================================================
+EOF
+            ;;
+        "appearance.conf")
+            cat <<'EOF'
+# ==============================================================================
+# USER CONFIGURATION: appearance.conf
+# ==============================================================================
+# Add your custom settings for appearance here.
+# These will override or add to the defaults found in ~/.config/hypr/source/appearance.conf
+# This file can also be edited with dusky appearance from the rofi menu or from dusky control center
+# ==============================================================================
+
+# -------------------------------------------------------------------------------------------------
+# THEME SOURCE
+# -------------------------------------------------------------------------------------------------
+# Sourcing colors generated by Matugen
+source = ~/.config/matugen/generated/hyprland-colors.conf
+
+# -------------------------------------------------------------------------------------------------
+# 1. GENERAL APPEARANCE
+# Control gaps, borders, and layout behavior.
+# See: https://wiki.hyprland.org/Configuring/Variables/#general
+# -------------------------------------------------------------------------------------------------
+general {
+    # --- Gaps & Borders ---
+    gaps_in = 6                 # Gap between windows
+    gaps_out = 12               # Gap between windows and monitor edges
+    gaps_workspaces = 0         # Gap between workspaces (when sliding)
+    border_size = 2             # Size of window borders
+
+    # --- Colors ---
+    # Uses variables from the sourced matugen file
+    col.active_border = $primary
+    col.inactive_border = $inverse_on_surface 
+
+    # --- Behavior ---
+    # RESIZING: Set to true. This allows you to resize windows by clicking and dragging 
+    # on the gaps/border area, rather than hitting the exact 2px pixel border.
+    resize_on_border = false
+
+    # TEARING: Allows lower latency in games. 
+    # NOTE: To use this, you must also apply 'windowrulev2 = immediate, class:^(game_class)$'
+    allow_tearing = true
+
+    # Default layout engine
+    layout = dwindle
+
+    # --- Snapping ---
+    # Controls how floating windows snap to each other and edges
+    snap {
+        enabled = false
+        window_gap = 10         # Min gap (px) before snapping to another window
+        monitor_gap = 10        # Min gap (px) before snapping to monitor edge
+        border_overlap = false  # If true, windows snap with overlapping borders
+    }
+}
+
+# -------------------------------------------------------------------------------------------------
+# 2. DECORATION
+# Shadows, Blur, Opacity, and Rounding.
+# See: https://wiki.hyprland.org/Configuring/Variables/#decoration
+# -------------------------------------------------------------------------------------------------
+decoration {
+    # --- Rounding ---
+    rounding = 6
+    rounding_power = 6.0
+
+    # --- Opacity ---
+    active_opacity = 1.0
+    inactive_opacity = 1.0
+    fullscreen_opacity = 1.0
+
+    # --- Dimming ---
+    dim_inactive = true
+    dim_strength = 0.2
+    dim_special = 0.8           # Stronger dimming for special workspace
+
+    # --- Shadows ---
+    # Enabled because your hardware (12700H) can easily handle it.
+    shadow {
+        enabled = false
+        range = 35
+        render_power = 2        # 1-4. Higher is faster falloff (sharper looking)
+        sharp = false           # If true, renders a sharp shadow (retro style)
+        ignore_window = true    # If true, shadow isn't rendered behind the window itself
+        scale = 1.0             # Scale of the shadow (1.0 = window size)
+        color = rgba(1a1a1aee)
+        # color = $primary
+        # offset = 0 0          # Displaces shadow (x, y)
+    }
+
+    # --- Blur ---
+    # Enabled for aesthetic depth.
+    blur {
+        enabled = false
+        size = 4                # Radius
+        passes = 2              # Quality (2 is a good balance of perf/looks)
+        new_optimizations = true
+        ignore_opacity = true   # Blurs behind transparent windows even if opacity is high
+        xray = false            # If true, floating windows "see through" tiled ones
+        
+        # Texture & Quality
+        noise = 0.0117          # Adds grain to prevent color banding
+        contrast = 0.8916       # Contrast modulation for blur
+        brightness = 0.8172     # Brightness modulation for blur
+        vibrancy = 0.1696       # Saturation of blurred colors
+        
+        # Specifics
+        popups = false          # Whether to blur right-click menus/popups
+    }
+
+    # --- Shaders ---
+    # screen_shader = ~/.config/hypr/shaders/grayscale_advanced.glsl
+}
+
+# -------------------------------------------------------------------------------------------------
+# 3. ANIMATIONS
+# See: https://wiki.hyprland.org/Configuring/Animations/
+# -------------------------------------------------------------------------------------------------
+
+source = ~/.config/hypr/source/animations/active/active.conf
+
+# -------------------------------------------------------------------------------------------------
+# 4. LAYOUTS
+# -------------------------------------------------------------------------------------------------
+dwindle {
+    pseudotile = true
+    preserve_split = true
+    # smart_split = false     # If true, splits based on mouse position.
+    # smart_resizing = false  # If true, resizing direction is determined by mouse pos.
+}
+
+master {
+    new_status = master
+}
+
+# -------------------------------------------------------------------------------------------------
+# 5. MISCELLANEOUS & PERFORMANCE
+# See: https://wiki.hyprland.org/Configuring/Variables/#misc
+# -------------------------------------------------------------------------------------------------
+misc {
+    force_default_wallpaper = 1     # Set to 0 to enable the anime mascot
+    disable_hyprland_logo = true
+    disable_splash_rendering = true
+}
+
+# -------------------------------------------------------------------------------------------------
+# 6. BINDS (Visual specific)
+# -------------------------------------------------------------------------------------------------
+binds {
+    allow_pin_fullscreen = true
+}
+
+# debug {
+#    overlay = true
+# }
+EOF
+            ;;
+        "autostart.conf")
+            cat <<'EOF'
+# ==============================================================================
+# USER CONFIGURATION: autostart.conf
+# ==============================================================================
+# Add your custom settings for autostart here.
+# These will override or add to the defaults found in ~/.config/hypr/source/autostart.conf
+# ==============================================================================
+
+EOF
+            ;;
+        "plugins.conf")
+            cat <<'EOF'
+# ==============================================================================
+# USER CONFIGURATION: plugins.conf
+# ==============================================================================
+# Add your custom settings for plugins here.
+# These will override or add to the defaults found in ~/.config/hypr/source/plugins.conf
+# ==============================================================================
+
+EOF
+            ;;
+        "window_rules.conf")
+            cat <<'EOF'
+# ==============================================================================
+# USER CONFIGURATION: window_rules.conf
+# ==============================================================================
+# Add your custom settings for window_rules here.
+# These will override or add to the defaults found in ~/.config/hypr/source/window_rules.conf
+# ==============================================================================
+
+EOF
+            ;;
+        "environment_variables.conf")
+            cat <<'EOF'
+# ==============================================================================
+# USER CONFIGURATION: environment_variables.conf
+# ==============================================================================
+# Add your custom settings for environment_variables here.
+# These will override or add to the defaults found in ~/.config/hypr/source/environment_variables.conf
+# NOTE: it's strongly advised to place your environment variables in the uwsm files in ~/.config/uwsm/{env,env-hyprland}
+# ==============================================================================
+
+EOF
+            ;;
+        "input.conf")
+            cat <<'EOF'
+# ==============================================================================
+# USER CONFIGURATION: input.conf
+# ==============================================================================
+# Add your custom settings for input here.
+# These will override or add to the defaults found in ~/.config/hypr/source/input.conf
+# This file can also be edited with dusky input from the rofi menu or from dusky control center
+# ==============================================================================
+# -------------------------------------------------------------------------------------------------
+# 1. KEYBOARD & LANGUAGE
+# -------------------------------------------------------------------------------------------------
+input {
+    kb_layout = us
+    
+    # TUI: Dropdown - Common options like "caps:escape", "grp:alt_shift_toggle"
+    # This is a high-value configuration for developers.
+    kb_options =
+    
+    resolve_binds_by_sym = false
+    numlock_by_default = true
+    
+    # TUI: Slider [10 - 100]
+    repeat_rate = 35
+    
+    # TUI: Slider [100 - 1000]
+    repeat_delay = 250
+}
+
+# -------------------------------------------------------------------------------------------------
+# 2. MOUSE & POINTER ACCELERATION
+# -------------------------------------------------------------------------------------------------
+input {
+    # 0: Cursor movement doesn't change focus
+    # 1: Cursor movement changes focus to window under cursor (Default)
+    # 2: Detached focus (Click to focus keyboard, mouse follows independently)
+    # 3: Completely separate focus
+    follow_mouse = 1
+
+    # TUI: Slider [-1.0 to 1.0]
+    sensitivity = 0
+    
+    # TUI: Dropdown [flat, adaptive, custom]
+    # "Adaptive" is generally better for touchpads/desktop use. "Flat" for gaming.
+    accel_profile = adaptive
+
+    # TUI: Toggle [true/false] - "Raw Input" for gamers.
+    # Bypasses most pointer settings. Critical for high-end mice.
+    force_no_accel = false
+
+    # TUI: Toggle [true/false]
+    left_handed = true
+
+    # TUI: Toggle [true/false] - Useful for preventing focus stealing
+    mouse_refocus = true
+}
+
+# -------------------------------------------------------------------------------------------------
+# 3. SCROLLING & TRACKBALLS
+# -------------------------------------------------------------------------------------------------
+input {
+    # TUI: Toggle [true/false] - "Natural Scrolling" (MacOS style) for mice
+    natural_scroll = false
+
+    # TUI: Dropdown [2fg, edge, on_button_down, no_scroll]
+    # Vital for trackball users.
+    scroll_method = 2fg
+    
+    # Only relevant if scroll_method is on_button_down
+    scroll_button = 0
+    scroll_button_lock = false
+}
+
+# -------------------------------------------------------------------------------------------------
+# 4. TOUCHPAD
+# -------------------------------------------------------------------------------------------------
+input {
+    touchpad {
+        # TUI: Toggle [true/false]
+        natural_scroll = true
+        
+        # TUI: Toggle [true/false] - "Disable while typing"
+        disable_while_typing = true
+
+        # TUI: Toggle [true/false] - "Tap to click"
+        tap-to-click = true
+
+        # TUI: Toggle [true/false] - "Mac-style Right Click"
+        # true = 2-finger click is right click usually.
+        # false = Physical click on bottom-right is right click.
+        clickfinger_behavior = false
+
+        # TUI: Toggle [true/false]
+        drag_lock = false
+    }
+}
+
+# -------------------------------------------------------------------------------------------------
+# 5. CURSOR BEHAVIOR & RENDERING
+# -------------------------------------------------------------------------------------------------
+cursor {
+    # TUI: Toggle [true/false] - Sync XCursor theme with GSettings
+    sync_gsettings_theme = true
+
+    # TUI: Dropdown [0, 1, 2] - CRITICAL for Nvidia/VMs
+    # 0 = Use HW cursors (Performance)
+    # 1 = Force SW cursors (Compatibility / Fixes disappearing cursor)
+    # 2 = Auto (Disable when tearing)
+    no_hardware_cursors = 2
+
+    # TUI: Dropdown [0, 1, 2] - Nvidia Specific optimization
+    # 0 = Off, 1 = On, 2 = Auto
+    use_cpu_buffer = 2
+
+    # TUI: Toggle [true/false] - Hides cursor when typing
+    # Great for "distraction free" coding.
+    hide_on_key_press = false
+
+    # TUI: Slider [0 - 60] - Hide cursor after X seconds of inactivity (0=never)
+    inactive_timeout = 0
+
+    # TUI: Dropdown [0, 1, 2] - Workflow Preference
+    # 0 = Disabled (Cursor stays put)
+    # 1 = Enabled (Cursor moves to center of focused window)
+    # 2 = Force
+    warp_on_change_workspace = 0
+    
+    # TUI: Dropdown [0, 1, 2] - Gaming / VRR Specific
+    # Prevents framerate spikes in VRR games by pausing cursor updates
+    # 0 = Off, 1 = On, 2 = Auto
+    no_break_fs_vrr = 2
+    
+    # TUI: Slider [1.0 - 5.0] - Accessibility / Presentation
+    # Sets the zoom level for the magnifier.
+    zoom_factor = 1.0
+}
+
+# -------------------------------------------------------------------------------------------------
+# 6. GESTURE PHYSICS (Tuning)
+# -------------------------------------------------------------------------------------------------
+# Note: The actual actions are in the dispatchers below.
+# This block controls the "feel" of the swipes.
+gestures {
+    # TUI: Slider [100 - 1000] - "Swipe Distance"
+    workspace_swipe_distance = 300
+    
+    # TUI: Slider [0.0 - 1.0] - "Swipe Cancellation Threshold"
+    workspace_swipe_cancel_ratio = 0.5
+    
+    # TUI: Toggle [true/false] - "Invert Swipe Direction"
+    workspace_swipe_invert = true
+    
+    # TUI: Toggle [true/false] - "Swipe to Create New Workspace"
+    workspace_swipe_create_new = true
+    
+    # TUI: Toggle [true/false] - "Swipe Forever" (Don't clamp at neighbors)
+    workspace_swipe_forever = false
+}
+
+# -------------------------------------------------------------------------------------------------
+# 7. PER-DEVICE SETTINGS
+# -------------------------------------------------------------------------------------------------
+device {
+    name = epic-mouse-v1
+    sensitivity = 0
+}
+
+EOF
+            ;;
+        *)
+            # Fallback using printf (safer than echo)
+            printf '# Default content for %s\n' "${filename}"
+            ;;
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# 3. Privilege & Pre-flight Checks
+# ------------------------------------------------------------------------------
+if [[ "${EUID}" -eq 0 ]]; then
+    log_error "This script must NOT be run as root."
+    log_error "It modifies user configuration files in ${HOME}."
+    exit 1
+fi
+
+# Ensure base directory structure exists FIRST
+if [[ ! -d "${HYPR_DIR}" ]]; then
+    log_info "Creating Hyprland config directory: ${HYPR_DIR}"
+    mkdir -p -- "${HYPR_DIR}"
+fi
+
+if [[ ! -f "${MAIN_CONF}" ]]; then
+    log_warn "Main Hyprland config not found at ${MAIN_CONF}. Creating empty file."
+    touch -- "${MAIN_CONF}"
+fi
+
+# ------------------------------------------------------------------------------
+# 4. Handle --force Flag
+# ------------------------------------------------------------------------------
+force_mode=false
+[[ "${1:-}" == "--force" ]] && force_mode=true
+
+if [[ "${force_mode}" == true && -d "${EDIT_DIR}" ]]; then
+    # Use Bash 5.0+ builtin for timestamp (No external 'date' command needed)
+    printf -v backup_timestamp '%(%Y%m%d_%H%M%S)T' -1
+    backup_name="edit_here.bak_${backup_timestamp}"
+    
+    log_warn "Force mode: Backing up '${EDIT_DIR}' to '${backup_name}'..."
+    mv -- "${EDIT_DIR}" "${HYPR_DIR}/${backup_name}"
+    log_success "Backup complete. Proceeding with clean regeneration."
+fi
+
+# ------------------------------------------------------------------------------
+# 5. Main Logic: Create or Verify Overlay
+# ------------------------------------------------------------------------------
+log_info "Initializing/Verifying Hyprland user configuration overlay..."
+
+# Ensure directory structure exists
+if [[ ! -d "${EDIT_SOURCE_DIR}" ]]; then
+    log_info "Creating directory: ${EDIT_SOURCE_DIR}"
+    mkdir -p -- "${EDIT_SOURCE_DIR}"
+else
+    log_info "Directory exists: ${EDIT_SOURCE_DIR} (verifying contents...)"
+fi
+
+# Iterate and create missing files using the content function
 for file in "${CONFIG_FILES[@]}"; do
     target_file="${EDIT_SOURCE_DIR}/${file}"
 
     if [[ -f "${target_file}" ]]; then
-        # File exists, skip it to protect user data
         log_info "  - Exists: ${file}"
     else
-        # File missing, create it
-        log_warn "  - Missing: ${file} -> Creating template..."
-        
-        cat > "${target_file}" <<EOF
-# ==============================================================================
-# USER CONFIGURATION: ${file}
-# ==============================================================================
-# Add your custom settings for ${file%.*} here.
-# These will override or add to the defaults found in ~/.config/hypr/source/${file}
-# ==============================================================================
-
-EOF
-        log_success "    Created template: ${file}"
+        log_warn "  - Missing: ${file} -> Creating with default template..."
+        get_file_content "${file}" > "${target_file}"
+        log_success "    Created: ${file}"
     fi
 done
 
-# 4. Generate the user's overlay config file (The loader)
-# Check if the loader exists
+# Generate the user's overlay loader config
 if [[ -f "${NEW_CONF}" ]]; then
     log_info "Loader file exists: ${NEW_CONF}"
 else
     log_warn "Loader file missing: ${NEW_CONF} -> Creating..."
+    # Using 'EOF' to prevent expansion
     cat > "${NEW_CONF}" <<'EOF'
 # ==============================================================================
 # USER CONFIGURATION OVERLAY
@@ -127,25 +544,25 @@ source = ~/.config/hypr/edit_here/source/autostart.conf
 source = ~/.config/hypr/edit_here/source/plugins.conf
 source = ~/.config/hypr/edit_here/source/window_rules.conf
 source = ~/.config/hypr/edit_here/source/environment_variables.conf
+source = ~/.config/hypr/edit_here/source/input.conf
 EOF
-    log_success "Created '${NEW_CONF}'."
+    log_success "Created loader: ${NEW_CONF}"
 fi
 
 # ------------------------------------------------------------------------------
-# 5. Modify Main Configuration
+# 6. Modify Main Configuration
 # ------------------------------------------------------------------------------
 log_info "Verifying main configuration at '${MAIN_CONF}'..."
 
 if grep -Fq -- "source = ${INCLUDE_PATH}" "${MAIN_CONF}"; then
     log_success "Main config already sources the overlay. No changes needed."
 else
-    # Append the source line
     printf '\n# Source User Custom Config Overlay\nsource = %s\n' "${INCLUDE_PATH}" >> "${MAIN_CONF}"
     log_success "Appended source directive to '${MAIN_CONF}'."
 fi
 
 # ------------------------------------------------------------------------------
-# 6. Completion
+# 7. Completion
 # ------------------------------------------------------------------------------
 printf '\n'
 log_success "Setup/Verification complete!"
