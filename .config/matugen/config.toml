@@ -54,10 +54,10 @@ post_hook   = '''
 input_path  = '~/.config/matugen/templates/colors.css'
 output_path = '~/.config/matugen/generated/swaync-colors.css'
 post_hook   = '''
-if command -v swaync-client >/dev/null 2>&1; then
+command -v swaync-client >/dev/null 2>&1 && {
   swaync-client -R
   swaync-client -rs
-fi
+}
 '''
 
 [templates.swayosd]
@@ -120,11 +120,11 @@ post_hook   = 'ln -nfs $HOME/.config/matugen/generated/zathura-colors $HOME/.con
 input_path  = '~/.config/matugen/templates/pywalfox-colors.json'
 output_path = '~/.config/matugen/generated/pywalfox-colors.json'
 post_hook   = '''
-if command -v pywalfox &> /dev/null; then
-    mkdir -p $HOME/.cache/wal;
-    ln -nfs $HOME/.config/matugen/generated/pywalfox-colors.json $HOME/.cache/wal/colors.json;
-    pywalfox update || true;
-fi
+command -v pywalfox >/dev/null 2>&1 && {
+    mkdir -p $HOME/.cache/wal
+    ln -nfs $HOME/.config/matugen/generated/pywalfox-colors.json $HOME/.cache/wal/colors.json
+    pywalfox update || true
+}
 '''
 
 [templates.Obsidian]
@@ -143,11 +143,11 @@ ln -nfs $HOME/.config/matugen/generated/obsidian-theme.css $HOME/Documents/pensi
 input_path  = '~/.config/matugen/templates/spotify-colors.ini'
 output_path = '~/.config/matugen/generated/spotify-colors.ini'
 post_hook   = '''
-if command -v spicetify &> /dev/null && [ -d "$HOME/.config/spicetify/Themes/Comfy" ]; then
-    ln -nfs $HOME/.config/matugen/generated/spotify-colors.ini $HOME/.config/spicetify/Themes/Comfy/color.ini;
-    spicetify apply -n;
-    hyprctl dispatch sendshortcut "CTRL SHIFT, R, class:^(spotify)$" || true;
-fi
+command -v spicetify >/dev/null 2>&1 && [ -d "$HOME/.config/spicetify/Themes/Comfy" ] && {
+    ln -nfs $HOME/.config/matugen/generated/spotify-colors.ini $HOME/.config/spicetify/Themes/Comfy/color.ini
+    spicetify apply -n
+    hyprctl dispatch sendshortcut 'CTRL SHIFT, R, class:^(spotify)$' || true
+}
 '''
 
 [templates.cava]
@@ -167,3 +167,8 @@ mkdir -p $HOME/.config/btop/themes;
 ln -nfs $HOME/.config/matugen/generated/btop-colors.theme $HOME/.config/btop/themes/matugen.theme
 notify-send -i applications-graphics-symbolic "Theme Updated"
 '''
+
+[templates.fastfetch]
+input_path  = '~/.config/matugen/templates/fastfetch'
+output_path = '~/.config/matugen/templates/fastfetch'
+post_hook   = '~/user_scripts/fastfetch/logogen.sh'
