@@ -1,12 +1,33 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Dusky Appearances - Elite Edition
+# Dusky Appearances - Elite Edition v7.4.0
 # -----------------------------------------------------------------------------
 # Target: Arch Linux / Hyprland / UWSM
 # Description: Tabbed TUI to modify hyprland appearance.conf.
 # -----------------------------------------------------------------------------
+# KNOWN EDGE CASES & FIXES:
+#
+# 1. "Locale Bomb" - Non-US locales make awk output "0,5" instead of "0.5"
+#    FIX: export LC_NUMERIC=C at script start
+#
+# 2. "Nested Block Range Trap" - sed range /block/,/}/ stops at ANY }, breaking
+#    nested configs like: decoration { blur { ... } shadow_color = x }
+#    FIX: Count braces to find exact block boundaries
+#
+# 3. "First Block Trap" - Config files can have MULTIPLE blocks with the
+#    same name. The old code used `head -n1` to get only the first block.
+#    FIX: Iterate through ALL block instances and find the one containing the key
+#
+# 4. "Hyphen Pattern Trap" - Keys like `tap-to-click` need hyphen escaping in
+#    sed patterns, otherwise `-` can be misinterpreted in character classes.
+#    FIX: Escape hyphens in escape_sed_pattern()
+#
+# 5. "Silent Failure Trap" - If a key isn't found, old code silently did nothing.
+#    FIX: Return status from write functions, show "⚠ UNSET" in UI
+# -----------------------------------------------------------------------------
 
 set -euo pipefail
+
 # CRITICAL: Force standard C locale for numeric operations. 
 # This prevents awk from outputting commas (0,5) in non-US locales, 
 # which would corrupt the Hyprland config.
@@ -14,6 +35,8 @@ export LC_NUMERIC=C
 
 # --- Configuration ---
 readonly CONFIG_FILE="${HOME}/.config/hypr/edit_here/source/appearance.conf"
+readonly APP_TITLE="Dusky Appearances"
+readonly APP_VERSION="v7.4.0"
 
 # UI Layout Constants
 declare -ri MAX_DISPLAY_ROWS=12
@@ -30,12 +53,16 @@ readonly H_LINE=${_H_LINE_BUF// /─}
 # Timeout for escape sequence reads
 readonly ESC_READ_TIMEOUT=0.02
 
+# Internal marker for unset values (uses Unicode to avoid collision with real values)
+readonly UNSET_MARKER='«unset»'
+
 # --- ANSI Constants ---
 readonly C_RESET=$'\033[0m'
 readonly C_CYAN=$'\033[1;36m'
 readonly C_GREEN=$'\033[1;32m'
 readonly C_MAGENTA=$'\033[1;35m'
 readonly C_RED=$'\033[1;31m'
+readonly C_YELLOW=$'\033[1;33m'
 readonly C_WHITE=$'\033[1;37m'
 readonly C_GREY=$'\033[1;30m'
 readonly C_INVERSE=$'\033[7m'
@@ -58,9 +85,10 @@ declare -a TAB_ZONES=()
 declare ORIGINAL_STTY=""
 
 # --- Data Structures ---
-declare -A ITEM_MAP
-declare -A VALUE_CACHE
-declare -A CONFIG_CACHE
+declare -A ITEM_MAP=()
+declare -A VALUE_CACHE=()
+declare -A CONFIG_CACHE=()
+declare -A DEFAULTS=()
 declare -a TAB_ITEMS_0=() TAB_ITEMS_1=() TAB_ITEMS_2=() TAB_ITEMS_3=() TAB_ITEMS_4=()
 
 # --- Helpers ---
@@ -106,6 +134,7 @@ escape_sed_pattern() {
     _s=${_s//^/\\^}
     _s=${_s//\$/\\\$}
     _s=${_s//|/\\|}
+    _s=${_s//-/\\-}      # FIX: "Hyphen Pattern Trap" - escape hyphens
     _out=$_s
 }
 
@@ -177,7 +206,7 @@ register 4 "Snap Monitor Gap"   "monitor_gap|int|snap|0|50|1"
 register 4 "Snap Border Overlap" "border_overlap|bool|snap|||"
 
 # --- DEFAULTS ---
-declare -A DEFAULTS=(
+DEFAULTS=(
     ["Gaps In"]=6
     ["Gaps Out"]=12
     ["Gaps Workspaces"]=0
@@ -220,7 +249,8 @@ populate_config_cache() {
     CONFIG_CACHE=()
     local key_part value_part key_name
 
-    while IFS='=' read -r key_part value_part; do
+    # FIX: Added `|| [[ -n $key_part ]]` for EOF safety
+    while IFS='=' read -r key_part value_part || [[ -n $key_part ]]; do
         [[ -z $key_part ]] && continue
         CONFIG_CACHE["$key_part"]=$value_part
 
@@ -262,73 +292,109 @@ populate_config_cache() {
     ' "$CONFIG_FILE")
 }
 
+# -----------------------------------------------------------------------------
+# write_value_to_file - Write a value to the config file
+# -----------------------------------------------------------------------------
+# CRITICAL: This function handles the "First Block Trap"
+#
+# Problem: Config files can have MULTIPLE blocks with the same name:
+#   input { kb_layout = us }      # Block 1
+#   input { sensitivity = 0 }     # Block 2  
+#
+# The old code used `grep ... | head -n1` which only found Block 1.
+# If we tried to modify "sensitivity", it would search Block 1, not find it,
+# and silently fail.
+#
+# Solution: Iterate through ALL blocks with the matching name, check which one
+# contains our key, and only modify that specific block.
+# -----------------------------------------------------------------------------
 write_value_to_file() {
     local key=$1 new_val=$2 block=${3:-}
     
     local current_val=${CONFIG_CACHE["$key|$block"]:-}
-    if [[ "$current_val" == "$new_val" ]]; then
-        return 0
-    fi
+    
+    # Dirty check: skip write if value unchanged
+    [[ "$current_val" == "$new_val" ]] && return 0
 
-    local safe_val safe_key safe_block
+    local safe_val safe_key
     escape_sed_replacement "$new_val" safe_val
     escape_sed_pattern "$key" safe_key
 
     if [[ -n $block ]]; then
+        local safe_block
         escape_sed_pattern "$block" safe_block
         
-        # ELITE FIX: Do not rely on sed range /start/,/}/ because it stops at ANY closing brace,
-        # breaking nested configs (e.g., editing a key inside decoration{...} that follows blur{...}).
-        # Instead, identify the EXACT start and end lines of the block by counting braces.
+        # CRITICAL FIX: The "First Block Trap"
+        # Iterate through ALL block instances, not just the first one.
+        # For each block, check if it contains our key before modifying.
         
-        local start_line
-        # Find the first line where the block starts
-        start_line=$(grep -n "^[[:space:]]*${safe_block}[[:space:]]*{" "$CONFIG_FILE" | head -n1 | cut -d: -f1)
+        local line_num block_start block_end found=0
         
-        if [[ -n $start_line ]]; then
-            local end_line_offset
+        while IFS=: read -r line_num _; do
+            block_start=$line_num
             
-            # Count braces starting from the block line to find the matching closing brace
-            end_line_offset=$(tail -n "+$start_line" "$CONFIG_FILE" | awk '
-                BEGIN { depth=0; found=0 }
+            # CRITICAL FIX: The "Nested Block Range Trap"
+            # Count braces to find exact block boundaries instead of stopping at first }
+            block_end=$(tail -n "+${block_start}" "$CONFIG_FILE" | awk '
+                BEGIN { depth = 0; started = 0 }
                 {
-                    # Count occurrences of { and }
-                    n_open = gsub(/{/, "&");
-                    n_close = gsub(/}/, "&");
+                    txt = $0
+                    sub(/#.*/, "", txt)  # Remove comments to avoid false brace counts
                     
-                    depth += n_open - n_close;
+                    n_open = gsub(/{/, "&", txt)
+                    n_close = gsub(/}/, "&", txt)
                     
-                    # We are in the block once we process the first line (tail guarantees this)
-                    if (NR == 1) found=1
+                    if (NR == 1) {
+                        depth = n_open
+                        started = 1
+                    } else {
+                        depth += n_open - n_close
+                    }
                     
-                    if (found && depth == 0) {
+                    if (started && depth <= 0) {
                         print NR
                         exit
                     }
                 }
             ')
             
-            if [[ -n $end_line_offset ]]; then
-                local -i real_end_line=$(( start_line + end_line_offset - 1 ))
+            # Skip if we couldn't determine block end
+            [[ -z $block_end ]] && continue
+            
+            local -i real_end=$(( block_start + block_end - 1 ))
+            
+            # Check if THIS specific block instance contains our key
+            # This is the key fix for multiple same-name blocks
+            if sed -n "${block_start},${real_end}p" "$CONFIG_FILE" | \
+               grep -q "^[[:space:]]*${safe_key}[[:space:]]*="; then
                 
-                # Apply substitution ONLY within the strictly calculated range
+                # Found it! Apply substitution ONLY to this block range
                 sed --follow-symlinks -i \
-                    "${start_line},${real_end_line}s|^\([[:space:]]*${safe_key}[[:space:]]*=[[:space:]]*\)[^#[:space:]]*|\1${safe_val}|" \
+                    "${block_start},${real_end}s|^\([[:space:]]*${safe_key}[[:space:]]*=[[:space:]]*\)[^#]*|\1${safe_val} |" \
                     "$CONFIG_FILE"
+                found=1
+                break
             fi
+        done < <(grep -n "^[[:space:]]*${safe_block}[[:space:]]*{" "$CONFIG_FILE")
+        
+        # FIX: "Silent Failure Trap" - Return error if key not found
+        if (( found == 0 )); then
+            return 1
         fi
     else
         # Global key update (no block context)
         sed --follow-symlinks -i \
-            "s|^\([[:space:]]*${safe_key}[[:space:]]*=[[:space:]]*\)[^#[:space:]]*|\1${safe_val}|" \
+            "s|^\([[:space:]]*${safe_key}[[:space:]]*=[[:space:]]*\)[^#]*|\1${safe_val} |" \
             "$CONFIG_FILE"
     fi
 
+    # Update cache on success
     CONFIG_CACHE["$key|$block"]=$new_val
-    
     if [[ -z $block ]]; then
         CONFIG_CACHE["$key|"]=$new_val
     fi
+    
+    return 0
 }
 
 load_tab_values() {
@@ -337,8 +403,21 @@ load_tab_values() {
 
     for item in "${items_ref[@]}"; do
         IFS='|' read -r key type block _ _ _ <<< "${ITEM_MAP[$item]}"
+        
+        # Try exact match first (key|block)
         val=${CONFIG_CACHE["$key|$block"]:-}
-        VALUE_CACHE["$item"]=${val:-unset}
+        
+        # If empty and no specific block required, try blockless lookup
+        if [[ -z $val && -z $block ]]; then
+            val=${CONFIG_CACHE["$key|"]:-}
+        fi
+        
+        # FIX: Use distinct marker so user knows value wasn't detected
+        if [[ -z $val ]]; then
+            VALUE_CACHE["$item"]=$UNSET_MARKER
+        else
+            VALUE_CACHE["$item"]=$val
+        fi
     done
 }
 
@@ -349,7 +428,12 @@ modify_value() {
 
     IFS='|' read -r key type block min max step <<< "${ITEM_MAP[$label]}"
     current=${VALUE_CACHE[$label]:-}
-    [[ $current == "unset" ]] && current=""
+    
+    # Handle unset values - use default or sensible minimum
+    if [[ $current == "$UNSET_MARKER" || -z $current ]]; then
+        current=${DEFAULTS[$label]:-}
+        [[ -z $current ]] && current=${min:-0}
+    fi
 
     case $type in
         int)
@@ -363,8 +447,7 @@ modify_value() {
             ;;
         float)
             if [[ ! $current =~ ^-?[0-9]*\.?[0-9]+$ ]]; then current=${min:-0.0}; fi
-            # Ensure awk uses C locale for dots via environment, though global export covers it
-            new_val=$(LC_NUMERIC=C awk -v c="$current" -v dir="$direction" -v s="${step:-0.1}" \
+            new_val=$(awk -v c="$current" -v dir="$direction" -v s="${step:-0.1}" \
                           -v mn="$min" -v mx="$max" 'BEGIN {
                 val = c + (dir * s)
                 if (mn != "" && val < mn) val = mn
@@ -393,8 +476,10 @@ modify_value() {
         *) return 0 ;;
     esac
 
-    write_value_to_file "$key" "$new_val" "$block"
-    VALUE_CACHE["$label"]=$new_val
+    # FIX: Only update cache if write succeeded
+    if write_value_to_file "$key" "$new_val" "$block"; then
+        VALUE_CACHE["$label"]=$new_val
+    fi
 }
 
 set_absolute_value() {
@@ -403,8 +488,10 @@ set_absolute_value() {
 
     IFS='|' read -r key type block _ _ _ <<< "${ITEM_MAP[$label]}"
 
-    write_value_to_file "$key" "$new_val" "$block"
-    VALUE_CACHE["$label"]=$new_val
+    # FIX: Only update cache if write succeeded
+    if write_value_to_file "$key" "$new_val" "$block"; then
+        VALUE_CACHE["$label"]=$new_val
+    fi
 }
 
 reset_defaults() {
@@ -426,14 +513,13 @@ draw_ui() {
     buf+="${CURSOR_HOME}"
     buf+="${C_MAGENTA}┌${H_LINE}┐${C_RESET}"$'\n'
 
-    # Header
-    local raw_title="Dusky Appearances v7.3.0"
-    local -i title_len=${#raw_title}
-    local -i left_pad=$(( (BOX_INNER_WIDTH - title_len) / 2 ))
-    local -i right_pad=$(( BOX_INNER_WIDTH - title_len - left_pad ))
+    # Header - Dynamic Centering
+    local -i visible_len=$(( ${#APP_TITLE} + ${#APP_VERSION} + 1 ))
+    local -i left_pad=$(( (BOX_INNER_WIDTH - visible_len) / 2 ))
+    local -i right_pad=$(( BOX_INNER_WIDTH - visible_len - left_pad ))
 
     printf -v pad_buf '%*s' "$left_pad" ''
-    buf+="${C_MAGENTA}│${pad_buf}${C_WHITE}Dusky Appearances ${C_CYAN}v7.3.0${C_MAGENTA}"
+    buf+="${C_MAGENTA}│${pad_buf}${C_WHITE}${APP_TITLE} ${C_CYAN}${APP_VERSION}${C_MAGENTA}"
     printf -v pad_buf '%*s' "$right_pad" ''
     buf+="${pad_buf}│${C_RESET}"$'\n'
 
@@ -507,17 +593,18 @@ draw_ui() {
     # Render visible items
     for (( i = visible_start; i < visible_end; i++ )); do
         item=${items_ref[i]}
-        val=${VALUE_CACHE[$item]:-unset}
+        val=${VALUE_CACHE[$item]:-$UNSET_MARKER}
 
+        # FIX: Use distinct yellow warning for unset values
         case $val in
-            true)         display="${C_GREEN}ON${C_RESET}" ;;
-            false)        display="${C_RED}OFF${C_RESET}" ;;
-            unset)        display="${C_RED}unset${C_RESET}" ;;
-            *'$primary'*) display="${C_MAGENTA}Dynamic${C_RESET}" ;;
-            *)            display="${C_WHITE}${val}${C_RESET}" ;;
+            true)              display="${C_GREEN}ON${C_RESET}" ;;
+            false)             display="${C_RED}OFF${C_RESET}" ;;
+            "$UNSET_MARKER")   display="${C_YELLOW}⚠ UNSET${C_RESET}" ;;
+            *'$primary'*)      display="${C_MAGENTA}Dynamic${C_RESET}" ;;
+            *)                 display="${C_WHITE}${val}${C_RESET}" ;;
         esac
 
-        printf -v padded_item "%-${ITEM_PADDING}s" "$item"
+        printf -v padded_item "%-${ITEM_PADDING}s" "${item:0:$ITEM_PADDING}"
 
         if (( i == SELECTED_ROW )); then
             buf+="${C_CYAN} ➤ ${C_INVERSE}${padded_item}${C_RESET} : ${display}${CLR_EOL}"$'\n'
@@ -532,9 +619,14 @@ draw_ui() {
         buf+="${CLR_EOL}"$'\n'
     done
 
-    # Bottom scroll indicator
-    if (( visible_end < count )); then
-        buf+="${C_GREY}    ▼ (more below)${CLR_EOL}${C_RESET}"$'\n'
+    # Bottom scroll indicator with position counter
+    if (( count > MAX_DISPLAY_ROWS )); then
+        local position_info="[$(( SELECTED_ROW + 1 ))/${count}]"
+        if (( visible_end < count )); then
+            buf+="${C_GREY}    ▼ (more below) ${position_info}${CLR_EOL}${C_RESET}"$'\n'
+        else
+            buf+="${C_GREY}                   ${position_info}${CLR_EOL}${C_RESET}"$'\n'
+        fi
     else
         buf+="${CLR_EOL}"$'\n'
     fi
@@ -555,10 +647,40 @@ navigate() {
     (( count == 0 )) && return 0
     (( SELECTED_ROW += dir )) || :
 
+    # Wrap selection
     if (( SELECTED_ROW < 0 )); then
         SELECTED_ROW=$(( count - 1 ))
     elif (( SELECTED_ROW >= count )); then
         SELECTED_ROW=0
+    fi
+}
+
+# Page navigation (no wrap)
+navigate_page() {
+    local -i dir=$1
+    local -n items_ref="TAB_ITEMS_${CURRENT_TAB}"
+    local -i count=${#items_ref[@]}
+
+    (( count == 0 )) && return 0
+    (( SELECTED_ROW += dir * MAX_DISPLAY_ROWS )) || :
+
+    # Clamp without wrapping
+    (( SELECTED_ROW < 0 )) && SELECTED_ROW=0
+    (( SELECTED_ROW >= count )) && SELECTED_ROW=$(( count - 1 ))
+}
+
+# Jump to first/last item
+navigate_end() {
+    local -i target=$1  # 0 = first, 1 = last
+    local -n items_ref="TAB_ITEMS_${CURRENT_TAB}"
+    local -i count=${#items_ref[@]}
+
+    (( count == 0 )) && return 0
+
+    if (( target == 0 )); then
+        SELECTED_ROW=0
+    else
+        SELECTED_ROW=$(( count - 1 ))
     fi
 }
 
@@ -602,14 +724,26 @@ handle_mouse() {
     local -i button x y i
     local type zone start end
 
-    if [[ $input =~ ^\[\<([0-9]+)\;([0-9]+)\;([0-9]+)([Mm])$ ]]; then
+    # SGR Mouse Mode (1006)
+    if [[ $input =~ ^\[<([0-9]+)\;([0-9]+)\;([0-9]+)([Mm])$ ]]; then
         button=${BASH_REMATCH[1]}
         x=${BASH_REMATCH[2]}
         y=${BASH_REMATCH[3]}
         type=${BASH_REMATCH[4]}
 
+        # Handle scroll wheel (button 64=up, 65=down) on any event
+        if (( button == 64 )); then
+            navigate -1
+            return 0
+        elif (( button == 65 )); then
+            navigate 1
+            return 0
+        fi
+
+        # Only handle Button Press ('M'), ignore Release ('m') for clicks
         [[ $type != "M" ]] && return 0
 
+        # Tab bar click detection (Row 3)
         if (( y == 3 )); then
             for (( i = 0; i < TAB_COUNT; i++ )); do
                 zone=${TAB_ZONES[i]}
@@ -622,6 +756,7 @@ handle_mouse() {
             done
         fi
 
+        # Item click detection (accounting for scroll indicator offset)
         local -n items_ref="TAB_ITEMS_${CURRENT_TAB}"
         local -i count=${#items_ref[@]}
         local -i item_row_start=$(( ITEM_START_ROW + 1 ))
@@ -641,13 +776,23 @@ handle_mouse() {
 # --- Main ---
 
 main() {
+    # Bash Version Check (namerefs require 4.3+)
+    if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) )); then
+        printf '%s[FATAL]%s Bash 4.3+ required (found %s)\n' \
+               "$C_RED" "$C_RESET" "$BASH_VERSION" >&2
+        exit 1
+    fi
+
+    # Config Validation
     [[ ! -f $CONFIG_FILE ]] && { log_err "Config not found: $CONFIG_FILE"; exit 1; }
     [[ ! -r $CONFIG_FILE ]] && { log_err "Config not readable: $CONFIG_FILE"; exit 1; }
     [[ ! -w $CONFIG_FILE ]] && { log_err "Config not writable: $CONFIG_FILE"; exit 1; }
 
+    # Dependency Check
     command -v awk &>/dev/null || { log_err "Required: awk"; exit 1; }
     command -v sed &>/dev/null || { log_err "Required: sed"; exit 1; }
 
+    # Initialization
     populate_config_cache
 
     # Save terminal state
@@ -660,9 +805,11 @@ main() {
 
     local key seq char
 
+    # Event Loop
     while true; do
         draw_ui
 
+        # Safety: break on EOF to prevent 100% CPU loops
         IFS= read -rsn1 key || break
 
         if [[ $key == $'\x1b' ]]; then
@@ -672,11 +819,15 @@ main() {
             done
 
             case $seq in
-                '[Z')          switch_tab -1 ;;
-                '[A'|'OA')     navigate -1 ;;
-                '[B'|'OB')     navigate 1 ;;
-                '[C'|'OC')     adjust 1 ;;
-                '[D'|'OD')     adjust -1 ;;
+                '[Z')          switch_tab -1 ;;     # Shift+Tab
+                '[A'|'OA')     navigate -1 ;;       # Arrow Up
+                '[B'|'OB')     navigate 1 ;;        # Arrow Down
+                '[C'|'OC')     adjust 1 ;;          # Arrow Right
+                '[D'|'OD')     adjust -1 ;;         # Arrow Left
+                '[5~')         navigate_page -1 ;;  # Page Up
+                '[6~')         navigate_page 1 ;;   # Page Down
+                '[H'|'[1~')    navigate_end 0 ;;    # Home
+                '[F'|'[4~')    navigate_end 1 ;;    # End
                 '['*'<'*)      handle_mouse "$seq" ;;
             esac
         else
@@ -685,6 +836,8 @@ main() {
                 j|J)           navigate 1 ;;
                 l|L)           adjust 1 ;;
                 h|H)           adjust -1 ;;
+                g)             navigate_end 0 ;;    # vim: go to top
+                G)             navigate_end 1 ;;    # vim: go to bottom
                 $'\t')         switch_tab 1 ;;
                 r|R)           reset_defaults ;;
                 q|Q|$'\x03')   break ;;
@@ -693,4 +846,4 @@ main() {
     done
 }
 
-main
+main "$@"

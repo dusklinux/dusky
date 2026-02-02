@@ -717,7 +717,7 @@ handle_mouse() {
     local type zone start end
 
     # SGR Mouse Mode (1006)
-    if [[ $input =~ ^\[<([0-9]+);([0-9]+);([0-9]+)([Mm])$ ]]; then
+    if [[ $input =~ ^\[<([0-9]+)\;([0-9]+)\;([0-9]+)([Mm])$ ]]; then
         button=${BASH_REMATCH[1]}
         x=${BASH_REMATCH[2]}
         y=${BASH_REMATCH[3]}
