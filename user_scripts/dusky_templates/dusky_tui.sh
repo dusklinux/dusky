@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Dusky TUI Engine - Master Template v2.5
+# Dusky TUI Engine - Master Template v2.6
 # -----------------------------------------------------------------------------
 # Target: Arch Linux / Hyprland / UWSM / Wayland
 # Description: High-performance, robust TUI for config modification.
@@ -15,6 +15,8 @@
 #   - Mouse Support (SGR 1006) with Scroll Wheel
 #   - Page Up/Down, Home/End Navigation
 #   - Visual "Unset" Detection for Debugging
+#   - NEW: Type Safety Validation at Startup
+#   - NEW: Post-Write Hook for Service Reloads
 # -----------------------------------------------------------------------------
 # KNOWN EDGE CASES & FIXES:
 #
@@ -54,7 +56,7 @@ export LC_NUMERIC=C
 
 readonly CONFIG_FILE="${HOME}/.config/hypr/change_me.conf"
 readonly APP_TITLE="Dusky Template"
-readonly APP_VERSION="v2.5"
+readonly APP_VERSION="v2.6"
 
 # Dimensions & Layout
 declare -ri MAX_DISPLAY_ROWS=14      # Rows of items to show before scrolling
@@ -85,6 +87,19 @@ register_items() {
     register 2 "Accel Profile"  'accel_profile|cycle|input|flat,adaptive,custom||' "adaptive"
     register 2 "Border Size"    'border_size|int||0|10|1'            "2"
     register 3 "Shadow Color"   'col.shadow|cycle|general|0xee1a1a1a,0xff000000||' "0xee1a1a1a"
+}
+
+# -----------------------------------------------------------------------------
+# Post-Write Hook
+# This function is called IMMEDIATELY after a value is successfully written.
+# Use this to reload services (Waybar, Dunst, etc.) or trigger system updates.
+# -----------------------------------------------------------------------------
+post_write_action() {
+    # Example: Reload Waybar if it's running
+    # pgrep -x waybar >/dev/null && killall -SIGUSR2 waybar
+    
+    # Example: Hyprland usually hot-reloads, but you can force it here if needed
+    : # Do nothing by default
 }
 
 # =============================================================================
@@ -201,6 +216,21 @@ trap 'exit 143' TERM
 register() {
     local -i tab_idx=$1
     local label=$2 config=$3 default_val=${4:-}
+    
+    # --- Type Safety Validation ---
+    local key type block min max step
+    IFS='|' read -r key type block min max step <<< "$config"
+
+    # Validate the 'type' field against allowed values
+    case "$type" in
+        bool|int|float|cycle) ;; # Valid types
+        *)
+            printf '%s[FATAL]%s Invalid type definition for "%s": "%s"\n' \
+                   "$C_RED" "$C_RESET" "$label" "$type" >&2
+            printf 'Allowed types: bool, int, float, cycle\n' >&2
+            exit 1
+            ;;
+    esac
 
     if (( tab_idx < 0 || tab_idx > 9 )); then
         printf '%s[FATAL]%s Tab index %d out of bounds (0-9)\n' \
@@ -270,18 +300,6 @@ populate_config_cache() {
 # write_value_to_file - Write a value to the config file
 # -----------------------------------------------------------------------------
 # CRITICAL: This function handles the "First Block Trap"
-#
-# Problem: Config files can have MULTIPLE blocks with the same name:
-#   input { kb_layout = us }      # Block 1
-#   input { sensitivity = 0 }     # Block 2  
-#   input { natural_scroll = true } # Block 3
-#
-# The old code used `grep ... | head -n1` which only found Block 1.
-# If we tried to modify "sensitivity", it would search Block 1, not find it,
-# and silently fail.
-#
-# Solution: Iterate through ALL blocks with the matching name, check which one
-# contains our key, and only modify that specific block.
 # -----------------------------------------------------------------------------
 write_value_to_file() {
     local key=$1 new_val=$2 block=${3:-}
@@ -299,16 +317,12 @@ write_value_to_file() {
         escape_sed_pattern "$block" safe_block
         
         # CRITICAL FIX: The "First Block Trap"
-        # Iterate through ALL block instances, not just the first one.
-        # For each block, check if it contains our key before modifying.
-        
         local line_num block_start block_end found=0
         
         while IFS=: read -r line_num _; do
             block_start=$line_num
             
             # CRITICAL FIX: The "Nested Block Range Trap"
-            # Count braces to find exact block boundaries instead of stopping at first }
             block_end=$(tail -n "+${block_start}" "$CONFIG_FILE" | awk '
                 BEGIN { depth = 0; started = 0 }
                 {
@@ -338,7 +352,6 @@ write_value_to_file() {
             local -i real_end=$(( block_start + block_end - 1 ))
             
             # Check if THIS specific block instance contains our key
-            # This is the key fix for multiple same-name blocks
             if sed -n "${block_start},${real_end}p" "$CONFIG_FILE" | \
                grep -q "^[[:space:]]*${safe_key}[[:space:]]*="; then
                 
@@ -388,7 +401,6 @@ load_tab_values() {
         fi
         
         # FIX: Use distinct marker so user knows value wasn't detected
-        # This helps debug config parsing issues
         if [[ -z $val ]]; then
             VALUE_CACHE["$item"]=$UNSET_MARKER
         else
@@ -470,6 +482,8 @@ modify_value() {
     # FIX: Only update cache if write succeeded
     if write_value_to_file "$key" "$new_val" "$block"; then
         VALUE_CACHE["$label"]=$new_val
+        # TRIGGER: Post-Write Hook
+        post_write_action
     fi
 }
 
@@ -482,6 +496,8 @@ set_absolute_value() {
     # FIX: Only update cache if write succeeded
     if write_value_to_file "$key" "$new_val" "$block"; then
         VALUE_CACHE["$label"]=$new_val
+        # TRIGGER: Post-Write Hook
+        post_write_action
     fi
 }
 
