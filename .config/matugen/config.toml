@@ -179,6 +179,11 @@ ln -nfs $HOME/.config/matugen/generated/cava-colors.ini $HOME/.config/cava/theme
 pkill -USR1 cava || true
 '''
 
+[templates.fastfetch]
+input_path  = '~/.config/matugen/templates/fastfetch'
+output_path = '~/.config/matugen/generated/fastfetch'
+post_hook   = '~/user_scripts/fastfetch/logogen.sh'
+
 [templates.btop]
 input_path  = '~/.config/matugen/templates/btop.theme'
 output_path = '~/.config/matugen/generated/btop-colors.theme'
