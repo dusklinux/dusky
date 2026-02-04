@@ -11,7 +11,6 @@ import logging
 import shlex
 import subprocess
 import threading
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,21 +49,35 @@ SUBPROCESS_TIMEOUT_LONG: Final[int] = 5
 ICON_PIXEL_SIZE: Final[int] = 42
 LABEL_MAX_WIDTH_CHARS: Final[int] = 16
 
-# Thread pool shared across all row widgets to prevent thread explosion
-_EXECUTOR: Final[ThreadPoolExecutor] = ThreadPoolExecutor(
-    max_workers=4, thread_name_prefix="dusky-row-"
-)
-
 TRUE_VALUES: Final[frozenset[str]] = frozenset(
     {"enabled", "yes", "true", "1", "on", "active", "set", "running", "open", "high"}
 )
 
+# =============================================================================
+# LAZY THREAD POOL (Startup Optimization)
+# =============================================================================
+_EXECUTOR: ThreadPoolExecutor | None = None
+_EXECUTOR_LOCK = threading.Lock()
+
+def _get_executor() -> ThreadPoolExecutor:
+    """Lazily initialize the thread pool to avoid overhead at import time."""
+    global _EXECUTOR
+    if _EXECUTOR is None:
+        with _EXECUTOR_LOCK:
+            if _EXECUTOR is None:
+                _EXECUTOR = ThreadPoolExecutor(
+                    max_workers=4, 
+                    thread_name_prefix="dusky-row-"
+                )
+    return _EXECUTOR
 
 def _shutdown_executor() -> None:
     """Gracefully shut down the thread pool on application exit."""
-    log.debug("Shutting down row widget thread pool...")
-    _EXECUTOR.shutdown(wait=False, cancel_futures=True)
-
+    global _EXECUTOR
+    if _EXECUTOR is not None:
+        log.debug("Shutting down row widget thread pool...")
+        _EXECUTOR.shutdown(wait=False, cancel_futures=True)
+        _EXECUTOR = None
 
 atexit.register(_shutdown_executor)
 
@@ -321,7 +334,7 @@ class DynamicIconMixin:
         with self._state.lock:
             if self._state.is_destroyed:
                 return
-        _EXECUTOR.submit(self._fetch_icon_async, command)
+        _get_executor().submit(self._fetch_icon_async, command)
 
     def _fetch_icon_async(self, command: str) -> None:
         """Background thread: execute command and fetch icon name."""
@@ -410,7 +423,7 @@ class StateMonitorMixin:
                 return GLib.SOURCE_CONTINUE
             self._state.is_monitoring = True
 
-        _EXECUTOR.submit(self._check_state_async)
+        _get_executor().submit(self._check_state_async)
         return GLib.SOURCE_CONTINUE
 
     def _check_state_async(self) -> None:
@@ -470,6 +483,8 @@ class BaseActionRow(DynamicIconMixin, Adw.ActionRow):
     Base class for all action row widgets.
     Provides icon handling, lifecycle management, and common properties.
     """
+    
+    __gtype_name__ = "DuskyBaseActionRow"
 
     def __init__(
         self,
@@ -549,6 +564,8 @@ class BaseActionRow(DynamicIconMixin, Adw.ActionRow):
 class ButtonRow(BaseActionRow):
     """A row with a button that executes an action."""
 
+    __gtype_name__ = "DuskyButtonRow"
+
     def __init__(
         self,
         properties: RowProperties,
@@ -599,6 +616,8 @@ class ButtonRow(BaseActionRow):
 
 class ToggleRow(StateMonitorMixin, BaseActionRow):
     """A row with a toggle switch."""
+
+    __gtype_name__ = "DuskyToggleRow"
 
     def __init__(
         self,
@@ -673,6 +692,8 @@ class ToggleRow(StateMonitorMixin, BaseActionRow):
 class LabelRow(BaseActionRow):
     """A row displaying a dynamic or static value."""
 
+    __gtype_name__ = "DuskyLabelRow"
+
     def __init__(
         self,
         properties: RowProperties,
@@ -713,7 +734,7 @@ class LabelRow(BaseActionRow):
             if self._state.is_value_updating or self._state.is_destroyed:
                 return
             self._state.is_value_updating = True
-        _EXECUTOR.submit(self._load_value_async)
+        _get_executor().submit(self._load_value_async)
 
     def _load_value_async(self) -> None:
         """Background thread: load the value."""
@@ -797,6 +818,8 @@ class LabelRow(BaseActionRow):
 
 class SliderRow(BaseActionRow):
     """A row with a slider for numeric values."""
+
+    __gtype_name__ = "DuskySliderRow"
 
     def __init__(
         self,
@@ -903,6 +926,8 @@ class SliderRow(BaseActionRow):
 class NavigationRow(BaseActionRow):
     """A row that navigates to a subpage."""
 
+    __gtype_name__ = "DuskyNavigationRow"
+
     def __init__(
         self,
         properties: RowProperties,
@@ -927,6 +952,8 @@ class NavigationRow(BaseActionRow):
 # =============================================================================
 class GridCardBase(Gtk.Button):
     """Base class for grid card widgets."""
+
+    __gtype_name__ = "DuskyGridCardBase"
 
     def __init__(
         self,
@@ -983,6 +1010,8 @@ class GridCardBase(Gtk.Button):
 class GridCard(DynamicIconMixin, GridCardBase):
     """A grid card with an icon and action."""
 
+    __gtype_name__ = "DuskyGridCard"
+
     def __init__(
         self,
         properties: RowProperties,
@@ -1033,6 +1062,8 @@ class GridCard(DynamicIconMixin, GridCardBase):
 
 class GridToggleCard(DynamicIconMixin, StateMonitorMixin, GridCardBase):
     """A grid card with toggle functionality and optional dynamic icon."""
+
+    __gtype_name__ = "DuskyGridToggleCard"
 
     def __init__(
         self,
