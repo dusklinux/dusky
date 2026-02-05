@@ -7,15 +7,21 @@ pages:
     properties:
       title: Quick Actions
     items:
-    - type: button
+    - type: toggle_card
       properties:
-        title: Dusky Update
-        icon: system-software-update-symbolic
-        style: suggested
-      on_press:
-        type: exec
-        command: kitty --class update_dusky.sh --title "System Updater" --hold sh -c "$HOME/user_scripts/update_dusky/update_dusky.sh"
-        terminal: false
+        title: Bluetooth
+        icon: bluetooth-active-symbolic
+        state_command: "bluetoothctl show | grep 'Powered: yes' | awk '{print $2}'"
+        interval: 5
+      on_toggle:
+        enabled:
+          type: exec
+          command: bluetoothctl power on && notify-send 'Bluetooth' 'Bluetooth Turned ON'
+          terminal: false
+        disabled:
+          type: exec
+          command: bluetoothctl power off && notify-send 'Bluetooth' 'Bluetooth Turned OFF'
+          terminal: false
     - type: toggle_card
       properties:
         title: Wi-Fi
@@ -49,6 +55,23 @@ pages:
           terminal: false
     - type: button
       properties:
+        title: Reload CC
+        icon: system-reboot-symbolic
+      on_press:
+        type: exec
+        command: systemctl --user try-restart dusky
+        terminal: false
+    - type: button
+      properties:
+        title: Dusky Update
+        icon: system-software-update-symbolic
+        style: suggested
+      on_press:
+        type: exec
+        command: kitty --class update_dusky.sh --title "System Updater" --hold sh -c "$HOME/user_scripts/update_dusky/update_dusky.sh"
+        terminal: false
+    - type: button
+      properties:
         title: Power Menu
         icon: system-log-out-symbolic
         style: destructive
@@ -56,25 +79,9 @@ pages:
         type: exec
         command: $HOME/user_scripts/wlogout/wlogout_scale.sh
         terminal: false
-    - type: button
-      properties:
-        title: Reload
-        icon: view-refresh-symbolic
-      on_press:
-        type: exec
-        command: hyprctl reload
-        terminal: false
-    - type: button
-      properties:
-        title: foot
-        icon: terminal-symbolic
-      on_press:
-        type: exec
-        command: Foot Term
-        terminal: false
   - type: section
     properties:
-      title: Live System Status
+      title: Quick Controls
     items:
     - type: slider
       properties:
@@ -100,6 +107,10 @@ pages:
       on_change:
         type: exec
         command: brightnessctl set {value}%
+  - type: section
+    properties:
+      title: Live System Status
+    items:
     - type: label
       properties:
         title: Kernel
