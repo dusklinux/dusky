@@ -480,7 +480,7 @@ class DuskyControlCenter(Adw.Application):
         """Construct and present the main application window."""
         self._window = Adw.Window(application=self, title=APP_TITLE)
         self._window.set_default_size(WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT)
-        self._window.set_size_request(700, 600)  # (Min Width, Min Height)
+        self._window.set_size_request(720, 600)  # (Min Width, Min Height)
         self._window.connect("close-request", self._on_close_request)
 
         # Keyboard event handling
