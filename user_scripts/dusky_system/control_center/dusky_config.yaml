@@ -103,7 +103,7 @@ pages:
       properties:
         title: Brightness
         icon: display-brightness-high-symbolic
-        min: 0
+        min: 1
         max: 100
         step: 1
         default: 50
