@@ -67,48 +67,87 @@ esac
 
 # 5. Hardware Detection (Smart Query)
 # ------------------------------------------------------------------------------
-# We fetch the entire JSON blob once to minimize IPC calls (Performance).
-# We strictly select index [0] as per your "single monitor system" constraint.
+# Fetch all monitors to handle multi-monitor setups
 MON_STATE=$(hyprctl monitors -j)
 
-# Extract precise values using jq
-NAME=$(printf "%s" "$MON_STATE" | jq -r '.[0].name')
-SCALE=$(printf "%s" "$MON_STATE" | jq -r '.[0].scale')
-CURRENT_TRANSFORM=$(printf "%s" "$MON_STATE" | jq -r '.[0].transform')
+# Count number of monitors
+MON_COUNT=$(printf "%s" "$MON_STATE" | jq 'length')
 
-# Validation: Ensure we actually found a monitor
-if [[ -z "$NAME" || "$NAME" == "null" ]]; then
+# Validation: Ensure we actually found monitors
+if [[ "$MON_COUNT" -eq 0 ]]; then
     printf "%s[ERROR]%s No active monitors detected via Hyprland IPC.\n" \
         "$C_RED" "$C_RESET" >&2
     exit 1
 fi
 
-# 6. Transformation Logic (Modulo Arithmetic)
+# 6. Detect Active Monitor (where mouse cursor is)
 # ------------------------------------------------------------------------------
-# Hyprland Transforms: 0=Normal, 1=90, 2=180, 3=270
-# The '+ 4' ensures we handle negative wraparounds correctly in Bash logic.
-NEW_TRANSFORM=$(( (CURRENT_TRANSFORM + DIRECTION + 4) % 4 ))
+# Get cursor position
+CURSOR_INFO=$(hyprctl cursorpos)
+CURSOR_X=$(echo "$CURSOR_INFO" | awk '{print $1}' | tr -d ',')
+CURSOR_Y=$(echo "$CURSOR_INFO" | awk '{print $2}')
 
-# 7. Execution (State overwrite)
+printf "%s[INFO]%s Cursor position: %d, %d\n" \
+    "$C_BLUE" "$C_RESET" "$CURSOR_X" "$CURSOR_Y"
+
+# Find which monitor contains the cursor
+ACTIVE_MONITOR=""
+for i in $(seq 0 $((MON_COUNT - 1))); do
+    MON_NAME=$(printf "%s" "$MON_STATE" | jq -r ".[$i].name")
+    MON_X=$(printf "%s" "$MON_STATE" | jq -r ".[$i].x")
+    MON_Y=$(printf "%s" "$MON_STATE" | jq -r ".[$i].y")
+    MON_WIDTH=$(printf "%s" "$MON_STATE" | jq -r ".[$i].width")
+    MON_HEIGHT=$(printf "%s" "$MON_STATE" | jq -r ".[$i].height")
+
+    # Check if cursor is within this monitor's bounds
+    if [[ $CURSOR_X -ge $MON_X ]] && [[ $CURSOR_X -lt $((MON_X + MON_WIDTH)) ]] && \
+       [[ $CURSOR_Y -ge $MON_Y ]] && [[ $CURSOR_Y -lt $((MON_Y + MON_HEIGHT)) ]]; then
+        ACTIVE_MONITOR="$i"
+        printf "%s[INFO]%s Detected active monitor: %s%s%s\n" \
+            "$C_BLUE" "$C_RESET" "$C_BOLD" "$MON_NAME" "$C_RESET"
+        break
+    fi
+done
+
+# Fallback to first monitor if detection fails
+if [[ -z "$ACTIVE_MONITOR" ]]; then
+    ACTIVE_MONITOR="0"
+    printf "%s[WARNING]%s Could not detect cursor monitor, using first monitor.\n" \
+        "$C_YELLOW" "$C_RESET"
+fi
+
+# 7. Rotate Only the Active Monitor
 # ------------------------------------------------------------------------------
-# We use 'preferred' and 'auto' to remain robust against resolution changes,
-# but we STRICTLY inject the detected $SCALE to prevent UI scaling issues.
+# Extract monitor details for the active monitor
+NAME=$(printf "%s" "$MON_STATE" | jq -r ".[$ACTIVE_MONITOR].name")
+SCALE=$(printf "%s" "$MON_STATE" | jq -r ".[$ACTIVE_MONITOR].scale")
+CURRENT_TRANSFORM=$(printf "%s" "$MON_STATE" | jq -r ".[$ACTIVE_MONITOR].transform")
+WIDTH=$(printf "%s" "$MON_STATE" | jq -r ".[$ACTIVE_MONITOR].width")
+HEIGHT=$(printf "%s" "$MON_STATE" | jq -r ".[$ACTIVE_MONITOR].height")
+REFRESH=$(printf "%s" "$MON_STATE" | jq -r ".[$ACTIVE_MONITOR].refreshRate")
+POS_X=$(printf "%s" "$MON_STATE" | jq -r ".[$ACTIVE_MONITOR].x")
+POS_Y=$(printf "%s" "$MON_STATE" | jq -r ".[$ACTIVE_MONITOR].y")
+
+# Calculate new transform using modulo arithmetic
+# Hyprland Transforms: 0=Normal, 1=90, 2=180, 3=270
+NEW_TRANSFORM=$(( (CURRENT_TRANSFORM + DIRECTION + 4) % 4 ))
 
 printf "%s[INFO]%s Rotating %s%s%s (Scale: %s): %d -> %d\n" \
     "$C_BLUE" "$C_RESET" "$C_BOLD" "$NAME" "$C_RESET" "$SCALE" "$CURRENT_TRANSFORM" "$NEW_TRANSFORM"
 
-# Apply the new configuration immediately via IPC
-if hyprctl keyword monitor "${NAME}, preferred, auto, ${SCALE}, transform, ${NEW_TRANSFORM}" > /dev/null; then
-    printf "%s[SUCCESS]%s Rotation applied successfully.\n" \
-        "$C_GREEN" "$C_RESET"
-    
-    # Notify user visually if notify-send is available (optional UX improvement)
+# Apply rotation while preserving position
+# Use exact resolution and position to maintain layout
+if hyprctl keyword monitor "${NAME}, ${WIDTH}x${HEIGHT}@${REFRESH}, ${POS_X}x${POS_Y}, ${SCALE}, transform, ${NEW_TRANSFORM}" > /dev/null; then
+    printf "%s[SUCCESS]%s Rotation applied for %s.\n" \
+        "$C_GREEN" "$C_RESET" "$NAME"
+
+    # Notify user visually if notify-send is available
     if command -v notify-send &> /dev/null; then
         notify-send -a "System" "Display Rotated" "Monitor: $NAME\nTransform: $NEW_TRANSFORM" -h string:x-canonical-private-synchronous:display-rotate
     fi
 else
-    printf "%s[ERROR]%s Failed to apply Hyprland keyword.\n" \
-        "$C_RED" "$C_RESET" >&2
+    printf "%s[ERROR]%s Failed to apply rotation for %s.\n" \
+        "$C_RED" "$C_RESET" "$NAME" >&2
     exit 1
 fi
 

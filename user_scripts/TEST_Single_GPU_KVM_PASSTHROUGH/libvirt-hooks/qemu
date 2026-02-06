@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#
+# Libvirt QEMU Hook Dispatcher
+# Executes hook scripts based on VM lifecycle events
+#
+set -euo pipefail
+
+GUEST_NAME="$1"
+HOOK_NAME="$2"
+STATE_NAME="$3"
+
+BASEDIR="$(dirname "$0")"
+HOOK_PATH="$BASEDIR/qemu.d/$GUEST_NAME/$HOOK_NAME/$STATE_NAME"
+
+# Log the hook invocation
+logger -t "libvirt-qemu-hook" "VM: $GUEST_NAME, Hook: $HOOK_NAME, State: $STATE_NAME"
+
+if [[ -f "$HOOK_PATH" ]]; then
+    "$HOOK_PATH" "$@"
+elif [[ -d "$HOOK_PATH" ]]; then
+    while read -r file; do
+        [[ -x "$file" ]] && "$file" "$@"
+    done <<< "$(find -L "$HOOK_PATH" -maxdepth 1 -type f -executable | sort)"
+fi
