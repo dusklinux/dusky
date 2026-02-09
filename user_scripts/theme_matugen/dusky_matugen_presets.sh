@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Dusky Matugen Presets v3.7.0 (Hardened & Audited)
+# Dusky Matugen Presets v3.7.1 (Hardened & Audited)
 # -----------------------------------------------------------------------------
 # Target: Arch Linux / Hyprland / Matugen
 # Description: High-performance TUI for applying Matugen color schemes.
@@ -16,7 +16,7 @@ export LC_NUMERIC=C
 # =============================================================================
 
 readonly APP_TITLE="Dusky Matugen Presets"
-readonly APP_VERSION="v3.7.0"
+readonly APP_VERSION="v3.7.1"
 
 # --- State Management ---
 readonly USE_STATE_FILE=false
@@ -815,7 +815,7 @@ main() {
                 l|L)            adjust_setting 1 ;;
                 h|H)            adjust_setting -1 ;;
                 $'\t')          switch_tab 1 ;;
-                $'\n'|'')       handle_enter ;;
+                $'\n'|''|' '|o|O) handle_enter ;;
                 q|Q|$'\x03')    break ;;
                 *)              ;;
             esac
