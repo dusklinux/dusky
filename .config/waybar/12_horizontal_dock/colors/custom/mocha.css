@@ -1,0 +1,30 @@
+/* Catppuccin Mocha - Unified Waybar Colors */
+
+/* Background Hierarchy */
+@define-color bg0     #11111b;  /* Crust - Deepest bg */
+@define-color bg1     #181825;  /* Mantle - Cards/Modules */
+@define-color bg2     #1e1e2e;  /* Base - Hover states */
+@define-color bg3     #313244;  /* Surface0 - Borders */
+@define-color bg4     #45475a;  /* Surface1 */
+
+/* Text Colors */
+@define-color fg0     #cdd6f4;  /* Text - Primary */
+
+/* Primary Accents */
+@define-color pri0      #b4befe;  /* Lavender - Active workspace, clock */
+@define-color accent    #89b4fa;  /* Blue - Selection highlight */
+
+/* Utility Colors */
+@define-color yellow    #f9e2af;
+@define-color orange    #f9e2af;
+@define-color green     #a6e3a1;
+@define-color red       #f38ba8;
+@define-color peach     #fab387;
+@define-color teal      #94e2d5;
+@define-color cyan      #89dceb;
+@define-color blue      #89b4fa;
+@define-color purple    #cba6f7;  /* mauve For network module */
+
+/* Gradient Colors */
+@define-color grad-start  #b4befe;
+@define-color grad-end    #cba6f7;

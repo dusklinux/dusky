@@ -1,0 +1,29 @@
+/* Everforest Theme - Unified Colors */
+
+/* Background Hierarchy */
+@define-color bg0     #1F2427;  /* bg0 - Deepest bg */
+@define-color bg1     #272F32;  /* bg1 - Elevated surfaces */
+@define-color bg2     #2E3539;  /* bg2 - Hover/selection */
+@define-color bg3     #3B4348;  /* bg3 - Borders/dividers */
+@define-color bg4     #46514E;  /* bg4 - Secondary borders */
+
+/* Text Colors */
+@define-color fg0     #d3c6aa;  /* fg - Primary text (soft cream) */
+
+/* Primary Accents - Green → Aqua Gradient */
+@define-color pri0        #a7c080;  /* Green - Main accent/workspace active */
+@define-color accent      #a7c080;  /* Fallback solid green */
+
+/* Utility Colors (Best Only) */
+@define-color green     #a7c080;  /* Main green */
+@define-color aqua      #83c092;  /* Aqua/Teal */
+@define-color blue      #7fbbb3;  /* Cyan-blue */
+@define-color yellow    #dbbc7f;  /* Yellow/gold */
+@define-color orange    #e69875;  /* Orange */
+@define-color red       #e67e80;  /* Soft red */
+@define-color purple    #d699b6;  /* Pink/purple (rare in Everforest but available) */
+@define-color line      #4f585e;  /* Separators */
+
+/* Gradient Colors */
+@define-color grad-start  #a7c080;  /* Green (left) */
+@define-color grad-end    #83c092;  /* Aqua (right) */

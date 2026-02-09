@@ -1,0 +1,29 @@
+/* Tokyo Night Theme - Unified Colors */
+
+/* Background Hierarchy */
+@define-color bg0     #1a1b26;  /* bg - Deepest blue-black */
+@define-color bg1     #24283b;  /* bg_dark - Elevated surfaces */
+@define-color bg2     #292e42;  /* bg_highlight - Hover/selection */
+@define-color bg3     #3b4261;  /* fg_gutter - Borders/dividers */
+@define-color bg4     #565f89;  /* comment - Secondary borders */
+
+/* Text Colors */
+@define-color fg0     #c0caf5;  /* fg - Primary text (soft lavender-white) */
+
+/* Primary Accents - Blue → Purple Gradient */
+@define-color pri0        #7aa2f7;  /* Blue - Main accent/workspace active */
+@define-color accent      #7aa2f7;  /* Fallback solid blue */
+
+/* Utility Colors (Best Selection) */
+@define-color blue      #7aa2f7;  /* Main blue */
+@define-color purple    #bb9af7;  /* Main purple (gradient end) */
+@define-color cyan      #7dcfff;  /* Bright cyan */
+@define-color green     #9ece6a;  /* Vibrant green */
+@define-color red       #f7768e;  /* Soft red/pink */
+@define-color orange    #ff9e64;  /* Warm orange */
+@define-color yellow    #e0af68;  /* Muted gold/yellow */
+@define-color line      #3b4261;  /* Separators (gutter fg) */
+
+/* Gradient Colors */
+@define-color grad-start  #7aa2f7;  /* Blue (left) */
+@define-color grad-end    #bb9af7;  /* Purple (right) */

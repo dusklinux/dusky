@@ -1,0 +1,31 @@
+/* Rxyhn Theme */
+
+/* Background Hierarchy */
+@define-color bg0     #061115;  /* Deepest black-teal */
+@define-color bg1     #131e22;  /* Elevated surfaces */
+@define-color bg2     #1c272b;  /* Hover states */
+@define-color bg3     #313c40;  /* Borders */
+@define-color bg4     #3b464a;  /* Secondary borders */
+
+/* Text Colors */
+@define-color fg0     #D9D7D6;  /* Primary white */
+
+/* Primary Accents - Purple → Pink Gradient */
+@define-color pri0        #7ACFE4;  /* Teal - Main accent */
+@define-color accent      #67AFC1;  /* Fallback solid */
+
+/* Utility Colors (Best Only) */
+@define-color purple    #6791C9;  /* Muted to blue-purple */
+@define-color pink      #EE6A70;  /* Shifted to coral/salmon */
+@define-color blue      #5A84BC;  /* Deeper nord blue */
+@define-color yellow    #f6dc95;  /* Warmer sun yellow */
+@define-color green     #78B892;  /* Muted sage green */
+@define-color red       #DF5B61;  /* Kept for errors */
+@define-color teal      #7ACFE4;  /* Rxyhn identity */
+@define-color cyan      #67AFC1;  /* Rxyhn identity */
+@define-color orange    #E9967E;  /* Dark salmon */
+@define-color line      #222d31;  /* Separators */
+
+/* Gradient Colors */
+@define-color grad-start  #78B892;  /* Muted sage green */
+@define-color grad-end    #EE6A70;  /* Pink/Dark Pink (right) */
