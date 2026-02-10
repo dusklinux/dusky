@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Dusky TUI Engine - Hybrid Master v3.6.0 (Architect Edition)
+# Dusky TUI Engine - Hybrid Master v3.6.1 (Architect Edition)
 # -----------------------------------------------------------------------------
 # Target: Arch Linux / Hyprland / UWSM / Wayland
+#
+# v3.6.1 CHANGELOG:
+#   - FIX: Corrected Bash nameref binding in mouse handler (logic error).
+#   - FIX: Adjusted sed regex to correctly handle '#' starting values (hex colors).
+#   - SAFETY: Added guard clause for invalid Bash identifiers in menu IDs.
 #
 # v3.6.0 CHANGELOG:
 #   - CRITICAL: Fixed "Trap" bug where q/Ctrl-C were ignored in submenus.
@@ -21,7 +26,7 @@ set -euo pipefail
 # POINT THIS TO YOUR REAL CONFIG FILE
 readonly CONFIG_FILE="${HOME}/.config/hypr/change_me.conf"
 readonly APP_TITLE="Input Config Editor"
-readonly APP_VERSION="v3.6.0 (Stable)"
+readonly APP_VERSION="v3.6.1 (Patched)"
 
 # Dimensions & Layout
 declare -ri MAX_DISPLAY_ROWS=14
@@ -193,6 +198,12 @@ register() {
 register_child() {
     local parent_id=$1
     local label=$2 config=$3 default_val=${4:-}
+
+    # SAFETY: Ensure parent_id is a valid bash identifier to prevent crashing 'declare'
+    if [[ ! "$parent_id" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+        log_err "Register Error: Menu ID '${parent_id}' contains invalid characters. Use alphanumeric/underscores only."
+        exit 1
+    fi
     
     # Initialize submenu array if it doesn't exist
     if ! declare -p "SUBMENU_ITEMS_${parent_id}" &>/dev/null; then
@@ -328,6 +339,10 @@ write_value_to_file() {
     escape_sed_replacement "$new_val" safe_val
     escape_sed_pattern "$key" safe_sed_key
 
+    # FIX: Changed `[^#]*` to `.*` in sed commands.
+    # Previous regex failed if the existing value started with '#' (like #ff0000).
+    # New regex consumes the whole line, which ensures cleaner replacement but drops inline comments.
+
     if [[ -n "$block" ]]; then
         local target_output
         target_output=$(find_key_line_in_block "$block" "$key" "$CONFIG_FILE")
@@ -336,13 +351,13 @@ write_value_to_file() {
         while IFS= read -r target_line; do
             [[ ! "$target_line" =~ ^[0-9]+$ ]] && continue
             (( target_line == 0 )) && continue
-            sed --follow-symlinks -i "${target_line}s|^\([[:space:]]*${safe_sed_key}[[:space:]]*=[[:space:]]*\)[^#]*|\1${safe_val}|" "$CONFIG_FILE"
+            sed --follow-symlinks -i "${target_line}s|^\([[:space:]]*${safe_sed_key}[[:space:]]*=[[:space:]]*\).*|\1${safe_val}|" "$CONFIG_FILE"
         done <<< "$target_output"
     else
         if [[ -z "${CONFIG_CACHE["$key|"]:-}" ]]; then
             return 1
         fi
-        sed --follow-symlinks -i "s|^\([[:space:]]*${safe_sed_key}[[:space:]]*=[[:space:]]*\)[^#]*|\1${safe_val}|" "$CONFIG_FILE"
+        sed --follow-symlinks -i "s|^\([[:space:]]*${safe_sed_key}[[:space:]]*=[[:space:]]*\).*|\1${safe_val}|" "$CONFIG_FILE"
     fi
 
     CONFIG_CACHE["$key|$block"]=$new_val
@@ -853,13 +868,17 @@ handle_mouse() {
     if (( y >= effective_start && y < effective_start + MAX_DISPLAY_ROWS )); then
         local -i clicked_idx=$(( y - effective_start + SCROLL_OFFSET ))
         
-        # FIX: Point to correct array based on View
-        local -n _mouse_items_ref
+        # FIX: Resolve target variable name FIRST, then declare nameref.
+        # This prevents the Bash behavior where assigning to an unbound nameref
+        # assigns the string to the ref variable itself rather than pointing to the target.
+        local _target_var_name
         if (( CURRENT_VIEW == 0 )); then
-             _mouse_items_ref="TAB_ITEMS_${CURRENT_TAB}"
+             _target_var_name="TAB_ITEMS_${CURRENT_TAB}"
         else
-             _mouse_items_ref="SUBMENU_ITEMS_${CURRENT_MENU_ID}"
+             _target_var_name="SUBMENU_ITEMS_${CURRENT_MENU_ID}"
         fi
+
+        local -n _mouse_items_ref="$_target_var_name"
         
         local -i count=${#_mouse_items_ref[@]}
         if (( clicked_idx >= 0 && clicked_idx < count )); then
