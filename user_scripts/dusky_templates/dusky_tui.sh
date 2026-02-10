@@ -255,9 +255,6 @@ populate_config_cache() {
         /^[[:space:]]*#/ { next }
         {
             line = $0
-            # FIX: Do not blindly strip everything after #.
-            # Only strip comments if # is preceded by space, or line starts with #.
-            # We handle the value extraction carefully below.
             
             tmpline = line
             # Remove blocks { ... } from processing
@@ -275,9 +272,17 @@ populate_config_cache() {
                     val = substr(line, eq_pos + 1)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
                     
+                    # FIX: Trim whitespace BEFORE comment stripping.
+                    # This ensures values like " #ff0000" (leading space) are treated as "#ff0000"
+                    # instead of being mistaken for a comment " #...".
+                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+
                     # Safe comment stripping:
-                    # Match space followed by #, then rest of line.
+                    # Now that we trimmed the leading space, we only strip if there is
+                    # a space followed by a # INSIDE the value (e.g. "true # comment")
                     sub(/[[:space:]]+#.*$/, "", val)
+                    
+                    # Final trim (just in case stripping left trailing spaces)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
                     
                     if (key != "") {
@@ -294,7 +299,6 @@ populate_config_cache() {
 
 find_key_line_in_block() {
     local block_name=$1 key_name=$2 file=$3
-    # Note: This awk also had the aggressive strip. Fixed here too.
     LC_NUMERIC=C awk -v target_block="$block_name" -v target_key="$key_name" '
     BEGIN { depth = 0; in_target = 0; target_depth = 0; found = 0 }
     {
@@ -338,10 +342,6 @@ write_value_to_file() {
     local safe_val safe_sed_key
     escape_sed_replacement "$new_val" safe_val
     escape_sed_pattern "$key" safe_sed_key
-
-    # FIX: Changed `[^#]*` to `.*` in sed commands.
-    # Previous regex failed if the existing value started with '#' (like #ff0000).
-    # New regex consumes the whole line, which ensures cleaner replacement but drops inline comments.
 
     if [[ -n "$block" ]]; then
         local target_output
@@ -417,8 +417,19 @@ modify_value() {
     case "$type" in
         int)
             if [[ ! "$current" =~ ^-?[0-9]+$ ]]; then current=${min:-0}; fi
-            local -i int_step=${step:-1} int_val=$current
+
+            # --- FIX: Sanitize Octal (strip leading zeros to force Base-10) ---
+            local clean_val=${current#-}    # Remove negative sign if present
+            clean_val=$(( 10#$clean_val ))  # Force Base-10 on the number (fixes 008/009 crash)
+            
+            # Re-apply negative if original had it
+            if [[ "$current" == -* ]]; then
+                clean_val=$(( clean_val * -1 )) 
+            fi
+
+            local -i int_step=${step:-1} int_val=$clean_val
             int_val=$(( int_val + direction * int_step ))
+            
             if [[ -n "$min" ]] && (( int_val < min )); then int_val=$min; fi
             if [[ -n "$max" ]] && (( int_val > max )); then int_val=$max; fi
             new_val=$int_val
@@ -884,7 +895,19 @@ handle_mouse() {
         if (( clicked_idx >= 0 && clicked_idx < count )); then
             SELECTED_ROW=$clicked_idx
             if (( x > ADJUST_THRESHOLD )); then
-                if (( button == 0 )); then adjust 1; else adjust -1; fi
+                if (( button == 0 )); then
+                    # Left Click Logic:
+                    # If in Main View (0), try check_drilldown first to enter menus.
+                    # If check_drilldown fails (not a menu), or we are in a submenu, fall back to adjust 1.
+                    if (( CURRENT_VIEW == 0 )); then
+                        check_drilldown || adjust 1
+                    else
+                        adjust 1
+                    fi
+                else
+                    # Right Click Logic
+                    adjust -1
+                fi
             fi
         fi
     fi
