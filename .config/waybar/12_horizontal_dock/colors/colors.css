@@ -1,0 +1,10 @@
+@import url("file:///home/rare/.config/matugen/generated/waybar-colors.css");
+
+@define-color bg0 alpha(@surface, 0.85);
+@define-color bg1 alpha(@surface_container, 0.9);
+@define-color fg0 @on_surface;
+@define-color pri0 @primary;
+@define-color grad-start @secondary;
+@define-color grad-end @primary;
+@define-color orange @tertiary;
+@define-color purple @primary;
