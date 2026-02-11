@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Dusky TUI Engine - Master v3.9.0
+# Dusky TUI Engine - Master v3.9.1
 # -----------------------------------------------------------------------------
 # Target: Arch Linux / Hyprland / UWSM / Wayland
+#
+# v3.9.1 CHANGELOG:
+#   - AUDIT: Full forensic line-by-line review. No functional bugs found.
+#   - STYLE: Consistent quoting on all variable assignments.
+#   - CLEAN: Removed redundant global scroll-state declarations.
 #
 # v3.9.0 CHANGELOG:
 #   - CRITICAL: Replaced sed-based writes with atomic awk processing.
@@ -23,7 +28,7 @@ shopt -s extglob
 # POINT THIS TO YOUR REAL CONFIG FILE
 declare -r CONFIG_FILE="${HOME}/.config/hypr/change_me.conf"
 declare -r APP_TITLE="Input Config Editor"
-declare -r APP_VERSION="v3.9.0 (Hardened)"
+declare -r APP_VERSION="v3.9.1 (Hardened)"
 
 # Dimensions & Layout
 declare -ri MAX_DISPLAY_ROWS=14
@@ -42,24 +47,24 @@ register_items() {
     # Tab 0: General
     register 0 "Enable Logs"    'logs_enabled|bool|general|||'          "true"
     register 0 "Timeout (ms)"   'timeout|int|general|0|1000|50'        "100"
-    
+
     # Tab 1: Input
     register 1 "Sensitivity"    'sensitivity|float|input|-1.0|1.0|0.1' "0.0"
     register 1 "Accel Profile"  'accel_profile|cycle|input|flat,adaptive,custom||' "adaptive"
-    
+
     # Tab 2: Display
     register 2 "Border Size"    'border_size|int||0|10|1'              "2"
     register 2 "Blur Enabled"   'blur|bool|decoration|||'              "true"
-    
+
     # Tab 3: Misc
     # 'menu' type item. The 'key' (advanced_settings) is used as the Menu ID.
     register 3 "Advanced Settings" 'advanced_settings|menu||||'        ""
-    
+
     # Submenu Items (registered to parent ID "advanced_settings")
     register_child "advanced_settings" "Touchpad Enable"  'enabled|bool|touchpad|||' "true"
     register_child "advanced_settings" "Scroll Factor"    'scroll_factor|float|touchpad|0.1|5.0|0.1' "1.0"
     register_child "advanced_settings" "Tap to Click"     'tap-to-click|bool|touchpad|||' "true"
-    
+
     register 3 "Shadow Color"   'col.shadow|cycle|general|0xee1a1a1a,0xff000000||' "0xee1a1a1a"
 }
 
@@ -115,10 +120,6 @@ declare CURRENT_MENU_ID=""     # ID of the currently open menu
 declare -i PARENT_ROW=0        # Saved row to return to
 declare -i PARENT_SCROLL=0     # Saved scroll to return to
 
-# Scroll State Globals (Explicitly declared)
-declare -i _vis_start=0
-declare -i _vis_end=0
-
 # Temp file global
 declare _TMPFILE=""
 
@@ -173,7 +174,7 @@ strip_ansi() {
 
 register() {
     local -i tab_idx=$1
-    local label=$2 config=$3 default_val=${4:-}
+    local label="$2" config="$3" default_val="${4:-}"
     local key type block min max step
     IFS='|' read -r key type block min max step <<< "$config"
 
@@ -182,8 +183,8 @@ register() {
         *) log_err "Invalid type for '${label}': ${type}"; exit 1 ;;
     esac
 
-    ITEM_MAP["${tab_idx}::${label}"]=$config
-    if [[ -n "$default_val" ]]; then DEFAULTS["${tab_idx}::${label}"]=$default_val; fi
+    ITEM_MAP["${tab_idx}::${label}"]="$config"
+    if [[ -n "$default_val" ]]; then DEFAULTS["${tab_idx}::${label}"]="$default_val"; fi
     local -n _reg_tab_ref="TAB_ITEMS_${tab_idx}"
     _reg_tab_ref+=("$label")
 
@@ -195,22 +196,22 @@ register() {
 }
 
 register_child() {
-    local parent_id=$1
-    local label=$2 config=$3 default_val=${4:-}
+    local parent_id="$1"
+    local label="$2" config="$3" default_val="${4:-}"
 
     # SAFETY: Ensure parent_id is a valid bash identifier
     if [[ ! "$parent_id" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
         log_err "Register Error: Menu ID '${parent_id}' contains invalid characters."
         exit 1
     fi
-    
+
     if ! declare -p "SUBMENU_ITEMS_${parent_id}" &>/dev/null; then
         declare -ga "SUBMENU_ITEMS_${parent_id}=()"
     fi
 
-    ITEM_MAP["${parent_id}::${label}"]=$config
-    if [[ -n "$default_val" ]]; then DEFAULTS["${parent_id}::${label}"]=$default_val; fi
-    
+    ITEM_MAP["${parent_id}::${label}"]="$config"
+    if [[ -n "$default_val" ]]; then DEFAULTS["${parent_id}::${label}"]="$default_val"; fi
+
     local -n _child_ref="SUBMENU_ITEMS_${parent_id}"
     _child_ref+=("$label")
 }
@@ -221,10 +222,10 @@ populate_config_cache() {
 
     while IFS='=' read -r key_part value_part || [[ -n "${key_part:-}" ]]; do
         if [[ -z "${key_part:-}" ]]; then continue; fi
-        CONFIG_CACHE["$key_part"]=$value_part
-        key_name=${key_part%%|*}
+        CONFIG_CACHE["$key_part"]="$value_part"
+        key_name="${key_part%%|*}"
         if [[ -z "${CONFIG_CACHE["${key_name}|"]:-}" ]]; then
-            CONFIG_CACHE["${key_name}|"]=$value_part
+            CONFIG_CACHE["${key_name}|"]="$value_part"
         fi
     done < <(LC_ALL=C awk '
         BEGIN { depth = 0 }
@@ -267,7 +268,7 @@ populate_config_cache() {
 }
 
 write_value_to_file() {
-    local key=$1 new_val=$2 block=${3:-}
+    local key="$1" new_val="$2" block="${3:-}"
     local current_val="${CONFIG_CACHE["$key|$block"]:-}"
     if [[ "$current_val" == "$new_val" ]]; then return 0; fi
 
@@ -331,13 +332,13 @@ write_value_to_file() {
             # Find the = sign position in original line to preserve pre-equals spacing
             eq = index(line, "=")
             before_eq = substr(line, 1, eq)
-            
+
             # Check for inline comment after value
             rest = substr(line, eq + 1)
             # Preserve spacing after =
             match(rest, /^[[:space:]]*/)
             space_after = substr(rest, RSTART, RLENGTH)
-            
+
             print before_eq space_after new_value
             replaced = 1
         } else {
@@ -367,8 +368,8 @@ write_value_to_file() {
     rm -f "$_TMPFILE"
     _TMPFILE=""
 
-    CONFIG_CACHE["$key|$block"]=$new_val
-    if [[ -z "$block" ]]; then CONFIG_CACHE["$key|"]=$new_val; fi
+    CONFIG_CACHE["$key|$block"]="$new_val"
+    if [[ -z "$block" ]]; then CONFIG_CACHE["$key|"]="$new_val"; fi
     return 0
 }
 
@@ -397,15 +398,15 @@ load_active_values() {
             val="${CONFIG_CACHE["$key|"]:-}"
         fi
         if [[ -z "$val" ]]; then
-            VALUE_CACHE["${REPLY_CTX}::${item}"]=$UNSET_MARKER
+            VALUE_CACHE["${REPLY_CTX}::${item}"]="$UNSET_MARKER"
         else
-            VALUE_CACHE["${REPLY_CTX}::${item}"]=$val
+            VALUE_CACHE["${REPLY_CTX}::${item}"]="$val"
         fi
     done
 }
 
 modify_value() {
-    local label=$1
+    local label="$1"
     local -i direction=$2
     local REPLY_REF REPLY_CTX
     get_active_context
@@ -436,7 +437,7 @@ modify_value() {
 
             local -i int_step=${step:-1}
             int_val=$(( int_val + direction * int_step ))
-            
+
             # Simple, safe clamping
             if [[ -n "$min" ]]; then
                 local -i min_i
@@ -490,19 +491,19 @@ modify_value() {
     esac
 
     if write_value_to_file "$key" "$new_val" "$block"; then
-        VALUE_CACHE["${REPLY_CTX}::${label}"]=$new_val
+        VALUE_CACHE["${REPLY_CTX}::${label}"]="$new_val"
         post_write_action
     fi
 }
 
 set_absolute_value() {
-    local label=$1 new_val=$2
+    local label="$1" new_val="$2"
     local REPLY_REF REPLY_CTX
     get_active_context
     local key type block
     IFS='|' read -r key type block _ _ _ <<< "${ITEM_MAP["${REPLY_CTX}::${label}"]}"
     if write_value_to_file "$key" "$new_val" "$block"; then
-        VALUE_CACHE["${REPLY_CTX}::${label}"]=$new_val
+        VALUE_CACHE["${REPLY_CTX}::${label}"]="$new_val"
         return 0
     fi
     return 1
@@ -530,6 +531,8 @@ reset_defaults() {
 
 # Computes scroll window and clamps SELECTED_ROW
 # Sets: SCROLL_OFFSET, SELECTED_ROW, _vis_start, _vis_end
+# Note: _vis_start/_vis_end are resolved via Bash dynamic scoping
+# to the caller's local variables of the same name.
 compute_scroll_window() {
     local -i count=$1
     if (( count == 0 )); then
@@ -559,7 +562,7 @@ compute_scroll_window() {
 # Renders the scroll indicators (above/below items)
 render_scroll_indicator() {
     local -n _rsi_buf=$1
-    local position=$2
+    local position="$2"
     local -i count=$3 boundary=$4
 
     if [[ "$position" == "above" ]]; then
@@ -587,7 +590,7 @@ render_scroll_indicator() {
 render_item_list() {
     local -n _ril_buf=$1
     local -n _ril_items=$2
-    local _ril_ctx=$3
+    local _ril_ctx="$3"
     local -i _ril_vs=$4 _ril_ve=$5
 
     local -i ri
@@ -664,7 +667,7 @@ draw_main_view() {
 
     pad_needed=$(( BOX_INNER_WIDTH - current_col + 2 ))
     if (( pad_needed < 0 )); then pad_needed=0; fi
-    
+
     if (( pad_needed > 0 )); then
         printf -v pad_buf '%*s' "$pad_needed" ''
         tab_line+="${pad_buf}"
@@ -694,11 +697,11 @@ draw_detail_view() {
     local -i count pad_needed
     local -i left_pad right_pad vis_len
     local -i _vis_start _vis_end
-    
+
     # 1. Header
     buf+="${CURSOR_HOME}"
     buf+="${C_MAGENTA}┌${H_LINE}┐${C_RESET}${CLR_EOL}"$'\n'
-    
+
     local title=" DETAIL VIEW "
     local sub=" ${CURRENT_MENU_ID} "
     strip_ansi "$title"; local -i t_len=${#REPLY}
@@ -711,18 +714,18 @@ draw_detail_view() {
     buf+="${C_MAGENTA}│${pad_buf}${C_YELLOW}${title}${C_GREY}${sub}${C_MAGENTA}"
     printf -v pad_buf '%*s' "$right_pad" ''
     buf+="${pad_buf}│${C_RESET}${CLR_EOL}"$'\n'
-    
+
     # Breadcrumb
     local breadcrumb=" « Back to ${TABS[CURRENT_TAB]}"
     strip_ansi "$breadcrumb"; local -i b_len=${#REPLY}
     pad_needed=$(( BOX_INNER_WIDTH - b_len ))
     if (( pad_needed < 0 )); then pad_needed=0; fi
-    
+
     printf -v pad_buf '%*s' "$pad_needed" ''
-    
+
     buf+="${C_MAGENTA}│${C_CYAN}${breadcrumb}${C_RESET}${pad_buf}${C_MAGENTA}│${C_RESET}${CLR_EOL}"$'\n'
     buf+="${C_MAGENTA}└${H_LINE}┘${C_RESET}${CLR_EOL}"$'\n'
-    
+
     # Items
     local items_var="SUBMENU_ITEMS_${CURRENT_MENU_ID}"
     local -n _detail_items_ref="$items_var"
@@ -809,17 +812,17 @@ set_tab() {
 check_drilldown() {
     local -n _dd_items_ref="TAB_ITEMS_${CURRENT_TAB}"
     if (( ${#_dd_items_ref[@]} == 0 )); then return 1; fi
-    
+
     local item="${_dd_items_ref[SELECTED_ROW]}"
     local config="${ITEM_MAP["${CURRENT_TAB}::${item}"]}"
     local key type
     IFS='|' read -r key type _ _ _ _ <<< "$config"
-    
+
     if [[ "$type" == "menu" ]]; then
         # Save state
         PARENT_ROW=$SELECTED_ROW
         PARENT_SCROLL=$SCROLL_OFFSET
-        
+
         # Switch Context
         CURRENT_MENU_ID="$key"
         CURRENT_VIEW=1
@@ -839,15 +842,15 @@ go_back() {
 }
 
 handle_mouse() {
-    local input=$1
+    local input="$1"
     local -i button x y i start end
     local type zone
 
-    local body=${input#'[<'}
+    local body="${input#'[<'}"
     if [[ "$body" == "$input" ]]; then return 0; fi
-    local terminator=${body: -1}
+    local terminator="${body: -1}"
     if [[ "$terminator" != "M" && "$terminator" != "m" ]]; then return 0; fi
-    body=${body%[Mm]}
+    body="${body%[Mm]}"
     local field1 field2 field3
     IFS=';' read -r field1 field2 field3 <<< "$body"
     if [[ ! "$field1" =~ ^[0-9]+$ ]]; then return 0; fi
@@ -862,9 +865,9 @@ handle_mouse() {
     if (( y == TAB_ROW )); then
         if (( CURRENT_VIEW == 0 )); then
             for (( i = 0; i < TAB_COUNT; i++ )); do
-                zone=${TAB_ZONES[i]}
-                start=${zone%%:*}
-                end=${zone##*:}
+                zone="${TAB_ZONES[i]}"
+                start="${zone%%:*}"
+                end="${zone##*:}"
                 if (( x >= start && x <= end )); then set_tab "$i"; return 0; fi
             done
         else
@@ -876,7 +879,7 @@ handle_mouse() {
     local -i effective_start=$(( ITEM_START_ROW + 1 ))
     if (( y >= effective_start && y < effective_start + MAX_DISPLAY_ROWS )); then
         local -i clicked_idx=$(( y - effective_start + SCROLL_OFFSET ))
-        
+
         local _target_var_name
         if (( CURRENT_VIEW == 0 )); then
              _target_var_name="TAB_ITEMS_${CURRENT_TAB}"
@@ -885,7 +888,7 @@ handle_mouse() {
         fi
 
         local -n _mouse_items_ref="$_target_var_name"
-        
+
         local -i count=${#_mouse_items_ref[@]}
         if (( clicked_idx >= 0 && clicked_idx < count )); then
             SELECTED_ROW=$clicked_idx
