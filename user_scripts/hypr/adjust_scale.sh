@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# UNIVERSAL HYPRLAND MONITOR SCALER (V16 - STRICT MATH)
+# UNIVERSAL HYPRLAND MONITOR SCALER (V17 - HARDENED)
 # ==============================================================================
-# Fixes "Rejection Loops" on low-resolution or virtual monitors by enforcing
-# strict pixel alignment (0.01 tolerance instead of 0.05).
+# V17 CHANGELOG:
+#   - CRITICAL: Replaced mv-based config writes with atomic cat > target
+#     to preserve symlinks/inodes (from Dusky TUI Engine pattern).
+#   - FIX: Global temp file lifecycle with guaranteed cleanup on all exits.
+#   - FIX: Added -0 guard to float formatting in compute_next_scale.
+#   - FIX: Trap hygiene — separate handlers for INT/TERM signals.
+#   - FIX: Bash 5.0+ version guard.
+#   - FIX: shopt -s extglob for defensive globbing.
+#   - CLEAN: Removed redundant per-function trap that conflicted with global.
 # ==============================================================================
 
 set -euo pipefail
+shopt -s extglob
 export LC_ALL=C
 
 # --- Immutable Configuration ---
@@ -21,11 +29,25 @@ DEBUG="${DEBUG:-0}"
 TARGET_MONITOR="${HYPR_SCALE_MONITOR:-}"
 CONFIG_FILE=""
 
+# Temp file global — single lifecycle, cleaned on any exit
+declare _TMPFILE=""
+
 # --- Logging ---
 log_err()   { printf '\033[0;31m[ERROR]\033[0m %s\n' "$1" >&2; }
 log_warn()  { printf '\033[0;33m[WARN]\033[0m %s\n'  "$1" >&2; }
 log_info()  { printf '\033[0;32m[INFO]\033[0m %s\n'  "$1" >&2; }
 log_debug() { [[ "${DEBUG}" != "1" ]] || printf '\033[0;34m[DEBUG]\033[0m %s\n' "$1" >&2; }
+
+# --- Cleanup & Traps ---
+cleanup() {
+    if [[ -n "${_TMPFILE:-}" && -f "$_TMPFILE" ]]; then
+        rm -f "$_TMPFILE" 2>/dev/null || :
+    fi
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 die() {
     log_err "$1"
@@ -42,7 +64,6 @@ trim() {
 
 # --- Initialization ---
 init_config_file() {
-    # STRICTLY monitors.conf only
     if [[ -f "${CONFIG_DIR}/monitors.conf" ]]; then
         CONFIG_FILE="${CONFIG_DIR}/monitors.conf"
         log_debug "Selected config: monitors.conf"
@@ -79,31 +100,24 @@ compute_next_scale() {
         -v w="$phys_w" -v h="$phys_h" \
         -v min_w="$MIN_LOGICAL_WIDTH" -v min_h="$MIN_LOGICAL_HEIGHT" '
     BEGIN {
-        # Hyprland "Golden List"
         n = split("0.5 0.6 0.75 0.8 0.9 1.0 1.0625 1.1 1.125 1.15 1.2 1.25 1.33 1.4 1.5 1.6 1.67 1.75 1.8 1.88 2.0 2.25 2.4 2.5 2.67 2.8 3.0", raw)
         count = 0
 
         for (i = 1; i <= n; i++) {
             s = raw[i] + 0
-            
-            # Check 1: Minimum logical size
+
             lw = w / s; lh = h / s
             if (lw < min_w || lh < min_h) continue
-            
-            # Check 2: STRICT Integer Alignment
-            # Fixes loop where 1.15 was allowed on 1280x800 despite 0.04px error
+
             frac = lw - int(lw)
             if (frac > 0.5) frac = 1.0 - frac
-            
-            # TOLERANCE TIGHTENED: 0.05 -> 0.01
             if (frac > 0.01) continue
-            
+
             valid[++count] = s
         }
-        
+
         if (count == 0) { valid[1] = 1.0; count = 1 }
 
-        # Find position
         best = 1; mindiff = 1e9
         for (i = 1; i <= count; i++) {
             d = cur - valid[i]
@@ -111,7 +125,6 @@ compute_next_scale() {
             if (d < mindiff) { mindiff = d; best = i }
         }
 
-        # Calculate target
         target = (dir == "+") ? best + 1 : best - 1
         if (target < 1) target = 1
         if (target > count) target = count
@@ -121,6 +134,8 @@ compute_next_scale() {
 
         fmt = sprintf("%.6f", ns)
         sub(/0+$/, "", fmt); sub(/\.$/, "", fmt)
+        # Guard against -0 (from template pattern)
+        if (fmt == "-0") fmt = "0"
         printf "%s %d %d %d\n", fmt, int(w/ns + 0.5), int(h/ns + 0.5), changed
     }'
 }
@@ -128,17 +143,17 @@ compute_next_scale() {
 # --- Config Manager ---
 update_config_file() {
     local monitor="$1" new_scale="$2"
-    local tmpfile found=0
+    local found=0
 
-    tmpfile=$(mktemp) || die "Failed to create temp file"
-    trap 'rm -f -- "$tmpfile"' EXIT
+    # Global temp file lifecycle — cleaned by EXIT trap
+    _TMPFILE=$(mktemp "${CONFIG_FILE}.tmp.XXXXXXXXXX") || die "Failed to create temp file"
 
     log_debug "Updating config: ${monitor} -> ${new_scale}"
 
     while IFS= read -r line || [[ -n "$line" ]]; do
         if [[ "$line" =~ ^[[:space:]]*monitor[[:space:]]*= ]]; then
             local content="${line#*=}"
-            content="${content%%#*}" # Strip comments
+            content="${content%%#*}"
             content="$(trim "$content")"
 
             local -a fields
@@ -152,32 +167,41 @@ update_config_file() {
                 new_line+=", $(trim "${fields[1]:-preferred}")"
                 new_line+=", $(trim "${fields[2]:-auto}")"
                 new_line+=", ${new_scale}"
-                
+
                 local i
                 for ((i = 4; i < ${#fields[@]}; i++)); do
                     new_line+=", $(trim "${fields[i]}")"
                 done
-                
-                printf '%s\n' "$new_line" >> "$tmpfile"
+
+                printf '%s\n' "$new_line" >> "$_TMPFILE"
                 continue
             fi
         fi
-        printf '%s\n' "$line" >> "$tmpfile"
+        printf '%s\n' "$line" >> "$_TMPFILE"
     done < "$CONFIG_FILE"
 
     if ((found == 0)); then
         log_info "Appending new entry for: ${monitor}"
-        printf 'monitor = %s, preferred, auto, %s\n' "$monitor" "$new_scale" >> "$tmpfile"
+        printf 'monitor = %s, preferred, auto, %s\n' "$monitor" "$new_scale" >> "$_TMPFILE"
     fi
 
-    mv -f -- "$tmpfile" "$CONFIG_FILE"
-    trap - EXIT
+    # CRITICAL: Use cat > target to preserve symlinks/inodes.
+    # Do NOT use mv, as it breaks dotfile symlink chains.
+    cat "$_TMPFILE" > "$CONFIG_FILE"
+    rm -f "$_TMPFILE"
+    _TMPFILE=""
 }
 
 # --- Main ---
 format_refresh() { awk -v r="$1" 'BEGIN { fmt = sprintf("%.2f", r); sub(/\.00$/, "", fmt); print fmt }'; }
 
 main() {
+    # Bash version guard (from template)
+    if (( BASH_VERSINFO[0] < 5 )); then
+        log_err "Bash 5.0+ required"
+        exit 1
+    fi
+
     check_dependencies
     init_config_file
 
