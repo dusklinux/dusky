@@ -9,7 +9,6 @@
     font-size: 16px;
 
     min-height: 25px;
-    padding: 0;
     margin: 0;
 }
 
@@ -50,7 +49,7 @@ tooltip label {
     padding: 0px 6px;
     margin: 0px 3px;
     border-radius: 45px;
-    background-color: @bg1;
+    background-color: @bg0;
     color: alpha(@fg0, 0.45);
     transition: all 0.3s ease-in-out;
 }
@@ -80,8 +79,8 @@ tooltip label {
 #custom-notification,
 #submap{
     background-color: @bg0;
-    padding: 0 8px;
-    margin: 0 5px;
+    padding: 0px 8px;
+    margin: 4px 5px;
     border-radius: 45;
     border: none;
     box-shadow: none;
