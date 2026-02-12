@@ -30,10 +30,6 @@ window#waybar > box {
   border-radius: 18px;
   border: 1px solid alpha(@outline_variant, 0.14);
 
-  box-shadow:
-    0 10px 30px alpha(@shadow, 0.35),
-    inset 0 1px 0 alpha(@on_surface, 0.08);
-
   margin: 4px 0;
 }
 
@@ -493,7 +489,6 @@ tooltip {
   background-color: alpha(@surface_container_high, 0.95);
   border: 1px solid alpha(@outline_variant, 0.3);
   border-radius: 12px;
-  box-shadow: 0 8px 24px alpha(@shadow, 0.4);
 }
 
 tooltip label {
