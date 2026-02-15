@@ -1,0 +1,116 @@
+@import 'colors/colors.css';
+
+* {
+    border: none;
+    border-radius: 0px;
+
+    font-family: "Adwaita Sans", "JetBrainsMono Nerd Font Propo", sans-serif;
+    font-weight: 700;
+    font-size: 16px;
+
+    min-height: 25px;
+    margin: 0;
+}
+
+window#waybar {
+    background: transparent;
+}
+
+.modules-center {
+    background: @bg0;
+    border-radius: 25px;
+    padding: 0 12px;
+}
+
+tooltip,
+tooltip.background,
+tooltip decoration,
+.tooltip {
+    background: transparent;
+    background-color: transparent;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+}
+
+tooltip label {
+    color: @pri0;
+    background-color: @bg0;
+    padding: 6px 12px;
+    border-radius: 15px;
+}
+
+#workspaces {
+    padding: 6px 6px;
+    margin: 0 0 0 12px;
+}
+
+#workspaces button {
+    padding: 0px 6px;
+    margin: 0px 3px;
+    border-radius: 45px;
+    background-color: @bg0;
+    color: alpha(@fg0, 0.45);
+    transition: all 0.3s ease-in-out;
+}
+
+#workspaces button.active {
+    background: linear-gradient(135deg, @grad-start 0%, @grad-end 100%);
+    color: @bg0;
+    min-height: 20px;
+    min-width: 45px;
+    transition: all 0.3s ease-in-out;
+}
+
+#workspaces button:hover {
+    background: linear-gradient(135deg, @grad-start 50%, @grad-end 100%);
+    color: @bg0;
+    min-width: 40px;
+    background-size: 400% 400%;
+}
+
+#battery,
+#pulseaudio,
+#network,
+#clock,
+#custom-media,
+#window,
+#custom-launcher,
+#custom-notification,
+#submap{
+    background-color: @bg0;
+    padding: 0px 8px;
+    margin: 4px 5px;
+    border-radius: 45;
+    border: none;
+    box-shadow: none;
+}
+
+#clock {
+    color: @fg0;
+    font-size: 15px;
+}
+
+#mpris {
+    color: @fg0;
+}
+
+#pulseaudio {
+    color: @orange;
+    font-size: 14px;
+}
+
+#network {
+    color: @purple;
+    font-size: 14px;
+}
+
+#battery {
+    color: @purple;
+    font-size: 14px;
+}
+
+#custom-notification {
+    color: @fg0;
+    font-size: 14px;
+}
