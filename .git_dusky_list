@@ -39,6 +39,8 @@
 .config/waybar/09_vertical_modern/
 .config/waybar/10_vertical_nerdy_compact/
 .config/waybar/11_horizontal_block_compact_visualizer/
+.config/waybar/12_horizontal_Dock/
+.config/waybar/13_expandable_pill_custom/
 .config/wayclick/
 .config/wlogout/
 .config/waypaper/

@@ -1,4 +1,4 @@
-@import 'colors/colors.css';
+@import url("../matugen/generated/waybar-colors.css");
 
 * {
     border: none;
@@ -17,7 +17,7 @@ window#waybar {
 }
 
 .modules-center {
-    background: @bg0;
+    background: @surface;
     border-radius: 25px;
     padding: 0 12px;
 }
@@ -34,8 +34,8 @@ tooltip decoration,
 }
 
 tooltip label {
-    color: @pri0;
-    background-color: @bg0;
+    color: @primary;
+    background-color: @surface;
     padding: 6px 12px;
     border-radius: 15px;
 }
@@ -49,22 +49,22 @@ tooltip label {
     padding: 0px 6px;
     margin: 0px 3px;
     border-radius: 45px;
-    background-color: @bg0;
-    color: alpha(@fg0, 0.45);
+    background-color: @surface;
+    color: alpha(@on_surface, 0.45);
     transition: all 0.3s ease-in-out;
 }
 
 #workspaces button.active {
-    background: linear-gradient(135deg, @grad-start 0%, @grad-end 100%);
-    color: @bg0;
+    background: linear-gradient(135deg, @primary 0%, @secondary 100%);
+    color: @on_primary;
     min-height: 20px;
     min-width: 45px;
     transition: all 0.3s ease-in-out;
 }
 
 #workspaces button:hover {
-    background: linear-gradient(135deg, @grad-start 50%, @grad-end 100%);
-    color: @bg0;
+    background: linear-gradient(135deg, @primary 50%, @secondary 100%);
+    color: @on_primary;
     min-width: 40px;
     background-size: 400% 400%;
 }
@@ -77,40 +77,40 @@ tooltip label {
 #window,
 #custom-launcher,
 #custom-notification,
-#submap{
-    background-color: @bg0;
+#submap {
+    background-color: @surface;
     padding: 0px 8px;
     margin: 4px 5px;
-    border-radius: 45;
+    border-radius: 45px;
     border: none;
     box-shadow: none;
 }
 
 #clock {
-    color: @fg0;
+    color: @on_surface;
     font-size: 15px;
 }
 
 #mpris {
-    color: @fg0;
+    color: @on_surface;
 }
 
 #pulseaudio {
-    color: @orange;
+    color: @tertiary;
     font-size: 14px;
 }
 
 #network {
-    color: @purple;
+    color: @secondary;
     font-size: 14px;
 }
 
 #battery {
-    color: @purple;
+    color: @secondary;
     font-size: 14px;
 }
 
 #custom-notification {
-    color: @fg0;
+    color: @on_surface;
     font-size: 14px;
 }
