@@ -16,8 +16,8 @@
   "window.customTitleBarVisibility": "auto",
   "workbench.sideBar.location": "right",
   "window.controlsStyle": "hidden",
-  "workbench.colorTheme": "Material Code"
-  "material-code.colors": {=
+  "workbench.colorTheme": "Material Code",
+  "material-code.colors": {
     "primary": "{{colors.surface.dark.hex}}",
     "foreground": "{{colors.on_surface.dark.hex}}",
     "mutedForeground": "{{colors.primary.dark.hex}}",
