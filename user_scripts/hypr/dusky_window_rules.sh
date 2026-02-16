@@ -172,7 +172,7 @@ scan_windows() {
         rule_block+="${C_GREEN}windowrule {${C_RESET}"$'\n'
         rule_block+="    name = ${safe_name}"$'\n'
         rule_block+="    match:class = ^(${safe_class})$"$'\n'
-        rule_block+="    ${C_COMMENT}# match:title = ^(${safe_title})$${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}# match:title = ^(${safe_title})\$${C_RESET}"$'\n'
 
         rule_block+="    float = on"$'\n'
         rule_block+="    ${C_COMMENT}# pin = on${C_RESET}"$'\n'
