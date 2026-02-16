@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  004_pacman_reflector.sh
+#  055_pacman_reflector.sh
 #  Context: Arch Linux OS (Post-Install)
 #  Description: Updates mirrorlist using Reflector with a massive global fallback.
 #               Designed for high availability and manual/auto execution.
@@ -1098,15 +1098,22 @@ update_mirrors() {
         printf '   --------------------------------------------------------\n'
         printf '   %sNOTE TO GLOBAL USERS:%s\n' "$Y" "$NC"
         printf '   Type %slist%s to view all available countries.\n' "$B" "$NC"
+        printf '   Type %sskip%s or %ss%s to bypass this step.\n' "$B" "$NC" "$B" "$NC"
         printf '   Press %s[Enter]%s to use the default (%s).\n' "$B" "$NC" "$DEFAULT_COUNTRY"
         printf '   --------------------------------------------------------\n'
 
         read -r -p ":: Enter country: " input_country
 
+        # Handle skip request
+        if [[ "${input_country,,}" == "s" || "${input_country,,}" == "skip" ]]; then
+            log_warn "Skipping mirror update as requested."
+            return 0
+        fi
+
         # Handle explicit list request
         if [[ "${input_country,,}" == "list" ]]; then
             log_warn "Retrieving country list..."
-            reflector --list-countries
+            reflector --list-countries || log_err "Failed to retrieve country list."
             printf '\n'
             continue
         fi
@@ -1117,7 +1124,7 @@ update_mirrors() {
         # If resolved country is 'list', show list and loop
         if [[ "${country,,}" == "list" ]]; then
             log_warn "Retrieving country list..."
-            reflector --list-countries
+            reflector --list-countries || log_err "Failed to retrieve country list."
             printf '\n'
             continue
         fi
@@ -1158,7 +1165,7 @@ update_mirrors() {
                     if [[ "${fb_input,,}" == "list" ]]; then
                         log_info "Available Fallback Countries:"
                         # List all lines starting with '## ' excluding headers
-                        grep '^## ' <<< "$FALLBACK_RAW_DATA" | sed 's/^## //g' | grep -vE "^Arch Linux|^Generated on|^$" | column
+                        grep '^## ' <<< "$FALLBACK_RAW_DATA" | sed 's/^## //g' | grep -vE "^Arch Linux|^Generated on|^$" | column || true
                         continue
                     fi
 
