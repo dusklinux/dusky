@@ -21,7 +21,7 @@ import logging
 # ==============================================================================
 # VERSION & CONFIGURATION
 # ==============================================================================
-VERSION = "4.1 (Stable Boot + FIFO Fix)"
+VERSION = "4.2 (Universal Hardware + Stable Boot)"
 
 ZRAM_MOUNT = Path("/mnt/zram1")
 AUDIO_OUTPUT_DIR = ZRAM_MOUNT / "kokoro_audio"
@@ -136,36 +136,59 @@ def get_next_index(directory):
 
 
 # ==============================================================================
-# GPU ENFORCER
+# HARDWARE ENFORCER (UNIVERSAL)
 # ==============================================================================
 import onnxruntime as rt
 
 _available = rt.get_available_providers()
-logger.info(f"ONNX Runtime initialized. Available providers: {_available}")
+logger.info(f"ONNX Runtime initialized. Detected Providers: {_available}")
 
 
 class PatchedInferenceSession(rt.InferenceSession):
     def __init__(self, path_or_bytes, sess_options=None, providers=None, **kwargs):
         if sess_options is None:
             sess_options = rt.SessionOptions()
+        
+        # General optimizations
         sess_options.enable_mem_pattern = False
         sess_options.enable_cpu_mem_arena = False
-        sess_options.graph_optimization_level = (
-            rt.GraphOptimizationLevel.ORT_ENABLE_ALL
-        )
-        cuda_options = {
-            'device_id': 0,
-            'arena_extend_strategy': 'kSameAsRequested',
-            'gpu_mem_limit': 3 * 1024 * 1024 * 1024,
-            'cudnn_conv_algo_search': 'HEURISTIC',
-            'do_copy_in_default_stream': True,
-        }
-        providers = [
-            ('CUDAExecutionProvider', cuda_options),
-            'CPUExecutionProvider'
-        ]
+        sess_options.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_ALL
+        
+        # Dynamic Provider Selection based on what is actually installed
+        dynamic_providers = []
+        available_set = set(rt.get_available_providers())
+
+        # 1. Check for NVIDIA CUDA
+        if 'CUDAExecutionProvider' in available_set:
+            logger.info("Configuring for NVIDIA CUDA...")
+            cuda_options = {
+                'device_id': 0,
+                'arena_extend_strategy': 'kSameAsRequested',
+                'gpu_mem_limit': 3 * 1024 * 1024 * 1024, # 3GB VRAM limit
+                'cudnn_conv_algo_search': 'HEURISTIC',
+                'do_copy_in_default_stream': True,
+            }
+            dynamic_providers.append(('CUDAExecutionProvider', cuda_options))
+
+        # 2. Check for AMD ROCm
+        if 'ROCmExecutionProvider' in available_set:
+            logger.info("Configuring for AMD ROCm...")
+            # ROCm options usually mirror CUDA, but safe defaults are best
+            rocm_options = {
+                'device_id': 0,
+                'arena_extend_strategy': 'kSameAsRequested',
+                'cudnn_conv_algo_search': 'HEURISTIC',
+                'do_copy_in_default_stream': True,
+            }
+            dynamic_providers.append(('ROCmExecutionProvider', rocm_options))
+
+        # 3. Always add CPU as fallback
+        dynamic_providers.append('CPUExecutionProvider')
+
+        logger.info(f"Active Provider Stack: {dynamic_providers}")
+
         super().__init__(
-            path_or_bytes, sess_options, providers=providers, **kwargs
+            path_or_bytes, sess_options, providers=dynamic_providers, **kwargs
         )
 
 
@@ -177,12 +200,6 @@ from kokoro_onnx import Kokoro
 # THREAD 1: MPV STREAMER (STREAM ID ARCHITECTURE)
 # ==============================================================================
 class AudioPlaybackThread(threading.Thread):
-    """
-    Streams audio to MPV.
-    Uses 'stream_id' to enforce session continuity.
-    - If stream_id matches current session but MPV is dead -> HALT (User Kill).
-    - If stream_id is new -> Spawn new MPV.
-    """
     def __init__(self, audio_queue, stop_event):
         super().__init__(name="MPV-Thread")
         self.audio_queue = audio_queue
@@ -191,33 +208,26 @@ class AudioPlaybackThread(threading.Thread):
         self.daemon = True
         self._mpv_process = None
         self._lock = threading.Lock()
-        
-        # Track the ID of the current playback session
         self._current_stream_id = None
 
         if not shutil.which("mpv"):
             logger.critical("MPV executable not found in PATH!")
 
     def _kill_process(self, proc):
-        if proc is None:
-            return
+        if proc is None: return
         try:
             if proc.stdin:
-                try:
-                    proc.stdin.close()
-                except Exception:
-                    pass
+                try: proc.stdin.close()
+                except Exception: pass
             if proc.poll() is None:
                 proc.terminate()
-                try:
-                    proc.wait(timeout=1.0)
+                try: proc.wait(timeout=1.0)
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait(timeout=1.0)
             else:
                 proc.wait()
-        except Exception:
-            pass
+        except Exception: pass
 
     def _spawn_mpv(self):
         cmd = [
@@ -230,19 +240,14 @@ class AudioPlaybackThread(threading.Thread):
             "--cache=yes", "--cache-secs=300",
             "-"
         ]
-
         mpv_env = os.environ.copy()
-        mpv_env.pop("LD_LIBRARY_PATH", None)
+        # Clean env to prevent MPV from inheriting CUDA/ROCm libs if not needed
+        mpv_env.pop("LD_LIBRARY_PATH", None) 
 
         try:
             proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stderr=sys.stderr,
-                stdout=subprocess.DEVNULL,
-                env=mpv_env,
-                start_new_session=False,
-                close_fds=True
+                cmd, stdin=subprocess.PIPE, stderr=sys.stderr, stdout=subprocess.DEVNULL,
+                env=mpv_env, start_new_session=False, close_fds=True
             )
             logger.info(f"MPV started (PID: {proc.pid})")
             return proc
@@ -251,30 +256,21 @@ class AudioPlaybackThread(threading.Thread):
             return None
 
     def _prepare_mpv_for_chunk(self, chunk_stream_id):
-        """
-        Decides whether to spawn, use existing, or halt based on stream_id.
-        Returns the process object or None (if halted).
-        """
         with self._lock:
             proc = self._mpv_process
             is_alive = (proc is not None and proc.poll() is None)
 
-            # Case 1: Same Stream ID
             if chunk_stream_id == self._current_stream_id:
-                if is_alive:
-                    return proc
+                if is_alive: return proc
                 else:
-                    # Same stream, but MPV is dead. 
-                    # This means the user closed the window mid-story.
                     logger.info("MPV closed mid-stream (User Kill). Halting.")
                     self._mpv_process = None
-                    self.stop_event.set() # Global Stop
+                    self.stop_event.set()
                     return None
 
-            # Case 2: New Stream ID (or first stream)
             if is_alive:
                 logger.info("New stream ID. Restarting MPV.")
-                self._kill_process(proc) # Kill old one
+                self._kill_process(proc)
             
             logger.info(f"Starting new stream ({chunk_stream_id[:8]}...). Spawning MPV.")
             new_proc = self._spawn_mpv()
@@ -283,78 +279,52 @@ class AudioPlaybackThread(threading.Thread):
             return new_proc
 
     def _finish_stream(self):
-        """End of stream sentinel received."""
         with self._lock:
-            self._current_stream_id = None # Reset session
+            self._current_stream_id = None
             proc = self._mpv_process
             self._mpv_process = None
-
-        if proc is None:
-            return
-
-        logger.info(f"Closing MPV stdin (PID: {proc.pid}). Playback finishing.")
-        try:
-            if proc.stdin:
-                proc.stdin.close()
-        except Exception:
-            pass
-
-        threading.Thread(
-            target=self._reap_process, args=(proc,),
-            name="MPV-Reaper", daemon=True
-        ).start()
+        if proc:
+            logger.info(f"Closing MPV stdin (PID: {proc.pid}). Playback finishing.")
+            try:
+                if proc.stdin: proc.stdin.close()
+            except Exception: pass
+            threading.Thread(target=self._reap_process, args=(proc,), name="MPV-Reaper", daemon=True).start()
 
     def _reap_process(self, proc):
         try:
             proc.wait(timeout=600)
             logger.debug(f"MPV (PID: {proc.pid}) exited after playback.")
         except subprocess.TimeoutExpired:
-            logger.warning(f"MPV (PID: {proc.pid}) reap timeout. Killing.")
             self._kill_process(proc)
-        except Exception:
-            pass
+        except Exception: pass
 
     def _timed_write(self, proc, data, timeout=2.0):
-        try:
-            fd = proc.stdin.fileno()
-        except Exception:
-            return False
-
-        try:
-            _, wlist, _ = select.select([], [fd], [], timeout)
-        except (ValueError, OSError):
-            return False
-
+        try: fd = proc.stdin.fileno()
+        except Exception: return False
+        try: _, wlist, _ = select.select([], [fd], [], timeout)
+        except (ValueError, OSError): return False
         if not wlist:
             logger.error("MPV write timed out (Hung?). Killing.")
             self._kill_process(proc)
             return False
-
         try:
             proc.stdin.write(data)
             proc.stdin.flush()
             return True
-        except (BrokenPipeError, OSError):
-            return False
+        except (BrokenPipeError, OSError): return False
 
     def run(self):
         try:
             while self.active:
-                try:
-                    # Get (audio, sr, stream_id) OR None
-                    item = self.audio_queue.get(timeout=0.2)
+                try: item = self.audio_queue.get(timeout=0.2)
                 except queue.Empty:
-                    # Idle Reaper: Just cleanup zombie handles
                     with self._lock:
                         if self._mpv_process and self._mpv_process.poll() is not None:
                             logger.debug("Cleaning up dead MPV handle (Idle).")
                             self._mpv_process = None
-                            # We do NOT reset current_stream_id here. 
-                            # If the user closed it, the next chunk will detect it and halt.
                     continue
 
                 if item is None:
-                    logger.debug("End-of-stream sentinel received.")
                     self._finish_stream()
                     self.audio_queue.task_done()
                     continue
@@ -363,53 +333,38 @@ class AudioPlaybackThread(threading.Thread):
                     self.audio_queue.task_done()
                     continue
 
-                # Unpack new tuple format
                 samples, _, stream_id = item
-                
-                if samples.dtype != np.float32:
-                    samples = samples.astype(np.float32)
+                if samples.dtype != np.float32: samples = samples.astype(np.float32)
                 raw_bytes = samples.tobytes()
 
                 try:
-                    # Decide what to do based on Stream ID
                     proc = self._prepare_mpv_for_chunk(stream_id)
-                    
                     if not proc:
-                        # Halt signal triggered
                         self.audio_queue.task_done()
                         self._drain_queue()
                         continue
-
-                    if not self._timed_write(proc, raw_bytes):
-                        raise BrokenPipeError("Write failed")
-
+                    if not self._timed_write(proc, raw_bytes): raise BrokenPipeError("Write failed")
                 except (BrokenPipeError, OSError):
                     logger.warning("MPV Connection Broken. Stopping.")
                     with self._lock:
                         dead_proc = self._mpv_process
                         self._mpv_process = None
                         self._current_stream_id = None
-                    
                     self._kill_process(dead_proc)
                     self.stop_event.set()
                     self.audio_queue.task_done()
                     self._drain_queue()
                     continue
-
-                except Exception as e:
-                    logger.error(f"Playback Error: {e}")
-                
+                except Exception as e: logger.error(f"Playback Error: {e}")
                 self.audio_queue.task_done()
-        finally:
-            self.cleanup()
+        finally: self.cleanup()
 
     def _drain_queue(self):
         while True:
             try:
                 self.audio_queue.get_nowait()
                 self.audio_queue.task_done()
-            except queue.Empty:
-                break
+            except queue.Empty: break
 
     def cleanup(self):
         self.active = False
@@ -432,41 +387,30 @@ class FifoReader(threading.Thread):
         self.daemon = True
         self.last_hash = None
         self.last_time = 0
-        self.fd = None # New: accept pre-opened FD
+        self.fd = None 
 
     def run(self):
-        # STABILITY FIX: Use the FD created by Main Thread if available
-        if self.fd is not None:
-            fd = self.fd
+        if self.fd is not None: fd = self.fd
         else:
-            # Fallback (old method)
-            if not self.fifo_path.exists():
-                os.mkfifo(self.fifo_path)
+            if not self.fifo_path.exists(): os.mkfifo(self.fifo_path)
             fd = os.open(self.fifo_path, os.O_RDWR | os.O_NONBLOCK)
 
         poll = select.poll()
         poll.register(fd, select.POLLIN)
 
         while self.active:
-            if not poll.poll(500):
-                continue
+            if not poll.poll(500): continue
             try:
                 data = b""
                 while True:
                     try:
                         chunk = os.read(fd, 65536)
-                        if not chunk:
-                            break
+                        if not chunk: break
                         data += chunk
-                    except BlockingIOError:
-                        break
-
-                if not data:
-                    continue
+                    except BlockingIOError: break
+                if not data: continue
                 text = data.decode('utf-8', errors='ignore').strip()
-                if not text:
-                    continue
-
+                if not text: continue
                 h = hashlib.md5(text.encode()).hexdigest()
                 now = time.time()
                 if self.last_hash == h and (now - self.last_time) < DEDUP_WINDOW:
@@ -475,8 +419,7 @@ class FifoReader(threading.Thread):
                 self.last_hash = h
                 self.last_time = now
                 self.text_queue.put(text)
-            except OSError:
-                time.sleep(1)
+            except OSError: time.sleep(1)
         os.close(fd)
 
 
@@ -486,18 +429,13 @@ class FifoReader(threading.Thread):
 class DuskyDaemon:
     def __init__(self, debug_file=None):
         self.running = True
-        if debug_file:
-            setup_debug_logging(debug_file)
-        
+        if debug_file: setup_debug_logging(debug_file)
         logger.info(f"Dusky Daemon {VERSION} Initializing...")
-
         self.audio_queue = queue.Queue(maxsize=QUEUE_SIZE)
         self.text_queue = queue.Queue()
         self.stop_event = threading.Event()
-
         self.playback = AudioPlaybackThread(self.audio_queue, self.stop_event)
         self.fifo_reader = FifoReader(self.text_queue, FIFO_PATH)
-
         env_dir = Path(__file__).parent
         self.kokoro = None
         self.model_path = str(env_dir / "models/kokoro-v0_19.onnx")
@@ -518,100 +456,56 @@ class DuskyDaemon:
             self.kokoro = None
             gc.collect()
 
-    def _should_stop(self):
-        return not self.running or self.stop_event.is_set()
+    def _should_stop(self): return not self.running or self.stop_event.is_set()
 
     def _setup_fifo(self):
-        """Create and open the FIFO before signaling readiness. Prevents shell race condition."""
+        """Create and open FIFO before readiness."""
         if FIFO_PATH.exists():
             if not FIFO_PATH.is_fifo():
                 logger.warning(f"Non-FIFO file at {FIFO_PATH}, removing.")
                 FIFO_PATH.unlink()
-
-        if not FIFO_PATH.exists():
-            os.mkfifo(FIFO_PATH)
-
-        # Open in non-blocking R/W mode
+        if not FIFO_PATH.exists(): os.mkfifo(FIFO_PATH)
         fd = os.open(FIFO_PATH, os.O_RDWR | os.O_NONBLOCK)
         self.fifo_reader.fd = fd
         logger.debug("FIFO created and opened.")
 
     def generate(self, text):
-        # NOTE: stop_event is cleared in start(), NOT here.
-        
         try:
             model = self.get_model()
             slug = generate_filename_slug(text)
             sentences = smart_split(text)
-
-            if not sentences:
-                logger.warning("No sentences to synthesize.")
-                return
-
+            if not sentences: return
             logger.info(f"Generating: '{slug}' ({len(sentences)} sentences)")
-            
-            # Generate a unique ID for this entire stream
             current_stream_id = str(uuid.uuid4())
 
-            try:
-                AUDIO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                logger.warning(f"Cannot create audio output dir: {e}")
-
+            try: AUDIO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            except OSError as e: logger.warning(f"Cannot create audio output dir: {e}")
             idx = get_next_index(AUDIO_OUTPUT_DIR)
-
             all_audio = []
             final_sr = SAMPLE_RATE
 
             for i, sentence in enumerate(sentences):
-                if self._should_stop():
-                    logger.info("Generation halted mid-stream.")
-                    break
-
-                logger.debug(f"  Sentence {i+1}/{len(sentences)}: "
-                             f"{sentence[:60]}...")
-
-                audio, sr = model.create(
-                    sentence, voice=DEFAULT_VOICE, speed=SPEED, lang="en-us"
-                )
-                if audio is None:
-                    logger.warning(f"  Sentence {i+1} returned None, skipping.")
-                    continue
-
+                if self._should_stop(): break
+                logger.debug(f"  Sentence {i+1}/{len(sentences)}: {sentence[:60]}...")
+                audio, sr = model.create(sentence, voice=DEFAULT_VOICE, speed=SPEED, lang="en-us")
+                if audio is None: continue
                 final_sr = sr
                 all_audio.append(audio)
-
-                # Stream to MPV: Pass the Stream ID!
                 while not self._should_stop():
                     try:
                         self.audio_queue.put((audio, sr, current_stream_id), timeout=0.2)
                         break
-                    except queue.Full:
-                        continue
+                    except queue.Full: continue
 
-            # --- End-of-stream sentinel ---
             if all_audio:
-                try:
-                    self.audio_queue.put(None, timeout=5.0)
-                except queue.Full:
-                    logger.warning("Could not send end-of-stream sentinel.")
-
-            # --- Save combined WAV ---
-            if all_audio:
+                try: self.audio_queue.put(None, timeout=5.0)
+                except queue.Full: logger.warning("Could not send end-of-stream sentinel.")
                 try:
                     combined = np.concatenate(all_audio)
                     wav_path = AUDIO_OUTPUT_DIR / f"{idx}_{slug}.wav"
-                    duration = len(combined) / final_sr
                     sf.write(str(wav_path), combined, final_sr)
-                    logger.info(
-                        f"Saved: {wav_path.name} "
-                        f"({len(all_audio)} sentences, {duration:.1f}s)"
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to save WAV: {e}")
-            else:
-                logger.warning("No audio generated, nothing to save.")
-
+                    logger.info(f"Saved: {wav_path.name}")
+                except Exception as e: logger.error(f"Failed to save WAV: {e}")
         except Exception as e:
             logger.error(f"Generation Error: {e}")
             self.kokoro = None
@@ -619,69 +513,39 @@ class DuskyDaemon:
     def start(self):
         signal.signal(signal.SIGTERM, lambda s, f: self.stop())
         signal.signal(signal.SIGINT, lambda s, f: self.stop())
-
-        # WRITE PID
         PID_FILE.write_text(str(os.getpid()))
-        
-        # CREATE FIFO *BEFORE* READY
         self._setup_fifo()
-        
-        # START THREADS
         self.playback.start()
         self.fifo_reader.start()
-        
-        # SIGNAL READY
         READY_FILE.touch()
-
         logger.info(f"Daemon Ready (PID: {os.getpid()})")
-
         try:
             while self.running:
                 try:
                     text = self.text_queue.get(timeout=0.5)
-                    
-                    # 1. Clear stop event BEFORE starting new job
                     self.stop_event.clear()
-                    
                     clean = clean_text(text)
-                    if clean:
-                        self.generate(clean)
-                    
-                    # 2. CRITICAL FIX: Double Drain with Cool-down
-                    # If generate() ended with stop_event SET, it means user killed MPV.
+                    if clean: self.generate(clean)
                     if self.stop_event.is_set():
-                        logger.info("User interrupted playback. Performing full queue flush...")
-                        
-                        # Drain 1: Immediate pending items
-                        drained_count = 0
+                        logger.info("User interrupted playback. Flushing...")
+                        drained = 0
                         while not self.text_queue.empty():
                             try:
                                 self.text_queue.get_nowait()
                                 self.text_queue.task_done()
-                                drained_count += 1
-                            except queue.Empty:
-                                break
-                        
-                        # Wait for FIFO pipe lag (stragglers)
+                                drained += 1
+                            except queue.Empty: break
                         time.sleep(1.0)
-                        
-                        # Drain 2: Stragglers
                         while not self.text_queue.empty():
                             try:
                                 self.text_queue.get_nowait()
                                 self.text_queue.task_done()
-                                drained_count += 1
-                            except queue.Empty:
-                                break
-                        
-                        if drained_count > 0:
-                            logger.info(f"Flushed {drained_count} pending text items.")
-
+                                drained += 1
+                            except queue.Empty: break
+                        if drained > 0: logger.info(f"Flushed {drained} items.")
                     self.text_queue.task_done()
-                except queue.Empty:
-                    self.check_idle()
-        finally:
-            self.cleanup()
+                except queue.Empty: self.check_idle()
+        finally: self.cleanup()
 
     def stop(self):
         self.running = False
@@ -694,11 +558,8 @@ class DuskyDaemon:
         self.fifo_reader.active = False
         self.playback.cleanup()
         for p in (FIFO_PATH, PID_FILE, READY_FILE):
-            try:
-                p.unlink(missing_ok=True)
-            except Exception:
-                pass
-
+            try: p.unlink(missing_ok=True)
+            except Exception: pass
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -706,15 +567,9 @@ if __name__ == "__main__":
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--debug-file", help="Path to write debug log")
     args = parser.parse_args()
-
     log_level = os.environ.get("DUSKY_LOG_LEVEL", args.log_level).upper()
-    if hasattr(logging, log_level):
-        logger.setLevel(getattr(logging, log_level))
-
+    if hasattr(logging, log_level): logger.setLevel(getattr(logging, log_level))
     debug_path = args.debug_file or os.environ.get("DUSKY_LOG_FILE")
     AUDIO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    if args.daemon:
-        DuskyDaemon(debug_path).start()
-    else:
-        print("Run with --daemon")
+    if args.daemon: DuskyDaemon(debug_path).start()
+    else: print("Run with --daemon")
