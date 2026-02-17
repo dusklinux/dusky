@@ -74,6 +74,7 @@ readonly TARGET_FILES=(
     "dusky_power.desktop"
     "dusky_waybars.desktop"
     "dusky_window_rules.desktop"
+    "dusky_site_blocker.desktop"
     "dusky_swaync_side.desktop"
     "dusky_service_toggle.desktop"
     "file_switcher.desktop"
