@@ -1802,7 +1802,7 @@ pages:
         title: Dusky TTS (Kokoro)
         description: Supports Nvidia, AMD, CPU
         icon: audio-speakers-symbolic
-        button_text: "Speak"
+        button_text: "Setup"
       on_press:
         type: exec
         command: kitty --class kokoro_installer.sh --hold sh -c "$HOME/user_scripts/tts_stt/dusky_kokoro/kokoro_installer.sh"
