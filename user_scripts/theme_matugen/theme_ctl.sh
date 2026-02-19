@@ -39,6 +39,7 @@ readonly DEFAULT_CONTRAST="0"
 readonly FLOCK_TIMEOUT_SEC=30
 readonly DAEMON_POLL_INTERVAL=0.1
 readonly DAEMON_POLL_LIMIT=50
+readonly WAYBAR_STATE_FILE="${XDG_RUNTIME_DIR:-/tmp}/waybar_was_running"
 
 # --- STATE VARIABLES (populated by read_state) ---
 THEME_MODE=""
@@ -77,6 +78,21 @@ check_deps() {
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
     (( ${#missing[@]} == 0 )) || die "Missing required commands: ${missing[*]}"
+}
+
+# --- WAYBAR STATE ---
+
+detect_waybar_state() {
+    rm -f "$WAYBAR_STATE_FILE"
+    pgrep -x waybar >/dev/null 2>&1 && touch "$WAYBAR_STATE_FILE" || true
+}
+
+restore_waybar_state() {
+    local autostart="${HOME}/user_scripts/waybar/waybar_autostart.sh"
+    if [[ -f "$WAYBAR_STATE_FILE" ]]; then
+        rm -f "$WAYBAR_STATE_FILE"
+        [[ -x "$autostart" ]] && { "$autostart" & } || true
+    fi
 }
 
 # --- STATE MANAGEMENT ---
@@ -318,6 +334,8 @@ apply_random_wallpaper() {
 
     log "Selected: ${wallpaper##*/}"
 
+    detect_waybar_state
+
     ensure_swww_running
     swww img "$wallpaper" \
         --transition-type grow \
@@ -325,6 +343,8 @@ apply_random_wallpaper() {
         --transition-fps 60
 
     generate_colors "$wallpaper"
+
+    restore_waybar_state
 }
 
 regenerate_current() {
@@ -358,7 +378,9 @@ regenerate_current() {
         log "Current wallpaper: ${resolved_wallpaper##*/}"
     fi
 
+    detect_waybar_state
     generate_colors "$resolved_wallpaper"
+    restore_waybar_state
 }
 
 generate_colors() {

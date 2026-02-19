@@ -51,7 +51,7 @@ output_path = '~/.config/matugen/generated/hyprlock-colors.conf'
 input_path  = '~/.config/matugen/templates/colors.css'
 output_path = '~/.config/matugen/generated/waybar-colors.css'
 post_hook   = '''
-~/user_scripts/waybar/waybar_autostart.sh || true;
+~/user_scripts/waybar/waybar_autostart.sh theme-change || true;
 '''
 
 [templates.swaync]
@@ -122,7 +122,6 @@ input_path  = '~/.config/matugen/templates/zathura-colors'
 output_path = '~/.config/matugen/generated/zathura-colors'
 post_hook   = 'ln -nfs $HOME/.config/matugen/generated/zathura-colors $HOME/.config/zathura/zathurarc'
 
-
 # [templates.starship]
 # input_path = '~/.config/matugen/templates/starship-colors.toml'
 # output_path = '~/.config/matugen/generated/starship-colors.toml'
@@ -156,7 +155,7 @@ ln -nfs $HOME/.config/matugen/generated/obsidian-theme.css $HOME/Documents/pensi
 input_path  = '~/.config/matugen/templates/midnight-discord.css'
 output_path = '~/.config/matugen/generated/midnight-discord.css'
 post_hook   = '''
-mkdir -p $HOME/~/.config/vesktop/themes/;
+mkdir -p $HOME/.config/vesktop/themes/;
 ln -nfs $HOME/.config/matugen/generated/midnight-discord.css $HOME/.config/vesktop/themes/midnight-discord.css
 '''
 
