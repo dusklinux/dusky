@@ -1,0 +1,255 @@
+/*
+ * ROFI THEME - ARCH LINUX / HYPRLAND
+ * Mode: Opaque / Solid Background
+ */
+
+configuration {
+    /* ─────────────────────────────────────────────────────────────────────
+       Display & Font
+       ───────────────────────────────────────────────────────────────────── */
+    show-icons:     true;
+    icon-theme:     "Papirus-Dark";
+    font:           "JetBrainsMono Nerd Font 11";
+
+    /* ─────────────────────────────────────────────────────────────────────
+       Text Layout / Mode Labels
+       ───────────────────────────────────────────────────────────────────── */
+    display-drun:       " Apps";
+    display-run:        " Run";
+    display-clipboard:  "󰅌 Clip";
+    
+    /* ─────────────────────────────────────────────────────────────────────
+       Keybindings - General
+       ───────────────────────────────────────────────────────────────────── */
+    kb-cancel:              "Escape";
+    kb-remove-char-back:    "BackSpace,Shift+BackSpace";
+    kb-accept-entry:        "Return,KP_Enter";
+    
+    /* ─────────────────────────────────────────────────────────────────────
+       Keybindings - Custom Actions (for clipboard script)
+       
+       kb-custom-1 (Alt+u) → Pin/Unpin item     → Returns exit code 10
+       kb-custom-2 (Alt+y) → Delete item        → Returns exit code 11
+       ───────────────────────────────────────────────────────────────────── */
+    kb-custom-1:            "Alt+u";
+    kb-custom-2:            "Alt+y";
+    kb-custom-3:            "Alt+t";
+    /* ─────────────────────────────────────────────────────────────────────
+       Behavior Tweaks
+       ───────────────────────────────────────────────────────────────────── */
+    scroll-method:          0;
+    click-to-exit:          true;
+}
+
+/* --- Import Colors --- */
+@import "../../.config/matugen/generated/rofi-colors.rasi"
+
+* {
+    /* =====================================================================
+       1. SEMANTIC VARIABLES (Renamed to avoid recursion loop)
+       ===================================================================== */
+    
+    /* Backgrounds */
+    var-win-bg:           @surface;
+    var-input-bg:         @surface-container-high;
+    var-urgent-bg:        @error-container;
+    var-active-bg:        @primary;
+    var-message-bg:       @surface-container;
+    
+    /* Text Colors */
+    var-text-def:         @on-surface;
+    var-text-dim:         @on-surface-variant;
+    var-text-urgent:      @on-error-container;
+    var-text-active:      @on-primary;
+    
+    /* Borders */
+    var-border:           @outline;
+
+
+    /* =====================================================================
+       2. ROFI INTERNAL VARIABLES
+       ===================================================================== */
+    
+    /* Global Properties */
+    background-color:     @var-win-bg;
+    text-color:           @var-text-def;
+    border-color:         @var-border;
+
+    /* Element States (Normal) */
+    normal-background:            transparent; 
+    normal-foreground:            @var-text-def;
+    alternate-normal-background:  transparent;
+    alternate-normal-foreground:  @var-text-def;
+
+    /* Element States (Selected/Active) */
+    selected-normal-background:   @var-active-bg;
+    selected-normal-foreground:   @var-text-active;
+    active-background:            @var-active-bg;
+    active-foreground:            @var-text-active;
+
+    /* Element States (Urgent) */
+    urgent-background:            @var-urgent-bg;
+    urgent-foreground:            @var-text-urgent;
+    selected-urgent-background:   @var-urgent-bg;
+    selected-urgent-foreground:   @var-text-urgent;
+}
+
+/* =====================================================================
+   Layout Structure
+   ===================================================================== */
+
+window {
+    location:           center;
+    anchor:             center;
+    width:              40%;
+    
+    background-color:   @var-win-bg;
+    border:             2px;
+    border-radius:      12px;
+    padding:            20px;
+}
+
+mainbox {
+    children:           [ inputbar, message, listview ];
+    spacing:            15px;
+    background-color:   transparent;
+    border:             0;
+    padding:            0;
+}
+
+/* =====================================================================
+   Input Bar
+   ===================================================================== */
+
+inputbar {
+    children:           [ prompt, entry ];
+    spacing:            10px;
+    padding:            12px;
+    border-radius:      8px;
+    background-color:   @var-input-bg;
+    text-color:         @var-text-def;
+}
+
+prompt {
+    enabled:            true;
+    background-color:   inherit;
+    text-color:         @var-text-dim;
+    font:               "JetBrainsMono Nerd Font Bold 11";
+}
+
+entry {
+    placeholder:        "Search...";
+    placeholder-color:  @var-text-dim;
+    background-color:   inherit;
+    text-color:         @var-text-def;
+    cursor:             text;
+}
+
+/* =====================================================================
+   Message Bar (Help text for clipboard mode)
+   ===================================================================== */
+
+message {
+    background-color:   transparent;
+    border:             0;
+    padding:            0;
+}
+
+textbox {
+    background-color:   @var-message-bg;
+    text-color:         @var-text-dim;
+    padding:            8px 12px;
+    border-radius:      6px;
+    markup:             true;
+    font:               "JetBrainsMono Nerd Font 9";
+    horizontal-align:   0.5;
+}
+
+/* =====================================================================
+   List View
+   ===================================================================== */
+
+listview {
+    columns:            3;
+    lines:              4;
+    cycle:              true;
+    scrollbar:          false;
+    spacing:            8px;
+    fixed-height:       false;
+    background-color:   transparent;
+    border:             0;
+    /* Add this - reduces left margin */
+    padding:            0;
+}
+
+element {
+    padding:            8px 12px;
+    border-radius:      8px;
+    cursor:             pointer;
+    /* Reduce spacing between icon and text */
+    spacing:            6px;
+    border:             0;
+}
+
+element-icon {
+    /* Smaller icon = less wasted space when no icon present */
+    size:               48px;
+    vertical-align:     0.5;
+    background-color:   transparent;
+    text-color:         inherit;
+    cursor:             inherit;
+}
+
+element-text {
+    vertical-align:     0.5;
+    background-color:   transparent;
+    text-color:         inherit;
+    highlight:          bold underline;
+    cursor:             inherit;
+    /* Left-align text tightly */
+    horizontal-align:   0.5;
+}
+
+/* =====================================================================
+   State Specific Styling
+   ===================================================================== */
+
+element normal.normal {
+    background-color: @normal-background;
+    text-color:       @normal-foreground;
+}
+element alternate.normal {
+    background-color: @alternate-normal-background;
+    text-color:       @alternate-normal-foreground;
+}
+
+element selected.normal {
+    background-color: @selected-normal-background;
+    text-color:       @selected-normal-foreground;
+}
+element selected.active {
+    background-color: @selected-normal-background;
+    text-color:       @selected-normal-foreground;
+}
+element selected.urgent {
+    background-color: @selected-urgent-background;
+    text-color:       @selected-urgent-foreground;
+}
+
+element normal.active {
+    background-color: @active-background;
+    text-color:       @active-foreground;
+}
+element alternate.active {
+    background-color: @active-background;
+    text-color:       @active-foreground;
+}
+
+element normal.urgent {
+    background-color: @urgent-background;
+    text-color:       @urgent-foreground;
+}
+element alternate.urgent {
+    background-color: @urgent-background;
+    text-color:       @urgent-foreground;
+}
