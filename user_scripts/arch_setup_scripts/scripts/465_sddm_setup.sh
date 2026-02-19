@@ -73,7 +73,7 @@ install_dependencies() {
 
     local -a pkgs=(sddm qt6-svg qt6-virtualkeyboard qt6-multimedia-ffmpeg imagemagick git)
     local -a needed=()
-    
+
     for pkg in "${pkgs[@]}"; do
         pacman -Qi "${pkg}" &>/dev/null || needed+=("${pkg}")
     done
@@ -103,7 +103,10 @@ check_conflicts() {
             fi
         fi
     done
-    [[ "${conflict}" == "false" ]] && log_success "No conflicting DMs found active."
+
+    if [[ "${conflict}" == "false" ]]; then
+        log_success "No conflicting DMs found active."
+    fi
 }
 
 setup_sddm_service() {
@@ -163,14 +166,16 @@ EOF
 }
 
 setup_avatar() {
-    [[ "${AUTO_MODE}" == "true" ]] && return
+    if [[ "${AUTO_MODE}" == "true" ]]; then
+        return
+    fi
 
     printf '\n--- Avatar Setup ---\n'
     prompt_yes_no "Do you want to set a user avatar now?" || return 0
 
     local real_user="${SUDO_USER:-${USER}}"
     local target_user
-    
+
     printf 'Enter username [%s]: ' "${real_user}"
     read -r target_user
     target_user="${target_user:-${real_user}}"
@@ -208,7 +213,7 @@ setup_avatar() {
     mv "${AVATAR_TEMP_FILE}" "${FACES_DIR}/${target_user}.face.icon"
     chmod 644 "${FACES_DIR}/${target_user}.face.icon"
     AVATAR_TEMP_FILE=""
-    
+
     log_success "Avatar updated for user '${target_user}'!"
 }
 
