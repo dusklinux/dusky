@@ -1,0 +1,28 @@
+[Unit]
+Description=Dusky Slider Center Daemon
+# Wait for Hyprland to be ready to avoid "Display not found" errors
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+# Using 'simple' prevents Systemd from killing the app if D-Bus signaling is delayed [cite: 2, 3]
+Type=simple
+
+# Forces Python to flush logs immediately for real-time debugging
+Environment=PYTHONUNBUFFERED=1
+
+# Enable RAM Tracking
+MemoryAccounting=yes
+
+# Replace the path below with the actual path to the new python slider script
+ExecStart=%h/user_scripts/sliders/dusky_sliders.py --gapplication-service
+
+# Restart automatically if it crashes
+Restart=always
+RestartSec=3
+
+SyslogIdentifier=dusky-sliders
+Slice=app.slice
+
+[Install]
+WantedBy=graphical-session.target
