@@ -6,9 +6,9 @@
 
     font-family: "Adwaita Sans", "JetBrainsMono Nerd Font Propo", sans-serif;
     font-weight: 700;
-    font-size: 16px;
+    font-size: 13px;
 
-    min-height: 20px;
+    min-height: 16px;
     margin: 0;
 }
 
@@ -18,8 +18,8 @@ window#waybar {
 
 .modules-center {
     background: @surface;
-    border-radius: 25px;
-    padding: 0 8px;
+    border-radius: 20px;
+    padding: 0 6px;
 }
 
 tooltip,
@@ -36,18 +36,18 @@ tooltip decoration,
 tooltip label {
     color: @primary;
     background-color: @surface;
-    padding: 6px 12px;
-    border-radius: 15px;
+    padding: 4px 10px;
+    border-radius: 12px;
 }
 
 #workspaces {
-    padding: 9px 3px;
-    margin: 0 0 0 6px;
+    padding: 6px 2px;
+    margin: 0 0 0 4px;
 }
 
 #workspaces button {
-    padding: 0px 3px;
-    margin: 0px 3px;
+    padding: 0px 2px;
+    margin: 0px 2px;
     border-radius: 45px;
     background-color: @surface;
     color: alpha(@on_surface, 0.45);
@@ -57,15 +57,15 @@ tooltip label {
 #workspaces button.active {
     background: linear-gradient(135deg, @primary 0%, @secondary 100%);
     color: @on_primary;
-    min-height: 20px;
-    min-width: 30px;
+    min-height: 16px;
+    min-width: 24px;
     transition: all 0.3s ease-in-out;
 }
 
 #workspaces button:hover {
     background: linear-gradient(135deg, @primary 50%, @secondary 100%);
     color: @on_primary;
-    min-width: 24px;
+    min-width: 20px;
     background-size: 400% 400%;
 }
 
@@ -79,8 +79,8 @@ tooltip label {
 #custom-notification,
 #submap {
     background-color: @surface;
-    padding: 0px 8px;
-    margin: 4px 5px;
+    padding: 0px 6px;
+    margin: 3px 4px;
     border-radius: 45px;
     border: none;
     box-shadow: none;
@@ -88,43 +88,71 @@ tooltip label {
 
 #clock {
     color: @on_surface;
-    font-size: 15px;
+    font-size: 12px;
 }
 
 #mpris {
     color: @on_surface;
-    margin-right: 4px;
-    font-size: 14px;
+    font-size: 12px;
+    background-color: @surface;
+    padding: 0 6px;
+    margin: 3px 4px;
+    border-radius: 45px;
 }
 
 #pulseaudio {
     color: @tertiary;
-    font-size: 14px;
+    font-size: 12px;
 }
 
 #network {
     color: @secondary;
-    font-size: 14px;
+    font-size: 12px;
 }
 
 #battery {
     color: @secondary;
-    font-size: 14px;
+    font-size: 12px;
 }
 
 #custom-notification {
     color: @on_surface;
-    font-size: 14px;
+    font-size: 12px;
+}
+
+#custom-cava {
+    padding: 0 6px;
+    margin: 3px 4px;
+    border-radius: 45px;
+    background-color: @surface;
+}
+
+#custom-cava-trigger {
+    color: @on_surface;
+    padding: 0 6px;
+    margin: 3px 0 3px 4px;
+    border-radius: 45px;
+    background-color: @surface;
+    font-size: 12px;
+}
+
+#custom-mpris-trigger {
+    color: @on_surface;
+    padding: 0 6px;
+    margin: 3px 0 3px 4px;
+    border-radius: 45px;
+    background-color: @surface;
+    font-size: 12px;
 }
 
 #custom-dropdown {
-    padding: 0 8px;
+    padding: 0 6px 0 12px;
 }
 
 #tray {
     background-color: @surface;
-    padding: 0 8px;
-    margin: 4px 0;
+    padding: 0 6px;
+    margin: 3px 0;
     border-radius: 45px;
 }
 
@@ -139,13 +167,21 @@ tooltip label {
 
 .hide-tray-drawer {
     background-color: @surface;
-    border-radius: 25px;
-    margin-right: 10px;
+    border-radius: 20px;
+    margin-right: 8px;
+}
+
+.cava-mpris-drawer {
+    background-color: transparent;
+}
+
+.mpris-drawer {
+    background-color: transparent;
 }
 
 #hide-tray {
     background: transparent;
-    border-radius: 25px;
-    margin-right: 10px;
-    padding: 6px 0;
+    border-radius: 20px;
+    margin-right: 8px;
+    padding: 4px 0;
 }
