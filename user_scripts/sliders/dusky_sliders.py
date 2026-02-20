@@ -2,7 +2,7 @@
 """
 Master Slider Widget for Hyprland (Dusky Sliders)
 Native GTK4 + Libadwaita Custom Card Implementation.
-Hyper-Optimized for Python 3.14+ (Daemonized, Borderless, Atomic I/O)
+Hyper-Optimized for Python 3.14+ (Daemonized, Borderless, Atomic I/O, Dynamic Features)
 """
 
 import sys
@@ -11,6 +11,8 @@ import subprocess
 import threading
 import tempfile
 import gc
+import shutil
+import time
 
 # ==============================================================================
 # 1. HEAVY IMPORTS
@@ -28,11 +30,8 @@ APP_ID = "org.dusky.sliders"
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
 STATE_FILE = f"{RUNTIME_DIR}/hyprsunset_state.txt"
 
-# Ensure daemon is running immediately to accept IPC commands
-try:
-    subprocess.run(["pgrep", "-u", str(os.getuid()), "-x", "hyprsunset"], check=True, stdout=subprocess.DEVNULL)
-except subprocess.CalledProcessError:
-    subprocess.Popen(["hyprsunset"], start_new_session=True, close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+# Fast, non-blocking check for the hyprsunset binary in PATH
+HAS_HYPRSUNSET = shutil.which("hyprsunset") is not None
 
 # ==============================================================================
 # 2. ASYNC ATOMIC I/O & BACKEND INTERFACES
@@ -48,11 +47,25 @@ def get_volume_fast() -> float:
     return 50.0
 
 def set_volume(val: float) -> None:
-    subprocess.Popen(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", f"{int(val)}%"], close_fds=True, stdout=subprocess.DEVNULL)
-    if val > 0:
-        subprocess.Popen(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"], close_fds=True, stderr=subprocess.DEVNULL)
+    v = round(val)
+    try:
+        subprocess.Popen(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", f"{v}%"], close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if v > 0:
+            subprocess.Popen(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"], close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        pass
 
 def get_brightness_native() -> float:
+    # 1. Primary: Use brightnessctl to ensure read/write target the EXACT same device
+    try:
+        cur = float(subprocess.run(["brightnessctl", "get"], capture_output=True, text=True).stdout)
+        max_val = float(subprocess.run(["brightnessctl", "max"], capture_output=True, text=True).stdout)
+        if max_val > 0:
+            return (cur / max_val) * 100
+    except Exception:
+        pass
+        
+    # 2. Fallback: Native sysfs parsing if brightnessctl query fails
     try:
         with os.scandir("/sys/class/backlight") as it:
             for entry in it:
@@ -64,7 +77,10 @@ def get_brightness_native() -> float:
     return 50.0
 
 def set_brightness(val: float) -> None:
-    subprocess.Popen(["brightnessctl", "set", f"{int(val)}%", "-q"], close_fds=True, stdout=subprocess.DEVNULL)
+    try:
+        subprocess.Popen(["brightnessctl", "set", f"{round(val)}%", "-q"], close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        pass
 
 def get_hyprsunset() -> float:
     try:
@@ -74,20 +90,31 @@ def get_hyprsunset() -> float:
         pass
     return 4500.0
 
-# --- Atomic State Save Mechanics ---
+# --- Atomic State Save & Orchestration Mechanics ---
 _write_timer_id = 0
+_hyprsunset_state = 0  # 0: Stopped, 1: Starting, 2: Ready
+_latest_sunset_val = 4500
 
 def _atomic_write_state(val: float) -> None:
     """Thread-safe, atomic file replacement to prevent data corruption."""
+    temp_path = None
     try:
         temp_fd, temp_path = tempfile.mkstemp(dir=RUNTIME_DIR, prefix=".sunset_", suffix=".tmp")
         with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
-            f.write(str(int(val)))
+            f.write(str(round(val)))
             f.flush()
             os.fsync(f.fileno())  # Ensure bytes are physically on disk
         os.replace(temp_path, STATE_FILE) # POSIX atomic rename
+        temp_path = None # Clear on success so the finally block ignores it
     except OSError:
         pass
+    finally:
+        # Guarantee cleanup of orphaned tmp files if anything failed before os.replace
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 def _debounced_state_save(val: float) -> bool:
     """Spins up background thread for file I/O so GTK never blocks."""
@@ -96,22 +123,62 @@ def _debounced_state_save(val: float) -> bool:
     _write_timer_id = 0
     return GLib.SOURCE_REMOVE
 
-def set_hyprsunset(val: float) -> None:
-    v = int(val)
+def _startup_hyprsunset_and_apply() -> None:
+    """Runs in a background thread to prevent GTK freezing during systemctl startup."""
+    sysd_request = subprocess.run(
+        ["systemctl", "--user", "start", "hyprsunset.service"],
+        check=False,
+        capture_output=True
+    )
+    # Fallback for systems lacking the .service file
+    if sysd_request.returncode != 0:
+        try:
+            subprocess.run(["pgrep", "-u", str(os.getuid()), "-x", "hyprsunset"], check=True, stdout=subprocess.DEVNULL)
+        except subprocess.CalledProcessError:
+            subprocess.Popen(
+                ["hyprsunset"], 
+                start_new_session=True, 
+                close_fds=True, 
+                stdout=subprocess.DEVNULL, 
+                stderr=subprocess.DEVNULL
+            )
     
-    # 1. Non-blocking debounce for disk I/O
-    global _write_timer_id
-    if _write_timer_id:
-        GLib.source_remove(_write_timer_id)
-    _write_timer_id = GLib.timeout_add(500, _debounced_state_save, v)
+    # Give the compositor ~350ms to bind the CTM IPC socket to prevent lost commands
+    time.sleep(0.35)
     
-    # 2. Instant Native IPC
+    global _hyprsunset_state
+    _hyprsunset_state = 2 # Mark Daemon as Ready
+    
+    # Apply the absolute latest value the user dragged to during the 350ms window
     subprocess.Popen(
-        ["hyprctl", "hyprsunset", "temperature", str(v)], 
+        ["hyprctl", "hyprsunset", "temperature", str(_latest_sunset_val)], 
         close_fds=True, 
         stdout=subprocess.DEVNULL, 
         stderr=subprocess.DEVNULL
     )
+
+def set_hyprsunset(val: float) -> None:
+    global _write_timer_id, _hyprsunset_state, _latest_sunset_val
+    _latest_sunset_val = round(val)
+    
+    # 1. Lazy-Load the Daemon: State Machine avoids race conditions
+    if _hyprsunset_state == 0 and HAS_HYPRSUNSET:
+        _hyprsunset_state = 1 # Mark as starting
+        threading.Thread(target=_startup_hyprsunset_and_apply, daemon=True).start()
+    elif _hyprsunset_state == 2:
+        # Instant Native IPC (Daemon is confirmed ready)
+        subprocess.Popen(
+            ["hyprctl", "hyprsunset", "temperature", str(_latest_sunset_val)], 
+            close_fds=True, 
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL
+        )
+    # If state is 1, we intentionally drop the IPC command; the thread will catch _latest_sunset_val
+    
+    # 2. Non-blocking debounce for disk I/O
+    if _write_timer_id:
+        GLib.source_remove(_write_timer_id)
+    _write_timer_id = GLib.timeout_add(500, _debounced_state_save, _latest_sunset_val)
 
 # ==============================================================================
 # 3. SLEEK GTK4 + LIBADWAITA UI
@@ -147,13 +214,17 @@ class CompactSliderRow(Gtk.Box):
     def _lazy_init(self, fetch_cb) -> bool:
         real_val = fetch_cb()
         self.adj.set_value(real_val)
-        self.val_label.set_label(str(int(real_val)))
+        
+        # Read back the safely clamped value from GTK to prevent visual desync
+        clamped_val = self.adj.get_value()
+        self.val_label.set_label(str(round(clamped_val)))
+        
         self.scale.connect("value-changed", self._on_value_changed)
         return GLib.SOURCE_REMOVE
 
     def _on_value_changed(self, scale):
         val = scale.get_value()
-        self.val_label.set_label(str(int(val)))
+        self.val_label.set_label(str(round(val)))
         self.apply_cb(val) 
 
 class SliderWindow(Adw.ApplicationWindow):
@@ -183,11 +254,19 @@ class SliderWindow(Adw.ApplicationWindow):
         card_box.set_margin_end(14)
         card_box.set_margin_top(14)
         card_box.set_margin_bottom(14)
+        
+        # --- ALIGNMENT FIX FOR DYNAMIC WIDGETS ---
+        card_box.set_vexpand(True)
+        card_box.set_valign(Gtk.Align.CENTER)
+        
         main_box.append(card_box)
         
         card_box.append(CompactSliderRow("", "volume", 0, 100, 1, get_volume_fast, set_volume))
         card_box.append(CompactSliderRow("󰃠", "brightness", 1, 100, 1, get_brightness_native, set_brightness))
-        card_box.append(CompactSliderRow("󰡬", "sunset", 1000, 6000, 50, get_hyprsunset, set_hyprsunset))
+        
+        # Dynamically render sunset slider ONLY if installed
+        if HAS_HYPRSUNSET:
+            card_box.append(CompactSliderRow("󰡬", "sunset", 1000, 6000, 50, get_hyprsunset, set_hyprsunset))
 
     def _on_close_request(self, window) -> bool:
         self.set_visible(False)
@@ -253,6 +332,14 @@ class SliderApp(Adw.Application):
     def do_activate(self):
         if self._window:
             self._window.present()
+
+    def do_shutdown(self):
+        # Guarantee pending debounced I/O writes are safely flushed on daemon exit
+        global _write_timer_id, _latest_sunset_val
+        if _write_timer_id:
+            GLib.source_remove(_write_timer_id)
+            _atomic_write_state(_latest_sunset_val)
+        Adw.Application.do_shutdown(self)
 
 if __name__ == "__main__":
     app = SliderApp()
