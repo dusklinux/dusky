@@ -2,6 +2,7 @@
 .config/btop/btop.conf
 .config/cava/config
 .config/dusky/version
+.config/dusky_nvim/
 .config/fastfetch/
 .config/firefox_extention_export_data_backup/
 .config/fontconfig/
@@ -21,7 +22,6 @@
 .config/matugen/templates/
 .config/matugen/presets/
 .config/mpv/mpv.conf
-.config/nvim/
 .config/pacman/makepkg.conf
 .config/pacseek/
 .config/swaync/

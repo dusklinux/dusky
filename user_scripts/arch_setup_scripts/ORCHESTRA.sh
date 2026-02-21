@@ -78,8 +78,6 @@ INSTALL_SEQUENCE=(
 #    "U | 255_tldr_update.sh"
 #    "U | 260_spotify.sh"
 #    "U | 265_mouse_button_reverse.sh --right"
-    "U | 270_neovim_clean.sh"
-    "U | 275_neovim_lazy_sync.sh"
     "U | 280_dusk_clipboard_errands_delete.sh --delete"
 #    "S | 285_tty_autologin.sh"
     "S | 290_system_services.sh"

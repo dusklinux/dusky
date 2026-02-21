@@ -2211,7 +2211,7 @@ pages:
                 button_text: "Clean"
               on_press:
                 type: exec
-                command: kitty --class 270_neovim_clean.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/270_neovim_clean.sh"
+                command: kitty --class 01_reset_neovim.sh --hold sh -c "$HOME/user_scripts/nvim/reset/01_reset_neovim.sh"
                 terminal: false
             - type: button
               properties:
@@ -2221,7 +2221,7 @@ pages:
                 button_text: "Sync"
               on_press:
                 type: exec
-                command: kitty --class 275_neovim_lazy_sync.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/275_neovim_lazy_sync.sh"
+                command: kitty --class 02_cli_plugins_download.sh --hold sh -c "$HOME/user_scripts/nvim/reset/02_cli_plugins_download.sh"
                 terminal: false
 
 - id: about_dusky

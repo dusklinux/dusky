@@ -21,7 +21,7 @@ import logging
 # ==============================================================================
 # VERSION & CONFIGURATION
 # ==============================================================================
-VERSION = "4.3 (Universal HW + Regression Fixes)"
+VERSION = "4.4 (Universal HW + Dual Speed Control)"
 
 ZRAM_MOUNT = Path("/mnt/zram1")
 AUDIO_OUTPUT_DIR = ZRAM_MOUNT / "kokoro_audio"
@@ -31,6 +31,7 @@ READY_FILE = Path("/tmp/dusky_kokoro.ready")
 
 DEFAULT_VOICE = "af_sarah"
 SPEED = 1.0
+MPV_SPEED = 1.0  # MPV playback speed control
 SAMPLE_RATE = 24000
 
 MAX_BATCH_LEN = 2000
@@ -245,7 +246,7 @@ class AudioPlaybackThread(threading.Thread):
             "mpv", "--no-terminal", "--force-window", "--title=Kokoro TTS",
             "--x11-name=kokoro", "--wayland-app-id=kokoro", "--geometry=400x100",
             "--keep-open=no",
-            "--speed=1.0",
+            f"--speed={MPV_SPEED}",
             "--demuxer=rawaudio", f"--demuxer-rawaudio-rate={SAMPLE_RATE}",
             "--demuxer-rawaudio-channels=1", "--demuxer-rawaudio-format=float",
             "--cache=yes", "--cache-secs=300",
