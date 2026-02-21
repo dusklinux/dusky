@@ -2211,7 +2211,7 @@ pages:
                 button_text: "Clean"
               on_press:
                 type: exec
-                command: kitty --class 01_reset_neovim.sh --hold sh -c "$HOME/user_scripts/nvim/reset/01_reset_neovim.sh
+                command: kitty --class 01_reset_neovim.sh --hold sh -c "$HOME/user_scripts/nvim/reset/01_reset_neovim.sh"
                 terminal: false
             - type: button
               properties:
