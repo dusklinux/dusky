@@ -41,8 +41,8 @@
     },
     "custom/arch": {
         "format": "󰣇",
-        "tooltip-format": "Power Menu",
-        "on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh"
+        "tooltip-format": "Control Center",
+        "on-click": "python3 /home/ubaid/user_scripts/dusky_system/control_center/dusky_control_center.py"
     },
     "custom/lock": {
         "format": "󰌾",

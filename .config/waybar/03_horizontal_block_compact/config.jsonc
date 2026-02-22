@@ -44,8 +44,8 @@
 
   "custom/launcher": {
     "format": "󰣇",
-    "on-click": "rofi -show drun",
-    "tooltip-format": "Application Launcher"
+    "on-click": "python3 /home/ubaid/user_scripts/dusky_system/control_center/dusky_control_center.py",
+    "tooltip-format": "Control Center"
   },
 
   "clock": {
