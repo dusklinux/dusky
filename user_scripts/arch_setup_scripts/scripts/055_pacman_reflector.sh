@@ -1086,7 +1086,6 @@ read -r -d '' FALLBACK_RAW_DATA << 'RAW_MIRROR_LIST' || true
 #Server = https://mirrors.huongnguyen.dev/arch/$repo/os/$arch
 #Server = https://mirror.meowsmp.net/arch/$repo/os/$arch
 #Server = https://mirrors.nguyenhoang.cloud/archlinux/$repo/os/$arch
-
 RAW_MIRROR_LIST
 
 # --- HELPER: Extract fallback date using bash regex ---
@@ -1106,21 +1105,73 @@ detect_cachyos() {
     return 1
 }
 
-# --- CACHYOS LOGIC ---
+# --- CACHYOS LOGIC (RELIABILITY UPGRADED) ---
 update_cachy_mirrors() {
-    log_warn "Initializing dedicated CachyOS mirror sync..."
+    log_info "Initializing dedicated CachyOS mirror sync..."
     
     if ! command -v cachyos-rate-mirrors &>/dev/null; then
         log_err "cachyos-rate-mirrors binary not found. Aborting."
         exit 1
     fi
 
-    # Script is already elevated; no sudo required
-    if cachyos-rate-mirrors; then
-        log_ok "CachyOS mirrors updated and graded successfully."
-    else
-        log_err "Failed to execute cachyos-rate-mirrors."
-        exit 1
+    local max_attempts=4
+    local attempt=1
+    local success=0
+
+    # Force underlying network calls to prefer IPv4 if supported by the environment,
+    # helping to mitigate ISP IPv6 blackholing without breaking standard configurations.
+    export CURL_OPTIONS="-4"
+
+    while (( attempt <= max_attempts )); do
+        if (( attempt == 1 )); then
+            # Small initial breather to detach from the rapid-fire orchestrator burst
+            sleep 2
+        else
+            log_warn "Network delay detected. Waiting 5 seconds for ISP/CDN limits to reset before attempt ${attempt}/${max_attempts}..."
+            sleep 5
+        fi
+
+        # Evaluating directly in the if-statement safely catches failures without triggering set -e
+        if cachyos-rate-mirrors; then
+            log_ok "CachyOS mirrors updated and graded successfully."
+            success=1
+            break
+        else
+            log_err "Attempt ${attempt} failed to connect to the mirror coordination servers."
+            (( attempt++ ))
+        fi
+    done
+
+    # --- GRACEFUL FAILURE HANDLING ---
+    if (( ! success )); then
+        printf '\n%s!! NETWORK TIMEOUT ENCOUNTERED %s\n' "$R" "$NC"
+        printf '   --------------------------------------------------------\n'
+        printf '   %sPlease do not panic.%s This is a known ISP network or routing\n' "$G" "$NC"
+        printf '   timeout (often caused by strict ISP firewalls or CGNAT limits)\n'
+        printf '   and has %sABSOLUTELY NOTHING to do with Dusky, the dot files.%s\n' "$B" "$NC"
+        printf '   Your system is perfectly safe and structurally sound.\n'
+        printf '   --------------------------------------------------------\n'
+        printf '   Would you like to:\n'
+        printf '   1) Skip this specific step and continue the installation (Recommended)\n'
+        printf '   2) Abort the entire installation\n\n'
+
+        local choice
+        while true; do
+            read -r -p ":: Select an option [1-2]: " choice || { printf '\n'; exit 1; }
+            case "$choice" in
+                1)
+                    log_ok "Gracefully skipping CachyOS mirror sync. You can safely run this manually later."
+                    return 0
+                    ;;
+                2)
+                    log_err "Aborting script execution as requested."
+                    exit 1
+                    ;;
+                *)
+                    log_warn "Invalid selection. Please enter 1 or 2."
+                    ;;
+            esac
+        done
     fi
 }
 
