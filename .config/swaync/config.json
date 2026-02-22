@@ -1,80 +1,77 @@
 {
-    "$schema": "/etc/xdg/swaync/configSchema.json",
-    "positionX": "left",
-    "positionY": "bottom",
-
-    "timeout": 5,
-    "timeout-low": 3,
-    "timeout-critical": 10,
-
-
-    "control-center-margin-top": 0,
-    "control-center-margin-bottom": 5,
-    "control-center-margin-right": 0,
-    "control-center-margin-left": 5,
-    "notification-window-width": 350,
-    "control-center-width": 300,
-    "fit-to-screen": true,
-    "layer": "overlay",
-    "control-center-layer": "top",
-    "layer-shell": true,
-    "cssPriority": "user",
-    "hide-on-action": false,
-    "script-fail-notify": true,
-    "ignore-gtk-theme": true,
-    "widgets": [
-        "title",
-        "dnd",
-        "buttons-grid",
-        "volume",
-        "backlight",
-        "notifications"
-    ],
-    "widget-config": {
-        "title": {
-            "clear-all-button": true,
-            "button-text": "Clear"
+  "$schema": "/etc/xdg/swaync/configSchema.json",
+  "positionX": "left",
+  "positionY": "bottom",
+  "timeout": 5,
+  "timeout-low": 3,
+  "timeout-critical": 10,
+  "control-center-margin-top": 0,
+  "control-center-margin-bottom": 5,
+  "control-center-margin-right": 0,
+  "control-center-margin-left": 5,
+  "notification-window-width": 350,
+  "control-center-width": 300,
+  "fit-to-screen": true,
+  "layer": "overlay",
+  "control-center-layer": "top",
+  "layer-shell": true,
+  "cssPriority": "user",
+  "hide-on-action": false,
+  "script-fail-notify": true,
+  "ignore-gtk-theme": true,
+  "widgets": [
+    "title",
+    "dnd",
+    "buttons-grid",
+    "volume",
+    "backlight",
+    "notifications"
+  ],
+  "widget-config": {
+    "title": {
+      "clear-all-button": true,
+      "button-text": "Clear"
+    },
+    "dnd": {
+      "label": "󰂛"
+    },
+    "volume": {
+      "label": "󰕾"
+    },
+    "backlight": {
+      "label": ""
+    },
+    "buttons-grid": {
+      "actions": [
+        {
+          "label": "󰡬",
+          "command": "uwsm-app -- $HOME/user_scripts/sliders/dusky_sliders.py"
         },
-        "dnd": {
-            "label": "󰂛"
+        {
+          "label": "",
+          "command": "uwsm-app -- kitty --class dusky_network.sh -e $HOME/user_scripts/network_manager/dusky_network.sh"
         },
-        "volume": {
-            "label": "󰕾"
+        {
+          "label": "󰂯",
+          "command": "uwsm-app -- blueman-manager"
         },
-        "backlight": {
-            "label": ""
+        {
+          "label": "󰕾",
+          "command": "uwsm-app -- pavucontrol"
         },
-        "buttons-grid": {
-            "actions": [
-                {
-                    "label": "󰡬",
-                    "command": "uwsm-app -- $HOME/user_scripts/sliders/dusky_sliders.py"
-                },
-                {
-                    "label": "",
-                    "command": "uwsm-app -- kitty --class dusky_network.sh -e $HOME/user_scripts/network_manager/dusky_network.sh"
-                },
-                {
-                    "label": "󰂯",
-                    "command": "uwsm-app -- blueman-manager"
-                },
-                {
-                    "label": "󰕾",
-                    "command": "uwsm-app -- pavucontrol"
-                },
-                {
-                    "label": "",
-                    "command": "uwsm-app -- $HOME/user_scripts/theme_matugen/theme_ctl.sh random"
-                },
-                {
-                    "label": "󰓅",
-                    "command": "uwsm-app -- kitty -e --class performance.sh $HOME/user_scripts/performance/services_and_process_terminator.sh"
-                },
-                {
-                    "label": "󱫓",
-                    "command": "uwsm-app -- kitty -e --class timeout.sh $HOME/user_scripts/hypridle/timeout.sh"
-                }
-            ]
+        {
+          "label": "",
+          "command": "uwsm-app -- $HOME/user_scripts/theme_matugen/theme_ctl.sh random"
+        },
+        {
+          "label": "󰓅",
+          "command": "uwsm-app -- kitty -e --class performance.sh $HOME/user_scripts/performance/services_and_process_terminator.sh"
+        },
+        {
+          "label": "󱫓",
+          "command": "uwsm-app -- kitty -e --class timeout.sh $HOME/user_scripts/hypridle/timeout.sh"
         }
+      ]
     }
+  }
 }
