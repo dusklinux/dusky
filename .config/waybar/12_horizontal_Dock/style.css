@@ -50,7 +50,7 @@ tooltip label {
     margin: 0px 2px;
     border-radius: 45px;
     background-color: @surface;
-    color: alpha(@on_surface, 0.45);
+    color: alpha(@tertiary, 0.45);
     transition: all 0.3s ease-in-out;
 }
 
@@ -87,12 +87,12 @@ tooltip label {
 }
 
 #clock {
-    color: @on_surface;
+    color: @tertiary;
     font-size: 12px;
 }
 
 #mpris {
-    color: @on_surface;
+    color: @tertiary;
     font-size: 12px;
     background-color: @surface;
     padding: 0 6px;
@@ -116,28 +116,20 @@ tooltip label {
 }
 
 #custom-notification {
-    color: @on_surface;
+    color: @tertiary;
     font-size: 12px;
 }
 
 #custom-cava {
+    color: @tertiary;
     padding: 0 6px;
     margin: 3px 4px;
     border-radius: 45px;
     background-color: @surface;
 }
 
-#custom-cava-trigger {
-    color: @on_surface;
-    padding: 0 6px;
-    margin: 3px 0 3px 4px;
-    border-radius: 45px;
-    background-color: @surface;
-    font-size: 12px;
-}
-
 #custom-mpris-trigger {
-    color: @on_surface;
+    color: @tertiary;
     padding: 0 6px;
     margin: 3px 0 3px 4px;
     border-radius: 45px;
