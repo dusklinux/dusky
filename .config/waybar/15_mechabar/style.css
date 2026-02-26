@@ -1,0 +1,331 @@
+@import url("../matugen/generated/waybar-colors.css");
+
+@define-color hover-fg      alpha(@on_surface, 0.75);
+@define-color outline       shade(@background, 0.5);
+
+* {
+	/* ignore GTK theme */
+	all: initial;
+	color: @on_surface;
+}
+
+* {
+	font-family: "Commit Mono Nerd Font";
+	font-weight: bold;
+	font-size: 16px;
+}
+
+#window label,
+#mpris,
+tooltip label {
+	font-weight: normal;
+}
+
+#workspaces button.active label,
+#workspaces button.focused label,
+#custom-distro {
+	font-size: 20px;
+}
+
+#custom-power {
+	font-size: 18px;
+}
+
+#custom-left_div,
+#custom-left_inv,
+#custom-right_div,
+#custom-right_inv {
+	font-size: 22px;
+}
+
+/*---------------
+    indicator
+---------------*/
+
+#keyboard-state label,
+#language {
+	margin-right: 12px;
+	color: @hover-fg;
+}
+
+/*-----------------
+    temperature
+-----------------*/
+
+#custom-left_div.2 {
+	color: @surface_container_low;
+}
+#temperature {
+	background-color: @surface_container_low;
+}
+
+/*------------
+    memory
+------------*/
+
+#custom-left_div.3 {
+	background-color: @surface_container_low;
+	color: @surface;
+}
+#memory {
+	background-color: @surface;
+}
+
+/*---------
+    cpu
+---------*/
+
+#custom-left_div.4 {
+	background-color: @surface;
+	color: @surface_container_high;
+}
+#cpu {
+	background-color: @surface_container_high;
+}
+#custom-left_inv.1 {
+	color: @surface_container_high;
+}
+
+/*-----------------
+    distro icon
+-----------------*/
+
+#custom-left_div.5,
+#custom-right_div.2 {
+	color: @secondary;
+}
+#custom-distro {
+	padding: 0 10px 0 5px;
+	background-color: @secondary;
+	color: @background;
+}
+
+/*--------------------
+    idle inhibitor
+--------------------*/
+
+#custom-right_inv.1 {
+	color: @surface_container_high;
+}
+#idle_inhibitor {
+	background-color: @surface_container_high;
+}
+
+/*--------------------
+    notifications
+--------------------*/
+
+#custom-right_inv.2 {
+	color: @surface_container_high;
+}
+#custom-notifications {
+	background-color: @surface_container_high;
+}
+
+/*----------
+    time
+----------*/
+
+#clock.time {
+	padding-right: 6px;
+	background-color: @surface_container_high;
+}
+#custom-right_div.3 {
+	background-color: @surface;
+	color: @surface_container_high;
+}
+
+/*----------
+    date
+----------*/
+
+#clock.date {
+	padding-left: 6px;
+	background-color: @surface;
+}
+#custom-right_div.4 {
+	background-color: @surface_container_low;
+	color: @surface;
+}
+
+/*-----------------
+    system tray
+-----------------*/
+
+#network {
+	background-color: @surface_container_low;
+	padding: 0 6px 0 4px;
+}
+#bluetooth {
+	background-color: @surface_container_low;
+	padding: 0 5px;
+}
+#custom-update {
+	background-color: @surface_container_low;
+	padding: 0 8px 0 2px;
+}
+#custom-right_div.5 {
+	color: @surface_container_low;
+}
+
+/*----------------
+    workspaces
+----------------*/
+
+#custom-left_div.1,
+#custom-right_div.1 {
+	color: @surface_container_low;
+}
+#workspaces {
+	padding: 0 1px;
+	background-color: @surface_container_low;
+}
+#workspaces button.active label,
+#workspaces button.focused label {
+	color: @secondary;
+}
+
+/*------------------
+    window title
+------------------*/
+
+#window {
+	margin: 0 12px;
+}
+
+/*----------------
+    media info
+----------------*/
+
+#custom-cava {
+	letter-spacing: 2px;
+	padding-right: 8px;
+}
+
+#mpris {
+	padding: 0 12px;
+}
+
+/*------------
+    volume
+------------*/
+
+#custom-left_div.6 {
+	color: @surface_container_low;
+}
+#pulseaudio,
+#wireplumber {
+	background-color: @surface_container_low;
+}
+
+/*----------------
+    brightness
+----------------*/
+
+#custom-left_div.7 {
+	background-color: @surface_container_low;
+	color: @surface;
+}
+#backlight {
+	background-color: @surface;
+}
+
+/*-------------
+    battery
+-------------*/
+
+#custom-left_div.8 {
+	background-color: @surface;
+	color: @surface_container_high;
+}
+#battery {
+	background-color: @surface_container_high;
+}
+#custom-left_inv.2 {
+	color: @surface_container_high;
+}
+
+/*----------------
+    power menu
+----------------*/
+
+#custom-power {
+	border-radius: 16px;
+	padding: 0 19px 0 16px;
+	color: @secondary;
+}
+#custom-power:hover {
+	background-color: @surface;
+}
+
+#custom-trigger:hover,
+#idle_inhibitor:hover,
+#custom-notifications:hover,
+#clock.date:hover,
+#network:hover,
+#bluetooth:hover,
+#custom-update:hover,
+#mpris:hover,
+#pulseaudio:hover,
+#wireplumber:hover {
+	color: @hover-fg;
+}
+
+/* inactive state */
+#idle_inhibitor.deactivated,
+#custom-notifications.dnd-none,
+#custom-notifications.dnd-inhibited-none,
+#mpris.paused,
+#pulseaudio.output.muted,
+#pulseaudio.input.source-muted,
+#wireplumber.muted {
+	color: @hover-fg;
+}
+
+#memory.warning,
+#cpu.warning,
+#battery.warning {
+	color: @on_secondary_container;
+}
+
+#temperature.critical,
+#memory.critical,
+#cpu.critical,
+#battery.critical {
+	color: @error;
+}
+
+#battery.charging {
+	color: @on_tertiary_container;
+}
+
+.module {
+	margin-bottom: -1px;
+}
+
+#waybar {
+	background-color: @outline;
+}
+#waybar > box {
+	margin: 4px;
+	background-color: @background;
+}
+
+button {
+	border-radius: 16px;
+	min-width: 16px;
+	padding: 0 10px;
+}
+button:hover {
+	background-color: @surface;
+	color: @hover-fg;
+}
+
+tooltip {
+	border: 2px solid @on_background;
+	border-radius: 10px;
+	background-color: @background;
+}
+tooltip > box {
+	padding: 0 6px;
+}
