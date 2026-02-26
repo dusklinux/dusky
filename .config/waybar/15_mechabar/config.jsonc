@@ -1,0 +1,467 @@
+{
+	"modules-left": [
+		"group/user",
+		"custom/left_div#1",
+		"hyprland/workspaces",
+		"custom/right_div#1",
+		"hyprland/window"
+	],
+	"modules-center": [
+//		Commented out bc it makes the waybar asymmetrical
+//		"hyprland/language",
+		"custom/left_div#2",
+		"temperature",
+		"custom/left_div#3",
+		"memory",
+		"custom/left_div#4",
+		"cpu",
+		"custom/notifications",
+		"custom/left_inv#1",
+		"custom/left_div#5",
+		"custom/distro",
+		"custom/right_div#2",
+		"custom/right_inv#1",
+		"idle_inhibitor",
+		"clock#time",
+		"custom/right_div#3",
+		"clock#date",
+		"custom/right_div#4",
+		"network",
+		"bluetooth",
+		"custom/right_div#5"
+//		Commented out bc it makes the waybar asymmetrical
+//		"custom/update"
+	],
+	"modules-right": [
+		"custom/cava",
+		"group/mpris-drawer",
+		"custom/left_div#6",
+		"group/pulseaudio",
+		"custom/left_div#7",
+		"backlight",
+		"custom/left_div#8",
+		"battery",
+		"custom/left_inv#2",
+		"custom/power"
+	],
+
+	"layer": "top",
+	"height": 0,
+	"width": 0,
+	"margin": 0,
+	"spacing": 0,
+	"mode": "dock",
+	"reload_style_on_change": true,
+
+	"group/user": {
+		"orientation": "horizontal",
+		"modules": [
+			"custom/trigger",
+			"tray"
+		],
+		"drawer": {
+			"transition-duration": 300,
+			"transition-left-to-right": true,
+			"click-to-reveal": false
+		}
+	},
+
+	"tray": {
+		"icon-size": 15,
+		"spacing": 6,
+		"show-passive-items": true
+	},
+
+	"custom/trigger": {
+		"format": "󰍜",
+		"min-length": 4,
+		"max-length": 4,
+		"tooltip-format": "No command set"
+	},
+
+	"hyprland/workspaces": {
+		"format": "{icon}",
+		"format-icons": {
+			"active": "",
+			"default": ""
+		},
+		"persistent-workspaces": {
+			"*": 5
+		},
+		"on-scroll-up": "hyprctl dispatch workspace +1",
+		"on-scroll-down": "hyprctl dispatch workspace -1",
+		"cursor": true
+	},
+
+	"hyprland/window": {
+		"format": "{}",
+		"rewrite": {
+			"": "Desktop",
+			"kitty": "Terminal",
+			"zsh": "Terminal",
+			"~": "Terminal"
+		},
+		"swap-icon-label": false
+	},
+
+	"hyprland/language": {
+		"format-en": "en",
+		"min-length": 3,
+		"max-length": 3
+	},
+
+	"temperature": {
+		"thermal-zone": 1,
+		"critical-threshold": 90,
+		"interval": 10,
+		"format-critical": "󰀦 {temperatureF}°F",
+		"format": "{icon} {temperatureF}°F",
+		"format-icons": [
+			"󱃃", "󰔏", "󱃂"
+		],
+		"min-length": 8,
+		"max-length": 8,
+		"tooltip-format": "Celsius: {temperatureC}°C"
+	},
+
+	"memory": {
+		"interval": 10,
+		"format": "󰘚 {percentage}%",
+		"format-warning": "󰀧 {percentage}%",
+		"format-critical": "󰀧 {percentage}%",
+		"states": {
+			"warning": 75,
+			"critical": 90
+		},
+		"min-length": 7,
+		"max-length": 7,
+		"tooltip-format": "Memory Used: {used:0.0f}/{total:0.0f} GB"
+	},
+
+	"cpu": {
+		"interval": 10,
+		"format": "󰍛 {usage}%",
+		"format-warning": "󰀨 {usage}%",
+		"format-critical": "󰀨 {usage}%",
+		"min-length": 5,
+		"max-length": 5,
+		"states": {
+			"warning": 75,
+			"critical": 90
+		},
+		"tooltip": false
+	},
+
+	"custom/distro": {
+		"format": "󰣇",
+		"on-click": "rofi -show drun",
+		"tooltip-format": "Application Launcher"
+	},
+
+	"idle_inhibitor": {
+		"format": "{icon}",
+		"format-icons": {
+			"activated": "󰈈",
+			"deactivated": "󰈉"
+		},
+		"min-length": 3,
+		"max-length": 3,
+		"tooltip-format-activated": "<b>Idle Inhibitor</b>: Activated",
+		"tooltip-format-deactivated": "<b>Idle Inhibitor</b>: Deactivated",
+		"start-activated": false
+	},
+
+	"clock#time": {
+		"format": "{:%I:%M}",
+		"min-length": 5,
+		"max-length": 5,
+		"tooltip-format": "<b>Standard Time</b>: <span text_transform='lowercase'>{:%I:%M %p}</span>"
+	},
+	
+	"custom/notifications": {
+                "tooltip": true,
+                "tooltip-format": "Left Click: Launch SwayNC\n Right Click: Do Not Disturb",
+                "format": "{icon}",
+                "format-icons": {
+                	"notification": "",
+                	"none": "",
+                	"dnd-notification": "",
+                	"dnd-none": "",
+                	"inhibited-notification": "",
+                	"inhibited-none": "",
+                	"dnd-inhibited-notification": "",
+                	"dnd-inhibited-none": ""
+                },
+                "return-type": "json",
+                "exec-if": "which swaync-client",
+                "exec": "swaync-client -swb",
+                "on-click": "sleep 0.1 && swaync-client -t -sw",
+                "on-click-right": "swaync-client -d -sw",
+                "escape": true,
+                "min-length": 3,
+                "max-length": 3,
+        },
+
+	"clock#date": {
+		"format": "󰸗 {:%m-%d}",
+		"min-length": 8,
+		"max-length": 8,
+		"tooltip-format": "{calendar}",
+		"calendar": {
+			"mode": "month",
+			"mode-mon-col": 6,
+			"format": {
+				"months": "<span alpha='100%'><b>{}</b></span>",
+				"days": "<span alpha='90%'>{}</span>",
+				"weekdays": "<span alpha='80%'><i>{}</i></span>",
+				"today": "<span alpha='100%'><b><u>{}</u></b></span>"
+			}
+		},
+		"actions": {
+			"on-click": "mode"
+		}
+	},
+
+	"network": {
+		"interval": 10,
+		"format": "󰤨",
+		"format-ethernet": "󰈀",
+		"format-wifi": "{icon}",
+		"format-disconnected": "󰤯",
+		"format-disabled": "󰤮",
+		"format-icons": [
+			"󰤟", "󰤢", "󰤥", "󰤨"
+		],
+		"min-length": 2,
+		"max-length": 2,
+		"on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
+		"on-click-right": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
+		"tooltip-format": "<b>Gateway</b>: {gwaddr}",
+		"tooltip-format-ethernet": "<b>Interface</b>: {ifname}",
+		"tooltip-format-wifi": "<b>Network</b>: {essid}\n<b>IP Addr</b>: {ipaddr}/{cidr}\n<b>Strength</b>: {signalStrength}%\n<b>Frequency</b>: {frequency} GHz",
+		"tooltip-format-disconnected": "Wi-Fi Disconnected",
+		"tooltip-format-disabled": "Wi-Fi Disabled"
+	},
+
+	"bluetooth": {
+		"format": "󰂯",
+		"format-disabled": "󰂲",
+		"format-off": "󰂲",
+		"format-on": "󰂰",
+		"format-connected": "󰂱",
+		"min-length": 2,
+		"max-length": 2,
+		"on-click": "uwsm-app -- blueman-manager",
+		"on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui",
+		"tooltip-format": "Device Addr: {device_address}",
+		"tooltip-format-disabled": "Bluetooth Disabled",
+		"tooltip-format-off": "Bluetooth Off",
+		"tooltip-format-on": "Bluetooth Disconnected",
+		"tooltip-format-connected": "Device: {device_alias}",
+		"tooltip-format-enumerate-connected": "Device: {device_alias}",
+		"tooltip-format-connected-battery": "Device: {device_alias}\nBattery: {device_battery_percentage}%",
+		"tooltip-format-enumerate-connected-battery": "Device: {device_alias}\nBattery: {device_battery_percentage}%"
+	},
+
+	"custom/update": {
+		"format": "󰏔 {}",
+		"exec": "checkupdates 2>/dev/null | wc -l || echo 0",
+		"interval": 3600,
+		"signal": 1,
+		"min-length": 3,
+		"max-length": 3,
+		"on-click": "kitty sh -c 'command -v yay >/dev/null && yay || paru'",
+		"on-click-right": "pkill -RTMIN+1 waybar",
+		"tooltip-format": "System Updates"
+	},
+
+	"custom/cava": {
+		"format": "{}",
+		"exec": "$HOME/user_scripts/waybar/cava.sh --8 --clean",
+		"spacing": 2
+	},
+
+	"group/mpris-drawer": {
+		"orientation": "inherit",
+		"drawer": {
+			"transition-duration": 800,
+			"children-class": "mpris-drawer",
+			"click-to-reveal": false,
+			"transition-left-to-right": false
+		},
+		"modules": ["custom/mpris-trigger", "mpris"]
+	},
+
+	"custom/mpris-trigger": {
+		"format": "♪",
+		"tooltip": false
+	},
+
+	"mpris": {
+		"format": "{player_icon} {title} - {artist}",
+		"format-paused": "{status_icon} {title} - {artist}",
+		"tooltip-format": "Playing: {title} - {artist}",
+		"tooltip-format-paused": "Paused: {title} - {artist}",
+		"player-icons": {
+			"default": "󰐊"
+		},
+		"status-icons": {
+			"paused": "󰏤"
+		},
+		"max-length": 1000
+	},
+
+	"group/pulseaudio": {
+		"orientation": "horizontal",
+		"modules": [
+			"pulseaudio#output",
+			"pulseaudio#input"
+		],
+		"drawer": {
+			"transition-left-to-right": false
+		}
+	},
+
+	"pulseaudio#output": {
+		"format": "{icon} {volume}%",
+		"format-muted": "{icon} {volume}%",
+		"format-icons": {
+			"default": [ "󰕿", "󰖀", "󰕾" ],
+			"default-muted": "󰝟",
+			"headphone": "󰋋",
+			"headphone-muted": "󰟎",
+			"headset": "󰋎",
+			"headset-muted": "󰋐"
+		},
+		"min-length": 7,
+		"max-length": 7,
+		"on-click": "uwsm-app -- pavucontrol",
+		"on-click-right": "uwsm-app -- kitty --class cava -e cava",
+		"on-click-middle": "swayosd-client --output-volume mute-toggle",
+		"on-scroll-up": "swayosd-client --output-volume raise",
+		"on-scroll-down": "swayosd-client --output-volume lower",
+		"tooltip-format": "<b>Output Device</b>: {desc}\n\nLMB: Pavucontrol\nRMB: Cava\nMMB: Mute Toggle\nScroll: Volume"
+	},
+
+	"pulseaudio#input": {
+		"format": "{format_source}",
+		"format-source": "󰍬 {volume}%",
+		"format-source-muted": "󰍭 {volume}%",
+		"min-length": 7,
+		"max-length": 7,
+		"on-click": "swayosd-client --input-volume mute-toggle",
+		"on-scroll-up": "swayosd-client --input-volume raise",
+		"on-scroll-down": "swayosd-client --input-volume lower",
+		"tooltip-format": "<b>Input Device</b>: {desc}"
+	},
+
+	"backlight": {
+		"format": "{icon} {percent}%",
+		"format-icons": [
+			"", "", "", "", "", "", "", "", ""
+		],
+		"min-length": 7,
+		"max-length": 7,
+		"on-click": "uwsm-app -- ~/user_scripts/sliders/dusky_sliders.py",
+		"on-click-right": "uwsm-app -- ~/user_scripts/sliders/dusky_sliders.py",
+		"on-scroll-up": "swayosd-client --brightness raise",
+		"on-scroll-down": "swayosd-client --brightness lower",
+		"tooltip": false
+	},
+
+	"battery": {
+		"states": {
+			"warning": 20,
+			"critical": 10
+		},
+		"format": "{icon} {capacity}%",
+		"format-time": "{H}h {M}min",
+		"format-icons": [
+			"󰂎", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"
+		],
+		"format-charging": "󰉁 {capacity}%",
+		"min-length": 7,
+		"max-length": 7,
+		"tooltip-format": "<b>Discharging</b>: {time}",
+		"tooltip-format-charging": "<b>Charging</b>: {time}",
+		"events": {
+			"on-discharging-warning": "notify-send 'Battery Low (20%)' -u critical -i 'battery-020' -h string:x-canonical-private-synchronous:battery",
+			"on-discharging-critical": "notify-send 'Battery Critical (10%)' -u critical -i 'battery-010' -h string:x-canonical-private-synchronous:battery",
+			"on-charging-100": "notify-send 'Battery Full (100%)' -i 'battery-100-charged' -h string:x-canonical-private-synchronous:battery"
+		}
+	},
+
+	"custom/power": {
+		"format": "󰤄",
+		"on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh",
+		"tooltip-format": "Power Menu"
+	},
+
+	"custom/left_div#1": {
+		"format": "",
+		"tooltip": false
+	},
+	"custom/left_div#2": {
+		"format": "",
+		"tooltip": false
+	},
+	"custom/left_div#3": {
+		"format": "",
+		"tooltip": false
+	},
+	"custom/left_div#4": {
+		"format": "",
+		"tooltip": false
+	},
+	"custom/left_div#5": {
+		"format": "",
+		"tooltip": false
+	},
+	"custom/left_div#6": {
+		"format": "",
+		"tooltip": false
+	},
+	"custom/left_div#7": {
+		"format": "",
+		"tooltip": false
+	},
+	"custom/left_div#8": {
+		"format": "",
+		"tooltip": false
+	},
+
+	"custom/left_inv#1": {
+		"format": "",
+		"tooltip": false
+	},
+	"custom/left_inv#2": {
+		"format": "",
+		"tooltip": false
+	},
+
+	"custom/right_div#1": {
+		"format": "",
+		"tooltip": false
+	},
+	"custom/right_div#2": {
+		"format": "",
+		"tooltip": false
+	},
+	"custom/right_div#3": {
+		"format": "",
+		"tooltip": false
+	},
+	"custom/right_div#4": {
+		"format": "",
+		"tooltip": false
+	},
+	"custom/right_div#5": {
+		"format": "",
+		"tooltip": false
+	},
+
+	"custom/right_inv#1": {
+		"format": "",
+		"tooltip": false
+	}
+}
