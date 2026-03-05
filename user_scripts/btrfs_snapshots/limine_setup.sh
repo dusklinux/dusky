@@ -146,7 +146,7 @@ register_efi() {
 
     # Idempotency: Avoid NVRAM wear if entry already exists perfectly
     local existing_entries
-    existing_entries=$(sudo efibootmgr | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\)[* ] Limine$/\1/p')
+    existing_entries=$(sudo efibootmgr | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\)[* ] Limine[[:space:]].*/\1/p')
     local count=0
     [[ -n "$existing_entries" ]] && count=$(wc -l <<< "$existing_entries")
 
