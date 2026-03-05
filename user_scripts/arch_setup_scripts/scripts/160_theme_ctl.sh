@@ -2,7 +2,7 @@
 # THEME CONTROLLER (theme_ctl)
 #
 #
-# this is optimized for setup orchestra to run matugen in teh background if swaync isn't running.
+# this is optimized for setup orchestra to run Matugen in the background if Swaync isn't running.
 #
 #
 #
@@ -362,3 +362,4 @@ case "${1:-}" in
     "") usage; exit 1 ;;
     *) die "Unknown command: $1" ;;
 esac
+
