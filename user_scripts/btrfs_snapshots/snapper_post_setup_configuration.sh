@@ -42,14 +42,13 @@ configure_sync_daemon() {
     # We explicitly isolated snapshots to '@snapshots' in Script 2
     local snapshots_subvol="@snapshots"
 
-    # 1. Update ROOT_SUBVOLUME_PATH safely
+    # Safely inject the correct isolated paths using sed
     if grep -q "^ROOT_SUBVOLUME_PATH=" "$conf_file"; then
         sudo sed -i "s|^ROOT_SUBVOLUME_PATH=.*|ROOT_SUBVOLUME_PATH=\"/${root_subvol}\"|" "$conf_file"
     else
         echo "ROOT_SUBVOLUME_PATH=\"/${root_subvol}\"" | sudo tee -a "$conf_file" >/dev/null
     fi
 
-    # 2. Update ROOT_SNAPSHOTS_PATH safely to our isolated subvolume
     if grep -q "^ROOT_SNAPSHOTS_PATH=" "$conf_file"; then
         sudo sed -i "s|^ROOT_SNAPSHOTS_PATH=.*|ROOT_SNAPSHOTS_PATH=\"/${snapshots_subvol}\"|" "$conf_file"
     else

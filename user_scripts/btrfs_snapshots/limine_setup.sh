@@ -111,18 +111,19 @@ generate_limine_conf() {
         done
     fi
 
-    local conf_content="timeout: 5
+local conf_content="timeout: 5
 default_entry: 1
 remember_last_entry: no
 hash_mismatch_panic: no
 
-/Arch Linux
+/+Arch Linux
+    //linux
     protocol: linux
     kernel_path: boot():/vmlinuz-linux
 ${ucode_lines}    module_path: boot():/initramfs-linux.img
     cmdline: $kernel_cmdline
 
-/Arch Linux (Previous Kernel - Rollback)
+    //linux-previous
     protocol: linux
     kernel_path: boot():/vmlinuz-linux-previous
 ${ucode_lines}    module_path: boot():/initramfs-linux-previous.img
