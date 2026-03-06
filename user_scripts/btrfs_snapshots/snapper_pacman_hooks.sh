@@ -4,64 +4,54 @@
 
 set -Eeuo pipefail
 export LC_ALL=C
-trap 'printf "\n\033[1;31m[FATAL]\033[0m Script failed at line %d. Command: %s\n" "$LINENO" "$BASH_COMMAND" >&2; trap - ERR' ERR
 
 AUTO_MODE=false
 [[ "${1:-}" == "--auto" ]] && AUTO_MODE=true
 
 declare -A BACKED_UP=()
 declare -a EFFECTIVE_HOOKS=()
+declare -A EFFECTIVE_HOOKS_SET=()
+
+declare -A CACHE_MNT_SOURCE=()
+declare -A CACHE_MNT_UUID=()
+declare -A CACHE_MNT_OPTS=()
+
+declare -a ACTIVE_TEMP_FILES=()
 
 SUDO_PID=""
-AUR_SYNC_PREEXISTING=false
-AUR_LIMINE_HOOK_PREEXISTING=false
-
-fatal() {
-    printf '\033[1;31m[FATAL]\033[0m %s\n' "$1" >&2
-    exit 1
-}
-
-info() {
-    printf '\033[1;32m[INFO]\033[0m %s\n' "$1"
-}
-
-warn() {
-    printf '\033[1;33m[WARN]\033[0m %s\n' "$1" >&2
-}
 
 cleanup() {
+    local f
+    for f in "${ACTIVE_TEMP_FILES[@]}"; do
+        [[ -n "$f" && -f "$f" ]] && sudo rm -f "$f" 2>/dev/null || true
+    done
     kill "${SUDO_PID:-}" 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+
+trap_exit() { cleanup; }
+trap_interrupt() { cleanup; printf '\n\033[1;31m[FATAL]\033[0m Script interrupted.\n' >&2; exit 130; }
+trap 'printf "\n\033[1;31m[FATAL]\033[0m Script failed at line %d. Command: %s\n" "$LINENO" "$BASH_COMMAND" >&2; cleanup' ERR
+trap trap_exit EXIT
+trap trap_interrupt INT TERM HUP
+
+fatal() { printf '\033[1;31m[FATAL]\033[0m %s\n' "$1" >&2; exit 1; }
+info() { printf '\033[1;32m[INFO]\033[0m %s\n' "$1"; }
+warn() { printf '\033[1;33m[WARN]\033[0m %s\n' "$1" >&2; }
 
 execute() {
-    local desc="$1"
-    shift
-
-    if [[ "$AUTO_MODE" == true ]]; then
-        "$@"
-        return 0
-    fi
-
+    local desc="$1"; shift
+    if [[ "$AUTO_MODE" == true ]]; then "$@"; return 0; fi
     printf '\n\033[1;34m[ACTION]\033[0m %s\n' "$desc"
     read -r -p "Execute this step? [Y/n] " response || fatal "Input closed; aborting."
-    if [[ "${response,,}" =~ ^(n|no)$ ]]; then
-        info "Skipped."
-        return 0
-    fi
-
+    if [[ "${response,,}" =~ ^(n|no)$ ]]; then info "Skipped."; return 0; fi
     "$@"
 }
 
 backup_file() {
     local file="$1"
-
     [[ -e "$file" ]] || return 0
-    [[ -n "${BACKED_UP["$file"]+x}" ]] && return 0
-
-    local stamp
-    stamp="$(date +%Y%m%d-%H%M%S)"
-
+    [[ -v BACKED_UP["$file"] ]] && return 0
+    local stamp; printf -v stamp '%(%Y%m%d-%H%M%S)T' -1
     sudo cp -a -- "$file" "${file}.bak.${stamp}"
     BACKED_UP["$file"]=1
     info "Backup created: ${file}.bak.${stamp}"
@@ -71,35 +61,48 @@ require_cmd() {
     command -v "$1" >/dev/null 2>&1 || fatal "Required command not found: $1"
 }
 
-extract_subvol() {
-    local opts="$1"
-    local opt value
-    local -a parts=()
+atomic_write() {
+    local target="$1" src="$2" target_dir tmp_target
+    target_dir="$(dirname "$target")"
+    tmp_target="$(sudo mktemp "${target_dir}/.tmp.XXXXXX")"
+    ACTIVE_TEMP_FILES+=("$tmp_target")
+    sudo cp "$src" "$tmp_target"
+    sudo chmod 0644 "$tmp_target"
+    sudo mv "$tmp_target" "$target"
+    ACTIVE_TEMP_FILES=("${ACTIVE_TEMP_FILES[@]/$tmp_target}")
+    sudo sync -f "$target_dir" 2>/dev/null || true
+}
 
-    IFS=',' read -r -a parts <<< "$opts"
-    for opt in "${parts[@]}"; do
-        case "$opt" in
-            subvol=*)
-                value="${opt#subvol=}"
-                value="${value#/}"
-                printf '%s\n' "$value"
-                return 0
-                ;;
-        esac
-    done
+extract_subvol() {
+    if [[ "$1" =~ subvol=([^,]+) ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]#/}"
+        return 0
+    fi
     return 1
+}
+
+get_root_subvolume_path() {
+    local findmnt_out path
+    findmnt_out="$(findmnt -n -e -o OPTIONS -M / 2>/dev/null || true)"
+    path="$(extract_subvol "$findmnt_out" || true)"
+    [[ -n "$path" ]] && { printf '%s\n' "$path"; return 0; }
+
+    require_cmd btrfs
+    path="$(sudo btrfs subvolume show / 2>/dev/null | sed -n 's/^[[:space:]]*Path:[[:space:]]*//p' || true)"
+    path="${path#/}"
+    case "$path" in ""|"<FS_TREE>"|"/") return 1 ;; esac
+    printf '%s\n' "$path"
 }
 
 collect_mkinitcpio_files() {
     local -a files=("/etc/mkinitcpio.conf")
-    local file
-
-    shopt -s nullglob
+    local file shopt_save
+    shopt_save=$(shopt -p nullglob || true); shopt -s nullglob
     for file in /etc/mkinitcpio.conf.d/*.conf; do
+        [[ "$file" == "/etc/mkinitcpio.conf.d/zz-limine-overlayfs.conf" ]] && continue
         files+=("$file")
     done
-    shopt -u nullglob
-
+    eval "$shopt_save"
     printf '%s\n' "${files[@]}"
 }
 
@@ -108,399 +111,207 @@ get_effective_hooks() {
     mapfile -t files < <(collect_mkinitcpio_files)
 
     EFFECTIVE_HOOKS=()
-    mapfile -t EFFECTIVE_HOOKS < <(
-        env -i PATH="$PATH" LC_ALL=C bash -O nullglob -c '
+    EFFECTIVE_HOOKS_SET=()
+
+    local hooks_str
+    hooks_str="$(
+        env -i PATH="$PATH" LC_ALL=C bash -c '
             set -e
-            for f in "$@"; do
-                [[ -f "$f" ]] || continue
-                source "$f"
-            done
-            printf "%s\n" "${HOOKS[@]}"
+            for f in "$@"; do [[ -f "$f" ]] || continue; source "$f" >/dev/null 2>&1; done
+            [[ "$(declare -p HOOKS 2>/dev/null)" =~ "declare -a" ]] || HOOKS=(${HOOKS})
+            for h in "${HOOKS[@]}"; do echo "$h"; done
         ' bash "${files[@]}"
-    )
+    )"
 
-    ((${#EFFECTIVE_HOOKS[@]} > 0)) || fatal "Could not determine the effective mkinitcpio HOOKS array."
+    [[ -n "$hooks_str" ]] || fatal "Could not determine effective HOOKS."
+    mapfile -t EFFECTIVE_HOOKS <<< "$hooks_str"
+    local hook
+    for hook in "${EFFECTIVE_HOOKS[@]}"; do EFFECTIVE_HOOKS_SET["$hook"]=1; done
 }
 
-set_shell_var() {
-    local file="$1"
-    local key="$2"
-    local value="$3"
-    local escaped_value
-
-    escaped_value="${value//\\/\\\\}"
-    escaped_value="${escaped_value//&/\\&}"
-    escaped_value="${escaped_value//|/\\|}"
-
-    sudo touch "$file"
-
-    if sudo grep -qE "^[[:space:]]*${key}=" "$file"; then
-        sudo sed -i -E "s|^[[:space:]]*${key}=.*|${key}=\"${escaped_value}\"|" "$file"
-    else
-        printf '%s="%s"\n' "$key" "$value" | sudo tee -a "$file" >/dev/null
-    fi
-}
-
-set_ini_key() {
-    local file="$1"
-    local section="$2"
-    local key="$3"
-    local value="$4"
-    local tmp
-
-    sudo touch "$file"
-    tmp="$(mktemp)"
-
-    awk -v section="$section" -v key="$key" -v value="$value" '
-        function print_key() {
-            print key " = " value
-            key_written = 1
-        }
-
-        BEGIN {
-            in_section = 0
-            section_found = 0
-            key_written = 0
-        }
-
-        /^\[[^]]+\][[:space:]]*$/ {
-            if (in_section && !key_written) {
-                print_key()
-            }
-
-            current = $0
-            gsub(/^\[/, "", current)
-            gsub(/\]$/, "", current)
-
-            in_section = (current == section)
-            if (in_section) {
-                section_found = 1
-                key_written = 0
-            }
-
-            print
-            next
-        }
-
-        {
-            if (in_section && $0 ~ "^[[:space:]]*" key "[[:space:]]*=") {
-                if (!key_written) {
-                    print_key()
-                }
-                next
-            }
-            print
-        }
-
-        END {
-            if (in_section && !key_written) {
-                print_key()
-            } else if (!section_found) {
-                print ""
-                print "[" section "]"
-                print key " = " value
-            }
-        }
-    ' "$file" > "$tmp"
-
-    sudo install -m 0644 "$tmp" "$file"
-    rm -f "$tmp"
-}
-
-dep_satisfied() {
-    local dep="$1"
-    [[ -z "$(pacman -T "$dep" 2>/dev/null || true)" ]]
-}
-
-choose_java_provider() {
-    local pkg
-
-    for pkg in jdk-openjdk jdk21-openjdk; do
-        if pacman -Si "$pkg" >/dev/null 2>&1; then
-            printf '%s\n' "$pkg"
-            return 0
-        fi
-    done
-
-    return 1
-}
+dep_satisfied() { ! pacman -T "$1" >/dev/null 2>&1; }
 
 ensure_aur_build_prereqs() {
-    local need_java=false
-    local dep provider
-
+    local need_java=false dep provider
     for dep in 'java-runtime>=21' 'java-environment>=21'; do
-        if ! dep_satisfied "$dep"; then
-            need_java=true
-            break
-        fi
+        if ! dep_satisfied "$dep"; then need_java=true; break; fi
     done
-
     [[ "$need_java" == true ]] || return 0
 
-    provider="$(choose_java_provider)" || fatal "A Java provider for java-environment>=21 is required, but no suitable repo package was found."
-    info "Installing $provider to satisfy Java build dependencies for the AUR package."
+    for pkg in jdk-openjdk jdk21-openjdk; do
+        if pacman -Si "$pkg" >/dev/null 2>&1; then provider="$pkg"; break; fi
+    done
+    [[ -n "$provider" ]] || fatal "Java provider required."
+    info "Installing $provider"
     sudo pacman -S --needed --noconfirm "$provider"
 }
 
 install_aur_packages() {
-    AUR_SYNC_PREEXISTING=false
-    AUR_LIMINE_HOOK_PREEXISTING=false
-
-    pacman -Q limine-snapper-sync >/dev/null 2>&1 && AUR_SYNC_PREEXISTING=true
-    pacman -Q limine-mkinitcpio-hook >/dev/null 2>&1 && AUR_LIMINE_HOOK_PREEXISTING=true
+    local sync_in=false hook_in=false
+    pacman -Q limine-snapper-sync >/dev/null 2>&1 && sync_in=true
+    pacman -Q limine-mkinitcpio-hook >/dev/null 2>&1 && hook_in=true
 
     if ! command -v paru >/dev/null 2>&1 && ! command -v yay >/dev/null 2>&1; then
-        if [[ "$AUR_SYNC_PREEXISTING" == true && ( "$AUR_LIMINE_HOOK_PREEXISTING" == true || -x /usr/bin/limine-update ) ]]; then
-            info "Required AUR packages are already installed."
-            return 0
-        fi
-        fatal "No supported AUR helper found. Install paru or yay first."
+        if [[ "$sync_in" == true && ( "$hook_in" == true || -x /usr/bin/limine-update ) ]]; then return 0; fi
+        fatal "No AUR helper found."
     fi
 
     ensure_aur_build_prereqs
+    local -a pkgs=()
+    [[ "$sync_in" == false ]] && pkgs+=(limine-snapper-sync)
+    [[ "$hook_in" == false ]] && ! command -v limine-update >/dev/null 2>&1 && pkgs+=(limine-mkinitcpio-hook)
 
-    local -a pkgs=(limine-snapper-sync)
-    command -v limine-update >/dev/null 2>&1 || pkgs+=(limine-mkinitcpio-hook)
-
-    if command -v paru >/dev/null 2>&1; then
-        paru -S --needed --noconfirm --skipreview "${pkgs[@]}"
-    else
-        yay -S --needed --noconfirm \
-            --answerdiff None \
-            --answerclean None \
-            --answeredit None \
-            "${pkgs[@]}"
-    fi
+    (( ${#pkgs[@]} == 0 )) && return 0
+    if command -v paru >/dev/null 2>&1; then paru -S --needed --noconfirm --skipreview "${pkgs[@]}"
+    else yay -S --needed --noconfirm --answerdiff None --answerclean None --answeredit None "${pkgs[@]}"; fi
 }
 
-install_snap_pac() {
-    sudo pacman -S --needed --noconfirm snap-pac
-}
+install_snap_pac() { sudo pacman -S --needed --noconfirm snap-pac; }
 
 verify_previous_setup() {
-    # Root checks
-    findmnt -M /.snapshots >/dev/null 2>&1 || fatal "/.snapshots is not mounted. Run the Snapper isolation script first."
-    sudo snapper -c root get-config >/dev/null 2>&1 || fatal "Snapper root config is missing or unusable."
+    local root_opts home_opts
+    root_opts="$(findmnt -n -e -o OPTIONS -M /.snapshots 2>/dev/null || true)"
+    [[ "$(extract_subvol "$root_opts" || true)" == "@snapshots" ]] || fatal "/.snapshots is not mounted from @snapshots."
 
-    local mounted_opts mounted_subvol
-    mounted_opts="$(findmnt -M /.snapshots -no OPTIONS 2>/dev/null || true)"
-    mounted_subvol="$(extract_subvol "$mounted_opts" || true)"
-    mounted_subvol="${mounted_subvol#/}"
-
-    [[ "$mounted_subvol" == "@snapshots" ]] || fatal "/.snapshots is mounted, but not from subvol=/@snapshots"
-
-    # Home checks
-    findmnt -M /home/.snapshots >/dev/null 2>&1 || fatal "/home/.snapshots is not mounted. Run the Snapper isolation script first."
-    sudo snapper -c home get-config >/dev/null 2>&1 || fatal "Snapper home config is missing or unusable."
-
-    local home_mounted_opts home_mounted_subvol
-    home_mounted_opts="$(findmnt -M /home/.snapshots -no OPTIONS 2>/dev/null || true)"
-    home_mounted_subvol="$(extract_subvol "$home_mounted_opts" || true)"
-    home_mounted_subvol="${home_mounted_subvol#/}"
-
-    [[ "$home_mounted_subvol" == "@home_snapshots" ]] || fatal "/home/.snapshots is mounted, but not from subvol=/@home_snapshots"
-
-    info "Verified Snapper isolated layout for root and home."
-}
-
-choose_overlay_hook() {
-    local hook
-    for hook in "${EFFECTIVE_HOOKS[@]}"; do
-        if [[ "$hook" == "systemd" ]]; then
-            printf '%s\n' "sd-btrfs-overlayfs"
-            return 0
-        fi
-    done
-
-    printf '%s\n' "btrfs-overlayfs"
-}
-
-verify_overlay_hook_available() {
-    local target_hook="$1"
-
-    [[ -f "/usr/lib/initcpio/install/${target_hook}" ]] || fatal "The mkinitcpio hook ${target_hook} is not installed on this system."
+    home_opts="$(findmnt -n -e -o OPTIONS -M /home/.snapshots 2>/dev/null || true)"
+    [[ "$(extract_subvol "$home_opts" || true)" == "@home_snapshots" ]] || fatal "/home/.snapshots is not mounted from @home_snapshots."
 }
 
 configure_mkinitcpio_overlay_hook() {
-    local target_hook managed_file current_hook hook
-    local found_filesystems=false
-    local -a filtered_hooks=()
-    local -a final_hooks=()
-    local tmp
-
+    local target_hook managed_file tmp
     get_effective_hooks
-    target_hook="$(choose_overlay_hook)"
-    verify_overlay_hook_available "$target_hook"
-
-    for hook in "${EFFECTIVE_HOOKS[@]}"; do
-        case "$hook" in
-            btrfs-overlayfs|sd-btrfs-overlayfs)
-                continue
-                ;;
-        esac
-
-        filtered_hooks+=("$hook")
-        [[ "$hook" == "filesystems" ]] && found_filesystems=true
-    done
-
-    [[ "$found_filesystems" == true ]] || fatal "'filesystems' is missing from mkinitcpio HOOKS."
-
-    for hook in "${filtered_hooks[@]}"; do
-        final_hooks+=("$hook")
-        if [[ "$hook" == "filesystems" ]]; then
-            final_hooks+=("$target_hook")
-        fi
-    done
+    
+    target_hook="btrfs-overlayfs"
+    [[ -v EFFECTIVE_HOOKS_SET["systemd"] ]] && target_hook="sd-btrfs-overlayfs"
+    
+    [[ -f "/usr/lib/initcpio/install/${target_hook}" ]] || fatal "Hook ${target_hook} missing."
+    [[ -v EFFECTIVE_HOOKS_SET["filesystems"] ]] || fatal "'filesystems' missing from HOOKS."
 
     managed_file="/etc/mkinitcpio.conf.d/zz-limine-overlayfs.conf"
-    current_hook=""
-    if [[ -f "$managed_file" ]]; then
-        current_hook="$(grep -E '^[[:space:]]*HOOKS=' "$managed_file" 2>/dev/null || true)"
-    fi
-
     tmp="$(mktemp)"
-    {
-        printf '# Managed by limine + snapper integration setup\n'
-        printf 'HOOKS=('
-        printf '%s' "${final_hooks[0]}"
-        local i
-        for ((i = 1; i < ${#final_hooks[@]}; i++)); do
-            printf ' %s' "${final_hooks[i]}"
-        done
-        printf ')\n'
-    } > "$tmp"
+    ACTIVE_TEMP_FILES+=("$tmp")
+    
+    # THE HALLUCINATION FIX: Safe, exact Bash array manipulation logic
+    cat <<EOF > "$tmp"
+# Managed by limine + snapper integration setup
+if [[ " \${HOOKS[*]} " != *" ${target_hook} "* ]]; then
+    _new_hooks=()
+    for _h in "\${HOOKS[@]}"; do
+        _new_hooks+=("\$_h")
+        if [[ "\$_h" == "filesystems" ]]; then
+            _new_hooks+=("${target_hook}")
+        fi
+    done
+    HOOKS=("\${_new_hooks[@]}")
+    unset _new_hooks _h
+fi
+EOF
 
-    if [[ -f "$managed_file" ]] && sudo cmp -s "$tmp" "$managed_file" 2>/dev/null; then
-        rm -f "$tmp"
-        info "${target_hook} is already configured in ${managed_file}"
-        return 0
+    if [[ -f "$managed_file" ]] && cmp -s "$tmp" "$managed_file"; then
+        rm -f "$tmp"; ACTIVE_TEMP_FILES=("${ACTIVE_TEMP_FILES[@]/$tmp}"); return 0
     fi
 
+    sudo mkdir -p /etc/mkinitcpio.conf.d
     backup_file "$managed_file"
-    sudo install -D -m 0644 "$tmp" "$managed_file"
-    rm -f "$tmp"
-
-    info "Configured ${target_hook} in ${managed_file}"
+    atomic_write "$managed_file" "$tmp"
+    rm -f "$tmp"; ACTIVE_TEMP_FILES=("${ACTIVE_TEMP_FILES[@]/$tmp}")
 }
 
-rebuild_initramfs() {
-    sudo limine-update
-}
+rebuild_initramfs() { sudo limine-update; }
 
 configure_sync_daemon() {
-    local conf_file="/etc/limine-snapper-sync.conf"
-    local root_subvol root_subvol_path
+    local conf_file="/etc/limine-snapper-sync.conf" root_subvol root_subvol_path tmp
+    [[ -f "$conf_file" ]] || fatal "$conf_file not found."
 
-    [[ -f "$conf_file" ]] || fatal "$conf_file was not found. limine-snapper-sync is probably not installed."
+    root_subvol="$(get_root_subvolume_path || true)"
+    root_subvol_path="${root_subvol:+/$root_subvol}"
+    root_subvol_path="${root_subvol_path:-/}"
 
-    root_subvol="$(extract_subvol "$(findmnt -no OPTIONS /)" || true)"
-    if [[ -n "$root_subvol" ]]; then
-        root_subvol_path="/${root_subvol#/}"
-    else
-        root_subvol_path="/"
+    tmp="$(mktemp)"; ACTIVE_TEMP_FILES+=("$tmp")
+    awk -v rsp="$root_subvol_path" -v snap="/@snapshots" '
+        BEGIN { wr=0; ws=0 }
+        /^[[:space:]]*ROOT_SUBVOLUME_PATH=/ { print "ROOT_SUBVOLUME_PATH=\"" rsp "\""; wr=1; next }
+        /^[[:space:]]*ROOT_SNAPSHOTS_PATH=/ { print "ROOT_SNAPSHOTS_PATH=\"" snap "\""; ws=1; next }
+        { print $0 }
+        END { if (!wr) print "ROOT_SUBVOLUME_PATH=\"" rsp "\""; if (!ws) print "ROOT_SNAPSHOTS_PATH=\"" snap "\"" }
+    ' "$conf_file" > "$tmp"
+
+    if ! cmp -s "$tmp" "$conf_file"; then
+        backup_file "$conf_file"
+        atomic_write "$conf_file" "$tmp"
     fi
-
-    backup_file "$conf_file"
-    set_shell_var "$conf_file" ROOT_SUBVOLUME_PATH "$root_subvol_path"
-    set_shell_var "$conf_file" ROOT_SNAPSHOTS_PATH "/@snapshots"
-
-    info "Configured limine-snapper-sync paths."
+    rm -f "$tmp"; ACTIVE_TEMP_FILES=("${ACTIVE_TEMP_FILES[@]/$tmp}")
 }
 
 configure_snap_pac() {
-    local ini="/etc/snap-pac.ini"
-
-    backup_file "$ini"
-    set_ini_key "$ini" root snapshot yes
-    set_ini_key "$ini" home snapshot yes
-
-    info "Configured snap-pac for root and home."
+    local ini="/etc/snap-pac.ini" tmp
+    sudo touch "$ini"
+    tmp="$(mktemp)"; ACTIVE_TEMP_FILES+=("$tmp")
+    
+    awk '
+        BEGIN { sec = "" }
+        /^[[:space:]]*\[.*\][[:space:]]*$/ {
+            sec = $0; sub(/^[[:space:]]*\[/, "", sec); sub(/\][[:space:]]*$/, "", sec)
+            print $0
+            if (sec == "root" || sec == "home") { print "snapshot = yes"; seen[sec] = 1 }
+            next
+        }
+        /^[[:space:]]*snapshot[[:space:]]*=/ { if (sec == "root" || sec == "home") next }
+        { print $0 }
+        END {
+            if (!seen["root"]) { print "\n[root]\nsnapshot = yes" }
+            if (!seen["home"]) { print "\n[home]\nsnapshot = yes" }
+        }
+    ' "$ini" > "$tmp"
+    
+    if ! cmp -s "$tmp" "$ini"; then
+        backup_file "$ini"; atomic_write "$ini" "$tmp"
+    fi
+    rm -f "$tmp"; ACTIVE_TEMP_FILES=("${ACTIVE_TEMP_FILES[@]/$tmp}")
 }
 
 baseline_snapshot_exists() {
-    local config="$1"
-    local desc="$2"
-
-    sudo snapper -c "$config" list | awk -F'|' -v desc="$desc" '
-        NF >= 7 {
-            field = $7
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", field)
-            if (field == desc) {
-                found = 1
-            }
-        }
-        END {
-            exit(found ? 0 : 1)
-        }
-    '
+    sudo snapper --csv -c "$1" list 2>/dev/null | awk -F',' -v desc="$2" '$7 == desc { found=1; exit } END { exit(found ? 0 : 1) }'
 }
 
 create_post_config_baseline_snapshot() {
     local desc="Baseline after Limine + Snapper integration"
-
     if ! baseline_snapshot_exists "root" "$desc"; then
         sudo snapper -c root create -t single -c important -d "$desc"
-        info "Created baseline root snapshot."
-    else
-        info "Baseline root snapshot already exists."
     fi
-
     if ! baseline_snapshot_exists "home" "$desc"; then
         sudo snapper -c home create -t single -c important -d "$desc"
-        info "Created baseline home snapshot."
-    else
-        info "Baseline home snapshot already exists."
     fi
 }
 
 enable_services_and_sync() {
-    sudo systemctl daemon-reload
     sudo systemctl enable --now snapper-cleanup.timer
     sudo systemctl enable --now limine-snapper-sync.service
 
-    sudo limine-snapper-sync
-    info "Boot menu sync completed."
+    if [[ "$(systemctl show -p Result --value limine-snapper-sync.service 2>/dev/null || true)" == "success" ]]; then
+        info "Boot menu sync completed."
+    else
+        sudo limine-snapper-sync || true
+    fi
 }
 
 preflight_checks() {
-    (( EUID != 0 )) || fatal "Run this script as a regular user with sudo privileges, not as root."
-
-    require_cmd sudo
-    require_cmd pacman
-    require_cmd findmnt
-    require_cmd awk
-    require_cmd sed
-    require_cmd grep
-    require_cmd stat
-    require_cmd mktemp
-    require_cmd cmp
-    require_cmd date
-
-    [[ -d /sys/firmware/efi ]] || fatal "System is not booted in EFI mode."
-    [[ "$(stat -f -c %T /)" == "btrfs" ]] || fatal "Root filesystem is not Btrfs."
-    [[ "$(stat -f -c %T /home)" == "btrfs" ]] || fatal "/home is not Btrfs."
-
+    (( EUID != 0 )) || fatal "Run as regular user with sudo."
+    require_cmd sudo; require_cmd pacman; require_cmd findmnt; require_cmd awk; require_cmd sed; require_cmd grep; require_cmd stat; require_cmd mktemp; require_cmd cmp
+    [[ -d /sys/firmware/efi ]] || fatal "Not booted in EFI mode."
     sudo -v || fatal "Cannot obtain sudo privileges."
-    (
-        while true; do
-            sudo -n -v 2>/dev/null || exit
-            sleep 240
-        done
-    ) &
+    (while true; do sudo -n -v 2>/dev/null || exit; sleep 240; done) &
     SUDO_PID=$!
 }
 
 preflight_checks
-execute "Verify Snapper isolated snapshot layout" verify_previous_setup
-execute "Install limine-snapper-sync and related AUR packages" install_aur_packages
-require_cmd limine-update
-require_cmd limine-snapper-sync
-require_cmd snapper
-execute "Inject the correct OverlayFS hook into mkinitcpio" configure_mkinitcpio_overlay_hook
-execute "Rebuild initramfs and Limine config" rebuild_initramfs
-execute "Configure limine-snapper-sync" configure_sync_daemon
-execute "Install snap-pac from the repo" install_snap_pac
+execute "Verify layout" verify_previous_setup
+execute "Install AUR packages" install_aur_packages
+require_cmd limine-update; require_cmd limine-snapper-sync; require_cmd snapper
+execute "Inject OverlayFS hook" configure_mkinitcpio_overlay_hook
+execute "Rebuild initramfs" rebuild_initramfs
+execute "Configure sync daemon" configure_sync_daemon
+execute "Install snap-pac" install_snap_pac
 execute "Configure snap-pac" configure_snap_pac
-execute "Create a post-configuration baseline snapshot" create_post_config_baseline_snapshot
-execute "Enable cleanup + sync services and perform initial sync" enable_services_and_sync
+execute "Create baseline snapshot" create_post_config_baseline_snapshot
+execute "Enable services" enable_services_and_sync

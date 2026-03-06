@@ -4,61 +4,60 @@
 
 set -Eeuo pipefail
 export LC_ALL=C
-trap 'printf "\n\033[1;31m[FATAL]\033[0m Script failed at line %d. Command: %s\n" "$LINENO" "$BASH_COMMAND" >&2; trap - ERR' ERR
 
 AUTO_MODE=false
 [[ "${1:-}" == "--auto" ]] && AUTO_MODE=true
 
 declare -A BACKED_UP=()
+declare -A CACHE_MNT_SOURCE=()
+declare -A CACHE_MNT_UUID=()
+declare -A CACHE_MNT_OPTS=()
 
+declare -a ACTIVE_TEMP_MOUNTS=()
+declare -a ACTIVE_TEMP_FILES=()
+declare -a ROLLBACK_CMDS=()
 SUDO_PID=""
 
-fatal() {
-    printf '\033[1;31m[FATAL]\033[0m %s\n' "$1" >&2
-    exit 1
-}
-
-info() {
-    printf '\033[1;32m[INFO]\033[0m %s\n' "$1"
-}
-
-warn() {
-    printf '\033[1;33m[WARN]\033[0m %s\n' "$1" >&2
-}
-
 cleanup() {
+    local cmd mnt f
+    if (( ${#ROLLBACK_CMDS[@]} > 0 )); then
+        warn "Executing transactional rollbacks..."
+        for cmd in "${ROLLBACK_CMDS[@]}"; do eval "$cmd" 2>/dev/null || true; done
+    fi
+    for mnt in "${ACTIVE_TEMP_MOUNTS[@]}"; do
+        if mountpoint -q "$mnt"; then sudo umount "$mnt" 2>/dev/null || true; fi
+        rmdir "$mnt" 2>/dev/null || true
+    done
+    for f in "${ACTIVE_TEMP_FILES[@]}"; do
+        [[ -n "$f" && -f "$f" ]] && sudo rm -f "$f" 2>/dev/null || true
+    done
     kill "${SUDO_PID:-}" 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+
+trap_exit() { cleanup; }
+trap_interrupt() { cleanup; printf '\n\033[1;31m[FATAL]\033[0m Script interrupted.\n' >&2; exit 130; }
+trap 'printf "\n\033[1;31m[FATAL]\033[0m Script failed at line %d. Command: %s\n" "$LINENO" "$BASH_COMMAND" >&2; cleanup' ERR
+trap trap_exit EXIT
+trap trap_interrupt INT TERM HUP
+
+fatal() { printf '\033[1;31m[FATAL]\033[0m %s\n' "$1" >&2; exit 1; }
+info() { printf '\033[1;32m[INFO]\033[0m %s\n' "$1"; }
+warn() { printf '\033[1;33m[WARN]\033[0m %s\n' "$1" >&2; }
 
 execute() {
-    local desc="$1"
-    shift
-
-    if [[ "$AUTO_MODE" == true ]]; then
-        "$@"
-        return 0
-    fi
-
+    local desc="$1"; shift
+    if [[ "$AUTO_MODE" == true ]]; then "$@"; return 0; fi
     printf '\n\033[1;34m[ACTION]\033[0m %s\n' "$desc"
     read -r -p "Execute this step? [Y/n] " response || fatal "Input closed; aborting."
-    if [[ "${response,,}" =~ ^(n|no)$ ]]; then
-        info "Skipped."
-        return 0
-    fi
-
+    if [[ "${response,,}" =~ ^(n|no)$ ]]; then info "Skipped."; return 0; fi
     "$@"
 }
 
 backup_file() {
     local file="$1"
-
     [[ -e "$file" ]] || return 0
-    [[ -n "${BACKED_UP["$file"]+x}" ]] && return 0
-
-    local stamp
-    stamp="$(date +%Y%m%d-%H%M%S)"
-
+    [[ -v BACKED_UP["$file"] ]] && return 0
+    local stamp; printf -v stamp '%(%Y%m%d-%H%M%S)T' -1
     sudo cp -a -- "$file" "${file}.bak.${stamp}"
     BACKED_UP["$file"]=1
     info "Backup created: ${file}.bak.${stamp}"
@@ -68,331 +67,228 @@ require_cmd() {
     command -v "$1" >/dev/null 2>&1 || fatal "Required command not found: $1"
 }
 
-extract_subvol() {
-    local opts="$1"
-    local opt value
-    local -a parts=()
+atomic_write() {
+    local target="$1" src="$2" target_dir tmp_target
+    target_dir="$(dirname "$target")"
+    tmp_target="$(sudo mktemp "${target_dir}/.tmp.XXXXXX")"
+    ACTIVE_TEMP_FILES+=("$tmp_target")
+    sudo cp "$src" "$tmp_target"
+    sudo chmod 0644 "$tmp_target"
+    sudo mv "$tmp_target" "$target"
+    ACTIVE_TEMP_FILES=("${ACTIVE_TEMP_FILES[@]/$tmp_target}")
+    sudo sync -f "$target_dir" 2>/dev/null || true
+}
 
-    IFS=',' read -r -a parts <<< "$opts"
-    for opt in "${parts[@]}"; do
-        case "$opt" in
-            subvol=*)
-                value="${opt#subvol=}"
-                value="${value#/}"
-                printf '%s\n' "$value"
-                return 0
-                ;;
-        esac
-    done
+load_mount_info() {
+    local target="$1"
+    [[ -v CACHE_MNT_SOURCE["$target"] ]] && return 0
+    
+    local findmnt_out source uuid opts fstab_opts
+    findmnt_out="$(findmnt -n -e -o SOURCE,UUID,OPTIONS -M "$target" 2>/dev/null || true)"
+    [[ -n "$findmnt_out" ]] || fatal "Could not determine mount info for $target"
+    
+    read -r source uuid opts <<< "$findmnt_out"
+    source="${source%%\[*}"
+    
+    fstab_opts="$(findmnt -s -n -e -o OPTIONS -M "$target" 2>/dev/null || true)"
+    [[ -n "$fstab_opts" ]] && opts="$fstab_opts"
+
+    if [[ -z "$uuid" || "$uuid" == "-" ]]; then
+        uuid="$(sudo blkid -s UUID -o value "$source" 2>/dev/null || true)"
+    fi
+    [[ -n "$uuid" ]] || fatal "Could not determine UUID for $target"
+    
+    CACHE_MNT_SOURCE["$target"]="$source"
+    CACHE_MNT_UUID["$target"]="$uuid"
+    CACHE_MNT_OPTS["$target"]="$opts"
+}
+
+extract_subvol() {
+    if [[ "$1" =~ subvol=([^,]+) ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]#/}"
+        return 0
+    fi
     return 1
 }
 
-strip_subvol_opts() {
-    local opts="$1"
-    local opt
-    local -a parts=()
-    local -a kept=()
-
+clean_mount_opts() {
+    local opts="$1" opt
+    local -a parts kept
     IFS=',' read -r -a parts <<< "$opts"
     for opt in "${parts[@]}"; do
-        case "$opt" in
-            subvol=*|subvolid=*)
-                ;;
-            *)
-                kept+=("$opt")
-                ;;
-        esac
+        case "$opt" in subvol=*|subvolid=*|ro) continue ;; *) kept+=("$opt") ;; esac
     done
-
-    local joined=""
-    if ((${#kept[@]} > 0)); then
-        joined="${kept[0]}"
-        local i
-        for ((i = 1; i < ${#kept[@]}; i++)); do
-            joined+=",${kept[i]}"
-        done
+    if (( ${#kept[@]} > 0 )); then
+        local IFS=,
+        printf '%s\n' "${kept[*]}"
     fi
-
-    printf '%s\n' "$joined"
 }
 
-get_root_source() {
-    findmnt -no SOURCE / | sed 's/\[.*\]//'
+dir_is_empty() {
+    sudo rmdir "$1" 2>/dev/null && { sudo mkdir "$1"; return 0; }
+    return 1
 }
 
-get_root_uuid() {
-    local source uuid
-
-    uuid="$(findmnt -no UUID / 2>/dev/null || true)"
-    if [[ -n "$uuid" ]]; then
-        printf '%s\n' "$uuid"
-        return 0
-    fi
-
-    source="$(get_root_source)"
-    [[ -n "$source" ]] || return 1
-
-    blkid -s UUID -o value "$source" 2>/dev/null || true
-}
-
-get_root_mount_opts() {
-    findmnt -no OPTIONS /
-}
-
-dir_has_entries() {
-    local dir="$1"
-    sudo find "$dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .
-}
-
-path_is_btrfs_subvolume() {
-    local path="$1"
-    sudo btrfs subvolume show "$path" >/dev/null 2>&1
-}
+path_is_btrfs_subvolume() { sudo btrfs subvolume show "$1" >/dev/null 2>&1; }
 
 verify_snapshots_mount() {
-    local mount_target="$1"
-    local expected_subvol="$2"
-    local root_uuid snap_uuid mounted_opts mounted_subvol
-
-    root_uuid="$(get_root_uuid)"
-    [[ -n "$root_uuid" ]] || fatal "Could not determine the Btrfs UUID for /"
+    local mount_target="$1" expected_subvol="$2" base_target="$3" target_uuid
+    load_mount_info "$base_target"
+    target_uuid="${CACHE_MNT_UUID["$base_target"]}"
 
     findmnt -M "$mount_target" >/dev/null 2>&1 || fatal "${mount_target} is not mounted."
 
-    snap_uuid="$(findmnt -M "$mount_target" -no UUID 2>/dev/null || true)"
-    [[ -n "$snap_uuid" ]] || fatal "Could not determine the filesystem UUID for ${mount_target}"
-    [[ "$snap_uuid" == "$root_uuid" ]] || fatal "${mount_target} is mounted from a different filesystem."
-
-    mounted_opts="$(findmnt -M "$mount_target" -no OPTIONS 2>/dev/null || true)"
+    local snap_info snap_uuid mounted_opts mounted_subvol
+    snap_info="$(findmnt -n -e -o UUID,OPTIONS -M "$mount_target" 2>/dev/null || true)"
+    read -r snap_uuid mounted_opts <<< "$snap_info"
+    
+    [[ "$snap_uuid" == "$target_uuid" ]] || fatal "${mount_target} filesystem UUID mismatch."
     mounted_subvol="$(extract_subvol "$mounted_opts" || true)"
-    mounted_subvol="${mounted_subvol#/}"
-
-    [[ "$mounted_subvol" == "$expected_subvol" ]] || fatal "${mount_target} is mounted, but not from subvol=/${expected_subvol}"
+    [[ "${mounted_subvol#/}" == "${expected_subvol#/}" ]] || fatal "${mount_target} subvol mismatch."
 
     sudo chmod 750 "$mount_target"
-    info "${mount_target} is mounted from ${expected_subvol}"
+    info "${mount_target} is mounted correctly."
 }
 
-install_packages() {
-    sudo pacman -S --needed --noconfirm snapper btrfs-progs
-}
-
-post_install_checks() {
-    require_cmd btrfs
-    require_cmd snapper
-    require_cmd systemctl
-}
+install_packages() { sudo pacman -S --needed --noconfirm snapper btrfs-progs; }
+post_install_checks() { require_cmd btrfs; require_cmd snapper; require_cmd systemctl; }
 
 ensure_snapper_config() {
-    local config_name="$1"
-    local config_path="$2"
-
-    if sudo snapper -c "$config_name" get-config >/dev/null 2>&1; then
-        info "Snapper ${config_name} config already exists."
-        return 0
-    fi
-
-    if mountpoint -q "${config_path}/.snapshots"; then
-        fatal "Snapper ${config_name} config is missing, but ${config_path}/.snapshots is already a mountpoint."
-    fi
+    local config_name="$1" config_path="$2"
+    sudo snapper -c "$config_name" get-config >/dev/null 2>&1 && { info "Snapper ${config_name} exists."; return 0; }
+    mountpoint -q "${config_path}/.snapshots" && fatal "${config_path}/.snapshots is already a mountpoint."
 
     sudo snapper -c "$config_name" create-config "$config_path"
-    sudo snapper -c "$config_name" get-config >/dev/null 2>&1 || fatal "Snapper ${config_name} config was not created correctly."
+    ROLLBACK_CMDS+=("sudo snapper -c ${config_name} delete-config")
     info "Created Snapper ${config_name} config."
 }
 
 ensure_top_level_snapshots_subvolume() {
-    local subvol_target="$1"
-    local root_source tmp_mnt mounted=false
+    local base_path="$1" subvol_target="$2" root_source root_opts tmp_mnt extra_opts="subvolid=5"
+    load_mount_info "$base_path"
+    root_source="${CACHE_MNT_SOURCE["$base_path"]}"
+    root_opts="${CACHE_MNT_OPTS["$base_path"]}"
 
-    root_source="$(get_root_source)"
-    [[ -n "$root_source" ]] || fatal "Could not determine the root source device."
+    [[ ",$root_opts," == *",degraded,"* ]] && extra_opts+=",degraded"
 
     tmp_mnt="$(mktemp -d)"
-    cleanup_top_level_mount() {
-        if [[ "$mounted" == true ]]; then
-            sudo umount "$tmp_mnt" 2>/dev/null || true
-        fi
-        rmdir "$tmp_mnt" 2>/dev/null || true
-    }
-    trap cleanup_top_level_mount RETURN
-
-    sudo mount -o subvolid=5 "$root_source" "$tmp_mnt"
-    mounted=true
+    ACTIVE_TEMP_MOUNTS+=("$tmp_mnt")
+    sudo mount -o "$extra_opts" "$root_source" "$tmp_mnt" || fatal "Mount failed."
 
     if [[ -e "${tmp_mnt}/${subvol_target}" ]]; then
-        if sudo btrfs subvolume show "${tmp_mnt}/${subvol_target}" >/dev/null 2>&1; then
-            info "Top-level subvolume ${subvol_target} already exists."
-        else
-            fatal "Top-level path ${subvol_target} exists, but it is not a Btrfs subvolume."
-        fi
+        path_is_btrfs_subvolume "${tmp_mnt}/${subvol_target}" || fatal "${subvol_target} exists but is not a subvol."
     else
-        sudo btrfs subvolume create "${tmp_mnt}/${subvol_target}"
+        sudo btrfs subvolume create "${tmp_mnt}/${subvol_target}" >/dev/null
         info "Created top-level subvolume ${subvol_target}."
     fi
 
-    trap - RETURN
-    cleanup_top_level_mount
+    sudo umount "$tmp_mnt"; rmdir "$tmp_mnt"
+    ACTIVE_TEMP_MOUNTS=("${ACTIVE_TEMP_MOUNTS[@]/$tmp_mnt}")
 }
 
 prepare_snapshots_mountpoint() {
     local mount_target="$1"
-    local expected_subvol="$2"
-
+    [[ -L "$mount_target" ]] && fatal "Symlink detected."
     sudo mkdir -p "$mount_target"
-
-    if mountpoint -q "$mount_target"; then
-        verify_snapshots_mount "$mount_target" "$expected_subvol"
-        return 0
-    fi
-
-    if [[ ! -d "$mount_target" ]]; then
-        fatal "${mount_target} exists, but it is not a directory."
-    fi
+    mountpoint -q "$mount_target" && return 0
 
     if path_is_btrfs_subvolume "$mount_target"; then
-        if dir_has_entries "$mount_target"; then
-            fatal "Nested ${mount_target} is a populated Btrfs subvolume. Refusing destructive migration."
-        fi
-
-        sudo btrfs subvolume delete "$mount_target"
+        dir_is_empty "$mount_target" || fatal "Populated nested subvolume found."
+        sudo btrfs subvolume delete "$mount_target" >/dev/null
         sudo mkdir -p "$mount_target"
-        info "Removed empty nested ${mount_target} subvolume."
+        info "Removed empty nested subvol."
         return 0
     fi
-
-    if dir_has_entries "$mount_target"; then
-        fatal "${mount_target} is a non-empty directory. Refusing to mount over existing contents."
-    fi
+    dir_is_empty "$mount_target" || fatal "Directory not empty."
 }
 
 ensure_fstab_entry_for_snapshots() {
-    local mount_target="$1"
-    local subvol_target="$2"
-    local fs_uuid root_opts cleaned_opts mount_opts newline tmp
+    local base_path="$1" mount_target="$2" subvol_target="$3"
+    local fs_uuid base_opts mount_opts newline tmp canonical_target
 
-    fs_uuid="$(get_root_uuid)"
-    [[ -n "$fs_uuid" ]] || fatal "Could not determine the Btrfs UUID for /"
+    load_mount_info "$base_path"
+    fs_uuid="${CACHE_MNT_UUID["$base_path"]}"
+    base_opts="${CACHE_MNT_OPTS["$base_path"]}"
 
-    root_opts="$(get_root_mount_opts)"
-    cleaned_opts="$(strip_subvol_opts "$root_opts")"
-
-    mount_opts="$cleaned_opts"
+    mount_opts="$(clean_mount_opts "$base_opts")"
     [[ -n "$mount_opts" ]] && mount_opts+=","
-    mount_opts+="subvol=/${subvol_target}"
+    mount_opts+="subvol=/${subvol_target#/}"
 
-    newline="UUID=${fs_uuid} ${mount_target} btrfs ${mount_opts} 0 0"
+    canonical_target="$(realpath -m "$mount_target")"
+    newline="UUID=${fs_uuid} ${canonical_target} btrfs ${mount_opts} 0 0"
 
-    backup_file /etc/fstab
     tmp="$(mktemp)"
+    ACTIVE_TEMP_FILES+=("$tmp")
 
-    awk -v mp="$mount_target" -v newline="$newline" '
+    awk -v mp="$canonical_target" -v newline="$newline" '
         BEGIN { done = 0 }
         /^[[:space:]]*#/ { print; next }
-        NF >= 2 && $2 == mp {
-            if (!done) {
-                print newline
-                done = 1
-            }
-            next
-        }
+        NF >= 2 { sub(/\/+$/, "", $2); if ($2 == mp) { if (!done) { print newline; done = 1 }; next } }
         { print }
-        END {
-            if (!done) {
-                print newline
-            }
-        }
+        END { if (!done) print newline }
     ' /etc/fstab > "$tmp"
 
-    sudo install -m 0644 "$tmp" /etc/fstab
-    rm -f "$tmp"
+    if ! findmnt --verify --tab-file "$tmp" >/dev/null 2>&1; then
+        fatal "Generated fstab failed libmount validation."
+    fi
 
+    backup_file /etc/fstab
+    atomic_write /etc/fstab "$tmp"
+    rm -f "$tmp"; ACTIVE_TEMP_FILES=("${ACTIVE_TEMP_FILES[@]/$tmp}")
     sudo systemctl daemon-reload
-    info "Ensured ${mount_target} entry in /etc/fstab"
+    info "Ensured entry in /etc/fstab"
 }
 
 mount_snapshots() {
-    local mount_target="$1"
-    local expected_subvol="$2"
-
+    local mount_target="$1" expected_subvol="$2" base_target="$3"
     sudo mkdir -p "$mount_target"
-
-    if mountpoint -q "$mount_target"; then
-        verify_snapshots_mount "$mount_target" "$expected_subvol"
-        return 0
-    fi
-
-    sudo mount "$mount_target"
-    verify_snapshots_mount "$mount_target" "$expected_subvol"
+    mountpoint -q "$mount_target" || sudo mount "$mount_target"
+    verify_snapshots_mount "$mount_target" "$expected_subvol" "$base_target"
+    ROLLBACK_CMDS=() 
 }
 
 verify_snapper_works() {
-    local config_name="$1"
-    sudo snapper -c "$config_name" get-config >/dev/null 2>&1 || fatal "Snapper ${config_name} config is not usable."
-    sudo snapper -c "$config_name" list >/dev/null 2>&1 || fatal "Snapper cannot access the ${config_name} snapshot set."
-    info "Snapper ${config_name} config is working."
+    sudo snapper -c "$1" list >/dev/null 2>&1 || fatal "Snapper $1 config is broken."
 }
 
 tune_snapper() {
-    local config_name="$1"
-    sudo snapper -c "$config_name" set-config \
-        TIMELINE_CREATE="no" \
-        NUMBER_CLEANUP="yes" \
-        NUMBER_LIMIT="10" \
-        NUMBER_LIMIT_IMPORTANT="5" \
-        SPACE_LIMIT="0.0" \
-        FREE_LIMIT="0.0"
+    sudo snapper -c "$1" set-config TIMELINE_CREATE="no" NUMBER_CLEANUP="yes" NUMBER_LIMIT="10" NUMBER_LIMIT_IMPORTANT="5" SPACE_LIMIT="0.0" FREE_LIMIT="0.0"
+}
 
-    sudo btrfs quota disable / 2>/dev/null || true
-    info "Applied Snapper retention settings for ${config_name}."
+quiesce_snapper() {
+    if systemctl is-active --quiet snapper-timeline.timer || systemctl is-active --quiet snapper-cleanup.timer; then
+        sudo systemctl stop snapper-timeline.timer snapper-cleanup.timer 2>/dev/null || true
+    fi
 }
 
 preflight_checks() {
-    (( EUID != 0 )) || fatal "Run this script as a regular user with sudo privileges, not as root."
-
-    require_cmd sudo
-    require_cmd pacman
-    require_cmd findmnt
-    require_cmd mountpoint
-    require_cmd awk
-    require_cmd sed
-    require_cmd grep
-    require_cmd stat
-    require_cmd mktemp
-    require_cmd date
-
-    [[ "$(stat -f -c %T /)" == "btrfs" ]] || fatal "Root filesystem is not Btrfs."
+    (( EUID != 0 )) || fatal "Run as regular user with sudo."
+    require_cmd sudo; require_cmd pacman; require_cmd findmnt; require_cmd awk; require_cmd realpath; require_cmd grep; require_cmd stat; require_cmd mktemp
+    [[ "$(stat -f -c %T /)" == "btrfs" ]] || fatal "Root is not Btrfs."
     [[ "$(stat -f -c %T /home)" == "btrfs" ]] || fatal "/home is not Btrfs."
-
     sudo -v || fatal "Cannot obtain sudo privileges."
-    (
-        while true; do
-            sudo -n -v 2>/dev/null || exit
-            sleep 240
-        done
-    ) &
+    (while true; do sudo -n -v 2>/dev/null || exit; sleep 240; done) &
     SUDO_PID=$!
 }
 
-preflight_checks
-
-execute "Install Snapper packages" install_packages
-post_install_checks
+preflight_checks; quiesce_snapper; execute "Install Snapper" install_packages; post_install_checks
 
 # --- ROOT SNAPSHOT CONFIG ---
-execute "Create Snapper root config" ensure_snapper_config "root" "/"
-execute "Create top-level @snapshots subvolume" ensure_top_level_snapshots_subvolume "@snapshots"
-execute "Prepare /.snapshots mountpoint safely" prepare_snapshots_mountpoint "/.snapshots" "@snapshots"
-execute "Write /.snapshots mount to /etc/fstab" ensure_fstab_entry_for_snapshots "/.snapshots" "@snapshots"
-execute "Mount /.snapshots from @snapshots" mount_snapshots "/.snapshots" "@snapshots"
-execute "Verify Snapper can use the root snapshot layout" verify_snapper_works "root"
-execute "Apply Snapper cleanup settings (root)" tune_snapper "root"
+execute "Create Snapper root" ensure_snapper_config "root" "/"
+execute "Create top-level @snapshots" ensure_top_level_snapshots_subvolume "/" "@snapshots"
+execute "Prepare /.snapshots" prepare_snapshots_mountpoint "/.snapshots"
+execute "Write /.snapshots to fstab" ensure_fstab_entry_for_snapshots "/" "/.snapshots" "@snapshots"
+execute "Mount /.snapshots" mount_snapshots "/.snapshots" "@snapshots" "/"
+execute "Verify Snapper root" verify_snapper_works "root"
+execute "Tune Snapper root" tune_snapper "root"
 
 # --- HOME SNAPSHOT CONFIG ---
-execute "Create Snapper home config" ensure_snapper_config "home" "/home"
-execute "Create top-level @home_snapshots subvolume" ensure_top_level_snapshots_subvolume "@home_snapshots"
-execute "Prepare /home/.snapshots mountpoint safely" prepare_snapshots_mountpoint "/home/.snapshots" "@home_snapshots"
-execute "Write /home/.snapshots mount to /etc/fstab" ensure_fstab_entry_for_snapshots "/home/.snapshots" "@home_snapshots"
-execute "Mount /home/.snapshots from @home_snapshots" mount_snapshots "/home/.snapshots" "@home_snapshots"
-execute "Verify Snapper can use the home snapshot layout" verify_snapper_works "home"
-execute "Apply Snapper cleanup settings (home)" tune_snapper "home"
+execute "Create Snapper home" ensure_snapper_config "home" "/home"
+execute "Create top-level @home_snapshots" ensure_top_level_snapshots_subvolume "/home" "@home_snapshots"
+execute "Prepare /home/.snapshots" prepare_snapshots_mountpoint "/home/.snapshots"
+execute "Write /home/.snapshots to fstab" ensure_fstab_entry_for_snapshots "/home" "/home/.snapshots" "@home_snapshots"
+execute "Mount /home/.snapshots" mount_snapshots "/home/.snapshots" "@home_snapshots" "/home"
+execute "Verify Snapper home" verify_snapper_works "home"
+execute "Tune Snapper home" tune_snapper "home"
+
+execute "Apply Global Btrfs Settings" apply_global_btrfs_tuning() { sudo btrfs quota disable / 2>/dev/null || true; }
