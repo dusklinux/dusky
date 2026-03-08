@@ -357,6 +357,7 @@ declare -g PRE_SYNC_HEAD=""
 
 declare -ga CREATED_TEMP_DIRS=()
 declare -ga COLLISION_BACKUP_DIRS=()
+declare -gA COLLISION_MOVED_PATHS=()
 declare -ga HARD_FAILED_SCRIPTS=()
 declare -ga SOFT_FAILED_SCRIPTS=()
 declare -ga SKIPPED_SCRIPTS=()
@@ -367,7 +368,6 @@ declare -gA CHANGE_OLD_MODE=()
 declare -gA CHANGE_OLD_OID=()
 declare -gA CHANGE_BACKUP_HAS_FILE=()
 
-# Manifest arrays
 declare -ga MANIFEST_MODE=()
 declare -ga MANIFEST_SCRIPT=()
 declare -ga MANIFEST_IGNORE_FAIL=()
@@ -376,7 +376,6 @@ declare -ga MANIFEST_PATH=()
 declare -ga MANIFEST_PATH_STATE=()
 declare -ga MANIFEST_IS_CUSTOM=()
 
-# CLI flags
 declare -g OPT_DRY_RUN=false
 declare -g OPT_SKIP_SYNC=false
 declare -g OPT_SYNC_ONLY=false
@@ -1014,7 +1013,6 @@ get_available_bytes() {
     local -a lines=()
     local available_bytes=0
 
-    # Removed the conflicting -P flag. -B1 works perfectly with --output=avail.
     mapfile -t lines < <(df -B1 --output=avail -- "$path" 2>/dev/null || true)
     if ((${#lines[@]} >= 2)); then
         available_bytes="${lines[1]//[^0-9]/}"
@@ -1089,14 +1087,11 @@ run_logged_command() {
         printf '\n'
     } >> "$LOG_FILE"
 
-    # Dynamically resolve the absolute path to bypass sudo secure_path restrictions
     if [[ -t 1 ]] && script_bin="$(command -v script 2>/dev/null)"; then
         if [[ "${cmd[0]}" == "sudo" ]]; then
-            # Strip 'sudo' from the inner command
             local -a inner_cmd=("${cmd[@]:1}")
             cmd_string="$(join_quoted_argv "${inner_cmd[@]}")"
-            
-            # Elevate BEFORE allocating the PTY, using the absolute path
+
             if sudo "$script_bin" --quiet --flush --return --command "$cmd_string" /dev/null | tee -a "$LOG_FILE"; then
                 rc=0
             else
@@ -1104,7 +1099,6 @@ run_logged_command() {
             fi
         else
             cmd_string="$(join_quoted_argv "${cmd[@]}")"
-            # Use the absolute path here as well for consistency
             if "$script_bin" --quiet --flush --return --command "$cmd_string" /dev/null | tee -a "$LOG_FILE"; then
                 rc=0
             else
@@ -1154,7 +1148,12 @@ detect_git_lock_state() {
 }
 
 get_repo_state() {
-    local lock_state=""
+    local lock_state="" lock_file=""
+    local lock_age=0 current_time=0 mtime=0
+    local prompt_ans=""
+    local can_auto_delete=false
+    local lock_real="" fd="" next_lock_state=""
+    local lock_open=false
 
     if [[ -L "$DOTFILES_GIT_DIR" ]]; then
         log ERROR "Git directory must not be a symlink: $DOTFILES_GIT_DIR"
@@ -1187,31 +1186,40 @@ get_repo_state() {
 
     lock_state="$(detect_git_lock_state)"
     while [[ "$lock_state" != "none" ]]; do
-        local lock_file="${DOTFILES_GIT_DIR}/${lock_state}"
-        local lock_age=0
-        local current_time=0
-        local mtime=0
-        local prompt_ans=""
-        local can_auto_delete=false
+        lock_file="${DOTFILES_GIT_DIR}/${lock_state}"
+        can_auto_delete=false
+        lock_open=false
 
         log WARN "Git lock detected: $lock_file"
-        
-        # Calculate precise age of the lock file
+
         current_time="$EPOCHSECONDS"
         mtime="$(stat -c %Y -- "$lock_file" 2>/dev/null || printf '%s' "$current_time")"
         (( lock_age = current_time - mtime )) || lock_age=0
 
-        # Heuristic: A git lock older than 60 seconds in a bare repo is almost certainly stale
+        lock_real="$(readlink -f -- "$lock_file" 2>/dev/null || printf '%s' "$lock_file")"
+        for fd in /proc/[0-9]*/fd/*; do
+            [[ -e "$fd" ]] || continue
+            if [[ "$(readlink -f -- "$fd" 2>/dev/null || true)" == "$lock_real" ]]; then
+                lock_open=true
+                break
+            fi
+        done
+
+        if [[ "$lock_open" == true ]]; then
+            log ERROR "Lock file is currently open by a live process. Refusing to remove it."
+            REPLY="invalid"
+            return 0
+        fi
+
         if (( lock_age > 60 )); then
-            log INFO "Lock file is ${lock_age}s old (likely a stale remnant from a crash)."
+            log INFO "Lock file is ${lock_age}s old and is not open by any live process."
             can_auto_delete=true
         fi
 
-        # Interactive user prompt
         if [[ -t 0 && "$OPT_FORCE" != true ]]; then
-            printf '\n%s[GIT LOCK DETECTED]%s Another Git process may be running, or a previous update crashed.\n' "$CLR_YLW" "$CLR_RST"
-            read -r -t "$PROMPT_TIMEOUT_SHORT" -p "Do you want to clear the stale lock and continue? [y/N] " prompt_ans || prompt_ans="n"
-            
+            printf '\n%s[GIT LOCK DETECTED]%s A previous Git operation may have crashed and left a stale lock behind.\n' "$CLR_YLW" "$CLR_RST"
+            read -r -t "$PROMPT_TIMEOUT_SHORT" -p "Do you want to clear the lock and continue? [y/N] " prompt_ans || prompt_ans="n"
+
             if [[ "$prompt_ans" =~ ^[Yy]$ ]]; then
                 can_auto_delete=true
             else
@@ -1220,35 +1228,28 @@ get_repo_state() {
                 return 0
             fi
         else
-            # Non-interactive (headless) safety checks
             if [[ "$can_auto_delete" != true ]]; then
-                log ERROR "Lock file is too recent (${lock_age}s) to safely auto-remove in unattended mode."
-                log ERROR "A background process might be actively writing to the repository."
+                log ERROR "Lock file is too recent (${lock_age}s) to auto-remove in unattended mode."
+                log ERROR "Refusing to guess whether another process just exited or is still starting."
                 REPLY="invalid"
                 return 0
-            else
-                log INFO "Auto-removing stale lock file in unattended mode..."
             fi
+            log INFO "Auto-removing stale lock file in unattended mode..."
         fi
 
-        # Atomic removal and verification
-        if [[ "$can_auto_delete" == true ]]; then
-            rm -f -- "$lock_file" 2>/dev/null || true
-            
-            local next_lock_state=""
-            next_lock_state="$(detect_git_lock_state)"
-            
-            if [[ "$next_lock_state" == "$lock_state" ]]; then
-                log ERROR "Failed to auto-remove lock file: $lock_file"
-                log ERROR "Check filesystem permissions or remove it manually."
-                REPLY="invalid"
-                return 0
-            fi
-            
-            lock_state="$next_lock_state"
-            if [[ "$lock_state" == "none" ]]; then
-                log OK "Stale lock successfully cleared."
-            fi
+        rm -f -- "$lock_file" 2>/dev/null || true
+
+        next_lock_state="$(detect_git_lock_state)"
+        if [[ "$next_lock_state" == "$lock_state" ]]; then
+            log ERROR "Failed to remove lock file: $lock_file"
+            log ERROR "Check filesystem permissions or remove it manually."
+            REPLY="invalid"
+            return 0
+        fi
+
+        lock_state="$next_lock_state"
+        if [[ "$lock_state" == "none" ]]; then
+            log OK "Stale lock successfully cleared."
         fi
     done
 
@@ -1350,39 +1351,114 @@ git_path_is_tracked() {
     "${GIT_CMD[@]}" ls-files --error-unmatch -- "$1" >/dev/null 2>&1
 }
 
+collect_dir_collision_roots() {
+    local root_rel="$1"
+    local tracked_exact_name="$2"
+    local tracked_desc_name="$3"
+    local out_name="$4"
+
+    local -n tracked_exact_ref="$tracked_exact_name"
+    local -n tracked_desc_ref="$tracked_desc_name"
+    local -n out_ref="$out_name"
+
+    local rel="" abs="" child=""
+    local -a stack=()
+    local -a children=()
+    local last_idx=0
+
+    abs="${WORK_TREE}/${root_rel}"
+    [[ -d "$abs" && ! -L "$abs" ]] || return 0
+
+    stack+=("$root_rel")
+
+    while ((${#stack[@]} > 0)); do
+        last_idx=$((${#stack[@]} - 1))
+        rel="${stack[$last_idx]}"
+        unset "stack[$last_idx]"
+
+        abs="${WORK_TREE}/${rel}"
+        path_exists "$abs" || continue
+
+        if [[ -L "$abs" || ! -d "$abs" ]]; then
+            if [[ -z "${tracked_exact_ref["$rel"]+_}" ]]; then
+                out_ref["$rel"]=1
+            fi
+            continue
+        fi
+
+        if [[ -n "${tracked_exact_ref["$rel"]+_}" ]]; then
+            out_ref["$rel"]=1
+            continue
+        fi
+
+        children=()
+        while IFS= read -r -d '' child; do
+            children+=("$child")
+        done < <(find "$abs" -mindepth 1 -maxdepth 1 -printf '%P\0' 2>/dev/null)
+
+        if [[ -n "${tracked_desc_ref["$rel"]+_}" ]]; then
+            if ((${#children[@]} == 0)); then
+                out_ref["$rel"]=1
+            else
+                for child in "${children[@]}"; do
+                    [[ -n "$child" ]] || continue
+                    stack+=("${rel}/${child}")
+                done
+            fi
+        else
+            out_ref["$rel"]=1
+        fi
+    done
+}
+
 backup_worktree_collisions_for_ref() {
     local ref="$1"
     local honor_current_tracked="${2:-true}"
 
-    local remote_path="" abs="" ancestor="" remaining="" part=""
+    local target_path="" abs="" ancestor="" remaining="" part=""
     local coll_backup_dir="" coll_rel="" coll_src="" coll_dest=""
     local coll_manifest="" info_file=""
     local tracked_path=""
     local required_bytes=0
     local path_bytes=0
-    local -A collision_paths=()
+    local skip=false
+    local -A collision_candidates=()
+    local -A collision_roots=()
     local -A mkdir_cache=()
-    local -A tracked_set=()
+    local -A current_tracked_exact=()
+    local -A current_tracked_descendants=()
 
     if [[ "$honor_current_tracked" == "true" ]]; then
         while IFS= read -r -d '' tracked_path; do
-            tracked_set["$tracked_path"]=1
+            [[ -n "$tracked_path" ]] || continue
+            current_tracked_exact["$tracked_path"]=1
+
+            ancestor="$tracked_path"
+            while [[ "$ancestor" == */* ]]; do
+                ancestor="${ancestor%/*}"
+                current_tracked_descendants["$ancestor"]=1
+            done
         done < <("${GIT_CMD[@]}" ls-files -z 2>/dev/null)
     fi
 
-    while IFS= read -r -d '' remote_path; do
-        [[ -n "$remote_path" ]] || continue
+    while IFS= read -r -d '' target_path; do
+        [[ -n "$target_path" ]] || continue
 
-        abs="${WORK_TREE}/${remote_path}"
+        abs="${WORK_TREE}/${target_path}"
         if path_exists "$abs"; then
-            if [[ "$honor_current_tracked" != "true" || -z "${tracked_set["$remote_path"]+_}" ]]; then
-                collision_paths["$remote_path"]=1
-                continue
+            if [[ -d "$abs" && ! -L "$abs" ]]; then
+                if [[ "$honor_current_tracked" == "true" && -n "${current_tracked_descendants["$target_path"]+_}" ]]; then
+                    collect_dir_collision_roots "$target_path" current_tracked_exact current_tracked_descendants collision_candidates
+                else
+                    collision_candidates["$target_path"]=1
+                fi
+            elif [[ "$honor_current_tracked" != "true" || -z "${current_tracked_exact["$target_path"]+_}" ]]; then
+                collision_candidates["$target_path"]=1
             fi
         fi
 
         ancestor=""
-        remaining="$remote_path"
+        remaining="$target_path"
         while [[ "$remaining" == */* ]]; do
             part="${remaining%%/*}"
             if [[ -z "$ancestor" ]]; then
@@ -1393,19 +1469,35 @@ backup_worktree_collisions_for_ref() {
 
             abs="${WORK_TREE}/${ancestor}"
             if path_exists "$abs" && { [[ -L "$abs" ]] || [[ ! -d "$abs" ]]; }; then
-                if [[ "$honor_current_tracked" != "true" || -z "${tracked_set["$ancestor"]+_}" ]]; then
-                    collision_paths["$ancestor"]=1
-                    break
+                if [[ "$honor_current_tracked" != "true" || -z "${current_tracked_exact["$ancestor"]+_}" ]]; then
+                    collision_candidates["$ancestor"]=1
                 fi
+                break
             fi
 
             remaining="${remaining#*/}"
         done
     done < <("${GIT_CMD[@]}" ls-tree -r -z --name-only "$ref" 2>/dev/null)
 
-    ((${#collision_paths[@]} > 0)) || return 0
+    for coll_rel in "${!collision_candidates[@]}"; do
+        skip=false
+        ancestor="$coll_rel"
 
-    for coll_rel in "${!collision_paths[@]}"; do
+        while [[ "$ancestor" == */* ]]; do
+            ancestor="${ancestor%/*}"
+            if [[ -n "${collision_candidates["$ancestor"]+_}" ]]; then
+                skip=true
+                break
+            fi
+        done
+
+        [[ "$skip" == true ]] && continue
+        collision_roots["$coll_rel"]=1
+    done
+
+    ((${#collision_roots[@]} > 0)) || return 0
+
+    for coll_rel in "${!collision_roots[@]}"; do
         coll_src="${WORK_TREE}/${coll_rel}"
         path_exists "$coll_src" || continue
         path_bytes="$(path_copy_size_bytes "$coll_src")"
@@ -1441,9 +1533,9 @@ backup_worktree_collisions_for_ref() {
     }
     chmod 600 -- "$info_file" 2>/dev/null || true
 
-    log WARN "Found ${#collision_paths[@]} work-tree collision(s). Backing them up..."
+    log WARN "Found ${#collision_roots[@]} work-tree collision(s). Backing them up..."
 
-    for coll_rel in "${!collision_paths[@]}"; do
+    for coll_rel in "${!collision_roots[@]}"; do
         coll_src="${WORK_TREE}/${coll_rel}"
         path_exists "$coll_src" || continue
 
@@ -1457,6 +1549,8 @@ backup_worktree_collisions_for_ref() {
             log ERROR "Failed to move colliding path: $(quote_for_log "$coll_rel")"
             return 1
         }
+
+        COLLISION_MOVED_PATHS["$coll_rel"]=1
 
         printf '%q\n' "$coll_rel" >> "$coll_manifest" || {
             log ERROR "Failed to record colliding path: $(quote_for_log "$coll_rel")"
@@ -1598,36 +1692,28 @@ capture_tracked_changes_manifest() {
     mapfile -d '' -t raw_records < <("${GIT_CMD[@]}" diff-index --raw --no-renames -z HEAD -- 2>/dev/null || true)
 
     count="${#raw_records[@]}"
-    
-    # Process the NUL-separated array in pairs (Metadata -> Path)
+
     while (( i < count )); do
         meta="${raw_records[i]}"
         path="${raw_records[i+1]:-}"
         (( i += 2 ))
 
-        # mapfile often leaves a trailing empty element when parsing NUL-terminated output
         [[ -n "$meta" ]] || continue
 
-        # Git diff-index raw metadata format: :100644 100644 e69de29... 0000000... M
         read -r oldmode newmode oldoid newoid status <<< "${meta#:}"
         status="${status%%[0-9]*}"
 
         [[ -n "$path" ]] || continue
-        
+
         CHANGE_PATHS+=("$path")
         CHANGE_STATUS["$path"]="$status"
         CHANGE_OLD_MODE["$path"]="$oldmode"
         CHANGE_OLD_OID["$path"]="$oldoid"
         CHANGE_BACKUP_HAS_FILE["$path"]=0
-        
+
         (( parsed_count++ ))
     done
 
-    # ---------------------------------------------------------
-    # THE FAIL-CLOSED SANITY CHECK
-    # ---------------------------------------------------------
-    # If Git output contained data (count > 1) but we failed to parse 
-    # a single valid path, the parsing logic is mismatched with Git's output.
     if (( count > 1 && parsed_count == 0 )); then
         log ERROR "Git reported tracked changes, but the engine failed to parse them."
         log ERROR "Raw Git output length: $count items."
@@ -1808,6 +1894,21 @@ ensure_merge_dir() {
     return 0
 }
 
+path_has_collision_backup() {
+    local path="$1"
+    local moved_path=""
+
+    if [[ -n "${COLLISION_MOVED_PATHS["$path"]+_}" ]]; then
+        return 0
+    fi
+
+    for moved_path in "${!COLLISION_MOVED_PATHS[@]}"; do
+        [[ "$moved_path" == "$path/"* ]] && return 0
+    done
+
+    return 1
+}
+
 classify_restore_action() {
     local path="$1"
     local status="$2"
@@ -1828,7 +1929,9 @@ classify_restore_action() {
     fi
 
     if [[ "$status" == "D" ]]; then
-        if [[ -z "$new_oid" ]]; then
+        if path_has_collision_backup "$path"; then
+            action="delete-merge"
+        elif [[ -z "$new_oid" ]]; then
             action="delete-preserved"
         elif [[ "$old_oid_valid" == true && "$new_oid" == "$old_oid" && "$new_mode" == "$old_mode" ]]; then
             action="delete-safe"
@@ -2083,8 +2186,8 @@ restore_user_modifications() {
         log OK "Auto-restored $restored_count file(s) (upstream had not changed them)"
     fi
     if (( merge_count > 0 )); then
-        log WARN "$merge_count file(s) need manual merge — upstream changed them too"
-        log INFO "Your versions saved to: $MERGE_DIR"
+        log WARN "$merge_count file(s) need manual merge — upstream changed them too or a path conflict was preserved"
+        log INFO "Review saved files and markers in: $MERGE_DIR"
     fi
     if (( deletion_count > 0 )); then
         log WARN "$deletion_count tracked deletion(s) preserved or queued for manual merge"
@@ -2211,7 +2314,26 @@ pull_updates() {
     fi
 
     if [[ "$local_head" == "$remote_head" ]]; then
-        log OK "Already up to date."
+        local unhealthy_tracked=0
+        local changed_path="" changed_status=""
+
+        capture_tracked_changes_manifest || return "$SYNC_RC_UNSAFE"
+
+        for changed_path in "${CHANGE_PATHS[@]}"; do
+            changed_status="${CHANGE_STATUS["$changed_path"]:-}"
+            case "$changed_status" in
+                D|T)
+                    ((unhealthy_tracked++)) || true
+                    ;;
+            esac
+        done
+
+        if (( unhealthy_tracked > 0 )); then
+            log WARN "HEAD matches origin/${BRANCH}, but ${unhealthy_tracked} tracked path(s) are missing or type-mismatched in the work tree."
+            log INFO "Leaving local files untouched because those paths may be intentional user changes."
+        else
+            log OK "Already up to date."
+        fi
         return 0
     fi
 
@@ -2231,7 +2353,7 @@ pull_updates() {
         fi
 
         backup_worktree_collisions_for_ref "origin/${BRANCH}" true || return "$SYNC_RC_UNSAFE"
-        capture_tracked_changes_manifest
+        capture_tracked_changes_manifest || return "$SYNC_RC_UNSAFE"
         backup_user_modifications || {
             log ERROR "Backup failed. Aborting update to protect your files."
             return "$SYNC_RC_UNSAFE"
@@ -2275,7 +2397,7 @@ pull_updates() {
                 ;;
             2)
                 backup_worktree_collisions_for_ref "origin/${BRANCH}" true || return "$SYNC_RC_UNSAFE"
-                capture_tracked_changes_manifest
+                capture_tracked_changes_manifest || return "$SYNC_RC_UNSAFE"
                 backup_full_tracked_tree || return "$SYNC_RC_UNSAFE"
                 backup_user_modifications || return "$SYNC_RC_UNSAFE"
 
@@ -2290,7 +2412,7 @@ pull_updates() {
                 ;;
             3)
                 backup_worktree_collisions_for_ref "origin/${BRANCH}" true || return "$SYNC_RC_UNSAFE"
-                capture_tracked_changes_manifest
+                capture_tracked_changes_manifest || return "$SYNC_RC_UNSAFE"
                 backup_full_tracked_tree || return "$SYNC_RC_UNSAFE"
                 backup_user_modifications || return "$SYNC_RC_UNSAFE"
 
@@ -2500,7 +2622,7 @@ execute_scripts() {
 # SUMMARY & CLEANUP
 # ==============================================================================
 print_summary() {
-    if [[ "$SKIP_FINAL_SUMMARY" == true || "$SUMMARY_PRINTED" == true ]]; then
+    if [[ "$SKIP_FINAL_SUMMARY" == true || "$SUMMARY_PRINTED" == "true" ]]; then
         return 0
     fi
     SUMMARY_PRINTED=true
@@ -2567,9 +2689,9 @@ cleanup() {
         printf '    %s\n' "$USER_MODS_BACKUP_DIR"
     fi
 
-    if ((${#COLLISION_BACKUP_DIRS[@]} > 0)) && { (( rc != 0 )) || [[ "$SYNC_FAILED" == true ]] || ((${#HARD_FAILED_SCRIPTS[@]} > 0)); }; then
+    if ((${#COLLISION_BACKUP_DIRS[@]} > 0)); then
         printf '\n'
-        log WARN "Untracked work-tree collisions were moved aside and preserved at:"
+        log INFO "Work-tree collision backups were preserved at:"
         local cdir=""
         for cdir in "${COLLISION_BACKUP_DIRS[@]}"; do
             [[ -d "$cdir" ]] && printf '    %s\n' "$cdir"
