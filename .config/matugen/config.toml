@@ -278,3 +278,7 @@ bash -c '
 } >/dev/null 2>&1 </dev/null & disown
 '
 '''
+
+[templates.p10k]
+input_path = '~/.config/matugen/templates/p10k-colors.zsh'
+output_path = '~/.config/matugen/generated/p10k-colors.zsh'
