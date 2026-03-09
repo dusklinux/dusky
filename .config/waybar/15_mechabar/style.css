@@ -18,6 +18,7 @@
 #window label,
 #mpris,
 tooltip label {
+	font-family: sans-serif;
 	font-weight: normal;
 }
 
@@ -28,13 +29,14 @@ tooltip label {
 }
 
 #custom-power {
-	font-size: 18px;
+	font-size: 16px;
 }
 
 #custom-left_div,
 #custom-left_inv,
 #custom-right_div,
 #custom-right_inv {
+	font-family: "JetBrainsMono Nerd Font";
 	font-size: 22px;
 }
 
@@ -48,14 +50,14 @@ tooltip label {
 	color: @hover-fg;
 }
 
-/*-----------------
-    temperature
------------------*/
+/*---------------
+    weather
+---------------*/
 
 #custom-left_div.2 {
 	color: @surface_container_low;
 }
-#temperature {
+#custom-weather {
 	background-color: @surface_container_low;
 }
 
@@ -197,13 +199,19 @@ tooltip label {
     media info
 ----------------*/
 
-#custom-cava {
+#cava {
+	font-family: "JetBrainsMono Nerd Font";
 	letter-spacing: 2px;
 	padding-right: 8px;
 }
 
 #mpris {
-	padding: 0 12px;
+	background-color: @surface_container_low;
+	padding: 0 5px;
+}
+#custom-mpris-trigger {
+	background-color: @surface_container_low;
+	padding: 0 5px;
 }
 
 /*------------
@@ -215,7 +223,7 @@ tooltip label {
 }
 #pulseaudio,
 #wireplumber {
-	background-color: @surface_container_low;
+	background-color: @surface;
 }
 
 /*----------------
@@ -227,7 +235,7 @@ tooltip label {
 	color: @surface;
 }
 #backlight {
-	background-color: @surface;
+	background-color: @surface_container_high;
 }
 
 /*-------------
@@ -239,7 +247,7 @@ tooltip label {
 	color: @surface_container_high;
 }
 #battery {
-	background-color: @surface;
+	background-color: @surface_container_high;
 }
 #custom-left_inv.2 {
 	color: @surface_container_high;
@@ -250,12 +258,9 @@ tooltip label {
 ----------------*/
 
 #custom-power {
-	border-radius: 16px;
-	padding: 0 19px 0 16px;
+	padding: 0 10px 0 10px;
 	color: @secondary;
-}
-#custom-power:hover {
-	background-color: @surface;
+	background-color: @background;
 }
 
 #custom-trigger:hover,
@@ -288,7 +293,6 @@ tooltip label {
 	color: @on_secondary_container;
 }
 
-#temperature.critical,
 #memory.critical,
 #cpu.critical,
 #battery.critical {

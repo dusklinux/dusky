@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# ─────────────────────────────────────────────────────────────────────────────
 # Rofi Power Menu for Hyprland + UWSM
-# Optimized for Arch Linux │ Bash 5+ │ Zero dependencies beyond core system
-# ─────────────────────────────────────────────────────────────────────────────
+# Arch Linux + Bash 5.3+
 
 set -euo pipefail
+shopt -s inherit_errexit
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Single Instance Lock
-# ─────────────────────────────────────────────────────────────────────────────
-exec 9>"${XDG_RUNTIME_DIR}/rofi-power.lock"
-flock -n 9 || exit 0
+: "${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Configuration
-# ─────────────────────────────────────────────────────────────────────────────
+readonly LOCK_FILE="${XDG_RUNTIME_DIR}/rofi-power.lock"
+readonly ACTION_DELAY='0.05'
 
-# User Defined Icons
+exec {lock_fd}> "${LOCK_FILE}"
+flock -n "${lock_fd}" || exit 0
+
+release_lock() {
+    exec {lock_fd}>&- 2>/dev/null || :
+}
+trap release_lock EXIT
+
 declare -Ar ICONS=(
     [shutdown]=""
     [reboot]=""
@@ -27,100 +28,121 @@ declare -Ar ICONS=(
     [cancel]=""
 )
 
-# Menu entries: Combines your Icons with the original Labels
-declare -Ar MENU=(
-    [lock]="${ICONS[lock]}  Lock"
-    [logout]="${ICONS[logout]}  Logout"
-    [suspend]="${ICONS[suspend]}  Suspend"
-    [reboot]="${ICONS[reboot]}  Reboot"
-    [soft_reboot]="${ICONS[soft_reboot]}  Soft Reboot"
-    [shutdown]="${ICONS[shutdown]}  Shutdown"
+declare -Ar LABELS=(
+    [lock]="Lock"
+    [logout]="Logout"
+    [suspend]="Suspend"
+    [reboot]="Reboot"
+    [soft_reboot]="Soft Reboot"
+    [shutdown]="Shutdown"
 )
 
-# Display order
-declare -ar ORDER=(shutdown reboot suspend lock logout soft_reboot )
+declare -ar ORDER=(
+    shutdown
+    reboot
+    suspend
+    lock
+    logout
+    soft_reboot
+)
 
-# Actions requiring confirmation
-declare -Ar CONFIRM=([shutdown]=1 [reboot]=1 [logout]=1 [soft_reboot]=1)
+declare -Ar CONFIRM=(
+    [shutdown]=1
+    [reboot]=1
+    [logout]=1
+    [soft_reboot]=1
+)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Action Dispatcher
-# ─────────────────────────────────────────────────────────────────────────────
+print_entry() {
+    local key=$1
+    printf '%s  %s\0info\x1f%s\n' "${ICONS[$key]}" "${LABELS[$key]}" "$key"
+}
+
+show_main_menu() {
+    local uptime_str
+
+    uptime_str=$(LC_ALL=C uptime -p)
+    uptime_str=${uptime_str#up }
+
+    printf '\0prompt\x1fUptime\n'
+    printf '\0theme\x1fentry { placeholder: "%s"; }\n' "$uptime_str"
+
+    local key
+    for key in "${ORDER[@]}"; do
+        print_entry "$key"
+    done
+}
+
+show_confirm_menu() {
+    local key=$1
+    local label=${LABELS[$key]}
+
+    printf '\0prompt\x1f%s?\n' "$label"
+    printf 'Yes, %s\0info\x1f%s:confirmed\n' "$label" "$key"
+    printf '%s  No, Cancel\0info\x1fcancel\n' "${ICONS[cancel]}"
+}
 
 execute() {
-    # Brief delay ensures rofi closes before system state changes
-    sleep 0.05
+    local action=$1
 
-    case $1 in
+    release_lock
+
+    case $action in
         lock)
-            # Idempotent: skip if already locked
-            # FIX 1: Redirect stdout/stderr to tmp to prevent Rofi log spam
-            # FIX 2: Use 'uwsm-app' for systemd-scope correctness
-            if ! pgrep -x hyprlock >/dev/null; then
-                uwsm-app -- hyprlock > /tmp/hyprlock.log 2>&1 &
+            if ! pgrep -x -u "$UID" hyprlock >/dev/null; then
+                {
+                    sleep "${ACTION_DELAY}"
+                    exec uwsm-app -- hyprlock
+                } </dev/null >/dev/null 2>&1 &
             fi
             ;;
         logout)
-            # UWSM gracefully terminates Wayland session
-            uwsm stop
+            sleep "${ACTION_DELAY}"
+            exec uwsm stop
             ;;
         suspend)
-            systemctl suspend
+            sleep "${ACTION_DELAY}"
+            exec systemctl suspend
             ;;
         reboot)
-            systemctl reboot
+            sleep "${ACTION_DELAY}"
+            exec systemctl reboot
             ;;
         soft_reboot)
-            systemctl soft-reboot
+            sleep "${ACTION_DELAY}"
+            exec systemctl soft-reboot
             ;;
         shutdown)
-            systemctl poweroff
+            sleep "${ACTION_DELAY}"
+            exec systemctl poweroff
+            ;;
+        *)
+            exit 1
             ;;
     esac
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Rofi Interface
-# ─────────────────────────────────────────────────────────────────────────────
+rofi_info=${ROFI_INFO-}
+key=${rofi_info%%:*}
+state=
+[[ $rofi_info == *:* ]] && state=${rofi_info#*:}
 
-# ROFI_INFO contains our action key from the selected entry's info field
-IFS=: read -r key state <<< "${ROFI_INFO:-}"
-
-# Phase 1: No selection — render main menu
-if [[ -z ${key:-} ]]; then
-    # Get pretty uptime, remove 'up ' prefix for cleanliness
-    # e.g., "3 hours, 20 minutes"
-    uptime_str=$(uptime -p | sed 's/^up //')
-    
-    printf '\0prompt\x1fUptime\n'
-    printf '\0theme\x1fentry { placeholder: "%s"; }\n' "$uptime_str"
-    for k in "${ORDER[@]}"; do
-        printf '%s\0info\x1f%s\n' "${MENU[$k]}" "$k"
-    done
+if [[ -z $key ]]; then
+    show_main_menu
     exit 0
 fi
 
-# Phase 2: Handle cancel
 [[ $key == cancel ]] && exit 0
+[[ -v "LABELS[$key]" ]] || exit 1
 
-# Phase 3: Validate key exists
-[[ -v MENU[$key] ]] || exit 1
-
-# Phase 4: Confirmed action — execute
-if [[ ${state:-} == confirmed ]]; then
+if [[ $state == confirmed ]]; then
     execute "$key"
     exit 0
 fi
 
-# Phase 5: Requires confirmation — show dialog
-if [[ -v CONFIRM[$key] ]]; then
-    # Strip the icon from the label for the prompt text (removes up to the first two spaces)
-    label=${MENU[$key]#* }
-    printf '\0prompt\x1f%s?\n' "$label"
-    printf 'Yes, %s\0info\x1f%s:confirmed\n' "$label" "$key"
-    printf '%s No, Cancel\0info\x1fcancel\n' "${ICONS[cancel]}"
+if [[ -v "CONFIRM[$key]" ]]; then
+    show_confirm_menu "$key"
     exit 0
 fi
 
-# Phase 6: No confirmation needed — execute directly
 execute "$key"

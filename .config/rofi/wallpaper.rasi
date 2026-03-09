@@ -1,19 +1,15 @@
 /* 🖼️ ROFI WALLPAPER GRID THEME */
-/* Compact 4x2 Grid Layout */
+/* Fixed 4x2 grid with keybind header */
 
 @import "~/.config/rofi/config.rasi"
 
-/* ---- Configuration ---- */
 configuration {
-    modi: "drun";
     show-icons: true;
-    drun-display-format: "{name}";
 }
 
 /* ---- Window ---- */
 window {
     width: 60%;
-    /* Adjusted to 45% to ensure the bottom row icons fit comfortably */
     height: 74%;
     border: 2px;
     border-radius: 12px;
@@ -21,7 +17,7 @@ window {
 
 /* ---- Mainbox ---- */
 mainbox {
-    children: ["inputbar", "listview"];
+    children: [ "inputbar", "message", "listview" ];
     spacing: 10px;
     padding: 20px;
 }
@@ -31,7 +27,7 @@ inputbar {
     enabled: true;
     padding: 10px;
     border-radius: 10px;
-    children: ["prompt", "entry"];
+    children: [ "prompt", "entry" ];
 }
 
 prompt {
@@ -47,19 +43,26 @@ entry {
     text-color: inherit;
 }
 
+/* ---- Message / Keybind Header ---- */
+message {
+    enabled: true;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background-color: transparent;
+    text-color: inherit;
+}
+
 /* ---- Listview ---- */
 listview {
-    /* Grid Layout: 4 columns x 2 rows = 8 images */
     columns: 4;
     lines: 2;
-    fixed-height: false;
+    fixed-columns: true;
+    fixed-height: true;
+    dynamic: false;
     scrollbar: true;
     spacing: 15px;
     padding: 10px;
     cycle: false;
-    dynamic: true;
-    
-    /* Flow */
     layout: vertical;
     reverse: false;
 }
@@ -86,9 +89,9 @@ element selected.normal {
 }
 
 element-icon {
-    /* Large Thumbnail Size */
     size: 6em;
     horizontal-align: 0.5;
+    vertical-align: 0.5;
     background-color: transparent;
 }
 

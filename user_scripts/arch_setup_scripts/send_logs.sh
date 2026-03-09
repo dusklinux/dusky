@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  ARCH DOTFILES LOG SUBMITTER (ELITE ARCHITECT EDITION v2.3)
+#  ARCH DOTFILES LOG SUBMITTER (ELITE ARCHITECT EDITION v2.4)
 #  - Zero-fork Timestamping (Bash 5+ Native)
 #  - Optimized Pacman Dependency Checking
 #  - Non-Mutating GitDelta Bare Repo Integration
 #  - Capped Systemd Journal & Ring Buffer Extraction
+#  - Comprehensive Environment Diagnostic Dump (Hyprland/UWSM aware)
 #  - Transient Artifact Isolation (Keeps ~/Documents/logs pristine)
 #  - Bulletproof TTY Color Handling & Safe I/O Streaming
 #  - Multi-Service Upload Fallback (0x0.st → litterbox → local)
@@ -18,6 +19,7 @@ shopt -s extglob
 
 # --- CONFIGURATION ---
 readonly LOG_SOURCE="${HOME:?HOME is not set}/Documents/logs"
+readonly HYPR_EDIT_DIR="$HOME/.config/hypr/edit_here"
 readonly UPLOAD_PRIMARY="https://0x0.st"
 readonly UPLOAD_SECONDARY="https://litterbox.catbox.moe/resources/internals/api.php"
 readonly GIT_DIR="$HOME/dusky"
@@ -28,6 +30,7 @@ readonly MAX_UPLOAD_BYTES=536870912  # 512 MiB
 TEMP_DIR=""
 STAGING_DIR=""
 ARCHIVE_FILE=""
+declare -g -A envmap=()
 
 # --- COLORS ---
 RED="" GREEN="" YELLOW="" BLUE="" BOLD="" RESET=""
@@ -57,6 +60,36 @@ cleanup() {
     fi
 }
 trap cleanup EXIT
+
+handle_interrupt() {
+    printf '\n%s[!] INTERRUPT RECEIVED - Salvaging archive before exit...%s\n' "$RED" "$RESET" >&2
+    if [[ -v ARCHIVE_FILE && -f "$ARCHIVE_FILE" ]]; then
+        save_local_fallback "$ARCHIVE_FILE"
+    fi
+    exit 130
+}
+trap handle_interrupt INT TERM
+
+is_valid_key() {
+    [[ "$1" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]
+}
+
+add_if_missing() {
+    local k="$1" v="$2"
+    # Keep first-seen value and ensure the key is a valid bash identifier
+    if is_valid_key "$k" && [[ -z ${envmap[$k]+_} ]]; then
+        envmap["$k"]="$v"
+    fi
+}
+
+strip_surrounding_quotes() {
+    local -n _val=$1
+    if [[ ${#_val} -ge 2 ]]; then
+        if [[ ${_val:0:1} == '"' && ${_val: -1} == '"' ]] || [[ ${_val:0:1} == "'" && ${_val: -1} == "'" ]]; then
+            _val="${_val:1:-1}"
+        fi
+    fi
+}
 
 # --- PRE-FLIGHT & SETUP ---
 initialize_environment() {
@@ -119,9 +152,21 @@ capture_gitdelta() {
     fi
 }
 
+# --- HYPRLAND CONFIG EXTRACTION ---
+stage_hypr_edit_dir() {
+    log "INFO" "Staging Hyprland config directory from $HYPR_EDIT_DIR..."
+    if [[ -d "$HYPR_EDIT_DIR" ]]; then
+        local dest="${STAGING_DIR}/hypr_edit_here"
+        mkdir -p -- "$dest"
+        cp -a -- "$HYPR_EDIT_DIR"/. "$dest/" 2>/dev/null || log "WARNING" "Some files in $HYPR_EDIT_DIR could not be copied."
+    else
+        log "INFO" "Directory $HYPR_EDIT_DIR not found. Skipping."
+    fi
+}
+
 # --- REPORT GENERATOR ---
 generate_system_report() {
-    log "INFO" "Generating comprehensive system, kernel, and environment report..."
+    log "INFO" "Generating comprehensive system and hardware report..."
 
     local report_file="${STAGING_DIR}/000_system_hardware_report.txt"
     local current_time
@@ -144,7 +189,7 @@ generate_system_report() {
             hyprctl version 2>/dev/null | head -n1 || true
         fi
 
-        printf '\n[WAYLAND ENVIRONMENT]\n'
+        printf '\n[WAYLAND ENVIRONMENT QUICK LOOK]\n'
         env | grep -E '^(WAYLAND_DISPLAY|DISPLAY|XDG_CURRENT_DESKTOP|XDG_SESSION_TYPE|QT_QPA_PLATFORM|GBM_BACKEND|LIBVA_DRIVER_NAME|__GLX_VENDOR_LIBRARY_NAME)=' || true
 
         printf '\n[JOURNALCTL - CURRENT BOOT (WARN+)]\n'
@@ -163,9 +208,74 @@ generate_system_report() {
     } > "$report_file" || die "Cannot write report to disk"
 }
 
+# --- ENVIRONMENT DUMP ENGINE ---
+generate_env_dump() {
+    log "INFO" "Dumping comprehensive environment variables..."
+
+    local timestamp out_file
+    timestamp=$(date -u +%Y%m%d_%H%M%SZ)
+    out_file="${LOG_SOURCE}/env_diagnostic_${timestamp}.log"
+    
+    # Reset map for a clean run
+    envmap=()
+
+    # ── 1) Current shell / process environment ──
+    while IFS= read -r -d '' entry; do
+        [[ -z "$entry" ]] && continue
+        add_if_missing "${entry%%=*}" "${entry#*=}"
+    done < <(printenv -0)
+
+    # ── 2) systemd user-manager environment (UWSM / Hyprland session vars) ──
+    while IFS= read -r line; do
+        [[ -z "$line" || "$line" != *=* ]] && continue
+        add_if_missing "${line%%=*}" "${line#*=}"
+    done < <(systemctl --user show-environment 2>/dev/null || true)
+
+    # ── 3) /proc/*/environ for every process owned by this user ──
+    local uid owner_uid procdir
+    uid=$(id -u)
+    for procdir in /proc/[0-9]*; do
+        [[ -r "$procdir/environ" ]] || continue
+        
+        # Only process files owned by the current user to avoid unnecessary permission denied errors
+        owner_uid=$(stat -c %u "$procdir" 2>/dev/null || true)
+        [[ -n "$owner_uid" && "$owner_uid" -eq "$uid" ]] || continue
+        
+        while IFS= read -r -d '' entry; do
+            [[ -z "$entry" || "$entry" != *=* ]] && continue
+            add_if_missing "${entry%%=*}" "${entry#*=}"
+        done 2>/dev/null < "$procdir/environ" || true
+    done
+
+    # ── 4) /etc/environment (system defaults) ──
+    if [[ -r /etc/environment ]]; then
+        while IFS= read -r line; do
+            [[ -z "$line" || "${line:0:1}" == '#' || "$line" != *=* ]] && continue
+            local key="${line%%=*}"
+            local val="${line#*=}"
+            strip_surrounding_quotes val
+            add_if_missing "$key" "$val"
+        done < /etc/environment
+    fi
+
+    # ── 5) Write consolidated, cleanly escaped diagnostic file ──
+    {
+        printf '# Diagnostic Environment Dump - %s\n' "$(date -u --iso-8601=seconds)"
+        local k
+        for k in "${!envmap[@]}"; do
+            # %q safely escapes the output, making multiline variables easy to read 
+            # and ensuring the file remains valid shell syntax.
+            printf '%s=%q\n' "$k" "${envmap[$k]}"
+        done | sort
+    } > "$out_file"
+
+    chmod 600 "$out_file"
+    log "INFO" "Environment variables dumped to: $out_file"
+}
+
 # --- PAYLOAD ENGINE ---
 prepare_payload() {
-    log "PROCESS" "Staging persistent logs from $LOG_SOURCE..."
+    log "PROCESS" "Staging persistent logs and diagnostics from $LOG_SOURCE..."
 
     shopt -s dotglob nullglob
     local -a log_files=("$LOG_SOURCE"/!(debug_logs_*.tar.gz))
@@ -199,7 +309,6 @@ upload_file() {
 
     log "UPLOAD" "Trying 0x0.st..."
     for attempt in 1 2; do
-        # Removed 2>&1 to prevent curl stderr warnings from poisoning the $url variable
         if response=$(curl -sS --fail --connect-timeout 30 --max-time 120 -F "file=@${file}" "$UPLOAD_PRIMARY"); then
             read -r url <<< "$response"
             if [[ "$url" == http* ]]; then
@@ -245,7 +354,9 @@ main() {
     initialize_environment
     check_and_install_deps
     capture_gitdelta
+    stage_hypr_edit_dir
     generate_system_report
+    generate_env_dump
     prepare_payload
 
     local file_size

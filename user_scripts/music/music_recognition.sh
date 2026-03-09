@@ -6,38 +6,38 @@
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
-# Constants & Configuration (readonly for safety)
+# Constants & Configuration
 # -----------------------------------------------------------------------------
 readonly SCRIPT_NAME="${0##*/}"
-readonly TIMEOUT_SECS=20
-readonly INTERVAL=4
+readonly TIMEOUT_SECS=30
+readonly RECORD_SECS=5
 readonly LOCK_FILE="/tmp/hypr_songrec.lock"
+readonly LOG_FILE="/tmp/hypr_songrec.log"
 
-# Map commands to their Arch Linux package names.
-declare -Ar RELIES_ON=(
+declare -Ar PACMAN_DEPS=(
     ["ffmpeg"]="ffmpeg"
     ["notify-send"]="libnotify"
     ["jq"]="jq"
     ["pactl"]="libpulse"
-    ["parec"]="libpulse"      # parec is also from libpulse (or pipewire-pulse)
+    ["parec"]="libpulse"
     ["songrec"]="songrec"
 )
 
-# These will be set by setup_environment()
 TMP_DIR=""
 RAW_FILE=""
 MP3_FILE=""
-REC_PID=""
+PAREC_PID=""
 
 # -----------------------------------------------------------------------------
 # Utility Functions
 # -----------------------------------------------------------------------------
 log_info() {
-    printf '[%s] INFO: %s\n' "$SCRIPT_NAME" "$1" >&2
+    printf '[%s] INFO: %s\n' "$SCRIPT_NAME" "$1" >> "$LOG_FILE"
 }
 
 log_error() {
-    printf '[%s] ERROR: %s\n' "$SCRIPT_NAME" "$1" >&2
+    printf '[%s] ERROR: %s\n' "$SCRIPT_NAME" "$1" >> "$LOG_FILE"
+    [[ -t 2 ]] && printf '[%s] ERROR: %s\n' "$SCRIPT_NAME" "$1" >&2
 }
 
 die() {
@@ -50,32 +50,23 @@ die() {
 # -----------------------------------------------------------------------------
 install_dependencies() {
     local -a to_install=()
-    local cmd pkg
+    local cmd
 
-    for cmd in "${!RELIES_ON[@]}"; do
+    for cmd in "${!PACMAN_DEPS[@]}"; do
         if ! command -v "$cmd" &>/dev/null; then
-            pkg="${RELIES_ON[$cmd]}"
-            # Avoid adding duplicates to the install list
-            local already_queued=0
-            for queued_pkg in "${to_install[@]+"${to_install[@]}"}"; do
-                [[ "$queued_pkg" == "$pkg" ]] && { already_queued=1; break; }
-            done
-            if (( !already_queued )); then
-                log_info "Command '$cmd' not found. Queueing package '$pkg'..."
-                to_install+=("$pkg")
-            fi
+            to_install+=("${PACMAN_DEPS[$cmd]}")
         fi
     done
 
     if (( ${#to_install[@]} > 0 )); then
+        if ! sudo -n true 2>/dev/null; then
+            die "Missing dependencies (${to_install[*]}) and sudo requires a password. Install manually: sudo pacman -S ${to_install[*]}"
+        fi
         log_info "Installing missing dependencies: ${to_install[*]}"
-        # Using an array correctly quotes each element.
         if sudo pacman -S --needed "${to_install[@]}"; then
             log_info "Dependencies installed successfully."
         else
-            log_error "Failed to install dependencies via pacman."
-            log_error "Note: 'songrec' is an AUR package. Try 'yay -S songrec' or 'paru -S songrec'."
-            return 1
+            die "Failed to install dependencies via pacman."
         fi
     fi
     return 0
@@ -85,16 +76,10 @@ install_dependencies() {
 # 1. Singleton Lock (Atomic using flock)
 # -----------------------------------------------------------------------------
 acquire_lock() {
-    # Open a file descriptor on the lock file.
-    # This is atomic and survives the lifetime of the script.
     exec 200>"$LOCK_FILE"
-
     if ! flock -n 200; then
-        # Another instance holds the lock. Exit silently.
         exit 0
     fi
-
-    # Lock acquired. Write PID for debugging purposes.
     printf '%d\n' "$$" >&200
 }
 
@@ -102,101 +87,98 @@ acquire_lock() {
 # 2. Setup & Cleanup Trap
 # -----------------------------------------------------------------------------
 setup_environment() {
-    # Use mktemp for a secure, unpredictable temporary directory.
+    log_info "Starting new recognition session"
     TMP_DIR=$(mktemp -d "/tmp/hypr_songrec.XXXXXX")
     RAW_FILE="${TMP_DIR}/recording.raw"
     MP3_FILE="${TMP_DIR}/recording.mp3"
 }
 
 cleanup() {
-    # Capture exit code immediately.
     local exit_code=$?
-
-    # Disable errexit to ensure all cleanup commands run.
     set +e
-
-    # Kill the recording process if it's running.
-    # Using ${VAR:-} syntax to handle unset variables safely with `set -u`.
-    if [[ -n "${REC_PID:-}" ]] && kill -0 "$REC_PID" 2>/dev/null; then
-        kill "$REC_PID" 2>/dev/null
-        wait "$REC_PID" 2>/dev/null
-    fi
-
-    # Remove the temporary directory.
+    [[ -n "${PAREC_PID:-}" ]] && kill "$PAREC_PID" 2>/dev/null
     [[ -d "${TMP_DIR:-}" ]] && rm -rf "$TMP_DIR"
-
-    # The flock on fd 200 is released automatically on exit.
-    # We still clean up the lock file itself.
-    rm -f "$LOCK_FILE"
-
+    log_info "Session ended with exit code $exit_code"
     exit "$exit_code"
 }
 
 # -----------------------------------------------------------------------------
-# 3. Audio Detection Functions
+# 3. Audio Functions
 # -----------------------------------------------------------------------------
 get_monitor_source() {
     local default_sink
 
-    if ! default_sink=$(pactl get-default-sink 2>/dev/null) || [[ -z "$default_sink" ]]; then
+    if ! default_sink=$(pactl get-default-sink 2>>"$LOG_FILE") || [[ -z "$default_sink" ]]; then
         die "Failed to get default audio sink from pactl."
     fi
 
     printf '%s.monitor' "$default_sink"
 }
 
-start_recording() {
+record_clip() {
     local monitor_source="$1"
 
-    parec -d "$monitor_source" --format=s16le --rate=44100 --channels=2 > "$RAW_FILE" 2>/dev/null &
-    REC_PID=$!
+    timeout "$RECORD_SECS" parec -d "$monitor_source" \
+        --format=s16le --rate=44100 --channels=2 \
+        > "$RAW_FILE" 2>>"$LOG_FILE" &
+    PAREC_PID=$!
 
-    # A short sleep to allow parec to fail fast if the source is invalid.
-    sleep 0.2
-    if ! kill -0 "$REC_PID" 2>/dev/null; then
-        die "Failed to start audio recording with parec on source '$monitor_source'."
-    fi
-}
+    for (( i=1; i<=RECORD_SECS; i++ )); do
+        printf '\r  ⏺ Recording... %d/%ds' "$i" "$RECORD_SECS"
+        sleep 1
+    done
+    printf '\n'
 
-convert_to_mp3() {
-    # Only attempt conversion if the raw file has data.
+    wait "$PAREC_PID" 2>/dev/null || true
+    PAREC_PID=""
+
     if [[ ! -s "$RAW_FILE" ]]; then
+        log_error "Raw recording is empty."
         return 1
     fi
 
-    ffmpeg -f s16le -ar 44100 -ac 2 -i "$RAW_FILE" \
-        -vn -acodec libmp3lame -q:a 2 -y -loglevel error "$MP3_FILE" 2>/dev/null
+    if ! ffmpeg -f s16le -ar 44100 -ac 2 -i "$RAW_FILE" \
+        -vn -acodec libmp3lame -q:a 2 -y -loglevel error \
+        "$MP3_FILE" 2>>"$LOG_FILE"; then
+        log_error "FFmpeg failed to convert raw audio to MP3."
+        return 1
+    fi
+
+    if [[ ! -s "$MP3_FILE" ]]; then
+        log_error "Converted MP3 file is empty."
+        return 1
+    fi
+
+    return 0
 }
 
 recognize_song() {
     local json
 
-    if ! json=$(songrec audio-file-to-recognized-song "$MP3_FILE" 2>/dev/null); then
+    if ! json=$(songrec recognize --json "$MP3_FILE" 2>>"$LOG_FILE"); then
+        log_info "songrec returned non-zero."
         return 1
     fi
 
     [[ -z "$json" ]] && return 1
 
-    # Combine validation and parsing into a single jq call.
-    # `jq -e` will return a non-zero exit code if .track is null.
-    # We output title and artist as tab-separated values.
     local parsed
-    if ! parsed=$(printf '%s' "$json" | jq -re '.track | [.title, .subtitle] | @tsv' 2>/dev/null); then
+    if ! parsed=$(printf '%s' "$json" | jq -re '.track | [.title, .subtitle] | @tsv' 2>>"$LOG_FILE"); then
         return 1
     fi
 
     local title artist
     IFS=$'\t' read -r title artist <<< "$parsed"
 
-    # If title is empty, it's not a valid match.
     [[ -z "$title" ]] && return 1
 
-    # --- Success ---
     notify-send -u normal -t 10000 \
         -h string:x-canonical-private-synchronous:songrec \
         "Song Detected" "<b>${title}</b>\n${artist}"
 
-    printf 'Found: %s by %s\n' "$title" "$artist"
+    printf '\n  🎵  %s — %s\n\n' "$title" "$artist"
+
+    log_info "Successfully identified: $title by $artist"
     return 0
 }
 
@@ -204,38 +186,44 @@ recognize_song() {
 # 4. Main Recognition Loop
 # -----------------------------------------------------------------------------
 recognition_loop() {
-    # Using the Bash 5.0+ built-in $EPOCHSECONDS instead of $(date +%s)
+    local monitor_source="$1"
     local start_time=$EPOCHSECONDS
+    local attempt=0
 
-    while true; do
-        sleep "$INTERVAL"
+    while (( EPOCHSECONDS - start_time < TIMEOUT_SECS )); do
+        (( ++attempt ))
+        log_info "Recording ${RECORD_SECS}s clip... (attempt $attempt, elapsed: $(( EPOCHSECONDS - start_time ))s)"
 
-        local elapsed=$(( EPOCHSECONDS - start_time ))
-
-        if (( elapsed >= TIMEOUT_SECS )); then
-            notify-send -u low -t 3000 \
-                -h string:x-canonical-private-synchronous:songrec \
-                "SongRec" "No match found."
-            return 1
-        fi
-
-        # Attempt to convert and recognize. Failures are expected and handled.
-        # The `if` block prevents `set -e` from triggering on these failures.
-        if convert_to_mp3 && recognize_song; then
+        if record_clip "$monitor_source" && recognize_song; then
             return 0
         fi
+
+        log_info "No match yet, retrying..."
+        printf '  No match, retrying... (attempt %d, %ds elapsed)\n' "$attempt" "$(( EPOCHSECONDS - start_time ))"
     done
+
+    notify-send -u low -t 3000 \
+        -h string:x-canonical-private-synchronous:songrec \
+        "SongRec" "No match found."
+    printf 'No match found after %ds.\n' "$(( EPOCHSECONDS - start_time ))"
+    return 1
 }
 
 # -----------------------------------------------------------------------------
 # Main Entry Point
 # -----------------------------------------------------------------------------
 main() {
-    install_dependencies || exit 1
     acquire_lock
 
+    > "$LOG_FILE"
+
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+
+    install_dependencies
     setup_environment
-    trap cleanup EXIT HUP INT TERM
 
     local monitor_source
     monitor_source=$(get_monitor_source)
@@ -243,9 +231,9 @@ main() {
     notify-send -u low -t 3000 \
         -h string:x-canonical-private-synchronous:songrec \
         "SongRec" "Listening..."
+    printf 'Listening...\n'
 
-    start_recording "$monitor_source"
-    recognition_loop
+    recognition_loop "$monitor_source"
 }
 
 main "$@"

@@ -1,168 +1,459 @@
 #!/usr/bin/env bash
-# This script installs ALL PACKAGEES, you can inspect this script manually to remove/add anything you might want.
-# --------------------------------------------------------------------------
-# Arch Linux / Hyprland / UWSM - Elite System Installer (v3.1 - Smart Fallback)
-# --------------------------------------------------------------------------
+# This script installs ALL PACKAGES. Inspect it manually to remove/add anything you want.
+# It installs packages only. It does not enable systemd services automatically.
+# ------------------------------------------------------------------------------
+# Arch Linux / Hyprland / UWSM - Elite System Installer (v3.4 - Hardened)
+# ------------------------------------------------------------------------------
 
 # --- 1. CONFIGURATION ---
 
 # Group 1: Graphics & Drivers
-pkgs_graphics=(
+declare -ar pkgs_graphics=(
   "intel-media-driver" "vpl-gpu-rt" "mesa" "vulkan-intel" "mesa-utils" "intel-gpu-tools" "libva" "libva-utils" "vulkan-icd-loader" "vulkan-tools" "sof-firmware" "linux-firmware" "acpi_call-dkms"
 )
 
 # Group 2: Hyprland Core
-pkgs_hyprland=(
-"hyprland" "uwsm" "xorg-xwayland" "xdg-desktop-portal-hyprland" "xdg-desktop-portal-gtk" "xorg-xhost" "polkit" "hyprpolkitagent" "xdg-utils" "socat" "inotify-tools" "file"
+declare -ar pkgs_hyprland=(
+  "hyprland" "uwsm" "xorg-xwayland" "xdg-desktop-portal-hyprland" "xdg-desktop-portal-gtk" "xorg-xhost" "polkit" "hyprpolkitagent" "xdg-utils" "socat" "inotify-tools" "file"
 )
 
 # Group 3: GUI, Toolkits & Fonts
-pkgs_appearance=(
-"qt5-wayland" "qt6-wayland" "gtk3" "gtk4" "nwg-look" "qt5ct" "qt6ct" "qt6-svg" "qt6-multimedia-ffmpeg" "adw-gtk-theme" "matugen" "ttf-font-awesome" "ttf-jetbrains-mono-nerd" "noto-fonts-emoji" "sassc"
+declare -ar pkgs_appearance=(
+  "qt5-wayland" "qt6-wayland" "gtk3" "gtk4" "nwg-look" "qt5ct" "qt6ct" "qt6-svg" "qt6-multimedia-ffmpeg" "adw-gtk-theme" "matugen" "ttf-font-awesome" "ttf-jetbrains-mono-nerd" "noto-fonts-emoji" "sassc"
 )
 
 # Group 4: Desktop Experience
-pkgs_desktop=(
-"waybar" "swww" "hyprlock" "hypridle" "hyprsunset" "hyprpicker" "swaync" "swayosd" "rofi" "libdbusmenu-qt5" "libdbusmenu-glib" "brightnessctl"
+declare -ar pkgs_desktop=(
+  "waybar" "swww" "hyprlock" "hypridle" "hyprsunset" "hyprpicker" "swaync" "swayosd" "rofi" "libdbusmenu-qt5" "libdbusmenu-glib" "brightnessctl"
 )
 
 # Group 5: Audio & Bluetooth
-pkgs_audio=(
-"pipewire" "wireplumber" "pipewire-pulse" "playerctl" "bluez" "bluez-utils" "blueman" "bluetui" "pavucontrol" "gst-plugin-pipewire" "libcanberra"
+declare -ar pkgs_audio=(
+  "pipewire" "wireplumber" "pipewire-pulse" "playerctl" "bluez" "bluez-utils" "blueman" "bluetui" "pavucontrol" "gst-plugin-pipewire" "libcanberra" "songrec" "sox"
 )
 
 # Group 6: Filesystem & Archives
-pkgs_filesystem=(
-"btrfs-progs" "compsize" "zram-generator" "udisks2" "udiskie" "dosfstools" "ntfs-3g" "gvfs" "gvfs-mtp" "gvfs-nfs" "gvfs-smb" "xdg-user-dirs" "usbutils" "gnome-disk-utility" "unzip" "zip" "unrar" "7zip" "cpio" "file-roller" "rsync" "thunar" "thunar-archive-plugin" "thunar-volman" "tumbler" "ffmpegthumbnailer" "webp-pixbuf-loader" "poppler-glib"
+declare -ar pkgs_filesystem=(
+  "btrfs-progs" "compsize" "zram-generator" "udisks2" "udiskie" "dosfstools" "ntfs-3g" "gvfs" "gvfs-mtp" "gvfs-nfs" "gvfs-smb" "xdg-user-dirs" "usbutils" "gnome-disk-utility" "unzip" "zip" "unrar" "7zip" "cpio" "file-roller" "rsync"
+
+  # thunar
+  # "thunar" "thunar-archive-plugin" "thunar-volman" "tumbler" "ffmpegthumbnailer" "webp-pixbuf-loader" "poppler-glib"
+
+  # nemo
+  "nemo" "nemo-fileroller" "file-roller" "gvfs" "gvfs-smb" "gvfs-mtp" "gvfs-gphoto2" "gvfs-google" "gvfs-nfs" "gvfs-afc" "gvfs-dnssd" "ffmpegthumbnailer" "webp-pixbuf-loader" "poppler-glib" "libgsf" "gnome-epub-thumbnailer" "resvg" "nemo-terminal" "nemo-python" "nemo-compare" "meld" "nemo-media-columns" "nemo-audio-tab" "nemo-image-converter" "nemo-emblems" "nemo-repairer" "nemo-share" "python-gobject" "dconf-editor" "xreader" "gst-libav" "gst-plugins-good" "nemo-fileroller" "nemo-audio-tab" "nemo-compare" "nemo-pastebin"
 )
 
 # Group 7: Network & Internet
-pkgs_network=(
-"networkmanager" "iwd" "nm-connection-editor" "inetutils" "wget" "curl" "openssh" "firewalld" "vsftpd" "reflector" "bmon" "ethtool" "httrack" "wavemon" "firefox" "network-manager-applet"
+declare -ar pkgs_network=(
+  "networkmanager" "iwd" "nm-connection-editor" "inetutils" "wget" "curl" "openssh" "firewalld" "vsftpd" "reflector" "bmon" "ethtool" "httrack" "wavemon" "firefox" "network-manager-applet"
 )
 
 # Group 8: Terminal & Shell
-pkgs_terminal=(
-"kitty" "foot" "zsh" "zsh-syntax-highlighting" "starship" "fastfetch" "bat" "eza" "fd" "yazi" "gum" "tree" "fzf" "less" "ripgrep" "expac" "zsh-autosuggestions" "iperf3" "pkgstats" "libqalculate" "moreutils"
+declare -ar pkgs_terminal=(
+  "kitty" "foot" "zsh" "zsh-syntax-highlighting" "starship" "fastfetch" "bat" "eza" "fd" "yazi" "gum" "tree" "fzf" "less" "ripgrep" "expac" "zsh-autosuggestions" "iperf3" "pkgstats" "libqalculate" "moreutils"
 )
 
 # Group 9: Development
-pkgs_dev=(
-"neovim" "git" "git-delta" "meson" "cmake" "clang" "uv" "rq" "jq" "bc" "viu" "chafa" "ueberzugpp" "ccache" "mold" "shellcheck" "fd" "ripgrep" "fzf" "shfmt" "stylua" "prettier" "tree-sitter-cli" "nano"
+declare -ar pkgs_dev=(
+  "neovim" "git" "git-delta" "meson" "cmake" "clang" "uv" "rq" "jq" "bc" "viu" "chafa" "ueberzugpp" "ccache" "mold" "shellcheck" "fd" "ripgrep" "fzf" "shfmt" "stylua" "prettier" "tree-sitter-cli" "nano"
 )
 
 # Group 10: Multimedia
-pkgs_multimedia=(
-"ffmpeg" "mpv" "mpv-mpris" "swappy" "swayimg" "resvg" "imagemagick" "libheif" "ffmpegthumbnailer" "grim" "slurp" "wl-clipboard" "wl-clip-persist" "cliphist" "tesseract-data-eng"
+declare -ar pkgs_multimedia=(
+  "ffmpeg" "mpv" "mpv-mpris" "swappy" "swayimg" "resvg" "imagemagick" "libheif" "ffmpegthumbnailer" "grim" "slurp" "wl-clipboard" "wl-clip-persist" "cliphist" "tesseract-data-eng"
 )
 
 # Group 11: Sys Admin
-pkgs_sysadmin=(
-"btop" "htop" "dgop" "nvtop" "inxi" "sysstat" "sysbench" "logrotate" "acpid" "tlp" "tlp-pd" "tlp-rdw" "thermald" "powertop" "gdu" "iotop" "iftop" "lshw" "wev" "pacman-contrib" "gnome-keyring" "libsecret" "seahorse" "yad" "dysk" "fwupd"
+declare -ar pkgs_sysadmin=(
+  "btop" "htop" "dgop" "nvtop" "inxi" "sysstat" "sysbench" "logrotate" "acpid" "tlp" "tlp-pd" "tlp-rdw" "thermald" "powertop" "gdu" "iotop" "iftop" "lshw" "wev" "pacman-contrib" "gnome-keyring" "libsecret" "seahorse" "yad" "dysk" "fwupd"
 )
 
 # Group 12: Gnome Utilities
-pkgs_gnome=(
-"snapshot" "cameractrls" "loupe" "gnome-text-editor" "gnome-calculator" "gnome-clocks"
+declare -ar pkgs_gnome=(
+  "snapshot" "cameractrls" "loupe" "gnome-text-editor" "gnome-calculator" "gnome-clocks"
 )
 
 # Group 13: Productivity
-pkgs_productivity=(
-"zathura" "zathura-pdf-mupdf" "cava"
+declare -ar pkgs_productivity=(
+  "zathura" "zathura-pdf-mupdf" "cava"
 )
 
-# --------------------------------------------------------------------------
-# --- 2. ENGINE (Optimized) ---
-# --------------------------------------------------------------------------
+declare -ar GROUP_LABELS=(
+  "Graphics & Drivers"
+  "Hyprland Core"
+  "GUI Appearance"
+  "Desktop Experience"
+  "Audio & Bluetooth"
+  "Filesystem Tools"
+  "Networking"
+  "Terminal & CLI"
+  "Development"
+  "Multimedia"
+  "System Admin"
+  "Gnome Utilities"
+  "Productivity"
+)
 
-# 1. Root Check
-if [[ $EUID -ne 0 ]]; then
-  printf "Elevating privileges...\n"
-  exec sudo "$0" "$@"
+declare -ar GROUP_ARRAYS=(
+  pkgs_graphics
+  pkgs_hyprland
+  pkgs_appearance
+  pkgs_desktop
+  pkgs_audio
+  pkgs_filesystem
+  pkgs_network
+  pkgs_terminal
+  pkgs_dev
+  pkgs_multimedia
+  pkgs_sysadmin
+  pkgs_gnome
+  pkgs_productivity
+)
+
+# --- 2. EARLY ROOT CHECK ---
+
+if (( EUID != 0 )); then
+  sudo_bin=$(command -v sudo) || {
+    printf 'sudo is required to elevate privileges.\n' >&2
+    exit 1
+  }
+
+  realpath_bin=$(command -v realpath) || {
+    printf 'realpath is required to resolve the script path.\n' >&2
+    exit 1
+  }
+
+  script_source=${BASH_SOURCE[0]-}
+  if [[ -z $script_source || ! -r $script_source ]]; then
+    printf 'Unable to resolve the script path. Run this script from a regular file.\n' >&2
+    exit 1
+  fi
+
+  script_path=$("$realpath_bin" -- "$script_source") || {
+    printf 'Unable to resolve the script path.\n' >&2
+    exit 1
+  }
+
+  printf 'Elevating privileges...\n'
+  exec "$sudo_bin" --preserve-env=TERM,NO_COLOR -- bash -- "$script_path" "$@"
 fi
 
-# 2. Safety & Aesthetics
-set -u
-set -o pipefail
+# --- 3. SAFETY ---
 
-BOLD=$(tput bold)
-GREEN=$(tput setaf 2)
-YELLOW=$(tput setaf 3)
-RED=$(tput setaf 1)
-CYAN=$(tput setaf 6)
-RESET=$(tput sgr0)
+set -Eeuo pipefail
+shopt -s inherit_errexit
 
-# 3. Core Logic
-install_group() {
-  local group_name="$1"
-  shift
-  local pkgs=("$@")
+# --- 4. UI ---
 
-  [[ ${#pkgs[@]} -eq 0 ]] && return
+BOLD=''
+GREEN=''
+YELLOW=''
+RED=''
+CYAN=''
+RESET=''
 
-  printf "\n${BOLD}${CYAN}:: Processing Group: %s${RESET}\n" "$group_name"
+if [[ -z ${NO_COLOR-} ]] && [[ -n ${TERM-} ]] && [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && tput colors >/dev/null 2>&1; then
+  BOLD=$(tput bold)
+  GREEN=$(tput setaf 2)
+  YELLOW=$(tput setaf 3)
+  RED=$(tput setaf 1)
+  CYAN=$(tput setaf 6)
+  RESET=$(tput sgr0)
+fi
 
-  # STRATEGY A: Batch Install
-  if pacman -S --needed --noconfirm "${pkgs[@]}"; then
-    printf "${GREEN} [OK] Batch installation successful.${RESET}\n"
+readonly BOLD GREEN YELLOW RED CYAN RESET
+
+HAS_TTY=0
+if [[ -t 0 && -t 1 ]]; then
+  HAS_TTY=1
+fi
+readonly HAS_TTY
+
+readonly PACMAN_DB_LOCK='/var/lib/pacman/db.lck'
+readonly PACMAN_LOCK_TIMEOUT=300
+readonly SCRIPT_LOCK_FILE='/run/lock/elite-system-installer.lock'
+
+declare -gi SCRIPT_LOCK_FD=-1
+declare -ga FAILED_GROUPS=()
+declare -ga FAILED_PACKAGES=()
+
+print_info() {
+  local msg="$*"
+  printf '\n%s:: %s%s\n' "${BOLD}${CYAN}" "$msg" "$RESET"
+}
+
+print_ok() {
+  local msg="$*"
+  printf '%s[OK] %s%s\n' "$GREEN" "$msg" "$RESET"
+}
+
+print_warn() {
+  local msg="$*"
+  printf '%s[!] %s%s\n' "$YELLOW" "$msg" "$RESET"
+}
+
+print_error() {
+  local msg="$*"
+  printf '%s[X] %s%s\n' "$RED" "$msg" "$RESET" >&2
+}
+
+die() {
+  print_error "$*"
+  exit 1
+}
+
+on_err() {
+  local rc=$?
+  local line="${1:-?}"
+  local cmd="${2:-?}"
+  print_error "Unexpected error at line ${line}: ${cmd}"
+  exit "$rc"
+}
+
+trap 'on_err "$LINENO" "$BASH_COMMAND"' ERR
+
+# --- 5. CORE HELPERS ---
+
+ensure_arch_environment() {
+  [[ -r /etc/arch-release ]] || die "This script is for Arch Linux only."
+  command -v pacman >/dev/null 2>&1 || die "pacman is required."
+  command -v pacman-key >/dev/null 2>&1 || die "pacman-key is required."
+  command -v flock >/dev/null 2>&1 || die "flock is required."
+  command -v mktemp >/dev/null 2>&1 || die "mktemp is required."
+  command -v mkfifo >/dev/null 2>&1 || die "mkfifo is required."
+  command -v tee >/dev/null 2>&1 || die "tee is required."
+}
+
+validate_group_configuration() {
+  local labels_count arrays_count array_name
+
+  labels_count=${#GROUP_LABELS[@]}
+  arrays_count=${#GROUP_ARRAYS[@]}
+
+  (( labels_count == arrays_count )) || die "GROUP_LABELS and GROUP_ARRAYS must have the same number of entries."
+
+  for array_name in "${GROUP_ARRAYS[@]}"; do
+    declare -p "$array_name" >/dev/null 2>&1 || die "Package array not found: ${array_name}"
+  done
+}
+
+acquire_script_lock() {
+  mkdir -p -- /run/lock
+  exec {SCRIPT_LOCK_FD}>"$SCRIPT_LOCK_FILE"
+  flock -n "$SCRIPT_LOCK_FD" || die "Another instance of this script is already running."
+}
+
+run_pacman() {
+  local start_time=$SECONDS
+  local warned=0
+  local rc=0
+  local tee_pid=0
+  local temp_dir=''
+  local stderr_file=''
+  local stderr_pipe=''
+
+  while :; do
+    temp_dir=$(mktemp -d) || die "Failed to create a temporary directory."
+    stderr_file="${temp_dir}/stderr.log"
+    stderr_pipe="${temp_dir}/stderr.pipe"
+
+    mkfifo -- "$stderr_pipe" || {
+      rm -rf -- "$temp_dir"
+      die "Failed to create a temporary pipe."
+    }
+
+    tee -- "$stderr_file" <"$stderr_pipe" >&2 &
+    tee_pid=$!
+
+    if command env LC_ALL=C pacman "$@" 2>"$stderr_pipe"; then
+      rc=0
+    else
+      rc=$?
+    fi
+
+    rm -f -- "$stderr_pipe"
+    wait "$tee_pid" || true
+
+    case "$rc" in
+      0)
+        rm -rf -- "$temp_dir"
+        return 0
+        ;;
+      130|143)
+        rm -rf -- "$temp_dir"
+        print_error "Pacman operation interrupted."
+        exit "$rc"
+        ;;
+    esac
+
+    if grep -Fqs 'unable to lock database' -- "$stderr_file"; then
+      rm -rf -- "$temp_dir"
+
+      if (( warned == 0 )); then
+        print_warn "Pacman database is locked. Waiting up to ${PACMAN_LOCK_TIMEOUT}s..."
+        warned=1
+      fi
+
+      if (( SECONDS - start_time >= PACMAN_LOCK_TIMEOUT )); then
+        die "Timed out waiting for pacman database lock: ${PACMAN_DB_LOCK}"
+      fi
+
+      sleep 2
+      continue
+    fi
+
+    rm -rf -- "$temp_dir"
+    return "$rc"
+  done
+}
+
+ensure_keyring() {
+  local keyring_dir='/etc/pacman.d/gnupg'
+
+  print_info "Checking Arch keyring"
+
+  if [[ -s ${keyring_dir}/trustdb.gpg ]] && { [[ -s ${keyring_dir}/pubring.kbx ]] || [[ -s ${keyring_dir}/pubring.gpg ]]; }; then
+    print_ok "Arch keyring already initialized."
     return 0
   fi
 
-  # STRATEGY B: Fallback Individual Install (Smart)
-  printf "\n${YELLOW} [!] Batch transaction failed. Retrying individually...${RESET}\n"
+  print_warn "Pacman keyring is not initialized. Initializing now..."
+  pacman-key --init
+  pacman-key --populate archlinux
+  print_ok "Arch keyring initialized."
+}
 
+refresh_keyring_package() {
+  print_info "Refreshing Arch keyring package"
+  run_pacman --sync --refresh --needed --noconfirm -- archlinux-keyring
+  print_ok "Arch keyring package is current."
+}
+
+upgrade_system() {
+  print_info "Full System Upgrade"
+  run_pacman --sync --sysupgrade --noconfirm
+  print_ok "System upgrade successful."
+}
+
+install_group() {
+  local group_name="$1"
+  local array_name="$2"
+  local -n pkgs_ref="$array_name"
+
+  local -a pkgs=()
+  local -A seen=()
+  local pkg
   local fail_count=0
 
-  for pkg in "${pkgs[@]}"; do
-    # Try 1: Auto-install (Silent)
-    # If this works, it means there was no conflict for THIS specific package.
-    if pacman -S --needed --noconfirm "$pkg" >/dev/null 2>&1; then
-      printf "  ${GREEN}[+] Installed:${RESET} %s\n" "$pkg"
-    
-    # Try 2: Interactive (Verbose)
-    # If Auto failed, it's likely a conflict (e.g., tldr vs tealdeer). 
-    # We run without --noconfirm so you can intervene.
-    else
-      printf "  ${YELLOW}[?] Intervention Needed:${RESET} %s\n" "$pkg"
-      if pacman -S --needed "$pkg"; then
-        printf "  ${GREEN}[+] Installed (Manual):${RESET} %s\n" "$pkg"
-      else
-        printf "  ${RED}[X] Not Found / Failed:${RESET} %s\n" "$pkg"
-        ((fail_count++))
-      fi
+  for pkg in "${pkgs_ref[@]}"; do
+    [[ -n $pkg ]] || continue
+
+    if [[ -n ${seen[$pkg]+_} ]]; then
+      continue
     fi
+
+    seen[$pkg]=1
+    pkgs+=("$pkg")
   done
 
-  if [[ $fail_count -gt 0 ]]; then
-    printf "${YELLOW} [!] Group completed with %d failures.${RESET}\n" "$fail_count"
+  (( ${#pkgs[@]} > 0 )) || return 0
+
+  printf '\n%s:: Processing Group: %s%s\n' "${BOLD}${CYAN}" "$group_name" "$RESET"
+
+  if run_pacman --sync --needed --noconfirm -- "${pkgs[@]}"; then
+    print_ok "Batch installation successful."
+    return 0
+  fi
+
+  print_warn "Batch transaction failed. Retrying individually..."
+
+  for pkg in "${pkgs[@]}"; do
+    if pacman -Qq -- "$pkg" >/dev/null 2>&1; then
+      printf '  %s[=] Already installed:%s %s\n' "$CYAN" "$RESET" "$pkg"
+      continue
+    fi
+
+    if (( HAS_TTY )); then
+      if run_pacman --sync --needed --noconfirm -- "$pkg" >/dev/null 2>&1; then
+        printf '  %s[+] Installed:%s %s\n' "$GREEN" "$RESET" "$pkg"
+        continue
+      fi
+
+      printf '  %s[?] Intervention needed:%s %s\n' "$YELLOW" "$RESET" "$pkg"
+      if run_pacman --sync --needed -- "$pkg"; then
+        printf '  %s[+] Installed (manual):%s %s\n' "$GREEN" "$RESET" "$pkg"
+        continue
+      fi
+    else
+      if run_pacman --sync --needed --noconfirm -- "$pkg"; then
+        printf '  %s[+] Installed:%s %s\n' "$GREEN" "$RESET" "$pkg"
+        continue
+      fi
+
+      printf '  %s[?] No TTY available for interactive retry:%s %s\n' "$YELLOW" "$RESET" "$pkg"
+    fi
+
+    printf '  %s[X] Failed:%s %s\n' "$RED" "$RESET" "$pkg" >&2
+    FAILED_PACKAGES+=("${group_name} :: ${pkg}")
+    (( ++fail_count ))
+  done
+
+  if (( fail_count > 0 )); then
+    FAILED_GROUPS+=("$group_name")
+    print_warn "Group completed with ${fail_count} failure(s)."
   else
-    printf "${GREEN} [OK] Recovery successful. All packages installed.${RESET}\n"
+    print_ok "Recovery successful. All packages installed."
   fi
 }
 
-# --- 3. EXECUTION ---
+print_summary() {
+  local group item
 
-printf "${BOLD}:: Initializing Arch Keyring...${RESET}\n"
-pacman-key --init
-pacman-key --populate archlinux
+  if (( ${#FAILED_PACKAGES[@]} == 0 )); then
+    printf '\n%s%s:: INSTALLATION COMPLETE ::%s\n' "$BOLD" "$GREEN" "$RESET"
+    printf 'Reboot is recommended to load newly installed drivers.\n'
+    printf 'This script installs packages only; it does not enable services automatically.\n'
+    return 0
+  fi
 
-printf "\n${BOLD}:: Full System Upgrade...${RESET}\n"
-pacman -Syu --noconfirm || printf "${YELLOW}[!] Upgrade skipped or failed.${RESET}\n"
+  printf '\n%s%s:: INSTALLATION FINISHED WITH FAILURES ::%s\n' "$BOLD" "$YELLOW" "$RESET"
+  printf 'Failed groups: %d\n' "${#FAILED_GROUPS[@]}"
+  printf 'Failed packages: %d\n' "${#FAILED_PACKAGES[@]}"
 
-# Execute Groups
-install_group "Graphics & Drivers" "${pkgs_graphics[@]}"
-install_group "Hyprland Core" "${pkgs_hyprland[@]}"
-install_group "GUI Appearance" "${pkgs_appearance[@]}"
-install_group "Desktop Experience" "${pkgs_desktop[@]}"
-install_group "Audio & Bluetooth" "${pkgs_audio[@]}"
-install_group "Filesystem Tools" "${pkgs_filesystem[@]}"
-install_group "Networking" "${pkgs_network[@]}"
-install_group "Terminal & CLI" "${pkgs_terminal[@]}"
-install_group "Development" "${pkgs_dev[@]}"
-install_group "Multimedia" "${pkgs_multimedia[@]}"
-install_group "System Admin" "${pkgs_sysadmin[@]}"
-install_group "Gnome Utilities" "${pkgs_gnome[@]}"
-install_group "Productivity" "${pkgs_productivity[@]}"
+  if (( ${#FAILED_GROUPS[@]} > 0 )); then
+    printf '\n%sGroups with failures:%s\n' "$BOLD" "$RESET"
+    for group in "${FAILED_GROUPS[@]}"; do
+      printf '  %s\n' "$group"
+    done
+  fi
 
-printf "\n${BOLD}${GREEN}:: INSTALLATION COMPLETE ::${RESET}\n"
-printf "Reboot is recommended to load new drivers and Hyprland env vars.\n"
+  printf '\n%sFailed packages:%s\n' "$BOLD" "$RESET"
+  for item in "${FAILED_PACKAGES[@]}"; do
+    printf '  %s\n' "$item"
+  done
+
+  return 1
+}
+
+main() {
+  local i
+
+  ensure_arch_environment
+  validate_group_configuration
+  acquire_script_lock
+  ensure_keyring
+  refresh_keyring_package
+  upgrade_system
+
+  for i in "${!GROUP_LABELS[@]}"; do
+    install_group "${GROUP_LABELS[i]}" "${GROUP_ARRAYS[i]}"
+  done
+
+  if print_summary; then
+    exit 0
+  else
+    exit 1
+  fi
+}
+
+main "$@"

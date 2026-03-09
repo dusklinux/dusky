@@ -327,7 +327,7 @@ register_items() {
     register 6 "Regenerate Last"   "ACTION_REGEN"
 
     # --- TAB 7: SETTINGS ---
-    register 7 "Scheme Type"       "type|cycle|scheme-fidelity,scheme-content,scheme-fruit-salad,scheme-rainbow,scheme-neutral,scheme-tonal-spot,scheme-expressive,scheme-monochrome"
+    register 7 "Scheme Type"       "type|cycle|scheme-fidelity,scheme-content,scheme-fruit-salad,scheme-vibrant,scheme-rainbow,scheme-neutral,scheme-tonal-spot,scheme-expressive,scheme-monochrome"
     register 7 "Mode"              "mode|cycle|dark,light"
     register 7 "Contrast"          "contrast|float|-1.0|1.0|0.1"
 }

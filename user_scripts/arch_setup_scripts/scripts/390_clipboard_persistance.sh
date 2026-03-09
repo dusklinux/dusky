@@ -152,8 +152,8 @@ update_config() {
     mkdir -p "$STATE_DIR"
 
     if [[ "$mode" == "ephemeral" ]]; then
-        # Check if already uncommented (active)
-        if grep -q "^${TARGET_LINE}" "$CONFIG_FILE"; then
+        # Check if already uncommented (active) - FIXED to allow leading spaces
+        if grep -q '^[[:space:]]*export CLIPHIST_DB_PATH=' "$CONFIG_FILE"; then
             log_info "Config is already set to Ephemeral."
             echo "false" > "$STATE_FILE"
             return 0
@@ -191,16 +191,17 @@ update_config() {
             return 0
         fi
 
-        # Verify the uncommented version exists before attempting modification
-        if ! grep -q '^export CLIPHIST_DB_PATH=' "$CONFIG_FILE"; then
+        # Verify the uncommented version exists before attempting modification - FIXED to allow leading spaces
+        if ! grep -q '^[[:space:]]*export CLIPHIST_DB_PATH=' "$CONFIG_FILE"; then
             log_err "Could not find an active CLIPHIST_DB_PATH line in config."
             return 1
         fi
 
         _TMPFILE=$(mktemp "${CONFIG_FILE}.tmp.XXXXXXXXXX")
 
+        # FIXED to allow leading spaces before export
         LC_ALL=C awk -v target="$TARGET_LINE" '
-        /^export[[:space:]]+CLIPHIST_DB_PATH=/ {
+        /^[[:space:]]*export[[:space:]]+CLIPHIST_DB_PATH=/ {
             print "# " target
             next
         }

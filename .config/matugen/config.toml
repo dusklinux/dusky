@@ -13,7 +13,10 @@ output_path = "~/.config/matugen/generated/master-dump.jsonl"
 input_path  = '~/.config/matugen/templates/gtk-colors.css'
 output_path = '~/.config/matugen/generated/gtk-3.css'
 post_hook   = '''
-bash -c '{ gsettings set org.gnome.desktop.interface icon-theme "Fluent-teal-dark"; } >/dev/null 2>&1 </dev/null & disown'
+bash -c '
+{
+  gsettings set org.gnome.desktop.interface icon-theme "Papirus"
+} >/dev/null 2>&1 </dev/null & disown'
 '''
 
 [templates.gtk4]
@@ -22,9 +25,12 @@ output_path = '~/.config/matugen/generated/gtk-4.css'
 post_hook   = '''
 bash -c '
 {
+  "$HOME/user_scripts/gtk/papirus_folder_colors.py"
   mkdir -p "$HOME/.config/gtk-3.0" "$HOME/.config/gtk-4.0"
   ln -nfs "$HOME/.config/matugen/generated/gtk-3.css" "$HOME/.config/gtk-3.0/gtk.css"
   ln -nfs "$HOME/.config/matugen/generated/gtk-4.css" "$HOME/.config/gtk-4.0/gtk.css"
+  ln -nfs "/usr/share/themes/adw-gtk3/gtk-4.0/libadwaita.css" "$HOME/.config/gtk-4.0/libadwaita.css"
+  ln -nfs "/usr/share/themes/adw-gtk3/gtk-4.0/libadwaita-tweaks.css" "$HOME/.config/gtk-4.0/libadwaita-tweaks.css"
   gsettings set org.gnome.desktop.interface gtk-theme "adw-gtk3"
 } >/dev/null 2>&1 </dev/null & disown
 '

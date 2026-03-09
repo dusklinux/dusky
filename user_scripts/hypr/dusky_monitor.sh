@@ -1,57 +1,49 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Dusky Monitor Wizard - Hyprland Edition v3.4.0 (Master Template Sync)
+# Dusky Monitor Wizard - Hyprland Edition v4.0.0 (Template Synced)
 # -----------------------------------------------------------------------------
 # A pure Bash TUI for Hyprland monitor management.
-# LOGIC ORIGIN: Ported from nwg-displays (Python) logic.
-# UI ENGINE:    Strictly derived from Dusky TUI v3.9.1 (The Gold Standard).
-# FEATURES:     Mouse, Vim Keys, VFR, Resolution List, Tabs, Desc/Name ID.
 #
-# v3.4.0 CHANGELOG (Engine Sync with Master v3.9.1):
-#   - PERF: strip_ansi now uses extglob parameter expansion (O(1) vs O(n)).
-#   - PERF: BOX_LINE pre-computed via printf -v, no subshell/seq.
-#   - FIX: Separate INT/TERM traps for correct exit codes (130/143).
-#   - FIX: read_escape_seq uses nameref output + longer timeout (0.10) for SSH.
-#   - FIX: Temp file cleanup hardened with existence check.
-#   - SAFE: Added Bash 5.0+ version guard and TTY check.
-#   - CLEAN: Added CLR_EOL/CLR_EOS constants for rendering consistency.
+# v4.0.0 CHANGELOG:
+#   - REFACTOR: Full TUI engine replacement based on dusky_tui.sh v3.9.5.
+#   - FEAT: Added Sliding Tabs logic (future-proofs UI).
+#   - FEAT: Added 'g' (top), 'G' (bottom), PageUp/Down navigation.
+#   - FIX: Atomic save now uses 'cat > target' to preserve symlinks/inodes.
+#   - FIX: Added empty-file checks before saving (Data Loss Prevention).
+#   - FIX: Strict arithmetic guards for 'set -e' safety.
+#   - VISUAL: Added ellipsis (…) for long monitor names.
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
 shopt -s extglob
 
-# =============================================================================
-# ▼ DEPENDENCY CHECK ▼
-# =============================================================================
-
-for _cmd in hyprctl jq awk stty; do
-    if ! command -v "$_cmd" &>/dev/null; then
-        printf 'FATAL: Required command "%s" not found in PATH.\n' "$_cmd" >&2
-        exit 1
-    fi
-done
-unset _cmd
+# Force C locale for consistent float handling (dot vs comma) inside internal logic
+export LC_NUMERIC=C
 
 # =============================================================================
 # ▼ CONFIGURATION ▼
 # =============================================================================
 
-declare -r APP_TITLE="DUSKY MONITOR WIZARD v3.4"
-declare -r APP_SUBTITLE="Multi Monitor Edition"
+declare -r APP_TITLE="DUSKY MONITOR WIZARD v4.0.0"
+declare -r APP_SUBTITLE="Hyprland Edition"
 declare -r TARGET_CONFIG="${HOME}/.config/hypr/edit_here/source/monitors.conf"
 declare -r BACKUP_DIR="/tmp/dusky_backups"
 declare -r DEBUG_LOG="/tmp/dusky_debug.log"
 
+# Dimensions & Layout (Synced with Template standards)
 declare -ri BOX_INNER_WIDTH=76
 declare -ri MAX_DISPLAY_ROWS=12
-declare -ri HEADER_ROWS=3
 declare -ri TAB_ROW=2
 declare -ri ITEM_START_ROW=5
+declare -ri ITEM_PADDING=32 
 
 declare -r ESC_READ_TIMEOUT=0.10
 
 readonly -a TRANSFORMS=("Normal" "90°" "180°" "270°" "Flipped" "Flipped-90°" "Flipped-180°" "Flipped-270°")
 readonly -a ANCHOR_POSITIONS=("Absolute" "Right Of" "Left Of" "Above" "Below" "Mirror")
+
+declare -ra TABS=("Monitors" "Globals")
+declare -ri TAB_COUNT=${#TABS[@]}
 
 # =============================================================================
 # ▼ ANSI CONSTANTS ▼
@@ -79,7 +71,6 @@ declare -r MOUSE_OFF=$'\033[?1000l\033[?1002l\033[?1006l'
 # ▼ PRE-COMPUTED CONSTANTS ▼
 # =============================================================================
 
-# Box line: extends 2 chars beyond Inner Width to cover padding spaces
 declare _box_line_buf
 printf -v _box_line_buf '%*s' "$(( BOX_INNER_WIDTH + 2 ))" ''
 declare -r BOX_LINE="${_box_line_buf// /─}"
@@ -91,6 +82,15 @@ unset _box_line_buf
 
 ORIG_STTY=""
 _SAVE_TMPFILE=""
+
+log_debug() {
+    printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$1" >> "$DEBUG_LOG"
+}
+
+log_err() {
+    printf '[ERROR] %s\n' "$1" >> "$DEBUG_LOG"
+    printf '%s[ERROR]%s %s\n' "$C_RED" "$C_RESET" "$1" >&2
+}
 
 cleanup() {
     printf '%s%s%s' "$MOUSE_OFF" "$CURSOR_SHOW" "$C_RESET" 2>/dev/null || :
@@ -108,15 +108,6 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 
-log_debug() {
-    printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$1" >> "$DEBUG_LOG"
-}
-
-log_err() {
-    printf '[ERROR] %s\n' "$1" >> "$DEBUG_LOG"
-    printf '%s[ERROR]%s %s\n' "$C_RED" "$C_RESET" "$1" >&2
-}
-
 # =============================================================================
 # ▼ STATE MANAGEMENT ▼
 # =============================================================================
@@ -127,7 +118,8 @@ declare -i GLB_USE_DESC=0
 declare -a MON_LIST=()
 declare -A MON_ENABLED=()
 declare -A MON_DESC=()
-declare -A MON_RES=()
+declare -A MON_CUR_RES=()   # e.g., "1920x1080"
+declare -A MON_CUR_RATE=()  # e.g., "143.88" (Exact)
 declare -A MON_SCALE=()
 declare -A MON_TRANSFORM=()
 declare -A MON_X=()
@@ -138,20 +130,27 @@ declare -A MON_MIRROR=()
 
 declare -A UI_ANCHOR_TARGET=()
 declare -A UI_ANCHOR_MODE=()
-declare -A MON_MODES_LIST=()
+declare -A MON_RAW_MODES=()
 
+# UI State
 declare -i CURRENT_TAB=0
-declare -i CURRENT_VIEW=0  # 0=MonList, 1=Edit, 2=ResPicker, 3=Globals
+declare -i CURRENT_VIEW=0  # 0=MonList/GlobalList, 1=Edit, 2=Picker
 declare -i SCROLL_OFFSET=0
 declare -i SELECTED_ROW=0
 declare -i LIST_SAVED_ROW=0
 declare CURRENT_MON=""
 
-declare -a RES_PICKER_LIST=()
-declare -i RES_PICKER_SCROLL=0
-declare -i RES_PICKER_ROW=0
+# Sliding Tabs State (From Template)
+declare -a TAB_ZONES=()
+declare -i TAB_SCROLL_START=0
+declare LEFT_ARROW_ZONE=""
+declare RIGHT_ARROW_ZONE=""
 
-# Geometry return values (global, set by get_logical_geometry)
+declare -a PICKER_LIST=()
+declare -i PICKER_SCROLL=0
+declare -i PICKER_ROW=0
+declare PICKER_TYPE="" # "RES" (Hybrid) or "RATE" (Buckets)
+
 declare -i GEO_W=0
 declare -i GEO_H=0
 
@@ -159,26 +158,54 @@ declare -i GEO_H=0
 # ▼ UTILITY FUNCTIONS ▼
 # =============================================================================
 
-# Robust ANSI stripping using extglob parameter expansion.
-# Handles CSI (ESC[...X) sequences including SGR separators.
-# Aligned with Master Template v3.9.1 strip_ansi implementation.
+# Robust ANSI stripping from Template
 strip_ansi() {
     local v="$1"
-    # Strip CSI: ESC [ (params) (intermediate) final_byte
-    # Params: 0x30-0x3F i.e. 0-9 : ; < = > ?
-    # Final:  0x40-0x7E i.e. @ A-Z [ \ ] ^ _ ` a-z { | } ~
     v="${v//$'\033'\[*([0-9;:?<=>])@([@A-Z\[\\\]^_\`a-z\{|\}~])/}"
     REPLY="$v"
 }
 
-# Float comparison via awk (unavoidable for float math in bash)
 float_lt() {
     awk -v a="$1" -v b="$2" 'BEGIN { exit !(a < b) }'
 }
 
 float_add() {
-    # $1 + $2, result in REPLY
     REPLY=$(awk -v a="$1" -v b="$2" 'BEGIN { printf "%.2f", a + b }')
+}
+
+float_round_int() {
+    awk -v a="$1" 'BEGIN { printf "%.0f", a }'
+}
+
+snap_refresh_rate() {
+    local raw_rate="$1"
+    local raw_modes="$2"
+    
+    local -a candidates
+    mapfile -t candidates < <(printf '%s' "$raw_modes" | sed 's/ /\n/g' | grep '@' | sed -E 's/.*@([0-9.]+).*/\1/' | sort -uV)
+
+    if (( ${#candidates[@]} == 0 )); then
+        printf -v REPLY "%.2f" "$raw_rate"
+        return
+    fi
+
+    local best="${candidates[0]}"
+    local min_diff=999999
+
+    for c in "${candidates[@]}"; do
+        local diff
+        diff=$(awk -v a="$raw_rate" -v b="$c" 'BEGIN { d = a - b; if (d < 0) d = -d; print d }')
+        if (( $(awk -v d="$diff" -v m="$min_diff" 'BEGIN { print (d < m) }') )); then
+            min_diff="$diff"
+            best="$c"
+        fi
+    done
+    
+    if (( $(awk -v d="$min_diff" 'BEGIN { print (d < 1.5) }') )); then
+        REPLY="$best"
+    else
+        printf -v REPLY "%.2f" "$raw_rate"
+    fi
 }
 
 # =============================================================================
@@ -188,10 +215,17 @@ float_add() {
 refresh_hardware() {
     log_debug "Refreshing hardware..."
 
+    # xrandr is optional; removed from fatal check
+    for _cmd in hyprctl jq awk stty; do
+        if ! command -v "$_cmd" &>/dev/null; then
+            printf 'FATAL: Required command "%s" not found in PATH.\n' "$_cmd" >&2
+            exit 1
+        fi
+    done
+
     local vfr_status
     vfr_status=$(hyprctl getoption misc:vfr -j 2>/dev/null | jq -r '.int' 2>/dev/null) || vfr_status="1"
     GLB_VFR=$vfr_status
-    log_debug "VFR State: $GLB_VFR"
 
     local json
     json=$(hyprctl monitors all -j 2>/dev/null) || {
@@ -200,7 +234,6 @@ refresh_hardware() {
     }
 
     MON_LIST=()
-
     local extracted
     extracted=$(printf '%s' "$json" | jq -r '
         .[] | [
@@ -214,35 +247,47 @@ refresh_hardware() {
             (.transform | tostring),
             (.x | tostring),
             (.y | tostring),
-            (.availableModes | join(" "))
+            ((.availableModes // []) | join(" ")),
+            (.vrr // false | tostring),
+            (.currentFormat // "XRGB8888")
         ] | @tsv
     ') || true
 
     if [[ -z "$extracted" ]]; then
-        log_err "No monitors detected from hyprctl."
+        log_err "No monitors detected."
         exit 1
     fi
 
-    local name desc disabled width height refresh scale transform x y avail_modes
-    while IFS=$'\t' read -r name desc disabled width height refresh scale transform x y avail_modes; do
+    local name desc disabled width height refresh scale transform x y avail_modes vrr_bool fmt
+    while IFS=$'\t' read -r name desc disabled width height refresh scale transform x y avail_modes vrr_bool fmt; do
         MON_LIST+=("$name")
         MON_DESC["$name"]="$desc"
+        MON_ENABLED["$name"]="${disabled/false/true}"
+        [[ "$disabled" == "true" ]] && MON_ENABLED["$name"]="false"
 
-        if [[ "$disabled" == "true" ]]; then
-            MON_ENABLED["$name"]="false"
-        else
-            MON_ENABLED["$name"]="true"
-        fi
+        MON_CUR_RES["$name"]="${width}x${height}"
+        MON_RAW_MODES["$name"]="$avail_modes"
 
-        MON_RES["$name"]="${width}x${height}@${refresh}"
+        snap_refresh_rate "$refresh" "$avail_modes"
+        MON_CUR_RATE["$name"]="$REPLY"
+        
         MON_SCALE["$name"]="$scale"
         MON_TRANSFORM["$name"]="$transform"
         MON_X["$name"]="$x"
         MON_Y["$name"]="$y"
-        MON_MODES_LIST["$name"]="$avail_modes"
 
-        MON_VRR["$name"]="0"
-        MON_BITDEPTH["$name"]="8"
+        if [[ "$vrr_bool" == "true" ]]; then
+            MON_VRR["$name"]="1"
+        else
+            MON_VRR["$name"]="0"
+        fi
+
+        if [[ "$fmt" == *"101010"* ]]; then
+            MON_BITDEPTH["$name"]="10"
+        else
+            MON_BITDEPTH["$name"]="8"
+        fi
+
         MON_MIRROR["$name"]=""
         UI_ANCHOR_MODE["$name"]="0"
         UI_ANCHOR_TARGET["$name"]=""
@@ -251,14 +296,12 @@ refresh_hardware() {
 
 get_logical_geometry() {
     local name=$1
-    local res_str=${MON_RES["$name"]}
+    local res_str=${MON_CUR_RES["$name"]}
     local width=${res_str%%x*}
-    local rest=${res_str#*x}
-    local height=${rest%%@*}
+    local height=${res_str#*x}
     local scale=${MON_SCALE["$name"]}
     local t=${MON_TRANSFORM["$name"]}
 
-    # Rotated transforms swap width/height
     case "$t" in
         1|3|5|7)
             local tmp=$width
@@ -267,7 +310,6 @@ get_logical_geometry() {
             ;;
     esac
 
-    # Integer division via awk (scale can be float like 1.25)
     GEO_W=$(awk -v w="$width" -v s="$scale" 'BEGIN { printf "%.0f", w / s }')
     GEO_H=$(awk -v h="$height" -v s="$scale" 'BEGIN { printf "%.0f", h / s }')
 }
@@ -319,7 +361,7 @@ save_config() {
 
     _SAVE_TMPFILE=$(mktemp "${config_dir}/monitors.conf.XXXXXX")
 
-    local -a direct_cmds=()
+    local batch_cmd=""
 
     {
         printf '# Generated by Dusky Monitor Wizard on %s\n' "$timestamp"
@@ -327,10 +369,10 @@ save_config() {
 
         if (( GLB_VFR == 1 )); then
             printf 'misc {\n    vfr = true\n}\n'
-            direct_cmds+=("keyword misc:vfr 1")
+            batch_cmd+="keyword misc:vfr 1 ; "
         else
             printf 'misc {\n    vfr = false\n}\n'
-            direct_cmds+=("keyword misc:vfr 0")
+            batch_cmd+="keyword misc:vfr 0 ; "
         fi
 
         printf '\n# Monitor Rules\n'
@@ -343,11 +385,11 @@ save_config() {
 
             if [[ "${MON_ENABLED["$name"]}" == "false" ]]; then
                 printf 'monitor = %s, disable\n' "$identifier"
-                direct_cmds+=("keyword monitor ${identifier},disable")
+                batch_cmd+="keyword monitor ${identifier},disable ; "
                 continue
             fi
 
-            local res=${MON_RES["$name"]}
+            local res="${MON_CUR_RES["$name"]}@${MON_CUR_RATE["$name"]}"
             local x=${MON_X["$name"]}
             local y=${MON_Y["$name"]}
             local scale=${MON_SCALE["$name"]}
@@ -363,50 +405,121 @@ save_config() {
             (( vrr > 0 )) && rule_args+=", vrr, ${vrr}"
 
             printf 'monitor = %s\n' "$rule_args"
-
-            # Build clean comma-separated args for hyprctl
             local clean_args="${rule_args//, /,}"
-            direct_cmds+=("keyword monitor ${clean_args}")
+            batch_cmd+="keyword monitor ${clean_args} ; "
         done
     } > "$_SAVE_TMPFILE"
 
-    # CRITICAL: Use cat > target to preserve symlinks/inodes.
-    # Do NOT use mv, as it breaks dotfile symlink chains.
-    if cat "$_SAVE_TMPFILE" > "$TARGET_CONFIG"; then
+    # CRITICAL FIX: Verify temp file integrity
+    if [[ ! -s "$_SAVE_TMPFILE" ]]; then
+        log_err "Generated config file is empty. Aborting save."
         rm -f -- "$_SAVE_TMPFILE" 2>/dev/null || :
         _SAVE_TMPFILE=""
-        printf '\n%sApplying settings...%s\n' "$C_CYAN" "$C_RESET"
+        return 1
+    fi
 
-        # Apply via hyprctl batch where possible
-        local cmd
-        for cmd in "${direct_cmds[@]}"; do
-            # Word-splitting is intentional here for hyprctl's CLI interface
-            # shellcheck disable=SC2086
-            hyprctl $cmd >/dev/null 2>&1 || true
-        done
+    # CRITICAL FIX: Use cat > target to preserve symlinks/inodes (Pattern from Template)
+    if cat "$_SAVE_TMPFILE" > "$TARGET_CONFIG"; then
+        printf '\n%sApplying settings...%s\n' "$C_CYAN" "$C_RESET"
+        if [[ -n "$batch_cmd" ]]; then
+            hyprctl --batch "$batch_cmd" >/dev/null 2>&1 || true
+        fi
         log_debug "Saved and applied."
+        rm -f -- "$_SAVE_TMPFILE" 2>/dev/null || :
+        _SAVE_TMPFILE=""
     else
-        log_err "Failed to save config file."
+        log_err "Failed to write to target config file."
         rm -f -- "$_SAVE_TMPFILE" 2>/dev/null || :
         _SAVE_TMPFILE=""
     fi
 }
 
 # =============================================================================
+# ▼ HYBRID MODE PARSING ▼
+# =============================================================================
+
+get_available_rate_buckets() {
+    local mon="$1"
+    local raw="${MON_RAW_MODES["$mon"]}"
+    printf '%s' "$raw" | sed 's/ /\n/g' | grep '@' | \
+    sed -E 's/.*@([0-9.]+).*/\1/' | \
+    awk '{ printf "%.0f\n", $1 }' | sort -uVr
+}
+
+get_resolutions_for_bucket() {
+    local mon="$1"
+    local target_bucket="$2"
+    local raw="${MON_RAW_MODES["$mon"]}"
+    printf '%s' "$raw" | sed 's/ /\n/g' | \
+    awk -F'@' -v bucket="$target_bucket" '{
+        sub(/Hz/, "", $2); 
+        if (sprintf("%.0f", $2) == bucket) print $1
+    }' | sort -uVr
+}
+
+find_exact_rate_in_bucket() {
+    local mon="$1"
+    local res="$2"
+    local bucket="$3"
+    local raw="${MON_RAW_MODES["$mon"]}"
+    local best_rate=""
+    local mode
+    for mode in $raw; do
+        if [[ "$mode" == "${res}@"* ]]; then
+            local r_str="${mode#*@}"
+            r_str="${r_str%Hz}"
+            local r_int
+            r_int=$(float_round_int "$r_str")
+            if (( r_int == bucket )); then
+                best_rate="$r_str"
+                break 
+            fi
+        fi
+    done
+    if [[ -z "$best_rate" ]]; then
+        best_rate="${MON_CUR_RATE["$mon"]}"
+    fi
+    REPLY="$best_rate"
+}
+
+get_all_modes_combined() {
+    local mon="$1"
+    local raw_hypr="${MON_RAW_MODES["$mon"]}"
+    
+    local -a modes
+    mapfile -t modes < <(printf '%s' "$raw_hypr" | sed 's/ /\n/g' | grep '@' | sed 's/@/ @ /')
+
+    if command -v xrandr &>/dev/null; then
+        local x_modes
+        x_modes=$(xrandr --query 2>/dev/null | awk -v mon="$mon" '
+            $1 == mon && $2 == "connected" { in_block = 1; next }
+            $1 ~ /^[a-zA-Z]/ && $1 != mon { in_block = 0 }
+            in_block && $1 ~ /^[0-9]+x[0-9]+$/ {
+                res = $1
+                for (i=2; i<=NF; i++) {
+                    rate = $i
+                    gsub(/[\*\+]/, "", rate)
+                    if (rate != "") {
+                        printf "%s @ %sHz\n", res, rate
+                    }
+                }
+            }
+        ')
+        if [[ -n "$x_modes" ]]; then
+            mapfile -t -O "${#modes[@]}" modes <<< "$x_modes"
+        fi
+    fi
+
+    printf '%s\n' "${modes[@]}" | sort -uVr
+}
+
+# =============================================================================
 # ▼ TUI ENGINE (DRAWING) ▼
 # =============================================================================
 
-draw_box_top() {
-    printf '%s┌%s┐%s\n' "$C_MAGENTA" "$BOX_LINE" "$C_RESET"
-}
-
-draw_box_bottom() {
-    printf '%s└%s┘%s\n' "$C_MAGENTA" "$BOX_LINE" "$C_RESET"
-}
-
-draw_separator() {
-    printf '%s├%s┤%s\n' "$C_MAGENTA" "$BOX_LINE" "$C_RESET"
-}
+draw_box_top() { printf '%s┌%s┐%s\n' "$C_MAGENTA" "$BOX_LINE" "$C_RESET"; }
+draw_box_bottom() { printf '%s└%s┘%s\n' "$C_MAGENTA" "$BOX_LINE" "$C_RESET"; }
+draw_separator() { printf '%s├%s┤%s\n' "$C_MAGENTA" "$BOX_LINE" "$C_RESET"; }
 
 draw_row() {
     local content="${1:-}"
@@ -414,9 +527,6 @@ draw_row() {
     local -i vis_len=${#REPLY}
     local -i pad_needed=$(( BOX_INNER_WIDTH - vis_len ))
     (( pad_needed < 0 )) && pad_needed=0
-
-    # Structure: │ SPACE content PADDING SPACE │
-    # Total inner chars = 1 + vis + pad + 1 = BOX_INNER_WIDTH + 2
     printf '%s│%s %s%*s %s│%s\n' "$C_MAGENTA" "$C_RESET" "$content" "$pad_needed" "" "$C_MAGENTA" "$C_RESET"
 }
 
@@ -425,16 +535,79 @@ draw_header() {
     draw_row "${C_WHITE}${C_INVERSE}  ${APP_TITLE}  ${C_RESET} ${C_GREY}${APP_SUBTITLE}${C_RESET}"
 }
 
+# New Sliding Tabs (Backported from Template)
 draw_tabs() {
-    local t0 t1
-    if (( CURRENT_TAB == 0 )); then
-        t0="${C_CYAN}${C_INVERSE} Monitors ${C_RESET}"
-        t1="${C_GREY} Globals ${C_RESET}"
-    else
-        t0="${C_GREY} Monitors ${C_RESET}"
-        t1="${C_CYAN}${C_INVERSE} Globals ${C_RESET}"
+    if (( TAB_SCROLL_START > CURRENT_TAB )); then
+        TAB_SCROLL_START=$CURRENT_TAB
     fi
-    draw_row "  ${t0}  ${t1}"
+
+    local tab_line
+    local -i max_tab_width=$(( BOX_INNER_WIDTH - 6 ))
+    
+    LEFT_ARROW_ZONE=""
+    RIGHT_ARROW_ZONE=""
+    TAB_ZONES=()
+
+    while true; do
+        tab_line="${C_MAGENTA}│ "
+        local -i current_col=3
+        local -i used_len=0
+        local -i i
+
+        if (( TAB_SCROLL_START > 0 )); then
+            tab_line+="${C_YELLOW}«${C_RESET} "
+            LEFT_ARROW_ZONE="$current_col:$((current_col+1))"
+            used_len=$(( used_len + 2 ))
+            current_col=$(( current_col + 2 ))
+        else
+            tab_line+="  "
+            used_len=$(( used_len + 2 ))
+            current_col=$(( current_col + 2 ))
+        fi
+
+        for (( i = TAB_SCROLL_START; i < TAB_COUNT; i++ )); do
+            local name="${TABS[i]}"
+            local t_len=${#name}
+            local chunk_len=$(( t_len + 4 ))
+
+            local reserve=0
+            if (( i < TAB_COUNT - 1 )); then reserve=2; fi
+
+            if (( used_len + chunk_len + reserve > max_tab_width )); then
+                if (( i <= CURRENT_TAB )); then
+                    TAB_SCROLL_START=$(( TAB_SCROLL_START + 1 ))
+                    continue 2
+                fi
+                tab_line+="${C_YELLOW}» ${C_RESET}"
+                RIGHT_ARROW_ZONE="$current_col:$((current_col+1))"
+                used_len=$(( used_len + 2 ))
+                break
+            fi
+
+            local zone_start=$current_col
+            if (( i == CURRENT_TAB )); then
+                tab_line+="${C_CYAN}${C_INVERSE} ${name} ${C_RESET}${C_MAGENTA}│ "
+            else
+                tab_line+="${C_GREY} ${name} ${C_MAGENTA}│ "
+            fi
+            
+            TAB_ZONES+=("${zone_start}:$(( zone_start + t_len + 1 ))")
+            used_len=$(( used_len + chunk_len ))
+            current_col=$(( current_col + chunk_len ))
+        done
+
+        local pad=$(( BOX_INNER_WIDTH + 1 - used_len ))
+        if (( pad > 0 )); then
+            local pad_buf
+            printf -v pad_buf '%*s' "$pad" ''
+            tab_line+="$pad_buf"
+        fi
+        
+        tab_line+="${C_MAGENTA}│${C_RESET}"
+        break
+    done
+    
+    printf '%s\n' "$tab_line"
     draw_separator
 }
 
@@ -447,7 +620,15 @@ draw_mon_list() {
     local -i i
     for (( i = start; i < end && i < count; i++ )); do
         local mon="${MON_LIST[$i]}"
-        local state info pos line_str
+        local state info pos line_str padded_mon
+
+        # Truncation logic from Template
+        local -i max_len=$(( ITEM_PADDING - 1 ))
+        if (( ${#mon} > ITEM_PADDING )); then
+            printf -v padded_mon "%-${max_len}s…" "${mon:0:max_len}"
+        else
+            printf -v padded_mon "%-${ITEM_PADDING}s" "$mon"
+        fi
 
         if [[ "${MON_ENABLED["$mon"]}" == "true" ]]; then
             state="${C_GREEN}ON ${C_RESET}"
@@ -455,19 +636,18 @@ draw_mon_list() {
             state="${C_RED}OFF${C_RESET}"
         fi
 
-        info="${MON_RES["$mon"]} @ ${MON_SCALE["$mon"]}x"
+        info="${MON_CUR_RES["$mon"]}@${MON_CUR_RATE["$mon"]}Hz ${MON_SCALE["$mon"]}x"
         pos="(${MON_X["$mon"]},${MON_Y["$mon"]})"
 
         if (( i == SELECTED_ROW )); then
-            line_str="${C_CYAN}➤ ${mon}${C_RESET} [${state}] ${info} ${C_GREY}${pos}${C_RESET}"
+            line_str="${C_CYAN}➤ ${padded_mon}${C_RESET} [${state}] ${info} ${C_GREY}${pos}${C_RESET}"
         else
-            line_str="  ${mon} [${state}] ${info} ${C_GREY}${pos}${C_RESET}"
+            line_str="  ${padded_mon} [${state}] ${info} ${C_GREY}${pos}${C_RESET}"
         fi
         draw_row "$line_str"
         (( drawn++ ))
     done
 
-    # Fill remaining rows
     local -i filler
     for (( filler = drawn; filler < MAX_DISPLAY_ROWS; filler++ )); do
         draw_row ""
@@ -488,8 +668,7 @@ draw_edit_view() {
     draw_row "${C_YELLOW}Editing: ${mon}${C_RESET}"
     draw_separator
 
-    # Fields array — index 6 is a separator placeholder
-    local -a fields=("Enabled" "Resolution" "Scale" "Rotation" "Bitdepth" "VRR" "---" "Anchor Mode" "Anchor Target" "X" "Y")
+    local -a fields=("Enabled" "Refresh Rate" "Resolution" "Scale" "Rotation" "Bitdepth" "VRR" "---" "Anchor Mode" "Anchor Target" "X" "Y")
     local -i drawn=0
     local -i i
 
@@ -511,31 +690,36 @@ draw_edit_view() {
                     val="${C_RED}False${C_RESET}"
                 fi
                 ;;
-            1) val="${MON_RES["$mon"]}" ;;
-            2) val="${MON_SCALE["$mon"]}" ;;
-            3)
+            1) 
+                local r_int
+                r_int=$(float_round_int "${MON_CUR_RATE["$mon"]}")
+                val="~${r_int} Hz (Bucket)" 
+                ;;
+            2) val="${MON_CUR_RES["$mon"]} @ ${MON_CUR_RATE["$mon"]}Hz" ;;
+            3) val="${MON_SCALE["$mon"]}" ;;
+            4)
                 local ti=${MON_TRANSFORM["$mon"]}
                 val="${TRANSFORMS[$ti]}"
                 ;;
-            4) val="${MON_BITDEPTH["$mon"]}-bit" ;;
-            5)
+            5) val="${MON_BITDEPTH["$mon"]}-bit" ;;
+            6)
                 case "${MON_VRR["$mon"]}" in 0) val="Off" ;; 1) val="On" ;; 2) val="Full" ;; esac
                 ;;
-            7)
+            8)
                 local am=${UI_ANCHOR_MODE["$mon"]}
                 val="${ANCHOR_POSITIONS[$am]}"
                 ;;
-            8)
+            9)
                 local at="${UI_ANCHOR_TARGET["$mon"]}"
                 val="${at:-None}"
                 ;;
-            9)
+            10)
                 val="${MON_X["$mon"]}"
                 if (( UI_ANCHOR_MODE["$mon"] != 0 )); then
                     val="${C_GREY}(Auto) ${val}${C_RESET}"
                 fi
                 ;;
-            10)
+            11)
                 val="${MON_Y["$mon"]}"
                 if (( UI_ANCHOR_MODE["$mon"] != 0 )); then
                     val="${C_GREY}(Auto) ${val}${C_RESET}"
@@ -551,32 +735,38 @@ draw_edit_view() {
         (( drawn++ ))
     done
 
-    # Fill remaining rows
     local -i k
     for (( k = drawn; k < MAX_DISPLAY_ROWS; k++ )); do
         draw_row ""
     done
 
     draw_separator
-    draw_row "${C_CYAN} [Esc] Back  [Enter/Click] Select  [h/l] Adjust  [s] Save${C_RESET}"
+    draw_row "${C_CYAN} [Esc] Back  [Enter] Select  [h/l] Adjust  [s] Save${C_RESET}"
 }
 
-draw_res_picker() {
-    draw_row "${C_YELLOW}Select Resolution for ${CURRENT_MON}${C_RESET}"
+draw_picker() {
+    local title=""
+    if [[ "$PICKER_TYPE" == "RATE" ]]; then
+        title="Select Refresh Rate Bucket (Auto-Match Res)"
+    else
+        title="Select Mode (Resolution @ Exact Rate)"
+    fi
+    
+    draw_row "${C_YELLOW}${title}${C_RESET}"
     draw_separator
 
-    local -i start=$RES_PICKER_SCROLL
+    local -i start=$PICKER_SCROLL
     local -i end=$(( start + MAX_DISPLAY_ROWS ))
-    local -i count=${#RES_PICKER_LIST[@]}
+    local -i count=${#PICKER_LIST[@]}
     local -i drawn=0
 
     local -i i
     for (( i = start; i < end && i < count; i++ )); do
-        local mode="${RES_PICKER_LIST[$i]}"
-        if (( i == RES_PICKER_ROW )); then
-            draw_row "${C_CYAN}➤ ${mode}${C_RESET}"
+        local item="${PICKER_LIST[$i]}"
+        if (( i == PICKER_ROW )); then
+            draw_row "${C_CYAN}➤ ${item}${C_RESET}"
         else
-            draw_row "  ${mode}"
+            draw_row "  ${item}"
         fi
         (( drawn++ ))
     done
@@ -592,7 +782,6 @@ draw_res_picker() {
 
 draw_globals() {
     local vfr_state desc_state
-
     if (( GLB_VFR == 1 )); then vfr_state="${C_GREEN}Enabled${C_RESET}"; else vfr_state="${C_RED}Disabled${C_RESET}"; fi
     if (( GLB_USE_DESC == 1 )); then desc_state="${C_GREEN}Description${C_RESET}"; else desc_state="${C_YELLOW}Port Name${C_RESET}"; fi
 
@@ -626,20 +815,9 @@ draw_ui() {
     draw_header
 
     case $CURRENT_VIEW in
-        0) # Monitor List
-            draw_tabs
-            draw_mon_list
-            ;;
-        1) # Edit
-            draw_edit_view
-            ;;
-        2) # Res Picker
-            draw_res_picker
-            ;;
-        3) # Globals
-            draw_tabs
-            draw_globals
-            ;;
+        0) draw_tabs; if (( CURRENT_TAB == 0 )); then draw_mon_list; else draw_globals; fi ;;
+        1) draw_edit_view ;;
+        2) draw_picker ;;
     esac
 
     draw_box_bottom
@@ -663,47 +841,52 @@ adjust_value() {
             fi
             ;;
         1)
-            # Open resolution picker
-            IFS=' ' read -r -a RES_PICKER_LIST <<< "${MON_MODES_LIST[$CURRENT_MON]}"
-            RES_PICKER_ROW=0
-            RES_PICKER_SCROLL=0
+            mapfile -t PICKER_LIST < <(get_available_rate_buckets "$mon")
+            PICKER_ROW=0
+            PICKER_SCROLL=0
+            PICKER_TYPE="RATE"
             CURRENT_VIEW=2
             ;;
         2)
+            mapfile -t PICKER_LIST < <(get_all_modes_combined "$mon")
+            PICKER_ROW=0
+            PICKER_SCROLL=0
+            PICKER_TYPE="RES"
+            CURRENT_VIEW=2
+            ;;
+        3)
             local current="${MON_SCALE["$mon"]}"
             local step
             step=$(awk -v d="$dir" 'BEGIN { printf "%.2f", d * 0.05 }')
             float_add "$current" "$step"
             local new_val="$REPLY"
-            if float_lt "$new_val" "0.25"; then
-                new_val="0.25"
-            fi
+            if float_lt "$new_val" "0.25"; then new_val="0.25"; fi
             MON_SCALE["$mon"]="$new_val"
             recalc_position "$mon"
             ;;
-        3)
+        4)
             local -i t=${MON_TRANSFORM["$mon"]}
             MON_TRANSFORM["$mon"]=$(( (t + dir + 8) % 8 ))
             recalc_position "$mon"
             ;;
-        4)
+        5)
             if [[ "${MON_BITDEPTH["$mon"]}" == "8" ]]; then
                 MON_BITDEPTH["$mon"]="10"
             else
                 MON_BITDEPTH["$mon"]="8"
             fi
             ;;
-        5)
+        6)
             local -i v=${MON_VRR["$mon"]}
             MON_VRR["$mon"]=$(( (v + dir + 3) % 3 ))
             ;;
-        7)
+        8)
             local -i m=${UI_ANCHOR_MODE["$mon"]}
             local -i c=${#ANCHOR_POSITIONS[@]}
             UI_ANCHOR_MODE["$mon"]=$(( (m + dir + c) % c ))
             recalc_position "$mon"
             ;;
-        8)
+        9)
             local ct="${UI_ANCHOR_TARGET["$mon"]}"
             local -a opts=()
             local m_iter
@@ -721,12 +904,12 @@ adjust_value() {
                 recalc_position "$mon"
             fi
             ;;
-        9)
+        10)
             if (( UI_ANCHOR_MODE["$mon"] == 0 )); then
                 MON_X["$mon"]=$(( MON_X["$mon"] + (dir * 10) ))
             fi
             ;;
-        10)
+        11)
             if (( UI_ANCHOR_MODE["$mon"] == 0 )); then
                 MON_Y["$mon"]=$(( MON_Y["$mon"] + (dir * 10) ))
             fi
@@ -741,67 +924,77 @@ do_save_with_prompt() {
     IFS= read -rsn1 || true
 }
 
-handle_key() {
-    local key="$1"
+# --- Router Logic ---
 
-    # --- Global shortcuts ---
-    case "$key" in
-        q|Q)
-            exit 0
-            ;;
-        s|S)
-            do_save_with_prompt
-            return
-            ;;
-        $'\t')
-            if (( CURRENT_VIEW == 0 )); then
-                CURRENT_TAB=1
-                CURRENT_VIEW=3
-                SELECTED_ROW=0
-            elif (( CURRENT_VIEW == 3 )); then
-                CURRENT_TAB=0
-                CURRENT_VIEW=0
-                SELECTED_ROW=0
-            fi
-            return
-            ;;
-    esac
-
-    # --- View-specific input ---
-    case $CURRENT_VIEW in
-        0) _handle_key_mon_list "$key" ;;
-        1) _handle_key_edit "$key" ;;
-        2) _handle_key_res_picker "$key" ;;
-        3) _handle_key_globals "$key" ;;
-    esac
+switch_tab() {
+    local -i dir=${1:-1}
+    CURRENT_TAB=$(( (CURRENT_TAB + dir + TAB_COUNT) % TAB_COUNT ))
+    SELECTED_ROW=0
+    SCROLL_OFFSET=0
 }
 
-_handle_key_mon_list() {
+set_tab() {
+    local -i idx=$1
+    if (( idx != CURRENT_TAB && idx >= 0 && idx < TAB_COUNT )); then
+        CURRENT_TAB=$idx
+        SELECTED_ROW=0
+        SCROLL_OFFSET=0
+    fi
+}
+
+handle_key_main() {
     local key="$1"
     local -i count=${#MON_LIST[@]}
+    # +1 for "Save" button
+    local -i total_items=$(( count + 1 ))
+    
+    # If Globals tab
+    if (( CURRENT_TAB == 1 )); then
+        total_items=3
+    fi
 
     case "$key" in
-        k|K) (( SELECTED_ROW > 0 )) && (( SELECTED_ROW-- )) || true ;;
-        j|J) (( SELECTED_ROW < count )) && (( SELECTED_ROW++ )) || true ;;
-        g)   SELECTED_ROW=0; SCROLL_OFFSET=0 ;;
-        G)
-            SELECTED_ROW=$count
+        k|K|'[A') (( SELECTED_ROW > 0 )) && (( SELECTED_ROW-- )) || true ;;
+        j|J|'[B') (( SELECTED_ROW < total_items - 1 )) && (( SELECTED_ROW++ )) || true ;;
+        g|'[H'|'[1~')   SELECTED_ROW=0; SCROLL_OFFSET=0 ;;
+        G|'[F'|'[4~')
+            SELECTED_ROW=$(( total_items - 1 ))
             SCROLL_OFFSET=$(( SELECTED_ROW - MAX_DISPLAY_ROWS + 1 ))
             (( SCROLL_OFFSET < 0 )) && SCROLL_OFFSET=0
             ;;
-        l|L|'')
-            if (( SELECTED_ROW == count )); then
-                do_save_with_prompt
-            elif (( SELECTED_ROW < count )); then
-                CURRENT_MON="${MON_LIST[$SELECTED_ROW]}"
-                LIST_SAVED_ROW=$SELECTED_ROW
-                CURRENT_VIEW=1
-                SELECTED_ROW=0
+        '[5~') # PageUp
+            SELECTED_ROW=$(( SELECTED_ROW - MAX_DISPLAY_ROWS ))
+            (( SELECTED_ROW < 0 )) && SELECTED_ROW=0
+            ;;
+        '[6~') # PageDown
+            SELECTED_ROW=$(( SELECTED_ROW + MAX_DISPLAY_ROWS ))
+            (( SELECTED_ROW >= total_items )) && SELECTED_ROW=$(( total_items - 1 ))
+            ;;
+        $'\t'|'[Z') switch_tab 1 ;;
+        s|S) do_save_with_prompt ;;
+        l|L|''|$'\n')
+            if (( CURRENT_TAB == 0 )); then
+                if (( SELECTED_ROW == count )); then
+                    do_save_with_prompt
+                elif (( SELECTED_ROW < count )); then
+                    CURRENT_MON="${MON_LIST[$SELECTED_ROW]}"
+                    LIST_SAVED_ROW=$SELECTED_ROW
+                    CURRENT_VIEW=1
+                    SELECTED_ROW=0
+                fi
+            else
+                # Globals Logic
+                case $SELECTED_ROW in
+                    0) GLB_VFR=$(( 1 - GLB_VFR )) ;;
+                    1) GLB_USE_DESC=$(( 1 - GLB_USE_DESC )) ;;
+                    2) do_save_with_prompt ;;
+                esac
             fi
             ;;
+        q|Q) exit 0 ;;
     esac
 
-    # Adjust scroll to keep selection visible
+    # Update scroll
     if (( SELECTED_ROW < SCROLL_OFFSET )); then
         SCROLL_OFFSET=$SELECTED_ROW
     elif (( SELECTED_ROW >= SCROLL_OFFSET + MAX_DISPLAY_ROWS )); then
@@ -809,202 +1002,214 @@ _handle_key_mon_list() {
     fi
 }
 
-_handle_key_edit() {
+handle_key_edit() {
     local key="$1"
-
     case "$key" in
-        k|K)
+        k|K|'[A')
             (( SELECTED_ROW > 0 )) && (( SELECTED_ROW-- )) || true
-            # Skip separator row
-            (( SELECTED_ROW == 6 )) && SELECTED_ROW=5
+            (( SELECTED_ROW == 7 )) && SELECTED_ROW=6
             ;;
-        j|J)
-            (( SELECTED_ROW < 10 )) && (( SELECTED_ROW++ )) || true
-            (( SELECTED_ROW == 6 )) && SELECTED_ROW=7
+        j|J|'[B')
+            (( SELECTED_ROW < 11 )) && (( SELECTED_ROW++ )) || true
+            (( SELECTED_ROW == 7 )) && SELECTED_ROW=8
             ;;
-        h|H) adjust_value -1 ;;
-        l|L) adjust_value 1 ;;
-        '')
-            if (( SELECTED_ROW == 1 )); then
-                # Open resolution picker
-                IFS=' ' read -r -a RES_PICKER_LIST <<< "${MON_MODES_LIST[$CURRENT_MON]}"
-                RES_PICKER_ROW=0
-                RES_PICKER_SCROLL=0
-                CURRENT_VIEW=2
-            else
-                adjust_value 1
-            fi
-            ;;
+        h|H|'[D') adjust_value -1 ;;
+        l|L|'[C') adjust_value 1 ;;
+        ''|$'\n') adjust_value 1 ;;
         ESC)
             CURRENT_VIEW=0
             SELECTED_ROW=$LIST_SAVED_ROW
             ;;
+        s|S) do_save_with_prompt ;;
     esac
-
-    # Bounds
-    (( SELECTED_ROW < 0 )) && SELECTED_ROW=0
-    (( SELECTED_ROW > 10 )) && SELECTED_ROW=10
 }
 
-_handle_key_res_picker() {
+handle_key_picker() {
     local key="$1"
-    local -i count=${#RES_PICKER_LIST[@]}
+    local -i count=${#PICKER_LIST[@]}
 
     case "$key" in
-        k|K)
-            (( RES_PICKER_ROW > 0 )) && (( RES_PICKER_ROW-- )) || true
-            ;;
-        j|J)
-            (( RES_PICKER_ROW < count - 1 )) && (( RES_PICKER_ROW++ )) || true
-            ;;
-        '')
-            local new_mode="${RES_PICKER_LIST[$RES_PICKER_ROW]}"
-            # Parse "WIDTHxHEIGHT@REFRESHHz" format
-            local clean="${new_mode%Hz}"
-            local w="${clean%%x*}"
-            local rest="${clean#*x}"
-            local h="${rest%%@*}"
-            local r="${rest#*@}"
-            MON_RES["$CURRENT_MON"]="${w}x${h}@${r}"
-            recalc_position "$CURRENT_MON"
+        k|K|'[A') (( PICKER_ROW > 0 )) && (( PICKER_ROW-- )) || true ;;
+        j|J|'[B') (( PICKER_ROW < count - 1 )) && (( PICKER_ROW++ )) || true ;;
+        ''|$'\n')
+            local selection="${PICKER_LIST[$PICKER_ROW]}"
+            if [[ -z "$selection" ]]; then
+                CURRENT_VIEW=1
+                return
+            fi
+
+            if [[ "$PICKER_TYPE" == "RATE" ]]; then
+                local bucket="$selection"
+                local bucket_resolutions
+                bucket_resolutions=$(get_resolutions_for_bucket "$CURRENT_MON" "$bucket")
+                local current_res="${MON_CUR_RES["$CURRENT_MON"]}"
+                local best_new_res=""
+                if echo "$bucket_resolutions" | grep -Fxq "$current_res"; then
+                     best_new_res="$current_res"
+                else
+                     best_new_res=$(echo "$bucket_resolutions" | head -n1)
+                fi
+                if [[ -n "$best_new_res" ]]; then
+                    find_exact_rate_in_bucket "$CURRENT_MON" "$best_new_res" "$bucket"
+                    MON_CUR_RES["$CURRENT_MON"]="$best_new_res"
+                    MON_CUR_RATE["$CURRENT_MON"]="$REPLY"
+                    recalc_position "$CURRENT_MON"
+                fi
+            elif [[ "$PICKER_TYPE" == "RES" ]]; then
+                local r_res="${selection%% @*}"
+                local r_rate="${selection#*@ }"
+                r_rate="${r_rate%Hz}"
+                MON_CUR_RES["$CURRENT_MON"]="$r_res"
+                MON_CUR_RATE["$CURRENT_MON"]="$r_rate"
+                recalc_position "$CURRENT_MON"
+            fi
             CURRENT_VIEW=1
             ;;
-        ESC)
-            CURRENT_VIEW=1
-            ;;
+        ESC) CURRENT_VIEW=1 ;;
     esac
 
-    # Adjust scroll
-    if (( RES_PICKER_ROW < RES_PICKER_SCROLL )); then
-        RES_PICKER_SCROLL=$RES_PICKER_ROW
-    elif (( RES_PICKER_ROW >= RES_PICKER_SCROLL + MAX_DISPLAY_ROWS )); then
-        RES_PICKER_SCROLL=$(( RES_PICKER_ROW - MAX_DISPLAY_ROWS + 1 ))
+    if (( PICKER_ROW < PICKER_SCROLL )); then
+        PICKER_SCROLL=$PICKER_ROW
+    elif (( PICKER_ROW >= PICKER_SCROLL + MAX_DISPLAY_ROWS )); then
+        PICKER_SCROLL=$(( PICKER_ROW - MAX_DISPLAY_ROWS + 1 ))
     fi
-}
-
-_handle_key_globals() {
-    local key="$1"
-
-    case "$key" in
-        k|K) (( SELECTED_ROW > 0 )) && (( SELECTED_ROW-- )) || true ;;
-        j|J) (( SELECTED_ROW < 2 )) && (( SELECTED_ROW++ )) || true ;;
-        l|L|'')
-            case $SELECTED_ROW in
-                0) GLB_VFR=$(( 1 - GLB_VFR )) ;;
-                1) GLB_USE_DESC=$(( 1 - GLB_USE_DESC )) ;;
-                2) do_save_with_prompt ;;
-            esac
-            ;;
-    esac
 }
 
 handle_mouse() {
     local seq="$1"
-
-    # Parse SGR mouse: ESC [ < Btn ; Col ; Row M/m
-    # The sequence arriving here has the leading '[' already included
-    # Format: [<btn;col;rowM  or  [<btn;col;rowm
     local inner="${seq#*<}"
     local terminator="${seq: -1}"
-
     local btn col row
     IFS=';' read -r btn col row <<< "${inner%[Mm]}"
 
-    # Validate fields are numeric (template safety pattern)
     if [[ ! "$btn" =~ ^[0-9]+$ ]]; then return 0; fi
     if [[ ! "$col" =~ ^[0-9]+$ ]]; then return 0; fi
     if [[ ! "$row" =~ ^[0-9]+$ ]]; then return 0; fi
 
-    # Scroll events are press-only (type M)
-    if [[ "$terminator" == "M" ]]; then
-        if (( btn == 64 )); then
-            handle_key "k"
-            return
-        elif (( btn == 65 )); then
-            handle_key "j"
-            return
-        fi
+    # Scroll Wheel (64=Up, 65=Down)
+    if (( btn == 64 )); then
+        if (( CURRENT_VIEW == 0 )); then handle_key_main "k"; fi
+        if (( CURRENT_VIEW == 1 )); then handle_key_edit "k"; fi
+        if (( CURRENT_VIEW == 2 )); then handle_key_picker "k"; fi
+        return
     fi
-
-    # Only handle button release for clicks (type m = release in SGR)
-    if [[ "$terminator" != "m" ]]; then
+    if (( btn == 65 )); then
+        if (( CURRENT_VIEW == 0 )); then handle_key_main "j"; fi
+        if (( CURRENT_VIEW == 1 )); then handle_key_edit "j"; fi
+        if (( CURRENT_VIEW == 2 )); then handle_key_picker "j"; fi
         return
     fi
 
-    # Tab row click
-    if (( row == TAB_ROW + 1 && (CURRENT_VIEW == 0 || CURRENT_VIEW == 3) )); then
-        if (( col < 40 )); then
-            CURRENT_TAB=0
-            CURRENT_VIEW=0
-        else
-            CURRENT_TAB=1
-            CURRENT_VIEW=3
+    if [[ "$terminator" != "m" ]]; then return; fi
+
+    # Tab Click Logic (Template Synced)
+    if (( row == TAB_ROW + 1 && CURRENT_VIEW == 0 )); then
+        if [[ -n "$LEFT_ARROW_ZONE" ]]; then
+            local start="${LEFT_ARROW_ZONE%%:*}"
+            local end="${LEFT_ARROW_ZONE##*:}"
+            if (( col >= start && col <= end )); then switch_tab -1; return 0; fi
         fi
-        SELECTED_ROW=0
+        if [[ -n "$RIGHT_ARROW_ZONE" ]]; then
+            local start="${RIGHT_ARROW_ZONE%%:*}"
+            local end="${RIGHT_ARROW_ZONE##*:}"
+            if (( col >= start && col <= end )); then switch_tab 1; return 0; fi
+        fi
+
+        local i
+        for (( i = 0; i < TAB_COUNT; i++ )); do
+            if [[ -z "${TAB_ZONES[i]:-}" ]]; then continue; fi
+            local zone="${TAB_ZONES[i]}"
+            local start="${zone%%:*}"
+            local end="${zone##*:}"
+            if (( col >= start && col <= end )); then set_tab "$(( i + TAB_SCROLL_START ))"; return 0; fi
+        done
         return
     fi
 
-    # Content area click
     if (( row >= ITEM_START_ROW )); then
         local -i target_idx=$(( row - ITEM_START_ROW ))
 
         case $CURRENT_VIEW in
             0)
+                # Bounds check
+                if (( target_idx >= MAX_DISPLAY_ROWS )); then 
+                     # Allow click on SAVE button row
+                     if (( target_idx == MAX_DISPLAY_ROWS + 1 )); then
+                         if (( CURRENT_TAB == 0 )); then SELECTED_ROW=${#MON_LIST[@]}; else SELECTED_ROW=2; fi
+                         handle_key_main ""
+                     fi
+                     return
+                fi
                 target_idx=$(( target_idx + SCROLL_OFFSET ))
-                if (( target_idx <= ${#MON_LIST[@]} )); then
+                
+                local max_sel
+                if (( CURRENT_TAB == 0 )); then max_sel=${#MON_LIST[@]}; else max_sel=3; fi
+                
+                if (( target_idx < max_sel )); then
                     SELECTED_ROW=$target_idx
-                    handle_key ""
+                    handle_key_main ""
                 fi
                 ;;
             1)
-                # Skip separator row visually at index 6
-                if (( target_idx == 6 )); then return; fi
-                if (( target_idx > 6 )); then (( target_idx++ )); fi
-                if (( target_idx <= 10 )); then
+                if (( target_idx == 7 )); then return; fi
+                if (( target_idx <= 11 )); then
                     SELECTED_ROW=$target_idx
-                    handle_key "l"
+                    handle_key_edit "l"
                 fi
                 ;;
             2)
-                target_idx=$(( target_idx + RES_PICKER_SCROLL ))
-                if (( target_idx < ${#RES_PICKER_LIST[@]} )); then
-                    RES_PICKER_ROW=$target_idx
-                    handle_key ""
-                fi
-                ;;
-            3)
-                if (( target_idx <= 2 )); then
-                    SELECTED_ROW=$target_idx
-                    handle_key ""
+                target_idx=$(( target_idx + PICKER_SCROLL ))
+                if (( target_idx < ${#PICKER_LIST[@]} )); then
+                    PICKER_ROW=$target_idx
+                    handle_key_picker ""
                 fi
                 ;;
         esac
     fi
 }
 
-# Read additional characters of an escape sequence after ESC.
-# Uses nameref output pattern from master template for consistency.
+handle_input_router() {
+    local key="$1"
+    local escape_seq=""
+
+    if [[ "$key" == $'\x1b' ]]; then
+        if read_escape_seq escape_seq; then
+            key="$escape_seq"
+            # Logic for Alt+Enter detection
+            if [[ "$key" == "" || "$key" == $'\n' ]]; then
+                key=$'\e\n'
+            fi
+        else
+            key="ESC"
+        fi
+    fi
+
+    if [[ "$key" == '['* ]]; then
+        if [[ "$key" =~ '<'*[mM]$ ]]; then
+            handle_mouse "$key"
+            return
+        fi
+    fi
+
+    case $CURRENT_VIEW in
+        0) handle_key_main "$key" ;;
+        1) handle_key_edit "$key" ;;
+        2) handle_key_picker "$key" ;;
+    esac
+}
+
 read_escape_seq() {
     local -n _esc_out=$1
     _esc_out=""
     local char
-
-    # Try to read the next char; if nothing comes, it was a bare ESC
-    if ! IFS= read -rsn1 -t "$ESC_READ_TIMEOUT" char; then
-        return 1  # bare ESC
-    fi
-
+    if ! IFS= read -rsn1 -t "$ESC_READ_TIMEOUT" char; then return 1; fi
     _esc_out+="$char"
-
     if [[ "$char" == '[' || "$char" == 'O' ]]; then
         while IFS= read -rsn1 -t "$ESC_READ_TIMEOUT" char; do
             _esc_out+="$char"
-            if [[ "$char" =~ [a-zA-Z~] ]]; then
-                break
-            fi
+            if [[ "$char" =~ [a-zA-Z~] ]]; then break; fi
         done
     fi
-
     return 0
 }
 
@@ -1028,41 +1233,17 @@ main() {
     stty -echo -icanon min 1 time 0 2>/dev/null
 
     printf '%s%s%s' "$MOUSE_ON" "$CURSOR_HIDE" "$CLR_SCREEN"
-
-    # Handle window resize (WINCH signal)
+    
+    # BACKPORTED FEATURE: Redraw on resize
     trap 'draw_ui' WINCH
-
-    # Interactive loop: disable strict error exit for safety
+    
     set +e
 
-    local key escape_seq
+    local key
     while true; do
         draw_ui
-
-        if ! IFS= read -rsn1 key; then
-            continue
-        fi
-
-        if [[ "$key" == $'\x1b' ]]; then
-            if read_escape_seq escape_seq; then
-                # We got a full escape sequence
-                case "$escape_seq" in
-                    '[A') handle_key "k" ;;
-                    '[B') handle_key "j" ;;
-                    '[C') handle_key "l" ;;
-                    '[D') handle_key "h" ;;
-                    '[Z') handle_key $'\t' ;;
-                    '['*'<'*[Mm])
-                        handle_mouse "$escape_seq"
-                        ;;
-                esac
-            else
-                # Bare ESC keypress
-                handle_key "ESC"
-            fi
-        else
-            handle_key "$key"
-        fi
+        IFS= read -rsn1 key || break
+        handle_input_router "$key"
     done
 }
 

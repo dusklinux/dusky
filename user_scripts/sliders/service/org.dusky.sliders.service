@@ -1,0 +1,6 @@
+[D-BUS Service]
+Name=org.dusky.sliders
+# This tells D-Bus: "Don't start the app yourself, ask Systemd to do it"
+SystemdService=dusky_sliders.service
+# Fail-safe executable path
+Exec=/usr/bin/false

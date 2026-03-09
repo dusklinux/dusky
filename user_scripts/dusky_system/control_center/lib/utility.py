@@ -214,12 +214,13 @@ def execute_command(cmd_string: str, title: str, run_in_terminal: bool) -> bool:
     try:
         # GLib.spawn_async bypasses Python's fork() locks and automatically 
         # attaches a child watch to reap the process immediately upon exit.
-        # SEARCH_PATH behaves like shell=True for locating binaries in $PATH.
-        success, _pid = GLib.spawn_async(
+        # We discard the return value (PID tuple) because success is indicated
+        # by the lack of a GLib.Error exception.
+        GLib.spawn_async(
             full_cmd,
             flags=GLib.SpawnFlags.SEARCH_PATH,
         )
-        return success
+        return True
     except GLib.Error as e:
         log.error(
             "Executable failed or not found: %r. Ensure 'uwsm-app' is installed. (GLib Error: %s)",

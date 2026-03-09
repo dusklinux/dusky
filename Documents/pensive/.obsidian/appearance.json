@@ -1,5 +1,6 @@
 {
   "enabledCssSnippets": [
-    "matugen-theme"
+    "matugen-theme",
+    "header_hide"
   ]
 }

@@ -1,29 +1,34 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Requires Bash 5.3.0 or higher
 # -----------------------------------------------------------------------------
 # OPTIMIZED MICROPHONE INPUT SWITCHER FOR HYPRLAND
 # Dependencies: hyprland, pulseaudio-utils (pactl), jq, swayosd-client
 # -----------------------------------------------------------------------------
-set -uo pipefail
+set -euo pipefail
 
-# Dependency check
+# 1. Elite DevOps Bash 5.3+ Check
+if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 3) )); then
+    printf -- "Error: This script leverages Bash 5.3 non-forking command substitutions. Upgrade your shell.\n" >&2
+    exit 1
+fi
+
+# 2. Dependency check
 for cmd in pactl jq hyprctl swayosd-client; do
     if ! command -v "$cmd" &>/dev/null; then
-        echo "Error: Required command '$cmd' not found." >&2
+        printf "Error: Required command '%s' not found.\n" "$cmd" >&2
         exit 1
     fi
 done
 
-# 1. Get the currently focused monitor for OSD notification
-focused_monitor=$(hyprctl monitors -j | jq -r '.[] | select(.focused == true).name // empty')
-focused_monitor="${focused_monitor:-}"
+# 3. Get the currently focused monitor for OSD notification (Bash 5.3 Non-forking)
+FOCUSED_MONITOR=${ hyprctl monitors -j | jq -r '.[] | select(.focused == true).name // empty'; }
 
-# 2. Get the current default source (microphone)
-current_source=$(pactl get-default-source 2>/dev/null || echo "")
+# 4. Get the current default source
+CURRENT_SOURCE=${ pactl get-default-source 2>/dev/null || echo ""; }
 
-# 3. THE LOGIC CORE
-#    Key difference: Filter out monitor sources (.monitor_of != null)
-source_data=$(pactl -f json list sources 2>/dev/null | jq -r --arg current "$current_source" '
-  # Filter: Exclude monitor sources AND apply availability check
+# 5. THE LOGIC CORE
+# Filter out monitor sources, check availability, sort, and extract TSV payload
+SOURCE_DATA=${ pactl -f json list sources 2>/dev/null | jq -r --arg current "$CURRENT_SOURCE" '
   [ .[]
     | select(.monitor_of == null)
     | select((.ports | length == 0) or ([.ports[]? | .availability != "not available"] | any))
@@ -31,7 +36,6 @@ source_data=$(pactl -f json list sources 2>/dev/null | jq -r --arg current "$cur
   | sort_by(.name) as $sources
   | ($sources | length) as $len
 
-  # Safety: Exit early if no sources available
   | if $len == 0 then ""
     else
       (($sources | map(.name) | index($current)) // -1) as $idx
@@ -45,52 +49,55 @@ source_data=$(pactl -f json list sources 2>/dev/null | jq -r --arg current "$cur
         ]
       | @tsv
     end
-')
+'; }
 
-# 4. Parse the output safely
-IFS=$'\t' read -r next_name next_desc next_vol next_mute <<< "$source_data"
-
-# 5. Error handling: No sources found
-if [[ -z "${next_name:-}" ]]; then
-    swayosd-client ${focused_monitor:+--monitor "$focused_monitor"} \
+# 6. Error handling: No sources found
+if [[ -z "$SOURCE_DATA" ]]; then
+    swayosd-client ${FOCUSED_MONITOR:+--monitor "$FOCUSED_MONITOR"} \
         --custom-message "No Input Devices Available" \
         --custom-icon "microphone-sensitivity-muted-symbolic"
     exit 1
 fi
 
-# 6. Ensure volume is numeric
-if ! [[ "${next_vol:-}" =~ ^[0-9]+$ ]]; then
-    next_vol=0
+# 7. Parse the output safely
+IFS=$'\t' read -r NEXT_NAME NEXT_DESC NEXT_VOL NEXT_MUTE <<< "$SOURCE_DATA"
+
+# 8. Ensure volume is numeric (fallback to 0)
+if ! [[ "$NEXT_VOL" =~ ^[0-9]+$ ]]; then
+    NEXT_VOL=0
 fi
 
-# 7. Switch the default source
-if ! pactl set-default-source "$next_name" 2>/dev/null; then
-    swayosd-client ${focused_monitor:+--monitor "$focused_monitor"} \
+# 9. Switch the default source
+if ! pactl set-default-source "$NEXT_NAME" 2>/dev/null; then
+    swayosd-client ${FOCUSED_MONITOR:+--monitor "$FOCUSED_MONITOR"} \
         --custom-message "Failed to switch input" \
         --custom-icon "dialog-error-symbolic"
     exit 1
 fi
 
-# 8. Move all currently recording applications to the new source
+# 10. Move all currently recording applications to the new source
+# Using a process substitution loop to avoid subshell variable scoping issues
 while IFS=$'\t' read -r output_id _; do
-    [[ -n "$output_id" ]] && pactl move-source-output "$output_id" "$next_name" 2>/dev/null || true
+    if [[ -n "$output_id" ]]; then
+        pactl move-source-output "$output_id" "$NEXT_NAME" 2>/dev/null || true
+    fi
 done < <(pactl list short source-outputs 2>/dev/null)
 
-# 9. Determine icon based on volume and mute status
-if [[ "${next_mute:-}" == "true" ]] || (( next_vol == 0 )); then
-    icon="microphone-sensitivity-muted-symbolic"
-elif (( next_vol <= 33 )); then
-    icon="microphone-sensitivity-low-symbolic"
-elif (( next_vol <= 66 )); then
-    icon="microphone-sensitivity-medium-symbolic"
+# 11. Determine icon based on volume and mute status
+if [[ "$NEXT_MUTE" == "true" ]] || (( NEXT_VOL == 0 )); then
+    ICON="microphone-sensitivity-muted-symbolic"
+elif (( NEXT_VOL <= 33 )); then
+    ICON="microphone-sensitivity-low-symbolic"
+elif (( NEXT_VOL <= 66 )); then
+    ICON="microphone-sensitivity-medium-symbolic"
 else
-    icon="microphone-sensitivity-high-symbolic"
+    ICON="microphone-sensitivity-high-symbolic"
 fi
 
-# 10. Display the OSD notification
+# 12. Display the OSD notification
 swayosd-client \
-    ${focused_monitor:+--monitor "$focused_monitor"} \
-    --custom-message "${next_desc:-Unknown Device}" \
-    --custom-icon "$icon"
+    ${FOCUSED_MONITOR:+--monitor "$FOCUSED_MONITOR"} \
+    --custom-message "${NEXT_DESC:-Unknown Device}" \
+    --custom-icon "$ICON"
 
 exit 0

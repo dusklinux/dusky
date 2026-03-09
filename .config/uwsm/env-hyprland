@@ -17,25 +17,6 @@ export DESKTOP_SESSION=hyprland-uwsm
 export HYPRCURSOR_SIZE=18
 
 # -----------------------------------------------------------------------------
-# 3. RENDERING ENGINE (AQUAMARINE)
-# -----------------------------------------------------------------------------
-# Hyprland v0.42+ uses Aquamarine (AQ) instead of WLROOTS.
-
-# !!! CRITICAL GPU SELECTION !!!
-# This forces Hyprland to run on a specific card.
-# Hardcoding 'card1' will CRASH single-GPU systems (which use card0).
-
-# Your script should detect the iGPU (Integrated) and dGPU (Discrete).
-# For laptops: Usually iGPU is the best choice for the compositor (window manager),
-# allowing the dGPU to sleep.
-#
-export AQ_DRM_DEVICES=/dev/dri/card1
-
-# Legacy/Backup variable (Restored from your config)
-# This is the old wlroots equivalent of AQ_DRM_DEVICES.
-# export WLR_DRM_DEVICES=/dev/dri/card1
-
-# -----------------------------------------------------------------------------
 # 4. PATH & UTILITIES
 # -----------------------------------------------------------------------------
 # Organized to prevent duplicates.

@@ -9,6 +9,10 @@
 # `return 1` for control flow (cache miss, non-image entry, etc.).
 #==============================================================================
 
+#
+#        CHANGE THIS LINE FOR CUSTOOMIZING THE UI , IT'S ON LINE 520
+#         --preview="'$SELF' --preview {}" --preview-window="right,45%,~1,wrap" \
+
 set -o nounset
 set -o pipefail
 shopt -s nullglob extglob
@@ -22,27 +26,49 @@ readonly XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 # --- UWSM / Persistence Integration ---
 # Robustly parse ~/.config/uwsm/env to find CLIPHIST_DB_PATH
 if [[ -z "${CLIPHIST_DB_PATH:-}" ]]; then
-    _uwsm_env="$HOME/.config/uwsm/env"
-    if [[ -f "$_uwsm_env" ]]; then
-        while IFS= read -r _raw_line; do
-            # Match: export CLIPHIST_DB_PATH=...
-            if [[ "$_raw_line" == "export CLIPHIST_DB_PATH="* ]]; then
-                _raw_val="${_raw_line#export CLIPHIST_DB_PATH=}"
-                # Strip surrounding quotes
-                if [[ "$_raw_val" =~ ^\"(.*)\"$ || "$_raw_val" =~ ^\'(.*)\'$ ]]; then
-                    _raw_val="${BASH_REMATCH[1]}"
+    # GUARDRAIL: Only parse the UWSM env file if the user is ACTUALLY running UWSM.
+    if [[ "${DESKTOP_SESSION:-}" == *"uwsm"* || -n "${UWSM_FINALIZE_VARNAMES:-}" ]]; then
+        _uwsm_env="$HOME/.config/uwsm/env"
+        if [[ -f "$_uwsm_env" ]]; then
+            # '|| [[ -n... ]]' prevents silent drops if the file lacks a trailing newline
+            while IFS= read -r _raw_line || [[ -n "$_raw_line" ]]; do
+                # Left-trim whitespace (utilizing extglob enabled at the top of the script)
+                _line="${_raw_line##+([[:space:]])}"
+                
+                # Skip empty lines and comments safely
+                [[ -z "$_line" || "$_line" == "#"* ]] && continue
+                
+                # Strip optional 'export ' prefix and subsequent spaces to catch bare assignments
+                _line="${_line#export }"
+                _line="${_line##+([[:space:]])}"
+                
+                # Match target variable
+                if [[ "$_line" == "CLIPHIST_DB_PATH="* ]]; then
+                    _raw_val="${_line#CLIPHIST_DB_PATH=}"
+                    
+                    # Strip surrounding quotes
+                    if [[ "$_raw_val" =~ ^\"(.*)\"$ || "$_raw_val" =~ ^\'(.*)\'$ ]]; then
+                        _raw_val="${BASH_REMATCH[1]}"
+                    fi
+                    
+                    # Expand variables securely (no eval)
+                    # Braced forms (always unambiguous)
+                    _raw_val="${_raw_val//\$\{XDG_RUNTIME_DIR\}/${XDG_RUNTIME_DIR:-}}"
+                    _raw_val="${_raw_val//\$\{HOME\}/${HOME}}"
+                    
+                    # Unbraced forms (append '/' to prevent greedy matches on longer variable names)
+                    _raw_val="${_raw_val//\$XDG_RUNTIME_DIR\//${XDG_RUNTIME_DIR:-}/}"
+                    _raw_val="${_raw_val//\$HOME\//${HOME}/}"
+                    
+                    export CLIPHIST_DB_PATH="$_raw_val"
+                    break
                 fi
-                # Expand common XDG variables securely (no eval)
-                _raw_val="${_raw_val//\$\{XDG_RUNTIME_DIR\}/${XDG_RUNTIME_DIR:-}}"
-                _raw_val="${_raw_val//\$XDG_RUNTIME_DIR/${XDG_RUNTIME_DIR:-}}"
-                _raw_val="${_raw_val//\$\{HOME\}/${HOME}}"
-                _raw_val="${_raw_val//\$HOME/${HOME}}"
-                export CLIPHIST_DB_PATH="$_raw_val"
-                break
-            fi
-        done < "$_uwsm_env"
+            done < "$_uwsm_env"
+        fi
+        unset _uwsm_env _raw_line _line _raw_val
     fi
-    unset _uwsm_env _raw_line _raw_val
+    # NOTE: The non-UWSM fallback warning was intentionally removed here to prevent log spam 
+    # for users utilizing standard Hyprland sessions.
 fi
 
 readonly PINS_DIR="$XDG_DATA_HOME/rofi-cliphist/pins"
@@ -231,7 +257,11 @@ cmd_list() {
 
         hash="${pin##*/}"
         hash="${hash%.pin}"
-        content=$(<"$pin") || continue
+
+        # Zero-fork memory protection: Read max 512 bytes natively
+        content=""
+        read -r -d '' -n 512 content < "$pin" || true
+        [[ -z "$content" ]] && continue
 
         # Inline sanitization
         preview="${content//$'\n'/ }"

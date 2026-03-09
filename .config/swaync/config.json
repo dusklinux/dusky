@@ -69,7 +69,7 @@
         },
         {
           "label": "󱫓",
-          "command": "uwsm-app -- kitty -e --class timeout.sh $HOME/user_scripts/hypridle/timeout.sh"
+          "command": "uwsm-app -- kitty -e --class dusky_hypridle.sh $HOME/user_scripts/hypridle/dusky_hypridle.sh"
         }
       ]
     }

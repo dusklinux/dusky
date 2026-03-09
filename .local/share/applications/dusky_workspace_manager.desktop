@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Workspace Manager TUI
+GenericName=Workspace Rules Configurator
+Comment=Real-time Hyprland workspace layout and rules configurator
+Exec=uwsm-app -- kitty --class dusky_workspace_manager.sh -e /home/dusk/user_scripts/hypr/dusky_workspace_manager.sh
+Terminal=false
+Categories=Settings;DesktopSettings;System;Utility;
+Keywords=dusky;hyprland;workspace;layout;rules;config;settings;scrolling;monocle;master;
+Icon=preferences-desktop-display
+StartupNotify=true
+StartupWMClass=dusky_workspace_manager.sh

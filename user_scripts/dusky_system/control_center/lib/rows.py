@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import math
 import shlex
 import subprocess
 import threading
@@ -504,6 +505,7 @@ class AsyncPollingMixin:
     ) -> None:
         """
         Begin a periodic polling loop bound to a specific state *slot*.
+        Safely replaces any existing timer on the same slot.
         """
         if immediate:
             self._poll_command(slot, command, on_output, timeout)
@@ -511,6 +513,8 @@ class AsyncPollingMixin:
         with self._state.lock:
             if self._state.is_destroyed:
                 return
+            if slot.source_id > 0:
+                GLib.source_remove(slot.source_id)
             slot.source_id = GLib.timeout_add_seconds(
                 interval, self._poll_tick, slot, command, on_output, timeout,
             )
@@ -531,7 +535,6 @@ class AsyncPollingMixin:
                 return GLib.SOURCE_REMOVE
             if slot.is_running:
                 return GLib.SOURCE_CONTINUE
-            slot.is_running = True
 
         self._poll_command(slot, command, on_output, timeout)
         return GLib.SOURCE_CONTINUE
@@ -548,6 +551,7 @@ class AsyncPollingMixin:
             if self._state.is_destroyed:
                 slot.is_running = False
                 return
+            slot.is_running = True
             if slot.cancellable is not None:
                 with suppress(Exception):
                     slot.cancellable.cancel()
@@ -555,21 +559,29 @@ class AsyncPollingMixin:
 
         def on_result(output: str | None) -> None:
             with self._state.lock:
-                slot.is_running = False
                 if slot.cancellable is cancellable:
                     slot.cancellable = None
+                    slot.is_running = False
                 if self._state.is_destroyed:
                     return
             if output is not None:
                 on_output(output)
 
-        cancellable = _run_shell_async(command, timeout, on_result)
+        try:
+            cancellable = _run_shell_async(command, timeout, on_result)
+        except Exception as e:
+            log.error("Failed to execute async shell command: %s", e)
+            with self._state.lock:
+                slot.is_running = False
+            return
 
         with self._state.lock:
             if not self._state.is_destroyed and cancellable:
                 slot.cancellable = cancellable
-            elif cancellable:
-                cancellable.cancel()
+            else:
+                if cancellable:
+                    cancellable.cancel()
+                slot.is_running = False
 
 
 # =============================================================================
@@ -593,7 +605,8 @@ class DynamicIconMixin(AsyncPollingMixin):
             )
 
     def _apply_icon_update(self, new_icon: str) -> None:
-        if self.icon_widget.get_icon_name() != new_icon:
+        new_icon = new_icon.strip()
+        if new_icon and self.icon_widget.get_icon_name() != new_icon:
             self.icon_widget.set_from_icon_name(new_icon)
 
 
@@ -633,23 +646,36 @@ class StateMonitorMixin(AsyncPollingMixin):
                 monitor = gfile.monitor_file(Gio.FileMonitorFlags.NONE, None)
                 monitor.connect("changed", self._on_file_changed)
                 
+                # Note: Gio.FileMonitor is stored in the cancellable field for cleanup parity.
+                # Both FileMonitor and Cancellable expose .cancel(), enabling shared teardown logic.
                 with self._state.lock:
                     self._state.monitor.cancellable = monitor
             except Exception as e:
                 log.error(f"File monitor setup failed for {key}: {e}")
 
     def _handle_state_output(self, output: str) -> None:
-        new_state = output.lower() in TRUE_VALUES
+        new_state = output.strip().lower() in TRUE_VALUES
         self._apply_state_update(new_state)
 
-    def _on_file_changed(self, monitor: Gio.FileMonitor, file: Gio.File, other_file: Gio.File | None, event_type: Gio.FileMonitorEvent) -> None:
+    def _on_file_changed(
+        self,
+        monitor: Gio.FileMonitor,
+        file: Gio.File,
+        other_file: Gio.File | None,
+        event_type: Gio.FileMonitorEvent
+    ) -> None:
+        with self._state.lock:
+            if self._state.is_destroyed:
+                return
+
         if isinstance(self, Gtk.Widget) and not self.get_mapped():
             return
+
         if event_type in (Gio.FileMonitorEvent.CHANGES_DONE_HINT, Gio.FileMonitorEvent.CREATED):
             key = str(self.properties.get("key", "")).strip()
             val = utility.load_setting(key, default=False)
             if isinstance(val, bool):
-                GLib.idle_add(self._apply_state_update, val)
+                self._apply_state_update(val)
 
     def _apply_state_update(self, new_state: bool) -> bool:
         raise NotImplementedError
@@ -676,15 +702,18 @@ class SliderMonitorMixin(AsyncPollingMixin):
 
     def _handle_value_output(self, output: str) -> None:
         try:
-            new_value = float(output)
-            self._apply_value_update(new_value)
-        except ValueError:
-            pass
+            new_value = float(output.strip())
+        except (ValueError, OverflowError):
+            log.debug("Non-numeric or overflow value_command output: %r", output.strip())
+            return
+
+        if not math.isfinite(new_value):
+            return
+
+        self._apply_value_update(new_value)
 
     def _apply_value_update(self, new_value: float) -> bool:
         raise NotImplementedError
-
-
 # =============================================================================
 # BASE ROW CLASS
 # =============================================================================
@@ -1292,7 +1321,9 @@ class SelectionRow(DynamicIconMixin, Adw.ComboRow):
             res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_SHORT)
             if res.returncode == 0:
                 value = res.stdout.strip()
-                if value: GLib.idle_add(self._update_selection_ui, value)
+                value_lower = value.lower()
+                mapped_val = self.options_map.get(value_lower, value)
+                if mapped_val: GLib.idle_add(self._update_selection_ui, mapped_val)
         except Exception: pass
 
     def _update_selection_ui(self, value: str) -> bool:
@@ -1530,11 +1561,30 @@ class GridCardBase(Gtk.Button):
         self.on_action: ActionConfig = on_action or {}
         self.context: RowContext = context or {}
         self.toast_overlay: Adw.ToastOverlay | None = self.context.get("toast_overlay")
+        
         self.icon_widget: Gtk.Image | None = None
+        self.title_label: Gtk.Label | None = None
 
-        match str(properties.get("style", "default")).lower():
-            case "destructive": self.add_css_class("destructive-card")
-            case "suggested": self.add_css_class("suggested-card")
+        self.base_style = str(properties.get("style", "default")).lower()
+        self._current_card_style = ""
+        self._apply_base_style(self.base_style)
+
+    def _apply_base_style(self, style: str) -> None:
+        """Dynamically add/remove CSS classes based on the current style state."""
+        if style == self._current_card_style:
+            return
+            
+        if self._current_card_style == "destructive":
+            self.remove_css_class("destructive-card")
+        elif self._current_card_style == "suggested":
+            self.remove_css_class("suggested-card")
+            
+        if style == "destructive":
+            self.add_css_class("destructive-card")
+        elif style == "suggested":
+            self.add_css_class("suggested-card")
+            
+        self._current_card_style = style
 
     def do_unroot(self) -> None:
         self._perform_cleanup()
@@ -1554,13 +1604,13 @@ class GridCardBase(Gtk.Button):
         img.add_css_class("hero-icon")
         self.icon_widget = img
 
-        lbl = Gtk.Label(label=title, css_classes=["hero-title"])
-        lbl.set_wrap(True)
-        lbl.set_justify(Gtk.Justification.CENTER)
-        lbl.set_max_width_chars(LABEL_MAX_WIDTH_CHARS)
+        self.title_label = Gtk.Label(label=title, css_classes=["hero-title"])
+        self.title_label.set_wrap(True)
+        self.title_label.set_justify(Gtk.Justification.CENTER)
+        self.title_label.set_max_width_chars(LABEL_MAX_WIDTH_CHARS)
 
         box.append(img)
-        box.append(lbl)
+        box.append(self.title_label)
         return box
 
 
@@ -1580,12 +1630,12 @@ class GridCard(DynamicIconMixin, GridCardBase):
             _resolve_static_icon_name(icon_conf),
             str(properties.get("title", "Unnamed")),
         )
-        self.set_child(box)
-        self.connect("clicked", self._on_clicked)
 
+        # Build overlay hierarchy before attaching to prevent visual flashes
         self.badge_label: Gtk.Label | None = None
-        if badge_path := properties.get("badge_file"):
-            self.set_child(None)
+        badge_path = properties.get("badge_file")
+        
+        if badge_path:
             overlay = Gtk.Overlay()
             overlay.set_child(box)
             
@@ -1599,12 +1649,74 @@ class GridCard(DynamicIconMixin, GridCardBase):
             overlay.add_overlay(self.badge_label)
             self.set_child(overlay)
             self._start_badge_monitor(str(badge_path))
+        else:
+            self.set_child(box)
+
+        self.connect("clicked", self._on_clicked)
 
         if _is_dynamic_icon(icon_conf) and isinstance(icon_conf, dict):
             self._start_icon_update_loop(icon_conf)
 
+        # Dynamic Text and Style Polling
+        self.text_file: str | None = properties.get("button_text_file")
+        self.text_map: dict[str, str] = properties.get("button_text_map") or {}
+        self.style_map: dict[str, str] = properties.get("style_map") or {}
+        self.base_title = str(properties.get("title", "Unnamed"))
+        
+        if self.text_file:
+            self._start_dynamic_style_poll()
+
+    def _start_dynamic_style_poll(self) -> None:
+        # Fetch immediately to bypass the initial get_mapped() delay
+        _submit_task_safe(self._fetch_dynamic_state_async, self._state)
+        
+        with self._state.lock:
+            if not self._state.is_destroyed:
+                self._state.value.source_id = GLib.timeout_add_seconds(
+                    MONITOR_INTERVAL_SECONDS, self._dynamic_state_tick
+                )
+
+    def _dynamic_state_tick(self) -> bool:
+        with self._state.lock:
+            if self._state.is_destroyed:
+                return GLib.SOURCE_REMOVE
+                
+        if not self.get_mapped():
+            return GLib.SOURCE_CONTINUE
+            
+        _submit_task_safe(self._fetch_dynamic_state_async, self._state)
+        return GLib.SOURCE_CONTINUE
+
+    def _fetch_dynamic_state_async(self) -> None:
+        """Runs in the background thread pool."""
+        val: str | None = None
+        try:
+            if self.text_file:
+                path = _expand_path(self.text_file)
+                if path.exists():
+                    val = path.read_text(encoding="utf-8").strip()
+        except Exception as e: 
+            log.debug(f"Failed to read dynamic state file {self.text_file}: {e}")
+            
+        GLib.idle_add(self._apply_dynamic_state_ui, val)
+
+    def _apply_dynamic_state_ui(self, val: str | None) -> bool:
+        """Runs on the GTK main thread."""
+        with self._state.lock:
+            if self._state.is_destroyed:
+                return GLib.SOURCE_REMOVE
+                
+        if val is not None:
+            new_label = self.text_map.get(val, self.text_map.get("default", self.base_title))
+            if self.title_label and self.title_label.get_label() != new_label: 
+                self.title_label.set_label(new_label)
+                
+            new_style = self.style_map.get(val, self.style_map.get("default", self.base_style))
+            self._apply_base_style(new_style)
+            
+        return GLib.SOURCE_REMOVE
+
     def _start_badge_monitor(self, path_str: str) -> None:
-        # Use 'misc' slot for badge monitoring
         self._check_badge_tick(path_str)
         with self._state.lock:
             if self._state.is_destroyed: return
@@ -1651,8 +1763,6 @@ class GridCard(DynamicIconMixin, GridCardBase):
             case "redirect":
                 if pid := self.on_action.get("page"):
                     _perform_redirect(str(pid), self.context.get("config") or {}, self.context.get("sidebar"))
-
-
 class GridToggleCard(DynamicIconMixin, StateMonitorMixin, GridCardBase):
     __gtype_name__ = "DuskyGridToggleCard"
 

@@ -6,7 +6,7 @@
 }
 {
     "label": "logout",
-    "action": "uwsm stop",
+    "action": "if uwsm check is-active; then uwsm stop; else hyprshutdown || hyprctl dispatch exit; fi",
     "text": "Logout",
     "keybind": "e"
 }

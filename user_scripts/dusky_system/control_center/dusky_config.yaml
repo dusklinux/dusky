@@ -60,12 +60,18 @@ pages:
         type: exec
         command: $HOME/user_scripts/dusky_system/reload_cc/cc_restart.sh
         terminal: false
-    - type: button
+    - type: grid_card
       properties:
         title: Dusky
         icon: system-software-update-symbolic
-        style: suggested
         badge_file: ~/.config/dusky/settings/dusky_update_behind_commit
+        button_text_file: ~/.config/dusky/settings/dusky_update_behind_commit
+        button_text_map:
+          "0": "Updated"
+          "default": "Available"
+        style_map:
+          "0": "default"
+          "default": "suggested"
       on_press:
         type: exec
         command: kitty --class update_dusky.sh --title "System Updater" --hold sh -c "$HOME/user_scripts/update_dusky/update_dusky.sh"
@@ -91,11 +97,16 @@ pages:
         title: Active Profile
         description: Select performance mode
         icon: power-profile-balanced-symbolic
-        key: power_profile_state
+        value_command: "tlpctl get"
+        interval: 2
         options:
         - Balanced
         - Performance
         - Power Saver
+        options_map:
+          "balanced": "Balanced"
+          "performance": "Performance"
+          "power-saver": "Power Saver"
       on_change:
         Balanced:
           type: exec
@@ -106,7 +117,6 @@ pages:
         Power Saver:
           type: exec
           command: tlpctl power-saver && notify-send 'Power Profile' 'Switched to Power Saver'
-
   - type: section
     properties:
       title: Quick Controls
@@ -223,6 +233,81 @@ pages:
         terminal: false
   - type: section
     properties:
+      title: Dusky Updates
+      icon: ''
+      description: ''
+    items:
+    - type: navigation
+      properties:
+        title: System Updates & Logs
+        description: Update system and manage backups
+        icon: system-software-update-symbolic
+      layout:
+        - type: section
+          properties:
+            title: System Updates
+          items:
+          - type: button
+            properties:
+              title: Dusky Updater
+              description: Update Dusky specific configuration files
+              icon: system-software-update-symbolic
+              badge_file: ~/.config/dusky/settings/dusky_update_behind_commit
+              button_text_file: ~/.config/dusky/settings/dusky_update_behind_commit
+              button_text_map:
+                "0": "Updated"
+                "default": "Available"
+              style_map:
+                "0": "normal"
+                "default": "suggested"
+            on_press:
+              type: exec
+              command: kitty --class update_dusky.sh --title "System Updater" --hold sh -c "$HOME/user_scripts/update_dusky/update_dusky.sh"
+              terminal: false
+          - type: button
+            properties:
+              title: Arch Updater
+              description: Pacman and AUR packages update
+              icon: system-software-update-symbolic
+              button_text: "Update"
+            on_press:
+              type: exec
+              command: kitty --class arch_update --title "Arch Linux Updater" --hold sh -c "paru -Syu"
+              terminal: false
+
+        - type: section
+          properties:
+            title: Backups & Logs
+          items:
+          - type: button
+            properties:
+              title: View Backups
+              description: Browse ~/Documents/dusky_backups/
+              icon: folder-documents-symbolic
+              buttons:
+                - icon: utilities-terminal-symbolic
+                  button_text: "Yazi"
+                  on_press:
+                    type: exec
+                    command: kitty --class yazi --title "Backup Viewer" --hold sh -c "yazi $HOME/Documents/dusky_backups/"
+                - icon: system-file-manager-symbolic
+                  button_text: "nemo"
+                  style: suggested
+                  on_press:
+                    type: exec
+                    command: nemo "$HOME/Documents/dusky_backups/"
+          - type: button
+            properties:
+              title: Send Logs
+              description: Generate system logs and copy link to clipboard
+              icon: edit-copy-symbolic
+              button_text: "Send"
+            on_press:
+              type: exec
+              command: kitty --class send_logs.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/send_logs.sh"
+              terminal: false
+  - type: section
+    properties:
       title: Session Management
       icon: system-users-symbolic
       description: Manage user session and login behavior
@@ -299,81 +384,6 @@ pages:
               command: kitty --class 310_reconnect_and_push_new_changes_to_github.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/310_reconnect_and_push_new_changes_to_github.sh"
               terminal: false
 
-  - type: section
-    properties:
-      title: Dusky Updates
-      icon: ''
-      description: ''
-    items:
-    - type: navigation
-      properties:
-        title: System Updates & Logs
-        description: Update system and manage backups
-        icon: system-software-update-symbolic
-      layout:
-        - type: section
-          properties:
-            title: System Updates
-          items:
-          - type: button
-            properties:
-              title: Dusky Updater
-              description: Update Dusky specific configuration files
-              icon: system-software-update-symbolic
-              badge_file: ~/.config/dusky/settings/dusky_update_behind_commit
-              button_text_file: ~/.config/dusky/settings/dusky_update_behind_commit
-              button_text_map:
-                "0": "Updated"
-                "default": "Available"
-              style_map:
-                "0": "normal"
-                "default": "suggested"
-            on_press:
-              type: exec
-              command: kitty --class update_dusky.sh --title "System Updater" --hold sh -c "$HOME/user_scripts/update_dusky/update_dusky.sh"
-              terminal: false
-          - type: button
-            properties:
-              title: Arch Updater
-              description: Pacman and AUR packages update
-              icon: system-software-update-symbolic
-              button_text: "Update"
-            on_press:
-              type: exec
-              command: kitty --class arch_update --title "Arch Linux Updater" --hold sh -c "paru -Syu"
-              terminal: false
-
-        - type: section
-          properties:
-            title: Backups & Logs
-          items:
-          - type: button
-            properties:
-              title: View Backups
-              description: Browse ~/Documents/dusky_backups/
-              icon: folder-documents-symbolic
-              buttons:
-                - icon: utilities-terminal-symbolic
-                  button_text: "Yazi"
-                  on_press:
-                    type: exec
-                    command: kitty --class yazi --title "Backup Viewer" --hold sh -c "yazi $HOME/Documents/dusky_backups/"
-                - icon: system-file-manager-symbolic
-                  button_text: "Thunar"
-                  style: suggested
-                  on_press:
-                    type: exec
-                    command: thunar "$HOME/Documents/dusky_backups/"
-          - type: button
-            properties:
-              title: Send Logs
-              description: Generate system logs and copy link to clipboard
-              icon: edit-copy-symbolic
-              button_text: "Send"
-            on_press:
-              type: exec
-              command: kitty --class send_logs.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/send_logs.sh"
-              terminal: false
 
 - id: disk_and_files
   title: Disk & Files
@@ -444,19 +454,22 @@ pages:
     - type: selection
       properties:
         title: File Manager Switch
-        description: 'Choose Default: Thunar (GUI) vs Yazi (TUI)'
+        description: 'Choose Default: Nemo (GUI) vs Yazi (TUI)'
         icon: system-file-manager-symbolic
         key: filemanager_switch
         options:
           - Yazi
-          - Thunar
+          - Nemo
+        options_map:
+          "false": "Nemo"
+          "true": "Yazi"
       on_change:
         Yazi:
           type: exec
-          command: kitty --class 235_file_manager_switch.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/235_file_manager_switch.sh --yazi"
-        Thunar:
+          command: "$HOME/user_scripts/arch_setup_scripts/scripts/235_file_manager_switch.sh --yazi"
+        Nemo:
           type: exec
-          command: kitty --class 235_file_manager_switch.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/235_file_manager_switch.sh --thunar"
+          command: "$HOME/user_scripts/arch_setup_scripts/scripts/235_file_manager_switch.sh --nemo"
   - type: section
     properties:
       title: File Transfer (FTP)
@@ -631,11 +644,16 @@ pages:
         title: Active Profile
         description: Select performance mode
         icon: power-profile-balanced-symbolic
-        key: power_profile_state
+        value_command: "tlpctl get"
+        interval: 2
         options:
         - Balanced
         - Performance
         - Power Saver
+        options_map:
+          "balanced": "Balanced"
+          "performance": "Performance"
+          "power-saver": "Power Saver"
       on_change:
         Balanced:
           type: exec
@@ -795,11 +813,11 @@ pages:
       on_toggle:
         enabled:
           type: exec
-          command: $HOME/user_scripts/audio/mono_audio_pipewire.sh
+          command: $HOME/user_scripts/audio/mono_audio_pipewire.py
           terminal: false
         disabled:
           type: exec
-          command: $HOME/user_scripts/audio/mono_audio_pipewire.sh
+          command: $HOME/user_scripts/audio/mono_audio_pipewire.py
           terminal: false
     - type: grid_card
       properties:
@@ -1054,6 +1072,24 @@ pages:
       icon: ''
       description: ''
     items:
+    - type: button
+      properties:
+        title: GSettings & GTK
+        description: Manage GNOME/GTK settings via TUI or GUI
+        icon: preferences-desktop-peripherals-symbolic
+        buttons:
+          - icon: text-x-script-symbolic
+            button_text: "Dconf"
+            on_press:
+              type: exec
+              command: dconf-editor
+          - icon: utilities-terminal-symbolic
+            button_text: "TUI"
+            style: suggested
+            on_press:
+              type: exec
+              command: kitty --class dusky_gsettings.sh --hold sh -c "$HOME/user_scripts/gtk/dusky_gsettings.sh"
+              terminal: false
     - type: selection
       properties:
         title: Clipboard Persistence
@@ -1106,7 +1142,7 @@ pages:
       properties:
         title: ZRam Configuration
         description: Manage compressed memory swap
-        icon: am-memory-symbolic
+        icon: memory-symbolic
       layout:
         - type: section
           properties:
@@ -1239,6 +1275,63 @@ pages:
   layout:
   - type: section
     properties:
+      title: System Defaults
+      icon: preferences-desktop-peripherals-symbolic
+      description: Manage your global application preferences
+    items:
+    - type: navigation
+      properties:
+        title: Default Applications
+        description: Browser, File Manager, Editor, and Terminal
+        icon: applications-system-symbolic
+      layout:
+        - type: section
+          properties:
+            title: Global Defaults
+            description: Select your preferred default software
+          items:
+            - type: button
+              properties:
+                title: File Manager
+                description: Switch system-wide file manager
+                icon: system-file-manager-symbolic
+                button_text: "Switch"
+              on_press:
+                type: exec
+                command: kitty --class 235_file_manager_switch.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/235_file_manager_switch.sh"
+                terminal: false
+            - type: button
+              properties:
+                title: Web Browser
+                description: Set default internet browser
+                icon: web-browser-symbolic
+                button_text: "Switch"
+              on_press:
+                type: exec
+                command: kitty --class 236_browser_switcher.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/236_browser_switcher.sh"
+                terminal: false
+            - type: button
+              properties:
+                title: Text Editor
+                description: Set default code/text editor
+                icon: text-editor-symbolic
+                button_text: "Switch"
+              on_press:
+                type: exec
+                command: kitty --class 237_text_editer_switcher.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/237_text_editer_switcher.sh"
+                terminal: false
+            - type: button
+              properties:
+                title: Terminal Emulator
+                description: Set default system terminal
+                icon: utilities-terminal-symbolic
+                button_text: "Switch"
+              on_press:
+                type: exec
+                command: kitty --class 238_terminal_switcher.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/238_terminal_switcher.sh"
+                terminal: false
+  - type: section
+    properties:
       title: Core Configuration
       icon: ''
       description: Main system settings
@@ -1312,13 +1405,27 @@ pages:
 
     - type: navigation
       properties:
-        title: Environment Variables
+        title: Auto setup GPU Environment Variables
         description: UWSM and Hyprland environment settings
         icon: text-x-script-symbolic
       layout:
         - type: section
           properties:
             title: Environment Variables
+          items:
+            - type: button
+              properties:
+                title: Auto Configure GPU
+                description: Detect and set GPU vars (UWSM)
+                icon: preferences-desktop-display-symbolic
+                style: suggested
+                button_text: "Run"
+              on_press:
+                type: exec
+                command: kitty --class 000_configure_uwsm_gpu.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/035_configure_uwsm_gpu.sh"
+        - type: section
+          properties:
+            title: Environment Variable files
           items:
             - type: button
               properties:
@@ -1347,26 +1454,6 @@ pages:
               on_press:
                 type: exec
                 command: gnome-text-editor "$HOME/.config/uwsm/env-hyprland"
-            - type: button
-              properties:
-                title: Auto Configure GPU
-                description: Detect and set GPU vars (UWSM)
-                icon: preferences-desktop-display-symbolic
-                style: suggested
-                button_text: "Run"
-              on_press:
-                type: exec
-                command: kitty --class 000_configure_uwsm_gpu.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/035_configure_uwsm_gpu.sh"
-            - type: button
-              properties:
-                title: Disable GPU Vars
-                description: Comment out all GPU variables
-                icon: edit-delete-symbolic
-                style: destructive
-                button_text: "Run"
-              on_press:
-                type: exec
-                command: kitty --class 000_uwsm_env_comment.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/030_uwsm_env_comment_everything.sh"
 
     - type: navigation
       properties:
@@ -1440,6 +1527,23 @@ pages:
                     on_press:
                       type: exec
                       command: kitty --class dusky_appearances.sh --hold sh -c "$HOME/user_scripts/hypr/dusky_appearances.sh"
+            - type: button
+              properties:
+                title: Workspace Rules
+                description: Configure Workspace Rules
+                icon: applications-graphics-symbolic
+                buttons:
+                  - icon: text-x-script-symbolic
+                    button_text: "File"
+                    on_press:
+                      type: exec
+                      command: gnome-text-editor "$HOME/.config/hypr/edit_here/source/workspace_rules.conf"
+                  - icon: applications-graphics-symbolic
+                    button_text: "TUI"
+                    style: suggested
+                    on_press:
+                      type: exec
+                      command: kitty --class dusky_workspace_manager.sh --hold sh -c "$HOME/user_scripts/hypr/dusky_workspace_manager.sh"
             - type: button
               properties:
                 title: Hypridle
@@ -1840,7 +1944,7 @@ pages:
         title: Dusky TTS (Kokoro)
         description: Supports Nvidia, AMD, CPU
         icon: audio-speakers-symbolic
-        button_text: "Setup"
+        button_text: "Install"
       on_press:
         type: exec
         command: kitty --class kokoro_installer.sh --hold sh -c "$HOME/user_scripts/tts_stt/dusky_kokoro/kokoro_installer.sh"
@@ -1853,23 +1957,13 @@ pages:
     items:
     - type: button
       properties:
-        title: Faster Whisper (CPU)
-        description: Standard dictation
+        title: Dusky STT (Parakeet)
+        description: Supports Nvidia, AMD, CPU
         icon: microphone-sensitivity-high-symbolic
-        button_text: "Record"
+        button_text: "Install"
       on_press:
         type: exec
-        command: kitty --class 345_faster_whisper_cpu.sh --hold sh -c "$HOME/user_scripts/tts_stt/dusky_kokoro/345_faster_whisper_cpu.sh"
-        terminal: false
-    - type: button
-      properties:
-        title: Parakeet (GPU)
-        description: High performance dictation
-        icon: microphone-sensitivity-high-symbolic
-        button_text: "Record"
-      on_press:
-        type: exec
-        command: kitty --class 425_parakeet_gpu_setup.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/425_parakeet_gpu_setup.sh"
+        command: kitty --class parakeet_installer.sh --hold sh -c "$HOME/user_scripts/tts_stt/dusky_parakeet/parakeet_installer.sh"
         terminal: false
 
 - id: setup_features
@@ -1950,26 +2044,128 @@ pages:
         type: exec
         command: kitty --class 150_wallpapers_download.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/150_wallpapers_download.sh"
         terminal: false
-    - type: navigation
-      properties:
-        title: Dusky Plugins
-        description: Manage Dusky extensions
-        icon: application-x-addon-symbolic
-      layout:
-        - type: section
-          properties:
-            title: Plugins
-          items:
-            - type: button
-              properties:
-                title: HyprExpo
-                description: Workspace overview plugin
-                icon: view-grid-symbolic
-                button_text: "Install"
-              on_press:
-                type: exec
-                command: kitty --class 355_hyprexpo_plugin.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/355_hyprexpo_plugin.sh"
-                terminal: false
+
+###    - type: navigation
+###      properties:
+###        title: Dusky Plugins
+###        description: Manage Dusky extensions
+###        icon: application-x-addon-symbolic
+###      layout:
+###        - type: section
+###          properties:
+###            title: Layouts & Workspaces
+###          items:
+###            - type: button
+###              properties:
+###                title: Hyprexpo
+###                description: Provides a workspace overview, inspired by macOS Mission Control or GNOME Activities.
+###                icon: view-grid-symbolic
+###                button_text: "Install"
+###              on_press:
+###                type: exec
+###                command: kitty --class 356_dusky_plugin_manager.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/356_dusky_plugin_manager.sh --expo"
+###                terminal: false
+###            - type: button
+###              properties:
+###                title: Hyprspace
+###                description: An alternative spatial overview providing a zoomed-out, interactive view of all workspaces.
+###                icon: view-app-grid-symbolic
+###                button_text: "Install"
+###              on_press:
+###                type: exec
+###                command: kitty --class 356_dusky_plugin_manager.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/356_dusky_plugin_manager.sh --space"
+###                terminal: false
+###            - type: button
+###              properties:
+###                title: Hyprscrolling
+###                description: A layout plugin that allows moving focus and windows like a continuous scrolling column.
+###                icon: media-playlist-shuffle-symbolic
+###                button_text: "Install"
+###              on_press:
+###                type: exec
+###                command: kitty --class 356_dusky_plugin_manager.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/356_dusky_plugin_manager.sh --scrolling"
+###                terminal: false
+###            - type: button
+###              properties:
+###                title: hy3 (i3 Tiling)
+###                description: Replaces the default layout with an i3/Sway-like manual tiling engine using container nodes.
+###                icon: view-split-left-right-symbolic
+###                button_text: "Install"
+###              on_press:
+###                type: exec
+###                command: kitty --class 356_dusky_plugin_manager.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/356_dusky_plugin_manager.sh --hy3"
+###                terminal: false
+###
+###        - type: section
+###          properties:
+###            title: Visuals & Enhancements
+###          items:
+###            - type: button
+###              properties:
+###                title: Hypr-Dynamic-Cursors
+###                description: Adds dynamic physics and behaviors to your cursor, including directional tilt and shake to locate.
+###                icon: input-mouse-symbolic
+###                button_text: "Install"
+###              on_press:
+###                type: exec
+###                command: kitty --class 356_dusky_plugin_manager.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/356_dusky_plugin_manager.sh --cursors"
+###                terminal: false
+###            - type: button
+###              properties:
+###                title: Hyprbars
+###                description: Adds customizable title bars to individual windows, complete with window management buttons.
+###                icon: window-new-symbolic
+###                button_text: "Install"
+###              on_press:
+###                type: exec
+###                command: kitty --class 356_dusky_plugin_manager.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/356_dusky_plugin_manager.sh --bars"
+###                terminal: false
+###            - type: button
+###              properties:
+###                title: Hyprglass
+###                description: Enhanced translucent window styling and blur aesthetics for the Wayland compositor.
+###                icon: palette-symbolic
+###                button_text: "Install"
+###              on_press:
+###                type: exec
+###                command: kitty --class 356_dusky_plugin_manager.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/356_dusky_plugin_manager.sh --glass"
+###                terminal: false
+###            - type: button
+###              properties:
+###                title: Hypr-DarkWindow
+###                description: Allows applying specific visual shaders (like invert or tint) to individual active windows.
+###                icon: display-brightness-symbolic
+###                button_text: "Install"
+###              on_press:
+###                type: exec
+###                command: kitty --class 356_dusky_plugin_manager.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/356_dusky_plugin_manager.sh --darkwindow"
+###                terminal: false
+###
+###        - type: section
+###          properties:
+###            title: Input & Gestures
+###          items:
+###            - type: button
+###              properties:
+###                title: Hypr-Hot-Edge
+###                description: Enables responsive screen edge triggers to rapidly toggle special workspaces or panels.
+###                icon: object-select-symbolic
+###                button_text: "Install"
+###              on_press:
+###                type: exec
+###                command: kitty --class 356_dusky_plugin_manager.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/356_dusky_plugin_manager.sh --hotedge"
+###                terminal: false
+###            - type: button
+###              properties:
+###                title: Hyprgrass
+###                description: Advanced multi-touch gesture support for Wayland touchscreens, enabling swipe and edge mechanics.
+###                icon: input-touchpad-symbolic
+###                button_text: "Install"
+###              on_press:
+###                type: exec
+###                command: kitty --class 356_dusky_plugin_manager.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/356_dusky_plugin_manager.sh --grass"
+###                terminal: false
+
     - type: navigation
       properties:
         title: Wayclick Setup
@@ -2336,21 +2532,21 @@ pages:
     - type: label
       properties:
         title: Kernel Version
-        icon: mintupdate-type-kernel-symbolic
+        icon: computer-symbolic
       value:
         type: system
         key: kernel_version
     - type: label
       properties:
         title: Processor
-        icon: am-cpu-symbolic
+        icon: cpu-symbolic
       value:
         type: system
         key: cpu_model
     - type: label
       properties:
         title: Memory
-        icon: am-memory-symbolic
+        icon: memory-symbolic
       value:
         type: system
         key: memory_total

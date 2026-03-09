@@ -1,0 +1,6 @@
+[D-BUS Service]
+Name=com.github.dusky.controlcenter
+# Delegates startup to Systemd (Critically important for environment variables)
+SystemdService=dusky.service
+# Point to false so DBus doesn't try to spawn it directly; forces Systemd path
+Exec=/usr/bin/false

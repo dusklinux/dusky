@@ -60,10 +60,6 @@ export QT_QUICK_CONTROLS_STYLE=Fusion
 # Fixes blank screens/rendering issues in tiling WMs (Java AWT).
 export _JAVA_AWT_WM_NONREPARENTING=1
 
-# --- Electron Configuration ---
-# Modern Electron apps (VSCode, Discord, Obsidian) generally auto-negotiate.
-# If apps flicker, forcing "wayland" here in a hardware-specific block might be needed.
-export ELECTRON_OZONE_PLATFORM_HINT=auto
 
 # -----------------------------------------------------------------------------
 # 3. APPS & DEFAULT PREFERENCES
@@ -78,7 +74,6 @@ export VISUAL=nvim
 # -----------------------------------------------------------------------------
 # 4. APP SPECIFIC FLAGS
 # -----------------------------------------------------------------------------
-export MOZ_ENABLE_WAYLAND=1
 export SDL_VIDEODRIVER=wayland
 export CLUTTER_BACKEND=wayland
 
@@ -87,47 +82,6 @@ export CLUTTER_BACKEND=wayland
 # Uncommented: Persistent clipboard.
 export CLIPHIST_DB_PATH="${XDG_RUNTIME_DIR}/cliphist.db"
 
-# -----------------------------------------------------------------------------
-# 5. HARDWARE ACCELERATION & DRIVERS (The "Scripting Zone")
-# -----------------------------------------------------------------------------
-# NOTE: Your script should uncomment ONE of the sections below based on detection.
-# if for some reason your hardware is not auto detected, or you use two gpus,
-# you can comment/uncomment the following blocks manually.
-
-# ### HARDWARE: INTEL ###
-# # Force Intel media driver for VA-API (Video Decode/Encode)
-export LIBVA_DRIVER_NAME=iHD
-
-# ### HARDWARE: AMD ###
-# # AMD uses the Mesa radeonsi driver
-# # export LIBVA_DRIVER_NAME=radeonsi
-
-# ### HARDWARE: NVIDIA ###
-# # -------------------------------------------------
-# # Critical NVIDIA Drivers
-# # export LIBVA_DRIVER_NAME=nvidia
-# # export __GLX_VENDOR_LIBRARY_NAME=nvidia
-#
-# # Firefox/Mozilla Hardware Acceleration Fixes
-# # export MOZ_DISABLE_RDD_SANDBOX=1
-# # export NVD_BACKEND=direct
-#
-# # GBM Backend (Often auto-detected, but explicit setting helps some compositors)
-# # export GBM_BACKEND=nvidia-drm
-#
-# # Vulkan Optimizations
-# # export __VK_LAYER_NV_optimus=NVIDIA_only
-#
-# # Adaptive Sync (VRR) - Set to 0 if games flicker
-# # export __GL_VRR_ALLOWED=1
-#
-# # Shader Cache (Reduces stuttering)
-# # export __GL_SHADER_DISK_CACHE=1
-# # export __GL_SHADER_DISK_CACHE_PATH=$HOME/.cache/nv/
-#
-# # Cursor Hardware Fix (Uncomment if cursor disappears/glitches)
-# # export WLR_NO_HARDWARE_CURSORS=1
-# # -------------------------------------------------
 
 # -----------------------------------------------------------------------------
 # 6. VIRTUALIZATION
@@ -149,3 +103,5 @@ export LIBVIRT_DEFAULT_URI='qemu:///system'
 # Enables PRIME Render Offload, allowing you to run specific applications
 # on the NVIDIA GPU while the desktop session runs on the Intel iGPU.
 #export __NV_PRIME_RENDER_OFFLOAD=1
+
+

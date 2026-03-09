@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky GSettings TUI
+GenericName=Appearance Configurator
+Comment=Real-time GTK, theme, and desktop environment configurator
+Exec=uwsm-app -- kitty --class dusky_gsettings.sh -e /home/dusk/user_scripts/gtk/dusky_gsettings.sh
+Terminal=false
+Categories=Settings;DesktopSettings;System;Utility;
+Keywords=dusky;hyprland;gsettings;gtk;theme;appearance;nemo;nautilus;tui;config;settings;
+Icon=preferences-desktop-theme
+StartupNotify=true
+StartupWMClass=dusky_gsettings.sh

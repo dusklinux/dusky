@@ -18,6 +18,8 @@
 # Directories to search for scripts (in order — first match wins)
 SCRIPT_SEARCH_DIRS=(
     "${HOME}/user_scripts/arch_setup_scripts/scripts"
+    "${HOME}/user_scripts/arch_setup_scripts"
+    "${HOME}/user_scripts/rofi"
     # "${HOME}/my_other_scripts"
     # "/opt/shared_team_scripts"
 )
@@ -26,13 +28,19 @@ SCRIPT_SEARCH_DIRS=(
 POST_SCRIPT_DELAY=0
 
 INSTALL_SEQUENCE=(
+
+# ------ CUSTOM PATH SCRIPTS -------
+#    "U | deploy_dotfiles.sh --force"
+
+# ------ Setup SCRIPTS -------
+
+
     "U | 005_hypr_custom_config_setup.sh"
     "U | 010_package_removal.sh --auto"
     "U | 015_set_thunar_terminal_kitty.sh"
     "U | 020_desktop_apps_username_setter.sh"
     "U | 025_configure_keyboard.sh"
-    "U | 030_uwsm_env_comment_everything.sh --auto"
-#    "U | 035_configure_uwsm_gpu.sh"
+    "U | 035_configure_uwsm_gpu.sh --auto"
     "U | 040_long_sleep_timeout.sh --auto"
 #    "S | 045_battery_limiter.sh"
     "S | 050_pacman_config.sh --auto"
@@ -51,6 +59,7 @@ INSTALL_SEQUENCE=(
 #    "S | 120_create_mount_directories.sh"
     "S | 125_pam_keyring.sh"
     "U | 130_copy_service_files.sh --default"
+    "U | 131_dbus_copy_service_files.sh"
     "U | 135_battery_notify_service.sh --auto"
     "U | 140_fc_cache_fv.sh"
     "U | 145_matugen_directories.sh"
@@ -71,7 +80,10 @@ INSTALL_SEQUENCE=(
     "S | 220_logrotate_optimization.sh"
 #    "S | 225_faillock_timeout.sh"
     "U | 230_non_asus_laptop.sh --auto"
-    "U | 235_file_manager_switch.sh --thunar"
+    "U | 235_file_manager_switch.sh --nemo"
+    "U | 236_browser_switcher.sh --firefox"
+    "U | 237_text_editer_switcher.sh --gnome-text-editor"
+    "U | 238_terminal_switcher.sh --kitty"
     "U | 240_swaync_dgpu_fix.sh --disable"
 #    "S | 245_asusd_service_fix.sh"
 #    "S | 250_ftp_arch.sh"
@@ -94,11 +106,13 @@ INSTALL_SEQUENCE=(
 #    "U | 345_faster_whisper_cpu.sh"
     "S | 350_dns_systemd_resolve.sh"
 #    "U | 355_hyprexpo_plugin.sh"
+#    "U | 356_dusky_plugin_manager.sh"
     "U | 360_obsidian_pensive_vault_configure.sh"
     "U | 365_cache_purge.sh"
     "S | 370_arch_install_scripts_cleanup.sh"
     "U | 375_cursor_theme_bibata_classic_modern.sh"
-    "S | 380_nvidia_open_source.sh"
+    "U | 380_nvidia_open_source.sh --auto"
+    "S | 381_nvidia_services.sh"
 #    "S | 385_waydroid_setup.sh"
     "U | 390_clipboard_persistance.sh --ram"
     "S | 395_intel_media_sdk_check.sh"
@@ -117,6 +131,12 @@ INSTALL_SEQUENCE=(
     "S | 465_sddm_setup.sh --auto"
     "U | 470_vesktop_matugen.sh --auto"
     "U | 475_reverting_sleep_timeout.sh"
+    "U | 480_dusky_commands.sh"
+    "S | 485_sudoers_nopassword.sh"
+
+# ------ CUSTOM PATH SCRIPTS -------
+
+    "U | rofi_wallpaper_selctor.sh --cache-only --progress"
 )
 
 # ==============================================================================
