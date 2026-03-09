@@ -666,18 +666,12 @@ pkg_old() {
 # 2. Checks if the binary (starship/fzf) has been updated (is newer than the cache).
 # 3. Regenerates the cache automatically if needed.
 
-# --- Starship Prompt ---
-# Define paths
-_starship_cache="$HOME/.starship-init.zsh"
-_starship_bin="$(command -v starship)"
-
-# Only proceed if starship is actually installed
-if [[ -n "$_starship_bin" ]]; then
-  if [[ ! -f "$_starship_cache" || "$_starship_bin" -nt "$_starship_cache" ]]; then
-    starship init zsh --print-full-init >! "$_starship_cache"
-  fi
-  source "$_starship_cache"
+# --- Powerlevel10k Prompt ---
+if [[ -r /usr/share/zsh-theme-powerlevel10k/powerlevel10k.zsh-theme ]]; then
+  source /usr/share/zsh-theme-powerlevel10k/powerlevel10k.zsh-theme
 fi
+[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
+[[ ! -f ~/.config/matugen/generated/p10k-colors.zsh ]] || source ~/.config/matugen/generated/p10k-colors.zsh
 
 # --- Fuzzy Finder (fzf) ---
 _fzf_cache="$HOME/.fzf-init.zsh"
@@ -712,7 +706,7 @@ if [[ -f "/usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting
 fi
 
 # Cleanup variables to keep environment clean
-unset _starship_cache _starship_bin _fzf_cache _fzf_bin
+unset _fzf_cache _fzf_bin
 
 # -----------------------------------------------------------------------------
 # [7] Auto login INTO UWSM HYPRLAND WITH TTY1
@@ -729,3 +723,6 @@ fi
 # =============================================================================
 # End of ~/.zshrc
 # =============================================================================
+
+# opencode
+export PATH=/home/dim/.opencode/bin:$PATH
