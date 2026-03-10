@@ -1,0 +1,190 @@
+@-moz-document url-prefix("https://x.com/"), url-prefix("https://twitter.com/") {
+  
+  body.LightsOut {
+      --border-color: var(--outline) !important;
+      --color: var(--on_surface);
+      --hover-bg-color: var(--surface_container); }
+      
+  body {
+      --border-color: var(--outline) !important;
+      --color: var(--on_surface);
+      --hover-bg-color: var(--surface_container); }
+      
+  :root[data-theme="dark"] {
+      --background: var(--surface) !important;
+      --border: var(--outline) !important; }
+    
+  /* Color */
+  
+  [style="color: rgb(113, 118, 123);"],
+  [style="-webkit-line-clamp: 3; color: rgb(113, 118, 123);"],
+  [style="-webkit-line-clamp: 2; color: rgb(113, 118, 123);"],
+  .draftjs-styles_0 .public-DraftEditorPlaceholder-root {
+      color: var(--on_surface) !important; }
+  
+  /* Background */
+  
+  body.LightsOut .r-5zmot,
+  [data-theme="dark"] .r-5zmot,
+  .r-5zmot {
+      background-color: var(--surface) !important; }
+  
+  body.LightsOut, body, [aria-label="Loading…"] {
+      background-color: var(--surface) !important; }
+  
+  body.LightsOut .r-kemksi,
+  [data-theme="dark"] .r-kemksi,
+  .r-kemksi {
+      background-color: var(--surface) !important; }
+      
+  [style="background-color: rgb(0, 0, 0);"] {
+      background-color: var(--surface) !important; }
+      
+  body.LightsOut .bg-background,
+  [data-theme="dark"] .bg-background,
+  .bg-background {
+      background-color: var(--surface) !important; }
+  
+  /* Hover */
+  
+  body.LightsOut .r-g2wdr4,
+  [data-theme="dark"] .r-g2wdr4,
+  .r-g2wdr4 {
+    background-color: var(--surface_container); }
+  
+  /* Border */
+  
+  body.LightsOut .r-kemksi,
+  [data-theme="dark"] .r-kemksi,
+  .r-kemksi {
+      border-color: var(--outline) !important; }
+  
+  body.LightsOut .r-1igl3o0,
+  [data-theme="dark"] .r-1igl3o0,
+  .r-1igl3o0 {
+      border-bottom-color: var(--outline) !important; }
+      
+  body.LightsOut .r-1kqtdi0,
+  [data-theme="dark"] .r-1kqtdi0,
+  .r-1kqtdi0{
+      border-color: var(--outline) !important; }
+      
+  body.LightsOut .r-gu4em3,
+  [data-theme="dark"] .r-gu4em3,
+  .r-gu4em3 {
+      background-color: var(--outline) !important; }
+      
+  body.LightsOut [id="cpftInteractionLinks"] > .r-37j5jr,
+  [data-theme="dark"] [id="cpftInteractionLinks"] > .r-37j5jr,
+  [id="cpftInteractionLinks"] > .r-37j5jr {
+      border-color: var(--outline) !important; }
+      
+  body.LightsOut .r-2sztyj,
+  [data-theme="dark"] .r-2sztyj,
+  .r-2sztyj {
+      border-color: var(--outline) !important; }
+      
+  body.LightsOut .r-1roi411,
+  [data-theme="dark"] .r-1roi411,
+  .r-1roi411 {
+      border-color: var(--outline) !important; }
+      
+  /* Reply */
+  
+  body.LightsOut .r-1bnu78o,
+  [data-theme="dark"] .r-1bnu78o,
+  .r-1bnu78o {
+      background-color: var(--outline) !important; }
+
+  /* Scrollbars */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--surface) !important;
+    border-left: 1px solid var(--outline) !important;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--outline) !important;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #4a5a66 !important;
+  }
+
+  * {
+    scrollbar-color: var(--outline) var(--surface) !important;
+    scrollbar-width: thin !important;
+  }
+
+  [data-testid="primaryColumn"],
+  [data-testid="sidebarColumn"],
+  [role="region"][aria-label*="Timeline"],
+  [role="dialog"] {
+    scrollbar-color: var(--outline) var(--surface) !important;
+    scrollbar-width: thin !important;
+  }
+
+  /* Grok chat fixes: containers & log */
+  [role="log"],
+  [data-testid="conversation-turn-parent"],
+  [data-viewport="true"],
+  div:has(> [data-testid="conversation-turn"]) {
+    background-color: var(--surface) !important;
+  }
+
+  [data-testid="conversation-turn"],
+  [data-testid="conversation-turn"] *,
+  [data-testid="conversation-turn"] > div *,
+  [data-testid="conversation-turn"] > div > div * {
+    background-color: var(--surface) !important;
+  }
+
+  /* Culprit override + classic Dim bubble/cloud colors */
+  .r-z32n2g,
+  .r-z32n2g > div,
+  .r-z32n2g * {
+    background-color: var(--surface_container_high) !important;  /* Classic Dim card/container shade - subtle elevation */
+  }
+
+  /* Bubble-specific distinction (rounded elements in chat) */
+  [data-testid="conversation-turn"] [style*="border-radius"] .r-z32n2g,
+  [data-testid="conversation-turn"] div[style*="border-radius: 18px"],
+  [data-testid="conversation-turn"] .r-z32n2g[style*="border-radius"] {
+    background-color: var(--surface_container_high) !important;  /* Or #22303c for more pop */
+  }
+
+  /* Alternating user/Grok messages (optional subtle variation) */
+  [data-testid="conversation-turn"]:nth-child(odd) .r-z32n2g {
+    background-color: var(--surface_container_high) !important;
+  }
+  [data-testid="conversation-turn"]:nth-child(even) .r-z32n2g {
+    background-color: var(--surface_container) !important;  /* Slight hover-like tint for alternation */
+  }
+
+  /* Text readability in chat */
+  .r-z32n2g span,
+  .r-z32n2g p,
+  .r-z32n2g div[dir="auto"],
+  [data-testid="conversation-turn"] span,
+  [data-testid="conversation-turn"] p,
+  [data-testid="conversation-turn"] div[dir="auto"],
+  [data-testid="conversation-turn"] code {
+    color: var(--on_surface) !important;
+  }
+
+  /* Chat scrollbar */
+  [role="log"]::-webkit-scrollbar-track,
+  [data-testid="conversation-turn"]::-webkit-scrollbar-track {
+    background: var(--surface) !important;
+  }
+  [role="log"]::-webkit-scrollbar-thumb,
+  [data-testid="conversation-turn"]::-webkit-scrollbar-thumb {
+    background: var(--outline) !important;
+  }
+
+}

@@ -1,0 +1,151 @@
+@-moz-document domain("youtube.com") {
+
+    :root {
+        --yt-spec-base-background: var(--background) !important;
+        --yt-spec-raised-background: var(--surface_container) !important;
+        --yt-spec-general-background-a: var(--background) !important;
+        --yt-spec-general-background-b: var(--surface_container_low) !important;
+        --yt-spec-general-background-c: var(--surface_container_lowest) !important;
+        --yt-spec-menu-background: var(--surface_container) !important;
+        --yt-spec-text-primary: var(--on_surface) !important;
+        --yt-spec-text-secondary: var(--on_surface_variant) !important;
+        --yt-icon-color: var(--on_surface) !important;
+        --yt-spec-icon-active-other: var(--primary) !important;
+        --yt-spec-red-indicator: var(--primary) !important;
+        --yt-spec-icon-inactive: var(--outline) !important;
+        --yt-spec-brand-background-solid: var(--primary) !important;
+        --yt-spec-brand-icon-active: var(--primary) !important;
+        --yt-spec-static-brand-red: var(--primary) !important;
+        --yt-spec-call-to-action: var(--primary) !important;
+        --yt-spec-10-percent-layer: var(--surface_variant) !important;
+        --yt-spec-badge-chip-background: var(--surface_container_high) !important;
+        --yt-spec-button-chip-background-hover: var(--surface_bright) !important;
+        --t2d807bb79e75606d: var(--primary) !important;
+        --t6216186c28b3834b: var(--on_primary) !important;
+        --t617db776af0de196: var(--primary) !important;
+    }
+
+    /* Sidebar / Navigation */
+    #guide-content.ytd-app,
+    ytd-guide-renderer,
+    #contentContainer.app-drawer,
+    .style-scope ytd-two-column-browse-results-renderer,
+    .style-scope ytd-rich-grid-renderer,
+    .style-scope ytd-feed-filter-chip-bar-renderer {
+        background-color: var(--surface) !important;
+    }
+
+    /* Progress bar */
+    .ytp-play-progress.ytp-swatch-background-color,
+    .ytp-play-progress,
+    .yt-play-progress {
+        background-image: linear-gradient(to right, var(--primary) 80%, var(--primary) 100%) !important;
+        background-color: transparent !important;
+    }
+
+    .ytp-scrubber-button.ytp-swatch-background-color {
+        background-color: var(--secondary) !important;
+    }
+
+    /* YouTube Logo Color */
+    #logo-icon svg g path[fill^="#ff"],
+    #logo-icon svg g path[fill^="#FF"],
+    ytd-logo svg g path[fill^="#ff"],
+    .ytd-logo svg g path[fill^="#FF"],
+    #logo-icon path.style-scope.ytd-logo[fill="#FF0000"],
+    #logo-icon path.style-scope.ytd-logo[fill="#ff0000"] {
+        fill: var(--primary) !important;
+    }
+
+    #logo-icon [fill="white"],
+    .ytd-logo [fill="white"] {
+        fill: var(--on_primary) !important;
+    }
+
+    #logo-icon path[fill="#212121"],
+    #logo-icon path[fill="#fff"],
+    .yt-icon-shape path[fill="#fff"] {
+        fill: var(--on_surface) !important;
+    }
+
+    .ytp-volume-slider-handle:before {
+        background: var(--primary) !important;
+    }
+
+    /* Notification Badges */
+    .yt-spec-icon-badge-shape--type-notification .yt-spec-icon-badge-shape__badge {
+        background-color: var(--primary) !important;
+        color: var(--on_primary) !important;
+    }
+
+
+    /* Search Bar */
+    .ytSearchboxComponentInputBox {
+        background-color: var(--surface_container) !important;
+        color: var(--on_surface_container) !important;
+    }
+
+    .ytSearchboxComponentInputBox.ytSearchboxComponentInputBoxHasFocus {
+        border-color: var(--primary) !important;
+    }
+
+    .ytSearchboxComponentSearchButton {
+        background-color: var(--primary) !important;
+        color: var(--on_primary) !important;
+    }
+
+    /* Header + Top Bar + Chip background */
+    #masthead-container.ytd-app,
+    ytd-feed-filter-chip-bar-renderer[frosted-glass-mode="with-chipbar"] #chips-wrapper.ytd-feed-filter-chip-bar-renderer,
+    ytd-mini-guide-entry-renderer[frosted-glass],
+    ytd-mini-guide-renderer[frosted-glass] {
+        background-color: var(--background) !important;
+        color: var(--on_background) !important
+    }
+
+
+    /* Buttons */
+    ytd-button-renderer.style-primary {
+        --yt-spec-button-chip-background-hover: var(--primary_container) !important;
+    }
+
+    /* Live Chat + Comments */
+    ytd-live-chat-frame#chat {
+        border: 1px solid var(--outline_variant) !important;
+        border-radius: 12px !important;
+    }
+
+    /* Primary Buttons */
+    ytd-button-renderer.style-primary .yt-spec-button-shape-next--filled {
+        background-color: var(--primary) !important;
+        color: var(--on_primary) !important;
+    }
+
+    ytd-button-renderer.style-primary:hover .yt-spec-button-shape-next--filled {
+        background-color: var(--primary_fixed_dim) !important;
+    }
+
+    /* Tonal/Secondary Buttons */
+    .yt-spec-button-shape-next--tonal,
+    .yt-spec-touch-feedback-shape--touch-response .yt-spec-touch-feedback-shape__fill {
+        background-color: var(--secondary_container) !important;
+        color: var(--on_secondary_container) !important;
+    }
+
+    .yt-spec-button-shape-next--tonal:hover,
+    .yt-spec-touch-feedback-shape--touch-response .yt-spec-touch-feedback-shape__fill:hover {
+        background-color: var(--secondary_fixed_dim) !important;
+        color: var(--on_secondary_fixed_variant) !important;
+    }
+
+    /* The "Subscribe" button */
+    /* Disabled because it looks kinda bad to me */
+    /* #subscribe-button .yt-spec-button-shape-next--filled {
+        background-color: var(--primary) !important;
+    } */
+
+    /* #subscribe-button:hover .yt-spec-button-shape-next--filled {
+        background-color: var(--primary_fixed) !important;
+        filter: brightness(1.1) !important;
+    } */
+}

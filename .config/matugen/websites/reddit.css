@@ -1,0 +1,171 @@
+@-moz-document domain("reddit.com") {
+    * {
+        --bg-dark: var(--surface);
+        --bg-code: var(--surface_container_lowest);
+        --bg: var(--surface_container_low);
+        --bg-2: var(--surface_container);
+        --bg-3: var(--surface_container_high);
+        --bg-4: var(--surface_container_highest);
+        --highlight: var(--tertiary_container);
+        --highlight-2: var(--secondary_container);
+        --blue-accent: var(--primary_container);
+        --blue-dim: var(--primary);
+        --text: var(--on_surface);
+        --text-dark: var(--on_primary);
+        --cyan: var(--primary);
+        --blue: var(--primary);
+        --orange: var(--secondary);
+        --red: var(--error);
+        --red-dark: var(--on_error);
+        --green: var(--tertiary_container);
+        --green-dark: var(--tertiary);
+        --comment: var(--on_primary);
+        --border: var(--bg-2);
+
+        --color-primary-onBackground: var(--on_surface) !important;
+        --color-primary-onBackground-selected: var(--shadow);
+        --color-neutral-border: var(--border) !important;
+
+        --color-neutral-content: var(--text) !important;
+        --color-neutral-content-disabled: var(--text-dark) !important;
+        --color-neutral-content-weak: var(--text-dark) !important;
+        --color-neutral-content-strong: var(--text) !important;
+        --color-neutral-background: var(--bg-dark) !important;
+        --color-neutral-background-selected: var(--blue-dim) !important;
+        --color-neutral-background-weak: var(--bg) !important;
+        --color-neutral-background-medium: var(--bg) !important;
+        --color-neutral-background-strong: var(--bg) !important;
+        --color-neutral-background-hover: var(--bg) !important;
+        --color-neutral-border-weak: var(--border) !important;
+        --color-neutral-border-strong: var(--border) !important;
+        --color-tone-1: var(--text) !important;
+        --color-tone-2: var(--text) !important;
+        --color-tone-3: var(--bg-2) !important;
+        --color-tone-4: var(--bg-2) !important;
+        --color-tone-5: var(--bg-2) !important;
+        --color-tone-6: var(--bg-2) !important;
+        --color-tone-7: var(--bg-2) !important;
+        --color-primary: var(--blue-dim) !important;
+        --color-primary-hover: var(--blue-dim) !important;
+        --color-primary-background: var(--blue) !important;
+        --color-primary-background-hover: var(--blue-dim) !important;
+        --color-primary-background-selected: var(--blue-dim) !important;
+        --color-secondary: var(--text) !important;
+        --color-secondary-hover: var(--text);
+        --color-secondary-weak: var(--text-dark) !important;
+        --color-secondary-background: var(--highlight) !important;
+        --color-secondary-background-hover: var(--highlight) !important;
+        --color-secondary-background-selected: var(--highlight-2) !important;
+        --shreddit-content-background: var(--color-neutral-background) !important;
+
+        --button-border-color: transparent;
+        --button-border-color-activated: var(--border) !important;
+        --button-color-background-activated: var(--highlight-2) !important;
+        --button-color-text-activated: var(--text) !important;
+        --button-color-overlay: var(--color-button-overlay-focus) !important;
+        --button-border-color-hover: var(--border) !important;
+        --button-color-background-hover: var(--highlight-2) !important;
+        --button-color-text: var(--button-color-text-hover, var(--button-color-text-default)) !important;
+
+        --color-button-secondary-text: var(--text) !important;
+        --color-button-secondary-text-activated: var(--text) !important;
+        --color-button-secondary-text-disabled: var(--text) !important;
+        --color-button-secondary-border: var(--border) !important;
+        --color-button-secondary-background: var(--highlight) !important;
+        --color-button-secondary-background-focus: var(--highlight-2) !important;
+        --color-button-secondary-background-hover: var(--highlight-2) !important;
+        --color-button-secondary-background-activated: var(--highlight) !important;
+        --color-button-secondary-background-disabled: var(--highlight) !important;
+
+        --color-action-upvote: var(--blue);
+        --color-action-downvote: var(--red);
+        --color-media-background: var(--bg);
+        --color-media-onbackground: var(--text);
+        --color-media-onbackground-disabled: var(--highlight-2);
+
+        --newCommunityTheme-bodyText: var(--text);
+        --newCommunityTheme-metaText: var(--text-dark);
+        --newCommunityTheme-button: var(--text);
+        --newCommunityTheme-body: var(--bg-dark);
+        --newRedditTheme-actionIcon: var(--text);
+        --newCommunityTheme-line: var(--text-dark);
+        --newRedditTheme-line: var(--text-dark);
+        --newRedditTheme-linkText: var(--blue);
+        --newCommunityTheme-navIconFaded10: var(--highlight-2);
+        --newCommunityTheme-active: var(--blue-dim);
+        --newCommunityTheme-field: var(--bg-dark);
+        --newRedditTheme-button: var(--text);
+        --newCommunityTheme-actionIcon: var(--text);
+        --newCommunityTheme-bodyTextAlpha20: transparent;
+        --newRedditTheme-post: var(--bg);
+        --newRedditTheme-body: var(--bg-dark);
+        --newRedditTheme-field: var(--bg-dark);
+        --newCommunityTheme-navIcon: var(--text);
+        --newRedditTheme-actionIconAlpha50: var(--text);
+        --newRedditTheme-buttonAlpha05: var(--bg-dark);
+        --newRedditTheme-bodyText: var(--text);
+        --newCommunityTheme-buttonAlpha50: var(--text);
+        --pseudo-before-background: var(--bg-dark) !important;
+        --newRedditTheme-metaText: var(--text-dark);
+        --newRedditTheme-navIconFaded10: var(--highlight);
+        
+        --button-color-background-default: transparent;
+        --button-color-background-focus: transparent;
+        --button-color-background-active: linear-gradient(transparent, transparent);
+        --button-color-background-disabled: transparent;
+        --button-color-text-default: var(--color-secondary-plain);
+        --button-color-text-disabled: var(--color-interactive-content-disabled);
+        --button-color-text-hover: var(--color-secondary-plain-hover);
+        --button-border-color-default: var(--color-neutral-border-medium);
+        --button-border-color-active: var(--color-neutral-border-strong);
+        --button-border-color-disabled: var(--border) !important;
+        --button-border-width-default: var(--border) !important;
+        --button-border-width-activated: var(--border) !important;
+
+        --newCommunityTheme-postLine: var(--text-dark);
+        --newRedditTheme-widgetColors-sidebarWidgetBackgroundColor: var(--bg-dark);
+        --newCommunityTheme-widgetColors-sidebarWidgetHeaderColor: var(--bg-dark);
+        --newRedditTheme-widgetColors-sidebarWidgetBorderColor: var(--border);
+        --post-icon-color: var(--text);
+        --newCommunityTheme-postIcon: var(--text);
+        --posttitletextcolor: var(--text);
+
+        color: var(--text);
+    }
+    
+    svg { fill: var(--text); }
+
+    /* Background */
+    .bg-neutral-background {
+        background-color: var(--bg);
+        border-bottom: none;
+    }
+
+    /* Borders */
+    .xs\:rounded-\[16px\] {
+        border-radius: 8px;
+        border: 1px solid var(--border);
+    }
+    .py-md { 
+        border: 1px solid var(--border);
+        border-radius: 8px;
+    }
+
+    /* Images */
+    .rounded-\[16px\] {
+        border-radius: 8px;
+        border: none;
+    }
+    
+    /* Spacing between reddit posts */
+    .border-b-neutral-border-weak {
+        border: none;
+        height: 0.5rem;
+    }
+    
+    .flair-content { color: var(--on_surface) !important; }
+    
+    /* Store */
+    .text-global-brand-orangered { background: color-mix(in srgb, var(--orange) 20%, transparent); }
+    .text-global-brand-orangered faceplate-number { color: var(--orange); }
+}

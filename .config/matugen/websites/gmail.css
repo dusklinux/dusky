@@ -1,0 +1,2018 @@
+@-moz-document domain("mail.google.com") {
+
+	/* COLOR PALETTE */
+
+	/* stylelint-disable color-no-hex */
+	:root {
+		--GR0: var(--surface);
+		/* Background */
+		--GR1: var(--surface);
+		--GR2: var(--surface);
+		--GR3: var(--surface);
+		--GR4: var(--surface_container);
+		--GR5: var(--surface);
+		--GR6: var(--surface_container_lowest);
+		/* Dropdown/Popover Background */
+		--GR7: var(--surface_container_low);
+		--GR8: var(--surface_container_high);
+		--GR9: var(--surface_container_highest);
+		--GR10: #606970;
+		--GR11: #70787E;
+		--GR12: #80878C;
+		--GR13: #90969B;
+		--GR14: #A0A5A9;
+		--GR15: #AFB4B7;
+		--GR16: #BFC3C5;
+		--GR17: var(--on_surface);
+		/* Text/Icons */
+		--GR18: var(--primary_container);
+		--GR19: var(--surface_bright);
+		/* Text/Icons Hover */
+		--GRSELECTED: var(--primary);
+	}
+
+	/* stylelint-enable color-no-hex */
+
+	/* GLOBAL */
+
+	body {
+		background: var(--GR0) !important
+	}
+
+	/* ICONS */
+
+	.gb_Ia svg,
+	/* Header Icons */
+	.gb_Qe button svg
+
+	/* Search Dropdown Icons */
+		{
+		color: var(--GR17) !important;
+		fill: var(--GR17) !important;
+	}
+
+	/* LOADING */
+
+	#loading {
+		background: var(--GR0) !important
+	}
+
+	/* Envelope */
+	/* stylelint-disable color-no-hex */
+	.la-k .la-m {
+		background: var(--GR0) !important
+	}
+
+	.la-i>.la-l,
+	.la-i>.la-r,
+	.la-k .la-l,
+	.la-k .la-r {
+		border-color: var(--GR0) !important
+	}
+
+	.la-i div[style*="background:#fafbfb"] {
+		background: var(--GR0) !important
+	}
+
+	.la-b .la-l,
+	.la-b .la-r,
+	.la-b .la-m {
+		background: var(--GR4)
+	}
+
+	.la-b .la-l.la-c {
+		background: var(--error)
+	}
+
+	.la-b .la-c.la-r {
+		background: var(--primary)
+	}
+
+	#loading div[style*="background:#d23f31"] {
+		background: var(--primary) !important
+	}
+
+	#loading div[style*="background:#db4437"] {
+		background: var(--primary) !important
+	}
+
+	/* stylelint-enable color-no-hex */
+
+	/* Progress Bar */
+	#nlpt {
+		background: var(--GR6) !important
+	}
+
+	#nlpt::before {
+		background: var(--GRSELECTED) !important
+	}
+
+	/* Text */
+	.msg {
+		color: var(--GR12) !important
+	}
+
+	/* Footer */
+	.msgb {
+		color: var(--GR12) !important
+	}
+
+	/* "Load basic HTML" */
+	.submit_as_link {
+		color: var(--GRSELECTED) !important
+	}
+
+	.submit_as_link:hover {
+		color: var(--GR19) !important
+	}
+
+	/* LEFT-SIDE APP BAR (Aug 2022) */
+
+	.WR:not(.aBA):not(.aTO),
+	.a6o::before {
+		background: var(--GR4) !important
+	}
+
+	/* Item */
+
+	/* Hamburger Icon */
+	.gb_Da svg {
+		color: var(--GR16) !important
+	}
+
+	/* Text (Mail, Chat, Spaces, Meet) */
+	.apW {
+		color: var(--GR16) !important
+	}
+
+	/* Selected */
+	.apV .V6,
+	.apV .V6:hover {
+		background: var(--GR8) !important
+	}
+
+	/* Hovered */
+	.aIk .V6.CL::after,
+	/* Chat / Spaces */
+	.CL:hover::after
+
+	/* Meet */
+		{
+		background: var(--GR2) !important;
+		outline: 2px solid var(--GRSELECTED) !important
+	}
+
+	/* Icons */
+
+	/* Mail */
+	.CL.W9::before {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/mail_white_20dp.png") !important
+	}
+
+	/* Mail (Selected) */
+	.apV .W9::before {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm_filled/1x/mail_white_20dp.png") !important
+	}
+
+	/* Chat */
+	.CL.su::before {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/chat_bubble_outline_white_20dp.png") !important
+	}
+
+	/* Spaces */
+	.CL.V2::before {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/gmail_groups_white_20dp.png") !important
+	}
+
+	/* Meet */
+	.CL.Xj::before {
+		background-image: url("https://ssl.gstatic.com/ui/v1/icons/mail/gm3/1x/meet_white_20dp.png") !important
+	}
+
+	/* HEADER */
+
+	.aiw {
+		border-bottom: 1px solid var(--GR6) !important
+	}
+
+	/* Icons */
+	.gb_oa svg {
+		color: var(--GR16) !important
+	}
+
+	/* "Gmail" logo */
+	[aria-label="Gmail"][title="Gmail"][href="#inbox"]>img {
+		background: url("https://ssl.gstatic.com/ui/v1/icons/mail/rfr/logo_gmail_lockup_dark_1x_r4.png") no-repeat center center !important;
+		height: 0 !important;
+		padding: 40px 109px 0 0 !important;
+		width: 0 !important;
+	}
+
+	/* Chat Status */
+
+	.Yb {
+		border-color: var(--GR10) !important;
+	}
+
+	/* "Active" text */
+	.Yc {
+		color: var(--GR17) !important
+	}
+
+	/* SEARCH HEADER */
+
+	/* Input Wrapper Focused */
+
+	/* NOTE: The classes on this seems to change very often, so using ID instead */
+	#aso_search_form_anchor {
+		background: var(--GR6) !important;
+		border-color: var(--GR8) !important;
+	}
+
+	/* Input */
+	#aso_search_form_anchor input {
+		color: var(--GR17) !important
+	}
+
+	/* "Search mail" placeholder */
+	#aso_search_form_anchor input::placeholder {
+		color: var(--GR15) !important
+	}
+
+	/* Search Options Dropdown */
+	.ZF-zT {
+		background: var(--GR6) !important;
+		color: var(--GR17) !important;
+	}
+
+	/* "No recent items" message */
+	.gsan_a {
+		color: var(--GR15) !important
+	}
+
+	/* Labels */
+	.boo>.ZG {
+		color: var(--GR17) !important
+	}
+
+	/* Select Fields */
+	.boo .aQl>.J-JN-M-I-Jm,
+	.boo .aaa>.J-JN-M-I-Jm,
+	.boo .ZE>.J-JN-M-I-Jm {
+		color: var(--GR17) !important
+	}
+
+	/* Select Arrow Icons */
+	.T-axO .J-JN-M-I-JG {
+		filter: invert(1) !important
+	}
+
+	/* Calendar Icon */
+	.bs5::after {
+		filter: invert(1) !important
+	}
+
+	/* Text Input */
+	.boo .nr {
+		background: var(--GR4) !important;
+		color: var(--GR17) !important;
+	}
+
+	.boo .nr:focus {
+		box-shadow: inset 0 -1px 0 0 var(--GRSELECTED) !important;
+	}
+
+	/* Checkbox */
+	.bs1+.bs3::before,
+	.btj+.aD::before {
+		filter: invert(1) !important
+	}
+
+	/* Checkbox Labels */
+	.bs1+.bs3,
+	.btj+.aD {
+		color: var(--GR17) !important
+	}
+
+	/* GENERIC DROPDOWNS */
+
+	/* Body */
+	.J-M {
+		background: var(--GR6) !important
+	}
+
+	/* Inbox Type Dropdown - Right Border */
+	.afL .J-M-Jz {
+		border-color: var(--GR8) !important
+	}
+
+	/* Title */
+	.J-awr,
+	.afQ,
+	/* Inbox Type Dropdown - Right-side title */
+	.SK
+
+	/* Email View - Label Toolbar */
+		{
+		color: var(--GR15) !important
+	}
+
+	/* Row */
+	.J-N,
+	.afP,
+	/* Inbox Type Dropdown - Right-side text */
+	.J-JK,
+	/* Email View - Move To Dropdown - Footer Rows */
+	.J-LC
+
+	/* Email View - Labels Dropdown - Checkmark Rows */
+		{
+		border-color: transparent !important;
+		color: var(--GR17) !important
+	}
+
+	/* Selected */
+	.J-Ks-KO .J-N-Jz {
+		color: var(--GRSELECTED) !important
+	}
+
+	/* Hover */
+	.J-N-JT,
+	.J-JK-JT,
+	.J-LC-JT {
+		background: var(--GR8) !important;
+	}
+
+	/* Hover Text */
+	.J-N-JT .J-N-Jz {
+		color: var(--GR19) !important
+	}
+
+	/* Checkmark */
+	.J-LC-Jo {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/check_box_outline_blank_white_20dp.png") !important
+	}
+
+	/* Checked */
+	.J-LC-JR-Jp .J-LC-Jo {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/check_box_white_20dp.png") !important
+	}
+
+	/* Search Field */
+	.agd .J-M-JJ input {
+		background: var(--GR4) !important;
+		color: var(--GR17) !important;
+	}
+
+	.agd .J-M-JJ input:focus {
+		box-shadow: inset 0 -2px 0 0 var(--GRSELECTED) !important;
+	}
+
+	/* Icon */
+	.A0 {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/search_white_20dp.png") !important
+	}
+
+
+	/* Divider */
+	.J-Kh {
+		border-color: var(--GR10) !important
+	}
+
+	/* Checkmark Icon */
+	.J-Ks-KO .J-N-Jo {
+		background-image: url("https://www.gstatic.com/images/icons/material/system/1x/check_white_20dp.png") !important;
+	}
+
+	/* Links */
+	.e {
+		color: var(--GR17) !important
+	}
+
+	.e:focus,
+	.e:hover {
+		color: var(--GR19) !important
+	}
+
+	/* SEARCH DROPDOWN */
+
+	.gssb_e {
+		background: var(--GR6) !important;
+		border-color: var(--GR8) !important;
+	}
+
+	/* Toolbar Row */
+	.aRp {
+		background: var(--GR4) !important
+	}
+
+	/* Toolbar */
+	.aSP {
+		border-color: var(--GR8) !important
+	}
+
+	/* Button */
+	.H2 {
+		background: var(--GR6) !important;
+		border-color: var(--GR8) !important;
+		color: var(--GR17) !important;
+		fill: currentColor !important;
+	}
+
+	.H2:focus,
+	.H2:hover {
+		background: var(--GR8) !important;
+	}
+
+	/* Icon */
+	.ap6 {
+		filter: brightness(100)
+	}
+
+	/* Row */
+	.gssb_m {
+		background: transparent !important;
+		color: var(--GR17) !important;
+	}
+
+	/* Row Color */
+	.asor_x {
+		color: var(--GR17) !important
+	}
+
+	/* Row Hover */
+	.gssb_i {
+		background: var(--GR8) !important;
+		cursor: pointer;
+	}
+
+	/* Group Separator */
+	.gssb_l {
+		background: var(--GR8) !important
+	}
+
+	/* Row Details */
+	.gstq_c,
+	.asor_e {
+		color: var(--GR15) !important
+	}
+
+	/* Row Icons */
+	.asor,
+	/* Historical Search */
+	.asor_o,
+	/* Attachment Icon */
+	.gsaq_b,
+	/* Remove Historical Search */
+	.gsoi_0
+
+	/* Mail Icon */
+		{
+		filter: invert(1) !important
+	}
+
+	/* "Create Filter" Button */
+	.acM {
+		color: var(--GR15) !important
+	}
+
+	/* "Search" Button */
+	.T-I-atl {
+		background: var(--GR8) !important
+	}
+
+	.T-I-atl:hover {
+		box-shadow: 0 1px 2px 0 var(--GR10), 0 1px 3px 1px var(--GR1) !important
+	}
+
+	/* FILTER CREATION DROPDOWN */
+
+	/* Back Arrow before "When a message arrives..." */
+	.btl.acK {
+		background-image: url("https://www.gstatic.com/images/icons/material/system/1x/arrow_back_white_20dp.png") !important
+	}
+
+	/* "Learn More" Icon */
+	.btn::before {
+		background-image: url("https://www.gstatic.com/images/icons/material/system/1x/help_white_20dp.png") !important
+	}
+
+	/* "Learn More" Button */
+	.btn {
+		color: var(--GR15) !important
+	}
+
+	/* MAIN BODY */
+
+	.wl {
+		background: var(--GR3) !important
+	}
+
+	.aeJ {
+		background: transparent !important
+	}
+
+	/* LEFT SIDEBAR */
+
+	.no .aeN.aeN,
+	.aqn
+
+	/* Aug 2022 */
+		{
+		background: var(--GR2) !important
+	}
+
+	/* When Collapsed */
+	.WR.aeN {
+		background: var(--GR2) !important
+	}
+
+	/* Compose Button */
+	.z0>.L3 {
+		background: var(--GR6) !important;
+		color: var(--GR17) !important
+	}
+
+	/* Icon */
+	.WR .z0>.L3::before,
+	.aIH .L3::before
+
+	/* Aug 2022 */
+		{
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/create_black_24dp.png") !important;
+		filter: invert(1) !important;
+	}
+
+	/* "New Chat" Icon */
+	.arL .L3::before {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/chat_bubble_outline_white_24dp.png") !important
+	}
+
+	/* "New space" Icon */
+	.arM .L3::before {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/add_white_24dp.png") !important
+	}
+
+	/* Header when hoving over "Chat", "Spaces", etc... */
+	.aJu .aBO>.aic,
+	.bym .aTV {
+		background: var(--GR2) !important
+	}
+
+	/* Triangle */
+	.aTV {
+		border-color: var(--GR2) !important
+	}
+
+	/* Icons */
+
+	/* Inbox */
+	.aHS-bnt .qj,
+	.nZ>.TN.aHS-bnt .qj::before
+
+	/* Aug 2022 */
+		{
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/inbox_white_20dp.png") !important
+	}
+
+	/* Starred */
+	.TO>.aHS-bnw>.qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/star_border_white_20dp.png") !important
+	}
+
+	/* Snoozed */
+	.TO>.aHS-bu1>.qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/schedule_white_20dp.png") !important
+	}
+
+	/* Sent */
+	.TO>.aHS-bnu>.qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/send_white_20dp.png") !important
+	}
+
+	/* Drafts */
+	.TO>.aHS-bnq>.qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/insert_drive_file_white_20dp.png") !important
+	}
+
+	/* All Mail */
+	.TO>.aHS-aHO>.qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/mail_outline_white_20dp.png") !important
+	}
+
+	/* Spam */
+	.TO>.aHS-bnv>.qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/report_white_20dp.png") !important
+	}
+
+	/* Trash */
+	.TO>.aHS-bnx>.qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/delete_white_20dp.png") !important
+	}
+
+	/* Less Arrow */
+	.n6 .air .G-asx {
+		background-image: url("https://ssl.gstatic.com/ui/v1/icons/mail/gm3/1x/expand_less_white_20dp.png") !important
+	}
+
+	/* More Arrow */
+	.n6 .n4 .G-asx {
+		background-image: url("https://ssl.gstatic.com/ui/v1/icons/mail/gm3/1x/expand_more_white_20dp.png") !important
+	}
+
+	/* Important */
+	.TO>.aHS-bns>.qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/label_important_outline_white_20dp.png") !important
+	}
+
+	/* Scheduled */
+	.TO>.aHS-nd .qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/schedule_send_white_20dp.png") !important
+	}
+
+	/* Categories */
+	.aEc.aHS-bnr .qj {
+		background-image: url("https://ssl.gstatic.com/ui/v1/icons/mail/gm3/1x/label_white_20dp.png") !important
+	}
+
+	/* Collapsed Arrow */
+	.aii {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/arrow_right_white_20dp.png") !important
+	}
+
+	/* Expanded Arrow */
+	.aih {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/arrow_drop_down_white_20dp.png") !important
+	}
+
+	/* Social */
+	.aS6 .qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/people_white_20dp.png") !important
+	}
+
+	/* Updates */
+	.aS4 .qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/info_white_20dp.png") !important
+	}
+
+	/* Forums */
+	.aS3 .qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/forum_white_20dp.png") !important
+	}
+
+	/* Promotions */
+	.aS5 .qj {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/local_offer_white_20dp.png") !important
+	}
+
+	/* Manage Labels */
+	.CL.Q7::before {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/settings_white_20dp.png") !important
+	}
+
+	/* Create new label */
+	.CL.Wj::before {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/add_white_20dp.png") !important
+	}
+
+	/* + for Labels */
+	.aAu {
+		background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/add_white_20dp.png") !important
+	}
+
+	/* Menu Items */
+	.TO {
+		cursor: pointer !important
+	}
+
+	/* Text */
+	.TO .nU>.n0,
+	/* Regular Items */
+	.ah9>.CJ,
+	/* "More" */
+	.n3>.CL>.CK
+
+	/* "Manage labels" and "Create new label" */
+		{
+		color: var(--GR17) !important
+	}
+
+	/* Email Count */
+	.bsU {
+		color: var(--GR15) !important
+	}
+
+	/* "Categories" Arrow Button Hover */
+	.aij {
+		background-color: transparent !important
+	}
+
+	/* Hover */
+	.TO.NQ,
+	.n6 .ah9:hover,
+	/* "More" */
+	.CL:hover {
+		background: var(--GR4) !important
+	}
+
+	/* Active */
+	.TO.nZ,
+	.TO.ol {
+		background: var(--GR6) !important
+	}
+
+	/* Icon */
+	.TO.nZ .qj {
+		opacity: 1 !important
+	}
+
+	/* Text */
+	.v .fZ .f0 {
+		color: var(--GRSELECTED) !important
+	}
+}
+}
+}
+
+}
+
+}
+}
+
+
+/* With preview pane enabled */
+.age {
+	background: transparent !important
+}
+
+/* Draggable Separator */
+.apj,
+/* Horizontal */
+.aph
+
+/* Vertical */
+	{
+	background: var(--GR6) !important;
+	border-color: var(--GR10) !important
+}
+
+/* "No conversations selected */
+.apb {
+	color: var(--GR15) !important
+}
+
+/* "You are currently using..." */
+.mj {
+	color: var(--GR12) !important
+}
+
+/* Progress bar */
+.apc .aeZ {
+	border-color: var(--GR6) !important
+}
+
+/* Active */
+.apc .ae0 {
+	background: var(--GR4) !important
+}
+
+/* "Manage" */
+.l8 {
+	color: var(--GR12) !important
+}
+
+.l8:hover {
+	color: var(--GR15) !important
+}
+
+/* SEARCH RESULTS */
+
+/* "Mail" / "Conversations" / "Spaces" Toolbar */
+
+.Th {
+	background: var(--GR5) !important
+}
+
+/* Selected */
+.qN.qO::before {
+	background: var(--GR8) !important
+}
+
+/* Divider */
+.U6 {
+	border-color: var(--GR10) !important
+}
+
+/* "Advanced search" */
+.Ol.Nk {
+	color: var(--GR18) !important
+}
+
+.Ol.Nk:hover {
+	color: var(--GRSELECTED) !important
+}
+
+/* INBOX TOOLBAR */
+
+/* Icons */
+
+/* Checkbox */
+.G-tF .T-Jo {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/check_box_outline_blank_white_20dp.png") !important
+}
+
+/* Checkbox (Checked) */
+.G-tF .T-Jo-Jp {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/check_box_white_20dp.png") !important
+}
+
+/* Dropdown Arrow */
+.G-asx {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/arrow_drop_down_white_20dp.png") !important
+}
+
+/* Refresh */
+.bzn .asf {
+	background-image: url("https://ssl.gstatic.com/ui/v1/icons/mail/gm3/1x/refresh_white_20dp.png") !important
+}
+
+/* More */
+.bjy {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/more_vert_white_20dp.png") !important
+}
+
+/* Left Arrow */
+.amI,
+.adj {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/chevron_left_white_20dp.png") !important
+}
+
+/* Right Arrow */
+.amJ,
+.adk {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/chevron_right_white_20dp.png") !important
+}
+
+/* Language Selector */
+.aBS .d-Na-JX-I .d-Na-J3 {
+	background-image: url("https://www.gstatic.com/inputtools/images/ita_sprite_grey8.png") !important
+}
+
+/* View Mode */
+.apK {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/vertical_split_white_20dp.png") !important
+}
+
+/* View Mode - Panes Enabled */
+.apJ {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/reorder_white_20dp.png") !important
+}
+
+/* Settings */
+.aos {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/settings_white_20dp.png") !important
+}
+
+/* Archive */
+.ar8 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/archive_white_20dp.png") !important
+}
+
+/* Aug 2022 [Remove -webkit-mask-image when legacy is gone] */
+.bzn .ar8 {
+	background-color: var(--GR17) !important;
+	/* stylelint-disable-next-line property-no-vendor-prefix */
+	-webkit-mask-image: url("https://fonts.gstatic.com/s/i/short-term/release/googlesymbols/archive/default/20px.svg");
+}
+
+/* Spam */
+.asl {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/report_white_20dp.png") !important
+}
+
+/* Aug 2022 [Remove -webkit-mask-image when legacy is gone] */
+.bzn .asl {
+	background-color: var(--GR17) !important;
+	/* stylelint-disable-next-line property-no-vendor-prefix */
+	-webkit-mask-image: url("https://fonts.gstatic.com/s/i/short-term/release/googlesymbols/report/default/20px.svg");
+}
+
+/* Delete */
+.ar9 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/delete_white_20dp.png") !important
+}
+
+/* Aug 2022 [Remove -webkit-mask-image when legacy is gone] */
+.bzn .ar9 {
+	background-color: var(--GR17) !important;
+	/* stylelint-disable-next-line property-no-vendor-prefix */
+	-webkit-mask-image: url("https://fonts.gstatic.com/s/i/short-term/release/googlesymbols/delete/default/20px.svg");
+}
+
+/* Mark as Unread */
+.bAP {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/mark_as_unread_white_20dp.png") !important
+}
+
+/* Aug 2022 [Remove -webkit-mask-image when legacy is gone] */
+.bzn .bAP {
+	background-color: var(--GR17) !important;
+	/* stylelint-disable-next-line property-no-vendor-prefix */
+	-webkit-mask-image: url("https://fonts.gstatic.com/s/i/short-term/release/googlesymbols/mail/default/20px.svg");
+}
+
+/* In Spam > "Delete forever" & "Not spam" buttons */
+.Bn {
+	color: var(--GR17) !important
+}
+
+/* Mark as read */
+.bzn .bAO {
+	background-image: url('https://ssl.gstatic.com/ui/v1/icons/mail/gm3/1x/drafts_white_20dp.png') !important
+}
+
+/* Snooze */
+.brW {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/watch_later_white_20dp.png") !important
+}
+
+/* Aug 2022 [Remove -webkit-mask-image when legacy is gone] */
+.bzn .brW {
+	background-color: var(--GR17) !important;
+	/* stylelint-disable-next-line property-no-vendor-prefix */
+	-webkit-mask-image: url("https://fonts.gstatic.com/s/i/short-term/release/googlesymbols/schedule/default/20px.svg");
+}
+
+/* Move To */
+.ase {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/drive_file_move_white_20dp.png") !important
+}
+
+/* Aug 2022 [Remove -webkit-mask-image when legacy is gone] */
+.bzn .ase {
+	background-color: var(--GR17) !important;
+	/* stylelint-disable-next-line property-no-vendor-prefix */
+	-webkit-mask-image: url("https://fonts.gstatic.com/s/i/short-term/release/googlesymbols/drive_file_move/default/20px.svg");
+}
+
+/* Labels */
+.asb {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/label_white_20dp.png") !important
+}
+
+/* Aug 2022 [Remove -webkit-mask-image when legacy is gone] */
+.bzn .asb {
+	background-color: var(--GR17) !important;
+	/* stylelint-disable-next-line property-no-vendor-prefix */
+	-webkit-mask-image: url("https://fonts.gstatic.com/s/i/short-term/release/googlesymbols/label/default/20px.svg");
+}
+
+/* Back */
+.ar6 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/arrow_back_white_20dp.png") !important
+}
+
+/* Inbox Tabs (Primary, Promotions, Social, Updates, Forums) */
+
+/* Primary Icon */
+.aIf-aLf {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/inbox_white_20dp.png") !important
+}
+
+/* Primary Icon (Selected) */
+.aAy.J-KU-KO>.aIf-aLf {
+	background-color: var(--GRSELECTED) !important
+}
+
+/* Promotions Icon */
+.aJi-aLf {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/local_offer_white_20dp.png") !important
+}
+
+/* Promotions Icon (Selected) */
+.aAy.J-KU-KO>.aJi-aLf {
+	background-color: var(--GRSELECTED) !important
+}
+
+/* Social Icon */
+.aKe-aLf {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/people_white_20dp.png") !important
+}
+
+/* Social Icon (Selected) */
+.aAy.J-KU-KO>.aKe-aLf {
+	background-color: var(--GRSELECTED) !important
+}
+
+/* Updates Icon */
+.aH2-aLf {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/info_white_20dp.png") !important
+}
+
+/* Updates Icon (Selected) */
+.aAy.J-KU-KO>.aH2-aLf {
+	background-color: var(--GRSELECTED) !important
+}
+
+/* Forums Icon */
+.aHE-aLf {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/forum_white_20dp.png") !important
+}
+
+/* Forums Icon (Selected) */
+.aAy.J-KU-KO>.aHE-aLf {
+	background-color: var(--GRSELECTED) !important
+}
+
+/* Text Label */
+.aKx>.aKz {
+	color: var(--GR17) !important
+}
+
+/* Selected Underline */
+.J-KU-KO::before {
+	background-color: var(--GRSELECTED) !important
+}
+
+/* Empty Tab */
+.aRs {
+	background: var(--GR4) !important;
+	color: var(--GR17) !important;
+}
+
+/* Title */
+.aRv {
+	color: var(--GR19) !important
+}
+
+/* Links */
+.aRq {
+	color: var(--GR19) !important
+}
+
+/* Inbox Group Section */
+
+/* "Unread", "Everything Else", etc... */
+.Wr>.Wn {
+	color: var(--GR17) !important
+}
+
+/* Collapse Button */
+.Wq,
+.Wq-A8 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/keyboard_arrow_up_white_20dp.png") !important
+}
+
+/* Expand Button */
+.Wo,
+.Wo-A8 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/keyboard_arrow_down_white_20dp.png") !important
+}
+
+/* Buttons */
+
+/* "Settings" Focused State (Outer Ring) */
+.asa::before {
+	border-color: var(--GR10) !important
+}
+
+/* "..." menu */
+.J-JN-M-I-JG {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/more_vert_white_20dp.png") !important
+}
+
+/* "Select messages to see more actions" */
+.asd {
+	color: var(--GR15) !important
+}
+
+/* Page Count (1 of 3) */
+.Dj,
+/* Inbox */
+.h0
+
+/* Email View */
+	{
+	color: var(--GR15) !important
+}
+
+/* INBOX LIST */
+
+/* "no new mail!" row */
+.TD {
+	background: var(--GR3) !important;
+	color: var(--GR15) !important;
+}
+
+/* In Spam Folder > "Messages that have been in Spam..." banner */
+.Tm .ya {
+	background: var(--GR3) !important;
+	color: var(--GR15) !important;
+}
+
+/* Link */
+.nH .ya .x2 {
+	color: var(--GR18) !important
+}
+
+.nH .ya .x2:hover {
+	color: var(--GRSELECTED) !important
+}
+
+/* Toolbar */
+
+/* Separators */
+.G-Ni.G-aE:not(:first-child) {
+	box-shadow: inset -1px 0 0 hsla(211, 18%, 88%, 0.322) !important
+}
+
+/* Row */
+.yO {
+	background: var(--GR4) !important;
+	color: var(--GR17) !important;
+}
+
+/* Hover */
+.zA:hover {
+	background: var(--GR6) !important;
+	box-shadow:
+		inset 1px 0 0 var(--GR7),
+		inset -1px 0 0 var(--GR9),
+		0 1px 2px 0 var(--GR2),
+		0 1px 3px 1px var(--GR4)
+}
+
+/* "View Issue" button (for GitHub emails) */
+.aOd.T-I {
+	box-shadow: inset 0 0 0 1px var(--GR12) !important;
+	color: var(--GR17) !important;
+}
+
+.aOd.T-I:hover {
+	box-shadow: inset 0 0 0 1px var(--GR15) !important;
+	color: var(--GR19) !important;
+}
+
+/* Icon */
+.aTn {
+	filter: invert(1) !important
+}
+
+/* Unread */
+.zE {
+	background: var(--GR6) !important;
+	color: var(--GR19) !important;
+}
+
+.zE:hover {
+	background: var(--GR8) !important
+}
+
+/* Author count (#) */
+.bx0 {
+	color: var(--GR13) !important
+}
+
+/* Description Text */
+.y2 {
+	color: var(--GR12) !important
+}
+
+/* Date Text */
+.yO>.xW {
+	color: var(--GR12) !important
+}
+
+/* Attachment Pill */
+.brc {
+	box-shadow: inset 0 0 0 1px var(--GR12) !important;
+	color: var(--GR15) !important
+}
+
+.brc:hover {
+	box-shadow: inset 0 0 0 1px var(--GR12) !important;
+	color: var(--GR15) !important
+}
+
+/* Icons */
+
+/* Drag handle */
+td.oZ-x3::before {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/drag_indicator_white_20dp.png") !important
+}
+
+/* Checkbox */
+.xY>.T-Jo {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/check_box_outline_blank_white_20dp.png") !important;
+	opacity: 0.4 !important;
+}
+
+/* Checkbox (Checked) */
+.xY>.T-Jo-Jp {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/check_box_white_20dp.png") !important;
+	opacity: 0.8 !important;
+}
+
+/* Star */
+td.apU>.T-KT.aXw::before {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/star_border_white_20dp.png") !important;
+	opacity: 0.4 !important;
+}
+
+/* Non-important */
+.a9q {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/label_important_outline_white_20dp.png") !important;
+	opacity: 0.4 !important;
+}
+
+/* Important */
+.a9q.pH {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/label_important_googyellow500_20dp.png") !important;
+	opacity: 0.8 !important;
+}
+
+/* Archive */
+.brq {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/archive_white_20dp.png") !important
+}
+
+/* Delete */
+.bru {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/delete_white_20dp.png") !important
+}
+
+/* Mark as Read */
+.brr {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/drafts_white_20dp.png") !important
+}
+
+/* Mark as Unread */
+.brs {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/mark_as_unread_white_20dp.png") !important
+}
+
+/* Snooze */
+.brv {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/watch_later_white_20dp.png") !important
+}
+
+/* Add to Tasks */
+.Vj {
+	background-image: url("https://ssl.gstatic.com/ui/v1/icons/mail/rfr/task_add_filled_20_white_1x.png") !important
+}
+
+/* Aug 2022 [Remove -webkit-mask-image when legacy is gone] */
+.bzn .Vj {
+	background-color: var(--GR17) !important;
+	/* stylelint-disable-next-line property-no-vendor-prefix */
+	-webkit-mask-image: url("https://fonts.gstatic.com/s/i/short-term/release/googlesymbols/add_task/default/20px.svg");
+}
+
+/* Move to Inbox */
+.bq5 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/move_to_inbox_white_20dp.png") !important
+}
+
+/* Calendar */
+.xL {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/today_white_20dp.png") !important
+}
+
+/* Hangouts */
+.aVb {
+	background-image: url("https://ssl.gstatic.com/ui/v1/icons/mail/wbt/hangouts_white_icon16.png") !important
+}
+
+/* Attachment */
+.yE {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/attachment_white_20dp.png") !important
+}
+
+/* INBOX CONTEXT MENU */
+
+/* Icons */
+
+/* Reply All */
+.BR {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/reply_all_white_20dp.png") !important
+}
+
+/* Reply All */
+.BS {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/reply_white_20dp.png") !important
+}
+
+/* Forward */
+.BQ {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/forward_white_20dp.png") !important
+}
+
+/* Forward as attachment */
+.In {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/attachment_white_20dp.png") !important
+}
+
+/* Archive */
+.aDD {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/archive_white_20dp.png") !important
+}
+
+/* Move to inbox */
+.s0 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/move_to_inbox_white_20dp.png") !important
+}
+
+/* Not spam */
+.s3 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/report_off_white_20dp.png") !important
+}
+
+/* Delete */
+.aDF {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/delete_white_20dp.png") !important
+}
+
+/* Discard drafts */
+.UN {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/delete_white_20dp.png") !important
+}
+
+/* Mark as read */
+.sX {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/drafts_white_20dp.png") !important
+}
+
+/* Mark as unread */
+.sY {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/mark_as_unread_white_20dp.png") !important
+}
+
+/* Snooze */
+.s7 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/watch_later_white_20dp.png") !important
+}
+
+/* Move to */
+.sZ {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/drive_file_move_white_20dp.png") !important
+}
+
+/* Label as */
+.zp {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/label_white_20dp.png") !important
+}
+
+/* Mute */
+.s1 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/volume_off_white_20dp.png") !important
+}
+
+/* Unmute */
+.s9 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/volume_up_white_20dp.png") !important
+}
+
+/* Find emails from ___ */
+.s6 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/search_white_20dp.png") !important
+}
+
+/* Open in new window */
+.zn {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/open_in_new_white_20dp.png") !important
+}
+
+/* Arrow */
+.J-Ph-hFsbo {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/arrow_right_white_20dp.png") !important
+}
+
+
+/* QUICK SETTINGS RIGHT SIDEBAR */
+
+.IU {
+	background: var(--GR4) !important;
+	box-shadow: inset 1px 0 0 var(--GR6) !important;
+}
+
+/* "Quick settings" Header */
+.Q0 {
+	color: var(--GR17) !important
+}
+
+/* "X" close button */
+.OB {
+	filter: invert(1)
+}
+
+.Tj,
+/* "See all settings" button */
+.YD
+
+/* "Manage this organization" button */
+	{
+	box-shadow: inset 0 0 0 1px var(--GR8) !important;
+	color: var(--GR17) !important;
+}
+
+.Tj:hover,
+.YD:hover {
+	box-shadow: inset 0 0 0 1px var(--GR10) !important;
+	color: var(--GR19) !important;
+}
+
+/* Info icon */
+.XO {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/info_outline_white_20dp.png") !important
+}
+
+/* Question Icon */
+.SV {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/help_outline_white_20dp.png") !important
+}
+
+/* Dividers */
+.Q3 {
+	border-color: var(--GR6) !important
+}
+
+/* Subheaders */
+.VM .Q5,
+/* "Theme" */
+.VM .OG
+
+/* All others */
+	{
+	color: var(--GR12) !important;
+}
+
+/* Text */
+.Q2,
+/* "Density" */
+.aIY,
+/* "You're using Gmail view" */
+.a21,
+/* "Chat and meet" */
+.ST
+
+/* "Conversation view" */
+	{
+	color: var(--GR17) !important;
+}
+
+/* Links */
+.OD {
+	color: var(--GRSELECTED) !important
+}
+
+.OD:hover {
+	color: var(--GR19) !important
+}
+
+/* Radio Button */
+.Vo::before {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/radio_button_unchecked_white_24dp.png")
+}
+
+/* Radio Button (Selected) */
+.Q1:checked+.Vo::before {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/radio_button_checked_white_24dp.png")
+}
+
+/* Checkbox */
+.ST::before {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/check_box_outline_blank_white_20dp.png") !important
+}
+
+/* Checkbox (Checked) */
+.SS:checked+.ST::before {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/check_box_white_20dp.png") !important
+}
+
+/* RIGHT SIDEBAR */
+
+/* Body */
+.brC-aT5-aOt-Jw {
+	background: var(--GR2) !important;
+	border-color: var(--GR6) !important;
+}
+
+/* Divider */
+.brC-aT5-aOt-axR {
+	border-color: var(--GR6) !important
+}
+
+/* Buttons */
+.aT5-aOt-I-JX-Jw:hover {
+	background-color: var(--GR7) !important;
+}
+
+/* "Get Addons" icon */
+.aT5-aOt-I-JX-Jw[style*="googlematerialicons"] {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/add_white_24dp.png") !important
+}
+
+/* EMAIL THREADS */
+
+/* Snoozed Bar */
+.bAR {
+	background: var(--GR4) !important
+}
+
+/* Text */
+.bAV {
+	color: var(--GR15) !important
+}
+
+/* Unsnooze Button */
+.bAS {
+	color: var(--GRSELECTED) !important
+}
+
+.bAS:focus,
+.bAS:hover {
+	color: var(--GR17) !important
+}
+
+/* Overall Background */
+.iY,
+.iY .Bu {
+	background: transparent !important
+}
+
+/* Thread Dividers */
+.Bk .G2 {
+	border-color: var(--GR6) !important
+}
+
+/* Email Title */
+.ha>.hP {
+	color: var(--GR17) !important
+}
+
+/* Flight Details */
+.aX3 {
+	border-color: var(--GR4) !important
+}
+
+/* Left Side */
+.aXt {
+	background: var(--GR2) !important;
+	border-color: var(--GR4) !important;
+}
+
+/* Right Side */
+
+/* Flight Number */
+.aHz {
+	color: var(--GR17) !important
+}
+
+/* Dates */
+.aHB {
+	color: var(--GR15) !important
+}
+
+/* From/To Sections */
+.aNp,
+.aYl {
+	border-color: var(--GR4) !important
+}
+
+/* Selected Item */
+.aNA .aX5,
+.aNp:hover .aX5 {
+	color: var(--GRSELECTED) !important
+}
+
+/* Body Preview */
+.g6 {
+	color: var(--GR15) !important
+}
+
+/* Recepients */
+.hx .hb,
+.ac2 {
+	color: var(--GR15) !important
+}
+
+/* "Images are not displayed" / "Translation" banner */
+.adp,
+.h9,
+.adI,
+.aHn {
+	background: var(--GR2) !important;
+	color: var(--GR17) !important;
+}
+
+/* Image Icon */
+.aeu {
+	filter: invert(1)
+}
+
+/* Links */
+.h8 {
+	color: var(--GR19) !important
+}
+
+.h8:hover {
+	color: var(--GRSELECTED) !important
+}
+
+/* Translation Bar */
+
+/* Translation Icon */
+.hc {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/translate_white_20dp.png") !important
+}
+
+/* Chevron Right */
+.adG {
+	background-image: url("https://www.gstatic.com/images/icons/material/system_gm/1x/chevron_right_white_20dp.png") !important
+}
+
+/* "French" / "English" */
+.J-JN-M-I {
+	color: var(--GR15) !important
+}
+
+/* "Translate Message" */
+.adI .B9 {
+	color: var(--GR19) !important
+}
+
+.adI .B9:hover {
+	color: var(--GRSELECTED) !important
+}
+
+/* "x" Button */
+.zz {
+	filter: invert(1) !important
+}
+
+/* Header Icons */
+
+/* Recepients Arrow */
+.ajy>.ajz {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/arrow_drop_down_white_20dp.png") !important
+}
+
+/* Collapse All */
+.ade .gq {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/collapse_all_white_20dp.png") !important
+}
+
+/* Expand All */
+.ade .gx {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/expand_all_white_20dp.png") !important
+}
+
+/* Print */
+.g1 {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/print_white_20dp.png") !important
+}
+
+/* Open in New Window */
+.gZ {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/open_in_new_white_20dp.png") !important
+}
+
+/* More */
+.hA {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/more_vert_white_20dp.png") !important
+}
+
+/* Attachment Clip */
+.gW {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/attachment_white_20dp.png") !important
+}
+
+/* Thread */
+
+/* Author */
+.hx .gD {
+	color: var(--GR19) !important
+}
+
+/* Author Email */
+.go {
+	color: var(--GR15) !important
+}
+
+/* Date */
+.g3 {
+	color: var(--GR15) !important
+}
+
+/* Icons */
+
+/* Star */
+.bi4>.T-KT:not(.T-KT-Jp):not(.byM)::before {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/star_border_white_20dp.png") !important
+}
+
+/* Reply */
+.hB,
+/* Inline */
+.mL
+
+/* In ... menu */
+	{
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/reply_white_20dp.png") !important
+}
+
+/* Reply All */
+.mK {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/reply_all_white_20dp.png") !important
+}
+
+/* Forward (In ... menu) */
+.mI {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/forward_white_20dp.png") !important
+}
+
+/* Email Content */
+.a3s {
+	background: #FFF;
+	/* stylelint-disable-line color-no-hex */
+	border-radius: 8px;
+	padding: 32px;
+}
+
+/* Attachments */
+
+/* Divider */
+.hp {
+	border-top: 1px solid var(--GR8) !important
+}
+
+/* "# Attachments" */
+.aVW {
+	color: var(--GR17)
+}
+
+/* Download Icon */
+.asa>.aZh {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/file_download_white_20dp.png") !important
+}
+
+/* Google Drive Icon */
+.asa>.aZg {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/attach_drive_white_20dp.png") !important
+}
+
+/* Attachment Item */
+.aQy,
+.aSG {
+	background: var(--GR2) !important
+}
+
+.aZn,
+.aZn::after,
+.aZm,
+.aZm::after {
+	border-color: var(--GR8) !important
+}
+
+/* Title */
+.aYy {
+	background: var(--GR4) !important
+}
+
+/* Text */
+.aQA {
+	color: var(--GR17) !important
+}
+
+/* Recepient ("me") Hover Popover */
+.ajA {
+	background: var(--GR6) !important
+}
+
+/* Labels */
+.ajB .gG {
+	color: var(--GR19) !important
+}
+
+/* Value */
+.gI {
+	color: var(--GR17) !important
+}
+
+/* Links */
+.h1,
+/* "Filter messages from this mailing list") */
+.gI a
+
+/* Security "Learn More" */
+	{
+	color: var(--GRSELECTED) !important
+}
+
+.h1:focus,
+.h1:hover,
+.gI a:focus,
+.gI a:hover {
+	color: var(--GR19) !important
+}
+
+/* Recommended Responses */
+
+.bra {
+	box-shadow: inset 0 0 0 1px var(--GR8) !important;
+	color: var(--GRSELECTED) !important;
+}
+
+.bra:hover {
+	background: var(--GR3) !important
+}
+
+/* Collapsed Threads */
+
+/* Number */
+.bh>.adv .adx {
+	background: var(--GR6) !important;
+	box-shadow: inset 0 0 0 1px var(--GR10);
+	color: var(--GR17) !important;
+}
+
+/* Hover Icons */
+.bh>.adv .adx::before {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/expand_all_white_20dp.png")
+}
+
+/* Divider */
+.bh>.adv>.Bk::after {
+	border-color: var(--GR8) !important
+}
+
+/* Footer Action Buttons */
+
+/* Row */
+.nr {
+	background: transparent !important
+}
+
+/* Button */
+
+.amn>.ams {
+	box-shadow: inset 0 0 0 1px var(--GR8) !important;
+	color: var(--GR17) !important;
+}
+
+.amn>.ams:hover {
+	background: var(--GR3) !important
+}
+
+/* Reply Icon */
+.ams.bkH::before {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/reply_white_20dp.png") !important
+}
+
+/* Reply All Icon */
+.ams.bkI::before {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/reply_all_white_20dp.png") !important
+}
+
+/* Forward Icon */
+.ams.bkG::before {
+	background-image: url("https://www.gstatic.com/images/icons/material/system/1x/forward_white_20dp.png") !important
+}
+
+/* Compose RTE editor */
+
+/* Border */
+.HM .I5 {
+	border-color: var(--GR8) !important
+}
+
+/* Outer elements */
+.aC2,
+.aC3,
+.HM .ahe::after {
+	background: transparent !important
+}
+
+/* Footer */
+.iN {
+	background: var(--GR18) !important;
+	border-radius: 0 0 14px 14px !important;
+}
+
+/* Deleted messages banner */
+.iS {
+	background: var(--GR2) !important;
+	border-color: var(--GR4) !important;
+}
+
+/* Button */
+.iT {
+	color: var(--GRSELECTED) !important
+}
+
+.iT:hover {
+	color: var(--GR19) !important
+}
+
+/* Calendar Invite */
+.aU9 {
+	border-color: var(--GR6) !important
+}
+
+/* First Panel */
+.aRi {
+	background: var(--GR4) !important;
+	border-color: var(--GR6) !important;
+}
+
+/* Second Panel */
+.aU4 {
+	background: var(--GR2) !important;
+	color: var(--GR17) !important;
+}
+
+/* Event Title */
+.aRo {
+	color: var(--GR17) !important
+}
+
+/* "View on Google Calendar" */
+.aRn .e {
+	color: var(--GR15) !important
+}
+
+/* "When", "Where", "Who", "Agenda" labels */
+.aRk,
+.aQ4,
+.aQ5 {
+	color: var(--GR15) !important
+}
+
+/* "Yes" button */
+.bqc.T-I-ax7.bAL.aRa {
+	background: var(--GR4) !important;
+	box-shadow: inset 0 0 0 1px var(--GR8) !important;
+	color: var(--GRSELECTED) !important;
+}
+
+.bqc.T-I-ax7.bAL.aRa:hover {
+	background: var(--GRSELECTED) !important;
+	box-shadow: inset 0 0 0 1px var(--GRSELECTED) !important;
+	color: var(--GR0) !important;
+}
+
+/* "Maybe", "No" Buttons */
+.bqc.T-I-ax7 {
+	background: var(--GR2) !important;
+	box-shadow: inset 0 0 0 1px var(--GR8) !important;
+	color: var(--GR17) !important;
+}
+
+.bqc.T-I-ax7:hover {
+	background: var(--GR4) !important;
+	box-shadow: inset 0 0 0 1px var(--GRSELECTED) !important;
+}
+
+/* Third Panel */
+.aRc {
+	background: var(--GR2) !important;
+	border-color: var(--GR6) !important;
+}
+
+/* Agenda Links */
+.aU7 {
+	color: var(--GR17) !important
+}
+
+.aU7:hover {
+	color: var(--GRSELECTED) !important
+}
+
+/* SETTINGS */
+
+
+/* "Settings" title */
+.dt {
+	color: var(--GR17) !important
+}
+
+/* Tab */
+.v .f1,
+.v .f1 .f0 {
+	color: var(--GR17) !important
+}
+
+.v .f1:hover,
+.v .f1 .f0:hover {
+	color: var(--GR19) !important
+}
+
+/* Selected */
+.v .fZ {
+	box-shadow: inset 0 -2px 0 0 var(--GRSELECTED) !important
+}
+
+/* Text */
+.v .fZ .f0 {
+	color: var(--GRSELECTED) !important
+}

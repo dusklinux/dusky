@@ -1,0 +1,35 @@
+@-moz-document domain("vault.bitwarden.com") {
+    :root {
+        /* Backgrounds */
+        --color-gray-900: var(--background) !important;
+        --color-gray-800: var(--surface_container_low) !important;
+        --color-background: var(--surface_container_high_rgb) !important;
+
+        /* Login background */
+        --color-gray-950: var(--background) !important;
+        --color-illustration-bg-primary: var(--primary_rgb) !important;
+        --color-illustration-bg-secondary: var(--secondary_rgb) !important;
+        --color-illustration-bg-tertiary: var(--surface_container_rgb) !important;
+        --color-illustration-outline: var(--outline_rgb) !important;
+        --color-illustration-tertiary: var(--on_surface_rgb) !important;
+
+        /* Buttons */
+        --color-primary-600: var(--primary_rgb) !important;
+        --color-primary-100: var(--primary_container_rgb) !important;
+
+        /* Muted */
+        --color-secondary-300: var(--surface_container_low_rgb) !important;
+        --color-text-muted: var(--on_surface_rgb) !important;
+
+        /* Also affects some borders */
+        --color-secondary-100: var(--surface_container_low_rgb) !important;
+        --color-secondary-700: var(--on_surface_rgb) !important;
+
+        /* Hovered */
+        --color-primary-700: var(--primary_rgb) !important;
+        --color-text-contrast: var(--on_primary_rgb) !important;
+
+        /* Text */
+        --color-brand-400: var(--primary) !important;
+    }
+}

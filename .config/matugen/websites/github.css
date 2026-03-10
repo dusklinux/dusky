@@ -1,0 +1,54 @@
+@-moz-document domain("github.com") {
+    :root {
+        --bgColor-default: var(--background) !important;
+        --bgColor-muted: var(--surface_container_low) !important;
+        --bgColor-inset: var(--surface_container_lowest) !important;
+        --bgColor-emphasis: var(--surface_bright) !important;
+
+        /* Borders */
+        --borderColor-default: var(--outline_variant) !important;
+        --borderColor-muted: var(--outline_variant) !important;
+        --borderColor-emphasis: var(--outline) !important;
+
+        /* Text Colors */
+        --fgColor-default: var(--on_surface) !important;
+        --fgColor-muted: var(--on_surface_variant) !important;
+        --fgColor-accent: var(--primary) !important;
+
+        /* Buttons */
+        --button-primary-bgColor-rest: var(--primary) !important;
+        --button-primary-fgColor-rest: var(--on_primary) !important;
+        --button-primary-bgColor-hover: var(--primary_fixed_dim) !important;
+        --button-primary-bgColor-active: var(--primary_fixed) !important;
+        --button-primary-borderColor-rest: var(--outline_variant) !important;
+
+        --button-default-bgColor-rest: var(--surface_container_high) !important;
+        --button-default-fgColor-rest: var(--on_surface) !important;
+        --button-default-bgColor-hover: var(--surface_bright) !important;
+        --buttonCounter-default-bgColor-rest: var(--surface_container_highest) !important;
+
+        --bgColor-accent-emphasis: var(--primary) !important;
+        --borderColor-accent-emphasis: var(--primary) !important;
+        --bgColor-accent-muted: var(--primary_container) !important;
+        --borderColor-accent-muted: var(--primary_container) !important;
+
+        /* Looks kinda bad in issues but here if you want it */
+        /* --bgColor-success-emphasis: var(--tertiary) !important; */
+        /* --fgColor-success: var(--tertiary) !important; */
+
+        --bgColor-danger-emphasis: var(--error) !important;
+        --fgColor-danger: var(--error) !important;
+        --button-danger-fgColor-rest: var(--error) !important;
+        --button-danger-bgColor-hover: var(--error_container) !important;
+
+        --bgColor-attention-emphasis: var(--secondary) !important;
+        --borderColor-attention-muted: var(--secondary_container) !important;
+
+        --control-checked-bgColor-rest: var(--primary) !important;
+        --control-checked-bgColor-hover: var(--primary_fixed_dim) !important;
+        --control-checked-bgColor-active: var(--primary_fixed) !important;
+
+        /* Star button */
+        --button-star-iconColor: var(--primary) !important;
+    }
+}
