@@ -1,9 +1,9 @@
 # ==============================================================================
-# function: detailed_log
-# description: The ultimate, zero-regression execution and logging wrapper.
-#              Optimized for Arch Linux, Bash 5.3+, and deep forensic debugging.
+# function: logs
+# function for script testing, logging, troubleshooting
 # ==============================================================================
-detailed_logs() {
+
+logs() {
     emulate -L zsh
     # Strictly prevent Zsh from implicitly duplicating streams or swallowing pipe errors
     setopt local_options NO_NOMATCH PIPE_FAIL NO_MULTIOS
@@ -16,7 +16,7 @@ detailed_logs() {
     while (( $# )); do
         case "$1" in
             -h|--help)
-                printf 'Usage: detailed_log [opts] <script> [args...]\n'
+                printf 'Usage: logs [opts] <script> [args...]\n'
                 printf '  -s, --strace    Trace system calls (-f -tt -T -y -yy)\n'
                 printf '  -q, --quiet     Suppress terminal output (logs only)\n'
                 printf '  -S, --strict    Inject strict mode (set -euo pipefail)\n'
@@ -78,6 +78,17 @@ detailed_logs() {
     script_name="${script_path:t}"
     script_dir="${script_path:h}"
 
+    # Determine execution mode (Preserve native shebangs/flags if executable)
+    local launch_mode="forced_bash"
+    local shebang
+    shebang=$(head -n1 "$script_path" 2>/dev/null)
+    
+    if [[ -x "$script_path" && "$shebang" == \#!*bash* ]]; then
+        launch_mode="direct"
+    elif [[ "$shebang" == \#!* && ! "$shebang" =~ (bash|/sh$|/sh\ |/dash|/ash|/env[[:space:]]+(sh|bash)) ]]; then
+        printf '\e[33mWarning: Script interpreter is "%s" but forcing Bash execution.\e[0m\n' "${shebang:0:50}" >&2
+    fi
+
     # --- 3. Session Setup & Pre-Flight Diagnostics
     local ts base outdir session_dir
     ts=$(date '+%Y%m%d-%H%M%S')
@@ -100,9 +111,15 @@ detailed_logs() {
     local journal_log="${session_dir}/systemd_journal.log"
     local error_dump="${session_dir}/error_state_dump.txt"
     local snapshot_path="${session_dir}/script_snapshot.source"
+    local pid_file="${session_dir}/pid.txt" 
     local env_prelude="${session_dir}/.bash_prelude.sh"
 
-    # Source Code Snapshotting (reflink for BTRFS/ZFS efficiency if available)
+    # Zsh TRAPEXIT: Indestructible cleanup, guaranteed to run even on SIGINT/SIGTERM
+    TRAPEXIT() {
+        rm -f -- "$env_prelude" 2>/dev/null
+    }
+
+    # Source Code Snapshotting (reflink for modern filesystems)
     cp -a --reflink=auto -- "$script_path" "$snapshot_path" 2>/dev/null || cp -a -- "$script_path" "$snapshot_path"
 
     # Static Analysis (Shellcheck & Syntax)
@@ -122,6 +139,11 @@ detailed_logs() {
 # Native Bash Injection Prelude
 unset BASH_ENV
 
+if [[ -n "${DL_PID_FILE:-}" ]]; then 
+    echo "$BASHPID" > "$DL_PID_FILE"
+    unset DL_PID_FILE
+fi
+
 # Open trace FD natively within Bash to survive close-on-exec boundaries
 if [[ -n "${DL_TRACE_LOG:-}" ]]; then
     exec {BASH_XTRACEFD}>>"${DL_TRACE_LOG}"
@@ -131,26 +153,29 @@ fi
 # Inheritance and strict mode application
 set -o errtrace
 set -o functrace
-shopt -s extdebug
 
 if [[ "${DL_STRICT:-0}" == "1" ]]; then
     set -o errexit
     set -o nounset
     set -o pipefail
+    shopt -s inherit_errexit 2>/dev/null || true
 fi
 
-# Advanced Error Trap: Call stack, Source context, File Descriptors, and Variable Dumps
+# Advanced Error Trap
 __dl_err() {
     local _ret=$?
+    # MUST be captured immediately before any other command executes
+    local -a _pipe_status=("${PIPESTATUS[@]}")  
     local _cmd="${BASH_COMMAND:-unknown}"
     local _src="${BASH_SOURCE[1]:-${BASH_SOURCE[0]:-unknown}}"
     local _lin="${BASH_LINENO[0]:-?}"
     
-    # Dump process state to a dedicated file to avoid polluting stderr
+    # Dump process state to a dedicated file
     if [[ -n "${DL_ERROR_DUMP:-}" ]]; then
         {
             printf '=== CRITICAL ERROR AT %s ===\n' "$(date '+%H:%M:%S.%N')"
             printf 'Exit Code: %s\nCommand: %s\n' "$_ret" "$_cmd"
+            printf 'PIPESTATUS: ( %s )\n' "${_pipe_status[*]}"
             printf '\n--- OPEN FILE DESCRIPTORS (/proc/%s/fd) ---\n' "$BASHPID"
             ls -l "/proc/$BASHPID/fd" 2>/dev/null
             printf '\n--- VARIABLE STATE (declare -p) ---\n'
@@ -159,19 +184,19 @@ __dl_err() {
     fi
 
     builtin echo -e "\n\e[1;41m  SCRIPT ERROR DETECTED  \e[0m" >&2
-    builtin echo -e "\e[1;31m Exit Code:\e[0m $_ret" >&2
+    builtin echo -e "\e[1;31m Exit Code:\e[0m $_ret \e[37m| PIPESTATUS: ( ${_pipe_status[*]} )\e[0m" >&2
     builtin echo -e "\e[1;31m Command  :\e[0m $_cmd" >&2
     
     builtin echo -e "\e[1;33m Call Stack:\e[0m" >&2
     local frame=0
     while builtin caller $frame; do
         ((frame++))
-    done | builtin awk '{printf "  \033[36m↳\033[0m %s:%s (\033[35m%s\033[0m)\n", $3, $1, $2}' >&2
+    done | awk '{printf "  \033[36m↳\033[0m %s:%s (\033[35m%s\033[0m)\n", $3, $1, $2}' >&2
     
-    # Render the dynamic Source Context block around the failing line
+    # Source Context parsing
     if [[ -f "$_src" && "$_lin" =~ ^[0-9]+$ ]]; then
         builtin echo -e "\e[1;33m Source Context:\e[0m" >&2
-        builtin awk -v n="$_lin" 'NR >= n - 3 && NR <= n + 3 { printf "  %s %6d | %s\n", (NR == n ? "\033[1;31m>\033[0m" : " "), NR, $0 }' "$_src" >&2
+        awk -v n="$_lin" 'NR >= n - 3 && NR <= n + 3 { printf "  %s %6d | %s\n", (NR == n ? "\033[1;31m>\033[0m" : " "), NR, $0 }' "$_src" >&2
     fi
     
     if [[ -n "${DL_ERROR_DUMP:-}" ]]; then
@@ -179,16 +204,25 @@ __dl_err() {
     fi
 }
 trap '__dl_err' ERR
+
+# Engage xtrace at the very end to prevent prelude initialization leakage
+set -o xtrace
 EOF
 
     # --- 5. Context & Metadata Capture
     {
         printf 'session_start=%s\n' "$(date --iso-8601=seconds)"
         printf 'script_path=%s\n' "$script_path"
+        printf 'launch_mode=%s\n' "$launch_mode"
         printf 'user=%s uid=%d\n' "$USER" "$UID"
         printf 'host=%s kernel=%s\n' "${HOST:-$(hostname)}" "$(uname -r)"
         printf 'bash_version=%s\n' "$(bash --version | head -n1)"
         printf 'sha256=%s\n' "$(sha256sum -- "$script_path" 2>/dev/null | cut -d' ' -f1)"
+        
+        # Zsh-safe stat parsing for exact octal permissions and size
+        local -a fstat
+        fstat=( $(stat -c '%a %s' -- "$script_path" 2>/dev/null || echo "000 0") )
+        printf 'mode=%s size=%s\n' "${fstat[1]}" "${fstat[2]}"
         
         if (( $+commands[git] )) && git -C "$script_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
             printf 'git_branch=%s\n' "$(git -C "$script_dir" rev-parse --abbrev-ref HEAD)"
@@ -219,7 +253,11 @@ EOF
     # --- 6. Execution Pre-Flight Assembly
     local exit_code=0
     local bash_bin
-    bash_bin=$(command -v bash)
+    
+    if ! bash_bin=$(command -v bash); then
+        printf '\e[31mError: bash not found in PATH.\e[0m\n' >&2
+        return 1
+    fi
 
     local -a cmd_prefix=()
     
@@ -242,7 +280,6 @@ EOF
         fi
     fi
 
-    # Stdbuf pipeline ensures logs don't tear or buffer irregularly under high I/O
     local -a t_cmd=( stdbuf -i0 -o0 -e0 tee -a )
 
     # --- 7. The Subshell Execution (Atomic Multiplexing)
@@ -251,41 +288,43 @@ EOF
         export DL_STRICT="$opt_strict"
         export DL_TRACE_LOG="$trace_log"
         export DL_ERROR_DUMP="$error_dump"
+        export DL_PID_FILE="$pid_file" 
         
-        # High-precision Bash tracing prompt
-        export PS4='+[$EPOCHREALTIME] [PID:$$] [${BASH_SOURCE[0]:-unknown}:${LINENO:-0}:${FUNCNAME[0]:-MAIN}] '
+        export PS4='+[$EPOCHREALTIME] [PID:$$/SUB:$BASHPID] [${BASH_SOURCE[0]:-unknown}:${LINENO:-0}:${FUNCNAME[0]:-MAIN}] '
 
-        local -a bash_flags=( -x )
-        (( opt_strict )) && bash_flags+=( -e -u -o pipefail )
+        local -a cmd=()
+        if [[ "$launch_mode" == "direct" ]]; then
+            cmd=( "${cmd_prefix[@]}" "$script_path" "${script_args[@]}" )
+        else
+            # We don't pass -x here because the BASH_ENV prelude triggers it securely
+            local -a bash_flags=()
+            (( opt_strict )) && bash_flags+=( -e -u -o pipefail )
+            cmd=( "${cmd_prefix[@]}" "$bash_bin" "${bash_flags[@]}" "--" "$script_path" "${script_args[@]}" )
+        fi
 
-        local -a cmd=( "${cmd_prefix[@]}" "$bash_bin" "${bash_flags[@]}" "--" "$script_path" "${script_args[@]}" )
+        exec 3>&1
 
-        exec 3>&1 # Preserve stdout handle
-
+        # Synchronous execution pipeline with perfectly restored routing
         if (( opt_quiet )); then
              { 
-                 { exec "${cmd[@]}"; } | "${t_cmd[@]}" "$stdout_log" >> "$comb_log" >/dev/null; 
-             } 2>&1 1>&3 | "${t_cmd[@]}" "$stderr_log" >> "$comb_log" >/dev/null 3>&-
+                 { exec "${cmd[@]}"; } | "${t_cmd[@]}" "$stdout_log" "$comb_log" >/dev/null; 
+             } 2>&1 1>&3 | "${t_cmd[@]}" "$stderr_log" "$comb_log" >/dev/null 3>&-
         else
              { 
-                 { exec "${cmd[@]}"; } | "${t_cmd[@]}" "$stdout_log" >> "$comb_log"; 
-             } 2>&1 1>&3 | "${t_cmd[@]}" "$stderr_log" >> "$comb_log" >&2 3>&-
+                 { exec "${cmd[@]}"; } | "${t_cmd[@]}" "$stdout_log" "$comb_log"; 
+             } 2>&1 1>&3 | "${t_cmd[@]}" "$stderr_log" "$comb_log" >&2 3>&-
         fi
         
         exit ${pipestatus[1]}
     )
     exit_code=$?
-
+    
     # --- 8. Finalization & Teardown
-    rm -f -- "$env_prelude"
-
     printf 'session_end=%s\n' "$(date --iso-8601=seconds)" >> "$meta_log" 2>/dev/null
     printf 'exit_code=%d\n' "$exit_code" >> "$meta_log" 2>/dev/null
 
-    # Systemd Post-Flight (Catch events that occurred during execution)
     if [[ -n "$j_cursor" ]] && (( $+commands[journalctl] )); then
         journalctl --after-cursor="$j_cursor" > "$journal_log" 2>/dev/null
-        # If the log is empty, delete it to keep the directory clean
         [[ -s "$journal_log" ]] || rm -f -- "$journal_log"
     fi
 
@@ -300,7 +339,6 @@ EOF
         fi
         printf 'Artifacts stored at: \e[1;36m%s\e[0m\n' "$session_dir"
         
-        # Quick artifact tree summary
         [[ -f "$journal_log" ]] && printf '  ├─ \e[36msystemd_journal.log\e[0m (Kernel/System events captured!)\n'
         [[ -f "${session_dir}/resource_usage.log" ]] && printf '  ├─ \e[36mresource_usage.log\e[0m  (GNU Time profiling)\n'
         [[ -f "$error_dump" ]] && printf '  ├─ \e[31merror_state_dump.txt\e[0m (Crash variable & FD state)\n'

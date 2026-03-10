@@ -1,0 +1,226 @@
+#function for script testing, logging
+
+logs_old() {
+    emulate -L zsh
+    # NO_MULTIOS: Prevents Zsh from duplicating streams implicitly.
+    setopt local_options NO_NOMATCH PIPE_FAIL NO_MULTIOS
+
+    local opt_strace=0 opt_quiet=0 opt_strict=0 opt_outdir=""
+    local script_path script_name script_dir
+    local -a script_args=()
+
+    # --- 1. Robust Option Parsing
+    while (( $# )); do
+        case "$1" in
+            -h|--help)
+                printf 'Usage: logs_old [-s|--strace] [-q|--quiet] [-S|--strict] [-o outdir] <script> [args...]\n'
+                return 0
+                ;;
+            -s|--strace) opt_strace=1; shift ;;
+            -q|--quiet)  opt_quiet=1;  shift ;;
+            -S|--strict) opt_strict=1; shift ;;
+            -o)
+                shift
+                if (( $# == 0 )); then
+                    printf '\e[31mError: -o requires an argument\e[0m\n' >&2
+                    return 2
+                fi
+                opt_outdir="$1"
+                shift 
+                ;;
+            --) shift; break ;;
+            -*) printf '\e[31mError: Unknown option %s\e[0m\n' "$1" >&2; return 2 ;;
+            *)  break ;;
+        esac
+    done
+
+    if (( $# == 0 )); then
+        printf '\e[31mError: No script provided.\e[0m\n' >&2
+        return 2
+    fi
+
+    local raw_script="$1"; shift
+    script_args=("$@")
+
+    # --- 2. Path Resolution
+    if ! script_path=$(realpath -e -- "$raw_script" 2>/dev/null); then
+        # Fallback: check PATH
+        if (( $+commands[$raw_script] )); then
+            if ! script_path=$(realpath -e -- "${commands[$raw_script]}" 2>/dev/null); then
+                 printf '\e[31mError: Could not resolve path for command: %s\e[0m\n' "$raw_script" >&2
+                 return 1
+            fi
+        else
+            printf '\e[31mError: Script not found or not readable: %s\e[0m\n' "$raw_script" >&2
+            return 1
+        fi
+    fi
+
+    if [[ ! -f "$script_path" || ! -r "$script_path" ]]; then
+        printf '\e[31mError: Target is not a regular readable file: %s\e[0m\n' "$script_path" >&2
+        return 1
+    fi
+
+    # Shebang Check (Strict Regex)
+    local shebang
+    shebang=$(head -n1 "$script_path" 2>/dev/null)
+    # Checks for bash, sh, dash, ash, or 'env sh' style shebangs
+    if [[ "$shebang" == \#!* && ! "$shebang" =~ (bash|/sh$|/sh\ |/dash|/ash|/env[[:space:]]+sh) ]]; then
+        printf '\e[33mWarning: Script interpreter is "%s" but forcing Bash execution.\e[0m\n' "${shebang:0:50}" >&2
+    fi
+
+    script_name="${script_path:t}"
+    script_dir="${script_path:h}"
+
+    # --- 3. Session Setup
+    local ts base outdir session_dir
+    ts=$(date '+%Y%m%d-%H%M%S')
+    
+    # Default log location
+    base="${opt_outdir:-$HOME/Documents/logs/script_logs}"
+    outdir="${base%/}"
+    session_dir="${outdir}/${script_name}.${ts}.$$"
+
+    mkdir -p -- "$session_dir" || {
+        printf '\e[31mError: Failed to create session dir: %s\e[0m\n' "$session_dir" >&2
+        return 1
+    }
+
+    local trace_log="${session_dir}/trace.log"
+    local stdout_log="${session_dir}/stdout.log"
+    local stderr_log="${session_dir}/stderr.log"
+    local comb_log="${session_dir}/combined.log"
+    local meta_log="${session_dir}/metadata.txt"
+    local pid_file="${session_dir}/pid"
+    local env_prelude="${session_dir}/.env_prelude.bash"
+
+    # --- 4. The BASH_ENV Injection
+    cat >"$env_prelude" <<'EOF'
+# detailed_log injection
+unset BASH_ENV
+if [[ -n "${DL_PID_FILE:-}" ]]; then
+    echo "$$" > "$DL_PID_FILE"
+    unset DL_PID_FILE
+fi
+
+# Apply Strict Mode only if requested
+if [[ "${DL_STRICT:-0}" == "1" ]]; then
+    set -o errexit
+    set -o nounset
+    set -o pipefail
+    set -o errtrace
+fi
+
+__dl_err() {
+    local _ret="${1:-$?}"
+    local _cmd="${BASH_COMMAND:-unknown}"
+    local _src="${BASH_SOURCE[0]:-unknown}"
+    local _lin="${BASH_LINENO[0]:-?}"
+    local _func="${FUNCNAME[1]:-MAIN}"
+    builtin printf '\n===ERROR=== exit=%d cmd=%q file=%s line=%s func=%s\n' \
+        "$_ret" "$_cmd" "$_src" "$_lin" "$_func" >&2
+}
+trap '__dl_err "$?"' ERR
+EOF
+
+    # --- 5. Metadata Capture
+    {
+        printf 'script_path=%s\n' "$script_path"
+        printf 'session_start=%s\n' "$(date --iso-8601=seconds)"
+        printf 'user=%s uid=%d\n' "$USER" "$UID"
+        printf 'host=%s kernel=%s\n' "${HOST:-$(hostname)}" "$(uname -r)"
+        printf 'bash_version=%s\n' "$(bash --version | head -n1)"
+        printf 'sha256=%s\n' "$(sha256sum -- "$script_path" 2>/dev/null | cut -d' ' -f1)"
+        
+        # Zsh-safe stat parsing using array splitting
+        local -a fstat
+        fstat=( $(stat -c '%a %s' -- "$script_path" 2>/dev/null || echo "000 0") )
+        printf 'mode=%s size=%s\n' "${fstat[1]}" "${fstat[2]}"
+        
+        if command -v git >/dev/null 2>&1 && git -C "$script_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            printf 'git_branch=%s\n' "$(git -C "$script_dir" rev-parse --abbrev-ref HEAD)"
+            printf 'git_commit=%s\n' "$(git -C "$script_dir" rev-parse HEAD)"
+            printf 'git_dirty=%s\n'  "$(git -C "$script_dir" status --porcelain | grep -q . && echo 'true' || echo 'false')"
+        else
+            printf 'git_context=none\n'
+        fi
+        
+        printf 'args=('
+        (( ${#script_args} )) && printf ' %q' "${script_args[@]}"
+        printf ' )\n'
+    } > "$meta_log" 2>/dev/null
+
+    (( opt_quiet )) || printf 'Session: \e[34m%s\e[0m\n' "$session_dir"
+
+    # --- 6. Execution Wrapper
+    local exit_code=0
+
+    TRAPEXIT() {
+        rm -f -- "$env_prelude"
+    }
+
+    local -a cmd_prefix=()
+    if (( opt_strace )); then
+        if (( $+commands[strace] )); then
+            cmd_prefix=(strace -f -tt -s 256 -o "${session_dir}/strace.log")
+        else
+            printf '\e[33mWarning: strace not found, skipping.\e[0m\n' >&2
+        fi
+    fi
+
+    # Check for bash existence
+    local bash_bin
+    if ! bash_bin=$(command -v bash); then
+        printf '\e[31mError: bash not found in PATH.\e[0m\n' >&2
+        return 1
+    fi
+
+    # --- 7. The Subshell (Synchronized Pipeline)
+    (
+        exec {trace_fd}>"$trace_log"
+        export BASH_XTRACEFD=$trace_fd
+        export BASH_ENV="$env_prelude"
+        export DL_PID_FILE="$pid_file"
+        export DL_STRICT="$opt_strict"
+        export PS4='+[$EPOCHREALTIME] ${BASH_SOURCE[0]}:${LINENO}:${FUNCNAME[0]:-MAIN}: '
+
+        # Base flags: -x (trace) + pipefail
+        local -a bash_flags=( -x -o pipefail )
+        # Add strict flags if requested
+        (( opt_strict )) && bash_flags+=( -eu -o errtrace )
+
+        local -a cmd=( "${cmd_prefix[@]}" "$bash_bin" "${bash_flags[@]}" "$script_path" "${script_args[@]}" )
+
+        exec 3>&1
+
+        if (( opt_quiet )); then
+             { 
+                 { exec "${cmd[@]}"; } | tee -a "$stdout_log" "$comb_log" >/dev/null; 
+             } 2>&1 1>&3 | tee -a "$stderr_log" "$comb_log" >/dev/null 3>&-
+        else
+             { 
+                 { exec "${cmd[@]}"; } | tee -a "$stdout_log" "$comb_log"; 
+             } 2>&1 1>&3 | tee -a "$stderr_log" "$comb_log" >&2 3>&-
+        fi
+        
+        exit ${pipestatus[1]}
+    )
+    exit_code=$?
+
+    # --- 8. Finalization
+    printf 'session_end=%s\n' "$(date --iso-8601=seconds)" >> "$meta_log" 2>/dev/null
+    printf 'exit_code=%d\n' "$exit_code" >> "$meta_log" 2>/dev/null
+
+    if (( ! opt_quiet )); then
+        echo ""
+        if (( exit_code == 0 )); then
+            printf 'Result: \e[32mSUCCESS (0)\e[0m\n'
+        else
+            printf 'Result: \e[31mFAILED (%d)\e[0m -> Check stderr.log\n' "$exit_code"
+        fi
+        printf 'Logs saved to: \e[1;34m%s\e[0m\n' "$session_dir"
+        printf 'Diagnostic info: \e[1;34m%s/metadata.txt\e[0m\n' "$session_dir"
+    fi
+
+    return $exit_code
+}
