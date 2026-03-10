@@ -175,6 +175,19 @@ bash -c '
 } >/dev/null 2>&1 </dev/null & disown
 '
 '''
+[templates.firefox_websites]
+input_path = '~/.config/matugen/templates/firefox-websites.css'
+output_path = '~/.config/matugen/generated/firefox-websites.css'
+post_hook = '''
+bash -c '
+{
+  if command -v firefox >/dev/null 2>&1; then
+    ln -nfs "$HOME/.config/matugen/generated/firefox-websites.css" "$HOME/.config/mozilla/firefox/n600oyoy.default-release-1771562099779/chrome/colors.css"
+  fi
+} >/dev/null 2>&1 </dev/null & disown
+'
+'''
+# this will need to be changed to somehow autodetect the user's firefox profile
 
 [templates.Obsidian]
 input_path  = '~/.config/matugen/templates/obsidian-theme.css'
