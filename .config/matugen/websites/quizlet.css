@@ -1,0 +1,2312 @@
+/* ==UserStyle==
+@name Quizlet Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/quizlet
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/quizlet
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/quizlet/catppuccin.user.less
+@description Soothing pastel theme for Quizlet
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("quizlet.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    :root body {
+      color: var(--on_surface);
+      background: var(--surface_container_lowest);
+    }
+
+    .DashboardLayout {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .TopNavigation {
+      background-color: var(--surface);
+      // border-bottom: none;
+    }
+
+    .s19dmjr1 {
+      border-color: none;
+      background: var(--surface_container_low);
+    }
+
+    .NavigationTab--span {
+      color: var(--on_surface) !important;
+    }
+
+    .s13oqxd2.NavigationTab:not(.no-highlight::after) {
+      background: var(--outline_variant);
+    }
+
+    .e1bxx0ta::after:hover {
+      background: var(--outline_variant);
+    }
+
+    .hri9878 {
+      color: var(--on_surface);
+    }
+
+    .AssemblyCard {
+      background-color: var(--surface);
+      border-color: var(--surface);
+      box-shadow: 0 0.125rem 0.5rem 0 var(--surface);
+    }
+    h5 {
+      color: var(--on_surface);
+    }
+
+    .CourseOverviewPreviewCard-recommendationTitle {
+      color: var(--on_surface);
+    }
+
+    .UISwitch-input:hover:not(:disabled) ~ .UISwitch-label {
+      color: var(--secondary);
+    }
+
+    .UIToggle-optionInput:hover:not(:disabled) ~ .UIToggle-optionLabel {
+      color: var(--secondary);
+    }
+
+    .UIToggle-optionInput:checked:not(:disabled) ~ .UIToggle-optionLabel {
+      background-color: var(--secondary);
+      color: var(--surface);
+    }
+
+    .UIButton--inverted,
+    .UIButton--inverted:visited,
+    html.touch .UIButton--inverted:focus:hover:not(:active) {
+      box-shadow: inset 0 0 0 3px var(--outline);
+    }
+
+    .UIButton--borderless,
+    .UIButton--borderless:visited,
+    html.touch .UIButton--borderless:focus:hover:not(:active) {
+      background: none;
+      background-color: initial;
+      color: inherit;
+    }
+
+    .UIButton,
+    .UIButton:visited,
+    html.touch .UIButton:focus:hover:not(:active) {
+      color: inherit;
+      background-color: var(--primary);
+    }
+
+    .UIButton--alert,
+    .UIButton--alert:visited,
+    html.touch .UIButton--alert:focus:hover:not(:active) {
+      background-color: var(--error);
+    }
+
+    .h1ebmrjk {
+      background: linear-gradient(180deg, #0000 69.83%, var(--surface_container_lowest) 100%);
+    }
+
+    .jqcfj5w {
+      filter: brightness(0) saturate(100%) invert(12%) sepia(5%) saturate(4408%)
+        hue-rotate(195deg) brightness(93%) contrast(90%);
+    }
+
+    .RichTextEditor[aria-invalid="true"]:not([aria-disabled="true"])
+      .RichTextEditor-label,
+    .LanguageBarSide.has-error .UILink,
+    .LanguageBarSide.has-error select {
+      color: var(--error_container);
+    }
+
+    .neeykg0 {
+      filter: brightness(0) saturate(100%) invert(14%) sepia(10%) saturate(
+        1367%
+      ) hue-rotate(192deg) brightness(95%) contrast(95%);
+    }
+
+    .CourseOverviewPreviewCard-recommendationLink:hover {
+      background-color: var(--surface);
+    }
+
+    .CourseOverviewPreviewCard-subtitle {
+      color: var(--on_surface);
+    }
+
+    .CourseOverviewPreviewCard-recommendationLabel {
+      color: var(--on_surface);
+    }
+
+    .CourseOverviewPreviewCard-divider {
+      border-color: var(--surface);
+    }
+
+    .AssemblyPrimaryButton--default {
+      background-color: var(--surface);
+      border-color: var(--on_surface);
+    }
+
+    .c1vierhv {
+      border-color: var(--outline_variant);
+    }
+
+    .djzjpyv {
+      color: var(--on_surface);
+    }
+
+    span {
+      color: inherit;
+    }
+
+    .s139vgrg {
+      color: var(--on_surface);
+    }
+
+    form {
+      background-color: inherit;
+    }
+    input {
+      background-color: var(--surface_container_low);
+    }
+
+    .b1r2wylq {
+      background-color: var(--surface);
+      box-shadow: 0 0.125rem 0.25rem var(--surface);
+    }
+
+    .AssemblyPill {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .t7pmw6o {
+      color: var(--on_surface);
+    }
+
+    .UIBaseCard-footer .UserLink-username,
+    .UserLink-username {
+      color: var(--on_surface);
+    }
+    .UserLink-title {
+      color: var(--on_surface);
+    }
+    .UILinkBox {
+      background-color: var(--surface);
+    }
+
+    .UIBaseCardHeader-info {
+      color: var(--on_surface);
+    }
+
+    .UIBaseCardHeader-thumbnail {
+      border-color: var(--surface);
+    }
+
+    .a1s81tf6 {
+      background-color: var(--surface);
+    }
+
+    .aup4qff {
+      color: var(--surface);
+    }
+
+    .illkdv2c {
+      color: var(--error_container);
+    }
+
+    .react-calendar__month-view__weekdays__weekday {
+      color: var(--on_surface_variant);
+    }
+
+    .CalendarTile--isCurrentWeek::after {
+      background-color: var(--surface);
+    }
+
+    .CalendarTile--isCurrentWeek {
+      color: var(--on_surface);
+    }
+
+    .AssemblyIcon--medium {
+      color: inherit;
+    }
+
+    .AssemblyIconButton--tertiary {
+      color: var(--on_surface);
+    }
+
+    .AssemblyButtonBase--circle {
+      color: var(--on_surface);
+    }
+
+    .AssemblySecondaryButton {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .AssemblyPillText {
+      color: var(--on_surface);
+    }
+
+    .SiteActivity-button.isGlobalNavInExperiment {
+      color: var(--on_surface);
+    }
+
+    .UIIcon--large {
+      color: var(--on_surface);
+    }
+
+    .s1da1u6y {
+      background-color: var(--surface);
+    }
+
+    .CalendarTile--hasEvent {
+      color: var(--surface);
+    }
+
+    .c1qopd51 {
+      color: var(--error_container);
+    }
+
+    .AssemblyIconButton--primary {
+      background: var(--surface_container_lowest);
+    }
+
+    .AssemblyButtonBase:hover:not([disabled]),
+    [aria-disabled="true"] {
+      background: var(--surface);
+    }
+
+    .SiteActivity-button {
+      border-color: var(--outline_variant);
+      color: var(--on_surface);
+    }
+
+    .SiteActivity-button:focus,
+    .SiteActivity-button:hover {
+      border-color: var(--outline);
+      color: var(--on_surface);
+    }
+
+    .NotificationBadge-container {
+      background: var(--outline_variant);
+    }
+
+    [d17q91q7][aria-expanded="true"] {
+      background-color: var(--on_surface);
+    }
+
+    .UILinkBox-link .UILink:active,
+    .UILinkBox-link .UILink:focus,
+    .UILinkBox-link .UILink:hover {
+      border-bottom-color: var(--outline_variant);
+    }
+
+    .AssemblySmallCard-hover:hover::after {
+      background-color: var(--outline_variant);
+    }
+
+    .rellgo5 {
+      color: var(--on_surface);
+    }
+
+    #react-autowhatever-site-header-global-search-autosuggest {
+      background-color: var(--surface);
+      border-color: var(--surface);
+    }
+
+    .tqxyjjt {
+      color: var(--on_surface);
+    }
+
+    text {
+      color: var(--on_surface);
+    }
+
+    li.react-autosuggest__suggestion:hover {
+      background: var(--surface);
+    }
+
+    .poy4xqf {
+      background: var(--surface);
+      border-color: var(--surface);
+    }
+
+    .wej97zk {
+      background-color: var(--surface);
+    }
+
+    .wvbj6cw {
+      background-color: var(--surface);
+    }
+
+    .c721v4v {
+      color: var(--on_surface);
+    }
+
+    .c139umgt {
+      color: var(--on_surface);
+    }
+
+    .t1ow6gy9 {
+      color: var(--on_surface);
+    }
+
+    .u1jilvfz {
+      background-color: var(--outline_variant);
+    }
+
+    .wej97zk:hover {
+      background-color: var(--surface);
+    }
+
+    .s1ovpdog {
+      background-color: var(--surface);
+      border-top-color: var(--outline);
+    }
+
+    .c1ap9d88 .AssemblyMenuItem--title {
+      color: var(--on_surface_variant);
+    }
+
+    .c1ap9d88:hover {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .c1ap9d88 {
+      background-color: var(--surface);
+    }
+
+    .h1hbonvg {
+      background-color: var(--surface);
+    }
+
+    .UIBaseCard-labelTag {
+      background-color: var(--surface_container_low);
+      color: var(--on_surface);
+    }
+
+    .UIIcon--chevron-right {
+      color: var(--on_surface);
+    }
+
+    .UIIcon--chevron-left {
+      color: var(--on_surface);
+    }
+
+    .UIPopover,
+    .UIPopover::after {
+      background-color: var(--surface);
+    }
+
+    .UIPopover.UIPopover--mediumShadow {
+      box-shadow: 0 0.125rem 0.25rem var(--surface);
+    }
+
+    .SetRecommendationCard-contextMenuItem:hover {
+      background-color: var(--surface);
+    }
+
+    .cxvmyeq {
+      border-color: var(--surface);
+    }
+
+    .wxhi4p:hover {
+      background-color: var(--surface);
+    }
+
+    .AssemblyTab {
+      color: var(--on_surface_variant);
+    }
+
+    .AssemblyTab::after {
+      color: var(--on_surface_variant);
+    }
+
+    .s4cgp9b.AssemblyTab {
+      color: var(--on_surface);
+    }
+
+    .AssemblyTab:hover {
+      color: var(--primary_container);
+    }
+
+    .f1ub3img {
+      border-top-color: var(--outline_variant);
+    }
+
+    .AssemblyTabsWrapper::before {
+      background-color: var(--outline_variant);
+    }
+
+    .s4cgp9b.AssemblyTab::after {
+      background: var(--primary);
+    }
+
+    .AssemblyTab:hover::after {
+      background: var(--primary);
+    }
+
+    .w15oa27z:hover {
+      background: var(--surface);
+    }
+
+    .i1v4i7rf.textbookIcon {
+      background-image: url("https://assets.quizlet.com/a/j/dist/app/i/explanations/textbook_night.1ff39f68b703b28.svg");
+    }
+
+    .sinah8x {
+      color: var(--on_surface_variant);
+    }
+
+    .SetPage {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .SetPage .SetPage-setDetailsInfoWrapper,
+    .SetPage .SetPage-setIntroWrapper.SetPage-setIntroWrapper {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .SetPage-setDetailsInfoWrapper {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .SetPage-setDetailsTermsWrapper {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .SetPage .SetPage-setDetailsTermsWrapper,
+    .SetPage .SetPage-setLinksWrapper.SetPage-setLinksWrapper {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .SiteFooter {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    .SiteFooter-bottom {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .SetPageStickyHeader.is-pinned {
+      background-color: var(--surface);
+    }
+
+    .StudyModesNavItem {
+      background-color: var(--surface);
+    }
+
+    .StudyModesNavItemName {
+      color: var(--on_surface);
+    }
+
+    .StudyModesNavItemName:visited {
+      color: var(--on_surface);
+    }
+
+    .c78g08u {
+      background-color: var(--surface);
+      box-shadow: 0 0.25rem 1rem 0 var(--surface);
+    }
+
+    .o1rf13bx {
+      color: var(--on_surface);
+    }
+
+    .lck97c5 {
+      background: var(--surface);
+    }
+
+    .SetPageTerm {
+      background: var(--surface);
+    }
+
+    .AssemblyIconButton--secondary {
+      background: var(--surface);
+    }
+
+    .UIDropdown--inverted {
+      background: var(--surface_container_lowest);
+    }
+
+    .UIDropdown-select {
+      color: var(--on_surface);
+    }
+
+    .soyu1j6 {
+      color: var(--error_container);
+    }
+
+    .s1e29328.cbb9lkx {
+      color: var(--error);
+      background: var(--surface_container_high);
+      border-color: var(--secondary_container);
+    }
+
+    .kahyre1 {
+      color: var(--tertiary);
+    }
+
+    .kzo3tk {
+      color: var(--primary);
+    }
+
+    .SiteActivity-button .NotificationBadge-container {
+      background-color: var(--primary);
+    }
+
+    .hgmlhdt {
+      background-color: var(--surface);
+    }
+
+    .o1rfl3bx {
+      color: var(--on_surface);
+      border-color: var(--outline_variant);
+    }
+
+    .c1lf7cxm {
+      color: var(--on_surface_variant);
+    }
+
+    .l3ucz5w {
+      color: var(--on_surface);
+    }
+
+    .u3v4pv0 {
+      color: var(--on_surface_variant);
+    }
+
+    .StudyModesNavItem:hover {
+      border-bottom-color: var(--outline_variant);
+    }
+
+    .o1g4qwv {
+      background-color: var(--surface);
+    }
+
+    .tqyy7cr.h19ive8k {
+      color: var(--on_surface);
+    }
+
+    .t1kgxwr0 {
+      color: var(--on_surface);
+    }
+
+    .tuxzbsj {
+      fill: var(--on_surface);
+    }
+
+    .c5iom2o {
+      color: var(--primary_container);
+    }
+
+    .lck97c5:focus .c5iom2o,
+    .lck97c5:hover .c5iom2o {
+      color: var(--primary);
+    }
+
+    .t4sjwm7 {
+      color: var(--on_surface);
+    }
+
+    body.colorRefresh-setPageOnly .UISwitch-label {
+      color: var(--on_surface);
+    }
+
+    .UISwitch-label {
+      border-color: var(--outline_variant);
+      background-color: var(--surface);
+      color: var(--on_surface_variant);
+    }
+
+    .SetPageTerm-sideContent {
+      border-right-color: var(--outline_variant);
+    }
+
+    .UISwitch-input:checked:not(:disabled ~ .UISwitch-label) {
+      color: var(--surface);
+      border-color: var(--secondary);
+      background-color: var(--secondary);
+    }
+
+    .AssemblyIconButton--highlight {
+      background: none;
+      color: var(--secondary);
+    }
+
+    .UIToggle-optionLabel {
+      background-color: var(--surface);
+      color: var(--primary);
+    }
+
+    .AssemblyIconButton--highlight:hover:not([disabled]) {
+      background-color: var(--surface);
+    }
+
+    .AssemblyIconButton--tertiary:hover:not([disabled]) {
+      background-color: var(--surface);
+    }
+
+    .AssemblyButtonBase--square {
+      color: var(--on_surface);
+    }
+
+    .z1x1k8pd.svwhkoh {
+      color: var(--tertiary);
+      border-color: var(--tertiary);
+    }
+
+    .svwhkoh {
+      background-color: var(--surface);
+    }
+
+    .kzo3tk.cbb9lkx {
+      background: var(--tertiary);
+      border-color: var(--tertiary);
+      color: var(--primary);
+    }
+
+    .kahyre1.l40n85g {
+      color: var(--tertiary);
+    }
+
+    .soyu1j6.l40n85g {
+      color: var(--error);
+    }
+
+    .axrvw3e.s1e29328.cbb9lkx {
+      background: var(--secondary_container);
+      border-color: var(--secondary_container);
+      color: var(--error);
+    }
+
+    .mnlifen {
+      background: var(--surface);
+    }
+
+    .f1yw38c3 {
+      background: none;
+    }
+
+    .AssemblyToggleSwitch-input:checked + .AssemblyToggleSwitch-fauxInput {
+      background: var(--primary_container);
+    }
+
+    .AssemblyToggleSwitch-input:checked
+      + .AssemblyToggleSwitch-fauxInput::after {
+      background-color: var(--secondary);
+    }
+
+    .AssemblyToggleSwitch-fauxInput {
+      background: var(--outline_variant);
+    }
+
+    .AssemblyToggleSwitch-fauxInput::after {
+      background: var(--primary_container);
+    }
+
+    .c13e2cpr {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .AssemblyInput {
+      background-color: var(--surface_container_low);
+      color: var(--on_surface);
+    }
+
+    .AssemblyInput-input {
+      color: var(--on_surface);
+    }
+
+    .a1k2umqi {
+      background-color: var(--surface);
+    }
+
+    .bxtl8jy {
+      background-color: var(--surface_container_low);
+      color: var(--on_surface);
+    }
+
+    .ah6785x {
+      color: var(--on_surface);
+    }
+
+    .a1fcz3cu:focus-within > .ah6785x {
+      color: var(--on_surface);
+    }
+
+    .e29yge6
+      .react-autosuggest__container
+      .react-autosuggest__suggestions-container--open {
+      background: var(--surface);
+    }
+
+    .e1g8wmc7 {
+      background-color: var(--surface_container_low);
+    }
+
+    .AssemblyLink--secondary:hover {
+      color: var(--secondary_container);
+    }
+
+    .a1k2umqi:focus-within {
+      border-bottom-color: var(--primary);
+    }
+
+    .cgyrcnx {
+      background-color: var(--outline_variant);
+    }
+
+    .byhd60 {
+      background-color: var(--error_container);
+    }
+
+    .d11ucs5j {
+      background: var(--outline_variant);
+    }
+
+    .sjsxdsz {
+      border-bottom-color: var(--outline_variant);
+    }
+
+    .fz4nps6 {
+      border-top-color: var(--outline_variant);
+    }
+
+    .AssemblyPrimaryButton--default:disabled,
+    .AssemblyPrimaryButton--default[aria-disabled="true"] {
+      background: var(--surface_container_low);
+      border-color: var(--surface_container_lowest);
+      color: var(--on_surface_variant);
+    }
+
+    .ptc18zm {
+      background: inherit;
+    }
+
+    .c1gi3y8b {
+      background: var(--surface);
+    }
+
+    .k3lm6f3 {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .w1uwrq7e {
+      color: var(--on_surface);
+      border-color: var(--outline_variant);
+    }
+
+    .t1d08860 {
+      color: inherit;
+    }
+
+    .i1p8x1gp .i1e9rt5 {
+      color: var(--error_container);
+    }
+
+    .i1p8x1gp {
+      background-color: var(--surface);
+    }
+
+    .i1p8x1gp,
+    .i1p8x1gp:focus,
+    .i1p8x1gp:hover {
+      border-color: var(--error_container);
+    }
+
+    .cv1rd7s {
+      background: var(--surface);
+    }
+
+    .cv1rd7s,
+    .cv1rd7s:focus,
+    .cv1rd7s:hover {
+      border-color: var(--tertiary);
+    }
+
+    .cv1rd7s .i1e9rt5 {
+      color: var(--tertiary);
+    }
+
+    .b1jcf4jl {
+      background-color: var(--surface);
+    }
+
+    .pck8ctn {
+      color: var(--on_surface);
+    }
+
+    .i6cf9vy {
+      color: var(--error);
+    }
+
+    .c2mfnz6 {
+      color: var(--tertiary);
+    }
+
+    .pr2w5fu:first-child {
+      border-right-color: var(--outline_variant);
+    }
+
+    .t117larf {
+      background-color: var(--surface);
+      border-color: var(--outline_variant);
+      color: var(--on_surface);
+    }
+
+    .q1m09plc:hover {
+      background-color: var(--surface);
+    }
+
+    .q1m09plc {
+      color: var(--primary);
+    }
+
+    .hbcu5v.q1m09plc {
+      color: var(--on_surface);
+    }
+
+    .qzk5crt {
+      color: var(--on_surface);
+    }
+
+    .sd72jj0 {
+      color: var(--on_surface);
+    }
+
+    .UIModalHeader {
+      background-color: var(--surface);
+    }
+
+    .UIModalBody {
+      background-color: var(--surface);
+    }
+
+    .TestModeOptions {
+      background-color: var(--surface);
+    }
+
+    .UIModal-box {
+      color: var(--on_surface);
+    }
+
+    .UICheckbox-label {
+      color: var(--on_surface);
+    }
+
+    .UICheckbox-input:checked ~ .UICheckbox-fauxInput {
+      border-color: var(--secondary);
+    }
+
+    .UICheckbox-fauxInput::after {
+      border-color: var(--secondary);
+      border-width: 0 0 0.125rem 0.125rem;
+    }
+
+    .UIInput-input {
+      color: var(--on_surface);
+    }
+
+    .UIInput[aria-invalid="false"] .UIInput-input ~ .UIInput-border {
+      box-shadow: 0 0.125rem 0 0 var(--outline_variant);
+    }
+
+    .UILink,
+    .UILink:visited {
+      color: var(--surface_container_high);
+    }
+
+    .UIButton:active,
+    html.cursor .UIButton:hover,
+    html.cursor .UIButton:hover:visited {
+      background-color: var(--primary_fixed);
+    }
+
+    .UIHorizontalRule {
+      border-bottom-color: var(--outline_variant);
+    }
+
+    .OptionsModal-description,
+    .TestModeOptions-listOption-description {
+      color: var(--on_surface_variant);
+    }
+
+    .swjz05g {
+      background-color: var(--surface);
+    }
+
+    .swjz05g,
+    .swjz05g:focus,
+    .swjz05g:hover {
+      border-color: var(--primary);
+    }
+
+    .s2y71yx label {
+      background: var(--surface_container_low);
+    }
+
+    .s2y71yx input {
+      background: inherit;
+      color: var(--on_surface);
+    }
+
+    .TextbookRecommendations {
+      background: var(--surface);
+    }
+
+    .TextbookCard-Details {
+      color: var(--on_surface);
+    }
+
+    .AssemblyLink--title:any-link {
+      color: var(--on_surface);
+    }
+
+    .AssemblyLink--title:hover {
+      color: var(--secondary);
+    }
+    /*     .AssemblyIcon--small {
+        color: var(--primary_container);
+    } */
+
+    .ah3z5j1 {
+      border-color: var(--primary);
+    }
+
+    .hkyil8p {
+      color: var(--primary);
+    }
+
+    .e17gih4t {
+      border-color: var(--outline_variant);
+    }
+
+    .o1q1tz6w {
+      border-color: var(--outline_variant);
+      color: var(--on_surface);
+    }
+
+    .hg3d33q {
+      border-color: #0000;
+    }
+
+    .ser6cev,
+    .c86ukn8 {
+      color: var(--on_surface_variant);
+    }
+
+    .a99ei82 {
+      background-color: var(--surface);
+      border-color: var(--outline_variant);
+    }
+
+    .qcpiy8g {
+      color: var(--on_surface);
+    }
+
+    .pqa404y {
+      color: var(--tertiary);
+    }
+
+    .s18c8hjh {
+      color: var(--error_container);
+    }
+
+    .ljt3l6v {
+      fill: var(--on_surface_variant);
+    }
+
+    .c16l7630.iayao2g {
+      color: var(--tertiary);
+    }
+
+    .i1e9dzkh.iayao2g {
+      color: var(--error_container);
+    }
+
+    .w1e3jc65 {
+      background-color: var(--surface);
+      border-color: var(--surface);
+    }
+
+    .t7fr19y {
+      color: var(--primary_container);
+    }
+
+    .dw1ojws {
+      color: var(--on_surface_variant);
+    }
+
+    .w1e3jc65:hover {
+      border-color: var(--outline_variant);
+    }
+
+    .q1nxab59 {
+      color: var(--on_surface);
+    }
+
+    .ssbjprp {
+      color: var(--on_surface_variant);
+    }
+
+    .smvj06a {
+      color: var(--on_surface);
+    }
+
+    .cfzatrd.a548wz9 {
+      color: var(--tertiary);
+    }
+
+    .cag3g2z.anp68o5 {
+      color: var(--tertiary);
+    }
+
+    .CombinePage-wrap {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .CombinePageTable-row {
+      background-color: var(--surface);
+    }
+
+    .CombinePageTable-rowTermCount {
+      color: var(--on_surface);
+    }
+
+    .CombinePageTable-setTitle .UIHeading--four {
+      color: var(--on_surface);
+    }
+
+    .UIDropdown {
+      background: var(--surface);
+      border-color: var(--surface);
+    }
+
+    .UIDropdown .UIDropdown-icon {
+      color: var(--outline_variant);
+    }
+
+    .UIDropdown-select:focus option {
+      background: var(--surface);
+    }
+
+    option:hover {
+      background: var(--surface);
+    }
+
+    .ModeControls {
+      background-color: var(--surface);
+    }
+
+    .ModeControls-backText {
+      color: var(--on_surface);
+    }
+
+    .ModeControls-back {
+      border-bottom-color: var(--outline_variant);
+    }
+
+    .UIButton--whiteBorder {
+      background: var(--surface);
+      border-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    .MatchModeControls-currentTime {
+      color: var(--primary);
+    }
+
+    .MatchModeQuestionScatterTile {
+      background-color: var(--surface);
+      border-color: var(--outline);
+    }
+
+    .MatchModeQuestionScatterTile.is-draggedOver,
+    .MatchModeQuestionScatterTile.is-dragging,
+    .MatchModeQuestionScatterTile:hover {
+      border-color: var(--outline_variant);
+    }
+
+    .MatchModeQuestionScatterTile.is-incorrect {
+      border-color: var(--error_container);
+    }
+
+    .MatchModeQuestionScatterTile.is-correct {
+      border-color: var(--tertiary);
+    }
+
+    .HighscoresList {
+      background-color: var(--surface);
+    }
+
+    .HighscoreRow {
+      background-color: var(--surface);
+    }
+
+    .UIButton[aria-disabled="true"],
+    .UIButton[aria-disabled="true"]:active,
+    .UIButton[aria-disabled="true"]:focus,
+    .UIButton[aria-disabled="true"]:visited,
+    .UIButton[disabled],
+    .UIButton[disabled]:active,
+    .UIButton[disabled]:focus,
+    .UIButton[disabled]:visited,
+    html.cursor .UIButton[aria-disabled="true"]:hover,
+    html.cursor .UIButton[disabled]:hover {
+      background-color: var(--surface);
+    }
+
+    .t10tqhey {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-color: var(--surface);
+    }
+
+    .t9i9vmb.h19ive8k,
+    .t1s26kx5.h19ive8k,
+    .s1rx7q8q.h19ive8k {
+      color: var(--on_surface);
+    }
+
+    .s8j1d54,
+    .c49e2ip {
+      color: var(--on_surface);
+    }
+
+    .c6p6uaq .react-calendar__month-view__days__day {
+      color: var(--on_surface);
+    }
+
+    .c6p6uaq .react-calendar__month-view__days__day--neighboringMonth {
+      color: var(--on_surface_variant);
+    }
+
+    .AchievementsImage--isActive .a130rwfv,
+    .al33ekg.isActive .a130rwfv {
+      color: var(--on_surface_variant);
+    }
+
+    .s1rtnf4c::before,
+    .s1rtnf4c::after {
+      background: none;
+    }
+
+    .AchievementsImage--isActive .a130rwfv,
+    .al33ekg.isActive .a130rwfv,
+    .DashboardLayout .SetPreviewLink--noLinkBox,
+    .DashboardLayout .PreviewCard--noLinkBox {
+      background-color: var(--surface);
+    }
+
+    .SetPreview-queryMatchHighlight {
+      background: var(--secondary);
+      color: var(--surface_container_lowest);
+    }
+
+    .cpey3pe {
+      color: var(--on_surface);
+    }
+
+    .s1fl65t6 {
+      color: var(--on_surface_variant);
+    }
+
+    .t1ne2oir {
+      color: var(--on_surface);
+    }
+
+    .b1xq6unb {
+      color: var(--on_surface);
+    }
+
+    .bp0a7jj {
+      color: var(--on_surface);
+    }
+
+    .pltikop {
+      color: var(--primary);
+    }
+
+    .SettingsBox-box {
+      background-color: var(--surface);
+    }
+
+    .EdgyDataCoursePillbox .UIPill {
+      background: var(--surface);
+      border-color: var(--outline_variant);
+      color: var(--on_surface);
+    }
+
+    .UIAutosuggest .react-autosuggest__suggestions-container {
+      background: var(--surface);
+    }
+
+    .UIAutosuggest .react-autosuggest__suggestion {
+      border-bottom-color: var(--outline_variant);
+    }
+
+    .UIAutosuggest
+      .react-autosuggest__suggestion.react-autosuggest__suggestion--highlighted {
+      border-bottom-color: var(--secondary);
+    }
+
+    .EdgyDataCourseSelector-suggestion .EdgyDataCourseSelector-suggestionName {
+      color: var(--on_surface);
+    }
+
+    .UIInput-input.UIInput-autoExpandInput.is-focused ~ .UIInput-border,
+    .UIInput-input:focus ~ .UIInput-border {
+      box-shadow: 0 0.25rem 0 0 var(--secondary);
+    }
+
+    .Divider-label {
+      background: var(--surface);
+    }
+
+    .the-label,
+    .UIButton {
+      color: var(--surface);
+    }
+
+    input:checked + .p22broa {
+      box-shadow: 0 0 0 0.25rem var(--primary);
+    }
+
+    .button.google {
+      background-color: var(--error);
+      border-color: var(--secondary_container);
+    }
+
+    .button.google::after {
+      border-right-color: var(--secondary_container);
+    }
+
+    .b1opuclq {
+      background-color: var(--surface);
+      box-shadow: 0 0.25rem 1rem 0 var(--surface);
+    }
+
+    .button.apple .label,
+    .button.facebook .label,
+    .button.google .label {
+      color: var(--surface);
+    }
+
+    .button.facebook {
+      background-color: var(--primary);
+      border-color: var(--primary_container);
+    }
+
+    .button.facebook::after {
+      border-right-color: var(--primary_container);
+    }
+
+    .UIInput-input:-webkit-autofill,
+    .UIInput-input:-webkit-autofill:focus,
+    .UIInput-input:-webkit-autofill:hover {
+      box-shadow: none !important;
+    }
+    .UIInput-input:-internal-autofill-previewed,
+    .UIInput-input:-internal-autofill-selected {
+      -webkit-text-fill-color: var(--on_surface);
+    }
+
+    .UILink:active,
+    html.cursor .UILink:hover,
+    html.cursor .UILink:hover:visited {
+      color: var(--error_container);
+    }
+
+    .setting legend,
+    .setting p {
+      color: var(--on_surface);
+    }
+
+    .UIButton-wrapper {
+      color: inherit;
+    }
+
+    .UIButton--alert:active,
+    html.cursor .UIButton--alert:hover,
+    html.cursor .UIButton--alert:hover:visited {
+      background-color: var(--error_container);
+    }
+
+    .c1qo8ql4 {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .phx9gy6 {
+      color: var(--on_surface);
+    }
+
+    .soad3d7 {
+      color: var(--on_surface);
+    }
+
+    .AssemblyLink--primary:any-link {
+      color: var(--surface_container_high);
+    }
+
+    .AssemblyLink {
+      color: var(--surface_container_high);
+    }
+
+    .UIButton--borderless:active,
+    html.cursor .UIButton--borderless:hover,
+    html.cursor .UIButton--borderless:hover:visited {
+      background-color: initial;
+      color: var(--secondary);
+    }
+
+    .UIButton--borderless[aria-disabled="true"],
+    .UIButton--borderless[aria-disabled="true"]:active,
+    .UIButton--borderless[aria-disabled="true"]:focus,
+    .UIButton--borderless[aria-disabled="true"]:visited,
+    .UIButton--borderless[disabled],
+    .UIButton--borderless[disabled]:active,
+    .UIButton--borderless[disabled]:focus,
+    .UIButton--borderless[disabled]:visited,
+    html.cursor .UIButton--borderless[aria-disabled="true"]:hover,
+    html.cursor .UIButton--borderless[disabled]:hover {
+      background-color: initial;
+    }
+
+    .s19dmjr1.isGlobalNavInExperiment.is-focused,
+    .s19dmjr1.isGlobalNavInExperiment.is-focused input {
+      background: var(--surface_container_low);
+    }
+
+    .t1iqlnnn p {
+      color: var(--on_surface);
+    }
+
+    .axupt8p,
+    .igkckaz {
+      color: var(--surface_container_high);
+    }
+
+    .axupt8p:active,
+    .axupt8p:focus,
+    .axupt8p:hover {
+      color: var(--secondary_container);
+    }
+
+    .cnuw08l {
+      background-color: var(--surface);
+    }
+
+    .c192jkj8 {
+      color: var(--on_surface);
+    }
+
+    .a1sd82zg {
+      background-color: var(--surface);
+      border-left-color: var(--primary_container);
+    }
+
+    .g84nzqs {
+      background-image: none;
+    }
+
+    .du7o3ew > div:not(:last-child) {
+      border-right-color: var(--outline_variant);
+    }
+
+    .i73vo82:hover {
+      color: var(--surface);
+      background-color: var(--surface);
+    }
+
+    .f2nmi2p {
+      border-top-color: var(--outline_variant);
+    }
+
+    .a1scx0nz {
+      background-color: var(--surface);
+    }
+
+    .a4ouqer {
+      color: var(--on_surface);
+    }
+
+    .t104cykg {
+      color: var(--on_surface);
+    }
+
+    .ExplanationsLandingPage #PrismicExplanationsSearchBarTarget label,
+    .ExplanationsLandingPage #SearchBarTarget label,
+    .explanations.prismic-page #PrismicExplanationsSearchBarTarget label,
+    .explanations.prismic-page #SearchBarTarget label {
+      background-color: var(--surface_container_low);
+    }
+
+    .l1rgb1ub {
+      border-color: var(--outline_variant);
+    }
+
+    .theme-night .h1uvmh9x,
+    .h1uvmh9x {
+      background: var(--surface);
+    }
+
+    .h1wn8ccf {
+      color: var(--on_surface);
+    }
+
+    .ccm0r9d {
+      color: var(--on_surface_variant);
+    }
+
+    .AssemblySmallCard-isActive::after {
+      background-color: var(--primary_container);
+    }
+
+    .i192320l {
+      border-color: var(--surface);
+    }
+
+    .b1j40uwt::before {
+      background-color: var(--surface);
+    }
+
+    .theme-night .g84nzqs {
+      background: none;
+    }
+
+    .CreateSetHeader-sticky {
+      background: var(--surface_container_lowest);
+    }
+
+    .a1fcz3cu {
+      background-color: var(--surface_container_low);
+    }
+
+    .CreateSetHeader-permissionsLink {
+      color: var(--on_surface);
+    }
+
+    .CreateSetDiagramUploader .UIFloatedCard--white,
+    .TermContent-inner {
+      background-color: var(--surface);
+    }
+
+    .CreateSetDiagramUploader-banner {
+      border-color: var(--outline);
+    }
+
+    .AssemblyIconButton--primaryInverted {
+      border-color: var(--outline_variant);
+    }
+
+    .StudiableItemToolbar {
+      border-bottom-color: var(--outline_variant);
+    }
+
+    .b18prmdf {
+      box-shadow: 0 0.125rem 0 0 var(--outline_variant);
+    }
+
+    .ImageUploadProminentContextToggle {
+      border-color: var(--outline);
+    }
+
+    .UILinkButton {
+      border-bottom-color: var(--primary);
+      color: var(--on_surface);
+    }
+
+    .p10i2lyl {
+      background-color: var(--surface);
+    }
+
+    * + .KeyboardShortcuts-shortcut,
+    .KeyboardShortcuts-shortcut + *,
+    .KeyboardShortcuts-shortcut + .KeyboardShortcuts-shortcut {
+      border-top-color: var(--outline_variant);
+    }
+
+    .UIKeyboardInput {
+      color: var(--on_surface);
+      border-color: var(--outline_variant);
+    }
+
+    .UIDropdown-select option {
+      color: var(--on_surface);
+    }
+
+    .UIButton--inverted:active,
+    html.cursor .UIButton--inverted:hover,
+    html.cursor .UIButton--inverted:hover:visited {
+      box-shadow: inset 0 0 0 3px var(--outline_variant);
+    }
+
+    .PMEditor:focus-within ~ .b18prmdf {
+      box-shadow: 0 0.25rem 0 0 var(--secondary);
+    }
+
+    .UITooltip,
+    .UITooltip::after {
+      background: var(--surface);
+    }
+
+    :not(.ie11 .UITooltip),
+    :not(.ie11 .UIPopover) {
+      filter: none;
+    }
+
+    .LanguageSelect-option:hover,
+    .Select-option.is-focused .LanguageSelect-option {
+      background-color: var(--secondary);
+    }
+
+    .i1u1jhdl {
+      background-color: var(--surface);
+    }
+
+    .TermRowDragPlaceholder {
+      background: var(--surface_container_lowest);
+    }
+
+    .CreateSetDiagramUploader-banner.is-dropTarget {
+      border-color: var(--secondary);
+    }
+
+    .TermContent-addRow:hover .UILinkButton {
+      border-bottom-color: var(--secondary);
+    }
+
+    .tetv1rf.t8spden:hover {
+      background-color: var(--surface);
+    }
+
+    .ImportTerms {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .ImportTerms-import,
+    .ImportTerms-preview {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .ImportTerms-textarea {
+      color: var(--on_surface);
+      border-color: var(--outline_variant);
+    }
+
+    .TermRowsPreview .TermRowsPreview-row {
+      background: var(--surface);
+    }
+
+    .UIRadio-input:checked ~ .UIRadio-fauxInput {
+      border-color: var(--secondary);
+    }
+
+    .UIRadio-fauxInput::after {
+      background-color: var(--secondary);
+    }
+
+    .UILinkButton:active,
+    .UILinkButton:focus,
+    .UILinkButton:hover {
+      border-bottom-color: var(--secondary);
+    }
+
+    .AutosuggestContextItem {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .AssemblyNotice-error {
+      border-color: var(--error);
+      background-color: var(--surface_container_low);
+    }
+
+    .TermRow.is-duplicate {
+      outline-color: var(--secondary);
+    }
+
+    .AssemblyPrimaryButton--danger {
+      background: var(--error);
+      color: var(--surface);
+    }
+
+    .AssemblyPrimaryButton--danger:hover:not([disabled]),
+    [aria-disabled="true"] {
+      background: var(--secondary);
+    }
+
+    .s19dmjr1.is-focused,
+    .s19dmjr1.is-focused input,
+    .s2y71yx label,
+    .s2y71yx.is-expanded label {
+      background: var(--surface_container_low);
+      color: var(--on_surface);
+    }
+
+    .eeiq5c0 {
+      color: var(--on_surface);
+    }
+
+    .t1r0fp00,
+    .t1elfe8k {
+      color: var(--on_surface_variant);
+    }
+
+    .MobilePage {
+      background: var(--surface_container_lowest);
+    }
+
+    .MobilePage-feature {
+      border-color: var(--outline_variant);
+    }
+
+    .MobilePage-anyDevice {
+      border-top-color: var(--outline_variant);
+    }
+
+    .AssemblyTextButton--secondary {
+      color: var(--on_surface);
+    }
+
+    .AssemblyPrimaryButton--upgrade {
+      background: var(--secondary);
+    }
+
+    .page,
+    .PrismicSimpleRichText--white,
+    .PrismicTextCallout--whiteBackground,
+    .PrismicVideoEmbedWithText--whiteBackground,
+    .p1mcvm6s,
+    .PrismicImageTextTile--whiteBackground,
+    .PrismicTextCallout--twilightBlue200Background,
+    #SearchResultsPageHeader-mainExperiment {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .tfomyx6,
+    .i1rs7b62,
+    .d5ww82k {
+      color: var(--on_surface);
+    }
+
+    .cssrxmc {
+      background-color: var(--secondary);
+    }
+
+    .PrismicImageTextTile-tileWrapper {
+      background-color: var(--surface);
+    }
+
+    .AssemblyPrimaryButton--upgrade:hover:not([disabled]) {
+      background: var(--surface_container_high);
+    }
+
+    .s1qq0zr7 {
+      background-color: var(--surface);
+    }
+
+    .sv0yvnj a,
+    .sv0yvnj a:visited:not(:last-child) {
+      color: var(--on_surface);
+    }
+
+    .sg4pwu6:hover,
+    .hivq638,
+    .s1ahro8n:hover {
+      background-color: var(--surface);
+    }
+
+    .e7lqtuc
+      .react-autosuggest__suggestions-container.react-autosuggest__suggestions-container--open {
+      background-color: var(--surface);
+    }
+
+    .e7lqtuc .react-autosuggest__section-title,
+    .SearchResultsPageHeader-queryFeedback,
+    .SearchResultsPage-contentType .SearchResultsPage-emptyStateHeadline,
+    .SearchResultsPage-contentType .SearchResultsPage-emptyStateDescription,
+    .SearchResultsPage-contentType
+      .SearchResultsPage-emptyStateSuggestionsList {
+      color: var(--on_surface);
+    }
+
+    .markdown-body {
+      color: var(--on_surface);
+    }
+
+    .e7lqtuc
+      li.react-autosuggest__suggestion.react-autosuggest__suggestion--highlighted,
+    .e7lqtuc li.react-autosuggest__suggestion:hover {
+      background-color: var(--surface);
+      border-color: var(--primary_container);
+    }
+
+    .UserPreviewCard-username,
+    .ClassPreviewCard-title {
+      color: var(--on_surface);
+    }
+
+    .UserPreviewCard-classesDescription,
+    .UserPreviewCard-createdSetsDescription,
+    .QuestionCard-subject,
+    .ClassPreviewCard-location,
+    .ClassPreviewCard-membersDescription,
+    .ClassPreviewCard-studySetsDescription {
+      color: var(--on_surface);
+    }
+
+    .QuestionCard-bottomGradient {
+      background-image: none;
+    }
+
+    .AssemblyTextButton--primary {
+      color: var(--surface_container_high);
+    }
+
+    .TosLegend--normal {
+      color: var(--on_surface);
+    }
+
+    .AssemblyLink--secondary:any-link {
+      color: var(--surface_container_high);
+    }
+
+    .lghzn8f,
+    .a1cdxe01.h9lvpq {
+      color: var(--on_surface);
+    }
+
+    .s1mff1xn,
+    .AssemblyCheckbox-label {
+      color: var(--on_surface);
+    }
+
+    .ccnmm10 {
+      background-color: var(--surface);
+    }
+
+    .c1g4obhz {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .SetPageTerm-wordText,
+    .SetPageTerm-definitionText {
+      color: var(--on_surface);
+    }
+
+    .SetPageTerms-embeddedDesktopAdWrapper {
+      background: var(--surface);
+    }
+
+    .c1qw5oc {
+      background: var(--surface);
+      border-bottom-color: var(--surface_container_low);
+    }
+
+    .c19lfjrd,
+    .l1fkuqeb {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .bxyvgmh {
+      background-color: var(--surface);
+    }
+
+    .ata5p6z[aria-disabled="true"],
+    .ata5p6z[aria-disabled="true"] div,
+    .ata5p6z[aria-disabled="true"] textarea {
+      background-color: var(--surface);
+    }
+
+    .ata5p6z {
+      border-color: var(--outline_variant);
+      background-color: var(--surface);
+    }
+
+    .AssemblyIconButton--primary:disabled,
+    .AssemblyIconButton--primary[aria-disabled="true"] {
+      background: var(--surface_container);
+      color: var(--on_surface);
+    }
+
+    .ugcsb7m {
+      background-color: var(--primary);
+      color: var(--surface);
+    }
+
+    .AssemblySecondaryButton:disabled,
+    .AssemblySecondaryButton[aria-disabled="true"] {
+      background-color: var(--surface_container_lowest);
+      border-color: var(--outline_variant);
+    }
+
+    .m9mf1hr div,
+    .m9mf1hr textarea {
+      background-color: var(--surface);
+    }
+
+    .lu5rlws {
+      color: var(--on_surface);
+    }
+
+    .b1yjduyh {
+      background-color: var(--surface);
+    }
+
+    .d6tac4m {
+      background-color: var(--surface_container_low);
+    }
+
+    .RecentFeed-empty {
+      background-color: var(--surface);
+    }
+
+    .i1ykvw4f {
+      background: var(--surface);
+    }
+
+    .i1ykvw4f:hover {
+      background: var(--surface);
+    }
+
+    .RecentFeed-empty--cta {
+      color: var(--on_surface);
+    }
+
+    .UIButton--whiteBorder:active,
+    html.cursor .UIButton--whiteBorder:hover,
+    html.cursor .UIButton--whiteBorder:hover:visited {
+      color: var(--secondary);
+    }
+
+    .c124zyvn {
+      background: var(--surface_container_lowest);
+    }
+
+    .AssemblyLink--primary:hover {
+      color: var(--error_container);
+    }
+
+    .cczh2hb,
+    .h1jftztg,
+    .t2m5erc {
+      color: var(--on_surface);
+    }
+
+    .t1nv0ihp,
+    .sku1zau,
+    .s54kfc3 {
+      color: var(--on_surface);
+    }
+
+    .ImageUploadProminentContextToggle
+      .ImageUploadProminentContextToggle-IconExplanation {
+      color: var(--on_surface);
+    }
+
+    .SiteHeaderLogo-link {
+      color: var(--primary);
+    }
+
+    .c1sgnxr5 {
+      color: var(--tertiary);
+    }
+
+    .suyglfi {
+      color: var(--on_surface);
+    }
+
+    .s2y71yx
+      li.react-autosuggest__suggestion.react-autosuggest__suggestion--highlighted,
+    .s2y71yx li.react-autosuggest__suggestion:hover {
+      background: var(--surface);
+    }
+
+    .q1kwd3of {
+      color: var(--outline_variant);
+    }
+
+    .c1741jrq:not(:first-child) {
+      border-top-color: var(--outline_variant);
+    }
+
+    .SetsView-studySetResults {
+      color: var(--on_surface);
+    }
+
+    .UILink .SetPreview-cardHeaderTitle,
+    .UILink .SetPreview-cardHeaderTitle:visited,
+    html.touch .UILink .SetPreview-cardHeaderTitle:focus:hover:not(:active) {
+      color: var(--on_surface);
+    }
+
+    .SetPreview-cardBylineClass {
+      color: var(--on_surface_variant);
+    }
+
+    .UILink .SetPreview-cardHeaderTitle:active,
+    html.cursor .UILink .SetPreview-cardHeaderTitle:hover,
+    html.cursor .UILink .SetPreview-cardHeaderTitle:hover:visited {
+      color: var(--secondary);
+    }
+
+    .e29yge6
+      .react-autosuggest__container
+      .react-autosuggest__suggestion.react-autosuggest__suggestion--highlighted,
+    .e29yge6
+      .react-autosuggest__container
+      .react-autosuggest__suggestion:hover {
+      background-color: var(--surface);
+    }
+
+    .e29yge6 .react-autosuggest__container .react-autosuggest__suggestion {
+      border-bottom-color: var(--surface);
+    }
+
+    .EdgyDataCourseSelector-addYourOwn {
+      color: var(--primary);
+    }
+
+    .i5h71e0 {
+      background-color: var(--surface_container_low);
+    }
+
+    .ikdjsw2 {
+      color: var(--on_surface);
+    }
+
+    .i1m3kkj2 {
+      color: var(--on_surface);
+    }
+
+    .i1190urg {
+      color: var(--on_surface_variant);
+    }
+
+    .le206v0 {
+      border-color: var(--outline_variant);
+    }
+
+    .sby7w0g {
+      background: var(--outline_variant);
+    }
+
+    .c3s5vdc:hover {
+      background-color: var(--primary);
+    }
+
+    .g4cyoxx {
+      color: var(--on_surface);
+    }
+
+    .s1lyn4nc {
+      background: var(--primary);
+    }
+
+    .UIModal.is-white .UIModal-box {
+      background: var(--surface);
+    }
+
+    .UIModalBadge {
+      background-color: var(--primary);
+      color: var(--surface);
+    }
+
+    .CombinePage-sourceSelectWrap .UIFieldset-legend {
+      color: var(--on_surface);
+    }
+
+    .k1reqlz9.ijrfqxy svg {
+      fill: var(--tertiary);
+    }
+
+    .dhmqhsx.ijrfqxy svg {
+      fill: var(--error);
+    }
+
+    .c6p6uaq .react-calendar__navigation__label {
+      color: var(--on_surface);
+    }
+
+    .c6p6uaq .react-calendar__navigation__arrow {
+      color: var(--on_surface);
+    }
+
+    .c6p6uaq .react-calendar__navigation__arrow:disabled {
+      color: var(--outline_variant);
+    }
+
+    .f1sxiitf {
+      background: none;
+    }
+
+    .c1ext0pg {
+      background-color: var(--surface_container);
+      color: var(--on_surface);
+    }
+
+    .sl7nfp9 {
+      background-color: var(--surface);
+    }
+
+    .sdw19mu .SetPreviewCardV1 {
+      border-bottom-color: var(--outline_variant);
+    }
+
+    .fiejqa {
+      background: none;
+    }
+
+    .t1ied0h6 {
+      color: var(--on_surface);
+    }
+
+    .SetListMediumCard-isActive::before {
+      background-color: var(--primary_container);
+    }
+
+    .c51obz3 {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .s80h93u {
+      color: var(--on_surface);
+      border-color: var(--outline_variant);
+    }
+
+    .s80h93u:active:not([disabled]),
+    .s80h93u:hover:not([disabled]) {
+      background: var(--surface);
+    }
+
+    .r78nxpu > div:hover {
+      background-color: var(--surface);
+    }
+
+    .stbnqj0 {
+      color: var(--on_surface);
+    }
+
+    .c1n6gny6,
+    .to5kbh1 {
+      color: var(--on_surface);
+    }
+
+    .tb3hrve {
+      color: var(--on_surface_variant);
+    }
+
+    .HurricaneBanner--default {
+      background: var(--surface);
+      border-bottom-color: var(--surface_container_low);
+    }
+
+    .HurricaneBanner--default .HurricaneBanner-text {
+      color: var(--on_surface);
+    }
+
+    .StudyModesNavSectionTitle {
+      color: var(--on_surface);
+    }
+
+    .cgkxufs {
+      background: var(--surface);
+      border-bottom-color: var(--outline);
+    }
+
+    .TeacherChoosePageView-gameTypeOption {
+      background-color: var(--surface);
+    }
+
+    .TeacherChoosePageView-gameTypes--text {
+      color: var(--on_surface);
+    }
+
+    .TeacherChoosePageView-gameTypes--description {
+      color: var(--on_surface_variant);
+    }
+
+    .TeacherChoosePageView-gameTypes--cta,
+    .CardContent-cta {
+      color: var(--primary);
+    }
+
+    .TeacherChoosePageView-gameTypeOption:hover,
+    .PlayModeCard:hover {
+      border-bottom-color: var(--secondary);
+    }
+
+    .PlayModeCard:active,
+    .PlayModeCard:focus:not(:active:not(:hover)),
+    html.cursor .PlayModeCard:hover,
+    html.cursor .PlayModeCard:hover:visited {
+      border-color: var(--secondary);
+    }
+
+    .PlayModeCard {
+      background-color: var(--surface);
+    }
+
+    .CardContent-option {
+      background: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .CardContent-text,
+    .CardContent-title {
+      color: var(--on_surface);
+    }
+
+    .TeacherLobbyView-join {
+      background-color: var(--surface);
+    }
+
+    .TeacherLobbyView .UIFloatedCard,
+    .TeacherStartGameView-side,
+    .TeacherEndView-side {
+      background: var(--surface);
+    }
+
+    .theme-night .TeacherLobbyView .UIFloatedCard {
+      border-color: var(--outline_variant);
+    }
+
+    .TeacherLobbyView-join--instructionLink .UIButton {
+      color: var(--primary);
+    }
+
+    .TeacherLobbyView-player:hover {
+      color: var(--error);
+    }
+
+    .td5er02 .UIFloatedCard {
+      background-color: var(--surface);
+    }
+
+    .TermStat--perfectTerms .TermStat-header {
+      background-color: var(--tertiary);
+    }
+
+    .TermStat-header {
+      color: var(--surface);
+    }
+
+    .TermStatGroup-navProgress {
+      color: var(--on_surface_variant)\1;
+    }
+
+    .TeacherEndView-side--bottomButton .UIButton.UIButton--whiteBorderRounded {
+      color: var(--on_surface);
+    }
+
+    .SegmentedControl.SegmentedControl--quizletBlue
+      .SegmentedControl-navItem.is-active,
+    .segmented-control.SegmentedControl--quizletBlue
+      .SegmentedControl-navItem.is-active {
+      background: var(--primary_container);
+      color: var(--surface);
+    }
+
+    .StudyWhileWaitingView {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .firefox
+      .CardsList.CardsList--showSingle
+      .CardsItem
+      .CardsItemSide
+      .CardsItemInner,
+    .ie11
+      .CardsList.CardsList--showSingle
+      .CardsItem
+      .CardsItemSide
+      .CardsItemInner,
+    .webkit
+      .CardsList.CardsList--showSingle
+      .CardsItem
+      .CardsItemSide
+      .CardsItemInner {
+      background-color: var(--surface);
+    }
+
+    .StudentTeamView-teamInner {
+      background-color: var(--surface);
+    }
+
+    .StudentAnswerOption .UIButton {
+      background-color: var(--surface) !important;
+    }
+
+    .StudentAnswerOption .UIButton:active,
+    html.cursor .StudentAnswerOption .UIButton:hover,
+    html.cursor .StudentAnswerOption .UIButton:hover:visited {
+      border-color: var(--secondary);
+    }
+
+    .StudentPlayingHeader {
+      background: var(--surface);
+    }
+
+    .StudentLeaderboard-headstart {
+      background: var(--primary);
+    }
+
+    .StudentLeaderboard {
+      background: var(--primary_container);
+    }
+
+    .StudentLeaderboard-team {
+      background: var(--primary);
+    }
+
+    .StudentGameboard-feedback.is-incorrectAnswer {
+      background: var(--error);
+    }
+
+    .StudentAnswerOption.is-showingIncorrectFeedback.StudentAnswerOption
+      .UIButton {
+      background: var(--error) !important;
+    }
+
+    .StudentAnswerOption.is-showingCorrectFeedback.StudentAnswerOption
+      .UIButton {
+      background: var(--tertiary) !important;
+    }
+
+    .StudentIncorrectAnswerFeedback-section--correct
+      .StudentIncorrectAnswerFeedback-heading {
+      color: var(--tertiary);
+    }
+
+    .TermStat--learnedTerms .TermStat-header {
+      background-color: var(--error);
+    }
+
+    .TeacherChoosePageView-gameTypeOption:active,
+    .TeacherChoosePageView-gameTypeOption:focus:not(:active:not(:hover)),
+    html.cursor .TeacherChoosePageView-gameTypeOption:hover,
+    html.cursor .TeacherChoosePageView-gameTypeOption:hover:visited {
+      border-color: var(--secondary);
+    }
+
+    .tllqvk3,
+    .c1tmoumb {
+      background-color: var(--surface);
+    }
+  }
+}

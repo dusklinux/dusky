@@ -1,0 +1,772 @@
+/* ==UserStyle==
+@name Hackage Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/hackage
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/hackage
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/hackage/catppuccin.user.less
+@description Soothing pastel theme for Hackage
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("hackage.haskell.org"),
+  domain("hackage-content.haskell.org") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    &,
+:root {
+}
+
+    body {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    a:hover {
+      background-color: inherit;
+    }
+
+    a[href]:link {
+      color: var(--primary);
+    }
+    a[href]:visited {
+      color: average(var(--outline_variant), var(--primary));
+    }
+
+    a[href].def:link,
+    a[href].def:visited {
+      color: var(--on_surface_variant);
+    }
+    a[href].def:hover {
+      color: average(var(--outline_variant), var(--on_surface_variant));
+    }
+
+    button {
+      background-color: var(--surface);
+      color: var(--on_surface);
+
+      &:hover {
+        background-color: var(--surface);
+      }
+    }
+
+    .caption,
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    summary,
+    .section1,
+    .section2,
+    .section3,
+    .section4,
+    .section5,
+    .section6 {
+      color: var(--on_surface);
+      filter: none;
+    }
+
+    .collapser::before,
+    .expander::before,
+    .noexpander::before {
+      color: var(--primary);
+    }
+
+    pre {
+      background-color: var(--surface);
+      border-color: var(--surface_container);
+    }
+
+    blockquote {
+      background-color: var(--surface_container_low);
+      border-color: var(--primary);
+    }
+
+    .src,
+    .decl,
+    .declname,
+    .declbut,
+    .topdecl,
+    .arg,
+    .inline-code {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .declbut {
+      border-color: var(--outline) !important;
+      a {
+        color: var(--outline_variant) !important;
+      }
+    }
+
+    /*
+     * Headers
+     */
+
+    #page-header,
+    #package-header {
+      background-color: var(--primary);
+      color: var(--surface_container);
+      border-color: shade(var(--primary), 25%);
+    }
+
+    #page-header .caption,
+    #package-header .caption,
+    #page-header a:link,
+    #page-header a:visited {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    #module-header .caption,
+    .modulebar {
+      color: var(--primary);
+      border-color: var(--surface_container);
+    }
+
+    #module-header {
+      background-color: inherit;
+    }
+
+    #package-header {
+      &,
+      #page-menu {
+        a:link,
+        a:visited {
+          color: var(--surface_container_lowest);
+        }
+      }
+      a:hover {
+        background-color: transparent;
+      }
+
+      ul.links li {
+        border-color: var(--outline);
+
+        &:hover {
+          background-color: transparent;
+        }
+      }
+    }
+
+    ul.links li form {
+      input,
+      button {
+        color: var(--surface_container_lowest);
+      }
+
+      button {
+        background-color: transparent;
+      }
+    }
+
+    .topbar {
+      background-color: var(--primary);
+
+      .topbut {
+        border-color: var(--outline);
+
+        a {
+          background-color: transparent;
+          color: var(--surface_container_lowest);
+        }
+      }
+      .title {
+        color: var(--surface_container_lowest);
+      }
+    }
+
+    .botbar {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    /*
+     * Style selectors (for old packages)
+     */
+
+    #style-menu {
+      background-color: var(--surface);
+
+      li {
+        &,
+        a {
+          color: var(--on_surface) !important;
+        }
+        + li {
+          border-color: var(--outline_variant);
+        }
+      }
+    }
+
+    /*
+     * Versions
+     */
+
+    a.unpreferred[href]:link,
+    a.unpreferred[href]:visited {
+      color: var(--secondary);
+    }
+
+    a.deprecated[href]:link,
+    a.deprecated[href]:visited {
+      color: var(--error);
+    }
+
+    .versions {
+      a.normal[href]:link,
+      a.normal[href]:visited {
+        color: var(--tertiary);
+      }
+    }
+
+    /*
+     * Readme style
+     */
+
+    .embedded-author-content {
+      border-color: var(--primary);
+    }
+
+    /*
+     * Contents & synopsis
+     */
+
+    #contents-list {
+      background-color: var(--surface);
+    }
+
+    h2#table-of-contents {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    div#table-of-contents {
+      background-color: var(--surface_container_lowest);
+      border-color: var(--surface_container);
+    }
+
+    #synopsis {
+      summary,
+      #control\.syn {
+          '<svg width="128" height="104" viewBox="0 0 128 104" xml:space="preserve" xmlns="http://www.w3.org/2000/svg"><defs><filter id="a" x="-.06" y="-.03" width="1.14" height="1.07" color-interpolation-filters="sRGB"><feFlood flood-color="#000" flood-opacity=".498" result="flood"/><feGaussianBlur in="SourceGraphic" result="blur" stdDeviation="1"/><feOffset dx="1" dy="1" in="blur" result="offset"/><feComposite in="flood" in2="offset" operator="in" result="comp1"/><feComposite in="SourceGraphic" in2="comp1" result="comp2"/></filter><filter id="b" x="-.06" y="-.03" width="1.14" height="1.07" color-interpolation-filters="sRGB"><feFlood flood-color="#000" flood-opacity=".498" result="flood"/><feGaussianBlur in="SourceGraphic" result="blur" stdDeviation="1"/><feOffset dx="1" dy="1" in="blur" result="offset"/><feComposite in="flood" in2="offset" operator="in" result="comp1"/><feComposite in="SourceGraphic" in2="comp1" result="comp2"/></filter></defs><g transform="translate(64)" filter="url(#a)"><rect x="8.5" y="8.5" width="40" height="80" rx="4" ry="4" fill="@{surface0}"/><text transform="matrix(0 -.995 1 0 0 0)" x="-86.188" y="23.735" fill="@{subtext1}" xml:space="preserve"><tspan x="-86.188" y="23.735" font-family="&quot;PT Sans&quot;,-apple-system,BlinkMacSystemFont,&quot;Segoe UI&quot;,Roboto,Oxygen-Sans,Cantarell,&quot;Helvetica Neue&quot;,sans-serif" font-size="14px" font-weight="400">Synopsis</tspan></text><g fill="@{overlay0}"><rect transform="scale(-1 1)rotate(-45)" x="-28.7" y="-6.53" width="7.88" height="2.46" rx=".985" ry=".985"/><rect transform="rotate(-45)" x="-1.47" y="26.3" width="7.88" height="2.46" rx=".985" ry=".985"/><rect transform="scale(-1 1)rotate(-45)" x="-23.7" y="-1.58" width="7.88" height="2.46" rx=".985" ry=".985"/><rect transform="rotate(-45)" x="-6.42" y="21.4" width="7.88" height="2.46" rx=".985" ry=".985"/></g></g><g filter="url(#b)"><rect x="8.5" y="8.5" width="40" height="80" rx="4" ry="4" fill="@{surface0}"/><text transform="matrix(0 -.995 1 0 0 0)" x="-86.188" y="23.735" fill="@{subtext1}" xml:space="preserve"><tspan x="-86.188" y="23.735" font-family="&quot;PT Sans&quot;,-apple-system,BlinkMacSystemFont,&quot;Segoe UI&quot;,Roboto,Oxygen-Sans,Cantarell,&quot;Helvetica Neue&quot;,sans-serif" font-size="14px" font-weight="400">Synopsis</tspan></text><g fill="@{overlay0}"><rect transform="rotate(-45)" x="-3.59" y="18.6" width="7.88" height="2.46" rx=".985" ry=".985"/><rect transform="scale(-1 1)rotate(-45)" x="-26.6" y="1.24" width="7.88" height="2.46" rx=".985" ry=".985"/><rect transform="rotate(-45)" x="1.36" y="23.5" width="7.88" height="2.46" rx=".985" ry=".985"/><rect transform="scale(-1 1)rotate(-45)" x="-31.5" y="-3.71" width="7.88" height="2.46" rx=".985" ry=".985"/></g></g></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}") !important;
+      }
+
+      ul {
+        &,
+        li.src {
+          background-color: var(--surface_container_low);
+        }
+      }
+    }
+
+    /*
+     * Quick jump
+     */
+
+    #search p.error {
+      color: var(--error);
+    }
+
+    #search-form,
+    #search-results {
+      box-shadow: 2px 2px 6px fade(var(--surface), 20%);
+    }
+
+    #search-form {
+      input {
+        border-color: var(--primary);
+      }
+    }
+
+    #search-results {
+      border-color: var(--primary);
+
+      > ul > li {
+        border-bottom-color: var(--outline);
+      }
+    }
+
+    .search-module > ul > li > a[href].active-link {
+      background-color: var(--surface_container_high);
+    }
+
+    .search-result ul.subs::after {
+      color: var(--on_surface);
+    }
+
+    .more-results,
+    .more-results::before {
+      color: var(--on_surface_variant);
+    }
+
+    .keyboard-shortcuts th {
+      color: var(--primary);
+    }
+
+    .key {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-color: var(--surface);
+    }
+
+    /*
+     * Dropdown
+     */
+
+    .dropdown-menu {
+      background-color: var(--surface_container_low);
+      border-color: var(--surface_container_low);
+
+      button {
+        background-color: var(--primary);
+        color: var(--surface);
+        border-color: var(--surface_container_high);
+
+        &:hover,
+        &:active {
+          background-color: var(--primary);
+          color: var(--surface);
+        }
+      }
+    }
+
+    /*
+     * Tables
+     */
+
+    table {
+      &.info {
+        background-color: var(--surface_container_lowest);
+        color: var(--on_surface);
+        border-color: var(--surface_container);
+      }
+
+      &.fancy {
+        &,
+        tr {
+          border-color: var(--surface_container);
+        }
+        tr.even td {
+          background-color: var(--surface);
+        }
+      }
+
+      &.fancy,
+      &.properties,
+      &.dataTable.compact.fancy tbody {
+        th,
+        td {
+          background-color: var(--surface_container_lowest);
+        }
+      }
+    }
+
+    .doc {
+      th,
+      td {
+        border-color: var(--surface_container);
+      }
+      th {
+        background-color: var(--surface);
+      }
+    }
+
+    .infohead,
+    .infoval {
+      color: var(--on_surface);
+    }
+
+    div#table_length.dataTables_length,
+    div#table_filter.dataTables_filter {
+      color: var(--on_surface);
+    }
+
+    div #description table {
+      &,
+      tr td {
+        border-color: var(--surface_container);
+      }
+      th {
+        background-color: var(--surface);
+      }
+    }
+
+    /*
+     * Source links
+     */
+
+    #interface {
+      .src {
+        .link,
+        .selflink {
+          color: var(--outline_variant) !important;
+          background-color: transparent !important;
+        }
+      }
+      p.src .link {
+        background-color: transparent;
+        color: var(--outline_variant);
+        border-color: var(--outline_variant);
+      }
+
+      span.fixity,
+      span.rightedge {
+        color: var(--outline_variant);
+        border-left-color: var(--outline_variant);
+      }
+      span.fixity {
+        color: var(--outline_variant);
+      }
+    }
+
+    /*
+     * Paginator
+     */
+
+    .paginator {
+      span {
+        color: var(--on_surface);
+      }
+
+      a {
+        color: var(--outline_variant);
+
+        &[href]:link,
+        &:link:hover {
+          color: var(--primary);
+        }
+        &:visited,
+        &:visited:hover {
+          color: average(var(--outline_variant), var(--primary));
+        }
+        &:link:hover,
+        &:visited:hover {
+          background-image: none;
+          background-color: var(--surface);
+          border-color: transparent;
+        }
+      }
+
+      .current {
+        background-image: none;
+        background-color: var(--surface);
+        color: var(--primary);
+        border-color: transparent;
+
+        &:hover {
+          background-color: var(--surface) !important;
+        }
+      }
+    }
+
+    .paginate_button {
+      background-color: var(--outline);
+    }
+
+    /*
+     * Search query
+     */
+
+    #browseTable th {
+      border-color: var(--surface_container);
+    }
+
+    #fatalError {
+      color: var(--error);
+    }
+
+    input:invalid {
+      border-color: var(--secondary);
+      box-shadow: 0 0 10px var(--secondary);
+    }
+
+    input {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-style: solid;
+      border-color: var(--surface_container_low);
+      border-radius: 4px;
+    }
+
+    input[type="range"] {
+      -moz-appearance: none;
+      -webkit-appearance: none;
+      appearance: none;
+      background-color: var(--surface);
+      height: 0.2em !important;
+
+      &::-moz-range-thumb,
+      &::-webkit-slider-thumb {
+        background-color: var(--on_surface);
+        border-color: var(--surface_container_low);
+        height: 1em !important;
+      }
+    }
+
+    input[type="range"]:hover,
+    input[type="submit"]:hover {
+      background-color: var(--surface);
+    }
+
+    /*
+     * Upload
+     */
+
+    input[type="file"] {
+      background-color: transparent;
+
+      &::file-selector-button {
+        background-color: var(--surface);
+        color: var(--on_surface);
+      }
+    }
+
+    /*
+     * Others
+     */
+
+    .candidate-warn {
+      background-color: var(--surface);
+      border-color: var(--error);
+    }
+
+    .candidate-info {
+      background-color: var(--surface);
+      border-color: var(--primary);
+    }
+
+    .box {
+      background-color: var(--surface_container_lowest);
+      border-color: var(--surface_container_lowest);
+    }
+
+    div#modal #content,
+    #search-results {
+      background-color: var(--surface_container_low);
+    }
+
+    .subs,
+    .top > .doc,
+    .subs > .doc {
+      border-left-color: var(--surface_container);
+    }
+
+    .subs .subs p.src {
+      background-color: var(--surface);
+    }
+
+    .top p.src {
+      border-color: var(--surface_container_low);
+    }
+
+    .warning,
+    strong.warning {
+      color: var(--error);
+    }
+
+    small.info,
+    .flags-table .flag-disabled {
+      color: var(--on_surface_variant);
+    }
+
+    .text-button {
+      color: var(--primary);
+    }
+
+    p.registration-email {
+      border-color: var(--primary);
+    }
+
+    :target {
+      background-image: linear-gradient(
+        to bottom,
+        transparent 0%,
+        transparent 65%,
+        average(var(--surface_container_low), var(--secondary)) 60%,
+        average(var(--surface_container_low), var(--secondary)) 100%
+      );
+    }
+    :target:hover {
+      background-image: linear-gradient(
+        to bottom,
+        overlay(var(--surface_container_low), var(--secondary)) 0%,
+        overlay(var(--surface_container_low), var(--secondary)) 100%
+      );
+    }
+
+    #footer {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-color: var(--outline);
+    }
+
+    /*
+     * MathJax
+     */
+
+    #MathJax_Message {
+      background-color: var(--surface);
+      border-color: var(--surface_container);
+      color: var(--on_surface);
+    }
+
+    #MathJax_About,
+    #MathJax_Help,
+    .MathJax_Menu {
+      background-color: var(--surface_container_low);
+      color: var(--on_surface);
+      border-color: var(--primary);
+      box-shadow: 0 10px 20px var(--surface);
+      -webkit-box-shadow: 0 10px 20px var(--surface);
+      -moz-box-shadow: 0 10px 20px var(--surface);
+    }
+
+    #MathJax_About > span,
+    #MathJax_HelpContent {
+      background-color: var(--surface_container) !important;
+      color: var(--on_surface) !important;
+      border-color: var(--outline) !important;
+    }
+
+    .MathJax_MenuArrow {
+      color: var(--on_surface);
+    }
+
+    .MathJax_MenuRule {
+      border-top-color: var(--outline);
+    }
+
+    .MathJax_MenuActive {
+      background-color: var(--surface_container);
+      color: var(--on_surface);
+    }
+
+    .MathJax_MenuDisabled {
+      color: var(--outline_variant);
+    }
+
+    .MathJax_MenuDisabled:focus,
+    .MathJax_MenuLabel:focus {
+      background-color: var(--surface_container);
+    }
+
+    #MathJax_AboutClose,
+    #MathJax_HelpClose {
+      border-color: var(--surface_container_high);
+      color: var(--on_surface_variant);
+      span {
+        background-color: var(--surface_container_high);
+      }
+
+      &:hover {
+        color: var(--on_surface) !important;
+        border-color: var(--outline) !important;
+        span {
+          background-color: var(--outline) !important;
+        }
+      }
+    }
+
+    span.mathjax img {
+      filter: var(--on_surface)-filter;
+    }
+
+    /*
+     * Sources
+     */
+
+    span.definition,
+    .hs-identifier {
+      color: var(--primary);
+    }
+
+    .hs-identifier.hs-type {
+      color: var(--secondary);
+    }
+
+    span.keyword,
+    .hs-keyword {
+      color: var(--primary);
+    }
+
+    span.str,
+    span.char,
+    .hs-string,
+    .hs-char,
+    .hs-str,
+    .hs-chr {
+      color: var(--tertiary);
+    }
+
+    .hs-number {
+      color: var(--secondary_container);
+    }
+
+    .hs-operator {
+      color: var(--primary_fixed);
+    }
+
+    span.keyglyph,
+    span.layout,
+    span.conop,
+    .hs-keyglyph,
+    .hs-layout,
+    .hs-glyph,
+    .hs-special {
+      color: var(--outline_variant);
+    }
+
+    span.comment,
+    .hs-comment,
+    .hs-comment a {
+      color: var(--outline);
+    }
+
+    span.cpp,
+    .hs-pragma,
+    .hs-cpp {
+      color: var(--secondary);
+    }
+
+    pre a {
+      &:link,
+      &:visited {
+        border-bottom-color: var(--surface_container_low);
+      }
+      &:hover,
+      &.hover-highlight {
+        background-color: var(--surface_container_low);
+      }
+    }
+
+    span.annot {
+      color: var(--on_surface);
+
+      &:hover {
+        background-color: var(--surface_container);
+      }
+
+      span.annottext {
+        background-color: var(--surface_container_low);
+        border-color: var(--primary);
+      }
+    }
+  }
+}

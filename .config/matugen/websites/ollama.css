@@ -1,0 +1,203 @@
+/* ==UserStyle==
+@name Ollama Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/ollama
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/ollama
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/ollama/catppuccin.user.less
+@description Soothing pastel theme for Ollama
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("ollama.com") {
+
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+    #lib.css-variables();
+
+    background-color: var(--surface_container_lowest);
+    color: var(--on_surface);
+
+    /* Llama logos */
+    img[src="/public/ollama.png"],
+    img[src="/public/shades.png"],
+    img[src="/public/glasses.png"] {
+      filter: var(--on_surface)-filter;
+    }
+
+    code,
+    pre {
+      background-color: var(--surface);
+      color: var(--on_surface) !important;
+    }
+
+    input {
+      background-color: var(--surface);
+    }
+
+    main,
+    section,
+    strong,
+    h3,
+    ul,
+    button,
+    li,
+    li::marker {
+      color: var(--on_surface);
+    }
+    blockquote {
+      color: var(--on_surface_variant);
+    }
+
+    a[class~=""] {
+      color: var(--primary);
+    }
+
+    #query,
+    #filter,
+    #search {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+    #readme,
+    #display,
+    #file-explorer {
+      color: var(--on_surface);
+    }
+
+    .command {
+      color: var(--on_surface);
+    }
+    .truncate {
+      color: var(--on_surface);
+    }
+
+    /* Tailwind */
+
+    * {
+      border-color: var(--surface_container);
+    }
+
+    .prose {
+      --tw-prose-headings: var(--on_surface);
+      --tw-prose-links: var(--primary);
+    }
+
+    .text-white,
+    .text-black {
+      color: var(--on_surface);
+    }
+    .text-gray-900 {
+      color: var(--on_surface);
+    }
+    .text-green-500,
+    .text-emerald-500,
+    .text-green-700 {
+      color: var(--tertiary);
+    }
+    .text-yellow-900 {
+      color: var(--secondary);
+    }
+    .text-neutral-300,
+    .text-neutral-400,
+    .text-neutral-500 {
+      color: var(--on_surface_variant);
+    }
+    .text-neutral-700,
+    .text-neutral-800,
+    .text-neutral-900 {
+      color: var(--on_surface) !important;
+    }
+    .text-red-500 {
+      color: var(--error);
+    }
+    .text-blue-500,
+    .text-blue-600 {
+      color: var(--primary);
+    }
+    /* Models page, color for non-weight pills/tags. Background color is solid from `.bg-indigo-50`. */
+    .text-indigo-600 {
+      color: var(--surface);
+    }
+
+    .bg-neutral-100 pre,
+    .bg-neutral-100 .command {
+      background-color: unset !important;
+    }
+    .bg-white {
+      background-color: var(--surface);
+    }
+    .bg-black,
+    .hover\:bg-black:hover {
+      background-color: var(--surface_container_low) !important;
+    }
+    .bg-neutral-50 {
+      background-color: var(--surface_container_low);
+    }
+    .bg-neutral-100,
+    .hover\:bg-neutral-100:hover {
+      background-color: var(--surface_container_high) !important;
+    }
+    .bg-neutral-700,
+    .bg-neutral-800 {
+      background-color: var(--surface_container);
+    }
+    .bg-green-50 {
+      background-color: fade(var(--tertiary), 10%);
+    }
+    .bg-yellow-50 {
+      background-color: fade(var(--secondary), 10%);
+    }
+    .bg-indigo-50 {
+      background-color: var(--primary);
+    }
+    .bg-\[\#ddf4ff\] {
+      background-color: fade(var(--primary), 10%);
+    }
+
+    .border {
+      border-color: var(--primary);
+    }
+    .border-neutral-200,
+    .border-neutral-300,
+    .divide-gray-200 > :not([hidden]) ~ :not([hidden]),
+    .divide-neutral-200 > :not([hidden]) ~ :not([hidden]) {
+      border-color: var(--surface_container);
+    }
+    .focus\:border-blue-400:focus {
+      border-color: var(--primary);
+    }
+    .focus\:border-red-400:focus {
+      border-color: var(--error);
+    }
+
+    .ring-neutral-300 {
+      --tw-ring-color: var(--surface_container) !important;
+    }
+    .ring-green-600\/20 {
+      --tw-ring-color: var(--tertiary);
+    }
+    .ring-yellow-600\/20 {
+      --tw-ring-color: var(--secondary);
+    }
+    select:focus,
+    .ring-blue-300,
+    .focus\:ring-blue-300:focus {
+      --tw-ring-color: rgba(#lib.rgbify(var(--primary))[], var(--tw-ring-opacity));
+    }
+    .focus\:ring-red-300:focus {
+      --tw-ring-color: rgba(#lib.rgbify(var(--error))[], var(--tw-ring-opacity));
+    }
+  }
+}

@@ -1,0 +1,273 @@
+/* ==UserStyle==
+@name docs.rs Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/docs.rs
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/docs.rs
+@version 2026.01.16
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/docs.rs/catppuccin.user.less
+@description Soothing pastel theme for docs.rs
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("docs.rs"), domain("doc.rust-lang.org") {
+  :root:not([data-docs-rs-theme]) {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+  :root[data-docs-rs-theme="dark"] {
+  }
+  :root[data-docs-rs-theme="light"] {
+  }
+
+
+    --color-background-code: var(--surface);
+    --color-background: var(--surface_container_lowest);
+    --input-color: var(--on_surface);
+    --input-box-shadow-focus: 0 0 8px 4px var(--primary);
+    --color-border-light: var(--surface_container_high);
+    --color-border: var(--surface_container_low);
+    --color-doc-link-background: var(--primary);
+    --color-doc-link-hover: var(--primary);
+    --color-error-hover: red;
+    --color-error: red;
+    --color-macro: red;
+    --color-menu-border: red;
+    --color-menu-header-background: red;
+    --color-navbar-standard: var(--on_surface);
+    --color-standard: var(--on_surface);
+    --color-brand: var(--on_surface);
+    --color-struct: red;
+    --color-type: var(--secondary_container);
+    --color-url: var(--primary);
+    --color-warn-background: var(--secondary_container);
+    --color-warn-msg: var(--surface);
+    --color-warn-hover: red;
+    --color-warn: var(--secondary_container);
+    --color-background-input: var(--surface);
+    --color-table-header-background: var(--surface_container_low);
+    --color-table-header: var(--on_surface);
+    --color-search-focus: red;
+    --chart-title-color: red;
+    --chart-grid: red;
+
+    --main-background-color: var(--surface_container_lowest);
+    --main-color: var(--on_surface);
+    --settings-input-color: var(--primary);
+    --settings-input-border-color: var(--surface_container_low);
+    --settings-button-color: var(--on_surface);
+    --settings-button-border-focus: var(--primary);
+    --settings-menu-filter: var(--on_surface_variant)-filter;
+    --settings-menu-hover-filter: var(--on_surface)-filter;
+    --sidebar-background-color: var(--surface);
+    --sidebar-background-color-hover: var(--surface);
+    --sidebar-border-color: var(--outline_variant);
+    --sidebar-resizer-hover: var(--primary_fixed);
+    --sidebar-resizer-active: var(--primary_container);
+    --source-sidebar-background-selected: var(--surface_container_low);
+    --source-sidebar-background-hover: var(--surface_container_lowest);
+    --code-block-background-color: var(--surface);
+    --headings-border-bottom-color: var(--outline_variant);
+    --border-color: var(--surface_container_low);
+    --button-background-color: var(--surface);
+    --right-side-color: var(--surface_container_high);
+    --code-attribute-color: var(--secondary);
+    --toggles-color: var(--on_surface);
+    --search-input-focused-border-color: var(--primary);
+    --copy-path-button-color: var(--on_surface);
+    --codeblock-error-hover-color: var(--error);
+    --codeblock-error-color: fade(var(--error), 70%);
+    --codeblock-ignore-hover-color: var(--error);
+    --codeblock-ignore-color: fade(var(--error), 70%);
+    --warning-border-color: red;
+    --type-link-color: var(--primary_fixed);
+    --trait-link-color: var(--primary);
+    --assoc-item-link-color: var(--secondary);
+    --function-link-color: var(--tertiary);
+    --macro-link-color: var(--tertiary);
+    --keyword-link-color: var(--secondary);
+    --mod-link-color: var(--primary);
+    --link-color: var(--primary);
+    --sidebar-link-color: var(--primary);
+    --sidebar-current-link-background-color: var(--surface_container_low);
+    --search-result-link-focus-background-color: fade(var(--primary), 20%);
+    --search-result-border-color: var(--surface_container_low);
+    --search-color: var(--on_surface);
+    --search-error-code-background-color: red;
+    --search-results-alias-color: red;
+    --search-results-grey-color: var(--on_surface);
+    --search-tab-title-count-color: var(--on_surface_variant);
+    --search-tab-button-not-selected-border-top-color: var(--surface);
+    --search-tab-button-not-selected-background: var(--surface);
+    --search-tab-button-selected-border-top-color: var(--primary);
+    --search-tab-button-selected-background: var(--surface_container_lowest);
+    --stab-background-color: var(--surface_container_low);
+    --stab-code-color: var(--primary);
+    --code-highlight-kw-color: var(--primary);
+    --code-highlight-kw-2-color: var(--primary);
+    --code-highlight-lifetime-color: var(--primary);
+    --code-highlight-prelude-color: var(--secondary);
+    --code-highlight-prelude-val-color: var(--secondary);
+    --code-highlight-number-color: var(--secondary_container);
+    --code-highlight-string-color: var(--tertiary);
+    --code-highlight-literal-color: var(--error);
+    --code-highlight-attribute-color: var(--secondary);
+    --code-highlight-self-color: var(--error);
+    --code-highlight-macro-color: var(--primary);
+    --code-highlight-question-mark-color: var(--tertiary_container);
+    --code-highlight-comment-color: var(--outline_variant);
+    --code-highlight-doc-comment-color: var(--outline_variant);
+    --color-syntax-foreground: inherit;
+    --color-syntax-attribute: var(--secondary);
+    --color-syntax-background: var(--surface);
+    --color-syntax-bool: var(--error);
+    --color-syntax-comment: var(--outline_variant);
+    --color-syntax-doc-comment: var(--outline_variant);
+    --color-syntax-keyword1: var(--primary);
+    --color-syntax-keyword2: var(--primary);
+    --color-syntax-lifetime: var(--primary);
+    --color-syntax-macro: var(--primary);
+    --color-syntax-number: var(--secondary_container);
+    --color-syntax-prelude-ty: var(--secondary);
+    --color-syntax-prelude-val: var(--secondary);
+    --color-syntax-question-mark: var(--tertiary_container);
+    --color-syntax-self: var(--error);
+    --color-syntax-string: var(--tertiary);
+    --src-line-numbers-span-color: var(--primary);
+    --src-line-number-highlighted-background-color: fade(var(--primary), 30%);
+    --test-arrow-color: #dedede;
+    --test-arrow-background-color: red;
+    --test-arrow-hover-color: #dedede;
+    --test-arrow-hover-background-color: red;
+    --target-background-color: fade(var(--primary), 10%);
+    --target-border-color: var(--primary);
+    --kbd-color: var(--on_surface);
+    --kbd-background: var(--surface);
+    --kbd-box-shadow-color: var(--surface_container);
+    --crate-search-hover-border: red;
+    --src-sidebar-background-selected: var(--surface_container_low);
+    --src-sidebar-background-hover: var(--surface_container);
+    --table-alt-row-background-color: var(--surface);
+    --codeblock-link-background: fade(var(--surface_container_low), 50%);
+    --scrape-example-toggle-line-background: red;
+    --scrape-example-toggle-line-hover-background: red;
+    --scrape-example-code-line-highlight: fade(var(--primary), 40%);
+    --scrape-example-code-line-highlight-focus: fade(var(--primary), 40%);
+    --scrape-example-help-border-color: var(--on_surface_variant);
+    --scrape-example-help-color: var(--on_surface);
+    --scrape-example-help-hover-border-color: var(--on_surface);
+    --scrape-example-help-hover-color: var(--on_surface);
+    --scrape-example-code-wrapper-background-start: var(--surface_container_lowest);
+    --scrape-example-code-wrapper-background-end: var(--surface_container_lowest);
+
+    select {
+      background-color: var(--surface);
+      border-color: var(--surface_container_low);
+    }
+
+    hr {
+      border-color: var(--outline_variant);
+    }
+
+    .rust-logo {
+        '<svg height="106" width="106" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><g transform="translate(53 53)"><path stroke="@{text}" fill="@{crust}" stroke-linejoin="round" d="M-8.5-14.5h13c8 0 8 8 0 8h-13Zm-31 37h40v-11h-9v-8h10c11 0 5 19 14 19h25v-19h-6v2c0 8-9 7-10 2s-5-9-6-9c15-8 6-24-6-24h-47v11h10v26h-15Z"/><g mask="url(#a)"><circle r="43" fill="none" stroke="@{crust}" stroke-width="9"/><path id="b" stroke="@{crust}" stroke-width="3" stroke-linejoin="round" d="m46 3 5-3-5-3z"/><use xlink:href="#b" transform="rotate(11.25)"/><use xlink:href="#b" transform="rotate(22.5)"/><use xlink:href="#b" transform="rotate(33.75)"/><use xlink:href="#b" transform="rotate(45)"/><use xlink:href="#b" transform="rotate(56.25)"/><use xlink:href="#b" transform="rotate(67.5)"/><use xlink:href="#b" transform="rotate(78.75)"/><use xlink:href="#b" transform="rotate(90)"/><use xlink:href="#b" transform="rotate(101.25)"/><use xlink:href="#b" transform="rotate(112.5)"/><use xlink:href="#b" transform="rotate(123.75)"/><use xlink:href="#b" transform="rotate(135)"/><use xlink:href="#b" transform="rotate(146.25)"/><use xlink:href="#b" transform="rotate(157.5)"/><use xlink:href="#b" transform="rotate(168.75)"/><use xlink:href="#b" transform="rotate(180)"/><use xlink:href="#b" transform="rotate(191.25)"/><use xlink:href="#b" transform="rotate(202.5)"/><use xlink:href="#b" transform="rotate(213.75)"/><use xlink:href="#b" transform="rotate(225)"/><use xlink:href="#b" transform="rotate(236.25)"/><use xlink:href="#b" transform="rotate(247.5)"/><use xlink:href="#b" transform="rotate(258.75)"/><use xlink:href="#b" transform="rotate(270)"/><use xlink:href="#b" transform="rotate(281.25)"/><use xlink:href="#b" transform="rotate(292.5)"/><use xlink:href="#b" transform="rotate(303.75)"/><use xlink:href="#b" transform="rotate(315)"/><use xlink:href="#b" transform="rotate(326.25)"/><use xlink:href="#b" transform="rotate(337.5)"/><use xlink:href="#b" transform="rotate(348.75)"/><path id="c" stroke="@{crust}" stroke-width="6" stroke-linejoin="round" d="m-7-42 7 7 7-7z"/><use xlink:href="#c" transform="rotate(72)"/><use xlink:href="#c" transform="rotate(144)"/><use xlink:href="#c" transform="rotate(216)"/><use xlink:href="#c" transform="rotate(288)"/></g><mask id="a"><path fill="#fff" d="M-60-60H60V60H-60z"/><circle id="d" cy="-40" r="3"/><use xlink:href="#d" transform="rotate(72)"/><use xlink:href="#d" transform="rotate(144)"/><use xlink:href="#d" transform="rotate(216)"/><use xlink:href="#d" transform="rotate(288)"/></mask></g></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    img[alt="Change settings"] {
+        '<svg xmlns="http://www.w3.org/2000/svg" width="27.434" height="29.5" viewBox="0 0 27.434 29.5" fill="@{text}"><path d="M27.316 18.39a2.7 2.7 0 0 0-.98-1.46 1.6 1.6 0 0 1-.016-.762l.035-.176v-1.191c0-1.246-.003-1.278-.046-1.473a1.7 1.7 0 0 1 .007-.805c.477-.343.829-.859.997-1.472.257-.957.074-2.094-.508-3.117l-.594-1.032c-.746-1.304-1.965-2.117-3.18-2.117-.379 0-.75.078-1.086.235a1.96 1.96 0 0 1-.855-.391l-.102-.082-.117-.063-1.855-1.07-.094-.055-.106-.043c-.378-.156-.66-.41-.77-.554C17.919 1.172 16.349 0 14.297 0h-1.155c-2.043 0-3.61 1.152-3.75 2.723-.114.14-.391.382-.758.527l-.102.04-.094.05-1.94 1.066-.134.074-.117.094a2 2 0 0 1-.832.403 2.5 2.5 0 0 0-1.008-.211c-1.199 0-2.414.82-3.168 2.14l-.59 1.032c-.41.718-.64 1.523-.64 2.257-.004.953.36 1.758 1.012 2.258a1.9 1.9 0 0 1-.016.785c-.04.168-.063.282-.063 1.563 0 1.148 0 1.148.016 1.261l.008.075.015.074c.075.344.047.64.012.8-.644.5-1.004 1.302-.992 2.259.008.726.238 1.52.648 2.242l.59 1.027c.758 1.332 1.965 2.16 3.149 2.16.324 0 .644-.062.937-.187.168.039.492.156.813.418l.11.086.124.07 2.047 1.156.102.059.105.043c.363.144.648.379.766.52.164 1.519 1.718 2.632 3.746 2.632h1.156c2.035 0 3.598-1.133 3.746-2.672.117-.144.402-.394.773-.55l.114-.047.101-.063 1.961-1.156.106-.063.097-.078c.309-.246.653-.37.832-.398.313.136.66.21 1.016.21 1.2 0 2.41-.82 3.164-2.14l.594-1.031c.59-1.028.777-2.164.52-3.117Zm-2.043 2.247-.59 1.031c-.437.766-1.105 1.25-1.636 1.25a.7.7 0 0 1-.371-.094 1.15 1.15 0 0 0-.567-.129c-.593 0-1.382.297-2.007.797l-1.961 1.156c-1.016.426-1.848 1.293-1.848 1.93 0 .64-.898 1.16-1.996 1.16H13.14c-1.102 0-2-.515-2-1.14 0-.63-.832-1.477-1.852-1.887l-2.047-1.16c-.637-.512-1.426-.813-2.008-.813-.199 0-.379.035-.515.114a.65.65 0 0 1-.332.085c-.52 0-1.18-.5-1.621-1.273l-.59-1.031c-.543-.953-.555-1.98-.024-2.285.532-.305.782-1.434.551-2.504V14.8c0-1.09.02-1.18.02-1.18.238-1.074-.008-2.203-.551-2.516-.54-.304-.54-1.34.008-2.293l.59-1.03c.437-.766 1.101-1.255 1.636-1.255a.73.73 0 0 1 .364.094c.152.086.343.125.566.125.594 0 1.379-.297 2.004-.793l1.945-1.066c1.02-.407 1.856-1.278 1.856-1.934s.898-1.191 2-1.191h1.156c1.098 0 1.996.543 1.996 1.21 0 .669.832 1.555 1.848 1.973L20 6.012c.617.492 1.402.777 2.012.777.242 0 .453-.047.62-.14a.8.8 0 0 1 .403-.102c.55 0 1.223.476 1.652 1.23l.59 1.032c.543.953.52 2.004-.062 2.336-.574.332-.86 1.48-.625 2.554 0 0 .008.04.008 1.102v1.011c-.215 1.051.07 2.176.636 2.5.567.325.586 1.368.04 2.325Zm0 0"/><path d="M13.61 7.61a7.084 7.084 0 0 0-7.083 7.085 7.085 7.085 0 1 0 14.168 0A7.09 7.09 0 0 0 13.61 7.61m0 12.41a5.33 5.33 0 0 1-5.325-5.325 5.33 5.33 0 0 1 5.324-5.32 5.327 5.327 0 0 1 5.325 5.32 5.33 5.33 0 0 1-5.325 5.325Zm0 0"/><path d="M13.684 9.906a4.72 4.72 0 0 0-4.72 4.719 4.72 4.72 0 0 0 4.72 4.719 4.724 4.724 0 0 0 4.714-4.719 4.724 4.724 0 0 0-4.714-4.719m0 7.676a2.954 2.954 0 1 1 0-5.91 2.953 2.953 0 0 1 2.953 2.953 2.957 2.957 0 0 1-2.953 2.957m0 0"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+    #settings-menu {
+      img[alt="Change settings"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="27.434" height="29.5" viewBox="0 0 27.434 29.5" fill="@{text}"><path d="M27.316 18.39a2.7 2.7 0 0 0-.98-1.46 1.6 1.6 0 0 1-.016-.762l.035-.176v-1.191c0-1.246-.003-1.278-.046-1.473a1.7 1.7 0 0 1 .007-.805c.477-.343.829-.859.997-1.472.257-.957.074-2.094-.508-3.117l-.594-1.032c-.746-1.304-1.965-2.117-3.18-2.117-.379 0-.75.078-1.086.235a1.96 1.96 0 0 1-.855-.391l-.102-.082-.117-.063-1.855-1.07-.094-.055-.106-.043c-.378-.156-.66-.41-.77-.554C17.919 1.172 16.349 0 14.297 0h-1.155c-2.043 0-3.61 1.152-3.75 2.723-.114.14-.391.382-.758.527l-.102.04-.094.05-1.94 1.066-.134.074-.117.094a2 2 0 0 1-.832.403 2.5 2.5 0 0 0-1.008-.211c-1.199 0-2.414.82-3.168 2.14l-.59 1.032c-.41.718-.64 1.523-.64 2.257-.004.953.36 1.758 1.012 2.258a1.9 1.9 0 0 1-.016.785c-.04.168-.063.282-.063 1.563 0 1.148 0 1.148.016 1.261l.008.075.015.074c.075.344.047.64.012.8-.644.5-1.004 1.302-.992 2.259.008.726.238 1.52.648 2.242l.59 1.027c.758 1.332 1.965 2.16 3.149 2.16.324 0 .644-.062.937-.187.168.039.492.156.813.418l.11.086.124.07 2.047 1.156.102.059.105.043c.363.144.648.379.766.52.164 1.519 1.718 2.632 3.746 2.632h1.156c2.035 0 3.598-1.133 3.746-2.672.117-.144.402-.394.773-.55l.114-.047.101-.063 1.961-1.156.106-.063.097-.078c.309-.246.653-.37.832-.398.313.136.66.21 1.016.21 1.2 0 2.41-.82 3.164-2.14l.594-1.031c.59-1.028.777-2.164.52-3.117Zm-2.043 2.247-.59 1.031c-.437.766-1.105 1.25-1.636 1.25a.7.7 0 0 1-.371-.094 1.15 1.15 0 0 0-.567-.129c-.593 0-1.382.297-2.007.797l-1.961 1.156c-1.016.426-1.848 1.293-1.848 1.93 0 .64-.898 1.16-1.996 1.16H13.14c-1.102 0-2-.515-2-1.14 0-.63-.832-1.477-1.852-1.887l-2.047-1.16c-.637-.512-1.426-.813-2.008-.813-.199 0-.379.035-.515.114a.65.65 0 0 1-.332.085c-.52 0-1.18-.5-1.621-1.273l-.59-1.031c-.543-.953-.555-1.98-.024-2.285.532-.305.782-1.434.551-2.504V14.8c0-1.09.02-1.18.02-1.18.238-1.074-.008-2.203-.551-2.516-.54-.304-.54-1.34.008-2.293l.59-1.03c.437-.766 1.101-1.255 1.636-1.255a.73.73 0 0 1 .364.094c.152.086.343.125.566.125.594 0 1.379-.297 2.004-.793l1.945-1.066c1.02-.407 1.856-1.278 1.856-1.934s.898-1.191 2-1.191h1.156c1.098 0 1.996.543 1.996 1.21 0 .669.832 1.555 1.848 1.973L20 6.012c.617.492 1.402.777 2.012.777.242 0 .453-.047.62-.14a.8.8 0 0 1 .403-.102c.55 0 1.223.476 1.652 1.23l.59 1.032c.543.953.52 2.004-.062 2.336-.574.332-.86 1.48-.625 2.554 0 0 .008.04.008 1.102v1.011c-.215 1.051.07 2.176.636 2.5.567.325.586 1.368.04 2.325Zm0 0"/><path d="M13.61 7.61a7.084 7.084 0 0 0-7.083 7.085 7.085 7.085 0 1 0 14.168 0A7.09 7.09 0 0 0 13.61 7.61m0 12.41a5.33 5.33 0 0 1-5.325-5.325 5.33 5.33 0 0 1 5.324-5.32 5.327 5.327 0 0 1 5.325 5.32 5.33 5.33 0 0 1-5.325 5.325Zm0 0"/><path d="M13.684 9.906a4.72 4.72 0 0 0-4.72 4.719 4.72 4.72 0 0 0 4.72 4.719 4.724 4.724 0 0 0 4.714-4.719 4.724 4.724 0 0 0-4.714-4.719m0 7.676a2.954 2.954 0 1 1 0-5.91 2.953 2.953 0 0 1 2.953 2.953 2.957 2.957 0 0 1-2.953 2.957m0 0"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+
+      > a:not(:has(img))::before {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 12 12" fill="@{text}"><path d="M10.25 6c0-.124-.026-.241-.037-.363l1.608-1.554-1.25-2.166-2.132.61a4 4 0 0 0-.65-.37L7.25 0h-2.5l-.54 2.157a4 4 0 0 0-.649.37l-2.132-.61-1.25 2.166 1.608 1.554c-.01.122-.037.239-.037.363s.026.241.037.363L.179 7.917l1.25 2.166 2.132-.61q.307.213.65.37L4.75 12h2.5l.54-2.157a4 4 0 0 0 .649-.37l2.132.61 1.25-2.166-1.608-1.554c.01-.122.037-.239.037-.363M6 7.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+    }
+
+    .setting-check input:checked {
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><path d="m7 23 10 7 16-20" fill="none" stroke="@{crust}" stroke-width="5"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    #copy-path {
+
+      > img {
+        content: url("data:image/svg+xml,@{svg}");
+        filter: none;
+      }
+      &:hover > img {
+        content: url("data:image/svg+xml,@{svg}");
+        filter: none;
+      }
+
+      &:not(:has(> img)) {
+        &::before {
+          content: url("data:image/svg+xml,@{svg}");
+          filter: none;
+        }
+
+        &:hover::before {
+          content: url("data:image/svg+xml,@{svg}");
+          filter: none;
+        }
+      }
+    }
+
+    details.toggle {
+      @plus: escape(
+        '<svg width="17" height="17" shape-rendering="crispEdges" stroke="@{text}" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 2.5H2.5v12H5m7-12h2.5v12H12m-7-6h7M8.5 12V5"/></svg>'
+      );
+      @minus: escape(
+        '<svg width="17" height="17" shape-rendering="crispEdges" stroke="@{text}" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 2.5H2.5v12H5m7-12h2.5v12H12m-7-6h7"/></svg>'
+      );
+
+      > summary::before {
+        background: url("data:image/svg+xml,@{plus}") no-repeat top left;
+        filter: none;
+      }
+
+      &[open] > summary::before {
+        background: url("data:image/svg+xml,@{minus}") no-repeat top left;
+      }
+    }
+
+    .src #sidebar-button > a::before {
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" fill="none" stroke="@{text}"><path d="M16 9V5h-6V4L8 2H4L2 4v16h13l6-11H6L2 19" stroke-width="1.25"/><path d="M15 7H4v3" stroke-width=".75"/><path d="M3.75 10v1.25" stroke-width=".375"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    .pure-menu-link {
+      color: var(--on_surface_variant);
+
+      &:hover {
+        color: var(--on_surface);
+      }
+    }
+    .pure-table {
+      &,
+      td,
+      th {
+        border-color: var(--surface_container_low);
+      }
+    }
+  }
+}

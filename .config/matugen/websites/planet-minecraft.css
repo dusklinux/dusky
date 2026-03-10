@@ -1,0 +1,334 @@
+/* ==UserStyle==
+@name Planet Minecraft Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/planet-minecraft
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/planet-minecraft
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/planet-minecraft/catppuccin.user.less
+@description Soothing pastel theme for Planet Minecraft
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("planetminecraft.com") {
+  [data-theme="light"] {
+  }
+  [data-theme="dark"] {
+  }
+
+
+    --body-bg: var(--surface);
+    --header-bg: var(--surface_container_lowest);
+    --content-bg: var(--surface_container_low);
+    --container-bg: var(--surface_container_lowest);
+    --menu-bg: var(--surface_container_low);
+    --menu-color: var(--on_surface);
+    --menu-selected-bg: var(--surface_container);
+    --menu-selected-color: var(--primary);
+    --footer-bg: var(--surface);
+    --bg-navbar: var(--surface);
+    --tab-selected: var(--primary);
+    --input-bg: var(--surface_container_low);
+    --dark-mid-bg: var(--surface_container_lowest);
+    --title-color: var(--on_surface);
+    --text-color: var(--on_surface);
+    --text-color-medium: var(--on_surface_variant);
+    --text-color-light: var(--on_surface);
+    --border-color: var(--surface_container_lowest);
+    --footer-a-color: var(--primary);
+    --nav-hover: var(--primary);
+    --stat-color: var(--error);
+    --a-color: var(--primary);
+    --a-hover: var(--primary);
+    --a-selected: fade(var(--primary), 80%);
+    --tab-hover: fade(var(--primary), 80%);
+    --tab-color: var(--on_surface_variant);
+    --nav-color: var(--on_surface);
+    --widget-wrap-bg: var(--surface);
+    --shine-start: var(--surface_container_high);
+    --shine-end: var(--surface_container);
+    --widget-bg: var(--surface_container_low);
+    --light-bg: var(--surface_container_low);
+    --medium-bg: var(--surface);
+    --toolbar-bg: var(--surface_container_low);
+    --shine-highlight: var(--surface_container_low);
+    --border-color-light: var(--surface_container_low);
+    --site-border-color: var(--surface_container_low);
+    --graphic-bg: var(--surface_container_low);
+    --notice-bg: var(--outline);
+    --notice-color: var(--on_surface);
+    --menu-disabled-color: var(--surface);
+    --control-bg: var(--primary);
+    --a-visited: var(--primary);
+    --nav-bar-border: none;
+    --feed-alt-bg: var(--surface_container);
+    --nav-selected: var(--primary);
+
+    .tab_options > ul > li.currentpage,
+    .tab_options > ul > li.ui-state-active,
+    .tab_options > ul > li:hover {
+      border-bottom-color: var(--primary);
+    }
+
+    .site_btn_secondary {
+      color: var(--on_surface);
+      background: var(--surface_container);
+      &:hover {
+        color: var(--primary);
+        background: fade(var(--surface_container), 80%);
+      }
+    }
+
+    .site_btn,
+    .site_btn_alt,
+    #subscribe_full .site_btn,
+    .pagination p a.pagination_page,
+    .pagination p > span.pagination_page,
+    .vert_menu > ul > li:only-child > a.current_select,
+    .vert_menu > ul > li > a.current_select {
+      color: var(--surface_container_lowest);
+      background: var(--primary);
+      &:not(:disabled, [data-disabled="disabled"]):hover {
+        background: fade(var(--primary), 80%);
+      }
+    }
+
+    #profile-bar #profile-actions .togglable.selected {
+      background: var(--primary);
+      color: var(--surface_container_lowest);
+    }
+
+    .tipso_bubble .bottom {
+      background: var(--surface_container_low) !important;
+    }
+
+    /* because the icons on the display mode buttons are white, we cant have white base here, so we improvise for latte */
+      #display_modes a {
+        background: var(--on_surface) !important;
+        box-shadow: none !important;
+      }
+
+      /* fix nav menu dropdown icons */
+      .navbar_icon .dropdown {
+        --svozk: var(--s) -256px -326px !important;
+        background: var(--s) -256px -326px !important;
+      }
+
+      .content-actions li {
+        background: var(--surface_container_low);
+
+        a,
+        .link,
+        .js_link,
+        .js_link_m {
+          color: var(--on_surface);
+        }
+      }
+
+      .content-actions li .js_link:hover,
+      .content-actions li .js_link_m:hover,
+      .content-actions li .link:hover,
+      .content-actions li a:hover {
+        .material-icons {
+          color: var(--on_surface) !important;
+        }
+
+        color: var(--on_surface) !important;
+        background: var(--primary) !important;
+      }
+
+      .content-actions li .material-icons {
+        color: var(--on_surface_variant) !important;
+      }
+    }
+
+    & when not(@flavor = latte) {
+      #display_modes a {
+        background: var(--surface_container_lowest) !important;
+        box-shadow: none !important;
+      }
+    }
+
+    #display_modes a.selected,
+    #display_modes a:hover {
+      background: var(--primary);
+    }
+
+    .navigation-wrap .navmenu a {
+      text-shadow: none !important;
+    }
+
+    #header
+      #header-wrap
+      .header_text
+      > ul
+      > li
+      > .material-btn.mem_submit
+      .material-icons,
+    #header #header-wrap .header_text > ul > li > a.mem_submit .material-icons,
+    #mobileRightPanel
+      .sidr-inner
+      > ul
+      > li
+      > .material-btn.mem_submit
+      .material-icons,
+    #mobileRightPanel .sidr-inner > ul > li > a.mem_submit .material-icons {
+      color: var(--tertiary) !important;
+    }
+
+    #header
+      #header-wrap
+      .header_text
+      > ul
+      > li
+      > .material-btn[data-alert="1"].mem_notifications
+      .material-icons,
+    #header
+      #header-wrap
+      .header_text
+      > ul
+      > li
+      > .material-btn[data-alert="1"].mem_tickets
+      .material-icons,
+    #header
+      #header-wrap
+      .header_text
+      > ul
+      > li
+      > a[data-alert="1"].mem_notifications
+      .material-icons,
+    #header
+      #header-wrap
+      .header_text
+      > ul
+      > li
+      > a[data-alert="1"].mem_tickets
+      .material-icons,
+    #mobileRightPanel
+      .sidr-inner
+      > ul
+      > li
+      > .material-btn[data-alert="1"].mem_notifications
+      .material-icons,
+    #mobileRightPanel
+      .sidr-inner
+      > ul
+      > li
+      > .material-btn[data-alert="1"].mem_tickets
+      .material-icons,
+    #mobileRightPanel
+      .sidr-inner
+      > ul
+      > li
+      > a[data-alert="1"].mem_notifications
+      .material-icons,
+    #mobileRightPanel
+      .sidr-inner
+      > ul
+      > li
+      > a[data-alert="1"].mem_tickets
+      .material-icons {
+      color: var(--secondary);
+    }
+
+    .material-icons,
+    .mem_submit > span,
+    .mem_notifications > span {
+      color: var(--on_surface) !important;
+    }
+
+    .green {
+      background: var(--tertiary);
+      color: var(--surface_container_lowest);
+
+      .material-icons {
+        color: var(--surface_container_lowest);
+      }
+    }
+
+    // .content-actions li:not(:only-child, :first-child) {
+    //   border-top: none;
+    // }
+
+    .tipso_content,
+    .member_profile_card_right {
+      background: var(--surface_container_low);
+    }
+
+    .tipso_arrow {
+      border-color: var(--surface_container_low);
+    }
+
+    #popular-reel .caption {
+        background: fade(var(--on_surface), 50%) !important;
+
+        .pop-title {
+          color: var(--surface_container_lowest) !important;
+          text-shadow: none;
+        }
+
+        .caption-subtitle {
+          color: var(--surface) !important;
+          text-shadow: none;
+        }
+      }
+
+      & when not(@flavor = latte) {
+        background: fade(var(--surface_container_lowest), 50%) !important;
+
+        .pop-title {
+          color: var(--on_surface) !important;
+          text-shadow: none;
+        }
+
+        .caption-subtitle {
+          color: var(--on_surface_variant) !important;
+          text-shadow: none;
+        }
+
+        .content-actions li {
+          background: var(--surface_container_low);
+
+          a,
+          .link,
+          .js_link,
+          .js_link_m {
+            color: var(--on_surface);
+          }
+        }
+
+        .content-actions li .js_link:hover,
+        .content-actions li .js_link_m:hover,
+        .content-actions li .link:hover,
+        .content-actions li a:hover {
+          .material-icons {
+            color: var(--primary) !important;
+          }
+          color: var(--primary) !important;
+          background: var(--surface_container) !important;
+        }
+
+        .content-actions li .material-icons {
+          color: var(--on_surface_variant) !important;
+        }
+      }
+    }
+
+    #content_notice .site_btn,
+    #content_notice .site_btn_alt {
+      text-shadow: none;
+    }
+
+    .custom_input:focus,
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--primary);
+    }
+  }
+}

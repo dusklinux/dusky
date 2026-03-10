@@ -1,0 +1,150 @@
+/* ==UserStyle==
+@name SearXNG Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/searxng
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/searxng
+@version 2026.02.28
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/searxng/catppuccin.user.less
+@description Soothing pastel theme for SearXNG
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+
+@var checkbox additions "Additional Tweaks" 0
+==/UserStyle== */
+
+
+/* Domains picked from https://searx.space/. */
+@-moz-document domain("search.bus-hit.me"), domain("search.inetol.net") {
+  :root.theme-auto {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+  :root.theme-dark {
+  }
+  :root.theme-light {
+  }
+
+
+    --color-base-font: var(--on_surface);
+    --color-base-background: var(--surface_container_lowest);
+    --color-base-background-mobile: var(--surface_container_lowest);
+    --color-url-font: var(--primary);
+    --color-url-visited-font: var(--primary);
+    --color-header-background: var(--surface);
+    --color-header-border: var(--surface);
+    --color-footer-background: var(--surface);
+    --color-footer-border: var(--surface);
+    --color-sidebar-border: var(--surface_container_lowest);
+    --color-sidebar-font: var(--on_surface);
+    --color-sidebar-background: var(--surface_container_lowest);
+    --color-backtotop-font: var(--on_surface);
+    --color-backtotop-border: var(--surface_container_low);
+    --color-backtotop-background: var(--surface_container_low);
+    --color-btn-background: var(--primary);
+    --color-btn-font: var(--surface_container_lowest);
+    --color-show-btn-background: var(--primary);
+    --color-show-btn-font: var(--surface_container_lowest);
+    --color-search-border: var(--surface_container_low);
+    --color-search-shadow: 0 2px 8px var(--surface);
+    --color-search-background: var(--surface_container_low);
+    --color-search-font: var(--on_surface);
+    --color-search-background-hover: var(--primary);
+    --color-error: var(--error);
+    --color-error-background: var(--surface_container_low);
+    --color-warning: var(--secondary);
+    --color-warning-background: var(--surface_container_low);
+    --color-success: var(--tertiary);
+    --color-success-background: var(--surface_container_low);
+    --color-categories-item-selected-font: var(--on_surface);
+    --color-categories-item-border-selected: var(--primary);
+    --color-autocomplete-font: var(--on_surface);
+    --color-autocomplete-border: var(--surface_container_low);
+    --color-autocomplete-shadow: 0 2px 8px var(--surface);
+    --color-autocomplete-background: var(--surface_container_low);
+    --color-autocomplete-background-hover: var(--surface_container);
+    --color-answer-font: var(--on_surface);
+    --color-answer-background: var(--surface);
+    --color-result-background: var(--surface);
+    --color-result-border: var(--surface_container_lowest);
+    --color-result-url-font: var(--on_surface);
+    --color-result-vim-selected: var(--surface_container_low);
+    --color-result-vim-arrow: var(--primary);
+    --color-result-description-highlight-font: var(--on_surface);
+    --color-result-link-font: var(--primary);
+    --color-result-link-font-highlight: var(--primary);
+    --color-result-link-visited-font: var(--primary);
+    --color-result-publishdate-font: var(--surface_container_high);
+    --color-result-engines-font: var(--surface_container_high);
+    --color-result-search-url-border: var(--surface_container_high);
+    --color-result-search-url-font: var(--on_surface);
+    --color-result-detail-font: var(--on_surface);
+    --color-result-detail-label-font: var(--on_surface_variant);
+    --color-result-detail-background: var(--surface_container_lowest);
+    --color-result-detail-hr: var(--surface_container_lowest);
+    --color-result-detail-link: var(--primary);
+    --color-result-detail-loader-border: rgba(255, 255, 255, 0.2);
+    --color-result-detail-loader-borderleft: var(--surface);
+    --color-result-image-span-font: var(--on_surface);
+    --color-result-image-span-font-selected: var(--surface_container_lowest);
+    --color-result-image-background: var(--surface);
+    --color-settings-tr-hover: var(--surface_container_low);
+    --color-settings-engine-description-font: var(--on_surface);
+    --color-settings-engine-group-background: var(--surface_container_low);
+    --color-toolkit-badge-font: var(--on_surface);
+    --color-toolkit-badge-background: var(--surface_container_low);
+    --color-toolkit-kbd-font: var(--on_surface);
+    --color-toolkit-kbd-background: var(--surface);
+    --color-toolkit-dialog-border: var(--surface);
+    --color-toolkit-dialog-background: var(--surface);
+    --color-toolkit-tabs-label-border: var(--surface_container_lowest);
+    --color-toolkit-tabs-section-border: var(--surface_container_lowest);
+    --color-toolkit-select-background: var(--surface_container_low);
+    --color-toolkit-select-border: var(--surface_container_low);
+    --color-toolkit-select-background-hover: var(--surface_container);
+    --color-toolkit-input-text-font: var(--on_surface);
+    --color-toolkit-checkbox-onoff-off-background: var(--surface_container_low);
+    --color-toolkit-checkbox-onoff-on-background: var(--surface_container_low);
+    --color-toolkit-checkbox-onoff-on-mark-background: var(--tertiary);
+    --color-toolkit-checkbox-onoff-on-mark-color: var(--surface);
+    --color-toolkit-checkbox-onoff-off-mark-background: var(--error);
+    --color-toolkit-checkbox-onoff-off-mark-color: var(--surface);
+    --color-toolkit-checkbox-label-background: var(--surface_container_lowest);
+    --color-toolkit-checkbox-label-border: var(--surface);
+    --color-toolkit-checkbox-input-border: var(--primary);
+    --color-toolkit-engine-tooltip-border: var(--surface_container_low);
+    --color-toolkit-engine-tooltip-background: var(--surface_container_low);
+    --color-toolkit-loader-border: rgba(255, 255, 255, 0.2);
+    --color-toolkit-loader-borderleft: var(--surface);
+    --color-doc-code: var(--surface_container_high);
+    --color-doc-code-background: var(--surface);
+
+    #search_logo svg :not([fill="none"]) {
+      fill: var(--primary);
+    }
+    #search_logo svg :not([stroke="none"]) {
+      stroke: var(--primary);
+    }
+
+    .index .title {
+      filter: var(--primary)-filter;
+    }
+
+      article.result {
+        background-color: var(--color-result-background);
+        border-radius: 0.75em;
+        padding: 0.75em;
+        margin: 0.5em;
+      }
+      article.category-images {
+        padding-bottom: 4em;
+      }
+    }
+  }
+}

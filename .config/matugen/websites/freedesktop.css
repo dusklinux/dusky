@@ -1,0 +1,106 @@
+/* ==UserStyle==
+@name freedesktop.org Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/freedesktop
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/freedesktop
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/freedesktop/catppuccin.user.less
+@description Soothing pastel theme for freedesktop.org
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("www.freedesktop.org"),
+  domain("specifications.freedesktop.org") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+:root {
+}
+
+    body {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    #content h1,
+    #content h2,
+    #content h3,
+    #content h4,
+    #content h5,
+    #content h6 {
+      color: var(--primary);
+    }
+
+    .pageheader {
+      background-color: var(--surface);
+      border-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .pageheader .actions ul li a,
+    input[type="submit"] {
+      background-color: transparent;
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    input#searchbox {
+      color: var(--on_surface);
+      background-color: var(--outline);
+      border-color: var(--outline_variant);
+      box-shadow: none;
+      &:focus {
+        border-color: var(--primary);
+        outline-color: none;
+        outline-style: none;
+      }
+    }
+
+    .headerpath .title {
+      color: var(--on_surface);
+    }
+
+    a:link {
+      color: var(--primary);
+    }
+
+    a:visited {
+      color: var(--primary_container);
+    }
+    code {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    pre {
+      background-color: var(--surface);
+      border-color: var(--surface_container_low);
+
+      code {
+        background-color: var(--surface);
+        color: var(--on_surface);
+      }
+    }
+
+    hr {
+      border-style: solid;
+      border-color: var(--surface_container);
+    }
+
+    .topnav, tr:nth-child(2n+1) {
+      border-color: var(--surface_container_low);
+      background-color: var(--surface);
+    }
+  }
+}

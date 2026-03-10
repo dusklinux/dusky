@@ -1,0 +1,888 @@
+/* ==UserStyle==
+@name Last.fm Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/lastfm
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/lastfm
+@version 2026.01.03
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/lastfm/catppuccin.user.less
+@description Soothing pastel theme for Last.fm
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("last.fm") {
+  @media (prefers-color-scheme: light) {
+  }
+  @media (prefers-color-scheme: dark) {
+  }
+
+
+    html, html body {
+      color: var(--on_surface);
+      background-color: var(--surface_container_lowest);
+    }
+
+    /* Components */
+
+    a, .mimic-link {
+      color: var(--primary);
+    }
+
+    .btn-primary() {
+      background-color: var(--primary);
+      color: var(--surface);
+
+      &:hover {
+        background-color: darken(var(--primary), 5%) !important;
+        color: var(--surface) !important;
+      }
+    }
+    .btn-primary {
+      .btn-primary();
+    }
+    .btn-secondary {
+      background-color: var(--surface_container_low);
+      color: var(--on_surface);
+
+      &:hover {
+        background-color: var(--surface_container) !important;
+        color: var(--on_surface) !important;
+      }
+    }
+    .btn-cancel {
+      color: var(--on_surface);
+    }
+
+    .dropdown-menu-clickable {
+      background: var(--surface);
+      &::before {
+        filter: var(--surface)-filter;
+      }
+
+      .dropdown-menu-clickable-item {
+        color: var(--on_surface);
+
+        &:hover {
+          background-color: var(--surface_container_lowest) !important;
+        }
+
+        &.dropdown-menu-clickable-item--selected {
+          color: var(--primary);
+        }
+      }
+    }
+    .dropdown-menu-clickable-button {
+      color: var(--on_surface_variant);
+
+      &:hover, &.disclose-active {
+        color: var(--on_surface);
+      }
+
+      .section-with-settings &.section-control::before {
+        border-right-color: var(--surface_container_high);
+      }
+
+      &::after {
+        filter: var(--on_surface)-filter;
+      }
+    }
+
+    .content-form {
+      textarea, input, select {
+        background-color: var(--surface) !important;
+        color: var(--on_surface) !important;
+        border-color: var(--surface_container) !important;
+
+        &:focus {
+          box-shadow: 0 3px 9px 0 var(--surface_container_low) !important;
+        }
+      }
+
+      .lfm-form-radio input[type="radio"] {
+        + label::before {
+          background-color: var(--surface_container_lowest);
+          border-color: var(--outline_variant);
+        }
+        &:checked + label::before {
+          box-shadow: inset 0 0 0 4px var(--primary);
+          border-color: var(--primary);
+        }
+      }
+
+      .form-row-help-text, .footnotes {
+        color: var(--on_surface_variant);
+      }
+
+      legend {
+        color: var(--on_surface);
+      }
+    }
+
+    .search-form {
+      .search-submit::before {
+        filter: var(--outline)-filter;
+      }
+
+      &::after {
+        border-right-color: var(--surface_container);
+      }
+    }
+
+    // Alerts
+    .alert-warning {
+      background-color: fade(var(--secondary_container), 30%);
+      color: var(--secondary_container);
+
+      &::before {
+        filter: var(--secondary_container)-filter;
+      }
+    }
+
+    // Modals
+    .modal-body {
+      background: var(--surface);
+    }
+
+    // Other
+
+    .section-with-separator::after {
+      background-color: var(--surface_container_low);
+    }
+
+    .container {
+      background: var(--surface_container_lowest);
+    }
+
+    .content-top-back-link {
+      color: var(--on_surface_variant);
+
+      a::before {
+        filter: var(--outline_variant)-filter;
+      }
+    }
+
+    /* Footer */
+    .footer {
+      background: var(--surface);
+      color: var(--on_surface);
+
+      .footer-heading {
+        color: var(--on_surface_variant);
+      }
+
+      .footer-language {
+        color: var(--on_surface_variant);
+        &.footer-language--active {
+          color: var(--on_surface);
+        }
+      }
+
+      .footer-timezone {
+        color: var(--on_surface_variant);
+        strong {
+          color: var(--on_surface);
+        }
+      }
+
+      .footer-legal {
+        color: var(--on_surface);
+      }
+
+      .container {
+        background: none;
+      }
+    }
+
+    /* Header */
+    .top-bar {
+      background: var(--surface);
+
+      svg {
+        filter: var(--primary)-filter;
+      }
+    }
+    .masthead {
+      .masthead-search-toggle {
+        &::before {
+          filter: var(--on_surface)-filter;
+        }
+        &::after {
+          background-color: var(--on_surface);
+        }
+      }
+      .masthead-nav .masthead-nav-control {
+        color: var(--on_surface);
+
+        &::after {
+          background-color: var(--on_surface);
+        }
+      }
+
+      .auth-avatar-notification-count-badge {
+        background: var(--primary);
+      }
+      .auth-dropdown-menu {
+        background: var(--surface) !important;
+
+        .auth-dropdown-profile {
+          background-color: var(--surface);
+
+          .auth-dropdown-profile-info {
+            .username {
+              color: var(--on_surface);
+            }
+            .scrobble-count {
+              color: var(--on_surface_variant);
+            }
+          }
+        }
+        .auth-dropdown-menu-links {
+          background: var(--surface);
+
+          .auth-dropdown-menu-item .auth-dropdown-menu-link img {
+            filter: var(--on_surface)-filter;
+          }
+        }
+        .auth-dropdown-menu-footer {
+          background: var(--surface);
+
+          .auth-upgrade-cta {
+            background: var(--surface);
+            box-shadow: inset 0 0 0 1px var(--outline);
+            color: var(--secondary);
+
+            &:hover {
+              box-shadow: inset 0 0 0 1px var(--secondary) !important;
+              color: var(--secondary) !important;
+            }
+          }
+          .auth-logout-cta {
+            box-shadow: inset 0 0 0 1px var(--outline);
+            background: var(--surface);
+            color: var(--on_surface);
+          }
+        }
+      }
+    }
+
+    .header {
+      &.header--overview, &.header--sub-page {
+        color: var(--on_surface);
+      }
+      &.header--overview .container, &.header--sub-page .container {
+        background: none;
+      }
+
+      background: var(--surface_container_lowest);
+
+      .header-info {
+        .header-featured-track {
+          .featured-item-heading {
+            color: var(--on_surface);
+          }
+        }
+
+        .header-title-secondary {
+          .header-scrobble-since, .header-title-display-name {
+            color: var(--on_surface);
+          }
+        }
+
+        .header-info-secondary {
+          color: var(--on_surface);
+        }
+      }
+    }
+    .header-metadata .header-metadata-title {
+      color: var(--on_surface);
+    }
+    .secondary-nav {
+      .secondary-nav-item-link:hover::after,
+      .secondary-nav-item-link--active::after {
+        background: var(--primary);
+      }
+    }
+
+    .chartlist {
+      .chartlist-row {
+        &:hover {
+          background-color: var(--surface_container_low);
+        }
+
+        &.chartlist-row--highlight, &.chartlist-row--now-scrobbling {
+          background-color: fade(var(--primary), 20%);
+        }
+
+        .chartlist-play {
+          .chartlist-play-button {
+            &::before {
+              background-color: transparent;
+              filter: var(--on_surface)-filter;
+              box-shadow: 0 0 0 1px fade(var(--surface), 20%);
+            }
+          }
+        }
+
+        .chartlist-loved {
+          button.chartlist-love-button {
+            &::before {
+              filter: var(--outline_variant)-filter;
+            }
+            &:hover::before, &[data-analytics-action="UnloveTrack"]::before {
+              filter: var(--primary)-filter;
+            }
+          }
+        }
+
+        .lazy-buylinks-toggle, .chartlist-more-button {
+          &::before {
+            filter: var(--outline_variant)-filter;
+          }
+          &:hover::before {
+            filter: var(--on_surface_variant)-filter;
+          }
+        }
+        .chartlist-more {
+          .chartlist-more-menu {
+            .more-item--track::before,
+            .more-item--artist::before,
+            .more-item--obsession::before {
+              filter: var(--on_surface_variant)-filter;
+            }
+            .more-item--delete::before {
+              filter: var(--error)-filter;
+            }
+          }
+        }
+
+        .chartlist-timestamp {
+          color: var(--on_surface_variant);
+
+          .chartlist-now-scrobbling::before {
+            filter: var(--on_surface_variant)-filter;
+          }
+        }
+
+        .chartlist-bar {
+          .chartlist-count-bar-slug {
+            background-color: transparent !important;
+            background-image: linear-gradient(
+              to right,
+              fade(var(--primary), 20%),
+              fade(var(--primary), 20%)
+            );
+            color: var(--surface);
+          }
+          .chartlist-count-bar-value {
+            color: var(--on_surface);
+          }
+        }
+      }
+      .chartlist-break::after, .chartlist-row::after {
+        border-bottom-color: var(--surface_container);
+      }
+
+      .cover-art {
+        img[src="https://lastfm.freetls.fastly.net/i/u/64s/c6f59c1e5e7240a4c0d427abd71f3dbb.jpg"] {
+          mix-blend-mode: screen;
+          filter: invert(1);
+        }
+
+        &::after {
+          box-shadow: inset 0 0 0 1px fade(var(--on_surface_variant), 7%);
+        }
+      }
+    }
+    #top-tracks {
+      .section-settings-toggle::before,
+      .share-chart .share-button-profile::before {
+        filter: var(--on_surface_variant)-filter;
+      }
+    }
+
+    /* Track Page */
+    .catalogue-metadata .lyrics-snippet-more-link a::before,
+    .more-link-fullwidth-right a::before,
+    .more-items::before,
+    .more-link a::before {
+      filter: var(--primary)-filter;
+    }
+    .more-items {
+      color: var(--primary);
+    }
+    .catalogue-tags {
+      .tag a, .tags-add, .tags-add-cta {
+        color: var(--primary);
+        box-shadow: inset 0 0 0 1px var(--primary);
+
+        &:hover {
+          color: darken(var(--primary), 5%) !important;
+          box-shadow: inset 0 0 0 1px darken(var(--primary), 5%) !important;
+        }
+      }
+      .tags-add::before {
+        filter: var(--primary)-filter;
+      }
+    }
+    .source-album .source-album-stats,
+    .about-artist .about-artist-listeners,
+    .trending-tracks .trending-tracks-item-listeners,
+    .catalogue-overview-similar-artists-item-aux-text {
+      color: var(--on_surface);
+    }
+
+    .trending-tracks-section {
+      &, .container {
+        color: var(--on_surface);
+        background: var(--surface_container_low);
+      }
+    }
+
+    .stationlink-list .stationlink::after,
+    .resource-external-link::after,
+    .play-this-track-playlink::after {
+      border-bottom-color: var(--surface_container);
+    }
+
+    .video-preview-upload-cta {
+      background: var(--surface_container_low);
+      box-shadow: 0 0 0 2px var(--surface_container);
+
+      &:hover {
+        background: var(--surface_container) !important;
+      }
+
+      &::before {
+        filter: var(--on_surface)-filter;
+      }
+    }
+
+    /* Shoutbox */
+    #shoutbox {
+      .shout,
+      .shout-form {
+        border-bottom-color: var(--surface_container_low);
+      }
+
+      .shout-list {
+        .shout-user a {
+          color: var(--on_surface);
+        }
+        .shout-timestamp {
+          color: var(--on_surface_variant);
+
+          &:focus,
+          &:hover {
+            color: var(--on_surface) !important;
+          }
+        }
+
+        .shout-action,
+        .shout-reply,
+        .vote-button {
+          color: var(--on_surface);
+
+          &::before {
+            filter: var(--on_surface)-filter;
+          }
+
+          &:focus,
+          &:hover {
+            color: var(--on_surface) !important;
+
+            &::before {
+              filter: var(--on_surface)-filter;
+            }
+          }
+        }
+
+        .vote-button--voted::before,
+        .vote-button--unvoted:focus::before,
+        .vote-button--unvoted:hover::before {
+          filter: var(--tertiary)-filter !important;
+        }
+
+        .shout-action-more {
+          .shout-more-actions {
+            &::before {
+              filter: var(--on_surface)-filter;
+            }
+
+            &:focus::before,
+            &:hover::before {
+              filter: var(--on_surface)-filter !important;
+            }
+          }
+          .shout-more-actions-menu {
+            .more-item--report::before {
+              filter: var(--on_surface_variant)-filter;
+            }
+          }
+        }
+      }
+    }
+
+    /* Settings */
+    .main-content,
+    .content-top-has-nav .content-top,
+    .two-column-layout .content-top {
+      background: var(--surface_container_lowest);
+    }
+    .two-column-layout .container, .two-column-layout .main-content {
+      background-image: none;
+    }
+    .content-top-has-nav .content-top::after,
+    .two-column-layout .content-top::after {
+      border-top-color: var(--surface_container);
+    }
+
+    .change-username-upsell {
+      background-color: fade(var(--secondary), 20%);
+    }
+
+    /* Inbox/Notifications */
+    .inbox-notifications {
+      .inbox-notifications__item--hover {
+        box-shadow: inset 0 -1px var(--surface_container);
+
+        &:hover {
+          background-color: var(--surface_container_low) !important;
+        }
+      }
+      .inbox-notifications__item--highlight-hover {
+        background-color: var(--surface_container);
+      }
+      .inbox-notifications__item-timestamp {
+        color: var(--on_surface_variant);
+      }
+    }
+    .inbox .inbox-buttons .inbox-compose-button {
+      .btn-primary();
+    }
+
+    /* Home */
+    .secondary-nav-item-link {
+      &--active::after {
+        .homefeed--artists .content-top & {
+          background-color: var(--secondary);
+        }
+        .homefeed--albums .content-top & {
+          background-color: var(--tertiary);
+        }
+        .homefeed--tracks .content-top & {
+          background-color: var(--primary);
+        }
+        .homefeed--events .content-top & {
+          background-color: var(--primary);
+        }
+      }
+      &:hover::after {
+        .homefeed .content-top .secondary-nav-item--artists & {
+          background-color: var(--secondary);
+        }
+        .homefeed .content-top .secondary-nav-item--albums & {
+          background-color: var(--tertiary);
+        }
+        .homefeed .content-top .secondary-nav-item--tracks & {
+          background-color: var(--primary);
+        }
+        .homefeed .content-top .secondary-nav-item--events & {
+          background-color: var(--primary);
+        }
+      }
+    }
+    .recs-feed {
+      .recs-feed-item {
+        .recs-feed-cover-image-wrap {
+          color: var(--on_surface);
+        }
+
+        .recs-feed-playlink::before {
+          background-color: var(--on_surface);
+        }
+
+        &.recs-feed-item--artist .context {
+          &::before {
+            background-color: var(--secondary);
+          }
+          &::after {
+            mask-position: 0 -32px;
+          }
+        }
+        &.recs-feed-item--track .context {
+          &::before {
+            background-color: var(--primary);
+          }
+          &::after {
+            mask-position: 0 -96px;
+          }
+        }
+        &.recs-feed-item--album .context {
+          &::before {
+            background-color: var(--tertiary);
+          }
+          &::after {
+            mask-position: 0 -64px;
+          }
+        }
+        .context {
+          // Hack using .mask-image() to allow us to mask icons with a background.
+          &::before {
+            border-radius: 50%;
+            content: "";
+            height: 32px;
+            left: auto;
+            position: absolute;
+            right: 15px;
+            top: -16px;
+            width: 32px;
+            z-index: 1;
+          }
+          &::after {
+            .mask-image(
+              url("/static/images/icons/rec_types_16@2x.5bf9cfd03a3e.png"),
+              var(--surface),
+              0 0,
+              32px 160px,
+              no-repeat,
+            );
+            z-index: 2;
+          }
+
+          color: var(--on_surface);
+          background-color: var(--surface_container_low);
+          box-shadow: inset 1px 0 var(--surface_container), inset -1px -1px var(--surface_container);
+        }
+      }
+    }
+
+    // Events - Browse Popular Music (no event recommendations)
+    .no-data-message-button {
+      .btn-primary();
+    }
+
+    .stationlinks {
+      .stationlink-list .stationlink::before {
+        background-color: var(--on_surface);
+      }
+    }
+    .mpu-subscription-upsell {
+      color: var(--on_surface_variant);
+    }
+    .subscribe-cta {
+      background-color: fade(var(--secondary), 10%);
+    }
+
+    .subscribe-cta a, .btn-subscribe {
+      background-color: var(--secondary);
+      color: var(--surface);
+
+      &:hover {
+        background-color: darken(var(--secondary), 5%) !important;
+        color: var(--surface) !important;
+      }
+    }
+
+    /* Profile */
+    .profile-cards-items {
+      .profile-card .profile-card-content {
+        background: linear-gradient(
+          90deg,
+          var(--surface_container_low) 185px 80%,
+          fade(var(--surface_container_low), 75%) 95%,
+          transparent
+        );
+
+        .profile-card-content-title {
+          color: var(--on_surface);
+        }
+        p {
+          color: var(--on_surface);
+        }
+      }
+    }
+
+    /* Reports */
+    .listening-report-promo {
+      background-color: var(--surface_container_low) !important;
+      border-color: var(--surface_container) !important;
+
+      .listening-report-promo-date::after {
+        filter: var(--outline_variant)-filter;
+      }
+
+      .listening-report-promo-title {
+        color: var(--on_surface_variant);
+      }
+    }
+
+    /* Library */
+    .library-controls {
+      .secondary-nav-item .secondary-nav-item-link {
+        &::before {
+          filter: var(--on_surface)-filter;
+        }
+        &--active, &:hover {
+          color: var(--primary);
+
+          &::before {
+            filter: var(--primary)-filter;
+          }
+        }
+      }
+    }
+    .library-controls-datepicker {
+      .date-range-picker-button {
+        color: var(--primary);
+
+        &::before, .date-range-picker-button-inner::before {
+          filter: var(--primary)-filter;
+        }
+      }
+    }
+    .date-range-picker-content {
+      background-color: var(--surface);
+
+      &::before {
+        filter: var(--surface)-filter;
+      }
+
+      .date-range-picker-presets a {
+        color: var(--on_surface);
+
+        &:hover {
+          background-color: var(--surface_container_low) !important;
+        }
+      }
+
+      .date-range-picker-form {
+        border-top-color: var(--surface_container);
+
+        .control-label {
+          color: var(--on_surface);
+        }
+      }
+    }
+    #scrobble-chart-content {
+      .highcharts-background {
+        fill: var(--surface_container_lowest) !important;
+      }
+      .highcharts-axis-title {
+        fill: var(--on_surface) !important;
+      }
+      .highcharts-axis-labels text {
+        fill: var(--on_surface_variant) !important;
+      }
+
+      .highcharts-yaxis-grid .highcharts-grid-line {
+        stroke: var(--outline) !important;
+      }
+      .highcharts-xaxis .highcharts-axis-line {
+        stroke: var(--outline_variant) !important;
+      }
+
+      .highcharts-series-group {
+        .highcharts-point {
+          fill: fade(var(--primary), 30%);
+        }
+      }
+
+      .highcharts-tooltip {
+        .highcharts-tooltip-box:not(.highcharts-shadow) {
+          fill: var(--surface) !important;
+          stroke: var(--surface_container_low) !important;
+        }
+
+        text {
+          fill: var(--on_surface) !important;
+        }
+      }
+    }
+    .metadata-title {
+      color: var(--on_surface);
+    }
+    .date-heading {
+      color: var(--on_surface_variant);
+    }
+
+    // Pagination
+    .pagination {
+      .pagination-page {
+        &[aria-current] {
+          color: var(--primary);
+          box-shadow: inset 0 -2px var(--primary);
+        }
+        &:not(.pagination-page--ellipsis):hover {
+          box-shadow: inset 0 -2px var(--primary);
+        }
+      }
+    }
+
+    /* Followers */
+    .text-light {
+      color: var(--on_surface);
+    }
+    .user-list-follower-btn {
+      [data-toggle-button-current-state="followed"] & {
+        background-color: var(--tertiary);
+
+        &:hover {
+          background-color: var(--error) !important;
+        }
+      }
+      [data-toggle-button-current-state="unfollowed"] & {
+        background-color: var(--primary);
+
+        &:hover {
+          background-color: darken(var(--primary), 5%) !important;
+        }
+      }
+
+      &::before {
+        filter: var(--surface)-filter;
+      }
+    }
+
+    /* Obsessions */
+    .obsession-candidates-row::before {
+      border-top-color: var(--surface_container);
+    }
+
+    // TODO: https://www.last.fm/music
+    // TODO: https://www.last.fm/user/*/listening-report/week (Reports)
+  }
+}
+
+// Usage:
+// .maskimage(mask-image, background-color, mask-position, mask-size, mask-repeat);
+// Setting any value to "skip" skips that attribute.
+// We cannot apply filters to psuedo elements with background-images when the pseudo element also has a background(-color), which is when this must be used.
+.mask-image(
+  @mask-image: url(""),
+  @mask-color: skip,
+  @mask-position: skip,
+  @mask-size: skip,
+  @mask-repeat: skip,
+) {
+  & when not(@mask-color = skip) {
+    background-image: none !important;
+    background-color: @mask-color;
+  }
+  & when not(@mask-image = skip) {
+    mask-image: @mask-image;
+  }
+  & when not(@mask-position = skip) {
+    mask-position: @mask-position;
+  }
+  & when not(@mask-size = skip) {
+    mask-size: @mask-size;
+  }
+  & when not(@mask-repeat = skip) {
+    mask-repeat: @mask-repeat;
+  }
+}

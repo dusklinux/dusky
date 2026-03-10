@@ -1,0 +1,491 @@
+/* ==UserStyle==
+@name LinkedIn Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/linkedin
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/linkedin
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/linkedin/catppuccin.user.less
+@description Soothing pastel theme for LinkedIn
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("www.linkedin.com") {
+  :root:not(.theme--dark, .theme--mercado-dark) {
+  }
+  :root.theme--dark,
+  :root.theme--mercado-dark {
+  }
+
+
+    --black: var(--surface);
+    --black-a90: var(--surface);
+    --black-a75: var(--surface);
+    --black-a60: fade(var(--surface), 60%);
+    --black-a45: var(--surface);
+    --black-a30: var(--surface);
+    --black-a15: var(--surface);
+    --black-a12: var(--surface);
+    --black-a08: var(--surface);
+    --black-a04: var(--surface);
+    --black-a100: var(--surface);
+
+    --white: var(--on_surface);
+    --white-a06: var(--surface_container_low);
+    --white-a12: var(--surface_container_low);
+    --white-a18: var(--surface_container_low);
+    --white-a25: var(--surface_container_low);
+    --white-a30: var(--on_surface);
+    --white-a40: var(--on_surface);
+    --white-a45: var(--on_surface);
+    --white-a55: var(--on_surface);
+    --white-a60: var(--on_surface_variant);
+    --white-a70: var(--on_surface);
+    --white-a75: var(--on_surface);
+    --white-a85: var(--on_surface);
+    --white-a90: var(--on_surface);
+    --white-a100: var(--on_surface);
+
+    --blue-10: var(--primary);
+    --blue-20: var(--primary);
+    --blue-30: var(--primary);
+    --blue-40: var(--primary);
+    --blue-50: var(--primary);
+    --blue-60: var(--primary);
+    --blue-70: var(--primary);
+    --blue-80: var(--primary);
+    --blue-90: var(--primary);
+    --blue-100: var(--primary);
+    --blue-50-a20: fade(var(--primary), 20%);
+    --blue-50-a25: fade(var(--primary), 25%);
+    --blue-50-a30: fade(var(--primary), 30%);
+    --blue-50-a40: fade(var(--primary), 40%);
+    --blue-60-a10: fade(var(--primary), 10%);
+    --blue-60-a15: fade(var(--primary), 85%);
+    --blue-60-a20: fade(var(--primary), 20%);
+    --blue-60-a25: fade(var(--primary), 25%);
+    --blue-60-a30: fade(var(--primary), 30%);
+    --blue-60-a35: fade(var(--primary), 35%);
+    --blue-60-a40: fade(var(--primary), 40%);
+    --blue-60-a45: fade(var(--primary), 45%);
+    --blue-70-a30: fade(var(--primary_container), 30%);
+    --blue-70-a40: fade(var(--primary_container), 40%);
+    --blue-70-a50: fade(var(--primary_container), 50%);
+
+    --cool-gray-10: var(--surface);
+    --cool-gray-20: var(--surface_container_low);
+    --cool-gray-30: var(--surface);
+    --cool-gray-40: var(--surface);
+    --cool-gray-50: var(--surface);
+    --cool-gray-60: var(--surface);
+    --cool-gray-70: var(--surface);
+    --cool-gray-80: var(--surface_container_low);
+    --cool-gray-85: var(--surface);
+    --cool-gray-90: var(--surface);
+    --cool-gray-100: var(--surface);
+    --cool-gray-60-a10: fade(var(--surface), 10%);
+    --cool-gray-60-a15: fade(var(--surface), 15%);
+    --cool-gray-60-a20: fade(var(--surface), 20%);
+    --cool-gray-60-a25: fade(var(--surface), 25%);
+    --cool-gray-60-a30: fade(var(--surface), 30%);
+    --cool-gray-60-a35: fade(var(--surface), 35%);
+
+    --warm-gray-10: var(--outline_variant);
+    --warm-gray-20: var(--outline_variant);
+    --warm-gray-30: var(--outline_variant);
+    --warm-gray-40: var(--outline_variant);
+    --warm-gray-50: var(--outline_variant);
+    --warm-gray-60: var(--outline_variant);
+    --warm-gray-70: var(--outline_variant);
+    --warm-gray-80: var(--outline_variant);
+    --warm-gray-90: var(--outline_variant);
+    --warm-gray-100: var(--outline_variant);
+    --warm-gray-60-a10: fade(var(--outline_variant), 10%);
+    --warm-gray-60-a15: fade(var(--outline_variant), 15%);
+    --warm-gray-60-a20: fade(var(--outline_variant), 20%);
+    --warm-gray-60-a25: fade(var(--outline_variant), 25%);
+    --warm-gray-60-a30: fade(var(--outline_variant), 30%);
+    --warm-gray-60-a35: fade(var(--outline_variant), 35%);
+
+    --warm-red-10: var(--error_container);
+    --warm-red-20: var(--error_container);
+    --warm-red-30: var(--error_container);
+    --warm-red-40: var(--error_container);
+    --warm-red-50: var(--error_container);
+    --warm-red-60: var(--error_container);
+    --warm-red-70: var(--error_container);
+    --warm-red-80: var(--error_container);
+    --warm-red-90: var(--error_container);
+    --warm-red-100: var(--error_container);
+    --warm-red-60-a10: fade(var(--error_container), 10%);
+    --warm-red-60-a15: fade(var(--error_container), 15%);
+    --warm-red-60-a20: fade(var(--error_container), 20%);
+    --warm-red-60-a25: fade(var(--error_container), 25%);
+    --warm-red-60-a30: fade(var(--error_container), 30%);
+    --warm-red-60-a35: fade(var(--error_container), 35%);
+
+    --teal-10: var(--tertiary_container);
+    --teal-20: var(--tertiary_container);
+    --teal-30: var(--tertiary_container);
+    --teal-40: var(--tertiary_container);
+    --teal-50: var(--tertiary_container);
+    --teal-60: var(--tertiary_container);
+    --teal-70: var(--tertiary_container);
+    --teal-80: var(--tertiary_container);
+    --teal-90: var(--tertiary_container);
+    --teal-100: var(--tertiary_container);
+    --teal-50-a30: fade(var(--tertiary_container), 30%);
+    --teal-60-a10: fade(var(--tertiary_container), 10%);
+    --teal-60-a15: fade(var(--tertiary_container), 15%);
+    --teal-60-a20: fade(var(--tertiary_container), 20%);
+    --teal-60-a25: fade(var(--tertiary_container), 25%);
+    --teal-60-a30: fade(var(--tertiary_container), 30%);
+    --teal-60-a35: fade(var(--tertiary_container), 35%);
+
+    --purple-10: var(--primary_container);
+    --purple-20: var(--primary_container);
+    --purple-30: var(--primary_container);
+    --purple-40: var(--primary_container);
+    --purple-50: var(--primary_container);
+    --purple-60: var(--primary_container);
+    --purple-70: var(--primary_container);
+    --purple-80: var(--primary_container);
+    --purple-90: var(--primary_container);
+    --purple-100: var(--primary_container);
+    --purple-40-a15: fade(var(--primary_container), 15%);
+    --purple-60-a10: fade(var(--primary_container), 10%);
+    --purple-60-a15: fade(var(--primary_container), 15%);
+    --purple-60-a20: fade(var(--primary_container), 20%);
+    --purple-60-a25: fade(var(--primary_container), 25%);
+    --purple-60-a30: fade(var(--primary_container), 30%);
+    --purple-60-a35: fade(var(--primary_container), 35%);
+    --purple-70-a15: fade(var(--primary_container), 15%);
+
+    --system-red-10: var(--error);
+    --system-red-20: var(--error);
+    --system-red-30: var(--error);
+    --system-red-40: var(--error);
+    --system-red-50: var(--error);
+    --system-red-60: var(--error);
+    --system-red-70: var(--error);
+    --system-red-80: var(--error);
+    --system-red-90: var(--error);
+    --system-red-100: var(--error);
+    --system-red-60-a10: fade(var(--error), 10%);
+    --system-red-60-a15: fade(var(--error), 15%);
+    --system-red-60-a20: fade(var(--error), 20%);
+    --system-red-60-a25: fade(var(--error), 25%);
+    --system-red-60-a30: fade(var(--error), 30%);
+    --system-red-60-a35: fade(var(--error), 35%);
+
+    --system-green-10: darken(var(--tertiary), 20%);
+    --system-green-20: darken(var(--tertiary), 20%);
+    --system-green-30: darken(var(--tertiary), 20%);
+    --system-green-40: darken(var(--tertiary), 20%);
+    --system-green-50: darken(var(--tertiary), 20%);
+    --system-green-60: darken(var(--tertiary), 20%);
+    --system-green-70: darken(var(--tertiary), 20%);
+    --system-green-80: darken(var(--tertiary), 20%);
+    --system-green-90: darken(var(--tertiary), 20%);
+    --system-green-100: darken(var(--tertiary), 20%);
+    --system-green-60-a10: fade(darken(var(--tertiary), 20%), 10%);
+    --system-green-60-a15: fade(darken(var(--tertiary), 20%), 15%);
+    --system-green-60-a20: fade(darken(var(--tertiary), 20%), 20%);
+    --system-green-60-a25: fade(darken(var(--tertiary), 20%), 25%);
+    --system-green-60-a30: fade(darken(var(--tertiary), 20%), 30%);
+    --system-green-60-a35: fade(darken(var(--tertiary), 20%), 35%);
+
+    --pink-10: var(--secondary);
+    --pink-20: var(--secondary);
+    --pink-30: var(--secondary);
+    --pink-40: var(--secondary);
+    --pink-50: var(--secondary);
+    --pink-60: var(--secondary);
+    --pink-70: var(--secondary);
+    --pink-80: var(--secondary);
+    --pink-90: var(--secondary);
+    --pink-100: var(--secondary);
+    --pink-60-a10: fade(var(--secondary), 10%);
+    --pink-60-a15: fade(var(--secondary), 15%);
+    --pink-60-a20: fade(var(--secondary), 20%);
+    --pink-60-a25: fade(var(--secondary), 25%);
+    --pink-60-a30: fade(var(--secondary), 30%);
+    --pink-60-a35: fade(var(--secondary), 35%);
+
+    --amber-10: var(--secondary);
+    --amber-20: var(--secondary);
+    --amber-30: var(--secondary);
+    --amber-40: var(--secondary);
+    --amber-50: var(--secondary);
+    --amber-60: var(--secondary);
+    --amber-70: var(--secondary);
+    --amber-80: var(--secondary);
+    --amber-90: var(--secondary);
+    --amber-100: var(--secondary);
+    --amber-30-a50: fade(var(--secondary), 50%);
+    --amber-60-a10: fade(var(--secondary), 10%);
+    --amber-60-a15: fade(var(--secondary), 15%);
+    --amber-60-a20: fade(var(--secondary), 20%);
+    --amber-60-a25: fade(var(--secondary), 25%);
+    --amber-60-a30: fade(var(--secondary), 30%);
+    --amber-60-a35: fade(var(--secondary), 35%);
+
+    --copper-10: var(--surface_container_high);
+    --copper-20: var(--surface_container_high);
+    --copper-30: var(--surface_container_high);
+    --copper-40: var(--surface_container_high);
+    --copper-50: var(--surface_container_high);
+    --copper-60: var(--surface_container_high);
+    --copper-70: var(--surface_container_high);
+    --copper-80: var(--surface_container_high);
+    --copper-90: var(--surface_container_high);
+    --copper-100: var(--surface_container_high);
+    --copper-60-a10: fade(var(--surface_container_high), 10%);
+    --copper-60-a15: fade(var(--surface_container_high), 15%);
+    --copper-60-a20: fade(var(--surface_container_high), 20%);
+    --copper-60-a25: fade(var(--surface_container_high), 25%);
+    --copper-60-a30: fade(var(--surface_container_high), 30%);
+    --copper-60-a35: fade(var(--surface_container_high), 35%);
+
+    --green-10: var(--tertiary);
+    --green-20: var(--tertiary);
+    --green-30: var(--tertiary);
+    --green-40: var(--tertiary);
+    --green-50: var(--tertiary);
+    --green-60: var(--tertiary);
+    --green-70: var(--tertiary);
+    --green-80: var(--tertiary);
+    --green-90: var(--tertiary);
+    --green-100: var(--tertiary);
+    --green-60-a10: fade(var(--tertiary), 10%);
+    --green-60-a15: fade(var(--tertiary), 15%);
+    --green-60-a20: fade(var(--tertiary), 20%);
+    --green-60-a25: fade(var(--tertiary), 25%);
+    --green-60-a30: fade(var(--tertiary), 30%);
+    --green-60-a35: fade(var(--tertiary), 35%);
+
+    --sage-10: darken(var(--tertiary), 40%);
+    --sage-20: darken(var(--tertiary), 40%);
+    --sage-30: darken(var(--tertiary), 40%);
+    --sage-40: darken(var(--tertiary), 40%);
+    --sage-50: darken(var(--tertiary), 40%);
+    --sage-60: darken(var(--tertiary), 40%);
+    --sage-70: darken(var(--tertiary), 40%);
+    --sage-80: darken(var(--tertiary), 40%);
+    --sage-90: darken(var(--tertiary), 40%);
+    --sage-100: darken(var(--tertiary), 40%);
+    --sage-60-a10: fade(darken(var(--tertiary), 40%), 10%);
+    --sage-60-a15: fade(darken(var(--tertiary), 40%), 15%);
+    --sage-60-a20: fade(darken(var(--tertiary), 40%), 20%);
+    --sage-60-a25: fade(darken(var(--tertiary), 40%), 25%);
+    --sage-60-a30: fade(darken(var(--tertiary), 40%), 30%);
+    --sage-60-a35: fade(darken(var(--tertiary), 40%), 35%);
+
+    --lime-10: lighten(var(--tertiary), 20%);
+    --lime-20: lighten(var(--tertiary), 20%);
+    --lime-30: lighten(var(--tertiary), 20%);
+    --lime-40: lighten(var(--tertiary), 20%);
+    --lime-50: lighten(var(--tertiary), 20%);
+    --lime-60: lighten(var(--tertiary), 20%);
+    --lime-70: lighten(var(--tertiary), 20%);
+    --lime-80: lighten(var(--tertiary), 20%);
+    --lime-90: lighten(var(--tertiary), 20%);
+    --lime-100: lighten(var(--tertiary), 20%);
+    --lime-60-a10: fade(lighten(var(--tertiary), 20%), 10%);
+    --lime-60-a15: fade(lighten(var(--tertiary), 20%), 15%);
+    --lime-60-a20: fade(lighten(var(--tertiary), 20%), 20%);
+    --lime-60-a25: fade(lighten(var(--tertiary), 20%), 25%);
+    --lime-60-a30: fade(lighten(var(--tertiary), 20%), 30%);
+    --lime-60-a35: fade(lighten(var(--tertiary), 20%), 35%);
+
+    --camo-10: var(--primary);
+    --camo-20: var(--primary);
+    --camo-30: var(--primary);
+    --camo-40: var(--primary);
+    --camo-50: var(--primary);
+    --camo-60: var(--primary);
+    --camo-70: var(--primary);
+    --camo-80: var(--primary);
+    --camo-90: var(--primary);
+    --camo-100: var(--primary);
+    --camo-60-a10: fade(var(--primary), 10%);
+    --camo-60-a15: fade(var(--primary), 15%);
+    --camo-60-a20: fade(var(--primary), 20%);
+    --camo-60-a25: fade(var(--primary), 25%);
+    --camo-60-a30: fade(var(--primary), 30%);
+    --camo-60-a35: fade(var(--primary), 35%);
+
+    --smoke-10: var(--surface_container);
+    --smoke-20: var(--surface_container);
+    --smoke-30: var(--surface_container);
+    --smoke-40: var(--surface_container);
+    --smoke-50: var(--surface_container);
+    --smoke-60: var(--surface_container);
+    --smoke-70: var(--surface_container);
+    --smoke-80: var(--surface_container);
+    --smoke-90: var(--surface_container);
+    --smoke-100: var(--surface_container);
+    --smoke-60-a10: fade(var(--surface_container), 10%);
+    --smoke-60-a15: fade(var(--surface_container), 15%);
+    --smoke-60-a20: fade(var(--surface_container), 20%);
+    --smoke-60-a25: fade(var(--surface_container), 25%);
+    --smoke-60-a30: fade(var(--surface_container), 30%);
+    --smoke-60-a35: fade(var(--surface_container), 35%);
+
+    --lavender-10: var(--primary_container);
+    --lavender-20: var(--primary_container);
+    --lavender-30: var(--primary_container);
+    --lavender-40: var(--primary_container);
+    --lavender-50: var(--primary_container);
+    --lavender-60: var(--primary_container);
+    --lavender-70: var(--primary_container);
+    --lavender-80: var(--primary_container);
+    --lavender-90: var(--primary_container);
+    --lavender-100: var(--primary_container);
+    --lavender-60-a10: fade(var(--primary_container), 10%);
+    --lavender-60-a15: fade(var(--primary_container), 15%);
+    --lavender-60-a20: fade(var(--primary_container), 20%);
+    --lavender-60-a25: fade(var(--primary_container), 25%);
+    --lavender-60-a30: fade(var(--primary_container), 30%);
+    --lavender-60-a35: fade(var(--primary_container), 35%);
+
+    --mauve-10: var(--primary);
+    --mauve-20: var(--primary);
+    --mauve-30: var(--primary);
+    --mauve-40: var(--primary);
+    --mauve-50: var(--primary);
+    --mauve-60: var(--primary);
+    --mauve-70: var(--primary);
+    --mauve-80: var(--primary);
+    --mauve-90: var(--primary);
+    --mauve-100: var(--primary);
+    --mauve-60-a10: fade(var(--primary), 10%);
+    --mauve-60-a15: fade(var(--primary), 15%);
+    --mauve-60-a20: fade(var(--primary), 20%);
+    --mauve-60-a25: fade(var(--primary), 25%);
+    --mauve-60-a30: fade(var(--primary), 30%);
+    --mauve-60-a35: fade(var(--primary), 35%);
+    --mauve-80-a50: fade(var(--primary), 50%);
+
+    --system-gray-10: var(--surface_container_low);
+    --system-gray-20: var(--surface_container_low);
+    --system-gray-30: var(--surface_container_low);
+    --system-gray-40: var(--surface_container_low);
+    --system-gray-50: var(--surface_container_low);
+    --system-gray-60: var(--surface_container_low);
+    --system-gray-70: var(--surface_container_low);
+    --system-gray-80: var(--surface_container_low);
+    --system-gray-90: var(--surface_container_low);
+    --system-gray-100: var(--surface_container_low);
+    --system-gray-60-a10: fade(var(--surface_container_low), 10%);
+    --system-gray-60-a15: fade(var(--surface_container_low), 15%);
+    --system-gray-60-a20: fade(var(--surface_container_low), 20%);
+    --system-gray-60-a25: fade(var(--surface_container_low), 25%);
+    --system-gray-60-a30: fade(var(--surface_container_low), 30%);
+    --system-gray-60-a35: fade(var(--surface_container_low), 35%);
+    --system-gray-60-a40: fade(var(--surface_container_low), 40%);
+    --system-gray-60-a45: fade(var(--surface_container_low), 45%);
+
+    --system-orange-10: var(--secondary_container);
+    --system-orange-20: var(--secondary_container);
+    --system-orange-30: var(--secondary_container);
+    --system-orange-40: var(--secondary_container);
+    --system-orange-50: var(--secondary_container);
+    --system-orange-60: var(--secondary_container);
+    --system-orange-70: var(--secondary_container);
+    --system-orange-80: var(--secondary_container);
+    --system-orange-90: var(--secondary_container);
+    --system-orange-100: var(--secondary_container);
+    --system-orange-60-a10: fade(var(--secondary_container), 10%);
+    --system-orange-60-a15: fade(var(--secondary_container), 15%);
+    --system-orange-60-a20: fade(var(--secondary_container), 20%);
+    --system-orange-60-a25: fade(var(--secondary_container), 25%);
+    --system-orange-60-a30: fade(var(--secondary_container), 30%);
+    --system-orange-60-a35: fade(var(--secondary_container), 35%);
+
+    /* quality of life changes */
+    --color-border-low-emphasis: var(--surface_container_low);
+
+    /* Codeblock fixes */
+    pre {
+      --color-text-on-dark: var(--on_surface);
+      --color-background-container-dark-tint: var(--surface);
+    }
+
+    /* more accent */
+    --voyager-color-background-badge-notification: var(--primary);
+    --color-signal-positive: var(--primary);
+    --color-checked: var(--primary);
+    --color-checked-hover: var(--primary);
+    --color-checked-active: var(--primary);
+
+    /* fix for hover buttons */
+    --artdeco-button-secondary-default-hover-background-color: fade(
+      var(--primary),
+      20%
+    );
+
+    /* text on dark */
+    --color-text-on-dark: var(--on_surface);
+
+    & when not(@flavor = latte) {
+      --color-element: var(--surface);
+    }
+
+      --black: var(--on_surface);
+      --black-a90: var(--on_surface);
+      --black-a75: var(--on_surface);
+      --black-a45: var(--on_surface);
+      --black-a30: var(--on_surface);
+      --black-a60: var(--on_surface_variant);
+      --black-a15: var(--on_surface);
+      --black-a04: var(--on_surface);
+      --black-a100: var(--on_surface);
+
+      --color-scrim: fade(var(--surface), 40%);
+      --color-icon-on-dark: var(--on_surface);
+
+      --white: var(--surface);
+      --white-a06: var(--surface_container_low);
+      --white-a12: var(--surface_container_low);
+      --white-a18: var(--surface_container_low);
+      --white-a25: var(--surface_container_low);
+      --white-a30: var(--surface);
+      --white-a40: var(--surface);
+      --white-a45: var(--surface);
+      --white-a55: var(--surface);
+      --white-a60: var(--on_surface_variant);
+      --white-a70: var(--surface);
+      --white-a75: var(--surface);
+      --white-a85: var(--surface);
+      --white-a90: var(--surface);
+      --white-a100: var(--surface);
+
+      --warm-gray-10: var(--surface_container_lowest);
+      --warm-gray-20: var(--surface_container_lowest);
+      --warm-gray-30: var(--surface_container_lowest);
+      --warm-gray-40: var(--surface_container_lowest);
+      --warm-gray-50: var(--surface_container_lowest);
+      --warm-gray-60: var(--surface_container_lowest);
+      --warm-gray-70: var(--surface_container_lowest);
+      --warm-gray-80: var(--surface_container_lowest);
+      --warm-gray-90: var(--surface_container_lowest);
+      --warm-gray-100: var(--surface_container_lowest);
+      --warm-gray-60-a10: fade(var(--surface_container_lowest), 10%);
+      --warm-gray-60-a15: fade(var(--surface_container_lowest), 15%);
+      --warm-gray-60-a20: fade(var(--surface_container_lowest), 20%);
+      --warm-gray-60-a25: fade(var(--surface_container_lowest), 25%);
+      --warm-gray-60-a30: fade(var(--surface_container_lowest), 30%);
+      --warm-gray-60-a35: fade(var(--surface_container_lowest), 35%);
+    }
+
+    .share-promoted-detour-button-legacy {
+      background-color: var(--primary) !important;
+    }
+  }
+}

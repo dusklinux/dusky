@@ -1,0 +1,67 @@
+/* ==UserStyle==
+@name NixOS Manual/Nixpkgs Manual Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/nixos-manual
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/nixos-manual
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/nixos-manual/catppuccin.user.less
+@description Soothing pastel theme for NixOS Manual and Nixpkgs Manual
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document url-prefix("https://nixos.org/manual/"),
+  url-prefix("https://nix-darwin.github.io/nix-darwin/manual/") {
+
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+    #lib.css-variables();
+
+    --background: var(--surface_container_lowest);
+    --main-text-color: var(--on_surface);
+    --link-color: var(--primary);
+    --heading-color: var(--primary);
+    --small-heading-color: fade(var(--primary), 85%);
+    --note-text-color: var(--primary);
+    --note-background: var(--surface_container_lowest);
+    --warning-text-color: var(--error);
+    --warning-background: var(--surface_container_lowest);
+    --codeblock-background: var(--surface_container_low);
+    --codeblock-text-color: var(--on_surface);
+
+    div.book .programlisting,
+    div.appendix .programlisting {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    hr,
+    div.toc {
+      border-top-color: transparent;
+      border-bottom-color: var(--outline_variant) !important;
+    }
+
+    // Version selector
+    div[style^="background: #333333;color: #FFFFFF;"] {
+      background-color: var(--surface) !important;
+
+      &,
+      dt {
+        color: var(--on_surface) !important;
+      }
+
+      a {
+        color: var(--primary) !important;
+      }
+    }
+  }
+}

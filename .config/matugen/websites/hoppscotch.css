@@ -1,0 +1,102 @@
+/* ==UserStyle==
+@name Hoppscotch Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/hoppscotch
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/hoppscotch
+@version 2025.12.27
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/hoppscotch/catppuccin.user.less
+@description Soothing pastel theme for Hoppscotch
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("hoppscotch.io") {
+  :root.dark {
+  }
+
+  :root.light {
+  }
+
+
+    var(--primary)-light-alpha: 1.1;
+    var(--primary)-dark-alpha: 80%;
+    var(--primary)-gradient-from-color: 1.05;
+    var(--primary)-gradient-via-color: 1.2;
+    var(--primary)-gradient-to-color: 0.85;
+
+    --primary-color: var(--surface_container_lowest);
+    --primary-light-color: var(--surface);
+    --primary-dark-color: var(--surface);
+    --primary-contrast-color: var(--surface);
+    --secondary-color: var(--on_surface_variant);
+    --secondary-light-color: var(--on_surface_variant);
+    --secondary-dark-color: var(--on_surface);
+    --divider-color: var(--surface_container_low);
+    --divider-light-color: var(--surface_container_low);
+    --divider-dark-color: var(--surface_container_low);
+    --error-color: var(--error);
+    --tooltip-color: var(--on_surface);
+    --popover-color: var(--surface);
+    --editor-theme: "vscode-esque";
+    --editor-type-color: fade(var(--primary), 90%);
+    --editor-name-color: var(--primary);
+    --editor-operator-color: var(--primary);
+    --editor-invalid-color: var(--error_container);
+    --editor-separator-color: var(--outline);
+    --editor-meta-color: var(--outline);
+    --editor-variable-color: var(--tertiary);
+    --editor-link-color: var(--primary_container);
+    --editor-constant-color: fade(var(--primary_container), 1.2%);
+    --editor-keyword-color: var(--error);
+    --accent-color: var(--primary);
+    --accent-light-color: fade(var(--primary), var(--primary)-light-alpha);
+    --accent-dark-color: fade(var(--primary), var(--primary)-dark-alpha);
+    --accent-contrast-color: var(--surface);
+    --gradient-from-color: fade(var(--primary), var(--primary)-gradient-from-color);
+    --gradient-via-color: fade(var(--primary), var(--primary)-gradient-via-color);
+    --gradient-to-color: fade(var(--primary), var(--primary)-gradient-to-color);
+
+    --editor-process-color: var(--on_surface);
+    --banner-info-color: fade(var(--primary), 20%);
+
+    --method-get-color: var(--tertiary);
+    --method-post-color: var(--secondary);
+    --method-put-color: var(--primary_container);
+    --method-patch-color: var(--primary);
+    --method-delete-color: var(--error);
+    --method-head-color: var(--tertiary_container);
+    --method-options-color: var(--primary_container);
+    --method-default-color: var(--outline_variant);
+    --status-info-color: var(--primary);
+    --status-success-color: var(--tertiary);
+    --status-redirect-color: var(--secondary_container);
+    --status-critical-error-color: var(--error);
+    --status-server-error-color: var(--error);
+    --status-missing-data-color: var(--outline);
+
+    .cm-editor {
+      background: var(--surface);
+
+      .cm-placeholder {
+        color: var(--on_surface);
+      }
+    }
+
+    .cm-focused .cm-activeLine {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .cm-focused .cm-activeLineGutter {
+      background-color: var(--surface_container_low);
+    }
+
+    .cm-selectionBackground {
+      background: fade(var(--primary), 30%) !important;
+    }
+  }
+}

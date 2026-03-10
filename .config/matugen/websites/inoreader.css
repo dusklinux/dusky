@@ -1,0 +1,575 @@
+/* ==UserStyle==
+@name inoreader Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/inoreader
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/inoreader
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/inoreader/catppuccin.user.less
+@description Soothing pastel theme for inoreader
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("inoreader.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    body,
+    .inno_dialog,
+    .reader_pane_view_style_1 .article_subscribed,
+    .reader_pane_view_style_4 .article_subscribed,
+    .inno_toolbar_switcher_button_active,
+    .dashboard_wrapper,
+    #sb_tree_part,
+    #sb_menu_icon,
+    #sb_tp_search_overlay,
+    #feed_searcher,
+    #wraper.tree_pane_docked #feed_searcher,
+    #preferences_main_wrapper,
+    .reader_pane_view_style_0 .article_expanded:hover,
+    div.article_expanded,
+    .article,
+    .article_expanded
+      .article_footer_placeholder_middle.footerized.article_footer_placeholder_middle_sticky,
+    #article_dialog .article_footer_placeholder_top,
+    #three_way_contents .article_footer_placeholder_top,
+    .article_footer,
+    .pricing_plans_row_sticky,
+    .searcher_top_bar_wrapper {
+      background-color: var(--surface_container_lowest);
+    }
+
+    body,
+    .article_unreaded .article_tile_title,
+    .icon16,
+    .icon14,
+    .icon19,
+    .h6,
+    .article_unreaded .article_magazine_content,
+    .article_unreaded .article_magazine_title,
+    #sb_tp_dock,
+    .inno_toolbar_button,
+    #sb_rp_heading,
+    .article_header_text,
+    .article_content,
+    .profile_menu_themes_heading,
+    .inno_toolbar_switcher_button:hover,
+    #sb_rp_heading span.icon16,
+    .sub_engagement_number,
+    .sub_folder,
+    .inline_folders_editor,
+    .tf,
+    .top_bar_tab,
+    .top_bar_tab .icon16,
+    #tree_pane .icon16,
+    #add_content_simulated_button .plus_img,
+    a:link,
+    .h4[class*="icon-"],
+    h4[class*="icon-"],
+    .inno_tabs_wrapper .inno_tabs_header .inno_tabs_tab a:link,
+    .inno_tabs_wrapper .inno_tabs_header .inno_tabs_tab a:active,
+    .inno_tabs_wrapper .inno_tabs_header .inno_tabs_tab a:visited,
+    #tree_pane .plus_img {
+      color: var(--on_surface);
+    }
+    a.text-color,
+    a.nav-item-btn,
+    .icon-arrow_collapse {
+      color: var(--on_surface) !important;
+    }
+
+    .progress {
+      --bs-progress-bar-color: var(--primary);
+      --bs-progress-bar-bg: var(--primary);
+      --bs-bar-bg: var(--outline_variant);
+    }
+
+    .text-muted-color {
+      color: var(--on_surface_variant) !important;
+    }
+
+    #tree_pane,
+    #reader_pane,
+    #feeds_nav,
+    .tree_ad,
+    .article_full_contents,
+    .article_unreaded,
+    .search_empty_state_mask,
+    .library_wrapper_outer,
+    .teams_presentation_wrapper,
+    .article_subscribed,
+    .tr1,
+    .search_width_constraint,
+    .bg-white {
+      background-color: var(--surface_container_lowest) !important;
+      color: var(--on_surface);
+    }
+
+    .st_usage_slider_outer {
+      background-color: var(--on_surface);
+    }
+
+    .st_usage_slider_inner,
+    #text-menu .dropdown-menu,
+    .article_unreaded .article_unread_dot .article_unread_dot_internal {
+      background-color: var(--primary);
+    }
+
+    .bg-primary {
+      background-color: var(--primary) !important;
+    }
+
+    #tree_pane .parent_div_inner_selected .plus_img {
+      color: var(--primary);
+    }
+
+    .active-url .item-name,
+    .active-url span[class^="icon-"].h4,
+    .active-url i[class^="icon-"].h4 {
+      color: var(--primary) !important;
+    }
+
+    .icon-logo_circle {
+      color: var(--surface) !important;
+    }
+
+    #tabs_pane .nav-item a i,
+    #tabs_pane .nav-item a span,
+    #tabs_pane #bottom_tabs .nav-item a i {
+      color: var(--surface);
+    }
+
+    #tabs_pane .tabs-counter,
+    #tabs_pane #bottom_tabs .nav-item a i.icon-full {
+      color: var(--on_surface) !important;
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    #hint-pref {
+      fill: var(--primary);
+    }
+
+    .article_footer_buttons.icon-article_topbar_read_later_full,
+    #reader_pane .ar .article_btns a .h4.icon-saved,
+    #reader_pane .ar .article_btns a .h4.star_full,
+    span.icon-yellow,
+    i.icon-yellow {
+      color: var(--secondary);
+    }
+
+    .bg-alt {
+      background: var(--secondary) !important;
+    }
+
+    .btn.btn-alt {
+      background-color: var(--secondary);
+      border-color: var(--secondary);
+    }
+
+    .bg-success-color.darker {
+      background-color: var(--tertiary) !important;
+    }
+
+    .alert_state {
+      background-color: var(--error);
+    }
+
+    .icon-mark-as-read-single-unread {
+      color: var(--primary) !important;
+    }
+
+    .tabs-counter {
+      background-color: var(--primary) !important;
+      outline-color: var(--primary) !important;
+      color: var(--surface);
+    }
+
+    .active-tab-feeds:not(.active-overlay) #tabs_pane [data-tab="feeds"] i,
+    .active-tab-dashboard:not(.active-overlay)
+      #tabs_pane
+      [data-tab="dashboard"]
+      i,
+    .active-tab-saved:not(.active-overlay) #tabs_pane [data-tab="saved"] i,
+    .active-tab-automation:not(.active-overlay)
+      #tabs_pane
+      [data-tab="automation"]
+      i,
+    .active-tab-search:not(.active-overlay) #tabs_pane [data-tab="search"] i,
+    .active-tab-add_feed:not(.active-overlay)
+      #tabs_pane
+      [data-tab="add_feed"]
+      i,
+    .active-tab-notifications:not(.active-overlay)
+      #tabs_pane
+      [data-tab="notifications"]
+      i,
+    .active-tab-preferences:not(.active-overlay)
+      #tabs_pane
+      [data-tab="preferences"]
+      i {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface) !important;
+    }
+
+    .preferences_main_button,
+    .preferences_billing_feature_main {
+      background-color: var(--surface);
+      border-color: var(--surface_container_low);
+    }
+
+    .dashboard_gadgets,
+    .dashboard_gadgets .content,
+    .library_section_main_article,
+    .library_secondary_article,
+    .library_section_list_articles {
+      background-color: var(--surface);
+    }
+
+    #header_pane,
+    .search_context_dropdown.open {
+      background-color: var(--surface_container_lowest) !important;
+      color: var(--on_surface);
+    }
+
+    .dropdown-menu,
+    .ino-autocomplete {
+      background-color: var(--surface);
+    }
+
+    .dropdown-menu .dropdown-header {
+      color: var(--on_surface);
+    }
+
+    .dropdown-menu .dropdown-item,
+    a:visited {
+      color: var(--on_surface_variant);
+    }
+
+    .dropdown-menu .dropdown-item:hover,
+    .dropdown-menu .dropdown-item:focus,
+    #tree_pane .parent_div_inner:hover,
+    #tree_pane .parent_div_inner:active,
+    #tree_pane .parent_div_inner:focus,
+    .search_context_dropdown.open .search_context_filter:hover,
+    .nav.nav-hover .nav-item:hover,
+    .lang_bubble:hover,
+    #tabs_pane .toggle_sidebar_btn i {
+      background-color: var(--surface_container_low);
+    }
+
+    .dropdown-menu .dropdown-item:active {
+      background-color: var(--surface_container_low);
+      color: var(--primary);
+    }
+
+    .dropdown-menu .dropdown-item.active,
+    #tree_pane .parent_div_inner_selected,
+    #tree_pane .parent_div_inner_selected:hover,
+    #tree_pane .parent_div_inner_selected a,
+    .search_context_dropdown.open .search_context_filter.active,
+    .nav.nav-hover .active-url,
+    .lang_bubble.lang_bubble_current {
+      background-color: var(--surface_container);
+      color: var(--primary);
+    }
+
+    .btn.btn-outline-text {
+      color: var(--on_surface);
+      border-color: var(--on_surface_variant);
+    }
+
+    .btn.btn-primary,
+    .btn.btn-primary:hover {
+      color: var(--on_surface);
+      background-color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    .dropdown-menu-active,
+    .btn.btn-outline-text:hover {
+      color: var(--on_surface);
+      border-color: var(--on_surface_variant);
+      background-color: var(--surface_container_low);
+    }
+
+    input[type="text"]:focus,
+    input[type="checkbox"]:focus + label,
+    input[type="checkbox"]:active + label,
+    input[type="button"]:focus,
+    input[type="button"]:active,
+    textarea:focus,
+    select:focus,
+    button:focus,
+    input[type="password"]:focus,
+    input[type="email"]:focus {
+      box-shadow: 0 0 3px var(--primary) !important;
+      border-color: var(--primary) !important;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    input[type="password"],
+    select,
+    textarea {
+      background-color: var(--surface_container_lowest) !important;
+      color: var(--on_surface) !important;
+      border-color: var(--on_surface_variant);
+    }
+
+    .graylink_darker,
+    .article_short_contents {
+      color: var(--on_surface_variant);
+    }
+
+    div.article_magazine.article_current,
+    div.article_magazine.article_bulk_selected {
+      box-shadow: 0 0 0 1px var(--on_surface_variant);
+    }
+    .view_style_3 #reader_pane .ar.article_current .article_tile_picture {
+      box-shadow: inset 3px 3px 0 -2px var(--primary), inset -3px 2px 0 -2px var(--primary);
+    }
+    .view_style_3 #reader_pane .ar.article_current {
+      box-shadow: inset 0 0 0 1px var(--primary);
+    }
+
+    .view_style_4 #reader_pane .ar.article_current {
+      box-shadow: 0 0 0 1px var(--primary);
+    }
+    .view_style_2 #reader_pane .ar.article_current_3way,
+    .view_style_2 #reader_pane .ar.article_expanded {
+      box-shadow: none;
+      border-color: var(--on_surface);
+    }
+
+    .article_magazine_content {
+      color: var(--outline);
+    }
+
+    .article_magazine_title {
+      color: var(--outline_variant);
+    }
+
+    .inno_dialog_modal_overlay {
+      background-color: var(--outline_variant);
+    }
+
+    .subscriptions_legend,
+    .preferences_main_button_icon span,
+    a.bluelink:link,
+    .bluelink,
+    .inno_tabs_tab_current,
+    .inno_tabs_tab_current:hover,
+    .inno_toolbar_button_menu_item_inactive .inno_toolbar_button_menu_icon,
+    .inno_toolbar_button_menu_icon,
+    #preferences_subscriptions_table span.icon_active,
+    .text-primary,
+    .inno_tabs_wrapper
+      .inno_tabs_header
+      .inno_tabs_tab.inno_tabs_tab_current
+      a:link,
+    .inno_tabs_wrapper
+      .inno_tabs_header
+      .inno_tabs_tab.inno_tabs_tab_current
+      a:active,
+    .inno_tabs_wrapper
+      .inno_tabs_header
+      .inno_tabs_tab.inno_tabs_tab_current
+      a:visited {
+      color: var(--primary) !important;
+    }
+
+    #new_articles_overlay {
+      color: var(--primary);
+      background-color: var(--surface_container_lowest);
+    }
+
+    input.apple-switch:checked {
+      background-color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    .add_content_simulated_button.expanded {
+      background-color: var(--surface_container_low);
+      box-shadow: inset 0 -1px 0 0 var(--primary);
+    }
+
+    .inno_toolbar_button_menu,
+    #reader_pane .info_state,
+    .inno_dialog_modal .info_state,
+    .preferences_interface_helper,
+    .sub_folder {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    #profile_menu_themes_wrapper {
+      display: none;
+    }
+
+    #sb_reading_part,
+    #wraper.tree_pane_docked #sb_tree_part {
+      box-shadow: none;
+    }
+
+    .whitebutton {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+      border-color: var(--surface_container_low);
+    }
+
+    .bluebutton,
+    .inno_dialog .inno_dialog_buttonbar_button:nth-child(1) {
+      background-color: var(--primary);
+      color: var(--surface);
+      border-style: none;
+    }
+
+    .inno_dialog .inno_dialog_buttonbar_button:nth-child(1):hover:enabled {
+      background-color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    .inno_dialog_buttonbar_button {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    .icon_green {
+      color: var(--tertiary);
+    }
+
+    .reader_pane_view_style_0 .article_unreaded:hover,
+    .reader_pane_view_style_2 .article_unreaded:hover,
+    .reader_pane_view_style_2 .article:hover,
+    .sd .share_wrapper .icon16:hover,
+    .pricing_feature_row:nth-child(odd),
+    .pricing_table_row .pricing_table_leftmost_cell,
+    .article_footer .share_wrapper:hover {
+      background-color: var(--surface_container_low);
+    }
+
+    .add_content_simulated_button_menu,
+    .profile_menu_plan_badge {
+      background-color: var(--surface_container_low);
+      border-color: var(--surface_container_low);
+      color: var(--on_surface);
+    }
+
+    .catalog_follow_featured_collection,
+    .catalog_sub_section_title,
+    .search_feed_wrapper {
+      border-color: var(--surface_container_low);
+    }
+
+    .border-bottom,
+    .header-shadow {
+      border-color: var(--on_surface);
+    }
+
+    .pricing_teams_hero {
+      background-color: var(--surface_container_low);
+      background-image: none;
+    }
+
+    .parent_div_inner:hover,
+    .inno_toolbar_button_menu_item:hover,
+    .preferences_profile_wrapper,
+    code,
+    pre {
+      background-color: var(--surface_container_low);
+      color: var(--on_surface);
+    }
+
+    .preferences_profile_plan_wrapper,
+    .st_subheader,
+    .catalog_sub_section_tab.catalog_sub_section_tab_current,
+    .catalog_sub_section_tab:hover {
+      background: var(--surface_container);
+      color: var(--on_surface);
+    }
+
+    .article_footer .article_footer_main_buttons .article_footer_buttons:hover,
+    .article_footer
+      .article_footer_main_buttons
+      .article_footer_buttons_current,
+    .article_footer .icon-article_topbar_more_menu:hover,
+    .st_header,
+    input[type="radio"].filter_radio:checked + label,
+    input[type="checkbox"].filter_radio:checked + label {
+      background-color: var(--surface_container_high);
+      color: var(--on_surface);
+    }
+
+    input[type="checkbox"].form-check-input:checked,
+    input[type="radio"].form-check-input:checked {
+      background-color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    .normal_dim {
+      color: var(--on_surface);
+    }
+
+    .parent_div_inner_selected,
+    #preferences_header,
+    #tabs_pane,
+    .add_content_simulated_button_menu_line_item:hover {
+      background-color: var(--primary);
+      color: var(--surface);
+    }
+
+    #preferences_header .icon16,
+    #preferences_dialog_close_button span.icon16 {
+      color: var(--surface);
+    }
+
+    .article_tile.article_unreaded.article_expanded {
+      background-color: var(--surface_container_lowest);
+      box-shadow: 0 1px 8px var(--surface), 0 1px 3px var(--surface);
+    }
+
+    div.article_current_3way {
+      box-shadow: inset 0 0 0 1 var(--primary), inset 5px 0 0 0 var(--primary);
+    }
+
+    div.article_tile.article_expanded {
+      border-color: var(--surface);
+    }
+
+    .article_footer_placeholder_top .article_footer,
+    .inno_tabs_header,
+    .gadget_overview_feed {
+      border-color: var(--surface_container_high);
+    }
+
+    .inno_toolbar_switcher:hover .inno_toolbar_switcher_button_active,
+    .inno_toolbar_switcher:hover .inno_toolbar_switcher_button_active:hover {
+      color: var(--primary);
+      background-color: var(--surface_container_lowest);
+      border-color: var(--primary);
+    }
+
+    .inno_tabs_tab:hover {
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    #audio_player_nav.is-overlay .tab-content,
+    #audio_player_nav .media-player.maximized .container,
+    #notifications_nav.is-overlay .tab-content,
+    #support_nav.is-overlay .tab-content,
+    #profile_nav.is-overlay .tab-content {
+      background-color: var(--surface_container_lowest);
+    }
+  }
+}

@@ -1,0 +1,291 @@
+/* ==UserStyle==
+@name Syncthing Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/syncthing
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/syncthing
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/syncthing/catppuccin.user.less
+@description Soothing pastel theme for Syncthing
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+
+@var text urls "URL(s) for Syncthing" "127\.0\.0\.1\:8384,0\.0\.0\.0\:8384,localhost\:8384"
+==/UserStyle== */
+
+
+/*
+  `replace(<stuff> ," ", "", "g")` is here to remove extra spaces (if any)
+*/
+
+@-moz-document regexp(
+    replace(replace(%("https?://(%s)/.*", @urls), ",", "|", "g"), " ", "", "g")
+  ) {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+  .light-theme {
+  }
+  .dark-theme {
+  }
+
+
+:root {
+}
+
+    body {
+      color: var(--on_surface) !important;
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    a {
+      color: var(--primary);
+    }
+
+    .nav-tabs > li.active > a:hover,
+    .nav-tabs > li.active > a {
+      color: var(--primary) !important;
+    }
+
+    /* navbar */
+    .navbar {
+      background-color: var(--surface) !important;
+      border-color: var(--surface) !important;
+    }
+
+    .navbar-text,
+    .dropdown > a,
+    .dropdown-menu > li > a,
+    .hidden-xs > a,
+    .navbar-link {
+      color: var(--on_surface) !important;
+    }
+
+    .dropdown-menu {
+      border-color: var(--surface_container) !important;
+      background-color: var(--surface) !important;
+    }
+
+    .dropdown-menu > li > a:hover,
+    .dropdown-menu > li > a:focus {
+      color: var(--on_surface) !important;
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .open > .dropdown-toggle,
+    .dropdown-toggle:hover {
+      border-color: var(--surface_container) !important;
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .divider {
+      background-color: var(--surface_container) !important;
+    }
+
+    li.hidden-xs:hover,
+    .navbar-link:hover,
+    .navbar-link:focus {
+      border-color: var(--surface_container) !important;
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .dropdown-menu > .active > a {
+      color: var(--surface_container_lowest) !important;
+      background-color: var(--primary) !important;
+    }
+
+    /* main panel */
+    .panel {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .panel-default {
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .panel-default > .panel-heading {
+      color: var(--on_surface) !important;
+      border-color: var(--surface_container_low) !important;
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .panel-footer {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .table-striped > tbody > tr {
+      border-top-color: var(--surface_container_low) !important;
+    }
+
+    .table-striped > tbody > tr:nth-of-type(odd) {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .panel-group .panel-heading + .panel-collapse > .panel-body,
+    .panel-group .panel-heading + .panel-collapse > .list-group {
+      border-top-color: var(--surface_container_lowest) !important;
+    }
+
+    .identicon > rect {
+      fill: var(--on_surface) !important;
+    }
+
+    /* buttons */
+    .btn-default {
+      color: var(--on_surface) !important;
+      background-color: transparent !important;
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .btn-default:hover,
+    .btn-default:focus,
+    .btn-default.focus {
+      color: var(--on_surface) !important;
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .btn-primary {
+      background-color: var(--primary) !important;
+      color: var(--surface_container_lowest);
+    }
+
+    .btn-primary:hover,
+    .btn-primary:focus,
+    .btn-primary.focus {
+      background-color: fade(var(--primary), 90%) !important;
+    }
+
+    .btn-warning {
+      background-color: var(--secondary) !important;
+      color: var(--surface_container_lowest);
+    }
+
+    .btn-warning:hover,
+    .btn-warning:focus,
+    .btn-warning.focus {
+      background-color: fade(var(--secondary), 90%) !important;
+    }
+
+    .btn-danger {
+      background-color: var(--error) !important;
+      color: var(--surface_container_lowest);
+    }
+
+    .btn-danger:hover,
+    .btn-danger:focus,
+    .btn-danger.focus {
+      background-color: fade(var(--error), 90%) !important;
+    }
+
+    /* modal dialogs */
+    .modal-header {
+      border-color: var(--surface_container_low) !important;
+      background-color: var(--surface);
+    }
+
+    .modal-content {
+      border-color: var(--surface_container_low) !important;
+      background-color: var(--surface) !important;
+    }
+
+    .modal-footer {
+      border-color: var(--surface_container_low) !important;
+      background-color: var(--surface) !important;
+    }
+
+    .alert-warning {
+      background-color: var(--secondary) !important;
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .alert-danger {
+      background-color: var(--error) !important;
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .help-block {
+      color: var(--on_surface) !important;
+    }
+
+    .form-control {
+      color: var(--on_surface) !important;
+      border-color: var(--surface_container_low) !important;
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    code.ng-binding {
+      color: var(--primary) !important;
+      background-color: var(--surface) !important;
+    }
+
+    .well,
+    .form-control[readonly="readonly"] {
+      /* read-only fields */
+      color: var(--on_surface_variant) !important;
+      border-color: var(--on_surface_variant) !important;
+      background-color: var(--surface) !important;
+    }
+
+    /* buttons for pagination */
+    .pagination > li > a,
+    .pagination > li > span {
+      background-color: var(--surface_container_lowest) !important;
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .pagination > li > a:hover,
+    .pagination > li > a:focus,
+    .pagination > li > a.focus {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    /* progress bars */
+    .progress-bar {
+      background-color: var(--primary) !important;
+    }
+
+    .progress-bar-success {
+      background-color: var(--tertiary) !important;
+    }
+
+    .progress-bar-info {
+      background-color: var(--secondary_container) !important;
+    }
+
+    .progress-bar-warning {
+      background-color: var(--secondary) !important;
+    }
+
+    .progress-bar-danger {
+      background-color: var(--error) !important;
+    }
+
+    /* text */
+    .text-primary {
+      color: var(--primary) !important;
+    }
+
+    .text-success {
+      color: var(--tertiary) !important;
+    }
+
+    .text-info {
+      color: var(--secondary_container) !important;
+    }
+
+    .text-warning {
+      color: var(--secondary) !important;
+    }
+
+    .text-danger {
+      color: var(--error) !important;
+    }
+  }
+}

@@ -1,0 +1,246 @@
+/* ==UserStyle==
+@name Vercel/Next.js Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/vercel
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/vercel
+@version 2026.02.25
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/vercel/catppuccin.user.less
+@description Soothing pastel theme for Vercel and Next.js
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("vercel.com"), domain("nextjs.org") {
+
+  :root.dark-theme {
+  }
+  :root.light-theme {
+  }
+
+    #lib.css-variables();
+
+    --geist-foreground: var(--on_surface);
+    --geist-background: var(--surface);
+
+    --accents-1: var(--surface_container_lowest);
+    --accents-2: var(--surface_container_low);
+    --accents-3: var(--surface_container);
+    --accents-4: var(--surface_container_high);
+    --accents-5: var(--outline);
+    --accents-6: var(--outline_variant);
+    --accents-7: var(--outline_variant);
+    --accents-8: var(--on_surface_variant);
+
+    --geist-link-color: var(--primary);
+    --geist-selection: var(--on_surface_variant);
+    --geist-success: var(--primary);
+    --geist-error: var(--error);
+    --geist-cyan: var(--tertiary_container);
+
+    --ds-background-100: var(--surface_container_lowest);
+    --ds-background-200: var(--surface);
+
+    --ds-gray-100: var(--surface);
+    --ds-gray-200: var(--surface_container_low);
+    --ds-gray-300: var(--surface_container);
+    --ds-gray-400: var(--surface_container);
+    --ds-gray-600: var(--on_surface_variant);
+    --ds-gray-700: var(--on_surface);
+    --ds-gray-800: var(--on_surface);
+    --ds-gray-900: var(--on_surface_variant);
+    --ds-gray-900-value: #lib.rgbify(var(--on_surface_variant))[];
+    --ds-gray-1000: var(--on_surface);
+    --ds-gray-1000-value: #lib.rgbify(var(--on_surface))[];
+    --ds-gray-alpha-100: fade(var(--on_surface), 6%);
+    --ds-gray-alpha-200: fade(var(--on_surface), 9%);
+    --ds-gray-alpha-400: var(--surface_container_low);
+    --ds-gray-alpha-900: fade(var(--on_surface), 61%);
+
+    --themed-hover-bg: var(--on_surface);
+
+    --ds-red-400: var(--error);
+    --ds-red-800: var(--error);
+    --ds-red-900: lighten(var(--error), 5%);
+
+    --ds-blue-200: fade(var(--primary), 30%);
+    --ds-blue-300: fade(var(--primary), 40%);
+    --ds-blue-400: fade(var(--primary), 50%);
+    --ds-blue-700: var(--primary);
+    --ds-blue-900: var(--primary);
+
+    --tw-gradient-top: transparent;
+
+    svg {
+      --geist-stroke: var(--geist-background) !important;
+    }
+
+    .geist-disabled img,
+    .geist-disabled svg {
+      filter: none;
+    }
+
+    .styled-scrollbar {
+      scrollbar-color: var(--primary) transparent;
+    }
+
+    .dark\:from-black,
+    .from-white {
+      --tw-gradient-from: var(--surface);
+    }
+
+    .shadow,
+    .shadow-md,
+    .shadow-sm {
+      box-shadow: none !important;
+    }
+
+    .card-grid_card__S85BZ {
+      background: linear-gradient(180deg, var(--surface_container_lowest) 0%, var(--surface) 100%);
+
+      &:hover {
+        background: linear-gradient(180deg, var(--surface_container_lowest) 0%, var(--surface) 100%);
+      }
+    }
+
+    [class*="fieldset_footer"] {
+      background-color: var(--surface_container_lowest);
+    }
+  }
+}
+
+@-moz-document domain("nextjs.org") {
+  :root.dark-theme {
+  }
+  :root.light-theme {
+  }
+
+
+    article {
+      :not(h1, h2, h3, h4) > a {
+        color: var(--primary);
+      }
+
+      a:hover {
+        color: darken(var(--primary), 5%);
+      }
+    }
+
+    nav {
+      /* Vertical line to the left of links */
+      a > div.bg-blue-600 {
+        background-color: var(--primary);
+      }
+    }
+
+    button[role="combobox"],
+    [data-radix-popper-content-wrapper] {
+      --ds-blue-400: var(--surface_container_lowest);
+      --ds-purple-400: var(--surface_container_lowest);
+
+      /* App Router icon */
+      --ds-blue-700: var(--primary);
+
+      /* Pages Router icon */
+      --ds-purple-700: var(--primary);
+    }
+
+    /* Syntax higlighting */
+    [class*="code-block_pre"] {
+      --shiki-token-punctuation: var(--outline_variant);
+      --shiki-token-constant: var(--secondary_container);
+      --shiki-token-string: var(--tertiary);
+      --shiki-token-string-expression: var(--tertiary);
+      --shiki-token-comment: var(--outline_variant);
+      --shiki-token-keyword: var(--primary);
+      --shiki-token-parameter: var(--error_container);
+      --shiki-token-function: var(--primary);
+    }
+
+    /* Footer social media icons */
+    img[src="/icons/github.svg"] {
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="15.673" viewBox="0 0 16 15.673"><path fill="@{subtext0}" fill-rule="evenodd" d="M7.976 0C3.566 0 0 3.592 0 8.035a8.03 8.03 0 0 0 5.454 7.623c.396.08.541-.173.541-.386 0-.186-.013-.825-.013-1.49-2.219.479-2.681-.958-2.681-.958-.357-.931-.885-1.171-.885-1.171-.726-.492.053-.492.053-.492.806.053 1.228.825 1.228.825.713 1.224 1.862.878 2.324.665.066-.519.277-.878.502-1.078-1.77-.186-3.632-.878-3.632-3.965 0-.878.317-1.596.819-2.155-.079-.2-.357-1.024.079-2.129 0 0 .673-.213 2.192.825a7.7 7.7 0 0 1 1.994-.266c.673 0 1.36.093 1.994.266 1.519-1.038 2.192-.825 2.192-.825.436 1.104.158 1.929.079 2.129.515.559.819 1.277.819 2.155 0 3.087-1.862 3.765-3.645 3.965.291.253.541.732.541 1.49 0 1.078-.013 1.942-.013 2.208 0 .213.145.466.541.386a8.03 8.03 0 0 0 5.454-7.623C15.952 3.592 12.374 0 7.976 0" clip-rule="evenodd"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+    img[src="/icons/x.svg"] {
+        '<svg xmlns="http://www.w3.org/2000/svg" fill="none" height="16" shape-rendering="geometricPrecision" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 24 24" width="16"><path fill="@{subtext0}" d="M16.99 0h3.308l-7.227 8.26 8.502 11.24h-6.657l-5.214-6.817L3.736 19.5H.426l7.73-8.835L0 0h6.826l4.713 6.231zm-1.161 17.52h1.833L5.83 1.876H3.863z" stroke="none"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    .group:hover .dark\:group-hover\:bg-white {
+      background-color: var(--on_surface);
+    }
+    .group:hover .dark\:group-hover\:text-black {
+      color: var(--surface);
+    }
+
+    [data-docs-container] code:not(pre code),
+    [data-docs-table-of-contents] code:not(pre code) {
+      border-color: var(--surface_container_low) !important;
+      background-color: var(--surface) !important;
+    }
+
+    td a {
+      color: var(--primary);
+    }
+
+    .animated-optimizations_window__CjM85 {
+      background: var(--surface) !important;
+    }
+
+    .features_card__xYla9,
+    .foundation_root__wm0ez,
+    .foundation_card__v7VKB {
+      background: var(--surface_container_lowest);
+    }
+
+    .foundation_cpu__ciXpm {
+      background: var(--surface);
+    }
+
+    .header_header__zJOD0 {
+      background: var(--surface_container_lowest);
+    }
+
+    .mute,
+    .subtitle {
+      color: var(--on_surface_variant);
+    }
+
+    .mobile-menu_mobileMenu__xqbOP a.mobile-menu_selected__G55UL {
+      color: var(--geist-background);
+    }
+
+    .dark-theme .dark\:bg-black\/50 {
+      background-color: var(--geist-background);
+    }
+
+    .gradient,
+    .gradient-text {
+      --text-gradient: var(--on_surface);
+    }
+
+    .bg-background-200,
+    .bg-vercel-100 {
+      background-color: var(--surface);
+    }
+
+    .guides_book__j9vP8 {
+      background: var(--surface_container_lowest) !important;
+    }
+
+    .guides_bind__9COxI {
+      background: var(--outline) !important;
+    }
+
+    .bg-gray-50 {
+      background-color: var(--surface);
+    }
+  }
+}

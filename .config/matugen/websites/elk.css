@@ -1,0 +1,98 @@
+/* ==UserStyle==
+@name Elk Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/elk
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/elk
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/elk/catppuccin.user.less
+@description Soothing pastel theme for Elk
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("elk.zone") {
+  :root.dark {
+  }
+  :root.light {
+  }
+
+
+    --c-primary: var(--primary) !important;
+    --c-primary-active: lighten(var(--primary), 10%) !important;
+    --c-primary-light: var(--surface_container_low) !important;
+    --c-border: var(--surface_container_low) !important;
+    --c-border-dark: var(--surface_container) !important;
+    --c-bg-base: var(--surface_container_lowest) !important;
+    --rgb-bg-base: #lib.rgbify(var(--surface))[] !important;
+    --c-bg-active: var(--surface_container_low) !important;
+    --c-bg-code: var(--surface_container_low) !important;
+    --c-bg-selection: var(--primary) !important;
+    --c-bg-fade: var(--surface_container_low) !important;
+    --c-text-base: var(--on_surface) !important;
+    --c-text-code: var(--surface_container_high) !important;
+    --c-text-secondary: var(--on_surface_variant) !important;
+    --c-text-secondary-light: var(--on_surface) !important;
+    --c-bg-btn-disabled: var(--surface_container) !important;
+    --c-text-btn-disabled: var(--on_surface) !important;
+    --c-text-btn: var(--on_surface) !important;
+    --c-success: var(--tertiary) !important;
+    --c-warning: var(--secondary) !important;
+    --c-error: var(--error) !important;
+    --c-danger: var(--error) !important;
+    --c-danger-active: lighten(var(--error), 10%) !important;
+    --c-bg-dm: var(--surface_container_low) !important;
+
+    .btn-solid,
+    [btn-solid=""] {
+      color: var(--c-bg-base);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: fade(var(--surface_container), 70%);
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: fade(var(--surface_container), 80%);
+    }
+
+    [text-red],
+    [text-red-600],
+    [hover^="text-red"]:hover {
+      color: rgba(#lib.rgbify(var(--error))[], var(--un-text-opacity));
+    }
+
+    [text-blue],
+    [hover^="text-blue"]:hover {
+      color: rgba(#lib.rgbify(var(--primary))[], var(--un-text-opacity));
+    }
+
+    [text-green],
+    [hover^="text-green"]:hover {
+      color: rgba(#lib.rgbify(var(--tertiary))[], var(--un-text-opacity));
+    }
+
+    [text-yellow],
+    [hover^="text-yellow"]:hover {
+      color: rgba(#lib.rgbify(var(--secondary))[], var(--un-text-opacity));
+    }
+
+    [text-purple],
+    [hover^="text-purple"]:hover {
+      color: rgba(#lib.rgbify(var(--primary_container))[], var(--un-text-opacity));
+    }
+
+    [group-hover^="bg-purple/10"]:hover {
+      background-color: fade(var(--primary_container), 10%);
+    }
+
+    .filter-saturate-0,
+    [filter-saturate-0=""] {
+      filter: none;
+    }
+  }
+}

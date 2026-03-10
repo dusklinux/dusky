@@ -1,0 +1,220 @@
+/* ==UserStyle==
+@name openmediavault Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/openmediavault
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/openmediavault
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/openmediavault/catppuccin.user.less
+@description Soothing pastel theme for openmediavault
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("openmediavault.example.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    .omv-dark-theme {
+      --mat-color-text: var(--on_surface);
+      --mat-color-secondary-text: var(--on_surface_variant);
+      --mat-color-disabled-text: var(--error);
+      --mat-color-hint-text: var(--primary);
+      --mat-background-color-hover: var(--primary);
+      --mat-background-color-selected-button: var(--primary);
+      --mat-background-color-card: var(--surface);
+      --mat-background-color-background: var(--surface);
+      --mat-primary-color-text: var(--primary);
+      --mat-background-color-body: var(--surface_container_lowest);
+    }
+    .omv-dark-theme .mat-toolbar.mat-primary {
+      background: var(--primary);
+      color: var(--on_surface);
+    }
+    .omv-dark-theme .mat-drawer-container {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    .omv-dark-theme .mat-card {
+      background: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .omv-dark-theme .mat-flat-button,
+    .mat-fab,
+    .mat-mini-fab {
+      color: var(--on_surface);
+      background-color: var(--surface);
+    }
+    .omv-dark-theme .mat-flat-button.mat-button-disabled.mat-button-disabled {
+      background-color: var(--surface);
+    }
+    .omv-dark-theme .mat-input-element:disabled {
+      color: var(--on_surface_variant);
+    }
+    .omv-dark-theme .mat-select-placeholder,
+    .omv-dark-theme .mat-select-disabled .mat-select-value {
+      color: var(--on_surface_variant);
+    }
+    .omv-dark-theme .mat-form-field-appearance-legacy .mat-form-field-label,
+    .omv-dark-theme .mat-form-field-appearance-legacy .mat-hint {
+      color: var(--primary);
+    }
+    .omv-dark-theme .mat-toolbar {
+      background: var(--surface);
+      color: var(--on_surface);
+    }
+    .omv-top-bar[_ngcontent-ydq-c112]
+      button[_ngcontent-ydq-c112]
+      .mat-icon[_ngcontent-ydq-c112] {
+      color: var(--surface);
+    }
+    .omv-top-bar[_ngcontent-ydq-c112] .hostname[_ngcontent-ydq-c112] {
+      color: var(--surface);
+    }
+
+    .omv-dark-theme .mat-icon-button.mat-button-disabled.mat-button-disabled {
+      color: var(--outline);
+    }
+    .omv-dark-theme .mat-chip.omv-background-color-pair-green {
+      color: var(--surface);
+      background-color: var(--tertiary);
+    }
+
+    .omv-scrollable-xy,
+    .omv-scrollable-y {
+      scrollbar-color: var(--primary) transparent;
+      --scrollbar-thumb-color: var(--primary) !important;
+      --scrollbar-thumb-hover-color: var(--primary);
+    }
+
+    .omv-dark-theme .mat-button,
+    .omv-dark-theme .mat-icon-button,
+    .omv-dark-theme .mat-stroked-button {
+      color: var(--primary);
+      background: inherit;
+    }
+
+    .omv-dark-theme .mat-pseudo-checkbox-checked,
+    .omv-dark-theme .mat-pseudo-checkbox-indeterminate,
+    .omv-dark-theme .mat-accent .mat-pseudo-checkbox-checked,
+    .omv-dark-theme .mat-accent .mat-pseudo-checkbox-indeterminate {
+      background: var(--primary);
+    }
+    .omv-dark-theme
+      .mat-checkbox-indeterminate.mat-accent
+      .mat-checkbox-background,
+    .omv-dark-theme .mat-checkbox-checked.mat-accent .mat-checkbox-background {
+      background-color: var(--primary);
+    }
+    .omv-dark-theme .mat-slide-toggle.mat-checked .mat-slide-toggle-thumb {
+      background-color: var(--primary);
+    }
+    .omv-dark-theme .mat-slide-toggle.mat-checked .mat-slide-toggle-bar {
+      background-color: var(--primary);
+    }
+    .omv-dark-theme .mat-badge-accent .mat-badge-content {
+      background: var(--surface);
+      color: var(--primary);
+    }
+
+    .omv-dark-theme .mat-select-panel {
+      scrollbar-color: var(--primary) transparent;
+      --scrollbar-thumb-color: var(--primary) !important;
+      --scrollbar-thumb-hover-color: var(--primary) !important;
+      background: var(--surface);
+    }
+
+    .omv-background-color-pair-success {
+      color: var(--surface);
+      background-color: var(--tertiary);
+    }
+    .omv-dark-theme
+      .mat-primary
+      .mat-option.mat-selected:not(.mat-option-disabled) {
+      color: var(--primary);
+    }
+
+    .ngx-datatable.single-selection .datatable-body-row.active,
+    .ngx-datatable.single-selection
+      .datatable-body-row.active
+      .datatable-row-group,
+    .ngx-datatable.multi-selection .datatable-body-row.active,
+    .ngx-datatable.multi-selection
+      .datatable-body-row.active
+      .datatable-row-group,
+    .ngx-datatable.multi-click-selection .datatable-body-row.active,
+    .ngx-datatable.multi-click-selection
+      .datatable-body-row.active
+      .datatable-row-group {
+      color: var(--primary);
+      background-color: var(--surface);
+    }
+
+    .ngx-datatable:not(.cell-selection) .datatable-body-row:hover,
+    .ngx-datatable:not(.cell-selection)
+      .datatable-body-row:hover
+      .datatable-row-group {
+      color: var(--surface);
+      background-color: var(--primary);
+    }
+
+    .ngx-datatable.single-selection .datatable-body-row.active:hover,
+    .ngx-datatable.single-selection
+      .datatable-body-row.active:hover
+      .datatable-row-group,
+    .ngx-datatable.multi-selection .datatable-body-row.active:hover,
+    .ngx-datatable.multi-selection
+      .datatable-body-row.active:hover
+      .datatable-row-group,
+    .ngx-datatable.multi-click-selection .datatable-body-row.active:hover,
+    .ngx-datatable.multi-click-selection
+      .datatable-body-row.active:hover
+      .datatable-row-group {
+      color: var(--surface);
+      background-color: var(--tertiary);
+    }
+
+    .omv-dark-theme .mat-menu-item {
+      background: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .omv-dark-theme .mat-menu-panel {
+      background: var(--surface);
+    }
+
+    [_nghost-ckr-c138]
+      .content[_ngcontent-ckr-c138]
+      omv-intuition-form-page[_ngcontent-ckr-c138]
+      .mat-card {
+      color: var(--on_surface);
+      background-color: var(--surface);
+    }
+
+    .mat-flat-button.omv-background-color-pair-primary {
+      color: var(--on_surface);
+      background-color: var(--surface);
+    }
+
+    .omv-dark-theme .mat-dialog-container {
+      background: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .omv-background-color-pair-terminal {
+      color: var(--tertiary);
+      background-color: var(--surface);
+    }
+  }
+}

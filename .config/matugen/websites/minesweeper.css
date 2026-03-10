@@ -1,0 +1,452 @@
+/* ==UserStyle==
+@name Minesweeper Online Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/minesweeper
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/minesweeper
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/minesweeper/catppuccin.user.less
+@description Soothing pastel theme for Minesweeper Online
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("minesweeper.online") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    --b0: var(--surface);
+    --b1: var(--surface_container_lowest);
+
+:root {
+}
+
+    body {
+      background-color: var(--surface);
+    }
+
+    .navbar-desktop {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .header {
+      margin-top: 0;
+    }
+
+    .navbar-default {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .navbar-default .navbar-brand,
+    .navbar-default .navbar-brand:hover,
+    .navbar-default .navbar-brand:focus,
+    .navbar-default .navbar-brand:focus:hover {
+      color: var(--on_surface);
+    }
+
+    .navbar-default .navbar-toggle {
+      border-color: var(--surface_container_low);
+      background-color: var(--surface_container_lowest);
+      &:hover {
+        border-color: var(--surface_container);
+        background-color: var(--surface);
+      }
+    }
+
+    .navbar-default .navbar-toggle .icon-bar {
+      background-color: var(--on_surface);
+    }
+
+    .navbar-desktop,
+    .main-content {
+      box-shadow: var(--surface_container_low) 0 0 0 1px;
+    }
+
+    hr,
+    .thumbnail,
+    .table-bordered {
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .main-column {
+      box-shadow: var(--surface_container_low) 1px 0 0 0 inset;
+    }
+
+    .main-content,
+    .thumbnail,
+    .table td {
+      background-color: var(--surface);
+    }
+
+    .homepage-level {
+      background-color: var(--surface);
+      border-color: var(--surface_container_low);
+    }
+
+    a.homepage-level.active,
+    a.homepage-level:focus,
+    a.homepage-level:hover {
+      border-color: var(--primary);
+    }
+
+    a,
+    a:hover,
+    .text-primary {
+      color: var(--primary);
+    }
+
+    .text-success,
+    .level1-link,
+    .level1-link:hover,
+    .time-icon,
+    .end-icon,
+    .equipment-rarity-0 {
+      color: var(--tertiary) !important;
+    }
+
+    .btn-success,
+    .btn-success:hover,
+    .btn-success:focus,
+    .btn-success:focus:hover {
+      color: var(--surface);
+      background-color: var(--tertiary);
+      border-color: var(--tertiary);
+    }
+
+    .btn-danger,
+    .btn-danger:hover,
+    .btn-danger:focus,
+    .btn-danger:focus:hover {
+      color: var(--surface);
+      background-color: var(--error);
+      border-color: var(--error);
+    }
+
+    code {
+      background-color: fade(var(--error), 12.5%);
+    }
+
+    #premium_content > div:nth-child(21) {
+      > p:nth-child(3) > code:nth-child(1) {
+        color: var(--secondary_container) !important;
+      }
+      > p:nth-child(4) > code:nth-child(1) {
+        color: var(--primary) !important;
+      }
+      > p:nth-child(5) > code:nth-child(1) {
+        color: var(--tertiary) !important;
+      }
+    }
+
+    .equipment-item-rarity-0 {
+      border-color: var(--tertiary);
+      background-color: fade(var(--tertiary), 12.5%);
+    }
+
+    .equipment-item-rarity-1 {
+      border-color: var(--primary);
+      background-color: fade(var(--primary), 12.5%);
+    }
+
+    .level2-link,
+    .level2-link:hover,
+    .blue,
+    .ws-icon,
+    .equipment-rarity-1,
+    .equipment-rarity-1:active,
+    .equipment-rarity-1:hover,
+    .equipment-rarity-1:visited {
+      color: var(--primary) !important;
+    }
+
+    .equipment-rarity-2,
+    .equipment-rarity-2:active,
+    .equipment-rarity-2:hover,
+    .equipment-rarity-2:visited {
+      color: var(--primary) !important;
+    }
+
+    .equipment-item-rarity-2 {
+      border-color: var(--primary);
+      background-color: fade(var(--primary), 12.5%);
+    }
+
+    .equipment-rarity-3,
+    .equipment-rarity-3:active,
+    .equipment-rarity-3:hover,
+    .equipment-rarity-3:visited {
+      color: var(--secondary_container) !important;
+    }
+
+    .equipment-item-rarity-3 {
+      border-color: var(--secondary_container);
+      background-color: fade(var(--secondary_container), 12.5%);
+    }
+
+    .equipment-item-rarity-4,
+    .equipment-item-rarity-5 {
+      border-color: var(--error);
+      background-color: fade(var(--error), 12.5%);
+    }
+
+    .eff-icon,
+    .quality-icon {
+      color: var(--secondary_container);
+    }
+
+    .text-danger,
+    .level3-link,
+    .level3-link:hover,
+    .eff-icon.eff-icon.level3,
+    .list-icon.level3,
+    .nf-icon.level3,
+    .time-icon.level3,
+    .wins-icon.level3,
+    .ws-icon.ws3,
+    .mastery-icon.mastery3,
+    .wins-icon,
+    .end-icon.end3,
+    .mastery-icon,
+    .equipment-rarity-4,
+    .equipment-rarity-4:active,
+    .equipment-rarity-4:hover,
+    .equipment-rarity-4:visited,
+    .equipment-rarity-5,
+    .equipment-rarity-5:active,
+    .equipment-rarity-5:hover,
+    .equipment-rarity-5:visited {
+      color: var(--error) !important;
+    }
+
+    body,
+    .main-page h1,
+    .main-page h2,
+    .main-page h3,
+    .sidebar-nav ul li a,
+    .help-menu-item > strong,
+    .help-content h3,
+    .sidebar-nav ul li,
+    a.active,
+    .brand-link .brand-text,
+    .black-link,
+    .black-link:active,
+    .black-link:hover,
+    .black-link:visited,
+    .events-title {
+      color: var(--on_surface) !important;
+    }
+
+    .btn-primary,
+    .btn-primary:hover,
+    .btn-primary:active:hover,
+    .btn-primary:active {
+      border-color: var(--primary);
+      background-color: var(--primary);
+      color: var(--surface);
+    }
+
+    .premium-product-descr {
+      color: fade(var(--secondary), 60%);
+    }
+
+    .shop-strike-danger {
+      background-image: linear-gradient(
+        rgba(0, 0, 0, 0) 8px,
+        var(--error) 8px,
+        var(--error) 10px,
+        rgba(0, 0, 0, 0) 10px
+      );
+    }
+
+    .gray,
+    .mediumgray,
+    .mediumgray:hover,
+    .dropdown-menu > li > a,
+    .dropdown-menu > li > a:hover,
+    .score-icon.icon-silver,
+    .gray:hover,
+    .icon-mobile {
+      color: var(--on_surface_variant);
+    }
+
+    .dropdown-menu > li > a:focus,
+    .dropdown-menu > li > a:hover {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .nav-tabs > li.active > a,
+    .nav-tabs > li.active > a:focus,
+    .nav-tabs > li.active > a:hover,
+    .nav-tabs > li > a:hover {
+      border-color: var(--surface_container_low);
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    .chat-messages {
+      border-color: var(--surface_container_low);
+    }
+
+    .btn-default,
+    .form-control {
+      color: var(--on_surface);
+      background-color: var(--surface);
+      border-color: var(--surface_container_low);
+      &:hover {
+        color: var(--on_surface);
+        background-color: var(--surface_container_lowest);
+        border-color: var(--surface_container);
+      }
+    }
+
+    .btn-info,
+    .btn-info:hover,
+    .btn-info:active:hover,
+    .btn-info:active {
+      border-color: var(--primary);
+      background-color: var(--primary);
+      color: var(--surface);
+    }
+
+    .ticket.icon-filter {
+      color: var(--primary_fixed);
+    }
+
+    td[class="text-nowrap"],
+    .result-block,
+    .dropdown-menu,
+    td[class=""],
+    .table-bordered > tbody > tr > td {
+      background-color: var(--surface);
+      border-color: var(--surface_container_low) !important;
+    }
+
+    th[class="homepage-best-players-th"],
+    th[colspan="1"],
+    th[class="text-nowrap"],
+    th[class="text-nowrap quests-column-last"],
+    .help-table > thead:nth-child(1) > tr:nth-child(1) > th,
+    table.table:nth-child(3) > tbody:nth-child(1) > tr:nth-child(1) > th,
+    table.table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > th,
+    th[colspan="3"] {
+      border-color: var(--surface_container_low) !important;
+      background-color: var(--surface_container_lowest);
+    }
+
+    .pagination > li > a,
+    .pagination > li > span {
+      background-color: var(--surface);
+      border-color: var(--surface_container_low) !important;
+      color: var(--primary);
+    }
+
+    .pagination > .disabled > a {
+      background-color: var(--surface);
+      border-color: var(--surface_container_low) !important;
+      color: var(--on_surface_variant);
+    }
+
+    .pagination > li > a:hover {
+      background-color: var(--surface_container_lowest);
+      color: var(--primary);
+    }
+
+    .pagination-sm > li:first-child > a,
+    .pagination-sm > li:first-child > a:hover,
+    .pagination > .disabled > a:hover {
+      background-color: var(--surface);
+      color: var(--on_surface_variant);
+    }
+
+    .pagination > .active > a,
+    .pagination > .active > a:hover {
+      background-color: var(--primary);
+      color: var(--surface);
+    }
+
+    .open > .dropdown-toggle.btn-default,
+    .open > .dropdown-toggle.btn-default:focus,
+    .open > .dropdown-toggle.btn-default:hover,
+    .btn-default:active:hover {
+      background-color: var(--surface_container_low);
+      border-color: var(--surface_container) !important;
+      color: var(--on_surface);
+    }
+
+    .footer-link,
+    .season {
+      color: var(--on_surface_variant) !important;
+    }
+
+    .score-icon {
+      color: var(--secondary);
+    }
+
+    .dotted-underline,
+    .dotted-underline:hover {
+      border-bottom-color: var(--on_surface_variant);
+    }
+
+    .ws-icon.ws11 {
+      color: var(--tertiary);
+    }
+
+    .brand-logo {
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" x="0px" y="0px" viewBox="0 0 100 100" enable-background="new 0 0 100 100" xml:space="preserve"><path fill="@{text}" d="M12.903 52.991V46.96H26.52a23.6 23.6 0 0 1 1.622-6.122L9.398 30.016a45.04 45.04 0 0 0-4.64 19.96 45.04 45.04 0 0 0 4.64 19.959l18.744-10.822a23.6 23.6 0 0 1-1.622-6.123zM50 35.577c-7.936 0-14.397 6.46-14.397 14.398S42.065 64.372 50 64.372c7.938 0 14.4-6.46 14.4-14.397S57.938 35.577 50 35.577m0 22.272c-4.342 0-7.872-3.532-7.872-7.873s3.53-7.875 7.872-7.875 7.878 3.533 7.878 7.875c0 4.34-3.536 7.873-7.878 7.873M34.066 83.612l-5.227-3.016 6.825-11.824a23.8 23.8 0 0 1-4.479-4.45L12.413 75.159c7.599 11.314 20.161 18.998 34.57 19.946V73.459c-2.138-.274-4.175-.858-6.096-1.663zm34.753-19.29a24 24 0 0 1-4.479 4.451l6.823 11.823-5.223 3.016-6.823-11.814a23.5 23.5 0 0 1-6.101 1.662v21.646c14.409-.949 26.978-8.634 34.569-19.946zm21.786-34.304-18.744 10.82a23.4 23.4 0 0 1 1.622 6.122H87.1v6.031H73.483a23.5 23.5 0 0 1-1.622 6.123l18.744 10.819a45.04 45.04 0 0 0 4.636-19.957 45.04 45.04 0 0 0-4.636-19.958M65.94 16.339l5.223 3.016-6.823 11.822a24 24 0 0 1 4.479 4.451l18.767-10.836C79.994 13.48 67.426 5.794 53.017 4.845v21.646a23.4 23.4 0 0 1 6.101 1.662zM35.665 31.177 28.84 19.354l5.227-3.016 6.821 11.815a23.4 23.4 0 0 1 6.096-1.663V4.845c-14.409.949-26.972 8.634-34.57 19.947l18.773 10.836a23.8 23.8 0 0 1 4.478-4.451"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    .exp-icon {
+        '<svg height="448pt" viewBox="0 -6 448.28512 448" width="448pt" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="a"><stop offset="5%" stop-color="@{blue}"/><stop offset="95%" stop-color="@{blue}"/></linearGradient></defs><path d="M445.086 175.18a8 8 0 0 0 2.797-8.903 8 8 0 0 0-7.543-5.496H294.285a8 8 0 0 1-7.512-5.265L232.203 5.414a8 8 0 0 0-7.52-5.273 8 8 0 0 0-7.519 5.273l-54.566 150.063a8 8 0 0 1-7.512 5.265H8.004a8 8 0 0 0-4.918 14.313l121.2 94.261a8 8 0 0 1 2.71 8.739l-46.84 147.199a8 8 0 0 0 12.367 8.863l127.418-93.879a8 8 0 0 1 9.489 0l125.94 92.802a8 8 0 0 0 9.54-.035 8 8 0 0 0 2.726-9.145l-52.903-145.52a8 8 0 0 1 2.766-9.175zm0 0" fill="url(#a)"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    .coin-icon {
+        '<svg height="512" viewBox="0 0 48 48" width="512" xmlns="http://www.w3.org/2000/svg"><circle cx="24" cy="24" fill="@{yellow}" r="22"/><path d="M38.52 7.48A21.994 21.994 0 0 1 7.48 38.52 21.995 21.995 0 1 0 38.52 7.48" fill="@{yellow}"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    .diff-icon {
+        '<svg fill="@{text}" version="1.1" viewBox="0 0 64.369 100.8" xml:space="preserve" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" enable-background="new 0 0 64.369 100.8"><path d="M32.472 74.848q4.154-2.302 14.574-6.712.512-.255 2.685-1.151 3.706-3.771 6.137-5.657 2.429-1.885 3.516-1.886 1.342 0 1.981.831.638.83.639 2.557 0 1.47-.448 4.155 2.749 3.452 2.749 5.114 0 1.407-.767 2.141-.766.735-2.301.735-.767 0-2.333-.799-1.567-.798-3.995-2.333-5.881 1.088-16.875 6.584 1.406.831 2.046 1.214 3.835 2.174 9.46 5.817.703.448 3.196 1.918 11.633 1.342 11.634 5.881 0 2.941-6.264 3.963-2.94 3.58-4.858 3.58-2.301 0-4.475-6.009-.192-.638-.703-1.854-8.95-7.35-16.108-11.122a87.6 87.6 0 0 0-16.236 11.761q-1.023 7.224-4.347 7.223-2.11 0-4.858-4.091-6.52.001-6.52-3.58 0-2.62 2.429-3.803t10.227-2.333q5.839-4.282 13.86-8.565-10.772-5.37-17.567-6.584-1.598 1.407-2.941 2.11t-2.493.703q-1.663 0-2.525-.703-.863-.703-.863-2.045 0-1.214 2.813-4.922-.639-2.62-.639-3.963 0-1.917.767-2.844.766-.926 2.237-.927 1.47 0 3.835 1.918 2.364 1.918 5.689 5.817 7.35 2.62 17.642 7.861"/><path d="M44.298 48.448 42.7 54.776l-3.9 3.388q-1.019 1.982-2.708 2.972-1.688.991-3.98.991-4.587 0-6.689-3.963L21.5 54.776l-1.607-6.328 2.315-.575q.382.96.574 1.47 1.468 3.388 3.223 4.474 1.756 1.087 5.841 1.087 4.595 0 6.351-1.023t3.224-4.538q.191-.512.574-1.47z"/><path d="M48.144 5.306Q41.944 0 31.972 0T15.8 5.306 9.6 19.177q0 7.352 1.981 10.675 2.557 4.474 2.749 6.009l.831 5.369 8.99 4.283 1.285 3.26q1.21.384 2.866.607 1.656.224 3.694.224 4.14 0 6.56-.831l1.279-3.26 8.949-4.283.831-5.369q.256-1.535.639-2.301 4.09-7.03 4.091-14.382 0-8.567-6.201-13.872M22.671 35.732q-5.337 0-5.337-6.137 0-2.939 1.382-4.411 1.382-1.47 4.148-1.47 5.208 0 5.209 5.433 0 6.586-5.402 6.585m11.143 8.625q-.705 0-1.534-.511-.831.512-1.534.511-1.15 0-1.758-.511-.607-.511-.607-1.534 0-.959 1.534-2.685 1.214-1.47 2.365-3.388a25 25 0 0 0 2.365 3.388q1.534 1.726 1.534 2.621 0 2.109-2.365 2.109m7.81-8.625q-5.37 0-5.37-6.137 0-5.88 5.497-5.881 2.62 0 3.931 1.342t1.311 4.091q.001 6.586-5.369 6.585"/><g/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+      filter: none;
+    }
+
+    .arena-icon {
+        '<svg height="104px" version="1.1" viewBox="0 0 102 104" width="102px" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><title/><desc/><g transform="translate(1 2)" stroke="@{crust}" stroke-width="3.5" fill="none" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round"><polygon fill="@{subtext0}" points="19.1435561 74.3063639 26.1446134 81.3774317 14.165804 93.4760291 7.16474678 86.4049613"/><polygon fill="@{text}" points="17.9831197 59.7106781 40.3865029 82.3380951 33.3854456 89.4091629 10.9820625 66.7817459"/><path d="M3.28 97.187c2.708 2.734 6.396 3.441 9.102.707s2.007-6.458-.7-9.192-6.395-3.44-9.101-.707-2.007 6.459.7 9.192" fill="@{text}"/><polygon fill="@{subtext0}" points="85.834196 74.3063639 92.8352532 81.3774317 80.8564439 93.4760291 73.8553866 86.4049613" transform="matrix(-1 0 0 1 166.69 0)"/><polygon fill="@{text}" points="66.6145544 59.7106781 89.0179375 82.3380951 82.0168803 89.4091629 59.6134971 66.7817459" transform="matrix(-1 0 0 1 148.631 0)"/><path d="M96.72 97.187c-2.708 2.734-6.396 3.441-9.102.707s-2.007-6.458.7-9.192 6.395-3.44 9.101-.707 2.007 6.459-.7 9.192" fill="@{text}"/><path d="M50 64.904 36.229 77.152 22.672 63.46 33.9 50.583zm16.1-14.32 28.766-25.585L99.072.19 74.309 4.236 50 32.116z" fill="@{blue}"/><polygon fill="@{sky}" points="99.0210002 0.4898358 99.0719829 0.189073698 74.308793 4.23596166 22.6723586 63.4598282 29.673415 70.5308968 99.0210002 0.4898358"/><polygon fill="@{blue}" points="52.5644515 4.23596166 77.3276414 0.189073698 73.1220477 24.9991339 14.4845545 77.1519342 0.928017109 63.4598282" transform="matrix(-1 0 0 1 78.256 0)"/><polygon fill="@{sky}" points="77.2766587 0.4898358 77.3276414 0.189073698 52.5644515 4.23596166 0.928017109 63.4598282 7.92907353 70.5308968 77.2766587 0.4898358" transform="matrix(-1 0 0 1 78.256 0)"/></g></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    .event-item-icon.icon-filter {
+        '<svg height="512" viewBox="0 0 66 66" width="512" xmlns="http://www.w3.org/2000/svg"><path d="m45.4 39.6 7.2 22.1-18.5-13.3-19.6 14.1v-.2L21.9 40h-.1L2 25.7h24.1l7.7-22.1 7.1 22.2 23.1.5z" fill="@{yellow}"/><path d="m45.4 39.6 7.2 22.1-18.5-13.3-19.6 14.1v-.2L21.9 40h-.1L2 25.7h24.1l7.7-22.1 7.1 22.2 23.1.5z" fill="none" stroke="@{yellow}" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2"/><path d="M34.3 35.6 2 25.7h24.1l8.1-.4z" fill="@{mauve}"/><path d="M34.3 35.6 2 25.7h8.8l13.6 4.2c3.1 1 6.3-1.2 6.5-4.4l3.2-.1z" fill="@{mauve}"/><path d="M34.3 35.6 14.6 62.4l-.1-.1L21.9 40h-.1l.1-.1 2.2-7.5z" fill="@{red}"/><path d="m34.3 35.6-1 1.4c-.5-.1-1-.1-1.4-.1-3.3 0-6.4 2.2-7.4 5.5l-.1.1-3.9 11.9-5.9 8L21.9 40l.1-.1 2.2-7.5z" fill="@{red}"/><path d="M52.6 61.7 34 48.3l-5.8-4.5 6.1-8.2z" fill="@{sky}"/><path d="M52.6 61.7 45 56.2l-8-11.4c-1.8-2.6-5.6-2.6-7.4-.1l-.1.1-1.2-1 6.1-8.3z" fill="@{sky}"/><path d="M64 26.3 45.4 39.6l-5.5 3.9-5.6-7.9z" fill="@{blue}"/><path d="m64 26.3-8.1 5.8-11.8 3.7c-2.7.9-3.9 4-2.4 6.5l-1.8 1.2-5.5-7.9z" fill="@{blue}"/><path d="m43.2 32.8-8.9 2.8-.5-32 7.1 22.2z" fill="#1de9b6"/><path d="m43.2 32.8-8.8 2.8-.5-32 1.9 6 .2 17.3c0 2.8 2.8 4.8 5.5 4l1-.3z" fill="@{green}"/><path d="M30.3 34.3 2 25.7h24.1l4.1-.2M23 36.3l-1.1 3.6v.1l-7.4 22.3.1.1L31.8 39m0 0 2.5-3.4 18.3 26.1L34 48.3l-2.6-2m11.7-5.1 2.3-1.6L64 26.3l-25.7 8m0 0-4 1.3-.5-32 7.1 22.2 1 3.2" fill="none" stroke="@{crust}" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    .quest-icon {
+        '<svg height="512" viewBox="0 0 24 24" width="512" xmlns="http://www.w3.org/2000/svg"><g data-name="Layer 2"><g fill="@{blue}"><rect height="4.5" rx="1" width="4.5" x="3.9" y="3"/><rect height="4.5" rx="1" width="4.5" x="3.9" y="9.75"/><rect height="4.5" rx="1" width="4.5" x="3.9" y="16.5"/></g><path d="M20.1 6.25H11a1 1 0 0 1 0-2h9.1a1 1 0 0 1 0 2m0 6.75H11a1 1 0 0 1 0-2h9.1a1 1 0 0 1 0 2m0 6.75H11a1 1 0 0 1 0-2h9.1a1 1 0 0 1 0 2" fill="@{text}"/></g></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    .arena-coin-icon.icon-filter {
+        '<svg enable-background="new 0 0 60 60" height="512" viewBox="0 0 60 60" width="512" xmlns="http://www.w3.org/2000/svg"><circle cx="30" cy="30" fill="@{sky}" r="24"/><path fill="@{crust}" d="M30 55C16.21 55 5 43.79 5 30S16.21 5 30 5s25 11.21 25 25-11.21 25-25 25m0-48C17.32 7 7 17.32 7 30s10.32 23 23 23 23-10.32 23-23S42.68 7 30 7"/><circle cx="30" cy="30" fill="@{yellow}" r="17.81"/><path fill="@{crust}" d="M30 48.81c-10.37 0-18.81-8.44-18.81-18.81S19.63 11.19 30 11.19 48.81 19.63 48.81 30 40.37 48.81 30 48.81m0-35.62c-9.27 0-16.81 7.54-16.81 16.81S20.73 46.81 30 46.81 46.81 39.27 46.81 30 39.27 13.19 30 13.19"/><path d="m30 22.17 2.54 5.15 5.7.83-4.12 4.01.97 5.67L30 35.16l-5.09 2.67.97-5.67-4.12-4.01 5.69-.83z" fill="@{text}"/><path fill="@{crust}" d="M35.09 38.83c-.16 0-.32-.04-.47-.11L30 36.29l-4.63 2.43c-.34.18-.74.15-1.05-.08-.31-.22-.46-.6-.4-.98l.88-5.15-3.74-3.65a.997.997 0 0 1 .56-1.7l5.17-.75 2.31-4.69c.34-.68 1.46-.68 1.79 0l2.31 4.69 5.17.75a.997.997 0 0 1 .56 1.7l-3.74 3.65.88 5.15c.06.38-.09.75-.4.98-.17.13-.37.19-.58.19m-11.18-9.98 2.67 2.6a1 1 0 0 1 .29.88L26.24 36l3.3-1.73c.29-.15.64-.15.93 0l3.3 1.73-.63-3.67c-.06-.32.05-.66.29-.88l2.67-2.6-3.69-.54a.98.98 0 0 1-.75-.55L30 24.43l-1.65 3.34c-.15.3-.43.5-.75.55z"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+  }
+}

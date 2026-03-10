@@ -1,0 +1,638 @@
+/* ==UserStyle==
+@name AniList/AniChart Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/anilist
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/anilist
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/anilist/catppuccin.user.less
+@description Soothing pastel theme for AniList and AniChart
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+
+@var select contrastColor "Contrast Color" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve", "red:Red*", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("anilist.co"), domain("anichart.net") {
+  body:not(.site-theme-dark) {
+  }
+  .site-theme-dark {
+  }
+
+
+    @contrast: @catppuccin[@@flavor][@@contrastColor];
+
+
+      --color-blue-dim: #lib.rgbify(desaturate(lighten(var(--primary), 10%), 10%))[];
+
+      .nav[data-v-62eacfff],
+      .solid[data-v-62eacfff],
+      .transparent[data-v-62eacfff]:hover {
+        background: darken(var(--on_surface), 10%);
+        color: var(--surface_container_lowest);
+      }
+
+      .nav-unscoped.transparent {
+        background: fade(darken(var(--on_surface), 10%), 50%);
+      }
+    }
+
+    --color-background: #lib.rgbify(var(--surface))[];
+    --color-foreground: #lib.rgbify(var(--surface_container_lowest))[];
+    --color-foreground-grey: #lib.rgbify(var(--surface_container_low))[];
+    --color-foreground-grey-dark: #lib.rgbify(darken(var(--surface_container_low), 5%))[];
+    --color-foreground-blue: #lib.rgbify(var(--surface))[];
+    --color-foreground-blue-dark: #lib.rgbify(var(--surface))[];
+    --color-background-blue-dark: #lib.rgbify(var(--on_surface))[];
+    --color-overlay: #lib.rgbify(var(--surface_container_low))[];
+    --color-shadow: #lib.rgbify(var(--surface))[];
+    --color-shadow-dark: #lib.rgbify(darken(var(--on_surface), 10%))[];
+    --color-shadow-blue: #lib.rgbify(var(--primary))[];
+    --color-text: #lib.rgbify(var(--on_surface))[];
+    --color-text-light: #lib.rgbify(var(--on_surface))[];
+    --color-text-lighter: #lib.rgbify(var(--on_surface_variant))[];
+    --color-text-bright: #lib.rgbify(var(--surface), var(--on_surface)))[];
+    --color-blue: #lib.rgbify(var(--primary))[];
+    --color-white: 255, 255, 255;
+    --color-black: 0, 0, 0;
+    --color-red: #lib.rgbify(@contrast)[];
+    --color-peach: #lib.rgbify(var(--error_container))[];
+    --color-orange: #lib.rgbify(var(--secondary_container))[];
+    --color-yellow: #lib.rgbify(var(--secondary))[];
+    --color-green: #lib.rgbify(var(--tertiary))[];
+    --color-background-1200: #lib.rgbify(var(--on_surface))[];
+    --color-background-1100: #lib.rgbify(var(--on_surface))[];
+    --color-background-1000: #lib.rgbify(var(--on_surface))[];
+    --color-background-900: #lib.rgbify(var(--on_surface))[];
+    --color-background-800: #lib.rgbify(var(--on_surface_variant))[];
+    --color-background-700: #lib.rgbify(var(--surface_container))[];
+    --color-background-600: #lib.rgbify(var(--surface_container_low))[];
+    --color-background-500: #lib.rgbify(var(--surface_container_low))[];
+    --color-background-400: #lib.rgbify(var(--surface_container_low))[];
+    --color-background-300: #lib.rgbify(var(--surface_container_lowest))[];
+    --color-background-200: #lib.rgbify(var(--surface))[];
+    --color-background-100: #lib.rgbify(var(--surface))[];
+    --color-gray-1200: #lib.rgbify(var(--on_surface))[];
+    --color-gray-1100: #lib.rgbify(var(--on_surface))[];
+    --color-gray-1000: #lib.rgbify(var(--on_surface))[];
+    --color-gray-900: #lib.rgbify(var(--on_surface))[];
+    --color-gray-800: #lib.rgbify(var(--outline_variant))[];
+    --color-gray-700: #lib.rgbify(var(--outline_variant))[];
+    --color-gray-600: #lib.rgbify(var(--outline))[];
+    --color-gray-500: #lib.rgbify(var(--surface_container_high))[];
+    --color-gray-400: #lib.rgbify(var(--surface_container))[];
+    --color-gray-300: #lib.rgbify(var(--surface_container_low))[];
+    --color-gray-200: #lib.rgbify(var(--surface))[];
+    --color-gray-100: #lib.rgbify(var(--surface))[];
+    --color-blue-100: #lib.rgbify(var(--on_surface))[];
+    --color-blue-200: #lib.rgbify(var(--on_surface))[];
+    --color-blue-300: #lib.rgbify(var(--on_surface))[];
+    --color-blue-400: #lib.rgbify(var(--primary_container))[];
+    --color-blue-500: #lib.rgbify(var(--primary_container))[];
+    --color-blue-600: #lib.rgbify(var(--primary))[];
+    --color-blue-700: #lib.rgbify(var(--primary))[];
+    --color-blue-800: #lib.rgbify(var(--primary))[];
+    --color-blue-900: #lib.rgbify(var(--primary))[];
+    --color-blue-1000: #lib.rgbify(var(--primary))[];
+    --color-green-100: #lib.rgbify(var(--tertiary_container))[];
+    --color-green-200: #lib.rgbify(var(--tertiary))[];
+    --color-green-300: #lib.rgbify(var(--tertiary))[];
+    --color-green-400: #lib.rgbify(var(--tertiary))[];
+    --color-green-500: #lib.rgbify(var(--tertiary))[];
+    --color-green-600: #lib.rgbify(var(--tertiary))[];
+    --color-green-700: #lib.rgbify(var(--tertiary))[];
+    --color-green-800: #lib.rgbify(var(--tertiary))[];
+    --color-red-100: #lib.rgbify(var(--on_surface))[];
+    --color-red-200: #lib.rgbify(var(--secondary_container))[];
+    --color-red-300: #lib.rgbify(var(--error_container))[];
+    --color-red-400: #lib.rgbify(var(--error))[];
+    --color-red-500: #lib.rgbify(var(--error))[];
+    --color-red-600: #lib.rgbify(var(--error))[];
+    --color-red-700: #lib.rgbify(var(--error))[];
+
+    & when not(@flavor = latte) {
+      --color-background: #lib.rgbify(var(--surface))[];
+      --color-foreground: #lib.rgbify(var(--surface_container_lowest))[];
+      --color-foreground-grey: #lib.rgbify(var(--surface_container_low))[];
+      --color-foreground-grey-dark: #lib.rgbify(darken(var(--surface_container_low), 5%))[];
+      --color-foreground-blue: #lib.rgbify(var(--surface))[];
+      --color-foreground-blue-dark: #lib.rgbify(var(--surface))[];
+      --color-text: #lib.rgbify(var(--on_surface))[];
+      --color-text-light: #lib.rgbify(var(--on_surface_variant))[];
+      --color-text-lighter: #lib.rgbify(var(--on_surface))[];
+      --color-shadow-dark: #lib.rgbify(var(--surface))[];
+      --color-shadow-blue: #lib.rgbify(var(--surface))[];
+      --color-background-1200: #lib.rgbify(var(--on_surface))[];
+      --color-background-1100: #lib.rgbify(var(--on_surface))[];
+      --color-background-1000: #lib.rgbify(var(--on_surface))[];
+      --color-background-900: #lib.rgbify(var(--on_surface))[];
+      --color-background-800: #lib.rgbify(var(--on_surface_variant))[];
+      --color-background-700: #lib.rgbify(var(--surface_container))[];
+      --color-background-600: #lib.rgbify(var(--surface_container_low))[];
+      --color-background-500: #lib.rgbify(var(--surface_container_low))[];
+      --color-background-400: #lib.rgbify(var(--surface_container_low))[];
+      --color-background-300: #lib.rgbify(var(--surface_container_lowest))[];
+      --color-background-200: #lib.rgbify(var(--surface))[];
+      --color-background-100: #lib.rgbify(var(--surface))[];
+      --color-gray-1200: #lib.rgbify(var(--on_surface))[];
+      --color-gray-1100: #lib.rgbify(var(--on_surface))[];
+      --color-gray-1000: #lib.rgbify(var(--on_surface))[];
+      --color-gray-900: #lib.rgbify(var(--on_surface))[];
+      --color-gray-800: #lib.rgbify(var(--outline_variant))[];
+      --color-gray-700: #lib.rgbify(var(--outline_variant))[];
+      --color-gray-600: #lib.rgbify(var(--outline))[];
+      --color-gray-500: #lib.rgbify(var(--surface_container_high))[];
+      --color-gray-400: #lib.rgbify(var(--surface_container))[];
+      --color-gray-300: #lib.rgbify(var(--surface_container_low))[];
+      --color-gray-200: #lib.rgbify(var(--surface))[];
+      --color-gray-100: #lib.rgbify(var(--surface))[];
+
+      --color-blue-dim: #lib.rgbify(desaturate(darken(var(--primary), 10%), 10%))[];
+    }
+
+    /* DARK THEME NAV BAR */
+    .nav-unscoped when not(@flavor = latte) {
+      background-color: var(--surface);
+    }
+    .nav-unscoped.transparent when not(@flavor = latte) {
+      background-color: fade(var(--surface), 50%);
+    }
+    .nav-unscoped.transparent:hover when not(@flavor = latte) {
+      background-color: var(--surface);
+      color: var(--on_surface_variant);
+    }
+
+    /* -----------------PROFILE FIXES----------------- */
+    #profileColor(@color) {
+      --color-blue: #lib.rgbify(@color)[];
+        --color-blue-dim: #lib.rgbify(var(--primary_fixed))[];
+      }
+      & when not(@flavor = latte) {
+        --color-blue-dim: #lib.rgbify(var(--primary_fixed_dim))[];
+      }
+      .progress .bar {
+        background: linear-gradient(270deg, var(--primary_fixed_dim)
+      }
+    }
+    .user-page-unscoped.orange {
+      #profileColor(var(--secondary_container));
+    }
+    .user-page-unscoped.green {
+      #profileColor(var(--tertiary));
+    }
+    .user-page-unscoped.purple {
+      #profileColor(var(--primary));
+    }
+    .user-page-unscoped.red {
+      #profileColor(var(--error));
+    }
+    .user-page-unscoped.blue {
+      #profileColor(var(--primary));
+    }
+    .user-page-unscoped.pink {
+      #profileColor(var(--secondary));
+    }
+    .user-page-unscoped.gray {
+      #profileColor(var(--outline_variant));
+    }
+    .history-day {
+      --color-foreground-grey-dark: #lib.rgbify(var(--surface))[];
+    }
+    .x-axis {
+      --color-background-300: #lib.rgbify(var(--surface_container_low))[];
+    }
+    /* Fixes gap between stats */
+    @media (max-width: 1540px) {
+      .stats-wrap {
+        grid-row-gap: 25px;
+      }
+    }
+
+    /* ----Tracking Status List Stuff---- */
+    .list[data-v-5776f768] {
+      color: var(--surface) !important;
+    }
+    .media-card .list-status[status="Repeating"] {
+      background: var(--secondary);
+    }
+    .banner .el-icon-arrow-down::before {
+      color: var(--on_surface) !important;
+    }
+    .el-textarea__inner::placeholder {
+      color: var(--outline_variant);
+    }
+    .el-dropdown-menu,
+    .el-dropdown-menu__item--divided::before,
+    .el-select-dropdown {
+      background-color: var(--surface_container_low) !important;
+    }
+    .el-popper[x-placement^="bottom"] .popper__arrow::after,
+    .el-popper[x-placement^="bottom"] .popper__arrow,
+    .el-tooltip__popper[x-placement^="bottom"] .popper__arrow::after,
+    .el-tooltip__popper[x-placement^="bottom"] .popper__arrow {
+      border-bottom-color: var(--surface_container_low);
+    }
+    .el-popper[x-placement^="top"] .popper__arrow::after,
+    .el-popper[x-placement^="top"] .popper__arrow,
+    .el-tooltip__popper[x-placement^="top"] .popper__arrow,
+    .el-tooltip__popper[x-placement^="top"] .popper__arrow::after {
+      border-top-color: var(--surface_container_low);
+    }
+    .el-dropdown .feed-filter {
+      color: var(--outline);
+    }
+    .el-dropdown-menu {
+      border-color: var(--on_surface) !important;
+    }
+    .el-dropdown-menu__item--divided when not(@flavor = latte) {
+      border-top-color: var(--surface_container);
+    }
+    .el-select-dropdown__item.hover,
+    .el-select-dropdown__item:hover {
+      background-color: var(--surface_container_lowest);
+    }
+    .el-select-dropdown__item.selected {
+      color: var(--primary);
+    }
+    .el-tooltip__popper.is-dark {
+      background: var(--surface_container_low);
+      color: var(--on_surface);
+    }
+    .tooltip > div {
+      --color-white: #lib.rgbify(var(--on_surface))[];
+    }
+    .dropdown {
+      --color-gray-100: #lib.rgbify(var(--surface_container_lowest))[];
+      --color-background-100: #lib.rgbify(var(--surface_container_lowest))[];
+      --color-background-200: #lib.rgbify(var(--surface))[];
+    }
+    .medialist .notes {
+      --color-overlay: #lib.rgbify(var(--surface_container_low))[];
+    }
+    .el-input__inner::placeholder,
+    .el-input__prefix {
+      color: var(--outline_variant);
+    }
+    .el-picker-panel {
+      color: var(--on_surface);
+      background-color: var(--surface_container_low);
+      border-color: var(--surface_container);
+    }
+    .el-date-table th {
+      color: var(--outline_variant);
+      border-bottom-color: var(--surface_container);
+    }
+    .el-date-picker__header-label {
+      color: var(--on_surface_variant);
+
+      &:hover {
+        color: var(--primary);
+      }
+    }
+    .el-picker-panel__icon-btn {
+      color: var(--outline_variant);
+
+      &:hover {
+        color: var(--primary);
+      }
+    }
+    .el-date-table td.available:hover {
+      color: var(--primary);
+    }
+    .el-date-table td.current:not(.disabled) span {
+      color: var(--surface);
+      background-color: var(--primary);
+    }
+    .el-date-table td.next-month,
+    .el-date-table td.prev-month {
+      color: var(--surface_container_high);
+    }
+
+    /* ---------SCORE TWEAKS-------------- */
+    .score[data-v-5ca094da] {
+      color: var(--surface_container_lowest);
+    }
+
+    /* --------------FOOTER--------------- */
+    .footer[data-v-0f519cab] {
+      background: var(--on_surface);
+      color: var(--surface);
+
+      h2 {
+        color: rgb(var(--color-blue));
+      }
+
+        --color-blue: #lib.rgbify(lighten(var(--primary), 30%))[];
+      }
+
+      & when not(@flavor = latte) {
+        background: var(--surface);
+        color: var(--on_surface_variant);
+      }
+    }
+
+    /* ------------------SEARCH PAGES------------------ */
+    .search,
+    .expand-description,
+    .studio {
+      --color-background-200: #lib.rgbify(var(--surface))[];
+    }
+    .search-wrap,
+    .filters,
+    .extra-filters-wrap,
+    .select,
+    .options {
+      --color-background-100: #lib.rgbify(var(--surface_container_lowest))[];
+    }
+    .filter.select-wrap .options {
+      --color-background-100: #lib.rgbify(var(--surface))[];
+    }
+
+    /* ------------------MISC EDITS-------------------- */
+    .list-editor-wrap .header::after {
+      background: fade(var(--surface), 50%);
+    }
+    .filter.clear-all {
+      --color-background-500: #lib.rgbify(var(--outline_variant))[];
+    }
+    /* --Reset button in notifications----- */
+    .reset-btn {
+      color: var(--surface_container_lowest) !important;
+    }
+    /* Publish Button in Replies and Messages */
+    .save {
+      color: var(--surface_container_lowest) !important;
+    }
+    .el-radio {
+      color: var(--outline_variant);
+    }
+    /* Mod Stuff */
+    .el-color-dropdown__link-btn {
+      color: var(--primary);
+    }
+    .el-color-picker__color {
+      border-color: var(--surface_container);
+    }
+    .el-color-picker__panel {
+      background-color: var(--surface_container_low);
+      border-color: var(--surface_container);
+    }
+    .el-color-dropdown__btn {
+      border-color: var(--surface_container_high);
+      color: var(--on_surface);
+
+      &:hover {
+        background-color: transparent;
+        border-color: var(--primary);
+        color: var(--primary);
+      }
+    }
+    /* Accent Text */
+    .input .hint {
+      --color-white: #lib.rgbify(var(--on_surface))[];
+    }
+    .el-checkbox__input.is-checked + .el-checkbox__label {
+      color: var(--primary);
+    }
+    .button,
+    .option.active,
+    .new-badge,
+    .submissions .user .stats > div,
+    .actions .icon,
+    .submissions .status,
+    .adult-label,
+    .header .btn,
+    .media-tag-editor .btn,
+    [data-v-843c77a2] .btn,
+    [data-v-22855988] .btn,
+    .btn[data-v-156b3973],
+    .btn[data-v-dceb4a66],
+    .favourite-btn,
+    .dialog .btn,
+    .tag,
+    .filter,
+    .media .header div,
+    .list-editor-wrap .header .save-btn,
+    .actions > div:not(.donator-badge),
+    .banner-content .mod-badge-wrap,
+    .external-link.no-color,
+    .count.circle,
+    .el-dropdown-menu__item,
+    .delete,
+    .list-editor-wrap .list-editor .body .delete-btn,
+    .open-user-search,
+    .save-btn {
+      & when not(@flavor = latte) {
+        --color-white: #lib.rgbify(var(--surface))[];
+      }
+    }
+    .submit-btn,
+    .random-btn {
+      & when not(@flavor = latte) {
+        color: var(--surface);
+      }
+    }
+    .user .notification-dot,
+    .create-btn {
+      & when not(@flavor = latte) {
+        color: var(--surface) !important;
+      }
+    }
+    .el-radio__inner::after {
+      & when not(@flavor = latte) {
+        background-color: var(--surface);
+      }
+    }
+    .icon,
+    .check {
+      & when not(@flavor = latte) {
+        --color-blue-300: #lib.rgbify(var(--surface))[];
+      }
+    }
+    /* ------------IMAGE COVER------------ */
+    .cover .image-text,
+    .plus-progress {
+      color: var(--on_surface) !important;
+    }
+
+    .entry .plus-progress,
+    .medialist.table .entry .edit {
+      color: var(--surface_container_lowest) !important;
+    }
+    /* --------SETTINGS-------- */
+    .el-radio__inner when not(@flavor = latte) {
+      background-color: var(--on_surface);
+    }
+    .el-checkbox__input.is-checked .el-checkbox__inner,
+    .el-radio__input.is-checked .el-radio__inner {
+      background-color: var(--primary);
+      border-color: var(--primary);
+    }
+    .el-checkbox__inner::after {
+      border-color: var(--surface);
+      border-width: 2px;
+      left: 3px;
+    }
+    .el-radio__input.is-checked + .el-radio__label {
+      color: var(--primary);
+    }
+    /* --------HIDE SCROLLBAR IN BIO----- */
+    .section::-webkit-scrollbar {
+      display: none;
+    }
+    .section {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    /* --------REMOVE DROPDOWN SHADOWS----- */
+    .dropdown.dropdown {
+      box-shadow: none;
+    }
+    /* ---------ANILIST LIKER PLUGIN------ */
+    #AnilistLikerPlugin .btntop {
+      margin-bottom: -4px;
+      margin-top: 5px;
+    }
+    #AnilistLikerPlugin .btnbottom {
+      margin-top: -2px;
+    }
+    /* ---------AUTOMAIL TWEAKS--------- */
+    .hohMediaScore {
+      border-color: var(--surface_container_low);
+      padding: 4px;
+      border-radius: 10px;
+      margin-left: 0;
+      background-color: var(--surface_container_lowest);
+      color: var(--primary);
+    }
+    .activity-feed .hohNoteSuffix:not(:empty),
+    .activity-feed .hohRewatchSuffix:not(:empty),
+    .activity-feed .hohScore:not(.hohSmiley),
+    .hohFeedScore .hohScore {
+      border-radius: 5px;
+      padding: 2.5px 5px 1px !important;
+      color: var(--on_surface) !important;
+      background-color: var(--surface_container_low);
+
+      &:not(:first-of-type) {
+        margin: 3px;
+      }
+    }
+    .activity-feed .hohRewatchSuffix:not(:empty) {
+      padding-left: 2px !important;
+    }
+    .hohExtraFilters button {
+      margin-bottom: 20px;
+    }
+    .filter-group.compare-btn,
+    .hohButton {
+      color: var(--surface_container_lowest);
+    }
+    .hohButton,
+    .hohCheckbox input:checked + .el-checkbox__inner {
+      background-color: var(--primary);
+    }
+    .hohCheckbox input:checked + .el-checkbox__inner {
+      border-color: var(--primary);
+    }
+    .medialist.table .entry:hover,
+    .medialist.table .entry .title a:hover,
+    .compare-btn[data-v-170179fc]:hover {
+      color: var(--surface_container_lowest);
+    }
+    .hohCompare table {
+      background-color: var(--surface);
+    }
+    .hohAnimeTable,
+    .hohAnimeTable td,
+    .hohUserRow td,
+    .hohUserRow th,
+    .hohHeaderRow td,
+    .hohHeaderRow th {
+      border-color: var(--surface_container_low) !important;
+    }
+    .hohUserRow td {
+      border-top-color: var(--surface_container_low) !important;
+    }
+    .hohUserRow tr {
+      border-right-color: var(--surface_container_low) !important;
+    }
+    hr {
+      color: var(--surface_container_low);
+    }
+    .hohCheckbox
+      input:checked
+      + .el-checkbox__inner
+      .like-wrap.thread
+      .button.liked
+      .fa-heart,
+    .actions .favourite.liked .fa-heart,
+    .like-wrap.thread .button.isFavourite .fa-heart,
+    .actions .favourite.isFavourite .fa-heart,
+    .actions .favourite {
+      & when not(@flavor = latte) {
+        --color-white: #lib.rgbify(var(--surface))[];
+      }
+    }
+  }
+}
+
+@-moz-document domain("anichart.net") {
+  body:not(.site-theme-dark) {
+  }
+  .site-theme-dark {
+  }
+
+
+    .login[data-v-0d5bfbcd],
+    .login[data-v-0d5bfbcd]:hover {
+      color: var(--surface_container_lowest);
+    }
+
+    [fill="#3db4f2" i] {
+      fill: var(--primary) !important;
+    }
+
+    & when not(@flavor = latte) {
+      .nav {
+        background: var(--surface);
+      }
+
+      .external-link {
+        background: var(--surface_container);
+
+        [stroke="#fff" i] {
+          stroke: var(--on_surface) !important;
+        }
+      }
+
+      .external-link .icon,
+      .dropdown-menu:hover {
+        --color-white: #lib.rgbify(var(--surface))[];
+      }
+
+      [fill="#fff" i] {
+        fill: var(--surface) !important;
+      }
+    }
+
+      --color-overlay: #lib.rgbify(var(--on_surface))[];
+
+      .external-link {
+        background: var(--on_surface_variant);
+      }
+
+      .nav {
+        background: var(--on_surface);
+      }
+
+      a.title {
+        --color-white: #lib.rgbify(var(--surface_container_lowest))[];
+      }
+    }
+  }
+}

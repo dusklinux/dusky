@@ -1,0 +1,122 @@
+/* ==UserStyle==
+@name Shinigami Eyes Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/shinigami-eyes
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/shinigami-eyes
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/shinigami-eyes/catppuccin.user.less
+@description Soothing pastel theme for Shinigami Eyes
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+/*
+These are the domains for the sites that Shinigami Eyes works with.
+The list can be found at https://github.com/shinigami-eyes/shinigami-eyes/blob/b66e9ad41fa4daef31886b139d8af6f852efcaaa/extension/manifest.json#L15-L96.
+*/
+@-moz-document domain("facebook.com"),
+  domain("youtube.com"),
+  domain("reddit.com"),
+  domain("twitter.com"),
+  domain("x.com"),
+  domain("medium.com"),
+  domain("disqus.com"),
+  domain("tumblr.com"),
+  domain("wikipedia.org"),
+  domain("rationalwiki.org"),
+  domain("cohost.org"),
+  domain("bsky.app"),
+  domain("anarchism.space"),
+  domain("aus.social"),
+  domain("c.im"),
+  domain("chaos.social"),
+  domain("eightpoint.app"),
+  domain("eldritch.cafe"),
+  domain("fosstodon.org"),
+  domain("hachyderm.io"),
+  domain("infosec.exchange"),
+  domain("kolektiva.social"),
+  domain("mas.to"),
+  domain("masto.ai"),
+  domain("chaosfem.tw"),
+  domain("mastodon.art"),
+  domain("mastodon.cloud"),
+  domain("mastodon.green"),
+  domain("mastodon.ie"),
+  domain("mastodon.nz"),
+  domain("mastodon.online"),
+  domain("mastodon.scot"),
+  domain("mastodon.social"),
+  domain("mastodon.world"),
+  domain("mastodon.xyz"),
+  domain("mastodonapp.uk"),
+  domain("meow.social"),
+  domain("mstdn.ca"),
+  domain("mstdn.jp"),
+  domain("mstdn.social"),
+  domain("octodon.social"),
+  domain("ohai.social"),
+  domain("pixelfed.social"),
+  domain("queer.party"),
+  domain("sfba.social"),
+  domain("social.transsafety.network"),
+  domain("tech.lgbt"),
+  domain("techhub.social"),
+  domain("toot.cat"),
+  domain("toot.community"),
+  domain("toot.wales"),
+  domain("vulpine.club"),
+  domain("wandering.shop"),
+  domain("lgbtqia.space"),
+  domain("threads.net"),
+  domain("duckduckgo.com"),
+  domain("bing.com"),
+  domain("google.ar"),
+  domain("google.at"),
+  domain("google.be"),
+  domain("google.ca"),
+  domain("google.ch"),
+  domain("google.co.uk"),
+  domain("google.com"),
+  domain("google.de"),
+  domain("google.dk"),
+  domain("google.es"),
+  domain("google.fi"),
+  domain("google.fr"),
+  domain("google.is"),
+  domain("google.it"),
+  domain("google.no"),
+  domain("google.pt"),
+  domain("google.se") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+:root {
+}
+
+    body {
+      --ShinigamiEyesTFriendly: var(--tertiary) !important;
+      --ShinigamiEyesTransphobic: var(--error) !important;
+    }
+
+    .shinigami-eyes-theme-purple-yellow {
+      --ShinigamiEyesTFriendly: var(--primary) !important;
+      --ShinigamiEyesTransphobic: var(--secondary) !important;
+    }
+
+    .shinigami-eyes-theme-cyan-orange {
+      --ShinigamiEyesTFriendly: var(--primary_container) !important;
+      --ShinigamiEyesTransphobic: var(--secondary_container) !important;
+    }
+  }
+}

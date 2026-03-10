@@ -1,0 +1,187 @@
+/* ==UserStyle==
+@name MDN Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/mdn
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/mdn
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/mdn/catppuccin.user.less
+@description Soothing pastel theme for MDN
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+  #lib.css-variables();
+
+  --text-primary: var(--on_surface);
+  --text-secondary: var(--on_surface_variant);
+  --text-active: var(--outline_variant);
+  --text-inactive: fade(var(--on_surface_variant), 60%);
+  --text-link: var(--primary);
+  --text-visited: lighten(saturate(var(--primary), -20%), -20%);
+  --text-invert: var(--surface_container_lowest);
+  --background-primary: var(--surface_container_lowest);
+  --background-secondary: var(--surface);
+  --background-tertiary: var(--surface);
+  --background-toc-active: var(--surface);
+  --background-mark-yellow: fade(var(--secondary), 40%);
+  --background-mark-green: fade(var(--tertiary), 40%);
+  --background-information: fade(var(--primary), 10%);
+  --background-warning: fade(var(--error_container), 10%);
+  --background-critical: fade(var(--error), 10%);
+  --background-success: fade(var(--tertiary), 10%);
+  --border-primary: var(--surface_container_high);
+  --border-secondary: var(--surface_container);
+  --button-primary-default: var(--on_surface);
+  --button-primary-hover: var(--on_surface_variant);
+  --button-primary-active: var(--outline);
+  --button-primary-inactive: var(--on_surface);
+  --button-secondary-default: var(--surface_container_high);
+  --button-secondary-hover: var(--surface_container);
+  --button-secondary-active: var(--outline);
+  --button-secondary-inactive: var(--surface_container_high);
+  --button-secondary-border-focus: var(--primary);
+  --button-secondary-border-red: var(--error);
+  --button-secondary-border-red-focus: var(--error_container);
+  --icon-primary: var(--on_surface);
+  --icon-secondary: var(--on_surface_variant);
+  --icon-information: var(--primary);
+  --icon-warning: var(--secondary_container);
+  --icon-critical: var(--error_container);
+  --icon-success: var(--tertiary);
+  --accent-primary: var(--primary);
+  --accent-primary-engage: fade(var(--primary), 10%);
+  --accent-secondary: var(--primary);
+  --accent-tertiary: fade(saturate(var(--primary), 10%), 10%);
+  --shadow-01: 0 1px 2px fade(var(--on_surface), 20%);
+  --shadow-02: 0 1px 6px fade(var(--on_surface), 20%);
+  --focus-01: 0 0 0 3px fade(var(--on_surface), 50%);
+  --field-focus-border: var(--on_surface);
+  --code-background-inline: var(--surface);
+  --code-background-block: var(--surface);
+  --notecard-link-color: var(--on_surface);
+  --scrollbar-bg: transparent;
+  --scrollbar-color: hsla(0, 0%, 100%, 0.25);
+  --category-color: var(--primary_fixed);
+  --category-color-background: fade(var(--primary_fixed), 40%);
+  --code-color: lighten(var(--primary_fixed), 10%);
+  --mark-color: darken(var(--primary_fixed), 30%);
+  --plus-accent-color: var(--error_container);
+  --html-accent-color: var(--error);
+  --css-accent-color: var(--primary_container);
+  --js-accent-color: var(--secondary);
+  --http-accent-color: var(--tertiary);
+  --apis-accent-color: var(--primary);
+  --learn-accent-color: var(--secondary);
+  --plus-code-color: saturate(var(--error_container), 10%);
+  --html-code-color: saturate(var(--error), 10%);
+  --css-code-color: saturate(var(--primary_container), 10%);
+  --js-code-color: saturate(var(--secondary), 10%);
+  --http-code-color: saturate(var(--tertiary), 10%);
+  --apis-code-color: saturate(var(--primary), 10%);
+  --learn-code-color: saturate(var(--secondary), 10%);
+  --plus-mark-color: darken(var(--error_container), 30%);
+  --html-mark-color: darken(var(--error), 30%);
+  --css-mark-color: darken(var(--primary_container), 30%);
+  --js-mark-color: darken(var(--secondary), 30%);
+  --http-mark-color: darken(var(--tertiary), 30%);
+  --apis-mark-color: darken(var(--primary), 30%);
+  --learn-mark-color: darken(var(--secondary), 30%);
+  --plus-accent-background-color: fade(var(--error_container), 30%);
+  --html-accent-background-color: fade(var(--error), 30%);
+  --css-accent-background-color: fade(var(--primary_container), 30%);
+  --js-accent-background-color: fade(var(--secondary), 30%);
+  --http-accent-background-color: fade(var(--tertiary), 30%);
+  --apis-accent-background-color: fade(var(--primary), 30%);
+  --learn-accent-background-color: fade(var(--secondary), 30%);
+  --plus-accent-engage: fade(var(--error_container), 70%);
+  --html-accent-engage: fade(var(--error), 70%);
+  --css-accent-engage: fade(var(--primary_container), 70%);
+  --js-accent-engage: fade(var(--secondary), 70%);
+  --http-accent-engage: fade(var(--tertiary), 70%);
+  --apis-accent-engage: fade(var(--primary), 70%);
+  --learn-accent-engage: fade(var(--secondary), 70%);
+  --modal-backdrop-color: fade(var(--surface), 70%);
+  --selection-background-color: fade(var(--surface_container_high), 60%);
+  --text-primary-red: var(--error);
+  --text-primary-green: var(--tertiary);
+  --text-primary-blue: var(--primary);
+  --text-primary-yellow: var(--secondary);
+  --collections-link: var(--secondary_container);
+  --collections-header: darken(var(--error), 30%);
+  --collections-mandala: darken(var(--error), 20%);
+  --collections-icon: darken(var(--error), 10%);
+  --updates-link: var(--primary_fixed);
+  --updates-header: var(--surface);
+  --updates-mandala: lighten(var(--primary_fixed), 10%);
+  --updates-icon: var(--primary_fixed);
+  --ai-help-link: var(--tertiary);
+  --ai-help-header: var(--surface);
+  --ai-help-mandala: lighten(var(--tertiary), 10%);
+  --ai-help-icon: var(--tertiary);
+  --form-limit-color: var(--outline);
+  --form-limit-color-emphasis: var(--outline_variant);
+  --form-invalid-color: var(--error);
+  --form-invalid-focus-color: var(--secondary_container);
+  --form-invalid-focus-effect-color: fade(var(--secondary_container), 20%);
+  --baseline-high-bg: hsl(
+    hue(var(--tertiary)),
+    saturation(var(--tertiary)),
+    lightness(var(--surface_container_low))
+  );
+  --baseline-high-engine-bg: hsl(
+    hue(var(--tertiary)),
+    saturation(var(--tertiary)),
+    lightness(var(--surface_container_lowest))
+  );
+  --baseline-high-check: var(--tertiary);
+  --baseline-low-bg: hsl(hue(var(--primary)), saturation(var(--primary)), lightness(var(--surface_container_low)));
+  --baseline-low-engine-bg: hsl(
+    hue(var(--primary)),
+    saturation(var(--primary)),
+    lightness(var(--surface_container_lowest))
+  );
+  --baseline-low-check: var(--primary);
+  --baseline-low-pill-bg: var(--primary_container);
+  --baseline-low-pill-color: var(--surface_container_lowest);
+  --baseline-limited-bg: var(--surface_container_low);
+  --baseline-limited-engine-bg: var(--surface_container_lowest);
+  --baseline-limited-check: var(--tertiary);
+  --baseline-limited-cross: var(--secondary_container);
+}
+
+@-moz-document domain("developer.mozilla.org") {
+
+  .light {
+  }
+
+  .dark {
+  }
+
+  /* stylelint-disable selector-not-notation */
+  :root:not(.light):not(.dark) {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+  /* stylelint-enable selector-not-notation */
+}
+
+@-moz-document domain("interactive-examples.mdn.mozilla.net") {
+  .theme-light {
+  }
+  .theme-dark {
+  }
+
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+}

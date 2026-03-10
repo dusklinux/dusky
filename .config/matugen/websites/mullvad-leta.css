@@ -1,0 +1,117 @@
+/* ==UserStyle==
+@name Mullvad Leta Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/mullvad-leta
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/mullvad-leta
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/mullvad-leta/catppuccin.user.less
+@description Soothing pastel theme for Mullvad Leta
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("leta.mullvad.net") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    &, svelte-css-wrapper > * {
+      --blue: var(--surface_container_lowest);
+      --blue-dark: var(--surface);
+      --blue-link: var(--surface_container);
+      --blue-link--hover: var(--surface_container_high);
+      --text-link: var(--primary);
+
+      --border-color: var(--primary);
+      --bg-color-checked: var(--surface_container_low);
+      --bg-color-hover: var(--surface_container);
+      --divider-color: var(--surface_container);
+      --focus-outline-color: var(--primary);
+
+      --color-text: var(--on_surface);
+      --color-icon: var(--on_surface);
+      --chevron-color: var(--on_surface);
+      --icons-color: var(--on_surface);
+      --input-color: var(--on_surface);
+      --placeholder-color: var(--on_surface);
+
+      --border: 1px solid var(--surface_container_low);
+      --border-hover: 1px solid var(--surface_container_high);
+      --border-focused: 1px solid var(--surface_container_high);
+      --clear-select-focus-outline: 1px solid var(--primary);
+
+      --background: var(--surface_container_lowest);
+      --list-background: var(--surface_container_lowest);
+      --disabled-background: var(--surface_container_low);
+      --disabled-border-color: var(--surface_container_low);
+      --form-control-disabled: var(--outline);
+
+      --item-color: var(--on_surface);
+      --item-hover-bg: var(--surface_container_low);
+      --item-hover-color: var(--on_surface);
+      --item-is-active-bg: var(--surface_container);
+      --item-is-active-color: var(--on_surface);
+      --selected-item-color: var(--on_surface);
+
+      --grey-dark: var(--surface_container);
+      --success: var(--tertiary);
+      --warning: var(--secondary);
+      --danger: var(--error);
+      --tag-danger-background: var(--error);
+      --tag-danger-color: var(--surface_container_lowest);
+    }
+
+    .results {
+      /* favicons */
+      .icon-wrapper {
+        background-color: var(--surface);
+      }
+
+      /* urls */
+      cite {
+        color: var(--on_surface_variant);
+      }
+    }
+
+    /* search query and engines */
+    input[name="q"],
+    .radio-group label {
+      color: var(--on_surface) !important;
+    }
+
+    img[src="/mullvad-vpn-logo.svg"] {
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 252" xml:space="preserve"><path d="M0 126c0 69.6 56.5 126 126 126s126-56.4 126-126S195.6 0 126 0 0 56.4 0 126" fill-rule="evenodd" clip-rule="evenodd" fill="transparent"/><path d="M23.9 96.6 16.8 111l9.6-13.4c0 .1-.6 19.3-.6 19.3l2.7-14.5c7.2 13.7 23.1 34.8 45.4 50.5 1.7 1.2 3.9 3.3 4.6 4.1 0 0 21.3 10.8 54.1-14.2.3-.2.7-.4 1-.6l.5.3 7.2 4.8c-2.5-.7-7.3-1.9-7.3-1.9-15.8 18.2-41.5 21.2-55.3 12-.6-.4-4 1-4.6 3-.4 1.1 0 2.3.5 3.2 2.8 5.2 7 4.7 5 10.8-1.4 3.3-3.4 6.5-5.6 9.5-4.6 6.2-11.8 11.7-11.1 15 32.6 40.2 106.1 34.6 134.1-1.3-.4-5.2-8.6-7.7-14.3-20.4 1.6.5 4 1.2 4 1.1s-6.8-11.1-7.1-12.2l4.4.3s-5.8-7.2-6-7.9l5.9-.8s-7.4-8.5-7.5-9.2l7.5 1.2-8.2-9.9h3.9l-4.6-6.7-37.3-14.7c-14.3-8.9-27-19.8-36.6-28.2l-19.3-9.4C63.3 79.4 46 79.9 35.4 82l6.8-11.6-9.9 11.8c-.6-.2-1.3-.4-1.3-.4l.7-15-3.3 14z" fill-rule="evenodd" clip-rule="evenodd" fill="@{peach}"/><path d="M28.4 80.8c-4.9-2.3-10.6 1-11.6 5.5-1.2 4.3 1.8 9.6 7.1 10.3 5-3.1 9.3-11.1 4.5-15.8" fill-rule="evenodd" clip-rule="evenodd" fill="@{rosewater}"/><path d="M101.2 69.9c-1.5-4.1-1.1-9.4 1-14.4 3-6.9 8.7-11.5 14.1-11.5 1.1 0 2.1.2 3.1.6 3.1-2.8 6.7-5.1 10.7-6.7 22-8.8 54.3 6.9 62.6 28.5 4 10.5 2.8 21.9-.6 32.4-2.8 8.6-13 21-9.2 30.3-1.5-.4-32.8-11-41.8-15.8-14.1-8.8-26.7-19.6-36.2-27.9l-.3-.3-32-15.2c-.4-.2-.8-.4-1.1-.6 4.4.2 21.9 2.3 29.7.6" fill-rule="evenodd" clip-rule="evenodd" fill="@{accent}"/><ellipse transform="rotate(-66.378 113.803 60.409)" cx="113.8" cy="60.4" rx="13.6" ry="8.1" fill="#f3f3f3"/><path d="M120.1 46.1c-5.3-2.3-12.4 2.2-15.9 10.1s-1.9 16.1 3.4 18.5c5.3 2.3 12.4-2.2 15.9-10.1s1.9-16.1-3.4-18.5m.5 17.3c-2.8 6.3-8.1 10.1-11.8 8.5-3.8-1.7-4.6-8.1-1.8-14.5 2.8-6.3 8.1-10.1 11.9-8.5 3.7 1.7 4.5 8.2 1.7 14.5" fill="transparent"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    a {
+      color: var(--on_surface);
+
+      /* anchors */
+      &[href^="#"]::before {
+        color: var(--outline_variant);
+      }
+    }
+
+    /* tooltips */
+    button:not([disabled])[aria-label] {
+      &:focus::after, &:hover::after {
+        color: var(--on_surface);
+      }
+    }
+
+    footer a {
+      color: var(--on_surface);
+    }
+  }
+}

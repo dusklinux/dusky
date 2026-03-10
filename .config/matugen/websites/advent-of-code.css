@@ -1,0 +1,205 @@
+/* ==UserStyle==
+@name Advent Of Code Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/advent-of-code
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/advent-of-code
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/advent-of-code/catppuccin.user.less
+@description Soothing pastel theme for Advent Of Code
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("adventofcode.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+:root {
+}
+
+    body {
+      background: var(--surface_container_lowest);
+      color: var(--on_surface);
+
+      header h1 a,
+      header h1 span {
+        color: var(--tertiary);
+        text-shadow: 0 0 2px var(--tertiary), 0 0 5px var(--tertiary);
+      }
+
+      a {
+        color: var(--tertiary);
+      }
+
+      .star-count {
+        color: var(--secondary);
+      }
+
+      .quiet {
+        color: var(--on_surface_variant);
+        opacity: 1;
+      }
+
+      .share,
+      .share:hover,
+      input[type="submit"] {
+        color: var(--tertiary);
+      }
+
+      main {
+        article {
+          em {
+            color: var(--on_surface);
+            text-shadow: 0 0 5px var(--on_surface);
+          }
+
+          h2 {
+            color: var(--on_surface);
+          }
+
+          input[type="radio"]:checked ~ span,
+          input[type="checkbox"]:checked ~ span {
+            color: var(--on_surface);
+          }
+
+          input[type="radio"] ~ span:hover,
+          input[type="radio"] ~ span:focus,
+          input[type="checkbox"]:hover ~ span,
+          input[type="checkbox"]:focus ~ span {
+            background-color: var(--surface);
+          }
+        }
+        .supporter-badge {
+          color: var(--secondary);
+        }
+
+        .supporter-badge:hover {
+          color: var(--secondary);
+          text-shadow: 0 0 5px var(--secondary);
+        }
+
+        .sponsor-badge {
+          color: var(--primary);
+        }
+
+        .sponsor-badge:hover,
+        .sponsor-badge:focus {
+          color: var(--primary);
+          text-shadow: 0 0 5px var(--primary);
+        }
+
+        .leaderboard-entry {
+          .leaderboard-position {
+            color: var(--on_surface);
+          }
+          .leaderboard-totalscore {
+            color: var(--on_surface);
+          }
+        }
+
+        .leaderboard-daylinks-selected {
+          color: var(--on_surface);
+          text-shadow: 0 0 5px var(--on_surface);
+        }
+
+        .leaderboard-daylinks-selected:hover {
+          color: var(--tertiary);
+        }
+
+        .leaderboard-anon {
+          opacity: 1;
+          color: var(--on_surface_variant);
+        }
+        .calendar {
+          .calendar-color-w {
+            color: var(--on_surface);
+          }
+          .calendar-color-s {
+            color: var(--secondary);
+          }
+          .calendar-color-c {
+            color: var(--on_surface);
+          }
+          .calendar-color-g3 {
+            color: darken(var(--tertiary), 3%);
+          }
+          .calendar-color-g2 {
+            color: var(--tertiary);
+          }
+          .calendar-color-g4 {
+            color: darken(var(--tertiary), 3.5%);
+          }
+          .calendar-color-u {
+            color: var(--primary_fixed);
+          }
+          .calendar-color-a {
+            color: var(--on_surface_variant);
+          }
+          .calendar-color-g1 {
+            color: darken(var(--tertiary), 2.5%);
+          }
+          .calendar-color-g0 {
+            color: darken(var(--tertiary), 2%);
+          }
+          .calendar-color-l {
+            color: var(--error);
+          }
+          .calendar-mark-complete {
+            color: var(--secondary);
+          }
+          .calendar-mark-verycomplete {
+            color: var(--secondary);
+          }
+          .calendar-day {
+            color: var(--on_surface);
+          }
+          #calendar-countdown {
+            color: var(--on_surface);
+          }
+
+          span {
+            color: var(--surface_container_low);
+          }
+
+          a {
+            color: var(--surface_container_high);
+          }
+        }
+
+        .day-success {
+          color: var(--secondary);
+          text-shadow: 0 0 5px var(--secondary);
+        }
+
+        .stats-both {
+          color: var(--secondary);
+        }
+
+        .stats-firstonly {
+          color: var(--outline);
+        }
+
+        a:hover {
+          background-color: var(--surface) !important;
+        }
+
+        input[type="text"],
+        textarea,
+        code::before {
+          border-color: var(--surface_container_low);
+          background: var(--surface);
+        }
+      }
+    }
+  }
+}

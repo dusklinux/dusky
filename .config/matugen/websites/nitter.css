@@ -1,0 +1,148 @@
+/* ==UserStyle==
+@name Nitter Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/nitter
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/nitter
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/nitter/catppuccin.user.less
+@description Soothing pastel theme for Nitter
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("nitter.net"),
+  domain("nitter.unixfox.eu"),
+  domain("nitter.42l.fr"),
+  domain("nitter.fdn.fr"),
+  domain("nitter.1d4.us"),
+  domain("nitter.kavin.rocks"),
+  domain("nitter.namazso.eu"),
+  domain("nitter.hu"),
+  domain("bird.trom.tf"),
+  domain("nitter.it"),
+  domain("twitter.censors.us"),
+  domain("nitter.grimneko.de"),
+  domain("n.hyperborea.cloud"),
+  domain("nitter.ca"),
+  domain("twitter.076.ne.jp"),
+  domain("nitter.mstdn.social"),
+  domain("nitter.fly.dev"),
+  domain("nitter.weiler.rocks"),
+  domain("nitter.sethforprivacy.com"),
+  domain("nttr.stream"),
+  domain("nitter.tiekoetter.com"),
+  domain("nitter.spaceint.fr"),
+  domain("nitter.privacy.com.denitter.mastodon.pro"),
+  domain("nitter.notraxx.chnitter.poast.org"),
+  domain("nitter.bird.froth.zone"),
+  domain("nitter.dcs0.hu"),
+  domain("twitter.beparanoid.de"),
+  domain("n.ramle.be"),
+  domain("nitter.cz"),
+  domain("nitter.privacydev.net"),
+  domain("tweet.lambda.dance"),
+  domain("nitter.kylrth.com"),
+  domain("nitter.oishi-ra.men"),
+  domain("nitter.foss.wtf"),
+  domain("nitter.priv.pw"),
+  domain("t.com.sb"),
+  domain("xcancel.com"),
+  domain("nitter.poast.org") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+:root {
+}
+
+    body {
+      --bg_color: var(--surface);
+      --fg_color: var(--on_surface);
+      --fg_faded: var(--on_surface);
+      --fg_dark: var(--primary);
+      --fg_nav: var(--primary);
+      --bg_panel: var(--surface);
+      --bg_elements: var(--surface_container_lowest);
+      --bg_overlays: var(--surface_container_lowest);
+      --bg_hover: var(--surface);
+      --grey: var(--on_surface);
+      --dark_grey: var(--outline);
+      --darker_grey: var(--surface_container_lowest);
+      --darkest_grey: var(--surface);
+      --border_grey: var(--surface_container_lowest);
+      --accent: var(--primary);
+      --accent_light: lighten(var(--primary), 10%);
+      --accent_dark: darken(var(--primary), 10%);
+      --accent_border: darken(var(--primary), 10%);
+      --play_button: var(--primary);
+      --play_button_hover: var(--primary);
+      --more_replies_dots: darken(var(--primary), 10%);
+      --error_red: var(--error);
+      --verified_blue: var(--primary);
+      --icon_text: var(--on_surface);
+      --tab: var(--on_surface);
+      --tab_selected: var(--primary);
+      --profile_stat: var(--on_surface);
+      --verified_government: var(--on_surface_variant);
+      --verified_business: var(--secondary);
+      background-color: var(--bg_color);
+      color: var(--fg_color);
+      line-height: 1.3;
+      margin: 0;
+    }
+
+    /* logo */
+    img.site-logo {
+        '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500" fill="none"><path stroke="@{accent}" stroke-linejoin="round" stroke-width="20" d="M145 41H81v418h78V183.5L355 459h64V41h-78v275.5z"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    /* Fix Poll Leader color */
+    .poll-meter.leader {
+      color: var(--bg_color);
+    }
+
+    /* xcancel "verifying your request" */
+    [style="background-color:#1f1f1f;color:#1f1f1f;font-family:Arial,Helvetica,sans-serif;font-size:100%;"] {
+      background: var(--surface_container_lowest) !important;
+      h1,
+      h2,
+      p,
+      #status {
+        color: var(--primary) !important;
+      }
+      [style="width:auto;margin:16px auto;border:1px solid #FF6C60;background-color:#1f1f1f;border-radius:3px 3px 3px 3px;padding:10px;"] {
+        background: var(--surface_container_lowest) !important;
+        border-color: var(--primary) !important;
+      }
+    }
+
+    /* error text color contrast */
+    .error-panel {
+      color: var(--surface);
+      a {
+        color: var(--surface);
+        text-decoration: underline;
+      }
+    }
+
+    /* twitter blue verification checkmark contrast */
+    .verified-icon.blue {
+      color: var(--surface);
+    }
+  }
+}
+
+#rgbify(@color) {
+  @rgb: red(@color) green(@color) blue(@color);
+}

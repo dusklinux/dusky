@@ -1,0 +1,111 @@
+/* ==UserStyle==
+@name Raindrop Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/raindrop
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/raindrop
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/raindrop/catppuccin.user.less
+@description Soothing pastel theme for Raindrop
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("app.raindrop.io") {
+  [data-theme="night"] {
+  }
+  [data-theme="day"],
+  [data-theme="sunset"] {
+  }
+
+  // theme selector previews
+  [class^="theme-"] {
+    &[data-index="0"],
+    &[data-index="2"] > [class^="main-"],
+    &[data-index="3"] {
+    }
+    &[data-index="1"],
+    &[data-index="2"] > [class^="sidebar-"] {
+    }
+  }
+
+
+    &,
+    [data-theme] {
+      --background-color: var(--surface_container_lowest);
+      --disable-background-color: var(--surface);
+      --disable-text-color: var(--outline_variant);
+      --accent-color: var(--primary);
+      --alternative-background-color: var(--surface);
+      --sidebar-background-color: var(--surface);
+      --hover-background-color: fade(var(--outline), 20%);
+      --active-background-color: var(--surface_container);
+      --primary-text-color: var(--on_surface);
+      --secondary-text-color: var(--on_surface_variant);
+      --shadow-color: fade(var(--on_surface), 10%);
+      --shadow-light-color: fade(var(--on_surface), 10%);
+      --danger-color: var(--error);
+      --important-color: var(--error);
+      --success-color: var(--tertiary);
+      --highlights-color: var(--primary);
+      --reminder-color: var(--secondary_container);
+      --note-color: var(--secondary);
+      --article-color: var(--secondary_container);
+      --audio-color: var(--primary);
+      --document-color: var(--on_surface_variant);
+      --book-color: var(--surface_container_high);
+      --image-color: var(--tertiary);
+      --video-color: var(--primary);
+      --broken-color: var(--error_container);
+      --duplicate-color: var(--primary_container);
+      --tag-color: var(--on_surface_variant);
+      --filter-color: var(--on_surface_variant);
+
+      [data-variant="active"] {
+        background: fade(var(--primary), 10%) !important;
+      }
+      // bookmark edit page header
+      [class^="header-"][data-fancy="true"] {
+        background: linear-gradient(
+          to bottom,
+          var(--background-color) 30%,
+          fade(var(--surface_container_lowest), 60%) 100%
+        );
+      }
+      // bookmark edit page cover selector
+      [class^="cover-"] > [class^="more-"] {
+        background: fade(var(--primary), 85%);
+      }
+      // add bookmark button text color
+      [title="Add Bookmark"] {
+        color: var(--surface_container_lowest);
+      }
+      // disabled add bookmark button
+      [class^="button-"][data-variant="primary"][disabled] {
+        filter: none;
+        opacity: 100%;
+        background: var(--outline);
+        color: var(--surface);
+      }
+      // dropping bookmark to collection color overlay
+      [class*="isDropping-"] {
+        background-color: fade(var(--primary), 10%);
+      }
+      // sidebar background color
+      .svSidebar {
+        background: var(--sidebar-background-color);
+      }
+      color: var(--on_surface);
+    }
+    // google login button
+    [href^="https://api.raindrop.io/v1/auth/google"] > span {
+      color: var(--on_surface);
+    }
+
+    // todo: recolor "Colors circle" icons using custom images (like the chess.com theme)
+  }
+}

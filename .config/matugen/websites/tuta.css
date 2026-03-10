@@ -1,0 +1,171 @@
+/* ==UserStyle==
+@name Tuta Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/tuta
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/tuta
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/tuta/catppuccin.user.less
+@description Soothing pastel theme for Tuta
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("app.tuta.com"), domain("mail.tutanota.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    body,
+    drawer-menu,
+    .list-bg {
+      background-color: var(--surface) !important;
+      color: var(--on_surface);
+    }
+
+    .list-row {
+      background-color: var(--surface_container_lowest);
+    }
+    .odd-row {
+      background-color: var(--surface_container_low);
+    }
+
+    .header-nav {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .elevated-bg,
+    .folder-column,
+    div[aria-modal] {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .icon {
+      &[style*="fill: rgb(78, 78, 78);"] {
+        fill: var(--on_surface) !important;
+      }
+
+      &[style*="fill: rgb(174, 174, 174);"] {
+        fill: var(--on_surface_variant) !important;
+      }
+
+      &[style*="fill: rgb(255, 83, 83);"] {
+        fill: var(--primary) !important;
+      }
+    }
+
+    .h2 {
+      color: var(--on_surface) !important;
+    }
+
+    .bottom-nav {
+      background: var(--surface) !important;
+      color: var(--on_surface) !important;
+    }
+
+    .dropdown-button,
+    .dropdown-button div {
+      color: var(--on_surface) !important;
+    }
+    .dropdown-button:hover {
+      background-color: var(--surface_container) !important;
+    }
+
+    /* logo */
+    path[style*="fill: #00d2a7;"] {
+      fill: var(--primary) !important;
+    }
+
+    path[style*="fill: #c5c7c7;"] {
+      fill: var(--on_surface) !important;
+    }
+
+    .row-selected {
+      border-color: var(--primary) !important;
+      color: var(--primary) !important;
+    }
+    .row-selected > .nav-button {
+      color: var(--primary) !important;
+
+      > .icon {
+        fill: var(--primary) !important;
+      }
+    }
+
+    .secondary {
+      color: var(--primary) !important;
+    }
+
+    .nav-button,
+    .sidebar-section.mb {
+      color: var(--on_surface_variant) !important;
+    }
+
+    .bubble {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    :where(.mouse-nav) .state-bg:hover,
+    :where(.keyboard-nav) .state-bg:hover,
+    [style*="background: rgba(139, 139, 139, 0.22)"] {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .nav-bg,
+    .content-bg,
+    [style*="background-color: rgb(35, 35, 35)"] {
+      background-color: var(--surface_container_lowest) !important;
+    }
+    [style*="background-color: rgb(17, 17, 17);"] {
+      background-color: var(--surface) !important;
+    }
+    [style*="background-color: rgba(139, 139, 139, 0.22);"] {
+      background-color: var(--surface_container_low) !important;
+    }
+    [style*="background-color: rgba(139, 139, 139, 0.38);"] {
+      background-color: var(--surface_container) !important;
+    }
+
+    [style*="color: rgb(221, 221, 221);"] {
+      color: var(--on_surface) !important;
+    }
+
+    [style*="color: rgb(174, 174, 174);"] {
+      color: var(--on_surface) !important;
+    }
+
+    .teamLabel {
+      background-color: var(--primary);
+      color: var(--surface);
+    }
+
+    [style*="border: 2px solid rgb(255, 83, 83);"] {
+      border-color: var(--primary) !important;
+    }
+    [style*="color: rgb(255, 83, 83);"],
+    .content-accent-fg {
+      color: var(--primary) !important;
+    }
+
+    button.expander {
+      color: var(--on_surface_variant) !important;
+    }
+
+    .logo-height > svg:nth-child(1) > path:nth-child(2) {
+      fill: var(--primary) !important;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background-color: var(--surface_container);
+    }
+  }
+}

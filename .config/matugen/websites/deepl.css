@@ -1,0 +1,291 @@
+/* ==UserStyle==
+@name DeepL Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/deepl
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/deepl
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/deepl/catppuccin.user.less
+@description Soothing pastel theme for DeepL
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document regexp("https:\\/\\/www.deepl.com\\/?(.*\\/)translator.*$") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    /* header */
+    .BasePageHeader-module--container--d81cb {
+      background-color: var(--surface) !important;
+    }
+
+    /* background */
+:root {
+}
+
+    body {
+      background-color: var(--surface_container_lowest) !important;
+      color: var(--on_surface) !important;
+    }
+
+    .bg-neutral-next-50,
+    .bg-white,
+    .contextual-menu-dragging-area,
+    input {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .pageFooterV2-module--footerOuterContainer--0b055 {
+      background-color: var(--surface) !important;
+    }
+
+    .scrollablePopiverListRoot-module--root--588fe {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    /* text color */
+    h1,
+    h2,
+    h3,
+    h4,
+    p,
+    a,
+    button,
+    span,
+    input,
+    ul,
+    li,
+    .mb-3,
+    .mb-4,
+    .GlossaryModalWithIllustration-module--content--2bf03,
+    .lmt__glossary_editor_glossaryName {
+      color: var(--on_surface) !important;
+    }
+
+    .text-neutral-next-600 {
+      color: var(--on_surface_variant) !important;
+    }
+
+    /* privacy notice */
+    .cookieBanner-module--container--9baef {
+      background-color: var(--surface_container_low) !important;
+      color: var(--on_surface) !important;
+    }
+
+    .button-module--button--4f58d.button-module--color_primaryAlt3--cd3cf {
+      border-color: var(--on_surface) !important;
+    }
+
+    /* side menu */
+    .classicSidemenu-module--menuContainer--35157 {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    /* borders */
+    .border-black {
+      border-color: var(--surface_container_high) !important;
+    }
+
+    .border-neutral-next-100,
+    .StartFreeTrialButton-module--startFreeTrialButton--bd671 {
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .divide-y > :not([hidden]) ~ :not([hidden]) {
+      border-color: var(--surface_container_lowest);
+    }
+
+    .TranslatorTab-module--active--0b6ea
+      .TranslatorTab-module--innerLower--8a080 {
+      background-color: var(--primary) !important;
+    }
+
+    .ring-neutral-next-900 {
+      --tw-ring-color: var(--surface_container_high);
+    }
+
+    .border-neutral-next-900 {
+      border-color: var(--surface_container_high) !important;
+    }
+
+    input {
+      border-color: var(--surface_container_low) !important;
+    }
+
+    /* hover */
+    button:hover,
+    .bg-blue-next-500:hover {
+      background-color: var(--surface_container) !important;
+    }
+
+    a:hover {
+      background-color: var(--surface) !important;
+    }
+
+    .FlyoutMenuButton-module--flyoutMenuButton--97ae6:hover {
+      background-color: var(--surface) !important;
+    }
+
+    [class*="SourceTranslatorArea-module--focusBorder--"]:has(
+      div[contenteditable="true"]:focus
+    ) {
+      border-color: var(--primary);
+    }
+
+    [class*="PageHeaderLink-module--pageHeaderLink--"]:not(
+      [class*="PageHeaderLink-module--nohover--"]
+    ):hover {
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    .hover\:bg-\[\#B4DAE8\]:hover {
+      background-color: var(--surface_container_high) !important;
+    }
+
+    /* highlight */
+    .bg-\[\#E1F0F5\] {
+      background-color: var(--surface_container) !important;
+    }
+
+    /* buttons */
+    .TranslatorTab-module--cardButton--4b203,
+    .bg-\[\#EDF8FC\] {
+      background-color: var(--surface_container_low) !important;
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .StartFreeTrialButton-module--startFreeTrialButton--bd671,
+    .bg-blue-next-50 {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .bg-blue-next-500 {
+      background-color: var(--surface_container_low);
+      border-color: var(--surface_container_low);
+    }
+
+    .LanguageSelector-module--wrapper--f9f17 {
+      --button-background: var(--surface_container_low) !important;
+      --button-border-color: var(--surface_container_low) !important;
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .CareerBanner-module--container--2ac20 {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    /* glossary button */
+    .lmt__glossaryButton,
+    .lmt__glossaryButton__desktop:hover,
+    .ModalDialogContent-module--content--5751e {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .lmt__glossary_acceptButton,
+    .lmt__glossary_editor,
+    .lmt__glossary_editor_subBar_top,
+    .lmt__glossary_editor_subBar_bottom,
+    .lmt__glossary_editor_mainBar,
+    .Select-module--wrapper--53ec7 .Select-module--flyout--c91f3,
+    .lmt_firstEntry-content,
+    .lmt__glossary_newEntry_langButton,
+    .Select-module--wrapper--53ec7,
+    .Select-module--button--f032e {
+      background-color: var(--surface_container_low) !important;
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .desktop-glossary-overwrites .lmt__language_select__menu {
+      background-color: var(--surface_container_low) !important;
+      color: var(--on_surface) !important;
+    }
+
+    .lmt__glossary_newEntry_langDropdown.lmt__language_select__menu
+      button
+      .langName {
+      color: var(--on_surface) !important;
+    }
+
+    /* pro banner */
+    .ProBanner2021-module--wrapper--c7e3d,
+    .p-8 {
+      background: var(--surface_container_lowest) !important;
+    }
+
+    /* some button colors */
+    .badge-module--badge--c9ebe.badge-module--proDark--a4d4e {
+      background-color: var(--tertiary);
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .button-module--button--a854e.button-module--color_secondary--f171e {
+      background-color: var(--secondary_container);
+      border-color: var(--secondary_container) !important;
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .button-module--button--a854e.button-module--variant_outline--b937c {
+      background-color: var(--surface_container_low) !important;
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .button-module--button--a854e.button-module--color_primary--bfa59 {
+      background-color: var(--primary) !important;
+      border-color: var(--primary) !important;
+      color: var(--surface_container_lowest) !important;
+    }
+
+    /* dropdowns */
+    .ProductUpdatesContainer-module--updateContainer--16394,
+    .ProductUpdateFooter-module--updateFooter--b46f0,
+    .LanguageSelector-module--flyout--6bfe6 {
+      background-color: var(--surface_container_lowest) !important;
+      border-color: var(--surface_container_low) !important;
+    }
+
+    /* allow mic/get extension prompt */
+    .bg-neutral-next-900,
+    .bg-blue-next-800 {
+      background-color: var(--surface_container_low) !important;
+      color: var(--on_surface) !important;
+    }
+
+    /* icons, svgs and images */
+    svg {
+      color: var(--on_surface) !important;
+    }
+
+    .lmt__glossary_ad_checkmark,
+    .lmt__glossary_arrowDown {
+      border-color: var(--on_surface) !important;
+    }
+
+    path,
+    .DeeplLogoText-module--logoText--34a4f,
+    .ProBanner2021-module--lockitem--febe3,
+    .FlyoutMenuButton-module--flyoutMenuButton--97ae6::after,
+    #top-navi-sidemenu-opener,
+    .pageFooterV2-module--socialMediaLinks--71305,
+    .ProBanner2021-module--checkitem--2d8e7,
+    [src*="https://static.deepl.com/img/app_desktop.svg"] {
+      filter: var(--on_surface)-filter;
+    }
+
+    .Logo-module--logoImg--1ee7e,
+    .LogoLink-module--logoText--33735,
+    .deeplLogo-module--logo--ffd7a {
+      filter: var(--primary)-filter;
+    }
+  }
+}

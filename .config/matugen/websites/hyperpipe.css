@@ -1,0 +1,69 @@
+/* ==UserStyle==
+@name Hyperpipe Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/hyperpipe
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/hyperpipe
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/hyperpipe/catppuccin.user.less
+@description Soothing pastel theme for Hyperpipe
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("hyperpipe.surge.sh"),
+  domain("hyperpipe.esmailelbob.xyz"),
+  domain("listen.whatever.social"),
+  domain("music.adminforge.de"),
+  domain("music.pfcd.me"),
+  domain("listen.whateveritworks.org"),
+  domain("hyperpipe.frontendfriendly.xyz"),
+  domain("hyperpipe.drgns.space"),
+  domain("hyperpipe.projectsegfau.lt"),
+  domain("hp.ggtyler.dev"),
+  domain("hyperpipe.lunar.icu"),
+  domain("hp.iqbalrifai.eu.org"),
+  domain("hp.ngn.tf"),
+  domain("hyperpipe.ducks.party") {
+:root {
+}
+
+  body {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+  body[data-theme^="light"] {
+  }
+
+  body[data-theme^="dark"],
+  body[data-theme^="black"],
+  body[data-theme^="dracula"],
+  body[data-theme^="nord"] {
+  }
+
+
+    --color-foreground: var(--primary) !important;
+    --color-background: var(--surface_container_lowest) !important;
+    --color-background-soft: var(--surface_container_low) !important;
+    --color-background-mute: var(--surface_container) !important;
+    --color-border: var(--surface_container_low) !important;
+    --color-border-hover: var(--outline) !important;
+    --color-shadow: var(--surface) !important;
+    --color-blur: fade(var(--surface), 45%) !important;
+    --color-gradient: linear-gradient(
+      45deg,
+      var(--primary),
+      fade(var(--primary), 45%)
+    );
+    --color-scrollbar: var(--primary) !important;
+    --color-heading: var(--on_surface) !important;
+    --color-text: var(--on_surface) !important;
+  }
+}

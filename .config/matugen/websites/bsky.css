@@ -1,0 +1,651 @@
+/* ==UserStyle==
+@name Bluesky Social Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/bsky
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/bsky
+@version 2025.10.29
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/bsky/catppuccin.user.less
+@description Soothing pastel theme for Bluesky Social
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("bsky.app") {
+  html.colorMode--system {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+  html.theme--light {
+  }
+  html.theme--dim,
+  html.theme--dark {
+  }
+
+
+    // fix general site background - this applies to the <html> element
+    background-color: var(--surface_container_lowest);
+
+    --text: var(--on_surface);
+    --background: var(--surface_container_lowest);
+    --backgroundLight: var(--surface_container_lowest);
+
+    /* generic text */
+    [style*="color: rgb(255, 255, 255)"],
+    [style*="color: rgb(241, 243, 245)"] //,
+    /* [style*="color: rgb(11, 15, 20)"] this breas on dark */ {
+      color: var(--surface_container_lowest), var(--on_surface)) !important;
+    }
+
+    /* some background color of follow button + hover */
+    [style*="background-color: rgb(241, 243, 245)"] {
+      background-color: var(--surface), var(--on_surface)) !important;
+    }
+
+    [style*="color: rgb(11, 15, 20)"] {
+      color: var(--on_surface), var(--surface)) !important;
+    }
+
+    /* secondary text [contrast_700] */
+    [style*="rgb(165, 178, 197)"], // dark
+    [style*="rgb(171, 184, 201)"], // dim
+    [style*="rgb(84, 110, 138)"],
+    [style*="rgb(66, 87, 108)"] {
+      color: var(--on_surface) !important;
+    }
+
+    // white bottons on the theme/color mode selection in settings
+    div[style*="background-color: rgb(197, 207, 217)"], // dark
+    div[style*="background-color: rgb(201, 210, 219)"], // dim
+    div[style*="background-color: rgb(46, 63, 81)"] // light
+    {
+      background-color: var(--on_surface) !important;
+      > div {
+        color: var(--surface) !important;
+      }
+    }
+
+    /* generic blue inline (e.g. link text, etc) [primary_500] */
+    [style*="color: rgb(0, 106, 255)"], // dark
+    [style*="color: rgb(15, 115, 255)"] // dim
+    {
+      color: var(--primary) !important;
+    }
+    /* generic blue inline underline (links) [primary_500] */
+    [style*="text-decoration-color: rgb(0, 106, 255)"], // dark
+    [style*="text-decoration-color: rgb(15, 115, 255)"] // dim
+    {
+      text-decoration-color: var(--primary) !important;
+    }
+
+    /* generic blue inline bg color (e.g. notification count) [primary_500] */
+    [style*="background-color: rgb(0, 106, 255)"], // dark
+    [style*="background-color: rgb(15, 115, 255)"] // dim
+    {
+      background-color: var(--primary) !important;
+
+      /* notification count contrast fix, also chat message contrast fix (> div) */
+      &[style*="color: rgb(241, 243, 245)"],
+      &[style*="color: rgb(255, 255, 255)"],
+      > div {
+        color: var(--surface) !important;
+      }
+
+      /* icon color fix */
+      path[fill="#ffffff"],
+      path[fill="hsl(211, 20%, 95.3%)"] {
+        fill: var(--surface) !important;
+      }
+    }
+
+    /* sending/pending/failed direct message */
+    [style*="background-color: rgb(1, 64, 132)"] {
+      background-color: fade(var(--primary), 30%) !important;
+    }
+
+    /* a lot of blue things (buttons etc) */
+    .r-wzwllv,
+    div[style*="background-color: rgb(0, 133, 255)"] {
+      background-color: var(--primary) !important;
+
+      /* notification count contrast fix, also chat message contrast fix (> div) */
+      &[style*="color: rgb(241, 243, 245)"],
+      > div {
+        color: var(--surface) !important;
+      }
+    }
+
+    /* subscribe to labeler button */
+    button[data-testid="toggleSubscribeBtn"] {
+      > div {
+        background-color: var(--primary) !important;
+        > div {
+          color: var(--surface) !important;
+        }
+      }
+    }
+
+    /* direct message "failed to send" text */
+    span[style*="color: rgb(205, 10, 55)"] {
+      color: var(--error) !important;
+    }
+
+    /* red button text (delete my account) [negative_500] */
+    [style*="color: rgb(233, 22, 70)"], // dark
+    [style*="color: rgb(235, 36, 82)"] // dim
+    {
+      color: var(--error) !important;
+    }
+
+    /* red button (delete, etc) */
+    button[style*="background-color: rgb(244, 11, 66)"],
+    // dark, light (same color)
+    button[style*="background-color: rgb(246, 60, 103)"], // dark (hover)
+    button[style*="background-color: rgb(245, 41, 88)"], // dim
+    button[style*="background-color: rgb(247, 84, 122)"], // dim (hover)
+    button[style*="background-color: rgb(205, 10, 55)"] // light (hover)
+    {
+      background-color: var(--error) !important;
+      &:hover {
+        background-color: fade(var(--error), 70%) !important;
+      }
+      // text color
+      > div {
+        color: var(--surface) !important;
+      }
+    }
+
+    /* delete account button */
+    [style^="background-color: rgb(79, 3, 20)"] {
+      background-color: var(--error) !important;
+    }
+    path[fill="#fba2b2"] {
+      fill: var(--surface);
+    }
+
+    /* generic background color */
+    [style*="background-color: rgb(255, 255, 255)"],
+    [style*="background-color: rgb(0, 0, 0)"],
+    [style*="background-color: rgb(21, 29, 40)"] // dim
+    {
+      background-color: var(--surface_container_lowest) !important;
+
+        /* fix button colors in latte */
+        [style*="background-color: rgb(0, 0, 0)"] {
+          background-color: var(--on_surface) !important;
+        }
+      }
+    }
+
+    /* secondary background color + sidebar button hover [contrast_25] */
+    [style*="background-color: rgb(17, 24, 34)"], // dark
+    [style*="background-color: rgb(28, 39, 54)"] // dim
+    {
+      background-color: var(--surface) !important;
+    }
+
+    /* secondary background color (when active?) (e.g. search bar, hovering some buttons like cancel) */
+    [style*="background-color: rgb(25, 34, 46)"], // dark
+    [style*="background-color: rgb(34, 46, 63)"] // dim
+    {
+      background-color: var(--surface) !important;
+    }
+
+    /* some sort of tertiary background color with a slight accent */
+    [style*="background-color: rgb(0, 25, 51)"] {
+      background-color: fade(var(--primary), 30%) !important;
+    }
+
+    /* loading circle */
+    circle[style^="stroke: rgb(25, 118, 210)"] {
+      stroke: var(--primary) !important;
+    }
+
+    /* wide site: new post button (w text) */
+    button[style*="background-color: rgb(0, 106, 255)"], // dark
+    button[style*="background-color: rgb(66, 145, 255)"], // dark (hover)
+    button[style*="background-color: rgb(15, 115, 255)"], // dim
+    button[style*="background-color: rgb(77, 151, 255)"] // dim (hover)
+    {
+      background-color: var(--primary) !important;
+      &:hover {
+        background-color: fade(var(--primary), 70%) !important;
+      }
+
+      > div {
+        color: var(--surface) !important;
+      }
+      svg > path {
+        fill: var(--surface) !important;
+      }
+    }
+
+    /* borders */
+    .css-175oi2r {
+      border-color: var(--surface_container_low) !important;
+    }
+
+    /* fix selected tab bottom border issue caused by selector above */
+    .css-175oi2r[style*="border-bottom-color: rgb(0, 106, 255)"] {
+      border-bottom-color: var(--primary) !important;
+    }
+
+    /* fixes the bottom border on tabs (timeline) having a darker color */
+    .r-oucylx {
+      border-bottom-color: var(--surface_container_lowest) !important;
+    }
+
+    /* current selected tab (acc page) !! KEEP THIS BELOW ABOVE DEFINITION !! */
+    [style*="border-color: rgb(255, 255, 255)"] {
+      border-color: var(--primary) !important;
+    }
+
+    /* settings highlight thing */
+    [style="background-color: rgb(38, 39, 45)"] {
+      background-color: var(--surface) !important;
+    }
+
+    /* thin site: bluesky text */
+    .r-yovm8p {
+      color: var(--primary);
+    }
+
+    /* empty profile banner */
+    .r-wuyfte {
+      background-color: var(--primary);
+    }
+
+    /* "invalid handle" warning */
+    [style*="color: rgb(236, 72, 104); border-color: rgb(209, 16, 67)"] {
+      color: var(--error) !important;
+      border-color: var(--error) !important;
+    }
+
+    /* end of feed text */
+    .r-1521r3q {
+      color: var(--outline_variant);
+    }
+
+    /* mobile side drawer */
+    [data-testid="drawer"] {
+      background-color: var(--surface_container_lowest);
+    }
+
+    /* feedback */
+    .r-m7buhn {
+      background-color: var(--primary);
+    }
+
+    /* save, report, post modal button */
+    [data-testid="sendReportBtn"],
+    [data-testid="composerPublishBtn"],
+    [data-testid="editProfileSaveBtn"] {
+      background: unset !important;
+
+      /* "save changes" button in edit profile */
+      > div[style*="background-image: linear-gradient(94.0544deg, rgb(90, 113, 250), rgb(0, 133, 255))"] {
+        background: var(--primary) !important;
+      }
+
+      /* fix contrast issues */
+      > div,
+      > div > div {
+        color: var(--surface) !important;
+      }
+    }
+
+    [data-testid="saveBtn"] {
+      > div[style*="background-image: linear-gradient"] {
+        background: unset !important;
+        background-color: var(--primary) !important;
+        > div {
+          color: var(--surface) !important;
+        }
+      }
+    }
+
+    // toast notifications (e.g. "copied to clipboard")
+    .r-17c3jg3:has(> div[dir="auto"]) {
+      background-color: var(--surface) !important;
+
+      .r-jwli3a {
+        color: var(--on_surface) !important;
+      }
+      > svg > path {
+        fill: var(--on_surface) !important;
+      }
+    }
+
+    /* draft "Discard" button */
+    [style^="background-color: rgb(209, 16, 67)"] {
+      background-color: var(--error) !important;
+    }
+
+    /* Discard draft modal border, bunch of other borders around the app [contrast_100] */
+    [style*="border-color: rgb(35, 46, 62)"], // dark
+    [style*="border-color: rgb(44, 58, 78)"] // dim
+    {
+      border-color: var(--surface_container_high) !important;
+    }
+
+    /* the round gradient post button in the bottom right when the page is thinner than usual */
+    [data-testid="composeFAB"] > div {
+      background: unset !important;
+      background-color: var(--primary) !important;
+
+      // fix contrast (inner symbol)
+      .r-jwli3a {
+        color: var(--surface) !important;
+      }
+    }
+
+    /* blue text only button (e.g. cancel post button) */
+    div[style*="color: rgb(66, 145, 255)"], // dark
+    div[style*="color: rgb(77, 151, 255)"], // dim
+    div[style*="color: rgb(0, 89, 214)"] // latte !! this overlaps with dark. might break?
+    {
+      color: var(--primary) !important;
+    }
+
+    /* text color when writing a post */
+    .ProseMirror,
+    .ProseMirror-dark {
+      color: var(--on_surface);
+    }
+
+    /* some button background color (when hovering) [primary_100] */
+    [style*="background-color: rgb(0, 40, 97)"], // dark
+    [style*="background-color: rgb(18, 52, 100)"], // dim
+    [style*="background-color: rgb(204, 225, 255)"], // latte
+    /* add alt text modal */
+    [style*="background-color: rgb(14, 73, 137)"] {
+      background-color: fade(var(--primary), 30%) !important;
+    }
+
+    /* several white buttons */
+    button[style*="background-color: rgb(255, 255, 255)"] when not(
+    ) {
+      background-color: var(--on_surface) !important;
+    }
+
+    /* the white buttons text */
+    [style*="color: rgb(0, 0, 0)"] {
+      color: var(--on_surface), var(--surface)) !important;
+    }
+
+    /* replace dark fill icons with crust ones */
+    path[fill="#000000"] {
+      fill: var(--on_surface), var(--surface));
+    }
+
+    /* fixes a contrast issue when the suggested follows button is enabled (very ugly selector) */
+    button[data-testid="suggestedFollowsBtn"][style*="background-color: rgb(255, 255, 255)"]
+      > svg
+      > path {
+      fill: var(--surface_container_lowest) !important;
+    }
+
+    /* text inside most buttons */
+    button > div > div[style~="color: rgb(0, 0, 0)"] {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    /* search bar text */
+    [role="search"],
+    [data-testid="confirmCodeInput"] {
+      --placeholderTextColor: var(--on_surface) !important;
+    }
+
+    /* search bar icon (this doesn't actually apply because path fill. keeping anyways) [contrast_500] */
+    svg[style^="color: rgb(102, 123, 153"], // dark
+    svg[style^="color: rgb(111, 131, 159)"] // dim
+    {
+      color: var(--on_surface) !important;
+    }
+
+    /* small icons */
+    path[fill="#FFFFFF"] {
+      fill: var(--on_surface);
+
+        fill: var(--surface_container_lowest);
+      }
+    }
+
+    /* more gray small icons (e.g. search bar icon, icons below posts [contrast_500] */
+    path[fill="#667B99"], // dark
+    path[fill="#6F839F"], // dim
+    [style*="color: rgb(111, 131, 159)"], // dark
+    [style*="color: rgb(111, 131, 159)"] // dim
+    {
+      color: var(--on_surface) !important;
+      fill: var(--on_surface) !important;
+    }
+    /* settings button at the top of the timeline, hashtag button/icon at top of timeline [contrast_600] */
+    path[fill="#8798B0"], // dark
+    path[fill="#8D9DB4"] // dim
+    {
+      fill: var(--on_surface);
+    }
+
+    /* x invite codes available icon */
+    div[style*="background-color: rgb(191, 225, 255)"],
+    div[style*="background-color: rgb(1, 37, 97)"] {
+      background-color: fade(var(--primary), 30%) !important;
+      > svg > path[fill="#52acfe"] {
+        fill: var(--primary);
+      }
+    }
+
+    /* heart/like */
+    .r-84gixx,
+    .r-1i89l9k,
+    div[style*="color: rgb(236, 72, 153)"],
+    button[data-testid="toggleLikeBtn"]
+      > svg:has(path[fill^="hsl(346,"]) // feed like button
+    {
+      color: var(--error) !important;
+      > path {
+        fill: var(--error) !important;
+      }
+    }
+
+    /* repost */
+    .r-5ld2xk,
+    [style*="color: rgb(92, 239, 170)"] {
+      color: var(--tertiary) !important;
+      > path {
+        fill: var(--tertiary) !important;
+      }
+    }
+
+    /* saved icon on post + trending icon */
+    path[fill="#006AFF"], // dark
+    path[fill="#0F73FF"] // dim
+    {
+      fill: var(--primary);
+    }
+
+    /* tiny people icon on post view ("Everybody can reply") */
+    path[fill="hsl(211, 24%, 43.6%)"],
+    /* icon above "you have no lists" */
+    path[fill="hsl(211, 24%, 34.2%)"] {
+      fill: var(--on_surface_variant);
+    }
+
+    /* onboarding: continue/next button */
+    [data-testid="continueBtn"] {
+      background-color: var(--primary) !important;
+    }
+    [data-testid="continueBtn"] > div > div {
+      color: var(--surface_container_lowest) !important;
+    }
+    [data-testid="continueBtn"] > div > svg > path {
+      fill: var(--surface_container_lowest) !important;
+    }
+
+    /* pretty self explanatory, user mentions in the post create modal */
+    .mention {
+      color: var(--primary);
+    }
+
+    /* mentions in the notification tab (highlighted notifications) */
+    div[style*="background-color: rgb(0, 17, 36)"], // dark
+    div[style*="background-color: rgb(21, 41, 63)"], // dim
+    div[style*="background-color: rgb(240, 247, 255)"], // light
+    a[style*="background-color: rgb(0, 17, 36)"], // dark
+    a[style*="background-color: rgb(21, 41, 63)"], // dim
+    a[style*="background-color: rgb(240, 247, 255)"] // light
+    {
+      background-color: fade(var(--primary), 30%) !important;
+      .css-175oi2r:not([role="checkbox"] *) {
+        background-color: transparent !important;
+      }
+    }
+
+    /* generic blue background color inline (used for buttons in notifications tab) */
+    button[style*="background-color: rgb(0, 133, 255)"] {
+      background-color: var(--primary) !important;
+    }
+    /* contrast fix for above */
+    button[style*="background-color: rgb(0, 133, 255)"] > div > div {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    /* miscellaneous lines around the app [contrast_200] */
+    [style*="border-color: rgb(49, 63, 84)"], // dark
+    [style*="border-color: rgb(57, 73, 96)"] // dim
+    {
+      border-color: var(--surface_container) !important;
+    }
+
+    /* other button in notifications tab, inner text */
+    div[style*="color: rgb(82, 172, 254)"] {
+      color: var(--primary) !important;
+    }
+
+    /* "No notifications yet!" text in the notifications tab */
+    div[style*="color: rgb(141, 142, 150)"] {
+      color: var(--on_surface_variant) !important;
+    }
+
+    /* login: wrong password highlight */
+    .r-w7hjet {
+      background-color: var(--error);
+    }
+
+    /* please verify your email popup (green checkmark) */
+    circle[fill="#20BC07"] {
+      fill: var(--tertiary);
+    }
+
+    /* toggle circle */
+    [style*="background-color: rgb(185, 185, 193)"] {
+      background-color: var(--outline_variant) !important;
+    }
+
+    /* skeletons */
+    .r-kdyh1x,
+    .r-cpet4d {
+      &[style*="background-color: rgb(20, 27, 35);"] {
+        background-color: var(--surface_container_low) !important;
+      }
+    }
+
+    /* thread lines */
+    div[style*="background-color: rgb(35, 46, 62)"].r-m5arl1 {
+      background: var(--surface_container) !important;
+    }
+
+    /* character limit progress circle [primary_500] */
+    path[stroke="#006AFF"], // dark
+    path[stroke="#0F73FF"], // dim
+    path[stroke="#006AFF"] // light
+    {
+      stroke: var(--primary) !important;
+    }
+
+    /* bg circle [contrast_100] */
+    path[stroke="#232E3E"], // dark
+    path[stroke="#2C3A4E"], // dim
+    path[stroke="#DCE2EA"] // light
+    {
+      stroke: var(--surface_container) !important;
+    }
+
+    /* load new posts button (border: [contrast_100]; bg: [primary_50]) */
+    button[style*="border-color: rgb(35, 46, 62); background-color: rgb(0, 30, 71)"],
+    // dark
+    button[style*="border-color: rgb(44, 58, 78); background-color: rgb(18, 41, 73)"],
+    // dim
+    button[style*="border-color: rgb(220, 226, 234); background-color: rgb(229, 240, 255)"] // light
+    {
+      background-color: var(--surface_container_low) !important;
+      border-color: var(--outline) !important;
+    }
+
+    /* any button that's disabled (we should start using broader overrides) */
+    button[disabled] > svg > path {
+      fill: var(--outline);
+    }
+
+    /* sitewide text inputs */
+    /* the divs are styled separately from the input areas */
+    div[style*="border-color: rgb(46, 64, 82)"] {
+      border-color: var(--surface_container) !important;
+    }
+    /* search bar [primary_500] */
+    div[style*="border-color: rgb(0, 106, 255)"], // dark
+    div[style*="border-color: rgb(15, 115, 255)"] // dim
+    {
+      border-color: var(--primary) !important;
+    }
+
+    /* image preview borders across app */
+    [style*="border-color: rgb(74, 97, 121)"] {
+      border-color: var(--surface_container_high) !important;
+    }
+
+    /* search tab trending buttons */
+    [style*="background-color: rgb(142, 9, 40)"] {
+      background-color: var(--error) !important;
+
+      div {
+        color: var(--surface) !important;
+      }
+
+      svg > path {
+        fill: var(--surface);
+      }
+    }
+    /* TODO: new which is green but I can't get the right class cause nothing on bsky is a new trending topic atm */
+
+    /* round icon backgrounds (e.g. feeds) */
+    div[style*="background-color: rgb(21, 52, 85)"] {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    /* pill toggle button styles (e.g. account activity notifications) */
+    /* active, hover */
+    div[style*="border-color: rgb(76, 162, 254);"] {
+      border-color: var(--primary) !important;
+    }
+    div[style*="background-color: rgb(18, 52, 100)"] {
+      background-color: fade(var(--primary), 40%) !important;
+    }
+    /* inactive, circle in pill */
+    div[style*="background-color: rgb(91, 119, 149)"] {
+      background-color: var(--surface_container_high) !important;
+    }
+    /* inactive, hover */
+    div[style*="border-color: rgb(120, 142, 165)"] {
+      border-color: var(--outline_variant) !important;
+    }
+  }
+}

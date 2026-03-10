@@ -1,0 +1,97 @@
+/* ==UserStyle==
+@name Lingva Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/lingva
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/lingva
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/lingva/catppuccin.user.less
+@description Soothing pastel theme for Lingva
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("lingva.ml"),
+  domain("translate.plausibility.cloud"),
+  domain("lingva.lunar.icu"),
+  domain("translate.projectsegfau.lt"),
+  domain("lingva.garudalinux.org") {
+  .chakra-ui-light {
+  }
+  .chakra-ui-dark {
+  }
+
+
+:root {
+}
+
+    body {
+      background: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    header {
+      background-color: var(--primary);
+
+      .chakra-button {
+        color: darken(var(--primary), 50%);
+        background: lighten(var(--primary), 5%);
+        &:hover {
+          background: darken(var(--primary), 5%);
+        }
+      }
+    }
+
+    footer {
+      background-color: var(--primary);
+      color: darken(var(--primary), 50%);
+    }
+
+    #__next > div {
+      background: var(--surface_container_lowest);
+    }
+
+    main {
+      background: var(--surface_container_lowest);
+      color: var(--on_surface);
+
+      select {
+        border-color: var(--primary);
+        color: var(--on_surface);
+      }
+      .chakra-select__icon {
+        color: var(--on_surface);
+      }
+      .chakra-button {
+        color: var(--primary);
+        border-color: var(--primary);
+
+        &:hover:not(:disabled) {
+          background-color: fade(var(--primary), 12%);
+        }
+
+        // Auto translate button (clicked) (Dark and Light classes)
+        &.css-1huvcr7,
+        &.css-q22xb2 {
+          background: var(--primary);
+          color: var(--surface);
+        }
+      }
+      .chakra-stack {
+        border-color: var(--primary);
+      }
+
+      textarea {
+        color: var(--on_surface);
+      }
+
+      .chakra-text {
+        color: var(--on_surface);
+      }
+    }
+  }
+}

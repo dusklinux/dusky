@@ -1,0 +1,67 @@
+/* ==UserStyle==
+@name NixOS Search Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/nixos-search
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/nixos-search
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/nixos-search/catppuccin.user.less
+@description Soothing pastel theme for NixOS Search
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("search.nixos.org") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    --background-color: var(--surface_container_lowest);
+    --badge-background: var(--primary);
+    --button-active-background: var(--surface_container);
+    --button-active-hover-background: var(--surface_container_high);
+    --button-background: var(--surface_container_low);
+    --button-hover-background: var(--surface_container_high);
+    --color-active-hover-tab: var(--surface_container);
+    --color-active-tab: var(--surface_container_low);
+    --color-hover-tab: var(--surface_container);
+    --headerbar-background-color: var(--surface);
+    --hover-background: var(--surface_container_low);
+    --link-color: var(--primary);
+    --info-label-background: var(--primary);
+    --dark-blue: var(--primary);
+    --light-blue: var(--primary); // used by focus outline
+    --line-color: var(--surface_container_low);
+    --search-result-short-details-color: var(--on_surface);
+    --search-result-divider-line-color: var(--surface_container_low);
+    --search-result-title-color: var(--primary);
+    --search-sidebar-link-color: var(--on_surface);
+    --search-sidebar-selected-link-background: var(--primary);
+    --search-sidebar-selected-link-color: var(--surface);
+    --terminal-background: var(--surface_container_low);
+    --terminal-color: var(--error);
+    --text-color: var(--on_surface);
+    --text-color-light: var(--on_surface);
+    --text-color-warning: var(--secondary);
+
+    // hardcoded to #fff
+    .label,
+    .badge {
+      color: var(--surface);
+    }
+
+    // hardcoded to #005580
+    a:hover,
+    a:focus {
+      color: var(--on_surface);
+    }
+  }
+}

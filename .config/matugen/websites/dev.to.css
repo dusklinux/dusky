@@ -1,0 +1,249 @@
+/* ==UserStyle==
+@name DEV Community Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/dev.to
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/dev.to
+@version 2025.12.29
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/dev.to/catppuccin.user.less
+@description Soothing pastel theme for DEV Community
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("dev.to"), domain("forem.com") {
+
+  body.dark-theme {
+  }
+  body.light-theme {
+  }
+  body[data-user-status="logged-out"] {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+    #lib.css-variables();
+
+    --body-bg: var(--surface);
+    --black: var(--on_surface), var(--surface));
+    --body-color: var(--on_surface);
+    --color-primary: var(--on_surface);
+    --color-secondary: var(--on_surface_variant);
+
+    --header-bg: var(--surface_container_lowest);
+    --header-shadow: var(--surface);
+
+    --footer-bg: var(--surface);
+    --footer-color: var(--on_surface_variant);
+
+    --form-bg: var(--surface);
+    --form-bg-focus: var(--surface_container_lowest);
+    --form-border: var(--surface_container_low);
+    --form-border-hover: var(--surface_container);
+    --form-border-focus: var(--primary);
+    --focus: var(--primary) !important;
+
+    --base-100: var(--on_surface);
+    --base-90: var(--on_surface);
+    --base-80: var(--on_surface);
+    --base-70: var(--on_surface_variant);
+    --base-60: var(--outline_variant);
+    --base-50: var(--outline_variant);
+    --base-20: var(--surface_container_lowest);
+    --base-0: var(--surface);
+    --base-inverted: var(--surface_container_low);
+
+    --tab-color-current: var(--primary);
+    --tab-color: var(--on_surface);
+    --tab-color-hover: var(--surface_container_lowest);
+    --tab-bg-hover: fade(var(--primary), 70%);
+
+    --link-branded-color: var(--primary);
+    --link-branded-color-hover: var(--primary);
+    --link-color: var(--on_surface);
+    --link-color-hover: var(--primary);
+    --link-bg-hover: var(--surface);
+    --link-color-secondary: var(--on_surface);
+    --link-color-secondary-hover: var(--on_surface);
+    --link-bg-current: var(--surface);
+    --link-color-current: var(--primary);
+    --link-current-bg: var(--surface_container_low);
+    --link-current-color: var(--primary);
+
+    --btn-bg-hover: var(--surface_container_low);
+    --btn-color: var(--on_surface);
+    --btn-color-hover: var(--primary);
+    --btn-primary-bg: var(--primary);
+    --btn-primary-bg-hover: fade(var(--primary), 90%);
+    --btn-primary-color: var(--surface_container_lowest);
+    --btn-primary-color-hover: var(--surface);
+
+    --button-primary-color: var(--surface_container_lowest);
+    --button-primary-color-hover: var(--surface_container_lowest);
+    --button-primary-bg: var(--primary);
+    --button-primary-bg-hover: fade(var(--primary), 90%);
+    --button-secondary-bg: var(--surface_container);
+    --button-secondary-bg-hover: fade(var(--surface_container), 90%);
+    --button-secondary-color: var(--on_surface);
+    --button-secondary-color-hover: var(--on_surface);
+    --button-outlined-bg-hover: var(--surface);
+    --button-outlined-color: var(--on_surface);
+    --button-outlined-color-hover: var(--on_surface);
+    --button-outlined-border: var(--surface_container_low);
+    --button-outlined-border-hover: var(--surface_container);
+    --button-ghost-bg-hover: var(--surface_container_lowest);
+    --button-ghost-color: var(--on_surface);
+    --button-ghost-color-hover: var(--on_surface);
+    --button-ghost-dimmed-color: var(--on_surface_variant);
+    --button-ghost-dimmed-color-hover: var(--on_surface);
+
+    --reaction-like-bg: fade(var(--error), 10%);
+    --reaction-like-color: var(--error);
+    --reaction-comment-color: var(--secondary);
+    --reaction-save-color: var(--primary);
+    // Article like button when liked.
+    img[src^="https://assets.dev.to/assets/heart-plus-active-"] {
+        '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g clip-path="url(#a)"><path d="M19 14v3h3v2h-3v3h-2v-3h-3v-2h3v-3zm1.243-9.243a6 6 0 0 1 .507 7.91 6 6 0 0 0-8.061 8.127l-.69.691-8.478-8.492a6 6 0 0 1 8.48-8.464 6 6 0 0 1 8.242.228" fill="@{red}"/><path fill-rule="evenodd" clip-rule="evenodd" d="M19.076 16.974v-3h-2v3h-3v2h3v3h2v-3h3v-2zm-6.311 3.794" fill="@{overlay0}"/></g><defs><clipPath id="a"><path fill="@{mantle}" d="M0 0h24v24H0z"/></clipPath></defs></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    --divider: var(--surface_container_low);
+
+    --label-primary: var(--on_surface);
+    --label-secondary: var(--on_surface);
+
+    --accent-brand: var(--primary);
+    --accent-danger-darker: var(--error);
+    --accent-danger: var(--error);
+    --accent-warning: var(--secondary);
+    --accent-warning-a10: fade(var(--secondary), 10%);
+    --accent-success-a10: fade(
+      var(--tertiary),
+      20%
+    ); // Share article link "copied to clipboard" confirmation.
+
+    --card-bg: var(--surface_container_lowest);
+    --card-color: var(--on_surface);
+    --card-border: var(--surface);
+    --card-secondary-bg: var(--surface_container_low);
+    --card-secondary-bg-hover: fade(var(--surface_container_low), 90%);
+    --card-secondary-color: var(--on_surface);
+    --card-secondary-border: var(--surface_container_low);
+    --card-tertiary-bg: var(--surface_container_low);
+    --card-tertiary-bg-hover: fade(var(--surface_container_low), 90%);
+    --card-color-tertiary: var(--on_surface);
+
+    --cta-branded-bg-hover: var(--primary);
+    --cta-branded-color: var(--primary);
+    --cta-branded-color-hover: var(--surface_container_lowest);
+    --cta-branded-border: var(--primary);
+    --cta-branded-border-hover: var(--primary);
+
+    --tooltip-bg: var(--surface_container_high);
+    --tooltip-color: var(--on_surface);
+
+    --modal-bg: var(--surface_container_low);
+
+    --tag-bg: fade(var(--primary), 10%);
+    --tag-bg-hover: fade(var(--primary), 20%);
+    --tag-color: var(--primary);
+    --tag-color-hover: var(--primary);
+    --tag-prefix: var(--primary);
+    --tag-prefix-hover: var(--primary);
+
+    --indicator-bg: var(--primary);
+    --indicator-color: var(--surface_container_lowest);
+    --indicator-subtle-bg: fade(var(--primary), 20%);
+    --indicator-subtle-color: var(--on_surface);
+
+    --syntax-background-color: var(--surface);
+
+    // popular colors have accent colors. These colors are dynamically assigned,
+    // whereas other tags fallback color is not overrided by root variables.
+    .crayons-tag__prefix {
+      --tag-prefix: var(--primary);
+    }
+
+    // danger button
+    .crayons-btn--danger {
+      --color: var(--surface_container_lowest);
+      --color-hover: var(--surface);
+    }
+
+    // like and reply button icons in comments
+    .crayons-btn--ghost .reaction-icon {
+      filter: none;
+    }
+
+    // billboard cards on right column has statically coded borders
+    .text-styles--billboard {
+      > div {
+        border-color: var(--surface_container_low) !important;
+      }
+    }
+
+    // dev.to doesn't provide style for <hr />
+    hr {
+      border-color: var(--surface_container_high);
+    }
+
+    // Dev++ page
+    // NOTE: This styling might change in future
+    // as it is wrapped with custom conatiner with different variables.
+    #custom {
+      background-color: var(--surface);
+      color: var(--on_surface);
+
+      // background
+      .tw-bg-dolphin,
+      .tw-bg-white,
+      .tw-bg-black,
+      .tw-bg-zinc-50,
+      .tw-bg-zinc-950 {
+        background-color: var(--surface);
+      }
+
+      .tw-bg-zinc-100,
+      .tw-bg-zinc-200,
+      .tw-bg-zinc-800,
+      .tw-bg-zinc-900 {
+        background-color: var(--surface);
+      }
+
+      // text
+      .tw-text-black,
+      .tw-text-white,
+      .tw-text-zinc-50,
+      .tw-text-zinc-950 {
+        color: var(--on_surface);
+      }
+
+      .tw-text-zinc-100,
+      .tw-text-zinc-200,
+      .tw-text-zinc-800,
+      .tw-text-zinc-900 {
+        color: var(--on_surface);
+      }
+
+      .tw-text-zinc-300,
+      .tw-text-zinc-400,
+      .tw-text-zinc-600,
+      .tw-text-zinc-700 {
+        color: var(--on_surface_variant);
+      }
+
+      // border
+      .tw-border-zinc-800,
+      .tw-border-zinc-600 {
+        border-color: var(--surface_container_low);
+      }
+    }
+  }
+}

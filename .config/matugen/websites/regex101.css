@@ -1,0 +1,156 @@
+/* ==UserStyle==
+@name regex101 Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/regex101
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/regex101
+@version 2026.01.10
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/regex101/catppuccin.user.less
+@description Soothing pastel theme for regex101
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("regex101.com") {
+
+  :root {
+    &[data-theme="dark"] {
+    }
+    &[data-theme="light"] {
+    }
+  }
+
+    #lib.css-variables();
+
+    --primary-color: var(--surface);
+    --primary-contrast-color: var(--primary);
+
+    --app-color: var(--on_surface);
+    --app-color-metadata: var(--on_surface_variant);
+    --app-contrast-color: var(--on_surface);
+
+    --link-color: var(--primary);
+
+    --highlight-bg: var(--tertiary);
+    --spinner-bg: var(--outline);
+    --bg-0: var(--surface);
+    --bg-1: var(--surface_container_lowest);
+    --content-bg: var(--surface_container_low);
+
+    --content-border-color: var(--surface_container);
+    --sub-content-bg: var(--surface_container);
+
+    --info-color: var(--on_surface_variant);
+    --success-color: var(--tertiary);
+    --warning-color: var(--secondary);
+    --danger-color: var(--error);
+
+    --misc-button-icon-color: var(--on_surface);
+    --misc-button-bg: var(--surface_container_low);
+    --misc-button-hover-bg: var(--surface_container);
+    --misc-button-active-bg: var(--surface_container_high);
+    --misc-button-active-color: var(--surface_container_lowest);
+    --misc-button-highlight-bg: fade(var(--tertiary), 40%);
+
+    --editor-active-bg: var(--outline_variant);
+    --library-active-bg: var(--secondary);
+    --account-active-bg: var(--tertiary);
+    --quiz-active-bg: var(--tertiary_container);
+    --settings-active-bg: var(--secondary);
+
+    #hsl-variables(--button-bg, var(--surface_container_low));
+    #hsl-variables(--button-ok-bg, var(--surface));
+    #hsl-variables(--button-danger-bg, fade(var(--error), 30%));
+
+    --button-hover-l: lightness(var(--surface_container));
+    --backdrop-bg: fade(var(--outline), 30%);
+
+    --input-bg: var(--surface_container_lowest);
+    --input-disabled-bg: var(--surface);
+    --input-border-color: var(--surface_container_low);
+    --input-focused-border-color: var(--surface_container_low);
+
+    --label-color: var(--on_surface);
+    --tooltip-color: var(--surface);
+    --tooltip-bg: var(--on_surface_variant);
+    --version-btn-bg: fade(var(--tertiary), 30%);
+    --match-indicator-no-match: fade(var(--primary), 30%);
+    --match-indicator-match-bg: fade(var(--tertiary), 30%);
+    --match-indicator-error-bg: fade(var(--error), 30%);
+
+    --debugger-backtrack-bg: fade(var(--error), 30%);
+    --debugger-regex-bg: fade(var(--tertiary), 30%);
+    --debugger-slider-bg: var(--surface_container_high);
+
+    --header-discord-color: var(--primary_container);
+    --header-twitter-color: var(--on_surface);
+    --header-donate-color: var(--secondary);
+    --header-contact-color: var(--tertiary);
+    --header-feedback-color: var(--error_container);
+    --header-wiki-color: var(--tertiary_container);
+    --header-whatsnew-color: var(--secondary);
+    --header-sponsor-color: var(--secondary);
+    --header-paypal-color: var(--primary);
+    --header-info-color: var(--primary_fixed);
+    --header-social-color: var(--tertiary);
+    --header-stripe-color: var(--primary);
+
+    --starred-library-entry-bg: fade(var(--secondary), 10%);
+    --cm-whitespace-color: var(--outline_variant);
+    --cm-selected-bg: fade(var(--primary), 30%);
+    --cm-inactive-selected-bg: fade(var(--primary), 30%);
+
+    @match-group-colors: var(--primary), var(--tertiary), var(--secondary), var(--primary), var(--secondary), var(--error), var(--tertiary);
+    each(
+      @match-group-colors,
+      {
+        @i: @index - 1;
+        --match-group-@{i}: @value;
+        --match-group-@{i}-alt: var(--primary_fixed_dim);
+      }
+    );
+
+    --match-highlight-color: fade(var(--secondary), 90%);
+
+    --explanation-keyword-color: var(--tertiary);
+    --explanation-token-bg: fade(var(--secondary), 80%);
+    --explanation-token-color: var(--surface_container_lowest);
+    --explanation-plain-text-bg: fade(var(--surface_container_high), 80%);
+    --explanation-flag-color: var(--primary);
+
+    --token-quote-color: var(--primary);
+    --token-quote-bg: none;
+    --token-escaped-string-color: var(--app-color);
+    --token-escaped-string-bg: fade(var(--outline_variant), 30%);
+    #accent-token(meta, var(--primary));
+    #accent-token(char-class, var(--surface_container_high));
+    #accent-token(char-class-meta, var(--secondary_container));
+    #accent-token(subpattern-reference, var(--primary));
+    #accent-token(group-0, var(--tertiary));
+    #accent-token(group-1, var(--secondary));
+    #accent-token(group-2, var(--secondary_container));
+    #accent-token(group-3, var(--error_container));
+    #accent-token(comment, transparent);
+    #accent-token(error, var(--error));
+
+    #accent-token(@id, @color) {
+      --token-@{id}-bg: @color;
+      --token-@{id}-color: var(--surface_container_lowest);
+    }
+
+    #hsl-variables(@variable, @color) {
+      @{variable}-h: hue(@color);
+      @{variable}-s: saturation(@color);
+      @{variable}-l: lightness(@color);
+    }
+
+    // Canvas is pulling Catppuccin colours from CSS variables, just needs fading for contrast
+    canvas {
+      filter: opacity(0.3);
+    }
+  }
+}

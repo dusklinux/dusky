@@ -1,0 +1,157 @@
+/* ==UserStyle==
+@name boringproxy Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/boringproxy
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/boringproxy
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/boringproxy/catppuccin.user.less
+@description Soothing pastel theme for boringproxy
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("boring.example.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+:root {
+}
+
+    body {
+      background: var(--surface_container_lowest);
+    }
+    main {
+      background: var(--surface);
+    }
+    .content {
+      border-color: var(--outline);
+    }
+
+    //Side Menu
+    .menu {
+      background: var(--surface);
+    }
+    .menu-item {
+      background: var(--surface);
+    }
+    .menu-item:hover {
+      background: var(--surface_container_high);
+      color: var(--primary);
+    }
+    .menu-item:any-link {
+      color: var(--on_surface);
+    }
+
+    // Right SIde Button
+    .button {
+      border-color: var(--primary);
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+    .button:hover {
+      color: var(--surface_container_low);
+      background-color: var(--primary);
+      border-color: var(--surface);
+    }
+
+    // Top Headers
+    .list {
+      background-color: var(--surface);
+    }
+
+    .list-item {
+      color: var(--primary);
+    }
+    // Tunnel Table
+    .tn-tunnel-link {
+      color: var(--on_surface);
+      text-decoration: none;
+    }
+
+    .tn-tunnel-table__cell {
+      color: var(--on_surface);
+    }
+    body a {
+      color: var(--on_surface);
+    }
+    body a:visited {
+      color: var(--primary);
+    }
+
+    .tn-attribute__name {
+      color: var(--on_surface);
+    }
+    .tn-attribute__value {
+      color: var(--on_surface_variant);
+    }
+    //Tunnel Adding
+    .tunnel-adder h1 {
+      color: var(--on_surface);
+    }
+
+    .input {
+      color: var(--on_surface);
+    }
+    .input input {
+      background-color: var(--surface);
+      color: var(--on_surface_variant);
+      border-color: var(--primary);
+    }
+
+    .input select {
+      background-color: var(--surface);
+      color: var(--on_surface_variant);
+      border-color: var(--primary);
+    }
+
+    // Token Adding
+    .token-adder {
+      color: var(--on_surface);
+    }
+    .token-adder select {
+      background-color: var(--surface);
+      color: var(--on_surface_variant);
+      border-color: var(--primary);
+    }
+
+    // Client Adding
+    .client-adder {
+      color: var(--on_surface);
+    }
+    .client-adder select {
+      background-color: var(--surface);
+      color: var(--on_surface_variant);
+      border-color: var(--primary);
+    }
+    .client-adder input {
+      background-color: var(--surface);
+      color: var(--on_surface_variant);
+      border-color: var(--primary);
+    }
+
+    // User Adding
+    .user-adder {
+      color: var(--on_surface);
+    }
+    .user-adder input {
+      background-color: var(--surface);
+      color: var(--on_surface_variant);
+      border-color: var(--primary);
+    }
+    // dialog
+    .dialog__content {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+  }
+}

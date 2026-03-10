@@ -1,0 +1,552 @@
+@-moz-document domain("chess.com") {
+  :root {
+    --color-bg-opaque: var(--surface);
+    --color-bg-opaque-lighter: var(--surface_container_lowest);
+    --color-bg-subtle: var(--surface_container);
+    --color-bg-subtler: var(--surface_container_low);
+    --color-bg-input: var(--surface);
+    --color-bg-speech: var(--surface_container_low);
+    --color-bg-secondary: var(--surface_container_low);
+    --color-bg-tertiary: var(--surface_container);
+    --color-bg-quaternary: var(--surface_container_high);
+    --color-gray-100: var(--outline_variant);
+    --color-text-speech: var(--on_surface);
+
+    --color-icon-default: var(--on_surface_variant);
+    --color-icon-default-hovered: var(--on_surface);
+    --color-icon-bolder: var(--on_surface);
+    --color-icon-boldest: var(--on_surface);
+
+    --color-text-boldest: var(--on_surface);
+    --color-text-bolder: var(--on_surface);
+    --color-text-default: var(--on_surface);
+    --color-text-default-hovered: var(--on_surface);
+    --color-text-subtle: var(--on_surface);
+    --color-text-placeholder: var(--on_surface_variant);
+    --color-text-inverse: var(--surface);
+    --color-text-link: var(--primary);
+    --color-text-link-hovered: var(--primary_fixed);
+
+    --color-border-default: var(--surface_container);
+    --color-border-subtle: var(--outline_variant);
+    --color-border-selected: var(--primary);
+
+    --color-green-200: var(--primary_fixed_dim);
+    --color-green-300: var(--primary_fixed);
+    --color-green-400: var(--primary);
+
+    --color-red-300: var(--error);
+    --color-red-400: var(--error);
+
+    --color-blue-200: var(--primary_container);
+    --color-blue-300: var(--primary_fixed);
+    --color-blue-400: var(--primary);
+
+    --color-classification-blunder: var(--error);
+    --color-classification-miss: var(--error_container);
+    --color-classification-mistake: var(--secondary_container);
+    --color-classification-inaccuracy: var(--secondary);
+    --color-classification-best: var(--tertiary);
+    --color-classification-excellent: var(--tertiary);
+    --color-classification-good: var(--tertiary_container);
+    --color-classification-great: var(--primary);
+    --color-classification-brilliant: var(--primary_container);
+    --color-classification-book: var(--surface_container_high);
+
+    --color-icon-win: var(--tertiary);
+    --color-text-win: var(--tertiary);
+    --color-icon-draw: var(--on_surface_variant);
+    --color-text-draw: var(--on_surface_variant);
+    --color-bg-draw: var(--on_surface_variant);
+    --color-border-draw: var(--outline_variant);
+    --color-icon-loss: var(--error);
+    --color-text-loss: var(--error);
+    --color-border-loss: var(--error);
+
+    --color-icon-bullet: var(--secondary_container);
+    --color-icon-blitz: var(--secondary);
+  }
+
+  body {
+    --theme-background-color: var(--surface) !important;
+    --theme-background-image: none;
+
+    --globalBackground: var(--surface) !important;
+    --globalBackgroundOpaque: var(--surface) !important;
+    --globalSecondaryBackground: var(--surface_container_lowest) !important;
+    --globalTertiaryBackground: var(--surface_container_low) !important;
+    --globalAccentBackground: var(--primary) !important;
+    --globalSecondaryAccentBackground: var(--surface_container_low) !important;
+    --globalSiteBackground: var(--surface_container_lowest) !important;
+    --globalBorder: var(--surface_container_low) !important;
+    --globalColorThemeFull: var(--on_surface) !important;
+    --globalColorThemeHigh: var(--on_surface);
+    --globalColorThemeMid: var(--outline_variant) !important;
+    --globalColorThemeLow: var(--outline) !important;
+    --globalColorThemeLower: var(--surface_container_lowest) !important;
+    --globalColorThemeLink: var(--primary_container) !important;
+    --globalColorThemeBlueToMid: var(--on_surface);
+    --globalOverlayBackground: var(--surface_container_lowest) !important;
+    --globalColorWin: var(--tertiary) !important;
+    --globalColorDraw: var(--primary) !important;
+    --globalColorLoss: var(--error) !important;
+
+    --labelBgColor: var(--surface_container);
+    --activeLabelColor: var(--primary);
+    --buttonBgColor: var(--on_surface);
+
+    --nodeColor: var(--on_surface);
+    --nodeBackground: var(--secondary);
+  }
+
+  .index-title,
+  .index-info-item-counter {
+    color: var(--on_surface) !important;
+  }
+  .index-info-item {
+    color: var(--on_surface_variant) !important;
+  }
+  .index-suggestion-title,
+  .index-posts-title,
+  .index-post-name {
+    color: var(--on_surface);
+  }
+  .index-quote-author,
+  .index-quote-body,
+  .index-post-author {
+    color: var(--on_surface);
+  }
+
+  .promo-title,
+  .promo-rank {
+    color: var(--on_surface);
+  }
+  .promo-subtitle {
+    color: var(--on_surface);
+  }
+
+  .home-username-link {
+    color: var(--on_surface);
+  }
+
+  .level-title {
+    color: var(--on_surface);
+  }
+  .level-desc,
+  .course-header-description strong {
+    color: var(--on_surface);
+  }
+
+  .lessons-search-filter {
+    .form-dropdown-chevron,
+    .form-dropdown-control-label,
+    .form-dropdown-value {
+      color: var(--on_surface);
+    }
+  }
+
+  .lesson-status {
+    background-color: var(--on_surface);
+  }
+
+  .landing-header {
+    color: var(--on_surface);
+  }
+
+  .v5-title-label {
+    color: var(--on_surface);
+  }
+  .v5-tabs-list,
+  .v5-tabs-list-dark {
+    --borderColor: var(--surface_container_high);
+    --tabTitleColor: var(--on_surface_variant);
+    --tabHoverTitleColor: var(--on_surface);
+    --tabSelectedBorderColor: var(--on_surface);
+    --tabSelectedTitleColor: var(--on_surface);
+  }
+  .ui_v5-input-component {
+    --borderColor: var(--surface_container_low);
+    --borderFocus: var(--surface_container);
+    --bgColor: var(--surface_container_lowest);
+    --textColor: var(--on_surface);
+    --secondaryTextColor: var(--on_surface);
+  }
+  .ui_v5-input-group-component {
+    --inputIconColor: var(--on_surface_variant);
+  }
+  .ui_v5-button-component {
+    --boxShadow: none;
+    --boxShadowHover: none;
+    box-shadow: none;
+
+    &.ui_v5-button-basic {
+      --basicColor: var(--on_surface) !important;
+      --basicHoverColor: var(--on_surface) !important;
+      --basicBgColor: var(--surface_container) !important;
+      --basicBghover: var(--surface_container_high) !important;
+      --borderColor: var(--surface_container_low) !important;
+    }
+
+    &.ui_v5-button-primary {
+      color: var(--surface) !important;
+      background-color: var(--primary);
+
+      &:hover {
+        background-color: var(--primary_fixed_dim);
+        box-shadow: none;
+      }
+    }
+  }
+  .ui_v5-select-component {
+    --borderColor: var(--surface_container_low);
+    --borderFocus: var(--surface_container);
+    --bgColor: var(--surface_container_lowest);
+    --textColor: var(--on_surface);
+    --arrowColor: var(--on_surface_variant);
+  }
+
+  .ui_pagination-item-component {
+    --paginationColor: var(--on_surface);
+    --paginationBgColor: var(--surface_container);
+    --paginationBgHover: var(--surface_container_high);
+    --paginationColorMuted: var(--surface_container_lowest);
+    --paginationBgColorMuted: var(--outline_variant);
+  }
+
+  .nav-link-text {
+    color: var(--on_surface) !important;
+  }
+  .nav-menu-area:last-of-type .icon-font-chess {
+    color: var(--surface) !important;
+  }
+  .nav-link-main-design,
+  .nav-link-main-link {
+    color: var(--on_surface) !important;
+
+    &:hover {
+      color: var(--on_surface) !important;
+    }
+  }
+
+  #tb {
+    .toolbar-action-icon {
+      color: var(--on_surface);
+    }
+
+    .toolbar-action-wrapper:hover .toolbar-action-icon {
+      color: var(--on_surface) !important;
+    }
+  }
+
+  #sb {
+    color: var(--on_surface_variant);
+
+    &.open {
+      background-color: var(--surface);
+    }
+
+    .nav-action:hover {
+      background-color: var(--surface_container_low);
+      color: var(--on_surface);
+    }
+
+    .nav-panel-shade,
+    .nav-panel-theme-bg,
+    .nav-action.has-popover + .nav-popover {
+      background: var(--surface) !important;
+    }
+
+    .nav-popover.dark .btn-link {
+      color: var(--on_surface);
+    }
+    .nav-menu-area:last-of-type {
+      color: var(--on_surface) !important;
+    }
+    .nav-popover.nav-search {
+      --search-bg-color: var(--surface_container_low);
+    }
+  }
+
+  .nav-popover.dark {
+    background: var(--surface);
+  }
+
+  .section-heading-component .back-link-component {
+    color: currentcolor;
+  }
+  .section-heading-black {
+    background-color: var(--surface_container);
+    color: var(--on_surface);
+  }
+  .nav-section-header-component {
+    background-color: var(--surface_container_lowest);
+    color: var(--on_surface);
+  }
+
+  .popover-friends-header,
+  .popover-friends-content,
+  .popover-messages-header,
+  .popover-messages-content,
+  .popover-settings-header,
+  .popover-settings-content {
+    background: var(--surface);
+  }
+
+  .selector-button-button,
+  .time-selector-button-button {
+    background: var(--surface_container_low);
+
+    &:hover {
+      background: var(--surface_container);
+    }
+  }
+
+  .cc-switch-checkbox:not(.cc-switch-readonly):checked
+    + .cc-switch-label
+    .cc-switch-button {
+    background-color: var(--surface_container);
+  }
+
+  .cc-button-component,
+  .cc-button-primary {
+    --bgColor: var(--primary);
+    --bgColorHover: var(--primary_fixed_dim);
+    --textColor: var(--surface);
+    --textColorHover: var(--surface);
+    box-shadow: none;
+  }
+
+  .cc-button-primary,
+  .cc-button-monetization {
+    --borderBottomLine: var(--primary_fixed_dim);
+    --borderBottomLineHover: var(--primary_fixed);
+  }
+
+  .cc-button-secondary {
+    --bgColor: var(--surface_container_low);
+    --bgColorHover: var(--surface_container);
+    --iconColor: var(--on_surface);
+    --iconColorHover: var(--on_surface);
+    --textColor: var(--on_surface);
+    --textColorHover: var(--on_surface);
+  }
+
+  .cc-button-danger {
+    --bgColor: var(--error);
+    --bgColorHover: var(--error_container);
+    color: var(--surface);
+  }
+
+  .v5-section-shadow,
+  .v5-section-shadow-hover {
+    --linkHoverBackground: var(--surface_container);
+    --linkBoxShadow: 0 0.5rem 0 0 var(--surface_container_high);
+  }
+
+  .user-username-component,
+  .cc-user-username-white,
+  .cc-user-rating-white {
+    color: var(--on_surface);
+    text-shadow: none;
+  }
+
+  .user-tagline-rating.user-tagline-white {
+    color: var(--outline_variant);
+  }
+
+  .clock-component.clock-black {
+    background: var(--surface_container_low);
+  }
+  .clock-component.clock-white {
+    background: var(--on_surface);
+  }
+
+  .highlight {
+    &[style*="rgb(235, 97, 80)"] {
+      background: var(--color-classification-blunder) !important;
+    }
+    &[style*="rgb(172, 206, 89)"] {
+      background: var(--color-classification-best) !important;
+    }
+    &[style*="rgb(255, 170, 0)"] {
+      background: var(--color-classification-inaccuracy) !important;
+    }
+    &[style*="rgb(82, 176, 220)"] {
+      background: var(--color-classification-great) !important;
+    }
+    opacity: 1 !important;
+  }
+  .hover-square rect {
+    stroke: var(--outline_variant) !important;
+  }
+  .hint {
+    background-color: var(--outline_variant);
+    filter: drop-shadow(0 0 1px var(--surface));
+  }
+  .capture-hint {
+    background-color: var(--outline_variant);
+    filter: drop-shadow(0 0 1px var(--surface));
+    z-index: -1;
+  }
+
+  .evaluation-bar-bar {
+    .evaluation-bar-black {
+      background-color: var(--surface_container_high);
+    }
+    .evaluation-bar-draw {
+      background-color: var(--outline_variant);
+    }
+    .evaluation-bar-white {
+      background-color: var(--on_surface);
+    }
+  }
+
+  .review-rating-white {
+    background-color: var(--on_surface);
+  }
+  .review-rating-black {
+    background-color: var(--surface_container_low);
+    color: var(--on_surface);
+  }
+
+  .overview-view-new-game-button {
+    background-color: var(--surface_container);
+  }
+
+  .arrow {
+    &[style*="rgba(248, 85, 63, 0.8)"] {
+      fill: var(--color-classification-blunder) !important;
+    }
+    &[style*="rgba(159, 207, 63, 0.8)"] {
+      fill: var(--color-classification-best) !important;
+    }
+    &[style*="rgba(255, 170, 0, 0.8)"] {
+      fill: var(--color-classification-inaccuracy) !important;
+    }
+    &[style*="rgba(72, 193, 249, 0.8)"] {
+      fill: var(--color-classification-great) !important;
+    }
+  }
+
+  g#winner [fill="#dbac16"] {
+    fill: var(--secondary) !important;
+  }
+
+  .modal-game-over-header-grey,
+  .modal-game-over-header-black-win,
+  .game-over-header-component {
+    background-color: var(--surface_container_lowest);
+    color: var(--on_surface);
+  }
+
+  .modal-game-over-user-winner-active,
+  .modal-game-over-user-crown {
+    background: var(--primary_container);
+  }
+
+  .game-over-review-button-label {
+    color: var(--surface);
+    text-shadow: none;
+  }
+
+  .placeholder-ad-upgrade {
+    background-color: var(--primary);
+  }
+  .placeholder-ad-link {
+    color: var(--surface);
+  }
+
+  .modal-trial-component.modal-trial-special-offer {
+    .modal-trial-header-background {
+      background-color: var(--primary);
+    }
+  }
+
+  .coach-nudges-modal-component {
+    background: var(--surface);
+  }
+
+  .ready-to-play-banner-component {
+    background-color: var(--surface);
+
+    .ready-to-play-banner-title,
+    .ready-to-play-banner-list {
+      color: var(--on_surface);
+    }
+  }
+
+  .notifications-links-trial .nav-link-text {
+    color: var(--surface) !important;
+  }
+
+  --color-bg-chesstitle: var(--primary);
+  .course-author-title,
+  .course-header-author-title,
+  .form-dropdown-short-title,
+  .index-chess-title,
+  .leaderboard-index-chess-title,
+  .player-header-title,
+  .category-headline-chess-title {
+    color: var(--surface) !important;
+  }
+
+  .tooltip-body {
+    background: var(--surface_container_low);
+    color: var(--on_surface);
+
+    &::after {
+      border-top-color: var(--surface_container_low) !important;
+    }
+  }
+  .popup-component {
+    background-color: var(--surface_container_low);
+    color: var(--on_surface);
+    &.popup-left .popup-arrow {
+      border-left-color: var(--surface_container_low);
+    }
+    &.popup-right .popup-arrow {
+      border-right-color: var(--surface_container_low);
+    }
+  }
+
+  .alerts-alert {
+    color: var(--surface);
+  }
+
+  div.mode-selection-button-selected {
+    > .mode-selection-button-description {
+      color: var(--surface_container);
+    }
+
+    > .mode-selection-button-mode {
+      color: var(--surface);
+    }
+  }
+
+  .status-component {
+    background-color: var(--primary);
+    color: var(--surface);
+  }
+
+  .navigation-footer-page-component,
+  .navigation-footer-platform-icon {
+    color: var(--on_surface);
+    text-shadow: none;
+  }
+
+  .download-button-button {
+    color: var(--surface) !important;
+  }
+
+  .table-hover tbody tr:hover {
+    background-color: var(--surface_container_high);
+  }
+
+  .chessboard-pkg-move-list-component .dark-row {
+    background-color: var(--surface_container);
+  }
+
+  .board-popover-component {
+    background-color: var(--surface_container_low);
+  }
+}

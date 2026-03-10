@@ -1,0 +1,192 @@
+/* ==UserStyle==
+@name Amplenote Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/amplenote
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/amplenote
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/amplenote/catppuccin.user.less
+@description Soothing pastel theme for Amplenote
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("amplenote.com") {
+  body:not(.theme-light) {
+  }
+
+  body.theme-light {
+  }
+
+
+    &.themeable {
+      --color-background-primary: var(--surface_container_lowest);
+      --color-background-primary-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+      --color-background-secondary: var(--surface);
+      --color-background-tertiary: var(--surface);
+
+      --color-background-popup: var(--surface_container_lowest);
+      --color-background-dialog: var(--surface);
+      --color-background-header: var(--surface);
+      --color-background-nav: var(--surface);
+      --color-background-nav-active: var(--surface_container_low);
+      --color-background-search-bar: var(--surface);
+      --color-background-nav-menu: var(--surface);
+      --color-background-nav-menu-divider: var(--surface);
+      --color-background-nav-avatar: var(--surface);
+      --color-background-popup-small: var(--surface_container_low);
+      --color-background-reversed: var(--surface_container_low);
+      --color-background-reversed-secondary: var(--surface_container_high);
+
+      --color-background-element-high-contrast: fade(var(--outline_variant), 40%);
+      --color-background-element-medium-contrast: fade(var(--primary), 40%);
+      --color-background-element-medium-contrast-rgb: fade(var(--primary). 40%);
+      --color-background-element-low-contrast: var(--surface);
+
+      --color-background-note-menu-button: var(--surface_container_low);
+      --color-background-banner: var(--surface_container_low);
+      --color-background-banner-alt: var(--surface_container_lowest);
+      --color-background-nav-divider: var(--surface_container_low);
+
+      --color-background-action-low-contrast: fade(var(--primary), 50%);
+      --color-background-action-medium-contrast: fade(var(--primary), 60%);
+      --color-background-action-high-contrast: var(--primary);
+      --color-background-action-high-contrast-rgb: #lib.rgbify(var(--primary))[];
+      --color-background-action-high-contrast-alt: fade(var(--primary), 75%);
+
+      --color-background-error-high-contrast: var(--error);
+      --color-background-error-medium-contrast: fade(var(--error), 50%);
+
+      --color-border-primary: var(--surface_container_low);
+      --color-border-secondary: var(--surface_container);
+      --color-border-tertiary: var(--surface_container);
+
+      --color-text-reversed: var(--on_surface);
+
+      --color-text-high-contrast: var(--on_surface);
+      --color-text-nav-high-contrast: var(--on_surface);
+      --color-text-medium-contrast: var(--on_surface);
+      --color-text-nav-medium-contrast: var(--on_surface);
+      --color-text-low-contrast: var(--on_surface_variant);
+      --color-text-nav-low-contrast: var(--on_surface_variant);
+      --color-text-lower-contrast: var(--outline_variant);
+      --color-text-nav-lower-contrast: var(--surface_container_high);
+
+      --color-text-error-low-contrast: var(--secondary_container);
+      --color-text-error-low-contrast-rgb: #lib.rgbify(var(--secondary_container))[];
+      --color-text-error-medium-contrast: var(--error);
+      --color-text-error-high-contrast: var(--error);
+
+      --color-text-status: var(--tertiary);
+      --color-text-link: var(--primary);
+      --color-text-button: var(--surface);
+
+      --color-background-task-value: var(--surface_container);
+      --color-background-sidebar-task: var(--surface_container_low);
+
+      --color-overlay-low-contrast: var(--primary);
+
+      --mdc-theme-surface: var(--surface_container_lowest);
+    }
+
+    header.note-header-container .logo-wrapper .ample-svg-logo .logo-icon {
+      fill: var(--on_surface);
+    }
+
+    .notes-list .notes-list-item:hover {
+      background-color: var(--surface);
+    }
+
+    .ample-editor .editor-tabs .tab:not(.current) {
+      border-bottom-color: var(--surface_container_low) !important;
+    }
+
+    .referencing-notes,
+    .tab.current,
+    .editor-title-input-wrapper textarea,
+    .completed-tasks,
+    .no-tasks-message {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .new-note-button {
+      color: var(--surface) !important;
+    }
+
+    .ample-editor .check-list-item.value-1 .row-wrapper {
+      border-left-color: var(--primary_container);
+    }
+
+    .menu-button.synced {
+      color: var(--tertiary) !important;
+    }
+
+    .menu-button .refreshing {
+      color: var(--primary) !important;
+    }
+
+    .primary-side-nav .section-link.default .shortcut-icon {
+      color: var(--secondary);
+    }
+
+    .ample-editor:not(.mobile-embed)
+      .check-list-item:hover:not(.expanded)
+      .row-wrapper {
+      background-color: var(--surface_container_low);
+    }
+
+    .mdc-chip-set.mdc-chip-set--choice
+      .mdc-chip.mdc-chip--selected
+      .mdc-chip__icon--leading,
+    .mdc-chip.mdc-chip--selected .mdc-chip__icon--leading {
+      color: var(--surface);
+    }
+
+    .account-appearance-app .mdc-chip i.material-icons.mdc-chip__icon--leading {
+      color: var(--on_surface);
+    }
+
+    .DayPicker-Weekday {
+      color: var(--on_surface_variant);
+    }
+
+    .calendar-pane .fc {
+      .fc-timegrid-now-indicator-arrow {
+        .line {
+          border-bottom-color: var(--primary);
+        }
+        .material-icons {
+          color: var(--primary);
+        }
+      }
+
+      .fc-timegrid-now-indicator-line {
+        border-color: darken(var(--primary), 10%);
+      }
+
+      .fc-timegrid .fc-daygrid-day-events,
+      .fc-timegrid .all-day-slot {
+        background-color: var(--surface_container_lowest);
+      }
+    }
+
+    #completed-tasks-stroke-gradient,
+    #completed-tasks-fill-gradient {
+      [offset="0%"] {
+        stop-color: var(--error_container);
+      }
+
+      [offset="50%"] {
+        stop-color: var(--secondary_container);
+      }
+
+      [offset="100%"] {
+        stop-color: var(--secondary);
+      }
+    }
+  }
+}

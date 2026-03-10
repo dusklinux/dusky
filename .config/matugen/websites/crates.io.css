@@ -1,0 +1,250 @@
+/* ==UserStyle==
+@name crates.io Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/crates.io
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/crates.io
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/crates.io/catppuccin.user.less
+@description Soothing pastel theme for crates.io
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("crates.io") {
+
+  code.hljs {
+    background: none !important;
+  }
+
+  :root[data-color-scheme="system"] {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+  :root[data-color-scheme="dark"] {
+  }
+  :root[data-color-scheme="light"] {
+  }
+
+    #lib.css-variables();
+
+    &,
+    * {
+      --shadow: none !important;
+      --csstools-color-scheme--dark: none;
+
+      --header-bg-color: var(--surface);
+      --main-color: var(--on_surface);
+      --main-color-light: var(--on_surface);
+      --main-shadow-color: var(--surface_container_low);
+      --main-bg: var(--surface);
+      --main-bg-dark: var(--surface_container_lowest);
+      --gray-border: var(--surface_container_low);
+      --link-color: var(--primary);
+      --link-hover-color: darken(var(--primary), 5%);
+      --footer-header-color: var(--on_surface);
+
+      /* Main article/readme background */
+      --csstools-light-dark-toggle--63: var(--surface_container_lowest);
+
+      /* Inline code background */
+      --csstools-light-dark-toggle--92: var(--surface);
+      /* Code block background */
+      --csstools-light-dark-toggle--91: var(--surface);
+      /* Copyable text hover */
+      --csstools-light-dark-toggle--78: var(--surface_container_lowest);
+
+      /* Versions cards */
+      --csstools-light-dark-toggle--111: var(--on_surface);
+      --csstools-light-dark-toggle--113: var(--surface_container_lowest);
+      --csstools-light-dark-toggle--114: fade(var(--tertiary), 15%);
+      --csstools-light-dark-toggle--117: fade(var(--secondary), 15%);
+      --csstools-light-dark-toggle--109: var(--surface_container_low);
+      --csstools-light-dark-toggle--110: var(--surface_container_low);
+      --csstools-light-dark-toggle--115: var(--surface_container_low);
+      --csstools-light-dark-toggle--118: var(--surface_container_low);
+      --csstools-light-dark-toggle--126: var(--on_surface);
+      [class*="_new"] {
+        color: var(--tertiary);
+      }
+      /* Dependencies cards */
+      --csstools-light-dark-toggle--83: var(--surface_container_lowest);
+      --csstools-light-dark-toggle--79: var(--surface_container_low);
+      --csstools-light-dark-toggle--80: var(--on_surface);
+      --csstools-light-dark-toggle--81: var(--on_surface);
+      --csstools-light-dark-toggle--84: var(--on_surface_variant);
+      --grey600: var(--on_surface_variant);
+      --grey700: var(--on_surface);
+      /* Dependents cards */
+      --csstools-light-dark-toggle--89: var(--surface_container_lowest);
+      --csstools-light-dark-toggle--86: var(--surface_container_low);
+      /* Search results cards */
+      --csstools-light-dark-toggle--2: var(--surface_container_lowest);
+      /* Homepage cards */
+      --csstools-light-dark-toggle--74: var(--surface_container_lowest);
+      --csstools-light-dark-toggle--77: var(--surface_container_low);
+      --csstools-light-dark-toggle--75: var(--on_surface);
+      --csstools-light-dark-toggle--76: var(--on_surface);
+      --csstools-light-dark-toggle--19: var(--on_surface_variant);
+      --csstools-light-dark-toggle--20: var(--on_surface_variant);
+
+      /* Header search bar */
+      --csstools-light-dark-toggle--34: var(--surface);
+      --yellow500: var(--primary);
+      --yellow700: darken(var(--primary), 5%);
+
+      /* Dropdown */
+      --csstools-light-dark-toggle--23: var(--surface);
+      --csstools-light-dark-toggle--35: var(--surface);
+      /* Dropdown items */
+      [class*="_item_"] {
+        button:hover,
+        > a:hover,
+        [class*="_selected_"] {
+          background: var(--surface_container_low);
+          color: var(--on_surface) !important;
+        }
+      }
+    }
+
+    /* Toasts */
+    .c-notification {
+      --ecn-green: var(--tertiary);
+      --ecn-blue: var(--primary);
+      --ecn-orange: var(--secondary_container);
+      --ecn-red: var(--error);
+
+      &,
+      .c-notification__icon {
+        color: var(--surface);
+      }
+    }
+
+    /* Tooltips */
+    .ember-tooltip {
+      color: var(--on_surface);
+      background-color: var(--surface);
+      text-shadow: none;
+
+      &[x-placement^="top"] .ember-tooltip-arrow {
+        border-top-color: var(--surface);
+      }
+    }
+
+    /* Icons and icon badges */
+    [class*="downloads_"] [fill="#FFF"] {
+      fill: var(--surface_container_low) !important;
+    }
+    [fill="#B13B89"],
+    [fill="#B84D94"],
+    svg[class*="_download-icon"] {
+      fill: var(--primary) !important;
+    }
+    [stroke="#B84D94"] {
+      stroke: var(--primary) !important;
+    }
+
+    /* Footer links */
+    ._content_hautyr {
+      h1 {
+        text-shadow: none;
+      }
+
+      a {
+        color: var(--primary);
+
+        &:hover {
+          color: darken(var(--primary), 5%);
+          text-shadow: none;
+        }
+      }
+    }
+
+    /* Misc header text */
+    [class*="_header-inner_"] {
+      &,
+      a {
+        color: var(--on_surface);
+      }
+    }
+
+    /* Search bar magnifying glass icon */
+    form[action="/search"] button {
+      color: var(--surface);
+    }
+
+    /* Sort by search results */
+    ._icon_xsqxju {
+      color: var(--primary);
+    }
+
+    /* Primary buttons */
+    [class*="_tan-button_"],
+    [class*="_yellow-button_"] {
+      color: var(--surface) !important;
+      background: var(--primary);
+
+      &:hover {
+        background-color: darken(var(--primary), 5%);
+      }
+    }
+
+    [class*="_red-button_"] {
+      --bg-color-top: var(--error_container);
+      --bg-color-bottom: var(--error_container);
+      --bg-color-top-dark: var(--error);
+      --bg-color-bottom-dark: var(--error);
+    }
+
+    /* User email settings */
+    [class*="_me-email_"] {
+      [class*="_row_"] {
+        border-color: var(--surface_container_low);
+      }
+      [class*="_verified_"] {
+        color: var(--tertiary);
+      }
+    }
+
+    /* Logged out home page hero */
+    [class*="_hero-title_"] {
+      color: var(--on_surface);
+      text-shadow: none;
+    }
+    [class*="_hero-button_"] [class*="_icon_"] {
+      color: var(--surface);
+    }
+    [class*="_blurb_"] [class*="_stats-value_"] {
+      [class*="_label_"],
+      svg {
+        color: var(--on_surface_variant);
+      }
+    }
+
+    /* User avatar backgrounds */
+    [class*="_avatar_"] {
+      background-color: var(--surface_container_low);
+      box-shadow: none;
+    }
+
+    [class*="_yanked-badge_"] {
+      background-color: var(--error);
+      color: var(--surface);
+    }
+
+    /* Tables in READMEs */
+    table {
+      th,
+      td {
+        border-color: var(--surface_container);
+      }
+    }
+  }
+}

@@ -1,0 +1,202 @@
+/* ==UserStyle==
+@name Claude Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/claude
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/claude
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/claude/catppuccin.user.less
+@description Soothing pastel theme for Claude
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("claude.ai") {
+  :root[data-mode="dark"] {
+  }
+  :root[data-mode="light"],
+  /* Login page */
+  [data-theme="claude"][data-mode="light"] {
+  }
+
+
+    --accent-brand: #hslify(var(--primary))[];
+    --accent-main-000: #hslify(var(--primary))[];
+    --accent-main-100: #hslify(var(--primary))[];
+    --accent-main-200: #hslify(var(--primary))[];
+    --accent-main-900: #hslify(var(--primary))[];
+    --accent-pro-000: #hslify(var(--primary))[];
+    --accent-pro-100: #hslify(var(--primary))[];
+    --accent-pro-200: #hslify(var(--primary))[];
+    --accent-pro-900: #hslify(var(--primary))[];
+    --accent-secondary-000: #hslify(var(--primary))[];
+    --accent-secondary-100: #hslify(var(--primary))[];
+    --accent-secondary-200: #hslify(var(--primary))[];
+    --accent-secondary-900: #hslify(var(--primary))[];
+    --bg-000: #hslify(var(--surface))[];
+    --bg-100: #hslify(var(--surface_container_lowest))[];
+    --bg-200: #hslify(var(--surface_container_lowest))[];
+    --bg-300: #hslify(var(--surface_container_low))[];
+    --bg-400: #hslify(var(--surface_container))[];
+    --bg-500: #hslify(var(--surface_container_high))[];
+    --border-000: #hslify(var(--surface_container_lowest))[];
+    --border-100: #hslify(var(--surface))[];
+    --border-200: #hslify(var(--surface))[];
+    --border-300: #hslify(var(--outline))[];
+    --border-400: #hslify(var(--outline_variant))[];
+    --border-500: #hslify(var(--outline_variant))[];
+    --danger-000: #hslify(var(--error_container))[];
+    --danger-100: #hslify(var(--error))[];
+    --danger-200: #hslify(var(--error))[];
+    --danger-900: #hslify(var(--secondary))[];
+    --oncolor-000: #hslify(darken(var(--surface), 5%))[];
+    --oncolor-100: #hslify(var(--surface))[];
+    --oncolor-200: #hslify(var(--surface))[];
+    --oncolor-300: #hslify(lighten(var(--surface), 5%))[];
+    --text-000: #hslify(darken(var(--on_surface), 5%))[];
+    --text-100: #hslify(var(--on_surface))[];
+    --text-200: #hslify(var(--on_surface))[];
+    --text-300: #hslify(var(--on_surface_variant))[];
+    --text-400: #hslify(var(--on_surface))[];
+    --text-500: #hslify(var(--on_surface_variant))[];
+
+    /* Side bar */
+    nav.\!bg-bg-200 {
+      background: var(--surface) !important;
+    }
+
+    /* Code blocks */
+    .code-block__code {
+      background: var(--surface) !important;
+
+      code {
+        /* Default color */
+        span {
+          color: var(--on_surface) !important;
+        }
+
+        /* Green */
+        span.token[style="color: rgb(152, 195, 121);"] {
+          color: var(--tertiary) !important;
+        }
+
+        /* Yellow */
+        span.token[style="color: rgb(209, 154, 102);"] {
+          color: var(--secondary) !important;
+        }
+
+        /* Blue */
+        span.token[style="color: rgb(97, 175, 239);"] {
+          color: var(--primary) !important;
+        }
+
+        /* Red */
+        span.token[style="color: rgb(224, 108, 117);"] {
+          color: var(--error) !important;
+        }
+
+        /* Magenta */
+        span.token[style="color: rgb(198, 120, 221);"] {
+          color: var(--primary) !important;
+        }
+
+        /* Gray */
+        span.token[style="color: rgb(171, 178, 191);"] {
+          color: var(--outline_variant) !important;
+        }
+      }
+    }
+
+    /* Inline code */
+    code.text-danger-000 {
+      color: var(--primary) !important;
+    }
+
+    /* Tooltip */
+    div.bg-black\/80 {
+      background: var(--surface) !important;
+    }
+    div.text-white {
+      color: var(--on_surface) !important;
+    }
+
+    /* Logo */
+    div.text-\[\#D97757\] {
+      color: var(--primary) !important;
+    }
+
+    /* "New chat" plus icon */
+    div.text-always-white svg {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    /* "Subscribe to Pro" and "Create Team Account" buttons */
+    button.bg-accent-pro-100 > span.inline-block {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    /* Pay monthly/annually buttons */
+    button.bg-accent-secondary-900 {
+      span.text-text-000 {
+        color: var(--surface_container_lowest) !important;
+      }
+      span.text-text-300 {
+        color: var(--surface_container_high) !important;
+      }
+      div.bg-accent-secondary-000 {
+        background: darken(var(--primary), 15%) !important;
+      }
+    }
+
+    /* Delete conversation button */
+    div.\!text-danger-000.\[\&\[data-highlighted\]\]\:bg-danger-900[data-highlighted] {
+      background: fade(var(--error), 20%) !important;
+    }
+
+    /* Checkbox */
+    input[type="checkbox"] + div.bg-bg-000 {
+      background: var(--on_surface) !important;
+    }
+
+    /* "Add writing example" button */
+    button.\!text-accent-secondary-100.bg-accent-secondary-900 {
+      color: var(--surface_container_lowest) !important;
+      &:hover {
+        color: var(--on_surface) !important;
+      }
+    }
+
+    /* "Describe your style" list */
+    button.\!bg-accent-secondary-900.text-accent-secondary-000 {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    /* "Be as descriptive as possible..." helper text */
+    div.bg-accent-secondary-900.text-text-200 {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    /* "Preview with an example..." pills */
+    button.hover\:bg-accent-secondary-900.hover\:text-accent-secondary-000 {
+      color: var(--primary) !important;
+      &:hover {
+        color: var(--surface_container_lowest) !important;
+      }
+    }
+
+    /* "Previewing with ..." dropdown button */
+    button.\!text-accent-secondary-100.hover\:\!bg-accent-secondary-900 {
+      color: var(--primary) !important;
+      &:hover {
+        color: var(--surface_container_lowest) !important;
+      }
+    }
+  }
+}
+
+#hslify(@color) {
+}

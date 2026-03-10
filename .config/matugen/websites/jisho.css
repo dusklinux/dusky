@@ -1,0 +1,445 @@
+/* ==UserStyle==
+@name Jisho Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/jisho
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/jisho
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/jisho/catppuccin.user.less
+@description Soothing pastel theme for Jisho
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("jisho.org") {
+  :root[data-color-theme="auto"] {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+  :root[data-color-theme="dark"] {
+  }
+  :root[data-color-theme="light"] {
+  }
+
+
+    var(--primary)-dim: if(
+      desaturate(lighten(var(--primary), 8%), 10%),
+      desaturate(darken(var(--primary), 8%), 10%)
+    );
+
+:root {
+}
+
+    body {
+      background-color: var(--surface_container_lowest) !important;
+      color: var(--on_surface);
+
+      a {
+        color: var(--primary);
+
+        &:hover {
+          color: var(--primary)-dim;
+        }
+      }
+    }
+
+    each(
+      range(6),
+      {
+        h@{value} {
+          color: var(--on_surface);
+        }
+      }
+    );
+
+    button,
+    .button,
+    .tabs .tab-title > a {
+      background-color: var(--outline);
+      color: var(--on_surface);
+
+      &:hover,
+      &:focus {
+        background-color: var(--outline_variant);
+        color: var(--on_surface);
+      }
+    }
+
+    // ! There is some white space between the buttons in the button group
+    // ! This is somewhat mitigated by using `margin: 0 -2px;` originally
+    // ! We use `display: flex;` instead
+    .button-group {
+      display: flex;
+      flex-wrap: wrap;
+
+      &.radius > *,
+      > li {
+        margin: unset;
+      }
+    }
+
+    .f-dropdown {
+      background-color: var(--surface);
+      border-color: var(--outline);
+
+      &::before {
+        border-bottom-color: var(--surface_container_low);
+      }
+
+      li:hover {
+        background-color: var(--surface);
+      }
+    }
+
+    header.row {
+      background-color: var(--surface_container_lowest);
+    }
+
+    h1.logo a {
+      background-image: if(
+        url("//assets.jisho.org/assets/jisho-logo-v4@2x-7330091c079b9dd59601401b052b52e103978221c8fb6f5e22406d871fcc746a.png"),
+        url("//assets.jisho.org/assets/jisho-logo-v4-dark@2x-e676613b426d34187b61928823730a225b52165aaef99f948bd3dc5fc16fa787.png")
+      );
+    }
+
+    nav .links {
+      .color_theme_picker--wrapper:hover {
+        background-color: var(--surface);
+      }
+
+      .color_theme_picker--choices {
+        background-color: var(--surface);
+
+        li a:hover {
+          background-color: var(--surface);
+        }
+      }
+    }
+
+    form.search {
+      .input_methods,
+      .input_method_button h4 {
+        color: var(--on_surface_variant);
+      }
+
+      .input_method_button:hover {
+        background-color: var(--surface_container_low);
+      }
+
+      .main {
+        background-color: var(--surface_container_low);
+        box-shadow: none;
+      }
+
+      .inner {
+        background-color: var(--surface_container);
+
+        input {
+          color: var(--on_surface);
+        }
+      }
+
+      .search_type {
+        border-right-color: var(--outline);
+        color: var(--on_surface_variant);
+      }
+
+      .submit {
+        background-color: var(--outline_variant);
+        color: var(--on_surface);
+      }
+
+      .search-form_clear-button {
+        background-color: transparent; // ! Unsure if this needs a background, also extends beyond the input
+        .clear-icon {
+          fill: var(--on_surface_variant);
+        }
+      }
+
+      .results,
+      #radical_area .results {
+        .result_label {
+          color: var(--on_surface);
+        }
+
+        .result {
+          background-color: var(--surface_container);
+
+          &:hover {
+            color: var(--on_surface);
+          }
+        }
+
+        each(
+          range(8),
+          {
+            .g@{value} {
+              color: var(--primary);
+            }
+          }
+        );
+      }
+
+      #radical_area {
+        .radical_table {
+          background-image: repeating-linear-gradient(
+            180deg,
+            var(--surface_container),
+            var(--surface_container) 32px,
+            var(--surface_container_high) 32px,
+            var(--surface_container_high) 64px
+          );
+
+          .number {
+            background-color: var(--on_surface);
+            color: var(--surface_container_lowest);
+          }
+
+          .radical {
+            background-image: none; // ! some radicals are rendered with a background image by default
+            color: var(--on_surface);
+
+            &.available:hover {
+              background-color: var(--outline);
+            }
+
+            &.selected {
+              border-color: var(--on_surface);
+              background-color: fade(var(--secondary), 30%);
+            }
+          }
+        }
+
+        &.combined_mode {
+          // ! what is combined mode?
+          .reset_radicals {
+            color: var(--on_surface_variant);
+
+            &:hover {
+              color: var(--on_surface);
+              background-color: var(--outline);
+            }
+          }
+        }
+      }
+
+      .handwriting {
+        .panel {
+          background-color: var(--surface_container);
+        }
+
+        .pencil-icon {
+          color: var(--surface_container_high) !important;
+        }
+      }
+    }
+
+    .speech_area_active #speech_button,
+    .radical_area_active #radical_button,
+    .handwriting_area_active #handwriting_button {
+      border-bottom-color: var(--primary);
+    }
+
+    #what_is_this {
+      color: unset;
+    }
+
+    .japanese_word__furigana-invisible {
+      opacity: 0; // ! Jisho uses `color: #fff;` to hide furigana, however this does not work in the dark theme
+    }
+
+    #zen_bar li[data-pos="Noun"] a,
+    #zen_bar li[data-pos="Proper noun"] a,
+    #zen_bar li[data-pos="Pronoun"] a,
+    #zen_bar li[data-pos="Suffix"] a,
+    #zen_bar li[data-pos="Prefix"] a,
+    #zen_bar li[data-pos="Symbol"] a,
+    #zen_bar li[data-pos="Interjection"] a,
+    #zen_bar li[data-pos="Propernoun"] a {
+      color: var(--secondary_container);
+      border-bottom-color: var(--secondary_container);
+    }
+
+    #zen_bar li[data-pos="Particle"] a {
+      color: var(--error);
+      border-bottom-color: var(--error);
+    }
+
+    #zen_bar li[data-pos="Verb"] a {
+      color: var(--on_surface_variant);
+      border-bottom-color: var(--on_surface_variant);
+    }
+
+    #main_results h4 .result_count {
+      color: var(--on_surface_variant);
+    }
+
+    .fact {
+      outline-color: var(--surface);
+      border-color: var(--surface_container_lowest);
+      background-color: var(--surface);
+    }
+
+    .concept_light {
+      border-bottom-color: var(--outline);
+    }
+
+    .concept_light-status .concept_light-tag {
+      color: var(--surface_container_lowest);
+      background-color: var(--on_surface_variant);
+
+      &.concept_light-common {
+        background-color: var(--tertiary);
+      }
+
+      a {
+        color: var(--surface_container_lowest);
+      }
+    }
+    .concept_light-meanings {
+      .meaning-tags,
+      .meaning-definition-section_divider {
+        color: var(--on_surface_variant);
+      }
+    }
+
+    .concept_light .sentence,
+    .meaning-abstract,
+    .supplemental_info {
+      color: var(--on_surface_variant);
+    }
+
+    .kanji_light {
+      border-bottom-color: var(--outline);
+
+      .info {
+        color: var(--on_surface_variant);
+      }
+    }
+
+    .sentences_block .sentence {
+      border-bottom-color: var(--outline);
+    }
+
+    #secondary aside .minor-text {
+      color: var(--on_surface_variant);
+    }
+
+    .kanji-details__main-readings-list a {
+      border-bottom-color: var(--on_surface_variant);
+    }
+
+    .kanji_strokes {
+      .kanji_play_button,
+      .replay_button,
+      .toggle_kanji_actions {
+        color: var(--on_surface);
+        background-color: transparent;
+      }
+
+      .actions {
+        background-color: var(--surface_container_lowest);
+
+        h3 {
+          color: var(--on_surface);
+        }
+      }
+
+      .noUi-target {
+        .noUi-background {
+          background-color: var(--primary);
+        }
+
+        .noUi-base {
+          border-color: var(--surface_container);
+        }
+
+        .noUi-origin {
+          background-color: var(--outline);
+        }
+
+        .noUi-handle {
+          background-color: var(--on_surface);
+          border-color: var(--surface_container_high);
+        }
+
+        .noUi-active {
+          background-color: var(--on_surface_variant);
+        }
+      }
+    }
+
+    .stroke_order_diagram--bounding_box,
+    .stroke_order_diagram--guide_line {
+      stroke: var(--surface_container_low);
+    }
+
+    .stroke_order_diagram--path_start {
+      fill: fade(var(--error), 80%);
+    }
+
+    .stroke_order_diagram--current_path {
+      stroke: var(--on_surface);
+    }
+
+    .stroke_order_diagram--existing_path {
+      stroke: fade(var(--on_surface_variant), 50%);
+    }
+
+    .kanji {
+      table {
+        background-color: var(--surface);
+        border-color: var(--outline);
+      }
+
+      tr {
+        background-color: var(--surface_container_low);
+
+        td {
+          color: var(--on_surface_variant);
+        }
+      }
+    }
+
+    .discussion_thread {
+      .comment_body {
+        background-color: var(--surface_container_low);
+        border-color: var(--outline);
+
+        .discussion_status {
+          background-color: var(--surface_container);
+          border-bottom-color: var(--outline);
+          color: var(--on_surface_variant);
+        }
+
+        .discussion_about {
+          background-color: mix(var(--surface_container_low), var(--tertiary_container), 80%);
+          color: var(--tertiary_container);
+        }
+
+        .comment_status {
+          background-color: var(--surface_container_high);
+          color: var(--on_surface_variant);
+        }
+      }
+
+      .discussion_title a {
+        color: var(--on_surface) !important;
+      }
+    }
+
+    footer {
+      .ornament {
+        background-color: var(--error);
+        box-shadow: 0 0 10px 5px var(--surface_container_lowest), var(--outline));
+      }
+    }
+  }
+}

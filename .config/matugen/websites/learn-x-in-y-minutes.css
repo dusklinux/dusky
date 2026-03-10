@@ -1,0 +1,144 @@
+/* ==UserStyle==
+@name Learn X in Y Minutes Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/learn-x-in-y-minutes
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/learn-x-in-y-minutes
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/learn-x-in-y-minutes/catppuccin.user.less
+@description Soothing pastel theme for Learn X in Y Minutes
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("learnxinyminutes.com") {
+
+  html.light {
+  }
+
+  html.dark {
+  }
+
+  html:not(.dark, .light) {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+    #lib.css-variables();
+
+    .highlight {
+      background-color: var(--surface);
+
+      pre {
+        background-color: var(--surface) !important;
+      }
+    }
+
+    &:not(.dark, .light) {
+      p {
+        color: var(--on_surface_variant) !important;
+      }
+
+      span {
+        color: var(--on_surface);
+      }
+    }
+
+    .share {
+      background-color: var(--surface);
+      border-color: var(--surface);
+
+      &:hover {
+        background-color: var(--surface_container_low);
+      }
+    }
+
+    .theme-choice button {
+      color: var(--on_surface);
+      background-color: var(--surface);
+      border-color: var(--surface);
+
+      &:hover {
+        background-color: var(--surface_container_low);
+      }
+    }
+
+    #lang-select {
+      color: var(--on_surface);
+      background-color: var(--surface);
+      border-color: var(--surface);
+    }
+
+    td.lang span a {
+      color: var(--on_surface);
+      background-color: var(--surface);
+      border-color: var(--surface);
+
+      &:hover {
+        background-color: var(--surface_container_low);
+      }
+    }
+
+    &,
+:root {
+}
+
+    body {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+      border-color: var(--surface_container_lowest);
+      box-shadow: none;
+    }
+
+    td,
+    th {
+      color: var(--on_surface);
+      border-bottom-color: var(--surface_container_low);
+    }
+
+    footer {
+      p {
+        color: var(--on_surface);
+      }
+    }
+
+    a {
+      color: var(--primary) !important;
+
+      code {
+        color: var(--primary) !important;
+      }
+
+      &:visited {
+        color: darken(var(--primary), 5%) !important;
+      }
+
+      &.active {
+        color: var(--surface_container_lowest) !important;
+        background-color: var(--primary) !important;
+        border-color: darken(var(--primary), 15%) !important;
+
+        &:visited {
+          background-color: darken(var(--primary), 5%) !important;
+          color: var(--surface_container_lowest) !important;
+          border-color: darken(var(--primary), 10%) !important;
+        }
+      }
+    }
+
+    hr {
+      border-color: var(--surface_container);
+    }
+
+    code {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+  }
+}

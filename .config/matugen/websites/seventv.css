@@ -1,0 +1,501 @@
+/* ==UserStyle==
+@name 7TV Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/seventv
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/seventv
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/seventv/catppuccin.user.less
+@description Soothing pastel theme for 7TV
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("7tv.app") {
+  .light-theme {
+  }
+  .dark-theme {
+  }
+
+  .system-theme {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    background-color: var(--surface_container_lowest);
+
+    --secondary: var(--surface_container_low);
+    --secondary-text: var(--on_surface);
+    --secondary-hover: var(--surface_container_low);
+    --secondary-active: var(--surface_container_low);
+    --secondary-disabled: var(--surface);
+    --secondary-border: transparent;
+    --primary: var(--primary);
+    --primary-text: var(--surface);
+    --primary-hover: darken(var(--primary), 5%);
+    --primary-active: darken(var(--primary), 5%);
+    --primary-disabled: var(--on_surface_variant);
+    --primary-border: transparent;
+    --bg-dark: var(--surface);
+    --bg-medium: var(--surface);
+    --bg-light: var(--surface_container_lowest);
+    --text: var(--on_surface);
+    --text-light: var(--on_surface_variant);
+    --layout-border: transparent;
+    --border-active: var(--surface_container_lowest);
+    --store: var(--primary);
+    --preview: var(--surface);
+    --danger: var(--secondary_container);
+    --approve: var(--tertiary);
+    --rename: var(--primary_container);
+    --staff: var(--error);
+    --staff-bg: fade(var(--error), 20%);
+    --admin-merge: var(--primary);
+    --admin-unlist: var(--secondary_container);
+
+    .flag {
+      &[style*="#57ab5a"] {
+        color: var(--tertiary) !important;
+        background-color: fade(var(--tertiary), 20%) !important;
+      }
+      /* Emote is in selected emote set */
+      &[style*="#529bf5"] {
+        color: var(--primary) !important;
+        background-color: fade(var(--primary), 20%) !important;
+      }
+      /* Emote is unlisted */
+      &[style*="#eb3d26"] {
+        color: var(--error) !important;
+        &[style*="background-color"] {
+          background-color: fade(var(--error), 20%) !important;
+        }
+      }
+      /* Emote is trending */
+      &[style*="#e0823d"] {
+        color: var(--secondary_container) !important;
+        &[style*="background-color"] {
+          background-color: fade(var(--secondary_container), 20%) !important;
+        }
+      }
+      /* Emote is overlaying */
+      &[style*="#fc8dc7"] {
+        color: var(--secondary) !important;
+        &[style*="background-color"] {
+          background-color: fade(var(--secondary), 20%) !important;
+        }
+      }
+      /* Personal emote set */
+      &[style*="#b083f0"] {
+        color: var(--primary) !important;
+      }
+    }
+
+    .badge {
+      color: var(--surface_container_lowest);
+    }
+
+    .emote,
+    .emote-set {
+      /* Emote is in selected emote set */
+      &[style*="--highlight-active: #529bf5"] {
+        --highlight: fade(var(--primary), 80%) !important;
+        --highlight-active: var(--primary) !important;
+        &.emote-set .name {
+          color: var(--primary) !important;
+        }
+      }
+
+      /* Emote is unlisted */
+      &[style*="--highlight-active: #eb3d26"] {
+        --highlight: fade(var(--error), 80%) !important;
+        --highlight-active: var(--error) !important;
+      }
+
+      /* Emote is trending */
+      &[style*="--highlight-active: #e0823d"] {
+        --highlight: fade(var(--secondary_container), 80%) !important;
+        --highlight-active: var(--secondary_container) !important;
+      }
+
+      /* Emote is overlaying */
+      &[style*="--highlight-active: #fc8dc7"] {
+        --highlight: fade(var(--secondary), 80%) !important;
+        --highlight-active: var(--secondary) !important;
+      }
+
+      /* Emote set is a personal emote set */
+      &.emote-set[style*="--highlight-active: #b083f0"] {
+        --highlight: fade(var(--primary), 80%) !important;
+        --highlight-active: var(--primary) !important;
+        &.emote-set .name {
+          color: var(--primary) !important;
+        }
+      }
+
+      /* Emote set is a special emote set */
+      &.emote-set[style*="--highlight-active: #fcc200"] {
+        --highlight: fade(var(--secondary), 80%) !important;
+        --highlight-active: var(--secondary) !important;
+        &.emote-set .name,
+        &.emote-set .flag {
+          color: var(--secondary) !important;
+        }
+      }
+    }
+
+    img.image,
+    .profile-picture,
+    .profile-name .name,
+    .user,
+    .user-link,
+    .username .name,
+    .role > span,
+    .side-bar .name,
+    .roles > span {
+      /* Admin */
+      &[style*="255, 70, 70"] {
+        &,
+        span,
+        img {
+          color: var(--error) !important;
+          border-color: var(--error) !important;
+        }
+      }
+
+      /* Moderator */
+      &[style*="50, 168, 82"] {
+        &,
+        span,
+        img {
+          color: var(--tertiary) !important;
+          border-color: var(--tertiary) !important;
+        }
+      }
+
+      &[style*="23, 235, 182"],
+      &[style*="177, 235, 52"],
+      &[style*="68, 194, 135"] {
+        &,
+        span {
+          color: var(--tertiary_container) !important;
+          border-color: var(--tertiary_container) !important;
+        }
+      }
+      /* Event coordinator */
+      &[style*="182, 56, 181"] {
+        &,
+        span,
+        img {
+          color: var(--secondary) !important;
+          border-color: var(--secondary) !important;
+        }
+      }
+
+      /* Verified */
+      &[style*="145, 70, 255"] {
+        &,
+        span,
+        img {
+          color: var(--primary) !important;
+          border-color: var(--primary) !important;
+        }
+      }
+      /* Subscriber */
+      &[style*="255, 170, 0"] {
+        &,
+        span,
+        img {
+          color: var(--secondary) !important;
+          border-color: var(--secondary) !important;
+        }
+      }
+    }
+
+    .hero {
+      svg {
+        color: var(--on_surface) !important;
+      }
+
+      color: var(--on_surface);
+      .for-all {
+        -webkit-text-stroke-color: var(--on_surface) !important;
+      }
+
+      &::before {
+        background:
+          radial-gradient(
+            180% 80% at 0% 100%,
+            var(--on_surface) 0%,
+            var(--primary) 25%,
+            fade(var(--primary), 90%) 56%,
+            fade(var(--primary), 50%) 79%,
+            transparent 100%
+          ),
+          var(--surface);
+      }
+    }
+
+    /* Sub progress bar */
+
+    .progress-circle {
+      #progress {
+        stroke: var(--primary);
+      }
+    }
+
+    .subgrid .badge {
+      color: var(--on_surface_variant) !important;
+    }
+
+    /* Subscribe gradients */
+    .gradient {
+      color: var(--on_surface) !important;
+
+      &.g1 {
+        background:
+          radial-gradient(
+            150% 180% at 50% 180%,
+            var(--secondary_container),
+            var(--secondary) 1%,
+            var(--secondary) 25%,
+            var(--surface) 75%
+          ),
+          var(--secondary) !important;
+      }
+
+      &.g2 {
+        background:
+          radial-gradient(
+            150% 180% at 50% 180%,
+            var(--on_surface),
+            var(--error) 1%,
+            var(--error) 25%,
+            var(--surface) 75%
+          ),
+          var(--secondary) !important;
+      }
+
+      &.g3 {
+        background:
+          radial-gradient(
+            150% 180% at 50% 180%,
+            var(--secondary_container),
+            var(--secondary) 1%,
+            var(--primary) 25%,
+            var(--surface) 75%
+          ),
+          var(--secondary) !important;
+      }
+
+      &.g5 {
+        background:
+          radial-gradient(
+            150% 180% at 50% 180%,
+            var(--secondary_container),
+            var(--primary_container) 1%,
+            var(--primary_container) 25%,
+            var(--surface) 75%
+          ),
+          var(--secondary) !important;
+      }
+    }
+
+    /* Home page glow */
+    .weird-smiley::before,
+    .feature .background {
+      background-image: radial-gradient(
+        circle at bottom,
+        fade(var(--primary), 20%),
+        fade(var(--primary_container), 20%)
+      ) !important;
+    }
+
+    .banner {
+      color: var(--surface_container_lowest);
+
+      &[style="--gradient-color: #9227cf"] {
+        --gradient-color: var(--primary) !important;
+      }
+      &[style="--gradient-color: #27cfb1"] {
+        --gradient-color: var(--tertiary_container) !important;
+      }
+      &[style="--gradient-color: #ff11bc"] {
+        --gradient-color: var(--error) !important;
+      }
+
+      &::before {
+        background:
+          radial-gradient(
+            100% 100% at 50% 0%,
+            var(--on_surface) 0%,
+            var(--gradient-color) 33%,
+            var(--primary) 64%,
+            fade(var(--primary), 50%) 80%,
+            var(--surface) 100%
+          ),
+          var(--bg-medium) !important;
+      }
+    }
+
+    /* Sub badge progress bar */
+
+    progress[value].bar {
+      &::-webkit-progress-bar,
+      &::-moz-progress-bar {
+        background: var(--primary) !important;
+      }
+    }
+  }
+}
+@-moz-document domain("twitch.tv") {
+  .tw-root--theme-dark {
+  }
+  .tw-root--theme-light {
+  }
+
+
+    --seventv-text-color-normal: var(--on_surface);
+    --seventv-text-color-secondary: var(--on_surface_variant);
+
+    --seventv-border-transparent-1: var(--surface_container_low);
+    --seventv-background-shade-1: var(--surface_container_lowest);
+    --seventv-background-shade-2: var(--surface);
+    --seventv-background-shade-3: var(--surface);
+    --seventv-background-transparent-1: var(--surface_container_lowest);
+    --seventv-background-transparent-2: var(--surface);
+    --seventv-background-transparent-3: var(--surface);
+    --seventv-highlight-neutral-1: var(--surface_container_low);
+    --seventv-input-background: var(--surface);
+    --seventv-input-border: var(--surface_container_low);
+    --seventv-subscriber-color: var(--secondary);
+
+    --seventv-highlight-color: var(--primary);
+    --seventv-highlight-dim-color: fade(var(--primary), 20%);
+
+    --seventv-primary: var(--primary);
+    --seventv-accent: var(--tertiary);
+    --seventv-warning: var(--secondary_container);
+    --seventv-muted: var(--on_surface_variant);
+
+    .seventv-transparent {
+      --seventv-border-transparent-1: fade(var(--surface_container_low), 77%);
+      --seventv-background-transparent-1: fade(var(--surface_container_lowest), 77%);
+      --seventv-background-transparent-2: fade(var(--surface), 59%);
+      --seventv-background-transparent-3: fade(var(--surface), 71%);
+    }
+
+    .seventv-announce-message-container {
+      .announce-header {
+        background-color: var(--surface);
+      }
+      .announce-message {
+        background-color: var(--surface_container_lowest);
+      }
+    }
+
+    .grabbable-inner, .grabbable-outer {
+      --color-border-input: var(--on_surface_variant);
+    }
+
+    .seventv-user-message {
+      /* First time chatter */
+      &[style*="--seventv-highlight-color: #c832c8"] {
+        --seventv-highlight-color: var(--primary) !important;
+        --seventv-highlight-dim-color: fade(var(--primary), 10%) !important;
+      }
+      /* Mention */
+      &[style*="--seventv-highlight-color: #e13232"] {
+        --seventv-highlight-color: var(--error) !important;
+        --seventv-highlight-dim-color: fade(var(--error), 10%) !important;
+      }
+      /* Blocked */
+      &[style*="--seventv-highlight-color: #9488855A"] {
+        --seventv-highlight-color: var(--surface_container_low) !important;
+      }
+      /* Raider */
+      &[style*="--seventv-highlight-color: #6dd126"] {
+        --seventv-highlight-color: var(--tertiary) !important;
+        --seventv-highlight-dim-color: fade(var(--tertiary), 10%) !important;
+      }
+      /* Returning chatter */
+      &[style*="--seventv-highlight-color: #3296e6"] {
+        --seventv-highlight-color: var(--primary) !important;
+        --seventv-highlight-dim-color: fade(var(--primary), 10%) !important;
+      }
+    }
+
+    .seventv-chat-message-container:hover .seventv-chat-message-background {
+      background-color: var(--surface_container_low);
+    }
+
+    .seventv-sub-message-container, .seventv-reward-message-container {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .seventv-settings-category {
+      .seventv-settings-category-dropdown .seventv-settings-subcategory {
+        &:hover {
+          background-color: var(--surface_container_lowest) !important;
+        }
+        &.intersect {
+          background-color: var(--surface_container_low) !important;
+        }
+      }
+
+      .settings-category-header {
+        &:hover, &:focus-within {
+          background-color: var(--surface_container_lowest);
+        }
+      }
+    }
+
+    .seventv-settings-category[in-view="true"] > .settings-category-header {
+      background-color: var(--surface_container_low);
+    }
+
+    .paint-tool-home {
+      h6[style="color: red;"] {
+        color: var(--secondary_container) !important;
+      }
+    }
+
+    section[timeline-id="LIVE"] {
+      label, div[selector="date-boundary"] {
+        color: var(--error);
+        border-color: var(--error);
+      }
+    }
+
+    .seventv-emote-container[zero-width="true"] {
+      border-color: var(--secondary);
+    }
+
+    .scope-labels {
+      .label-global {
+        color: var(--tertiary);
+      }
+      .label-sub-feature {
+        color: var(--secondary);
+      }
+    }
+
+    [style*="rgb(255, 255, 255)"] .seventv-chat-user-username span {
+      color: var(--on_surface) !important;
+    }
+
+    .seventv-chat-mod-buttons {
+      color: var(--on_surface_variant);
+
+      svg:hover {
+        color: var(--on_surface);
+      }
+    }
+  }
+}

@@ -1,0 +1,105 @@
+/* ==UserStyle==
+@name Indie Wiki Buddy Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/indie-wiki-buddy
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/indie-wiki-buddy
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/indie-wiki-buddy/catppuccin.user.less
+@description Soothing pastel theme for Indie Wiki Buddy
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+/*
+To get a list of supported search engines, run the following command:
+curl -s https://raw.githubusercontent.com/KevinPayravi/indie-wiki-buddy/main/manifest-firefox.json | python -c "import sys, json;print(*json.loads(sys.stdin.read())['content_scripts'][2]['matches'], sep='\n')"
+*/
+@-moz-document domain("bing.com"),
+  domain("search.brave.com"),
+  domain("duckduckgo.com"),
+  domain("ecosia.org"),
+  domain("kagi.com"),
+  domain("qwant.com"),
+  domain("search.yahoo.com"),
+  domain("startpage.com"),
+  domain("ya.ru"),
+  regexp("^https?://(www\\.)?google\\..*"),
+  regexp("^https?://(www\\.)?yandex\\..*") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    .iwb-new-link button {
+      color: var(--surface_container_lowest);
+      background: var(--primary);
+      &:hover {
+        background: var(--primary_fixed);
+      }
+    }
+    .iwb-result-controls {
+      color: var(--on_surface) !important;
+    }
+  }
+}
+
+@-moz-document domain("fandom.com"),
+  domain("fextralife.com"),
+  domain("neoseeker.com"),
+  domain("breezewiki.com"),
+  domain("antifandom.com"),
+  domain("bw.artemislena.eu"),
+  domain("breezewiki.catsarch.com"),
+  domain("breezewiki.esmailelbob.xyz"),
+  domain("breezewiki.frontendfriendly.xyz"),
+  domain("bw.hamstro.dev"),
+  domain("breeze.hostux.net"),
+  domain("breezewiki.hyperreal.coffee"),
+  domain("breeze.mint.lgbt"),
+  domain("breezewiki.nadeko.net"),
+  domain("nerd.whatever.social"),
+  domain("breeze.nohost.network"),
+  domain("z.opnxng.com"),
+  domain("bw.projectsegfau.lt"),
+  domain("breezewiki.pussthecat.org"),
+  domain("bw.vern.cc"),
+  domain("breeze.whateveritworks.org"),
+  domain("breezewiki.woodland.cafe") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    .indie-wiki-banner {
+      background: var(--surface);
+      color: var(--on_surface);
+      ::selection {
+        background-color: fade(var(--primary), 30%);
+      }
+    }
+    .indie-wiki-banner-exit {
+      color: var(--on_surface);
+    }
+    .indie-wiki-banner-link {
+      color: var(--primary);
+
+      &:hover {
+        color: var(--primary_fixed);
+      }
+    }
+    .indie-wiki-banner-disabled {
+      color: var(--on_surface_variant);
+    }
+  }
+}

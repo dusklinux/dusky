@@ -1,0 +1,314 @@
+/* ==UserStyle==
+@name ichi.moe Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/ichi.moe
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/ichi.moe
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/ichi.moe/catppuccin.user.less
+@description Soothing pastel theme for ichi.moe
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+
+@var checkbox zen "Zen Mode" 0
+==/UserStyle== */
+
+
+@-moz-document domain("ichi.moe") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    html,
+:root {
+}
+
+    body {
+      background: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    footer {
+      color: var(--on_surface);
+    }
+
+    span.query-word:hover {
+      border-color: var(--secondary);
+    }
+
+    .panel-error {
+      background-color: fade(var(--error), 80%);
+    }
+
+    .highlight {
+      background-color: fade(var(--secondary), 80%);
+    }
+
+    .gloss {
+      background-color: if(@flavor = "latte", var(--surface_container_lowest), var(--surface_container_low));
+    }
+
+    .gloss,
+    .gloss-rtext {
+      border-color: if(@flavor = "latte", var(--surface_container_high), var(--outline));
+    }
+
+    .gloss:target {
+        box-shadow: 0 0 5px var(--surface_container_high);
+        -webkit-box-shadow: 0 0 5px var(--surface_container_high);
+        -moz-box-shadow: 0 0 5px var(--surface_container_high);
+      }
+      box-shadow: 0 0 5px var(--outline);
+      -webkit-box-shadow: 0 0 5px var(--outline);
+      -moz-box-shadow: 0 0 5px var(--outline);
+    }
+
+    a {
+      color: var(--primary_container);
+    }
+
+    a.wiktionary-link {
+      color: var(--on_surface);
+    }
+
+    a.info-link {
+      color: var(--on_surface);
+    }
+
+    a.info-link:hover {
+      border-bottom-color: var(--primary_container);
+    }
+
+    .note-skipped a {
+      color: var(--on_surface);
+    }
+
+    .note-skipped a:hover {
+      border-color: var(--on_surface);
+    }
+
+    .jspDrag {
+      background-color: if(@flavor = "latte", var(--surface_container), var(--surface_container_high));
+    }
+
+    .conj-negative {
+      color: var(--error);
+    }
+
+    .conj-formal {
+      color: var(--primary);
+    }
+
+    .pos-desc {
+      color: var(--tertiary);
+    }
+
+    .reading-table tr:nth-of-type(2n),
+    table.kanji-match tr:nth-of-type(2n) {
+      background: fade(if(@flavor = "latte", var(--surface_container_low), var(--surface_container)), 50%);
+    }
+
+    .kanji-big a {
+      color: var(--on_surface);
+    }
+
+    .autocomplete-suggestions {
+      border-color: if(@flavor = "latte", var(--surface_container_high), var(--outline));
+    }
+
+    .autocomplete-suggestions,
+    .autocomplete-selected {
+      background: if(@flavor = "latte", var(--surface_container_lowest), var(--surface_container_low));
+    }
+
+    .autocomplete-suggestions strong {
+      color: var(--primary_container);
+    }
+
+    .autocomplete-group strong {
+      border-bottom-color: var(--on_surface);
+    }
+
+    .button {
+      background-color: var(--primary_container);
+      border-color: var(--primary_container);
+      color: var(--surface_container_lowest);
+    }
+
+    button:hover,
+    button:focus,
+    .button:hover,
+    .button:focus {
+      background-color: darken(var(--primary_container), 25%);
+      color: var(--surface_container_lowest);
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+      color: var(--on_surface);
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="date"],
+    input[type="datetime"],
+    input[type="datetime-local"],
+    input[type="month"],
+    input[type="week"],
+    input[type="email"],
+    input[type="number"],
+    input[type="search"],
+    input[type="tel"],
+    input[type="time"],
+    input[type="url"],
+    input[type="color"],
+    textarea,
+    input[type="file"],
+    input[type="checkbox"],
+    input[type="radio"],
+    select,
+    input[type="text"]:focus,
+    input[type="password"]:focus,
+    input[type="date"]:focus,
+    input[type="datetime"]:focus,
+    input[type="datetime-local"]:focus,
+    input[type="month"]:focus,
+    input[type="week"]:focus,
+    input[type="email"]:focus,
+    input[type="number"]:focus,
+    input[type="search"]:focus,
+    input[type="tel"]:focus,
+    input[type="time"]:focus,
+    input[type="url"]:focus,
+    input[type="color"]:focus,
+    textarea:focus,
+    input[type="file"]:focus,
+    input[type="checkbox"]:focus,
+    input[type="radio"]:focus,
+    select:focus {
+        background-color: var(--surface_container_lowest);
+        border-color: var(--surface_container_low);
+      }
+      background-color: var(--surface_container_low);
+      border-color: var(--surface_container);
+      color: var(--on_surface);
+    }
+
+    .header-nav a {
+      color: var(--secondary);
+    }
+
+    .header-nav a:hover {
+      color: darken(var(--secondary), 15%);
+    }
+
+    .jspTrack {
+      background: if(@flavor = "latte", var(--surface_container_low), var(--surface_container));
+    }
+
+    .f-dropdown {
+      background-color: if(@flavor = "latte", var(--surface_container_lowest), var(--surface_container_low));
+      border-color: var(--on_surface);
+    }
+
+    .f-dropdown::before {
+      border-color: transparent transparent var(--on_surface);
+    }
+
+    span.query-pick {
+      color: var(--on_surface);
+    }
+
+    .has-tip {
+      color: var(--on_surface);
+      border-color: var(--outline_variant);
+    }
+
+    .has-tip:hover,
+    .has-tip:focus {
+      border-bottom-color: var(--primary_container);
+      color: var(--primary_container);
+    }
+
+    label {
+      color: var(--on_surface);
+    }
+
+    table {
+      background: var(--surface_container_lowest);
+      background-color: if(@flavor = "latte", var(--surface_container_low), var(--surface_container));
+    }
+
+    table tr th,
+    table tr td {
+      color: var(--on_surface);
+    }
+
+    table tr.even,
+    table tr.alt,
+    table tr:nth-of-type(2n) {
+      background: fade(if(@flavor = "latte", var(--surface_container_low), var(--surface_container)), 50%);
+    }
+
+    .kanji-table td,
+    .reading-table tr ~ tr > td,
+    table.kanji-match td,
+    tr.match-row-kanji,
+    tr.match-row-reading {
+      border-color: if(@flavor = "latte", var(--surface_container_low), var(--surface_container));
+    }
+
+    img {
+      filter: contrast(1.2) opacity(85%);
+    }
+
+    /* Options */
+      .header,
+      footer,
+      .landing-page {
+        display: none;
+      }
+
+      div.wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        place-content: center center;
+        padding: 50px 0;
+        min-height: 100vh;
+        margin: 0;
+      }
+
+      .gloss-all {
+        width: 100%;
+        padding: 0 10px;
+      }
+
+      #div-ichiran-result {
+        padding: 0 10px;
+      }
+
+      #div-kanji-form,
+      #w-form {
+        width: 100%;
+      }
+
+      #k-form > div > div,
+      #w-form > div > div {
+        width: 100%;
+        max-width: 304px;
+      }
+    }
+  }
+}

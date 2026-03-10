@@ -1,0 +1,59 @@
+/* ==UserStyle==
+@name Graphite Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/graphite
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/graphite
+@version 2025.11.07
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/graphite/catppuccin.user.less
+@description Soothing pastel theme for Graphite
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("app.graphite.com") {
+  :root[data-theme="light"] {
+  }
+  :root[data-theme="dark"] {
+  }
+
+  #createset(@color, @type) {
+    --color-@{type}-default: @color;
+    --color-@{type}-lowest-contrast: var(--primary_fixed_dim);
+    --color-@{type}-low-contrast: @color;
+    --color-@{type}-high-contrast: @color;
+    --color-@{type}-highest-contrast: var(--primary_fixed);
+  }
+
+
+    --color-bg-light: var(--surface_container_lowest);
+    --color-bg-med: var(--surface);
+    --color-bg-dark: var(--surface);
+
+    --text-color-light: var(--surface); // this means on a light background
+    --text-color-default: var(--on_surface);
+    --text-color-low-contrast: var(--on_surface);
+    --text-color-high-contrast: var(--on_surface);
+    --text-color-disabled: var(--on_surface_variant);
+
+    --btn-color-neutral-selected: var(--surface_container_low);
+    --btn-color-neutral-default: var(--surface_container_low);
+    --btn-color-neutral-hover: var(--surface_container_low);
+
+    --icon-color-default: var(--on_surface);
+
+    --border-color-default: var(--surface_container);
+
+    --color-gray-60: var(--surface_container_low);
+
+    #createset(var(--primary), emphasis);
+    #createset(var(--tertiary), positive);
+    #createset(var(--secondary_container), caution);
+    #createset(var(--error), negative);
+    #createset(var(--primary), action);
+  }
+}

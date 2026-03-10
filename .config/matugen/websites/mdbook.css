@@ -1,0 +1,89 @@
+/* ==UserStyle==
+@name mdBook Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/mdbook
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/mdbook
+@version 2025.12.27
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/mdbook/catppuccin.user.less
+@description Soothing pastel theme for mdBook
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("rust-lang.github.io"),
+  domain("doc.rust-lang.org"),
+  domain("rust-book.cs.brown.edu"),
+  domain("rustc-dev-guide.rust-lang.org"),
+  domain("forge.rust-lang.org"),
+  domain("lang-team.rust-lang.org"),
+  domain("doc.redox-os.org"),
+  url-prefix("https://lukaswirth.dev/tlborm/") {
+
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+    #lib.css-variables();
+
+    --bg: var(--surface_container_lowest);
+    --fg: var(--on_surface);
+    --sidebar-bg: var(--surface);
+    --sidebar-fg: var(--on_surface);
+    --sidebar-non-existant: var(--outline);
+    --sidebar-active: var(--primary);
+    --sidebar-spacer: var(--outline);
+    --scrollbar: var(--outline);
+    --icons: var(--outline);
+    --icons-hover: var(--outline_variant);
+    --links: var(--primary);
+    --inline-code-color: var(--secondary_container);
+    --theme-popup-bg: var(--surface);
+    --theme-popup-border: var(--outline);
+    --theme-hover: var(--outline);
+    --quote-bg: var(--surface);
+    --quote-border: var(--surface);
+    --table-border-color: var(--surface);
+    --table-header-bg: var(--surface);
+    --table-alternate-bg: var(--surface);
+    --searchbar-border-color: var(--surface);
+    --searchbar-bg: var(--surface);
+    --searchbar-fg: var(--on_surface);
+    --searchbar-shadow-color: var(--surface);
+    --searchresults-header-fg: var(--on_surface);
+    --searchresults-border-color: var(--surface);
+    --searchresults-li-bg: var(--surface_container_lowest);
+    --search-mark-bg: var(--secondary_container);
+    --warning-border: var(--secondary_container);
+
+    code.hljs {
+      color: var(--on_surface);
+      background: var(--surface);
+    }
+    blockquote blockquote {
+      border-top-color: var(--surface_container_high);
+      border-bottom-color: var(--surface_container_high);
+    }
+    hr {
+      color: var(--surface_container_high);
+    }
+    del {
+      color: var(--outline_variant);
+    }
+    .ace_gutter {
+      color: var(--outline_variant);
+      background: var(--surface);
+    }
+    .ace_gutter-active-line.ace_gutter-cell {
+      color: var(--secondary);
+      background: var(--surface);
+    }
+  }
+}

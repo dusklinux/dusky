@@ -1,0 +1,256 @@
+/* ==UserStyle==
+@name DeepSeek Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/deepseek
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/deepseek
+@version 2025.12.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/deepseek/catppuccin.user.less
+@description Soothing pastel theme for DeepSeek
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document url-prefix("https://chat.deepseek.com") {
+
+  body[data-ds-dark-theme] {
+  }
+  body:not([data-ds-dark-theme]) {
+  }
+
+    #lib.css-variables();
+
+    #ds-rgb() {
+      --ds-bordered-secondary-button-color: var(--dsr-text-1);
+      --ds-button-hover-color: initial;
+      --ds-input-prefix-color: var(--dsr-text-1);
+      --ds-modal-content-color: var(--surface_container_low);
+      --ds-rgb-bg-base: var(--ds-rgb-black);
+      --ds-rgb-elevated: #lib.rgbify(var(--surface_container_low))[];
+      --ds-rgb-error: #lib.rgbify(var(--error))[];
+      --ds-rgb-header: 40 40 40;
+      --ds-rgb-info: #lib.rgbify(var(--primary))[];
+      --ds-rgb-input-focus: var(--ds-rgb-neutral-900);
+      --ds-rgb-input-strong: var(--ds-rgb-neutral-700);
+      --ds-rgb-input: var(--ds-rgb-neutral-800);
+      --ds-rgb-label-1: #lib.rgbify(var(--on_surface))[];
+      --ds-rgb-label-2: #lib.rgbify(var(--on_surface_variant))[];
+      --ds-rgb-label-3: #lib.rgbify(var(--outline_variant))[];
+      --ds-rgb-link: var(--ds-rgb-primary);
+      --ds-rgb-primary-foreground: #lib.rgbify(var(--surface_container_lowest))[];
+      --ds-rgb-primary: #lib.rgbify(var(--primary))[];
+      --ds-rgb-segmented-button: var(--ds-rgb-neutral-500);
+      --ds-rgb-segmented-separator: var(--ds-rgb-neutral-500);
+      --ds-rgb-segmented: var(--ds-rgb-neutral-600);
+      --ds-rgb-separator-strong: #lib.rgbify(var(--outline))[];
+      --ds-rgb-separator: #lib.rgbify(var(--surface_container_high))[];
+      --ds-rgb-success: #lib.rgbify(var(--tertiary))[];
+      --ds-rgb-tag: var(--ds-rgb-neutral-600);
+      --ds-rgb-thumb: var(--ds-rgb-neutral-200);
+      --ds-rgb-track: var(--ds-rgb-neutral-500);
+      --ds-rgb-warning: #lib.rgbify(var(--secondary))[];
+      --ds-rgba-transparent: 255 255 255/0;
+      --ds-tabs-active-color: var(--primary);
+      --ds-text-primary-button-color: var(--primary);
+      --ds-rgb-hover: #lib.rgbify(mix(var(--on_surface), var(--surface_container_lowest), 8%))[];
+
+      --ds-toast-custom-color: var(--surface_container_low);
+      --ds-toast-custom-text-color: var(--on_surface);
+      --ds-toast-cutsom-border: 1px solid var(--surface_container);
+      --ds-md-inline-code-color: var(--surface_container_lowest);
+    }
+
+    --dsw-alias-bg-base: var(--surface_container_lowest);
+    --dsw-alias-bg-layer-1: var(--surface);
+    --dsw-alias-bg-layer-2: var(--surface_container_lowest);
+    --dsw-alias-bg-layer-3: var(--surface_container_low);
+
+    --dsw-alias-bg-mask-1: rgba(0, 0, 0, 0.5);
+    --dsw-alias-bg-mask-2: rgba(0, 0, 0, 0.2);
+    --dsw-alias-bg-multi-select: mix(var(--primary), var(--surface), 8%);
+    --dsw-alias-bg-skeleton: fade(var(--on_surface), 8%);
+
+    --dsw-alias-border-inverted2: rgba(255, 255, 255, 0.08);
+    --dsw-alias-border-inverted: rgba(255, 255, 255, 0.06);
+    --dsw-alias-border-l1: rgba(255, 255, 255, 0.06);
+    --dsw-alias-border-l2-darkmode-thin: rgba(255, 255, 255, 0.06);
+    --dsw-alias-border-l2: var(--surface_container);
+    --dsw-alias-border-l3: var(--surface_container_high);
+    --dsw-alias-border-l4: var(--outline);
+
+    --dsw-alias-brand-primary-invert: var(--on_surface);
+    --dsw-alias-brand-primary: var(--primary);
+    --dsw-alias-brand-text: var(--primary);
+
+    --dsw-alias-button-contrast-fill: var(--on_surface);
+    --dsw-alias-button-elevated-fill: var(--surface_container);
+
+    --dsw-alias-button-floating-fill: var(--surface_container_lowest);
+    --dsw-alias-button-floating-hover: mix(var(--on_surface), var(--surface_container_lowest), 8%);
+
+    --dsw-alias-button-ghost-active-border: var(--primary);
+    --dsw-alias-button-ghost-active-fill: fade(var(--primary), 14%);
+    --dsw-alias-button-ghost-active-hover: fade(var(--primary), 18%);
+
+    --dsw-alias-button-primary-dimmed: darken(var(--primary), 8%);
+    --dsw-alias-button-primary-fill: var(--dsw-alias-brand-primary);
+    --dsw-alias-button-primary-hover: lighten(var(--primary), 8%);
+
+    --dsw-alias-interactive-bg-active: fade(var(--on_surface), 14%);
+    --dsw-alias-interactive-bg-hover-accent: fade(var(--on_surface), 24%);
+    --dsw-alias-interactive-bg-hover-danger: fade(var(--error), 15%);
+    --dsw-alias-interactive-bg-hover: fade(var(--on_surface), 8%);
+
+    --dsw-alias-label-caption: var(--outline);
+    --dsw-alias-label-dimmed: var(--surface_container);
+    --dsw-alias-label-primary-dimmed: var(--dsw-static-neutral-bluish-100);
+    --dsw-alias-label-primary-inverted: var(--dsw-static-neutral-bluish-800);
+
+    --dsw-alias-label-primary: var(--on_surface);
+    --dsw-alias-label-secondary: var(--on_surface_variant);
+    --dsw-alias-label-tertiary: var(--outline_variant);
+
+    --dsw-alias-markdown-citation: var(--dsw-static-neutral-bluish-800);
+    --dsw-alias-markdown-code-block-banner: var(--surface_container_low);
+    --dsw-alias-markdown-code-block: var(--surface);
+    --dsw-alias-markdown-code-segment-selected: var(
+      --dsw-static-neutral-bluish-800
+    );
+    --dsw-alias-markdown-code-segment-unselected: var(
+      --dsw-static-neutral-bluish-900
+    );
+    --dsw-alias-markdown-inline-code: var(--surface_container_low);
+    --dsw-alias-markdown-tag: var(--dsw-static-neutral-bluish-850);
+
+    --dsw-alias-scrollbar-bg-l1: var(--surface_container_high);
+    --dsw-alias-scrollbar-bg-l2: var(--outline);
+    --dsw-alias-scrollbar-hover-l1: var(--outline);
+    --dsw-alias-scrollbar-hover-l2: var(--outline_variant);
+
+    --dsw-alias-state-error-primary: var(--error);
+    --dsw-alias-state-error-secondary: var(--error);
+
+    --dsw-alias-state-success-primary: var(--tertiary);
+    --dsw-alias-state-success-secondary: var(--tertiary);
+
+    --dsw-alias-state-warn-label: var(--dsw-static-amber-600);
+    --dsw-alias-state-warn-primary: var(--dsw-static-amber-500);
+    --dsw-alias-state-warn-secondary: var(--dsw-static-amber-400);
+    --dsw-alias-state-warn-tertiary: var(--dsw-static-amber-900);
+
+    --dsw-alias-toast-bg: var(--dsw-static-neutral-bluish-750);
+    --dsw-alias-tooltip-bg: var(--dsw-static-neutral-bluish-750);
+
+    --dsw-specific-bubble: var(--surface_container_low);
+    --dsw-specific-input-major: var(--surface_container_low);
+    --dsw-specific-login-input: var(--dsw-static-neutral-900);
+    --dsw-specific-menu: var(--dsw-alias-bg-layer-3);
+    --dsw-specific-selector: fade(var(--on_surface), 14%);
+    --dsw-specific-sidebar-fill: var(--surface);
+    --dsw-specific-sidebar-nav-item-active-accent: var(--surface_container_low);
+    --dsw-specific-sidebar-nav-item-active: var(--surface_container_low);
+    --dsw-specific-sidebar-nav-item-hover: fade(var(--on_surface), 8%);
+    --dsw-specific-tip: var(--dsw-static-neutral-bluish-800);
+
+    --dsr-bg: var(--surface);
+    --dsr-text-0: var(--on_surface);
+    --dsr-text-1: var(--on_surface);
+    --dsr-text-2: var(--on_surface_variant);
+    --dsr-text-3: var(--outline_variant);
+    --dsr-text-4: var(--outline_variant);
+    --dsr-border-1: rgb(var(--ds-rgb-neutral-450));
+    --dsr-border-2: rgb(var(--ds-rgb-neutral-600));
+    --dsr-input-border: #5a5a69;
+    --dsr-input-bg: #404045;
+    --dsr-button-main-bg: #509fff;
+    --dsr-button-main-bg-hover: #4166d5;
+    --dsr-button-second-bg: var(--dsr-main-2);
+    --dsr-button-grey-0: rgb(var(--ds-rgb-neutral-600));
+    --dsr-button-grey-1: rgb(var(--ds-rgb-neutral-650));
+    --dsr-button-grey-2: rgb(var(--ds-rgb-neutral-700));
+    --dsr-delete-button-bg: rgb(var(--ds-rgb-red-500) / 0.85);
+    --dsr-delete-button-bg-hover: rgb(var(--ds-rgb-red-550) / 0.45);
+    --dsr-tooltip-fg: rgb(var(--ds-rgb-zinc-650));
+    --dsr-tooltip-bg: #000;
+    --dsr-side-bg: #212327;
+    --dsr-side-hover-bg-rgb: 51, 51, 51;
+    --dsr-side-hover-bg: rgb(var(--ds-rgb-neutral-750));
+    --dsr-icon-fg-1: rgb(var(--ds-rgb-neutral-350));
+    --dsr-icon-hover-0: rgb(var(--ds-rgb-neutral-500));
+    --dsr-icon-hover-1: rgb(var(--ds-rgb-neutral-700));
+    --dsr-side-icon-hover: rgb(var(--ds-rgb-zinc-750));
+    --dsr-error-fg: rgb(var(--ds-rgb-red-450));
+    --dsr-risk-text: #e4773d;
+    --dsr-risk-border: #4c4740;
+    --dsr-risk-fill: #31302e;
+
+    .ds-elevated, [data-elevated] {
+      #ds-rgb() !important;
+    }
+    &, .ds-theme {
+      #ds-rgb() !important;
+
+      --wip-ds-color-bg-tooltip: var(--surface_container_low);
+    }
+
+    .ds-sign-up-form__main {
+      background: var(--surface_container_lowest);
+    }
+    .ds-switch.ds-switch.ds-switch {
+      --switch-color: var(--surface_container_high);
+      --switch-thumb-color: var(--surface_container_lowest), var(--on_surface));
+      &.ds-switch--checked {
+        --switch-color: var(--primary);
+        --switch-thumb-color: var(--surface_container_lowest);
+      }
+    }
+    .ds-basic-button--primary {
+      --ds-primary-button-text-color: var(--surface_container_lowest);
+    }
+    .ds-checkbox svg {
+      color: var(--surface_container_lowest);
+    }
+
+    .ds-tooltip {
+      --tooltip-text-color: var(--on_surface);
+    }
+
+    /* Fade out text on active sidebar nav item */
+    ._546d736.b64fb9ae ._254829d {
+      --mask-base-color: #lib.rgbify(var(--surface_container_low))[];
+    }
+    /* Fade out text on hovered sidebar nav item */
+    ._546d736 ._254829d {
+      --mask-base-color: #lib.rgbify(var(--surface_container_low))[];
+    }
+
+    /* Fade out on top of conversation */
+    .c99b79f8.c99b79f8.c99b79f8 {
+      background: linear-gradient(to bottom, var(--surface), transparent);
+    }
+    /* Fade out on top of conversation when multiselect active */
+    .a51c5344 .c99b79f8.c99b79f8.c99b79f8 {
+      background: linear-gradient(
+        to bottom,
+        var(--dsw-alias-bg-multi-select),
+        transparent
+      );
+    }
+
+    /* Response feedback rating radio button focus */
+    ._74d6322
+      .ds-radio-button-group
+      .ds-radio-button.ds-radio-button--active::after {
+      box-shadow: var(--radio-button-group-button-outline-box-shadow-focus);
+    }
+
+    /* Send button icon */
+    ._7436101 {
+      color: var(--surface_container_lowest);
+    }
+  }
+}

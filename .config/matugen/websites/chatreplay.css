@@ -1,0 +1,163 @@
+/* ==UserStyle==
+@name ChatReplay Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/chatreplay
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/chatreplay
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/chatreplay/catppuccin.user.less
+@description Soothing pastel theme for ChatReplay
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+
+@var range bg-opacity "Background Opacity" [0.2 , -0.05 , 1 , 0.05]
+@var range bg-blur "Background Blur" [20, 0, 100, 1, 'px']
+==/UserStyle== */
+
+
+@-moz-document domain("chatreplay.stream") {
+  :root[dark] #chat-container {
+  }
+  :root #chat-container {
+  }
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+      a:not(.username),
+      i {
+        color: var(--primary);
+      }
+      color: var(--on_surface);
+      --text-color: var(--on_surface);
+      --timestamp-color: var(--on_surface);
+      --bg-color: var(--surface_container_lowest);
+      --bg-color-transparent: fade(var(--surface_container_lowest), 10%);
+      --settings-bg-color: var(--surface);
+      --btn-bg-color: var(--surface_container_low);
+      --bg-color-highlight: var(--surface_container_low);
+      --scrollbar-thumb: var(--surface_container_low);
+      --btn-hover-bg: var(--surface_container);
+      --link-color: var(--primary);
+      --border-color: var(--surface_container_low);
+      --settings-shadow: 0 4px 8px fade(var(--surface), 40%), 0 0 4px fade(var(--surface), 40%);
+      .message-notice {
+        border-left-color: var(--primary);
+      }
+      .message--highlighted a {
+        color: var(--primary);
+      }
+      .message--highlighted {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: var(--surface_container_lowest);
+        text-shadow: none;
+      }
+      .red-dot::after {
+        background: var(--error);
+      }
+      &[overlay] {
+        --bg-color: rgba(var(--surface_container_lowest), var(--overlay-opacity));
+        --bg-color-highlight: rgba(
+          var(--surface_container_lowest),
+          max(0.4, calc(var(--overlay-opacity) * 1.2))
+        );
+        --text-shadow:
+          -1px -1px 0px var(--surface_container_lowest), 0px -1px 0px var(--surface_container_lowest), 1px -1px 0px var(--surface_container_lowest), -1px 0px
+          0px var(--surface_container_lowest), 1px 0px 0px var(--surface_container_lowest), -1px 1px 0px var(--surface_container_lowest), 0px 1px 0px var(--surface_container_lowest),
+          1px 1px 0px var(--surface_container_lowest);
+        --text-color: var(--on_surface);
+      }
+      .resume-scroll {
+        background-color: var(--surface_container_low);
+      }
+    }
+    @keyframes rotating {
+      0% {
+        transform: rotate(0);
+      }
+
+      100% {
+        transform: rotate(360deg);
+        scale: 1.5;
+        fill: var(--error);
+      }
+    }
+
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+
+:root {
+}
+
+      body {
+        color: var(--on_surface);
+      }
+      .card {
+        background: fade(var(--surface), 80%);
+      }
+      .card.c1cw4bqg.c1cw4bqg {
+        color: var(--on_surface_variant);
+      }
+      a,
+      i {
+        color: var(--primary);
+      }
+      button.gradient,
+      .btn.gradient {
+        background: linear-gradient(
+          45deg,
+          var(--primary),
+          spin(var(--primary), 45)
+        );
+        color: var(--surface_container_lowest);
+        text-shadow: none;
+      }
+      button:not(.custom),
+      .btn {
+        background: var(--surface_container_low);
+        text-shadow: none;
+        color: var(--on_surface);
+      }
+      .item.zmyc33:hover,
+      .item.active.zmyc33 {
+        background-color: var(--surface_container_low);
+      }
+      .video-title.damcrq,
+      .logo-text.c1j5psx1.c1j5psx1 {
+        color: var(--on_surface);
+      }
+      [d="M 4,0 1,3 v 10 h 4 v 3 l 3,-3 h 2 L 15,8 V 0 Z m 10,7 -3,3 H 9 L 7,12 V 10 H 5 V 1 h 9 z"],
+      [d="m 8.5,3 3,2 -3,2 z"] {
+        fill: var(--primary);
+      }
+      [d="m 4,1 h 10 v 7 l -4,4 H 4 Z"] {
+        fill: var(--surface_container_lowest);
+      }
+      .delete.c19loos5.c19loos5 {
+        border-color: var(--error);
+      }
+      .mark.z8oy0d.z8oy0d {
+        background: var(--primary);
+        color: var(--surface_container_lowest);
+      }
+      .bg.c1ejz165.c1ejz165 {
+        opacity: @bg-opacity;
+        filter: blur(@bg-blur);
+      }
+      // .topbar-container.c1j5psx1.c1j5psx1 {
+      //   border-bottom: none;
+      // }
+      #inner-a.tmgko.tmgko {
+        background: var(--surface);
+      }
+    }
+  }
+}

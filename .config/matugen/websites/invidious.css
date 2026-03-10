@@ -1,0 +1,284 @@
+/* ==UserStyle==
+@name Invidious Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/invidious
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/invidious
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/invidious/catppuccin.user.less
+@description Soothing pastel theme for Invidious
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+
+@var checkbox styleVideoPlayer "Style Video Player" 1
+==/UserStyle== */
+
+
+/**
+ * kept up-to-date with
+ * `curl https://api.invidious.io/instances.json | jq '.[] | select(.[1].type=="https") | .[0]'`
+ */
+@-moz-document domain("anontube.lvkaszus.pl"),
+  domain("inv.citw.lgbt"),
+  domain("inv.in.projectsegfau.lt"),
+  domain("inv.tux.pizza"),
+  domain("inv.us.projectsegfau.lt"),
+  domain("inv.zzls.xyz"),
+  domain("invidious.asir.dev"),
+  domain("invidious.drgns.space"),
+  domain("invidious.einfachzocken.eu"),
+  domain("invidious.fdn.fr"),
+  domain("invidious.io.lol"),
+  domain("invidious.lunar.icu"),
+  domain("invidious.nerdvpn.de"),
+  domain("invidious.no-logs.com"),
+  domain("invidious.perennialte.ch"),
+  domain("invidious.privacydev.net"),
+  domain("invidious.private.coffee"),
+  domain("invidious.projectsegfau.lt"),
+  domain("invidious.protokolla.fi"),
+  domain("invidious.slipfox.xyz"),
+  domain("iv.datura.network"),
+  domain("iv.ggtyler.dev"),
+  domain("iv.melmac.space"),
+  domain("iv.nboeck.de"),
+  domain("iv.winston.sh"),
+  domain("onion.tube"),
+  domain("vid.priv.au"),
+  domain("vid.puffyan.us"),
+  domain("yewtu.be"),
+  domain("yt.artemislena.eu"),
+  domain("yt.cdaut.de"),
+  domain("yt.drgnz.club"),
+  domain("yt.oelrichsgarcia.de") {
+  .no-theme {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+  .light-theme {
+  }
+  .dark-theme {
+  }
+
+
+    // TODO: Can we remove lightenOrDarken in favor of shades/tints? Should we add it to the shared lib for now?
+    #lightenOrDarken(@color, @value) {
+        darken(@color, @value),
+        lighten(@color
+      );
+    }
+
+    @link-color: var(--primary);
+    @link-hover: #lightenOrDarken(var(--primary), 5%)[@result];
+
+    background-color: var(--surface_container_lowest) !important;
+    color: var(--on_surface) !important;
+
+    a,
+    /* menu under the search bar */
+    .pure-menu-heading {
+      color: @link-color;
+      &:hover,
+      &:focus,
+      &:active {
+        color: @link-hover !important;
+      }
+    }
+
+    hr,
+    /* legend borders are visible as dividers in Settings */
+    legend {
+      border-color: var(--surface_container);
+      border-style: solid;
+    }
+
+    legend {
+      color: var(--primary) !important;
+    }
+
+    .pure-button-primary {
+      background-color: var(--surface_container) !important;
+      color: var(--on_surface) !important;
+      border-color: var(--surface_container) !important;
+      &:hover,
+      &:focus {
+        background-color: var(--surface_container_high) !important;
+        color: var(--on_surface) !important;
+        border-color: var(--surface_container) !important;
+      }
+    }
+    .pure-button-secondary {
+      background-color: var(--primary) !important;
+      color: var(--surface) !important;
+      border-color: var(--surface_container) !important;
+      &:hover,
+      &:focus {
+        background-color: #lightenOrDarken(var(--primary), 2%)[@result] !important;
+        color: var(--surface) !important;
+        border-color: var(--surface_container) !important;
+      }
+    }
+
+    #subscribe {
+      background-color: @link-color !important;
+      color: var(--surface) !important;
+      :hover,
+      :focus {
+        background-color: @link-hover !important;
+        color: var(--surface) !important;
+      }
+    }
+
+    #filters-box {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .underlined {
+      border-color: var(--outline_variant);
+    }
+
+    .video-js .vjs-control-bar,
+    .vjs-menu-button-popup .vjs-menu .vjs-menu-content {
+      background-color: var(--surface) !important;
+      color: var(--on_surface) !important;
+    }
+
+    .video-js .vjs-slider:hover,
+    .video-js button:hover {
+      color: var(--primary) !important;
+    }
+
+    .video-js .vjs-slider {
+      background-color: var(--surface_container_high) !important;
+    }
+
+    .video-js .vjs-load-progress,
+    .video-js .vjs-load-progress div {
+      background-color: var(--surface_container_high) !important;
+    }
+
+    .video-js.player-style-invidious .vjs-play-progress {
+      background-color: var(--primary) !important;
+    }
+
+    .vjs-menu li.vjs-menu-item:focus,
+    .vjs-menu li.vjs-menu-item:hover {
+      background-color: var(--surface_container_low) !important;
+      color: var(--on_surface) !important;
+    }
+
+    .vjs-menu li.vjs-selected,
+    .vjs-menu li.vjs-selected:focus,
+    .vjs-menu li.vjs-selected:hover {
+      background-color: var(--primary) !important;
+    }
+
+    .vjs-menu li.vjs-selected,
+    .vjs-menu li.vjs-selected:focus,
+    .vjs-menu li.vjs-selected:hover,
+    .js-focus-visible .vjs-menu li.vjs-selected:hover {
+      color: var(--surface) !important;
+    }
+
+    .vjs-modal-dialog-content {
+      backdrop-filter: blur(4px);
+    }
+
+    .vjs-share__title {
+      color: var(--on_surface) !important;
+    }
+    .vjs-share__subtitle {
+      color: var(--on_surface_variant) !important;
+      opacity: 100% !important;
+    }
+    .vjs-share__short-link {
+      color: var(--on_surface) !important;
+      background: var(--surface_container_lowest) !important;
+    }
+    .vjs-share__btn {
+      background: var(--surface) !important;
+      svg path {
+        fill: var(--on_surface) !important;
+      }
+    }
+
+    #related-videos > .h-box > div:not(#autoplay-controls) {
+      margin-bottom: 48px !important;
+    }
+
+    footer a,
+    footer span {
+      color: var(--on_surface_variant) !important;
+    }
+
+    footer span a,
+    footer span:has(i) {
+      &:hover {
+        color: var(--primary) !important;
+      }
+    }
+
+    .pure-form-message-inline {
+      color: var(--on_surface_variant);
+    }
+
+    select,
+    input[type="text"],
+    input[type="number"],
+    input[type="input"],
+    input[type="password"] {
+      color: var(--on_surface) !important;
+      background-color: var(--surface_container_low) !important;
+      border-color: var(--surface_container) !important;
+      box-shadow: none !important;
+      &:active {
+        color: var(--on_surface) !important;
+      }
+    }
+    input[type="search"] {
+      color: var(--on_surface) !important;
+      background-color: var(--surface_container_lowest) !important;
+      border-bottom-color: var(--outline_variant) !important;
+      box-shadow: none !important;
+    }
+    input[type="checkbox"] {
+      background-color: var(--surface_container_high);
+      border-color: var(--surface_container);
+      height: 1rem;
+      width: 1rem;
+      -webkit-appearance: none;
+      appearance: none;
+      cursor: pointer;
+      &:checked {
+          '<svg viewBox="0 0 16 16" fill="@{accent}" xmlns="http://www.w3.org/2000/svg"><path d="M12.207 4.793a1 1 0 0 1 0 1.414l-5 5a1 1 0 0 1-1.414 0l-2-2a1 1 0 0 1 1.414-1.414L6.5 9.086l4.293-4.293a1 1 0 0 1 1.414 0"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+    }
+
+    /* video player background */
+    #player-container > .video-js > video,
+    /* placeholder for loading thumbnails */
+    .vjs-poster {
+        background-color: var(--surface) !important;
+      }
+    }
+
+    /* watch progress on videos */
+    div.watched-indicator {
+      background-color: var(--error);
+    }
+
+    /* Channel owner comments */
+    a.channel-owner {
+      color: var(--surface);
+      background-color: var(--primary);
+    }
+  }
+}

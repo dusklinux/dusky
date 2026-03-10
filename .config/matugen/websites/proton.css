@@ -1,0 +1,305 @@
+/* ==UserStyle==
+@name Proton Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/proton
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/proton
+@version 2025.12.05
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/proton/catppuccin.user.less
+@description Soothing pastel theme for Proton
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document regexp(
+    "https://(account|mail|drive|calendar|lumo).proton.me/.*$"
+  ) {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    svg.logo {
+      var(--primary)H: hue(var(--primary));
+      @protonH: hue(#6d4aff);
+
+      .replaceColor(@org, @property) {
+        &[@{property}="@{org}"] {
+          @hDiff: @protonH - hue(@org);
+          @{property}: hsl(
+            var(--primary)H - @hDiff,
+            saturation(@org) - 30%,
+            lightness(@org)
+          );
+        }
+      }
+
+      /* deno-fmt-ignore */
+      path {
+        .replaceColor(#B8D7FF, fill);
+        .replaceColor(#8F69FF, fill);
+        .replaceColor(#6D4AFF, fill);
+        .replaceColor(#FFBB93, fill);
+        .replaceColor(#85D4F5, fill);
+        .replaceColor(#D6F1FC, fill);
+      }
+
+      /* deno-fmt-ignore */
+      defs stop {
+        .replaceColor(#E3D9FF, stop-color);
+        .replaceColor(#7341FF, stop-color);
+        .replaceColor(#6D4AFF, stop-color);
+        .replaceColor(#AA8EFF, stop-color);
+        .replaceColor(#06B8FF, stop-color);
+        .replaceColor(#BFE8FF, stop-color);
+        .replaceColor(#BFABFF, stop-color);
+        .replaceColor(#FF50C3, stop-color);
+        .replaceColor(#B487FF, stop-color);
+        .replaceColor(#FFC8FF, stop-color);
+        .replaceColor(#8EFFEE, stop-color);
+        .replaceColor(#C9C7FF, stop-color);
+        .replaceColor(#00F0C3, stop-color);
+        .replaceColor(#FFD580, stop-color);
+        .replaceColor(#F6C592, stop-color);
+        .replaceColor(#EBB6A2, stop-color);
+        .replaceColor(#DFA5AF, stop-color);
+        .replaceColor(#D397BE, stop-color);
+        .replaceColor(#C486CB, stop-color);
+        .replaceColor(#B578D9, stop-color);
+        .replaceColor(#A166E5, stop-color);
+        .replaceColor(#8B57F2, stop-color);
+        .replaceColor(#704CFF, stop-color);
+        .replaceColor(#B39FFB, stop-color);
+        .replaceColor(#FFE8DB, stop-color);
+        .replaceColor(#957AFD, stop-color);
+        .replaceColor(#FFC6C6, stop-color);
+        .replaceColor(#FA528E, stop-color);
+        .replaceColor(#FF8065, stop-color);
+        .replaceColor(#FFA51F, stop-color);
+        .replaceColor(#34B8EE, stop-color);
+      }
+    }
+
+    &,
+    .ui-prominent,
+    .ui-standard {
+      #lightenOrDarken(@color, @value) {
+          lighten(@color, @value),
+          darken(@color
+        );
+      }
+
+      #darkenOrLighten(@color, @value) {
+          darken(@color, @value),
+          lighten(@color
+        );
+      }
+
+      --primary-minor-2: #lightenOrDarken(var(--primary), 60%)[];
+      --primary-minor-1: #lightenOrDarken(var(--primary), 50%)[];
+      --primary: var(--primary);
+      --primary-major-1: #darkenOrLighten(var(--primary), 4%)[];
+      --primary-major-2: #darkenOrLighten(var(--primary), 8%)[];
+      --primary-major-3: #darkenOrLighten(var(--primary), 12%)[];
+      --primary-contrast: var(--surface);
+      --signal-danger-minor-2: #lightenOrDarken(var(--error_container), 40%)[];
+      --signal-danger-minor-1: #lightenOrDarken(var(--error_container), 30%)[];
+      --signal-danger: var(--error_container);
+      --signal-danger-major-1: #darkenOrLighten(var(--error_container), 4%)[];
+      --signal-danger-major-2: #darkenOrLighten(var(--error_container), 8%)[];
+      --signal-danger-major-3: #darkenOrLighten(var(--error_container), 12%)[];
+      --signal-danger-contrast: var(--surface);
+      --signal-warning-minor-2: #lightenOrDarken(var(--secondary_container), 40%)[];
+      --signal-warning-minor-1: #lightenOrDarken(var(--secondary_container), 30%)[];
+      --signal-warning: var(--secondary_container);
+      --signal-warning-major-1: #darkenOrLighten(var(--secondary_container), 4%)[];
+      --signal-warning-major-2: #darkenOrLighten(var(--secondary_container), 8%)[];
+      --signal-warning-major-3: #darkenOrLighten(var(--secondary_container), 12%)[];
+      --signal-warning-contrast: var(--surface);
+      --signal-success-minor-2: #lightenOrDarken(var(--tertiary), 40%)[];
+      --signal-success-minor-1: #lightenOrDarken(var(--tertiary), 30%)[];
+      --signal-success: var(--tertiary);
+      --signal-success-major-1: #darkenOrLighten(var(--tertiary), 4%)[];
+      --signal-success-major-2: #darkenOrLighten(var(--tertiary), 8%)[];
+      --signal-success-major-3: #darkenOrLighten(var(--tertiary), 12%)[];
+      --signal-success-contrast: var(--surface);
+      --signal-info-minor-2: #lightenOrDarken(var(--primary), 40%)[];
+      --signal-info-minor-1: #lightenOrDarken(var(--primary), 30%)[];
+      --signal-info: var(--primary);
+      --signal-info-major-1: #darkenOrLighten(var(--primary), 4%)[];
+      --signal-info-major-2: #darkenOrLighten(var(--primary), 8%)[];
+      --signal-info-major-3: #darkenOrLighten(var(--primary), 12%)[];
+      --signal-info-contrast: var(--surface);
+      --interaction-norm-minor-2: #lightenOrDarken(var(--primary), 40%)[];
+      --interaction-norm-minor-1: #lightenOrDarken(var(--primary), 30%)[];
+      --interaction-norm: var(--primary);
+      --interaction-norm-major-1: #darkenOrLighten(var(--primary), 4%)[];
+      --interaction-norm-major-2: #darkenOrLighten(var(--primary), 8%)[];
+      --interaction-norm-major-3: #darkenOrLighten(var(--primary), 12%)[];
+      --interaction-norm-contrast: var(--surface);
+      --interaction-weak-minor-2: #lightenOrDarken(var(--surface_container_low), 20%)[];
+      --interaction-weak-minor-1: #lightenOrDarken(var(--surface_container_low), 10%)[];
+      --interaction-weak: var(--surface_container_low);
+      --interaction-weak-major-1: #darkenOrLighten(var(--surface_container_low), 4%)[];
+      --interaction-weak-major-2: #darkenOrLighten(var(--surface_container_low), 8%)[];
+      --interaction-weak-major-3: #darkenOrLighten(var(--surface_container_low), 12%)[];
+      --interaction-weak-contrast: var(--on_surface);
+      --text-norm: var(--on_surface);
+      --text-weak: var(--on_surface_variant);
+      --text-hint: var(--on_surface);
+      --text-disabled: var(--outline_variant);
+      --text-invert: var(--surface);
+      --text-markdown: var(--on_surface);
+      --field-norm: var(--outline_variant);
+      --field-hover: var(--outline_variant);
+      --field-disabled: var(--outline);
+      --field-focus: var(--primary);
+      --field-highlight: fade(var(--primary), 70%);
+      --focus-outline: var(--primary);
+      --focus-ring: fade(var(--primary), 40%);
+      --link-norm: var(--primary);
+      --link-hover: var(--primary_container);
+      --link-active: var(--primary_fixed);
+      --markdown-pre-background: var(--surface);
+      --border-norm: var(--outline);
+      --border-weak: var(--surface_container);
+      --background-norm: var(--surface_container_lowest);
+      --background-weak: var(--surface);
+      --background-strong: var(--surface);
+      --background-invert: var(--on_surface);
+      --interaction-default: transparent;
+      --interaction-default-hover: fade(var(--outline_variant), 20%);
+      --interaction-default-active: fade(var(--outline_variant), 40%);
+      --shadow-primary-color: red(var(--primary)) green(var(--primary)) blue(var(--primary));
+      --shadow-norm-opacity: 0.5;
+      --shadow-raised-opacity: 1;
+      --shadow-lifted-opacity: 0.75;
+      --backdrop-norm: fade(var(--surface), 50%);
+      --optional-scrollbar-thumb-color: var(--surface_container_low);
+      --optional-scrollbar-thumb-hover-color: var(--surface_container_high);
+      --optional-link-norm: var(--interaction-norm-major-1);
+      --optional-link-hover: var(--interaction-norm-major-2);
+      --optional-link-active: var(--interaction-norm-major-3);
+      --optional-background-elevated: var(--surface_container_low);
+      --optional-background-lowered: var(--background-norm);
+      --optional-email-item-unread-background-color: var(--background-weak);
+      --optional-email-item-read-background-color: var(--background-norm);
+      --optional-email-item-read-text-color: var(--text-weak);
+      --optional-mini-calendar-today-color: var(--on_surface);
+      --optional-logo-text-proton-color: var(--on_surface);
+      --optional-logo-text-product-color: var(--on_surface);
+      --favorite-icon-color: var(--secondary_container);
+    }
+
+    .ui-prominent {
+      --background-norm: var(--surface);
+      --background-weak: var(--surface_container_lowest);
+      --background-strong: var(--surface);
+    }
+
+    .button-promotion {
+      --upgrade-color-stop-1: var(--error);
+      --upgrade-color-stop-2: var(--primary);
+    }
+
+    .item-container-row:not(.item-is-selected):hover,
+    .item-container:not(.item-is-selected):hover {
+      box-shadow: none;
+      background-color: var(--navigation-current-item-background-color);
+      color: var(--email-item-unread-text-color);
+    }
+
+    .message-content:not(.plain) .message-iframe iframe {
+      color-scheme: light;
+    }
+
+    @media (min-width: 28.135em) {
+      .sign-layout-bg {
+        background: linear-gradient(
+          68.66deg,
+          desaturate(var(--surface), 5%) 1.3%,
+          desaturate(var(--surface_container_lowest), 5%) 50%
+        );
+      }
+    }
+
+    /* Proton Lumo */
+
+    header {
+      a[aria-label="Go to Lumo homepage"] img {
+        filter: var(--primary)-filter;
+      }
+    }
+
+    .whats-new-section {
+      background: var(--primary);
+    }
+
+    .new-label {
+      background-color: var(--primary);
+      color: var(--surface);
+    }
+
+    .lumo-sidebar {
+      background: var(--surface);
+      a.lumo-plus-button svg path {
+        fill: var(--primary);
+      }
+    }
+
+    .lumo-input-container.ghost-mode {
+      background-color: var(--surface);
+      --ghost-text: var(--on_surface);
+      --ghost-text-weak: var(--on_surface_variant);
+      .lumo-input {
+        background-color: var(--surface);
+      }
+    }
+
+    div[style*="background: rgb(40, 44, 52);"],
+    div[style*="background: rgb(250, 250, 250);"] {
+      background: var(--surface) !important;
+
+      span {
+        color: var(--on_surface) !important;
+      }
+
+      span.token[style*="color: rgb(92, 99, 112);"],
+      span.token[style*="color: rgb(160, 161, 167);"] {
+        color: var(--outline_variant) !important;
+      }
+
+      span.token[style*="color: rgb(97, 175, 239);"],
+      span.token[style*="color: rgb(64, 120, 242);"] {
+        color: var(--primary) !important;
+      }
+
+      span.token[style*="color: rgb(152, 195, 121);"],
+      span.token[style*="color: rgb(80, 161, 79);"] {
+        color: var(--tertiary) !important;
+      }
+
+      span.token[style*="color: rgb(209, 154, 102);"],
+      span.token[style*="color: rgb(183, 107, 1);"] {
+        color: var(--secondary_container) !important;
+      }
+
+      span.token[style*="color: rgb(198, 120, 221);"],
+      span.token[style*="color: rgb(166, 38, 164);"] {
+        color: var(--primary) !important;
+      }
+
+      span.token[style*="color: rgb(224, 108, 117);"],
+      span.token[style*="color: rgb(228, 86, 73);"] {
+        color: var(--error) !important;
+      }
+    }
+  }
+}

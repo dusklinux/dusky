@@ -1,0 +1,409 @@
+/* ==UserStyle==
+@name Have I Been Pwned Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/have-i-been-pwned
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/have-i-been-pwned
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/have-i-been-pwned/catppuccin.user.less
+@description Soothing pastel theme for Have I Been Pwned
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("haveibeenpwned.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+:root {
+}
+
+    body {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    hr {
+      border-color: var(--surface_container_low);
+    }
+
+    a {
+      &,
+      &:hover,
+      &:focus {
+        color: var(--on_surface);
+        border-bottom-color: var(--surface_container_high);
+      }
+
+      &:hover {
+        background-color: fade(var(--primary), 30%);
+      }
+    }
+
+    img.pwnLogo.large.modalLogo {
+      filter: var(--on_surface)-filter;
+    }
+
+    .bodyGradient {
+      color: var(--on_surface);
+    }
+
+    .modal-header {
+      background: var(--surface);
+
+      .close {
+        color: var(--on_surface);
+      }
+    }
+
+    .fa-loader,
+    .loaderText {
+      color: var(--on_surface);
+    }
+
+    #postNotificationCallsToAction {
+      .btn {
+        background-color: var(--surface);
+        color: var(--on_surface);
+      }
+
+      a.socialLink {
+        &,
+        &:link,
+        &:visited {
+          color: var(--on_surface);
+        }
+      }
+    }
+
+    .modal-content {
+      background-color: var(--surface_container_lowest);
+      border-color: var(--surface_container_low);
+    }
+
+    .main {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .main-logo .logo {
+      border-color: var(--primary);
+      background-color: fade(var(--primary), 30%);
+    }
+
+    .pwnedCompanyList {
+      a,
+      a:hover {
+        color: var(--on_surface);
+        border-bottom-color: var(--surface_container_high);
+      }
+
+      td {
+        color: var(--on_surface_variant);
+      }
+    }
+
+    footer {
+      a,
+      p {
+        color: var(--on_surface_variant);
+      }
+    }
+
+    .unverified {
+      &,
+      a {
+        color: darken(var(--error), 50%) !important;
+        border-bottom-color: darken(var(--error), 50%) !important;
+      }
+    }
+
+    .navbar-inverse {
+      border-color: var(--surface_container_low);
+      background-color: var(--surface);
+
+      .navbar-toggle {
+        border-color: var(--surface_container_low);
+
+        &:hover,
+        &:focus {
+          background-color: var(--surface_container_low);
+        }
+
+        .icon-bar {
+          background-color: var(--on_surface);
+        }
+      }
+
+      .navbar-brand {
+        color: var(--on_surface);
+        border-color: var(--on_surface) !important;
+      }
+
+      li.active > a {
+        &,
+        &:hover,
+        &:focus {
+          color: var(--on_surface);
+          background-color: var(--surface);
+        }
+      }
+
+      li > a {
+        color: var(--on_surface_variant);
+
+        &:hover,
+        &:focus {
+          color: var(--on_surface);
+        }
+      }
+    }
+
+    img.pwnLogo {
+      &[src$="/List.png"],
+      &[src$="/Email.png"] {
+        filter: var(--on_surface)-filter;
+      }
+    }
+
+    .form-control {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-color: var(--surface_container_low) !important;
+
+      &:focus {
+        box-shadow: 0 0 8px fade(var(--primary), 30%);
+      }
+    }
+
+    .btn-primary {
+      color: var(--on_surface);
+      background-color: var(--surface);
+      border-color: var(--surface_container_low) !important;
+
+      &:hover {
+        background-color: fade(var(--primary), 30%);
+      }
+    }
+
+    .btn-success {
+      background-color: var(--tertiary);
+      color: var(--surface_container_lowest);
+      border-color: var(--surface_container_low);
+    }
+
+    .progress-bar {
+      background-color: var(--primary);
+    }
+
+    .form-group .termsOfUse {
+      background-color: var(--surface_container_lowest);
+    }
+
+    .termsOfUse {
+      background-color: var(--surface);
+
+      &,
+      a {
+        color: var(--on_surface_variant);
+        border-bottom-color: var(--surface_container_high);
+      }
+    }
+
+    .secondaryHeader {
+      background-color: var(--surface);
+    }
+
+    .sensitive {
+      color: var(--secondary);
+    }
+
+    .sensitive-fade {
+      color: var(--on_surface_variant);
+    }
+
+    .panel-primary {
+      border-color: var(--surface_container_low);
+
+      > .panel-heading,
+      > .panel-footer {
+        color: var(--on_surface);
+        border-color: var(--surface_container_low);
+        background-color: var(--surface);
+      }
+    }
+
+    #noPwnage {
+      background: var(--tertiary);
+
+      a.socialLink {
+        color: var(--surface_container_lowest) !important;
+      }
+    }
+
+    #invalidAccount {
+      background: var(--secondary);
+    }
+
+    #pwnedWebsitesContainer {
+      hr {
+        border-color: var(--surface_container_low);
+      }
+
+      > .pwnedRow {
+        background: var(--error);
+
+        .pwnedWebsite {
+          color: var(--surface_container_lowest);
+
+          a {
+            color: var(--surface_container_lowest);
+            border-bottom-color: var(--surface_container_lowest);
+
+            &:hover {
+              background-color: transparent !important;
+            }
+          }
+        }
+      }
+
+      a.socialLink {
+        color: var(--surface_container_lowest) !important;
+      }
+    }
+
+    .pwnResultBanner {
+      color: var(--surface_container_lowest);
+
+      a {
+        color: var(--surface_container_lowest);
+        border-bottom-color: var(--surface_container_lowest) !important;
+
+        &:hover {
+          background-color: transparent !important;
+        }
+      }
+    }
+
+    #Cloudflare img {
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1239.3 310.1"><path d="M1158.5 187.7c-3.4 0-6.1-2.7-6.1-6.1 0-3.3 2.7-6.1 6.1-6.1 3.3 0 6.1 2.7 6.1 6.1s-2.8 6.1-6.1 6.1m0-11c-2.7 0-4.9 2.2-4.9 4.9s2.2 4.9 4.9 4.9 4.9-2.2 4.9-4.9-2.2-4.9-4.9-4.9m3.1 8.1h-1.4l-1.2-2.3h-1.6v2.3h-1.3v-6.7h3.2c1.4 0 2.3.9 2.3 2.2 0 1-.6 1.7-1.4 2zm-2.4-3.5c.5 0 1-.3 1-1 0-.8-.4-1-1-1h-2v2zM523 174.9h15.6v42.5h27.1V231H523zm58.8 28.2v-.1c0-16.1 13-29.2 30.3-29.2s30.1 12.9 30.1 29v.2c0 16.1-13 29.2-30.3 29.2-17.2-.1-30.1-13-30.1-29.1m44.6 0v-.1c0-8.1-5.8-15.1-14.4-15.1-8.5 0-14.2 6.9-14.2 15v.2c0 8.1 5.8 15.1 14.3 15.1 8.6-.1 14.3-7 14.3-15.1m34.9 3.3v-31.5h15.8v31.2c0 8.1 4.1 11.9 10.3 11.9s10.3-3.7 10.3-11.5v-31.6h15.8V206c0 18.1-10.3 26-26.3 26-15.9.1-25.9-8-25.9-25.6m76-31.5H759c20 0 31.7 11.5 31.7 27.7v.2c0 16.2-11.8 28.2-32 28.2h-21.3zm21.9 42.3c9.3 0 15.5-5.1 15.5-14.2v-.2c0-9-6.2-14.2-15.5-14.2h-6.3v28.5zm54-42.3h44.9v13.7h-29.4v9.5h26.6V211h-26.6v20h-15.5zm66.5 0h15.5v42.5h27.2V231h-42.7zm83.3-.4h15l23.9 56.5h-16.7l-4.1-10h-21.6l-4 10h-16.3zm13.7 34.4-6.2-15.9-6.3 15.9zm45.2-34h26.5c8.6 0 14.5 2.2 18.3 6.1 3.3 3.2 5 7.5 5 13.1v.2c0 8.6-4.6 14.3-11.5 17.2l13.4 19.6h-18l-11.3-17h-6.8v17H1022zm25.8 27c5.3 0 8.3-2.6 8.3-6.6v-.3c0-4.4-3.2-6.6-8.4-6.6h-10.2v13.5zm46.4-27h45.1v13.3h-29.7v8.4h26.9v12.3h-26.9v8.9h30.1V231h-45.5zM489 209.7c-2.2 4.9-6.8 8.4-12.8 8.4-8.5 0-14.3-7.1-14.3-15.1v-.2c0-8.1 5.7-15 14.2-15 6.4 0 11.3 3.9 13.3 9.3h16.4c-2.6-13.4-14.4-23.3-29.6-23.3-17.3 0-30.3 13.1-30.3 29.2v.2c0 16.1 12.8 29 30.1 29 14.8 0 26.4-9.6 29.4-22.4zm-97.9-40.1L348.2 145l-7.4-3.2-175.5 1.3v89l225.8.1z" fill="@{text}"/><path d="M313 224c2.1-7.2 1.3-13.8-2.2-18.7-3.2-4.5-8.6-7.1-15.1-7.4l-123.1-1.6c-.8 0-1.5-.4-1.9-1s-.5-1.4-.3-2.2c.4-1.2 1.6-2.1 2.9-2.2l124.2-1.6c14.7-.7 30.7-12.6 36.3-27.2l7.1-18.5c.3-.8.4-1.6.2-2.4-8-36.2-40.3-63.2-78.9-63.2-35.6 0-65.8 23-76.6 54.9-7-5.2-15.9-8-25.5-7.1-17.1 1.7-30.8 15.4-32.5 32.5-.4 4.4-.1 8.7.9 12.7-27.9.8-50.2 23.6-50.2 51.7 0 2.5.2 5 .5 7.5.2 1.2 1.2 2.1 2.4 2.1h227.2c1.3 0 2.5-.9 2.9-2.2zm39.2-79.1c-1.1 0-2.3 0-3.4.1-.8 0-1.5.6-1.8 1.4l-4.8 16.7c-2.1 7.2-1.3 13.8 2.2 18.7 3.2 4.5 8.6 7.1 15.1 7.4l26.2 1.6c.8 0 1.5.4 1.9 1s.5 1.5.3 2.2c-.4 1.2-1.6 2.1-2.9 2.2l-27.3 1.6c-14.8.7-30.7 12.6-36.3 27.2l-2 5.1c-.4 1 .3 2 1.4 2h93.8c1.1 0 2.1-.7 2.4-1.8 1.6-5.8 2.5-11.9 2.5-18.2 0-37.1-30.1-67.2-67.3-67.2" fill="@{peach}"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    pre,
+    code {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-color: var(--surface_container_low);
+    }
+
+    thead tr {
+      border-color: var(--surface_container_low);
+    }
+
+    .bitcoinAddress {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .bg-info {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .subscriptions {
+      .rpm10 {
+        border-color: var(--tertiary_container);
+
+        h4,
+        h5,
+        .price {
+          background-color: var(--tertiary_container);
+          color: var(--surface_container_lowest);
+        }
+      }
+
+      .rpm50 {
+        border-color: var(--tertiary);
+
+        h4,
+        h5,
+        .price {
+          background-color: var(--tertiary);
+          color: var(--surface_container_lowest);
+        }
+      }
+
+      .rpm100 {
+        border-color: var(--secondary);
+
+        h4,
+        h5,
+        .price {
+          background-color: var(--secondary);
+          color: var(--surface_container_lowest);
+        }
+      }
+
+      .rpm500 {
+        border-color: var(--secondary_container);
+
+        h4,
+        h5,
+        .price {
+          background-color: var(--secondary_container);
+          color: var(--surface_container_lowest);
+        }
+      }
+
+      .description {
+        color: var(--on_surface);
+      }
+    }
+
+    .finePrint {
+      color: var(--on_surface);
+    }
+
+    .table-bordered {
+      &,
+      th,
+      td {
+        border-color: var(--surface_container_low);
+      }
+    }
+
+    .dropdown-menu {
+      background-color: var(--surface_container_lowest);
+
+      > li > a {
+        &:hover,
+        &:focus {
+          background-color: var(--surface);
+        }
+      }
+    }
+
+    @media (min-width: 768px) {
+      ul.nav li.dropdown:hover {
+        background-color: var(--surface_container_lowest);
+      }
+    }
+
+    @media (max-width: 480px) {
+      #searchContainer {
+        background-color: var(--surface);
+      }
+    }
+  }
+}

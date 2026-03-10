@@ -1,0 +1,126 @@
+/* ==UserStyle==
+@name Snapchat Web Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/snapchat-web
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/snapchat-web
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/snapchat-web/catppuccin.user.less
+@description Soothing pastel theme for Snapchat Web
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document url-prefix("https://www.snapchat.com/web") {
+  :root[theme="dark"] {
+  }
+  :root[theme="light"] {
+  }
+
+
+    /* Snapchat applies the variables (overrides?) to specific elements so we need to apply to every element (with high specificity) to override those. */
+    &,
+    body > main#root * {
+      --sigMain: var(--surface_container_lowest);
+      --sigSurface: var(--surface);
+      --sigSurfaceRGB: red(var(--surface)), green(var(--surface)), blue(var(--surface));
+      --sigAboveSurface: var(--surface);
+      --sigSurfaceDown: var(--surface_container_lowest);
+      --sigSubscreen: var(--surface);
+      --sigTextField: var(--surface);
+      --sigDivider: var(--surface_container_low);
+      --sigDividerLight: var(--surface_container_low);
+      --sigColorBackgroundBorder: var(--surface_container_low);
+      --sigBackgroundPrimary: var(--surface_container_lowest);
+      --sigBackgroundSecondary: var(--surface);
+      --sigBackgroundSecondaryHover: darken(var(--surface), 5%);
+      --sigBackgroundTertiary: var(--surface);
+      --sigBackgroundMessageHover: var(--surface_container);
+      --sigBackgroundMessageSaved: var(--surface_container_low);
+      --sigBackgroundMessageSavedHover: var(--surface_container_high);
+      --sigOverlay: fade(var(--surface_container), 40%);
+      --sigOverlayHover: fade(var(--surface_container), 35%);
+      --sigBrandSecondary: var(--primary);
+      --sigObject: rgba(255, 255, 255, 0.05);
+
+      --sigTextPrimary: var(--on_surface);
+      --sigButtonOnPrimary: var(--surface);
+      --sigTextSecondary: var(--on_surface_variant);
+      --sigButtonOnSecondary: var(--on_surface_variant);
+      --sigTextTertiary: var(--on_surface);
+      --sigButtonOnTertiary: var(--on_surface);
+      --sigTextNegative: var(--error);
+      --sigButtonOnSuccess: var(--surface_container_lowest);
+      --sigButtonOnError: var(--surface_container_lowest);
+      --sigButtonOnNegative: var(--surface_container_lowest);
+      --sigButtonOnChatSurfaceCalling: var(--surface_container_lowest);
+      --sigTextPlayer: var(--surface);
+      --sigButtonGreyHover: darken(var(--surface_container_low), 5%);
+      --sigButtonGreyActive: darken(var(--surface_container_low), 8%);
+
+      --sigButtonPrimary: var(--primary);
+      --sigButtonPrimaryHover: darken(var(--primary), 5%);
+      --sigButtonPrimaryActive: darken(var(--primary), 8%);
+      --sigButtonSecondary: var(--surface_container_low);
+      --sigButtonSecondaryHover: var(--surface_container);
+      --sigButtonSecondaryActive: var(--surface_container_high);
+      --sigButtonNegative: var(--error);
+      --sigButtonError: var(--error);
+      --sigButtonErrorHover: darken(var(--error), 5%);
+      --sigButtonSuccess: var(--tertiary);
+      --sigButtonSuccessHover: darken(var(--tertiary), 5%);
+      --sigIconCalling: var(--tertiary);
+      --sigIconCallingHover: darken(var(--tertiary), 5%);
+      --sigChatSurfaceCalling: var(--tertiary);
+      --sigChatSurfaceCallingDisabled: darken(var(--tertiary), 20%);
+      --sigChatSurfaceCallingHover: darken(var(--tertiary), 5%);
+
+      --sigChat: var(--primary);
+      --sigChatIcon: var(--primary);
+      --sigSnapWithoutSound: var(--error);
+      --sigSnapWithSound: var(--primary);
+    }
+
+    // new chat button
+    button[title="New Chat"],
+    // checkbox to choose camera
+    [id*="downshift-"] a,
+    // checkbox in new chat popup
+    [aria-label="Unselect chosen user"] {
+      path[fill="#fff"] {
+        fill: var(--surface);
+      }
+      // replaces blue fill
+      path[fill="#51B7FF"] {
+        fill: var(--primary);
+      }
+    }
+
+    // new group button
+    form > div > div > div[role="searchbox"] button {
+      color: var(--surface);
+      path {
+        fill: var(--surface);
+      }
+    }
+
+    // story reply text
+    li button[type="button"].replyText {
+      background-color: rgba(30, 30, 30, 0.8);
+    }
+
+    // buttons when in call
+    [data-projection-id] button {
+      --sigColorAlwaysWhite: var(--surface_container_low);
+    }
+
+    // replay button on stories
+    img[role="presentation"][src^="blob:"] + div > svg > path[fill="#fff"] {
+      fill: var(--on_surface);
+    }
+  }
+}

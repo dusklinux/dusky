@@ -1,0 +1,145 @@
+/* ==UserStyle==
+@name homepage Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/homepage
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/homepage
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/homepage/catppuccin.user.less
+@description Soothing pastel theme for homepage
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("homepage.example.com"),
+  regexp("https?://homepage\\..*") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    //Page Level Features
+
+    :is(.dark .dark\:bg-theme-800) {
+      --tw-bg-opacity: 1;
+      background-color: var(--surface_container_lowest); //background Color
+    }
+
+    .dark {
+      --bg-color: var(--surface_container_lowest);
+      --scrollbar-thumb: var(--primary); //ScrollBar
+      --scrollbar-track: var(--surface); //Scrollbar base
+    }
+
+    //Information Widget Features
+
+    :is(.dark .dark\:bg-theme-200\/20) {
+      background-color: var(--outline); //Information Widgets Progress Bar Background
+    }
+    :is(.dark .dark\:bg-theme-200\/50) {
+      background-color: var(--on_surface); //Information Widgets Progress Bar Value
+    }
+    .border-theme-300 {
+      --tw-border-opacity: 1;
+      border-color: var(--surface_container_low)
+        !important; //Search bar Border (important is needed so top separator doesn't override)
+    }
+    :is(.dark .dark\:bg-white\/10) {
+      background-color: var(--surface_container_lowest); //Search bar background
+    }
+    :is(.dark .dark\:focus\:ring-white\/50:focus) {
+      --tw-ring-color: var(--on_surface); //Search bar Focus Border
+    }
+
+    :is(.dark .dark\:text-white) {
+      --tw-text-opacity: 1;
+      color: var(--primary); //Search bar Text
+    }
+
+    // Services Level Features
+
+    :is(.dark .dark\:bg-white\/5) {
+      background-color: var(--surface); //Box Background
+    }
+    :is(.dark .dark\:shadow-theme-900\/20) {
+      --tw-shadow-color: var(--surface); //Box Shadows
+      --tw-shadow: var(--tw-shadow-colored);
+    }
+
+    :is(.dark .dark\:hover\:bg-white\/10:hover) {
+      background-color: var(--surface_container); //Box Hover Color
+    }
+
+    :is(.dark .dark\:bg-theme-900\/50) {
+      background-color: var(--surface); //Ping & Docker Stats Box Background
+    }
+    :is(.dark .dark\:bg-theme-900\/20) {
+      background-color: var(--surface_container_low); //Stats Background Color
+    }
+
+    :is(.dark .dark\:bg-theme-900\/40) {
+      background-color: var(--primary); //Progress Bar
+    }
+    :is(.dark .dark\:text-theme-300) {
+      color: var(--on_surface); //Section Names + Container Description
+    }
+
+    // api error
+    .text-theme-900 {
+      --tw-border-opacity: 1;
+      color: var(--surface_container_lowest); // api error text color
+    }
+
+    .bg-rose-900\/80 {
+      --tw-border-opacity: 1;
+      background-color: var(--error); // api error box color
+    }
+    //
+
+    :is(.dark .dark\:text-theme-400) {
+      --tw-border-opacity: 1;
+      color: var(--on_surface); // update and version text
+    }
+
+    .text-white {
+      color: var(--on_surface); // search bar icon
+    }
+
+    :is(.dark .dark\:border-theme-200\/50) {
+      --tw-border-opacity: 1;
+      border-color: var(--surface_container_high); // top separator
+    }
+
+    :is(.dark .dark\:hover\:text-theme-300:hover) {
+      --tw-text-opacity: 1;
+      color: darken(
+        var(--primary),
+        10%
+      ); //Section Names + Container Description Hover Color
+    }
+    :is(.dark .dark\:text-theme-200) {
+      --tw-text-opacity: 1;
+      color: var(--on_surface); // Container Names + Stats
+    }
+
+    .text-emerald-500\/80 {
+      color: lighten(
+        var(--tertiary),
+        10%
+      ); //Ping & Docker Status Text (Running + Healthy)
+    }
+    .text-orange-400\/50 {
+      color: lighten(var(--secondary), 10%); //Docker Status Text (Unhealthy)
+    }
+    .text-rose-500\/80 {
+      color: darken(var(--error), 10%); //Ping Status Text (Bad)
+    }
+  }
+}

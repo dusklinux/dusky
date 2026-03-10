@@ -1,0 +1,754 @@
+/* ==UserStyle==
+@name bStats Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/bstats
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/bstats
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/bstats/catppuccin.user.less
+@description Soothing pastel theme for bStats
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+
+@var checkbox graphUseAccentColor "Graphs Use Accent" 0
+==/UserStyle== */
+
+
+@-moz-document domain("bstats.org") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    body,
+    .collection-header,
+    .collection-item,
+    .grey.lighten-4,
+    .page-footer .footer-copyright {
+      background: var(--surface_container_lowest) !important;
+    }
+    .teal.darken-3,
+    .teal.darken-2,
+    .dropdown-content,
+    .side-nav {
+      background-color: var(--surface) !important;
+    }
+
+    .teal {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    /* slide out nav text & icons */
+    .subheader,
+    .left {
+      color: var(--on_surface) !important;
+    }
+
+    .collection {
+      border-color: var(--surface_container_low);
+    }
+    .collection.with-header .collection-header,
+    .collection .collection-item {
+      border-bottom-color: var(--surface_container_low);
+    }
+
+    .collapsible {
+      border-top-color: var(--surface_container);
+      border-right-color: var(--surface_container);
+      border-left-color: var(--surface_container);
+    }
+    .collapsible-body {
+      border-bottom-color: var(--surface_container);
+    }
+    .collapsible-header {
+      background-color: var(--surface_container_low) !important;
+      border-bottom-color: var(--surface_container);
+    }
+
+    blockquote {
+      border-left-color: var(--error_container);
+    }
+    /* code box */
+    .prettyprint,
+    .withBox,
+    .prettyprinted {
+      background-color: var(--surface) !important;
+      outline-color: var(--surface);
+      color: var(--outline_variant);
+    }
+    .tag,
+    .boolean {
+      color: var(--primary);
+    }
+    .pln {
+      color: var(--on_surface);
+    }
+    .com {
+      color: var(--outline);
+    }
+    .key {
+      color: var(--error);
+    }
+    .clo,
+    .opn,
+    .pun {
+      color: var(--secondary);
+    }
+    .str,
+    .string,
+    .atv {
+      color: var(--tertiary);
+    }
+    .atn {
+      color: var(--primary);
+    }
+    .number {
+      color: var(--secondary_container);
+    }
+
+    p,
+    h5,
+    b,
+    table,
+    th,
+    td,
+    .white-text,
+    nav .brand-logo,
+    nav a,
+    div.material-table .table-title,
+    div.material-table table th,
+    .card-title,
+    .card-content,
+    .container,
+    .center {
+      color: var(--on_surface) !important;
+    }
+    html,
+    div.material-table table tr td,
+    .grey-text.text-lighten-4,
+    .page-footer .footer-copyright {
+      color: var(--on_surface) !important;
+    }
+    .grey-text,
+    .grey-text.text-darken-2,
+    .input-field label,
+    div.material-table .table-footer label,
+    div.material-table .table-footer,
+    label {
+      color: var(--on_surface_variant) !important;
+    }
+    .blue-text {
+      color: var(--primary) !important;
+    }
+    .red-text {
+      color: var(--error) !important;
+    }
+    .red {
+      background-color: var(--error);
+    }
+
+    /* discord logo on homepage */
+    img[src="/images/discord.svg"] when (@flavor = latte) {
+      filter: saturate(210%) hue-rotate(-20deg) brightness(82%);
+    }
+    img[src="/images/discord.svg"] when (@flavor = frappe) {
+      filter: saturate(53%) hue-rotate(-10deg) brightness(147%) contrast(90%)
+        sepia(15%) invert(2%);
+    }
+    img[src="/images/discord.svg"] when (@flavor = macchiato) {
+      filter: saturate(52%) hue-rotate(-15deg) brightness(157%) contrast(90%)
+        sepia(10%);
+    }
+    img[src="/images/discord.svg"] when (@flavor = mocha) {
+      filter: saturate(38%) hue-rotate(-25deg) brightness(153%) sepia(6%);
+    }
+
+    /* checkbox */
+    [type="checkbox"] + label::before,
+    [type="checkbox"]:not(.filled-in) + label::after {
+      border-color: var(--on_surface_variant);
+    }
+    [type="checkbox"]:checked + label::before {
+      border-color: rgba(0, 0, 0, 0);
+      border-right-color: var(--tertiary);
+      border-bottom-color: var(--tertiary);
+    }
+
+    /* table hover */
+    div.material-table table tbody tr:hover {
+      background-color: fade(var(--surface_container_high), 40%);
+    }
+    /* nav hover */
+    nav ul a:hover {
+      background-color: fade(var(--surface_container_high), 40%);
+    }
+    .dropdown-content li:hover,
+    .dropdown-content li.active,
+    .dropdown-content li.selected {
+      background-color: fade(var(--surface_container_high), 5%);
+    }
+
+    .input-field label {
+      color: var(--primary) !important;
+    }
+    /* search unfocused */
+    input:not([type]),
+    input[type="text"],
+    input[type="password"],
+    input[type="email"],
+    input[type="url"],
+    input[type="time"],
+    input[type="date"],
+    input[type="datetime"],
+    input[type="datetime-local"],
+    input[type="tel"],
+    input[type="number"],
+    input[type="search"],
+    textarea.materialize-textarea {
+      border-bottom-color: var(--on_surface_variant);
+      box-shadow: 1 1px 0 0 var(--on_surface_variant);
+    }
+    /* search focused */
+    input:not([type]):focus:not([readonly]),
+    input[type="text"]:focus:not([readonly]),
+    input[type="password"]:focus:not([readonly]),
+    input[type="email"]:focus:not([readonly]),
+    input[type="url"]:focus:not([readonly]),
+    input[type="time"]:focus:not([readonly]),
+    input[type="date"]:focus:not([readonly]),
+    input[type="datetime"]:focus:not([readonly]),
+    input[type="datetime-local"]:focus:not([readonly]),
+    input[type="tel"]:focus:not([readonly]),
+    input[type="number"]:focus:not([readonly]),
+    input[type="search"]:focus:not([readonly]),
+    textarea.materialize-textarea:focus:not([readonly]) {
+      border-bottom-color: var(--primary);
+      box-shadow: 0 1px 0 0 var(--primary);
+    }
+    /* valid input */
+    input:not([type]).valid,
+    input:not([type]):focus.valid,
+    input[type="text"].valid,
+    input[type="text"]:focus.valid,
+    input[type="password"].valid,
+    input[type="password"]:focus.valid,
+    input[type="email"].valid,
+    input[type="email"]:focus.valid,
+    input[type="url"].valid,
+    input[type="url"]:focus.valid,
+    input[type="time"].valid,
+    input[type="time"]:focus.valid,
+    input[type="date"].valid,
+    input[type="date"]:focus.valid,
+    input[type="datetime"].valid,
+    input[type="datetime"]:focus.valid,
+    input[type="datetime-local"].valid,
+    input[type="datetime-local"]:focus.valid,
+    input[type="tel"].valid,
+    input[type="tel"]:focus.valid,
+    input[type="number"].valid,
+    input[type="number"]:focus.valid,
+    input[type="search"].valid,
+    input[type="search"]:focus.valid,
+    textarea.materialize-textarea.valid,
+    textarea.materialize-textarea:focus.valid {
+      border-bottom-color: var(--tertiary);
+      box-shadow: 0 1px 0 0 var(--tertiary);
+    }
+
+    .teal-text,
+    .teal-text.text-darken-2,
+    .teal-text.text-lighten-3,
+    a {
+      color: var(--primary) !important;
+    }
+
+    .btn,
+    .btn-large {
+      color: var(--on_surface) !important;
+    }
+    .btn.disabled,
+    .disabled.btn-large,
+    .btn-floating.disabled,
+    .btn-large.disabled,
+    .btn-flat.disabled,
+    .btn:disabled,
+    .btn-floating:disabled,
+    .btn-large:disabled,
+    .btn-flat:disabled,
+    .btn[disabled],
+    [disabled].btn-large,
+    .btn-floating[disabled],
+    .btn-large[disabled],
+    .btn-flat[disabled],
+    .btn-large.red[disabled],
+    .btn-large.red.disabled[id="delete_button"] {
+      background-color: var(--surface) !important;
+      color: var(--on_surface_variant) !important;
+    }
+    .btn-large.red[id="delete_button"] {
+      color: var(--surface) !important;
+      background-color: var(--error) !important;
+    }
+
+    .card {
+      background-color: var(--surface_container_lowest);
+      border-color: var(--surface_container_low);
+    }
+
+    thead,
+    div.material-table table tr td,
+    div.material-table .table-header {
+      border-bottom-color: var(--surface_container_low);
+    }
+
+    /* modals found in custom chart settings */
+    .modal .modal-content,
+    .modal .modal-footer {
+      background-color: var(--surface_container_low);
+    }
+
+    /* custom chart dropdown menu */
+    .select-wrapper input.select-dropdown {
+      border-bottom-color: var(--on_surface_variant);
+    }
+    .select-dropdown li.optgroup {
+      border-top-color: var(--surface_container);
+    }
+    .select-dropdown li.disabled,
+    .select-dropdown li.disabled > span,
+    .select-dropdown li.optgroup {
+      color: var(--on_surface);
+    }
+    .select-dropdown li.optgroup > span {
+      color: var(--on_surface);
+    }
+    .dropdown-content li > a,
+    .dropdown-content li > span {
+      color: var(--primary);
+    }
+
+    .divider {
+      background-color: var(--surface_container);
+    }
+    .caret {
+      color: var(--outline_variant) !important;
+    }
+
+    /* custom chart lever */
+    .switch label .lever {
+      background-color: var(--outline);
+      &::after {
+        background-color: var(--outline_variant);
+      }
+    }
+    .switch label input[type="checkbox"]:checked + .lever {
+      background-color: desaturate(darken(var(--primary), 25%), 50%);
+        background-color: desaturate(lighten(var(--primary), 12%), 30%);
+      }
+      &::after {
+        background-color: var(--primary);
+      }
+    }
+
+    /* custom chart filter data */
+    .chip {
+      color: var(--on_surface);
+      background-color: var(--surface_container);
+    }
+    .chips .chip.selected {
+      background-color: var(--primary);
+      color: var(--surface_container_lowest);
+    }
+    .chips.focus {
+      border-bottom-color: var(--primary);
+      box-shadow: 0 1px 0 0 var(--primary);
+    }
+    .chips .input {
+      color: var(--on_surface);
+    }
+    input[placeholder="Add an other value"] {
+      border-bottom-color: var(--outline_variant);
+    }
+
+    /* HIGHCHARTS "let's hope this does'nt break"-section */
+    /* all the charts */
+    .highcharts-graph when (@graphUseAccentColor = 1) {
+      stroke: var(--primary);
+    }
+    .highcharts-graph when (@graphUseAccentColor = 0) {
+      stroke: var(--error);
+    }
+    /* "shadow" area below graph in time navigator */
+    .highcharts-area {
+      fill: fade(var(--error), 5%) !important;
+        fill: fade(var(--primary), 5%) !important;
+      }
+    }
+
+    /* charts background */
+    .highcharts-container {
+      background: var(--surface_container_lowest) !important;
+    }
+    /* map blends in with background on latte flavor */
+    .highcharts-map-series .highcharts-point {
+      stroke: var(--surface_container_lowest) !important;
+        stroke: var(--outline) !important;
+      }
+    }
+    /* graph chart grid */
+    .highcharts-grid.highcharts-yaxis-grid .highcharts-grid-line {
+      stroke: var(--surface_container_low);
+    }
+    /* bottom timeline line */
+    .highcharts-tick,
+    .highcharts-xaxis .highcharts-axis-line {
+      stroke: var(--surface_container);
+    }
+    /* bottom timeline & y axis text text */
+    .highcharts-axis-labels.highcharts-xaxis-labels text,
+    .highcharts-axis-labels.highcharts-yaxis-labels text {
+      fill: var(--on_surface) !important;
+    }
+
+    /* vertical line on graph hover */
+    .highcharts-crosshair,
+    .highcharts-crosshair-thin {
+      stroke: var(--outline_variant);
+    }
+    /* circle marker on graph */
+    .highcharts-markers .highcharts-halo.highcharts-color-0 {
+      fill: var(--error) !important;
+      stroke: none !important;
+        fill: var(--primary) !important;
+      }
+    }
+    .highcharts-markers path {
+      fill: var(--error) !important;
+      stroke: var(--surface_container_lowest) !important;
+        fill: var(--primary) !important;
+      }
+    }
+
+    /* time navigator on bottom */
+    /* active time span */
+    .highcharts-navigator,
+    .highcharts-navigator-mask-inside {
+      fill: fade(var(--surface_container), 33%);
+    }
+    .highcharts-navigator .highcharts-navigator-outline {
+      stroke: var(--surface_container);
+    }
+    /* navigator handles on the left & right */
+    .highcharts-navigator .highcharts-navigator-handle {
+      fill: var(--surface_container_low);
+      stroke: var(--outline_variant);
+    }
+    /* vertical timestamp lines */
+    .highcharts-grid.highcharts-xaxis-grid.highcharts-navigator-xaxis
+      .highcharts-grid-line {
+      stroke: var(--surface_container);
+    }
+    /* time navigator timestamp text */
+    .highcharts-xaxis-labels.highcharts-navigator-xaxis tspan {
+      fill: var(--on_surface_variant) !important;
+    }
+
+    /* scrollbar */
+    .highcharts-scrollbar,
+    .highcharts-scrollbar-track {
+      fill: var(--surface_container_low);
+      stroke: var(--surface_container);
+    }
+    .highcharts-scrollbar,
+    .highcharts-scrollbar-thumb {
+      fill: var(--outline_variant);
+      stroke: var(--outline_variant);
+    }
+    .highcharts-scrollbar .highcharts-scrollbar-rifles {
+      stroke: var(--surface);
+    }
+    .highcharts-scrollbar-button {
+      fill: var(--outline_variant);
+      stroke: var(--outline_variant);
+    }
+    .highcharts-scrollbar-arrow {
+      fill: var(--surface);
+    }
+
+    /* buttons */
+    .highcharts-button text {
+      fill: var(--on_surface) !important;
+    }
+    .highcharts-button-box {
+      fill: var(--surface_container_low) !important;
+      stroke: var(--surface_container_low) !important;
+    }
+    .highcharts-button-symbol {
+      fill: var(--on_surface_variant) !important;
+      stroke: var(--on_surface_variant) !important;
+    }
+    /* normal state */
+    .highcharts-button.highcharts-button-normal text {
+      fill: var(--on_surface) !important;
+    }
+    .highcharts-button.highcharts-button-normal .highcharts-button-box {
+      fill: var(--surface_container_low) !important;
+      stroke: var(--surface_container_low) !important;
+    }
+    /* hover state */
+    .highcharts-button.highcharts-button-hover text {
+      fill: var(--on_surface) !important;
+    }
+    .highcharts-button.highcharts-button-hover .highcharts-button-box {
+      fill: var(--surface_container_high) !important;
+      stroke: var(--surface_container_high) !important;
+    }
+    /* pressed state */
+    .highcharts-button.highcharts-button-pressed text {
+      fill: var(--on_surface) !important;
+    }
+    .highcharts-button.highcharts-button-pressed .highcharts-button-box {
+      fill: var(--surface_container_high) !important;
+      stroke: var(--surface_container_high) !important;
+    }
+    /* disabled state */
+    .highcharts-button.highcharts-button-disabled text {
+      fill: var(--outline) !important;
+    }
+    .highcharts-button.highcharts-button-disabled .highcharts-button-box {
+      fill: var(--surface_container_lowest) !important;
+      stroke: var(--surface_container_low) !important;
+    }
+
+    /* "Load full data" button */
+    .highcharts-menu {
+      background: var(--surface_container_low) !important;
+      border-color: var(--surface_container) !important;
+      box-shadow: var(--surface) 3px 3px 10px !important;
+    }
+    .highcharts-menu-item {
+      color: var(--on_surface) !important;
+      &:hover {
+        color: var(--surface_container_lowest) !important;
+        background: var(--primary) !important;
+      }
+    }
+    /* pie text "shadow" */
+    .highcharts-text-outline {
+      stroke: var(--surface);
+      stroke-width: 2px;
+    }
+    /* pie text */
+    .highcharts-label.highcharts-data-label tspan {
+      fill: var(--on_surface);
+    }
+    /* drilldown pie text */
+    .highcharts-label.highcharts-data-label.highcharts-drilldown-data-label
+      tspan {
+      fill: var(--primary);
+    }
+    .highcharts-label.highcharts-data-label.highcharts-drilldown-data-label
+      text {
+      fill: var(--primary) !important;
+      color: var(--primary) !important;
+    }
+    /* pie subtitle */
+    .highcharts-subtitle tspan {
+      fill: var(--on_surface_variant);
+    }
+    /* pie hover text */
+    .highcharts-label.highcharts-tooltip text {
+      fill: var(--on_surface) !important;
+      color: var(--on_surface) !important;
+    }
+    /* hover text */
+    .highcharts-label.highcharts-tooltip-box tspan {
+      fill: var(--on_surface);
+    }
+    /* hover text red dot */
+    .highcharts-label.highcharts-tooltip-box tspan[style="fill:#F44336"] {
+      fill: var(--error) !important;
+        fill: var(--primary) !important;
+      }
+    }
+    /* map hover text */
+    .highcharts-label.highcharts-tooltip
+      span:not(div.highcharts-label > span:nth-child(1) > span:nth-child(1)) {
+      color: var(--on_surface) !important;
+    }
+    /* "No data to display" */
+    .highcharts-label.highcharts-no-data tspan {
+      fill: var(--on_surface);
+    }
+    /* axis label */
+    .highcharts-axis-title tspan {
+      fill: var(--on_surface);
+    }
+
+    /* hover text background */
+    .highcharts-label-box,
+    .highcharts-tooltip-box {
+      fill: var(--surface_container_low);
+    }
+
+    /* legend */
+    /* legend title */
+    .highcharts-label.highcharts-legend-title text {
+      fill: var(--on_surface) !important;
+    }
+    /* legend labels */
+    .highcharts-axis-labels,
+    .highcharts-coloraxis-labels text {
+      fill: var(--on_surface_variant) !important;
+    }
+    /* vertical lines */
+    .highcharts-legend-item
+      .highcharts-grid.highcharts-coloraxis-grid
+      .highcharts-grid-line {
+      stroke: var(--surface_container_lowest);
+    }
+    /* background only for bar chart legend */
+    .highcharts-legend
+      .highcharts-legend-box[fill="#FFFFFF"][stroke="#999999"] {
+      fill: var(--surface_container_low) !important;
+      stroke: var(--surface_container) !important;
+    }
+    /* bar chart entries */
+    .highcharts-legend .highcharts-legend-item.highcharts-bar-series tspan {
+      fill: var(--on_surface) !important;
+      &:hover {
+        fill: var(--on_surface) !important;
+      }
+    }
+    .highcharts-legend
+      .highcharts-legend-item.highcharts-bar-series.highcharts-legend-item-hidden
+      tspan {
+      fill: var(--outline_variant) !important;
+      &:hover {
+        fill: var(--on_surface_variant) !important;
+      }
+    }
+
+    .highcharts-point {
+      stroke: var(--surface_container_lowest) !important;
+    }
+    /* bar chart circle outline */
+    .highcharts-legend .highcharts-legend-item.highcharts-bar-series rect {
+      stroke: none !important;
+    }
+    /* disabled bar chart circle */
+    .highcharts-legend
+      .highcharts-legend-item.highcharts-bar-series.highcharts-legend-item-hidden
+      rect {
+      fill: var(--outline) !important;
+      stroke: none !important;
+    }
+    /* bar & pie chart colors */
+    /* color 0 */
+    .highcharts-point.highcharts-color-0,
+    .highcharts-halo.highcharts-color-0,
+    .highcharts-legend-item.highcharts-bar-series.highcharts-color-0 rect {
+      fill: var(--error) !important;
+    }
+    .highcharts-data-label-connector.highcharts-color-0 {
+      stroke: var(--error) !important;
+    }
+    /* color 1 */
+    .highcharts-point.highcharts-color-1,
+    .highcharts-halo.highcharts-color-1,
+    .highcharts-legend-item.highcharts-bar-series.highcharts-color-1 rect {
+      fill: var(--tertiary) !important;
+    }
+    .highcharts-data-label-connector.highcharts-color-1 {
+      stroke: var(--tertiary) !important;
+    }
+    /* color 2 */
+    .highcharts-point.highcharts-color-2,
+    .highcharts-halo.highcharts-color-2,
+    .highcharts-legend-item.highcharts-bar-series.highcharts-color-2 rect {
+      fill: var(--primary_fixed) !important;
+    }
+    .highcharts-data-label-connector.highcharts-color-2 {
+      stroke: var(--primary_fixed) !important;
+    }
+    /* color 3 */
+    .highcharts-point.highcharts-color-3,
+    .highcharts-halo.highcharts-color-3,
+    .highcharts-legend-item.highcharts-bar-series.highcharts-color-3 rect {
+      fill: var(--secondary_container) !important;
+    }
+    .highcharts-data-label-connector.highcharts-color-3 {
+      stroke: var(--secondary_container) !important;
+    }
+    /* color 4 */
+    .highcharts-point.highcharts-color-4,
+    .highcharts-halo.highcharts-color-4,
+    .highcharts-legend-item.highcharts-bar-series.highcharts-color-4 rect {
+      fill: var(--secondary) !important;
+    }
+    .highcharts-data-label-connector.highcharts-color-4 {
+      stroke: var(--secondary) !important;
+    }
+    /* color 5 */
+    .highcharts-point.highcharts-color-5,
+    .highcharts-halo.highcharts-color-5,
+    .highcharts-legend-item.highcharts-bar-series.highcharts-color-5 rect {
+      fill: var(--tertiary_container) !important;
+    }
+    .highcharts-data-label-connector.highcharts-color-5 {
+      stroke: var(--tertiary_container) !important;
+    }
+    /* color 6 */
+    .highcharts-point.highcharts-color-6,
+    .highcharts-halo.highcharts-color-6,
+    .highcharts-legend-item.highcharts-bar-series.highcharts-color-6 rect {
+      fill: var(--secondary) !important;
+    }
+    .highcharts-data-label-connector.highcharts-color-6 {
+      stroke: var(--secondary) !important;
+    }
+    /* color 7 */
+    .highcharts-point.highcharts-color-7,
+    .highcharts-halo.highcharts-color-7,
+    .highcharts-legend-item.highcharts-bar-series.highcharts-color-7 rect {
+      fill: var(--secondary_container) !important;
+    }
+    .highcharts-data-label-connector.highcharts-color-7 {
+      stroke: var(--secondary_container) !important;
+    }
+    /* color 8 */
+    .highcharts-point.highcharts-color-8,
+    .highcharts-halo.highcharts-color-8,
+    .highcharts-legend-item.highcharts-bar-series.highcharts-color-8 rect {
+      fill: var(--on_surface_variant) !important;
+    }
+    .highcharts-data-label-connector.highcharts-color-8 {
+      stroke: var(--on_surface_variant) !important;
+    }
+    /* color 9 */
+    .highcharts-point.highcharts-color-9,
+    .highcharts-halo.highcharts-color-9,
+    .highcharts-legend-item.highcharts-bar-series.highcharts-color-9 rect {
+      fill: var(--primary) !important;
+    }
+    .highcharts-data-label-connector.highcharts-color-9 {
+      stroke: var(--primary) !important;
+    }
+    /* color 10 */
+    .highcharts-point.highcharts-color-10,
+    .highcharts-halo.highcharts-color-10,
+    .highcharts-legend-item.highcharts-bar-series.highcharts-color-10 rect {
+      fill: var(--primary) !important;
+    }
+    .highcharts-data-label-connector.highcharts-color-10 {
+      stroke: var(--primary) !important;
+    }
+  }
+}

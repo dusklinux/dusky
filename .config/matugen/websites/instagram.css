@@ -1,0 +1,818 @@
+/* ==UserStyle==
+@name Instagram Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/instagram
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/instagram
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/instagram/catppuccin.user.less
+@description Soothing pastel theme for Instagram
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("instagram.com") {
+  ._aa4d {
+  }
+  ._aa4c {
+  }
+
+
+
+    &,
+    .x1qjc9v5,
+    .x9f619,
+    .x78zum5,
+    .xdt5ytf,
+    .x1iyjqo2,
+    .xl56j7k {
+      --web-always-black: #lib.rgbify(@dark-color)[];
+      --ig-primary-icon: #lib.rgbify(var(--on_surface))[];
+      --web-always-white: #lib.rgbify(@light-color)[];
+      --always-white: #lib.rgbify(@light-color)[];
+      --overlay-alpha-80: fade(@dark-color, 50%);
+      --grey-9: #lib.rgbify(var(--surface))[];
+      --ig-primary-background: #lib.rgbify(var(--surface_container_lowest))[];
+      --ig-secondary-background: #lib.rgbify(var(--surface_container_low))[];
+      --ig-banner-background: #lib.rgbify(var(--surface))[];
+      --ig-highlight-background: #lib.rgbify(var(--surface_container_low))[];
+      --ig-elevated-background: #lib.rgbify(var(--surface))[];
+      --ig-elevated-highlight-background: #lib.rgbify(var(--surface_container_low))[];
+      --ig-hover-overlay: #lib.rgbify(var(--on_surface))[], 0.1;
+      --hover-overlay: fade(var(--surface_container_low), 20%);
+      --ig-text-on-color: #lib.rgbify(var(--surface))[];
+      --ig-badge: #lib.rgbify(var(--primary))[];
+      --ig-primary-button: #lib.rgbify(var(--primary))[];
+      --ig-primary-button-hover: fade(var(--primary), 80%);
+      --ig-secondary-button-background: #lib.rgbify(var(--surface_container_low))[];
+      --ig-secondary-button-hover: #lib.rgbify(var(--surface_container))[];
+      --ig-secondary-button: #lib.rgbify(var(--on_surface))[];
+      --ig-primary-text: #lib.rgbify(var(--on_surface))[];
+      --ig-secondary-text: #lib.rgbify(var(--on_surface_variant))[];
+      --ig-tertiary-text: #lib.rgbify(var(--on_surface_variant))[];
+      --wbloks-primary-text: var(--on_surface);
+      --ig-text-on-media: #lib.rgbify(var(--on_surface))[];
+      --ig-separator: #lib.rgbify(var(--surface_container_low))[];
+      --chat-admin-text-color: #lib.rgbify(var(--on_surface_variant))[];
+      --ig-elevated-separator: #lib.rgbify(var(--surface_container_low))[];
+      --post-separator: #lib.rgbify(var(--outline))[];
+      --ig-stroke: #lib.rgbify(var(--outline))[];
+      --grey-2: #lib.rgbify(var(--outline))[];
+      --ig-link: #lib.rgbify(var(--primary))[];
+      --ig-error-or-destructive: #lib.rgbify(var(--error))[];
+      --ig-success: #lib.rgbify(var(--tertiary))[];
+      --blue-2: #lib.rgbify(var(--primary))[];
+      --ig-close-friends-refreshed: #lib.rgbify(var(--tertiary))[];
+      --ig-text-input-border-hover-prism: #lib.rgbify(var(--surface_container))[];
+      --ig-toggle-outline-prism: #lib.rgbify(var(--on_surface))[];
+      --ig-toggle-background-on-prism: #lib.rgbify(var(--on_surface))[];
+      --ig-stroke-prism: #lib.rgbify(var(--surface))[];
+      --barcelona-logo: #lib.rgbify(var(--on_surface))[];
+      --ig-bubble-background: #lib.rgbify(var(--surface_container))[];
+      --ig-tertiary-icon: #lib.rgbify(var(--primary))[];
+      --always-dark-overlay: var(--primary);
+      --secondary-text: var(--on_surface_variant);
+      --primary-text: var(--on_surface);
+      --primary-icon: var(--primary);
+      --primary-button-text: var(--surface) !important;
+      --primary-button: var(--primary) !important;
+      --mwp-primary-theme-color: darken(var(--primary), 10%);
+      --chat-composer-button-color: darken(var(--primary), 10%);
+      scrollbar-color: var(--primary) var(--surface);
+    }
+    #splash-screen {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    /* Sidebar */
+    .x1xgvd2v {
+      background-color: var(--surface) !important;
+      &[style="transform: translateX(0px);"] {
+        background-color: var(--surface) !important;
+      }
+    }
+    .x1zvrr1 {
+      background-color: var(--surface);
+    }
+    svg[aria-label="Loading..."] {
+      stroke: var(--on_surface);
+    }
+
+    /* Story background */
+    .x5qyhuo {
+      background-color: var(--surface_container_lowest);
+    }
+
+    /* Story progress bar */
+    ._ac3p {
+      background-color: var(--primary) !important;
+    }
+
+    /* close friends story things */
+    .x9bdzbf {
+      color: var(--on_surface) !important;
+    }
+
+    /* Story seen / not seen ring */
+    button:has(canvas + span > img[alt$="'s profile picture"]) {
+      canvas {
+        display: none;
+      }
+
+      span {
+        outline-style: solid;
+        outline-offset: 0.15rem;
+      }
+
+      &[aria-label^="Story by"][aria-label$="not seen"] span {
+        outline-color: var(--primary);
+        outline-width: 0.2rem;
+      }
+      &[aria-label^="Story by"]:not([aria-label$="not seen"]) span {
+        outline-color: var(--surface_container_high);
+        outline-width: 0.075rem;
+      }
+    }
+
+    /* Posts */
+    ._aggc {
+      background-color: var(--surface);
+      border-color: var(--outline) !important;
+      border-radius: var(--modal-border-radius);
+      box-shadow: 0 3px 5px -1px fade(@dark-color, 80%);
+      box-sizing: border-box;
+    }
+    ._aatc ._aasi,
+    ._ae1i,
+    ._aggc textarea.xvbhtw8 {
+      background-color: var(--surface);
+    }
+
+    /* Icons */
+    svg[aria-label="Unlike"],
+    svg[aria-label="Verified"] {
+      fill: var(--primary) !important;
+    }
+    svg[aria-label="Next"],
+    svg[aria-label="Go back"],
+    svg[aria-label="Close"] {
+      fill: var(--on_surface) !important;
+    }
+
+    /* new post thingy */
+    ._aa1q._aa1q {
+      color: var(--on_surface) !important;
+    }
+
+    /* sumting wong's popup box */
+    .x879a55,
+    .x7ywyr2:not(
+      [style*="background-color: rgb(var(--ig-highlight-background))"]
+    ) {
+      background-color: var(--surface1) !important;
+    }
+
+    /* Share box */
+    .xzloghq {
+      background-color: var(--surface_container_low);
+      color: var(--on_surface) !important;
+      &:hover {
+        color: var(--surface) !important;
+        background-color: var(--primary) !important;
+      }
+    }
+    .xk5f4mz {
+      background-color: var(--surface);
+      &:hover {
+        background-color: var(--primary);
+      }
+    }
+    .x3nfvp2 {
+      color: var(--on_surface) !important;
+      &:hover {
+        color: var(--surface);
+      }
+    }
+
+    /* reel icon */
+    .xq3z1fi {
+      color: var(--primary) !important;
+    }
+
+    /* Toggle sliders */
+    .x1r7x56h {
+      background-color: var(--primary);
+    }
+    .x100vrsf {
+      background-color: var(--surface_container_low);
+    }
+
+    .x1psfjxj {
+      background-color: var(--surface);
+    }
+    span[data-bloks-name="bk.components.TextSpan"] {
+      color: var(--primary) !important;
+    }
+    .xs7f9wi {
+      background-color: var(--surface) !important;
+    }
+    .x1d72o {
+      background-color: var(--surface_container_low);
+    }
+    /* Log In With Facebook text */
+    ._ab37 {
+      color: var(--primary);
+    }
+    /* Excluded:  - _9ys7, _9_1f, _9ys8 (verified icon) */
+    [style*='background-image: url("https://static.cdninstagram.com/rsrc.php/v3/y4/r/ewSyA8IItw_.png")'],
+    ._9zkj,
+    ._a3ds,
+    ._a3dt,
+    ._a3du,
+    ._a3dv,
+    ._a3dw,
+    ._9-b3,
+    ._9znl,
+    ._9z-6,
+    ._a3dx,
+    ._a3dy,
+    ._a3dz,
+    ._a3d-,
+    ._a3d_,
+    ._a3e0,
+    ._9zm4,
+    ._a3e1,
+    ._a3e2,
+    ._a3e3,
+    ._a3e4,
+    ._a3e5,
+    ._a3e6,
+    ._a3e7,
+    ._a3e8,
+    ._a3e9,
+    ._a3ea,
+    ._9_57,
+    ._9_n5,
+    ._9-y3,
+    ._a3eb,
+    ._a3ec,
+    ._a3ed,
+    ._a3ee,
+    ._9zlu,
+    ._9-yp,
+    ._a3ef,
+    ._a3eg,
+    ._9_wm,
+    ._a3eh,
+    ._a3ei,
+    ._9-j_,
+    ._a3ej,
+    ._a3ek,
+    ._9_ij,
+    ._9_d_,
+    ._9_e1,
+    ._9-mm,
+    ._9_cx,
+    ._9zm0,
+    ._9zfi,
+    ._9-ub,
+    ._a3el,
+    ._9-7-,
+    ._9-1a,
+    ._a3em,
+    ._9zrp,
+    ._a3en,
+    ._9zz9,
+    ._a3eo,
+    ._9zmr,
+    ._9-8d,
+    ._9zhi,
+    ._a3ep,
+    ._9zs0,
+    ._9-j-,
+    ._a3eq,
+    ._9zli,
+    ._9_4y,
+    ._9zm2,
+    ._9zfj,
+    ._9zlg,
+    ._a3er,
+    ._9-lv,
+    ._9_ug,
+    ._9_sh,
+    ._9_sj,
+    ._9-k0,
+    ._9z-c,
+    ._9_35,
+    ._9_hh,
+    ._a3es,
+    ._a3et,
+    ._a3eu,
+    ._9-v-,
+    ._9_4d,
+    ._9zlh,
+    ._a3ev,
+    ._a3ew,
+    ._a3ex,
+    ._a3ey,
+    ._9_7m,
+    ._9_fv,
+    ._a3ez,
+    ._9-zf,
+    ._9-zg,
+    ._9-ze,
+    ._a9fa,
+    ._9-zh,
+    ._9-zi,
+    ._9-zj,
+    ._9-zk,
+    ._9-zl,
+    ._9-zm,
+    ._9-zn,
+    ._9-zo,
+    ._9-zp,
+    ._9-zq,
+    ._9-zr,
+    ._9-zs,
+    ._9-zt,
+    ._a3op,
+    ._a3oq,
+    ._9-zu,
+    ._9-zv,
+    ._9-zw,
+    ._9-zx,
+    ._9-zy,
+    ._9-zz,
+    ._9-z-,
+    ._a3or,
+    ._a3ot,
+    ._a3os,
+    ._9zs1,
+    ._9zs2,
+    ._9-z_,
+    ._9--0,
+    ._9--1,
+    ._9--2,
+    ._9--3,
+    ._9--4,
+    ._9--5,
+    ._9--6,
+    ._9--7,
+    ._9--f,
+    ._9--8,
+    ._9--9,
+    ._9--a,
+    ._9--b,
+    ._9--c,
+    ._9--d,
+    ._9--e,
+    ._a3ou,
+    ._9--g,
+    ._9--h,
+    ._9--i,
+    ._9--j,
+    ._9--l,
+    ._9--k,
+    ._9--m,
+    ._9--n,
+    ._9--o,
+    ._9--p,
+    ._9--q,
+    ._a3ov,
+    ._9--s,
+    ._9--r,
+    ._9--t,
+    ._9--u,
+    ._9--v,
+    ._9--x,
+    ._9--y,
+    ._9--w,
+    ._9--z,
+    ._9--_,
+    ._9-_0,
+    ._9-_1,
+    ._9-_2,
+    ._9-_3,
+    ._9---,
+    ._9-_4,
+    ._9-_5,
+    ._9-_6,
+    ._9-_7,
+    ._a3wy,
+    ._9-_8,
+    ._9-_9,
+    ._a3ow,
+    ._9-_a,
+    ._9-_b,
+    ._9-_c,
+    ._9-_d,
+    ._9-_e,
+    ._9-_f,
+    ._9-_g,
+    ._9-_h,
+    ._9-_i,
+    ._9-_j,
+    ._9-_k,
+    ._9-_l,
+    ._9-_m,
+    ._9-_n,
+    ._9-_o,
+    ._a3ox,
+    ._9-_p,
+    ._9-_q,
+    ._a9fb,
+    ._9-_t,
+    ._9-_r,
+    ._9-_s,
+    ._a93g,
+    ._9-_u,
+    ._9-_v,
+    ._a9fc,
+    ._9-_w,
+    ._9-_x,
+    ._9-_y,
+    ._9-_z,
+    ._9-_-,
+    ._9-__,
+    ._9_00,
+    ._a3oy,
+    ._9_01,
+    ._9_02,
+    ._9_03,
+    ._9_04,
+    ._9_05,
+    ._9_08,
+    ._9_09,
+    ._9_07,
+    ._9_06,
+    ._9_0a,
+    ._9_0b,
+    ._9_0c,
+    ._9_0d,
+    ._9_0e,
+    ._9_0f,
+    ._9_0g,
+    ._a93h,
+    ._9_0h,
+    ._9_0i,
+    ._9_0j,
+    ._9_0k,
+    ._aepo,
+    ._9_0l,
+    ._9_0m,
+    ._9_0n,
+    ._9_0o,
+    ._9_0p,
+    ._a3oz,
+    ._a93l,
+    ._9_0r,
+    ._9_0s,
+    ._a7tk,
+    ._9_0q,
+    ._a3o-,
+    ._9_0t,
+    ._9_0v,
+    ._9_0u,
+    ._a9ej,
+    ._9_0w,
+    ._9_0x,
+    ._9_0y,
+    ._9_0z,
+    ._9_0_,
+    ._9_0-,
+    ._9_10,
+    ._9_11,
+    ._9_12,
+    ._9_13,
+    ._9_14,
+    ._9_15,
+    ._a3o_,
+    ._9_18,
+    ._9_19,
+    ._9_1a,
+    ._9_1e,
+    ._9_1b,
+    ._9_1c,
+    ._9_1d,
+    ._9_16,
+    ._9_17,
+    ._a3p0,
+    ._9_1g,
+    ._9_1i,
+    ._9_1h,
+    ._9_1j,
+    ._9_1k,
+    ._9_1l,
+    ._9_1m,
+    ._a9pw {
+      filter: var(--on_surface)-filter;
+    }
+
+    /* Custom icons */
+    @instagram_gradient: radial-gradient(
+      circle at 30% 107%,
+      var(--secondary) 0%,
+      var(--secondary) 5%,
+      var(--secondary_container) 45%,
+      var(--primary) 60%,
+      var(--primary) 90%
+    );
+    /* Instagram text logo */
+    [style*="background-image: url(\"https://static.cdninstagram.com/rsrc.php/v3/yU/r/H5Bq7ru-y9E.png\");"] {
+        '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="39.285" viewBox="0 0 110 39.285"><path fill="@{text}" d="M8.481 6.431C6.358 7.32 4.025 9.83 3.288 12.98c-.934 3.992 2.951 5.68 3.269 5.127.375-.65-.696-.87-.916-2.941-.285-2.675.959-5.665 2.525-6.976.292-.244.277.096.277.723 0 1.122-.062 11.194-.062 13.296 0 2.845-.118 3.742-.329 4.63-.213.9-.558 1.507-.297 1.741.292.262 1.533-.361 2.253-1.365.862-1.203 1.165-2.65 1.219-4.22.066-1.893.063-4.896.066-6.609.002-1.571.026-6.172-.028-8.938-.013-.679-1.894-1.39-2.783-1.018m75.38 13.312c-.068 1.478-.396 2.635-.802 3.45-.786 1.579-2.419 2.068-3.111-.2-.377-1.236-.395-3.302-.123-5.028.276-1.758 1.048-3.086 2.325-2.966 1.261.118 1.85 1.742 1.712 4.744m-21.248 9.173c-.017 2.457-.404 4.611-1.233 5.237-1.176.887-2.757.221-2.43-1.571.289-1.586 1.659-3.207 3.666-5.187 0 0 .004.451-.003 1.52m-.321-9.188c-.072 1.346-.421 2.699-.802 3.464-.786 1.579-2.43 2.071-3.111-.2-.465-1.552-.354-3.562-.123-4.828.299-1.642 1.024-3.167 2.325-3.167 1.265 0 1.89 1.388 1.712 4.73zm-12.307-.021c-.077 1.427-.355 2.619-.802 3.485-.808 1.568-2.407 2.065-3.111-.2-.508-1.634-.336-3.86-.123-5.063.314-1.785 1.099-3.05 2.325-2.93 1.26.123 1.872 1.742 1.712 4.709zm56.401 1.667c-.308 0-.449.318-.564.851-.404 1.858-.827 2.277-1.374 2.277-.611 0-1.159-.92-1.3-2.761-.111-1.448-.094-4.114.048-6.765.029-.544-.121-1.084-1.583-1.615-.629-.229-1.543-.564-1.998.533-1.286 3.103-1.789 5.568-1.907 6.568-.007.052-.069.063-.08-.058-.076-.802-.244-2.258-.265-5.32-.004-.597-.131-1.105-.79-1.521-.428-.27-1.727-.748-2.195-.179-.405.464-.875 1.715-1.362 3.198a270 270 0 0 1-.672 2.02s.006-3.251.01-4.485c.002-.465-.317-.62-.414-.648-.433-.125-1.287-.336-1.649-.336-.447 0-.557.25-.557.614 0 .047-.07 4.28-.07 7.24l.001.418c-.248 1.361-1.049 3.207-1.921 3.207s-1.285-.772-1.285-4.301c0-2.058.062-2.954.092-4.442.018-.858.052-1.516.05-1.665-.007-.459-.799-.69-1.167-.774a3.5 3.5 0 0 0-.944-.106c-.355.02-.607.253-.607.574l.002.499c-.459-.721-1.196-1.221-1.685-1.366-1.321-.393-2.699-.045-3.739 1.41-.826 1.156-1.324 2.465-1.52 4.346-.143 1.375-.097 2.77.158 3.949-.308 1.331-.879 1.876-1.505 1.876-.909 0-1.566-1.483-1.491-4.047.051-1.686.388-2.87.757-4.582.157-.73.03-1.112-.292-1.478-.294-.336-.921-.507-1.821-.296a32 32 0 0 1-2.397.437s.051-.202.092-.558c.218-1.868-1.811-1.716-2.458-1.12-.386.356-.649.777-.749 1.531-.158 1.199.82 1.763.82 1.763-.321 1.469-1.107 3.386-1.918 4.772-.435.743-.767 1.294-1.197 1.879l-.003-.652c-.01-3.087.031-5.515.05-6.391.018-.858.052-1.498.051-1.648-.004-.336-.2-.462-.607-.621a4.4 4.4 0 0 0-1.227-.274c-.558-.044-.893.252-.884.602.002.066.002.471.002.471-.459-.721-1.196-1.221-1.685-1.366-1.321-.392-2.699-.044-3.739 1.41-.826 1.156-1.367 2.778-1.52 4.332-.143 1.448-.117 2.679.078 3.715-.21 1.038-.814 2.123-1.496 2.123-.873 0-1.37-.772-1.37-4.301 0-2.058.062-2.954.092-4.442.018-.858.052-1.516.05-1.665-.007-.459-.799-.69-1.167-.774a3.4 3.4 0 0 0-.975-.103c-.338.025-.574.328-.574.552v.519c-.459-.721-1.196-1.221-1.685-1.366-1.321-.392-2.692-.039-3.739 1.41-.683.945-1.235 1.992-1.52 4.311a14 14 0 0 0-.113 1.884c-.273 1.665-1.475 3.585-2.458 3.585-.575 0-1.124-1.117-1.124-3.497 0-3.17.196-7.684.23-8.119l1.484-.024c.62-.007 1.181.008 2.008-.034.415-.021.813-1.508.386-1.692-.194-.084-1.563-.156-2.107-.168-.457-.01-1.727-.105-1.727-.105s.114-2.996.141-3.312c.022-.264-.319-.399-.515-.482-.476-.201-.902-.298-1.407-.402-.697-.144-1.013-.003-1.076.585-.094.893-.141 3.509-.141 3.509-.512 0-2.259-.1-2.771-.1-.475 0-.989 2.045-.331 2.07.757.03 2.075.055 2.948.081 0 0-.039 4.588-.039 6.005l.001.437c-.481 2.507-2.175 3.861-2.175 3.861.364-1.659-.38-2.904-1.718-3.958a123 123 0 0 0-2.556-1.929s.631-.621 1.19-1.872c.396-.887.414-1.9-.56-2.124-1.608-.37-2.934.811-3.329 2.071-.307.977-.143 1.701.457 2.454q.066.083.141.167c-.363.7-.861 1.641-1.284 2.372-1.171 2.027-2.057 3.632-2.727 3.632-.535 0-.528-1.628-.528-3.153 0-1.315.097-3.29.175-5.336.025-.676-.312-1.063-.88-1.411-.344-.212-1.08-.629-1.506-.629-.638 0-2.477.087-4.215 5.114-.219.634-.649 1.789-.649 1.789l.037-6.046c0-.142-.076-.279-.249-.373-.293-.16-1.075-.484-1.771-.484q-.497 0-.497.461l-.061 9.459c0 .718.019 1.557.09 1.924s.186.665.328.844a.95.95 0 0 0 .576.369c.252.052 1.63.229 1.702-.298.086-.631.089-1.315.813-3.861 1.127-3.966 2.596-5.9 3.287-6.587.121-.12.259-.128.252.069-.03.869-.133 3.042-.204 4.887-.187 4.939.712 5.854 1.995 5.854.982 0 2.367-.976 3.851-3.446a868 868 0 0 0 2.47-4.137c.45.417.955.865 1.46 1.343 1.173 1.112 1.558 2.17 1.302 3.174-.196.767-.931 1.557-2.241.789-.382-.224-.544-.397-.928-.65-.206-.135-.521-.176-.71-.034-.491.37-.77.839-.931 1.421-.156.567.411.866 1 1.127.506.226 1.594.43 2.288.453 2.704.09 4.87-1.306 6.378-4.906.27 3.11 1.419 4.87 3.414 4.87 1.334 0 2.672-1.725 3.257-3.421q.254 1.038.737 1.802c1.538 2.437 4.521 1.912 6.019-.157.463-.639.533-.869.533-.869.219 1.954 1.792 2.636 2.693 2.636 1.009 0 2.05-.476 2.781-2.121a6 6 0 0 0 .281.51c1.538 2.437 4.521 1.912 6.019-.157a10 10 0 0 0 .186-.264l.044 1.284-1.379 1.265c-2.31 2.119-4.066 3.727-4.194 5.599-.166 2.387 1.77 3.275 3.235 3.39 1.555.123 2.888-.736 3.706-1.938.721-1.058 1.191-3.336 1.157-5.586-.013-.901-.036-2.046-.054-3.275a26.4 26.4 0 0 0 2.569-3.529c.917-1.52 1.901-3.561 2.405-5.149 0 0 .855.008 1.767-.053.292-.019.375.041.321.254-.065.259-1.152 4.451-.16 7.245.679 1.912 2.21 2.527 3.117 2.527 1.063 0 2.079-.802 2.623-1.993a4 4 0 0 0 .209.38c1.538 2.437 4.51 1.909 6.019-.157.341-.466.533-.869.533-.869.323 2.022 1.896 2.647 2.796 2.647.938 0 1.828-.385 2.551-2.094.03.752.078 1.368.153 1.562.046.119.312.267.506.34.858.318 1.734.167 2.057.102.224-.045.399-.226.424-.69.063-1.22.024-3.27.394-4.794.621-2.558 1.2-3.549 1.475-4.04.154-.275.328-.32.333-.03.013.59.042 2.319.283 4.644.177 1.709.413 2.72.594 3.04.518.914 1.157.958 1.677.958.331 0 1.024-.091.961-.673-.03-.284.023-2.037.635-4.556.399-1.646 1.066-3.132 1.307-3.675.089-.2.13-.043.129-.012-.051 1.133-.164 4.839.297 6.865.626 2.746 2.435 3.053 3.067 3.053 1.346 0 2.448-1.024 2.818-3.719.089-.649-.043-1.149-.439-1.149"/></svg>'
+      );
+      background-image: url("data:image/svg+xml,@{svg}") !important;
+      background-position: -3px -7px !important;
+      background-size: unset !important;
+    }
+    /* 2fa lock icon */
+    [aria-label="Two factor authentication lock icon"] {
+        '<svg width="76" height="76" viewBox="0 0 76 76" fill="@{blue}" xmlns="http://www.w3.org/2000/svg"><path d="M38.49.004c-4.62-.066-9.374.71-14.079 2.456C7.41 8.766-2.782 27.015.672 44.969c2.997 15.573 14.442 27.16 29.91 30.28 23.375 4.714 45.416-13.374 45.416-37.271C75.998 16.38 58.508.288 38.49.004m-.503 3.098c3.374 0 6.747.41 9.379 1.231C59.724 8.187 67.739 16.208 71.63 28.616c1.644 5.24 1.645 13.474.002 18.741-3.825 12.263-11.866 20.357-24.019 24.174-6.902 2.169-15.31 1.747-22.419-1.125C5.896 62.611-2.438 40.654 6.89 22.181c4.408-8.729 11.704-14.725 21.717-17.848 2.632-.82 6.006-1.231 9.38-1.231m15.47 1.416.082.04q-.02.04-.037.081a1 1 0 0 0-.045-.12m-.011.872q.015.042.034.08l-.093-.041a.3.3 0 0 0 .059-.039M37.987 21.69c-4.812 0-7.402 2.806-7.404 8.02 0 2.714-.056 2.839-1.26 2.839-1.61 0-3.961 1.21-4.358 2.243-.168.44-.306 3.79-.306 7.446 0 6.398.045 6.692 1.211 7.858l1.212 1.211h21.81l1.212-1.21c1.167-1.167 1.212-1.46 1.212-7.859 0-3.655-.139-7.006-.307-7.446-.397-1.033-2.748-2.243-4.359-2.243-1.203 0-1.259-.125-1.26-2.838 0-5.215-2.59-8.021-7.403-8.021m0 3.208c3.374 0 4.443 1.201 4.443 4.99v2.66h-8.885v-2.66c0-3.789 1.07-4.99 4.442-4.99m.084 10.563c4.69.023 9.362.276 9.745.738.378.455.524 2.583.431 6.294l-.14 5.606-9.904.133c-5.447.073-10.057-.019-10.244-.205-.613-.614-.386-11.284.254-11.924.458-.458 5.167-.665 9.858-.642M38 39.723a1.05 1.05 0 0 0-1.05 1.049 1.05 1.05 0 0 0 .617.957v2.225h.865v-2.225a1.05 1.05 0 0 0 .617-.957 1.05 1.05 0 0 0-1.05-1.05m15.607 30.662a1 1 0 0 0-.084.14.2.2 0 0 0-.068-.072zm-.122.923q.031.056.078.098-.06.028-.123.053c.016-.05.029-.088.045-.151"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+    /* "All caught up" icon */
+    img[src="/images/instagram/xig/web/illo-confirm-refresh-light.png"] {
+        '<svg width="96" height="95.986" viewBox="0 0 25.4 25.397" xmlns="http://www.w3.org/2000/svg" fill="@{accent}"><path d="M12.591.001c-1.934.008-2.265.045-3.353.374-.664.201-1.703.612-2.308.914s-1.582.931-2.172 1.396c-.589.466-1.436 1.287-1.883 1.825-.468.564-1.127 1.604-1.554 2.455C.913 7.777.45 8.923.292 9.514c-.234.872-.288 1.461-.292 3.152-.004 1.575.053 2.291.231 2.951.13.479.353 1.192.497 1.582.143.391.389.964.546 1.274s.581.994.943 1.519a14.4 14.4 0 0 0 1.558 1.82c.496.476 1.263 1.109 1.706 1.408s1.112.698 1.487.887 1.069.477 1.543.638c.473.161 1.282.371 1.799.466s1.513.178 2.214.184 1.667-.05 2.146-.125 1.355-.293 1.945-.485 1.375-.501 1.744-.687a17 17 0 0 0 1.475-.88c.443-.298 1.21-.932 1.706-1.408s1.197-1.295 1.559-1.82.81-1.257.995-1.626.494-1.154.685-1.744.41-1.465.485-1.945.136-1.385.136-2.012-.061-1.533-.136-2.012-.293-1.355-.485-1.945-.5-1.375-.685-1.744-.633-1.1-.994-1.626a14.4 14.4 0 0 0-1.559-1.82c-.496-.476-1.286-1.125-1.757-1.443-.471-.317-1.289-.778-1.82-1.023S16.49.466 15.868.297c-.969-.261-1.437-.304-3.277-.296m-.515.555.001.003h-.004q.002 0 .003-.003m.65.254c1.324.011 2.002.084 2.817.303.59.158 1.58.531 2.2.827s1.435.763 1.811 1.036.972.764 1.324 1.09.938.995 1.302 1.486.906 1.402 1.203 2.025c.297.622.671 1.614.831 2.205.23.851.29 1.448.29 2.884 0 1.426-.061 2.039-.287 2.884-.158.59-.586 1.677-.95 2.414s-1 1.748-1.412 2.245-1.155 1.241-1.652 1.652c-.497.412-1.507 1.047-2.245 1.412s-1.824.787-2.414.937c-.599.153-1.696.299-2.482.331-.874.035-1.772-.013-2.369-.127a17 17 0 0 1-1.677-.418 16 16 0 0 1-1.656-.7c-.517-.256-1.271-.709-1.677-1.006s-.999-.789-1.317-1.092c-.319-.303-.875-.948-1.235-1.432s-.899-1.39-1.197-2.012c-.297-.622-.667-1.615-.821-2.205s-.312-1.707-.35-2.482c-.055-1.1-.011-1.693.2-2.71.148-.716.474-1.772.723-2.348s.692-1.408.984-1.849.919-1.214 1.392-1.716S5.417 3.202 6.022 2.8s1.515-.903 2.024-1.112a18 18 0 0 1 1.931-.637c.76-.194 1.432-.253 2.75-.242m3.229.115v.002l.006.004-.012-.003zm3.312 6.912c-.129 0-2.197 1.962-4.596 4.36l-4.363 4.361-2.077-2.08c-1.456-1.459-2.167-2.08-2.38-2.08-.225 0-.304.078-.304.3 0 .21.679.98 2.245 2.549 1.413 1.415 2.345 2.248 2.514 2.248.174 0 1.838-1.568 4.73-4.459 3.7-3.699 4.461-4.523 4.461-4.829 0-.262-.068-.369-.234-.369m5.624 2.252.004.015q-.003-.004-.008-.007zm-.303.013.006.003-.004.005zM7.614 23.749l.019.009-.004.016q-.006-.013-.014-.024m8.544.584-.001.003-.004-.002zm.004.306.003.001-.005.001z"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    [style*='background-image: url("https://static.cdninstagram.com/rsrc.php/v3/y4/r/ewSyA8IItw_.png")'] {
+      /* No photo icon */
+      &[style*="background-position: 0px -97px"] {
+        filter: none;
+        background: var(--primary) !important;
+        background: @instagram_gradient !important;
+        mask-image: url("https://static.cdninstagram.com/rsrc.php/v3/y4/r/ewSyA8IItw_.png");
+        mask-position: 0 -97px;
+      }
+
+      /* Private page icon */
+      &[style*="background-position: -49px -97px"] {
+        filter: none;
+        background: var(--primary) !important;
+        background: @instagram_gradient !important;
+        mask-image: url("https://static.cdninstagram.com/rsrc.php/v3/y4/r/ewSyA8IItw_.png");
+        mask-position: -49px -97px;
+      }
+
+      &[style*="background-position: -49px 0px"] {
+        filter: none;
+        background: var(--primary) !important;
+        background: @instagram_gradient !important;
+        mask-image: url("https://static.cdninstagram.com/rsrc.php/v3/y4/r/ewSyA8IItw_.png");
+        mask-position: -49px 0;
+      }
+    }
+
+    /* Post swipe icons */
+    ._aaqh {
+      background-color: var(--surface_container_low);
+    }
+
+    /* Inside primary buttons */
+    .xzloghq,
+    ._acas:not(._acao) {
+      &,
+      svg {
+        color: var(--surface);
+        fill: var(--surface);
+      }
+    }
+    ._acas:not(._acao):hover {
+      background-color: var(--surface_container_low) !important;
+      color: var(--primary) !important;
+    }
+
+    /* Secondary buttons */
+    .x1gjpkn9,
+    ._acat,
+    ._acap {
+      &,
+      a& {
+        &,
+        &:visited {
+          color: var(--on_surface);
+        }
+      }
+    }
+
+    /* Profile banner */
+    div:has(> .x1mu97ne) {
+      background-color: var(--surface);
+      border-color: var(--outline);
+      box-shadow: 0 10px 35px 2px fade(@dark-color, 30%);
+    }
+
+    /* Dialog overlay */
+    .x7r02ix[role="dialog"] {
+      box-shadow: 0 5px 10px 0 fade(@dark-color, 50%);
+    }
+
+    /* Settings */
+    ._ab81 {
+      background-color: var(--surface);
+    }
+    ._ab85,
+    ._ab6i,
+    ._ab85 .xvbhtw8,
+    ._aav4 {
+      background-color: var(--surface);
+    }
+    /* Settings saved toast */
+    ._abmp {
+      color: var(--on_surface);
+    }
+
+    /* Bloks */
+    .wbloks_1[data-bloks-name="bk.components.Collection"] {
+      background-color: var(--surface_container_lowest) !important;
+    }
+    div[data-bloks-name="bk.components.Flexbox"],
+    .wbloks_1[data-bloks-name="bk.components.Flexbox"] {
+      /* Radios have left padding */
+      padding-left: 0 !important;
+
+      /* The heading */
+      &[style*="background: rgb(0\, 0\, 0)"],
+      &[style*="background: rgb(255\, 255\, 255)"] {
+        background-color: var(--surface_container_lowest) !important;
+      }
+
+      /* Radios */
+      &[style*="border-radius: 10.5px"],
+      &[style*="border-radius: 12px"],
+      &[style*="border-radius: 4px"] {
+        /* Selected radio */
+        &[style*="background: rgb(0\, 149\, 246)"] {
+          background-color: var(--primary) !important;
+        }
+
+        /* Not selected radio */
+        &[style*="background: rgb(219\, 219\, 219)"],
+        &[style*="background: rgb(38\, 38\, 38)"],
+        &[style*="background: rgb(54\, 54\, 54)"],
+        &[style*="background: rgb(255\, 255\, 255)"] {
+          background-color: var(--surface_container_low) !important;
+        }
+      }
+
+      /* That "border" */
+      &[style*="background: rgb(38\, 38\, 38)"] {
+        display: none;
+      }
+    }
+
+    span[data-bloks-name="bk.components.TextSpan"],
+    span[data-bloks-name="bk.components.Text"] {
+      &[style*="color: rgb(250\, 250\, 250)"],
+      &[style*="color: rgb(224\, 241\, 255)"],
+      &[style*="color: rgb(0\, 55\, 107)"],
+      &[style*="color: rgb(38\, 38\, 38)"] {
+        color: var(--on_surface) !important;
+      }
+
+      &[style*="color: rgb(142\, 142\, 142)"] {
+        color: var(--on_surface_variant) !important;
+      }
+    }
+
+    /* Map pop-ups */
+    .leaflet-popup-content-wrapper,
+    .leaflet-popup-tip {
+      background-color: var(--surface);
+      box-shadow: 0 5px 15px fade(@dark-color, 60%);
+
+      * {
+        color: var(--on_surface) !important;
+      }
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      background-color: var(--surface);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background-color: var(--primary);
+      border-radius: 10px;
+    }
+  }
+}
+
+@-moz-document regexp("^.*instagram.com/direct.*") {
+  ._aa4d {
+  }
+  ._aa4c {
+  }
+
+
+    .x11jlvup {
+      --chat-outgoing-message-bubble-background-color: fade(var(--primary), 80%);
+    }
+    .x1n2onr6 {
+      --chat-incoming-message-bubble-background-color: var(--surface_container_low);
+    }
+
+    /* Chat background */
+    .xnz67gz {
+      background-color: var(--surface_container_lowest);
+    }
+    /* messages you've sent */
+    .xyk4ms5 {
+      color: var(--surface) !important;
+    }
+    /* sidebar */
+    .xvbhtw8 {
+      background-color: var(--surface);
+    }
+    .x186z157,
+    .xk50ysn,
+    .xi81zsa {
+      color: var(--on_surface_variant) !important;
+    }
+
+    /* New Chat Button */
+    .xk5f4mz {
+      background-color: var(--surface_container_low);
+    }
+
+    /* Chat button */
+    .x1i10hfl:hover {
+      color: var(--on_surface);
+    }
+    .x1bvjpef {
+      color: var(--surface);
+    }
+    .x1bvjpef:hover {
+      color: lighten(var(--primary), 5%);
+    }
+
+    /* notes */
+    .xsnw5ke,
+    .x3zg9eu::after {
+      background-color: var(--surface_container_low) !important;
+    }
+    .x103n6ev,
+    .xzxgvzf {
+      background-image: linear-gradient(
+        -90deg,
+        fade(var(--surface_container_low), 30%),
+        fade(var(--surface_container_low), 100%)
+      );
+    }
+
+    /* voice clip */
+    div.x7ywyr2 {
+      &[style*="background-color: rgb(var(--ig-highlight-background))"] {
+        div[aria-label="Play"],
+        div[aria-label="Pause"],
+        div[role="timer"],
+        div[role="slider"] {
+          background-color: var(--on_surface) !important;
+        }
+        div[style*="clip-path"] div.x5yr21d.xh8yej3.x1bhxuv2 {
+          background-color: var(--on_surface_variant) !important;
+        }
+        div[aria-label="Play"]:hover {
+          background-color: var(--on_surface) !important;
+        }
+      }
+      &[style*="background-color: var(--mwp-primary-theme-color)"] {
+        background-color: var(--mwp-primary-theme-color) !important;
+        div[aria-label="Play"],
+        div[aria-label="Pause"],
+        div[role="slider"],
+        div[role="timer"] {
+          background-color: var(--on_surface) !important;
+        }
+        div[aria-label="Play"]:hover {
+          background-color: var(--on_surface) !important;
+        }
+      }
+    }
+    /* voice clip recording container */
+    div[style*="background-color: var(--chat-composer-button-color)"] {
+      div[role="slider"] {
+        opacity: 1 !important;
+        background-color: darken(var(--primary), 4%) !important;
+      }
+      div[aria-label="Play"],
+      div[aria-label="Pause"],
+      div[role="timer"],
+      div[aria-label="Stop recording"] {
+        background-color: var(--on_surface) !important;
+      }
+    }
+
+    /* explicit music icon in notes */
+    .x1cp0k07 {
+      color: var(--on_surface);
+    }
+  }
+}

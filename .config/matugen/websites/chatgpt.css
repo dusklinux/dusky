@@ -1,0 +1,186 @@
+@-moz-document domain("chatgpt.com") {
+
+	:root {
+		--main-surface-background: var(--background);
+		--message-surface: var(--surface_container);
+		--composer-blue-bg: var(--primary);
+		--composer-blue-hover: var(--primary_fixed_dim);
+		--composer-blue-text: var(--on_primary);
+		--composer-surface-primary: var(--surface_container_high);
+		--dot-color: var(--on_surface);
+		--text-primary-inverse: var(--on_background);
+		--text-placeholder: var(--on_surface_variant);
+		--content-primary: var(--on_surface);
+		--content-secondary: var(--on_surface_variant);
+		--text-error: var(--error);
+
+		--border-xlight: var(--outline_variant);
+		--border-light: var(--outline_variant);
+		--border-medium: var(--outline);
+		--border-heavy: var(--outline);
+		--border-xheavy: var(--outline);
+		--border-sharp: var(--outline_variant);
+
+		--main-surface-primary: var(--surface_container);
+		--main-surface-primary-inverse: var(--on_surface);
+		--main-surface-secondary: var(--surface_container_high);
+		--main-surface-secondary-selected: var(--surface_container_highest);
+		--main-surface-tertiary: var(--surface_container_highest);
+
+		--sidebar-surface-primary: var(--surface);
+		--sidebar-surface-secondary: var(--surface_container);
+		--sidebar-surface-tertiary: var(--surface_container_high);
+		--sidebar-title-primary: var(--on_surface_variant);
+		--sidebar-surface: var(--surface);
+		--sidebar-body-primary: var(--on_surface);
+		--sidebar-icon: var(--primary);
+
+		--surface-hover: var(--primary_container);
+		--link: var(--primary);
+		--link-hover: var(--primary_fixed_dim);
+		--surface-error: var(--error);
+	}
+
+	.bg-token-main-surface-primary,
+	.bg-white {
+		background-color: var(--surface_container) !important;
+	}
+
+	.dark\:bg-gray-900:is(.dark *),
+	.dark,
+	.light {
+		background-color: var(--background) !important;
+	}
+
+	.bg-token-main-surface-primary {
+		background-color: var(--surface);
+	}
+
+	.dark\:prose-invert:is(.dark *) :where(code):not(:where([class~=not-prose] *)) {
+		background-color: var(--surface_container_high);
+	}
+
+	.bg-token-sidebar-surface-primary {
+		background-color: var(--surface_container);
+	}
+
+	.dark\:bg-gray-600:is(.dark *),
+	.bg-gray-200,
+	.bg-gray-50 {
+		background-color: var(--surface_container_highest);
+	}
+
+	.btn-danger {
+		background-clip: padding-box;
+		background-color: var(--error) !important;
+		color: var(--on_error) !important;
+	}
+
+	.btn-danger:hover {
+		background-color: var(--error_container) !important;
+		color: var(--on_error_container) !important;
+	}
+
+	.btn-danger:disabled {
+		background-color: var(--surface_container_highest) !important;
+		color: var(--on_surface_variant) !important;
+		opacity: 0.6;
+	}
+
+	.composer-secondary-button-color {
+		background-color: var(--surface_container_high);
+		color: var(--on_surface);
+	}
+
+	.radix-state-checked\:bg-blue-400[data-state="checked"] {
+		background-color: var(--tertiary) !important;
+	}
+
+	:root {
+		--bg-primary: var(--background);
+		--bg-secondary: var(--surface_container);
+		--bg-tertiary: var(--surface_container_high);
+		--bg-scrim: var(--surface);
+		--bg-elevated-primary: var(--surface_container);
+		--bg-elevated-secondary: var(--surface);
+		--bg-status-warning: var(--secondary);
+		--bg-status-error: var(--error);
+
+		--border-default: var(--outline_variant);
+		--border-heavy: var(--outline);
+		--border-light: var(--outline_variant);
+		--border-status-warning: var(--secondary);
+		--border-status-error: var(--error);
+
+		--text-primary: var(--on_surface);
+		--text-secondary: var(--on_surface_variant);
+		--text-tertiary: var(--outline);
+		--text-inverted: var(--on_background);
+		--text-inverted-static: var(--on_surface);
+		--text-accent: var(--primary);
+		--text-status-warning: var(--secondary);
+		--text-status-error: var(--error);
+
+		--icon-primary: var(--on_surface_variant);
+		--icon-secondary: var(--on_surface);
+		--icon-tertiary: var(--outline);
+		--icon-inverted: var(--on_background);
+		--icon-inverted-static: var(--on_surface);
+		--icon-accent: var(--primary);
+		--icon-status-warning: var(--secondary);
+		--icon-status-error: var(--error);
+
+		--interactive-bg-primary-default: var(--on_surface);
+		--interactive-bg-primary-hover: var(--surface_bright);
+		--interactive-bg-primary-press: var(--surface_container_high);
+		--interactive-bg-primary-inactive: var(--on_surface);
+		--interactive-bg-primary-selected: var(--primary);
+
+		--interactive-bg-secondary-default: transparent;
+		--interactive-bg-secondary-hover: var(--surface_container_highest);
+		--interactive-bg-secondary-press: var(--surface_container_high);
+		--interactive-bg-secondary-selected: var(--primary_container);
+
+		--interactive-bg-accent-default: var(--primary);
+		--interactive-bg-accent-hover: var(--primary_fixed_dim);
+		--interactive-bg-accent-press: var(--primary_fixed);
+		--interactive-bg-accent-inactive: var(--primary);
+
+		--interactive-label-primary-default: var(--on_background);
+		--interactive-label-secondary-default: var(--on_surface);
+		--interactive-label-tertiary-default: var(--on_surface_variant);
+		--interactive-label-accent-default: var(--tertiary);
+		--interactive-label-danger-primary-default: var(--on_surface);
+
+		--interactive-border-focus: var(--primary);
+		--interactive-border-secondary-default: var(--outline_variant);
+		--interactive-border-tertiary-default: var(--surface_container_highest);
+		--interactive-border-danger-secondary-default: var(--error);
+
+		--interactive-icon-primary-default: var(--on_background);
+		--interactive-icon-secondary-default: var(--on_surface);
+		--interactive-icon-tertiary-default: var(--on_surface_variant);
+		--interactive-icon-accent-default: var(--primary);
+		--interactive-icon-danger-primary-default: var(--on_surface);
+
+		--utility-scrollbar: var(--outline);
+	}
+
+	.dark :not(.light).popover,
+	.dark.popover,
+	.popover .dark,
+	.popover .light,
+	.light :not(.dark).popover,
+	.light.popover {
+		--main-surface-primary: var(--surface_container);
+		--main-surface-secondary: var(--surface_container_high);
+		--main-surface-tertiary: var(--surface_container_highest);
+
+		--text-primary: var(--on_surface);
+		--text-secondary: var(--on_surface_variant);
+		--text-tertiary: var(--tertiary);
+		--text-quaternary: var(--primary);
+
+		--sidebar-surface-primary: var(--surface_container);
+	}
+}

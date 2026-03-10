@@ -1,0 +1,98 @@
+/* ==UserStyle==
+@name DevDocs Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/devdocs
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/devdocs
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/devdocs/catppuccin.user.less
+@description Soothing pastel theme for DevDocs
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("devdocs.io") {
+
+  html._theme-default {
+  }
+  html._theme-dark {
+  }
+
+    #lib.css-variables();
+
+    --documentBackground: var(--surface_container_lowest);
+    --contentBackground: var(--surface_container_lowest);
+    --textColor: var(--on_surface);
+    --textColorLight: var(--on_surface);
+    --textColorLighter: var(--on_surface_variant);
+    --textColorRed: var(--error);
+
+    --focusBackground: var(--surface_container_low);
+    --focusBorder: var(--surface_container);
+    --focusText: var(--on_surface);
+    --selectionBackground: var(--primary);
+    --selectionText: var(--surface_container_lowest);
+    --selectionBorder: var(--surface_container);
+    --highlightBackground: var(--surface_container_high);
+    --loadingText: var(--outline_variant);
+
+    --linkColor: var(--primary);
+    --linkColorHover: var(--primary_fixed);
+
+    --headerBackground: var(--surface);
+    --headerBorder: var(--surface_container);
+
+    --searchTagBackground: var(--surface);
+    --searchBorder: var(--surface_container);
+    --inputFocusBorder: var(--primary);
+
+    --sidebarBackground: var(--surface);
+    --sidebarBorder: var(--surface_container);
+    --scrollbarColor: var(--outline);
+    --scrollbarColorHover: var(--outline_variant);
+
+    --boxHeaderBackground: var(--surface);
+    --boxHeaderColor: var(--on_surface);
+    --boxBackground: var(--surface);
+    --boxBorder: var(--surface_container);
+    --boxBorderLight: var(--surface_container);
+
+    --noteBackground: var(--surface_container_low);
+    --noteBorder: var(--surface_container);
+    --noteGreenBackground: fade(var(--tertiary), 30%);
+    --noteGreenBorder: var(--surface_container);
+    --noteBlueBackground: fade(var(--primary), 30%);
+    --noteBlueBorder: var(--surface_container);
+    --noteOrangeBackground: fade(var(--secondary_container), 30%);
+    --noteOrangeBorder: var(--surface_container);
+    --noteRedBackground: fade(var(--error), 30%);
+    --noteRedBorder: var(--surface_container);
+
+    --notifBackground: var(--surface_container_low);
+    --notifBorder: 1px solid var(--surface_container);
+    --notifColor: var(--on_surface);
+    --tipBackground: var(--surface_container_low);
+    --tipBorder: 1px solid var(--surface_container);
+    --noticeBackground: var(--surface_container_low);
+    --noticeBorder: var(--surface_container);
+    --labelBackground: var(--surface_container_low);
+
+    ._list-arrow {
+      fill: var(--outline);
+      opacity: 1;
+
+      &:hover {
+        fill: var(--outline_variant);
+      }
+    }
+
+    ._search > svg {
+      fill: var(--outline_variant);
+      opacity: 1;
+    }
+  }
+}

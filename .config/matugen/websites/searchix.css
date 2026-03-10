@@ -1,0 +1,43 @@
+/* ==UserStyle==
+@name Searchix Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/searchix
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/searchix
+@version 2025.12.05
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/searchix/catppuccin.user.less
+@description Soothing pastel theme for Searchix
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("searchix.ovh") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    --bg: var(--surface_container_lowest);
+    --accent-bg: var(--surface);
+    --text: var(--on_surface);
+    --text-light: var(--on_surface_variant);
+    --accent: var(--primary);
+    --accent-hover: var(--primary);
+    --accent-error: fade(var(--error), 20%);
+    --border: var(--outline);
+    --code: var(--primary_container);
+    --preformatted: var(--on_surface);
+    --disabled: var(--surface);
+
+    dialog {
+      color: var(--text);
+    }
+  }
+}

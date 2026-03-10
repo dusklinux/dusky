@@ -1,0 +1,420 @@
+/* ==UserStyle==
+@name Pronouns.page Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/pronouns.page
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/pronouns.page
+@version 2026.01.09
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/pronouns.page/catppuccin.user.less
+@description Soothing pastel theme for Pronouns.page
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("pronouns.page"),
+  domain("pronomen.net"),
+  domain("pronombr.es"),
+  domain("pronomejo.net"),
+  domain("fornovn.fo"),
+  domain("pronoms.fr"),
+  domain("pronom.it"),
+  domain("zaimki.pl") {
+  body:not([data-theme="dark"]) {
+  }
+
+  body[data-theme="dark"],
+  body[data-theme="dark"]:not(.reduced-colours) {
+  }
+
+
+    background: var(--surface_container_lowest);
+    color: var(--on_surface) !important;
+
+    --bs-body-color: var(--on_surface);
+    --bs-body-bg: var(--surface_container_lowest);
+    --bs-white-rgb: #lib.rgbify(var(--surface))[];
+    --bs-primary-rgb: #lib.rgbify(var(--primary))[];
+    --bs-secondary-rgb: #lib.rgbify(var(--outline))[];
+    --bs-secondary-color: var(--on_surface_variant);
+    --bs-tertiary-bg: var(--surface);
+    --bs-success-text-emphasis: var(--tertiary);
+    --bs-success-rgb: #lib.rgbify(var(--tertiary))[];
+    --bs-info-text-emphasis: var(--primary_container);
+    --bs-warning-text-emphasis: var(--secondary);
+    --bs-danger-text-emphasis: var(--error);
+    --bs-danger-rgb: #lib.rgbify(var(--error))[];
+    --bs-light-text-emphasis: var(--on_surface);
+    --bs-dark-text-emphasis: var(--on_surface);
+    --bs-heading-color: var(--on_surface);
+    --bs-form-valid-color: var(--tertiary);
+    --bs-form-valid-border-color: var(--tertiary);
+    --bs-form-invalid-color: var(--error);
+    --bs-form-invalid-border-color: var(--error);
+
+    /* Buttons */
+
+    .btn-primary {
+      color: var(--surface);
+      --bs-btn-bg: var(--primary);
+    }
+
+    .btn-primary,
+    .btn-outline-primary {
+      --bs-btn-hover-bg: var(--primary);
+      --bs-btn-border-color: var(--primary);
+      --bs-btn-hover-border-color: var(--primary);
+      --bs-btn-active-bg: var(--primary);
+      --bs-btn-active-border-color: var(--primary);
+      --bs-btn-disabled-color: var(--primary);
+      --bs-btn-disabled-bg: darken(var(--primary), 5%);
+      --bs-btn-disabled-border-color: var(--primary);
+    }
+
+    .btn-outline-primary {
+      color: var(--on_surface);
+
+      &:hover {
+        color: var(--surface);
+      }
+    }
+
+    .btn-success {
+      --bs-btn-color: var(--surface);
+      --bs-btn-bg: var(--tertiary);
+      --bs-btn-border-color: var(--tertiary);
+      --bs-btn-hover-color: var(--surface);
+      --bs-btn-hover-bg: darken(var(--tertiary), 5%);
+      --bs-btn-hover-border-color: darken(var(--tertiary), 5%);
+      --bs-btn-active-color: var(--surface);
+      --bs-btn-active-bg: darken(var(--tertiary), 5%);
+      --bs-btn-active-border-color: darken(var(--tertiary), 5%);
+      --bs-btn-disabled-color: var(--on_surface);
+      --bs-btn-disabled-bg: var(--tertiary);
+      --bs-btn-disabled-border-color: var(--tertiary);
+    }
+
+    .btn-outline-success {
+      color: var(--tertiary);
+
+      &:hover {
+        color: var(--surface);
+      }
+
+      --bs-btn-color: var(--tertiary);
+      --bs-btn-border-color: var(--tertiary);
+      --bs-btn-hover-color: var(--surface);
+      --bs-btn-hover-bg: var(--tertiary);
+      --bs-btn-hover-border-color: var(--tertiary);
+      --bs-btn-active-color: var(--surface);
+      --bs-btn-active-bg: var(--tertiary);
+      --bs-btn-active-border-color: var(--tertiary);
+      --bs-btn-disabled-color: var(--tertiary);
+      --bs-btn-disabled-border-color: var(--tertiary);
+    }
+
+    .btn-outline-danger {
+      --bs-btn-color: var(--error);
+      --bs-btn-border-color: var(--error);
+      --bs-btn-hover-color: var(--surface);
+      --bs-btn-hover-bg: var(--error);
+      --bs-btn-hover-border-color: var(--error);
+      --bs-btn-active-color: var(--surface);
+      --bs-btn-active-bg: var(--error);
+      --bs-btn-active-border-color: var(--error);
+      --bs-btn-disabled-color: var(--error);
+      --bs-btn-disabled-border-color: var(--error);
+    }
+
+    .btn-secondary {
+      --bs-btn-color: var(--on_surface);
+      --bs-btn-bg: var(--outline);
+      --bs-btn-border-color: var(--outline);
+      --bs-btn-hover-color: var(--on_surface);
+      --bs-btn-hover-bg: var(--surface_container_high);
+      --bs-btn-hover-border-color: var(--surface_container_high);
+      --bs-btn-active-color: var(--on_surface);
+      --bs-btn-active-bg: var(--surface_container_high);
+      --bs-btn-active-border-color: var(--surface_container_high);
+      --bs-btn-disabled-color: var(--on_surface);
+      --bs-btn-disabled-bg: var(--outline);
+      --bs-btn-disabled-border-color: var(--outline);
+    }
+
+    .btn-outline-secondary {
+      --bs-btn-color: var(--outline);
+      --bs-btn-border-color: var(--outline);
+      --bs-btn-hover-color: var(--on_surface);
+      --bs-btn-hover-bg: var(--outline);
+      --bs-btn-hover-border-color: var(--outline);
+      --bs-btn-active-color: var(--on_surface);
+      --bs-btn-active-bg: var(--outline);
+      --bs-btn-active-border-color: var(--outline);
+      --bs-btn-disabled-color: var(--outline);
+      --bs-btn-disabled-border-color: var(--outline);
+    }
+
+    .btn-light {
+      &,
+      &:disabled,
+      &.disabled {
+        color: var(--on_surface);
+        background-color: var(--surface);
+      }
+    }
+    .btn-dark,
+    .btn-outline-dark:hover {
+      color: var(--surface);
+      background-color: var(--on_surface);
+    }
+    .btn-outline-dark {
+      color: var(--on_surface);
+    }
+
+    .btn-square {
+      background-color: var(--primary) !important;
+    }
+
+    /* Inputs */
+
+    .form-check-input:checked {
+      background-color: var(--primary) !important;
+      border-color: var(--primary) !important;
+    }
+
+    .form-control {
+      color: var(--on_surface);
+      background-color: var(--surface);
+      border-color: var(--surface_container_low);
+
+      &:focus {
+        box-shadow: 0 0 0 0.25rem fade(var(--primary), 50%);
+      }
+    }
+
+    .dropdown-menu {
+      color: var(--on_surface);
+      background-color: var(--surface);
+      border-color: var(--surface_container_low);
+
+      .dropdown-item {
+        color: var(--on_surface);
+
+        &:hover,
+        &:focus {
+          background-color: var(--surface);
+        }
+      }
+    }
+
+    /* Date/calendar input */
+    .dp__theme_dark, .dp__theme_light {
+      --dp-primary-color: var(--primary);
+      --dp-text-color: var(--on_surface);
+      --dp-hover-text-color: var(--on_surface);
+      --dp-background-color: var(--surface_container_low);
+      --dp-hover-color: var(--surface_container);
+      --dp-disabled-color: var(--surface_container_high);
+      --dp-icon-color: var(--on_surface_variant);
+      --dp-hover-icon-color: var(--on_surface);
+      --dp-secondary-color: var(--on_surface_variant);
+
+      .dp__overlay_cell_active,
+      .dp__active_date,
+      .dp__range_end,
+      .dp__range_start {
+        color: var(--surface);
+      }
+    }
+
+    /* Header */
+
+    header .nav-item {
+      color: var(--on_surface) !important;
+
+      &:hover {
+        color: var(--primary) !important;
+      }
+    }
+
+    .nav-custom:not(.nav-custom-start) .nav-item {
+      border-color: var(--surface_container_low);
+
+      &:hover {
+        border-bottom-color: var(--primary) !important;
+      }
+
+      &.btn.active,
+      &.btn:hover {
+        border-bottom-color: var(--primary) !important;
+      }
+    }
+
+    .nav-custom-start .btn,
+    .nav-custom .btn {
+      border-inline-start-color: var(--surface_container_high) !important;
+
+      &:hover,
+      &.active {
+        color: lighten(var(--primary), 5%) !important;
+        border-inline-start-color: var(--primary) !important;
+      }
+    }
+
+    .hamburger-menu .btn-hamburger {
+      background-color: var(--surface) !important;
+      border-color: var(--surface_container_low);
+    }
+
+    .card {
+      background-color: var(--surface);
+    }
+
+    /* Footer */
+
+    .separator {
+      > .mask::after {
+        box-shadow: 0 0 10px var(--on_surface);
+      }
+
+      > span {
+        box-shadow: 0 2px 4px var(--on_surface);
+        background: var(--on_surface);
+        color: var(--surface);
+      }
+    }
+
+    /* Calendar */
+
+    .list-group-flare > :first-child {
+      border-top-color: var(--primary) !important;
+    }
+    .list-group-item {
+      color: var(--on_surface) !important;
+      background-color: var(--surface) !important;
+      border-color: var(--surface_container_low) !important;
+    }
+    .calendar > .day.day-event {
+      border-color: var(--primary);
+
+      &:hover {
+        background-color: darken(var(--primary), 10%) !important;
+
+        .day-number {
+          color: var(--surface);
+          text-shadow: none;
+        }
+      }
+
+      &.day-event-1 {
+        background-color: var(--primary);
+        color: var(--surface);
+      }
+    }
+
+    /* Dictionary */
+    .page-link {
+      color: var(--on_surface);
+      background-color: var(--surface);
+      border-color: var(--surface_container_low);
+    }
+    .page-item.active .page-link {
+      color: var(--surface);
+      background-color: var(--primary);
+      border-color: var(--primary);
+    }
+    .page-item.disabled .page-link {
+      color: var(--on_surface);
+      background-color: var(--surface_container_lowest);
+      border-color: var(--surface_container_low);
+    }
+    table {
+      --bs-table-color: var(--on_surface) !important;
+      --bs-table-striped-color: var(--on_surface) !important;
+      --bs-table-hover-color: var(--on_surface) !important;
+      --bs-table-hover-bg: var(--surface_container) !important;
+      --bs-table-striped-bg: var(--surface_container_low) !important;
+    }
+
+    /* Other */
+
+    .bg-light {
+      background-color: var(--surface) !important;
+    }
+    .bg-dark {
+      background-color: var(--on_surface) !important;
+    }
+    .bg-white {
+      background-color: var(--surface) !important;
+    }
+    .text-dark {
+      color: var(--on_surface) !important;
+    }
+    .colour-default {
+      color: var(--on_surface) !important;
+    }
+    .colour-pink, .text-primary {
+      color: var(--primary) !important;
+    }
+    .colour-orange {
+      color: var(--secondary_container) !important;
+    }
+    .colour-red {
+      color: var(--error) !important;
+    }
+    .colour-grey {
+      color: var(--outline_variant) !important;
+    }
+
+    .alert-light {
+      background-color: var(--surface_container_high);
+      color: var(--on_surface);
+    }
+    .alert-info {
+      background-color: fade(var(--primary_container), 30%);
+      border-color: var(--primary_container);
+      color: var(--on_surface);
+    }
+
+    .nav-pills {
+      --bs-nav-pills-link-active-bg: var(--primary);
+      --bs-nav-pills-link-active-color: var(--surface);
+    }
+
+    .badge {
+      --bs-badge-color: var(--on_surface);
+    }
+
+    .border {
+      border-color: var(--surface_container_low) !important;
+    }
+
+    a {
+      color: var(--primary);
+
+      &:not(.nav-link.active):hover {
+        color: lighten(var(--primary), 5%);
+      }
+    }
+
+    code {
+      color: var(--surface);
+      background-color: var(--primary);
+      border-color: transparent;
+    }
+
+    /* Share QR code */
+    [fill="#ff95bb"] {
+      fill: var(--primary);
+    }
+
+    mark,
+    .mark {
+      background-color: fade(var(--secondary), 50%);
+      color: var(--on_surface);
+    }
+  }
+}

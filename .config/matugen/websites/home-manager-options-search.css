@@ -1,0 +1,144 @@
+/* ==UserStyle==
+@name Home Manager Options Search Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/home-manager-options-search
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/home-manager-options-search
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/home-manager-options-search/catppuccin.user.less
+@description Soothing pastel theme for Home Manager Options Search
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("home-manager-options.extranix.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+:root {
+}
+
+    body {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    header {
+      background-color: var(--surface);
+
+      nav.shortcuts li a {
+        color: var(--on_surface);
+
+        &:hover {
+          background-color: var(--surface_container_low);
+          color: var(--on_surface);
+        }
+      }
+    }
+
+    #lastUpdateElement {
+      color: var(--on_surface);
+    }
+
+    a,
+    a:visited {
+      color: var(--primary);
+    }
+
+    input,
+    textarea,
+    select {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      caret-color: var(--on_surface);
+      border-color: var(--surface_container_low);
+    }
+
+    .progress-bar-striped {
+      background-image: linear-gradient(
+        45deg,
+        fade(var(--on_surface), 40%) 25%,
+        transparent 25%,
+        transparent 50%,
+        fade(var(--on_surface), 40%) 50%,
+        fade(var(--on_surface), 40%) 75%,
+        transparent 75%,
+        transparent
+      );
+      background-color: var(--primary);
+      color: var(--surface);
+    }
+
+    .form-control:focus {
+      border-color: var(--primary);
+      box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075), 0 0 8px var(--primary);
+    }
+
+    .table-striped > tbody > tr:nth-of-type(2n+1) {
+      background-color: var(--surface_container_low);
+    }
+
+    table#indexedOptionsTable tr td,
+    .table > thead > tr > th {
+      border-color: var(--surface_container_high) !important;
+    }
+
+    table tr.optrow:focus-visible,
+    table tr.optrow:hover {
+      background-color: var(--surface_container) !important;
+    }
+
+    .modal-content {
+      background-color: var(--surface_container_lowest);
+
+      .modal-header,
+      .modal-footer {
+        border-color: var(--surface_container_low) !important;
+      }
+
+      .close {
+        color: var(--on_surface);
+        text-shadow: 0 1px 0 var(--on_surface);
+      }
+
+      pre {
+        color: var(--on_surface);
+        background-color: var(--surface);
+        border-color: var(--surface_container_low);
+      }
+    }
+
+    .btn-default {
+      background: var(--surface_container_low);
+      color: var(--on_surface);
+      text-shadow: none;
+      box-shadow: none;
+      border-color: var(--surface_container_low);
+
+      &:hover,
+      &:focus,
+      &:active,
+      .focus,
+      .active {
+        background-color: var(--surface_container);
+        color: var(--on_surface);
+        border-color: var(--surface_container_low);
+      }
+    }
+
+    footer {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-color: var(--surface_container_high);
+    }
+  }
+}

@@ -1,0 +1,375 @@
+/* ==UserStyle==
+@name Rentry.co Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/rentry.co
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/rentry.co
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/rentry.co/catppuccin.user.less
+@description Soothing pastel theme for Rentry.co
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("rentry.org"), domain("rentry.co") {
+
+    #darkModeBtn::before {
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="@{overlay2}" class="bi bi-moon-fill" viewBox="0 0 16 16"><path d="M6 .278a.77.77 0 0 1 .08.858 7.2 7.2 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277q.792-.001 1.533-.16a.79.79 0 0 1 .81.316.73.73 0 0 1-.031.893A8.35 8.35 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.75.75 0 0 1 6 .278"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+  }
+    #darkModeBtn::before {
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="@{overlay2}" class="bi bi-brightness-high-fill" viewBox="0 0 16 16"><path d="M12 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0M8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0m0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13m8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5M3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8m10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0m-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0m9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707M4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+  }
+
+    #lib.css-variables();
+
+:root {
+}
+
+    body {
+      background: var(--surface);
+      color: var(--on_surface);
+    }
+    /* Editor and preview */
+    .cm-s-default,
+    .markdownx-preview,
+    .entry-text,
+    .tab-content {
+      background: var(--surface_container_lowest) !important;
+      color: var(--on_surface) !important;
+    }
+
+    /* Tab navigation */
+    .nav-link {
+      background: var(--surface);
+      color: var(--outline) !important;
+
+      &.active {
+        background: var(--surface_container_lowest) !important;
+        color: var(--on_surface) !important;
+      }
+    }
+    .form-control,
+    textarea {
+      background: var(--surface_container_lowest) !important;
+      color: var(--on_surface) !important;
+    }
+    .input-success {
+      box-shadow: inset 4px 0 var(--tertiary) !important;
+    }
+    .input-error {
+      &,
+      + .CodeMirror-wrap {
+        box-shadow: var(--error) 4px 0 inset !important;
+      }
+    }
+    .input-warning {
+      box-shadow: var(--secondary) 4px 0 inset !important;
+    }
+    .btn {
+      background: var(--surface_container_lowest) !important;
+      color: var(--on_surface) !important;
+      &:hover {
+        background: var(--surface_container_low) !important;
+        color: var(--on_surface) !important;
+      }
+    }
+    .btn-success {
+      &,
+      &.btn,
+      &:hover {
+        color: var(--tertiary) !important;
+      }
+      &#submitButton {
+        background: var(--surface_container_lowest) !important;
+        &:hover {
+          background: var(--surface_container_low) !important;
+        }
+      }
+    }
+    .btn-danger {
+      &,
+      &.btn,
+      &:hover {
+        color: var(--error) !important;
+      }
+    }
+    .clipboard {
+      color: var(--on_surface);
+      background: none;
+    }
+    #progressBar {
+      background-color: var(--primary) !important;
+    }
+    .full-contrast:not(.active) path {
+      fill: var(--outline_variant) !important;
+    }
+    .full-contrast.active path {
+      fill: var(--secondary_container) !important;
+    }
+    .edit-code {
+      background: var(--surface);
+      color: var(--on_surface) !important;
+    }
+    .cb-tooltiptext {
+      color: var(--on_surface) !important;
+      background: var(--surface_container_low) !important;
+    }
+    .cb-tooltiptext-bottom::after {
+      border-color: transparent transparent var(--surface_container_low);
+    }
+    .headerlink {
+      color: var(--outline_variant) !important;
+    }
+    #submitButton {
+      background: var(--surface) !important;
+    }
+    // claim-guide page
+    .color-change {
+      &[style="color:grey"] {
+        color: var(--outline_variant) !important;
+      }
+      &[style="color:#039205"] {
+        color: var(--tertiary) !important;
+      }
+    }
+    // delete modal
+    .modal-content {
+      background: var(--surface);
+      color: var(--on_surface);
+    }
+    .modal-body {
+      color: var(--outline_variant);
+    }
+    .modal-header {
+      color: var(--on_surface) !important;
+    }
+    .modal-header,
+    .modal-footer {
+      border-color: var(--surface_container) !important;
+    }
+    #deleteButton {
+      color: var(--error) !important;
+    }
+    // footer
+    a {
+      color: var(--primary);
+
+      &:hover {
+        color: var(--primary_fixed) !important;
+      }
+    }
+    .text-muted {
+      color: var(--outline_variant) !important;
+    }
+    .text-primary {
+      color: var(--primary) !important;
+    }
+    .text-success {
+      color: var(--tertiary) !important;
+    }
+    .text-warning,
+    .text-warning-darker {
+      color: var(--secondary) !important;
+    }
+    .text-danger {
+      color: var(--error) !important;
+    }
+    // editor
+    .CodeMirror-line::selection,
+    .CodeMirror-line > span::selection,
+    .CodeMirror-line > span > span::selection {
+      background-color: fade(var(--outline_variant), 25%);
+    }
+    .cm-s-default {
+      .cm-formatting-admonition {
+        color: var(--secondary);
+      }
+      .cm-mark {
+        color: var(--secondary);
+      }
+      .cm-link {
+        color: var(--primary_container);
+      }
+      .cm-url {
+        color: var(--primary);
+      }
+      .cm-formatting-toc {
+        color: var(--primary);
+      }
+      .cm-variable-2 {
+        color: var(--tertiary);
+      }
+      .cm-keyword {
+        color: var(--secondary);
+      }
+      .cm-meta {
+        color: var(--on_surface_variant);
+      }
+      .cm-comment {
+        color: var(--secondary);
+      }
+      .cm-hr {
+        color: var(--surface_container_high);
+      }
+      .cm-tag {
+        color: var(--primary);
+      }
+      .cm-header {
+        color: var(--on_surface);
+      }
+      .cm-quote {
+        color: var(--tertiary);
+        border-color: var(--tertiary);
+      }
+    }
+    blockquote {
+      color: var(--tertiary);
+      border-color: var(--tertiary);
+    }
+    mark {
+      background: fade(var(--secondary), 25%);
+      color: var(--on_surface);
+    }
+    .spoiler {
+      color: var(--on_surface);
+      background: var(--on_surface);
+    }
+    .spoiler:hover {
+      background: none;
+    }
+    code {
+      color: var(--error) !important;
+      background: fade(var(--error), 10%) !important;
+    }
+    hr {
+      border-top-color: var(--surface_container) !important;
+    }
+    .admonition {
+      &.info,
+      &.hint,
+      &.tip {
+        color: var(--primary);
+        background: fade(var(--primary), 25%);
+        > .admonition-title::before {
+            '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path fill="@{blue}" d="M2 6a6 6 0 1 1 10.174 4.31c-.203.196-.359.4-.453.619l-.762 1.769A.5.5 0 0 1 10.5 13h-5a.5.5 0 0 1-.46-.302l-.761-1.77a2 2 0 0 0-.453-.618A5.98 5.98 0 0 1 2 6m3 8.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1l-.224.447a1 1 0 0 1-.894.553H6.618a1 1 0 0 1-.894-.553L5.5 15a.5.5 0 0 1-.5-.5"/></svg>'
+          );
+          content: url("data:image/svg+xml,@{svg}");
+        }
+      }
+      &.note,
+      &.important {
+        color: var(--tertiary);
+        background-color: fade(var(--tertiary), 25%);
+        &,
+        .admonition.greentext {
+          > .admonition-title::before {
+              '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path fill="@{green}" d="M0 2a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2zm8.93 4.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533zM8 5.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2"/></svg>'
+            );
+            content: url("data:image/svg+xml,@{svg}");
+          }
+        }
+      }
+      &.greentext {
+        color: var(--tertiary);
+        background-color: fade(var(--secondary), 25%);
+      }
+      &.warning,
+      &.caution,
+      &.attention {
+        color: var(--secondary);
+        background-color: fade(var(--secondary), 25%);
+        > .admonition-title::before {
+            '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path fill="@{yellow}" d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5m.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2"/></svg>'
+          );
+          content: url("data:image/svg+xml,@{svg}");
+        }
+      }
+      &.danger,
+      &.error {
+        color: var(--error);
+        background-color: fade(var(--error), 25%);
+        > .admonition-title::before {
+            '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path fill="@{red}" d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0M8 4a.905.905 0 0 0-.9.995l.35 3.507a.552.552 0 0 0 1.1 0l.35-3.507A.905.905 0 0 0 8 4m.002 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2"/></svg>'
+          );
+          content: url("data:image/svg+xml,@{svg}");
+        }
+      }
+      .admonition-title::before,
+      &.warning > .admonition-title::before,
+      &.danger > .admonition-title::before {
+        filter: none !important;
+      }
+    }
+    // code
+    .highlighttable {
+      border-left-color: var(--surface_container_low) !important;
+    }
+    .linenodiv > pre > .normal > a:not(:hover),
+    .linenodiv > pre > a:not(:hover) {
+      color: var(--outline_variant) !important;
+    }
+    .entry-text pre,
+    .markdownx-preview pre,
+    code {
+      color: var(--error) !important;
+    }
+    .highlight {
+      pre {
+        color: var(--on_surface) !important;
+      }
+      border-color: var(--surface_container_low) !important;
+    }
+    /* tables */
+    // help tab/page table
+    .mtable > tbody > tr:nth-child(even) {
+      background-color: var(--surface) !important;
+    }
+    // markdown tables
+    .ntable th {
+      background-color: var(--surface_container) !important;
+      border-color: var(--surface_container_high) !important;
+      color: var(--on_surface);
+    }
+    .ntable tr:nth-child(even) {
+      background-color: var(--surface_container_low) !important;
+    }
+  }
+}
+
+@-moz-document regexp("https?://rentry\\.(co|org)/.+/(raw|exists)"),
+  url-prefix("https://rentry.co/static/"),
+  domain("export3.rentry.co") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    // TODO: Can we use defaults? Currently doesn't have input/textarea placeholder styling.
+    color-scheme: light, dark);
+
+    ::selection {
+      background-color: fade(var(--primary), 30%);
+    }
+
+:root {
+}
+
+    body {
+      color: var(--on_surface) !important;
+      background: var(--surface_container_lowest) !important;
+    }
+  }
+}

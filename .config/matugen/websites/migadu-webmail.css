@@ -1,0 +1,440 @@
+/* ==UserStyle==
+@name Migadu Webmail Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/migadu-webmail
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/migadu-webmail
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/migadu-webmail/catppuccin.user.less
+@description Soothing pastel theme for Migadu Webmail
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+
+@var checkbox hideProfilePictures "Hide Profile Pictures" 0
+==/UserStyle== */
+
+
+@-moz-document domain("webmail.migadu.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    @orange: mix(var(--secondary_container), var(--secondary));
+
+    --main-color: var(--on_surface);
+    --main-bg-color: var(--surface_container_lowest);
+    --border-color: var(--surface_container_low);
+    --dropdown-menu-color: var(--on_surface);
+    --dropdown-menu-bg-color: var(--surface_container_lowest);
+    --dropdown-menu-hover-bg-color: var(--surface_container);
+    --dropdown-menu-hover-color: var(--on_surface);
+    --dropdown-menu-disabled-color: var(--on_surface_variant);
+    --dropdown-menu-border-clr: var(--surface_container_low);
+    --folders-color: var(--on_surface);
+    --folders-disabled-color: var(--surface_container_high);
+    --folders-selected-color: var(--primary);
+    --folders-selected-bg-color: fade(var(--primary), 10%);
+    --folders-focused-color: var(--primary);
+    --folders-hover-color: var(--on_surface);
+    --folders-hover-bg-color: var(--surface_container_lowest);
+    --folders-drop-color: var(--on_surface);
+    --settings-menu-color: var(--on_surface);
+    --settings-menu-selected-color: var(--primary);
+    --settings-menu-selected-bg-color: fade(var(--primary), 10%);
+    --settings-menu-hover-color: var(--on_surface);
+    --settings-menu-hover-bg-color: var(--surface_container_lowest);
+    --message-list-toolbar-bg-color: var(--outline);
+    --panel-bg-clr: var(--surface_container_lowest);
+    --message-header-bg-clr: var(--surface);
+    --hr-color: var(--surface_container_low);
+    --dialog-bg-clr: var(--surface_container_lowest);
+    --dialog-clr: var(--on_surface);
+    --tr-hover-bg-clr: var(--surface);
+    --loading-color: var(--on_surface);
+    --login-color: var(--on_surface);
+    --login-bg-color: var(--surface);
+    --tab-hover-border-clr: var(--surface_container_low);
+    --tab-active-bg-clr: var(--surface);
+    --tr-odd-bg-clr: var(--surface);
+
+    /* Login page */
+    .LoginView .btn,
+    .LoginView input {
+      border-color: var(--surface_container_low);
+    }
+    .LoginView input:focus,
+    .LoginView input:hover {
+      border-color: var(--surface_container);
+    }
+
+    /* Inbox */
+    .messageItemHeader,
+    .bodySubHeader,
+    .thm-message-list-top-toolbar,
+    .thm-message-list-bottom-toolbar {
+      background: var(--surface) !important;
+    }
+
+    /* Buttons */
+    --btn-clr: var(--on_surface);
+    --btn-border-clr: var(--outline);
+    .btn [class^="icon-"] {
+      color: var(--on_surface);
+    }
+    .btn.btn-success {
+      &,
+      [class^="icon-"] {
+        color: var(--tertiary) !important;
+      }
+      background-color: fade(var(--tertiary), 20%);
+      &:hover,
+      &:active {
+        background-color: fade(var(--tertiary), 40%);
+      }
+    }
+    .btn.btn-warning {
+      &,
+      [class^="icon-"] {
+        color: var(--secondary) !important;
+      }
+      background-color: fade(var(--secondary), 20%);
+      &:hover,
+      &:active {
+        background-color: fade(var(--secondary), 40%);
+      }
+    }
+    .btn.btn-danger {
+      &,
+      [class^="icon-"] {
+        color: var(--error) !important;
+      }
+      background-color: fade(var(--error), 20%);
+      &:hover,
+      &:active {
+        background-color: fade(var(--error), 40%);
+      }
+    }
+    .btn.disabled,
+    .btn.disabled.fontastic,
+    .btn.disabled .fontastic {
+      color: var(--surface_container_low) !important;
+    }
+    .btn,
+    .btn.disabled,
+    .btn[disabled],
+    .btn.disabled:hover,
+    .btn[disabled]:hover {
+      border-color: var(--surface_container_low) !important;
+      text-shadow: none !important;
+      background-color: var(--surface_container_lowest);
+    }
+    .btn:hover {
+      background-color: var(--surface);
+    }
+
+    /* Links */
+
+    --link-color: var(--primary);
+    #messageItem .b-text-part a:visited {
+      color: var(--primary);
+    }
+
+    /* Inputs */
+
+    --input-bg-clr: var(--surface_container_lowest);
+    --input-border-clr: var(--surface_container_low);
+    --input-focus-border-clr: var(--outline);
+    --input-clr: var(--on_surface);
+
+    .select,
+    select {
+        '<svg xmlns="http://www.w3.org/2000/svg" height="10px" width="15px"><text x="0" y="10" fill="@{subtext1}">▾</text></svg>'
+      );
+      background-image: url("data:image/svg+xml,@{svg}") !important;
+    }
+
+    .e-checkbox.material-design input:checked + div {
+      border-color: darken(var(--tertiary), 10%);
+    }
+
+    /* stylelint-disable property-disallowed-list */
+    @keyframes checkmark-to-box {
+      0% {
+        top: -1px;
+        left: 5px;
+        width: 10px;
+        height: 18px;
+        border: 2px solid darken(var(--tertiary), 10%);
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg);
+      }
+
+      50% {
+        top: 13px;
+        left: 5px;
+        width: 4px;
+        height: 4px;
+        transform: rotate(45deg);
+      }
+
+      100% {
+        top: 0;
+        left: 0;
+        width: 18px;
+        height: 18px;
+        border: 2px solid var(--outline);
+        transform: rotate(0);
+      }
+    }
+
+    @keyframes box-to-checkmark {
+      0% {
+        top: 0;
+        left: 0;
+        width: 18px;
+        height: 18px;
+        border: 2px solid var(--outline);
+        transform: rotate(0);
+      }
+
+      50% {
+        top: 13px;
+        left: 5px;
+        width: 4px;
+        height: 4px;
+        transform: rotate(45deg);
+      }
+
+      100% {
+        top: -1px;
+        left: 5px;
+        width: 10px;
+        height: 18px;
+        border: 2px solid darken(var(--tertiary), 10%);
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg);
+      }
+    }
+    /* stylelint-enable property-disallowed-list */
+
+    /* Nothing selected */
+    .messageView .b-message-view-desc,
+    #V-PopupsContacts .b-view-content .b-contact-view-desc {
+      color: var(--outline);
+    }
+
+    /* Loading messages */
+    .messageList .b-content {
+      .listDragOver,
+      .listEmptyMessage,
+      .listError,
+      .listLoading {
+        color: var(--outline);
+      }
+
+      .listError {
+        color: var(--error);
+      }
+    }
+    #messageItem .loading,
+    #V-PopupsContacts .b-list-content .listEmptyList,
+    #V-PopupsContacts .b-list-content .listEmptyListLoading,
+    #V-PopupsContacts .b-list-content .listEmptySearchList {
+      color: var(--outline);
+    }
+
+    .icon-spinner {
+      border-color: var(--surface_container);
+      border-top-color: var(--on_surface);
+    }
+    .iconcolor-green {
+      color: var(--tertiary);
+    }
+    .iconcolor-red {
+      color: var(--error);
+    }
+    .b-folders .is-flagged .flag-icon::after,
+    .messageListItem.hasFlaggedSubMessage .flagParent::after,
+    .messageListItem.msgflag-\\flagged .flagParent::after {
+      color: @orange;
+    }
+
+    /* Tags */
+
+    .msgflag-\$important .checkboxMessage {
+      background-color: var(--error);
+    }
+
+    .msgflag-\$important.focused {
+      background-color: fade(var(--error), 30%);
+    }
+
+    .msgflag-\$important:not(.focused) {
+      color: var(--error);
+    }
+
+    .msgflag-\$todo .checkboxMessage {
+      background-color: var(--primary);
+      color: var(--on_surface);
+    }
+
+    .msgflag-\$todo.focused {
+      background-color: fade(var(--primary), 30%);
+    }
+
+    .msgflag-\$todo:not(.focused) {
+      color: var(--primary);
+    }
+
+    .msgflag-\$label5 .checkboxMessage {
+      background-color: darken(var(--secondary), 10%);
+      color: var(--on_surface);
+    }
+
+    .msgflag-\$label4 .checkboxMessage {
+      background-color: var(--primary);
+      color: var(--on_surface);
+    }
+
+    .msgflag-\$label3 .checkboxMessage {
+      background-color: var(--tertiary);
+      color: var(--on_surface);
+    }
+
+    .msgflag-\$label2 .checkboxMessage {
+      background-color: @orange;
+      color: var(--on_surface);
+    }
+
+    .msgflag-\$label1 .checkboxMessage {
+      background-color: var(--error);
+      color: var(--on_surface);
+    }
+
+    .msgflag-\$label5.focused {
+      background-color: fade(var(--secondary), 30%);
+    }
+
+    .msgflag-\$label4.focused {
+      background-color: fade(var(--primary), 30%);
+    }
+
+    .msgflag-\$label3.focused {
+      background-color: fade(var(--tertiary), 30%);
+    }
+
+    .msgflag-\$label2.focused {
+      background-color: fade(mix(var(--error), var(--secondary)), 30%);
+    }
+
+    .msgflag-\$label1.focused {
+      background-color: fade(var(--error), 30%);
+    }
+
+    .msgflag-\$label5:not(.focused) {
+      color: darken(var(--secondary), 10%);
+    }
+
+    .msgflag-\$label4:not(.focused) {
+      color: var(--primary);
+    }
+
+    .msgflag-\$label3:not(.focused) {
+      color: var(--tertiary);
+    }
+
+    .msgflag-\$label2:not(.focused) {
+      color: @orange;
+    }
+
+    .msgflag-\$label1:not(.focused) {
+      color: var(--error);
+    }
+
+    .messageList .b-content .listSearchDesc {
+      border-bottom-color: var(--surface_container_low);
+    }
+
+    /* Profile pictures */
+    img.fromPic when (@hideProfilePictures = 1) {
+      display: none;
+    }
+
+    /* Settings */
+    #V-Settings-Themes figure {
+      &.selected {
+        background-color: fade(var(--tertiary), 40%);
+        border-color: var(--on_surface);
+      }
+      &:hover {
+        border-color: var(--surface_container_low);
+      }
+    }
+
+    #V-PopupsContacts .e-contact-item,
+    .messageListItem {
+      &.focused {
+        border-left-color: var(--surface_container_high);
+        background-color: var(--surface_container_low);
+      }
+
+      &.checked {
+        border-left-color: lighten(var(--primary), 10%);
+      }
+
+      &.checked.focused,
+      &.selected {
+        border-left-color: var(--primary);
+      }
+
+      &.selected {
+        background-color: fade(var(--primary), 30%);
+      }
+    }
+
+    #V-PopupsContacts .e-contact-item {
+      border-left-color: var(--surface_container_low);
+    }
+
+    /* Send mail modal */
+    .squire-toolbar,
+    #V-PopupsCompose .attachmentAreaParent {
+      border-color: var(--surface_container_low);
+    }
+    #V-PopupsCompose header {
+      color: var(--on_surface);
+    }
+    /* Minimize and close icons */
+    #V-PopupsCompose header div.pull-right a.minimize-custom,
+    #V-PopupsCompose .close,
+    .close {
+      border-color: var(--on_surface);
+      color: var(--on_surface);
+    }
+    /* Email address field */
+    .emailaddresses {
+      li[draggable] {
+        background-color: var(--surface);
+        border-color: var(--surface_container_low);
+        box-shadow: 0 1px 0 fade(var(--surface), 75%) inset;
+        color: var(--on_surface);
+      }
+      li a {
+        color: var(--surface_container_low);
+      }
+    }
+
+    /* Untheme message content */
+    div:has(> .bodyText) {
+      color: #333;
+      background-color: #fff;
+    }
+  }
+}

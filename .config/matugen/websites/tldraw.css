@@ -1,0 +1,467 @@
+/* ==UserStyle==
+@name tldraw Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/tldraw
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/tldraw
+@version 2025.09.10
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/tldraw/catppuccin.user.less
+@description Soothing pastel theme for tldraw
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("tldraw.com") {
+  .tl-theme__dark {
+  }
+
+  .tl-theme__light {
+  }
+
+  :root:has(.tl-container.tl-theme__dark) .cl-modalContent {
+  }
+
+  :root:has(.tl-container.tl-theme__light) .cl-modalContent {
+  }
+
+
+    --tl-color-background: var(--surface);
+    --tl-color-low: var(--surface_container_lowest);
+    --tl-color-low-border: var(--surface_container_lowest);
+    --tl-color-panel: var(--surface_container_low);
+    --tl-color-panel-contrast: var(--surface_container);
+    --tl-color-primary: var(--primary);
+    --tl-color-success: var(--tertiary);
+    --tl-color-info: var(--primary_fixed);
+    --tl-color-warning: var(--secondary_container);
+    --tl-color-danger: var(--error_container);
+    --tl-color-laser: var(--error);
+    --tl-color-selected: var(--primary);
+    --tl-color-text: var(--on_surface);
+    --tl-color-text-1: var(--on_surface);
+    --tl-color-text-2: var(--on_surface);
+    --tl-color-text-3: var(--on_surface_variant);
+    --tl-color-selected-contrast: var(--surface);
+    --tl-color-snap: var(--error);
+    --tl-color-selection-stroke: var(--primary);
+    --tl-color-divider: var(--surface_container);
+    --tl-color-grid: var(--outline_variant);
+    --tla-color-primary: var(--primary);
+    --tla-color-primary-hover: fade(var(--primary), 80%);
+    --tla-color-sidebar: var(--surface_container_low);
+    --tla-color-cta: var(--primary);
+    --tla-color-cta-hover: fade(var(--primary), 80%);
+    --tla-color-text-1: var(--on_surface);
+    --tla-color-text-2: var(--on_surface);
+    --tla-color-text-3: var(--on_surface_variant);
+    --tla-color-contrast: var(--surface);
+
+    @violet: darken(var(--primary), 20%);
+    @dark-green: darken(var(--tertiary), 15%);
+    @dark-red: darken(var(--error), 10%);
+
+    button.tla-primary-button > span.i18n-msg {
+      color: var(--tla-color-contrast);
+    }
+
+    /* colours on canvas */
+    div.tl-shape {
+      svg.tl-svg-container {
+        /* pencil draw shape fills */
+        path[fill="#f2f2f2"],
+        path[fill="#1d1d1d"] {
+          fill: var(--on_surface);
+        }
+
+        path[fill="#9398b0"],
+        path[fill="#9fa8b2"] {
+          fill: var(--outline_variant);
+        }
+
+        path[fill="#e599f7"],
+        path[fill="#e085f4"] {
+          fill: var(--primary);
+        }
+
+        path[fill="#ae3ec9"] {
+          fill: @violet;
+        }
+
+        path[fill="#4f72fc"],
+        path[fill="#4465e9"] {
+          fill: var(--primary);
+        }
+
+        path[fill="#4dabf7"],
+        path[fill="#4ba1f1"] {
+          fill: var(--primary_fixed);
+        }
+
+        path[fill="#ffc034"],
+        path[fill="#f1ac4b"] {
+          fill: var(--secondary);
+        }
+
+        path[fill="#f76707"],
+        path[fill="#e16919"] {
+          fill: var(--secondary_container);
+        }
+
+        path[fill="#099268"] {
+          fill: @dark-green;
+        }
+
+        path[fill="#40c057"],
+        path[fill="#4cb05e"] {
+          fill: var(--tertiary);
+        }
+
+        path[fill="#ff8787"],
+        path[fill="#f87777"] {
+          fill: var(--error);
+        }
+
+        path[fill="#e03131"] {
+          fill: @dark-red;
+        }
+
+        /* shape outlines (path), arrow strokes (g) */
+        path[stroke="#f2f2f2"],
+        path[stroke="#1d1d1d"],
+        g[stroke="#f2f2f2"],
+        g[stroke="#1d1d1d"] {
+          stroke: var(--on_surface);
+        }
+
+        path[stroke="#9398b0"],
+        path[stroke="#9fa8b2"],
+        g[stroke="#9398b0"],
+        g[stroke="#9fa8b2"] {
+          stroke: var(--outline_variant);
+        }
+
+        path[stroke="#e599f7"],
+        path[stroke="#e085f4"],
+        g[stroke="#e599f7"],
+        g[stroke="#e085f4"] {
+          stroke: var(--primary);
+        }
+
+        path[stroke="#ae3ec9"],
+        g[stroke="#ae3ec9"] {
+          stroke: @violet;
+        }
+
+        path[stroke="#4f72fc"],
+        path[stroke="#4465e9"],
+        g[stroke="#4f72fc"],
+        g[stroke="#4465e9"] {
+          stroke: var(--primary);
+        }
+
+        path[stroke="#4dabf7"],
+        path[stroke="#4ba1f1"],
+        g[stroke="#4dabf7"],
+        g[stroke="#4ba1f1"] {
+          stroke: var(--primary_fixed);
+        }
+
+        path[stroke="#ffc034"],
+        path[stroke="#f1ac4b"],
+        g[stroke="#ffc034"],
+        g[stroke="#f1ac4b"] {
+          stroke: var(--secondary);
+        }
+
+        path[stroke="#f76707"],
+        path[stroke="#e16919"],
+        g[stroke="#f76707"],
+        g[stroke="#e16919"] {
+          stroke: var(--secondary_container);
+        }
+
+        path[stroke="#099268"],
+        g[stroke="#099268"] {
+          stroke: @dark-green;
+        }
+
+        path[stroke="#40c057"],
+        path[stroke="#4cb05e"],
+        g[stroke="#40c057"],
+        g[stroke="#4cb05e"] {
+          stroke: var(--tertiary);
+        }
+
+        path[stroke="#ff8787"],
+        path[stroke="#f87777"],
+        g[stroke="#ff8787"],
+        g[stroke="#f87777"] {
+          stroke: var(--error);
+        }
+
+        path[stroke="#e03131"],
+        g[stroke="#e03131"] {
+          stroke: @dark-red;
+        }
+
+        /* shape fill - solid */
+        path[fill="#2c3036"],
+        path[fill="#e8e8e8"] {
+          fill: fade(var(--on_surface), 20%);
+        }
+
+        path[fill="#33373c"],
+        path[fill="#eceef0"] {
+          fill: fade(var(--outline_variant), 20%);
+        }
+
+        path[fill="#383442"],
+        path[fill="#f5eafa"] {
+          fill: fade(var(--primary), 20%);
+        }
+
+        path[fill="#342938"],
+        path[fill="#ecdcf2"] {
+          fill: @violet;
+        }
+
+        path[fill="#262d40"],
+        path[fill="#dce1f8"] {
+          fill: fade(var(--primary), 20%);
+        }
+
+        path[fill="#2a3642"],
+        path[fill="#ddedfa"] {
+          fill: fade(var(--primary_fixed), 20%);
+        }
+
+        path[fill="#3b352b"],
+        path[fill="#f9f0e6"] {
+          fill: fade(var(--secondary), 20%);
+        }
+
+        path[fill="#3b2e27"],
+        path[fill="#f8e2d4"] {
+          fill: fade(var(--secondary_container), 20%);
+        }
+
+        path[fill="#253231"],
+        path[fill="#d3e9e3"] {
+          fill: fade(@dark-green, 20%);
+        }
+
+        path[fill="#2a3830"],
+        path[fill="#dbf0e0"] {
+          fill: fade(var(--tertiary), 20%);
+        }
+
+        path[fill="#3c2b2b"],
+        path[fill="#f4dadb"] {
+          fill: fade(var(--error), 20%);
+        }
+
+        path[fill="#382726"] {
+          fill: fade(@dark-red, 20%);
+        }
+      }
+
+      /* sticky notes */
+      div.tl-note__container {
+        &[style*="background-color: rgb(44, 44, 44);"] {
+          background-color: var(--surface_container_low) !important;
+        }
+
+        &[style*="background-color: rgb(86, 89, 95);"],
+        &[style*="background-color: rgb(192, 202, 211)"] {
+          background-color: var(--outline_variant) !important;
+        }
+
+        &[style*="background-color: rgb(118, 47, 142);"],
+        &[style*="background-color: rgb(223, 176, 249)"] {
+          background-color: fade(var(--primary), 40%) !important;
+        }
+
+        &[style*="background-color: rgb(95, 28, 112);"],
+        &[style*="background-color: rgb(219, 145, 253)"] {
+          background-color: @violet !important;
+        }
+
+        &[style*="background-color: rgb(42, 63, 152);"],
+        &[style*="background-color: rgb(138, 163, 255)"] {
+          background-color: fade(var(--primary), 40%) !important;
+        }
+
+        &[style*="background-color: rgb(31, 84, 149);"],
+        &[style*="background-color: rgb(155, 196, 253)"] {
+          background-color: fade(var(--primary_fixed), 40%) !important;
+        }
+
+        /* in light mode, the 'white' coloured sticky note is yellow, so we override it here */
+        &[style*="background-color: rgb(138, 94, 28);"],
+        &[style*="background-color: rgb(254, 212, 154)"],
+        &[style*="background-color: rgb(252, 225, 156)"] {
+          background-color: fade(var(--secondary), 40%) !important;
+        }
+
+        &[style*="background-color: rgb(124, 57, 5);"],
+        &[style*="background-color: rgb(250, 164, 117)"] {
+          background-color: fade(var(--secondary_container), 40%) !important;
+        }
+
+        &[style*="background-color: rgb(1, 68, 41);"],
+        &[style*="background-color: rgb(111, 200, 150)"] {
+          background-color: fade(@dark-green, 60%) !important;
+        }
+
+        &[style*="background-color: rgb(33, 88, 29);"],
+        &[style*="background-color: rgb(152, 208, 138)"] {
+          background-color: fade(var(--tertiary), 40%) !important;
+        }
+
+        &[style*="background-color: rgb(122, 51, 51);"],
+        &[style*="background-color: rgb(247, 165, 161)"] {
+          background-color: fade(var(--error), 40%) !important;
+        }
+
+        &[style*="background-color: rgb(126, 32, 31);"],
+        &[style*="background-color: rgb(252, 130, 130)"] {
+          background-color: fade(@dark-red, 40%) !important;
+        }
+      }
+    }
+
+    /* canvas text */
+    div.tl-text-content__wrapper {
+      &[style*="color: rgb(242, 242, 242)"],
+      &[style*="color: rgb(29, 29, 29)"] {
+        color: var(--on_surface) !important;
+      }
+
+      &[style*="color: rgb(147, 152, 176)"],
+      &[style*="color: rgb(159, 168, 178)"] {
+        color: var(--outline_variant) !important;
+      }
+
+      &[style*="color: rgb(229, 153, 247)"],
+      &[style*="color: rgb(224, 133, 244)"] {
+        color: var(--primary) !important;
+      }
+
+      &[style*="color: rgb(174, 62, 201)"] {
+        color: @violet !important;
+      }
+
+      &[style*="color: rgb(79, 114, 252)"],
+      &[style*="color: rgb(68, 101, 233)"] {
+        color: var(--primary) !important;
+      }
+
+      &[style*="color: rgb(77, 171, 247)"],
+      &[style*="color: rgb(75, 161, 241)"] {
+        color: var(--primary_fixed) !important;
+      }
+
+      &[style*="color: rgb(255, 192, 52)"],
+      &[style*="color: rgb(241, 172, 75)"] {
+        color: var(--secondary) !important;
+      }
+
+      &[style*="color: rgb(247, 103, 7)"],
+      &[style*="color: rgb(225, 105, 25)"] {
+        color: var(--secondary_container) !important;
+      }
+
+      &[style*="color: rgb(9, 146, 104)"] {
+        color: @dark-green !important;
+      }
+
+      &[style*="color: rgb(64, 192, 87)"],
+      &[style*="color: rgb(76, 176, 94)"] {
+        color: var(--tertiary) !important;
+      }
+
+      &[style*="color: rgb(255, 135, 135)"],
+      &[style*="color: rgb(248, 119, 119)"] {
+        color: var(--error) !important;
+      }
+
+      &[style*="color: rgb(224, 49, 49)"] {
+        color: @dark-red !important;
+      }
+    }
+
+    /* colour selection button fills */
+
+    [data-id="black"] {
+      color: var(--on_surface) !important;
+    }
+
+    [data-id="grey"] {
+      color: var(--outline_variant) !important;
+    }
+
+    [data-id="light-violet"] {
+      color: var(--primary) !important;
+    }
+
+    [data-id="violet"] {
+      color: @violet !important;
+    }
+
+    [data-id="blue"] {
+      color: var(--primary) !important;
+    }
+
+    [data-id="light-blue"] {
+      color: var(--primary_fixed) !important;
+    }
+
+    [data-id="yellow"] {
+      color: var(--secondary) !important;
+    }
+
+    [data-id="orange"] {
+      color: var(--secondary_container) !important;
+    }
+
+    [data-id="green"] {
+      color: @dark-green !important;
+    }
+
+    [data-id="light-green"] {
+      color: var(--tertiary) !important;
+    }
+
+    [data-id="light-red"] {
+      color: var(--error) !important;
+    }
+
+    [data-id="red"] {
+      color: @dark-red !important;
+    }
+
+    /* clerk components */
+    --clerk-color-background: var(--surface);
+    --clerk-color-primary: var(--on_surface);
+    --clerk-color-primary-foreground: var(--surface);
+    --clerk-color-foreground: var(--on_surface);
+    --clerk-color-neutral: var(--on_surface);
+    --clerk-color-input: var(--surface_container_lowest);
+    --clerk-color-input-foreground: var(--on_surface);
+    --clerk-color-border: var(--on_surface);
+
+    .cl-socialButtonsBlockButton:hover {
+      background-color: var(--surface_container_low);
+    }
+
+    .cl-logoImage {
+        '<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" width="200" height="200"><path fill="@{text}" d="M178.95 0H21.05C9.425 0 0 9.833 0 21.975v156.05C0 190.158 9.425 200 21.05 200h157.9c11.625 0 21.05-9.833 21.05-21.975V21.975C200 9.842 190.575 0 178.95 0M87.2 44.9q4.958-5.058 12.283-5.058 7.117 0 12.067 5.058 4.958 5.05 4.958 12.3c0 7.25-1.65 8.933-4.958 12.3a16.25 16.25 0 0 1-12.067 5.058q-7.325 0-12.283-5.058-4.95-5.05-4.95-12.3c0-7.25 1.65-8.933 4.95-12.3m26.083 95.75a40.83 40.83 0 0 1-16.817 17.8q-6.033 3.517-9.917-.217-3.65-3.517 2.167-8.35 3.225-2.417 5.383-6.15 2.15-3.742 2.8-7.692.217-1.75-1.508-1.75-4.308-.225-8.833-4.842t-4.525-11.417q0-7.25 4.95-12.308a16.83 16.83 0 0 1 12.5-5.275q6.9 0 12.067 5.275 5.167 5.042 6.033 11.417 1.725 11.867-4.308 23.517z"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+  }
+}

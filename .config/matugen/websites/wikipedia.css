@@ -1,0 +1,743 @@
+/* ==UserStyle==
+@name Wikipedia Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/wikipedia
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/wikipedia
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/wikipedia/catppuccin.user.less
+@description Soothing pastel theme for Wikipedia
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+@var checkbox highlight-redirect "Highlight redirect links" 0
+==/UserStyle== */
+
+
+@-moz-document domain("wikipedia.org"),
+  domain("wiktionary.org"),
+  domain("www.mediawiki.org"),
+  domain("auth.wikimedia.org"),
+  domain("wikiversity.org"),
+  domain("wikisource.org"),
+  domain("meta.wikimedia.org"),
+  domain("wikidata.org"),
+  domain("wikibooks.org"),
+  domain("species.wikimedia.org"),
+  domain("commons.wikimedia.org"),
+  domain("wikivoyage.org"),
+  domain("wikinews.org"),
+  domain("wikiquote.org") {
+
+  :root.skin-theme-clientpref-os,
+  .vector-feature-night-mode-enabled,
+  .skin-invert,
+  .notheme {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+  :root.skin-theme-clientpref-night {
+  }
+
+  :root.skin-theme-clientpref-day {
+  }
+
+  html.skin-theme-clientpref-night, html.skin-theme-clientpref-os {
+    /* Logo */
+    .skin-invert-image img,
+    .skin-invert,
+    .oo-ui-iconElement-icon:not(
+      .oo-ui-image-progressive,
+      .oo-ui-image-destructive,
+      .oo-ui-checkboxInputWidget-checkIcon,
+      .oo-ui-image-invert,
+      .mw-no-invert
+    ),
+    .oo-ui-indicatorElement-indicator {
+      filter: none;
+    }
+  }
+
+  /* MediaWiki only applies the following overrides on dark and automatic appearance settings, leaving broken elements with the light appearance. */
+
+  .hatnote:not(.notheme),
+  .dablink:not(.notheme),
+  .rellink:not(.notheme),
+  .infobox:not(.notheme) {
+    color: var(--color-base) !important;
+    background-color: var(--background-color-interactive-subtle) !important;
+  }
+  .infobox td:not(.notheme),
+  .infobox th:not(.notheme),
+  .infobox-above:not(.notheme),
+  .infobox p:not(.notheme),
+  .infobox > div:not(.notheme),
+  .infobox caption:not(.notheme),
+  .infobox--frwiki td:not(.notheme),
+  .infobox--frwiki th:not(.notheme),
+  .infobox--frwiki p:not(.notheme),
+  .infobox--frwiki > div:not(.notheme),
+  .infobox--frwiki caption:not(.notheme),
+  .sinottico th:not(.notheme),
+  .infobox-header:not(.notheme),
+  .skin-nightmode-reset-color:not(.notheme),
+  .navigation-box:not(.notheme),
+  .metadata:not(.notheme),
+  .quotebox:not(.notheme),
+  .side-box:not(.notheme),
+  .side-box div:not(.notheme),
+  .navbox:not(.notheme),
+  .navbox-subgroup:not(.notheme),
+  .navbox-group:not(.notheme),
+  .navbox-even:not(.notheme),
+  .navbox-abovebelow:not(.notheme),
+  .navbox-title:not(.notheme) {
+    background: inherit !important;
+    color: inherit !important;
+    border-color: var(--border-color-subtle) !important;
+  }
+  .ns-100 .mw-parser-output :not(.notheme, a) {
+    background: inherit !important;
+    color: inherit !important;
+    border-color: var(--border-color-subtle) !important;
+  }
+
+    #lib.css-variables();
+
+    --color-base: var(--on_surface);
+    --color-base--hover: var(--on_surface);
+    --color-emphasized: var(--on_surface);
+    --color-subtle: var(--on_surface_variant);
+    --color-inverted: var(--surface);
+    --color-inverted-fixed: var(--surface);
+    --color-progressive: var(--primary);
+    --color-progressive--hover: darken(var(--primary), 5%);
+    --color-progressive--active: darken(var(--primary), 5%);
+    --color-progressive--focus: darken(var(--primary), 5%);
+    --color-destructive: var(--error);
+    --color-destructive--hover: var(--error_container);
+    --color-destructive--active: var(--error_container);
+    --color-visited: var(--primary_container);
+    --color-destructive--visited: #b97876;
+    --color-error: var(--error);
+    --color-warning: var(--secondary);
+    --color-success: var(--tertiary);
+    --color-notice: var(--on_surface);
+    --color-icon-error: var(--error);
+    --color-icon-warning: var(--secondary);
+    --color-icon-success: var(--tertiary);
+    --color-icon-notice: var(--on_surface_variant);
+    --color-content-added: var(--tertiary);
+    --color-content-removed: var(--error_container);
+    --color-placeholder: var(--on_surface_variant);
+    --color-disabled: var(--outline_variant);
+    --box-shadow-color-base: #fff;
+    --box-shadow-color-inverted: #000;
+    --box-shadow-color-progressive--focus: var(--primary);
+    --background-color-interactive: var(--surface_container_low);
+    --background-color-interactive-subtle: var(--surface_container_low);
+    --background-color-interactive-subtle--hover: var(--surface_container);
+    --background-color-disabled: var(--outline_variant);
+    --background-color-disabled-subtle: var(--surface_container_low);
+    --background-color-progressive: var(--primary);
+    --background-color-progressive-subtle: fade(var(--primary), 10%);
+    --background-color-destructive-subtle: #421211;
+    --background-color-progressive--active: fade(var(--primary), 70%);
+    --background-color-progressive--hover: fade(var(--primary), 70%);
+    --background-color-progressive--focus: fade(var(--primary), 70%);
+    --background-color-error: var(--error);
+    --background-color-error--hover: var(--error_container);
+    --background-color-error--active: var(--error_container);
+    --background-color-error-subtle: fade(var(--error), 20%);
+    --background-color-warning-subtle: fade(var(--secondary), 20%);
+    --background-color-success-subtle: fade(var(--tertiary), 20%);
+    --background-color-notice-subtle: var(--surface_container_low);
+    --background-color-content-added: #2a4b8d;
+    --background-color-content-removed: #a66200;
+    --background-color-backdrop-light: rgba(0, 0, 0, 0.65);
+    --background-color-backdrop-dark: rgba(255, 255, 255, 0.65);
+    --background-color-base: var(--surface_container_lowest);
+    --background-color-neutral: var(--surface_container_lowest);
+    --background-color-neutral-subtle: var(--surface_container_low);
+    --background-color-inverted: var(--on_surface);
+    --background-color-input-binary--checked: var(--primary);
+    --border-base: 1px solid var(--surface_container_low);
+    --border-subtle: 1px solid var(--surface_container_low);
+    --border-color-base: var(--surface_container_low);
+    --border-color-interactive: var(--surface_container_high);
+    --border-color-interactive--hover: var(--outline);
+    --border-color-disabled: #54595d;
+    --border-color-subtle: var(--surface_container);
+    --border-color-muted: var(--surface_container_low);
+    --border-color-inverted: #101418;
+    --border-color-error: var(--error);
+    --border-color-error--hover: var(--error_container);
+    --border-color-warning: var(--secondary);
+    --border-color-success: var(--tertiary);
+    --border-color-notice: var(--surface_container_high);
+    --border-color-content-added: var(--primary);
+    --border-color-content-removed: var(--secondary_container);
+    --border-color-progressive: var(--primary);
+    --border-color-progressive--active: var(--primary);
+    --border-color-progressive--hover: var(--primary);
+    --border-color-progressive--focus: var(--primary);
+
+    /* Wiktionary */
+    --wikt-palette-indigo: var(--primary_container);
+    --wikt-palette-lightindigo: fade(var(--primary_container), 40%);
+    --wikt-palette-lighterblue: fade(var(--primary), 20%);
+    --wikt-palette-dulllightblue: fade(var(--primary), 40%);
+    --wikt-palette-grey: var(--on_surface_variant);
+    --wikt-palette-lightergrey: fade(var(--on_surface_variant), 40%);
+
+    /* Other */
+
+    .infobox {
+      border-color: var(--surface_container_high);
+    }
+
+    [style="color:white;"], [style*="color:#ffffff"] {
+      color: var(--on_surface) !important;
+    }
+    .mw-collapsible-toggle-default {
+      &::before, &::after {
+        color: var(--on_surface_variant);
+      }
+    }
+
+    a {
+      &:focus {
+        outline-color: var(--primary);
+      }
+    }
+
+    .mw-parser-output {
+      a.external {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><path fill="@{accent}" d="M6 1h5v5L8.86 3.85 4.7 8 4 7.3l4.15-4.16zM2 3h2v1H2v6h6V8h1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      /* Wikipedia Home */
+      #mp-topbanner {
+        background-color: var(--surface_container_lowest);
+        border-color: var(--surface_container);
+      }
+      #mp-left {
+        background-color: fade(var(--tertiary), 20%);
+        border-color: var(--tertiary);
+
+        .mp-h2 {
+          background-color: fade(var(--tertiary), 40%);
+          border-color: fade(var(--tertiary), 40%);
+        }
+      }
+      #mp-right {
+        background-color: fade(var(--primary), 20%);
+        border-color: var(--primary);
+
+        .mp-h2 {
+          background-color: fade(var(--primary), 40%);
+          border-color: fade(var(--primary), 40%);
+        }
+      }
+      #mp-lower {
+        background-color: fade(var(--primary_container), 20%);
+        border-color: var(--primary_container);
+
+        .mp-h2 {
+          background-color: fade(var(--primary_container), 40%);
+          border-color: fade(var(--primary_container), 40%);
+        }
+      }
+      #mp-bottom {
+        border-color: var(--outline);
+
+        .mp-h2 {
+          background-color: fade(var(--primary), 40%);
+          border-color: fade(var(--primary), 40%);
+        }
+      }
+      .wikipedia-languages-prettybars {
+        background-color: var(--surface_container_high);
+      }
+
+      /* MediaWiki Home */
+      .mainpage_box {
+        border-color: var(--surface_container_high);
+
+        .header_icon {
+          filter: var(--on_surface)-filter;
+        }
+
+        .items {
+          border-top-color: var(--surface_container);
+        }
+      }
+      .nmbox {
+        background-color: var(--surface_container_low);
+        border-color: var(--surface_container_high);
+
+        .nmbox-header {
+          background-color: var(--surface_container_lowest);
+          border-color: var(--surface_container);
+        }
+      }
+      /* MediaWiki Pages */
+      .tpl-downloadmediawiki-icon {
+        filter: var(--surface)-filter;
+      }
+      .note-info {
+        filter: var(--primary)-filter;
+        color: var(--on_surface);
+        background-color: fade(var(--primary), 20%);
+      }
+      .note-warn {
+        filter: var(--secondary)-filter;
+        color: var(--on_surface);
+        background-color: fade(var(--secondary), 20%);
+      }
+    }
+
+    /* Math equations */
+    .mwe-math-element img.skin-invert {
+      filter: var(--on_surface)-filter;
+    }
+
+    /* OOUI */
+    .oo-ui-indicator-down {
+      filter: var(--on_surface)-filter !important;
+    }
+    .oo-ui-image-invert.oo-ui-icon-check, .mw-ui-icon-check-invert::before {
+        '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M7 14.2 2.8 10l-1.4 1.4L7 17 19 5l-1.4-1.4z" fill="@{crust}"/></svg>'
+      );
+      background-image: url("data:image/svg+xml,@{svg}");
+    }
+
+    /* View source */
+    textarea {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    /* View history */
+    .flaggedrevs-color-1 {
+      background-color: fade(var(--primary), 10%);
+    }
+
+    /* Language search and settings */
+    .uls-search,
+    .uls-filtersuggestion,
+    .uls-lcd,
+    #uls-settings-block.uls-settings-block--vector-2022.uls-settings-block--with-add-languages,
+    #language-settings-dialog,
+    #languagesettings-settings-panel,
+    .uls-language-settings-close-block {
+      background-color: var(--surface);
+    }
+    .uls-language-block a {
+      color: var(--primary);
+    }
+    .uls-search-label,
+    #uls-settings-block.uls-settings-block--vector-2022
+      > button.uls-add-languages-button,
+    #uls-settings-block.uls-settings-block--vector-2022
+      > button.uls-language-settings-button,
+    #uls-settings-block.uls-settings-block--vector-2022
+      > button.uls-language-settings-button:hover,
+    .uls-icon-close,
+    .uls-languagefilter-clear {
+      filter: var(--on_surface)-filter;
+    }
+    .uls-sub-panel, .language-settings-buttons {
+      border-color: var(--surface_container);
+    }
+    .uls-language-block > ul > li:hover {
+      background-color: var(--surface_container_low);
+    }
+    .languagesettings-menu .menu-section.active {
+      background-color: var(--surface_container);
+    }
+
+    /* Page preview */
+    .mwe-popups .mwe-popups-extract[dir="ltr"]::after {
+      background-image: linear-gradient(to right, transparent, var(--surface_container_lowest) 50%);
+    }
+    .mwe-popups .mwe-popups-extract[dir="rtl"]::after {
+      background-image: linear-gradient(to left, transparent, var(--surface_container_lowest) 50%);
+    }
+
+    /* Icons */
+
+    img[alt="Edit this on Wikidata"],
+    img[alt="Edit this at Wikidata"] {
+      filter: var(--primary)-filter;
+    }
+
+    /* Logos */
+
+    .mw-logo-wordmark[alt="Wikipedia"] {
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 18"><path fill="@{text}" fill-rule="nonzero" d="m18.339 0 .199.001h.375l.174.001h.315l.138.001.323.001h.171l.058.053v.5q0 .208-.231.208c-.753.035-.908.11-1.184.507-.15.216-.447.68-.755 1.204L15.28 7.419l-.074.154 3.23 6.611.196.054L23.72 2.162q.265-.73-.078-1.035c-.228-.197-.389-.315-.978-.34l-.477-.023a.28.28 0 0 1-.168-.061.17.17 0 0 1-.08-.147V.054l.073-.052h5.749l.058.052v.502q0 .204-.231.205-1.129.051-1.673.489c-.362.294-.645.698-.848 1.225 0 0-1.53 3.5-3.137 7.159l-.268.61c-1.12 2.55-2.24 5.09-2.876 6.501-.613 1.17-1.22 1.06-1.745-.033-.411-.847-1.1-2.33-1.8-3.86l-.469-1.024c-.273-.6-.54-1.19-.786-1.727-1.08 2.23-2.56 5.26-3.3 6.624-.715 1.24-1.3 1.08-1.771.032-1.63-3.84-4.97-10.6-6.539-14.35-.29-.697-.51-1.14-.716-1.32Q1.347.827.36.774.002.734 0 .593V.067L.058.016.592.014H1.6l.969-.001h.253l1.734.001h.225l.95.001h.577l.058.052v.5q0 .207-.26.206L5.454.8q-.84.036-.84.5c0 .145.06.38.19.696 1.25 3.05 5.58 12.2 5.576 12.169l.158.04 2.787-5.56c-.34-.751-.558-1.23-.558-1.234l-1.916-3.765s-.37-.753-.497-1.004C9.512.972 9.53.882 8.68.772c-.238-.031-.361-.061-.362-.18V.065L8.39.013h.702L10.58.01h2.77l.131.043V.58q0 .181-.26.182l-.36.052c-.909.07-.76.442-.156 1.644l1.838 3.76 2.034-4.055c.318-.693.278-.9.157-1.064l-.027-.035c-.081-.096-.351-.251-.94-.275l-.231-.025a.28.28 0 0 1-.167-.06.17.17 0 0 1-.079-.147v-.5l.072-.052L16.24 0zm10.464 5.318h.118c.71 0 2.73-.053 2.73-.053l.027.053v.577c0 .08-.053.131-.158.132l-.551.053c-.814.078-1.1.29-1.103.815v8.74c0 .578.262.92 1.103.998l.551.054c.079 0 .157.051.158.156v.552l-.027.053s-1.99-.053-2.808-.053c-.735 0-2.78.053-2.783.053l-.052-.053v-.552c0-.105.078-.156.184-.156l.525-.054c.866-.078 1.13-.499 1.128-.997V6.895c0-.575-.316-.736-1.128-.813l-.525-.054c-.105 0-.184-.024-.184-.105v-.605l.026-.053s1.89.048 2.769.053m8.81 10.318c0 .577.341.866 1.103.997l.288.054c.079.025.157.051.158.156v.551l-.027.054s-1.65-.054-2.44-.054c-.736 0-2.89.054-2.888.054l-.053-.054v-.55c0-.106.08-.157.184-.157l.525-.054c.787-.079 1.13-.499 1.129-.997V6.895c0-.575-.29-.736-1.129-.813l-.525-.055c-.105 0-.184-.024-.184-.105v-.604l.027-.053s2.15.053 2.966.053c.736 0 2.39-.053 2.389-.053l.026.053v.577c0 .079-.053.105-.158.131l-.288.054c-.814.156-1.1.289-1.103.815v3.964c.866 0 1.36-.444 2.52-1.68 1.05-1.16 1.86-2.12 1.864-2.626 0-.21-.236-.445-.762-.526-.105-.024-.157-.052-.157-.13V5.29l.026-.024s2.13.053 2.888.053c.682 0 1.84-.053 1.837-.053l.079.024v.606c0 .079-.079.131-.21.131-1.02.08-1.73.131-2.678 1.208l-2.257 2.597c-.446.475-.604.76-.604.972 0 .157.105.288.237.445l3.963 4.778c.315.366.945.525 1.47.628l.131.026c.08.025.184.077.184.156v.551l-.079.027s-1.39-.026-2.126-.027c-.656 0-1.6.027-1.6.027l-.027-.027v-.315c0-.342-.026-.629-.394-1.049l-2.914-3.623c-.394-.526-.814-.655-1.39-.655v3.89zm14.151 0c0 .577.262.919 1.102.997l.552.054c.078 0 .157.051.157.156v.551l-.026.054s-1.99-.054-2.809-.054c-.735 0-2.78.054-2.782.054l-.053-.054v-.55c0-.106.08-.157.184-.157l.525-.054c.866-.079 1.13-.499 1.129-.997V6.895c0-.575-.315-.736-1.129-.813l-.525-.055c-.105 0-.184-.024-.184-.105v-.604l.027-.053s2.07.053 2.887.053c.709 0 2.73-.053 2.73-.053l.026.053v.577c0 .079-.052.131-.157.131l-.552.054c-.814.078-1.1.289-1.102.815zm5.672-8.69c0-.814-.341-.84-1.575-.919-.157 0-.184-.077-.184-.13v-.605l.053-.026c.394 0 1.94.053 2.703.053.735 0 1.78-.053 2.757-.053 3.73 0 4.41 1.84 4.407 3.203 0 1.58-.76 4.04-4.486 4.043-.656 0-1.18-.054-1.655-.263v3.516c0 .576.315.71 1.156.84l.526.079c.105.025.185.053.185.156v.551l-.024.054s-2.1-.054-2.915-.054c-.735 0-2.7.054-2.704.054l-.026-.054v-.551c0-.105.053-.131.158-.156l.55-.08c.815-.104 1.08-.34 1.077-.84zm2.021 4.568c.525.211 1.18.236 1.706.237 1.58 0 2.33-.947 2.335-2.967 0-2.26-1.02-2.76-2.466-2.756-1.26 0-1.58.236-1.576.919zm10.661 5.88c-.787 0-2.6.054-2.598.054l-.027-.054v-.577c0-.052.027-.13.158-.13l.605-.054c.815-.079 1.05-.604 1.051-1.128V6.843c0-.606-.315-.71-1.05-.761l-.606-.055c-.157-.024-.157-.077-.158-.105v-.604l.027-.053s2.05.053 2.834.053h3.859c.787 0 2.65-.053 2.652-.053l.055.053c.024 1.13.208 2.15.393 3.15l-.654.105c-.288-.972-.786-2.36-2.466-2.362h-2.1c-.5 0-.761.184-.761.63v3.806h1.967c.736 0 .92-.315 1.025-.84l.157-.55c0-.08.053-.133.157-.133h.444c.055 0 .055.027.055.079-.055.576-.157 1.31-.158 1.943 0 .655.105 1.21.158 1.811l-.055.054h-.444c-.13 0-.186-.054-.186-.133l-.13-.576c-.106-.526-.342-.815-1.028-.815h-1.966v4.017c0 .497.286.995.76.996h2.495c1.34 0 2.08-.84 2.388-2.207l.654.079-.526 3.017-.052.053s-1.55-.053-2.336-.053zm9.872-.707.604-.054c.788-.079 1.05-.315 1.05-1.128V6.843c0-.685-.185-.685-1.05-.761l-.576-.055c-.105 0-.186-.052-.186-.13v-.578l.026-.053s2.31.053 2.784.053c.497 0 2.78-.053 3.465-.053 4.38 0 6.54 2.73 6.537 6.221 0 4.59-3.26 5.96-6.167 5.958-2.1 0-3.02-.054-3.832-.054-.788 0-2.78.054-2.784.054l-.026-.054v-.55a.147.147 0 0 1 .155-.154m5.855 0c2.89 0 4.52-1.07 4.515-4.752 0-2.73-.605-5.91-5.014-5.908-1.02 0-1.68.157-1.68.816v8.662c0 .733.183 1.18 2.179 1.182m12.996-1.051c0 .577.262.919 1.102.997l.551.054c.079 0 .157.051.158.156v.551l-.027.054s-1.99-.054-2.807-.054c-.736 0-2.78.054-2.783.054l-.053-.054v-.55c0-.106.079-.157.184-.157l.526-.054c.865-.079 1.13-.499 1.128-.997V6.895c0-.575-.316-.736-1.128-.813l-.526-.055c-.105 0-.184-.024-.184-.105v-.604l.026-.053s2.07.053 2.886.053c.708 0 2.73-.053 2.73-.053l.025.053v.577c0 .079-.055.131-.158.131l-.551.054c-.815.078-1.1.289-1.103.815zm8.086.997.762.054c.105 0 .21.078.21.209v.498l-.053.054s-2.86-.054-3.491-.054c-.683 0-2.36.054-2.364.054l-.053-.054v-.498c0-.13.079-.21.21-.21 1.16-.078 1.81-.29 2.546-1.97l5.826-13.65c.288-.682.5-.946.895-.946.365 0 .498.264.707.788l5.38 14.227c.37 1.02.895 1.42 1.945 1.523l.288.025c.132 0 .264.078.263.211v.497l-.078.053s-2.02-.053-3.046-.053c-.92 0-3.49.053-3.492.053l-.025-.053v-.497c0-.133.053-.21.187-.21l.735-.054c.996-.078 1.37-.395 1.103-1.128l-1.602-4.438h-5.461c-.63 0-.787.105-.918.444l-1.524 3.807c-.262.66.079 1.24 1.05 1.318m6.431-6.67-2.546-7.007h-.052l-2.625 6.667c-.105.265.078.341.655.342h4.568v-.001z"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+
+      + .mw-logo-tagline {
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 117 13"><path fill="@{text}" d="M89.777 3.326c.104 0 .17.039.17.092 0 0-.055.363-.055.832 0 .093.076.081.117.039.584-.594 1.3-.921 1.781-.921 1.33 0 2.3 1.27 2.301 2.651 0 1.05-.352 1.86-.963 2.457-.533.509-1.18.729-1.91.729-.41 0-.812-.072-1.131-.201-.133-.055-.182-.071-.182.098v1.403c0 1.08.143 1.13 1.064 1.185.078.077.078.352 0 .428-.558-.011-.96-.025-1.572-.025-.572 0-.91.014-1.455.025-.078-.078-.078-.353 0-.431.793-.038.936-.104.936-1.184V4.951c0-.74-.143-.818-.846-.885-.025-.078-.053-.285-.025-.363.896-.116 1.4-.233 1.77-.377m-17.266.144c.078.078.078.353 0 .431-.479.039-.869.455-1.053.832-.688 1.46-1.26 2.8-2.301 5.305-.16.385-.33.757-.533 1.117-.467.834-.989.938-1.26.938-.352 0-.611-.209-.611-.48 0-.17.195-.561.572-.561.143 0 .193.039.377.039.324 0 .506-.116.648-.377.195-.402.354-.762.508-1.195.131-.363-.068-.961-.182-1.223l-1.473-3.419c-.354-.828-.459-.923-1.023-.976-.078-.078-.078-.353 0-.431q.388.023 1.053.024c.469 0 .988-.012 1.469-.024.078.078.078.353 0 .431-.797.062-.66.297-.426.846l1.152 2.703c.109.259.221.224.311.014l1.291-2.977c.203-.473-.215-.547-.625-.586-.078-.078-.078-.353 0-.431.48.015.729.024 1.184.024.363 0 .6-.012.922-.024M105.829.002c.117 0 .17.039.17.13 0 0-.046.448-.052 1.189l-.001 6.065c0 .639.117.885.949.949.078.078.078.273 0 .352-.793.092-1.38.285-1.664.521a.5.5 0 0 1-.299 0s.014-.639.014-.768c0-.092-.094-.067-.156-.019-.637.526-1.12.785-1.625.785-1.4 0-2.21-1.17-2.211-2.771 0-.963.338-1.73.898-2.286.52-.494 1.09-.781 1.949-.781.43 0 .963.222 1.014.222.092 0 .117-.026.117-.117V1.809c0-1.09-.156-1.03-.832-1.065-.078-.076-.104-.284-.078-.391.52-.039 1.48-.221 1.807-.351m7.457 3.372c.949 0 1.96.352 1.965 2.197v1.938c0 .6.014 1.1.52 1.105.273 0 .328-.209.404-.209.051 0 .168.131.168.222 0 .063-.467.585-1.104.585-.694 0-.924-.48-1.002-.754h-.024l-.001-.005-.258.206c-.572.441-.82.547-1.418.547-.91 0-1.64-.377-1.639-1.404 0-.884.898-1.57 2.146-1.885l1.115-.273c.039-.013.078-.064.078-.154 0-1.47-.609-1.69-1.055-1.689-.492 0-1.08.145-1.078.546 0 .146.014.224.025.263a.6.6 0 0 1 .039.231c0 .169-.195.429-.572.429-.299 0-.455-.143-.455-.455 0-.699 1.08-1.44 2.146-1.441m-15.579.018c1.81 0 2.2 1.17 2.197 2.265 0 .143-.09.221-.246.221l-3.459-.025c0 .754.154 1.35.416 1.78.402.663.949.937 1.418.937.754 0 1.13-.207 1.609-.701.156.011.234.078.273.206-.52.676-1.22 1.13-2.211 1.131-.936 0-1.55-.312-1.988-.832-.43-.494-.609-1.2-.609-1.924 0-1.98 1.47-3.06 2.6-3.058m-13.081-.024c2.02 0 2.73 1.57 2.73 2.926 0 1.3-.818 2.91-2.756 2.912-1.83 0-2.73-1.47-2.73-2.795 0-1.65 1-3.04 2.756-3.043m-49.254.024c1.81 0 2.2 1.17 2.197 2.265 0 .143-.091.221-.247.221l-3.458-.025c0 .754.156 1.35.416 1.78.403.663.949.937 1.417.937.754 0 1.13-.207 1.612-.701.156.011.234.078.273.206-.52.676-1.22 1.13-2.21 1.131-.936 0-1.55-.312-1.989-.832-.429-.494-.611-1.2-.611-1.924 0-1.98 1.47-3.06 2.6-3.058m5.85 0c1.81 0 2.2 1.17 2.197 2.265 0 .143-.091.221-.247.221l-3.458-.025c0 .754.156 1.35.416 1.78.403.663.949.937 1.417.937.754 0 1.13-.207 1.612-.701.156.011.234.078.273.206-.52.676-1.22 1.13-2.21 1.131-.936 0-1.55-.312-1.989-.832-.429-.494-.611-1.2-.611-1.924 0-1.98 1.47-3.06 2.6-3.058m-25.009 0c1.81 0 2.2 1.17 2.197 2.265 0 .143-.091.221-.247.221l-3.458-.025c0 .754.156 1.35.416 1.78.403.663.949.937 1.417.937.754 0 1.13-.207 1.612-.701.156.011.234.078.273.206-.52.676-1.22 1.13-2.21 1.131-.936 0-1.55-.312-1.989-.832-.429-.494-.611-1.2-.611-1.924 0-1.98 1.47-3.06 2.6-3.058m47.407-.024c1.25 0 1.99.521 1.988 1.234 0 .402-.363.571-.637.571s-.453-.117-.494-.468c-.053-.455-.156-.91-.924-.91-.857 0-1.48.857-1.482 2.288 0 1.52.795 2.48 1.742 2.481.561 0 1.12-.285 1.561-.856.117.013.221.063.273.183-.65 1.07-1.34 1.32-2.119 1.315-1.64 0-2.57-1.16-2.574-2.834 0-1.85 1.38-3 2.666-3.004m12.037 0c1.25 0 1.99.521 1.988 1.234 0 .402-.363.571-.637.571-.271 0-.453-.117-.494-.468-.051-.455-.154-.91-.922-.91-.859 0-1.48.857-1.482 2.288 0 1.52.793 2.48 1.742 2.481.559 0 1.12-.285 1.561-.856.117.013.221.063.271.183-.648 1.07-1.34 1.32-2.119 1.315-1.64 0-2.57-1.16-2.572-2.834 0-1.85 1.38-3 2.664-3.004m-45.836-.035c.104 0 .169.038.169.091 0 0-.065.624-.065 1.04 0 .063.039.13.117-.015.299-.506.832-1.08 1.443-1.078.546 0 .78.375.78.623 0 .326-.299.649-.611.649-.273 0-.403-.247-.533-.377-.078-.077-.182-.091-.273-.091-.156 0-.455.43-.598.637-.156.234-.312.533-.312.871v1.809c0 1.08.156 1.12 1.066 1.184.078.078.078.354 0 .43a61 61 0 0 0-1.573-.025c-.52 0-.936.014-1.482.025-.078-.076-.078-.352 0-.43.806-.053.962-.104.962-1.184V4.958c0-.719-.143-.822-.845-.886-.052-.078-.052-.285-.026-.362.897-.117 1.42-.234 1.781-.377M80.104.002c.115 0 .168.039.168.13 0 0-.046.448-.052 1.189l-.001 6.168c0 1.08.145 1.14.938 1.184.078.078.078.352 0 .43-.561-.014-.885-.025-1.443-.025-.572 0-.91.014-1.457.025-.078-.078-.078-.352 0-.43.793-.039.938-.104.938-1.184l-.001-5.68c0-1.09-.156-1.03-.832-1.065-.078-.076-.105-.284-.078-.391.52-.039 1.49-.221 1.82-.351M52.231.633c.039 0 .052.013.052.039.026.104.221 1.35.286 1.885a.7.7 0 0 1-.429.065c-.286-.897-.494-1.42-1.469-1.417h-1.365c-.312 0-.468.26-.468.571v2.601h1.183c1.1.006 1.14-.163 1.183-.878.078-.078.351-.078.429 0-.013.39-.026.676-.026 1.117s.013.688.026 1.145c-.078.078-.351.078-.429 0-.039-.585-.078-.884-1.183-.884h-1.183V8.01c0 .353.182.56.468.56h1.768c.988 0 1.44-.768 1.703-1.703a.6.6 0 0 1 .455.064 21 21 0 0 1-.481 2.172s-.914-.022-1.543-.025h-2.963c-.21.003-1.09.015-1.643.025-.078-.078-.078-.352 0-.43.91-.039 1.13-.104 1.131-1.184V2.276c0-1.08-.221-1.15-1.131-1.185-.078-.078-.078-.353 0-.431.65.015 1.68.025 1.677.025h3.315c.312 0 .416-.013.637-.052m56.966 2.696c.104 0 .168.039.168.092 0 0-.051.832-.051 1.479v2.592c-.001 1.08.142 1.13.935 1.181.078.078.078.352 0 .43-.559-.014-.885-.025-1.443-.025-.57 0-.908.014-1.457.025-.074-.078-.074-.352 0-.43.793-.064.938-.104.938-1.184V4.954c0-.74-.137-.816-.846-.883-.025-.078-.054-.287-.025-.364.896-.117 1.41-.234 1.781-.378M27.199.633c.031 0 .046.009.052.039.018.099.214 1.35.282 1.885l-.403.065c-.286-.897-.494-1.42-1.469-1.417h-1.365c-.312 0-.468.13-.468.442v2.729h1.209c1.1 0 1.14-.169 1.183-.885.078-.077.351-.077.429 0-.013.391-.026.677-.026 1.119 0 .439.013.688.026 1.144-.078.078-.351.078-.429 0-.039-.585-.078-.884-1.183-.884h-1.209v2.619c0 1.08.221 1.14 1.131 1.184.078.078.078.352 0 .43-.65-.014-1.03-.025-1.677-.025-.663 0-1.05.014-1.69.025-.078-.078-.078-.352 0-.43.91-.039 1.13-.104 1.131-1.184V2.276c0-1.08-.221-1.15-1.131-1.185-.078-.078-.078-.353 0-.431.65.015 1.68.025 1.677.025h3.319c.308 0 .384-.008.611-.052M8.398 0c.104 0 .156.039.156.13 0 0-.037.455-.039 1.3l-.009 2.992c0 .183.083.048.127 0 .793-.884 1.42-1.05 2.054-1.054.455 0 .861.156 1.079.44.303.396.351 1.03.351 1.742v1.938c0 1.06.143 1.12.871 1.184.065.078.065.352 0 .43-.559-.014-.845-.025-1.378-.025-.52 0-.78.014-1.326.025-.065-.078-.065-.352 0-.43.676-.064.806-.117.806-1.184V5.51c0-.39-.026-.743-.156-1.001-.151-.298-.424-.468-.689-.468-.512 0-1.01.28-1.508.767a.76.76 0 0 0-.221.549v2.131c0 1.08.117 1.13.777 1.184.078.078.078.352 0 .43-.547-.014-.777-.025-1.285-.025-.559 0-.892.014-1.427.025-.078-.078-.078-.352 0-.43.754-.053.907-.104.907-1.184V1.805c0-.299 0-.598-.91-.598H4.927c-.468 0-.598.233-.598.676v5.604c0 1.08.221 1.14 1.261 1.184.078.078.078.352 0 .43-.65-.014-1.1-.025-1.807-.025-.715 0-1.18.014-1.82.025-.078-.078-.078-.352 0-.43 1.04-.039 1.26-.104 1.261-1.184V1.843c0-.401-.13-.637-.598-.637H1.534C.819 1.206.65 1.361.39 2.4L0 2.337C.156 1.649.234.977.286.335l.351.052c0 .078 0 .301.273.301h5.174c1.1 0 1.26-.099 2.314-.688m47.33 3.328c.104 0 .156.039.156.104 0 0-.065.6-.065.988 0 .183.091.052.13 0 .792-.882 1.42-1.05 2.054-1.052.455 0 .857.156 1.078.44.301.403.352 1.03.352 1.742v1.938c0 1.06.145 1.12.871 1.184.064.078.064.352 0 .43-.559-.014-.846-.025-1.377-.025-.521 0-.779.014-1.327.025-.065-.078-.065-.352 0-.43.676-.064.806-.117.806-1.184V5.51c0-.39-.026-.74-.156-1.001-.156-.299-.429-.468-.689-.468-.507 0-1.01.284-1.508.767a.77.77 0 0 0-.221.549v2.131c0 1.06.117 1.12.78 1.184.078.078.078.352 0 .43-.546-.014-.78-.025-1.287-.025-.559 0-.897.014-1.43.025-.078-.078-.078-.352 0-.43.78-.064.91-.117.91-1.184V4.953c0-.754-.143-.818-.845-.883-.026-.078-.052-.287-.026-.364.897-.117 1.43-.234 1.794-.378m28.755.473c-1.09-.003-1.49 1.18-1.494 2.312 0 1 .494 2.67 1.846 2.666.611 0 1.4-.353 1.404-2.066 0-1.91-.637-2.91-1.756-2.912m6.942.163c-.379 0-.91.338-1.312.754-.167.175-.208.303-.208.575v2.418c0 .47.051.545.311.778.234.209.689.273.924.273 1.46 0 1.83-1.33 1.832-2.395 0-1.47-.715-2.4-1.547-2.403m22.819 2.084-1.032.274c-.959.254-1.23.846-1.234 1.431 0 .401.285.923.938.923.363 0 .809-.286 1.146-.561.104-.078.182-.168.182-.338zm-10.588-2.225c-.26 0-.809.039-1.209.648-.193.271-.377.793-.377 1.729 0 1.62.729 2.39 1.432 2.393.322 0 .738-.208 1.223-.624.184-.158.207-.26.207-.507V4.993c0-.402-.039-.493-.221-.701-.262-.299-.586-.469-1.055-.469m-68.284 0c-.312 0-1.22.117-1.469 1.586l2.353-.039c.143-.002.195-.064.195-.183 0-1.09-.585-1.36-1.079-1.364m-19.159 0c-.312 0-1.22.117-1.469 1.586l2.353-.039c.143-.002.195-.064.195-.183 0-1.09-.585-1.36-1.079-1.364m25.009 0c-.312 0-1.22.117-1.469 1.586l2.353-.039c.143-.002.195-.064.195-.183 0-1.09-.585-1.36-1.079-1.364m56.482 0c-.311 0-1.22.117-1.469 1.586l2.354-.039c.145-.002.195-.064.195-.183 0-1.09-.586-1.36-1.08-1.364M108.805.665c.352 0 .623.363.623.676 0 .273-.312.624-.676.624-.312 0-.623-.338-.623-.677.001-.311.364-.623.676-.623"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+    }
+
+    .mw-logo-icon {
+      &[src$="wikidatawiki.svg"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="50" height="50"><g fill="none"><path fill="@{red}" d="M0 40.767h1.795V10H0zm3.71 0h5.502V10H3.71zM11.006 10v30.766h5.504V10z"/><path fill="@{green}" d="M44.28 40.77h1.796V10H44.28zM47.99 10v30.77h1.795V10zM18.365 40.77h1.795V10h-1.795zM22.075 10v30.768h1.795V10z"/><path fill="@{blue}" d="M25.723 40.77h5.504V10h-5.504zm7.299 0h1.914V10h-1.914zM36.73 10v30.768h5.503V10z"/></g></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+      &[src$="commonswiki.svg"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="50" height="50"><defs><circle id="a" cx="18.242" cy="18.242" r="18.242"/></defs><g fill="none" fill-rule="evenodd" transform="translate(2)"><circle cx="23.062" cy="31.525" r="6.121" fill="@{red}" fill-rule="nonzero"/><g transform="translate(4.82 13.284)"><mask id="b" fill="#fff"><use xlink:href="#a"/></mask><g fill="@{blue}" fill-rule="nonzero" mask="url(#b)"><path stroke="@{blue}" stroke-width="1.347" d="M18.278 36.606V29.26"/><path d="m15.609 29.566 2.632-4.591 2.632 4.591z"/><path stroke="@{blue}" stroke-width="1.347" d="m5.282 31.253 5.194-5.194"/><path d="m8.372 24.388 5.108-1.385-1.386 5.107z"/><path stroke="@{blue}" stroke-width="1.347" d="M-.124 18.278h7.346"/><path d="m6.916 15.609 4.591 2.632-4.591 2.632z"/><path stroke="@{blue}" stroke-width="1.347" d="m5.23 5.283 5.195 5.194"/><path d="m12.096 8.373 1.385 5.108-5.108-1.385z"/><path stroke="@{blue}" stroke-width="1.347" d="m31.201 31.253-5.194-5.194"/><path d="m28.11 24.388-5.107-1.385 1.386 5.107z"/><path stroke="@{blue}" stroke-width="1.347" d="M36.607 18.278h-7.346"/><path d="m29.567 15.609-4.591 2.632 4.591 2.632z"/><path stroke="@{blue}" stroke-width="1.347" d="m31.253 5.283-5.195 5.194"/><path d="m24.387 8.373-1.385 5.108 5.108-1.385z"/></g></g><path stroke="@{blue}" stroke-width="5.142" d="M11.982 20.444c-6.12 6.12-6.12 16.042 0 22.162s16.042 6.12 22.162 0 6.12-16.042 0-22.162C29.815 16.116 23.279 18.324 21.98 8.8"/><path fill="@{blue}" fill-rule="nonzero" d="M21.655 0s-2.204 8.264-4.898 11.325 7.101-3.796 10.407-.306S21.654 0 21.654 0z"/></g></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+      &[src$="wikivoyage.svg"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><g fill="none"><path fill="@{red}" d="M31.496 16.378 39.685 0 23.307 8.189a11.58 11.58 0 0 1 8.19 8.189z"/><path fill="@{green}" d="M18.898 24.465 29.124 40l1.112-18.583a11.71 11.71 0 0 1-11.338 3.048"/><path fill="@{blue}" d="M18.583 9.449 0 10.56l15.535 10.226A11.72 11.72 0 0 1 18.583 9.45z"/></g></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+      &[src$="wikiquote.svg"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="50" height="50"><defs><radialGradient id="a" cx="50%" cy="50%" r="50%" fx="50%" fy="50%"><stop offset="0%" stop-color="@{blue}"/><stop offset="100%" stop-color="@{blue}"/></radialGradient></defs><g fill="none" transform="translate(5)"><path fill="@{blue}" d="M17.697 11.515a16.17 16.17 0 0 1 6.924 13.279c0 5.23-2.5 10.043-6.63 13.068l-.298.213-2.29-3.28a12.17 12.17 0 0 0 5.218-10.001 12.17 12.17 0 0 0-4.933-9.796l-.283-.204z"/><circle cx="8.304" cy="24.62" r="8.304" fill="url(#a)"/><path fill="@{sky}" d="M29.463 0c7.23 6.139 11.48 15.123 11.48 24.794a32.44 32.44 0 0 1-11.259 24.604l-.24.206-2.853-3.365c6.262-5.31 9.94-13.076 9.94-21.445 0-8.26-3.582-15.933-9.696-21.236l-.227-.195z"/><path fill="@{sapphire}" d="M23.453 5.917a24.08 24.08 0 0 1 9.102 18.877 24.08 24.08 0 0 1-8.873 18.692l-.224.181-2.663-3.34a19.81 19.81 0 0 0 7.488-15.533 19.8 19.8 0 0 0-7.276-15.362l-.215-.175z"/></g></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+      &[src$="wikiversity.svg"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="50" height="50"><path fill="@{blue}" d="M24.9 6c-.5.1-1.1.5-1.6 1.2-.5.6-.9 1.5-1.3 2.5h5.7c-.4-1.1-.8-1.9-1.3-2.5-.4-.7-1-1.1-1.5-1.2m1.8.2c.2.2.3.3.4.5q.9 1.2 1.5 3h4C31 7.9 29 6.6 26.7 6.2m-3.6 0c-2.2.5-4.3 1.7-5.9 3.6h4c.4-1.2.9-2.3 1.5-3 .1-.3.3-.5.4-.6m-2.9.1c-2.1.7-4.1 1.9-5.7 3.4h1.7c1.1-1.4 2.5-2.6 4-3.4m9.6.1c1.5.8 2.8 1.9 4 3.4h1.7c-1.7-1.6-3.6-2.7-5.7-3.4m-16.2 4.2c-1.2 1.3-2.2 2.9-2.9 4.6h2.6c.5-1.6 1.3-3.2 2.2-4.6zm2.9 0c-1 1.4-1.8 2.9-2.4 4.6H20c.2-1.5.5-3.1 1-4.6zm5.3 0c-.5 1.5-.8 3-1 4.6h8.3c-.2-1.5-.5-3.1-1-4.6zm7.2 0c.4 1.5.8 3 1 4.6h5.8c-.5-1.6-1.3-3.2-2.4-4.6zm5.4 0c1 1.4 1.7 2.9 2.2 4.6h2.6c-.7-1.7-1.7-3.2-2.9-4.6zm-24 5.4c-.6 1.7-.9 3.5-.9 5.3h2.9c0-1.8.2-3.6.7-5.3zm3.5 0c-.5 1.7-.7 3.5-.7 5.3h6.4c0-1.8.1-3.5.3-5.3zm6.8 0c-.2 1.8-.3 3.5-.3 5.3h9.1c0-1.8-.1-3.5-.3-5.3zm9.3 0c.2 1.8.3 3.5.3 5.3h6.4c0-1.8-.2-3.6-.7-5.3zm6.8 0c.5 1.7.7 3.5.7 5.3h2.9c0-1.8-.3-3.6-.9-5.3zM0 22.204h49.893v1.652H0zm1.706 2.559h6.663v17.164H1.706zm13.272 0h6.663v17.164h-6.663zm13.273 0h6.663v17.164h-6.663zm13.273 0h6.663v17.164h-6.663zM0 42.736h49.893v1.652H0z"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+      &[src$="mediawikiwiki.svg"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" id="svg62" width="50" height="50" version="1.1"><defs id="defs11"><linearGradient id="gradient" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"><stop id="stop2" offset="0%" stop-color="@{mauve}"/><stop id="stop4" offset="50%" stop-color="@{red}"/><stop id="stop6" offset="100%" stop-color="@{peach}"/></linearGradient><linearGradient xlink:href="#gradient" id="linearGradient873" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient875" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient877" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient879" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient881" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient883" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient885" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient887" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient889" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient891" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient893" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient895" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient897" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient899" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient901" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient903" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient905" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient907" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient909" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient911" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient913" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient915" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient917" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient919" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><linearGradient xlink:href="#gradient" id="linearGradient921" x1="0" x2="100" y1="100" y2="0" gradientUnits="userSpaceOnUse"/><style id="style9">.petal{opacity:.65}</style></defs><g id="petals" fill="url(#linearGradient921)" transform="matrix(.5 0 0 .5 0 .026)"><path id="path13" fill="url(#linearGradient873)" d="M33.6 14.8a16.94 16.94 0 0 0 3.116 11.142 11.46 11.46 0 0 0 6.858 4.3 3.03 3.03 0 0 0 2.385-.713 11.92 11.92 0 0 0 3.634-10.837c-1.257-7.54-6.19-12.43-12.4-17A32.5 32.5 0 0 0 33.6 14.8" class="petal" opacity=".65"/><path id="path15" fill="url(#linearGradient875)" d="M25.117 20.232a16.94 16.94 0 0 0 5.893 9.956 11.46 11.46 0 0 0 7.738 2.381 3.03 3.03 0 0 0 2.119-1.306 11.92 11.92 0 0 0 .705-11.409C38.406 12.9 32.376 9.449 25.2 6.642a32.5 32.5 0 0 0-.083 13.59" class="petal" opacity=".65"/><path id="path17" fill="url(#linearGradient877)" d="M18.329 27.677a16.94 16.94 0 0 0 8.271 8.092 11.46 11.46 0 0 0 8.09.3 3.03 3.03 0 0 0 1.709-1.81 11.92 11.92 0 0 0-2.271-11.2c-4.859-5.9-11.576-7.67-19.237-8.523a32.5 32.5 0 0 0 3.438 13.141" class="petal" opacity=".65"/><path id="path19" fill="url(#linearGradient879)" d="M13.7 36.626A16.94 16.94 0 0 0 23.781 42.3a11.46 11.46 0 0 0 7.891-1.807 3.03 3.03 0 0 0 1.182-2.193 11.92 11.92 0 0 0-5.093-10.233c-6.221-4.443-13.167-4.412-20.787-3.254A32.5 32.5 0 0 0 13.7 36.626" class="petal" opacity=".65"/><path id="path21" fill="url(#linearGradient881)" d="M11.543 46.468a16.94 16.94 0 0 0 11.208 2.873 11.46 11.46 0 0 0 7.155-3.788 3.03 3.03 0 0 0 .575-2.422 11.92 11.92 0 0 0-7.568-8.566c-7.16-2.681-13.861-.854-20.923 2.235a32.5 32.5 0 0 0 9.553 9.668" class="petal" opacity=".65"/><path id="path23" fill="url(#linearGradient883)" d="M12.008 56.532a16.94 16.94 0 0 0 11.569-.126 11.46 11.46 0 0 0 5.931-5.51 3.03 3.03 0 0 0-.072-2.488 11.92 11.92 0 0 0-9.527-6.315C12.3 41.356 6.3 44.855.279 49.669a32.5 32.5 0 0 0 11.729 6.863" class="petal" opacity=".65"/><path id="path25" fill="url(#linearGradient885)" d="M15.062 66.134A16.94 16.94 0 0 0 26.2 63.018a11.46 11.46 0 0 0 4.3-6.858 3.03 3.03 0 0 0-.713-2.385 11.92 11.92 0 0 0-10.837-3.634c-7.54 1.257-12.43 6.19-17 12.4a32.5 32.5 0 0 0 13.112 3.593" class="petal" opacity=".65"/><path id="path27" fill="url(#linearGradient887)" d="M20.5 74.618a16.94 16.94 0 0 0 9.956-5.893 11.46 11.46 0 0 0 2.381-7.738 3.03 3.03 0 0 0-1.306-2.119 11.93 11.93 0 0 0-11.409-.705c-6.958 3.166-10.4 9.2-13.212 16.376a32.5 32.5 0 0 0 13.59.079" class="petal" opacity=".65"/><path id="path29" fill="url(#linearGradient889)" d="M27.943 81.406a16.94 16.94 0 0 0 8.092-8.269 11.46 11.46 0 0 0 .3-8.09 3.03 3.03 0 0 0-1.81-1.709 11.92 11.92 0 0 0-11.2 2.271c-5.9 4.859-7.67 11.576-8.523 19.237a32.5 32.5 0 0 0 13.141-3.44" class="petal" opacity=".65"/><path id="path31" fill="url(#linearGradient891)" d="M36.891 86.035a16.94 16.94 0 0 0 5.676-10.082 11.46 11.46 0 0 0-1.807-7.891 3.03 3.03 0 0 0-2.191-1.182 11.92 11.92 0 0 0-10.233 5.094c-4.443 6.221-4.412 13.167-3.254 20.787a32.5 32.5 0 0 0 11.809-6.726" class="petal" opacity=".65"/><path id="path33" fill="url(#linearGradient893)" d="M46.733 88.191a16.94 16.94 0 0 0 2.873-11.207 11.46 11.46 0 0 0-3.788-7.155 3.03 3.03 0 0 0-2.422-.575 11.92 11.92 0 0 0-8.566 7.568c-2.681 7.159-.854 13.86 2.237 20.921a32.5 32.5 0 0 0 9.666-9.552" class="petal" opacity=".65"/><path id="path35" fill="url(#linearGradient895)" d="M56.8 87.726a16.94 16.94 0 0 0-.125-11.569 11.46 11.46 0 0 0-5.511-5.931 3.03 3.03 0 0 0-2.488.072 11.92 11.92 0 0 0-6.315 9.528c-.737 7.609 2.762 13.609 7.576 19.629A32.5 32.5 0 0 0 56.8 87.726" class="petal" opacity=".65"/><path id="path37" fill="url(#linearGradient897)" d="M66.4 84.672a16.94 16.94 0 0 0-3.116-11.142 11.46 11.46 0 0 0-6.858-4.3 3.03 3.03 0 0 0-2.385.713 11.92 11.92 0 0 0-3.634 10.837c1.257 7.54 6.19 12.43 12.4 17A32.5 32.5 0 0 0 66.4 84.672" class="petal" opacity=".65"/><path id="path39" fill="url(#linearGradient899)" d="M74.883 79.237a16.94 16.94 0 0 0-5.893-9.956 11.46 11.46 0 0 0-7.738-2.381 3.03 3.03 0 0 0-2.119 1.306 11.92 11.92 0 0 0-.705 11.409c3.166 6.958 9.2 10.4 16.375 13.212a32.5 32.5 0 0 0 .08-13.59" class="petal" opacity=".65"/><path id="path41" fill="url(#linearGradient901)" d="M81.671 71.792A16.94 16.94 0 0 0 73.4 63.7a11.46 11.46 0 0 0-8.09-.3 3.03 3.03 0 0 0-1.708 1.81 11.92 11.92 0 0 0 2.271 11.2c4.859 5.9 11.576 7.67 19.237 8.523a32.5 32.5 0 0 0-3.439-13.141" class="petal" opacity=".65"/><path id="path43" fill="url(#linearGradient903)" d="M86.3 62.843a16.94 16.94 0 0 0-10.082-5.676 11.46 11.46 0 0 0-7.891 1.807 3.03 3.03 0 0 0-1.182 2.191A11.92 11.92 0 0 0 72.239 71.4c6.221 4.443 13.167 4.412 20.787 3.254A32.5 32.5 0 0 0 86.3 62.843" class="petal" opacity=".65"/><path id="path45" fill="url(#linearGradient905)" d="M88.457 53a16.94 16.94 0 0 0-11.207-2.873 11.46 11.46 0 0 0-7.155 3.788 3.03 3.03 0 0 0-.574 2.422 11.93 11.93 0 0 0 7.567 8.563c7.158 2.681 13.86.854 20.921-2.237A32.5 32.5 0 0 0 88.457 53" class="petal" opacity=".65"/><path id="path47" fill="url(#linearGradient907)" d="M87.992 42.936a16.94 16.94 0 0 0-11.569.126 11.46 11.46 0 0 0-5.931 5.511 3.03 3.03 0 0 0 .072 2.488 11.92 11.92 0 0 0 9.527 6.315c7.609.737 13.609-2.762 19.63-7.576a32.5 32.5 0 0 0-11.729-6.864" class="petal" opacity=".65"/><path id="path49" fill="url(#linearGradient909)" d="M84.938 33.335A16.94 16.94 0 0 0 73.8 36.451a11.46 11.46 0 0 0-4.3 6.858 3.03 3.03 0 0 0 .714 2.385 11.92 11.92 0 0 0 10.837 3.634c7.54-1.257 12.43-6.19 17-12.4a32.5 32.5 0 0 0-13.113-3.593" class="petal" opacity=".65"/><path id="path51" fill="url(#linearGradient911)" d="M79.5 24.851a16.94 16.94 0 0 0-9.956 5.893 11.46 11.46 0 0 0-2.381 7.738 3.03 3.03 0 0 0 1.309 2.118 11.92 11.92 0 0 0 11.409.705c6.958-3.166 10.4-9.2 13.212-16.375a32.5 32.5 0 0 0-13.593-.079" class="petal" opacity=".65"/><path id="path53" fill="url(#linearGradient913)" d="M72.057 18.063a16.94 16.94 0 0 0-8.092 8.269 11.46 11.46 0 0 0-.3 8.09 3.03 3.03 0 0 0 1.81 1.709 11.92 11.92 0 0 0 11.2-2.271c5.9-4.859 7.67-11.576 8.523-19.237a32.5 32.5 0 0 0-13.141 3.44" class="petal" opacity=".65"/><path id="path55" fill="url(#linearGradient915)" d="M63.109 13.434a16.94 16.94 0 0 0-5.676 10.082 11.46 11.46 0 0 0 1.807 7.891 3.03 3.03 0 0 0 2.191 1.182A11.92 11.92 0 0 0 71.664 27.5c4.443-6.221 4.412-13.167 3.254-20.787a32.5 32.5 0 0 0-11.809 6.721" class="petal" opacity=".65"/><path id="path57" fill="url(#linearGradient917)" d="M53.267 11.278a16.94 16.94 0 0 0-2.873 11.207 11.46 11.46 0 0 0 3.788 7.155 3.03 3.03 0 0 0 2.422.575 11.92 11.92 0 0 0 8.566-7.568c2.681-7.159.854-13.86-2.237-20.921a32.5 32.5 0 0 0-9.666 9.552" class="petal" opacity=".65"/><path id="path59" fill="url(#linearGradient919)" d="M43.2 11.743a16.94 16.94 0 0 0 .126 11.569 11.46 11.46 0 0 0 5.511 5.931 3.03 3.03 0 0 0 2.488-.072 11.92 11.92 0 0 0 6.315-9.528c.739-7.609-2.76-13.609-7.574-19.629A32.5 32.5 0 0 0 43.2 11.743" class="petal" opacity=".65"/></g></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+    }
+
+    .mw-logo-wordmark {
+      &[alt="Wikidata"],
+      &[alt="Wikimedia Commons"] {
+        filter: var(--on_surface)-filter;
+      }
+      &[alt="Wikivoyage"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 25"><path fill="@{subtext1}" d="M5.286 18.534 0 6.09h3.005l2.846 7.226 2.933-7.405H10.6l2.909 7.366 2.857-7.188h3.01l-5.342 12.445h-1.102l-3.277-7.928-3.266 7.928h-.55zm15.666-.443V6.087h2.896v12.265h-2.323zM22.4 1.045q.712 0 1.201.49.49.488.49 1.175 0 .69-.488 1.176a1.64 1.64 0 0 1-1.203.488q-.72 0-1.206-.486a1.6 1.6 0 0 1-.485-1.178q0-.69.487-1.178a1.64 1.64 0 0 1 1.204-.487M29.62.26v18.093h-2.896V0h2.896zm5.53 17.832-5.987-5.86 5.411-6.145h3.255l-5.157 6.084 6.076 6.181h-3.026l-.573-.26zm4.498-.002V6.087h2.896v12.265h-2.323l-.573-.26zm1.448-17.046q.711 0 1.201.49.49.488.49 1.175 0 .69-.488 1.176a1.64 1.64 0 0 1-1.203.488q-.72 0-1.206-.486a1.6 1.6 0 0 1-.485-1.178q0-.69.487-1.178a1.64 1.64 0 0 1 1.204-.487"/><path fill="@{overlay2}" d="M47.2 6.645h2.979l2.844 7.123 2.856-7.123h2.957L53.551 18.87h-1.082zm19.013 12.248c-1.982.085-3.644-.524-4.846-1.7s-1.803-2.68-1.803-4.512q0-2.755 1.804-4.527t4.634-1.773q2.825 0 4.639 1.775 1.813 1.774 1.813 4.525 0 2.745-1.811 4.51c-1.208 1.177-2.731 1.702-4.43 1.702m-.01-2.365c.947-.085 1.692-.424 2.352-1.12q.99-1.043.99-2.727 0-1.696-.99-2.746-.99-1.048-2.553-1.048-1.566 0-2.548 1.046-.983 1.047-.983 2.748 0 1.694.98 2.732c.655.692 1.518 1.115 2.751 1.115zM84.977 6.9l-8.145 18.014h-3.115l4.013-9.092-4.565-9.178h3.045l3.065 6.597 2.748-6.597h2.954zm3.368 12.054q-1.364 0-2.184-.861-.82-.862-.82-2.242.001-1.223.806-2.109.807-.885 2.39-1.454l2.8-1.012v-.54q0-.898-.422-1.287-.42-.39-1.379-.39-1.072 0-1.915.41-.844.41-2.04 1.372V8.158q.923-.952 1.87-1.366.949-.414 2.11-.414 2.245 0 3.433 1.12t1.187 3.237v5.806q0 .142.04.181t.143.04q.087 0 .366-.176.28-.176 1.07-.539v1.799a3.5 3.5 0 0 1-1.234.786q-.732.285-1.393.284-.769 0-1.295-.465-.39-.357-.409-.65-.088.291-.614.56a5.4 5.4 0 0 1-2.51.593m2.991-2.689v-3.23l-1.105.515q-1.022.364-1.501.876a1.7 1.7 0 0 0-.48 1.2q0 .517.387.833t1.05.316q.56 0 1.108-.25.363-.17.86-.347zm9.074-.373q0 .232.636.565.637.332 1.644.488 2.441.39 3.529 1.308t1.088 2.668q0 1.717-1.609 2.698-1.608.982-4.266.982-2.494 0-3.997-1.055-1.5-1.055-1.501-2.876 0-1.256.805-2.156.804-.9 1.878-1.013-.902-.435-.902-1.333 0-.973 1.198-1.616.286-.156.419-.054-.468-.018-1.028-.525-1.292-1.197-1.292-3.06 0-1.87 1.293-3.07 1.294-1.199 3.315-1.199.51 0 .96.076h4.727v2.342h-1.631q.534.568.552 2.107 0 1.602-1.308 2.82-1.14 1.048-2.871 1.168l-.772.048a1.6 1.6 0 0 0-.573.216q-.295.188-.295.47zm1.21-6.942q-.852 0-1.395.543t-.543 1.42q0 .882.54 1.416.542.536 1.398.536.853 0 1.396-.538.542-.537.542-1.414 0-.873-.547-1.421-.543-.542-1.391-.542m-3.03 11.733q0 .695.768 1.154.767.458 2.099.458 1.454 0 2.273-.387c.819-.387.819-.58.819-.962q0-.608-.558-1.034-.556-.428-1.665-.603l-.323-.05a10 10 0 0 0-.862-.09 3 3 0 0 0-.63.014q-.808.13-1.291.428-.63.391-.63 1.072m15.953-1.729q-2.776 0-4.539-1.762-1.761-1.763-1.762-4.514 0-2.745 1.527-4.522 1.528-1.778 3.946-1.778 2.627 0 4.057 1.662 1.428 1.66 1.429 4.639v.67h-8.026q.126 1.035.747 1.82 1.178 1.092 2.72 1.092 1.132 0 2.102-.399.97-.398 2.457-1.357v2.785q-1.218.921-2.289 1.292-1.07.372-2.37.372zm1.913-7.634a3.5 3.5 0 0 0-.624-1.511q-.676-.925-1.992-.925-1.167 0-1.921 1.004-.518.675-.694 1.432z"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+      &[alt="Wikinews"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="146" height="21" fill="none"><path fill="@{subtext1}" d="M5.044 20.535 0 .34 3.887.265l3.337 16.288L10.94.265h3.85l3.26 16.004L21.692.265h3.736l-5.442 20.213-3.982.076-3.413-15.53-3.64 15.473-3.906.038Zm24.289 0V.285h3.678v20.25zm9.5-.095V.284h3.602v9.348L49.394.284h4.474L46.74 9.196l7.736 11.244h-4.361l-5.802-9.158-1.858 2.389v6.769zm18.922 0V.284h3.603V20.44z"/><path fill="@{overlay2}" d="M140.179 0c-2.01 0-3.678.417-4.854 1.441-2.579 2.294-2.768 5.67-.531 8.077 1.479 1.593 3.697 2.067 5.65 2.901.967.418 1.859 1.309 1.878 2.409.019 1.061-.323 1.839-.986 2.332-.645.493-1.574.74-2.769.74-1.687-.02-3.375-.418-4.816-1.328l-.758 2.901c.986.588 1.289.664 2.332.91a14.4 14.4 0 0 0 3.318.38c1.043 0 1.991-.114 2.825-.342.854-.227 1.84-.588 2.427-1.08.607-.494 1.195-.968 1.517-1.764.323-.778.588-1.574.588-2.693s-.322-2.389-1.062-3.431c-1.611-2.333-6.333-2.883-7.508-4.57-.285-.398-.436-1.043-.436-1.498 0-.74.284-1.27.929-1.726.606-.417 1.327-.587 2.237-.587 1.1 0 1.422-.02 2.143.208s1.46.38 2.123.872l.835-2.995c-.702-.531-1.043-.645-2.029-.854-.91-.208-1.953-.303-3.053-.303m-35.59.284 5.063 20.194h3.83l3.887-15.776 3.185 15.776h4.039L129.997.284h-3.773l-3.489 16.269L119.436.284h-3.868L111.87 16.63 108.571.284zM67.236.417v20.08h3.394V5.138l8.286 15.359H83.2V.417h-3.11v14.79L71.388.417zm21.862 0v20.137H101.1v-2.996h-8.4v-5.916h7.756V8.627h-7.755V3.28h8.172V.417z"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+      &[alt="Wikiquote"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 77 40"><path fill="@{subtext0}" d="M1.2 35.727c-.165-.082-.189-.117-.153-.25.02-.086.137-.676.262-1.316.16-.836.215-1.25.195-1.48-.02-.196.039-.82.152-1.65.152-1.1.18-1.49.172-2.277-.008-.52.008-1.2.031-1.507a8 8 0 0 0-.027-1.305 27 27 0 0 1-.086-1.922c-.008-.648-.043-1.45-.082-1.785-.05-.45-.05-.703-.004-1.004.04-.238.05-.648.027-.996-.019-.324-.007-1.49.028-2.582.043-1.38.043-2.4 0-3.313-.102-2.32-.055-4.21.152-6 .164-1.42.328-1.79 1.14-2.64.849-.88 1.18-.965 1.688-.434.246.254.262.285.282.664a2.8 2.8 0 0 1-.098.871c-.067.262-.188.844-.27 1.293s-.18.875-.222.946c-.047.085-.082.527-.102 1.312-.015.652-.055 1.22-.086 1.273-.031.047-.062.328-.066.622-.008.598-.113 2.28-.164 2.703-.02.152-.051 1.08-.067 2.07s-.047 2-.074 2.238c-.062.586-.02 7.35.05 7.422.106.11.86-.64.958-.957.023-.07.164-.297.312-.5.344-.477.68-1.25 1.059-2.445.246-.785.344-1 .562-1.297.145-.195.29-.461.325-.594.03-.129.137-.39.234-.578.133-.25.188-.449.211-.77.031-.358.082-.511.316-.96.152-.293.324-.72.38-.95.054-.227.147-.496.206-.597s.11-.234.11-.297c.004-.473 1.04-2.5 1.496-2.95.133-.132.359-.37.5-.538.457-.543.69-.715 1.02-.762l.296-.04.04.36c.019.195.054.512.074.7.03.308.015.382-.149.714-.102.203-.383.95-.621 1.653-.238.707-.473 1.37-.52 1.464-.046.098-.129.484-.18.856-.05.375-.183 1.13-.296 1.687-.113.555-.31 1.68-.438 2.516-.129.828-.297 1.74-.379 2.027a3.6 3.6 0 0 0-.144 1.024c0 .578-.188 2.36-.32 2.98-.098.484-.113 1.22-.028 1.57.032.133.086.56.121.95s.086.934.11 1.21c.027.278.054.54.054.579.004.039.036.074.067.074.137 0 .289-.543.41-1.453.105-.797.156-1.01.328-1.387.16-.348.203-.52.207-.789 0-.309-.02-.355.281-.809l.282-.46-.063-.383c-.062-.371-.058-.406.113-.852.102-.258.215-.594.254-.746.055-.23.094-.281.2-.281.074 0 .21-.016.308-.035.238-.051.285.109.137.453a2.4 2.4 0 0 0-.152.5 1.6 1.6 0 0 1-.145.414 1.5 1.5 0 0 0-.14.441c-.024.145-.067.297-.102.336-.043.055-.031.125.039.246.094.16.094.195.004.559-.055.215-.148.547-.215.734-.227.664-.438 1.48-.367 1.762.062.246.004.43-.063.68-.07.266-.097.53-.058.707.058.242.008.348-.055.504a1.2 1.2 0 0 0-.094.386c0 .086-.054.355-.12.598-.142.516-.31.723-.696.863-.145.051-.457.18-.692.278-.465.199-.5.19-.57-.137a3 3 0 0 0-.18-.465c-.125-.277-.14-.371-.109-.684.031-.289.016-.422-.082-.668-.16-.418-.355-1.21-.355-1.445 0-.156-.047-.234-.207-.363l-.204-.168v-.809c0-.852.105-2.26.274-3.648.09-.746.113-.84.265-1.012.16-.188.16-.199.09-.484-.086-.336-.047-1.37.07-1.79.094-.335.075-.304.153-.152.04.067.082.184.082.274 0 .195.141.543.195.488.105-.109-.12-1.85-.25-1.738-.105.094-.172.219.004-.172.063-.137.047-.277-.008-.54-.039-.194-.093-.351-.117-.35s-.18.405-.347.902c-.164.496-.453 1.32-.641 1.82s-.492 1.39-.672 1.973a33 33 0 0 1-.805 2.183c-.53 1.25-.57 1.3-1.129 1.371-.465.059-.539.148-.703.832-.137.574-.137.598-.047 1.059.172.852.012 1.72-.398 2.148-.133.141-.168.215-.121.246.05.032.031.113-.074.297a1.1 1.1 0 0 0-.145.524c0 .367-.145.64-.476.91-.434.344-.801.422-1.149.25zm6.94-11.098c0-.074-.062-.152-.117-.21-.113-.126-.117-.06-.117.062 0 .137.125.27.188.28.054.009.047-.062.047-.132zm12.087.79c-.121-.103-.137-.165-.133-.52.004-.332.05-.531.273-1.122.145-.39.285-.836.309-.988.047-.328-.008-.69-.11-.691-.039 0-.242.176-.449.39-.496.512-1.32 1.16-1.722 1.352-.605.293-1.17.254-1.344-.086-.047-.094-.125-.43-.172-.746-.148-1.01-.367-1.12-1.188-.594-.28.176-.598.367-.707.422l-.195.102.133-.243c.074-.133.34-.473.594-.757.582-.66.832-1.04 1.082-1.641.109-.262.367-.828.57-1.258.488-1.02.832-1.36 1.644-1.64.266-.09.29-.09.356.004.109.152.098.215-.215 1.207-.48 1.53-.48 1.53-.508 2.718-.027.977-.015 1.12.078 1.301s.13.207.32.203c.192-.008.298-.082.891-.644.371-.352.777-.773.903-.942.137-.18.582-1.08 1.09-2.195.476-1.04 1.02-2.23 1.206-2.648a18 18 0 0 0 .52-1.274c.098-.28.44-1.19.766-2.008.742-1.89.87-2.04 1.773-2.128.3-.028.383-.02.41.054.047.13-1.8 4.71-2.312 5.719-.344.68-.398.895-.262 1.031.12.125.215.125.617.008.441-.133.844-.371 1.629-.969.887-.676 2.57-1.83 3.012-2.07.367-.199.688-.227.715-.063.011.047-.036.176-.102.282-.094.156-.273.273-.89.57-.88.422-1.86 1.04-3.462 2.176-1.34.949-1.39 1.02-1.359 1.734.023.531.152.91.578 1.668.473.84 1.09 1.33 1.91 1.5.328.07 1.5.047 1.746-.031.105-.035.133-.02.133.062 0 .067.067.008.184-.156.105-.145.355-.449.558-.676.488-.539.75-.945.997-1.535.105-.262.363-.828.57-1.258.488-1.02.832-1.36 1.644-1.64.266-.09.285-.09.356.004.109.152.098.215-.215 1.207-.48 1.53-.48 1.53-.512 2.719-.023.977-.011 1.12.082 1.3.094.188.13.207.328.203.18-.007.277-.058.496-.273.316-.305.59-.52.66-.52.11 0 .048.395-.097.606-.184.277-1.09.992-1.516 1.195-.605.293-1.17.254-1.343-.086-.047-.093-.125-.43-.172-.746-.148-1.01-.367-1.12-1.188-.594-1.19.754-1.77.996-2.898 1.192-.695.12-1.08.113-1.496-.027-.5-.172-.77-.363-1.54-1.098-.378-.355-.706-.656-.734-.664-.074-.028-.109.097-.183.648-.094.703-.602 2.25-.825 2.504-.19.22-.809.562-1.015.563a.5.5 0 0 1-.27-.114zm13.934-3.024c-22.8 11.7-11.4 5.87 0 0m-22.316 1.863c-.051-.137.258-1.51.394-1.742.094-.156.133-.348.156-.742.024-.457.055-.586.223-.914.109-.207.199-.434.2-.504 0-.07.034-.258.081-.418.141-.52.902-3.12 1.067-3.637.082-.277.27-.918.414-1.422.3-1.06.398-1.29.594-1.367.215-.086.289.031.132.203a.5.5 0 0 0-.129.367c0 .207-.406 1.38-.53 1.54-.028.034-.067.222-.09.413-.02.195-.146.617-.274.946a6.5 6.5 0 0 0-.313 1.043c-.043.25-.168.66-.28.91-.114.254-.208.535-.208.629 0 .285-.12.688-.238.797-.09.082-.11.184-.11.53 0 .368-.03.5-.207.888-.109.25-.203.539-.203.64 0 .102-.05.293-.117.418-.062.13-.117.273-.117.324 0 .156-.316 1.19-.367 1.188-.024 0-.059-.04-.078-.09m7.617-10.012c-.152-.102-.336-.453-.336-.648 0-.156.266-.57.45-.708.261-.195.733-.422.968-.468.199-.04.215-.028.25.129.023.093.145.28.273.414.301.316.273.453-.144.789-.617.5-1.16.684-1.461.492m13.496 0c-.152-.102-.336-.453-.336-.648 0-.156.266-.57.45-.708.261-.195.73-.422.968-.468.199-.04.215-.028.25.129.023.093.145.28.273.414.297.316.273.453-.144.789-.617.5-1.16.684-1.461.492m-17.922-1.082c0-.168.262-.969.629-1.926.477-1.25 1.13-3.3 1.09-3.418-.028-.074.199-.53.46-.933.055-.086.203-.465.329-.844.164-.484.395-.98.78-1.68.966-1.74 1.21-2.3 1.298-2.945.054-.395.16-.59.515-.961.254-.266.332-.312.516-.313.121 0 .289-.03.375-.07.25-.117.332.05.309.645-.02.449-.036.5-.2.68-.164.175-.176.214-.125.386.051.168.036.219-.148.473-.11.156-.223.363-.242.46a1 1 0 0 1-.207.356 3.4 3.4 0 0 0-.325.473c-.09.164-.28.46-.418.66-.14.199-.254.422-.253.492 0 .07-.156.352-.352.625a9 9 0 0 0-.547.902c-.113.223-.246.441-.297.485-.305.254-1.32 2.31-1.578 3.187a1.2 1.2 0 0 1-.203.325c-.09.105-.18.27-.203.367-.02.097-.066.297-.094.441a1 1 0 0 1-.168.383c-.062.066-.156.285-.203.48-.12.473-.477 1.25-.594 1.293-.129.047-.145.043-.144-.023m38.972 9.129c.188-.91.859-2.55 1.91-3.625 1.17-1.2 2.14-1.85 2.45-1.54.308.313.37.2.374 1.684 0 .816-.62 3.45-.62 3.454s1.32-1.26 1.757-1.844c1.08-1.43 1.82-2.21 2.883-4.426 1.86-3.86 2.67-6.24 2.672-6.238s-1.83.023-2.723.066c-.89.04-.96.211-1.008.035-.047-.168.434-.598.7-.98.266-.387.312-.73.52-.73.827-.142 1.77.19 2.522.171.75-.02.82-.074.82-.074s.747-2.05 1.009-2.05c.176 0 1.02-.509 1.023-.509l-.602 2.653s.391-.117 2.278.023l3.582-.246c.324-.023-.645.816-1.168 1.031-.742.172-.641.02-1.543.098-.453.043-.727.266-1.114.348s-2.04.093-2.386.144l-2.91 8.098c-1.19 3.63-1.1 3.84-1.301 5.062-.102.621-.055.941.3.942.254 0 2.55-2.48 3.008-2.996.95-1.56 1.92-3 3.496-3.86.297-.062.906-.312 1.278-.195.148.328.227 1 .11 1.492-.212.578-.989 1.62-3.056 3.094-.188.3-.05 1.1-.05 1.437 0 .348.359.504.921.309.281-.098.711-.211 1.075-.508.363-.3.434-.758.84-1.3.32-.134.402-.087.593.148-.344.438-.656.84-1.02 1.195-.362.36-.55.645-.886.902-.668.516-1.23.812-1.484.813-1.5-.254-2.02-1.39-1.758-2.867 0 0-1.06.883-2.2 2.43-.714.561-.952.831-1.41 1-.457.167-1.13.233-1.304.085-.172-1.82 2.18-7.38 1.469-7.773 0 0-2.09 2.75-2.88 3.496-.788.754-1.58 1.39-2.124 1.93-.473.906-1.89 2.26-2.227 2.258-1.37-.02-2.14-.773-1.848-2.332m15.262-4.325c-.434.082-1.09 1.64-.933 2.328.047.2 1.27-1.04 1.14-1.097.402-.332.113-1.46-.207-1.23zM53.59 22.988c-.488.531-1.95 1.43-2.425 1.457-.785-.18-.29-2.7-1.012-2.047-.797.715-1.34 1.79-2.59 1.91-.121 0-.387-.133-.656-.558-.316-.5-.551-2.46-.551-2.465s-1.41 1.39-1.914 1.867c-.645.613-1.32.871-1.316 1.364 0 .316.465.66.64 1.07.27.613.66 1.25.594 2.172-.098 1.32-.781 3.41-1.5 4.633-.637 1.07-1.61 2.21-1.89 2.214-.118 0-.317-.203-.446-.457-.301-.594-.227-1.81.082-4.207.125-.957.477-2.88.34-3.437-.141-.56-.805-.137-.957-.324.188-.477.73-.641.922-1.09-.184-.898-.238-2.15-.239-2.152s-.84.406-1.734 1.043c-1.65 1.12-1.12-1.77-1.027-2.711 0 0-1.66 1.43-2.711 2.601-.887.988-1.25 1.26-1.254.961 0-.512 2.98-3.87 5.25-6.05 1.36-1.3 2.14-2.52 2.945-2.755.72-.203 1.36-.23 1.68-.078.43.207-.031 1.3-.77 4.395-.289 1.11-.242 3.41-.242 3.555.48-.098 2.2-2.14 2.899-2.938.703-.797.398-.555.77-1.352.323-1.12.897-2.89 1.839-2.57 0 0-.82 4.89.23 5.813.496.074 1.34-.527 1.953-3.235 1.48-3.01 2.01-2.35 2.008-2.347s-.457 5.88-.011 5.875c.184 0 .414-.016.628-.094.273-.094.398-.473.532-.403zm-11.594 9.813c.754-1.21 1.51-2.8 1.512-5.125-.344-1.41-1.36-2.07-1.812-.985-.332.81-.61 4.13-.73 5.094-.458 2.62.37 2.08 1.03 1.016m15.555-12.867c-.277-.281-1.75-1.04-1.828.234-.168 2.55-.035 3.18.422 3.164 1.07.418 1.89-3.45 1.406-3.398M40.613 21.93c.082-.703 1.1-2.75 1.34-3.598.082-.3.195-.742-.129-.777-.723-.082-2.19 2.26-2.187 3.582 0 .434-.156 1.5.152 1.504.23 0 .512-.352.824-.711"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+      &[alt="Wikiversity"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="146" height="16"><path fill="@{subtext1}" d="M24.64.697h-3.798L17.425 8.65 13.818.697h-2.933L7.194 8.65 3.797.697H0l6.329 14.577h1.54l4.45-9.388 4.43 9.388h1.54zm5.252 0h-3.629v14.387h3.628V.697Zm15.32 0h-3.945l-4.578 6.518V.697h-3.607v14.387h3.607v-6.75l5.717 6.75h4.493l-6.37-7.637L45.21.697Zm6.681 0h-3.628v14.387h3.628zm16.776 0h-3.86L61.2 8.903 57.404.697H53.5l6.962 14.577h1.56L68.67.697Zm12.209 11.75h-6.983v-3.46h6.519v-2.7h-6.519v-2.91h6.835V.696H70.267v14.387h10.61v-2.637ZM83.616.697v14.387h3.629V9.22h.527c1.013 0 1.73 0 2.7 1.814.296.57 1.54 3.417 1.857 4.05h3.945l-.486-1.034c-.38-.822-.991-2.173-1.392-2.995-.317-.739-1.034-2.194-2.067-2.7.611-.296 2.468-1.14 2.468-3.544 0-1.71-1.118-2.89-1.878-3.397-1.16-.717-2.468-.717-3.776-.717zm5.443 2.616c.4 0 2.004 0 2.004 1.645 0 .59-.253 1.118-.78 1.393-.38.21-.612.21-1.54.253h-1.498V3.313zm18.515-1.688C105.275.634 103.84.507 102.701.507c-3.607 0-5.443 1.899-5.443 4.093 0 3.037 2.616 4.05 4.683 4.767 1.899.654 2.722.95 2.722 1.899 0 1.287-1.688 1.308-2.152 1.308-2.109 0-3.755-1.013-5-1.793v3.1c.36.254 2.658 1.393 5.084 1.393 2.152 0 5.633-.928 5.633-4.261 0-2.785-2.152-3.882-3.966-4.536-2.067-.738-3.481-1.244-3.481-2.11 0-.147.064-1.18 2.173-1.18 1.835 0 3.628.906 4.62 1.392zm6.509-.928h-3.628v14.387h3.628zm16.396 0H116.43v2.7h5.21v11.687h3.65V3.397h5.189zm15.521 0h-4.303l-3.165 4.514-3.164-4.514h-4.325l5.675 7.658v6.729h3.607v-6.73L146 .698Z"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+      &[alt="MediaWiki"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 18"><path fill="@{subtext1}" d="m17.732 17.827-.024-16.816h-2.476L8.913 12.157 2.479 1.011H0v16.816h2.87v-11L8.2 15.9h1.338l5.324-9.22.023 11.146h2.847Zm15.252-6.342a7.3 7.3 0 0 0-.8-3.471 5.77 5.77 0 0 0-2.222-2.33 6.3 6.3 0 0 0-3.229-.829 6.46 6.46 0 0 0-3.286.841 5.94 5.94 0 0 0-2.28 2.342 6.9 6.9 0 0 0-.822 3.375 6.8 6.8 0 0 0 .845 3.4 5.93 5.93 0 0 0 2.4 2.342 7.4 7.4 0 0 0 3.587.841 7.4 7.4 0 0 0 2.87-.529A5.2 5.2 0 0 0 32.15 15.9l-1.55-1.845a4.42 4.42 0 0 1-3.356 1.393 4.25 4.25 0 0 1-2.673-.829 3.5 3.5 0 0 1-1.331-2.246h9.7q.046-.576.046-.889Zm-6.249-4.228a3.37 3.37 0 0 1 2.361.865 3.6 3.6 0 0 1 1.134 2.258h-7.013a3.63 3.63 0 0 1 1.169-2.27 3.4 3.4 0 0 1 2.349-.853M44.51 0v6.584a4.5 4.5 0 0 0-1.736-1.3 5.7 5.7 0 0 0-2.245-.432 6.3 6.3 0 0 0-3.206.817 5.8 5.8 0 0 0-2.233 2.309 7.1 7.1 0 0 0-.81 3.435 7.14 7.14 0 0 0 .81 3.447 5.76 5.76 0 0 0 2.233 2.318 6.3 6.3 0 0 0 3.206.817 5.8 5.8 0 0 0 2.326-.456 4.5 4.5 0 0 0 1.77-1.369v1.657H47.4V0zm-3.634 15.424A3.6 3.6 0 0 1 39 14.932a3.5 3.5 0 0 1-1.319-1.405 4.4 4.4 0 0 1-.486-2.114 4.4 4.4 0 0 1 .487-2.113A3.5 3.5 0 0 1 39 7.894a3.82 3.82 0 0 1 3.749 0A3.5 3.5 0 0 1 44.07 9.3a4.4 4.4 0 0 1 .486 2.114 4.4 4.4 0 0 1-.486 2.114 3.5 3.5 0 0 1-1.319 1.405 3.6 3.6 0 0 1-1.875.492Zm9.86 2.4h2.893V5h-2.894v12.827ZM61.682 4.855a10 10 0 0 0-2.893.408 6.9 6.9 0 0 0-2.337 1.177l1.134 2.186a5 5 0 0 1 1.7-.937 6.4 6.4 0 0 1 2.048-.336 3.27 3.27 0 0 1 2.3.721 2.68 2.68 0 0 1 .775 2.066v.192H61.22a5.98 5.98 0 0 0-3.9 1.045 3.45 3.45 0 0 0-1.238 2.774 3.57 3.57 0 0 0 .567 1.982 3.8 3.8 0 0 0 1.608 1.367 5.6 5.6 0 0 0 2.43.492 5.7 5.7 0 0 0 2.372-.444 3.4 3.4 0 0 0 1.516-1.285v1.561h2.731v-7.516a5.36 5.36 0 0 0-1.447-4.1 5.9 5.9 0 0 0-4.178-1.357Zm-.393 10.954a2.8 2.8 0 0 1-1.736-.48 1.55 1.55 0 0 1-.625-1.3q0-1.705 2.5-1.706h2.986v1.489a2.8 2.8 0 0 1-1.192 1.477 3.63 3.63 0 0 1-1.933.516Zm30.343-14.8-4.143 12.854-4.1-12.852h-2.774l-4.189 12.78L72.4 1.011h-3.126l5.37 16.815h3.216l4.074-12.443 4 12.443h3.194L94.5 1.011h-2.87Zm4.7 16.815h2.893V5H96.33v12.827Zm15.553 0h3.515l-5.647-7.447L114.915 5h-3.472l-5.994 5.765V0h-2.893v17.827h2.893V14.44l2.152-2.114Zm4.814 0h2.893V5H116.7v12.827ZM52.194 3.294a1.86 1.86 0 0 0 1.33-.494 1.6 1.6 0 0 0 .521-1.212 1.41 1.41 0 0 0-.532-1.122 1.98 1.98 0 0 0-1.319-.448 1.92 1.92 0 0 0-1.319.47 1.5 1.5 0 0 0-.532 1.168 1.5 1.5 0 0 0 .532 1.168 1.92 1.92 0 0 0 1.319.47m45.595 0a1.86 1.86 0 0 0 1.33-.494 1.6 1.6 0 0 0 .521-1.21 1.41 1.41 0 0 0-.533-1.124 1.98 1.98 0 0 0-1.319-.448 1.92 1.92 0 0 0-1.319.47 1.5 1.5 0 0 0-.532 1.168 1.5 1.5 0 0 0 .532 1.168 1.92 1.92 0 0 0 1.319.47Zm20.367 0a1.86 1.86 0 0 0 1.331-.491 1.6 1.6 0 0 0 .521-1.212 1.41 1.41 0 0 0-.533-1.125 1.98 1.98 0 0 0-1.319-.448 1.92 1.92 0 0 0-1.319.47 1.5 1.5 0 0 0-.533 1.168 1.5 1.5 0 0 0 .533 1.168 1.92 1.92 0 0 0 1.319.47"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+    }
+
+    .vector-page-titlebar
+      .mw-portlet-lang
+      .vector-dropdown-label.cdx-button--action-progressive.cdx-button--weight-quiet::after {
+        '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><path fill="@{accent}" d="m11.05 3.996-.965-1.053-4.035 3.86-3.947-3.86L1.05 3.996l5 5z"/></svg>'
+      );
+      background-image: url("data:image/svg+xml,@{svg}") !important;
+      filter: none;
+    }
+
+    .vector-icon {
+      filter: none !important;
+
+      &.mw-ui-icon-wikimedia-menu {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M1 3v2h18V3zm0 8h18V9H1zm0 6h18v-2H1z" fill="@{text}"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-ellipsis {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><g fill="@{text}"><circle cx="10" cy="10" r="2"/><circle cx="3" cy="10" r="2"/><circle cx="17" cy="10" r="2"/></g></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-appearance {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.25 14.5a4.25 4.25 0 0 0 4.247-4.092c.3-.21.706-.21 1.006 0a4.25 4.25 0 0 0 8.431.59L19 11a1 1 0 1 0-.182-1.984 4.252 4.252 0 0 0-7.896-.615 2.9 2.9 0 0 0-1.844 0 4.25 4.25 0 0 0-7.896.615 1 1 0 1 0-.116 1.981A4.25 4.25 0 0 0 5.25 14.5m0-2a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5M17 10.25a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0" fill="@{text}"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-expand {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><path fill="@{text}" d="m11.05 3.996-.965-1.053-4.035 3.86-3.947-3.86L1.05 3.996l5 5z"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}") !important;
+      }
+
+      &.mw-ui-icon-wikimedia-language-progressive {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M20 18h-1.44a.6.6 0 0 1-.4-.12.8.8 0 0 1-.23-.31L17 15h-5l-1 2.54a.8.8 0 0 1-.22.3.6.6 0 0 1-.4.14H9l4.55-11.47h1.89zm-3.53-4.31L14.89 9.5a12 12 0 0 1-.39-1.24q-.09.37-.19.69l-.19.56-1.58 4.19zm-6.3-1.58a13.4 13.4 0 0 1-2.91-1.41 11.46 11.46 0 0 0 2.81-5.37H12V4H7.31a4 4 0 0 0-.2-.56C6.87 2.79 6.6 2 6.6 2l-1.47.5s.4.89.6 1.5H0v1.33h2.15A11.23 11.23 0 0 0 5 10.7a17.2 17.2 0 0 1-5 2.1q.56.82.87 1.38a23.3 23.3 0 0 0 5.22-2.51 15.6 15.6 0 0 0 3.56 1.77zM3.63 5.33h4.91a8.1 8.1 0 0 1-2.45 4.45 9.1 9.1 0 0 1-2.46-4.45" fill="@{accent}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}") !important;
+      }
+
+      &.mw-ui-icon-wikimedia-language {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M20 18h-1.44a.6.6 0 0 1-.4-.12.8.8 0 0 1-.23-.31L17 15h-5l-1 2.54a.8.8 0 0 1-.22.3.6.6 0 0 1-.4.14H9l4.55-11.47h1.89zm-3.53-4.31L14.89 9.5a12 12 0 0 1-.39-1.24q-.09.37-.19.69l-.19.56-1.58 4.19zm-6.3-1.58a13.4 13.4 0 0 1-2.91-1.41 11.46 11.46 0 0 0 2.81-5.37H12V4H7.31a4 4 0 0 0-.2-.56C6.87 2.79 6.6 2 6.6 2l-1.47.5s.4.89.6 1.5H0v1.33h2.15A11.23 11.23 0 0 0 5 10.7a17.2 17.2 0 0 1-5 2.1q.56.82.87 1.38a23.3 23.3 0 0 0 5.22-2.51 15.6 15.6 0 0 0 3.56 1.77zM3.63 5.33h4.91a8.1 8.1 0 0 1-2.45 4.45 9.1 9.1 0 0 1-2.46-4.45" fill="@{text}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}") !important;
+      }
+
+      &.mw-ui-icon-wikimedia-listBullet {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="@{text}"><path d="M7 15h12v2H7zm0-6h12v2H7zm0-6h12v2H7z"/><circle cx="3" cy="4" r="2"/><circle cx="3" cy="10" r="2"/><circle cx="3" cy="16" r="2"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}") !important;
+      }
+
+      &.mw-ui-icon-wikimedia-fullScreen {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M1 1v6h2V3h4V1zm2 12H1v6h6v-2H3zm14 4h-4v2h6v-6h-2zm0-16h-4v2h4v4h2V1z" fill="@{text}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-userAvatar {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><g fill="@{text}"><path d="M10 11c-5.92 0-8 3-8 5v3h16v-3c0-2-2.08-5-8-5"/><circle cx="10" cy="5.5" r="4.5"/></g></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-watchlist {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M1 3h16v2H1Zm0 6h6v2H1Zm0 6h8v2H1Zm8-4.24h3.85L14.5 7l1.65 3.76H20l-3 3.17.9 4.05-3.4-2.14L11.1 18l.9-4.05Z" fill="@{text}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-tray {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M3 1a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm14 12h-4l-1 2H8l-1-2H3V3h14z" fill="@{text}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-bell {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M16 7a5.38 5.38 0 0 0-4.46-4.85C11.6 1.46 11.53 0 10 0S8.4 1.46 8.46 2.15A5.38 5.38 0 0 0 4 7v6l-2 2v1h16v-1l-2-2zm-6 13a3 3 0 0 0 3-3H7a3 3 0 0 0 3 3" fill="@{text}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-star {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M20 7h-7L10 .5 7 7H0l5.46 5.47-1.64 7 6.18-3.7 6.18 3.73-1.63-7zm-10 6.9-3.76 2.27 1-4.28L3.5 8.5h4.61L10 4.6l1.9 3.9h4.6l-3.73 3.4 1 4.28z" fill="@{text}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-userTalk {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M18 0H2a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2m-4 4a1.5 1.5 0 1 1-1.5 1.5A1.5 1.5 0 0 1 14 4M6 4a1.5 1.5 0 1 1-1.5 1.5A1.5 1.5 0 0 1 6 4m4 8c-2.61 0-4.83-.67-5.65-3h11.3c-.82 2.33-3.04 3-5.65 3" fill="@{text}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-sandbox {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M8 12V9l6-6 3 3-6 6zm10-7-3-3 2-2 3 3zM8 2h2v2H8zM4 2h2v2H4zM0 3a1 1 0 0 1 1-1h1v2H0zm0 3h2v2H0zm0 4h2v2H0zm0 4h2v2H0zm0 4h2v2H1a1 1 0 0 1-1-1zm4 0h2v2H4zm4 0h2v2H8zm4 0h2v1a1 1 0 0 1-1 1h-1zm0-4h2v2h-2z" fill="@{text}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-settings {
+          '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="20" height="20" viewBox="0 0 20 20"><g fill="@{text}"><g xmlns:xlink="http://www.w3.org/1999/xlink" transform="translate(10 10)"><path id="a" d="M1.5-10h-3l-1 6.5h5m0 7h-5l1 6.5h3"/><use xlink:href="#a" transform="rotate(45)"/><use xlink:href="#a" transform="rotate(90)"/><use xlink:href="#a" transform="rotate(135)"/></g><path d="M10 2.5a7.5 7.5 0 0 0 0 15 7.5 7.5 0 0 0 0-15v4a3.5 3.5 0 0 1 0 7 3.5 3.5 0 0 1 0-7"/></g></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-unStar {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M20 7h-7L10 .5 7 7H0l5.46 5.47-1.64 7 6.18-3.7 6.18 3.73-1.63-7z" fill="@{text}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-labFlask {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M13 7.61V3h1V1H6v2h1v4.61l-5.86 9.88A1 1 0 0 0 2 19h16a1 1 0 0 0 .86-1.51zm-4.2.88a1 1 0 0 0 .2-.6V3h2v4.89a1 1 0 0 0 .14.51l2.14 3.6H6.72z" fill="@{text}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-userContributions {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><g fill="@{text}"><circle cx="15.5" cy="10.5" r="2.5"/><path d="M1 15h8v2H1Zm0-6h10v2H1Zm0-6h16v2H1Zm14.5 10.6c-3.3 0-4.5 1.6-4.5 2.7V18h9v-1.7c0-1-1.2-2.7-4.5-2.7"/></g></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-logOut {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><g fill="@{text}"><path d="M3 3h8V1H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8v-2H3z"/><path d="M13 5v4H5v2h8v4l6-5z"/></g></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-search {
+          '<svg fill="@{text}" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M12.2 13.6a7 7 0 1 1 1.4-1.4l5.4 5.4-1.4 1.4zM13 8A5 5 0 1 1 3 8a5 5 0 0 1 10 0"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-edit {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="m16.77 8 1.94-2a1 1 0 0 0 0-1.41l-3.34-3.3a1 1 0 0 0-1.41 0L12 3.23zM1 14.25V19h4.75l9.96-9.96-4.75-4.75z" fill="@{text}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-history {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><g fill="@{text}"><path d="M9 6v5h.06l2.48 2.47 1.41-1.41L11 10.11V6z"/><path d="M10 1a9 9 0 0 0-7.85 13.35L.5 16H6v-5.5l-2.38 2.38A7 7 0 1 1 10 17v2a9 9 0 0 0 0-18"/></g></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-speechBubbles {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><g fill="@{text}"><path d="M17 4v7a2 2 0 0 1-2 2H4v1a2 2 0 0 0 2 2h10l4 4V6a2 2 0 0 0-2-2zM6 10H0v6z"/><rect width="16" height="12" rx="2"/></g></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+
+      &.mw-ui-icon-wikimedia-editLock {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M12 12a2 2 0 0 1-2-2V5.25l-9 9V19h4.75l7-7zm7-8h-.5V2.5a2.5 2.5 0 0 0-5 0V4H13a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1m-3 4a1 1 0 1 1 1-1 1 1 0 0 1-1 1m1.5-4h-3V2.75C14.5 2 14.5 1 16 1s1.5 1 1.5 1.75z" fill="@{text}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+      }
+    }
+  }
+
+  /* Root */
+  :root:has(.central-featured) {
+
+    &, body {
+      color: var(--on_surface);
+      background-color: var(--surface_container_lowest);
+
+      .svg-Wikipedia_wordmark {
+        filter: var(--on_surface)-filter;
+      }
+
+      .central-featured-lang small,
+      .other-project-tagline,
+      .site-license,
+      .footer-sidebar-text {
+        color: var(--on_surface);
+      }
+
+      .central-featured-lang :hover {
+        background-color: var(--surface_container);
+      }
+
+      .other-project-link:hover {
+        background-color: var(--surface_container);
+      }
+
+      .search-container {
+        #searchInput {
+          color: var(--on_surface);
+          background-color: var(--surface);
+          border-color: var(--outline_variant);
+          box-shadow: none;
+
+          &:focus {
+            border-color: var(--primary);
+          }
+        }
+
+        .js-langpicker-label {
+          color: var(--on_surface_variant);
+        }
+        .styled-select:hover {
+          background-color: var(--surface_container);
+        }
+        .sprite.svg-arrow-down {
+          filter: var(--on_surface)-filter;
+        }
+
+        button[type="submit"] {
+          background-color: var(--primary);
+          border-color: var(--primary);
+
+          .svg-search-icon {
+            filter: var(--surface)-filter;
+          }
+        }
+
+        .suggestions-dropdown {
+          background-color: var(--surface);
+          border-color: var(--outline_variant);
+
+          .suggestion-link {
+            border-bottom-color: var(--outline);
+
+            &.active {
+              background-color: fade(var(--primary), 10%);
+            }
+
+            .suggestion-thumbnail {
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><path fill="@{surface1}" d="M0 0h56v56H0z"/><path fill="@{overlay2}" d="M36.4 13.5H17.8v24.9c0 1.4.9 2.3 2.3 2.3h18.7v-25c.1-1.4-1-2.2-2.4-2.2M30.2 17h5.1v6.4h-5.1zm-8.8 0h6v1.8h-6zm0 4.6h6v1.8h-6zm0 15.5v-1.8h13.8v1.8zm13.8-4.5H21.4v-1.8h13.8zm0-4.7H21.4v-1.8h13.8z"/></svg>',
+              );
+              background-image: url("data:image/svg+xml,@{svg}");
+            }
+
+            .suggestion-title {
+              color: var(--on_surface);
+            }
+          }
+        }
+      }
+
+      hr {
+        border-bottom-color: var(--surface_container);
+      }
+
+      .lang-list-border {
+        background-color: var(--surface_container_high);
+      }
+      .lang-list-button {
+        background-color: var(--surface);
+        color: var(--primary);
+        outline-color: var(--surface);
+        border-color: var(--surface_container_high);
+
+        .svg-language-icon,
+        .svg-arrow-down-blue {
+          filter: var(--primary)-filter;
+        }
+
+        &:focus {
+          box-shadow: inset 0 0 0 1px var(--primary);
+        }
+      }
+      .lang-list-container {
+        background-color: var(--surface_container_low);
+
+        .bookshelf {
+          border-top-color: var(--outline_variant);
+          box-shadow: none;
+
+          .text {
+            color: var(--on_surface);
+            background-color: var(--surface_container_high);
+          }
+        }
+      }
+    }
+  }
+}

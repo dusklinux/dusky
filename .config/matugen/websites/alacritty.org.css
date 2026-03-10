@@ -1,0 +1,78 @@
+/* ==UserStyle==
+@name alacritty.org Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/alacritty.org
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/alacritty.org
+@version 2025.11.07
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/alacritty.org/catppuccin.user.less
+@description Soothing pastel theme for alacritty.org
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("alacritty.org") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+:root {
+}
+
+    body {
+      color: var(--on_surface) !important;
+      background-color: var(--surface_container_lowest) !important;
+    }
+    a {
+      color: var(--primary) !important;
+    }
+    header {
+      background-color: var(--surface) !important;
+      border-bottom-color: var(--surface_container_low) !important;
+      nav > a {
+        color: var(--on_surface) !important;
+      }
+    }
+    em {
+      color: var(--tertiary) !important;
+    }
+    strong, strong > a {
+      color: var(--primary) !important;
+    }
+    #pick-version select {
+      color: var(--on_surface) !important;
+      background-color: var(--surface_container_low);
+      border-color: var(--outline);
+    }
+    h1 {
+      color: var(--primary) !important;
+    }
+    a:not([name]) {
+      text-shadow: none !important;
+    }
+    code {
+      background-color: var(--surface_container_low);
+    }
+    video {
+      background-color: var(--outline) !important;
+    }
+    img:not(img#logo-img) {
+      border-color: var(--outline) !important;
+    }
+    img#logo-img {
+      border-color: var(--surface) !important;
+    }
+    kbd {
+      background-color: var(--surface_container) !important;
+      border-color: var(--outline) !important;
+    }
+  }
+}

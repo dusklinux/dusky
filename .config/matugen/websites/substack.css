@@ -1,0 +1,253 @@
+/* ==UserStyle==
+@name Substack Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/substack
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/substack
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/substack/catppuccin.user.less
+@description Soothing pastel theme for Substack
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("substack.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    color: var(--on_surface);
+    background-color: var(--surface_container_lowest) !important;
+
+    &,
+    .dark-theme,
+    [class*="_pubTheme_"] {
+      --color-bg-primary: var(--surface_container_lowest);
+      --color-bg-primary-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+      --color-bg-primary-raw: #lib.rgbify(var(--surface_container_lowest))[];
+      --color-bg-primary-hover: var(--surface_container_low);
+      --color-bg-secondary: var(--surface_container_low);
+      --color-bg-tertiary: var(--surface_container);
+      --color-bg-elevated-primary: var(--surface);
+      --color-bg-elevated-secondary: var(--surface);
+      --color-fg-primary: var(--on_surface);
+      --color-fg-secondary: var(--on_surface);
+      --color-fg-tertiary: var(--on_surface_variant);
+      --color-utility-detail: var(--surface_container);
+      --color-utility-white: var(--on_surface);
+      --color-detail-themed: var(--surface_container);
+      --color-accent-themed: var(--primary);
+
+      --color-accent-fg-red: var(--error);
+      --color-accent-bg-red: fade(var(--error), 20%);
+      --color-semantic-error-bg-primary: var(--error);
+      --color-semantic-error-utility-contrast: var(--surface);
+
+      --color-accent-fg-orange: var(--primary);
+      --color-accent-bg-orange: fade(var(--primary), 20%);
+
+      --color-accent-fg-green: var(--tertiary);
+      --color-accent-bg-green: fade(var(--tertiary), 20%);
+
+      --color-accent-fg-cyan: var(--primary);
+      --color-accent-bg-cyan: fade(var(--primary), 20%);
+
+      /* Buttons */
+      --color-button-primary-bg: var(--primary);
+      --color-button-primary-bg-hover: darken(var(--primary), 5%);
+      --color-button-primary-fg: var(--surface);
+
+      --color-button-secondary-bg: var(--surface_container_low);
+      --color-button-secondary-bg-hover: var(--surface_container);
+      --color-button-secondary-fg: var(--on_surface);
+
+      --color-button-tertiary-bg-hover: var(--surface_container);
+      --color-button-tertiary-fg: var(--on_surface);
+
+      --color-button-mono-bg: var(--on_surface);
+      --color-button-mono-bg-hover: var(--on_surface);
+      --color-button-mono-fg: var(--surface);
+
+      --color-button-disabled-fg: var(--on_surface_variant);
+
+      /* Tooltips & Toasts */
+      --color-bg-tooltip: var(--surface);
+      --material-thick: var(--surface);
+
+      --print_pop: var(--primary);
+      --print_secondary: var(--on_surface);
+      --background_pop: var(--primary);
+      --print_on_pop: var(--surface);
+      --color_theme_bg_pop: var(--primary);
+      --color_theme_bg_pop_darken: darken(var(--primary), 5%);
+      --color_theme_print_on_pop: var(--surface);
+      --border_subtle: var(--surface_container);
+      --background_contrast_1: var(--surface);
+      --background_contrast_2: var(--surface_container_high);
+      --color_theme_bg_contrast_1: var(--surface_container);
+      --color_theme_bg_contrast_2: var(--outline);
+      --color_theme_bg_contrast_4: var(--on_surface_variant);
+
+      --color-chat-other-fg-secondary: var(--on_surface);
+
+      --color-semantic-select-fg-primary: var(--primary);
+      --color-semantic-select-utility-detail: fade(var(--primary), 20%);
+      --color-semantic-highlight-fg-primary: var(--primary);
+
+      /* Weird variables issue fixes */
+      --color-light-bg-primary: var(--surface); /* Was text, changing to mantle for (select text) -> Share -> Download button color. Might break things */
+      --color-light-bg-secondary: var(--surface_container_low); /* substack.com homepage sections */
+      --color-dark-bg-primary: var(--surface);
+      --color-dark-bg-secondary: var(--surface_container_lowest);
+      --color-dark-bg-tertiary: var(--surface_container_low);
+
+      /* Publications with different variables */
+      --color-primary-themed: var(--on_surface);
+      --color-secondary-themed: var(--on_surface);
+
+      --color-bg-secondary-themed: var(--surface_container_low);
+
+      --web_bg_color: var(--surface);
+      --print_on_web_bg_color: var(--on_surface);
+      --print_secondary_on_web_bg_color: var(--on_surface);
+
+      /* Share button */
+      --material-dark-regular: var(--surface);
+      /* Copy (heading link) to clipboard notification */
+      --material-dark-thick: var(--surface);
+      /* Button hover, faded to 0.1 */
+      --color-primitive-white-rgb: #lib.rgbify(var(--on_surface))[];
+
+      /* Various full screen modals for singing up, subscribing etc */
+      --cover_print_primary: var(--on_surface);
+      --cover_print_secondary: var(--on_surface);
+      --cover_print_tertiary: var(--on_surface_variant);
+      --cover_bg_color: var(--surface_container_lowest);
+      --cover_input_background: var(--surface);
+    }
+
+    /* Substack logos */
+    [fill="#ff6719" i] {
+      fill: var(--primary) !important;
+    }
+    /* Inverted logo colors */
+    [fill="#FFFFFF" i] {
+      fill: var(--surface) !important;
+    }
+
+    /* Footer */
+    .footer-wrap {
+      &,
+      .footer {
+        background-color: var(--surface);
+      }
+
+      .home-footer {
+        &,
+        a,
+        .footer-info .footer-info-col h3 {
+          color: var(--on_surface);
+        }
+      }
+    }
+    .subscribe-footer .button.primary {
+      border-color: var(--surface);
+    }
+
+    /* Signup, onboarding, and profile */
+
+    .homepage-nav .homepage-nav-bar .homepage-nav-wrap.grey {
+      background-color: var(--surface_container_lowest);
+    }
+    .signup-page {
+      background-color: var(--surface_container_lowest);
+
+      .signup-box-wrap .error {
+        color: var(--error);
+      }
+    }
+
+    .onboarding-profile-page {
+      .accept-tos * {
+        color: var(--on_surface);
+      }
+
+      .skip-button {
+        color: var(--on_surface);
+      }
+    }
+
+    .profile-page .set-up-profile-button {
+      color: var(--surface);
+    }
+    .edit-profile-page .publication-section .all-toggle {
+      color: var(--on_surface);
+    }
+
+    /* Misc inputs */
+    button[role="switch"],
+    input[type="radio"] + span {
+      --color-utility-white: var(--surface_container_low);
+    }
+
+    input[type="text"],
+    input[type="date"],
+    select {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    .themed-select > div {
+      background-color: var(--surface);
+      border-color: var(--surface_container_low);
+
+      * {
+        color: var(--on_surface);
+      }
+    }
+
+    [aria-label="File Picker"] {
+      background-color: var(--surface_container_lowest);
+    }
+
+    /* Dashboard */
+
+    /* Icons */
+    [stroke="#888888"],
+    [stroke="#555555"] {
+      stroke: var(--on_surface) !important;
+    }
+
+    /* Import posts */
+    .signup-page > .container .signup-box {
+      background-color: var(--surface_container_lowest);
+    }
+
+    /* Stats */
+    .subscriber-stats-page {
+      .heading .options .header-option .header-button {
+        background-color: var(--surface_container_low);
+      }
+
+      table {
+        td,
+        th {
+          background-color: var(--surface_container_lowest);
+        }
+      }
+    }
+
+    /* Editor */
+    .tw-bg-pub-accent {
+      background-color: var(--primary) !important;
+    }
+  }
+}

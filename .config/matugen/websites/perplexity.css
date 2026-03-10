@@ -1,0 +1,446 @@
+/* ==UserStyle==
+@name Perplexity Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/perplexity
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/perplexity
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/perplexity/catppuccin.user.less
+@description Soothing pastel theme for Perplexity
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("perplexity.ai") {
+  :root:not([data-color-scheme="dark"]) {
+  }
+  :root,
+  :root:not([data-color-scheme="light"]) {
+  }
+
+
+    ::selection {
+      background-color: fade(var(--primary), 30%)
+        !important; // TODO:  Has !important unlike the defaults. Add !important to defaults?
+      color: var(--on_surface)
+        !important; // TODO: Another case of setting the text color in the selection.
+    }
+
+:root {
+}
+
+    body {
+      background-color: var(--surface) !important;
+    }
+    .bg-\[red\] {
+      background-color: var(--error) !important;
+    }
+
+    .bg-alert {
+      background-color: var(--secondary_container) !important;
+    }
+    .bg-text-100 {
+      background-color: var(--on_surface) !important;
+    }
+
+    .bg-backdrop-lightbox\/95 {
+      background-color: var(--surface) !important;
+    }
+
+    .bg-backdrop\/70 {
+      background-color: var(--surface) !important;
+    }
+
+    .bg-background, .bg-background-50 {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .bg-background-100 {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .bg-background-300, .bg-background-200 {
+      background-color: var(--surface) !important;
+    }
+
+    .bg-background-super-alt {
+      background-color: var(--primary) !important;
+    }
+
+    .bg-backgroundDark {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .bg-black,
+    .bg-black\/30,
+    .bg-black\/40,
+    .bg-black\/50,
+    .bg-black\/60,
+    .bg-black\/80 {
+      background-color: var(--surface) !important;
+    }
+
+    .bg-borderMain {
+      background-color: var(--surface_container) !important;
+    }
+
+    .bg-idle,
+    .bg-idle\/70 {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .bg-offset,
+    .bg-offsetDark,
+    .bg-offset\/50 {
+      background-color: var(--surface) !important;
+    }
+
+    .bg-offsetPlus {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .bg-offsetPlusDark,
+    .dark\:\!bg-offsetPlusDark:where(
+      [data-color-scheme="dark"] .dark\:\!bg-offsetPlusDark,
+      [data-color-scheme="dark"] .dark\:\!bg-offsetPlusDark *
+    ) {
+      background-color: var(--surface) !important;
+    }
+
+    .bg-super,
+    .bg-superAlt,
+    .bg-superBG,
+    .bg-superBGDark,
+    .bg-superDark,
+    .bg-superDark\/100,
+    .bg-super\/100 {
+      background-color: var(--primary) !important;
+    }
+    .bg-super\/10,
+    .bg-superDark\/10 {
+      background-color: fade(var(--primary), 10%) !important;
+    }
+
+    .bg-textMain {
+      background-color: var(--surface) !important;
+    }
+
+    .bg-textMainDark,
+    .bg-textMain\/10 {
+      background-color: var(--on_surface) !important;
+    }
+
+    .bg-textOff {
+      background-color: var(--on_surface) !important;
+    }
+
+    .bg-textOffDark,
+    .bg-textOff\/50 {
+      background-color: var(--on_surface_variant) !important;
+    }
+
+    .bg-white,
+    .bg-white\/30,
+    .bg-white\/50,
+    .bg-white\/80 {
+      background-color: var(--on_surface) !important;
+    }
+
+    .text-background {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .text-black {
+      color: var(--surface) !important;
+    }
+
+    .text-offset {
+      color: var(--surface) !important;
+    }
+
+    .text-orange-400 {
+      color: var(--secondary_container) !important;
+    }
+
+    .text-super,
+    .text-superAlt,
+    .text-superDark,
+    .text-superDuper {
+      color: var(--primary) !important;
+    }
+
+    .text-textMain {
+      color: var(--on_surface) !important;
+    }
+
+    .text-textMainDark,
+    .text-textOff {
+      color: var(--on_surface) !important;
+    }
+
+    .text-textOff\/50 {
+      color: var(--on_surface_variant) !important;
+    }
+
+    .text-textOffDark {
+      color: var(--on_surface) !important;
+    }
+
+    .text-textOffDark\/50 {
+      color: var(--on_surface_variant) !important;
+    }
+
+    .text-white {
+      color: var(--surface) !important;
+    }
+
+    .text-default {
+      color: var(--on_surface) !important;
+    }
+
+    .text-zinc-700 {
+      color: var(--on_surface) !important;
+    }
+
+    .stroke-background {
+      stroke: var(--surface_container_low) !important;
+    }
+
+    .stroke-super,
+    .stroke-superAlt,
+    .stroke-superDark {
+      stroke: var(--primary) !important;
+    }
+
+    .stroke-textMain {
+      stroke: var(--on_surface) !important;
+    }
+
+    .stroke-textMainDark,
+    .stroke-textOff {
+      stroke: var(--on_surface) !important;
+    }
+
+    .stroke-textOffDark {
+      stroke: var(--on_surface_variant) !important;
+    }
+
+    .fill-backgroundDark {
+      fill: var(--surface_container_lowest) !important;
+    }
+
+    .fill-super,
+    .fill-superAlt,
+    .fill-superDark {
+      fill: var(--primary) !important;
+    }
+
+    .fill-textMain,
+    .fill-textMainDark {
+      fill: var(--on_surface) !important;
+    }
+
+    .fill-textOff,
+    .fill-textOffDark {
+      fill: var(--on_surface) !important;
+    }
+
+    .border-\[black\]\/10 {
+      border-color: fade(var(--surface), 10%) !important;
+    }
+
+    .border-background,
+    .border-black\/10,
+    .border-black\/5 {
+      border-color: var(--surface) !important;
+    }
+    .dark\:border-borderMainDark:where(
+      [data-color-scheme="dark"] .dark\:border-borderMainDark,
+      [data-color-scheme="dark"] .dark\:border-borderMainDark *
+    ),
+    .border-borderMain {
+      border-color: var(--surface_container) !important;
+    }
+
+    .border-borderMain\/10,
+    .border-borderMain\/50,
+    .border-borderMain\/75 {
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .border-borderMainDark {
+      border-color: var(--surface_container_lowest) !important;
+    }
+
+    .border-offsetPlus {
+      border-color: var(--surface) !important;
+    }
+
+    .border-super,
+    .border-super\/10,
+    .border-super\/100 {
+      border-color: var(--primary) !important;
+    }
+
+    .border-textMain\/0 {
+      border-color: transparent !important;
+    }
+
+    .border-textMainDark {
+      border-color: var(--surface) !important;
+    }
+
+    .border-textOff\/50 {
+      border-color: var(--on_surface_variant) !important;
+    }
+
+    .border-b-offset {
+      border-bottom-color: var(--on_surface_variant) !important;
+    }
+    .group:hover [class*="group-hover:text-superDark"] {
+      color: var(--primary) !important;
+    }
+
+    [class*="hover:!bg-superAlt/20"]:hover {
+      background-color: var(--primary) !important;
+    }
+
+    [class*="data-[focused=self]:bg-background-200"]:focus,
+    [class*="hover:bg-background-200"]:hover {
+      background-color: var(--surface) !important;
+    }
+
+    [class*=":hover:bg-offset"]:hover, [class*="hover:bg-offset"]:hover {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    [class*="hover:bg-offsetPlus"]:hover {
+      background-color: var(--surface_container) !important;
+    }
+
+    [class*="hover:bg-super"]:hover {
+      background-color: var(--primary) !important;
+    }
+
+    [class*="hover:text-super"]:hover,
+    [class*="hover:text-superAlt"]:hover {
+      color: var(--primary) !important;
+    }
+
+    [class*="hover:text-textMain"]:hover {
+      color: var(--on_surface) !important;
+    }
+
+    [class*="hover:text-textOff"]:hover {
+      color: var(--on_surface_variant) !important;
+    }
+
+    [class*="hover:text-white"]:hover {
+      color: var(--on_surface) !important;
+    }
+
+    [data-focused="self"] {
+      background-color: var(--surface_container) !important;
+    }
+
+    .dark\:divide-borderMainDark\/50:where(
+      [data-color-scheme="dark"] .dark\:divide-borderMainDark\/50,
+      [data-color-scheme="dark"] .dark\:divide-borderMainDark\/50 *
+    )
+      > :not([hidden])
+      ~ :not([hidden]),
+    .divide-borderMain\/50 > :not([hidden]) ~ :not([hidden]) {
+      border-color: var(--surface_container) !important;
+    }
+
+    .focus\:\!border-backgroundDark:focus {
+      border-color: var(--surface) !important;
+    }
+
+    .focus\:bg-background:focus {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .focus\:text-super:focus {
+      color: var(--primary) !important;
+    }
+
+    .focus-visible\:bg-offsetPlus:focus-visible {
+      background-color: var(--surface) !important;
+    }
+
+    *[class*="ring"] {
+      --tw-ring-color: var(--surface_container_high) !important;
+      --tw-ring-offset-color: var(--surface) !important;
+    }
+
+    .caret-superDuper {
+      caret-color: var(--primary) !important;
+    }
+    .data-\[state\=checked\]\:bg-super[data-state="checked"] {
+      background-color: var(--primary) !important;
+    }
+
+    /* Additional fixes: */
+
+    .scrollbar-thumb-idle {
+      --scrollbar-thumb: var(--surface_container) !important;
+    }
+
+    /* gradient on super long prompt */
+    div[style="background: linear-gradient(transparent, currentcolor);"] {
+      background: linear-gradient(transparent, var(--surface_container_lowest)) !important;
+    }
+
+    /* citations */
+    .citation:hover * {
+      color: var(--surface) !important;
+    }
+    /* switch knob in settings */
+    .data-\[state\=checked\]\:before\:\!bg-super[data-state="checked"]::before {
+      background-color: var(--primary) !important;
+    }
+    /* switch in main input */
+    #copilot-toggle > div::before {
+      background-color: var(--outline_variant);
+    }
+
+    /* credits on image view */
+    #__next
+      > div:nth-child(26)
+      > div:nth-child(2)
+      > div
+      > div
+      > div.gap-md.mx-md.py-md.border-borderMainDark.flex.h-\[74px\].items-center.justify-between.border-b-2
+      > div.gap-x-md.flex.items-center
+      > a
+      > div
+      > div
+      > div.line-clamp-1.break-all.transition-all.duration-300.white.font-sans.text-sm.text-white.selection\:bg-super\/50.selection\:text-textMain.dark\:selection\:bg-superDuper\/10.dark\:selection\:text-superDark {
+      color: var(--on_surface) !important;
+    }
+
+    /* research goals in pro search */
+    .research-goal::before {
+      border-color: var(--surface_container);
+    }
+    .research-goal-title:hover {
+      background-color: var(--surface_container_low);
+    }
+    .research-goal-timeline {
+      background-color: var(--surface_container);
+    }
+
+    .\!bg-transparent {
+      background: transparent !important;
+    }
+  }
+}
+
+#rgbify(@color) {
+  @rgb: red(@color) green(@color) blue(@color);
+}

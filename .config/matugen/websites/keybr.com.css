@@ -1,0 +1,99 @@
+/* ==UserStyle==
+@name keybr.com Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/keybr.com
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/keybr.com
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/keybr.com/catppuccin.user.less
+@description Soothing pastel theme for keybr.com
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("keybr.com") {
+  html[data-color="dark"] {
+  }
+  html[data-color="light"] {
+  }
+  html[data-color="system"] {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    --primary-d2: var(--outline);
+    --primary-d1: var(--outline);
+    --primary: var(--surface_container_lowest);
+    --primary-l1: var(--surface);
+    --primary-l2: var(--surface);
+    --secondary-d1: var(--on_surface_variant);
+    --secondary: var(--on_surface);
+    --secondary-l1: var(--on_surface_variant);
+    --secondary-l2: var(--primary);
+    --secondary-f1: var(--on_surface_variant);
+    --secondary-f2: var(--on_surface_variant);
+    --accent-d2: var(--primary);
+    --accent-d1: var(--primary);
+    --accent: var(--primary);
+    --accent-l1: var(--primary);
+    --accent-l2: var(--primary);
+    --error-d1: var(--error);
+    --error: var(--error);
+    --error-l1: var(--error);
+    --shadow-color: fade(var(--surface), 88%);
+    --slow-key-color: var(--error);
+    --fast-key-color: var(--tertiary);
+    --Chart-speed__color: var(--tertiary);
+    --Chart-accuracy__color: var(--secondary_container);
+    --Chart-complexity__color: var(--secondary);
+    --Chart-threshold__color: var(--error_container);
+    --Chart-hist-h__color: var(--primary_container);
+    --Chart-hist-m__color: var(--error_container);
+    --Chart-hist-r__color: var(--primary);
+    --KeyboardKey-pointer__color: var(--primary);
+    --KeyboardKey-symbol__color: var(--surface);
+    --pinky-zone-color: var(--tertiary);
+    --ring-zone-color: var(--tertiary_container);
+    --middle-zone-color: var(--secondary);
+    --left-index-zone-color: var(--primary);
+    --right-index-zone-color: var(--error_container);
+    --thumb-zone-color: var(--primary);
+    --effort-0-color: var(--surface);
+    --effort-1-color: var(--surface);
+    --effort-2-color: var(--primary);
+    --effort-3-color: var(--primary);
+    --Value--more__color: var(--tertiary);
+    --Value--less__color: var(--error);
+    --KeyboardKey-button--depressed__color: var(--primary);
+    --LessonKey--included__color: var(--surface);
+    --LessonKey--uncalibrated__background-color: var(--surface_container_low);
+    --LessonKey--excluded__background-color: var(--surface_container_low);
+    --LessonKey--excluded__color: var(--outline);
+    --DailyGoal-bar__color: var(--primary);
+    --KeyboardKey-button__color: var(--primary);
+    --textinput__color: var(--on_surface);
+    --textinput--special__color: var(--on_surface);
+    --textinput--hit__color: var(--on_surface_variant);
+    --textinput--miss__color: var(--error);
+    --syntax-keyword: var(--primary);
+    --syntax-string: var(--tertiary);
+    --syntax-number: var(--secondary_container);
+    --syntax-comment: var(--outline_variant);
+    --MenuItem__background-color: var(--surface);
+    --MenuItem__color: var(--on_surface);
+    --MenuItem--hover__background-color: var(--surface_container_low);
+    --MenuItem--hover__color: var(--on_surface);
+    --KeyboardKey-symbol--dead__color: var(--error);
+    --KeyboardKey-symbol--ligature__color: var(--primary);
+    --Name-color: var(--on_surface_variant);
+    --Value-color: var(--primary);
+    --effort-color: var(--primary);
+  }
+}

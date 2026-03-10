@@ -1,0 +1,646 @@
+/* ==UserStyle==
+@name Google Drive Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/google-drive
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/google-drive
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/google-drive/catppuccin.user.less
+@description Soothing pastel theme for Google Drive
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("drive.google.com") {
+  .vhoiae {
+    &.KkxPLb {
+    }
+
+    &.LgGVmb, .yYWAMb.bvmRsc, .dif24c.bvmRsc {
+    }
+  }
+
+
+
+    ::selection {
+      background-color: fade(var(--primary), 30%);
+    }
+
+    input,
+    textarea {
+      &::placeholder {
+        color: var(--on_surface_variant) !important;
+      }
+    }
+
+    --dt-on-background: var(--on_surface);
+    --dt-on-background-secondary: var(--on_surface_variant);
+    --dt-background: var(--surface_container_lowest);
+    --dt-on-surface: var(--on_surface);
+    --dt-inverse-surface: var(--on_surface);
+    --dt-on-surface-secondary: var(--on_surface_variant);
+    --dt-on-surface-variant: var(--on_surface);
+    --dt-surface-variant: var(--surface_container_low);
+    --dt-inverse-on-surface: var(--surface_container_low);
+    --dt-surface: var(--surface_container_lowest);
+    --dt-surface-tint: var(--primary);
+    --dt-shadow-elevation-1:
+      0px 3px 1px -2px fade(var(--surface_container_lowest), 20%), 0px 2px 2px 0px fade(var(--surface_container_lowest), 14%), 0px
+      1px 5px 0px fade(var(--surface_container_lowest), 12%);
+    --dt-shadow-elevation-2:
+      0px 2px 4px -1px fade(var(--surface_container_lowest), 20%), 0px 4px 5px 0px fade(var(--surface_container_lowest), 14%), 0px
+      1px 10px 0px fade(var(--surface_container_lowest), 12%);
+    --dt-shadow-elevation-3:
+      0px 5px 5px -3px fade(var(--surface_container_lowest), 20%), 0px 8px 10px 1px fade(var(--surface_container_lowest), 14%), 0px
+      3px 14px 2px fade(var(--surface_container_lowest), 12%);
+    --dt-shadow-elevation-4:
+      0px 5px 5px -3px fade(var(--surface_container_lowest), 20%), 0px 8px 10px 1px fade(var(--surface_container_lowest), 14%), 0px
+      3px 14px 2px fade(var(--surface_container_lowest), 12%);
+    --dt-shadow-elevation-5:
+      0px 8px 10px -6px fade(var(--surface_container_lowest), 20%), 0px 16px 24px 2px fade(var(--surface_container_lowest), 14%),
+      0px 6px 30px 5px fade(var(--surface_container_lowest), 12%);
+    --dt-surface-container-lowest: var(--surface);
+    --dt-surface-container-low: var(--surface);
+    --dt-surface-container: var(--surface_container_low);
+    --dt-surface-container-high: var(--surface_container);
+    --dt-surface-container-highest: var(--surface_container_high);
+    --dt-surface-dim: var(--surface);
+    --dt-surface-bright: var(--surface_container_lowest);
+    --dt-on-primary-container: var(--on_surface);
+    --dt-primary-container-icon: var(--on_surface);
+    --dt-primary-container-link: var(--on_surface);
+    --dt-primary: var(--primary);
+    --dt-primary-action: var(--primary);
+    --dt-primary-action-stateful: var(--primary);
+    --dt-primary-outline: var(--primary);
+    --dt-primary-action-state-layer: var(--primary);
+    --dt-primary-container: var(--surface_container_low);
+    --dt-on-primary: var(--surface_container_lowest);
+    --dt-primary-icon: var(--surface_container_lowest);
+    --dt-primary-link: var(--surface_container_lowest);
+    --dt-on-secondary-container: var(--on_surface);
+    --dt-secondary-container-icon: var(--on_surface);
+    --dt-secondary-container-link: var(--on_surface);
+    --dt-secondary: var(--primary);
+    --dt-secondary-action: var(--primary);
+    --dt-secondary-action-stateful: var(--primary);
+    --dt-secondary-outline: var(--primary);
+    --dt-secondary-action-state-layer: var(--primary);
+    --dt-secondary-container: var(--surface_container_low);
+    --dt-on-secondary: var(--surface_container_lowest);
+    --dt-secondary-icon: var(--surface_container_lowest);
+    --dt-secondary-link: var(--surface_container_lowest);
+    --dt-on-tertiary-container: var(--on_surface);
+    --dt-tertiary-container-icon: var(--on_surface);
+    --dt-tertiary-container-link: var(--on_surface);
+    --dt-tertiary: var(--primary);
+    --dt-tertiary-action: var(--primary);
+    --dt-tertiary-action-stateful: var(--primary);
+    --dt-tertiary-outline: var(--primary);
+    --dt-tertiary-action-state-layer: var(--primary);
+    --dt-tertiary-container: var(--surface_container_low);
+    --dt-on-tertiary: var(--surface_container_lowest);
+    --dt-tertiary-icon: var(--surface_container_lowest);
+    --dt-tertiary-link: var(--surface_container_lowest);
+    --dt-on-neutral-container: var(--on_surface);
+    --dt-neutral-container-icon: var(--on_surface);
+    --dt-neutral-container-link: var(--on_surface);
+    --dt-neutral: var(--surface_container_low);
+    --dt-neutral-action: var(--on_surface);
+    --dt-neutral-action-stateful: var(--on_surface);
+    --dt-neutral-outline: var(--surface_container_low);
+    --dt-neutral-action-state-layer: var(--surface_container_low);
+    --dt-neutral-container: var(--surface_container_low);
+    --dt-on-neutral: var(--on_surface);
+    --dt-neutral-icon: var(--surface_container_low);
+    --dt-neutral-link: var(--surface_container_low);
+    --dt-on-warning-container: var(--secondary);
+    --dt-warning-container-icon: var(--secondary);
+    --dt-warning-container-link: var(--secondary);
+    --dt-warning: var(--secondary);
+    --dt-warning-action: var(--secondary);
+    --dt-warning-action-stateful: var(--secondary);
+    --dt-warning-outline: var(--secondary);
+    --dt-warning-action-state-layer: var(--secondary);
+    --dt-warning-container: var(--surface_container_low);
+    --dt-on-warning: var(--surface_container_lowest);
+    --dt-warning-icon: var(--secondary);
+    --dt-warning-link: var(--secondary);
+    --dt-on-error-container: var(--error);
+    --dt-error-container-icon: var(--error);
+    --dt-error-container-link: var(--error);
+    --dt-error: var(--error);
+    --dt-error-action: var(--error);
+    --dt-error-action-stateful: var(--error);
+    --dt-error-outline: var(--error);
+    --dt-error-action-state-layer: var(--surface_container);
+    --dt-error-container: var(--surface_container);
+    --dt-on-error: var(--surface_container_lowest);
+    --dt-error-icon: var(--surface_container_lowest);
+    --dt-error-link: var(--surface_container_lowest);
+    --dt-mime-type-blue: var(--primary);
+    --dt-mime-type-dark-blue: var(--primary);
+    --dt-mime-type-green: var(--tertiary);
+    --dt-mime-type-grey: var(--outline);
+    --dt-mime-type-purple: var(--primary);
+    --dt-mime-type-deep-purple: var(--primary);
+    --dt-mime-type-red: var(--error);
+    --dt-mime-type-yellow: var(--secondary);
+    --dt-disabled: var(--outline);
+    --dt-on-disabled: var(--on_surface);
+    --dt-outline: var(--outline);
+    --dt-outline-variant: var(--surface_container_high);
+    --dt-light-info-banner-button: var(--on_surface);
+    --dt-light-neutral-banner-button: var(--on_surface);
+    --dt-light-success-banner-button: var(--tertiary);
+    --dt-light-warning-banner-button: var(--secondary);
+    --dt-light-error-banner-button: var(--error);
+
+    --gm3-sys-color-background: var(--surface_container_lowest);
+    --gm3-sys-color-background-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+    --gm3-sys-color-error: var(--error);
+    --gm3-sys-color-error-rgb: #lib.rgbify(var(--error))[];
+    --gm3-sys-color-error-container: var(--surface_container_high);
+    --gm3-sys-color-error-container-rgb: #lib.rgbify(var(--surface_container_high))[];
+    --gm3-sys-color-inverse-on-surface: var(--surface_container_low);
+    --gm3-sys-color-inverse-on-surface-rgb: #lib.rgbify(var(--surface_container_low))[];
+    --gm3-sys-color-inverse-primary: red;
+    --gm3-sys-color-inverse-primary-rgb: 255, 0, 0;
+    --gm3-sys-color-inverse-surface: var(--on_surface);
+    --gm3-sys-color-inverse-surface-rgb: #lib.rgbify(var(--on_surface))[];
+    --gm3-sys-color-on-background: var(--on_surface);
+    --gm3-sys-color-on-background-rgb: #lib.rgbify(var(--on_surface))[];
+    --gm3-sys-color-on-error: var(--surface_container_lowest);
+    --gm3-sys-color-on-error-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+    --gm3-sys-color-on-error-container: var(--error);
+    --gm3-sys-color-on-error-container-rgb: #lib.rgbify(var(--error))[];
+    --gm3-sys-color-on-primary: var(--surface_container_lowest);
+    --gm3-sys-color-on-primary-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+    --gm3-sys-color-on-primary-container: var(--on_surface);
+    --gm3-sys-color-on-primary-container-rgb: #lib.rgbify(var(--on_surface))[];
+    --gm3-sys-color-on-primary-fixed: var(--surface_container_lowest);
+    --gm3-sys-color-on-primary-fixed-rgb: #lib.rgbify(var(--surface_container_lowest));
+    --gm3-sys-color-on-primary-fixed-variant: var(--surface_container_lowest);
+    --gm3-sys-color-on-primary-fixed-variant-rgb: #lib.rgbify(var(--surface_container_lowest));
+    --gm3-sys-color-on-secondary: var(--surface_container_lowest);
+    --gm3-sys-color-on-secondary-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+    --gm3-sys-color-on-secondary-container: var(--on_surface);
+    --gm3-sys-color-on-secondary-container-rgb: #lib.rgbify(var(--on_surface))[];
+    --gm3-sys-color-on-secondary-fixed: var(--surface_container_lowest);
+    --gm3-sys-color-on-secondary-fixed-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+    --gm3-sys-color-on-secondary-fixed-variant: var(--surface_container_lowest);
+    --gm3-sys-color-on-secondary-fixed-variant-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+    --gm3-sys-color-on-surface: var(--on_surface);
+    --gm3-sys-color-on-surface-rgb: #lib.rgbify(var(--on_surface))[];
+    --gm3-sys-color-on-surface-variant: var(--on_surface);
+    --gm3-sys-color-on-surface-variant-rgb: #lib.rgbify(var(--on_surface))[];
+    --gm3-sys-color-on-tertiary: var(--surface_container_lowest);
+    --gm3-sys-color-on-tertiary-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+    --gm3-sys-color-on-tertiary-container: var(--on_surface);
+    --gm3-sys-color-on-tertiary-container-rgb: #lib.rgbify(var(--on_surface))[];
+    --gm3-sys-color-on-tertiary-fixed: var(--surface_container_lowest);
+    --gm3-sys-color-on-tertiary-fixed-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+    --gm3-sys-color-on-tertiary-fixed-variant: var(--surface_container_lowest);
+    --gm3-sys-color-on-tertiary-fixed-variant-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+    --gm3-sys-color-outline: var(--outline);
+    --gm3-sys-color-outline-rgb: #lib.rgbify(var(--outline))[];
+    --gm3-sys-color-outline-variant: var(--surface_container_high);
+    --gm3-sys-color-outline-variant-rgb: #lib.rgbify(var(--surface_container_high))[];
+    --gm3-sys-color-primary: var(--primary);
+    --gm3-sys-color-primary-rgb: #lib.rgbify(var(--primary))[];
+    --gm3-sys-color-primary-container: var(--surface_container_low);
+    --gm3-sys-color-primary-container-rgb: #lib.rgbify(var(--surface_container_low))[];
+    --gm3-sys-color-primary-fixed: var(--primary);
+    --gm3-sys-color-primary-fixed-rgb: #lib.rgbify(var(--primary))[];
+    --gm3-sys-color-primary-fixed-dim: var(--primary);
+    --gm3-sys-color-primary-fixed-dim-rgb: #lib.rgbify(var(--primary))[];
+    --gm3-sys-color-secondary: var(--primary);
+    --gm3-sys-color-secondary-rgb: #lib.rgbify(var(--primary));
+    --gm3-sys-color-secondary-container: var(--surface_container_low);
+    --gm3-sys-color-secondary-container-rgb: #lib.rgbify(var(--surface_container_low))[];
+    --gm3-sys-color-secondary-fixed: #c2e7ff;
+    --gm3-sys-color-secondary-fixed-rgb: 194, 231, 255;
+    --gm3-sys-color-secondary-fixed-dim: #7fcfff;
+    --gm3-sys-color-secondary-fixed-dim-rgb: 127, 207, 255;
+    --gm3-sys-color-surface: var(--surface_container_lowest);
+    --gm3-sys-color-surface-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+    --gm3-sys-color-surface-bright: var(--surface_container_lowest);
+    --gm3-sys-color-surface-bright-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+    --gm3-sys-color-surface-container: var(--surface_container_low);
+    --gm3-sys-color-surface-container-rgb: #lib.rgbify(var(--surface_container_low))[];
+    --gm3-sys-color-surface-container-high: var(--surface_container);
+    --gm3-sys-color-surface-container-high-rgb: #lib.rgbify(var(--surface_container))[];
+    --gm3-sys-color-surface-container-highest: var(--surface_container_high);
+    --gm3-sys-color-surface-container-highest-rgb: #lib.rgbify(var(--surface_container_high))[];
+    --gm3-sys-color-surface-container-low: var(--surface);
+    --gm3-sys-color-surface-container-low-rgb: #lib.rgbify(var(--surface))[];
+    --gm3-sys-color-surface-container-lowest: var(--surface);
+    --gm3-sys-color-surface-container-lowest-rgb: #lib.rgbify(var(--surface))[];
+    --gm3-sys-color-surface-dim: var(--surface);
+    --gm3-sys-color-surface-dim-rgb: #lib.rgbify(var(--surface))[];
+    --gm3-sys-color-surface-tint: var(--primary);
+    --gm3-sys-color-surface-tint-rgb: #lib.rgbify(var(--primary))[];
+    --gm3-sys-color-surface-variant: var(--surface_container_low);
+    --gm3-sys-color-surface-variant-rgb: #lib.rgbify(var(--surface_container_low))[];
+    --gm3-sys-color-tertiary: var(--primary);
+    --gm3-sys-color-tertiary-rgb: #lib.rgbify(var(--primary))[];
+    --gm3-sys-color-tertiary-container: var(--surface_container_low);
+    --gm3-sys-color-tertiary-container-rgb: #lib.rgbify(var(--surface_container_low));
+    --gm3-sys-color-tertiary-fixed: var(--primary);
+    --gm3-sys-color-tertiary-fixed-rgb: #lib.rgbify(var(--primary))[];
+    --gm3-sys-color-tertiary-fixed-dim: var(--primary);
+    --gm3-sys-color-tertiary-fixed-dim-rgb: #lib.rgbify(var(--primary))[];
+
+      --dt-scrim: fade(var(--on_surface), 50%);
+      --dt-scrim-2x: fade(var(--on_surface), 50%);
+      --gm3-sys-color-scrim: var(--on_surface);
+      --gm3-sys-color-scrim-rgb: #lib.rgbify(var(--on_surface))[];
+      --gm3-sys-color-shadow: var(--on_surface);
+      --gm3-sys-color-shadow-rgb: #lib.rgbify(var(--on_surface))[];
+    }
+
+    & when not(@flavor = latte) {
+      --dt-scrim: fade(var(--surface_container_lowest), 50%);
+      --dt-scrim-2x: fade(var(--surface_container_lowest), 50%);
+      --gm3-sys-color-scrim: var(--surface_container_lowest);
+      --gm3-sys-color-scrim-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+      --gm3-sys-color-shadow: var(--surface_container_lowest);
+      --gm3-sys-color-shadow-rgb: #lib.rgbify(var(--surface_container_lowest))[];
+    }
+
+    /* Settings menu title & back button */
+    .gb_Pc svg,
+    .gb_Uc.gb_Zc svg,
+    .gb_Pc .gb_gd .gb_od,
+    .gb_Pc .gb_gd .gb_Oc,
+    .gb_Pc .gb_gd .gb_id,
+    .gb_Uc.gb_Zc .gb_od {
+      color: var(--on_surface) !important;
+    }
+
+    /* Settings menu Storage total used icon */
+    .VBJTHe svg path {
+      fill: var(--on_surface);
+    }
+
+    /* Drive sync checkbox disabled */
+    .MlG5Jc gm-checkbox[disabled] ~ .VfPpkd-ga,
+    .MlG5Jc gm-radio[disabled] ~ .VfPpkd-ga,
+    .MlG5Jc .VfPpkd-Qa-Qu-db ~ .VfPpkd-ga,
+    .MlG5Jc .VfPpkd-Eg-Qu-db ~ .VfPpkd-ga {
+      color: var(--on_surface_variant) !important;
+    }
+
+    /* Quota hover box-shadow */
+    .KnDsIf:hover,
+    .KnDsIf:focus,
+    .al9hA {
+      box-shadow: 0 2px 6px var(--outline);
+    }
+
+    /* Quota Google Drive */
+    .kJzqSb {
+      color: var(--primary);
+    }
+
+    /* Quota Google Photos */
+    .L1pqQb {
+      color: var(--secondary);
+    }
+
+    /* Quota Gmail */
+    .au0LDe {
+      color: var(--error);
+    }
+
+    /* Google Account outline */
+    .gb_Ea.gb_i {
+      border-color: var(--outline);
+      background-color: var(--surface_container_low);
+    }
+    .gb_Ea.gb_i:focus,
+    .gb_Ea.gb_i:hover {
+      border-color: var(--on_surface_variant);
+    }
+
+    /* File preview (separate tab) background */
+    &.ndfHFb-c4YZDc-uoC0bf.ndfHFb-c4YZDc-i5oIFb .ndfHFb-c4YZDc-bnBfGc {
+      background-color: var(--surface_container_lowest);
+    }
+    .a-b-uoC0bf.a-b-L .a-b-jl /* File preview (in Drive) background */ {
+      background-color: fade(var(--surface_container_lowest), 85%);
+    }
+
+    /* File preview (separate tab) top bar */
+    &.ndfHFb-c4YZDc-uoC0bf.ndfHFb-c4YZDc-i5oIFb
+      .ndfHFb-c4YZDc-Wrql6b.ndfHFb-c4YZDc-Wrql6b-Hyc8Sd,
+    .a-b-uoC0bf.a-b-L .a-b-K.a-b-K-Hyc8Sd /* File preview (in Drive) top bar */
+    {
+      background-color: fade(var(--surface_container_lowest), 85%);
+    }
+
+    /* File preview (separate tab) bottom bar */
+    .ndfHFb-c4YZDc-q77wGc .ndfHFb-c4YZDc-DARUcf-NnAfwf-i5oIFb,
+    .ndfHFb-c4YZDc-q77wGc .ndfHFb-c4YZDc-nJjxad-nK2kYb-i5oIFb,
+    .a-b-vo .a-b-La-yc-L,
+    .a-b-vo .a-b-Kb-ac-L /* File preview (in Drive) bottom bar */ {
+      background-color: fade(var(--surface_container_lowest), 85%);
+      color: var(--on_surface) !important;
+      /* File preview (separate tab) page input */
+      .ndfHFb-c4YZDc-DARUcf-NGme3c-YPqjbf,
+      .a-b-La-su-vb /* File preview (in Drive) page input */ {
+        background-color: fade(var(--surface_container_lowest), 50%);
+        color: var(--on_surface);
+      }
+    }
+
+    /* File preview (separate tab) share button */
+    &.ndfHFb-c4YZDc-uoC0bf .zAYgkb-uoC0bf .tk3N6e-LgbsSe,
+    &.ndfHFb-c4YZDc-uoC0bf
+      .zAYgkb-mAKE4e-LQLjdd-xl07Ob-LgbsSe.VIpgJd-Kb3HCc-xl07Ob-LgbsSe,
+    .a-b-uoC0bf .ae-uoC0bf .g-d,
+    .a-b-uoC0bf
+      .ae-mAKE4e-Hc-w-d.h-R-w-d /* File preview (in Drive) share button */ {
+      background-color: var(--primary);
+      color: var(--surface_container_lowest);
+      /* File preview (separate tab) share icon */
+      .IyROMc-euCgFf-LJSvSb,
+      .ae-c /* File preview (in Drive) share icon */ {
+          filter: brightness(0) invert(97%) sepia(4%) saturate(152%) hue-rotate(
+            183deg
+          ) brightness(94%) contrast(106%);
+        }
+          filter: brightness(0) invert(15%) sepia(8%) saturate(2252%)
+            hue-rotate(192deg) brightness(98%) contrast(85%);
+        }
+          filter: brightness(0) invert(13%) sepia(26%) saturate(823%)
+            hue-rotate(195deg) brightness(90%) contrast(92%);
+        }
+          filter: brightness(0) invert(10%) sepia(36%) saturate(650%)
+            hue-rotate(201deg) brightness(90%) contrast(93%);
+        }
+      }
+      /* File preview (separate tab) share triangle */
+      .VIpgJd-Kb3HCc-xl07Ob-LgbsSe-j4gsHd,
+      .h-R-w-d-Re /* File preview (in Drive) share triangle */ {
+        border-color: var(--surface_container_lowest) transparent !important;
+      }
+    }
+    /* File preview (separate tab) share Quick options */
+    .zAYgkb-NhlrFc-xl07Ob-BvBYQ,
+    .h-w.ae-NhlrFc-w /* File preview (in Drive) share Quick options */ {
+      background-color: var(--surface_container_lowest);
+      * {
+        color: var(--on_surface) !important;
+      }
+      /* File preview (in Drive) share Quick options current share level container */
+      .h-v-x {
+        opacity: 100%;
+      }
+      /* File preview (separate tab) share Quick options divider */
+      .zAYgkb-NhlrFc-gqMrKb,
+      .ae-NhlrFc-Yo /* File preview (in Drive) share Quick options divider */ {
+        border-color: var(--outline);
+      }
+      /* File preview (separate tab) share Quick options row hover */
+      .VIpgJd-j7LFlb-sn54Q,
+      .h-v-pc /* File preview (in Drive) share Quick options row hover */ {
+        background-color: var(--surface_container_low);
+      }
+      /* File preview (separate tab) share Quick options row icon */
+      .IyROMc-euCgFf-LJSvSb,
+      .ba-ea-i /* File preview (in Drive) share Quick options row icon */ {
+          filter: brightness(0) invert(31%) sepia(10%) saturate(1268%)
+            hue-rotate(196deg) brightness(90%) contrast(86%);
+        }
+          filter: brightness(0) invert(80%) sepia(7%) saturate(1070%)
+            hue-rotate(192deg) brightness(104%) contrast(92%);
+        }
+          filter: brightness(0) invert(84%) sepia(13%) saturate(579%)
+            hue-rotate(193deg) brightness(99%) contrast(94%);
+        }
+          filter: brightness(0) invert(84%) sepia(19%) saturate(370%)
+            hue-rotate(192deg) brightness(98%) contrast(95%);
+        }
+      }
+    }
+    /* File preview (separate tab) Print, Download, 3 dots */
+    .ndfHFb-c4YZDc-Bz112c:not([style]),
+    .ndfHFb-c4YZDc-Bz112c[style*="googlematerialicons"],
+    .ndfHFb-c4YZDc-Bz112c[style="user-select: none;"],
+    .ndfHFb-c4YZDc-Wrql6b-htvI8d-wcotoc-wHEfpf-ndfHFb-Bz112c
+    /* File preview (separate tab) Save to drive */,
+    .ndfHFb-c4YZDc-Wrql6b-w37qKe-Bz112c
+    /* File preview (separate tab) Save to drive (clicked) */,
+    /* File preview (in Drive) Print, Download, 3 dots */
+    .a-b-c:not([style]),
+    .a-b-c[style*="googlematerialicons"],
+    .a-b-c[style="user-select: none;"],
+    .a-b-K-zc-Eb-bg-a-c /* File preview (in Drive) Save to drive */,
+    .a-b-K-X-c /* File preview (in Drive) Save to drive (clicked) */ {
+        filter: brightness(0) invert(31%) sepia(10%) saturate(1268%) hue-rotate(
+          196deg
+        ) brightness(90%) contrast(86%);
+      }
+        filter: brightness(0) invert(80%) sepia(7%) saturate(1070%) hue-rotate(
+          192deg
+        ) brightness(104%) contrast(92%);
+      }
+        filter: brightness(0) invert(84%) sepia(13%) saturate(579%) hue-rotate(
+          193deg
+        ) brightness(99%) contrast(94%);
+      }
+        filter: brightness(0) invert(84%) sepia(19%) saturate(370%) hue-rotate(
+          192deg
+        ) brightness(98%) contrast(95%);
+      }
+    }
+    /* File preview (separate tab) File title */
+    .ndfHFb-c4YZDc-Wrql6b-V1ur5d,
+    .a-b-cg-Zf /* File preview (in Drive) File title */ {
+      color: var(--on_surface);
+    }
+    /* File preview (separate tab) 3 dots menu item hover */
+    .ndfHFb-c4YZDc-j7LFlb:hover,
+    .a-b-v:hover /* File preview (in Drive) 3 dots menu item hover */ {
+      background-color: var(--surface_container_low);
+    }
+    /* File preview (separate tab) No preview available */
+    .ndfHFb-c4YZDc-EglORb-haAclf,
+    .a-b-Tb-j /* File preview (in Drive) No preview available */ {
+      background-color: var(--surface_container_low);
+      color: var(--on_surface);
+      /* File preview (separate tab) No preview available Download */
+      .ndfHFb-c4YZDc-bN97Pc-nupQLb-LgbsSe,
+      .a-b-x-rb-d /* File preview (in Drive) No preview available Download */ {
+        background-color: var(--surface_container);
+        color: var(--on_surface);
+        text-shadow: none;
+        border-color: transparent;
+        &:hover {
+          background-color: var(--surface_container_high);
+          background-image: none;
+        }
+      }
+      /* File preview (separate tab) No preview available Download icon */
+      .ndfHFb-c4YZDc-bN97Pc-nupQLb-LgbsSe-Bz112c,
+      .a-b-x-rb-d-c /* File preview (in Drive) No preview available Download icon */
+      {
+          filter: brightness(0) invert(31%) sepia(10%) saturate(1268%)
+            hue-rotate(196deg) brightness(90%) contrast(86%);
+        }
+          filter: brightness(0) invert(80%) sepia(7%) saturate(1070%)
+            hue-rotate(192deg) brightness(104%) contrast(92%);
+        }
+          filter: brightness(0) invert(84%) sepia(13%) saturate(579%)
+            hue-rotate(193deg) brightness(99%) contrast(94%);
+        }
+          filter: brightness(0) invert(84%) sepia(19%) saturate(370%)
+            hue-rotate(192deg) brightness(98%) contrast(95%);
+        }
+      }
+    }
+    /* File preview (in Drive) text document */
+    .a-b-r-x,
+    .ndfHFb-c4YZDc-fmcmS-bN97Pc /* File preview (separate tab) text document */
+    {
+      &,
+      pre {
+        background-color: var(--surface_container_low) !important;
+        color: var(--on_surface) !important;
+      }
+    }
+    /* File preview (in Drive) comment on image */
+    .Yk-efwuC {
+      background-color: var(--surface_container_low) !important;
+      /* File preview (in Drive) comment on image person */
+      .Yk-Vq7Udc {
+        background-color: var(--surface_container_low) !important;
+        [data-name] {
+          color: var(--on_surface) !important;
+        }
+        /* Comment text */
+        .Yk-eKrold-Sg.Yk-eKrold-Sg {
+          color: var(--on_surface) !important;
+        }
+        /* Comment date */
+        .Yk-eKrold-bi {
+          color: var(--on_surface_variant) !important;
+        }
+      }
+      /* File preview (in Drive) comments */
+      .Yk-efwuC-vb-Gd {
+        background-color: var(--surface_container_low);
+        &,
+        * {
+          color: var(--on_surface) !important;
+        }
+        [role="textbox"] {
+          background-color: var(--surface_container);
+          border-color: var(--outline);
+          &::before {
+            color: var(--on_surface_variant) !important;
+          }
+        }
+        [role="button"] {
+          background-color: var(--surface_container) !important;
+          /* needed to override border-color */
+          &[role="button"] {
+            border-color: var(--outline) !important;
+          }
+          &[aria-disabled="true"] {
+            background-color: var(--surface_container) !important;
+            color: var(--on_surface_variant) !important;
+          }
+        }
+      }
+    }
+
+    /* Drive sharing window material icon */
+    .SbpzSe .VfPpkd-StrnGf-rymPhb-f7MjDc {
+      color: var(--primary);
+    }
+
+    /* Drive sharing window access hover */
+    .lfDNBb:hover,
+    .lfDNBb:focus-within,
+    .ZelW3e:hover .FYhd9e,
+    .ZelW3e:focus-within .FYhd9e /* Drive sharing window person row hover */ {
+      background-color: var(--surface_container_low);
+    }
+
+    /* Drive sharing iframe (in Drive) */
+    .lb-k-x {
+      color-scheme: unset;
+    }
+    /* Drive sharing iframe (file preview separate tab) */
+    .XKSfm-Sx9Kwc-bN97Pc {
+      color-scheme: auto; /* unset doesn't work? */
+    }
+    [role="tooltip"],
+    .Kk7lMc-Ca /* Drive applications sidebar tooltip */,
+    .gb_2e /* Drive google account tooltip */ {
+      background-color: var(--surface_container_high);
+      *,
+      & {
+        color: var(--on_surface) !important;
+      }
+      border-color: transparent;
+      /* File preview (separate tab) tooltip arrow */
+      .tk3N6e-suEOdc-jQ8oHc,
+      .tk3N6e-suEOdc-ez0xG {
+        border-color: var(--surface_container_high) transparent !important;
+      }
+    }
+
+    /* Drive applications sidebar close button */
+    .Kk7lMc-QWPxkf-d-j .Yb-Il-d .Yb-Il-d-c-j {
+      background-color: var(--surface_container_low);
+      path:nth-child(1) {
+        stroke: var(--on_surface);
+      }
+    }
+    /* Drive applications sidebar get addons */
+    .Yb-Il-d#qJTzr .Yb-Il-d-c-j {
+        filter: brightness(0) invert(31%) sepia(10%) saturate(1268%) hue-rotate(
+          196deg
+        ) brightness(90%) contrast(86%);
+      }
+        filter: brightness(0) invert(80%) sepia(7%) saturate(1070%) hue-rotate(
+          192deg
+        ) brightness(104%) contrast(92%);
+      }
+        filter: brightness(0) invert(84%) sepia(13%) saturate(579%) hue-rotate(
+          193deg
+        ) brightness(99%) contrast(94%);
+      }
+        filter: brightness(0) invert(84%) sepia(19%) saturate(370%) hue-rotate(
+          192deg
+        ) brightness(98%) contrast(95%);
+      }
+    }
+    /* Drive applications sidebar close button white background */
+    .Yb-Il-d-c-Nd {
+      background-color: transparent;
+    }
+
+    /* Drive icon */
+    [src="//ssl.gstatic.com/images/branding/product/1x/drive_2020q4_48dp.png"] {
+      @darkBlue: mix(var(--primary), var(--surface_container_lowest), 80%);
+      @darkGreen: mix(var(--tertiary), var(--surface_container_lowest), 80%);
+
+        '<svg viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3L27.5 53H0c0 1.55.4 3.1 1.2 4.5z" fill="@{darkBlue}"/><path d="M43.65 25 29.9 1.2c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44A9.06 9.06 0 0 0 0 53h27.5z" fill="@{green}"/><path d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75L86.1 57.5c.8-1.4 1.2-2.95 1.2-4.5H59.798l5.852 11.5z" fill="@{red}"/><path d="M43.65 25 57.4 1.2C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z" fill="@{darkGreen}"/><path d="M59.8 53H27.5L13.75 76.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="@{blue}"/><path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25 59.8 53h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="@{yellow}"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    /* Drive upload checkmark */
+    .z-Ea-Fj-c svg path {
+      fill: var(--tertiary);
+    }
+  }
+}

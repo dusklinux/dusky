@@ -1,0 +1,111 @@
+/* ==UserStyle==
+@name Crowdin Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/crowdin
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/crowdin
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/crowdin/catppuccin.user.less
+@description Soothing pastel theme for Crowdin
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document regexp("https://crowdin.com(?!/translate).*") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    :root:root:root:root:root {
+      --app-bg: var(--surface);
+      --body-bg: var(--surface_container_lowest);
+      --light-bg: var(--surface_container_low);
+      --search-bg: var(--surface_container_low);
+      --super-light-bg: var(--surface_container);
+      --body-color: var(--on_surface);
+      --link-hover: var(--tertiary);
+      --primary: var(--tertiary);
+      --secondary: var(--surface_container_high);
+      --tertiary: var(--secondary);
+      --primary-btn: var(--tertiary);
+      --primary-btn-hover: var(--tertiary_container);
+      --warning-content: var(--secondary);
+      --info: var(--primary);
+      --crowdin-primary-blue-gray-05: var(--surface_container);
+      --crowdin-primary-blue-gray: var(--outline);
+    }
+
+    .btn-primary,
+    .btn-primary:hover {
+      color: var(--surface_container_lowest);
+    }
+
+    .btn-outline-primary,
+    .btn-outline-primary:hover {
+      color: var(--tertiary);
+      border-color: var(--tertiary);
+    }
+  }
+}
+
+@-moz-document regexp("https://crowdin.com/translate/.*") {
+  @media (prefers-color-scheme: light) {
+  }
+  @media (prefers-color-scheme: dark) {
+  }
+
+
+:root {
+}
+
+    body {
+      background-color: var(--surface) !important;
+      color: var(--on_surface) !important;
+    }
+
+    #left_panel,
+    .nav-tabs,
+    .navbar-inner.editor-navbar,
+    #discussions_control,
+    #main_menu {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    #editor-center-layout,
+    .editor-pane-inner,
+    #translation_wrapper,
+    #translation_text_container,
+    .texts-to-translate-header,
+    #right_panel,
+    .texts-to-translate-paging,
+    #asset_preview_wrapper.no-preview,
+    .editor-pane-title-and-buttons-helper {
+      background-color: var(--surface_container_lowest) !important;
+      color: var(--on_surface) !important;
+    }
+
+    .body.dark-theme #main_menu .nav-pills > li.active > a {
+      background-color: var(--primary);
+    }
+
+    .progress .bar-validate {
+      background-color: var(--primary_container);
+    }
+    .progress .bar-translate {
+      background-color: var(--primary_container);
+    }
+
+    a,
+    .btn-link {
+      color: var(--surface_container_high) !important;
+    }
+  }
+}

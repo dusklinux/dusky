@@ -1,0 +1,176 @@
+/* ==UserStyle==
+@name Modrinth Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/modrinth
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/modrinth
+@version 2025.12.05.3
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/modrinth/catppuccin.user.less
+@description Soothing pastel theme for Modrinth
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("modrinth.com") {
+  .light,
+  .light-properties,
+  html {
+  }
+
+  .dark,
+  .oled-mode,
+  :root[data-theme="dark"] {
+  }
+
+
+    // TODO: Use Catppuccin palette colors? `fade()`-ed?
+
+    #css-variables() !important;
+
+    // homepage
+    .blob-demonstration,
+    .blob-demonstration::after {
+      background: linear-gradient(
+        0deg,
+        fade(var(--primary), 20%),
+        fade(var(--surface_container_lowest), 10%)
+      ) !important;
+    }
+    .logo-banner path {
+      fill: var(--primary) !important;
+    }
+    .logo-banner > svg > g > rect {
+      display: none;
+    }
+
+    [tabindex="0"]:focus-visible,
+    a:focus-visible,
+    button:focus-visible {
+      outline-color: var(--primary);
+    }
+
+    .BDVE3s9MFQttmbMUeYup-2 a b,
+    .BDVE3s9MFQttmbMUeYup-2 a strong {
+      color: var(--primary);
+    }
+
+    // dropdown icon
+    .multiselect__select::before {
+      border-color: var(--on_surface) transparent transparent;
+      color: var(--on_surface);
+    }
+    // header button hover
+    .btn-wrapper:hover {
+      a,
+      button {
+        --tw-brightness: none !important;
+      }
+    }
+    .nuxt-loading-indicator {
+      background: var(--primary) !important;
+    }
+
+    #css-variables() {
+      --text-color: var(--on_surface);
+      --color-base: var(--on_surface);
+      --color-bg: var(--surface);
+      --color-secondary: var(--on_surface_variant);
+      --color-ad-raised: var(--surface_container_high);
+      --color-ad: var(--surface_container);
+      --color-ad-highlight: var(--tertiary_container);
+      --color-brand: var(--primary);
+      --color-brand-green: var(--tertiary);
+      --color-button-bg-active: var(--outline);
+      --color-button-bg-selected: fade(var(--primary), 25%);
+      --color-button-bg-hover: var(--surface_container);
+      --color-button-bg: var(--surface_container_low);
+      --color-button-text-hover: var(--on_surface);
+      --color-button-text: var(--on_surface);
+      --color-button-text-active: var(--on_surface);
+      --color-button-text-selected: var(--primary);
+      --color-divider: var(--surface_container_low);
+      --color-heading: var(--on_surface);
+      --color-icon: var(--on_surface);
+      --color-link-active: var(--primary_container);
+      --color-link-hover: var(--primary_fixed);
+      --color-link: var(--primary);
+      --color-raised-bg: var(--surface_container_lowest);
+      --color-blue: var(--primary_container);
+      --color-special-blue: var(--primary_container);
+      --color-orange: var(--secondary_container);
+      --color-special-orange: var(--secondary_container);
+      --color-purple: var(--primary);
+      --color-special-purple: var(--primary);
+      --color-red: var(--error);
+      --color-gray: var(--on_surface_variant);
+      --color-special-gray: var(--on_surface_variant);
+      --color-green: var(--tertiary);
+      --color-text: var(--on_surface);
+      --color-text-dark: var(--on_surface);
+      --color-text-inactive: var(--outline_variant);
+      --color-brand-highlight: var(--surface_container_low);
+      --color-brand-inverted: @shadow;
+      --color-table-alternate-row: var(--surface);
+      --color-table-border: var(--outline);
+      --color-contrast: var(--on_surface);
+      --color-accent-contrast: var(--surface);
+      --color-brand-shadow: var(--primary);
+      --color-warning-banner-side: var(--error);
+      --color-warning-banner-bg: fade(var(--error), 10%);
+      --color-warning-banner-text: var(--on_surface);
+      --color-platform-fabric: var(--secondary);
+      --color-platform-quilt: var(--primary);
+      --color-platform-forge: var(--primary);
+      --color-platform-neoforge: var(--secondary_container);
+      --color-platform-liteloader: var(--primary_fixed);
+      --color-platform-bukkit: var(--secondary_container);
+      --color-platform-bungeecord: var(--secondary);
+      --color-platform-folia: var(--tertiary);
+      --color-platform-paper: var(--error);
+      --color-platform-purpur: var(--primary_container);
+      --color-platform-spigot: var(--secondary);
+      --color-platform-velocity: var(--tertiary_container);
+      --color-platform-waterfall: var(--primary);
+      --color-platform-sponge: var(--secondary);
+      --color-platform-ornithe: var(--tertiary_container);
+      --color-platform-bta-babric: var(--tertiary);
+      --color-platform-legacy-fabric: var(--primary_container);
+      --color-platform-nilloader: var(--secondary);
+      --color-button-border: fade(var(--surface), 20%);
+      --color-tooltip-bg: var(--surface_container);
+      --color-tooltip-text: var(--on_surface);
+      --landing-green-label: var(--primary);
+      --landing-green-label-bg: fade(var(--primary), 10%);
+      --landing-blue-label: var(--primary);
+      --landing-color-heading: var(--on_surface);
+      --landing-color-subheading: var(--on_surface_variant);
+      --landing-border-color: var(--outline);
+      --landing-blue-label-bg: fade(var(--primary), 10%);
+      --landing-border-gradient: linear-gradient(
+        to bottom right,
+        var(--outline),
+        var(--surface_container_high)
+      );
+      --brand-gradient-strong-bg: linear-gradient(
+        270deg,
+        fade(var(--primary), 5%) 10%,
+        fade(var(--primary), 10%)
+      );
+      --brand-gradient-border: fade(var(--primary), 10%);
+
+      --surface-1: var(--surface);
+      --surface-2: var(--surface);
+      --surface-3: var(--surface_container_lowest);
+      --surface-4: var(--surface_container_low);
+      --surface-5: var(--surface_container_high);
+
+      --color-text-primary: var(--on_surface);
+      --color-text-default: var(--on_surface);
+      --color-text-tertiary: var(--on_surface_variant);
+    }
+  }
+}

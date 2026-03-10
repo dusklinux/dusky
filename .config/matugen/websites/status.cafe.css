@@ -1,0 +1,123 @@
+/* ==UserStyle==
+@name status.cafe Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/status.cafe
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/status.cafe
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/status.cafe/catppuccin.user.less
+@description Soothing pastel theme for status.cafe
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document regexp("https://status\\.cafe/(?!users).*"),
+  domain("forum.status.cafe") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    background-color: var(--surface_container_lowest);
+
+:root {
+}
+
+    body {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    textarea {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-color: var(--surface_container);
+      border-style: solid;
+      border-width: 1px;
+      border-radius: 2px;
+      padding: 3px;
+    }
+
+    input {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-color: var(--surface_container);
+      border-style: solid;
+      border-width: 1px;
+      border-radius: 4px;
+      padding: 2px 5px;
+      :hover {
+        background-color: darken(var(--surface), 2%);
+      }
+
+      :active {
+        background-color: var(--surface);
+        border-color: var(--surface_container_low);
+      }
+    }
+
+    textarea:hover,
+    input:hover {
+      border-color: darken(var(--surface_container), 5%);
+    }
+
+    .flash {
+      background-color: var(--tertiary);
+    }
+
+    a:not(.flash a) {
+      color: var(--primary);
+    }
+
+    a:visited:not(.flash a) {
+      color: darken(var(--primary), 5%);
+    }
+
+    table,
+    th,
+    td {
+      border-color: var(--surface_container) !important;
+    }
+
+    thead {
+      background-color: var(--surface_container);
+      color: var(--on_surface);
+    }
+
+    .forum {
+      background-color: var(--secondary);
+      a {
+        color: darken(var(--primary), 10%) !important;
+      }
+    }
+
+    tbody,
+    .topic > tbody > tr:nth-child(2n) {
+      background-color: var(--surface);
+    }
+
+    hr {
+      background-color: var(--surface_container);
+    }
+
+    .signature {
+      border-top-color: var(--surface_container_low);
+    }
+
+      a:visited:not(.flash a) {
+        color: darken(var(--primary), 10%);
+      }
+      input:active {
+        background-color: var(--surface_container_low);
+        border-color: var(--surface_container_high);
+      }
+    }
+  }
+}

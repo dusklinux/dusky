@@ -1,0 +1,333 @@
+/* ==UserStyle==
+@name Vikunja Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/vikunja
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/vikunja
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/vikunja/catppuccin.user.less
+@description Soothing pastel theme for Vikunja
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("try.vikunja.io") {
+  :root.dark {
+  }
+  :root.light {
+  }
+
+
+    #hslbreakdown(@color, @item) {
+      --@{item}-h: hue(@color) !important;
+      --@{item}-s: saturation(@color) !important;
+      --@{item}-l: lightness(@color) !important;
+      --@{item}-light-l: lightness(@color) !important;
+      --@{item}-dark-l: lightness(@color) !important;
+      --@{item}-invert-l: lightness(@color) !important;
+    }
+
+    #hslbreakdown(var(--primary), primary);
+    --grey-100-hsl: hue(var(--surface)) saturation(var(--surface)) lightness(var(--surface));
+    --site-background: var(--surface);
+    --content-heading-color: var(--on_surface);
+    --card-header-color: var(--on_surface);
+    --card-color: var(--on_surface);
+    --body-color: var(--on_surface);
+    --label-color: var(--on_surface);
+    --strong-color: var(--on_surface);
+    --primary: var(--primary);
+    --primary-invert: var(--surface_container_lowest);
+    --switch-view-color: var(--surface_container_lowest);
+    --input-background-color: var(--surface_container_lowest);
+    --input-icon-color: var(--on_surface);
+    --table-row-hover-background-color: var(--surface);
+    --table-head-cell-color: var(--on_surface);
+    --input-border-color: var(--outline);
+    --link-hover: var(--primary);
+    --white: var(--surface_container_lowest);
+    --grey: var(--outline);
+    --card-content-background-color: var(--surface_container_lowest);
+    --success: var(--tertiary);
+    --danger: var(--error);
+    --warning: var(--secondary);
+    --text: var(--on_surface);
+    --text-strong: var(--on_surface);
+    --button-text-hover-background-color: var(--surface_container_lowest);
+    --table-striped-row-even-background-color: var(--surface);
+    --code-background: var(--surface);
+    --code: var(--on_surface);
+
+    body,
+    div#app,
+    header,
+    aside.menu-container,
+    footer.card-footer {
+      background: var(--surface) !important;
+    }
+
+    svg.llama-cool > circle,
+    svg.logo > path[fill="#196aff"] {
+      fill: var(--primary);
+    }
+
+    svg.logo,
+    h1,
+    .action-heading,
+    .subtitle a,
+    .project-menu-title {
+      color: var(--on_surface) !important;
+    }
+
+    p.nothing,
+    .has-text-grey-light {
+      color: var(--on_surface_variant) !important;
+    }
+
+    h1.title.task-id,
+    div.detail-title,
+    div.detail-title span {
+      color: var(--outline);
+    }
+
+    button {
+      box-shadow: none !important;
+    }
+
+    button.is-danger {
+      color: var(--error) !important;
+      background: none;
+
+      &:hover {
+        background: var(--error) !important;
+        color: var(--surface_container_low) !important;
+      }
+
+      &:active {
+        background: darken(var(--error), 10%) !important;
+        color: var(--surface_container_low) !important;
+      }
+    }
+
+    .has-text-danger {
+      --has-text-hover-color: var(--error);
+    }
+
+    button.is-success {
+      color: var(--tertiary);
+
+      &:hover {
+        background: var(--tertiary) !important;
+        color: var(--surface_container_low) !important;
+      }
+
+      &:active {
+        background: darken(var(--tertiary), 10%) !important;
+      }
+    }
+
+    .base-button.is-primary {
+      color: var(--surface_container_lowest);
+
+      &:hover {
+        background: var(--primary);
+      }
+
+      &:active {
+        background: darken(var(--primary), 10%);
+      }
+
+      span.icon {
+        color: var(--surface_container_lowest) !important;
+      }
+    }
+
+    button.base-button:not(.is-primary) {
+      color: var(--on_surface);
+    }
+
+    div.action-buttons > button:hover,
+    button.search-result-button:hover,
+    .button.is-text:active,
+    .single-task:hover {
+      background: var(--surface);
+    }
+
+    p.is-editor-empty::before {
+      color: var(--outline);
+    }
+
+    header > button.base-button.menu-button::before,
+    header > button.base-button.menu-button::after {
+      background: var(--on_surface);
+    }
+
+    .menu .menu-list {
+      li > a,
+      li > a > span {
+        color: var(--on_surface);
+      }
+      li > a.router-link-active {
+        color: var(--primary);
+      }
+      li:hover {
+        background: var(--surface);
+      }
+    }
+
+    a.base-button.menu-bottom-link {
+      color: var(--outline);
+
+      &:hover {
+        color: var(--outline_variant);
+      }
+    }
+
+    div.is-done {
+      background: var(--tertiary);
+      color: var(--surface_container_low);
+    }
+
+    div.tiptap__editor {
+      a {
+        color: var(--primary);
+      }
+      pre,
+      code {
+        background: var(--surface_container_low);
+        color: var(--on_surface);
+      }
+    }
+
+    blockquote,
+    hr {
+      background: var(--surface_container_low);
+    }
+
+    emoji-picker {
+      --background: var(--surface_container_low);
+      --border-color: var(--outline);
+      --button-hover-background: var(--outline);
+      --input-border-color: var(--outline);
+      scrollbar-color: var(--outline) var(--surface_container_low) !important;
+    }
+
+    .reaction-button.current-user-has-reacted {
+      border-color: var(--primary);
+      background: fade(var(--primary), 30%);
+    }
+
+    p.created {
+      color: var(--outline);
+    }
+
+    .progress-bar {
+      --progress-bar-background-color: var(--surface);
+      --progress-value-background-color: var(--primary);
+    }
+
+    .loader-container.is-loading::after {
+      --loader-border-color: var(--primary);
+    }
+
+    /* Gantt */
+    div.gantt-container {
+      --grey-300: var(--surface_container_low);
+    }
+
+    div.g-gantt-chart {
+      .g-upper-timeunit,
+      .g-timeunit {
+        color: var(--on_surface) !important;
+      }
+
+      .g-timeunit .today {
+        color: var(--surface_container_low);
+      }
+
+      .g-gantt-row {
+        background: var(--surface_container_lowest);
+      }
+
+      div.g-gantt-bar {
+        div.g-gantt-bar-label > div {
+          color: var(--surface_container_low);
+        }
+
+        .g-gantt-bar-handle-left,
+        .g-gantt-bar-handle-right {
+          background: darken(var(--primary), 10%);
+        }
+      }
+    }
+
+    /* Kaban */
+    div.bucket-header,
+    div.task-item,
+    div.bucket-footer,
+    div.bucket > button.base-button {
+      background: var(--surface_container_lowest);
+    }
+
+    div.task-item > .task {
+      background: var(--surface);
+
+      span.priority-label {
+        background: var(--surface_container_low);
+      }
+    }
+
+    /* Command Palette */
+    span.result-title,
+    div.active-cmd.tag {
+      background: var(--surface_container_lowest);
+    }
+
+    /* Keyboard Shortcuts modal */
+    kbd {
+      color: var(--on_surface);
+      border-color: var(--outline);
+      background: var(--surface_container_lowest);
+    }
+
+    div.message-wrapper > div.message.info {
+      background: var(--surface_container_lowest);
+    }
+
+    /* Popups */
+    div.v-popper__inner {
+      background: var(--surface);
+      color: var(--on_surface);
+    }
+
+    div.v-popper__arrow-outer {
+      border-color: var(--surface);
+    }
+
+    .modal-mask {
+      span,
+      p,
+      strong {
+        color: var(--on_surface) !important;
+      }
+    }
+
+    /* Vue Notifications */
+    .vue-notification {
+      color: var(--surface_container_low) !important;
+    }
+    .vue-notification button {
+      background: none;
+      color: var(--outline) !important;
+    }
+
+    .vue-notification.success {
+      background: var(--tertiary);
+      border-left-color: darken(var(--tertiary), 5%);
+    }
+  }
+}

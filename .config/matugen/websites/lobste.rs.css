@@ -1,0 +1,102 @@
+/* ==UserStyle==
+@name Lobsters Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/lobste.rs
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/lobste.rs
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/lobste.rs/catppuccin.user.less
+@description Soothing pastel theme for Lobsters
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("lobste.rs") {
+  html:has(head > link[rel="stylesheet"][href^="/assets/system-"]) {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+  html:has(head > link[rel="stylesheet"][href^="/assets/light-"]) {
+  }
+
+  html:has(head > link[rel="stylesheet"][href^="/assets/dark-"]) {
+  }
+
+
+    --color-bg: var(--surface_container_lowest);
+
+    --color-fg: var(--on_surface);
+    --color-fg-shape: var(--surface_container_high);
+
+    --color-tag-bg: fade(var(--secondary), 20%);
+    --color-tag-border: fade(var(--secondary), 20%);
+
+    --color-lobsters-tag-special-bg: fade(var(--error), 30%);
+    --color-lobsters-tag-special-border: fade(var(--error), 30%);
+
+    --color-tag-media-bg: fade(var(--primary), 20%);
+    --color-tag-media-border: fade(var(--primary), 30%);
+
+    --color-tag-meta-bg: var(--surface_container_low);
+    --color-tag-meta-border: var(--surface_container_high);
+
+    --color-bg-target: fade(var(--primary), 20%);
+
+    --color-fg-affirmative: var(--tertiary);
+    --color-fg-accent: var(--primary);
+    --color-fg-author: var(--primary);
+
+    --color-fg-contrast-7-5: var(--primary);
+
+    --color-fg-link: var(--primary);
+    --color-fg-link-visited: var(--primary_container);
+
+    --color-fg-contrast-4-5: var(--on_surface_variant);
+    --color-fg-contrast-5: var(--on_surface);
+    --color-fg-contrast-6: var(--on_surface);
+    --color-fg-contrast-10: var(--on_surface);
+    --color-fg-contrast-13: var(--on_surface);
+
+    --color-box-bg: var(--surface);
+    --color-button-bg: var(--surface);
+    --color-button-bg-shaded: var(--surface_container_low);
+    --color-box-border: var(--surface_container_low);
+    --color-box-border-focus: var(--primary);
+    --color-box-bg-shaded: var(--surface);
+
+    --color-mobile-story-liner-bg: var(--surface_container_lowest);
+    --color-mobile-story-comments-bubble-fill: var(--surface_container);
+
+    --color-mobile-story-comments-bubble-fill-zero: var(--surface_container_low);
+
+    --color-table-header-bg: var(--surface_container_low);
+    --color-table-header-border: var(--surface_container);
+    --color-table-row-bg-even: var(--surface);
+    --color-table-row-bg-odd: var(--surface);
+    --color-table-row-border: var(--surface_container_lowest);
+
+    --color-flash-bg-success: fade(var(--tertiary), 30%);
+    --color-fg-negative: var(--error);
+
+    hr {
+      color: var(--surface_container_high);
+    }
+
+    #logo {
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path fill="@{accent}" d="M16 16H0V0h16z"/><path fill="@{base}" d="M3.5 13.45v-.63c0-.11 0-.1.1-.11.23-.02.46-.03.69-.07.46-.08.67-.31.74-.78.02-.14.03-.29.03-.43V4.69c0-.18-.02-.36-.04-.53-.03-.31-.23-.5-.52-.61-.27-.1-.55-.11-.83-.13h-.15v-.65c0-.07.02-.09.09-.09h5.24c.07 0 .1.01.1.09-.01.19 0 .37 0 .56v.08c-.14.01-.28 0-.41.02-.2.03-.4.06-.59.11-.35.11-.53.35-.57.68q-.03.225-.03.45v6.39c0 .27.03.54.06.8.03.29.22.48.49.58.23.09.48.11.72.12.63.02 1.25.01 1.86-.15.88-.22 1.47-.77 1.76-1.64.09-.28.13-.57.2-.86.01-.02.03-.06.05-.06h.66c-.02 1.2.02 2.4 0 3.6z"/></svg>'
+      );
+      background-image: url("data:image/svg+xml,@{svg}");
+      background-color: transparent !important;
+      &::after {
+        background: none;
+      }
+    }
+  }
+}

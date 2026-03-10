@@ -1,0 +1,221 @@
+/* ==UserStyle==
+@name Cinny Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/cinny
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/cinny
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/cinny/catppuccin.user.less
+@description Soothing pastel theme for Cinny
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("cinny.in") {
+  code .token {
+    opacity: 1 !important;
+  }
+
+  :root,
+  .silver-theme {
+  }
+
+  .dark-theme,
+  .butter-theme {
+  }
+
+    #lib.css-variables();
+
+    /* Legacy user colors */
+    --mx-uc-1: var(--primary);
+    --mx-uc-2: var(--secondary);
+    --mx-uc-3: var(--tertiary_container);
+    --mx-uc-4: var(--error);
+    --mx-uc-5: var(--secondary_container);
+    --mx-uc-6: var(--primary_fixed);
+    --mx-uc-7: var(--primary);
+    --mx-uc-8: var(--tertiary);
+
+    body.oq6d071w,
+    &._15q3ngn0,
+    &._15q3ngn1,
+    &._15q3ngn2 {
+      --oq6d070: var(--surface);
+      --oq6d071: var(--surface_container_lowest);
+      --oq6d072: var(--surface_container_low);
+      --oq6d073: var(--surface_container);
+      --oq6d074: var(--on_surface);
+      --oq6d075: var(--surface_container_lowest);
+      --oq6d076: var(--surface_container_low);
+      --oq6d077: var(--surface_container);
+      --oq6d078: var(--surface_container_high);
+      --oq6d079: var(--on_surface);
+      --oq6d07a: var(--surface);
+      --oq6d07b: var(--surface_container_lowest);
+      --oq6d07c: var(--surface_container_low);
+      --oq6d07d: var(--surface_container);
+      --oq6d07e: var(--on_surface);
+
+      --oq6d07f: var(--on_surface_variant);
+      --oq6d07g: var(--outline_variant);
+      --oq6d07h: var(--outline_variant);
+      --oq6d07i: var(--outline);
+
+      --oq6d07j: var(--surface_container_lowest);
+
+      --oq6d07k: fade(var(--primary), 50%);
+      --oq6d07l: fade(var(--primary), 40%);
+      --oq6d07m: fade(var(--primary), 30%);
+      --oq6d07n: fade(var(--primary), 20%);
+
+      --oq6d07o: var(--on_surface);
+      --oq6d07p: var(--on_surface);
+      --oq6d07q: var(--on_surface_variant);
+      --oq6d07r: var(--outline_variant);
+      --oq6d07s: var(--outline_variant);
+
+      --oq6d07t: var(--surface);
+      --oq6d07u: var(--surface_container_low);
+      --oq6d07v: var(--surface_container);
+      --oq6d07w: var(--surface_container_high);
+      --oq6d07x: var(--outline);
+      --oq6d07y: var(--on_surface);
+
+      --oq6d07z: fade(var(--tertiary), 90%);
+      --oq6d0710: fade(var(--tertiary), 95%);
+      --oq6d0711: fade(var(--tertiary), 97.5%);
+      --oq6d0712: var(--tertiary);
+      --oq6d0713: var(--surface_container_low);
+      --oq6d0714: fade(var(--surface_container_low), 97.5%);
+      --oq6d0715: fade(var(--surface_container_low), 95%);
+      --oq6d0716: fade(var(--surface_container_low), 90%);
+      --oq6d0717: fade(var(--surface_container_low), 80%);
+
+      --oq6d0718: var(--tertiary);
+
+      --oq6d0719: fade(var(--secondary_container), 90%);
+      --oq6d071a: fade(var(--secondary_container), 95%);
+      --oq6d071b: fade(var(--secondary_container), 97.5%);
+      --oq6d071c: var(--secondary_container);
+      --oq6d071d: fade(var(--surface_container_low), 97.5%);
+      --oq6d071e: fade(var(--surface_container_low), 95%);
+      --oq6d071f: fade(var(--surface_container_low), 90%);
+      --oq6d071g: fade(var(--surface_container_low), 80%);
+      --oq6d071h: fade(var(--surface_container_low), 70%);
+
+      --oq6d071i: fade(var(--error_container), 90%);
+      --oq6d071j: fade(var(--error_container), 95%);
+      --oq6d071k: fade(var(--error_container), 97.5%);
+      --oq6d071l: var(--error_container);
+      --oq6d071m: fade(var(--surface_container_low), 97.5%);
+      --oq6d071n: fade(var(--surface_container_low), 95%);
+      --oq6d071o: fade(var(--surface_container_low), 90%);
+      --oq6d071p: fade(var(--surface_container_low), 80%);
+      --oq6d071q: fade(var(--surface_container_low), 70%);
+      --oq6d071r: fade(var(--surface_container_low), 60%);
+      --oq6d071s: fade(var(--error_container), 90%);
+
+      --oq6d071t: fade(var(--on_surface), 50%);
+      --oq6d071u: var(--surface);
+      --oq6d071v: fade(var(--surface), 60%);
+    }
+
+    /* Search results */
+    ._1m2qi7rq {
+      background-color: var(--primary);
+      color: var(--surface_container_lowest);
+    }
+
+    /* Footer */
+    .footer {
+      .text-s1,
+      .text-h2,
+      a {
+        color: var(--on_surface);
+      }
+
+      .footer__creator,
+      .footer__menu-container .text-b3 {
+        color: var(--on_surface_variant);
+      }
+
+      background-color: var(--surface_container_lowest);
+    }
+
+    /* I don't think these actually do anything anymore, but they are
+    still defined in the app. They _might_ be removed in a future release. */
+
+    /* Backgrounds */
+    --bg-surface: var(--surface_container_lowest);
+    --bg-surface-transparent: fade(var(--surface_container_lowest), 0%);
+    --bg-surface-low: var(--surface);
+    --bg-surface-low-transparent: fade(var(--surface), 0%);
+    --bg-surface-extra-low: var(--surface);
+    --bg-surface-extra-low-transparent: fade(var(--surface), 0%);
+    --bg-surface-border: fade(var(--surface), 20%);
+    --bg-surface-hover: var(--surface_container_low);
+    --bg-surface-active: var(--surface_container);
+    --bg-overlay: fade(var(--surface), 60%);
+    --bg-overlay-low: fade(var(--surface), 80%);
+    --bg-primary: var(--primary);
+    --bg-primary-hover: fade(var(--primary), 80%);
+    --bg-primary-active: fade(var(--primary), 70%);
+    --bg-primary-border: fade(var(--primary), 38%);
+    --bg-tooltip: var(--surface_container_low);
+    --bg-badge: var(--primary_container);
+    --bg-positive: var(--tertiary);
+    --bg-positive-hover: fade(var(--tertiary), 8%);
+    --bg-positive-active: fade(var(--tertiary), 15%);
+    --bg-positive-border: fade(var(--tertiary), 40%);
+    --bg-caution: var(--secondary_container);
+    --bg-caution-hover: fade(var(--secondary_container), 8%);
+    --bg-caution-active: fade(var(--secondary_container), 15%);
+    --bg-caution-border: fade(var(--secondary_container), 40%);
+    --bg-danger: var(--error_container);
+    --bg-danger-hover: fade(var(--error_container), 5%);
+    --bg-danger-active: fade(var(--error_container), 10%);
+    --bg-danger-border: fade(var(--error_container), 20%);
+    --bg-ping: fade(var(--tertiary), 40%);
+    --bg-ping-hover: fade(var(--tertiary), 50%);
+
+    /* Texts */
+    --tc-surface-high: var(--on_surface);
+    --tc-surface-normal: var(--on_surface);
+    --tc-surface-normal-low: var(--on_surface);
+    --tc-surface-low: var(--on_surface_variant);
+    --tc-primary-high: var(--surface);
+    --tc-primary-normal: var(--on_surface);
+    --tc-primary-low: var(--on_surface);
+    --tc-tooltip: var(--on_surface_variant);
+    --tc-code: var(--primary);
+    --tc-link: var(--primary);
+    --tc-badge: var(--surface);
+    --tc-positive-high: var(--tertiary);
+    --tc-positive-normal: var(--tertiary);
+    --tc-positive-low: var(--tertiary);
+    --tc-caution-high: var(--secondary_container);
+    --tc-caution-normal: var(--secondary_container);
+    --tc-caution-low: var(--secondary_container);
+    --tc-danger-high: var(--error_container);
+    --tc-danger-normal: var(--error_container);
+    --tc-danger-low: var(--error_container);
+
+    /* Icons */
+    --ic-surface-high: var(--on_surface);
+    --ic-surface-normal: var(--on_surface);
+    --ic-surface-low: var(--on_surface);
+    --ic-primary-high: var(--surface);
+    --ic-primary-normal: var(--surface);
+    --ic-primary-low: var(--surface);
+    --ic-positive-high: var(--tertiary);
+    --ic-positive-normal: var(--error_container);
+    --ic-caution-high: var(--secondary_container);
+    --ic-caution-normal: var(--secondary_container);
+    --ic-danger-high: var(--error_container);
+    --ic-danger-normal: var(--error_container);
+  }
+}

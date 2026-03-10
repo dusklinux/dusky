@@ -1,0 +1,245 @@
+/* ==UserStyle==
+@name Hoogle Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/hoogle
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/hoogle
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/hoogle/catppuccin.user.less
+@description Soothing pastel theme for Hoogle
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("hoogle.haskell.org") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    a {
+      color: var(--primary);
+
+      &:hover {
+        background-color: var(--surface_container_low);
+      }
+    }
+
+:root {
+}
+
+    body {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    /*
+     * Top
+     */
+
+    #links {
+      background-color: var(--primary);
+      color: var(--surface_container);
+      border-color: shade(var(--primary), 25%);
+    }
+
+    #top-menu li {
+      border-color: var(--surface);
+
+      a,
+      a:visited,
+      a:link {
+        color: var(--surface_container_lowest);
+      }
+      a:hover {
+        background-color: fade(var(--outline), 30%);
+      }
+    }
+
+    #logo {
+      img {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="58"><path d="M110.241 11.967c-.248 0-.524.221-.837.652a20.5 20.5 0 0 1-2.977 3.328v1.126a7 7 0 0 1 .672-.03q1.194-.001 1.82.526.623.528 1.601 2.915l1.271 3.028-5.085 13.519c-.404 1.03-.757 1.666-1.043 1.901-.287.222-.739.39-1.365.507v1.643a14 14 0 0 1 1.82-.134q.802-.001 2.407.134c1.044-4.317 2.51-9.344 4.414-15.069 1.956 5.36 3.33 8.896 4.113 10.604a34 34 0 0 0 2.76 4.858h.61a57 57 0 0 1 4.516-2.057v-1.096q-1.215-.116-2.098-1.074c-.574-.653-1.58-2.778-3.028-6.377l-5.261-13.25q-1.174-2.932-2.367-4.279c-.795-.913-1.447-1.375-1.943-1.375m-93.741.3v28.68h5.788V28.402h11.348v12.547h5.788v-28.68h-5.788v11.285H22.288V12.267zm118.453 9.095c-2.635 0-4.864 1.038-6.677 3.111-1.721 1.996-2.573 4.331-2.573 7.018 0 3.012.897 5.432 2.697 7.245q2.699 2.698 7.235 2.697 4.501.002 7.38-3.049c.208-.221.31-.376.31-.454q.001-.096-.683-1.406c-.456-.887-.705-1.348-.744-1.374q-.04-.041-.196-.042l-.63.517q-2.583 1.995-5.675 1.995c-1.2 0-2.315-.388-3.359-1.158-1.095-.808-1.732-1.787-1.902-2.935 7.513-.56 11.553-.939 12.113-1.147.835-.326 1.251-.978 1.251-1.943q-.001-3.756-2.408-6.377-2.463-2.699-6.14-2.698m-36.741.042c-.157 0-.238.385-.238 1.167 0 .183.015.47.041.848.027.365.042.626.042.796q0 .352-.155.351c-.092 0-.246-.129-.455-.403-1.265-1.656-2.974-2.49-5.126-2.49-2.44 0-4.417.928-5.943 2.78-1.435 1.734-2.15 3.836-2.15 6.314 0 2.44.746 4.501 2.233 6.17 1.551 1.735 3.53 2.595 5.942 2.595 2.23 0 4.072-.875 5.52-2.636.052.952.072 1.566.072 1.84 0 1.239-.49 2.18-1.468 2.832-.848.574-1.913.858-3.204.858-1.97 0-3.935-.553-5.891-1.675-.104-.065-.183-.103-.248-.103q-.218 0-.28.33-.587 3.11-.588 2.895c0 .13.147.292.434.475q2.74 1.683 7.183 1.685c3.065 0 5.291-.782 6.687-2.347 1.33-1.473 1.995-3.769 1.995-6.873 0-1.565.015-3.908.041-7.038.026-3.143.041-5.504.041-7.07 0-.273-.096-.44-.279-.506-.117-.052-.81-.189-2.087-.423-1.279-.248-1.989-.372-2.12-.372m-45.464.155c-2.7 0-4.962.979-6.8 2.935-1.788 1.917-2.688 4.24-2.688 6.966s.9 5.038 2.687 6.955c1.826 1.983 4.088 2.977 6.8 2.977 2.7 0 4.965-1.002 6.791-2.997 1.787-1.93 2.677-4.25 2.677-6.977q.001-4.068-2.698-6.924-2.739-2.934-6.77-2.935m20.485 0q-4.051 0-6.81 2.935-2.679 2.876-2.677 6.966c0 2.726.89 5.038 2.676 6.955 1.826 1.983 4.099 2.977 6.811 2.977 2.7 0 4.965-1.002 6.79-2.997 1.787-1.93 2.677-4.25 2.677-6.977q.001-4.068-2.697-6.924-2.74-2.934-6.77-2.935m61.444 3.555c1.069 0 2.035.416 2.883 1.25.86.835 1.292 1.802 1.292 2.884q0 .236-1.137.393c-2.686.391-4.994.579-6.925.579-.469 0-.702-.13-.702-.403 0-1.2.459-2.291 1.385-3.256.939-.965 2.004-1.447 3.204-1.447m-41.31.279q2.13 0 3.441 1.664c.796 1.017 1.189 2.25 1.189 3.71q0 2.134-1.23 3.68-1.329 1.683-3.4 1.684c-1.396 0-2.537-.563-3.411-1.684q-1.212-1.546-1.21-3.68c0-1.447.404-2.672 1.2-3.69q1.309-1.682 3.42-1.684m-40.617.217q2.349-.002 3.875 1.778 1.468 1.683 1.468 4.072c0 1.565-.49 2.914-1.468 4.062q-1.546 1.819-3.875 1.819c-1.54 0-2.822-.607-3.866-1.82-.99-1.147-1.488-2.496-1.488-4.061q0-2.388 1.468-4.093c1.03-1.174 2.32-1.757 3.886-1.757m20.484 0q2.349-.001 3.876 1.778 1.467 1.683 1.468 4.072c0 1.565-.49 2.914-1.468 4.062Q75.56 37.34 73.23 37.34q-2.31 0-3.875-1.82c-.992-1.147-1.489-2.496-1.489-4.061q0-2.388 1.468-4.093 1.547-1.759 3.896-1.757" fill="@{accent}"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+
+      &:hover {
+        background-color: transparent;
+      }
+    }
+
+    #hoogle,
+    #scope,
+    #submit {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-style: solid;
+      border-width: 2px;
+      border-color: var(--surface_container_low);
+      border-radius: 4px;
+    }
+
+    .chosen-container {
+      .chosen-drop {
+        background-color: var(--surface);
+        border-color: var(--surface_container_low);
+      }
+
+      .chosen-single {
+        background-image: none;
+        background-color: var(--surface);
+        box-shadow: none;
+        border-style: solid;
+        border-width: 2px;
+        border-color: var(--surface_container_low);
+        color: var(--on_surface);
+      }
+
+      .chosen-default {
+        color: var(--surface);
+      }
+
+      .chosen-search input {
+        border-color: var(--surface_container);
+        border-radius: 4px;
+      }
+
+      .chosen-results {
+        color: var(--on_surface);
+
+        li.disabled-result {
+          color: var(--outline);
+        }
+
+        li.highlighted {
+          background-image: none;
+          background-color: var(--primary);
+          color: var(--surface_container_lowest);
+        }
+
+        li.no-results {
+          color: var(--on_surface);
+          background-color: var(--surface);
+        }
+      }
+    }
+
+    /*
+     * Left
+     */
+
+    #left {
+      a {
+        color: var(--primary);
+      }
+      .plus {
+          '<svg width="12" height="12" viewBox="0 0 12 12" xmlns="http://www.w3.org/2000/svg"><circle cy="6" cx="6" r="5.5" fill="none" stroke="@{overlay0}"/><rect width="2" height="8" x="5" y="2" ry=".5" fill="@{green}"/><rect width="8" height="2" x="2" y="5" ry=".5" fill="@{green}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+        color: var(--tertiary);
+      }
+      .minus {
+          '<svg width="12" height="12" viewBox="0 0 12 12" xmlns="http://www.w3.org/2000/svg"><circle cy="6" cx="6" r="5.5" fill="none" stroke="@{overlay0}"/><rect width="8" height="2" x="2" y="5" ry=".5" fill="@{red}"/></svg>'
+        );
+        background-image: url("data:image/svg+xml,@{svg}");
+        color: var(--error);
+      }
+    }
+
+    /*
+     * Footer
+     */
+
+    #footer {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-color: var(--outline);
+    }
+
+    /*
+     * Other
+     */
+
+    .error {
+      border-color: var(--error);
+    }
+
+    #example {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-color: var(--surface_container_low);
+    }
+
+    /*
+     * Results
+     */
+
+    .result.active {
+      background-color: var(--surface);
+    }
+
+    .ans {
+      background-color: var(--surface);
+      border-color: var(--surface_container_low);
+
+      a {
+        color: var(--on_surface);
+      }
+      .name {
+        color: var(--primary);
+      }
+    }
+
+    .links a {
+      color: var(--outline_variant);
+    }
+
+    .from a,
+    .p1,
+    .p2 {
+      color: var(--tertiary);
+    }
+
+    .doc,
+    .doc a {
+      color: var(--on_surface);
+    }
+
+    .open {
+        '<svg width="10" height="10" viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg"><rect width="9" height="9" x=".5" y=".5" ry="3" fill="none" stroke="@{overlay0}"/><rect width="6" height="2" x="2" y="4" ry=".5" fill="@{overlay0}"/></svg>'
+      );
+      background-image: url("data:image/svg+xml,@{svg}");
+    }
+    .shut {
+        '<svg width="10" height="10" viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg"><rect width="9" height="9" x=".5" y=".5" ry="3" fill="none" stroke="@{overlay0}"/><rect width="2" height="6" x="4" y="2" ry=".5" fill="@{overlay0}"/><rect width="6" height="2" x="2" y="4" ry=".5" fill="@{overlay0}"/></svg>'
+      );
+      background-image: url("data:image/svg+xml,@{svg}");
+    }
+
+    .c0 {
+      background-color: var(--surface_container_high);
+    }
+    .c1 {
+      background-color: var(--tertiary);
+    }
+    .c2 {
+      background-color: var(--primary_container);
+    }
+    .c3 {
+      background-color: var(--secondary);
+    }
+    .c4 {
+      background-color: var(--secondary);
+    }
+    .c5 {
+      background-color: var(--tertiary_container);
+    }
+  }
+}

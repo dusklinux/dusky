@@ -1,0 +1,112 @@
+/* ==UserStyle==
+@name Poe Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/poe
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/poe
+@version 2026.01.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/poe/catppuccin.user.less
+@description Soothing pastel theme for Poe
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+// Using `url-prefix `instead of `domain` prevents a broken theme on the Help Center (https://help.poe.com/).
+@-moz-document url-prefix("https://poe.com") {
+  :root:not(.dark, .light) {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+  :root {
+    &.dark {
+    }
+    &.light {
+    }
+  }
+
+
+    --pdl-bg-base: var(--surface);
+    --pdl-bg-faint: var(--surface_container_lowest);
+    --pdl-bg-muted: var(--surface_container_low);
+    --pdl-bg-subtle: var(--surface_container);
+    --pdl-bg-emphasis: var(--surface_container_high);
+
+    --pdl-fg-base: var(--on_surface);
+    --pdl-fg-muted: var(--on_surface);
+    --pdl-fg-subtle: var(--on_surface_variant);
+
+    --pdl-bg-reverse: var(--on_surface);
+    --pdl-fg-reverse: var(--surface_container_lowest);
+
+    --pdl-border-base: var(--surface_container);
+    --pdl-border-emphasis: var(--outline);
+
+    --pdl-accent-base: var(--primary);
+    --pdl-accent-on-accent: var(--surface_container_lowest);
+    --pdl-fg-white: var(--surface_container_lowest);
+
+    --code-block-bg: var(--surface_container_lowest);
+
+    --pdl-error-base: var(--error);
+
+    --pdl-success-base: var(--tertiary);
+    --pdl-success-muted: fade(var(--tertiary), 60%);
+    --pdl-success-on-success: var(--surface_container_lowest);
+
+    // Settings
+    --pdl-action-default-bg: var(--surface);
+    --pdl-action-disabled-bg: var(--surface_container_low);
+    --pdl-action-default-border: var(--surface_container_high);
+    --pdl-action-hover-border: var(--outline);
+    --pdl-action-hover-border-accent: var(--primary);
+    --pdl-action-default-fg: var(--on_surface);
+    --pdl-action-disabled-fg: var(--outline_variant);
+    --violet-9: var(--primary);
+    --violet-10: var(--primary);
+    --violet-11: var(--primary);
+    --ruby-10: var(--error); // danger button text
+    --ruby-11: var(--error); // danger button hover text
+
+    textarea {
+      color: var(--on_surface);
+    }
+
+    [class^="Tooltip_root"] {
+      --pdl-tooltip-bg: var(--surface_container_low);
+      --pdl-tooltip-color: var(--on_surface);
+    }
+
+    // API
+    ul[data-pdl-sidebar-menu] {
+      li[data-pdl-sidebar-menu-item] {
+        --item-active-bg-color: var(--surface_container_low);
+        --item-hover-bg-color: var(--surface_container);
+      }
+    }
+
+    // Login
+    --fade-bottom-gradual: linear-gradient(
+      to bottom,
+      transparent 0%,
+      fade(var(--surface), 50%) 60%,
+      var(--surface) 90%,
+      var(--surface) 100%
+    );
+    --fg-base--ignore-light-mode: var(--on_surface);
+
+    // Logo (Login, Chat)
+    img[src^="https://psc2.cf2.poecdn.net/assets/_next/static/media/poeFullMultibot"],
+    img[src^="https://psc2.cf2.poecdn.net/assets/_next/static/media/poeFullWhiteMultibot"] {
+        '<svg width="331" height="100" viewBox="0 0 331 100" fill="none" xmlns="http://www.w3.org/2000/svg"><g clip-path="url(#a)"><path d="M153.581.219h25.792c12.042 0 22.707 8.268 25.12 19.678.405 1.944.624 3.83.648 5.66.178 13.192-10.989 25.445-25.784 25.445-3.248.048-12.99.016-12.99.016l.081 26.748h-12.876V.219zm12.786 38.57s9.192.017 12.666 0c8.94 0 13.345-7.498 13.345-13.466 0-7.208-6.041-13.006-12.997-13.006h-13.014v26.481zm71.393-16.738c16.132-.048 28.667 12.35 28.7 28.376.032 16.066-12.374 28.448-28.554 28.489-16.269.049-28.764-12.301-28.781-28.424-.008-16.026 12.447-28.392 28.643-28.449zm.057 11.337c-9.256-.016-16.342 7.313-16.399 16.958-.065 9.823 7.005 17.249 16.431 17.257 9.151.008 16.237-7.467 16.237-17.12 0-9.66-7.07-17.086-16.269-17.095m80.73 25.04c-1.239 3.652-5.758 9.41-15.443 9.41-9.167 0-16.091-7.807-15.808-15.338 0 0 42.046-.04 42.086 0 2.648-18.982-9.094-30.44-25.93-30.44-20.116 0-28.538 16.033-28.538 27.857 0 20.868 16.196 28.999 28.141 28.999 13.07-.008 23.128-6.22 27.825-18.034-4.235-.843-8.082-1.62-12.333-2.454m-15.273-25.161c9.547 0 14.171 5.83 13.937 10.527H288.43c0-3.716 5.831-10.527 14.844-10.527m-198.995-13.75a7.12 7.12 0 0 0-5.182-2.082h-.033A10.17 10.17 0 0 1 88.901 7.232v-.009A7.126 7.126 0 0 0 81.848 0H24.529a7.11 7.11 0 0 0-7.061 7.224A10.204 10.204 0 0 1 7.264 17.426 7.117 7.117 0 0 0 0 24.594V42.92a7.126 7.126 0 0 0 7.272 7.142 10.204 10.204 0 0 1 10.204 10.172v18.609a2.51 2.51 0 0 0 4.47 1.571l10.333-12.916h49.569a7.11 7.11 0 0 0 7.053-7.224c0-5.644 4.551-10.203 10.188-10.203h.016a7.12 7.12 0 0 0 7.272-7.151V24.586a7.1 7.1 0 0 0-2.098-5.061zM92.092 43.113a10.204 10.204 0 0 1-10.204 10.099H24.473a10.204 10.204 0 0 1-10.196-10.099v-18.73a10.204 10.204 0 0 1 10.204-10.099h57.407a10.204 10.204 0 0 1 10.204 10.098z" fill="@{text}"/><path d="M37.332 23.007a7.16 7.16 0 0 0-7.158 7.166v7.16a7.159 7.159 0 1 0 14.317 0v-7.16a7.16 7.16 0 0 0-7.159-7.158zm31.704 0a7.16 7.16 0 0 0-7.158 7.166v7.16a7.162 7.162 0 0 0 14.325 0v-7.16a7.16 7.16 0 0 0-7.167-7.158z" fill="@{text}"/><path d="m36.717 98.918 10.041-12.552h49.569a7.11 7.11 0 0 0 7.061-7.215 10.206 10.206 0 0 1 10.155-10.212h.041a7.12 7.12 0 0 0 5.144-2.04 7.1 7.1 0 0 0 2.128-5.11V43.68a7.85 7.85 0 0 0-1.62-4.778l-2.008-2.615v20.78a7.14 7.14 0 0 1-2.127 5.103 7.13 7.13 0 0 1-5.137 2.047h-.049A10.203 10.203 0 0 0 99.76 74.42a7.126 7.126 0 0 1-7.053 7.224H43.13l-10.916 13.67a2.891 2.891 0 0 0 4.503 3.611z" fill="url(#b)"/><path d="M25.201 85.573 35.883 72.21H85.45a7.11 7.11 0 0 0 7.053-7.216v-.016c0-5.612 4.535-10.171 10.147-10.203h.057a7.117 7.117 0 0 0 7.272-7.143V26.837l2.624 3.418a7.86 7.86 0 0 1 1.62 4.786V53.14a7.13 7.13 0 0 1-7.264 7.142h-.049a10.205 10.205 0 0 0-10.155 10.212 7.126 7.126 0 0 1-7.053 7.223H40.126L30.48 89.784a3.377 3.377 0 0 1-5.28-4.211" fill="url(#c)"/></g><defs><linearGradient id="b" x1="144.446" y1="31.1048" x2="32.6514" y2="111.454" gradientUnits="userSpaceOnUse"><stop stop-color="@{sapphire}"/><stop offset="1" stop-color="@{lavender}"/></linearGradient><linearGradient id="c" x1="24.7477" y1="103.283" x2="122.565" y2="32.5381" gradientUnits="userSpaceOnUse"><stop stop-color="@{pink}"/><stop offset="1" stop-color="@{mauve}"/></linearGradient><clipPath id="a"><rect width="330.88" height="99.9953" fill="white"/></clipPath></defs></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+  }
+}

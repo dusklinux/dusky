@@ -1,0 +1,167 @@
+/* ==UserStyle==
+@name paste.rs Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/paste.rs
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/paste.rs
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/paste.rs/catppuccin.user.less
+@description Soothing pastel theme for paste.rs
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("paste.rs") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+:root {
+}
+
+    body {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    a {
+      color: var(--primary);
+    }
+
+    /* Web UI */
+    textarea,
+    select,
+    input[type="submit"] {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+      border-color: var(--outline);
+      border-radius: 4px;
+    }
+    textarea:focus,
+    select:focus,
+    input[type="submit"]:focus {
+      border-color: var(--primary);
+      outline-color: var(--outline);
+    }
+    input[type="submit"]:hover {
+      background-color: var(--surface);
+    }
+
+    main {
+      color: var(--on_surface);
+      border-color: var(--surface_container_low);
+    }
+
+    .code.gutter {
+      background-color: var(--surface_container_lowest) !important;
+      span {
+        /* Line Numbers */
+        color: var(--outline) !important;
+      }
+    }
+
+    article.markdown-body {
+      color: var(--on_surface);
+
+      h6 {
+        color: var(--on_surface);
+      }
+
+      a {
+        color: var(--primary);
+      }
+
+      img {
+        background: none;
+      }
+
+      pre {
+        background: var(--surface_container_low);
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      h5,
+      h6 {
+        border-color: var(--surface_container_low);
+      }
+
+      blockquote {
+        border-color: var(--surface_container);
+
+        p {
+          color: var(--on_surface);
+        }
+      }
+
+      table {
+        border-color: var(--surface_container_low) !important;
+        tr,
+        th,
+        td {
+          border-color: var(--surface_container);
+          background: none !important;
+        }
+      }
+    }
+
+    /* Syntax-highlighted code */
+    .code.text > pre {
+      background-color: var(--surface_container_lowest) !important;
+      background-image: none;
+
+      span {
+        color: red !important;
+      }
+
+      /* General Text, Braces, Delimiters, Parameters, Classes, Metadata */
+      span[style*="color:#323232"] {
+        color: var(--on_surface) !important;
+      }
+
+      /* Keywords, Operators */
+      span[style*="color:#a71d5d"] {
+        color: var(--primary) !important;
+      }
+
+      /* Strings */
+      span[style*="color:#183691"],
+      span[style*="color:#ed6a43"] {
+        color: var(--tertiary) !important;
+      }
+
+      /* Comments */
+      span[style*="color:#969896"] {
+        color: var(--outline_variant) !important;
+      }
+
+      /* Constants, Numbers */
+      span[style*="color:#0086b3"] {
+        color: var(--secondary_container) !important;
+      }
+
+      /* Methods, Functions */
+      span[style*="color:#795da3"],
+      span[style*="color:#62a35c"],
+      span[style*="color:#63a35c"] {
+        color: var(--primary) !important;
+      }
+
+      /* Errors */
+      span[style*="background-color:#f5f5f5"][style*="color:#b52a1d"] {
+        color: var(--on_surface) !important;
+        background: fade(var(--error), 60%) !important;
+      }
+    }
+  }
+}

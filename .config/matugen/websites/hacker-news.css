@@ -1,0 +1,156 @@
+/* ==UserStyle==
+@name Hacker News Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/hacker-news
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/hacker-news
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/hacker-news/catppuccin.user.less
+@description Soothing pastel theme for Hacker News
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("news.ycombinator.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    [bgcolor="#fafaf0"],
+    [bgcolor="#f6f6ef"] {
+      background-color: var(--surface_container_lowest);
+    }
+:root {
+}
+
+    body {
+      background-color: var(--surface);
+      color: var(--on_surface);
+    }
+
+    td {
+      color: var(--on_surface);
+    }
+
+    /* Header */
+    td[bgcolor="#ff6600"] {
+      background-color: var(--primary);
+
+      .pagetop,
+      .pagetop a {
+        color: var(--surface) !important;
+      }
+
+      img[src="y18.svg"] {
+          '<svg height="18" viewBox="4 4 188 188" width="18" xmlns="http://www.w3.org/2000/svg"><path d="M4 4h188v188H4z" fill="@{accent}"/><path d="M73.252 45.01 96 92.401l22.748-47.391h19.566l-34.324 64.487v41.493H88.01v-41.493L53.686 45.01z" fill="@{crust}"/></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+        border-color: var(--surface) !important;
+      }
+
+      [color="#ffffff"] {
+        color: var(--surface);
+      }
+    }
+
+    td[bgcolor="#ffffaa"] {
+      background-color: var(--secondary);
+
+      td {
+        color: var(--surface);
+      }
+    }
+
+    .subtext,
+    .comhead {
+      &,
+      a:link,
+      a:visited,
+      a:hover {
+        color: var(--outline_variant) !important;
+      }
+    }
+
+    a:link {
+      color: var(--primary);
+      &:hover {
+        color: var(--primary_fixed);
+      }
+    }
+    .hnmore a:link,
+    a:visited {
+      color: var(--primary_container);
+    }
+
+    [color="#3c963c"] {
+      color: var(--tertiary);
+    }
+
+    /* Story points */
+    .score {
+      color: var(--on_surface_variant);
+    }
+
+    /* Story ranking number */
+    .title {
+      color: var(--primary_container);
+    }
+
+    /* Comment text */
+    .commtext {
+      color: var(--on_surface);
+    }
+
+    /* Comment box */
+    input,
+    textarea,
+    select {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-width: 1px;
+      border-style: solid;
+      border-color: var(--surface_container_low);
+      border-radius: 2px;
+    }
+
+    input {
+      padding: 2px;
+    }
+
+    /* Poll questions */
+    td.comment > div > font {
+      color: var(--on_surface);
+    }
+
+    /* Text post content */
+    .toptext {
+      color: var(--on_surface);
+    }
+
+    .votearrow {
+        '<svg xmlns="http://www.w3.org/2000/svg" height="32" viewBox="0 0 32 16" width="32"><path d="M2 27 16-2l14 29z" fill="@{subtext0}"/></svg>'
+      );
+      background-image: url("data:image/svg+xml,@{svg}");
+    }
+
+    .yclinks {
+      color: var(--surface_container_high);
+    }
+
+    b {
+      color: var(--on_surface);
+    }
+
+    table[bgcolor="#ff6600"] {
+      background-color: var(--primary);
+    }
+  }
+}

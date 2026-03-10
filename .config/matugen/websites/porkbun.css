@@ -1,0 +1,349 @@
+/* ==UserStyle==
+@name Porkbun Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/porkbun
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/porkbun
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/porkbun/catppuccin.user.less
+@description Soothing pastel theme for Porkbun
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("porkbun.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    &,
+:root {
+}
+
+    body {
+      background-color: var(--surface_container_lowest);
+      color: var(--on_surface);
+    }
+
+    --cloudflare_on: var(--secondary_container);
+    --porkbun_danger: var(--error);
+    --porkbun_warning: var(--secondary);
+    --porkbun_success: var(--tertiary);
+    --porkbun_pink_hover: darken(var(--primary), 5%);
+    --porkbun_pink: var(--primary);
+    --porkbun_gold: var(--secondary);
+    --porkbun_pink_light: lighten(var(--primary), 5%);
+    --porkbun_pink_medium: var(--primary);
+    --porkbun_dark_gray: var(--on_surface);
+    --porkbun_light_gray: var(--surface_container_low);
+    --porkbun_medium_gray: var(--outline_variant);
+    --porkbun_white: var(--surface);
+    --blue_link: var(--primary);
+    --blue_link_hover: var(--primary_container);
+    --headerMenuLink_color: var(--on_surface);
+    --headerMenuLink-hover_color: var(--on_surface);
+    --homepageBlurb_color: var(--on_surface);
+
+    /* Misc */
+
+    .text-muted {
+      color: var(--on_surface_variant);
+    }
+    .text-danger {
+      color: var(--error);
+    }
+    .text-success {
+      color: var(--tertiary);
+    }
+
+    .badge-porkbun {
+      background-color: var(--surface_container_low);
+      color: var(--on_surface);
+    }
+
+    .alert-info {
+      background-color: fade(var(--primary), 30%);
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    .alert-warning {
+      background-color: fade(var(--secondary), 30%);
+      color: var(--secondary);
+      border-color: var(--secondary);
+    }
+
+    .alert-danger {
+      background-color: fade(var(--error), 30%);
+      color: var(--error);
+      border-color: var(--error);
+    }
+
+    hr {
+      border-top-color: var(--surface_container);
+    }
+
+    /* Inline overrides */
+
+    [style*="background-color:white;"],
+    [style*="background-color: rgb(248, 248, 248);"] {
+      background-color: var(--surface_container_low) !important;
+    }
+    [style*="color:black;"],
+    [style*="color: white;"] {
+      color: var(--on_surface) !important;
+    }
+
+    &[stylus-iframe="https://porkbun.com"],
+    #beacon-container-body {
+      background-color: transparent;
+
+      .hsds-beacon button {
+        background-color: var(--primary);
+
+        [class*="FabButtoncss__FabBackgroundUI"] > svg {
+          fill: var(--primary);
+        }
+
+        > span {
+          color: var(--surface);
+        }
+      }
+    }
+
+    /* Buttons */
+
+    .btn-default,
+    .sortByPriceButton {
+      &:not(.searchAddRemoveIcon, .searchAddRemoveIconSideBar) {
+        background-color: var(--surface_container_low);
+        color: var(--on_surface);
+        border-color: var(--surface_container);
+      }
+
+      &:hover {
+        background-color: var(--surface_container);
+        color: var(--on_surface);
+      }
+    }
+
+    .btn-primary {
+      background-color: var(--primary);
+      border-color: var(--primary);
+      color: var(--surface);
+
+      &:hover {
+        background-color: darken(var(--primary), 5%);
+      }
+    }
+
+    .btn-danger {
+      background-color: var(--error);
+      border-color: var(--error);
+      color: var(--surface);
+    }
+
+    .btn-success {
+      background-color: var(--tertiary);
+      border-color: var(--tertiary);
+      color: var(--surface);
+    }
+
+    .btn-success-light {
+      background-color: var(--tertiary);
+      color: var(--surface);
+    }
+
+    .btn-porkbun-white-borderless,
+    .btn-porkbun-white:hover,
+    .btn-porkbun-white:focus {
+      color: var(--on_surface);
+    }
+
+    .btn-porkbun-white.active {
+      color: var(--surface);
+
+      .text-muted {
+        color: var(--surface_container_low);
+      }
+    }
+
+    /* Inputs */
+
+    .slider {
+      background-color: var(--error);
+
+      &::before {
+        background-color: var(--surface);
+      }
+    }
+
+    .dropdown-menu {
+      background-color: var(--surface_container_low);
+
+      > li > a {
+        color: var(--on_surface);
+
+        &:hover {
+          background-color: var(--surface_container);
+        }
+      }
+
+      .divider {
+        background-color: var(--surface_container);
+      }
+    }
+
+    .form-control {
+      background-color: var(--surface);
+      color: var(--on_surface);
+      border-color: var(--surface_container_low);
+
+      &:focus {
+        box-shadow: 0 0 8px fade(var(--primary), 50%);
+      }
+    }
+
+    select:not([multiple]) {
+      -webkit-appearance: auto;
+    }
+
+    /* Table dividers */
+
+    .table {
+      > tbody,
+      > tfoot,
+      > thead {
+        > tr {
+          > th,
+          > td {
+            border-top-color: var(--surface_container);
+          }
+        }
+      }
+
+      > thead > tr > th {
+        border-bottom-color: var(--surface_container_high);
+      }
+
+      [style*="border-top:2px solid gray;"] {
+        border-top-color: var(--surface_container_high) !important;
+      }
+    }
+
+    .table-bordered {
+      border-color: var(--surface_container);
+
+      > tbody,
+      > tfoot,
+      > thead {
+        > tr {
+          > th,
+          > td {
+            border-color: var(--surface_container);
+          }
+        }
+      }
+    }
+
+    /* Main */
+
+    .headerContainer,
+    footer > div {
+      background-color: var(--surface) !important;
+    }
+
+    #headerBrandLogo,
+    #footerLogo {
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 144" fill="@{crust}"><circle fill="@{accent}" cx="72" cy="72" r="56.3"/><path d="M43.1 43.2c5 1.1 9.8 2.9 14.1 5.3-5.1 2.6-9.4 6.5-12.5 11.3-2-2.7-3.1-6.1-3.1-9.7q0-3.75 1.5-6.9"/><path d="M102.4 95.2c0 3.1-2.5 5.6-5.6 5.6s-5.6-2.5-5.6-5.6v-4.5H52.7v4.5c0 3.1-2.5 5.6-5.6 5.6s-5.6-2.5-5.6-5.6V78.1c0-16.5 12.8-30.5 29.3-31.1 17.3-.6 31.5 13.2 31.5 30.4z"/><path d="M99.3 59.8c-3.1-4.8-7.4-8.7-12.5-11.3 4.4-2.4 9.1-4.2 14.1-5.3q1.5 3.15 1.5 6.9c0 3.6-1.2 6.9-3.1 9.7"/><path fill="@{accent}" d="M85.3 71.4c-.4-.2-.8-.1-1 .2-.4.6-.9 1-1.6 1.4v-.5c0-1.4-.5-2.7-1.3-3.7-.6-.9-1.6-1.4-2.8-1.4-1.9 0-3.5 1.6-3.5 3.5 0 .8.3 1.6.8 2.2.6.7 1.3 1.3 2.2 1.7-.6.3-1.2.5-1.9.5-.8 0-1.4.7-1.4 1.4 0 .8.6 1.4 1.4 1.4h.7c2.2 0 4.2-1.3 5.1-3.1 1.5-.4 2.7-1.4 3.5-2.7.3-.2.2-.7-.2-.9m-5.7 1.9c-.9-.3-1.7-.8-2.2-1.6-.2-.2-.3-.5-.3-.8 0-.8.6-1.4 1.4-1.4.7 0 1.4.6 1.4 1.3 0 .2.1.4.1.7.1.6-.1 1.3-.4 1.8"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    .reviewWidget {
+      .googleReviewCount {
+        color: var(--on_surface);
+      }
+
+      .fas[class*="fa-star"] {
+        color: var(--secondary);
+      }
+    }
+
+    .homepageBulletIconFontAwesome {
+      color: var(--on_surface_variant);
+    }
+    .homePageSupportOptionCenterRight {
+      border-color: var(--surface_container_low);
+    }
+
+    #domainSearchBulkDropButton {
+      &:hover,
+      &:active,
+      &:target,
+      &:focus {
+        background-color: var(--surface_container_low);
+      }
+    }
+
+    #searchResultsContainer {
+      background-color: transparent;
+
+      .sideBarSearchResults {
+        border-color: var(--surface_container_low);
+      }
+    }
+    .searchResultsTldLetterBox {
+      border-color: var(--surface_container);
+    }
+
+    .cartBox {
+      border-color: var(--surface_container);
+    }
+    .cartSummaryBoxFreeList > li::before {
+      color: var(--on_surface_variant);
+    }
+
+    .marketplaceRow {
+      border-top-color: var(--surface_container_low);
+    }
+
+    .domainsPricingAllExtensionsHeader {
+      background-color: transparent;
+    }
+
+    #homePagePricingContainer {
+      background-color: transparent;
+    }
+
+    .hostingBox {
+      border-color: var(--surface_container_low);
+    }
+
+    .well {
+      background-color: var(--surface_container_lowest);
+      border-color: var(--surface_container_low);
+    }
+
+    .modal-content {
+      background-color: var(--surface_container_lowest);
+
+      .close {
+        color: var(--on_surface);
+        opacity: 1;
+      }
+    }
+
+    .nav-tabs {
+      border-bottom-color: var(--surface_container_low);
+    }
+  }
+}

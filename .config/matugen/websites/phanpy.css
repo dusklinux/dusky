@@ -1,0 +1,81 @@
+/* ==UserStyle==
+@name Phanpy Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/phanpy
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/phanpy
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/phanpy/catppuccin.user.less
+@description Soothing pastel theme for Phanpy
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("phanpy.social") {
+  :root:not(:has(.is-light)) {
+  }
+  :root.is-light {
+  }
+
+
+    --text-color: var(--on_surface);
+    --text-insignificant-color: var(--on_surface_variant);
+    --link-color: var(--primary);
+    --link-text-color: var(--primary);
+    --link-faded-color: var(--primary);
+    --link-light-color: var(--primary);
+    --button-bg-blur-color: var(--primary);
+    --button-bg-color: var(--primary);
+    --button-text-color: var(--surface_container_lowest);
+    --bg-faded-color: var(--surface_container_lowest);
+    --bg-faded-blur-color: var(--surface);
+    --bg-blur-color: var(--surface);
+    --close-button-bg-color: var(--surface);
+    --close-button-color: var(--on_surface_variant);
+    --bg-color: var(--surface_container_lowest);
+    --link-bg-hover-color: var(--surface);
+    --divider-color: var(--surface_container_low);
+    --outline-color: var(--surface_container_low);
+    --outline-hover-color: var(--surface_container_high);
+    --reblog-faded-color: fade(var(--primary), 20%);
+    --reblog-color: var(--primary);
+    --reply-to-faded-color: fade(var(--secondary), 20%);
+    --reply-to-text-color: var(--secondary);
+    --reply-to-color: var(--secondary);
+    --favourite-color: var(--error);
+    --green-color: var(--tertiary);
+    --red-color: var(--error);
+    --comment-line-color: var(--surface_container);
+    --media-bg-color: var(--surface_container_lowest);
+    --media-fg-color: var(--on_surface);
+    --media-outline-color: var(--on_surface);
+
+    .szh-menu__item--disabled {
+      color: var(--on_surface_variant);
+    }
+
+    .button.plain2 {
+      background-color: var(--surface);
+    }
+
+    .replies-parent-link {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .account-container {
+      --original-color: var(--primary);
+
+      .profile-field,
+      .stats,
+      .posting-stats-button {
+        background-color: var(--surface);
+        -webkit-filter: none;
+        filter: none;
+      }
+    }
+  }
+}

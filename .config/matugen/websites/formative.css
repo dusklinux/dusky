@@ -1,0 +1,1603 @@
+/* ==UserStyle==
+@name Formative Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/formative
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/formative
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/formative/catppuccin.user.less
+@description Soothing pastel theme for Formative
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("app.formative.com"), domain("goformative.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+
+    input,
+    textarea {
+      border-color: var(--outline);
+      color: var(--on_surface);
+    }
+    .input {
+      border-color: var(--outline);
+    }
+
+    .MainAppSideMenu__LogoLink-sc-11gwnv8-2,
+    .MainAppHeader__LogoLink-sc-1gw0bt9-2,
+    .SplitColumnLayout__StyledLogo-sc-4mcl10-4 {
+      svg {
+        path:nth-child(1) {
+          fill: var(--secondary) !important;
+        }
+        path:nth-child(2) {
+          fill: var(--tertiary) !important;
+        }
+        path:nth-child(3) {
+          fill: var(--primary) !important;
+        }
+        path:nth-child(4) {
+          fill: var(--error) !important;
+        }
+        path:nth-child(5) {
+          fill: var(--secondary) !important;
+        }
+        path:nth-child(6) {
+          fill: var(--on_surface) !important;
+        }
+      }
+    }
+
+    background: var(--surface_container_lowest);
+:root {
+}
+
+    body {
+      color: var(--on_surface);
+    }
+
+    hr {
+      border-color: var(--outline) !important;
+    }
+
+    .MainAppSideMenu__RootNav-sc-11gwnv8-0 {
+      background: var(--surface_container_low);
+      .SideTabItem__RootButton-sc-vtkzgr-0 {
+        &.selected {
+          background: fade(var(--primary), 50%);
+          &::after {
+            background: var(--primary);
+          }
+        }
+        &:hover {
+          .avatar {
+            box-shadow: var(--primary) 0 0 0 1px;
+          }
+        }
+        &:not(.selected):hover {
+          .side-tab-item-label-div,
+          .material-icons-outlined,
+          .svg-icons svg {
+            color: var(--primary);
+          }
+        }
+      }
+      .side-tab-item-label-div,
+      .material-icons-outlined,
+      .svg-icons {
+        color: var(--on_surface);
+      }
+    }
+    .notifications-count {
+      background: var(--primary);
+      color: @contrast;
+    }
+    .NotificationCenterAlert__TriggerDiv-sc-165xmi4-0 {
+      background-color: var(--surface_container_low);
+      .material-icons-outlined {
+        color: var(--on_surface);
+      }
+    }
+    .avatar:hover {
+      box-shadow: var(--primary) 0 0 0 1px;
+    }
+    .MainAppHeader__RootDiv-sc-1gw0bt9-0 {
+      background-color: var(--surface_container_low);
+    }
+
+    .SecondaryHeader__RootDiv-sc-1lpafq7-0 {
+      background: var(--surface_container_low);
+      border-color: var(--outline);
+      .TabsItem__RootDiv-sc-tj1og8-0 > a {
+        color: var(--on_surface);
+      }
+      .TabsItem__RootDiv-sc-tj1og8-0:hover > a {
+        color: var(--primary);
+      }
+      .TabsItem__SelectedLineDiv-sc-tj1og8-1 {
+        background: var(--primary) !important;
+      }
+      .TabsItem__TabLink-sc-tj1og8-3:focus-visible {
+        background: transparent !important;
+      }
+    }
+
+    main,
+    .FormativesShelf__HeaderDiv-sc-1pswvpk-3,
+    .FormativesShelf__StyledSecondaryHeader-sc-1pswvpk-4,
+    .TabsItem__TabDiv-sc-tj1og8-4:focus-visible {
+      background: var(--surface_container_lowest);
+    }
+    .Home__TitleSpan-sc-q7a345-5,
+    .ClassesShelf__TitleSpan-sc-1ews12o-2,
+    .TabsItem__TabDiv-sc-tj1og8-4,
+    .OverflowEllipsis__RootDiv-sc-1mjk6uz-0,
+    .Label-sc-rzlz3u-0,
+    .Text-sc-1mon9hz-0,
+    .ProfileAccountInfo__BaseDiv-sc-1nbrrm9-0,
+    .Achievements__StyledHeading-sc-nmy2km-2,
+    .Achievements__StyledSubHeading-sc-nmy2km-3,
+    .BadgeCard__BadgeLabelDiv-sc-13976oo-8,
+    .BadgeCard__BadgeDescriptionDiv-sc-13976oo-9,
+    .EmptyExplainer__EmptyExplainerMainText-sc-1ixiesy-2,
+    .EmptyExplainer__EmptyExplainerSubtext-sc-1ixiesy-3,
+    .LabelledDropdownList__StyledLabel-sc-co7v7a-1,
+    .BadgeSidebar__BadgeLabelDiv-sc-oi03p1-3,
+    .BadgeSidebar__BadgeDescriptionDiv-sc-oi03p1-4,
+    .BadgeSidebar__ChallengeProgressStatusDiv-sc-oi03p1-8,
+    .BadgeSidebar__ChallengeProgressFractionDiv-sc-oi03p1-9,
+    .BadgeSidebar__LevelDescriptionDiv-sc-oi03p1-13,
+    .BadgeSidebar__AchievedOnDiv-sc-oi03p1-14,
+    .QuestionNotificationRow__NameP-sc-f7ccw5-7,
+    .QuestionNotificationRow__StyledTimeAgo-sc-f7ccw5-8,
+    .TextViewable__RootDiv-sc-ohojgu-0,
+    .ScorePill__ScoreDiv-sc-w63ftw-0,
+    .QuestionViewable__QuestionTextRichTextWrapperDiv-sc-13jvio2-1,
+    .QuestionViewable__QuestionNumberDiv-sc-13jvio2-3,
+    .FormativeStudentFooter__ProgressCountDiv-sc-6tj89c-1,
+    .FormativeStudentFooter__SubTextDiv-sc-6tj89c-5,
+    .FormativesShelf__ShowScoresText-sc-1pswvpk-6,
+    .ModalBody__RootDiv-sc-1lg094f-0,
+    .Elements__Title-sc-1qtb2ho-9,
+    .JoinQuickCode__QuickCodeTextParagraph-sc-1uhfett-1,
+    .CallToActionLink__ActionText-sc-yuiy65-1,
+    .Checkbox__CheckboxLabel-sc-1oy0ey9-4,
+    .ModalTitle__TitleH4-sc-18cspoj-1,
+    .FormativeItemViewable__HintDiv-sc-m0kwch-8,
+    .NoFormatives__HeadingDiv-sc-1v9g5eg-1,
+    .NoFormatives__BodyP-sc-1v9g5eg-2,
+    .DragAndDropViewableContainer__InstructionsDiv-sc-1ke293x-0,
+    .QuestionViewable__CorrectAnswerLabelDiv-sc-13jvio2-7,
+    .MatchingTableRow__ArrowIcon-sc-1u9h4tb-1,
+    .PracticeSet__StyledLastUpdated-sc-1wup6tb-9,
+    .MaterialIcon-sc-1g5xoi8-0,
+    .MinimalFormativeStudentHeader__FormativeTitleDiv-sc-14rcnaq-4,
+    .ErrorExplainer__SubTextHeading-sc-7nq4if-2,
+    .ErrorExplainer__MainTextHeading-sc-7nq4if-1,
+    .ErrorExplainer__TechnicalDetailsHeading-sc-7nq4if-3,
+    .ErrorExplainer__ErrorIdParagraph-sc-7nq4if-4,
+    .TeacherPacedStart__DetailsDiv-sc-1f4f5sd-4,
+    .Elements__SubText-sc-1qtb2ho-11,
+    .RichText__RootReadOnlyDiv-sc-fjolxt-1 *,
+    .ValidatedInputNew__InputPrefixSpan-sc-18vdili-3,
+    .LaunchRespondusBrowser__MainTextHeading-sc-1ymzzc2-5,
+    .LaunchRespondusBrowser__DetailsParagraph-sc-1ymzzc2-4,
+    .PracticeSession__PopoverContentDiv-sc-1t2vn9a-4,
+    .ExpandableAccordionHeader__HeaderRow-sc-cu02pz-1,
+    .VerticalButton__StyledSpan-sc-1h2we7r-1,
+    .ShelfTile__LabelDiv-sc-1oc4c00-3,
+    .PracticeSet__AddItemCardContents-sc-1wup6tb-10 {
+      color: var(--on_surface);
+    }
+    .TabsItem__TabDiv-sc-tj1og8-4:hover,
+    .RespondusTroubleshootLink__TroubleshootingAnchor-sc-17na5u4-7,
+    .Summary__RawButtonLink-sc-1ofq6fd-2 {
+      color: var(--primary);
+    }
+    .FormativesShelf__StyledSecondaryHeader-sc-1pswvpk-4 {
+      border-color: var(--outline);
+    }
+    .TabsItem__SelectedLineDiv-sc-tj1og8-1 {
+      background: var(--primary) !important;
+    }
+    .Pill__RootDiv-sc-4b6mpn-0,
+    .ItemInfoPill-sc-ecx83e-0,
+    .FormativeItemViewable__HintsRemainingCountDiv-sc-m0kwch-11,
+    .IconWarningButton__RootButton-sc-1b683n6-0,
+    .Ellipse__RootButton-sc-1teidw7-0 {
+      &.IconWarningButton__RootButton-sc-1b683n6-0:hover {
+        border-color: var(--error);
+      }
+      > svg[width="16"] {
+        path {
+          stroke: var(--error);
+        }
+      }
+      &,
+      .material-icons-outlined {
+        color: var(--on_surface) !important;
+      }
+      background: var(--surface_container_high) !important;
+      border-color: var(--outline);
+    }
+    .Card__RootDiv-sc-hyrluv-0,
+    .Card__RootDiv-sc-4gt2nj-0 {
+      background: var(--surface_container_low);
+      border-color: var(--outline);
+      &.selected {
+        border-color: var(--primary);
+        outline-color: var(--primary);
+      }
+      .material-icons-outlined {
+        color: var(--on_surface);
+      }
+      &:hover {
+        .FormativeCard__TitleOverflowEllipsis-sc-tkxjaz-7,
+        .SectionCard__SectionTitleOverflowEllipsis-sc-ir1v2v-4 {
+          color: var(--primary);
+        }
+      }
+    }
+    .ClassAvatar__RootDiv-sc-i7tto7-0,
+    .avatar > div {
+      background: var(--primary);
+      color: @contrast;
+    }
+    .ReactSelect__control {
+      background: var(--surface_container_low);
+      border-color: var(--outline);
+      .ReactSelect__placeholder {
+        color: var(--on_surface_variant);
+      }
+      .ReactSelect__indicator,
+      .ReactSelect__single-value,
+      .ReactSelect__input-container {
+        color: var(--on_surface);
+      }
+      &:focus-within {
+        border-color: var(--primary) !important;
+      }
+    }
+    .react-select-icon {
+      color: var(--on_surface);
+    }
+    .ReactSelect__menu {
+      background: var(--surface_container_high) !important;
+      color: var(--on_surface);
+      .SearchBarOption__RootLink-sc-191bb28-1:hover
+        .SearchBarOption__TitleOverflowEllipsis-sc-191bb28-0 {
+        color: var(--primary);
+      }
+      .ReactSelect__option--is-focused {
+        background: var(--outline);
+      }
+      .ReactSelect__option--is-selected {
+        background: var(--primary);
+        color: @contrast;
+      }
+      .ReactSelect__menu-notice {
+        color: var(--on_surface_variant);
+      }
+    }
+
+    .ClassesShelfContainer__StyledButton-sc-zx4vft-0 .material-icons-outlined {
+      color: var(--on_surface);
+    }
+
+    .Button__StyledButton-sc-aum9f1-1,
+    .IconButton__RootButton-sc-ebvofk-0,
+    .SectionDetail__BackLink-sc-1aifgaj-4 {
+      background: var(--surface_container_low) !important;
+      &,
+      .material-icons-outlined {
+        color: var(--primary) !important;
+        border-color: var(--outline);
+      }
+      &:hover,
+      &:enabled:focus {
+        background: var(--surface_container);
+        border-color: var(--primary);
+      }
+    }
+    .Switch__RootButton-sc-1ss5zxi-0 {
+      background: var(--surface_container_low);
+      &[aria-checked="true"] {
+        background: var(--primary);
+      }
+      .Switch__BallDiv-sc-1ss5zxi-1 {
+        background: var(--outline);
+      }
+    }
+    .ButtonSwitch__RootDiv-sc-1cluxwg-0 {
+      background: var(--surface_container);
+      .ButtonSwitchOption__RootDiv-sc-ek1jm8-0 {
+        &.selected {
+          background: var(--surface_container_high);
+        }
+        color: var(--on_surface);
+      }
+    }
+    .FormativeCardScore__PercentageSpan-sc-p5mc30-1 {
+      &[style*="rgba(32, 213, 171, 0.2)"] {
+        background: fade(var(--tertiary), 50%) !important;
+      }
+      &[style*="rgba(255, 222, 51, 0.2)"] {
+        background: fade(var(--secondary), 50%) !important;
+      }
+      &[style*="rgba(0, 165, 251, 0.2)"] {
+        background: fade(var(--primary), 50%) !important;
+      }
+      &[style*="rgba(255, 76, 77, 0.2)"] {
+        background: fade(var(--error), 50%) !important;
+      }
+    }
+
+    .Dropdown__PopoverContent-sc-1s7u5eb-2,
+    .Popover__PopoverContent-sc-1x169li-4 {
+      background: var(--surface_container_high);
+      .DropdownRow__RowButton-sc-1bu6csb-0 {
+        background: var(--surface_container_high);
+        border-color: var(--outline_variant);
+        &,
+        .dropdown-list-icon,
+        .material-icons-outlined {
+          color: var(--on_surface) !important;
+          svg path {
+            fill: var(--on_surface) !important;
+          }
+        }
+        &:hover {
+          background: var(--outline) !important;
+          color: var(--on_surface) !important;
+        }
+      }
+      .Dropdown__PopoverArrow-sc-1s7u5eb-1,
+      .Popover__PopoverArrow-sc-1x169li-3 {
+        fill: var(--surface_container_high);
+      }
+      .StrokePicker__InnerDiv-sc-8widgm-4 {
+        background: var(--surface_container_high);
+      }
+    }
+    .DropdownList__TriggerButton-sc-1hvvmg1-0,
+    .EmptyExplainer__StyledMaterialIcon-sc-1ixiesy-4 {
+      color: var(--primary);
+    }
+
+    .ProfileAccountInfo__DashedGroup-sc-1nbrrm9-2 {
+      border-color: var(--outline);
+    }
+
+    .BadgeCard__RootButton-sc-13976oo-0 {
+      &:hover,
+      &:focus,
+      &.selected {
+        .BadgeCard__BadgeLabelDiv-sc-13976oo-8 {
+          color: var(--primary);
+        }
+        .Card__RootDiv-sc-4gt2nj-0 {
+          border-color: var(--primary);
+        }
+      }
+      .BadgeCard__ProgressPercentSpan-sc-13976oo-7 {
+        color: var(--on_surface);
+      }
+    }
+    .BadgeSidebar__RootDiv-sc-oi03p1-0 {
+      background: var(--surface_container_low);
+      .SvgIconWrapper__SvgIconDiv-sc-1u203y2-0 {
+        svg path {
+          fill: var(--on_surface);
+        }
+        &:hover {
+          background: var(--surface_container);
+        }
+      }
+      .BadgeSidebar__ChallengeLevelsDiv-sc-oi03p1-10 {
+        border-color: var(--outline);
+      }
+    }
+    .BadgeCard__BadgeImage-sc-13976oo-5,
+    .BadgeSidebar__BadgeImage-sc-oi03p1-2 {
+      &[src*="responses"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="192" height="181" fill="none"><g clip-path="url(#a)" transform="translate(31.528)"><path fill="@{peach}" d="M.972 63.518C.972 28.748 29.159.56 63.929.56s62.958 28.187 62.958 62.957v109.726a7.196 7.196 0 0 1-7.195 7.195H8.167a7.196 7.196 0 0 1-7.195-7.195z"/><mask id="c" width="127" height="181" x="0" y="0" maskUnits="userSpaceOnUse"><path fill="url(#b)" d="M.972 63.518C.972 28.748 29.159.56 63.929.56s62.958 28.187 62.958 62.957v109.726a7.196 7.196 0 0 1-7.195 7.195H8.167a7.196 7.196 0 0 1-7.195-7.195z"/></mask><g mask="url(#c)"><path fill="url(#d)" d="M.972 63.518C.972 28.748 29.159.56 63.929.56s62.958 28.187 62.958 62.957v109.726a7.196 7.196 0 0 1-7.195 7.195H8.167a7.196 7.196 0 0 1-7.195-7.195z"/></g><path stroke="@{base}" stroke-width="1.124" d="M10.534 63.524c0-29.493 23.909-53.401 53.402-53.401 29.492 0 53.401 23.908 53.401 53.401v100.732a6.633 6.633 0 0 1-6.633 6.633H17.167a6.633 6.633 0 0 1-6.633-6.633z"/><path stroke="@{base}" stroke-linecap="round" stroke-width="1.124" d="M116.972 77.56h-30.98a1.02 1.02 0 0 1-1.02-1.02V41.56c0-8.836 7.163-16 16-16v0"/><path stroke="@{base}" stroke-width="1.124" d="M23.534 125.123h93.312v23.159H23.534Zm-13 39.242a6.633 6.633 0 0 0 6.633 6.633h93.537a6.633 6.633 0 0 0 6.633-6.633v-15.627H10.534Z"/><path stroke="@{base}" stroke-width="1.124" d="M40.534 102.123h77.123v23.159H40.534Zm20-24h56.876v23.876H60.534Z"/><path fill="@{base}" d="M17.066 138.61a1.048 1.048 0 1 1-2.096.002 1.048 1.048 0 0 1 2.096-.002m98-64a1.048 1.048 0 1 1-2.096.001 1.048 1.048 0 0 1 2.096-.001m-54-54a1.048 1.048 0 1 1-2.096.002 1.048 1.048 0 0 1 2.096-.002m-29 93a1.048 1.048 0 1 1-2.096.002 1.048 1.048 0 0 1 2.096-.002m24-63a1.048 1.048 0 1 1-2.096.002 1.048 1.048 0 0 1 2.096-.002"/><path fill="@{base}" fill-rule="evenodd" d="M34.534 41.56a.562.562 0 1 0-1.124 0v1.438h-2.253a.563.563 0 0 0 0 1.125h2.253v3.253a.562.562 0 1 0 1.124 0v-3.253h2.438a.562.562 0 0 0 0-1.124h-2.438z" clip-rule="evenodd"/><path fill="@{base}" fill-rule="evenodd" d="M34.534 41.56a.562.562 0 1 0-1.124 0v1.438h-2.253a.563.563 0 0 0 0 1.125h2.253v3.253a.562.562 0 1 0 1.124 0v-3.253h2.438a.562.562 0 0 0 0-1.124h-2.438zm44-21a.562.562 0 1 0-1.124 0V22h-2.253a.562.562 0 0 0 0 1.124h2.253v3.253a.562.562 0 1 0 1.124 0v-3.253h2.438a.563.563 0 0 0 0-1.125h-2.438z" clip-rule="evenodd"/><path fill="@{base}" fill-rule="evenodd" d="M78.534 20.56a.562.562 0 1 0-1.124 0V22h-2.253a.562.562 0 0 0 0 1.124h2.253v3.253a.562.562 0 1 0 1.124 0v-3.253h2.438a.563.563 0 0 0 0-1.125h-2.438zm-39 56a.562.562 0 1 0-1.124 0V81h-5.13a.562.562 0 0 0 0 1.124h5.13v6.13a.562.562 0 1 0 1.124 0v-6.13h5.438a.562.562 0 0 0 0-1.124h-5.438z" clip-rule="evenodd"/><path fill="@{base}" fill-rule="evenodd" d="M39.534 76.56a.562.562 0 1 0-1.124 0V81h-5.13a.562.562 0 0 0 0 1.124h5.13v6.13a.562.562 0 1 0 1.124 0v-6.13h5.438a.562.562 0 0 0 0-1.124h-5.438z" clip-rule="evenodd"/></g><defs><clipPath id="a"><path fill="@{base}" d="M.972.56h125.915v179.88H.972Z"/></clipPath></defs></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+      &[src*="formatives-assigned-submitted"] {
+          '<svg xmlns="http://www.w3.org/2000/svg" width="192" height="181" fill="none"><g clip-path="url(#a)" transform="translate(23.5)"><path fill="@{green}" fill-rule="evenodd" d="M70.746 40.026 9.431 2.446C5.337-.064.076 2.883.076 7.686v135.031a6.15 6.15 0 0 0 3.418 5.507l64.905 32.13c2.7 1.336 5.705.491 7.434-1.551l65.75-31.736a6.14 6.14 0 0 0 3.474-5.533V6.449c0-4.771-5.201-7.722-9.297-5.275z" clip-rule="evenodd"/><mask id="c" width="145" height="180" x="0" y="0" maskUnits="userSpaceOnUse"><path fill="url(#b)" fill-rule="evenodd" d="M71.537 39.219 9.356 1.109C5.26-1.401 0 1.546 0 6.348V141.38a6.15 6.15 0 0 0 3.419 5.507l64.904 32.129a6.1 6.1 0 0 0 3.207.627 6.1 6.1 0 0 0 3.13-.601l66.858-32.27a6.14 6.14 0 0 0 3.473-5.533V6.154c0-4.771-5.2-7.722-9.296-5.275z" clip-rule="evenodd"/></mask><g mask="url(#c)"><path fill="url(#d)" fill-rule="evenodd" d="M71.575 39.1 9.346.96C5.252-1.55-.01 1.397-.01 6.2v135.031a6.14 6.14 0 0 0 3.42 5.507l64.904 32.13a6.1 6.1 0 0 0 2.89.643 6.1 6.1 0 0 0 3.456-.567l66.857-32.269a6.14 6.14 0 0 0 3.473-5.534V6.057c0-4.77-5.2-7.722-9.296-5.274z" clip-rule="evenodd"/></g><mask id="e" fill="@{base}"><path fill-rule="evenodd" d="M71.66 172.771a12 12 0 0 0-1.337 0 5.3 5.3 0 0 1-2.57-.512L8.016 143.843a5.3 5.3 0 0 1-3.024-4.786V20.5c0-4.1 4.457-6.648 7.99-4.567L69.166 49.02a3.6 3.6 0 0 0 3.651 0l56.185-33.088c3.533-2.081 7.989.466 7.989 4.567v118.557a5.3 5.3 0 0 1-3.023 4.786l-59.739 28.416a5.3 5.3 0 0 1-2.569.512" clip-rule="evenodd"/></mask><path fill="@{base}" d="m67.754 172.259-.387.812zm-59.74-28.416.387-.812zm4.967-127.91-.456.775zm116.021 0-.457-.775zm4.966 127.91-.386-.812zm-59.739 28.416-.386-.812zM72.817 49.021l-.456-.775Zm-2.494 123.75.05.898zm1.337 0-.05.898zm-1.388-.898a4.4 4.4 0 0 1-2.132-.426l-.773 1.624a6.2 6.2 0 0 0 3.006.598zm-2.132-.426L8.4 143.031l-.772 1.624 59.738 28.416ZM8.4 143.031a4.4 4.4 0 0 1-2.51-3.974H4.092a6.2 6.2 0 0 0 3.537 5.598zm-2.51-3.974V20.5H4.092v118.557Zm0-118.557c0-3.405 3.7-5.52 6.634-3.792l.912-1.55c-4.132-2.434-9.345.545-9.345 5.342Zm6.634-3.792 56.184 33.088.913-1.55-56.184-33.088zm116.02-1.55L72.361 48.246l.913 1.55 56.184-33.088zm9.346 5.341c0-4.796-5.213-7.775-9.346-5.341l.913 1.55c2.934-1.728 6.634.387 6.634 3.791zm0 118.558V20.5h-1.799v118.557Zm-3.537 5.598a6.2 6.2 0 0 0 3.537-5.598h-1.799a4.4 4.4 0 0 1-2.51 3.974zm-59.738 28.416 59.738-28.416-.772-1.624-59.739 28.416zm-3.007.598a6.2 6.2 0 0 0 3.007-.598l-.773-1.624a4.4 4.4 0 0 1-2.132.426zm-2.9-123.873c1.409.83 3.156.83 4.564 0l-.912-1.55a2.7 2.7 0 0 1-2.739 0zm1.664 123.873q.619-.034 1.236 0l.102-1.796q-.72-.04-1.439 0z" mask="url(#e)"/><path stroke="@{base}" stroke-width="1.124" d="M58.08 48.523v53.064c0 .994-.805 1.799-1.799 1.799H44.803c-1.52 0-2.355 1.769-1.388 2.942l27.686 33.62a1.8 1.8 0 0 0 2.761.019l28.478-33.62c.99-1.169.159-2.961-1.373-2.961H90.008a1.8 1.8 0 0 1-1.798-1.799v-59.36"/><path stroke="@{base}" stroke-width="1.124" d="M88.08 60.653v53.064c0 .993-.806 1.798-1.799 1.798H74.803c-1.52 0-2.355 1.769-1.388 2.943l27.686 33.619a1.8 1.8 0 0 0 2.761.019l28.478-33.619c.99-1.169.159-2.962-1.373-2.962h-10.959a1.8 1.8 0 0 1-1.799-1.798v-89.49M57.865 42.965v40.771c0 .994.805 1.799 1.798 1.799H71.14c1.527 0 2.36 1.782 1.38 2.953l-27.718 33.114a1.798 1.798 0 0 1-2.742.019L13.55 88.507c-1.003-1.166-.175-2.972 1.364-2.972h10.955a1.8 1.8 0 0 0 1.799-1.799V25.227"/><path fill="@{base}" fill-rule="evenodd" d="M124.554 37.227a.562.562 0 0 0-1.125 0v2.438h-2.253a.562.562 0 0 0 0 1.125h2.253v2.252a.562.562 0 0 0 1.125 0V40.79h2.437a.562.562 0 1 0 0-1.124h-2.437z" clip-rule="evenodd"/><path fill="@{base}" fill-rule="evenodd" d="M124.554 37.227a.562.562 0 0 0-1.125 0v2.438h-2.253a.562.562 0 0 0 0 1.125h2.253v2.252a.562.562 0 0 0 1.125 0V40.79h2.437a.562.562 0 1 0 0-1.124h-2.437zm-111 20a.562.562 0 0 0-1.125 0v2.438h-2.253a.562.562 0 1 0 0 1.125h2.253v2.252a.562.562 0 1 0 1.125 0V60.79h2.437a.562.562 0 1 0 0-1.124h-2.437z" clip-rule="evenodd"/><path fill="@{base}" fill-rule="evenodd" d="M13.554 57.227a.562.562 0 0 0-1.125 0v2.438h-2.253a.562.562 0 1 0 0 1.125h2.253v2.252a.562.562 0 1 0 1.125 0V60.79h2.437a.562.562 0 1 0 0-1.124h-2.437zm34 81a.562.562 0 0 0-1.125 0v4.438H41.3a.562.562 0 0 0 0 1.124h5.13v6.13a.563.563 0 1 0 1.125 0v-6.13h5.438a.562.562 0 1 0 0-1.124h-5.438z" clip-rule="evenodd"/><path fill="@{base}" fill-rule="evenodd" d="M47.554 138.227a.562.562 0 0 0-1.125 0v4.438H41.3a.562.562 0 0 0 0 1.124h5.13v6.13a.563.563 0 1 0 1.125 0v-6.13h5.438a.562.562 0 1 0 0-1.124h-5.438z" clip-rule="evenodd"/><path fill="@{base}" d="M18.085 71.276a1.048 1.048 0 1 1-2.096.003 1.048 1.048 0 0 1 2.096-.003m48 79a1.048 1.048 0 1 1-2.093 0 1.048 1.048 0 1 1 2.093 0m-41-28a1.048 1.048 0 1 1-2.094 0 1.048 1.048 0 1 1 2.094 0m103-43a1.048 1.048 0 1 1-2.094 0 1.048 1.048 0 1 1 2.094 0"/></g><defs><clipPath id="a"><path fill="@{base}" d="M0 0h145.057v180.999H0z"/></clipPath></defs></svg>'
+        );
+        content: url("data:image/svg+xml,@{svg}");
+      }
+    }
+    .ProgressBar__ProgressDiv-sc-4qm1te-0 {
+      background: var(--outline);
+      .ProgressBar__ProgressBarDiv-sc-4qm1te-2 {
+        background: var(--primary);
+      }
+    }
+    .notification {
+      &.notification-success {
+        background: var(--tertiary) !important;
+        color: @contrast !important;
+      }
+    }
+    .Tooltip__Content-sc-1k6bq57-0 {
+      background: var(--surface_container_low);
+      color: var(--on_surface);
+      .Tooltip__KeyboardShortcutContainerDiv-sc-1k6bq57-1 {
+        background: var(--surface_container);
+        color: var(--on_surface);
+      }
+    }
+    .Modal__Overlay-sc-1uf7odj-0 {
+      background: fade(var(--surface), 80%);
+    }
+    .Modal__Content-sc-1uf7odj-1 {
+      background: var(--surface_container_lowest);
+      .modal-header,
+      .modal-footer {
+        border-color: var(--outline) !important;
+      }
+      .ModalHeader__Title-sc-1aoz840-1 {
+        color: var(--on_surface);
+      }
+      .modal-footer {
+        background: var(--surface_container_lowest);
+      }
+      .ModalHeader__CloseButton-sc-1aoz840-2 {
+        border-color: var(--outline);
+        background: var(--surface_container_low);
+        &:enabled:hover {
+          background: var(--surface_container) !important;
+          border-color: var(--primary);
+        }
+      }
+      .CopyablePracticeSetInfo__LinkText-sc-14zdsnw-3,
+      .CopyablePracticeSetInfo__ExplainerDiv-sc-14zdsnw-5 {
+        background: var(--surface_container_low);
+      }
+      .ThemePreview__PrimaryColorDiv-sc-zh51j9-0[style*="outline"] {
+        &[style*="outline: rgb(255, 255, 255)"] {
+          outline-color: var(--on_surface) !important;
+        }
+        &[style*="outline: rgb(13, 100, 242)"] {
+          outline-color: var(--primary) !important;
+        }
+      }
+    }
+    .ReactModal__Overlay {
+      background: fade(var(--surface), 80%);
+      .ReactModal__ActualContent {
+        background: var(--surface_container_lowest) !important;
+        .ModalBody-sc-1lg094f-0 > * {
+          color: var(--on_surface) !important;
+          &.ErrorExplainer__BodyDiv-sc-7nq4if-0 {
+            .material-icons-outlined {
+              color: var(--error);
+            }
+            .ErrorExplainer__TechnicalDetailsHeading-sc-7nq4if-3,
+            .ErrorExplainer__ErrorIdParagraph-sc-7nq4if-4 {
+              color: var(--on_surface_variant);
+            }
+          }
+          &.Input__StyledInput-sc-1632reg-0 {
+            background: var(--surface_container_low) !important;
+            &::placeholder {
+              color: var(--outline_variant) !important;
+            }
+            &:focus {
+              border-color: var(--primary);
+            }
+          }
+          &.CookiePolicyModal__AccordionDiv-sc-dpnzx7-0
+            .AccordionItem__ContainerDiv-sc-1aj05j4-0 {
+            &,
+            .AccordionItem__HeaderDiv-sc-1aj05j4-1,
+            .AccordionItem__BodyDiv-sc-1aj05j4-5 {
+              background: var(--surface_container_low);
+              border-color: var(--outline);
+            }
+            .material-icons-outlined {
+              color: var(--on_surface);
+            }
+            .CookiePolicyModal__BlueAlertText-sc-dpnzx7-5 {
+              color: var(--primary);
+            }
+          }
+        }
+        .ModalBody-sc-1lg094f-0:has(.Submit__ContentTitleH3-sc-1vceatk-1)
+          svg
+          path {
+          fill: var(--primary);
+        }
+        .ModalTitle {
+          background: var(--surface_container_lowest);
+        }
+        .PracticeDispatchModalOptionLink__RootLink-sc-1wp7oro-0 {
+          background: var(--surface_container) !important;
+          img {
+            &[src*="flashcard-preview"] {
+                '<svg width="147" height="108" viewBox="0 0 147 108" fill="none" xmlns="http://www.w3.org/2000/svg"><g clip-path="url(#a)"><mask id="c" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width="147" height="108"><rect width="147" height="108" rx="4" fill="@{surface2}"/></mask><g filter="url(#b)" mask="url(#c)"><rect x="16" y="16" width="115" height="76" rx="4" fill="@{surface2}" shape-rendering="crispEdges"/><path d="M40 44h67M40 54h67M40 64h49.742" stroke="@{text}" stroke-width="4" stroke-linecap="round"/></g></g><defs><filter id="b" x="4" y="8" width="139" height="100" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="4"/><feGaussianBlur stdDeviation="6"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_2281_1029"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_2281_1029" result="shape"/></filter><clipPath id="a"><rect width="147" height="108" fill="@{surface2}"/></clipPath></defs></svg>'
+              );
+              content: url("data:image/svg+xml,@{svg}");
+            }
+            &[src*="match-preview"] {
+                '<svg width="191" height="146" viewBox="0 0 191 146" fill="none" xmlns="http://www.w3.org/2000/svg"><g filter="url(#a)"><rect x="12" y="8" width="47" height="34" rx="4" fill="@{accent}"/></g><g filter="url(#b)"><rect x="12" y="52" width="47" height="34" rx="4" fill="@{surface2}"/></g><g filter="url(#c)"><rect x="12" y="96" width="47" height="34" rx="4" fill="@{surface2}"/></g><g filter="url(#d)"><rect x="72" y="8" width="47" height="34" rx="4" fill="@{surface2}"/></g><g filter="url(#e)"><rect x="72" y="52" width="47" height="34" rx="4" fill="@{surface2}"/></g><g filter="url(#f)"><rect x="72" y="96" width="47" height="34" rx="4" fill="@{surface2}"/></g><g filter="url(#g)"><rect x="132" y="8" width="47" height="34" rx="4" fill="@{surface2}"/></g><g filter="url(#h)"><rect x="132" y="52" width="47" height="34" rx="4" fill="@{accent}"/></g><g filter="url(#i)"><rect x="132" y="96" width="47" height="34" rx="4" fill="@{surface2}"/></g><defs><filter id="a" x="0" y="0" width="71" height="58" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="4"/><feGaussianBlur stdDeviation="6"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_2281_1053"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_2281_1053" result="shape"/></filter><filter id="b" x="0" y="44" width="71" height="58" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="4"/><feGaussianBlur stdDeviation="6"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_2281_1053"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_2281_1053" result="shape"/></filter><filter id="c" x="0" y="88" width="71" height="58" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="4"/><feGaussianBlur stdDeviation="6"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_2281_1053"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_2281_1053" result="shape"/></filter><filter id="d" x="60" y="0" width="71" height="58" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="4"/><feGaussianBlur stdDeviation="6"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_2281_1053"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_2281_1053" result="shape"/></filter><filter id="e" x="60" y="44" width="71" height="58" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="4"/><feGaussianBlur stdDeviation="6"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_2281_1053"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_2281_1053" result="shape"/></filter><filter id="f" x="60" y="88" width="71" height="58" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="4"/><feGaussianBlur stdDeviation="6"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_2281_1053"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_2281_1053" result="shape"/></filter><filter id="g" x="120" y="0" width="71" height="58" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="4"/><feGaussianBlur stdDeviation="6"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_2281_1053"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_2281_1053" result="shape"/></filter><filter id="h" x="120" y="44" width="71" height="58" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="4"/><feGaussianBlur stdDeviation="6"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_2281_1053"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_2281_1053" result="shape"/></filter><filter id="i" x="120" y="88" width="71" height="58" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="4"/><feGaussianBlur stdDeviation="6"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_2281_1053"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_2281_1053" result="shape"/></filter></defs></svg>'
+              );
+              content: url("data:image/svg+xml,@{svg}");
+            }
+            &[src*="quiz-preview"] {
+                '<svg width="209" height="85" viewBox="0 0 209 85" fill="none" xmlns="http://www.w3.org/2000/svg"><g filter="url(#a)"><rect x="115.371" y="7" width="39.3799" height="28.6254" rx="3.36769" fill="@{surface2}"/></g><g filter="url(#b)"><rect x="115.371" y="42.3746" width="39.3799" height="28.6254" rx="3.36769" fill="@{surface2}"/></g><g filter="url(#c)"><rect x="158.991" y="7" width="39.3799" height="28.6254" rx="3.36769" fill="@{surface2}"/></g><g filter="url(#d)"><rect x="158.991" y="42.3746" width="39.3799" height="28.6254" rx="3.36769" fill="@{surface2}"/></g><g filter="url(#e)"><rect x="11" y="7" width="96" height="64" rx="3.34694" fill="@{surface2}" shape-rendering="crispEdges"/><path d="M31.082 30.429h56.06m-56.06 8.367h56.06m-56.06 8.367h41.62" stroke="@{text}" stroke-width="3.34694" stroke-linecap="round"/></g><defs><filter id="a" x="105.268" y="0.264616" width="59.586" height="48.8315" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="3.36769"/><feGaussianBlur stdDeviation="5.05154"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_110_1187"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_110_1187" result="shape"/></filter><filter id="b" x="105.268" y="35.6392" width="59.586" height="48.8315" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="3.36769"/><feGaussianBlur stdDeviation="5.05154"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_110_1187"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_110_1187" result="shape"/></filter><filter id="c" x="148.888" y="0.264616" width="59.586" height="48.8315" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="3.36769"/><feGaussianBlur stdDeviation="5.05154"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_110_1187"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_110_1187" result="shape"/></filter><filter id="d" x="148.888" y="35.6392" width="59.586" height="48.8315" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="3.36769"/><feGaussianBlur stdDeviation="5.05154"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_110_1187"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_110_1187" result="shape"/></filter><filter id="e" x="0.959185" y="0.306123" width="116.082" height="84.0816" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/><feOffset dy="3.34694"/><feGaussianBlur stdDeviation="5.02041"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_110_1187"/><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_110_1187" result="shape"/></filter></defs></svg>'
+              );
+              content: url("data:image/svg+xml,@{svg}");
+            }
+          }
+        }
+      }
+    }
+    .NotificationCenterAlertListContainer__RootDiv-sc-1kyy25p-0 {
+      background: var(--surface_container_high);
+      .FormativeNotificationsCard__HeaderDiv-sc-fv5hu9-1,
+      .QuestionNotificationRow__IndentedBorderDiv-sc-f7ccw5-1,
+      .QuestionNotificationRow__RootDiv-sc-f7ccw5-0 {
+        border-color: var(--outline_variant);
+      }
+      .FormativeNotificationsCard__RootDiv-sc-fv5hu9-0 {
+        background: var(--surface_container_high);
+        border-color: var(--outline_variant);
+        &:hover {
+          background: var(--outline);
+        }
+      }
+      .QuestionNotificationRow__RootDiv-sc-f7ccw5-0:hover {
+        background: transparent;
+      }
+      .material-icons-outlined {
+        color: var(--on_surface);
+        &:hover {
+          color: var(--primary);
+        }
+      }
+    }
+    .SectionCard__InactiveSectionIcon-sc-ir1v2v-3 {
+      svg {
+        path:nth-child(1) {
+          fill: var(--outline) !important;
+        }
+        path:nth-child(2),
+        path:nth-child(3) {
+          fill: var(--on_surface) !important;
+        }
+      }
+    }
+    .SectionDetail__Header-sc-1aifgaj-2 {
+      background: transparent;
+    }
+
+    .FormativeStudentHeader__UpperDiv-sc-yw00ql-12 {
+      background: var(--surface) !important;
+      color: var(--on_surface);
+      &,
+      .FormativeStudentHeader__InfoItem-sc-yw00ql-7 {
+        border-color: var(--outline);
+      }
+    }
+    .FormativeStudentHeader__NavStrip-sc-yw00ql-11 {
+      .FormativeStudentHeader__ScrollableDiv-sc-yw00ql-9 {
+        &::-webkit-scrollbar-track {
+          background: var(--surface_container_low) !important;
+          border-color: var(--surface_container_low) !important;
+        }
+        &::-webkit-scrollbar-thumb {
+          background: var(--outline) !important;
+          border-color: var(--outline) !important;
+        }
+      }
+      background: var(--surface);
+      border-color: var(--outline);
+      .selectedSection {
+        border-color: var(--primary);
+      }
+      .formative-nav-item {
+        &,
+        .formative-nav-item-icon {
+          color: var(--on_surface);
+        }
+        .FormativeStudentNavItem__StyledMessageIcon-sc-i1u5ts-4 {
+          color: var(--primary);
+        }
+        &:hover,
+        &:focus {
+          background: var(--surface_container);
+          color: var(--primary);
+          border-color: var(--primary);
+        }
+        .fxpwVv {
+          background-color: var(--tertiary);
+        }
+        .hSVaRB {
+          background-color: var(--on_surface);
+        }
+        .kBznqt {
+          background-color: var(--secondary);
+        }
+        .hfnlVy {
+          background-color: var(--error);
+        }
+        .bDcnFV {
+          background-color: var(--secondary_container);
+        }
+        svg {
+          path {
+            stroke: var(--error);
+          }
+        }
+      }
+    }
+    .checkbox-root {
+      button {
+        background: var(--surface_container_low);
+        border-color: var(--primary) !important;
+        box-shadow: none !important;
+      }
+      &.checked button {
+        background: var(--primary) !important;
+      }
+      .Checkbox__RadioCircleDiv-sc-1oy0ey9-3 {
+        background: @contrast !important;
+      }
+      .Checkbox__IndicatorIcon-sc-1oy0ey9-5 {
+        color: @contrast;
+      }
+    }
+    .FormativeUnavailableMessage__InnerDiv-sc-14kxg7t-1 {
+      border-color: var(--primary);
+      background-color: var(--surface_container_low);
+    }
+    .FormativeItemViewable__RootDiv-sc-m0kwch-0,
+    .SectionDescription__SectionInformationCard-sc-nmaua7-0 {
+      background: var(--surface);
+      .correct {
+        outline-color: var(--tertiary) !important;
+        background: color-mix(in srgb, var(--surface_container_lowest), var(--tertiary) 25%) !important;
+      }
+      .incorrect {
+        outline-color: var(--error) !important;
+        background: color-mix(in srgb, var(--surface_container_lowest), var(--error) 25%) !important;
+      }
+      &,
+      .withFunctionalizedViewable__LeftColumn-sc-1636o2h-2,
+      .withFunctionalizedViewable__RightColumn-sc-1636o2h-4 {
+        border-color: var(--outline);
+      }
+      .SectionDescription__DividerDiv-sc-nmaua7-1 {
+        border-color: var(--outline);
+      }
+      .ScoreCircle__RootDiv-sc-lj5glq-0 {
+        &[style*="rgb(32, 213, 171)"] {
+          background-color: var(--tertiary) !important;
+          .material-icons-outlined {
+            color: @contrast !important;
+          }
+        }
+        &[style*="rgb(255, 222, 51)"] {
+          background-color: var(--secondary) !important;
+        }
+        &[style*="rgb(255, 138, 51)"] {
+          background-color: var(--secondary_container) !important;
+        }
+        &[style*="rgb(255, 76, 77)"] {
+          background-color: var(--error) !important;
+          .material-icons-outlined {
+            color: @contrast !important;
+          }
+        }
+        border-color: var(--outline_variant) !important;
+      }
+      .BlankOutput__FillableEntity-sc-15mzaww-3,
+      .BlankOutput__FillableNumericDiv-sc-15mzaww-2 {
+        outline-color: var(--primary);
+        color: var(--on_surface);
+        background: var(--surface_container_low);
+        .KatexOutput__RootDiv-sc-gu2jna-0 {
+          [style*="color: rgb(204, 0, 0)"] {
+            color: var(--error) !important;
+          }
+        }
+      }
+      .match-table-grid-container table {
+        th,
+        tr,
+        td {
+          background: var(--surface_container_low) !important;
+          border-color: var(--outline);
+          .checkbox-root button {
+            background: var(--surface_container);
+          }
+        }
+      }
+      .TargetElementViewable__BoxDiv-sc-1cp2mml-1 {
+        background: var(--surface_container_low);
+        border-color: var(--primary);
+        .TargetChoiceViewable__ContentDiv-sc-6nylj9-1 {
+          background: var(--surface_container);
+          border-color: var(--outline);
+        }
+        .TargetElementViewable__AddSelectedChoiceButton-sc-1cp2mml-6 i {
+          background: var(--primary);
+          color: @contrast;
+        }
+      }
+      .MatchingTable__Table-sc-1rhxmvo-1 {
+        &,
+        td,
+        tr {
+          border-color: var(--outline);
+        }
+        tr.isOver {
+          outline-color: var(--primary);
+        }
+      }
+      .ChoiceElementViewable__RootDiv-sc-viwu2x-0 {
+        background: var(--surface_container_low);
+        border-color: var(--outline);
+        &:hover,
+        &.highlight {
+          border-color: var(--primary);
+          background: var(--surface_container);
+        }
+        .ChoiceElementViewable__LabelRichText-sc-viwu2x-4 {
+          background: transparent;
+          color: var(--on_surface);
+        }
+        .Button__StyledButton-sc-aum9f1-1,
+        i {
+          background: transparent !important;
+        }
+      }
+      .ChoiceElement__RootDiv-sc-1mbtxfk-1 {
+        background: transparent;
+      }
+      .ChoiceElement__StyledRawButton-sc-1mbtxfk-0 {
+        .ChoiceElement__LabelRichText-sc-1mbtxfk-3,
+        .material-icons-outlined {
+          background: transparent;
+        }
+      }
+      .ChoiceOptionViewable__RightSideDiv-sc-a2vwy6-2 {
+        border-color: var(--outline);
+        .ChoiceOptionViewable__StrickenOverlayDiv-sc-a2vwy6-7 {
+          background-image: repeating-linear-gradient(
+            315deg,
+            transparent,
+            transparent 16px,
+            var(--on_surface) 16px,
+            var(--on_surface) 18px
+          );
+        }
+      }
+      .InlineChoiceOutput__InlineChoiceOutputDiv-sc-1694w84-2 {
+        background: var(--surface_container_low);
+        border-color: var(--primary);
+      }
+      .DrawingCardButton__RootButton-sc-u2qprg-1 {
+        border-color: var(--outline);
+        .DrawingCardButton__DrawingPreview-sc-u2qprg-3 {
+          background: rgb(245, 246, 248);
+        }
+        .DrawingCardButton__HoverDarkScrim-sc-u2qprg-2 {
+          background: fade(var(--surface), 75%);
+          border-radius: 0;
+        }
+        .DrawingCardButton__ShowYourWorkPseudoButtonDiv-sc-u2qprg-0 {
+          border-color: var(--outline);
+          color: var(--on_surface);
+          background: var(--surface_container_lowest);
+        }
+        .DrawingCardButton__IncompleteIndicatorDiv-sc-u2qprg-4 {
+          background: var(--secondary);
+          svg path {
+            fill: @contrast;
+          }
+        }
+        &:hover .DrawingCardButton__ShowYourWorkPseudoButtonDiv-sc-u2qprg-0 {
+          background: var(--surface_container_high);
+          border-color: var(--primary);
+        }
+      }
+      .DragAndDropImageDropLocation__DropLocationContainerDiv-sc-oq3fcx-1 {
+        &:hover {
+          .DragAndDropImageDropLocationPoint-sc-1v0z50f-0 {
+            background: var(--surface_container);
+            border-color: var(--surface_container);
+          }
+          .dropzone-tip::before {
+            background: var(--surface_container);
+          }
+        }
+        .DragAndDropImageDropLocationPoint-sc-1v0z50f-0 {
+          background: var(--surface_container_low);
+          border-color: var(--surface_container_low);
+        }
+        .dropzone-tip::before {
+          background: var(--surface_container_low);
+        }
+        .isOver .dropzone {
+          background: var(--surface_container);
+          .dropzone-number {
+            background: var(--surface_container_high) !important;
+          }
+        }
+        .dropzone {
+          &:hover,
+          &.selected {
+            background: var(--surface_container);
+            .dropzone-number {
+              background: var(--surface_container_high) !important;
+            }
+          }
+          border-color: var(--primary) !important;
+          background: var(--surface_container_low);
+          .dropzone-number {
+            background: var(--surface_container);
+          }
+        }
+      }
+      .DragAndDropChoice__RootDiv-sc-1wzeg1h-3 {
+        background: var(--surface_container_low);
+        border-color: var(--outline);
+        .Button__StyledButton-sc-aum9f1-1,
+        .DragAndDropChoice__DragIcon-sc-1wzeg1h-1 {
+          background: transparent;
+        }
+        &.selected {
+          background: var(--surface_container);
+        }
+      }
+      .DragAndDropDropzoneOutput__RootDiv-sc-1is7exh-0 {
+        background: var(--surface_container_low);
+        border-color: var(--primary);
+        &.hasAnswer {
+          border-color: var(--outline);
+        }
+      }
+      .AnswerCorrectnessIndicator__CircleDiv-sc-18hnk99-1 {
+        &.correct {
+          background: var(--tertiary);
+        }
+        .material-icons-outlined {
+          color: @contrast;
+        }
+      }
+      .ShortAnswerViewableDetails__InputAutosizeTextarea-sc-1ugk4gk-0 {
+        background: var(--surface_container_low);
+        border-color: var(--outline);
+        color: var(--on_surface);
+      }
+      .ExpandableAccordionHeader__RootButton-sc-cu02pz-0 {
+        background: transparent;
+      }
+      .GraphViewableDetails__GraphAndControlsDiv-sc-13yx2r4-2 {
+        .VerticalButton__StyledButton-sc-1h2we7r-2 {
+          &:disabled {
+            i,
+            span {
+              color: var(--on_surface_variant);
+            }
+          }
+          &:not(:disabled):hover,
+          &:not(:disabled):focus-within {
+            div {
+              background: var(--surface_container_low);
+            }
+            span {
+              color: var(--primary);
+            }
+          }
+        }
+        .Graph__ContainerDiv-sc-1y56z00-0 {
+          border-color: var(--outline);
+          background: var(--surface_container_low);
+          svg {
+            line[stroke="rgb(4,28,68)"],
+            marker[stroke="rgb(4,28,68)"] {
+              fill: var(--on_surface);
+              stroke: var(--on_surface);
+            }
+            path[stroke="rgb(80,95,121)"] {
+              fill: var(--on_surface_variant);
+              stroke: var(--on_surface_variant);
+            }
+            path[stroke="rgb(192,197,207)"] {
+              fill: var(--outline);
+              stroke: var(--outline);
+            }
+            path[stroke="rgb(13,100,242)"] {
+              stroke: var(--primary);
+              fill: var(--primary);
+            }
+            text {
+              stroke: var(--surface_container_low) !important;
+              fill: var(--on_surface);
+            }
+            ellipse[fill="rgb(13,100,242)"] {
+              stroke: var(--surface_container_low);
+              fill: var(--primary);
+            }
+          }
+          .Coords__CoordsDiv-sc-1fj077e-1 {
+            background: var(--surface_container_high);
+          }
+        }
+      }
+    }
+    .MediaSlider__RootSpan-sc-1gz67jn-0 {
+      .TrimmerMarker__TooltipDiv-sc-1f17hi4-1 {
+        background: var(--surface_container_high);
+        color: var(--on_surface);
+      }
+      .Thumb__RootSpan-sc-yv6w5k-0 {
+        background: var(--primary);
+        z-index: 2;
+      }
+      .Segment__SegmentSpan-sc-r0cy9o-0 {
+        background: var(--surface_container_low) !important;
+      }
+      .TrimmerMarker__RootSpan-sc-1f17hi4-0 {
+        background: var(--outline);
+        z-index: 1;
+      }
+    }
+    .slider {
+      background: var(--surface_container);
+      .thumb {
+        background: var(--outline);
+        color: var(--on_surface);
+      }
+    }
+    .ExpandedDrawing__BodyDiv-sc-cz2rcw-0 {
+      .DrawingToolbar__RootDiv-sc-2xuxy3-0 {
+        &,
+        .DrawingToolbar__ToolDiv-sc-2xuxy3-3 {
+          background: var(--surface_container_low);
+          color: var(--on_surface);
+        }
+        .DrawingToolbar__ToolDiv-sc-2xuxy3-3:hover {
+          &,
+          .svg-icons,
+          .material-icons-outlined {
+            color: var(--primary);
+          }
+        }
+        .selected {
+          &::after {
+            background: var(--primary);
+          }
+          color: var(--primary);
+        }
+      }
+      .DrawingSidebar__ExpandedAnswerDiv-sc-1hvcy70-0 {
+        background: var(--surface);
+      }
+      .DrawingSidebar__SidebarTopExplainer-sc-1hvcy70-1 {
+        background: var(--surface_container_lowest);
+        border-color: var(--outline);
+        color: var(--on_surface);
+        .DrawingSidebar__StyledSvgIcon-sc-1hvcy70-5 {
+          color: var(--on_surface);
+        }
+      }
+      .SidePicker__RootDiv-sc-xie0qr-0 {
+        background: var(--surface_container_lowest);
+        border-color: var(--outline);
+      }
+    }
+    .MathLiveInput__RootDiv-sc-tki2b-0 {
+      .keyboard-button-wrapper .svg-icons svg path {
+        fill: var(--primary) !important;
+      }
+      color: var(--on_surface);
+      border-color: var(--outline);
+      background: var(--surface_container_low);
+      &:focus-within,
+      &:hover {
+        border-color: var(--primary);
+      }
+      &.invalid {
+        color: var(--error);
+      }
+      math-field {
+        --caret-color: var(--primary);
+        --selection-background-color: fade(var(--primary), 50%);
+        --selection-color: var(--on_surface);
+        --correct-color: var(--on_surface);
+        --incorrect-color: var(--error);
+        --latex-color: var(--primary);
+        --placeholder-color: var(--primary);
+      }
+      .ML__keyboard--plate {
+        --keyboard-text: var(--on_surface);
+        --keyboard-text-active: var(--primary);
+        --keyboard-background: var(--surface_container_low);
+        --keycap-background: var(--surface_container);
+        --keycap-background-active: var(--surface_container_high);
+        --keycap-background-border: var(--outline);
+        --keycap-background-border-bottom: var(--outline);
+        --keycap-text: var(--on_surface);
+        --keycap-secondary-text: var(--on_surface_variant);
+        --keycap-text-active: var(--primary);
+        --keycap-modifier-background: var(--surface_container_high);
+        --keycap-modifier-background-active: var(--outline);
+        --keycap-modifier-border: var(--outline_variant);
+        --keycap-modifier-border-bottom: var(--outline_variant);
+
+        [data-tooltip]::after {
+          background-color: var(--surface_container_high);
+          color: var(--on_surface);
+        }
+        border-color: var(--outline) !important;
+      }
+    }
+    .ML__keyboard.alternate-keys {
+      --keyboard-alternate-background: var(--surface_container_high);
+      --keyboard-alternate-background-active: var(--outline);
+      --keyboard-alternate-text: var(--on_surface);
+      --keyboard-alternate-text-active: var(--on_surface);
+    }
+
+    #mathlive-popover-panel {
+      background: var(--surface_container_high);
+      color: var(--on_surface);
+      box-shadow: 0 14px 28px fade(var(--surface), 25%) 0 10px 10px fade(var(--surface), 22%);
+      li:hover {
+        background: var(--outline);
+      }
+      &::after {
+        border-color: var(--surface_container_high) transparent;
+      }
+    }
+
+    .FullPointsAnimation__AbsoluteContainerDiv-sc-mzm76r-0,
+    .ScoreCircle__LottieWrapperDiv-sc-lj5glq-1,
+    .Summary__SummaryDiv-sc-1ofq6fd-0,
+    .MatchingSessionSummary__CheckmarkContainerDiv-sc-d3unim-2 {
+      svg {
+        path[fill="rgb(32,213,171)"],
+        path[fill="rgb(33,214,170)"] {
+          fill: var(--tertiary) !important;
+        }
+        path[fill="rgb(255,138,51)"] {
+          fill: var(--secondary_container) !important;
+        }
+        path[fill="rgb(255,222,51)"] {
+          fill: var(--secondary) !important;
+        }
+        path[fill="rgb(255,76,77)"],
+        path[fill="rgb(255,76,76)"] {
+          fill: var(--error) !important;
+        }
+        path[fill="rgb(201,68,204)"] {
+          fill: var(--primary) !important;
+        }
+        path[fill="rgb(0,165,249)"] {
+          fill: var(--primary) !important;
+        }
+        path[fill="rgb(255,255,255)"],
+        path[fill="rgb(242,242,242)"] {
+          fill: @contrast !important;
+        }
+
+        path[stroke="rgb(32,213,171)"],
+        path[stroke="rgb(33,214,170)"] {
+          stroke: var(--tertiary) !important;
+        }
+        path[stroke="rgb(255,138,51)"] {
+          stroke: var(--secondary_container) !important;
+        }
+        path[stroke="rgb(255,222,51)"] {
+          stroke: var(--secondary) !important;
+        }
+        path[stroke="rgb(255,76,77)"],
+        path[stroke="rgb(255,76,76)"] {
+          stroke: var(--error) !important;
+        }
+        path[stroke="rgb(201,68,204)"] {
+          stroke: var(--primary) !important;
+        }
+        path[stroke="rgb(0,165,249)"] {
+          stroke: var(--primary) !important;
+        }
+        path[stroke="rgb(255,255,255)"],
+        path[stroke="rgb(242,242,242)"] {
+          stroke: @contrast !important;
+        }
+      }
+    }
+
+    .Elements__JoinLayoutDiv-sc-1qtb2ho-0 {
+      background: var(--surface_container_lowest);
+      .SplitColumnLayout__Card-sc-4mcl10-0 {
+        background: var(--surface_container_low);
+        .Login__ContentDiv-sc-5w2jun-0,
+        .Login__LoginServiceButtonsRowDiv-sc-5w2jun-3 {
+          .Button__StyledButton-sc-aum9f1-1 {
+            background: var(--surface_container) !important;
+            &:hover {
+              background: var(--surface_container_high) !important;
+            }
+          }
+          .material-icons-outlined {
+            color: var(--on_surface);
+          }
+          .NewselaServiceLoginButton__QuestionTextDiv-sc-mk13mj-1 {
+            color: var(--on_surface);
+          }
+          .NewselaServiceLoginButton__ActionDiv-sc-mk13mj-2 {
+            color: var(--primary);
+          }
+        }
+      }
+      .JoinQuickCode__StyledLink-sc-1uhfett-2,
+      .CallToActionLink__StyledLink-sc-yuiy65-0,
+      .Login__ForgotLink-sc-5w2jun-1 {
+        color: var(--primary);
+      }
+      .react-code-input {
+        input {
+          background: var(--surface_container);
+          border-color: var(--outline);
+          &:focus-within {
+            border-color: var(--primary);
+          }
+        }
+        &:not(:focus-within).empty [data-id="0"] {
+          border-color: var(--primary);
+        }
+      }
+      .JoinQuickCode__StyledPrimaryButton-sc-1uhfett-5 {
+        background: var(--surface_container);
+        &:hover {
+          background: var(--surface_container_high);
+        }
+      }
+      .ValidatedInputNew__StyledInput-sc-18vdili-4 {
+        background: var(--surface_container);
+        border-color: var(--outline) !important;
+        color: var(--on_surface);
+      }
+    }
+    .FormativeStudentFooter__BottomDiv-sc-6tj89c-3 {
+      border-color: var(--outline);
+    }
+    .StudentFormativeStatus__RootDiv-sc-y86tx8-1 {
+      &.bQdPlK {
+        background: var(--tertiary);
+      }
+      &,
+      .material-icons-outlined {
+        color: @contrast;
+      }
+    }
+    .FloatingToolButton__FloatingButton-sc-1gy4xsl-0 {
+      background: var(--outline);
+      &:hover,
+      &:enabled:hover,
+      &:focus,
+      &:enabled:focus {
+        background: var(--outline_variant);
+      }
+      .material-icons-outlined {
+        color: var(--primary);
+      }
+    }
+    .PracticeSet__StyledHeader-sc-1wup6tb-6 {
+      background: var(--surface_container_low);
+      border-color: var(--outline);
+      input.ReactiveTextInput__StyledInput-sc-go3drs-2 {
+        color: var(--on_surface) !important;
+        &::placeholder,
+        &:focus::placeholder {
+          color: var(--on_surface_variant) !important;
+        }
+      }
+      .HeaderBackLink__TertiaryButtonLink-sc-1vx1tro-0,
+      .Button__StyledButton-sc-aum9f1-1 {
+        background: var(--surface_container) !important;
+        color: var(--primary) !important;
+        &:not([disabled]):hover {
+          background: var(--surface_container_high);
+        }
+      }
+      .PracticeSet__DividerDiv-sc-1wup6tb-4 {
+        background: var(--outline);
+      }
+    }
+    .PracticeSet__ContentDiv-sc-1wup6tb-1 {
+      .AutoSizeInput__StyledInput-sc-ops4en-2 {
+        color: var(--on_surface);
+        background: transparent !important;
+
+        &:focus {
+          border-color: var(--on_surface_variant);
+        }
+      }
+      .FlashcardSide__RootDiv-sc-amoro3-1 {
+        background: var(--surface_container_low);
+        color: var(--on_surface);
+      }
+      .PracticeItemEditor__HeaderDiv-sc-1jko4q4-0 {
+        background: var(--surface_container);
+      }
+      .PracticeItemEditor__ContentDiv-sc-1jko4q4-2 {
+        background: var(--surface_container_low);
+        .TextareaCard__RootDiv-sc-qx9s19-0 {
+          background: var(--surface_container);
+          border-color: var(--outline);
+          textarea {
+            color: var(--on_surface);
+          }
+        }
+        .MediaButton__StyledButton-sc-12h2vjb-0 {
+          background: var(--surface_container);
+          border-color: var(--outline);
+          color: var(--on_surface);
+          &:hover {
+            background: var(--surface_container_high);
+            color: var(--primary);
+          }
+        }
+      }
+    }
+    .Banner__Root-sc-yf4o5r-0 {
+      &.error {
+        .material-icons-outlined {
+          color: var(--error);
+        }
+        border-color: var(--error);
+      }
+      background: var(--surface_container_high);
+      color: var(--on_surface);
+    }
+    .FileUploadButton__DropZoneDiv-sc-88u8tg-2 {
+      background: var(--surface_container_low);
+      border-color: var(--primary);
+      .material-icons-outlined {
+        color: var(--primary);
+      }
+    }
+    .DividerWord__LineDiv-sc-59xl7-1 {
+      background: var(--outline);
+    }
+    .DividerWord__WordDiv-sc-59xl7-2 {
+      color: var(--on_surface);
+    }
+    .MinimalFormativeStudentHeader__RootDiv-sc-14rcnaq-0 {
+      border-color: var(--outline);
+    }
+    .FormativeItemViewable__FeedbackMessagesListDiv-sc-m0kwch-1 {
+      .FeedbackMessagesList__MessagesListDiv-sc-9o5dsw-0 {
+        background: var(--surface_container);
+        .FeedbackMessagesList__EmptyDiv-sc-9o5dsw-1 svg {
+          path:nth-child(1) {
+            fill: var(--secondary);
+          }
+          path:nth-child(2) {
+            fill: var(--tertiary);
+          }
+          path:nth-child(3) {
+            fill: var(--primary);
+          }
+          path:nth-child(4) {
+            stroke: var(--secondary_container);
+          }
+          path:nth-child(5) {
+            stroke: var(--secondary_container);
+          }
+        }
+      }
+      .FeedbackMessage__FeedbackBoxDiv-sc-q3ku9d-2 {
+        background: var(--surface_container_high);
+        border-color: var(--outline_variant);
+      }
+      .FeedbackMessageComposer__RootDiv-sc-vs8711-0 {
+        border-color: var(--outline);
+        .FeedbackMessageComposer__RichTextContainerDiv-sc-vs8711-3 {
+          border-color: var(--outline_variant);
+          color: var(--on_surface);
+          .public-DraftEditorPlaceholder-inner {
+            color: var(--on_surface_variant);
+          }
+        }
+      }
+    }
+    .Toolbar__RootDiv-sc-1e3lohg-0 {
+      border-color: var(--outline);
+      box-shadow: var(--outline) 0 1px 3px 0;
+      &::before,
+      &::after {
+        border-color: var(--surface_container_high) transparent transparent;
+      }
+      &,
+      .buttonWrapper button {
+        background: var(--surface_container_high);
+      }
+      .buttonWrapper button {
+        &:hover {
+          background: var(--outline);
+        }
+        &.active {
+          color: var(--primary);
+          svg {
+            fill: var(--primary);
+          }
+        }
+        svg {
+          fill: var(--on_surface);
+        }
+        color: var(--on_surface);
+      }
+    }
+    .TeacherPacedStart__RootDiv-sc-1f4f5sd-0 {
+      background: var(--surface_container_low) !important;
+    }
+    .FeedbackMessageIcon__UnreadJewelDiv-sc-1x1yblc-1 {
+      background: var(--error);
+      box-shadow: var(--on_surface) 0 0 0 2px;
+    }
+    .CookiePolicyBanner__ContainerDiv-sc-1p3fxjn-1 {
+      background: var(--surface_container_low);
+      border-color: var(--primary);
+      .Button__StyledButton-sc-aum9f1-1 {
+        background: var(--surface_container);
+        &:hover {
+          background: var(--surface_container_high);
+        }
+      }
+    }
+    .GameContainer__RootDiv-sc-1c3jzzv-0 {
+      background: var(--surface_container_lowest) !important;
+      .Timer__RootDiv-sc-bbbpy2-0 {
+        background: var(--surface_container);
+        &,
+        i {
+          color: var(--on_surface);
+        }
+      }
+      .Header__HeaderDiv-sc-327vcg-0 {
+        background: var(--surface_container_low);
+        border-color: var(--outline);
+        .HeaderBackLink__TertiaryButtonLink-sc-1vx1tro-0,
+        .Button__StyledButton-sc-aum9f1-1 {
+          background: var(--surface_container);
+          color: var(--primary);
+          &:hover {
+            background: var(--surface_container_high);
+          }
+        }
+      }
+      .ThemePicker__ToggleItem-sc-juof75-3 {
+        div {
+          outline-color: var(--on_surface) !important;
+        }
+        &[aria-checked="true"],
+        &[aria-checked="true"] div {
+          outline-color: var(--primary) !important;
+        }
+      }
+      .TitleCard__StartButton-sc-xz0ejb-1 {
+        background: var(--primary);
+        color: var(--surface_container_lowest);
+      }
+      .QuizSession__BodyDiv-sc-4aco0-0 {
+        .QuizSession__DividerDiv-sc-4aco0-4 {
+          background: var(--outline);
+        }
+        .AnswerChoiceCard__CardButton-sc-lns4c-0 {
+          &::before {
+            box-shadow: var(--outline) 0 0 0 1px;
+          }
+          &.correct::before {
+            animation: 1.2s ease 0s 1 normal forwards running
+              catppuccin-formative-practiceset-quiz-correct;
+          }
+          &.incorrect::before {
+            animation: 1.2s ease 0s 1 normal forwards running
+              catppuccin-formative-practiceset-quiz-incorrect;
+          }
+          .AnswerChoiceCard__CorrectnessPill-sc-lns4c-2 {
+            &.correct {
+              background: var(--tertiary);
+              i,
+              span {
+                color: @contrast;
+              }
+            }
+            background: var(--error);
+            i,
+            span {
+              color: @contrast;
+            }
+          }
+          .AnswerChoiceCard__CorrectnessOverlay-sc-lns4c-3 {
+            &.correct {
+              background: var(--tertiary);
+            }
+            i {
+              color: @contrast !important;
+            }
+            background: var(--error);
+          }
+        }
+      }
+      .MatchingSessionSummary__RootDiv-sc-d3unim-0,
+      .MatchingSessionSummary__CheckmarkOverlayDiv-sc-d3unim-1 {
+        background: var(--surface_container_lowest);
+        .Glow__RootDiv-sc-1c8wp5s-0 {
+          background: var(--primary) !important;
+          color: @contrast;
+        }
+        .MatchingSessionSummary__SessionDiv-sc-d3unim-13 {
+          border-color: var(--outline);
+          &.highlight {
+            background: fade(var(--secondary), 25%);
+          }
+        }
+      }
+      .LatestPerformances__PerformanceDiv-sc-g3qin-2,
+      .Leaderboard__PerformanceDiv-sc-152arb5-3 {
+        border-color: var(--outline);
+      }
+      .MatchingSession__ContentDiv-sc-edrizy-0 {
+        .ProgressBar__RootDiv-sc-ly2f4w-0 {
+          .Glow__FlashDiv-sc-1c8wp5s-1 {
+            background: transparent;
+          }
+          .ProgressBar__PointsContainerSpan-sc-ly2f4w-3
+            .Glow__RootDiv-sc-1c8wp5s-0 {
+            background: var(--surface_container_low) !important;
+            color: var(--on_surface);
+          }
+          .ProgressBar__BarDiv-sc-ly2f4w-1 {
+            background: var(--surface_container_low);
+            border-color: var(--outline);
+            .Glow__RootDiv-sc-1c8wp5s-0 {
+              background: var(--primary) !important;
+            }
+          }
+        }
+      }
+      .PracticeSessionCard__CardButton-sc-wwcpxc-0 {
+        border-color: var(--outline);
+      }
+      .FlashcardSide__RootDiv-sc-amoro3-1 {
+        background: var(--surface_container_low);
+        border-color: var(--outline);
+        color: var(--on_surface);
+      }
+      .StreakProgressBar__Progress-sc-1b8tyg3-2 {
+        background: var(--surface_container_low);
+        .StreakProgressBar__ProgressBarDiv-sc-1b8tyg3-3 {
+          background: var(--primary);
+        }
+      }
+      .StreakProgressBar__StyledSvgIcon-sc-1b8tyg3-4 {
+        svg path {
+          fill: var(--secondary);
+          stroke: @contrast;
+        }
+        &.visible {
+          animation: 0.5s ease 0s 1 normal none running
+            catppuccin-formative-practiceset-quiz-streak;
+        }
+      }
+      .PracticeSession__AnswerButton-sc-1t2vn9a-3 {
+        color: @contrast;
+        &.red {
+          background: var(--error);
+        }
+        &.green {
+          background: var(--tertiary);
+        }
+      }
+    }
+    .PillToggleGroup__Item-sc-12fkyq8-1 {
+      &[aria-checked="true"] {
+        background: var(--surface_container_low);
+        color: var(--primary);
+      }
+      &:hover {
+        background: var(--surface_container_low);
+      }
+      border-color: var(--outline);
+      color: var(--on_surface);
+    }
+    .FeedbackButton__StyledButton-sc-1b7u8ss-0 {
+      background: var(--surface_container_high);
+      i {
+        color: var(--on_surface);
+      }
+    }
+    @keyframes catppuccin-formative-practiceset-quiz-correct {
+      0% {
+        box-shadow: var(--outline) 0 0 0 1px;
+      }
+      70% {
+        box-shadow: var(--outline) 0 0 0 1px;
+      }
+      100% {
+        box-shadow: var(--tertiary) 0 0 0 3px;
+      }
+    }
+    @keyframes catppuccin-formative-practiceset-quiz-incorrect {
+      0% {
+        box-shadow: var(--outline) 0 0 0 1px;
+      }
+      70% {
+        box-shadow: var(--outline) 0 0 0 1px;
+      }
+      100% {
+        box-shadow: var(--error) 0 0 0 3px;
+      }
+    }
+    @keyframes catppuccin-formative-practiceset-quiz-streak {
+      0% {
+        filter: drop-shadow(fade(var(--secondary), 80%) 0 0 0);
+        transform: scale(0.8);
+      }
+      50% {
+        filter: drop-shadow(fade(var(--secondary), 80%) 0 0 12px);
+        transform: scale(1.3);
+      }
+      100% {
+        filter: drop-shadow(fade(var(--secondary), 80%) 0 0 0);
+        transform: scale(1);
+      }
+    }
+    .Shelf__RootDiv-sc-5aism7-0 {
+      background: var(--surface_container_low);
+      .ShelfTile__RootButton-sc-1oc4c00-0 {
+        background: var(--surface_container);
+        &:hover {
+          background: var(--surface_container_high);
+          box-shadow: var(--primary) 0 0 0 1px;
+          .label {
+            color: var(--primary);
+          }
+        }
+        .ShelfTile__IconDiv-sc-1oc4c00-1 {
+          background: var(--primary) !important;
+          i {
+            color: @contrast;
+          }
+        }
+      }
+    }
+    img.spinner {
+        '<svg width="140" height="140" version="1.1" viewBox="0 0 1400 1400" xmlns="http://www.w3.org/2000/svg"><path d="M1035 1226c-13-13-27-40-31-60-6-35-3-40 60-106 116-120 162-254 145-423-9-93-55-201-114-266l-37-41h44c60 0 83-24 79-86-3-55 3-53 64 26 97 126 148 276 148 430 0 155-52 305-148 430-91 118-158 148-210 96" fill="@{yellow}"/><path d="M1105 362c-11-2-41-24-68-49-102-95-263-143-409-123-87 12-198 62-257 115l-41 37v-40c0-61-26-86-85-83-56 3-54-3 25-64 72-55 182-108 270-131 85-22 235-22 320 0 124 32 298 132 345 199s-19 159-100 139" fill="@{green}"/><path d="M612 1389c-158-21-341-117-431-226-56-68-31-143 53-159 35-6 40-3 106 60 121 118 272 168 433 146 76-11 178-53 236-97l34-26-6 23c-8 30 15 85 41 99 12 6 35 11 53 11h32l-47 36c-134 102-337 156-504 133" fill="@{red}"/><path d="M142 1113c-45-59-98-173-118-253-22-85-22-235 0-320 32-124 132-298 199-345 46-32 110-14 132 39 19 45 10 73-42 129-95 102-143 264-123 410 11 76 53 178 97 236l26 34-23-6c-26-7-83 14-96 34-5 8-11 30-14 50l-5 36z" fill="@{blue}"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+    .NoFormatives__StyledImg-sc-1v9g5eg-4 {
+        '<svg xmlns="http://www.w3.org/2000/svg" width="276" height="253" fill="none"><g filter="url(#a)"><rect width="171" height="137" x="179" y="38" fill="@{text}" rx="4" shape-rendering="crispEdges" transform="rotate(90 179 38)"/><path fill="@{blue}" fill-rule="evenodd" d="M163.595 162.575c-1.247-4.445-1.877-9.098-2.453-13.613-.121-.972.553-1.875 1.504-1.944.95-.139 1.82.556 1.941 1.459.555 4.375 1.148 8.889 2.349 13.125.261.903-.276 1.876-1.198 2.154s-1.882-.278-2.143-1.181" clip-rule="evenodd"/><path fill="@{yellow}" fill-rule="evenodd" d="M145.91 176.048c-7.3-7.153-13.661-15.21-21.156-22.224-.701-.625-.738-1.736-.085-2.431.655-.694 1.755-.764 2.455-.069 7.517 7.015 13.898 15.071 21.22 22.224.683.695.693 1.806.021 2.5-.672.625-1.772.695-2.455 0" clip-rule="evenodd"/><path fill="@{red}" fill-rule="evenodd" d="m117.831 189.453 12.535.624c.957 0 1.696.834 1.649 1.806s-.862 1.667-1.819 1.667l-12.554-.625a1.78 1.78 0 0 1-1.639-1.875c.052-.903.871-1.667 1.828-1.597" clip-rule="evenodd"/><path fill="@{green}" d="M175.742 230.484c14.769 0 26.742-11.973 26.742-26.742S190.511 177 175.742 177 149 188.973 149 203.742s11.973 26.742 26.742 26.742"/><path fill="@{text}" fill-rule="evenodd" d="m171.731 209.874 15.1-15.1a1.337 1.337 0 0 1 1.891 1.891l-16.046 16.045a1.333 1.333 0 0 1-1.891 0l-8.022-8.022a1.337 1.337 0 0 1 1.891-1.891z" clip-rule="evenodd"/></g><g filter="url(#b)"><rect width="171" height="137" x="155" y="14" fill="@{surface0}" rx="4" transform="rotate(90 155 14)"/></g><g filter="url(#c)"><rect width="171" height="137" x="179" y="38" fill="@{surface1}" rx="4" shape-rendering="crispEdges" transform="rotate(90 179 38)"/><path fill="@{blue}" fill-rule="evenodd" d="M163.595 162.575c-1.247-4.445-1.877-9.098-2.453-13.613-.121-.972.553-1.875 1.504-1.944.95-.139 1.82.556 1.941 1.459.555 4.375 1.148 8.889 2.349 13.125.261.903-.276 1.876-1.198 2.154s-1.882-.278-2.143-1.181" clip-rule="evenodd"/><path fill="@{yellow}" fill-rule="evenodd" d="M145.91 176.048c-7.3-7.153-13.661-15.21-21.156-22.224-.701-.625-.738-1.736-.085-2.431.655-.694 1.755-.764 2.455-.069 7.517 7.015 13.898 15.071 21.22 22.224.683.695.693 1.806.021 2.5-.672.625-1.772.695-2.455 0" clip-rule="evenodd"/><path fill="@{red}" fill-rule="evenodd" d="m117.831 189.453 12.535.624c.957 0 1.696.834 1.649 1.806s-.862 1.667-1.819 1.667l-12.554-.625a1.78 1.78 0 0 1-1.639-1.875c.052-.903.871-1.667 1.828-1.597" clip-rule="evenodd"/></g><path fill="@{green}" d="M175.742 230.484c14.769 0 26.742-11.973 26.742-26.742S190.511 177 175.742 177 149 188.973 149 203.742s11.973 26.742 26.742 26.742"/><path fill="@{base}" fill-rule="evenodd" d="m171.731 209.874 15.1-15.1a1.337 1.337 0 0 1 1.891 1.891l-16.046 16.045a1.333 1.333 0 0 1-1.891 0l-8.022-8.022a1.337 1.337 0 0 1 1.891-1.891z" clip-rule="evenodd"/><rect width="18" height="18" x="56" y="58" fill="@{text}" rx="4"/><path fill="@{text}" d="M82 67a3.5 3.5 0 0 1 3.5-3.5h76a3.5 3.5 0 1 1 0 7h-76A3.5 3.5 0 0 1 82 67"/><rect width="18" height="18" x="56" y="85" fill="@{text}" rx="4"/><path fill="@{text}" d="M82 94a3.5 3.5 0 0 1 3.5-3.5h76a3.5 3.5 0 1 1 0 7h-76A3.5 3.5 0 0 1 82 94"/><rect width="18" height="18" x="56" y="112" fill="@{text}" rx="4"/><path fill="@{text}" d="M82 121a3.5 3.5 0 0 1 3.5-3.5h76a3.5 3.5 0 1 1 0 7h-76A3.5 3.5 0 0 1 82 121"/><path fill="@{mauve}" stroke="@{mauve}" stroke-width=".386" d="M218.37 54.903c28.409 38.13 14.739 84.164-12.803 119.068a1.58 1.58 0 0 0 2.479 1.955c28.361-35.938 42.216-83.502 12.855-122.91a1.578 1.578 0 1 0-2.531 1.887Z"/><path fill="@{mauve}" stroke="@{mauve}" stroke-width=".386" d="m204.79 141.404-.62 35.442-.193-.019v.001c-.057.602.094.977.155 1.091.235.469.587.679.882.785h.002c.343.12.93.172 1.594-.171.339-.177.802-.526 1.207-.849.204-.162.392-.317.549-.446.165-.136.296-.243.375-.302a217 217 0 0 0 4.063-3.116c3.486-2.717 7.112-5.542 10.963-7.724 5.112-2.895 10.592-4.635 16.641-3.214.849.2 1.699-.33 1.899-1.177.2-.849-.33-1.699-1.177-1.899h-.001c-6.901-1.62-13.156.279-18.917 3.541-3.975 2.252-7.728 5.171-11.308 7.955-1.122.872-2.226 1.731-3.315 2.552.2-1.278.426-2.667.594-3.706.136-.837.236-1.448.255-1.592 1.277-9.336 1.036-18.368-.532-27.676a1.58 1.58 0 0 0-1.82-1.296 1.58 1.58 0 0 0-1.296 1.82Z"/><defs><filter id="a" width="196.484" height="228.484" x="24" y="24" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" result="hardAlpha" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"/><feOffset dy="4"/><feGaussianBlur stdDeviation="9"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.12 0"/><feBlend in2="BackgroundImageFix" result="effect1_dropShadow_2447_34166"/><feBlend in="SourceGraphic" in2="effect1_dropShadow_2447_34166" result="shape"/></filter><filter id="b" width="173" height="207" x="0" y="0" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" result="hardAlpha" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"/><feOffset dy="4"/><feGaussianBlur stdDeviation="9"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.12 0"/><feBlend in2="BackgroundImageFix" result="effect1_dropShadow_2447_34166"/><feBlend in="SourceGraphic" in2="effect1_dropShadow_2447_34166" result="shape"/></filter><filter id="c" width="173" height="207" x="24" y="24" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" result="hardAlpha" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"/><feOffset dy="4"/><feGaussianBlur stdDeviation="9"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.12 0"/><feBlend in2="BackgroundImageFix" result="effect1_dropShadow_2447_34166"/><feBlend in="SourceGraphic" in2="effect1_dropShadow_2447_34166" result="shape"/></filter></defs></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+    .PracticeSetGrid__EmptyStateDiv-sc-1yuxflk-1 img {
+        '<svg xmlns="http://www.w3.org/2000/svg" width="298" height="206" fill="none"><g filter="url(#a)"><rect width="204" height="123" x="40" y="39.066" fill="@{surface0}" rx="8" transform="rotate(-3.39 40 39.066)"/></g><g filter="url(#b)"><rect width="205" height="124" x="267" y="173.001" fill="@{surface1}" rx="8" shape-rendering="crispEdges" transform="rotate(-180 267 173.001)"/><path fill="@{text}" d="M155 89.5a3.5 3.5 0 0 1 3.5-3.5h71a3.5 3.5 0 1 1 0 7h-71a3.5 3.5 0 0 1-3.5-3.5m0 18a3.5 3.5 0 0 1 3.5-3.5h71a3.5 3.5 0 1 1 0 7h-71a3.5 3.5 0 0 1-3.5-3.5"/><rect width="58" height="68" x="81" y="77" fill="@{text}" rx="4"/></g><g clip-path="url(#c)"><path fill="@{peach}" fill-rule="evenodd" d="M253.037 106.077c.714-.255 1.465-.593 2.045-1.082.688-.581.968-1.33 1.155-2.118.242-1.013.338-2.091.631-3.105.108-.377.316-.52.406-.583a1 1 0 0 1 .669-.186.98.98 0 0 1 .835.542c.033.061.076.154.104.282.021.094.035.386.057.507q.082.445.145.892c.145.994.228 1.839.686 2.752.62 1.24 1.242 1.998 2.086 2.334.815.325 1.791.264 3.037.009q.177-.043.352-.073a1.025 1.025 0 0 1 .396 2.012q-.17.038-.336.07c-1.684.417-3.633 1.905-4.766 3.207-.349.402-.86 1.525-1.381 2.241-.385.529-.818.877-1.181 1-.243.083-.448.07-.618.028a1.04 1.04 0 0 1-.607-.406 1.2 1.2 0 0 1-.202-.47 4 4 0 0 1-.02-.448c-.106-.366-.236-.723-.331-1.092-.226-.88-.669-1.437-1.196-2.173a4.1 4.1 0 0 0-1.798-1.467c-.101-.025-.915-.224-1.203-.338-.42-.168-.62-.449-.693-.601a1.15 1.15 0 0 1-.111-.668 1.1 1.1 0 0 1 .38-.703c.136-.119.34-.234.612-.29.211-.044.769-.07.847-.073m4.778-1.434q.057.126.12.253c.91 1.816 1.926 2.83 3.162 3.322l.041.016a14 14 0 0 0-2.147 1.957c-.235.271-.547.833-.884 1.41-.306-.995-.806-1.698-1.436-2.578-.48-.671-.984-1.177-1.603-1.589.48-.246.938-.535 1.338-.872a5.1 5.1 0 0 0 1.409-1.919" clip-rule="evenodd"/></g><g clip-path="url(#d)"><path fill="@{green}" d="m280.676 182.9-23.925-31.886v-17.202l5.568-6.971c1.073-1.361.124-3.341-1.608-3.341h-24.42c-1.733 0-2.682 1.98-1.609 3.341l5.569 6.971v17.202L216.326 182.9c-2.022 2.722-.083 6.6 3.3 6.6h57.75c3.382 0 5.321-3.878 3.3-6.6"/></g><path fill="@{blue}" fill-rule="evenodd" d="M57.25 19.652C55.38 14.53 54.218 9.105 53.13 3.84c-.231-1.135.477-2.26 1.585-2.428 1.103-.25 2.186.49 2.41 1.542 1.05 5.104 2.16 10.367 3.955 15.249.388 1.04-.152 2.234-1.209 2.645-1.055.411-2.233-.156-2.621-1.196" clip-rule="evenodd"/><path fill="@{yellow}" fill-rule="evenodd" d="M37.736 37.132C28.52 29.37 20.324 20.458 10.891 12.876c-.878-.672-1.023-1.978-.32-2.855.704-.878 1.988-1.06 2.872-.305 9.458 7.58 17.679 16.49 26.92 24.25.865.756.978 2.064.253 2.943-.73.798-2.015.98-2.88.223" clip-rule="evenodd"/><path fill="@{red}" fill-rule="evenodd" d="m6.025 55.476 14.76-.404c1.122-.087 2.065.828 2.1 1.978.033 1.15-.86 2.041-1.983 2.128l-14.782.406c-1.129.005-2.066-.91-2.094-2.06-.021-1.068.87-2.042 1.999-2.048" clip-rule="evenodd"/><path fill="@{peach}" fill-rule="evenodd" d="M270.299 78.123q-.105-.619-.156-1.23c-.051-.613-.02-1.23-.038-1.843-.008-.26-.039-.938-.026-1.036.113-.85.799-.98 1-1.002.097-.014 1.093-.126 1.308.98.264 1.35.348 2.71.255 4.043.218 1.133.59 2.261 1.082 3.283 1.956 4.062 5.685 4.457 9.724 4.42a1.156 1.156 0 0 1 1.169 1.095 1.16 1.16 0 0 1-1.048 1.217c-2.258.218-6.264 2.029-7.649 3.914-.289.394-.458 1.346-.681 2.28-.311 1.295-.681 2.576-1.095 3.115-.063.083-.819.938-1.045 1.063a1.14 1.14 0 0 1-1.223-.033c-.246-.157-.525-.469-.637-.984-.116-.538-.018-1.644-.036-1.88-.066-.86-.237-2.545-.588-3.993-.189-.78-.39-1.5-.724-1.857-1.234-1.323-3.207-1.129-4.869-.91l-.572.074q-1.015.302-2.154.436c-1.146.135-1.334-.919-1.345-.989-.021-.153-.1-.942.764-1.258.094-.032.789-.185 1.057-.246.374-.083.751-.148 1.13-.209 3.913-1.216 6.039-4.633 6.397-8.45m1.343 4.22c1.477 3.056 3.719 4.532 6.377 5.2h-.001c-1.659.869-3.168 1.955-3.968 3.046-.304.414-.582 1.245-.834 2.178-.136-.868-.32-1.792-.562-2.582-.277-.9-.649-1.648-1.064-2.094-.801-.858-1.807-1.337-2.888-1.573 1.295-1.147 2.276-2.577 2.94-4.174" clip-rule="evenodd"/><defs><clipPath id="c"><path fill="@{surface0}" d="M251 99h16v16h-16z"/></clipPath><clipPath id="d"><path fill="@{surface0}" d="M199 107h99v99h-99z"/></clipPath><filter id="a" width="246" height="169.933" x="22.459" y="13.46" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" result="hardAlpha" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"/><feOffset dy="4"/><feGaussianBlur stdDeviation="9"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.12 0"/><feBlend in2="BackgroundImageFix" result="effect1_dropShadow_2791_38025"/><feBlend in="SourceGraphic" in2="effect1_dropShadow_2791_38025" result="shape"/></filter><filter id="b" width="241" height="160" x="44" y="35.001" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feColorMatrix in="SourceAlpha" result="hardAlpha" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"/><feOffset dy="4"/><feGaussianBlur stdDeviation="9"/><feComposite in2="hardAlpha" operator="out"/><feColorMatrix values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.12 0"/><feBlend in2="BackgroundImageFix" result="effect1_dropShadow_2791_38025"/><feBlend in="SourceGraphic" in2="effect1_dropShadow_2791_38025" result="shape"/></filter></defs></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+  }
+}

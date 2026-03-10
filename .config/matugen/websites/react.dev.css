@@ -1,0 +1,418 @@
+/* ==UserStyle==
+@name React.dev Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/react.dev
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/react.dev
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/react.dev/catppuccin.user.less
+@description Soothing pastel theme for React.dev
+@author Catppuccin
+@license MIT
+@preprocessor less
+
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("react.dev") {
+  html.dark {
+  }
+  html {
+  }
+
+
+    //svg styling
+
+    svg {
+      color: var(--primary) !important;
+    }
+
+    //text styling
+
+    .text-primary {
+      color: var(--on_surface);
+    }
+
+    .dark\:text-primary-dark {
+      color: var(--on_surface);
+    }
+
+    .dark\:text-white {
+      color: var(--on_surface);
+    }
+
+    .text-secondary {
+      color: var(--on_surface);
+    }
+
+    .text-gray-30 {
+      color: var(--on_surface);
+    }
+
+    .text-red-50,
+    .text-red-30 {
+      color: var(--error) !important;
+    }
+
+    .text-gray-50 {
+      color: var(--on_surface_variant);
+    }
+
+    // color divs text
+
+    #color-and-svg(@color) {
+      color: @color !important;
+      svg {
+        color: @color !important;
+      }
+    }
+    .text-red-50, .text-red-40 {
+      #color-and-svg(var(--error));
+    }
+    .text-purple-50, .text-purple-30, .text-purple-60 {
+      #color-and-svg(var(--primary));
+    }
+    .text-blue-50, .text-blue-40, .text-blue-60 {
+      #color-and-svg(var(--primary));
+    }
+    .text-yellow-40, .text-yellow-50, .text-yellow-60 {
+      #color-and-svg(var(--secondary));
+    }
+
+    .text-green-60, .text-green-40 {
+      color: var(--tertiary) !important;
+    }
+
+    .text-tertiary,
+    .text-tertiary-dark {
+      color: var(--on_surface_variant);
+    }
+
+    .text-link,
+    .text-link-dark {
+      color: var(--primary);
+    }
+
+    //hover styling
+
+    .hover\:text-link:hover, .text-link:hover, .text-link-dark:hover {
+      color: var(--primary);
+    }
+
+    .hover\:bg-gray-80:hover,
+    .hover\:bg-gray-5:hover {
+      background-color: var(--surface);
+    }
+
+    .hover\:bg-card:hover {
+      background-color: var(--surface);
+    }
+
+    //code stylizing
+
+    a > code {
+      color: var(--primary) !important;
+    }
+
+    .console-block code {
+      background-color: var(--surface_container) !important;
+      color: var(--error) !important;
+    }
+
+    .sp-wrapper {
+      --sp-colors-accent: var(--primary);
+      --sp-colors-clickable: var(--secondary_container);
+      --sp-colors-disabled: var(--on_surface);
+      --sp-colors-error: var(--error);
+      --sp-colors-error-surface: var(--error_container);
+      --sp-colors-surface1: var(--surface_container_low);
+      --sp-colors-surface2: var(--surface_container);
+      --sp-syntax-color-plain: var(--on_surface);
+      --sp-syntax-color-comment: var(--outline_variant);
+      --sp-syntax-color-keyword: var(--primary);
+      --sp-syntax-color-tag: var(--primary);
+      --sp-syntax-color-punctuation: var(--outline_variant);
+      --sp-syntax-color-definition: var(--secondary);
+      --sp-syntax-color-property: var(--primary);
+      --sp-syntax-color-static: var(--secondary_container);
+      --sp-syntax-color-string: var(--tertiary);
+    }
+
+    //border styling
+
+    .border-blue-40 {
+      border-color: var(--primary);
+    }
+
+    .border-b-4 {
+      border-color: var(--on_surface);
+    }
+
+    .border-yellow-40 {
+      border-color: var(--secondary);
+    }
+
+    .border-purple-40 {
+      border-color: var(--primary_container);
+    }
+
+    .border-purple-10 {
+      border-color: var(--primary);
+    }
+
+    .dark\:border-purple-30, .border-purple-30 {
+      border-color: var(--primary);
+    }
+
+    .border-green-40 {
+      border-color: var(--tertiary);
+    }
+
+    .hover\:border-gray-10:hover {
+      border-color: var(--primary);
+    }
+
+    .border-gray-300, .bg-gray-90 {
+      border-color: var(--outline_variant);
+    }
+
+    .border-gray-20 {
+      border-color: var(--outline_variant);
+    }
+
+    .border-link:hover {
+      border-color: var(--primary);
+    }
+
+    .dark\:border-link-dark {
+      border-color: var(--primary);
+    }
+
+    //backgrounds styling
+
+    .bg-card-dark,
+    .bg-card {
+      background-color: var(--surface_container_low);
+    }
+
+    .bg-highlight {
+      background-color: var(--surface_container_low);
+    }
+
+    .bg-highlight-dark {
+      background-color: var(--surface_container_low);
+    }
+
+    .bg-github-highlight {
+      background-color: var(--surface_container_low);
+    }
+
+    .bg-link {
+      color: var(--surface_container_low);
+      background-color: var(--primary);
+    }
+
+    .bg-gradient-left,
+    .bg-gradient-left-dark {
+      background-image: conic-gradient(
+        from 90deg at -10% 100%,
+        var(--surface) 0deg,
+        var(--surface_container_lowest) 90deg,
+        var(--surface) 1turn
+      );
+    }
+
+    .bg-gray-3,
+    .bg-gray-5 {
+      background-color: var(--surface);
+    }
+
+    .bg-gray-40\/5,
+    .bg-gray-60\/5 {
+      background-color: var(--outline_variant);
+    }
+
+    .bg-gray-40\/10,
+    .bg-gray-60\/10 {
+      background-color: var(--outline);
+    }
+    .bg-gray-30,
+    .bg-gray-300,
+    .bg-gray-70,
+    .bg-gray-700 {
+      background-color: var(--surface_container_low);
+    }
+
+    .bg-gray-80,
+    .bg-gray-200,
+    .bg-gray-95 {
+      background-color: var(--surface);
+    }
+
+    .bg-black {
+      background-color: var(--surface_container_lowest);
+    }
+
+    #color-fragment-style(@divColor) {
+      background-color: @divColor;
+      color: var(--on_surface);
+
+      p {
+        color: var(--on_surface);
+      }
+
+      button {
+        color: var(--surface_container_lowest) !important;
+        background-color: @divColor !important;
+
+        svg {
+          color: var(--surface_container_lowest) !important;
+        }
+      }
+
+      .text-primary {
+        color: var(--on_surface);
+      }
+
+      .text-link {
+        color: var(--primary);
+      }
+
+      .bg-highlight {
+        color: var(--primary);
+      }
+
+      .bg-link {
+        background-color: var(--primary);
+        color: var(--on_surface);
+      }
+    }
+
+    .bg-green-5, .bg-green-60, .bg-green-40 {
+      #color-fragment-style(var(--tertiary));
+    }
+
+    .bg-red-5, .bg-red-60 {
+      #color-fragment-style(var(--error));
+    }
+
+    .bg-yellow-5, .bg-yellow-60, .bg-yellow-40 {
+      #color-fragment-style(var(--secondary_container));
+    }
+
+    .bg-purple-5, .bg-purple-60, .bg-purple-40 {
+      #color-fragment-style(var(--primary));
+    }
+
+    .bg-blue-10, .bg-blue-60, .bg-blue-40 {
+      #color-fragment-style(var(--primary));
+    }
+
+    .bg-red-30 {
+      background-color: fade(var(--error), 10%);
+    }
+
+    .bg-gradient-right,
+    .bg-gradient-right-dark {
+      background-image: conic-gradient(
+        from -90deg at 110% 100%,
+        var(--surface) 0deg,
+        var(--surface_container_lowest) 90deg,
+        var(--surface) 1turn
+      );
+    }
+
+    .bg-white,
+    .bg-wash {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .bg-secondary-button {
+      background-color: var(--surface_container);
+    }
+
+    // outline styling
+
+    .outline-link {
+      outline-color: var(--primary);
+    }
+
+    .focus\:outline-link:focus {
+      outline-color: var(--primary);
+    }
+
+    // docsearch styling
+
+    --docsearch-modal-background: var(--surface_container_lowest) !important;
+    --docsearch-hit-background: var(--surface) !important;
+    --docsearch-highlight-color: var(--primary) !important;
+    --docsearch-primary-color: var(--primary) !important;
+    --docsearch-container-background: rgba(127, 132, 156, 0.8) !important;
+    --docsearch-text-color: var(--on_surface) !important;
+    --docsearch-logo-color: var(--primary) !important;
+    --docsearch-muted-color: var(--on_surface_variant) !important;
+    --docsearch-searchbox-background: var(--primary) !important;
+    --docsearch-searchbox-focus-background: var(--primary) !important;
+    --docsearch-hit-color: var(--surface) !important;
+    --docsearch-hit-active-color: var(--surface_container_lowest) !important;
+    --docsearch-footer-background: var(--outline) !important;
+    --docsearch-key-gradient: linear-gradient(
+      -225deg,
+      var(--surface_container_lowest),
+      var(--surface)
+    ) !important;
+
+    .DocSearch-Form {
+      background-color: var(--surface);
+      input {
+        color: var(--on_surface);
+      }
+      :focus-visible {
+        outline-color: 2px solid var(--primary) !important;
+      }
+    }
+
+    .DocSearch-Hit {
+      .DocSearch-Hit-title {
+        color: var(--on_surface);
+      }
+
+      svg {
+        color: currentcolor !important;
+      }
+
+      .DocSearch-Hit-Tree {
+        color: var(--surface_container_lowest) !important;
+      }
+
+      &[aria-selected="false"] {
+        mark {
+          color: var(--primary) !important;
+        }
+        .DocSearch-Hit-Tree {
+          color: var(--on_surface_variant) !important;
+        }
+      }
+    }
+
+    .DocSearch-Hit-source {
+      color: var(--on_surface);
+    }
+
+    .DocSearch-Cancel {
+      color: var(--primary);
+    }
+
+    .DocSearch-Footer {
+      background-color: var(--surface_container_lowest);
+
+      [aria-label="Algolia"] {
+        .cls-1,
+        .cls-2 {
+          fill: var(--primary) !important;
+        }
+      }
+    }
+  }
+}

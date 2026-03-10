@@ -1,0 +1,139 @@
+/* ==UserStyle==
+@name Startpage Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/startpage
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/startpage
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/startpage/catppuccin.user.less
+@description Soothing pastel theme for Startpage
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("startpage.com") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    &,
+:root {
+}
+
+    body {
+      --sx-accent: var(--primary);
+      --sx-background: var(--surface_container_lowest);
+      --sx-border: var(--surface_container_low);
+      --sx-tabLinkHover: var(--tertiary_container);
+      --sx-foreground: var(--on_surface);
+      --sx-foregroundAlt: var(--on_surface);
+      --sx-foregroundEmphasis: lighten(var(--on_surface), 10%);
+      --sx-popupBackground: var(--surface_container_low);
+      --sx-popupForeground: var(--on_surface);
+      --sx-popupForegroundEm: var(--on_surface);
+      --sx-popupUrl: var(--primary);
+      --sx-buttonHighlight: var(--primary);
+      --sx-loadingBars: var(--surface);
+      --sx-darkIcons: var(--surface);
+      --sx-arrowButtonBackground: var(--on_surface);
+      --sx-arrowButtonForeground: var(--on_surface);
+    }
+
+    .css-nguon6 button {
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    .css-fg9wif,
+    .header,
+    .wp-qi-sb__result,
+    .linkHover,
+    .footer__container {
+      background: var(--surface) !important;
+    }
+
+:root {
+}
+
+    body {
+      color: var(--on_surface);
+    }
+
+    body,
+    .layout-web,
+    .layout-web__body,
+    .ex-qi-kp:not(.ex-qi-kp--light, .ex-qi-kp--night, .ex-qi-kp--air)
+      .sx-kp-infobox-wrap
+      .sx-infobox
+      tr:not(.sx-heading-row)
+      > *,
+    .w-gl {
+      background: var(--surface_container_lowest) !important;
+    }
+
+    .wp-qi-sb__result {
+      border-color: var(--surface) !important;
+    }
+
+    .wp-qi-sb__top-square-img {
+      border-bottom-color: var(--surface) !important;
+    }
+
+    /* fonts */
+    .w-gl__result-title,
+    .inline-nav-menu__link,
+    .wp-qi-sb__title {
+      color: var(--on_surface) !important;
+    }
+
+    .w-gl__result,
+    .search-filter-time__dropdown,
+    .search-filter-region__dropdown,
+    .search-filter-family__field-label,
+    .wp-qi-sb__extract {
+      color: var(--on_surface) !important;
+    }
+
+    .w-gl__result-url {
+      color: var(--primary) !important;
+    }
+
+    .wp-qi-sb__expand-text,
+    .inline-nav-menu__link__active,
+    .inline-nav-menu__link:hover {
+      color: var(--tertiary) !important;
+    }
+
+    .inline-nav-menu__link__active,
+    .inline-nav-menu__link__post-link:hover {
+      border-bottom-color: var(--tertiary) !important;
+    }
+
+    .pagination .num--active {
+      background: var(--secondary_container) !important;
+      border-color: var(--secondary_container) !important;
+    }
+
+    .pagination__num:hover,
+    .pagination__next-prev-button:hover {
+      background: var(--primary) !important;
+      border-color: var(--primary) !important;
+    }
+
+    header {
+      background-color: var(--surface) !important;
+    }
+
+    .w-gl__result-title:visited {
+      color: var(--primary_container) !important;
+    }
+  }
+}

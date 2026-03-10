@@ -1,0 +1,222 @@
+/* ==UserStyle==
+@name Holodex Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/holodex
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/holodex
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/holodex/catppuccin.user.less
+@description Soothing pastel theme for Holodex
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("holodex.net") {
+  :root:has(.theme--dark) {
+  }
+
+  :root:has(.theme--light) {
+  }
+
+
+    --v-anchor-base: var(--primary);
+    --v-primary-base: var(--primary);
+    --v-primary-lighten1: lighten(var(--primary), 4%);
+    --v-primary-lighten2: lighten(var(--primary), 8%);
+    --v-primary-lighten3: lighten(var(--primary), 9%);
+    --v-primary-lighten4: lighten(var(--primary), 18%);
+    --v-primary-lighten5: lighten(var(--primary), 19%);
+    --v-primary-darken1: darken(var(--primary), 14%);
+    --v-primary-darken2: darken(var(--primary), 31%);
+    --v-primary-darken3: darken(var(--primary), 35%);
+    --v-primary-darken4: darken(var(--primary), 43%);
+
+    --v-accent-base: var(--primary);
+    --v-accent-lighten1: lighten(var(--primary), 4%);
+    --v-accent-lighten2: lighten(var(--primary), 8%);
+    --v-accent-lighten3: lighten(var(--primary), 9%);
+    --v-accent-lighten4: lighten(var(--primary), 18%);
+    --v-accent-lighten5: lighten(var(--primary), 19%);
+    --v-accent-darken1: darken(var(--primary), 14%);
+    --v-accent-darken2: darken(var(--primary), 31%);
+    --v-accent-darken3: darken(var(--primary), 35%);
+    --v-accent-darken4: darken(var(--primary), 43%);
+
+    --v-secondary-base: var(--primary);
+    --v-secondary-lighten1: lighten(var(--primary), 4%);
+    --v-secondary-lighten2: lighten(var(--primary), 8%);
+    --v-secondary-lighten3: lighten(var(--primary), 9%);
+    --v-secondary-lighten4: lighten(var(--primary), 18%);
+    --v-secondary-lighten5: lighten(var(--primary), 19%);
+    --v-secondary-darken1: darken(var(--primary), 14%);
+    --v-secondary-darken2: darken(var(--primary), 31%);
+    --v-secondary-darken3: darken(var(--primary), 35%);
+    --v-secondary-darken4: darken(var(--primary), 43%);
+
+    --v-error-base: var(--error);
+    --v-error-lighten1: lighten(var(--error), 4%);
+    --v-error-lighten2: lighten(var(--error), 8%);
+    --v-error-lighten3: lighten(var(--error), 9%);
+    --v-error-lighten4: lighten(var(--error), 18%);
+    --v-error-lighten5: lighten(var(--error), 19%);
+    --v-error-darken1: darken(var(--error), 14%);
+    --v-error-darken2: darken(var(--error), 31%);
+    --v-error-darken3: darken(var(--error), 35%);
+    --v-error-darken4: darken(var(--error), 43%);
+
+    --v-info-base: var(--primary);
+    --v-info-lighten1: lighten(var(--primary), 4%);
+    --v-info-lighten2: lighten(var(--primary), 8%);
+    --v-info-lighten3: lighten(var(--primary), 9%);
+    --v-info-lighten4: lighten(var(--primary), 18%);
+    --v-info-lighten5: lighten(var(--primary), 19%);
+    --v-info-darken1: darken(var(--primary), 14%);
+    --v-info-darken2: darken(var(--primary), 31%);
+    --v-info-darken3: darken(var(--primary), 35%);
+    --v-info-darken4: darken(var(--primary), 43%);
+
+    --v-success-base: var(--tertiary);
+    --v-success-lighten1: lighten(var(--tertiary), 4%);
+    --v-success-lighten2: lighten(var(--tertiary), 8%);
+    --v-success-lighten3: lighten(var(--tertiary), 9%);
+    --v-success-lighten4: lighten(var(--tertiary), 18%);
+    --v-success-lighten5: lighten(var(--tertiary), 19%);
+    --v-success-darken1: darken(var(--tertiary), 14%);
+    --v-success-darken2: darken(var(--tertiary), 31%);
+    --v-success-darken3: darken(var(--tertiary), 35%);
+    --v-success-darken4: darken(var(--tertiary), 43%);
+
+    --v-warning-base: var(--secondary);
+    --v-warning-lighten1: lighten(var(--secondary), 4%);
+    --v-warning-lighten2: lighten(var(--secondary), 8%);
+    --v-warning-lighten3: lighten(var(--secondary), 9%);
+    --v-warning-lighten4: lighten(var(--secondary), 18%);
+    --v-warning-lighten5: lighten(var(--secondary), 19%);
+    --v-warning-darken1: darken(var(--secondary), 14%);
+    --v-warning-darken2: darken(var(--secondary), 31%);
+    --v-warning-darken3: darken(var(--secondary), 35%);
+    --v-warning-darken4: darken(var(--secondary), 43%);
+
+    --v-background-base: var(--surface_container_lowest);
+    --v-background-lighten1: lighten(var(--surface_container_lowest), 4%);
+    --v-background-lighten2: lighten(var(--surface_container_lowest), 8%);
+    --v-background-lighten3: lighten(var(--surface_container_lowest), 9%);
+    --v-background-lighten4: lighten(var(--surface_container_lowest), 18%);
+    --v-background-lighten5: lighten(var(--surface_container_lowest), 19%);
+    --v-background-darken1: darken(var(--surface_container_lowest), 14%);
+    --v-background-darken2: darken(var(--surface_container_lowest), 31%);
+    --v-background-darken3: darken(var(--surface_container_lowest), 35%);
+    --v-background-darken4: darken(var(--surface_container_lowest), 43%);
+
+    div.v-application {
+      background: var(--surface_container_lowest) !important;
+      color: var(--on_surface);
+    }
+
+    header#top-bar,
+    header.v-toolbar,
+    div.v-navigation-drawer__content,
+    div#bottom-bar,
+    div.v-main__wrap > div,
+    div.v-select__selections,
+    div.v-slide-group__wrapper,
+    div.v-bottom-navigation,
+    div.v-select__slot,
+    div.v-input__slot,
+    div.v-overlay__scrim {
+      background: var(--surface_container_lowest) !important;
+    }
+    div.v-sheet {
+      background: var(--surface_container_lowest);
+      border-color: var(--surface_container_lowest);
+    }
+
+    .v-btn.v-btn--has-bg:not(.nav-btn) {
+      background-color: var(--surface_container_low) !important;
+    }
+
+    .v-list,
+    .v-list-item,
+    .v-card,
+    .v-sheet,
+    .v-select__selections,
+    .v-label,
+    .text--secondary,
+    .v-input__slot input {
+      color: var(--on_surface) !important;
+      path:not([fill*="iid-1"]) {
+        fill: var(--on_surface);
+      }
+    }
+
+    .v-messages,
+    .v-list-item__subtitle,
+    .v-tab:not(.v-tab--active) {
+      color: var(--on_surface_variant) !important;
+    }
+
+    svg.logo path {
+      fill: darken(var(--primary), 2%) !important;
+
+      &:last-child {
+        fill: darken(var(--primary), 8%) !important;
+      }
+    }
+
+    .v-chip {
+      background: var(--primary);
+    }
+
+    .primary--text,
+    .name-vtuber {
+      color: var(--primary) !important;
+    }
+
+    .text-live {
+      color: var(--error);
+    }
+
+    .stream-count-chip {
+      color: var(--surface) !important;
+    }
+
+    .nav-btn.v-btn--active {
+      color: var(--primary) !important;
+    }
+
+    div.v-sheet.v-alert {
+      background: none !important;
+      color: var(--secondary) !important;
+
+      .v-icon path {
+        fill: var(--secondary) !important;
+      }
+    }
+
+    hr {
+      border-color: var(--surface_container_lowest);
+    }
+
+    // Snack
+    div.v-snack {
+      color: var(--on_surface);
+
+      div.v-sheet {
+        background: var(--surface_container_low) !important;
+      }
+
+      button.v-btn--text {
+        color: var(--on_surface) !important;
+      }
+
+      button.v-btn--is-elevated.v-btn--has-bg {
+        background: var(--primary) !important;
+        color: var(--surface_container_lowest);
+      }
+    }
+  }
+}

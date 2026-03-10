@@ -1,0 +1,203 @@
+/* ==UserStyle==
+@name Keyoxide Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/keyoxide
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/keyoxide
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/keyoxide/catppuccin.user.less
+@description Soothing pastel theme for Keyoxide
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document url-prefix("https://keyoxide.org") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    --primary-color: var(--primary);
+    --primary-color-subtle: lighten(var(--primary), 5%);
+    --body-background-color: var(--surface);
+    --section-background-color: var(--surface_container_lowest);
+    --text-color: var(--on_surface);
+    --text-color-subtle: var(--on_surface);
+    --text-color-inverse: var(--surface);
+
+    --link-color: var(--primary);
+    --link-color-subtle: var(--text-color);
+    --link-color-hover: lighten(var(--primary), 5%);
+    --line-color-subtle: var(--surface_container);
+    --button-text-color: var(--text-color);
+    --button-text-color-hover: var(--text-color);
+    --button-border-color: var(--surface_container_low);
+    --button-border-color-hover: var(--surface_container_low);
+    --button-background-color: var(--surface_container_low);
+    --button-background-color-hover: var(--surface_container);
+    --input-text-color: var(--text-color);
+    --input-text-color-hover: var(--text-color);
+    --input-border-color: var(--surface_container_low);
+    --input-border-color-hover: var(--surface_container_low);
+    --input-background-color: var(--surface);
+    --input-background-color-hover: var(--surface);
+    --footer-text-color: var(--text-color-subtle);
+
+    .kx-item details summary .info img,
+    .kx-item details .subsection > img {
+      filter: var(--on_surface)-filter;
+    }
+
+    kx-claim,
+    kx-key {
+      --loader-color: var(--on_surface);
+      --success-color: var(--tertiary);
+      --failure-color: var(--error);
+      --background-color: var(--surface_container_low);
+      --header-background-color: var(--surface_container);
+    }
+
+    a.button.button--donate.button--opencollective {
+      background-color: var(--primary);
+      color: var(--surface);
+
+      &:hover {
+        background-color: lighten(var(--primary), 5%);
+      }
+
+      svg {
+        fill: var(--surface);
+      }
+    }
+  }
+}
+
+@-moz-document domain("docs.keyoxide.org"), domain("blog.keyoxide.org") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    var(--on_surface)-filter: @catppuccin-filters[@@flavor][var(--on_surface)];
+
+
+    background-color: var(--surface_container_lowest);
+
+    --clr-primary-100: var(--surface);
+    --clr-primary-99: var(--surface);
+    --clr-primary-98: var(--surface);
+    --clr-primary-95: var(--surface_container_lowest);
+    --clr-primary-90: lighten(var(--primary), 30%);
+    --clr-primary-80: lighten(var(--primary), 20%);
+    --clr-primary-70: lighten(var(--primary), 10%);
+    --clr-primary-60: var(--primary);
+    --clr-primary-50: darken(var(--primary), 5%);
+    --clr-primary-40: darken(var(--primary), 10%);
+    --clr-primary-35: darken(var(--primary), 15%);
+    --clr-primary-30: darken(var(--primary), 20%);
+    --clr-primary-25: darken(var(--primary), 25%);
+    --clr-primary-20: darken(var(--primary), 30%);
+    --clr-primary-10: darken(var(--primary), 35%);
+    --clr-primary-0: var(--on_surface);
+    --clr-primary: var(--primary);
+    --clr-header: var(--on_surface);
+    --clr-header-subtle: var(--on_surface);
+    --clr-text: var(--on_surface);
+    --clr-text-subtle: var(--on_surface);
+    --clr-bg: var(--surface);
+    --clr-bg-alt: var(--surface);
+    --clr-border: var(--surface_container_low);
+    --clr-link: var(--primary);
+
+    --clr-secondary-20: var(--on_surface);
+
+    nav a.active {
+      color: var(--surface);
+    }
+
+    .quick-links img,
+    [src="/chevron-up.svg"],
+    [src="/chevron-down.svg"] {
+      filter: var(--on_surface)-filter;
+    }
+    img[title="Keyoxide logo"] {
+        '<svg viewBox="0 0 35 35" xmlns="http://www.w3.org/2000/svg" width="35" height="35"><path fill="@{accent}" d="M15.852 0a1.225 1.225 0 0 0-1.214 1.214c0 .663.549 1.214 1.214 1.214a1.225 1.225 0 0 0 1.214-1.214A1.225 1.225 0 0 0 15.852 0m2.698.427a1.52 1.52 0 0 0-1.512 1.512c0 .346.116.667.317.923a2.046 2.046 0 0 0-2.292 2.021c0 1.12.919 2.041 2.039 2.041a2.04 2.04 0 0 0 1.422-.58 3 3 0 0 0-.024.326c0 .875.457 1.649 1.127 2.159l-3.771 2.934v-.168a4.82 4.82 0 0 0-4.811-4.811 4.82 4.82 0 0 0-4.811 4.813v9.956c0-.02-.003-.015-.003.051v8.579A4.82 4.82 0 0 0 11.044 35c2.523 0 4.543-1.975 4.74-4.448l5.46 3.636a4.82 4.82 0 0 0 6.67-1.333 4.82 4.82 0 0 0-1.333-6.67l-7.312-4.876 7.598-5.911a4.81 4.81 0 0 0 1.327-6.001l-.034-.064a2.3 2.3 0 0 0 .604-1.555 2.32 2.32 0 0 0-2.31-2.31 2.32 2.32 0 0 0-2.098 1.341 6 6 0 0 0-.37-.02c.003-.044.006-.059.006-.116a2.756 2.756 0 0 0-2.749-2.749c-.844 0-1.6.388-2.104.991v-.031c0-.557-.225-1.065-.589-1.433.829 0 1.512-.684 1.512-1.512S19.379.426 18.55.426zm-2.698.615c.101 0 .171.07.171.171s-.069.172-.171.172-.171-.07-.171-.171.07-.171.171-.171m2.698.427c.265 0 .47.204.47.47s-.204.47-.47.47a.464.464 0 0 1-.47-.47c0-.265.204-.47.47-.47M17.1 3.888c.557 0 .996.439.996.996a.99.99 0 0 1-.996 1 .99.99 0 0 1-.997-.999c0-.558.44-.997.997-.997m4.145 1.079a1.7 1.7 0 0 1 1.706 1.706c0 .083-.007.16-.009.278 0 .12.015.306.116.48a.85.85 0 0 0 .445.35 1.1 1.1 0 0 0 .382.045c.088 0 .175.009.263.015a2.32 2.32 0 0 0 1.827 2.199l.018.003.031.006q.099.019.197.031h.006a2.4 2.4 0 0 0 .633-.025h.011l.015-.003q.19-.038.365-.102l.02-.007.009-.003a3.754 3.754 0 0 1-1.05 4.635l-8.171 6.354a.52.52 0 0 0 .031.846l7.916 5.274a3.76 3.76 0 0 1 1.046 5.226 3.76 3.76 0 0 1-5.226 1.046l-6.198-4.13a.521.521 0 0 0-.808.433v.562a3.76 3.76 0 0 1-3.771 3.771 3.76 3.76 0 0 1-3.775-3.769v-8.579l.002-.045v-9.966a3.76 3.76 0 0 1 3.769-3.769 3.76 3.76 0 0 1 3.769 3.769v1.234a.521.521 0 0 0 .842.413l4.677-3.64s.109-.073.216-.19a.77.77 0 0 0 .239-.659.92.92 0 0 0-.27-.516c-.125-.105-.19-.127-.242-.165a1.7 1.7 0 0 1-.732-1.402c0-.948.754-1.706 1.704-1.706zm5.212 1.542a1.26 1.26 0 0 1 1.267 1.27 1.27 1.27 0 0 1-.768 1.171h-.003l-.051.018a2 2 0 0 1-.208.059l-.009.004h-.018a1.23 1.23 0 0 1-.921-.197 1.25 1.25 0 0 1-.558-1.054l.003-.066.003-.066a1.263 1.263 0 0 1 1.264-1.137"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    table {
+      &,
+      td {
+        border-color: var(--surface_container_low);
+      }
+    }
+
+    pre {
+      background-color: var(--surface) !important;
+      color: var(--on_surface) !important;
+
+      span[style="color:#c82728;"] {
+        color: var(--primary) !important;
+      }
+      span[style="color:#4271ae;"],
+      span[style="color:#f07219;"] {
+        color: var(--tertiary) !important;
+      }
+      span[style="color:#8e908c;"] {
+        color: var(--outline) !important;
+      }
+      span[style="color:#8959a8;"] {
+        color: var(--primary) !important;
+      }
+      span[style="color:#839c00;"] {
+        color: var(--tertiary) !important;
+      }
+      span[style="color:#3e999f;"] {
+        color: var(--tertiary_container) !important;
+      }
+    }
+
+    .info {
+      background-color: var(--surface);
+
+      &::before {
+        background-color: var(--primary_fixed);
+        color: var(--surface);
+      }
+    }
+
+    .warning {
+      background-color: var(--surface);
+
+      &::before {
+        background-color: var(--secondary);
+        color: var(--surface);
+      }
+    }
+
+    .widget {
+      background-color: fade(var(--primary), 60%);
+      border-color: var(--primary);
+
+      .title {
+        color: var(--on_surface);
+      }
+
+      input,
+      select {
+        background-color: var(--surface);
+      }
+    }
+  }
+}

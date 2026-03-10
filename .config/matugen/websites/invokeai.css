@@ -1,0 +1,87 @@
+/* ==UserStyle==
+@name InvokeAI Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/invokeai
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/invokeai
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/invokeai/catppuccin.user.less
+@description Soothing pastel theme for InvokeAI
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document regexp("http:\\/\\/(127\\.0\\.0\\.1|localhost):9090(.*)") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    :root,
+    [data-theme]:root {
+      --accent-color-dim: lighten(var(--primary), -10%);
+      --accent-color: var(--primary);
+      --accent-color-bright: lighten(var(--primary), 10%);
+      --accent-color-hover: var(--accent-color-bright);
+      --root-bg-color: var(--surface);
+      --background-color: var(--surface_container_lowest);
+      --background-color-light: var(--surface_container_low);
+      --background-color-secondary: var(--surface_container_lowest);
+      --text-color: var(--on_surface);
+      --text-color-secondary: var(--on_surface_variant);
+      --subtext-color: var(--on_surface);
+      --subtext-color-bright: var(--on_surface_variant);
+      --border-color: var(--surface_container);
+      --border-color-light: var(--surface_container_high);
+      --tab-color: var(--primary);
+      --tab-list-bg: var(--primary);
+      --btn-delete-image: var(--error);
+      --status-good-color: var(--tertiary);
+      --status-good-color-glow: lighten(var(--tertiary), 10%);
+      --border-color-invalid: var(--error);
+      --box-shadow-color-invalid: lighten(var(--error), 5%);
+      --tab-panel-bg: var(--background-color-light);
+      --tab-hover-color: var(--background-color-secondary);
+      --tab-list-text: white;
+      --prompt-bg-color: var(--background-color-light);
+      --switch-bg-color: var(--background-color-secondary);
+      --btn-base-color: var(--background-color-light);
+      --btn-base-color-hover: var(--background-color-secondary);
+      --destructive-color: var(--error);
+      --slider-color: var(--primary_container);
+      --slider-mark-color: var(--slider-color);
+      --switch-bg-active-color: var(--accent-color);
+      --console-icon-button-bg-color: var(--btn-base-color);
+      --console-icon-button-bg-color-hover: var(--btn-base-color-hover);
+      --console-bg-color: var(--background-color-light);
+      --svg-color: var(--text-color);
+      --btn-load-more: var(--background-color-light);
+      --tab-list-text-inactive: var(--text-color-secondary);
+    }
+
+    .invokeai-style-cache-1m5jnul {
+      --number-input-color: var(--text-color-secondary) !important;
+    }
+
+    .invoke-btn,
+    .invokeai__button[data-active],
+    .site-header-right-side .lang-select-btn[data-selected="true"],
+    .site-header-right-side .lang-select-btn[data-selected="true"]:hover,
+    button.chakra-button.invokeai__icon-button[data-selected="true"] {
+      --svg-color: var(--root-bg-color);
+      color: var(--root-bg-color) !important;
+    }
+
+    .invokeai-style-cache-vs1g06,
+    .invokeai-style-cache-vs1g06:hover {
+      background-color: var(--background-color-light);
+    }
+  }
+}

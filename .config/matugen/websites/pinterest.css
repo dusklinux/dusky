@@ -1,0 +1,269 @@
+/* ==UserStyle==
+@name Pinterest Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/pinterest
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/pinterest
+@version 2025.10.09
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/pinterest/catppuccin.user.less
+@description Soothing pastel theme for Pinterest
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document regexp(
+    "^https?:\\/\\/(www|[a-z]{2}).pinterest.(com(.(au|mx))?|co(.(uk|kr))?|at|ca|ch|cl|de|dk|es|fr|ie|it|jp|nz|ph|pt|ru|se)\\/.*"
+  ) {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    &,
+:root {
+}
+
+    body {
+      color: var(--on_surface);
+      background: var(--surface_container_lowest);
+    }
+
+    --sema-color-background-default: var(--surface_container_lowest);
+    --sema-color-background-secondary: var(--surface_container_low);
+    --sema-color-hover-background-secondary: var(--surface_container);
+    --sema-color-background-tertiary: var(--outline); // send message to conversation button
+    --sema-color-hover-background-tertiary: var(--outline_variant);
+    --sema-color-text-default: var(--on_surface);
+    --sema-color-text-subtle: var(--on_surface);
+    --sema-color-text-link: var(--primary); // links / messages username
+    --sema-color-text-dark: var(--on_surface); // commenter username / bar pills text
+    --sema-color-text-light: if(
+      var(--surface_container_lowest),
+      var(--on_surface)
+    ); // Explore suggested articles link
+    --sema-color-icon-primary: var(--primary); // logo
+    --sema-color-icon-inverse: var(--surface);
+    --sema-color-border-decorative: var(--surface_container_high);
+    --sema-color-border-interactive: var(--outline); // form inputs
+    --sema-color-hover-border-interactive: var(--outline_variant);
+    --sema-color-border-focus-outer-default: var(--primary);
+    --sema-color-border-focus-inner-default: var(--surface_container_lowest);
+    --sema-color-border-disabled: var(--surface_container);
+    --sema-color-icon-disabled: var(--on_surface_variant); // board actions in organize mode
+
+    /* Pins */
+    --sema-color-background-primary: var(--primary);
+    --sema-color-hover-background-primary: darken(var(--primary), 5%);
+    --sema-color-background-wash-light: var(--surface_container_lowest);
+    --sema-color-pressed-background-primary: darken(var(--primary), 5%);
+    --comp-button-color-background-primary-selected: var(--surface_container); // select dropdown
+    --comp-button-color-background-tertiary-semi-transparent-default: fade(
+      var(--surface_container_lowest),
+      50%
+    ); // pin action
+    --comp-button-color-hover-background-tertiary-semi-transparent-default: fade(
+      var(--surface_container_lowest),
+      50%
+    );
+
+    [data-test-id="more-description-container"] {
+      background-color: var(--surface_container_lowest) !important;
+      [style*="background: linear-gradient"] {
+        background: linear-gradient(90deg, transparent 0%, var(--surface_container_lowest) 100%)
+          !important;
+      }
+    }
+    [data-test-id="closeup-metadata-details-divider"] {
+      border-top-color: var(--sema-color-border-decorative) !important;
+    }
+    [data-test-id="PinBetterSaveDropdown"] {
+      --sema-color-text-inverse: var(--on_surface);
+      --sema-color-icon-inverse: var(--on_surface);
+    }
+
+    --sema-color-text-error: var(--error);
+    --sema-color-background-error-default: var(--error_container);
+    --sema-color-icon-error: var(--error);
+    --sema-color-border-error: var(--error);
+
+    /* Boards */
+    --sema-color-background-checked: var(--primary); // "Secret" toggle
+    --sema-color-hover-background-checked: darken(var(--primary), 5%);
+    --sema-color-pressed-background-checked: darken(var(--primary), 10%);
+    --comp-switch-color-background-container-enabled-off: var(--surface_container_high);
+    --comp-switch-color-hover-background-container-enabled-off: var(--outline);
+    --comp-button-color-hover-background-secondary-default: var(--surface_container); // "Cancel" button hover
+
+    [data-test-id="profile-board-card"] [style*="border-color: white;"] {
+      // pin preview collage images
+      border-color: var(--surface_container_lowest) !important;
+    }
+
+    --sema-color-border-inverse: var(--surface_container_lowest); // around profile pictures under previews
+    --sema-color-pressed-background-default: var(--surface_container_high); // "Edit" icon / edit modal "X" icon buttons
+    --comp-button-color-pressed-background-secondary-default: var(--surface_container_high); // active "View profile" button
+    --sema-color-pressed-background-elevation: var(--surface_container_high); // plus action
+
+    // "select and reorder" / organize
+    [data-test-id="pinRepSelectionBorder"] {
+      &[style*="border-color: rgb(255, 255, 255);"] {
+        border-color: var(--surface_container_lowest) !important;
+      }
+      &[style*="box-shadow: rgb(255, 255, 255) 0px 0px 0px 3px inset;"] {
+        box-shadow: var(--primary) 0 0 0 3px inset !important;
+      }
+    }
+
+    /* Sidebar */
+    --sema-color-icon-default: var(--on_surface);
+    --sema-color-hover-background-default: var(--surface_container_low);
+    --base-color-grayscale-100: var(--surface_container_low); // border
+    [aria-label="You have new Updates"] {
+      --sema-color-text-light: var(--surface_container_lowest); // notification badge
+    }
+    // Explore
+    [data-test-id="topic-rep-title"] {
+      --sema-color-text-inverse: var(--on_surface); // Explore categories
+    }
+    --sema-color-background-elevation: var(--surface);
+    --sema-color-hover-background-elevation: var(--surface_container_lowest);
+    // Create
+    --sema-color-icon-dark: var(--on_surface);
+    [data-test-id="drag-behavior-container"] {
+      --sema-color-text-default: if(
+        var(--on_surface),
+        var(--surface_container_high)
+      ); // drag container error
+    }
+    // Tooltips
+    --sema-color-background-inverse: var(--on_surface);
+    --sema-color-text-inverse: var(--surface_container_lowest);
+
+    /* Search */
+    --sema-color-icon-subtle: var(--outline_variant);
+
+    #searchBoxContainer > div {
+      background-color: var(--surface) !important;
+
+      > div[style*="box-shadow:"] {
+        // on focus
+        box-shadow: fade(var(--primary), 50%) 0 0 0 4px !important;
+      }
+
+      // divider
+      [style*="background:#d8d8d8;"],
+      [style*="background: rgb(216, 216, 216);"] {
+        background: var(--surface_container) !important;
+      }
+
+      input {
+        color: var(--on_surface) !important;
+      }
+    }
+
+    [id^="SuggestionGroup-Option"][aria-selected="true"] > a > div {
+      background-color: var(--surface_container);
+    }
+
+    /* Home */
+    [data-test-id="homefeed-feed"]
+      div:has(
+        > [data-root-margin="more-ideas-tabs"]
+      )[style*="background-color: rgb(255, 255, 255);"] {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    --sema-color-background-selected: var(--primary); // active tab underline
+    --sema-color-hover-background-selected: darken(var(--primary), 5%);
+    --sema-color-pressed-background-selected: darken(var(--primary), 10%);
+
+    // share modal
+    [data-test-id="lego-share-social-bar-auth"] button {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    /* Settings */
+    --sema-color-text-disabled: var(--outline_variant); // disabled "Reset"/"Save" buttons
+
+    /* Messages */
+    textarea#messageDraft {
+      background-color: transparent !important;
+      color: var(--on_surface);
+      caret-color: var(--on_surface) !important;
+    }
+
+    div[data-test-id="add-pin-to-conversation"] {
+      div[style="border: 1px solid rgb(218, 218, 218); box-shadow: rgba(0, 132, 255, 0) 0px 0px 0px 4px; min-height: 48px; width: 100%;"] {
+        border-color: var(--surface) !important;
+      }
+
+      div[style="border: 1px solid transparent; box-shadow: rgba(0, 132, 255, 0.5) 0px 0px 0px 4px; min-height: 48px; width: 100%;"] {
+        box-shadow: fade(var(--primary), 50%) 0 0 0 4px !important;
+      }
+    }
+
+    /* Loading */
+    .mainContainer
+      > div[style*="background-color: rgba(255, 255, 255, 0.5); height: 100%; width: 100%; z-index: 1;"] {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    /* Emoji Picker */
+    .EmojiPickerReact {
+      --epr-bg-color: var(--surface_container_lowest);
+      --epr-text-color: var(--on_surface);
+      --epr-picker-border-color: var(--surface_container_lowest);
+      --epr-category-label-bg-color: var(--surface_container_lowest);
+      --epr-search-input-bg-color: var(--surface);
+      --epr-skin-tone-picker-menu-color: var(--surface);
+      --epr-category-icon-active-color: var(--primary);
+      --epr-highlight-color: var(--primary);
+      --epr-hover-bg-color: var(--surface_container_low);
+      --epr-focus-bg-color: var(--surface_container_low);
+    }
+
+    /* suggestion bar */
+    --sema-color-pressed-background-secondary: var(--surface_container_high);
+    [data-test-id="one-bar-pill"] {
+      --sema-color-text-dark: var(--on_surface), var(--surface_container_lowest));
+    }
+    [data-test-id="one-bar-navigation-arrows"] {
+      &[style*="to left"]:not([style*="to right"]) {
+        background: linear-gradient(to left, var(--surface_container_lowest), transparent 40px)
+          !important;
+      }
+      &[style*="to right"]:not([style*="to left"]) {
+        background: linear-gradient(to right, var(--surface_container_lowest), transparent 40px)
+          !important;
+      }
+      &[style*="to left"][style*="to right"] {
+        background:
+          linear-gradient(to left, var(--surface_container_lowest), transparent 40px),
+          linear-gradient(to right, var(--surface_container_lowest), transparent 40px) !important;
+      }
+    }
+    [data-test-id="multi-select-filter-fade-bottom-edge"] {
+      background: linear-gradient(0deg, var(--surface_container_lowest) 0%, transparent 100%) !important;
+    }
+
+    /* Toasts */
+    --comp-toast-color-background-default: var(--outline_variant);
+
+    /* SaveButton */
+    [data-test-id="SaveButton"] > [class^="SaveButton"] {
+      // Your saved ideas pins "Save" button
+      background-color: var(--sema-color-background-primary);
+      &:hover {
+        background-color: var(--sema-color-hover-background-primary);
+      }
+    }
+  }
+}

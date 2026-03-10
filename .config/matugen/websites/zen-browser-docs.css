@@ -1,0 +1,90 @@
+/* ==UserStyle==
+@name Zen Browser Docs Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/zen-browser-docs
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/zen-browser-docs
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/zen-browser-docs/catppuccin.user.less
+@description Soothing pastel theme for Zen Browser Docs
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("zen-browser.app") {
+  :root[data-theme="light"],
+  .light {
+  }
+
+  :root[data-theme="dark"],
+  .dark {
+  }
+
+
+    --zen-paper: var(--surface);
+    --zen-dark: var(--on_surface);
+    --zen-subtle: var(--surface_container_low);
+
+    --color-fd-background: var(--surface);
+    --color-fd-popover: var(--surface);
+    --color-fd-secondary: var(--surface_container_lowest);
+    --color-fd-accent: var(--surface_container_low);
+    --color-fd-card: var(--surface);
+    --color-fd-border: var(--surface_container_low);
+    --color-fd-ring: var(--outline);
+
+    --color-fd-primary: var(--primary);
+    --color-fd-muted: fade(var(--on_surface), 5%);
+
+    --color-fd-foreground: var(--on_surface);
+    --color-fd-accent-foreground: var(--on_surface);
+    --color-fd-card-foreground: var(--on_surface);
+    --color-fd-primary-foreground: var(--on_surface);
+    --color-fd-secondary-foreground: var(--on_surface);
+    --color-fd-popover-foreground: var(--on_surface);
+    --color-fd-muted-foreground: var(--on_surface);
+
+    --color-blue-500: var(--primary);
+    --color-red-500: var(--error);
+    --color-orange-500: var(--secondary_container);
+
+    .text-coral,
+    .zen-link,
+    .extra a,
+    .text-\[\#fe846b\],
+    .text-\[\#f7a74b\],
+    .text-\[\#f76f53\],
+    .hover\:text-coral:hover {
+      color: var(--primary);
+    }
+
+    .text-\[\#e3401f\],
+    .dark\:text-\[\#D02908\] {
+      color: var(--error);
+    }
+
+    .hover\:text-fd-accent-foreground:hover {
+      color: var(--on_surface);
+    }
+
+    .dark\:text-white\/50 {
+      color: var(--on_surface_variant);
+    }
+
+    #nd-sidebar {
+      --color-fd-secondary: var(--surface_container_lowest);
+      --color-fd-muted: fade(var(--on_surface), 5%);
+      --color-fd-muted-foreground: var(--on_surface);
+    }
+
+    img[src="/icon.svg"] {
+        '<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M32 44.308c6.797 0 12.308-5.51 12.308-12.308 0-6.797-5.51-12.308-12.308-12.308-6.797 0-12.308 5.51-12.308 12.308 0 6.797 5.51 12.308 12.308 12.308M41.846 32c0 5.438-4.408 9.846-9.846 9.846S22.154 37.438 22.154 32s4.408-9.846 9.846-9.846 9.846 4.408 9.846 9.846" fill="@{accent}"/><path fill-rule="evenodd" clip-rule="evenodd" d="M53.333 32c0 11.782-9.55 21.333-21.333 21.333S10.667 43.783 10.667 32 20.217 10.667 32 10.667 53.333 20.217 53.333 32M32 49.23c9.516 0 17.23-7.714 17.23-17.23S41.517 14.77 32 14.77 14.77 22.483 14.77 32 22.483 49.23 32 49.23" fill="@{accent}"/><path fill-rule="evenodd" clip-rule="evenodd" d="M64 32c0 17.673-14.327 32-32 32S0 49.673 0 32 14.327 0 32 0s32 14.327 32 32M32 58.256c14.501 0 26.256-11.755 26.256-26.256S46.501 5.744 32 5.744 5.744 17.499 5.744 32 17.499 58.256 32 58.256" fill="@{accent}"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+  }
+}

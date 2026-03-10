@@ -1,0 +1,98 @@
+/* ==UserStyle==
+@name cobalt Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/cobalt
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/cobalt
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/cobalt/catppuccin.user.less
+@description Soothing pastel theme for cobalt
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("cobalt.tools") {
+  [data-theme="dark"] {
+  }
+  [data-theme="light"] {
+  }
+
+
+    --primary: var(--surface_container_lowest);
+    --secondary: var(--on_surface);
+    --gray: var(--on_surface_variant);
+    --blue: var(--primary);
+    --green: var(--tertiary);
+    --red: var(--error_container);
+    --medium-red: var(--error);
+    --dark-red: var(--error);
+    --white: var(--surface);
+    --button: var(--surface_container_low);
+    --button-hover: darken(var(--surface_container_low), 5%);
+    --button-active-hover: darken(var(--on_surface_variant), 5%);
+    --button-elevated: var(--surface_container);
+    --button-elevated-hover: darken(var(--surface_container), 5%);
+    --button-text: var(--on_surface);
+    --sidebar-bg: var(--surface);
+    --sidebar-hover: var(--surface_container_low);
+    --sidebar-highlight: var(--on_surface);
+    --input-border: var(--surface_container_high);
+    --popup-bg: var(--surface);
+    --toggle-bg-enabled: var(--primary);
+
+    #donate-page {
+      --donate-gradient-start: var(--surface_container) !important;
+      --donate-gradient-end: var(--surface_container_low) !important;
+    }
+
+    #banner-left {
+      color: var(--on_surface);
+    }
+
+    #banner-subtitle {
+      color: var(--on_surface_variant);
+      opacity: 1;
+    }
+
+    .donate-card button {
+      color: var(--on_surface) !important;
+    }
+
+    .donate-card {
+      color: var(--on_surface);
+    }
+
+    .donate-card-title {
+      color: var(--on_surface);
+    }
+
+    .donate-card-subtitle {
+      color: var(--on_surface_variant);
+      opacity: 1;
+    }
+
+    #input-container.focused {
+      box-shadow: 0 0 0 2px var(--on_surface) inset !important;
+    }
+
+    #input-dollar-sign {
+      color: var(--on_surface);
+    }
+
+    #donation-custom-input {
+      color: var(--on_surface) !important;
+    }
+
+    #cobalt-logo path {
+      fill: var(--on_surface);
+    }
+
+    .sidebar-tab.active {
+      background-color: var(--primary) !important;
+    }
+  }
+}

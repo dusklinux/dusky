@@ -1,0 +1,1149 @@
+/* ==UserStyle==
+@name Desmos Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/desmos
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/desmos
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/desmos/catppuccin.user.less
+@description Soothing pastel theme for Desmos
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document regexp(
+    "^(https?:\/\/)(?!(cl|teacher|student)\.desmos\.com)([a-zA-Z0-9-]+\.)?desmos\.com(\/.*)?$"
+  ) {
+
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+    #lib.css-variables();
+
+    .dcg-desmos-svg-logo g {
+      fill: var(--on_surface);
+    }
+
+    .dcg-expression-top-bar {
+      border-right-color: var(--surface_container_low) !important;
+      border-bottom-color: var(--surface_container_low) !important;
+    }
+
+    .user-info, .dcg-saved-graphs-tile-or-row, .dcg-graph-list__header-row {
+      border-bottom-color: var(--surface_container_low) !important;
+    }
+
+    .dcg-exppanel-container {
+      --dcg-item-background-color: var(--surface_container_lowest);
+      background: var(--surface_container_lowest);
+    }
+
+    i:not(
+      .dcg-shared-product-icon,
+      .dcg-icon-error,
+      .dcg-geo-basic-tools .dcg-icon-caret-down,
+      .dcg-geometry-toolbar-view i,
+      .dcg-btn-short-blue i
+    ) {
+      opacity: 1 !important;
+      text-shadow: none !important;
+      color: var(--on_surface) !important;
+    }
+
+    .dcg-expressionitem:not(.dcg-selected) .dcg-tab,
+    .dcg-account-reminder,
+    .search-container input,
+    .dcg-evaluation-view__wrapped-value,
+    .dcg-loading-background-div,
+    .dcg-mq-sqrt-container .dcg-mq-empty,
+    .dcg-mq-fraction .dcg-mq-empty,
+    .dcg-my-graphs-modal__footer,
+    .dcg-product-filter__button.dcg-hovered,
+    .dsm-panic-button,
+    .dcg-select-dropdown-option.dcg-hovered {
+      background: var(--surface) !important;
+    }
+
+    .dcg-expressionitem.dcg-selected .dcg-tab {
+      background: var(--primary) !important;
+
+      .dcg-num {
+        color: var(--surface) !important;
+      }
+
+      .dcg-slider-menu-opener i, .dcg-icon-zoom-fit, .dcg-icon-create-table {
+        color: var(--surface) !important;
+      }
+
+      .dcg-circular-icon:not(:has(.dcg-icon-parametric-solid)):not(
+        .dcg-colored-icon
+      ) {
+        border-color: var(--surface) !important;
+
+        i {
+          color: var(--surface) !important;
+        }
+      }
+    }
+
+    /* This is not applied to entire view to prevent the graph from changing color. */
+    .dcg-new-expression-fade,
+    .dcg-mq-editable-field::after,
+    .dcg-popover,
+    .dcg-options-menu,
+    .dcg-dropdown-popover__interior,
+    .dcg-arrow,
+    .dcg-table-container,
+    .dcg-mq-editing-overflow-left::before,
+    .dcg-exppanel-outer__wrapper {
+      --dcg-custom-background-color: var(--surface_container_lowest);
+    }
+
+    .dcg-popover .dcg-new-item,
+    .dcg-evaluation-view__equals-sign,
+    .dcg-circular-icon-container {
+      opacity: 1 !important;
+    }
+
+    .dcg-popover-interior,
+    .dcg-dropdown-popover__interior,
+    .dcg-notice--authenticate,
+    .dcg-btn-white-outline,
+    .dcg-action-save.dcg-disabled,
+    .dcg-calc-option,
+    .dcg-end-test-button,
+    .dcg-action-cartesian,
+    .dcg-action-polar,
+    .dcg-evaluation-view__plaintext,
+    .dcg-add-inference-wizard__table th,
+    .dcg-add-inference-wizard__table td,
+    .dcg-add-inference-wizard__sample-type-selector.dcg-selected,
+    .dcg-table--cell,
+    .dcg-checkbox:not(.dcg-geometry-toolbar-view .dcg-checkbox),
+    .dcg-product-filter__button {
+      border-color: var(--on_surface) !important;
+    }
+
+    .dcg-btn-white-outline.dcg-hovered, .dcg-end-test-button.dcg-hovered {
+      box-shadow: 0 0 0 1px var(--on_surface) !important;
+    }
+
+    .dcg-arrow::after, .dcg-add-inference-wizard__header {
+      border-bottom-color: var(--on_surface) !important;
+    }
+
+    .dcg-expressionitem.dcg-selected {
+      border-color: var(--primary) !important;
+      --dcg-item-border-color: var(--primary) !important;
+    }
+
+    .dcg-expressionitem:not(.dcg-selected) {
+      border-top-color: var(--surface_container_low) !important;
+    }
+
+    .dcg-popover-title, .dcg-dropdown-popover__title, .dcg-help-menu-title {
+      color: var(--primary) !important;
+      background-color: transparent !important;
+      border-bottom-color: var(--primary) !important;
+    }
+
+    .dcg-toggle-track {
+      background: var(--on_surface_variant) !important;
+    }
+
+    .dcg-toggle-switch, .dcg-or-separator {
+      background: var(--on_surface) !important;
+    }
+
+    .dcg-toggled .dcg-toggle-switch {
+      background: var(--outline_variant) !important;
+    }
+
+    .dcg-keypad-btn.dcg-btn-light-on-gray, .dcg-ctrl-toggle-cover {
+      background: var(--surface) !important;
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .dcg-keypad-btn.dcg-btn-dark-on-gray {
+      background: var(--surface) !important;
+      border-color: var(--surface_container_low) !important;
+    }
+
+    @layer {
+      .dcg-btn-short-blue, .dcg-btn-blue, .dcg-copy-button {
+        background: var(--primary) !important;
+        border-color: transparent !important;
+        color: var(--surface_container_lowest) !important;
+
+        *, *::before {
+          color: var(--surface_container_lowest) !important;
+        }
+      }
+    }
+
+    .dcg-btn-red {
+      background: var(--error) !important;
+      border-color: none !important;
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .dcg-unstyled-button.dcg-disabled {
+      color: var(--on_surface_variant) !important;
+      border-color: var(--on_surface_variant) !important;
+    }
+
+    .dcg-overgraph-icon-container {
+      background: var(--surface_container_lowest);
+      border-radius: 5px;
+    }
+
+    .dcg-header, .dcg-main-header-container, .navbar-inner {
+      background: var(--surface) !important;
+      border-bottom-color: var(--surface_container_low) !important;
+      *:not(
+        .dcg-btn-blue,
+        .dcg-dropdown-popover__title,
+        .dcg-copy-button > span,
+        .dcg-copy-button,
+        .dcg-help-menu-title
+      ) {
+        color: var(--on_surface) !important;
+      }
+    }
+
+    .dcg-variable-permalink,
+    .dcg-shared-input-blue-outline:not(
+      .dcg-geometry-toolbar-view .dcg-shared-input-blue-outline
+    ),
+    .dcg-input-blue-outline:not(
+      .dcg-geometry-toolbar-view .dcg-input-blue-outline
+    ) {
+      background: var(--surface);
+      border-color: var(--on_surface) !important;
+
+      &.dcg-focus-visible {
+        box-shadow: inset 0 0 0 1px var(--primary) !important;
+        border-color: var(--primary) !important;
+      }
+    }
+
+    *:not(.dcg-header-right-content)
+      > *
+      > *:not(.dcg-share-menu__sharing-options-button)
+      > .dcg-icon-print,
+    *:not(.dcg-share-menu__sharing-options-button) > .dcg-icon-export,
+    .dcg-icon-embed {
+      box-shadow: 0 0 0 1px var(--primary) !important;
+    }
+
+    .dcg-hovered:not(.dcg-share-menu__sharing-options-button) > .dcg-icon-print,
+    .dcg-hovered:not(.dcg-share-menu__sharing-options-button)
+      > .dcg-icon-export,
+    .dcg-hovered > .dcg-icon-embed {
+      background: fade(var(--primary), 26%) !important;
+    }
+
+    .dcg-notice--authenticate,
+    .dcg-authentication-modal,
+    .dcg-authentication-modal__detail,
+    .dcg-btn-gray-outline.dcg-hovered:not(.dcg-frontpage-landing__button),
+    .dcg-resources-container,
+    .dcg-account-link,
+    .dcg-title,
+    .dcg-lost-work-link,
+    .dcg-action-save.dcg-disabled,
+    .account-name,
+    .account-email,
+    .dcg-account-container *,
+    .dcg-icon-remove::before,
+    .dcg-tooltip-message,
+    .dcg-attempt-recovery.dcg-hovered,
+    .no-matches,
+    .dcg-basic-calculator-footer,
+    .dcg-basic-calculator-footer *,
+    .dcg-checkbox-label,
+    .dcg-input-blue-outline,
+    .dcg-shared-modal-contents-wrapper
+      *:not(
+        .dcg-btn-blue,
+        .dcg-gray-link,
+        .dcg-blue-link,
+        .dcg-shared-tab-gray-underline
+      ),
+    .dcg-start-practice-screen,
+    .dcg-calc-option,
+    .dcg-keypad-control-toggle,
+    code,
+    h3,
+    .dcg-show-more-row-interior,
+    .dcg-label-input,
+    .dcg-checkbox-children,
+    .dcg-axis-label-to,
+    .pulsing-message,
+    .dsm-panic-close-button,
+    #dsm-panic-reopen-button {
+      color: var(--on_surface) !important;
+    }
+
+    .dcg-shared-modal-contents-wrapper,
+    .dcg-shared-modal-title::before,
+    .dcg-authentication-modal__detail,
+    .dcg-user-bar,
+    .dcg-scrollable,
+    .dcg-expressionitem.dcg-shell,
+    .dcg-loading-div-container,
+    .dcg-mini-play-pause,
+    .dcg-start-practice-screen,
+    .dcg-basic-calc-practice,
+    .dcg-cell.dcg-non-editable.dcg-selected,
+    pre,
+    .dcg-action-polar:not(.dcg-selected),
+    .dcg-action-cartesian:not(.dcg-selected),
+    .dcg-my-graphs-modal__options,
+    #dsm-panic-popover,
+    .dcg-hotkeys-header,
+    .dcg-select-dropdown-list {
+      background: var(--surface_container_lowest) !important;
+    }
+
+    .dcg-authentication-modal__divider::before,
+    .dcg-authentication-modal__divider::after {
+      border-bottom-color: var(--on_surface) !important;
+    }
+
+    .dcg-btn-gray-outline, .dcg-dropdown-input {
+      background: var(--surface) !important;
+      border-color: var(--surface_container_low) !important;
+
+      &.dcg-hovered {
+        box-shadow: 0 0 0 1px var(--on_surface) !important;
+      }
+    }
+
+    .dcg-user-bar {
+      border-bottom-color: var(--surface_container_low) !important;
+    }
+
+    .graph-link-container.dcg-hovered,
+    .graph-link-container.dcg-selected .graph-link,
+    .dcg-tooltip-message,
+    .dcg-sliding-interior,
+    .dcg-keypad-control-toggle,
+    .dcg-dropdown-choice.dcg-selected,
+    .dcg-saved-graphs-tile-or-row.dcg-selected,
+    .dcg-track > .dcg-graphic {
+      background: var(--surface) !important;
+    }
+
+    .dcg-circular-icon {
+      border-color: var(--on_surface) !important;
+      opacity: 1 !important;
+    }
+
+    .dcg-thumb > .dcg-graphic {
+      background: fade(var(--primary), 59%) !important;
+    }
+
+    .dcg-thumb > .dcg-center,
+    .dcg-action-cartesian.dcg-selected,
+    .dcg-action-polar.dcg-selected {
+      background: var(--primary) !important;
+    }
+
+    .dcg-evaluation-view__wrapped-value,
+    .dcg-circular-icon.dcg-hidden,
+    .dcg-keypad-control-toggle,
+    .dcg-btn-gray-outline {
+      border-color: var(--surface_container_low) !important;
+      box-shadow: none !important;
+    }
+
+    .dcg-tooltip-arrow {
+      border-bottom-color: var(--surface) !important;
+    }
+
+    .dcg-hovered > .dcg-add-blank {
+      background: fade(var(--on_surface), 26%) !important;
+    }
+
+    .dcg-icon-error {
+      color: var(--secondary) !important;
+    }
+
+    .dcg-action-redo.dcg-disabled, .dcg-action-undo.dcg-disabled {
+      opacity: 1 !important;
+
+      i {
+        color: var(--surface_container) !important;
+      }
+    }
+
+    .dcg-loading-div {
+      filter: var(--on_surface)-filter !important;
+    }
+
+    .dcg-inline-math-input-view .dcg-math-field,
+    .dcg-ticker-settings-internal .dcg-math-field {
+      border-bottom-color: var(--outline_variant) !important;
+
+      &.dcg-focus {
+        border-bottom-color: var(--primary) !important;
+      }
+    }
+
+    .dcg-mq-ghost {
+      opacity: 1 !important;
+      color: var(--outline_variant);
+    }
+
+    .dcg-mq-root-block::after, .dcg-action-cancel {
+      opacity: 1 !important;
+    }
+
+    .dcg-mini-play-pause {
+      border-color: var(--surface_container_lowest) !important;
+    }
+
+    .dcg-gray-link, .dcg-centered-top-link, .dcg-cancel-while-loading {
+      color: var(--primary) !important;
+    }
+
+    .dcg-shared-tab-gray-underline.dcg-selected {
+      border-bottom-color: var(--primary) !important;
+    }
+
+    .dcg-calc-option.dcg-is-selected {
+      border-color: var(--primary) !important;
+      box-shadow: 0 0 0 1px var(--primary) !important;
+      background: fade(var(--primary), 13%) !important;
+    }
+
+    /* To make this !important more important than Desmos' !important */
+    @layer {
+      .dcg-mq-selection {
+        &,
+        .dcg-mq-non-leaf,
+        .dcg-mq-scaled {
+          background: var(--primary) !important;
+          color: var(--surface_container_lowest) !important;
+        }
+      }
+    }
+
+    .dcg-cell.dcg-first-column, .dcg-cell.dcg-interior-column {
+      border-right-color: var(--on_surface) !important;
+    }
+
+    .dcg-cell.dcg-table-header {
+      border-bottom-color: var(--on_surface) !important;
+    }
+
+    .dcg-cell.dcg-interior-row, .dcg-show-more-row {
+      border-bottom-color: var(--surface_container_high) !important;
+    }
+
+    .dcg-cell.dcg-selected {
+      box-shadow: inset 0 0 0 2px var(--primary) !important;
+
+      &:not(.dcg-computed-cell)::after, .dcg-inner-border {
+        border-color: var(--primary) !important;
+      }
+    }
+
+    .dcg-action-changeimage.dcg-hovered,
+    .dcg-expressionitem .dcg-icon-remove.dcg-hovered::before,
+    .dcg-complex-enabled-note,
+    .dcg-expression-warning,
+    .dcg-reference-count,
+    .dcg-maxLabel.dcg-hovered,
+    .dcg-minLabel.dcg-hovered {
+      color: var(--on_surface_variant) !important;
+    }
+
+    .active-arrow .dcg-graphic {
+      border-right-color: var(--surface_container_lowest) !important;
+    }
+
+    .dcg-row:nth-of-type(2) .dcg-cell,
+    table th,
+    table td,
+    .footer,
+    .dcg-add-inference-wizard--create-button-wrapper,
+    .dcg-small-screen-menu__logout-container,
+    .dcg-product-filter__clear-filter-container {
+      border-top-color: var(--on_surface) !important;
+    }
+
+    .dcg-row .dcg-cell,
+    .dcg-expressionfolder .dcg-fade-container::after,
+    .dcg-expressionitem.dcg-inFolder .dcg-fade-container::after {
+      border-left-color: var(--on_surface) !important;
+    }
+
+    .dcg-row:not(:nth-of-type(2)) .dcg-cell {
+      border-top-color: var(--surface_container_high) !important;
+    }
+
+    .dcg-cell .dcg-empty-line {
+      border-top-color: transparent !important;
+    }
+
+    #pageHeader.brand, .dcg-grapher__error-in-graph-bounds {
+      text-shadow: none !important;
+    }
+
+    .dcg-btn-light-gray {
+      background: var(--surface) !important;
+      box-shadow: none !important;
+      border-color: var(--on_surface) !important;
+    }
+
+    .spa-header {
+      background: var(--tertiary) !important;
+      color: var(--surface_container_lowest);
+
+      @layer {
+        .spa-header .dcg-icon-desmos {
+          color: var(--surface_container_lowest) !important;
+        }
+      }
+
+      .state-name, .test-name {
+        border-left-color: var(--surface_container_lowest) !important;
+      }
+    }
+
+    .dcg-complex-container,
+    .dcg-axes-settings-container,
+    .dcg-options-menu-section {
+      border-top-color: var(--outline_variant) !important;
+    }
+
+    .dcg-visual-settings {
+      border-bottom-color: var(--outline_variant) !important;
+    }
+
+    .dcg-axis-label,
+    .dcg-clickable-menu-row:has(.dcg-input-label) > .dcg-mathquill-wrapper {
+      --dcg-accent-color: var(--primary) !important;
+    }
+
+    .dcg-segmented-control-btn.dcg-selected,
+    .dcg-action-cartesian.dcg-selected > i::before,
+    .dcg-action-polar.dcg-selected > i::before,
+    .dcg-grapher__error-in-graph-bounds,
+    .dcg-toast-view,
+    .dcg-toast .dcg-undo,
+    .dcg-segmented-control-container .dcg-selected i::before,
+    .dcg-selected-graphs-actions__icon-btn i::before,
+    .dcg-segmented-control-btn.dcg-selected * {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    @layer {
+      .dcg-btn-blue:has(> .dcg-icon-caret-down) {
+        i {
+          color: var(--surface_container_lowest) !important;
+        }
+
+        &::before {
+          border-left-color: var(--surface_container_lowest) !important;
+        }
+      }
+    }
+
+    .dcg-label-input {
+      border-color: var(--on_surface) !important;
+
+      &:focus {
+        border-color: var(--primary) !important;
+        box-shadow: 0 1px var(--primary) !important;
+      }
+    }
+
+    .dcg-toast {
+      background: var(--secondary) !important;
+      border-color: var(--secondary_container) !important;
+    }
+
+    .dcg-expressionitem.dcg-inference-wizard-insert-target {
+      --dcg-item-border-color: var(--on_surface) !important;
+    }
+
+    .dcg-add-inference-wizard__table td:has(.dcg-focus)::after,
+    .dcg-table--cell:has(.dcg-focus)::after {
+      border-color: var(--primary) !important;
+    }
+
+    .dcg-add-inference-wizard__sample-type-selector.dcg-hovered:not(
+      .dcg-selected
+    ) {
+      border-color: var(--outline) !important;
+    }
+
+    @layer {
+      .dcg-frontpage-landing-interactive__graph-link,
+      .dcg-frontpage-landing-interactive__arrow-overlay {
+        i {
+          color: var(--surface_container_lowest) !important;
+        }
+      }
+    }
+
+    .dcg-my-graphs-modal__heading--selectable {
+      &.dcg-hovered {
+        box-shadow: 0 3px var(--outline) !important;
+      }
+
+      &.dcg-selected {
+        box-shadow: 0 3px var(--primary) !important;
+      }
+    }
+
+    .dcg-saved-graphs-tile {
+      --dcg-saved-graphs-tile-or-row-hover-color: var(--surface) !important;
+      background: var(--surface) !important;
+    }
+
+    .dcg-graph-list__row.dcg-hovered:not(.dcg-selected),
+    .dcg-my-graphs-modal__currently-open,
+    .dcg-graph-list__field-btn.dcg-hovered,
+    .dcg-product-filter__option--selected {
+      background: var(--surface) !important;
+    }
+
+    @layer {
+      .dcg-saved-graphs-tile__subtitle {
+        color: var(--surface_container_lowest) !important;
+      }
+    }
+
+    .dcg-geometry-toolbar-view {
+      .dcg-component-checkbox, & {
+        color: #000 !important;
+      }
+    }
+
+    .dcg-my-graphs-modal-empty-state__logged-out {
+      border-color: var(--surface_container) !important;
+    }
+
+    .dcg-shortcuts-table tr {
+      border-bottom-color: var(--surface_container_high) !important;
+    }
+
+    --dcg-custom-text-color: var(--on_surface);
+    --dcg-custom-background-color-shaded: var(--surface_container_lowest);
+
+    /* DesModder */
+    .dsm-plugin-title-bar,
+    .dsm-version-number,
+    .dsm-plugin-info-body,
+    .cm-panel,
+    #intellisense-container td,
+    .dsm-vc-outfile-name {
+      color: var(--on_surface) !important;
+    }
+
+    .cm-gutters, .cm-foldPlaceholder, .selected-intellisense-option {
+      background: var(--surface) !important;
+    }
+
+    .ͼb {
+      color: var(--primary) !important;
+    }
+
+    .ͼe {
+      color: var(--error) !important;
+    }
+
+    .ͼd {
+      color: var(--tertiary) !important;
+    }
+
+    .cm-activeLineGutter, #intellisense-container, .dsm-vc-outfile-name {
+      background: var(--surface) !important;
+    }
+
+    .cm-focused .cm-matchingBracket {
+      background: fade(var(--primary), 25%) !important;
+    }
+
+    .cm-activeLine {
+      background: fade(var(--surface_container_low), 50%) !important;
+    }
+
+    .cm-foldPlaceholder, #intellisense-container {
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .cm-gutters {
+      color: var(--on_surface_variant) !important;
+      border-right-color: var(--surface_container_low);
+    }
+
+    .cm-panels, .dsm-vc-preview-inner {
+      background: var(--surface_container_lowest) !important;
+    }
+
+    .cm-panels-bottom {
+      border-top-color: var(--surface_container_low) !important;
+    }
+
+    .cm-lintRange-error {
+        '<svg xmlns="http://www.w3.org/2000/svg" width="6" height="3"><path d="M0 2.5 2 1h1l2 1.5h1" stroke="@{red}" fill="none" stroke-width=".7"/></svg>'
+      );
+      background-image: url("data:image/svg+xml,@{svg}");
+    }
+
+    .cm-cursor {
+      border-left-color: var(--on_surface) !important;
+    }
+
+    .cm-selectionBackground {
+      background: var(--surface_container) !important;
+    }
+
+    .compact-view-enabled .dcg-mq-cursor {
+      border-color: var(--on_surface) !important;
+    }
+
+    @layer {
+      .dsm-vc-preview-expand,
+      .dsm-vc-remove-frame,
+      .dsm-vc-preview-play-pause {
+        i {
+          color: var(--surface_container_lowest) !important;
+        }
+      }
+    }
+
+    .dsm-vc-outfile-name {
+      border-bottom-color: var(--outline) !important;
+
+      &.dcg-hovered {
+        box-shadow: 0 1px var(--outline) !important;
+      }
+
+      &:focus {
+        border-bottom-color: var(--primary) !important;
+        box-shadow: 0 1px var(--primary) !important;
+      }
+    }
+
+    /* Non-Calculator Pages */
+    .cls-1, #states path {
+      fill: var(--primary) !important;
+    }
+
+    #states path:not(.uses-desmos) {
+      filter: brightness(125%);
+    }
+
+    .dcg-frontpage-landing-hero,
+    .dcg-frontpage-landing__button--hero,
+    .dcg-text--dark-blue,
+    .dcg-for-work-hero__label,
+    .accessibility-main details[open] summary,
+    .accessibility-main details[open] summary h3 {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .dcg-frontpage-landing__button, .dcg-for-work-hero__button {
+      background: var(--on_surface) !important;
+      color: var(--surface_container_lowest) !important;
+      opacity: 1 !important;
+    }
+
+    .dcg-frontpage-landing-geometry__primary-link {
+      background: var(--primary) !important;
+    }
+
+    .dcg-frontpage-landing-3d__primary-link {
+      background: var(--error_container) !important;
+    }
+
+    .dcg-frontpage-landing-section,
+    .dcg-frontpage-landing-tools__link,
+    .dcg-link-section-title,
+    .dcg-finalist-name,
+    li,
+    .section-interior *,
+    .dcg-p-tag,
+    .dcg-search-container input,
+    .dcg-searchable-dropdown-list,
+    .section-interior,
+    .careers-hero h1,
+    .sticky-nav li:not(.active) a,
+    .top-info,
+    .partners,
+    .dcg-principles-section *,
+    .dcg-for-work-hero,
+    body,
+    .dcg-basic-markdown-container p,
+    .dcg-basic-markdown-container table th,
+    .accessibility-main {
+      color: var(--on_surface) !important;
+    }
+
+    .dcg-frontpage-landing-interactive__arrow-overlay {
+      /* Desmos' normal solution looks bad when zoomed in (it uses like 10 stacked text-shadows.) */
+      text-shadow: none;
+      paint-order: stroke fill;
+      -webkit-text-stroke: 4px white;
+    }
+
+    .dcg-frontpage-landing-section--bg-light,
+    .dcg-frontpage-landing-section--bg-dark,
+    .dcg-facts-wrapper,
+    .dcg-principles-container__light-bg,
+    .dcg-for-work-hero,
+    .dcg-section--gray,
+    .callout--primary,
+    .lt-dropdown-menu,
+    .dcg-basic-markdown-container table th,
+    .accessibility-main section:nth-of-type(2n) {
+      background: var(--surface) !important;
+    }
+
+    .dcg-frontpage-landing-classroom__card,
+    body,
+    .dcg-frontpage-landing-testing__bullets,
+    .accessibility-features-in-tools li,
+    .accessibility-main details {
+      background-color: var(--surface_container_lowest) !important;
+    }
+
+    .dcg-blue-link,
+    .dcg-footer-link,
+    .dcg-primary-link,
+    .dcg-shared-tab-gray-underline,
+    .dcg-btn-blue-outline {
+      color: var(--primary) !important;
+    }
+
+    .dcg-footer-legal-content-container,
+    .sticky-nav li.active a,
+    .dcg-principles-header,
+    .dcg-for-work-hero__label,
+    .accessibility-main details[open] summary {
+      background: var(--primary) !important;
+    }
+
+    .dcg-finalist-location, .dcg-subtitle, .breadcrumbs li::before {
+      color: var(--on_surface_variant) !important;
+    }
+
+    .dcg-shared-tab-gray-underline.dcg-hovered {
+      border-bottom-color: var(--primary) !important;
+    }
+
+    .dcg-footer-main-content-container,
+    .careers-hero,
+    .dcg-background--light-blue,
+    .state-info:not(.modal-view) {
+      background: var(--surface_container_lowest) !important;
+    }
+
+    .dcg-footer-legal-info a,
+    .dcg-footer-title,
+    .dcg-copyright,
+    .dcg-footer-legal-info,
+    .sticky-nav li.active a,
+    .dcg-principles-header * {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .dcg-test-blurb,
+    .dcg-key-command,
+    pre,
+    .dcg-container,
+    .lt-dropdown-menu,
+    .accessibility-main details {
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .dcg-search-container input,
+    .dcg-searchable-dropdown-list,
+    .sticky-nav li:not(.active) a,
+    .dcg-key-command,
+    .dcg-btn-blue-outline,
+    *:not(pre) > code {
+      background: var(--surface) !important;
+    }
+
+    .dcg-search-container input:focus,
+    .pdf-button,
+    .dcg-btn-blue-outline,
+    .callout--primary,
+    .lt-btn,
+    .lt-section-subscribe button {
+      border-color: var(--primary) !important;
+    }
+
+    .dividing-line {
+      background: var(--surface_container_low) !important;
+    }
+
+    .job-openings-message-container .white-background {
+      background: transparent !important;
+    }
+
+    .pdf-button.dcg-hovered, .dcg-btn-blue-outline.dcg-hovered {
+      box-shadow: 0 0 0 1px var(--primary) !important;
+    }
+
+    .dcg-footer-logo img, .dcg-testimonial__image {
+      filter: var(--on_surface)-filter;
+    }
+
+    .dcg-for-work-hero__input {
+      border-color: var(--on_surface) !important;
+
+      &:focus {
+        box-shadow: 0 0 0 1px var(--on_surface) !important;
+      }
+    }
+
+    .dcg-basic-markdown-container table {
+      th, td {
+        border-color: var(--on_surface) !important;
+      }
+    }
+
+    /* Scientific, Geometric, and Matrix */
+    .dcg-calc-basic-main, #main {
+      --dcg-custom-background-color: var(--surface_container_lowest);
+      border-color: transparent !important;
+    }
+
+    .dcg-basic-list-container, .dcg-matrix-list-container {
+      border-top-color: var(--surface_container_low) !important;
+    }
+
+    .dcg-basic-list-placeholder,
+    .dcg-keypad-control-bar,
+    .dcg-matrix-list-placeholder {
+      border-left-color: var(--surface_container_low) !important;
+      border-right-color: var(--surface_container_low) !important;
+    }
+
+    .dcg-basic-keypad-container,
+    .dcg-basic-expression,
+    .dcg-latex-expression,
+    .dcg-matrix-expression {
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .dcg-keypad-control-btn.dcg-selected::after,
+    .dcg-segmented-control-btn.dcg-selected {
+      background: var(--primary) !important;
+    }
+
+    .dcg-basic-expression.dcg-focused,
+    .dcg-matrix-expression.dcg-focused,
+    .dcg-latex-expression.dcg-focused {
+      border-color: var(--primary) !important;
+      box-shadow: inset 0 0 0 1px var(--primary) !important;
+    }
+
+    .dcg-resize-action {
+      background: var(--surface) !important;
+      border-color: var(--surface_container_low) !important;
+    }
+
+    .dcg-matrix-container, .dcg-segmented-control-btn.dcg-selected {
+      border-color: var(--on_surface) !important;
+    }
+
+    .dcg-matrix-view .dcg-mq-math-mode.dcg-mq-focused {
+      border-bottom-color: var(--primary) !important;
+    }
+
+    .dcg-mq-ans {
+      border-color: var(--primary) !important;
+      color: var(--primary) !important;
+      background: fade(var(--primary), 26%) !important;
+
+      &::after {
+        border-color: var(--primary) !important;
+        color: var(--primary) !important;
+        background: var(--surface) !important;
+      }
+    }
+
+    .dcg-keypad-control-btn.dcg-disabled {
+      opacity: 1 !important;
+      color: var(--surface_container) !important;
+
+      i {
+        color: var(--surface_container) !important;
+      }
+    }
+
+    --dcg-custom-text-color-shaded: var(--on_surface);
+
+    /* Help Center */
+    .lt-container-inner *,
+    .lt-topbar,
+    .hc-multiselect-toggle li span[aria-label]::before {
+      color: var(--on_surface) !important;
+    }
+
+    .lt-container-inner a:not(.lt-btn--primary), .lt-topbar__link {
+      color: var(--primary) !important;
+    }
+
+    .lt-topbar {
+      background: var(--surface) !important;
+    }
+
+    .lt-topbar__logo {
+      filter: var(--on_surface)-filter;
+    }
+
+    .lt-hero-unit__bg,
+    .lt-footer-submit-ticket,
+    .tab,
+    .lt-new-request-tip,
+    .form-field input,
+    .form-field textarea,
+    .hc-multiselect-toggle,
+    .hc-multiselect-menu {
+      background: var(--surface) !important;
+    }
+
+    input[type="submit"], .lt-block-list-item__link, .lt-btn--primary {
+      background: var(--primary) !important;
+      border-color: var(--primary) !important;
+      color: var(--surface_container_lowest) !important;
+    }
+
+    input[type="search"] {
+      background: var(--surface) !important;
+      border-color: var(--on_surface) !important;
+    }
+
+    .search::before {
+        '<svg aria-hidden="true" focusable="false" data-prefix="far" data-icon="search" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" class="svg-inline--fa fa-search fa-w-16 fa-3x"><path fill="@{text}" d="M508.5 468.9 387.1 347.5c-2.3-2.3-5.3-3.5-8.5-3.5h-13.2c31.5-36.5 50.6-84 50.6-136C416 93.1 322.9 0 208 0S0 93.1 0 208s93.1 208 208 208c52 0 99.5-19.1 136-50.6v13.2c0 3.2 1.3 6.2 3.5 8.5l121.4 121.4c4.7 4.7 12.3 4.7 17 0l22.6-22.6c4.7-4.7 4.7-12.3 0-17M208 368c-88.4 0-160-71.6-160-160S119.6 48 208 48s160 71.6 160 160-71.6 160-160 160" class=""/></svg>'
+      );
+      background-image: url("data:image/svg+xml,@{svg}");
+    }
+
+    .lt-block-list-item__link * {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .lt-custom-block__icon {
+      filter: var(--primary)-filter;
+    }
+
+    .lt-footer,
+    .lt-search-box:not(.lt-search-box--hero-unit),
+    .lt-breadcrumbs-wrapper,
+    .hc-multiselect-menu li:focus,
+    .hc-multiselect-toggle li {
+      background: var(--surface_container_lowest) !important;
+    }
+
+    .lt-scroll-to-top {
+      color: var(--primary) !important;
+    }
+
+    .pagination-list *, .lt-scroll-to-top, .lt-new-request-tip {
+      border-color: var(--primary) !important;
+    }
+
+    .lt-header, .lt-search-result {
+      border-bottom-color: var(--surface_container_low) !important;
+    }
+
+    .lt-search-result__text em {
+      background: var(--secondary) !important;
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .lt-toc--link.is-active > span {
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .tab, .key-command, .hc-multiselect-toggle, .hc-multiselect-menu {
+      border-color: var(--surface_container_low) !important;
+    }
+
+    @layer {
+      .tabs-link {
+        color: var(--on_surface) !important;
+
+        &:hover {
+          color: var(--primary) !important;
+        }
+
+        &.is-active {
+          color: var(--surface_container_lowest) !important;
+          background: var(--primary) !important;
+          border-color: var(--primary) !important;
+        }
+      }
+    }
+
+    .upload-dropzone[data-hc-focus="true"] {
+      border-color: var(--primary) !important;
+    }
+
+    --input-border-color: var(--surface_container_low);
+    --input-focus-border-color: var(--primary);
+
+    /* Blog */
+    .content-wrap *:not(a), .tag-links > a {
+      color: var(--on_surface) !important;
+    }
+
+    .article header {
+      border-top-color: var(--surface_container_low) !important;
+    }
+
+    *:not(.tag-links) > a:not(.img-card, .btn-blue, .btn-blue-outline) {
+      color: var(--primary);
+    }
+
+    .tag-container a {
+      border-color: var(--on_surface) !important;
+
+      &:active {
+        background: fade(var(--on_surface), 50%) !important;
+      }
+    }
+
+    .img-card {
+      border-color: var(--surface_container_high) !important;
+
+      &:hover {
+        box-shadow: 0 0 0 1px var(--surface_container_high) !important;
+      }
+    }
+
+    .btn-blue {
+      background: var(--primary) !important;
+      color: var(--surface_container_lowest) !important;
+    }
+
+    .btn-blue-outline {
+      border-color: var(--primary) !important;
+      color: var(--primary) !important;
+
+      &:hover {
+        box-shadow: 0 0 0 1px var(--primary) !important;
+      }
+    }
+  }
+}

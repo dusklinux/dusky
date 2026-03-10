@@ -1,0 +1,206 @@
+/* ==UserStyle==
+@name Lemmy Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/lemmy
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/lemmy
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/lemmy/catppuccin.user.less
+@description Soothing pastel theme for Lemmy
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("lemmy.ml"), domain("lemmy.world") {
+  :root {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+
+    [data-bs-theme="dark"] {
+      --bs-body-color: var(--on_surface);
+      --bs-body-bg: var(--surface_container_lowest);
+      --bs-emphasis-color: var(--on_surface);
+      --bs-secondary-color: var(--on_surface_variant);
+      --bs-secondary-bg: var(--surface);
+      --bs-tertiary-color: var(--surface);
+      --bs-tertiary-bg: var(--surface);
+      --bs-primary-text-emphasis: var(--outline);
+      --bs-secondary-text-emphasis: var(--outline_variant);
+      --bs-success-text-emphasis: var(--tertiary);
+      --bs-info-text-emphasis: var(--primary_fixed);
+      --bs-warning-text-emphasis: var(--secondary);
+      --bs-danger-text-emphasis: var(--error);
+      --bs-light-text-emphasis: var(--outline_variant);
+      --bs-dark-text-emphasis: var(--outline_variant);
+      --bs-primary-bg-subtle: var(--surface_container_lowest);
+      --bs-secondary-bg-subtle: var(--surface);
+      --bs-success-bg-subtle: var(--tertiary);
+      --bs-info-bg-subtle: var(--primary);
+      --bs-warning-bg-subtle: var(--secondary);
+      --bs-danger-bg-subtle: var(--error);
+      --bs-light-bg-subtle: var(--surface_container_lowest);
+      --bs-dark-bg-subtle: var(--surface_container_lowest);
+      --bs-primary-border-subtle: var(--primary);
+      --bs-secondary-border-subtle: var(--primary);
+      --bs-success-border-subtle: var(--tertiary);
+      --bs-info-border-subtle: var(--primary);
+      --bs-warning-border-subtle: var(--secondary);
+      --bs-danger-border-subtle: var(--error);
+      --bs-light-border-subtle: var(--surface);
+      --bs-dark-border-subtle: var(--surface);
+      --bs-heading-color: var(--on_surface);
+      --bs-card-border-color: var(--surface);
+      --bs-link-color: var(--primary);
+      --bs-link-hover-color: var(--error_container);
+      --bs-code-color: var(--primary_container);
+      --bs-highlight-color: var(--primary);
+      --bs-highlight-bg: var(--surface);
+      --bs-border-color: var(--surface);
+      --bs-form-valid-color: var(--tertiary);
+      --bs-form-valid-border-color: var(--tertiary);
+      --bs-form-invalid-color: var(--error);
+      --bs-form-invalid-border-color: var(--error);
+      --bs-dark-rgb: var(--primary);
+      --bs-btn-bg: var(--surface_container_lowest);
+    }
+
+:root {
+}
+
+    body {
+      color: var(--on_surface);
+      background-color: var(--surface_container_lowest);
+    }
+
+    .nav-link {
+      color: var(--primary);
+    }
+    .card {
+      --bs-card-cap-bg: var(--surface);
+      --bs-card-title-color: var(--on_surface);
+      --bs-card-subtitle-color: var(--on_surface);
+      --bs-card-color: var(--on_surface);
+      --bs-card-cap-color: var(--surface);
+      --bs-card-bg: var(--surface);
+    }
+
+    .form-control {
+      color: var(--on_surface);
+      background-color: var(--surface);
+      border-color: var(--surface);
+    }
+
+    .btn-secondary {
+      --bs-btn-color: var(--on_surface);
+      --bs-btn-bg: var(--surface_container_lowest);
+      --bs-btn-border-color: var(--outline_variant);
+      --bs-btn-hover-color: var(--primary);
+      --bs-btn-hover-bg: var(--surface);
+      --bs-btn-hover-border-color: var(--outline_variant);
+      --bs-btn-active-color: var(--on_surface);
+      --bs-btn-active-bg: var(--primary);
+      --bs-btn-active-border-color: var(--surface);
+      --bs-btn-active-shadow: inset 0 3px 5px var(--surface);
+      --bs-btn-disabled-color: var(--error);
+      --bs-btn-disabled-bg: var(--surface);
+      --bs-btn-disabled-border-color: var(--surface);
+    }
+
+    .table > :not(caption) > * > * {
+      color: var(--on_surface);
+      background-color: var(--surface);
+    }
+
+    .dropdown-menu-dark {
+      --bs-dropdown-color: var(--on_surface);
+      --bs-dropdown-bg: var(--surface);
+      --bs-dropdown-border-color: var(--surface);
+      --bs-dropdown-box-shadow: var(--surface);
+      --bs-dropdown-link-color: var(--primary);
+      --bs-dropdown-link-hover-color: var(--primary);
+      --bs-dropdown-divider-bg: var(--outline);
+      --bs-dropdown-link-hover-bg: var(--surface);
+      --bs-dropdown-link-active-color: var(--primary);
+      --bs-dropdown-link-active-bg: var(--surface);
+      --bs-dropdown-link-disabled-color: var(--error);
+      --bs-dropdown-header-color: var(--on_surface);
+    }
+
+    .form-select {
+      color: var(--on_surface);
+      background-color: var(--surface);
+      border-color: var(--surface);
+    }
+
+    .btn-outline-secondary {
+      --bs-btn-color: var(--on_surface);
+      --bs-btn-border-color: var(--surface);
+      --bs-btn-hover-color: var(--primary);
+      --bs-btn-hover-bg: var(--surface);
+      --bs-btn-hover-border-color: var(--outline);
+      --bs-btn-active-color: var(--primary);
+      --bs-btn-active-bg: var(--surface);
+      --bs-btn-active-border-color: var(--surface);
+      --bs-btn-active-shadow: inset 0 3px 5px var(--surface);
+      --bs-btn-disabled-color: var(--error);
+      --bs-btn-disabled-border-color: var(--surface);
+    }
+
+    .nav-tabs .nav-link.active,
+    .nav-tabs .nav-item.show .nav-link {
+      color: var(--primary);
+      background-color: var(--surface);
+      border-color: var(--surface);
+    }
+
+    .dropdown-item {
+      color: var(--on_surface);
+      background-color: var(--surface);
+    }
+
+    .dropdown-menu {
+      --bs-dropdown-color: var(--on_surface);
+      --bs-dropdown-bg: var(--surface);
+      --bs-dropdown-border-color: var(--surface);
+      --bs-dropdown-box-shadow: var(--surface);
+      --bs-dropdown-link-color: var(--primary);
+      --bs-dropdown-link-hover-color: var(--primary);
+      --bs-dropdown-divider-bg: var(--outline);
+      --bs-dropdown-link-hover-bg: var(--surface);
+      --bs-dropdown-link-active-color: var(--primary);
+      --bs-dropdown-link-active-bg: var(--surface);
+      --bs-dropdown-link-disabled-color: var(--error);
+      --bs-dropdown-header-color: var(--on_surface);
+    }
+
+    a {
+      color: var(--primary);
+    }
+
+    .text-bg-primary {
+      color: var(--on_surface);
+    }
+
+    .text-muted {
+      color: var(--primary);
+    }
+    .text-bg-light {
+      color: var(--on_surface) !important;
+      background-color: rgba(#lib.rgbify(var(--surface))[], 1) !important;
+    }
+    .alert-info,
+    .alert-warning {
+      background-color: var(--surface) !important;
+      border-color: var(--surface) !important;
+      color: var(--on_surface) !important;
+    }
+  }
+}

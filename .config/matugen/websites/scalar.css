@@ -1,0 +1,75 @@
+/* ==UserStyle==
+@name Scalar Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/scalar
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/scalar
+@version 2026.01.20
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/scalar/catppuccin.user.less
+@description Soothing pastel theme for Scalar
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("scalar.com") {
+  code.hljs {
+    background: none !important;
+  }
+
+  }
+
+  }
+
+    #lib.css-variables();
+
+    --scalar-color-1: var(--on_surface);
+    --scalar-color-2: var(--on_surface);
+    --scalar-color-3: var(--on_surface_variant);
+    --scalar-color-accent: var(--primary);
+    --scalar-background-1: var(--surface_container_lowest);
+    --scalar-background-2: var(--surface_container_low);
+    --scalar-background-3: var(--surface_container);
+    --scalar-background-accent: fade(var(--primary), 12%);
+    --scalar-border-color: var(--surface_container);
+    --scalar-color-green: var(--tertiary);
+    --scalar-color-red: var(--error);
+    --scalar-color-yellow: var(--secondary);
+    --scalar-color-blue: var(--primary);
+    --scalar-color-orange: var(--secondary_container);
+    --scalar-color-purple: var(--primary);
+    --scalar-selection-1: fade(var(--primary), 30%);
+    --scalar-button-1: var(--primary);
+    --scalar-button-1-hover: darken(var(--primary), 5%);
+    --scalar-button-1-color: var(--surface_container_lowest);
+
+    background-color: var(--surface_container_lowest);
+
+    .sidebar {
+      --scalar-sidebar-background-1: var(--surface);
+      --scalar-sidebar-item-hover-background: var(--surface_container_low);
+      --scalar-sidebar-item-active-background: fade(var(--primary), 10%);
+      --scalar-sidebar-color-active: var(--primary);
+    }
+
+    .scalar-code-block, .t-editor__code {
+      background-color: var(--surface);
+    }
+
+    .brightness-lifted {
+      filter: none; // remove elevated filter on dropdown modal backgrounds
+    }
+
+    .text-white {
+      color: var(--surface_container_lowest); // danger (delete) button text
+    }
+
+    // https://scalar.com/
+    .logo {
+      filter: var(--on_surface)-filter;
+    }
+  }
+}

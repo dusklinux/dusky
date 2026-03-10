@@ -1,0 +1,78 @@
+/* ==UserStyle==
+@name Wikiwand Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/wikiwand
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/wikiwand
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/wikiwand/catppuccin.user.less
+@description Soothing pastel theme for Wikiwand
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("wikiwand.com") {
+
+  .theme-system {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+  .theme-light,
+  .theme-desert,
+  .theme-calmness {
+  }
+  .theme-dark,
+  .theme-black,
+  .theme-deepOcean,
+  .theme-nature {
+  }
+
+    #lib.css-variables();
+
+    --color-bg: var(--surface_container_lowest) !important;
+    --color-text: var(--on_surface) !important;
+    --color-grey: var(--on_surface) !important;
+    --color-accent: var(--primary) !important;
+    --color-highlight: var(--surface_container_high) !important;
+    --color-ash: var(--surface_container_high) !important;
+    --color-border: var(--surface_container_high) !important;
+    --color-blue-bg: var(--surface_container) !important;
+    --color-blue-text: var(--primary) !important;
+    --color-purple-bg: var(--surface_container) !important;
+    --color-purple-text: var(--primary) !important;
+    --color-green-bg: var(--surface_container) !important;
+    --color-green-text: var(--tertiary) !important;
+    --color-orange-bg: var(--surface_container) !important;
+    --color-orange-text: var(--secondary_container) !important;
+    --color-table: var(--surface_container_low) !important;
+    --color-link: var(--primary) !important;
+    --color-score-A: var(--tertiary) !important;
+    --color-score-B: var(--primary) !important;
+    --color-score-C: var(--secondary_container) !important;
+    --color-score-F: var(--error) !important;
+    --color-score-NA: var(--color-grey) !important;
+    --grad: linear-gradient(-45deg, var(--secondary_container), var(--primary), var(--secondary), var(--secondary)) !important;
+    --box-shadow: 0px 1px 4px 1px var(--surface) !important;
+    --box-shadow-dark:
+      0px 0px 1px 1px var(--surface), 0px 1px 5px 2px var(--surface) !important;
+    --box-shadow-strong: 0px 1px 5px 2px var(--surface) !important;
+    --backdrop-bg: var(--surface_container_lowest) !important;
+    --backdrop-bg-ash: fade(var(--surface_container), 50%) !important;
+
+    .mw-no-invert * {
+      color: var(--surface) !important;
+    }
+
+    .notheme * {
+      --color-text: auto;
+      --color-link: auto;
+    }
+  }
+}

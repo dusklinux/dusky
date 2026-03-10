@@ -1,0 +1,98 @@
+/* ==UserStyle==
+@name Anonymous Overflow Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/anonymous-overflow
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/anonymous-overflow
+@version 2026.01.10
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/anonymous-overflow/catppuccin.user.less
+@description Soothing pastel theme for Anonymous Overflow
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+/* Working instances filtered from instance list: https://aohub.httpjames.space/. */
+@-moz-document domain("ao.vern.cc"),
+  domain("overflow.adminforge.de"),
+  domain("overflow.floppa.cloud"),
+  domain("overflow.hostux.net"),
+  domain("ao.bloat.cat"),
+  domain("ao.owo.si"),
+  domain("overflow.r4fo.com"),
+  domain("overflow.ducks.party"),
+  domain("anonymousoverflow.privacyredirect.com"),
+  domain("soflow.nerdvpn.de"),
+  domain("overflow.einfachzocken.eu"),
+  domain("anonymousoverflow.catsarch.com"),
+  domain("overflow.darkness.services"),
+  domain("anonflow.aketawi.space"),
+  domain("o.iii.st"),
+  domain("overflow.canine.tools") {
+
+  :root[data-theme="auto"] {
+    @media (prefers-color-scheme: light) {
+    }
+    @media (prefers-color-scheme: dark) {
+    }
+  }
+
+  :root[data-theme="dark"] {
+  }
+
+  :root[data-theme="light"] {
+  }
+
+    #lib.css-variables();
+
+    --main-bg: var(--surface_container_lowest);
+    --text-color: var(--on_surface);
+    --muted-text-color: var(--on_surface_variant);
+    --link-color: var(--primary);
+    --meta-bg: var(--surface_container);
+    --input-bg: var(--surface);
+    --input-bg-hover: var(--surface_container);
+    --divider-color: var(--outline);
+
+    .view-input:focus {
+      border-color: var(--surface_container_high);
+    }
+
+    .answer-link .icon img {
+      background: none;
+      filter: var(--on_surface)-filter;
+    }
+    .answer-meta.accepted {
+      background-color: var(--tertiary);
+      color: var(--surface_container_lowest);
+
+      .answer-link .icon img {
+        filter: var(--surface)-filter;
+      }
+    }
+
+    .sorting img[src="/static/icons/sort.svg"] {
+      filter: var(--on_surface_variant)-filter;
+    }
+
+    .logo {
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 49 48"><circle cx="14.5" cy="33.5" r="14.5" fill="@{teal}"/><circle cx="14.5" cy="14.5" r="14.5" fill="@{text}"/><circle cx="34.5" cy="14.5" r="14.5" fill="@{teal}"/><circle cx="34.5" cy="33.5" r="14.5" fill="@{text}"/></svg>'
+      );
+      content: url("data:image/svg+xml,@{svg}");
+    }
+
+    hr {
+      border-color: var(--outline);
+    }
+
+    .error {
+      background-color: var(--error);
+    }
+    .error, .success {
+      color: var(--surface);
+    }
+  }
+}

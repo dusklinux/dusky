@@ -1,0 +1,97 @@
+/* ==UserStyle==
+@name Ecosia Catppuccin
+@namespace github.com/catppuccin/userstyles/styles/ecosia
+@homepageURL https://github.com/catppuccin/userstyles/tree/main/styles/ecosia
+@version 2025.09.06
+@updateURL https://github.com/catppuccin/userstyles/raw/main/styles/ecosia/catppuccin.user.less
+@description Soothing pastel theme for Ecosia
+@author Catppuccin
+@license MIT
+
+@preprocessor less
+@var select lightFlavor "Light Flavor" ["latte:Latte*", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha"]
+@var select darkFlavor "Dark Flavor" ["latte:Latte", "frappe:Frappé", "macchiato:Macchiato", "mocha:Mocha*"]
+@var select accentColor "Accent" ["rosewater:Rosewater", "flamingo:Flamingo", "pink:Pink", "mauve:Mauve*", "red:Red", "maroon:Maroon", "peach:Peach", "yellow:Yellow", "green:Green", "teal:Teal", "blue:Blue", "sapphire:Sapphire", "sky:Sky", "lavender:Lavender", "subtext0:Gray"]
+==/UserStyle== */
+
+
+@-moz-document domain("ecosia.org") {
+  :root.light {
+  }
+
+  :root.dark {
+  }
+
+
+    --color-brand-primary: var(--primary) !important;
+    --color-brand-secondary: var(--surface) !important;
+    --color-error: var(--error) !important;
+    --color-success: var(--tertiary) !important;
+    --color-disabled: var(--outline_variant) !important;
+    --color-button-background-primary: var(--primary) !important;
+    --color-button-background-primary-active: var(--primary) !important;
+    --color-button-background-primary-hover: var(--primary);
+    --color-button-background-secondary: var(--surface_container_low) !important;
+    --color-button-background-secondary-active: var(--surface_container_high) !important;
+    --color-button-background-secondary-hover: var(--surface_container) !important;
+    --color-button-content-primary: var(--surface_container_lowest) !important;
+    --color-button-content-secondary: var(--on_surface) !important;
+    --color-button-content-tertiary: var(--primary) !important;
+    --color-button-border: var(--surface_container_low) !important;
+    --color-button-background-transparent-hover: var(--surface_container);
+    --color-button-background-transparent-active: var(--surface_container_high);
+    --color-background-primary: var(--surface_container_lowest) !important;
+    --color-background-secondary: var(--surface) !important;
+    --color-background-tertiary: var(--surface) !important;
+    --color-background-quaternary: var(--surface_container_low);
+    --color-background-elevation-1: var(--surface) !important;
+    --color-highlighter: var(--surface_container_low) !important;
+    --color-highlight-primary: var(--surface_container_low) !important;
+    --color-overlay-primary: var(--outline) !important;
+    --color-overlay-secondary: var(--outline_variant) !important;
+    --color-text-primary: var(--on_surface) !important;
+    --color-text-secondary: var(--on_surface_variant) !important;
+    --color-text-tertiary: var(--on_surface) !important;
+    --color-link-primary: var(--primary_container) !important;
+    --color-link-secondary: var(--primary_fixed) !important;
+    --color-url: var(--primary_container) !important;
+    --color-link-results-default: var(--primary_container) !important;
+    --color-link-results-visited: var(--tertiary_container) !important;
+    --color-decorative-icon: var(--primary) !important;
+    --color-elevation-layer-1: var(--surface_container);
+    --color-elevation-layer-2: var(--surface_container_high);
+    --color-decorative-border-1: var(--surface_container) !important;
+    --color-focused: var(--primary) !important;
+    --color-form-border-default: var(--surface_container_low) !important;
+    --color-form-border-hover: var(--surface_container) !important;
+    --color-form-border-primary-active: var(--primary) !important;
+    --color-tripadvisor-rating: var(--on_surface_variant) !important;
+    --color-tree-counter-tree-tall: var(--secondary) !important;
+    --color-green-leaf-icon-color-top: var(--tertiary) !important;
+    --color-green-leaf-icon-color-bottom: var(--tertiary) !important;
+    --color-fossil-fuel-icon-color-top: var(--secondary_container) !important;
+    --color-fossil-fuel-icon-color-bottom: var(--error_container) !important;
+
+    /* search page */
+    --color-above-fold-background: var(--surface_container_low) !important;
+    --color-above-fold-background-addon: var(--outline_variant) !important;
+    --color-above-fold-text: var(--on_surface) !important;
+    --color-section-wrapper-background-gray: var(--surface_container) !important;
+    --color-section-wrapper-background-dark-green: var(--surface_container_low) !important;
+    --color-section-wrapper-background-light-green: var(--surface_container_low) !important;
+    --color-section-header-title: var(--on_surface) !important;
+    --color-projects-title: var(--on_surface) !important;
+    --color-projects-description: var(--surface_container);
+    --color-financial-report-total-background: var(--surface_container_low) !important;
+    --color-financial-report-total-text: var(--on_surface) !important;
+    --color-forest-background-addon: var(--surface_container) !important;
+    --color-forest-background-secondary: var(--surface_container_low) !important;
+    --color-before-after-text: var(--on_surface) !important;
+
+    /* override color digit on homepage */
+    .count__digit,
+    .counter__description {
+      color: var(--on_surface) !important;
+    }
+  }
+}
