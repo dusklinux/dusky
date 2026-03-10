@@ -1,0 +1,74 @@
+@-moz-document domain("gemini.google.com") {
+
+    body {
+        color-scheme: dark !important;
+
+        --gem-sys-color--primary: var(--primary) !important;
+        --gem-sys-color--on-primary: var(--on_primary) !important;
+        --gem-sys-color--primary-container: var(--primary_container) !important;
+        --gem-sys-color--on-primary-container: var(--on_primary_container) !important;
+        --gem-sys-color--secondary: var(--secondary) !important;
+        --gem-sys-color--on-secondary: var(--on_secondary) !important;
+        --gem-sys-color--secondary-container: var(--secondary_container) !important;
+        --gem-sys-color--on-secondary-container: var(--secondary) !important;
+        --gem-sys-color--tertiary: var(--tertiary) !important;
+        --gem-sys-color--on-tertiary: var(--on_tertiary) !important;
+        --gem-sys-color--error: var(--secondary) !important;
+        --gem-sys-color--on-error: var(--on_secondary) !important;
+
+        --gem-sys-color--surface: var(--surface) !important;
+        --gem-sys-color--surface-bright: var(--surface_bright) !important;
+        --gem-sys-color--surface-container: var(--surface_container) !important;
+        --gem-sys-color--surface-container-high: var(--surface_container_high) !important;
+        --gem-sys-color--surface-container-highest: var(--surface_container_highest) !important;
+        --gem-sys-color--surface-container-low: var(--surface_container_low) !important;
+        --gem-sys-color--surface-container-lowest: var(--surface_container_lowest) !important;
+        --bard-color-synthetic--chat-window-surface: var(--gem-sys-color--surface) !important;
+        --mat-app-background-color: var(--gem-sys-color--surface) !important;
+
+        --gem-sys-color--on-surface: var(--on_surface) !important;
+        --gem-sys-color--on-surface-variant: var(--on_surface_variant) !important;
+        --mat-app-text-color: var(--gem-sys-color--on-surface) !important;
+        --bard-color-form-field-placeholder: var(--tertiary) !important;
+
+        --gem-sys-color--outline: var(--outline) !important;
+        --gem-sys-color--outline-variant: var(--outline_variant) !important;
+
+        --bard-color-response-container-flipped-background: var(--surface_container) !important;
+        --bard-color-zero-state-prompt-chip-background: var(--outline) !important;
+        --bard-color-zero-state-prompt-chip-text: var(--secondary) !important;
+        --bard-color-image-placeholder-background: var(--surface_container) !important;
+
+        --bard-color-code-comment: var(--tertiary) !important;
+        --bard-color-code-variables: var(--tertiary) !important;
+        --bard-color-code-literal: var(--primary) !important;
+        --bard-color-code-class: var(--tertiary) !important;
+        --bard-color-code-string: var(--secondary) !important;
+        --bard-color-code-quotes-and-meta: var(--tertiary) !important;
+        --bard-color-code-keyword: var(--secondary) !important;
+
+        --mat-form-field-outlined-input-text-color: var(--on_surface) !important;
+        --mat-form-field-filled-input-text-color: var(--on_surface) !important;
+        --mat-select-enabled-trigger-text-color: var(--on_surface) !important;
+        --mat-menu-item-label-text-color: var(--on_surface) !important;
+        --mat-list-list-item-label-text-color: var(--on_surface) !important;
+        --mat-dialog-subhead-color: var(--on_surface) !important;
+        --mat-dialog-supporting-text-color: var(--on_surface) !important;
+    }
+
+    body,
+    body.light-theme {
+        background-color: var(--gem-sys-color--surface) !important;
+        color: var(--gem-sys-color--on-surface) !important;
+    }
+
+
+    bard-sidenav {
+        background-color: var(--gem-sys-color--surface-container) !important;
+    }
+
+    .ia-redesign infinite-scroller {
+        --bottom-gradient-color: transparent !important;
+        --top-gradient-color: transparent !important;
+    }
+}
