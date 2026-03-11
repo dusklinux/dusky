@@ -239,6 +239,19 @@ if command -v spicetify &> /dev/null && [ -d "$HOME/.config/spicetify/Themes/Com
 fi
 '''
 
+[templates.vacuumtube]
+input_path = '~/.config/matugen/templates/vacuumtube.css'
+output_path = '~/.config/matugen/generated/vacuumtube.css'
+post_hool = '''
+bash -c '
+{
+  if command -v startvacuumtube >/dev/null 2>&1; then
+    ln -nfs "$HOME/.config/matugen/generated/vacuumtube.css" "$HOME/.config/VacuumTube/userstyles/matugen.css"
+  fi
+} >/dev/null 2>&1 </dev/null & disown
+'
+'''
+
 [templates.cava]
 input_path  = '~/.config/matugen/templates/cava-colors.ini'
 output_path = '~/.config/matugen/generated/cava-colors.ini'
