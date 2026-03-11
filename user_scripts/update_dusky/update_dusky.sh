@@ -2538,8 +2538,7 @@ pull_updates() {
     fi
 
     base_commit="$("${GIT_CMD[@]}" merge-base "$local_head" "$remote_head" 2>/dev/null)" || mb_rc=$?
-
-    if (( mb_rc == 1 || (mb_rc == 0 && -z "$base_commit") )); then
+    if (( mb_rc == 1 )) || [[ "$mb_rc" -eq 0 && -z "$base_commit" ]]; then
         if handle_unrelated_upstream_history "$remote_ref"; then
             [[ "$OPT_DRY_RUN" == true ]] || ensure_repo_defaults
             [[ "$OPT_DRY_RUN" == true ]] || log OK "Repository synchronized."
