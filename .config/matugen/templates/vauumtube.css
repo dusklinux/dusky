@@ -1,7 +1,7 @@
 #container {
-    background-color: #101418;
+    background-color: {{colors.surface.default.hex}};
 }
 
 * {
-    color: #9dcafc;
+    color: {{colors.primary.default.hex}};
 }
