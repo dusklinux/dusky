@@ -110,7 +110,7 @@ declare -ri LOG_RETENTION_DAYS=14
 declare -ri BACKUP_RETENTION_DAYS=14
 declare -ri DISK_MIN_FREE_MB=100
 declare -ri DISK_COPY_RESERVE_MB=64
-declare -r VERSION="8.0"
+declare -r VERSION="8.0.1"
 declare -ri SYNC_RC_RECOVERABLE=10
 declare -ri SYNC_RC_UNSAFE=20
 
@@ -127,6 +127,8 @@ declare -r FALLBACK_LOG_BASE_DIR="${STATE_HOME_DIR}/logs"
 declare -r FALLBACK_BACKUP_BASE_DIR="${STATE_HOME_DIR}/backups"
 declare -r REPO_URL="https://github.com/dusklinux/dusky"
 declare -r BRANCH="main"
+declare -r UPSTREAM_REMOTE="dusky-upstream"
+declare -r UPSTREAM_TRACKING_REF="refs/dusky-updater/upstream/${BRANCH}"
 
 # ==============================================================================
 # USER CONFIGURATION
@@ -352,6 +354,7 @@ declare -g SYNC_FAILED=false
 
 declare -g USER_MODS_BACKUP_DIR=""
 declare -g FULL_TRACKED_BACKUP_DIR=""
+declare -g GIT_HISTORY_BACKUP_DIR=""
 declare -g MERGE_DIR=""
 declare -g PRE_SYNC_HEAD=""
 
@@ -571,7 +574,7 @@ Options:
   --sync-only              Pull updates but do not run scripts
   --force                  Skip confirmation prompts
   --stop-on-fail           Abort script execution on first hard failure
-  --allow-diverged-reset   In non-interactive mode, allow reset on diverged history
+  --allow-diverged-reset   In non-interactive mode, allow reset on diverged or unrelated history
   --list                   List all active scripts in the update sequence
 
 Update sequence entry formats:
@@ -1127,7 +1130,8 @@ auto_prune() {
             -o -name 'user_mods_*' \
             -o -name 'untracked_collisions_*' \
             -o -name 'needs_merge_*' \
-            -o -name 'initial_conflicts_*' \) \
+            -o -name 'initial_conflicts_*' \
+            -o -name 'repo_history_*' \) \
             -mtime "+${BACKUP_RETENTION_DAYS}" \
             -exec rm -rf {} + 2>/dev/null || true
     fi
@@ -1137,13 +1141,30 @@ auto_prune() {
 # GIT HELPERS
 # ==============================================================================
 detect_git_lock_state() {
-    local lock_name=""
-    for lock_name in index.lock config.lock packed-refs.lock shallow.lock HEAD.lock; do
+    local lock_name="" ref_lock=""
+
+    for lock_name in \
+        index.lock \
+        config.lock \
+        packed-refs.lock \
+        shallow.lock \
+        HEAD.lock \
+        ORIG_HEAD.lock \
+        FETCH_HEAD.lock
+    do
         if [[ -e "${DOTFILES_GIT_DIR}/${lock_name}" ]]; then
             printf '%s' "$lock_name"
             return 0
         fi
     done
+
+    if [[ -d "${DOTFILES_GIT_DIR}/refs" ]]; then
+        while IFS= read -r -d '' ref_lock; do
+            printf '%s' "${ref_lock#${DOTFILES_GIT_DIR}/}"
+            return 0
+        done < <(find "${DOTFILES_GIT_DIR}/refs" -type f -name '*.lock' -print0 2>/dev/null)
+    fi
+
     printf 'none'
 }
 
@@ -1214,6 +1235,16 @@ get_repo_state() {
         if (( lock_age > 60 )); then
             log INFO "Lock file is ${lock_age}s old and is not open by any live process."
             can_auto_delete=true
+        fi
+
+        if [[ "$OPT_DRY_RUN" == true ]]; then
+            if [[ "$can_auto_delete" == "true" ]]; then
+                log WARN "[DRY-RUN] Stale Git lock detected at $lock_file. Dry-run will not remove it."
+            else
+                log WARN "[DRY-RUN] Git lock detected at $lock_file. Dry-run will not remove it."
+            fi
+            REPLY="invalid"
+            return 0
         fi
 
         if [[ -t 0 && "$OPT_FORCE" != true ]]; then
@@ -1316,39 +1347,51 @@ normalize_git_state() {
     esac
 }
 
-ensure_origin_remote() {
-    local current_url=""
+canonicalize_git_remote_url() {
+    local url="${1-}"
 
-    current_url="$("${GIT_CMD[@]}" remote get-url origin 2>/dev/null || true)"
-    if [[ -z "$current_url" ]]; then
-        log WARN "No origin remote configured."
-        if [[ "$OPT_DRY_RUN" == true ]]; then
-            log INFO "[DRY-RUN] Would add origin remote: $REPO_URL"
-        else
-            log INFO "Adding origin remote..."
-            "${GIT_CMD[@]}" remote add origin "$REPO_URL" >> "$LOG_FILE" 2>&1 || {
-                log ERROR "Failed to add origin remote"
-                return 1
-            }
-        fi
-    elif [[ "${current_url%.git}" != "${REPO_URL%.git}" ]]; then
-        log WARN "Remote mismatch detected: $current_url"
-        if [[ "$OPT_DRY_RUN" == true ]]; then
-            log INFO "[DRY-RUN] Would update origin to: $REPO_URL"
-        else
-            log INFO "Updating origin to: $REPO_URL"
-            "${GIT_CMD[@]}" remote set-url origin "$REPO_URL" >> "$LOG_FILE" 2>&1 || {
-                log ERROR "Failed to update origin remote"
-                return 1
-            }
-        fi
-    fi
+    url="${url%/}"
+    url="${url%.git}"
 
-    return 0
+    case "$url" in
+        git@github.com:*)
+            printf 'github.com/%s' "${url#git@github.com:}"
+            ;;
+        ssh://git@github.com/*)
+            printf 'github.com/%s' "${url#ssh://git@github.com/}"
+            ;;
+        https://github.com/*)
+            printf 'github.com/%s' "${url#https://github.com/}"
+            ;;
+        http://github.com/*)
+            printf 'github.com/%s' "${url#http://github.com/}"
+            ;;
+        *)
+            printf '%s' "$url"
+            ;;
+    esac
 }
 
-git_path_is_tracked() {
-    "${GIT_CMD[@]}" ls-files --error-unmatch -- "$1" >/dev/null 2>&1
+get_upstream_fetch_source() {
+    local expected_url="" active_remote="" current_url=""
+
+    expected_url="$(canonicalize_git_remote_url "$REPO_URL")"
+
+    for active_remote in origin "$UPSTREAM_REMOTE"; do
+        current_url="$("${GIT_CMD[@]}" remote get-url "$active_remote" 2>/dev/null || true)"
+        if [[ -n "$current_url" && "$(canonicalize_git_remote_url "$current_url")" == "$expected_url" ]]; then
+            REPLY="$active_remote"
+            return 0
+        fi
+    done
+
+    current_url="$("${GIT_CMD[@]}" remote get-url "$UPSTREAM_REMOTE" 2>/dev/null || true)"
+    if [[ -n "$current_url" ]]; then
+        log WARN "Existing ${UPSTREAM_REMOTE} remote points elsewhere; leaving it unchanged."
+    fi
+
+    REPLY="$REPO_URL"
+    return 0
 }
 
 collect_dir_collision_roots() {
@@ -1565,30 +1608,33 @@ backup_worktree_collisions_for_ref() {
 }
 
 fetch_with_retry() {
+    local source="${1:?missing fetch source}"
     local attempt=1
     local wait_time=$FETCH_INITIAL_BACKOFF
     local rc=0
 
-    while ((attempt <= FETCH_MAX_ATTEMPTS)); do
-        if timeout "${FETCH_TIMEOUT}s" "${GIT_CMD[@]}" fetch --no-write-fetch-head origin \
-            "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" >> "$LOG_FILE" 2>&1; then
+    while (( attempt <= FETCH_MAX_ATTEMPTS )); do
+        if timeout "${FETCH_TIMEOUT}s" \
+            "${GIT_CMD[@]}" fetch --no-write-fetch-head "$source" \
+            "+refs/heads/${BRANCH}:${UPSTREAM_TRACKING_REF}" \
+            >> "$LOG_FILE" 2>&1; then
             return 0
         fi
 
         rc=$?
-        if ((attempt < FETCH_MAX_ATTEMPTS)); then
-            if ((rc == 124)); then
+        if (( attempt < FETCH_MAX_ATTEMPTS )); then
+            if (( rc == 124 )); then
                 log WARN "Fetch attempt $attempt/$FETCH_MAX_ATTEMPTS timed out. Retrying in ${wait_time}s..."
             else
                 log WARN "Fetch attempt $attempt/$FETCH_MAX_ATTEMPTS failed. Retrying in ${wait_time}s..."
             fi
             sleep "$wait_time"
-            ((wait_time *= 2))
+            (( wait_time *= 2 ))
         fi
-        ((attempt++))
+        (( attempt++ ))
     done
 
-    if ((rc == 124)); then
+    if (( rc == 124 )); then
         log ERROR "Fetch failed after $FETCH_MAX_ATTEMPTS attempts due to repeated timeouts"
     else
         log ERROR "Fetch failed after $FETCH_MAX_ATTEMPTS attempts"
@@ -1635,11 +1681,15 @@ clone_with_retry() {
 show_update_preview() {
     local local_head="$1"
     local remote_head="$2"
-    local commit_count="?"
+    local base_commit="${3:-}"
+    local diff_base="" commit_count="?"
     local -a changed_files=()
 
+    diff_base="$local_head"
+    [[ -n "$base_commit" ]] && diff_base="$base_commit"
+
     commit_count="$("${GIT_CMD[@]}" rev-list --count "${local_head}..${remote_head}" 2>/dev/null || printf '?')"
-    mapfile -d '' -t changed_files < <("${GIT_CMD[@]}" diff -z --name-only "${local_head}..${remote_head}" 2>/dev/null || true)
+    mapfile -d '' -t changed_files < <("${GIT_CMD[@]}" diff -z --name-only "${diff_base}..${remote_head}" 2>/dev/null || true)
 
     printf '\n'
     log INFO "Upstream changes:"
@@ -1670,6 +1720,64 @@ git_head_path_meta() {
     else
         printf ''
     fi
+}
+
+handle_unrelated_upstream_history() {
+    local remote_ref="${1:?missing remote ref}"
+    local sync_choice="1"
+
+    log WARN "Local repository does not share history with ${remote_ref}."
+
+    if [[ "$OPT_DRY_RUN" == true ]]; then
+        log INFO "[DRY-RUN] Would back up the current tracked tree and Git history, then reset to ${remote_ref}"
+        return 0
+    fi
+
+    if [[ -t 0 ]]; then
+        printf '\n%s[UNRELATED HISTORY]%s The existing bare repo at %s is not based on Dusky upstream.\n' \
+            "$CLR_YLW" "$CLR_RST" "$DOTFILES_GIT_DIR"
+        printf '  1) Abort (keep current state) [DEFAULT]\n'
+        printf '  %s2) Replace local repo contents with upstream [RECOMMENDED]%s\n' \
+            "$CLR_GRN" "$CLR_RST"
+        printf '     Current tracked files and Git history will be backed up before reset.\n\n'
+
+        read -r -t "$PROMPT_TIMEOUT_LONG" -p "Choice [1-2] (default: 1): " sync_choice 2>/dev/null || sync_choice="1"
+    elif [[ "$OPT_ALLOW_DIVERGED_RESET" == true ]]; then
+        sync_choice="2"
+    else
+        log ERROR "Non-interactive mode and unrelated history. Aborting to prevent data loss (use --allow-diverged-reset to override)."
+        return "$SYNC_RC_RECOVERABLE"
+    fi
+
+    sync_choice="${sync_choice:-1}"
+
+    case "$sync_choice" in
+        1)
+            log INFO "Aborted by user."
+            return "$SYNC_RC_RECOVERABLE"
+            ;;
+        2)
+            backup_git_history || return "$SYNC_RC_UNSAFE"
+            backup_worktree_collisions_for_ref "$remote_ref" true || return "$SYNC_RC_UNSAFE"
+            backup_full_tracked_tree || return "$SYNC_RC_UNSAFE"
+
+            log INFO "Resetting to ${remote_ref}..."
+            if "${GIT_CMD[@]}" reset --hard "$remote_ref" >> "$LOG_FILE" 2>&1; then
+                log OK "Reset complete."
+                log WARN "Previous tracked files were preserved in a full backup and were not auto-restored because the histories are unrelated."
+                log INFO "Review the preserved backup at: $FULL_TRACKED_BACKUP_DIR"
+            else
+                log ERROR "Reset failed."
+                return "$SYNC_RC_UNSAFE"
+            fi
+            ;;
+        *)
+            log INFO "Invalid choice. Aborting."
+            return "$SYNC_RC_RECOVERABLE"
+            ;;
+    esac
+
+    return 0
 }
 
 # ==============================================================================
@@ -1882,6 +1990,42 @@ backup_full_tracked_tree() {
     return 0
 }
 
+backup_git_history() {
+    local backup_root="" backup_repo="" info_file=""
+    local required_bytes=0
+
+    if [[ -n "$GIT_HISTORY_BACKUP_DIR" && -d "$GIT_HISTORY_BACKUP_DIR" ]]; then
+        return 0
+    fi
+
+    required_bytes="$(path_copy_size_bytes "$DOTFILES_GIT_DIR")"
+    check_disk_space "$ACTIVE_BACKUP_BASE_DIR" || return 1
+    ensure_free_space_for_bytes "$ACTIVE_BACKUP_BASE_DIR" "$required_bytes" "Git history backup" || return 1
+
+    backup_root="$(make_private_dir_under "$ACTIVE_BACKUP_BASE_DIR" "repo_history_${RUN_TIMESTAMP}_XXXXXX")" || {
+        log ERROR "Failed to create Git history backup directory"
+        return 1
+    }
+
+    backup_repo="${backup_root}/repo.git"
+    cp -a --reflink=auto -- "$DOTFILES_GIT_DIR" "$backup_repo" || {
+        log ERROR "Failed to preserve Git history backup"
+        return 1
+    }
+
+    info_file="${backup_root}/INFO.txt"
+    {
+        printf 'Dusky Git history backup\n'
+        printf 'Created: %s\n' "$RUN_TIMESTAMP"
+        printf 'Source: %s\n' "$DOTFILES_GIT_DIR"
+    } > "$info_file" || true
+    chmod 600 -- "$info_file" 2>/dev/null || true
+
+    GIT_HISTORY_BACKUP_DIR="$backup_root"
+    log OK "Git history backup preserved at: $backup_root"
+    return 0
+}
+
 ensure_merge_dir() {
     if [[ -n "$MERGE_DIR" && -d "$MERGE_DIR" ]]; then
         return 0
@@ -1965,8 +2109,9 @@ classify_restore_action() {
 atomic_restore_path() {
     local src="$1"
     local target="$2"
-    local parent="" base="" probe_path="" tmpdir="" tmp=""
+    local parent="" base="" probe_path="" tmpdir="" tmp="" displaced=""
     local -i copy_bytes=0
+    local mv_rc=0
 
     parent="$(path_parent "$target")"
     base="$(path_base "$target")"
@@ -1983,11 +2128,25 @@ atomic_restore_path() {
     CREATED_TEMP_DIRS+=("$tmpdir")
 
     tmp="${tmpdir}/${base}"
-    cp -a --reflink=auto -- "$src" "$tmp" || return 1
-    mv -fT -- "$tmp" "$target" || return 1
+    displaced="${tmpdir}/.old_${base}"
 
-    rm -rf -- "$tmpdir" 2>/dev/null || true
-    return 0
+    cp -a --reflink=auto -- "$src" "$tmp" || return 1
+
+    if path_exists "$target"; then
+        mv -fT -- "$target" "$displaced" || return 1
+    fi
+
+    if mv -fT -- "$tmp" "$target"; then
+        rm -rf -- "$tmpdir" 2>/dev/null || true
+        return 0
+    fi
+
+    mv_rc=$?
+    if path_exists "$displaced" && ! path_exists "$target"; then
+        mv -fT -- "$displaced" "$target" 2>/dev/null || true
+    fi
+
+    return "$mv_rc"
 }
 
 restore_user_modifications() {
@@ -2222,8 +2381,8 @@ initial_clone() {
 
     if [[ -t 0 && "$OPT_FORCE" != true ]]; then
         printf '\n'
-        read -r -t "$PROMPT_TIMEOUT_LONG" -p "Clone from ${REPO_URL}? [Y/n] " do_clone || do_clone="y"
-        do_clone="${do_clone:-y}"
+        read -r -t "$PROMPT_TIMEOUT_LONG" -p "Clone from ${REPO_URL}? [y/N] " do_clone || do_clone="n"
+        do_clone="${do_clone:-n}"
     fi
 
     if [[ ! "$do_clone" =~ ^[Yy]$ ]]; then
@@ -2253,6 +2412,30 @@ initial_clone() {
     return 0
 }
 
+initialize_unborn_repo_from_ref() {
+    local remote_ref="${1:?missing remote ref}"
+
+    if [[ "$OPT_DRY_RUN" == true ]]; then
+        log INFO "[DRY-RUN] Would initialize unborn repository from ${remote_ref}"
+        return 0
+    fi
+
+    "${GIT_CMD[@]}" symbolic-ref HEAD "refs/heads/${BRANCH}" >> "$LOG_FILE" 2>&1 || {
+        log ERROR "Failed to point HEAD at refs/heads/${BRANCH}"
+        return 1
+    }
+
+    backup_worktree_collisions_for_ref "$remote_ref" false || return 1
+
+    if "${GIT_CMD[@]}" reset --hard "$remote_ref" >> "$LOG_FILE" 2>&1; then
+        log OK "Initialized existing empty repository from upstream."
+        return 0
+    fi
+
+    log ERROR "Failed to initialize unborn repository from upstream."
+    return 1
+}
+
 # ==============================================================================
 # PULL UPDATES
 # ==============================================================================
@@ -2260,10 +2443,12 @@ pull_updates() {
     log SECTION "Synchronizing Dotfiles Repository"
 
     local repo_state=""
+    local fetch_source="" remote_ref="$UPSTREAM_TRACKING_REF"
     local local_head="" remote_head="" base_commit=""
-    local sync_choice="2"
+    local sync_choice="1"
     local rebase_output="" rebase_rc=0
     local clone_rc=0
+    local mb_rc=0
 
     get_repo_state
     repo_state="$REPLY"
@@ -2288,29 +2473,42 @@ pull_updates() {
             ;;
     esac
 
-    ensure_repo_defaults
     normalize_git_state || return "$SYNC_RC_UNSAFE"
-    ensure_origin_remote || return "$SYNC_RC_UNSAFE"
+    get_upstream_fetch_source || return "$SYNC_RC_UNSAFE"
+    fetch_source="$REPLY"
 
     log INFO "Fetching from upstream..."
     if [[ "$OPT_DRY_RUN" == true ]]; then
-        log INFO "[DRY-RUN] Would fetch from origin/${BRANCH}"
+        log INFO "[DRY-RUN] Would fetch branch ${BRANCH} from ${fetch_source}"
     else
-        fetch_with_retry || return "$SYNC_RC_RECOVERABLE"
+        fetch_with_retry "$fetch_source" || return "$SYNC_RC_RECOVERABLE"
         log OK "Fetch complete."
     fi
 
     log INFO "Checking sync status..."
-    local_head="$("${GIT_CMD[@]}" rev-parse HEAD 2>/dev/null || true)"
-    remote_head="$("${GIT_CMD[@]}" rev-parse "origin/${BRANCH}" 2>/dev/null || true)"
+    local_head="$("${GIT_CMD[@]}" rev-parse --verify -q HEAD 2>/dev/null || true)"
+    remote_head="$("${GIT_CMD[@]}" rev-parse --verify -q "$remote_ref" 2>/dev/null || true)"
 
-    if [[ -z "$local_head" || -z "$remote_head" ]]; then
+    if [[ -z "$remote_head" ]]; then
         if [[ "$OPT_DRY_RUN" == true ]]; then
-            log WARN "[DRY-RUN] No cached remote refs found. Cannot preview sync status."
+            log WARN "[DRY-RUN] No cached upstream ref found. Cannot preview sync status."
             return 0
         fi
-        log ERROR "Cannot determine HEAD commits"
+        log ERROR "Cannot determine upstream HEAD for ${BRANCH}"
         return "$SYNC_RC_UNSAFE"
+    fi
+
+    if [[ -z "$local_head" ]]; then
+        if [[ "$OPT_DRY_RUN" == true ]]; then
+            log INFO "[DRY-RUN] Existing repository has an unborn HEAD. Would initialize it from ${remote_ref}."
+            return 0
+        fi
+
+        log WARN "Local repository has no commits yet. Initializing it from upstream..."
+        initialize_unborn_repo_from_ref "$remote_ref" || return "$SYNC_RC_UNSAFE"
+        ensure_repo_defaults
+        log OK "Repository synchronized."
+        return 0
     fi
 
     if [[ "$local_head" == "$remote_head" ]]; then
@@ -2323,45 +2521,58 @@ pull_updates() {
             changed_status="${CHANGE_STATUS["$changed_path"]:-}"
             case "$changed_status" in
                 D|T)
-                    ((unhealthy_tracked++)) || true
+                    (( unhealthy_tracked++ )) || true
                     ;;
             esac
         done
 
         if (( unhealthy_tracked > 0 )); then
-            log WARN "HEAD matches origin/${BRANCH}, but ${unhealthy_tracked} tracked path(s) are missing or type-mismatched in the work tree."
+            log WARN "HEAD matches ${remote_ref}, but ${unhealthy_tracked} tracked path(s) are missing or type-mismatched in the work tree."
             log INFO "Leaving local files untouched because those paths may be intentional user changes."
         else
             log OK "Already up to date."
         fi
+
+        [[ "$OPT_DRY_RUN" == true ]] || ensure_repo_defaults
         return 0
     fi
 
-    show_update_preview "$local_head" "$remote_head"
-    base_commit="$("${GIT_CMD[@]}" merge-base "$local_head" "$remote_head" 2>/dev/null || true)"
-    if [[ -z "$base_commit" ]]; then
-        log ERROR "Cannot determine merge-base with upstream"
+    base_commit="$("${GIT_CMD[@]}" merge-base "$local_head" "$remote_head" 2>/dev/null)" || mb_rc=$?
+
+    if (( mb_rc == 1 || (mb_rc == 0 && -z "$base_commit") )); then
+        if handle_unrelated_upstream_history "$remote_ref"; then
+            [[ "$OPT_DRY_RUN" == true ]] || ensure_repo_defaults
+            [[ "$OPT_DRY_RUN" == true ]] || log OK "Repository synchronized."
+            return 0
+        else
+            return $?
+        fi
+    elif (( mb_rc != 0 )); then
+        log ERROR "Cannot determine merge-base with upstream (git exit code $mb_rc). Repository may be corrupted."
         return "$SYNC_RC_UNSAFE"
     fi
+
+    show_update_preview "$local_head" "$remote_head" "$base_commit"
 
     if [[ "$base_commit" == "$local_head" ]]; then
         log INFO "Fast-forwarding to upstream..."
 
         if [[ "$OPT_DRY_RUN" == true ]]; then
-            log INFO "[DRY-RUN] Would reset --hard to origin/${BRANCH}"
+            log INFO "[DRY-RUN] Would reset --hard to ${remote_ref}"
             return 0
         fi
 
-        backup_worktree_collisions_for_ref "origin/${BRANCH}" true || return "$SYNC_RC_UNSAFE"
+        backup_worktree_collisions_for_ref "$remote_ref" true || return "$SYNC_RC_UNSAFE"
         capture_tracked_changes_manifest || return "$SYNC_RC_UNSAFE"
         backup_user_modifications || {
             log ERROR "Backup failed. Aborting update to protect your files."
             return "$SYNC_RC_UNSAFE"
         }
 
-        if "${GIT_CMD[@]}" reset --hard "origin/${BRANCH}" >> "$LOG_FILE" 2>&1; then
+        if "${GIT_CMD[@]}" reset --hard "$remote_ref" >> "$LOG_FILE" 2>&1; then
             log OK "Updated to latest."
             restore_user_modifications || return "$SYNC_RC_UNSAFE"
+            ensure_repo_defaults
         else
             log ERROR "Reset failed."
             return "$SYNC_RC_UNSAFE"
@@ -2370,17 +2581,17 @@ pull_updates() {
         log WARN "Local history diverged from upstream."
 
         if [[ "$OPT_DRY_RUN" == true ]]; then
-            log INFO "[DRY-RUN] History diverged. Would require reset or rebase to upstream."
+            log INFO "[DRY-RUN] History diverged. Would require reset or rebase to ${remote_ref}."
             return 0
         fi
 
         if [[ -t 0 ]]; then
             printf '\n%s[DIVERGED HISTORY]%s Choose sync method:\n' "$CLR_YLW" "$CLR_RST"
-            printf '  1) Abort (keep current state)\n'
+            printf '  1) Abort (keep current state) [DEFAULT]\n'
             printf '  %s2) Reset to upstream [RECOMMENDED]%s\n' "$CLR_GRN" "$CLR_RST"
             printf '     Your uncommitted tweaks will be backed up and auto-restored where safe.\n'
             printf '  3) Attempt rebase (may fail)\n\n'
-            read -r -t "$PROMPT_TIMEOUT_LONG" -p "Choice [1-3] (default: 2): " sync_choice 2>/dev/null || sync_choice="2"
+            read -r -t "$PROMPT_TIMEOUT_LONG" -p "Choice [1-3] (default: 1): " sync_choice 2>/dev/null || sync_choice="1"
         elif [[ "$OPT_ALLOW_DIVERGED_RESET" == true ]]; then
             sync_choice="2"
         else
@@ -2388,7 +2599,7 @@ pull_updates() {
             return "$SYNC_RC_RECOVERABLE"
         fi
 
-        sync_choice="${sync_choice:-2}"
+        sync_choice="${sync_choice:-1}"
 
         case "$sync_choice" in
             1)
@@ -2396,38 +2607,42 @@ pull_updates() {
                 return "$SYNC_RC_RECOVERABLE"
                 ;;
             2)
-                backup_worktree_collisions_for_ref "origin/${BRANCH}" true || return "$SYNC_RC_UNSAFE"
+                backup_git_history || return "$SYNC_RC_UNSAFE"
+                backup_worktree_collisions_for_ref "$remote_ref" true || return "$SYNC_RC_UNSAFE"
                 capture_tracked_changes_manifest || return "$SYNC_RC_UNSAFE"
                 backup_full_tracked_tree || return "$SYNC_RC_UNSAFE"
                 backup_user_modifications || return "$SYNC_RC_UNSAFE"
 
                 log INFO "Resetting to upstream..."
-                if "${GIT_CMD[@]}" reset --hard "origin/${BRANCH}" >> "$LOG_FILE" 2>&1; then
+                if "${GIT_CMD[@]}" reset --hard "$remote_ref" >> "$LOG_FILE" 2>&1; then
                     log OK "Reset complete."
                     restore_user_modifications || return "$SYNC_RC_UNSAFE"
+                    ensure_repo_defaults
                 else
                     log ERROR "Reset failed."
                     return "$SYNC_RC_UNSAFE"
                 fi
                 ;;
             3)
-                backup_worktree_collisions_for_ref "origin/${BRANCH}" true || return "$SYNC_RC_UNSAFE"
+                backup_git_history || return "$SYNC_RC_UNSAFE"
+                backup_worktree_collisions_for_ref "$remote_ref" true || return "$SYNC_RC_UNSAFE"
                 capture_tracked_changes_manifest || return "$SYNC_RC_UNSAFE"
                 backup_full_tracked_tree || return "$SYNC_RC_UNSAFE"
                 backup_user_modifications || return "$SYNC_RC_UNSAFE"
 
                 "${GIT_CMD[@]}" reset --hard HEAD >> "$LOG_FILE" 2>&1 || true
                 log INFO "Attempting rebase..."
-                rebase_output="$("${GIT_CMD[@]}" rebase "origin/${BRANCH}" 2>&1)" || rebase_rc=$?
+                rebase_output="$("${GIT_CMD[@]}" rebase "$remote_ref" 2>&1)" || rebase_rc=$?
                 printf '%s\n' "$rebase_output" >> "$LOG_FILE"
 
-                if ((rebase_rc != 0)); then
+                if (( rebase_rc != 0 )); then
                     log ERROR "Rebase failed. Aborting and resetting..."
                     "${GIT_CMD[@]}" rebase --abort >> "$LOG_FILE" 2>&1 || true
 
-                    if "${GIT_CMD[@]}" reset --hard "origin/${BRANCH}" >> "$LOG_FILE" 2>&1; then
+                    if "${GIT_CMD[@]}" reset --hard "$remote_ref" >> "$LOG_FILE" 2>&1; then
                         log OK "Fallback reset complete."
                         restore_user_modifications || return "$SYNC_RC_UNSAFE"
+                        ensure_repo_defaults
                     else
                         log ERROR "Reset also failed."
                         return "$SYNC_RC_UNSAFE"
@@ -2435,6 +2650,7 @@ pull_updates() {
                 else
                     log OK "Rebase successful."
                     restore_user_modifications || return "$SYNC_RC_UNSAFE"
+                    ensure_repo_defaults
                 fi
                 ;;
             *)
@@ -2703,6 +2919,11 @@ cleanup() {
         printf '    %s\n' "$FULL_TRACKED_BACKUP_DIR"
     fi
 
+    if [[ -n "$GIT_HISTORY_BACKUP_DIR" && -d "$GIT_HISTORY_BACKUP_DIR" ]]; then
+        log INFO "Git history backup preserved at:"
+        printf '    %s\n' "$GIT_HISTORY_BACKUP_DIR"
+    fi
+
     print_summary
 
     if ((${#HARD_FAILED_SCRIPTS[@]} > 0)); then
@@ -2758,10 +2979,6 @@ main() {
     CURRENT_PHASE="preflight"
     parse_update_sequence_manifest
     require_sudo_if_needed || exit 1
-
-    if [[ "$OPT_NEEDS_SUDO" == true && -z "$SUDO_PID" && "$OPT_DRY_RUN" != true ]]; then
-        init_sudo
-    fi
 
     local self_hash_before=""
     if [[ "$OPT_DRY_RUN" != true && "$OPT_POST_SELF_UPDATE" != true && -r "$SELF_PATH" ]]; then

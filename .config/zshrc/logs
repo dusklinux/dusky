@@ -1,16 +1,22 @@
 # ==============================================================================
-# function: logs
-# function for script testing, logging, troubleshooting
+# function: logs (detailed_log)
+# description: The ultimate, zero-regression execution and logging wrapper.
+# deployment: Production-ready for mass distribution.
 # ==============================================================================
-
 logs() {
     emulate -L zsh
-    # Strictly prevent Zsh from implicitly duplicating streams or swallowing pipe errors
     setopt local_options NO_NOMATCH PIPE_FAIL NO_MULTIOS
+    umask 077
 
-    local opt_strace=0 opt_quiet=0 opt_strict=0 opt_outdir="" opt_timeout=""
-    local script_path script_name script_dir
+    local -i opt_strace=0 opt_quiet=0 opt_strict=0 opt_journal=0
+    local opt_outdir="" opt_timeout=""
+    local raw_target="" script_exec_path="" script_resolved_path="" script_name="" script_dir="" bash_bin=""
     local -a script_args=()
+
+    local c_red="" c_yellow="" c_green="" c_blue="" c_bold="" c_reset=""
+    if [[ -t 2 && "${TERM:-}" != "dumb" ]]; then
+        c_red=$'\e[31m'; c_yellow=$'\e[33m'; c_green=$'\e[32m'; c_blue=$'\e[34m'; c_bold=$'\e[1m'; c_reset=$'\e[0m'
+    fi
 
     # --- 1. Robust Option Parsing
     while (( $# )); do
@@ -20,85 +26,87 @@ logs() {
                 printf '  -s, --strace    Trace system calls (-f -tt -T -y -yy)\n'
                 printf '  -q, --quiet     Suppress terminal output (logs only)\n'
                 printf '  -S, --strict    Inject strict mode (set -euo pipefail)\n'
-                printf '  -t, --timeout   Set max execution time in seconds (e.g., -t 30)\n'
-                printf '  -o <outdir>     Specify custom output directory\n'
+                printf '  -j, --journal   Capture journalctl entries after the run\n'
+                printf '  -t, --timeout   Set max execution time (e.g., 30, 2m)\n'
+                printf '  -o, --outdir    Specify custom output directory\n'
                 return 0
                 ;;
             -s|--strace) opt_strace=1; shift ;;
-            -q|--quiet)  opt_quiet=1;  shift ;;
+            -q|--quiet) opt_quiet=1; shift ;;
             -S|--strict) opt_strict=1; shift ;;
+            -j|--journal) opt_journal=1; shift ;;
             -t|--timeout)
                 shift
-                if (( $# == 0 )) || [[ "$1" == -* ]]; then
-                    printf '\e[31mError: -t requires a numeric argument\e[0m\n' >&2
+                if [[ ! "$1" =~ ^[0-9]+([.][0-9]+)?(s|m|h|d)?$ ]]; then
+                    printf '%sError:%s -t requires a duration (e.g., 30s, 2m)\n' "$c_red" "$c_reset" >&2
                     return 2
                 fi
                 opt_timeout="$1"; shift 
                 ;;
-            -o)
+            --timeout=*) opt_timeout="${1#*=}"; shift ;;
+            -o|--outdir)
                 shift
                 if (( $# == 0 )) || [[ "$1" == -* ]]; then
-                    printf '\e[31mError: -o requires a directory argument\e[0m\n' >&2
+                    printf '%sError:%s -o requires a directory argument\n' "$c_red" "$c_reset" >&2
                     return 2
                 fi
                 opt_outdir="$1"; shift 
                 ;;
+            --outdir=*) opt_outdir="${1#*=}"; shift ;;
             --) shift; break ;;
-            -*) printf '\e[31mError: Unknown option %s\e[0m\n' "$1" >&2; return 2 ;;
+            -*) printf '%sError:%s Unknown option %s\n' "$c_red" "$c_reset" "$1" >&2; return 2 ;;
             *)  break ;;
         esac
     done
 
     if (( $# == 0 )); then
-        printf '\e[31mError: No script provided.\e[0m\n' >&2
+        printf '%sError:%s No script provided.\n' "$c_red" "$c_reset" >&2
         return 2
     fi
 
-    local raw_script="$1"; shift
+    raw_target="$1"; shift
     script_args=("$@")
 
-    # --- 2. Path Resolution & Validation
-    if ! script_path=$(realpath -e -- "$raw_script" 2>/dev/null); then
-        if (( $+commands[$raw_script] )); then
-            if ! script_path=$(realpath -e -- "${commands[$raw_script]}" 2>/dev/null); then
-                 printf '\e[31mError: Could not resolve path for command: %s\e[0m\n' "$raw_script" >&2
-                 return 1
-            fi
-        else
-            printf '\e[31mError: Script not found or not readable: %s\e[0m\n' "$raw_script" >&2
-            return 1
-        fi
-    fi
-
-    if [[ ! -f "$script_path" || ! -r "$script_path" ]]; then
-        printf '\e[31mError: Target is not a regular readable file: %s\e[0m\n' "$script_path" >&2
+    # --- 2. Hardened Path & Dependency Resolution
+    if ! bash_bin=$(command -v bash 2>/dev/null); then
+        printf '%sError:%s bash not found in PATH.\n' "$c_red" "$c_reset" >&2
         return 1
     fi
 
-    script_name="${script_path:t}"
-    script_dir="${script_path:h}"
-
-    # Determine execution mode (Preserve native shebangs/flags if executable)
-    local launch_mode="forced_bash"
-    local shebang
-    shebang=$(head -n1 "$script_path" 2>/dev/null)
-    
-    if [[ -x "$script_path" && "$shebang" == \#!*bash* ]]; then
-        launch_mode="direct"
-    elif [[ "$shebang" == \#!* && ! "$shebang" =~ (bash|/sh$|/sh\ |/dash|/ash|/env[[:space:]]+(sh|bash)) ]]; then
-        printf '\e[33mWarning: Script interpreter is "%s" but forcing Bash execution.\e[0m\n' "${shebang:0:50}" >&2
+    if [[ "$raw_target" == */* ]]; then
+        script_exec_path="$raw_target"
+    elif [[ -e "$raw_target" ]]; then
+        script_exec_path="$raw_target"
+    elif (( $+commands[$raw_target] )); then
+        script_exec_path="${commands[$raw_target]}"
+    else
+        printf '%sError:%s target not found: %s\n' "$c_red" "$c_reset" "$raw_target" >&2
+        return 1
     fi
 
-    # --- 3. Session Setup & Pre-Flight Diagnostics
-    local ts base outdir session_dir
-    ts=$(date '+%Y%m%d-%H%M%S')
-    
-    base="${opt_outdir:-$HOME/Documents/logs/script_logs}"
-    outdir="${base%/}"
-    session_dir="${outdir}/${script_name}.${ts}.$$"
+    if ! script_resolved_path=$(realpath -e -- "$script_exec_path" 2>/dev/null); then
+        printf '%sError:%s could not resolve target: %s\n' "$c_red" "$c_reset" "$script_exec_path" >&2
+        return 1
+    fi
 
-    mkdir -p -m 700 -- "$session_dir" || {
-        printf '\e[31mError: Failed to create session dir: %s\e[0m\n' "$session_dir" >&2
+    local mime=$(file -b --mime-type "$script_resolved_path" 2>/dev/null)
+    if [[ "$mime" != text/* && "$mime" != application/x-executable ]]; then
+        printf '%sError:%s Target is a binary, not a shell script (MIME: %s)\n' "$c_red" "$c_reset" "$mime" >&2
+        return 1
+    fi
+
+    script_name="${script_resolved_path:t}"
+    script_dir="${script_resolved_path:h}"
+
+    # --- 3. Collision-Proof Session Directory
+    local ts=$(date '+%Y%m%d-%H%M%S')
+    local base="${opt_outdir:-$HOME/Documents/logs/script_logs}"
+    local outdir="${base%/}"
+    mkdir -p -m 700 -- "$outdir"
+    
+    local session_dir
+    session_dir=$(mktemp -d "${outdir}/${script_name}.${ts}.XXXXXX") || {
+        printf '%sError:%s Failed to generate session directory.\n' "$c_red" "$c_reset" >&2
         return 1
     }
 
@@ -111,239 +119,235 @@ logs() {
     local journal_log="${session_dir}/systemd_journal.log"
     local error_dump="${session_dir}/error_state_dump.txt"
     local snapshot_path="${session_dir}/script_snapshot.source"
-    local pid_file="${session_dir}/pid.txt" 
     local env_prelude="${session_dir}/.bash_prelude.sh"
+    local fifo_out="${session_dir}/fifo_out"
+    local fifo_err="${session_dir}/fifo_err"
+    local exit_code=0
+    local pre_sha256="$(sha256sum -- "$script_resolved_path" 2>/dev/null | awk '{print $1}')"
 
-    # Zsh TRAPEXIT: Indestructible cleanup, guaranteed to run even on SIGINT/SIGTERM
-    TRAPEXIT() {
-        rm -f -- "$env_prelude" 2>/dev/null
-    }
+    # ==========================================================================
+    # ENCLOSING ZSH ALWAYS BLOCK - Guarantees Subshell-Immune Teardown
+    # ==========================================================================
+    {
+        # --- 4. Pre-Flight Checks & Snapshots
+        touch "$trace_log" "$stdout_log" "$stderr_log" "$comb_log"
+        mkfifo -m 600 "$fifo_out" "$fifo_err"
 
-    # Source Code Snapshotting (reflink for modern filesystems)
-    cp -a --reflink=auto -- "$script_path" "$snapshot_path" 2>/dev/null || cp -a -- "$script_path" "$snapshot_path"
+        cp -a --reflink=auto -- "$script_resolved_path" "$snapshot_path" 2>/dev/null || cp -a -- "$script_resolved_path" "$snapshot_path"
 
-    # Static Analysis (Shellcheck & Syntax)
-    if (( $+commands[shellcheck] )); then
-        shellcheck --shell=bash -x -- "$script_path" > "${session_dir}/shellcheck_preflight.log" 2>&1
-    fi
-    bash -n -- "$script_path" > "${session_dir}/syntax_preflight.log" 2>&1
+        if ! "$bash_bin" -n -- "$script_resolved_path" > "${session_dir}/syntax_preflight.log" 2>&1; then
+            printf '%s[!] CRITICAL:%s Bash syntax check failed. Execution aborted.\n' "$c_red" "$c_reset" >&2
+            cat "${session_dir}/syntax_preflight.log" >&2
+            exit_code=1
+            return 1
+        fi
 
-    # Systemd Journal Cursor Intercept
-    local j_cursor=""
-    if (( $+commands[journalctl] )); then
-        j_cursor=$(journalctl --show-cursor -q 2>/dev/null | awk '{print $NF}')
-    fi
+        if (( $+commands[shellcheck] )); then
+            shellcheck --shell=bash -x -- "$script_resolved_path" > "${session_dir}/shellcheck_preflight.log" 2>&1
+        fi
 
-    # --- 4. The Deep Diagnostics BASH_ENV Injection
-    cat >"$env_prelude" <<'EOF'
-# Native Bash Injection Prelude
+        local j_cursor=""
+        if (( opt_journal )) && (( $+commands[journalctl] )); then
+            j_cursor=$(journalctl -n 0 --show-cursor -q 2>/dev/null | awk '{print $NF}')
+        fi
+
+        # --- 5. BASH_ENV Payload Injection
+        cat >"$env_prelude" <<'EOF'
 unset BASH_ENV
 
-if [[ -n "${DL_PID_FILE:-}" ]]; then 
-    echo "$BASHPID" > "$DL_PID_FILE"
-    unset DL_PID_FILE
-fi
-
-# Open trace FD natively within Bash to survive close-on-exec boundaries
 if [[ -n "${DL_TRACE_LOG:-}" ]]; then
-    exec {BASH_XTRACEFD}>>"${DL_TRACE_LOG}"
-    export BASH_XTRACEFD
+    if exec {__dl_xtrace_fd}>>"$DL_TRACE_LOG" 2>/dev/null; then
+        BASH_XTRACEFD=$__dl_xtrace_fd
+    fi
 fi
-
-# Inheritance and strict mode application
-set -o errtrace
-set -o functrace
 
 if [[ "${DL_STRICT:-0}" == "1" ]]; then
-    set -o errexit
-    set -o nounset
-    set -o pipefail
+    set -o errexit -o nounset -o pipefail
     shopt -s inherit_errexit 2>/dev/null || true
 fi
 
-# Advanced Error Trap
+set -o errtrace -o functrace
+__DL_TRAP_FIRED=0
+
 __dl_err() {
     local _ret=$?
-    # MUST be captured immediately before any other command executes
     local -a _pipe_status=("${PIPESTATUS[@]}")  
+    local _trigger="${1:-}"
+
+    if [[ "$_trigger" == "EXIT" && "$_ret" == 0 ]]; then return 0; fi
+
+    local is_fatal=0
+    [[ "$_trigger" == "EXIT" ]] || [[ "$-" == *e* ]] && is_fatal=1
+
+    if (( ! is_fatal )); then
+        builtin echo -e "\e[1;33m[WARN] Unchecked command failed (Exit $_ret): ${BASH_COMMAND:-unknown}\e[0m" >&2
+        return 0
+    fi
+
+    [[ "$__DL_TRAP_FIRED" == "1" ]] && return 0
+    __DL_TRAP_FIRED=1
+
     local _cmd="${BASH_COMMAND:-unknown}"
     local _src="${BASH_SOURCE[1]:-${BASH_SOURCE[0]:-unknown}}"
     local _lin="${BASH_LINENO[0]:-?}"
     
-    # Dump process state to a dedicated file
+    set +e +u 
+    set +o pipefail 2>/dev/null || true
+
     if [[ -n "${DL_ERROR_DUMP:-}" ]]; then
         {
             printf '=== CRITICAL ERROR AT %s ===\n' "$(date '+%H:%M:%S.%N')"
             printf 'Exit Code: %s\nCommand: %s\n' "$_ret" "$_cmd"
             printf 'PIPESTATUS: ( %s )\n' "${_pipe_status[*]}"
             printf '\n--- OPEN FILE DESCRIPTORS (/proc/%s/fd) ---\n' "$BASHPID"
-            ls -l "/proc/$BASHPID/fd" 2>/dev/null
+            ls -l "/proc/$BASHPID/fd" 2>/dev/null || true
             printf '\n--- VARIABLE STATE (declare -p) ---\n'
-            declare -p 2>/dev/null
+            declare -p 2>/dev/null | awk -F= 'BEGIN {IGNORECASE=1} {k=$1; if (k ~ /(^|_)(PASS(WORD)?|TOKEN|SECRET|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|AUTH|CREDENTIAL|COOKIE|SESSION)(_|$)/) {print k "=[REDACTED]"} else {print $0}}' || true
         } >> "$DL_ERROR_DUMP"
     fi
 
     builtin echo -e "\n\e[1;41m  SCRIPT ERROR DETECTED  \e[0m" >&2
     builtin echo -e "\e[1;31m Exit Code:\e[0m $_ret \e[37m| PIPESTATUS: ( ${_pipe_status[*]} )\e[0m" >&2
     builtin echo -e "\e[1;31m Command  :\e[0m $_cmd" >&2
-    
     builtin echo -e "\e[1;33m Call Stack:\e[0m" >&2
     local frame=0
-    while builtin caller $frame; do
-        ((frame++))
-    done | awk '{printf "  \033[36m↳\033[0m %s:%s (\033[35m%s\033[0m)\n", $3, $1, $2}' >&2
+    while builtin caller $frame; do ((frame++)); done | awk '{printf "  \033[36m↳\033[0m %s:%s (\033[35m%s\033[0m)\n", $3, $1, $2}' >&2
     
-    # Source Context parsing
     if [[ -f "$_src" && "$_lin" =~ ^[0-9]+$ ]]; then
         builtin echo -e "\e[1;33m Source Context:\e[0m" >&2
-        awk -v n="$_lin" 'NR >= n - 3 && NR <= n + 3 { printf "  %s %6d | %s\n", (NR == n ? "\033[1;31m>\033[0m" : " "), NR, $0 }' "$_src" >&2
+        awk -v n="$_lin" 'NR >= n - 3 && NR <= n + 3 { printf "  %s %6d | %s\n", (NR == n ? "\033[1;31m>\033[0m" : "  "), NR, $0 }' "$_src" >&2
     fi
-    
-    if [[ -n "${DL_ERROR_DUMP:-}" ]]; then
-        builtin echo -e "\n\e[1;34m [!] Full variable and FD state dumped to: \e[4m$(basename "$DL_ERROR_DUMP")\e[0m\n" >&2
-    fi
+    builtin echo -e "\n\e[1;34m [!] Full variable and FD state dumped to: \e[4m$(basename "$DL_ERROR_DUMP")\e[0m\n" >&2
 }
-trap '__dl_err' ERR
 
-# Engage xtrace at the very end to prevent prelude initialization leakage
+trap '__dl_err ERR' ERR
+trap '__dl_err EXIT' EXIT
+
 set -o xtrace
 EOF
 
-    # --- 5. Context & Metadata Capture
-    {
-        printf 'session_start=%s\n' "$(date --iso-8601=seconds)"
-        printf 'script_path=%s\n' "$script_path"
-        printf 'launch_mode=%s\n' "$launch_mode"
-        printf 'user=%s uid=%d\n' "$USER" "$UID"
-        printf 'host=%s kernel=%s\n' "${HOST:-$(hostname)}" "$(uname -r)"
-        printf 'bash_version=%s\n' "$(bash --version | head -n1)"
-        printf 'sha256=%s\n' "$(sha256sum -- "$script_path" 2>/dev/null | cut -d' ' -f1)"
-        
-        # Zsh-safe stat parsing for exact octal permissions and size
-        local -a fstat
-        fstat=( $(stat -c '%a %s' -- "$script_path" 2>/dev/null || echo "000 0") )
-        printf 'mode=%s size=%s\n' "${fstat[1]}" "${fstat[2]}"
-        
-        if (( $+commands[git] )) && git -C "$script_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            printf 'git_branch=%s\n' "$(git -C "$script_dir" rev-parse --abbrev-ref HEAD)"
-            printf 'git_commit=%s\n' "$(git -C "$script_dir" rev-parse HEAD)"
-            printf 'git_dirty=%s\n'  "$(git -C "$script_dir" status --porcelain | grep -q . && echo 'true' || echo 'false')"
-        else
-            printf 'git_context=none\n'
+        # --- 6. Metadata Capture
+        {
+            printf 'session_start=%s\n' "$(date --iso-8601=seconds)"
+            printf 'script_path=%s\n' "$script_resolved_path"
+            printf 'user=%s uid=%d\n' "$USER" "$UID"
+            printf 'host=%s kernel=%s\n' "${HOST:-$(hostname)}" "$(uname -r)"
+            printf 'bash_version=%s\n' "$($bash_bin --version | head -n1)"
+            printf 'source_sha256_before=%s\n' "$pre_sha256"
+            
+            local -a fstat=( $(stat -c '%a %s' -- "$script_resolved_path" 2>/dev/null || echo "000 0") )
+            printf 'mode=%s size=%s\n' "${fstat[1]}" "${fstat[2]}"
+            
+            if (( $+commands[git] )) && git -C "$script_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+                printf 'git_branch=%s\n' "$(git -C "$script_dir" rev-parse --abbrev-ref HEAD)"
+                printf 'git_commit=%s\n' "$(git -C "$script_dir" rev-parse HEAD)"
+                printf 'git_dirty=%s\n'  "$(git -C "$script_dir" status --porcelain | grep -q . && echo 'true' || echo 'false')"
+            else
+                printf 'git_context=none\n'
+            fi
+            
+            printf 'args=('
+            (( ${#script_args} )) && printf ' %q' "${script_args[@]}"
+            printf ' )\n'
+        } > "$meta_log" 2>/dev/null
+
+        {
+            echo "=== INITIAL SYSTEM STATE ==="
+            uptime; echo
+            free -m; echo
+            df -hT / /home 2>/dev/null; echo
+            lscpu | awk '/^(Model name|CPU\(s\)|Thread\(s\) per core):/ { print }'; echo
+            echo "=== INITIAL ENVIRONMENT ==="
+            env | LC_ALL=C sort | awk -F= 'BEGIN {IGNORECASE=1} {k=$1; if (k ~ /(^|_)(PASS(WORD)?|TOKEN|SECRET|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|AUTH|CREDENTIAL|COOKIE|SESSION)(_|$)/) {print k "=[REDACTED]"} else {print $0}}'
+        } > "$sys_log" 2>/dev/null
+
+        (( opt_quiet )) || printf 'Session Logging Active: %s%s%s\n' "$c_blue" "$session_dir" "$c_reset" >&2
+
+        # --- 7. Execution Assembly
+        local -a cmd_prefix=()
+        if [[ -x /usr/bin/time ]]; then
+            cmd_prefix+=( /usr/bin/time -v -o "${session_dir}/resource_usage.log" )
         fi
-        
-        printf 'args=('
-        (( ${#script_args} )) && printf ' %q' "${script_args[@]}"
-        printf ' )\n'
-    } > "$meta_log" 2>/dev/null
-
-    # System Resources Pre-flight
-    {
-        echo "=== INITIAL SYSTEM STATE ==="
-        uptime; echo
-        free -m; echo
-        df -hT / /home 2>/dev/null; echo
-        lscpu | grep -E "(Model name|CPU\(s\):|Thread)"; echo
-        echo "=== INITIAL ENVIRONMENT ==="
-        env | sort
-    } > "$sys_log" 2>/dev/null
-
-    (( opt_quiet )) || printf 'Session Logging Active: \e[34m%s\e[0m\n' "$session_dir"
-
-    # --- 6. Execution Pre-Flight Assembly
-    local exit_code=0
-    local bash_bin
-    
-    if ! bash_bin=$(command -v bash); then
-        printf '\e[31mError: bash not found in PATH.\e[0m\n' >&2
-        return 1
-    fi
-
-    local -a cmd_prefix=()
-    
-    # GNU Time Wrapper
-    if (( $+commands[time] )) && [[ -f "/usr/bin/time" ]]; then
-        cmd_prefix+=( /usr/bin/time -v -o "${session_dir}/resource_usage.log" )
-    fi
-
-    # Timeout Wrapper
-    if [[ -n "$opt_timeout" ]] && (( $+commands[timeout] )); then
-        cmd_prefix+=( timeout "$opt_timeout" )
-    fi
-
-    # Strace Wrapper
-    if (( opt_strace )); then
-        if (( $+commands[strace] )); then
-            cmd_prefix+=(strace -f -tt -T -y -yy -s 1024 -o "${session_dir}/strace_dump")
-        else
-            printf '\e[33mWarning: strace not found, skipping system call trace.\e[0m\n' >&2
+        if [[ -n "$opt_timeout" ]] && (( $+commands[timeout] )); then
+            cmd_prefix+=( timeout --foreground "$opt_timeout" )
         fi
-    fi
-
-    local -a t_cmd=( stdbuf -i0 -o0 -e0 tee -a )
-
-    # --- 7. The Subshell Execution (Atomic Multiplexing)
-    (
-        export BASH_ENV="$env_prelude"
-        export DL_STRICT="$opt_strict"
-        export DL_TRACE_LOG="$trace_log"
-        export DL_ERROR_DUMP="$error_dump"
-        export DL_PID_FILE="$pid_file" 
-        
-        export PS4='+[$EPOCHREALTIME] [PID:$$/SUB:$BASHPID] [${BASH_SOURCE[0]:-unknown}:${LINENO:-0}:${FUNCNAME[0]:-MAIN}] '
-
-        local -a cmd=()
-        if [[ "$launch_mode" == "direct" ]]; then
-            cmd=( "${cmd_prefix[@]}" "$script_path" "${script_args[@]}" )
-        else
-            # We don't pass -x here because the BASH_ENV prelude triggers it securely
-            local -a bash_flags=()
-            (( opt_strict )) && bash_flags+=( -e -u -o pipefail )
-            cmd=( "${cmd_prefix[@]}" "$bash_bin" "${bash_flags[@]}" "--" "$script_path" "${script_args[@]}" )
+        if (( opt_strace )) && (( $+commands[strace] )); then
+            cmd_prefix+=( strace -f -tt -T -y -yy -s 1024 -o "${session_dir}/strace_dump" )
         fi
 
-        exec 3>&1
+        # Start asynchronous logging daemons on the FIFOs (Fixing the unquoted string split bug)
+        local -a t_cmd=( tee -a )
+        if [[ -x "/usr/bin/stdbuf" ]]; then
+            t_cmd=( /usr/bin/stdbuf -i0 -o0 -e0 tee -a )
+        fi
 
-        # Synchronous execution pipeline with perfectly restored routing
         if (( opt_quiet )); then
-             { 
-                 { exec "${cmd[@]}"; } | "${t_cmd[@]}" "$stdout_log" "$comb_log" >/dev/null; 
-             } 2>&1 1>&3 | "${t_cmd[@]}" "$stderr_log" "$comb_log" >/dev/null 3>&-
+            < "$fifo_out" "${t_cmd[@]}" "$stdout_log" >> "$comb_log" &
+            local out_pid=$!
+            < "$fifo_err" "${t_cmd[@]}" "$stderr_log" >> "$comb_log" &
+            local err_pid=$!
         else
-             { 
-                 { exec "${cmd[@]}"; } | "${t_cmd[@]}" "$stdout_log" "$comb_log"; 
-             } 2>&1 1>&3 | "${t_cmd[@]}" "$stderr_log" "$comb_log" >&2 3>&-
+            < "$fifo_out" "${t_cmd[@]}" "$stdout_log" "$comb_log" &
+            local out_pid=$!
+            < "$fifo_err" "${t_cmd[@]}" "$stderr_log" "$comb_log" >&2 &
+            local err_pid=$!
         fi
+
+        # --- 8. The Direct Execution Trigger
+        (
+            export BASH_ENV="$env_prelude"
+            export DL_TRACE_LOG="$trace_log"
+            export DL_ERROR_DUMP="$error_dump"
+            export DL_STRICT="$opt_strict"
+            export PS4='+[$EPOCHREALTIME] [PID:$$/SUB:$BASHPID] [${BASH_SOURCE[0]##*/}:${LINENO:-0}:${FUNCNAME[0]:-MAIN}] '
+
+            exec "${cmd_prefix[@]}" "$bash_bin" "$script_resolved_path" "${script_args[@]}" > "$fifo_out" 2> "$fifo_err"
+        ) &
+        local child_pid=$!
         
-        exit ${pipestatus[1]}
-    )
-    exit_code=$?
-    
-    # --- 8. Finalization & Teardown
-    printf 'session_end=%s\n' "$(date --iso-8601=seconds)" >> "$meta_log" 2>/dev/null
-    printf 'exit_code=%d\n' "$exit_code" >> "$meta_log" 2>/dev/null
+        wait "$child_pid"
+        exit_code=$?
 
-    if [[ -n "$j_cursor" ]] && (( $+commands[journalctl] )); then
-        journalctl --after-cursor="$j_cursor" > "$journal_log" 2>/dev/null
-        [[ -s "$journal_log" ]] || rm -f -- "$journal_log"
-    fi
+        # --- 9. Anti-Orphan-Hang Teardown
+        ( sleep 0.5; kill $out_pid $err_pid 2>/dev/null ) &
+        local flush_killer=$!
+        wait $out_pid $err_pid 2>/dev/null || true
+        kill $flush_killer 2>/dev/null || true
 
-    if (( ! opt_quiet )); then
-        echo ""
-        if (( exit_code == 0 )); then
-            printf 'Result: \e[1;32mSUCCESS (0)\e[0m\n'
-        elif (( exit_code == 124 )) && [[ -n "$opt_timeout" ]]; then
-            printf 'Result: \e[1;33mTIMED OUT (124)\e[0m - Terminated after %ss\n' "$opt_timeout"
-        else
-            printf 'Result: \e[1;31mFAILED (%d)\e[0m -> Check \e[3m%s/stderr.log\e[0m\n' "$exit_code" "$session_dir"
+        # --- 10. Finalization
+        local post_sha256="$(sha256sum -- "$script_resolved_path" 2>/dev/null | awk '{print $1}')"
+        printf 'session_end=%s\n' "$(date --iso-8601=seconds)" >> "$meta_log" 2>/dev/null
+        printf 'exit_code=%d\n' "$exit_code" >> "$meta_log" 2>/dev/null
+        printf 'source_sha256_after=%s\n' "$post_sha256" >> "$meta_log" 2>/dev/null
+
+        if (( opt_journal )) && [[ -n "$j_cursor" ]]; then
+            journalctl --after-cursor="$j_cursor" > "$journal_log" 2>/dev/null
+            [[ -s "$journal_log" ]] || rm -f -- "$journal_log"
         fi
-        printf 'Artifacts stored at: \e[1;36m%s\e[0m\n' "$session_dir"
-        
-        [[ -f "$journal_log" ]] && printf '  ├─ \e[36msystemd_journal.log\e[0m (Kernel/System events captured!)\n'
-        [[ -f "${session_dir}/resource_usage.log" ]] && printf '  ├─ \e[36mresource_usage.log\e[0m  (GNU Time profiling)\n'
-        [[ -f "$error_dump" ]] && printf '  ├─ \e[31merror_state_dump.txt\e[0m (Crash variable & FD state)\n'
-        printf '  └─ \e[36mscript_snapshot.source\e[0m (Immutable code copy)\n'
-    fi
+
+        if (( ! opt_quiet )); then
+            echo "" >&2
+            if (( exit_code == 0 )); then
+                printf 'Result: %sSUCCESS%s (0)\n' "$c_green" "$c_reset" >&2
+            elif (( exit_code == 124 )) && [[ -n "$opt_timeout" ]]; then
+                printf 'Result: %sTIMED OUT%s (124) - Terminated after %s\n' "$c_yellow" "$c_reset" "$opt_timeout" >&2
+            else
+                printf 'Result: %sFAILED%s (%d) -> Check %s/stderr.log\n' "$c_red" "$c_reset" "$exit_code" "$session_dir" >&2
+            fi
+            printf 'Artifacts stored at: %s%s%s\n' "$c_bold" "$session_dir" "$c_reset" >&2
+            
+            [[ -f "${session_dir}/trace.log" ]] && printf '  ├─ trace.log           (Step-by-step Bash traces)\n' >&2
+            [[ -f "$journal_log" ]] && printf '  ├─ systemd_journal.log (Kernel/System events captured!)\n' >&2
+            [[ -f "${session_dir}/resource_usage.log" ]] && printf '  ├─ resource_usage.log  (GNU Time profiling)\n' >&2
+            [[ -f "$error_dump" ]] && printf '  ├─ error_state_dump.txt (Crash variable & FD state)\n' >&2
+            printf '  └─ script_snapshot.source (Immutable code copy)\n' >&2
+        fi
+
+    } always {
+        # The ultimate guarantee: Subshells CANNOT execute this block.
+        # It will only trigger once, safely, when the entire wrapper concludes.
+        rm -f -- "$env_prelude" "$fifo_out" "$fifo_err" 2>/dev/null
+    }
 
     return $exit_code
 }
