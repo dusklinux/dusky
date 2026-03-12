@@ -239,7 +239,6 @@ post_hook   = '''
 if command -v btop >/dev/null 2>&1; then
   mkdir -p "$HOME/.config/btop/themes"
   ln -nfs "$HOME/.config/matugen/generated/btop-colors.theme" "$HOME/.config/btop/themes/matugen.theme"
-  notify-send -i applications-graphics-symbolic "Theme Updated"
 fi
 '''
 
@@ -266,4 +265,11 @@ output_path = '/dev/null'
 post_hook   = '''
   systemctl --user reset-failed hyprpolkitagent
   systemctl --user restart hyprpolkitagent
+'''
+
+[templates.conclude_notify]
+input_path  = '/dev/null'
+output_path = '/dev/null'
+post_hook   = '''
+  notify-send -i applications-graphics-symbolic "Theme Updated"
 '''
