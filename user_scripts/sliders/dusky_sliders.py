@@ -8,7 +8,6 @@ Tuned for current Arch Linux + Python 3.14.
 from __future__ import annotations
 
 import functools
-import gc
 import logging
 import math
 import os
@@ -27,7 +26,7 @@ try:
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
     from gi.repository import Adw, Gdk, Gio, GLib, Gtk
-except ImportError as exc:
+except (ImportError, ValueError) as exc:
     raise SystemExit(f"Failed to load GTK4/Libadwaita: {exc}")
 
 APP_ID = "org.dusky.sliders"
@@ -40,15 +39,20 @@ if not logging.getLogger().handlers:
 
 LOG = logging.getLogger(APP_ID)
 
+# Keep command output locale-stable so numeric parsing remains reliable.
+COMMAND_ENV = dict(os.environ)
+COMMAND_ENV["LC_ALL"] = "C"
+COMMAND_ENV["LANG"] = "C"
+
 type CommandArg = str | os.PathLike[str]
 
-DEFAULT_VOLUME = 50.0
-DEFAULT_BRIGHTNESS = 50.0
 DEFAULT_SUNSET = 4500.0
 
 QUERY_TIMEOUT = 1.0
 CONTROL_TIMEOUT = 2.0
 SUNSET_READY_TIMEOUT = 3.0
+SUNSET_FALLBACK_READY_TIMEOUT = 1.5
+LIVE_REFRESH_INTERVAL_SECONDS = 2
 
 
 def clamp(value: float, lower: float, upper: float) -> float:
@@ -67,7 +71,8 @@ def snap_to_step(value: float, lower: float, upper: float, step: float) -> float
     if step <= 0:
         return clamp(value, lower, upper)
 
-    snapped = lower + round((value - lower) / step) * step
+    scaled = (value - lower) / step
+    snapped = lower + math.floor(scaled + 0.5 + 1e-12) * step
     return round(clamp(snapped, lower, upper), 10)
 
 
@@ -92,6 +97,7 @@ def run_command(
             stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=timeout,
+            env=COMMAND_ENV,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -101,11 +107,24 @@ def _resolve_state_dir() -> Path | None:
     candidates: list[Path] = []
     seen: set[str] = set()
 
+    xdg_state_home = os.environ.get("XDG_STATE_HOME")
+    if xdg_state_home:
+        path = Path(xdg_state_home)
+        if path.is_absolute():
+            candidates.append(path / APP_ID)
+
+    try:
+        candidates.append(Path.home() / ".local" / "state" / APP_ID)
+    except (OSError, RuntimeError):
+        pass
+
     xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
     if xdg_runtime_dir:
-        candidates.append(Path(xdg_runtime_dir))
+        path = Path(xdg_runtime_dir)
+        if path.is_absolute():
+            candidates.append(path / APP_ID)
 
-    candidates.append(Path(f"/run/user/{os.getuid()}"))
+    candidates.append(Path(f"/run/user/{os.getuid()}") / APP_ID)
     candidates.append(Path(tempfile.gettempdir()) / f"{APP_ID}-{os.getuid()}")
 
     for path in candidates:
@@ -137,15 +156,15 @@ SYSTEMCTL = shutil.which("systemctl")
 
 
 @functools.cache
-def _best_sysfs_backlight() -> tuple[Path, Path] | None:
+def _sysfs_backlight_candidates() -> tuple[tuple[int, int, Path], ...]:
     base = Path("/sys/class/backlight")
     if not base.is_dir():
-        return None
+        return ()
 
     try:
         entries = tuple(base.iterdir())
     except OSError:
-        return None
+        return ()
 
     candidates: list[tuple[int, int, Path]] = []
 
@@ -163,6 +182,9 @@ def _best_sysfs_backlight() -> tuple[Path, Path] | None:
         except (OSError, ValueError):
             continue
 
+        if max_value <= 0:
+            continue
+
         name = entry.name.lower()
         priority = 0
         if name.startswith("intel_backlight"):
@@ -178,16 +200,49 @@ def _best_sysfs_backlight() -> tuple[Path, Path] | None:
 
         candidates.append((priority, max_value, entry))
 
-    if not candidates:
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return tuple(candidates)
+
+
+@functools.cache
+def _best_sysfs_backlight(*, require_writable: bool = False) -> tuple[Path, Path] | None:
+    for _, _, entry in _sysfs_backlight_candidates():
+        brightness_path = entry / "brightness"
+        max_brightness_path = entry / "max_brightness"
+
+        if require_writable and not os.access(brightness_path, os.W_OK):
+            continue
+
+        return brightness_path, max_brightness_path
+
+    return None
+
+
+@functools.cache
+def _preferred_sysfs_backlight() -> tuple[Path, Path] | None:
+    return _best_sysfs_backlight(require_writable=True) or _best_sysfs_backlight()
+
+
+@functools.cache
+def _preferred_backlight_name() -> str | None:
+    sysfs_paths = _preferred_sysfs_backlight()
+    if sysfs_paths is None:
+        return None
+    return sysfs_paths[0].parent.name
+
+
+def _brightnessctl_command_base() -> list[str] | None:
+    if BRIGHTNESSCTL is None:
         return None
 
-    _, _, best = max(candidates, key=lambda item: (item[0], item[1]))
-    return best / "brightness", best / "max_brightness"
+    args = [BRIGHTNESSCTL, "-c", "backlight"]
+    if (device_name := _preferred_backlight_name()) is not None:
+        args.extend(["-d", device_name])
+    return args
 
 
 def _has_writable_sysfs_backlight() -> bool:
-    paths = _best_sysfs_backlight()
-    return paths is not None and os.access(paths[0], os.W_OK)
+    return _best_sysfs_backlight(require_writable=True) is not None
 
 
 def _has_hyprland_session() -> bool:
@@ -195,13 +250,15 @@ def _has_hyprland_session() -> bool:
 
 
 HAS_VOLUME = WPCTL is not None
-HAS_BRIGHTNESS = BRIGHTNESSCTL is not None or _has_writable_sysfs_backlight()
+HAS_BRIGHTNESS = _preferred_sysfs_backlight() is not None and (
+    BRIGHTNESSCTL is not None or _has_writable_sysfs_backlight()
+)
 HAS_SUNSET = HYPRCTL is not None and HYPRSUNSET is not None and _has_hyprland_session()
 
 
-def get_volume() -> float:
+def get_volume() -> float | None:
     if WPCTL is None:
-        return DEFAULT_VOLUME
+        return None
 
     result = run_command(
         [WPCTL, "get-volume", "@DEFAULT_AUDIO_SINK@"],
@@ -209,15 +266,15 @@ def get_volume() -> float:
         capture_stdout=True,
     )
     if result is None or result.returncode != 0:
-        return DEFAULT_VOLUME
+        return None
 
     parts = result.stdout.split()
     if len(parts) < 2:
-        return DEFAULT_VOLUME
+        return None
 
     value = parse_float(parts[1])
     if value is None:
-        return DEFAULT_VOLUME
+        return None
 
     return clamp(value * 100.0, 0.0, 100.0)
 
@@ -246,7 +303,7 @@ def apply_volume(value: float) -> None:
 
 
 def _read_sysfs_brightness() -> float | None:
-    sysfs_paths = _best_sysfs_backlight()
+    sysfs_paths = _preferred_sysfs_backlight()
     if sysfs_paths is None:
         return None
 
@@ -264,7 +321,7 @@ def _read_sysfs_brightness() -> float | None:
 
 
 def _write_sysfs_brightness(value: float) -> bool:
-    sysfs_paths = _best_sysfs_backlight()
+    sysfs_paths = _best_sysfs_backlight(require_writable=True)
     if sysfs_paths is None:
         return False
 
@@ -290,10 +347,10 @@ def _write_sysfs_brightness(value: float) -> bool:
     return True
 
 
-def get_brightness() -> float:
-    if BRIGHTNESSCTL is not None:
+def get_brightness() -> float | None:
+    if (base_cmd := _brightnessctl_command_base()) is not None:
         result = run_command(
-            [BRIGHTNESSCTL, "-m"],
+            [*base_cmd, "-m"],
             timeout=QUERY_TIMEOUT,
             capture_stdout=True,
         )
@@ -307,19 +364,15 @@ def get_brightness() -> float:
                     if value is not None:
                         return clamp(value, 0.0, 100.0)
 
-    value = _read_sysfs_brightness()
-    if value is not None:
-        return value
-
-    return DEFAULT_BRIGHTNESS
+    return _read_sysfs_brightness()
 
 
 def apply_brightness(value: float) -> None:
     brightness = int(clamp(round(value), 1, 100))
 
-    if BRIGHTNESSCTL is not None:
+    if (base_cmd := _brightnessctl_command_base()) is not None:
         result = run_command(
-            [BRIGHTNESSCTL, "set", f"{brightness}%", "-q"],
+            [*base_cmd, "-q", "set", f"{brightness}%"],
             timeout=CONTROL_TIMEOUT,
         )
         if result is not None and result.returncode == 0:
@@ -346,6 +399,20 @@ def get_hyprsunset_state() -> float:
     return clamp(value, 1000.0, 6000.0)
 
 
+def _fsync_directory(path: Path) -> None:
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return
+
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def atomic_write_state(value: float) -> bool:
     if STATE_FILE is None:
         return False
@@ -353,6 +420,8 @@ def atomic_write_state(value: float) -> bool:
     temp_path: Path | None = None
 
     try:
+        STATE_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+
         fd, raw_temp_path = tempfile.mkstemp(
             dir=STATE_FILE.parent,
             prefix=".sunset_",
@@ -367,6 +436,7 @@ def atomic_write_state(value: float) -> bool:
             os.fsync(handle.fileno())
 
         os.replace(temp_path, STATE_FILE)
+        _fsync_directory(STATE_FILE.parent)
         temp_path = None
         return True
     except OSError as exc:
@@ -382,6 +452,7 @@ def atomic_write_state(value: float) -> bool:
 
 class LatestValueExecutor:
     def __init__(self, name: str, apply_func: Callable[[float], None]) -> None:
+        self._name = name
         self._apply_func = apply_func
         self._condition = threading.Condition()
         self._pending: float | None = None
@@ -417,6 +488,8 @@ class LatestValueExecutor:
             self._running = False
             self._condition.notify_all()
         self._thread.join(timeout=timeout)
+        if self._thread.is_alive():
+            LOG.warning("%s worker did not stop within %.1fs", self._name, timeout)
 
     def _worker(self) -> None:
         while True:
@@ -490,6 +563,8 @@ class DebouncedStateWriter:
             self._running = False
             self._condition.notify_all()
         self._thread.join(timeout=timeout)
+        if self._thread.is_alive():
+            LOG.warning("sunset state writer did not stop within %.1fs", timeout)
 
     def _worker(self) -> None:
         while True:
@@ -544,7 +619,6 @@ class HyprsunsetController:
 
     def stop(self, timeout: float = 3.0) -> None:
         self._executor.stop(timeout)
-        self._state_writer.flush(timeout)
         self._state_writer.stop(timeout)
 
     def _apply(self, value: float) -> None:
@@ -557,15 +631,25 @@ class HyprsunsetController:
         self._ready.clear()
         self._start_daemon()
 
-        deadline = time.monotonic() + SUNSET_READY_TIMEOUT
+        if self._wait_until_applied(target, SUNSET_READY_TIMEOUT):
+            return
+
+        if not self._is_hyprsunset_running():
+            self._spawn_fallback_process()
+            if self._wait_until_applied(target, SUNSET_FALLBACK_READY_TIMEOUT):
+                return
+
+        LOG.warning("Failed to apply hyprsunset temperature: %s", target)
+
+    def _wait_until_applied(self, target: int, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self._send_temperature(target):
                 self._ready.set()
                 self._state_writer.schedule(float(target))
-                return
+                return True
             time.sleep(0.10)
-
-        LOG.warning("Failed to apply hyprsunset temperature: %s", target)
+        return False
 
     def _send_temperature(self, value: int) -> bool:
         if HYPRCTL is None:
@@ -658,7 +742,7 @@ class CompactSliderRow(Gtk.Box):
         min_value: float,
         max_value: float,
         step: float,
-        fetch_cb: Callable[[], float],
+        fetch_cb: Callable[[], float | None],
         submit_cb: Callable[[float], None],
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
@@ -668,6 +752,7 @@ class CompactSliderRow(Gtk.Box):
         self._suppress_apply = False
         self._refresh_token = 0
         self._user_revision = 0
+        self._has_value = False
 
         self.add_css_class("slider-row")
 
@@ -690,6 +775,7 @@ class CompactSliderRow(Gtk.Box):
         )
         self.scale.set_hexpand(True)
         self.scale.set_draw_value(False)
+        self.scale.set_sensitive(False)
         self.scale.add_css_class("pill-scale")
         self.scale.add_css_class(css_class)
         self.scale.connect("value-changed", self._on_value_changed)
@@ -700,8 +786,6 @@ class CompactSliderRow(Gtk.Box):
         self.value_label.set_xalign(1.0)
         self.value_label.add_css_class("value-label")
         self.append(self.value_label)
-
-        self.refresh_async()
 
     def refresh_async(self) -> None:
         self._refresh_token += 1
@@ -719,12 +803,23 @@ class CompactSliderRow(Gtk.Box):
             value = self._fetch_cb()
         except Exception:
             LOG.exception("Unhandled exception while refreshing slider value")
-            return
+            value = None
 
         GLib.idle_add(self._apply_refresh_result, token, user_revision, value)
 
-    def _apply_refresh_result(self, token: int, user_revision: int, value: float) -> bool:
+    def _apply_refresh_result(
+        self,
+        token: int,
+        user_revision: int,
+        value: float | None,
+    ) -> bool:
         if token != self._refresh_token or user_revision != self._user_revision:
+            return GLib.SOURCE_REMOVE
+
+        if value is None:
+            self.scale.set_sensitive(False)
+            self.value_label.set_label("…")
+            self._has_value = False
             return GLib.SOURCE_REMOVE
 
         clamped = snap_to_step(
@@ -738,6 +833,8 @@ class CompactSliderRow(Gtk.Box):
         try:
             self.adjustment.set_value(clamped)
             self.value_label.set_label(str(int(round(clamped))))
+            self.scale.set_sensitive(True)
+            self._has_value = True
         finally:
             self._suppress_apply = False
 
@@ -781,6 +878,7 @@ class SliderWindow(Adw.ApplicationWindow):
         super().__init__(application=app)
 
         self._rows: list[CompactSliderRow] = []
+        self._refresh_source_id: int | None = None
 
         self.set_default_size(340, -1)
         self.set_resizable(False)
@@ -788,6 +886,7 @@ class SliderWindow(Adw.ApplicationWindow):
         self.set_decorated(False)
 
         self.connect("close-request", self._on_close_request)
+        self.connect("notify::visible", self._on_visible_changed)
 
         key_controller = Gtk.EventControllerKey()
         key_controller.connect("key-pressed", self._on_key_pressed)
@@ -832,9 +931,34 @@ class SliderWindow(Adw.ApplicationWindow):
         for row in self._rows:
             row.refresh_async()
 
+    def stop_refresh_timer(self) -> None:
+        if self._refresh_source_id is not None:
+            GLib.source_remove(self._refresh_source_id)
+            self._refresh_source_id = None
+
+    def _ensure_refresh_timer(self) -> None:
+        if self._refresh_source_id is None and self._rows:
+            self._refresh_source_id = GLib.timeout_add_seconds(
+                LIVE_REFRESH_INTERVAL_SECONDS,
+                self._on_refresh_timeout,
+            )
+
+    def _on_refresh_timeout(self) -> bool:
+        if not self.is_visible():
+            self._refresh_source_id = None
+            return GLib.SOURCE_REMOVE
+
+        self.refresh_rows()
+        return GLib.SOURCE_CONTINUE
+
+    def _on_visible_changed(self, _window: Gtk.Widget, _pspec: object) -> None:
+        if self.is_visible():
+            self._ensure_refresh_timer()
+        else:
+            self.stop_refresh_timer()
+
     def _on_close_request(self, _window: Gtk.Window) -> bool:
         self.set_visible(False)
-        gc.collect()
         return True
 
     def _on_key_pressed(
@@ -846,7 +970,6 @@ class SliderWindow(Adw.ApplicationWindow):
     ) -> bool:
         if keyval == Gdk.KEY_Escape:
             self.set_visible(False)
-            gc.collect()
             return True
         return False
 
@@ -863,6 +986,11 @@ class SliderApp(Adw.Application):
     def do_startup(self) -> None:
         Adw.Application.do_startup(self)
         self.hold()
+
+        quit_action = Gio.SimpleAction.new("quit", None)
+        quit_action.connect("activate", lambda *_args: self.quit())
+        self.add_action(quit_action)
+        self.set_accels_for_action("app.quit", ["<Primary>q"])
 
         style_manager = Adw.StyleManager.get_default()
         style_manager.set_color_scheme(Adw.ColorScheme.PREFER_DARK)
@@ -948,6 +1076,9 @@ class SliderApp(Adw.Application):
         self._window.present()
 
     def do_shutdown(self) -> None:
+        if self._window is not None:
+            self._window.stop_refresh_timer()
+
         if self._sunset_controller is not None:
             self._sunset_controller.stop()
 
