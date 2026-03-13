@@ -90,6 +90,7 @@ declare -ar PACKAGES=(
   "wlogout"
   "adwaita-qt6"
   "adwaita-qt5"
+  "adwsteamgtk"
   "otf-atkinson-hyperlegible-next"
   "python-pywalfox"
   "python-pyquery"

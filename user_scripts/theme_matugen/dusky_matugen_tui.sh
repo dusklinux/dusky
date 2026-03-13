@@ -76,6 +76,7 @@ register_items() {
     register_template 2 "OpenCode"       "opencode"   "false" "opencode"
     register_template 2 "VS Code"        "vscode"     "false" "vscodium"
     register_template 2 "Alacritty"      "alacritty"  "false" "alacritty"
+    register_template 2 "Steam"          "steam"      "false" "adwaita-steam-gtk"
     register_template 2 "NeoVim"         "neovim"     "true"  "nvim"
     register_template 2 "Zed Editor"     "zed"        "false" "zeditor"
     register_template 2 "Yazi"           "yazi"       "true"  "yazi"
