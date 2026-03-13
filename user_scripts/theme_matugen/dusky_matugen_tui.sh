@@ -62,6 +62,7 @@ register_items() {
     register_template 0 "Qt6 CT"         "qt6ct"      "true"  ""
 
     # Tab 1: System
+    register_template 1 "Hyprland"       "hyprland"   "true"  ""
     register_template 1 "Hyprlock"       "hyprlock"   "true"  ""
     register_template 1 "Waybar"         "waybar"     "true"  "waybar"
     register_template 1 "SwayOSD"        "swayosd"    "true"  "swayosd-server"
