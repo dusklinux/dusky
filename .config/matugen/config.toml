@@ -15,7 +15,7 @@ output_path = '~/.config/matugen/generated/gtk-3.css'
 post_hook   = '''
   mkdir -p "$HOME/.config/gtk-3.0"
   ln -nfs "$HOME/.config/matugen/generated/gtk-3.css" "$HOME/.config/gtk-3.0/gtk.css"
-  gsettings set org.gnome.desktop.interface gtk-theme "adw-gtk3"
+  gsettings set org.gnome.desktop.interface gtk-theme "adw-gtk3" || :
 '''
 
 [templates.gtk4]
@@ -32,7 +32,7 @@ post_hook   = '''
 input_path  = '/dev/null'
 output_path = '/dev/null'
 post_hook   = '''
-   gsettings set org.gnome.desktop.interface icon-theme "Papirus"
+   gsettings set org.gnome.desktop.interface icon-theme "Papirus" || :
 '''
 
 [templates.qt5ct]
@@ -63,7 +63,7 @@ post_hook   = "pkill -USR2 -x waybar || :"
 [templates.swayosd]
 input_path  = '~/.config/matugen/templates/swayosd-colors.css'
 output_path = '~/.config/matugen/generated/swayosd-colors.css'
-post_hook   = "pkill -x swayosd-server; sleep 0.1; uwsm app -- swayosd-server >/dev/null 2>&1 & disown"
+post_hook   = "pkill -x swayosd-server || :; sleep 0.1; uwsm app -- swayosd-server >/dev/null 2>&1 & disown"
 
 [templates.swaync]
 input_path  = '~/.config/matugen/templates/colors.css'
@@ -72,8 +72,8 @@ post_hook   = '''
 bash -c '
 {
   if command -v swaync-client >/dev/null 2>&1; then
-    swaync-client -R
-    swaync-client -rs
+    swaync-client -R || :
+    swaync-client -rs || :
   fi
 } >/dev/null 2>&1 </dev/null & disown
 '
@@ -162,7 +162,7 @@ post_hook   = '''
   if command -v pywalfox >/dev/null 2>&1; then
     mkdir -p "$HOME/.cache/wal"
     ln -nfs "$HOME/.config/matugen/generated/pywalfox-colors.json" "$HOME/.cache/wal/colors.json"
-    pywalfox update
+    pywalfox update || :
   fi
 '''
 
@@ -203,7 +203,7 @@ post_hook   = '''
 # post_hook   = '''
 #   if command -v beeper >/dev/null 2>&1; then
 #     ln -nfs "$HOME/.config/matugen/generated/beeper.css" "$HOME/.config/BeeperTexts/custom.css"
-#     hyprctl dispatch sendshortcut "CTRL SHIFT ALT, R, class:^(BeeperTexts)$"
+#     hyprctl dispatch sendshortcut "CTRL SHIFT ALT, R, class:^(BeeperTexts)$" || :
 #   fi
 # '''
 
@@ -213,8 +213,8 @@ post_hook   = '''
 # post_hook   = '''
 # if command -v spicetify >/dev/null 2>&1 && [ -d "$HOME/.config/spicetify/Themes/Comfy" ]; then
 #     ln -nfs "$HOME/.config/matugen/generated/spotify-colors.ini" "$HOME/.config/spicetify/Themes/Comfy/color.ini"
-#     spicetify apply -n
-#     hyprctl dispatch sendshortcut "CTRL SHIFT, R, class:^(spotify)$" || true
+#     spicetify apply -n || :
+#     hyprctl dispatch sendshortcut "CTRL SHIFT, R, class:^(spotify)$" || :
 # fi
 # '''
 
@@ -223,10 +223,10 @@ post_hook   = '''
 # output_path = '~/.config/matugen/generated/steam.css'
 # post_hook =  '''
 #   if command -v steam >/dev/null 2>&1; then
-#     gsettings set io.github.Foldex.AdwSteamGtk prefs-install-custom-css true
-#     gsettings set io.github.Foldex.AdwSteamGtk window-controls-layout-options 'None'
+#     gsettings set io.github.Foldex.AdwSteamGtk prefs-install-custom-css true || :
+#     gsettings set io.github.Foldex.AdwSteamGtk window-controls-layout-options 'None' || :
 #     ln -nfs "$HOME/.config/matugen/generated/steam.css" "$HOME/.config/AdwSteamGtk/custom.css";
-#     adwaita-steam-gtk -i
+#     adwaita-steam-gtk -i || :
 #   fi
 # '''
 
@@ -255,16 +255,16 @@ fi
 input_path  = '/dev/null'
 output_path = '/dev/null'
 post_hook   = '''
-  systemctl --user reset-failed dusky.service
-  systemctl --user restart dusky.service
+  systemctl --user reset-failed dusky.service || :
+  systemctl --user restart dusky.service || :
 '''
 
 [templates.dusky_sliders]
 input_path  = '/dev/null'
 output_path = '/dev/null'
 post_hook   = '''
-  systemctl --user reset-failed dusky_sliders.service
-  systemctl --user restart dusky_sliders.service
+  systemctl --user reset-failed dusky_sliders.service || :
+  systemctl --user restart dusky_sliders.service || :
 '''
 
 
@@ -272,13 +272,13 @@ post_hook   = '''
 input_path  = '/dev/null'
 output_path = '/dev/null'
 post_hook   = '''
-  systemctl --user reset-failed hyprpolkitagent
-  systemctl --user restart hyprpolkitagent
+  systemctl --user reset-failed hyprpolkitagent || :
+  systemctl --user restart hyprpolkitagent || :
 '''
 
 [templates.conclude_notify]
 input_path  = '/dev/null'
 output_path = '/dev/null'
 post_hook   = '''
-  notify-send -i applications-graphics-symbolic "Theme Updated"
+  notify-send -i applications-graphics-symbolic "Theme Updated" || :
 '''
