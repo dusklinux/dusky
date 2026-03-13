@@ -85,9 +85,10 @@ EOF
 
     log_success "New configuration generated at: $CONFIG_FILE"
     
-    if [[ "$USER" != "dusk" ]]; then
-         printf "${C_BLUE}[NOTE]${C_RESET} Waypaper config has been reset to fix teh git bug!\n"
+        if [[ "$USER" != "dusk" ]]; then
+            printf "${C_BLUE}[NOTE]${C_RESET} Waypaper config has been reset to fix the git bug!\n"
     fi
 }
 
 main
+

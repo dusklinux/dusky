@@ -31,7 +31,7 @@ here's what it looks like.
 ![waybar_minimal](Pictures/readme_assets/waybar_minimal.webp)
 
 
-### There's also a brand new Dusky Control Center that acts as a system overview gui for settings and features, it's exhaustive in it's scope, almost anything you want to set/change can be done from this one stop shop intuitive gui app. I'll keep adding more quality of life features to it over time.
+### There's also a brand new Dusky Control Center that acts as a system overview gui for settings and features, it's exhaustive in its scope, almost anything you want to set/change can be done from this one stop shop intuitive gui app. I'll keep adding more quality of life features to it over time.
 
 ![Dusky Control Center](Pictures/readme_assets/dusky_control_center.webp)
 
@@ -41,7 +41,7 @@ This repository is the result of 8 months of tinkering/breaking/fixing and polis
 
 ### Filesystem
 
-This setup is strictly optimized for **BTRFS file system format**. (should also work on ext4 but not recommanded)
+This setup is strictly optimized for **BTRFS file system format**. (should also work on ext4 but not recommended)
 
 - **Why?** ZSTD compression, copy on write (CoW) to prevent data corruption, and you also get instant Snapshots.
     
@@ -102,12 +102,12 @@ git --git-dir=$HOME/dusky/ --work-tree=$HOME checkout -f
 
 > Note:
 > 
-> This will immediately list a few errors at the top, but dont worry, that's expected behaviour, the errors will later go away on there own after matugen generates colors and cycles through a wallpaper. 
+> This will immediately list a few errors at the top, but don't worry, that's expected behavior, the errors will later go away on their own after matugen generates colors and cycles through a wallpaper. 
 
 
 ### Step 2: Run the Orchestra
 
-Run the master script to install dependencies, themes, and services, this will take a while. because it sets up everything. You'll be promted to say yes/no during setup, so dont leave it running unattended.
+Run the master script to install dependencies, themes, and services, this will take a while. because it sets up everything. You'll be prompted to say yes/no during setup, so don't leave it running unattended.
 
 ```bash
 ~/user_scripts/arch_setup_scripts/ORCHESTRA.sh
@@ -133,7 +133,7 @@ The steepest learning curve will be the keybinds. I have designed them to be int
 > Press CTRL + SHIFT + SPACE to open the Keybinds Cheatsheet. You can click commands in this menu to run them directly!
 
 
-It's been tested to work on other arch based distors with hyprland installed (fresh installed) like catchyOS
+It's been tested to work on other arch based distros with hyprland installed (fresh installed) like catchyOS
 
 
 ## 🔧 Troubleshooting
@@ -159,27 +159,27 @@ Note : i've purposely decided to not use quickshell for anything in the interest
 
 - Circle to search type feature. uses Google lens. 
 
-- Tui for chaining your hyprland's appearience like gaps, shadow color, blur strength, opacity strength and a lottt more!!
+- TUI for changing your hyprland's appearance like gaps, shadow color, blur strength, opacity strength and a lot more!!
 
-- Ai llm local infrense using ollama side bar (terminal, incredilby resource efficient)
+- AI LLM local inference using ollama side bar (terminal, incredibly resource efficient)
 
-- keybind TUI setter that auto checks for conflicts and unbinds any existing keybind in the default hyrland keybind.conf
+- keybind TUI setter that auto checks for conflicts and unbinds any existing keybind in the default hyprland keybind.conf
 
-- Easily switch Swaync's side to either lift or right.
+- Easily switch Swaync's side to either left or right.
 
 - airmon wifi script for wifi testing/password cracking
     (only use on access points that you own, i'm not legally responsible if you use it for nefarious purposes)
-- live disk i/o monitoring, to allow you to see live read/write disk speed during copying and infer if copying has actually finsihed, useful for flashdrives, external drives. 
+- live disk i/o monitoring, to allow you to see live read/write disk speed during copying and infer if copying has actually finished, useful for flashdrives, external drives. 
 
-- quick audio input/output switch with a keybind, eg if you have bluetooth headphones connected, you can quicly switch to speakers without disconnecting. 
+- quick audio input/output switch with a keybind, eg if you have bluetooth headphones connected, you can quickly switch to speakers without disconnecting. 
 
-- mono/sterio audio toggling. 
+- mono/stereo audio toggling. 
 
-- also supports touchpad gestures for volume/brightess, locking the screen, invoking swaync, pause/play, muting.(requires a laptop or a touchpad for pc)
+- also supports touchpad gestures for volume/brightness, locking the screen, invoking swaync, pause/play, muting.(requires a laptop or a touchpad for pc)
 
 - battery notifier for laptops, you can customize it to show notifications at certain levels.
 
-- Togglable power saver mode.
+- Toggleable power saver mode.
 
 - system clean up (cache purge)- removes unwanted files to reclaim storage. 
 
@@ -191,13 +191,13 @@ Note : i've purposely decided to not use quickshell for anything in the interest
 
 - Openssh auto setup. with or without tailscale.
 
-- auto warp- cloudflaire setup and toggleale right from rofi. 
+- auto warp- cloudflare setup and toggleable right from rofi. 
 
 - Vnc setup for iphones (wired)
 
-- dynamic frantional scalling script so you can scale your display with a keybind. 
+- dynamic fractional scaling script so you can scale your display with a keybind. 
 
-- toggle window transparancy, blur and shadow with a single keybind. 
+- toggle window transparency, blur and shadow with a single keybind. 
 
 - hypridle tui configuration.
 
@@ -214,7 +214,7 @@ Note : i've purposely decided to not use quickshell for anything in the interest
 
 - btrfs system compression ratio - scans your os files to see how much space zstd compression is saving you. 
 
-- drive manager, easily lock/unlock encrypted drives from the terminal using "unlock media or lock media", it automaticlaly mounts your drives at a specified path, also unmounts when you lock it. This requires you to first configure the ~/user_scripts/drives/drive_manager.sh script with your drives' uuid. 
+- drive manager, easily lock/unlock encrypted drives from the terminal using "unlock media or lock media", it automatically mounts your drives at a specified path, also unmounts when you lock it. This requires you to first configure the ~/user_scripts/drives/drive_manager.sh script with your drives' uuid. 
 
 - ntfs drives have a tendency to not unlock if the drive had previously been disconnected without unmounting first, because of corrupted metadata, i've a script that fixes this. ntfs_fix.sh
 
@@ -247,9 +247,9 @@ text to speech
 - kokoro for both cpu and gpu
 
 - mechanical keypress sounds
-togglalble with a keybind or from rofi. 
+toggleable with a keybind or from rofi. 
 
-- Wlogout is drawn using a dynamic script that respects your frational scaling. 
+- Wlogout is drawn using a dynamic script that respects your fractional scaling. 
 
 
 **performance and system**
@@ -305,4 +305,3 @@ sddm is a modified version of the SilentSDDM project by @uiriansan (this is a gr
 [SilentSDDM by uiriansan][repo_linkk]
 
 [repo_linkk]: https://github.com/uiriansan/SilentSDDM/
-
