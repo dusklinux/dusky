@@ -58,20 +58,20 @@ flock -n 9 || { log_err "Another instance is running. Exiting."; exit 1; }
 # --- Process Management ---
 log_info "Managing ${APP_NAME} instances..."
 
-if pgrep -x "${APP_NAME}" >/dev/null 2>&1; then
+if pgrep "${APP_NAME}" >/dev/null 2>&1; then
     log_info "Stopping existing instances..."
-    pkill -x "${APP_NAME}" >/dev/null 2>&1 || true
+    pkill "${APP_NAME}" >/dev/null 2>&1 || true
 
     # Poll for termination (Bash C-style loop)
     for (( i = 0; i < TIMEOUT_SEC * 10; i++ )); do
-        pgrep -x "${APP_NAME}" >/dev/null 2>&1 || break
+        pgrep "${APP_NAME}" >/dev/null 2>&1 || break
         sleep 0.1
     done
 
     # Force kill if still resistant
-    if pgrep -x "${APP_NAME}" >/dev/null 2>&1; then
+    if pgrep "${APP_NAME}" >/dev/null 2>&1; then
         log_err "Process hung. Sending SIGKILL..."
-        pkill -9 -x "${APP_NAME}" >/dev/null 2>&1 || true
+        pkill -9 "${APP_NAME}" >/dev/null 2>&1 || true
         sleep 0.2
     fi
     log_success "Cleanup complete."
