@@ -1,0 +1,7 @@
+#container {
+    background-color: {{colors.surface.default.hex}};
+}
+
+* {
+    color: {{colors.primary.default.hex}};
+}
