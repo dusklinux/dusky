@@ -299,3 +299,19 @@ else
     log_warn "uwsm command not found in PATH. Ensure you are in a UWSM session."
     log_info "You will need to log out and back in for changes to take effect."
 fi
+
+# =============================================================================
+# CRITICAL REBOOT WARNING
+# =============================================================================
+printf '\n'
+printf '\033[1;37;41m%s\033[0m\n' "================================================================================"
+printf '\033[1;37;41m%s\033[0m\n' "||                                                                            ||"
+printf '\033[1;37;41m%s\033[0m\n' "||                      !!! SYSTEM REBOOT REQUIRED !!!                        ||"
+printf '\033[1;37;41m%s\033[0m\n' "||                                                                            ||"
+printf '\033[1;37;41m%s\033[0m\n' "||  THE CLIPBOARD IS NOW IN A TRANSITIONAL STATE AND WILL NOT                 ||"
+printf '\033[1;37;41m%s\033[0m\n' "||  FUNCTION CORRECTLY UNTIL A FULL SYSTEM REBOOT IS PERFORMED.               ||"
+printf '\033[1;37;41m%s\033[0m\n' "||                                                                            ||"
+printf '\033[1;37;41m%s\033[0m\n' "||  PLEASE SAVE ALL YOUR WORK AND REBOOT YOUR COMPUTER AT THE EARLIEST.       ||"
+printf '\033[1;37;41m%s\033[0m\n' "||                                                                            ||"
+printf '\033[1;37;41m%s\033[0m\n' "================================================================================"
+printf '\n'
