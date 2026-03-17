@@ -19,9 +19,27 @@ from pathlib import Path
 import logging
 
 # ==============================================================================
+# KOKORO V1.0 VOICE ROSTER
+# ==============================================================================
+# 🇺🇸 American (en-us) : af_heart, af_alloy, af_aoede, af_bella, af_jessica, af_kore, 
+#                       af_nicole, af_nova, af_river, af_sarah, af_sky, am_adam, 
+#                       am_echo, am_eric, am_fenrir, am_liam, am_michael, am_onyx, 
+#                       am_puck, am_santa
+# 🇬🇧 British (en-gb)  : bf_alice, bf_emma, bf_isabella, bf_lily, bm_daniel, 
+#                       bm_fable, bm_george, bm_lewis
+# 🇯🇵 Japanese (ja)    : jf_alpha, jf_gongitsune, jf_nezumi, jf_tebukuro, jm_kumo
+# 🇨🇳 Mandarin (zh)    : zf_xiaobei, zf_xiaoni, zf_xiaoxiao, zf_xiaoyi, zm_yunjian, 
+#                       zm_yunxi, zm_yunxia, zm_yunyang
+# 🇪🇸 Spanish (es)     : ef_dora, em_alex, em_santa
+# 🇫🇷 French (fr-fr)   : ff_siwis
+# 🇮🇳 Hindi (hi)       : hf_alpha, hf_beta, hm_omega, hm_psi
+# 🇮🇹 Italian (it)     : if_sara, im_nicola
+# 🇧🇷 Portuguese(pt-br): pf_dora, pm_alex, pm_santa
+
+# ==============================================================================
 # VERSION & CONFIGURATION
 # ==============================================================================
-VERSION = "4.4 (Universal HW + Dual Speed Control)"
+VERSION = "4.5 (Universal HW + Dynamic Vectors + Char Toggle)"
 
 ZRAM_MOUNT = Path("/mnt/zram1")
 AUDIO_OUTPUT_DIR = ZRAM_MOUNT / "kokoro_audio"
@@ -29,10 +47,23 @@ FIFO_PATH = Path("/tmp/dusky_kokoro.fifo")
 PID_FILE = Path("/tmp/dusky_kokoro.pid")
 READY_FILE = Path("/tmp/dusky_kokoro.ready")
 
-DEFAULT_VOICE = "af_sarah"
+# --- VOICE SETUP ---
+# You can use a SINGLE string for one voice, OR a DICTIONARY to blend them.
+# If blending, ensure the decimals add up to 1.0. Do not mix languages.
+
+# Example 1 (Single Voice):
+# VOICE_SETUP = "am_santa"
+
+# Example 2 (50/50 Voice Blend):
+VOICE_SETUP = {
+    "am_santa": 0.5,
+    "am_michael": 0.5
+}
+
 SPEED = 1.0
 MPV_SPEED = 1.0  # MPV playback speed control
 SAMPLE_RATE = 24000
+STRIP_SPECIAL_CHARS = True  # Set to False to allow special characters like brackets and emojis
 
 MAX_BATCH_LEN = 2000
 IDLE_TIMEOUT = 10.0
@@ -74,7 +105,7 @@ def custom_excepthook(args):
 threading.excepthook = custom_excepthook
 
 # ==============================================================================
-# TEXT PROCESSING
+# TEXT PROCESSING & UTILITIES
 # ==============================================================================
 RE_MARKDOWN_LINK = re.compile(r'\[([^\]]+)\]\([^)]+\)')
 RE_URL = re.compile(r'https?://\S+', re.IGNORECASE)
@@ -89,7 +120,8 @@ RE_SENTENCE_SPLIT = re.compile(
 def clean_text(text):
     text = RE_MARKDOWN_LINK.sub(r'\1', text)
     text = RE_URL.sub('Link', text)
-    text = RE_CLEAN.sub(' ', text)
+    if STRIP_SPECIAL_CHARS:
+        text = RE_CLEAN.sub(' ', text)
     return ' '.join(text.split())
 
 
@@ -136,6 +168,23 @@ def get_next_index(directory):
     return max_idx + 1
 
 
+def get_lang_from_prefix(voice_name):
+    """Dynamically routes the phonemizer based on the voice's geographic prefix."""
+    prefix = voice_name[0].lower()
+    lang_map = {
+        'a': 'en-us',
+        'b': 'en-gb',
+        'j': 'ja',
+        'z': 'zh',
+        'e': 'es',
+        'f': 'fr-fr',
+        'h': 'hi',
+        'i': 'it',
+        'p': 'pt-br'
+    }
+    return lang_map.get(prefix, 'en-us')
+
+
 # ==============================================================================
 # HARDWARE ENFORCER (UNIVERSAL - FIXED ROCM)
 # ==============================================================================
@@ -150,12 +199,10 @@ class PatchedInferenceSession(rt.InferenceSession):
         if sess_options is None:
             sess_options = rt.SessionOptions()
         
-        # 1. Determine Dynamic Providers FIRST
         dynamic_providers = []
         available_set = set(rt.get_available_providers())
         is_gpu = False
 
-        # Check for NVIDIA CUDA
         if 'CUDAExecutionProvider' in available_set:
             logger.info("Configuring for NVIDIA CUDA...")
             is_gpu = True
@@ -168,9 +215,6 @@ class PatchedInferenceSession(rt.InferenceSession):
             }
             dynamic_providers.append(('CUDAExecutionProvider', cuda_options))
 
-        # Check for AMD ROCm
-        # BUG FIX: Removed 'cudnn_conv_algo_search' (CUDA only)
-        # BUG FIX: Added 'gpu_mem_limit'
         elif 'ROCmExecutionProvider' in available_set:
             logger.info("Configuring for AMD ROCm...")
             is_gpu = True
@@ -182,11 +226,8 @@ class PatchedInferenceSession(rt.InferenceSession):
             }
             dynamic_providers.append(('ROCmExecutionProvider', rocm_options))
 
-        # Always add CPU as fallback
         dynamic_providers.append('CPUExecutionProvider')
 
-        # 2. Configure Memory Options (Optimization)
-        # BUG FIX: Only disable memory arena if GPU is active
         if is_gpu:
             sess_options.enable_mem_pattern = False
             sess_options.enable_cpu_mem_arena = False
@@ -196,7 +237,6 @@ class PatchedInferenceSession(rt.InferenceSession):
             sess_options.enable_cpu_mem_arena = True
 
         sess_options.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_ALL
-
         logger.info(f"Active Provider Stack: {dynamic_providers}")
 
         super().__init__(
@@ -253,7 +293,6 @@ class AudioPlaybackThread(threading.Thread):
             "-"
         ]
         mpv_env = os.environ.copy()
-        # Clean env to prevent MPV from inheriting CUDA/ROCm libs if not needed
         mpv_env.pop("LD_LIBRARY_PATH", None) 
 
         try:
@@ -496,10 +535,37 @@ class DuskyDaemon:
             all_audio = []
             final_sr = SAMPLE_RATE
 
+            # --- DYNAMIC VOICE ROUTING & VECTOR BLENDING ---
+            lang_code = "en-us"
+            voice_input = None
+
+            if isinstance(VOICE_SETUP, str):
+                voice_input = VOICE_SETUP
+                lang_code = get_lang_from_prefix(VOICE_SETUP)
+            elif isinstance(VOICE_SETUP, dict):
+                first_voice = list(VOICE_SETUP.keys())[0]
+                lang_code = get_lang_from_prefix(first_voice)
+                
+                try:
+                    voice_vectors = np.load(self.voices_path)
+                    blended = None
+                    for v_name, weight in VOICE_SETUP.items():
+                        if blended is None:
+                            blended = voice_vectors[v_name] * weight
+                        else:
+                            blended += voice_vectors[v_name] * weight
+                    voice_input = blended
+                except Exception as e:
+                    logger.error(f"Failed to blend voices mathematically: {e}. Falling back to single voice.")
+                    voice_input = first_voice
+
             for i, sentence in enumerate(sentences):
                 if self._should_stop(): break
                 logger.debug(f"  Sentence {i+1}/{len(sentences)}: {sentence[:60]}...")
-                audio, sr = model.create(sentence, voice=DEFAULT_VOICE, speed=SPEED, lang="en-us")
+                
+                # Model generation utilizing the dynamic language routing and raw vector data
+                audio, sr = model.create(sentence, voice=voice_input, speed=SPEED, lang=lang_code)
+                
                 if audio is None: continue
                 final_sr = sr
                 all_audio.append(audio)
