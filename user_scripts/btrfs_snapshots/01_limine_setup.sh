@@ -306,6 +306,13 @@ has_loader_entry_on_esp() {
     ((${#entries[@]} > 0))
 }
 
+get_primary_canonical_limine_entry() {
+    local -a entries=()
+    mapfile -t entries < <(get_boot_entries_for_loader_on_esp '\EFI\limine\limine_x64.efi' "${1:-}")
+    ((${#entries[@]} > 0)) || return 1
+    printf '%s\n' "${entries[0]}"
+}
+
 get_limine_fallback_entries_on_esp() {
     local esp_partuuid="${1:-}" line entry_code line_lc partuuid_lc fallback_loader
     fallback_loader='\efi\boot\bootx64.efi'
@@ -365,6 +372,54 @@ dedupe_canonical_limine_entries() {
     keep="${entries[0]}"
     warn "Multiple canonical Limine NVRAM entries found. Keeping Boot${keep} and deleting extras."
     delete_boot_entries "${entries[@]:1}" || true
+}
+
+get_boot_order_entries() {
+    load_efibootmgr_cache
+    local order
+    order="$(awk -F': ' '/^BootOrder:/ { print $2; exit }' <<< "$CACHE_EFIBOOTMGR_OUTPUT")"
+    [[ -n "$order" ]] || return 1
+    order="${order//[[:space:]]/}"
+    local -a entries=()
+    IFS=',' read -r -a entries <<< "$order"
+    printf '%s\n' "${entries[@]}"
+}
+
+ensure_boot_entry_first_in_order() {
+    local wanted="$1"
+    [[ -n "$wanted" ]] || return 0
+
+    local -a current_order=() new_order=()
+    local entry new_order_str
+    local -A seen=()
+
+    mapfile -t current_order < <(get_boot_order_entries || true)
+
+    if ((${#current_order[@]} > 0)) && [[ "${current_order[0]^^}" == "${wanted^^}" ]]; then
+        return 0
+    fi
+
+    wanted="${wanted^^}"
+    new_order+=("$wanted")
+    seen["$wanted"]=1
+
+    for entry in "${current_order[@]}"; do
+        entry="${entry^^}"
+        [[ -n "$entry" ]] || continue
+        [[ -v seen["$entry"] ]] && continue
+        seen["$entry"]=1
+        new_order+=("$entry")
+    done
+
+    local IFS=,
+    new_order_str="${new_order[*]}"
+
+    if sudo efibootmgr -o "$new_order_str" >/dev/null 2>&1; then
+        CACHE_EFIBOOTMGR_OUTPUT=""
+        info "Set BootOrder to prefer Boot${wanted}."
+    else
+        warn "Could not update BootOrder to prefer Boot${wanted}."
+    fi
 }
 
 prepare_limine_nvram_for_install() {
@@ -529,7 +584,7 @@ configure_limine_defaults() {
 }
 
 deploy_limine() {
-    local esp_target esp_partuuid canonical_present=false
+    local esp_target esp_partuuid canonical_present=false canonical_entry=""
 
     esp_target="$(detect_esp_mountpoint)" || fatal "Could not detect ESP mount."
     esp_partuuid="$(get_mount_partuuid "$esp_target" || true)"
@@ -555,6 +610,13 @@ deploy_limine() {
 
     purge_limine_fallback_entries "$esp_partuuid"
     dedupe_canonical_limine_entries "$esp_partuuid"
+
+    canonical_entry="$(get_primary_canonical_limine_entry "$esp_partuuid" || true)"
+    if [[ -n "$canonical_entry" ]]; then
+        ensure_boot_entry_first_in_order "$canonical_entry"
+    else
+        warn "No canonical Limine NVRAM entry found; BootOrder left unchanged."
+    fi
 
     [[ -f /boot/limine.conf ]] || fatal "/boot/limine.conf was not created."
     info "Limine deployment completed."

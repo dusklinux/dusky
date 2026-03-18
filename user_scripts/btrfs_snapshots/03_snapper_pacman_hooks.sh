@@ -19,7 +19,6 @@ declare -A CACHE_MNT_OPTS=()
 declare -a ACTIVE_TEMP_FILES=()
 
 SUDO_PID=""
-SNAP_PAC_INSTALLED_NOW=false
 
 cleanup() {
     local f
@@ -189,7 +188,6 @@ install_snap_pac() {
         return 0
     fi
     sudo pacman -S --needed --noconfirm snap-pac
-    SNAP_PAC_INSTALLED_NOW=true
 }
 
 verify_previous_setup() {
@@ -307,12 +305,21 @@ configure_snap_pac() {
 }
 
 snapshot_with_description_exists() {
-    sudo snapper --csv -c "$1" list 2>/dev/null | awk -F',' -v desc="$2" '$7 == desc { found=1; exit } END { exit(found ? 0 : 1) }'
+    sudo snapper --csv -c "$1" list 2>/dev/null | awk -F',' -v desc="$2" '
+        NR == 1 {
+            for (i = 1; i <= NF; i++) if ($i == "description") col = i
+            next
+        }
+        col && $col == desc { found = 1; exit }
+        END { exit(found ? 0 : 1) }
+    '
 }
 
-ensure_initial_home_snap_pac_snapshot() {
-    [[ "$SNAP_PAC_INSTALLED_NOW" == true ]] || return 0
-    snapshot_with_description_exists root "snap-pac" || return 0
+ensure_home_snap_pac_snapshot() {
+    if ! snapshot_with_description_exists root "snap-pac"; then
+        info "No root snap-pac snapshot detected; nothing to backfill for home."
+        return 0
+    fi
 
     if snapshot_with_description_exists home "snap-pac"; then
         info "Home already has a snap-pac snapshot."
@@ -320,7 +327,7 @@ ensure_initial_home_snap_pac_snapshot() {
     fi
 
     sudo snapper -c home create -t single -c number -d "snap-pac"
-    info "Created initial home snapshot to match the snap-pac transaction."
+    info "Created missing home snap-pac snapshot."
 }
 
 create_post_config_baseline_snapshot() {
@@ -328,10 +335,15 @@ create_post_config_baseline_snapshot() {
     if ! snapshot_with_description_exists "root" "$desc"; then
         sudo snapper -c root create -t single -c important -d "$desc"
         info "Created baseline root snapshot."
+    else
+        info "Baseline root snapshot already exists."
     fi
+
     if ! snapshot_with_description_exists "home" "$desc"; then
         sudo snapper -c home create -t single -c important -d "$desc"
         info "Created baseline home snapshot."
+    else
+        info "Baseline home snapshot already exists."
     fi
 }
 
@@ -364,6 +376,6 @@ execute "Rebuild initramfs" rebuild_initramfs
 execute "Configure sync daemon" configure_sync_daemon
 execute "Install snap-pac" install_snap_pac
 execute "Configure snap-pac" configure_snap_pac
-execute "Backfill initial home snap-pac snapshot" ensure_initial_home_snap_pac_snapshot
+execute "Ensure home snap-pac snapshot" ensure_home_snap_pac_snapshot
 execute "Create baseline snapshot" create_post_config_baseline_snapshot
 execute "Enable services" enable_services_and_sync
