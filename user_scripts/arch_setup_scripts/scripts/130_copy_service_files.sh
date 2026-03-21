@@ -42,7 +42,7 @@ readonly SERVICES_CONFIG=(
     "$HOME/user_scripts/update_dusky/update_checker/service/update_checker.timer | enable"
 
     # dusky sliders
-    "$HOME/user_scripts/sliders/service/dusky_sliders.service | enable"
+    "$HOME/user_scripts/sliders/service/dusky_sliders.service | disable"
 )
 
 # XDG Standard: ~/.config/systemd/user
