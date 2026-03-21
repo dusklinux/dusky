@@ -297,3 +297,7 @@ output_path = '~/.config/matugen/generated/firefox_websites.css'
 post_hook = '''
     ln -nfs "/home/dusk/.config/matugen/generated/firefox_websites.css" "/home/dusk/.mozilla/firefox/dd7ma16i.default-release/chrome/colors.css"
 '''
+
+[templates.p10k]
+input_path = '~/.config/matugen/templates/p10k-colors.zsh'
+output_path = '~/.config/matugen/generated/p10k-colors.zsh'
