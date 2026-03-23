@@ -7,6 +7,7 @@ bypassing OverlayFS abstractions. Includes strict nested subvolume guardrails.
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -59,15 +60,46 @@ def mount_top_level(device: str) -> t.Iterator[Path]:
         mnt_point = Path(tmpdir)
         mounted = False
 
-        print(f"[*] Mounting top-level tree (subvolid=5) for {device}...")
+        print(f"[*] Mounting top-level tree (subvolid=5) for {device}...", file=sys.stderr)
         run_cmd(["mount", "-o", "subvolid=5", device, str(mnt_point)])
         mounted = True
         try:
             yield mnt_point
         finally:
             if mounted:
-                print("[*] Unmounting top-level tree...")
+                print("[*] Unmounting top-level tree...", file=sys.stderr)
                 run_cmd(["umount", str(mnt_point)])
+
+
+def handle_list(config: str, as_json: bool) -> None:
+    """Outputs the snapshot list either as raw stdout or structured JSON for GUIs."""
+    if not as_json:
+        result = subprocess.run(["snapper", "-c", config, "list"])
+        sys.exit(result.returncode)
+
+    # Fetch raw data, strip the two header lines
+    raw_list = run_cmd(["snapper", "-c", config, "list", "--disable-used-space"]).splitlines()[2:]
+    
+    gui_data = []
+    for line in raw_list:
+        parts = line.split("|")
+        # Ensure the line is valid and has enough columns before parsing
+        if len(parts) >= 7:
+            snap_id = parts[0].strip()
+            
+            # Skip the currently running state (ID 0) as it cannot be restored to
+            if snap_id == "0":
+                continue
+
+            gui_data.append({
+                "id": snap_id,
+                "type": parts[1].strip(),
+                "date": parts[3].strip(), # Corrected index for Date
+                "description": parts[6].strip()
+            })
+            
+    # Output purely the JSON array. Standard print goes to stdout.
+    print(json.dumps(gui_data))
 
 
 def handle_create(config: str, description: str) -> None:
@@ -173,7 +205,7 @@ def handle_restore(config: str, snap_id: str) -> None:
 
 def main() -> None:
     if os.geteuid() != 0:
-        sys.exit("[!] This script requires root privileges. Please run with sudo.")
+        sys.exit("[!] This script requires root privileges. Please run with sudo or pkexec.")
 
     parser = argparse.ArgumentParser(
         description="Advanced Snapper Flat-Layout Manager for Arch Linux",
@@ -181,6 +213,7 @@ def main() -> None:
     )
 
     parser.add_argument("-c", "--config", required=True, help="Target Snapper configuration (e.g., root, home)")
+    parser.add_argument("--json", action="store_true", help="Format list output as JSON for GUI ingestion")
 
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("-l", "--list", action="store_true", help="List snapshots for the configuration")
@@ -191,8 +224,7 @@ def main() -> None:
 
     match args:
         case args if args.list:
-            result = subprocess.run(["snapper", "-c", args.config, "list"])
-            sys.exit(result.returncode)
+            handle_list(args.config, args.json)
         case args if args.create:
             handle_create(args.config, args.create)
         case args if args.restore:
