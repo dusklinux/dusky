@@ -63,6 +63,7 @@ select_home_id() {
 import json
 import re
 import sys
+from datetime import datetime
 
 target_date = sys.argv[1]
 target_desc = sys.argv[2]
@@ -73,10 +74,15 @@ except Exception as exc:
     print(f"[!] Fatal: Failed to parse Home snapshot list JSON: {exc}", file=sys.stderr)
     raise SystemExit(1)
 
+if not snapshots:
+    print("[!] Fatal: Home snapshot list is empty. Cannot perform coordinated restore.", file=sys.stderr)
+    raise SystemExit(1)
+
 def minute_prefix(value: str) -> str | None:
     match = re.search(r"^(.*\d{2}:\d{2})", value)
     return match.group(1) if match else None
 
+# --- Attempt 1: Exact Match ---
 exact = [str(item["id"]) for item in snapshots if item.get("raw_date") == target_date]
 if len(exact) == 1:
     print(exact[0])
@@ -86,6 +92,7 @@ if len(exact) > 1:
     print(f"[!] Fatal: Multiple Home snapshots matched exact date: {target_date}", file=sys.stderr)
     raise SystemExit(1)
 
+# --- Attempt 2: Fuzzy Minute Match ---
 if target_desc:
     target_minute = minute_prefix(target_date)
     if target_minute:
@@ -108,8 +115,53 @@ if target_desc:
             )
             raise SystemExit(1)
 
-print("[!] Fatal: Could not find a unique matching Home snapshot for coordinated restore.", file=sys.stderr)
-raise SystemExit(1)
+# --- Attempt 3: Mathematical Closest Time Fallback ---
+def parse_dt(d_str):
+    d_str = str(d_str).strip()
+    if not d_str:
+        return None
+    # Handle Snapper tabular format: "Sun 22 Mar 2026 01:53:16 PM IST"
+    tokens = d_str.split()
+    if len(tokens) >= 7 and tokens[-1].isalpha():
+        try:
+            clean = " ".join(tokens[:-1])
+            return datetime.strptime(clean, "%a %d %b %Y %I:%M:%S %p")
+        except ValueError:
+            pass
+    # Handle Snapper jsonout format
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(d_str, fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(d_str.replace(" ", "T", 1))
+    except ValueError:
+        return None
+
+target_dt = parse_dt(target_date)
+best_diff = float('inf')
+best_id = None
+
+if target_dt:
+    for s in snapshots:
+        s_dt = parse_dt(s.get("raw_date", ""))
+        if s_dt:
+            diff = abs((s_dt - target_dt).total_seconds())
+            if diff < best_diff:
+                best_diff = diff
+                best_id = str(s["id"])
+
+if best_id is not None:
+    print(f"[*] Warning: Could not find exact Home snapshot. Falling back to mathematically closest snapshot (ID {best_id}).", file=sys.stderr)
+    print(best_id)
+    raise SystemExit(0)
+
+# --- Ultimate Fallback: Most Recent ---
+best_id = str(sorted(snapshots, key=lambda x: int(x["id"]))[-1]["id"])
+print(f"[*] Warning: Date parsing failed. Falling back to most recent Home snapshot (ID {best_id}).", file=sys.stderr)
+print(best_id)
+raise SystemExit(0)
 PY
 }
 
