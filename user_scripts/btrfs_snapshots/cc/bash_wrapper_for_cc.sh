@@ -6,7 +6,7 @@ set -euo pipefail
 
 TARGET_DATE="$1"
 
-# Resolve script directory securely to bypass pkexec $HOME stripping
+# Resolve script directory securely
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANAGER_SCRIPT="${SCRIPT_DIR}/04_dusky_snapshot_manager.py"
 
@@ -15,10 +15,9 @@ if [[ ! -x "$MANAGER_SCRIPT" ]]; then
     exit 1
 fi
 
-# Extract the IDs based on the exact timestamp (Column 4 in snapper list output)
-# Using index() ensures safe string matching without regex character escaping issues.
-HOME_ID=$(snapper -c home list --disable-used-space | awk -F'|' -v d="$TARGET_DATE" 'index($4, d) > 0 {print $1; exit}' | tr -d ' ')
-ROOT_ID=$(snapper -c root list --disable-used-space | awk -F'|' -v d="$TARGET_DATE" 'index($4, d) > 0 {print $1; exit}' | tr -d ' ')
+# Use Regex field separator for awk to match both ASCII | and Unicode │
+HOME_ID=$(snapper -c home list --disable-used-space | awk -F'[|│]' -v d="$TARGET_DATE" 'index($4, d) > 0 {print $1; exit}' | tr -d ' ')
+ROOT_ID=$(snapper -c root list --disable-used-space | awk -F'[|│]' -v d="$TARGET_DATE" 'index($4, d) > 0 {print $1; exit}' | tr -d ' ')
 
 # Execute atomic swaps sequentially
 if [[ -n "$HOME_ID" ]]; then

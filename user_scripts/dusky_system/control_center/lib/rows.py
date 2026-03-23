@@ -1855,8 +1855,7 @@ class ExpanderRow(DynamicIconMixin, Adw.ExpanderRow):
 class AsyncSelectorRow(BaseActionRow):
     """
     A generalized widget that fetches a JSON array of dictionaries,
-    populates a dropdown using a display template, and executes a command
-    by injecting values from the selected dictionary.
+    populates a dropdown using a display template, and executes a command.
     """
     __gtype_name__ = "DuskyAsyncSelectorRow"
 
@@ -1872,10 +1871,15 @@ class AsyncSelectorRow(BaseActionRow):
         self.display_template = str(properties.get("display_template", "{id}"))
         self.sort_order = str(properties.get("sort", "none")).lower()
 
+        # New Properties for Auto-Refresh and UI Control
+        self.auto_refresh = bool(properties.get("auto_refresh", False))
+        self.display_max_length = _safe_int(properties.get("display_max_length"), 45)
+
         button_text = str(properties.get("button_text", "Execute"))
         button_style = str(properties.get("style", "default")).lower()
 
         self.json_data: list[dict] = []
+        self._fetch_in_progress = False
 
         # UI Construction
         self.controls_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1885,6 +1889,10 @@ class AsyncSelectorRow(BaseActionRow):
         self.refresh_btn.set_tooltip_text("Load Data")
         self.refresh_btn.connect("clicked", self._on_refresh_clicked)
         self.refresh_btn.add_css_class("flat")
+
+        # Hide refresh button if auto-refresh is active
+        if self.auto_refresh:
+            self.refresh_btn.set_visible(False)
 
         self.model = Gtk.StringList.new([])
         self.dropdown = Gtk.DropDown(model=self.model)
@@ -1910,9 +1918,18 @@ class AsyncSelectorRow(BaseActionRow):
 
         self.add_suffix(self.controls_box)
 
+        # Hook map signal to trigger auto-refresh the moment the widget appears
+        self.connect("map", self._on_map)
+
+    def _on_map(self, _widget: Gtk.Widget) -> None:
+        """Triggered when the widget is drawn on screen."""
+        if self.auto_refresh and not self.json_data and not self._fetch_in_progress:
+            self._on_refresh_clicked(self.refresh_btn)
+
     def _on_refresh_clicked(self, _btn: Gtk.Button) -> None:
-        if not self.list_command:
+        if not self.list_command or self._fetch_in_progress:
             return
+        self._fetch_in_progress = True
         self.refresh_btn.set_sensitive(False)
         self.action_btn.set_sensitive(False)
         _submit_task_safe(self._fetch_data_async, self._state)
@@ -1940,6 +1957,7 @@ class AsyncSelectorRow(BaseActionRow):
             GLib.idle_add(self._on_fetch_failed)
 
     def _update_ui(self, parsed_data: list[dict]) -> bool:
+        self._fetch_in_progress = False
         with self._state.lock:
             if self._state.is_destroyed:
                 return GLib.SOURCE_REMOVE
@@ -1960,9 +1978,17 @@ class AsyncSelectorRow(BaseActionRow):
         for item in self.json_data:
             try:
                 label = self.display_template.format_map(SafeDict(item))
+
+                # Prevent GTK UI Squishing by enforcing a max character length
+                if len(label) > self.display_max_length:
+                    label = label[:self.display_max_length - 3] + "..."
+
                 strings.append(label)
             except Exception:
                 strings.append("Format Error")
+
+        if not strings:
+             strings.append("(No Snapshots)")
 
         self.model.splice(0, 0, strings)
 
@@ -1972,10 +1998,11 @@ class AsyncSelectorRow(BaseActionRow):
         )
 
         self.refresh_btn.set_sensitive(True)
-        self.action_btn.set_sensitive(bool(strings) and has_valid_action)
+        self.action_btn.set_sensitive(bool(self.json_data) and has_valid_action)
         return GLib.SOURCE_REMOVE
 
     def _on_fetch_failed(self) -> bool:
+        self._fetch_in_progress = False
         with self._state.lock:
             if self._state.is_destroyed:
                 return GLib.SOURCE_REMOVE
@@ -1986,7 +2013,7 @@ class AsyncSelectorRow(BaseActionRow):
         self.action_btn.set_sensitive(False)
 
         if self.toast_overlay:
-            utility.toast(self.toast_overlay, "✖ Failed to fetch data (Check logs or Polkit)", 4)
+            utility.toast(self.toast_overlay, "✖ Failed to fetch data (Check logs)", 4)
 
         return GLib.SOURCE_REMOVE
 

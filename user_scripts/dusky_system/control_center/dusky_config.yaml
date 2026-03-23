@@ -294,6 +294,8 @@ pages:
                 button_text: "Restore Both"
                 style: "destructive"
                 sort: "reverse"
+                auto_refresh: true
+                display_max_length: 45
               on_action:
                 type: "exec"
                 command: "sudo ~/user_scripts/btrfs_snapshots/cc/bash_wrapper_for_cc.sh '{date}'"
@@ -313,6 +315,8 @@ pages:
                 button_text: "Restore Root"
                 style: "destructive"
                 sort: "reverse"
+                auto_refresh: true
+                display_max_length: 45
               on_action:
                 type: "exec"
                 command: "sudo ~/user_scripts/btrfs_snapshots/cc/04_dusky_snapshot_manager.py -c root -R {id}"
@@ -326,6 +330,8 @@ pages:
                 button_text: "Restore Home"
                 style: "suggested"
                 sort: "reverse"
+                auto_refresh: true
+                display_max_length: 45
               on_action:
                 type: "exec"
                 command: "sudo ~/user_scripts/btrfs_snapshots/cc/04_dusky_snapshot_manager.py -c home -R {id}"

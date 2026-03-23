@@ -7,8 +7,6 @@ bypassing OverlayFS abstractions. Includes strict nested subvolume guardrails.
 """
 
 import argparse
-import csv
-import io
 import json
 import os
 import re
@@ -79,42 +77,29 @@ def handle_list(config: str, as_json: bool) -> None:
         result = subprocess.run(["snapper", "-c", config, "list"])
         sys.exit(result.returncode)
 
-    # Use --csv to bypass all Unicode box-drawing and string spacing issues
-    raw_csv = run_cmd(["snapper", "--csv", "-c", config, "list", "--disable-used-space"])
-
+    # Fetch raw data, strip the two header lines
+    raw_list = run_cmd(["snapper", "-c", config, "list", "--disable-used-space"]).splitlines()[2:]
+    
     gui_data = []
-    reader = csv.reader(io.StringIO(raw_csv))
+    for line in raw_list:
+        # Support BOTH ASCII '|' and Unicode box drawing '│' separators dynamically
+        parts = [p.strip() for p in re.split(r'[|│]', line)]
+        
+        if len(parts) >= 7:
+            snap_id = parts[0]
+            
+            # Skip the currently running state (ID 0)
+            if snap_id == "0" or not snap_id.isdigit():
+                continue
 
-    # Safely extract headers and find column indexes dynamically
-    headers = [h.strip() for h in next(reader, [])]
-
-    try:
-        id_idx = headers.index("#")
-        type_idx = headers.index("Type")
-        date_idx = headers.index("Date")
-        desc_idx = headers.index("Description")
-    except ValueError:
-        # Fallback if headers change in future snapper versions
-        id_idx, type_idx, date_idx, desc_idx = 0, 1, 3, 6
-
-    for row in reader:
-        if len(row) <= max(id_idx, type_idx, date_idx, desc_idx):
-            continue
-
-        snap_id = row[id_idx].strip()
-
-        # Skip the currently running state (ID 0) and invalid rows
-        if snap_id == "0" or not snap_id.isdigit():
-            continue
-
-        gui_data.append({
-            "id": snap_id,
-            "type": row[type_idx].strip(),
-            "date": row[date_idx].strip(),
-            "description": row[desc_idx].strip()
-        })
-
-    # Output purely the JSON array. Standard print goes to stdout.
+            gui_data.append({
+                "id": snap_id,
+                "type": parts[1],
+                "date": parts[3], 
+                "description": parts[6]
+            })
+            
+    # Output purely the JSON array.
     print(json.dumps(gui_data))
 
 

@@ -177,6 +177,8 @@ class ItemProperties(TypedDict, total=False):
     placeholder: str
     path: str
     sort: str
+    auto_refresh: bool
+    display_max_length: int
     list_command: str
     display_template: str
 
