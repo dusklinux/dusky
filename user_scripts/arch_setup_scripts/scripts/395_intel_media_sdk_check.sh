@@ -94,17 +94,15 @@ detect_and_install() {
         local driver_tier=""
 
         if (( gen >= 12 )); then
-            # Modern Stack: iHD VA-API + OneVPL QuickSync
+            # 12th+ Gen (Alder Lake to Current)
+            # vpl-gpu-rt pulls in intel-media-driver automatically, but we declare both for strict idempotency.
             target_pkgs=("intel-media-driver" "vpl-gpu-rt")
             driver_tier="12th+ Gen (iHD + OneVPL)"
-        elif (( gen >= 8 && gen <= 11 )); then
-            # Bridge Stack: iHD VA-API + Legacy Media SDK QuickSync
-            target_pkgs=("intel-media-driver" "intel-media-sdk")
-            driver_tier="8th-11th Gen (iHD + MFX)"
-        elif (( gen >= 5 && gen <= 7 )); then
-            # Legacy Stack: i965 VA-API + Legacy Media SDK QuickSync
-            target_pkgs=("libva-intel-driver" "intel-media-sdk")
-            driver_tier="5th-7th Gen (i965 + MFX)"
+        elif (( gen >= 5 && gen <= 11 )); then
+            # 5th-11th Gen (Broadwell to Rocket Lake)
+            # intel-media-sdk pulls in intel-media-driver automatically.
+            target_pkgs=("intel-media-sdk")
+            driver_tier="5th-11th Gen (iHD + MFX)"
         else
             printf "%s[SKIP]%s Intel %s Gen CPU detected. Hardware is outside the 5th+ Gen support matrix.\n" "${YELLOW}" "${RESET}" "${gen}"
             return 0
