@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# INTEL MEDIA DRIVER/SDK SELECTOR (5th Gen to Current)
+# INTEL VA-API / QSV STACK DEPLOYER (5th Gen to Current)
 # Optimized for Bash 5.3+ / Arch Linux / Hyprland ecosystem
+# -----------------------------------------------------------------------------
+# Resolves the VA-API (iHD/i965) and QuickSync (MFX/OneVPL) package split
+# to dynamically satisfy the UWSM environment prober.
+# -----------------------------------------------------------------------------
 
 # 1. Safety & Strict Mode
 set -euo pipefail
@@ -26,8 +30,7 @@ detect_and_install() {
     printf "%s>>> ANALYZING SYSTEM HARDWARE...%s\n" "${BLUE}" "${RESET}"
 
     # --- STAGE 1: HARDWARE VERIFICATION (The "Horse") ---
-    # Execute the raw PCI bus check BEFORE parsing the CPU string.
-    # If there is no Intel iGPU, we exit immediately. Zero wasted cycles.
+    # Raw PCI bus check to prevent F-series/chroot execution bloat.
     local intel_gpu_present=0
     local pci_dev vendor class
 
@@ -53,7 +56,6 @@ detect_and_install() {
     fi
 
     # --- STAGE 2: MICROARCHITECTURE PARSING (The "Cart") ---
-    # Slurp the file entirely into memory (Zero subshells)
     local cpuinfo
     cpuinfo=$(< /proc/cpuinfo) || {
         printf "%s[ERROR]%s Failed to read /proc/cpuinfo.\n" "${RED}" "${RESET}"
@@ -67,7 +69,6 @@ detect_and_install() {
 
     local gen="" sku
 
-    # Standard Core i-series formats (e.g., i7-8550U, i9-14900K)
     if [[ $model_name =~ i[3579]-([0-9]{4,5})[A-Za-z0-9]* ]]; then
         sku="${BASH_REMATCH[1]}"
         if [[ $sku == 1[0-9]* ]]; then
@@ -75,44 +76,45 @@ detect_and_install() {
         else
             gen="${sku:0:1}"
         fi
-    # Meteor/Lunar/Arrow Lake (e.g., Intel(R) Core(TM) Ultra 7 155H, Core(TM) 5 120U)
     elif [[ $model_name =~ Core\(TM\)[[:space:]](Ultra[[:space:]])?[3579][[:space:]][12][0-9]{2}[A-Za-z]* ]]; then
         gen="14"
-    # Alder Lake-N / Modern N-Series Core branding (e.g., Intel(R) Core(TM) i3-N305)
     elif [[ $model_name =~ Core\(TM\)[[:space:]]i[3579]-N[0-9]{3}[A-Za-z0-9]* ]]; then
         gen="12"
-    # Alder Lake-N / Modern N-Series Processor branding (e.g., Intel(R) Processor N100)
     elif [[ $model_name =~ Processor[[:space:]]N[0-9]{2,3} ]]; then
         gen="12"
-    # Consolidated Core M / m-series / Y-series formats (e.g., m3-6Y30, M-5Y71, i7-7Y75)
     elif [[ $model_name =~ ([mM][357]?|i[3579])[-[:space:]]?((1[0-9]|[5-9])Y[0-9]{2})[A-Za-z0-9]* ]]; then
         gen="${BASH_REMATCH[2]}"
-    # Lakefield formats (e.g., i5-L16G7)
     elif [[ $model_name =~ i[35]-L[0-9]{2}G[0-9][A-Za-z0-9]* ]]; then
         gen="10"
     fi
 
     # --- STAGE 3: DRIVER POLICY & DEPLOYMENT ---
     if [[ -n "$gen" ]]; then
-        local target_pkg=""
+        local -a target_pkgs=()
         local driver_tier=""
 
-        # Restored precise architecture mapping to prevent legacy regressions
         if (( gen >= 12 )); then
-            target_pkg="intel-media-driver"
-            driver_tier="12th+ Gen (iHD)"
-        elif (( gen >= 5 && gen <= 11 )); then
-            target_pkg="intel-media-sdk"
-            driver_tier="5th-11th Gen (Legacy)"
+            # Modern Stack: iHD VA-API + OneVPL QuickSync
+            target_pkgs=("intel-media-driver" "vpl-gpu-rt")
+            driver_tier="12th+ Gen (iHD + OneVPL)"
+        elif (( gen >= 8 && gen <= 11 )); then
+            # Bridge Stack: iHD VA-API + Legacy Media SDK QuickSync
+            target_pkgs=("intel-media-driver" "intel-media-sdk")
+            driver_tier="8th-11th Gen (iHD + MFX)"
+        elif (( gen >= 5 && gen <= 7 )); then
+            # Legacy Stack: i965 VA-API + Legacy Media SDK QuickSync
+            target_pkgs=("libva-intel-driver" "intel-media-sdk")
+            driver_tier="5th-7th Gen (i965 + MFX)"
         else
             printf "%s[SKIP]%s Intel %s Gen CPU detected. Hardware is outside the 5th+ Gen support matrix.\n" "${YELLOW}" "${RESET}" "${gen}"
             return 0
         fi
 
-        printf "%s[MATCH]%s Intel %s graphics hardware present. Target: %s%s%s\n" "${GREEN}" "${RESET}" "${driver_tier}" "${BOLD}" "${target_pkg}" "${RESET}"
+        printf "%s[MATCH]%s Intel %s graphics hardware present.\n" "${GREEN}" "${RESET}" "${driver_tier}"
+        printf "%s[INFO]%s Target Packages: %s%s%s\n" "${BLUE}" "${RESET}" "${BOLD}" "${target_pkgs[*]}" "${RESET}"
 
         if (( ! AUTO_MODE )); then
-            printf "%s[PROMPT]%s Install %s? [Y/n]: " "${YELLOW}" "${RESET}" "${target_pkg}"
+            printf "%s[PROMPT]%s Install required hardware acceleration stack? [Y/n]: " "${YELLOW}" "${RESET}"
             local confirm
             if ! IFS= read -r confirm; then
                 printf "\n%s[INFO]%s No input received. Installation aborted.\n" "${BLUE}" "${RESET}"
@@ -124,8 +126,8 @@ detect_and_install() {
             fi
         fi
 
-        printf "%s[RUN]%s Deploying %s...\n" "${YELLOW}" "${RESET}" "${target_pkg}"
-        pacman -S --needed --noconfirm "${target_pkg}"
+        printf "%s[RUN]%s Deploying pacman targets...\n" "${YELLOW}" "${RESET}"
+        pacman -S --needed --noconfirm "${target_pkgs[@]}"
 
         printf "%s[SUCCESS]%s Hardware acceleration stack installed.\n" "${GREEN}" "${RESET}"
         return 0
@@ -133,8 +135,10 @@ detect_and_install() {
     elif [[ $model_name =~ Intel ]]; then
         printf "%s[WARN]%s Intel GPU detected, but cannot definitively parse microarchitecture generation.\n" "${YELLOW}" "${RESET}"
         printf "%s[SKIP]%s Skipping installation to prevent driver mismatch.\n" "${YELLOW}" "${RESET}"
+        return 0
     else
         printf "%s[SKIP]%s Non-Intel CPU detected. Module ignored.\n" "${YELLOW}" "${RESET}"
+        return 0
     fi
 }
 
