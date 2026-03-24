@@ -9,7 +9,7 @@
 
 # Group 1: Graphics & Drivers
 declare -ar pkgs_graphics=(
-  "intel-media-driver" "vpl-gpu-rt" "mesa" "vulkan-intel" "mesa-utils" "intel-gpu-tools" "libva" "libva-utils" "vulkan-icd-loader" "vulkan-tools" "sof-firmware" "linux-firmware" "acpi_call-dkms"
+  "intel-media-driver" "vpl-gpu-rt" "mesa" "vulkan-intel" "mesa-utils" "intel-gpu-tools" "libva" "libva-utils" "vulkan-icd-loader" "vulkan-tools" "sof-firmware" "linux-firmware" "linux-headers" "acpi_call-dkms"
 )
 
 # Group 2: Hyprland Core
@@ -78,6 +78,11 @@ declare -ar pkgs_productivity=(
   "zathura" "zathura-pdf-mupdf" "cava"
 )
 
+# Group 14: Limine and snapshot
+declare -ar btrfs_snapshot=(
+  "limine" "efibootmgr" "kernel-modules-hook" "btrfs-progs" "snapper" "snap-pac" "jdk-openjdk"
+)
+
 declare -ar GROUP_LABELS=(
   "Graphics & Drivers"
   "Hyprland Core"
@@ -92,6 +97,7 @@ declare -ar GROUP_LABELS=(
   "System Admin"
   "Gnome Utilities"
   "Productivity"
+  "Boot Loader & Snapshot"
 )
 
 declare -ar GROUP_ARRAYS=(
@@ -108,6 +114,7 @@ declare -ar GROUP_ARRAYS=(
   pkgs_sysadmin
   pkgs_gnome
   pkgs_productivity
+  btrfs_snapshot
 )
 
 # --- 2. EARLY ROOT CHECK ---

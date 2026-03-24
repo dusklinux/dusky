@@ -104,6 +104,10 @@ declare -ar PACKAGES=(
   "papirus-icon-theme-git"
   "papirus-folders-git"
 # "fluent-icon-theme-git"
+
+# snapshot & limine
+  "limine-mkinitcpio-hook"
+  "limine-snapper-sync"
 )
 
 # Delay before auto-retrying

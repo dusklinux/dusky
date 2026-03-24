@@ -24,6 +24,7 @@ SCRIPT_SEARCH_DIRS=(
     "${HOME}/user_scripts/arch_setup_scripts"
     "${HOME}/user_scripts/rofi"
     "${HOME}/user_scripts/theme_matugen"
+    "${HOME}/user_scripts/btrfs_snapshots"
     # "${HOME}/my_other_scripts"
     # "/opt/shared_team_scripts"
 )
@@ -146,6 +147,12 @@ INSTALL_SEQUENCE=(
 # ------ CUSTOM PATH SCRIPTS -------
 
     "U | rofi_wallpaper_selctor.sh --cache-only --progress"
+
+# ------ Btrfs Snapshot configuration -------
+
+    "U | 01_limine_setup.sh --auto"
+    "U | 02_snapper_isolation_subvolume.sh --auto"
+    "U | 03_snapper_pacman_hooks.sh --auto"
 )
 
 # ==============================================================================
