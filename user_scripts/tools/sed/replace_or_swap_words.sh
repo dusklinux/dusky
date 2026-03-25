@@ -32,7 +32,8 @@ crash_handler() {
     local line_no=$1
     local command="$2"
     local code=$3
-    printf "\n%s[!] CRASH: Command '%s' failed on line %d with exit code %d.%s\n" "${RED}" "${command}" "${line_no}" "${code}" "${RESET}" >&2
+    printf "\n%s[!] CRASH: Command '%s' failed on line %d with exit code %d.%s\n" \
+        "${RED}" "${command}" "${line_no}" "${code}" "${RESET}" >&2
 }
 
 cleanup_temp_files() {
@@ -80,6 +81,8 @@ choose_delimiter() {
     die "Unable to safely construct a substitution command. All delimiter candidates collide." 1
 }
 
+# Vim/Neovim Ex commands use '|' as a command separator, so it must never be
+# used as the :substitute delimiter here.
 choose_vim_delimiter() {
     local combined="${1}${2}"
     local delim
@@ -119,11 +122,11 @@ show_help() {
     printf "  %s<SEARCH_TERM>%s   The text or regex to find. Syntax depends on the selected mode.\n" "${CYAN}" "${RESET}"
     printf "  %s<REPLACE_TERM>%s  The literal text to replace matches with.\n" "${CYAN}" "${RESET}"
     printf "  %s<TARGET_DIR>%s    The directory to search within.\n\n" "${CYAN}" "${RESET}"
-    printf "%sExecution Modes (Interactive):%s\n" "${YELLOW}" "${RESET}"
-    printf "  1. %sInteractive Neovim:%s Opens matching files in nvim and confirms each replacement.\n" "${GREEN}" "${RESET}"
-    printf "  2. %sBatch Sed (Standard):%s Fast global replacement using GNU sed.\n" "${GREEN}" "${RESET}"
-    printf "  3. %sBatch Perl (Advanced):%s Uses Perl regular expressions for advanced patterns.\n" "${GREEN}" "${RESET}"
-    printf "  4. %sDry Run:%s Preview matches touching nothing.\n\n" "${GREEN}" "${RESET}"
+    printf "%sExecution Modes:%s\n" "${YELLOW}" "${RESET}"
+    printf "  1. %sInteractive Neovim:%s ripgrep file discovery + Vim substitution with per-match confirmation.\n" "${GREEN}" "${RESET}"
+    printf "  2. %sBatch Sed (Standard):%s GNU grep/sed BRE-style replacement.\n" "${GREEN}" "${RESET}"
+    printf "  3. %sBatch Perl (Advanced):%s Perl regular-expression replacement.\n" "${GREEN}" "${RESET}"
+    printf "  4. %sDry Run:%s Preview matches only using ripgrep.\n\n" "${GREEN}" "${RESET}"
 }
 
 print_lesson() {
@@ -183,7 +186,8 @@ main() {
                 rc=$?
                 case "${rc}" in
                     1)
-                        printf "%s[i] No instances of '%s' found in '%s'. Exiting cleanly.%s\n" "${GREEN}" "${search}" "${target_dir}" "${RESET}"
+                        printf "%s[i] No instances of '%s' found in '%s'. Exiting cleanly.%s\n" \
+                            "${GREEN}" "${search}" "${target_dir}" "${RESET}"
                         exit 0
                         ;;
                     *)
@@ -227,7 +231,8 @@ main() {
                 rc=$?
                 case "${rc}" in
                     1)
-                        printf "%s[i] No instances of '%s' found in '%s'. Exiting cleanly.%s\n" "${GREEN}" "${search}" "${target_dir}" "${RESET}"
+                        printf "%s[i] No instances of '%s' found in '%s'. Exiting cleanly.%s\n" \
+                            "${GREEN}" "${search}" "${target_dir}" "${RESET}"
                         exit 0
                         ;;
                     *)
@@ -290,7 +295,8 @@ main() {
             fi
 
             if [[ ! -s "${perl_filelist}" ]]; then
-                printf "%s[i] No instances of '%s' found in '%s'. Exiting cleanly.%s\n" "${GREEN}" "${search}" "${target_dir}" "${RESET}"
+                printf "%s[i] No instances of '%s' found in '%s'. Exiting cleanly.%s\n" \
+                    "${GREEN}" "${search}" "${target_dir}" "${RESET}"
                 exit 0
             fi
 
@@ -325,7 +331,8 @@ main() {
                 rc=$?
                 case "${rc}" in
                     1)
-                        printf "%s[i] No instances of '%s' found in '%s'. Exiting cleanly.%s\n" "${GREEN}" "${search}" "${target_dir}" "${RESET}"
+                        printf "%s[i] No instances of '%s' found in '%s'. Exiting cleanly.%s\n" \
+                            "${GREEN}" "${search}" "${target_dir}" "${RESET}"
                         exit 0
                         ;;
                     *)
