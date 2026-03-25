@@ -1289,6 +1289,31 @@ pages:
                 type: exec
                 command: kitty --class 210_zram_optimize_swappiness.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/210_zram_optimize_swappiness.sh"
                 terminal: false
+
+
+  - type: section
+    properties:
+      title: Clock
+      icon: ''
+      description: ''
+    items:
+    - type: toggle
+      properties:
+        title: 24-Hour Clock
+        description: Toggle between 12hr (AM/PM) and 24hr format
+        icon: preferences-system-time-symbolic
+        state_command: "grep -q '%H:%M' $HOME/.config/waybar/config.jsonc && echo yes"
+        interval: 5
+      on_toggle:
+        enabled:
+          type: exec
+          command: "sed -i 's/{:%I:%M %p}/{:%H:%M}/g' $HOME/.config/waybar/config.jsonc && pkill -USR2 -x waybar"
+          terminal: false
+        disabled:
+          type: exec
+          command: "sed -i 's/{:%H:%M}/{:%I:%M %p}/g' $HOME/.config/waybar/config.jsonc && pkill -USR2 -x waybar"
+          terminal: false
+
   - type: section
     properties:
       title: Status Bar & Notifications
