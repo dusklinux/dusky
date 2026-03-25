@@ -193,8 +193,8 @@ main() {
             fi
 
             print_lesson \
-                "Collect a null-delimited file list first, then let Neovim load that list internally so shell argument limits are never a problem:" \
-                "tmp=\$(mktemp) && rg -l -0 -- <PATTERN> <DIR> > \"\$tmp\" && SMART_REPLACE_FILELIST=\"\$tmp\" nvim -c '<load arglist>' -c '<safe argdo substitution>'"
+                "Collect a null-delimited file list first, and pass patterns via environment variables so shell quoting and ARG_MAX limits are never a problem:" \
+                "tmp=\$(mktemp) && rg -l -0 -- <PATTERN> <DIR> > \"\$tmp\" && SMART_REPLACE_SEARCH=\"<PATTERN>\" SMART_REPLACE_REPLACE=\"<TEXT>\" SMART_REPLACE_DELIM=\"<DELIM>\" SMART_REPLACE_FILELIST=\"\$tmp\" nvim -c '<load arglist>' -c '<safe argdo substitution>'"
 
             printf "%s[i] Launching Neovim...%s\n" "${GREEN}" "${RESET}"
 
