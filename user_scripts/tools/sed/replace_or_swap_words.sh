@@ -190,7 +190,7 @@ main() {
                SMART_REPLACE_FILELIST="${filelist}" \
                nvim \
                    -c 'lua local f = assert(io.open(vim.env.SMART_REPLACE_FILELIST, "rb")); local data = assert(f:read("*a")); f:close(); for path in data:gmatch("([^%z]+)%z") do vim.cmd("argadd " .. vim.fn.fnameescape(path)) end; vim.cmd("first")' \
-                   -c 'let g:d = $SMART_REPLACE_DELIM | let g:pat = escape($SMART_REPLACE_SEARCH, g:d) | let g:rep = escape($SMART_REPLACE_REPLACE, "\\" .. g:d .. "&~") | execute "argdo %s" .. g:d .. g:pat .. g:d .. g:rep .. g:d .. "gce | update"'; then
+                   -c 'let s:d = $SMART_REPLACE_DELIM | let s:pat = escape($SMART_REPLACE_SEARCH, s:d) | let s:rep = escape($SMART_REPLACE_REPLACE, "\\" .. s:d .. "&~") | execute "argdo %s" .. s:d .. s:pat .. s:d .. s:rep .. s:d .. "gce | update"'; then
                 printf "%s[✔] Neovim session completed.%s\n" "${GREEN}" "${RESET}"
             else
                 rc=$?
