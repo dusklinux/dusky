@@ -2157,7 +2157,7 @@ pages:
                 button_text: "Setup"
               on_press:
                 type: exec
-                command: kitty --class 01_limine_setup.sh --hold sh -c "$HOME/user_scripts/btrfs_setup/01_limine_setup.sh"
+                command: kitty --class 01_limine_setup.sh --hold sh -c "$HOME/user_scripts/btrfs_setup/01_limine_setup.sh --auto"
                 terminal: false
             - type: button
               properties:
@@ -2167,7 +2167,7 @@ pages:
                 button_text: "Setup"
               on_press:
                 type: exec
-                command: kitty --class 02_snapper_isolation_subvolume.sh --hold sh -c "$HOME/user_scripts/btrfs_setup/02_snapper_isolation_subvolume.sh"
+                command: kitty --class 02_snapper_isolation_subvolume.sh --hold sh -c "$HOME/user_scripts/btrfs_setup/02_snapper_isolation_subvolume.sh --auto"
                 terminal: false
             - type: button
               properties:
@@ -2177,7 +2177,7 @@ pages:
                 button_text: "Setup"
               on_press:
                 type: exec
-                command: kitty --class 03_snapper_pacman_hooks.sh --hold sh -c "$HOME/user_scripts/btrfs_setup/03_snapper_pacman_hooks.sh"
+                command: kitty --class 03_snapper_pacman_hooks.sh --hold sh -c "$HOME/user_scripts/btrfs_setup/03_snapper_pacman_hooks.sh --auto"
                 terminal: false
 
   - type: section
