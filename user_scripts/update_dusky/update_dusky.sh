@@ -200,13 +200,19 @@ declare -ra UPDATE_SEQUENCE=(
 
 #================= CUSTOM=====================
     "U | dusky_commands_before.sh"
+#================= Scripts =====================
+
+    "U | 005_hypr_custom_config_setup.sh"
+    "U | 010_package_removal.sh --auto"
+
+
+#================= CUSTOM=====================
     "U | rofi_wallpaper_selctor.sh --cache-only --progress"
     "S | pacman_packages.sh"
     "U | paru_packages.sh"
 #================= Scripts =====================
 
-    "U | 005_hypr_custom_config_setup.sh"
-    "U | 010_package_removal.sh --auto"
+
     "U | 015_set_thunar_terminal_kitty.sh"
     "U | 020_desktop_apps_username_setter.sh --quiet"
 #    "U | 025_configure_keyboard.sh"
