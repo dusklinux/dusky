@@ -1,157 +1,170 @@
 #!/usr/bin/env bash
-# -----------------------------------------------------------------------------
-# MODULE: DISK PARTITIONING & MOUNTING (BIOS & UEFI SUPPORT)
-# -----------------------------------------------------------------------------
+# ==============================================================================
+# MODULE: 004_disk_mount.sh
+# CONTEXT: Arch ISO Environment
+# PURPOSE: BTRFS Subvolume Generation, NOCOW Attributes, and FHS Mounting
+# ==============================================================================
+
 set -euo pipefail
-readonly C_BOLD=$'\033[1m' C_RED=$'\033[31m' C_GREEN=$'\033[32m' C_YELLOW=$'\033[33m' C_BLUE=$'\033[34m' C_RESET=$'\033[0m'
 
-# --- Helpers ---
-sanitize_dev() {
-    local input="${1%/}"
-    input="${input#/dev/}"
-    echo "/dev/$input"
-}
+readonly C_BOLD=$'\033[1m'
+readonly C_RED=$'\033[31m'
+readonly C_GREEN=$'\033[32m'
+readonly C_YELLOW=$'\033[33m'
+readonly C_CYAN=$'\033[36m'
+readonly C_RESET=$'\033[0m'
 
-is_ssd() {
-    local dev="$1"
-    local parent
-    parent=$(lsblk -no PKNAME "$dev" | head -n1)
-    local rot
-    rot=$(cat "/sys/block/$parent/queue/rotational" 2>/dev/null || echo 1)
-    (( rot == 0 ))
-}
-
-# Check Boot Mode
 if [[ -d /sys/firmware/efi/efivars ]]; then
-    BOOT_MODE="UEFI"
+    readonly BOOT_MODE="UEFI"
 else
-    BOOT_MODE="BIOS"
+    readonly BOOT_MODE="BIOS"
 fi
 
-# --- Main Logic ---
-umount -R /mnt 2>/dev/null || true
+# --- Helper Functions ---
+get_partition_path() {
+    local dev_path="$1"
+    local num="$2"
+    local dev_name="${dev_path#/dev/}" # Strip /dev/ prefix for clean anchored regex validation
+    
+    # Strict anchored regex prevents false positives on complex topology names
+    if [[ "$dev_name" =~ ^(nvme|mmcblk|loop) ]]; then
+        printf '%s\n' "${dev_path}p${num}"
+    else
+        printf '%s\n' "${dev_path}${num}"
+    fi
+}
 
-clear
-echo -e "${C_BOLD}=== DISK SETUP (${C_BLUE}$BOOT_MODE Mode${C_RESET}${C_BOLD}) ===${C_RESET}"
+# --- Idempotent State Teardown ---
+if swapon --show=NAME --noheadings | grep -Fxq '/mnt/swap/swapfile'; then
+    swapoff /mnt/swap/swapfile
+fi
 
-# --- INSTRUCTIONS ---
-echo -e "${C_YELLOW}>> PRE-REQ: Ensure partitions exist (run 'cfdisk').${C_RESET}"
+if findmnt -Rno TARGET /mnt >/dev/null 2>&1; then
+    umount -R /mnt
+fi
+
+# --- Validations ---
+readonly MAPPED_ROOT="/dev/mapper/cryptroot"
+
+if [[ ! -e "$MAPPED_ROOT" ]]; then
+    echo -e "${C_RED}Critical: $MAPPED_ROOT not found. Did you run the partitioning module?${C_RESET}"
+    exit 1
+fi
+
+echo -e "${C_BOLD}=== BTRFS ARCHITECTURE & MOUNTING ===${C_RESET}\n"
+
+# --- Determine & Validate EFI Partition ---
+EFI_PART=""
 if [[ "$BOOT_MODE" == "UEFI" ]]; then
-    echo -e "${C_YELLOW}   - 1x EFI Partition (Type: EFI System, ~512MB)${C_RESET}"
-    echo -e "${C_YELLOW}   - 1x ROOT Partition (Type: Linux Filesystem)${C_RESET}"
-else
-    echo -e "${C_YELLOW}   - 1x BIOS Boot Partition (Type: BIOS Boot, 1MB) [Required for GPT]${C_RESET}"
-    echo -e "${C_YELLOW}   - 1x ROOT Partition (Type: Linux Filesystem)${C_RESET}"
-fi
-lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
+    # Auto Mode: Intelligently derive the EFI partition with strict multi-line pipeline safety
+    if [[ "${1:-}" == "--auto" || "${1:-}" == "auto" ]]; then
+        ROOT_PART_NAME=$(lsblk -no PKNAME "$MAPPED_ROOT" | head -n1)
+        if [[ -z "$ROOT_PART_NAME" ]]; then
+            echo -e "${C_RED}Critical: Failed to determine the encrypted root partition behind $MAPPED_ROOT.${C_RESET}"
+            exit 1
+        fi
 
-# 1. INPUTS
-while true; do
-    read -rp "Enter ROOT partition (e.g. nvme0n1p2): " raw_root
-    ROOT_PART=$(sanitize_dev "$raw_root")
-    if [[ -b "$ROOT_PART" ]]; then break; else echo "${C_YELLOW}Invalid device: $ROOT_PART${C_RESET}"; fi
+        ROOT_DISK_NAME=$(lsblk -no PKNAME "/dev/${ROOT_PART_NAME}" | head -n1)
+        if [[ -z "$ROOT_DISK_NAME" ]]; then
+            echo -e "${C_RED}Critical: Failed to determine the parent disk for /dev/${ROOT_PART_NAME}.${C_RESET}"
+            exit 1
+        fi
+
+        EFI_PART=$(get_partition_path "/dev/${ROOT_DISK_NAME}" 1)
+        echo -e "${C_CYAN}Auto-detected EFI partition: $EFI_PART${C_RESET}"
+    else
+        # Interactive Mode
+        lsblk -o NAME,SIZE,TYPE,FSTYPE | grep -i "vfat\|efi" || true
+        read -r -p "Enter your EFI partition (e.g., nvme0n1p1): " raw_efi
+        EFI_PART="/dev/${raw_efi#/dev/}"
+    fi
+
+    # FAIL-FAST: Validate block device immediately. Never mutate BTRFS state if this fails.
+    if [[ ! -b "$EFI_PART" ]]; then
+        echo -e "${C_RED}Critical: EFI partition $EFI_PART not found or is not a block device.${C_RESET}"
+        exit 1
+    fi
+fi
+
+# --- Phase 1: Subvolume Matrix Generation ---
+echo -e "${C_YELLOW}>> Constructing Subvolume Matrix on Root...${C_RESET}"
+
+readonly TEMP_MNT="/mnt/btrfs_temp"
+mkdir -p "$TEMP_MNT"
+mount -t btrfs "$MAPPED_ROOT" "$TEMP_MNT"
+
+# Standard Snapshot-Aware Subvolumes
+declare -a STD_SUBVOLS=(
+    "@"
+    "@home"
+    "@snapshots"
+    "@home_snapshots"
+    "@var_log"
+    "@var_cache"
+    "@var_tmp"
+    "@var_lib_machines"
+    "@var_lib_portables"
+)
+
+for sub in "${STD_SUBVOLS[@]}"; do
+    btrfs subvolume create "${TEMP_MNT}/${sub}" >/dev/null
 done
 
-ESP_PART=""
+# NOCOW Subvolumes (VMs & Swap)
+declare -a NOCOW_SUBVOLS=(
+    "@var_lib_libvirt"
+    "@swap"
+)
+
+for sub in "${NOCOW_SUBVOLS[@]}"; do
+    btrfs subvolume create "${TEMP_MNT}/${sub}" >/dev/null
+    # CRITICAL: Apply NOCOW (+C) strictly while the directory is empty
+    chattr +C "${TEMP_MNT}/${sub}"
+done
+
+echo -e "${C_GREEN}>> Matrix generated and attributes securely applied.${C_RESET}"
+umount "$TEMP_MNT"
+rm -rf "$TEMP_MNT"
+
+# --- Phase 2: FHS Hierarchy Assembly ---
+# Optimized BTRFS Mount Options (Includes discard=async for NVMe I/O performance)
+readonly BTRFS_OPTS="rw,noatime,compress=zstd:3,space_cache=v2,discard=async"
+
+echo -e "${C_YELLOW}>> Assembling File Hierarchy Standard (FHS) to /mnt...${C_RESET}"
+
+# 1. Mount Top Level Root First
+mount -o "${BTRFS_OPTS},subvol=@" "$MAPPED_ROOT" /mnt
+
+# 2. Generate Mountpoints
+mkdir -p /mnt/{home,.snapshots,var/log,var/cache,var/tmp,var/lib/machines,var/lib/portables,var/lib/libvirt,swap,boot}
+
+# 3. Mount Sub-branches
+mount -o "${BTRFS_OPTS},subvol=@home"               "$MAPPED_ROOT" /mnt/home
+mount -o "${BTRFS_OPTS},subvol=@snapshots"          "$MAPPED_ROOT" /mnt/.snapshots
+mount -o "${BTRFS_OPTS},subvol=@var_log"            "$MAPPED_ROOT" /mnt/var/log
+mount -o "${BTRFS_OPTS},subvol=@var_cache"          "$MAPPED_ROOT" /mnt/var/cache
+mount -o "${BTRFS_OPTS},subvol=@var_tmp"            "$MAPPED_ROOT" /mnt/var/tmp
+mount -o "${BTRFS_OPTS},subvol=@var_lib_machines"   "$MAPPED_ROOT" /mnt/var/lib/machines
+mount -o "${BTRFS_OPTS},subvol=@var_lib_portables"  "$MAPPED_ROOT" /mnt/var/lib/portables
+mount -o "${BTRFS_OPTS},subvol=@var_lib_libvirt"    "$MAPPED_ROOT" /mnt/var/lib/libvirt
+mount -o "${BTRFS_OPTS},subvol=@swap"               "$MAPPED_ROOT" /mnt/swap
+
+# Nested Home Snapshots
+mkdir -p /mnt/home/.snapshots
+mount -o "${BTRFS_OPTS},subvol=@home_snapshots"     "$MAPPED_ROOT" /mnt/home/.snapshots
+
+# 4. Mount EFI Target
 if [[ "$BOOT_MODE" == "UEFI" ]]; then
-    while true; do
-        read -rp "Enter EFI partition (e.g. nvme0n1p1): " raw_esp
-        ESP_PART=$(sanitize_dev "$raw_esp")
-        [[ "$ESP_PART" == "$ROOT_PART" ]] && echo "EFI cannot be ROOT." && continue
-        if [[ -b "$ESP_PART" ]]; then break; else echo "${C_YELLOW}Invalid device: $ESP_PART${C_RESET}"; fi
-    done
-    echo -e "\n${C_BOLD}Target:${C_RESET} ROOT=$ROOT_PART | EFI=$ESP_PART"
-else
-    echo -e "\n${C_BOLD}Target:${C_RESET} ROOT=$ROOT_PART | BOOT=Legacy (No mount needed)"
+    echo -e "${C_YELLOW}>> Mounting EFI ($EFI_PART) to /mnt/boot...${C_RESET}"
+    mount "$EFI_PART" /mnt/boot
 fi
 
-# 2. MODE SELECTION
-DO_FORMAT=false
-echo -e "\n${C_RED}${C_BOLD}!!! WARNING !!!${C_RESET}"
-read -r -p "Do you want to FORMAT these partitions? (Choosing 'n' mounts existing drives) [y/N]: " fmt_choice
-if [[ "${fmt_choice,,}" =~ ^(y|yes)$ ]]; then
-    DO_FORMAT=true
-    echo -e "${C_RED}>> DATA WILL BE WIPED. <<${C_RESET}"
-else
-    echo -e "${C_GREEN}>> RESCUE MODE: Mounting existing system without formatting. <<${C_RESET}"
-fi
+# --- Phase 3: Swapfile Initialization ---
+echo -e "${C_YELLOW}>> Generating 4GB Static Swapfile...${C_RESET}"
+# Modern 'mkswapfile' properly formats the blocks avoiding COW fragmentation entirely
+btrfs filesystem mkswapfile --size 4G --uuid clear /mnt/swap/swapfile
+swapon /mnt/swap/swapfile
 
-# --- LOGIC UPDATE START ---
-if [ "$DO_FORMAT" = true ]; then
-    # Strict safety check for Formatting: Defaults to NO
-    read -r -p ":: Proceed with FORMATTING? [y/N] " confirm
-    [[ "${confirm,,}" != "y" ]] && exit 1
-else
-    # Convenience check for Mounting: Defaults to YES
-    read -r -p ":: Proceed with MOUNTING? [Y/n] " confirm
-    [[ "${confirm,,}" =~ ^(n|no)$ ]] && exit 1
-fi
-# --- LOGIC UPDATE END ---
-
-# 3. EXECUTION
-if [ "$DO_FORMAT" = true ]; then
-    # --- FORMATTING ---
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        echo ">> Formatting EFI..."
-        mkfs.fat -F 32 -n "EFI" "$ESP_PART"
-    fi
-    
-    echo ">> Formatting ROOT (BTRFS)..."
-    mkfs.btrfs -f -L "ROOT" "$ROOT_PART"
-    
-    echo ">> Creating Subvolumes..."
-    mount -t btrfs "$ROOT_PART" /mnt
-    btrfs subvolume create /mnt/@
-    btrfs subvolume create /mnt/@home
-    umount /mnt
-else
-    # --- RESCUE ---
-    echo ">> Skipping Format. Checking filesystem..."
-    if ! lsblk -f "$ROOT_PART" | grep -q "btrfs"; then
-        echo "${C_RED}Error: Partition $ROOT_PART is not BTRFS.${C_RESET}"
-        exit 1
-    fi
-
-    # Subvolume Validation
-    echo ">> Verifying subvolume structure..."
-    mount -t btrfs "$ROOT_PART" /mnt
-    if [[ ! -d "/mnt/@" ]] || [[ ! -d "/mnt/@home" ]]; then
-        echo "${C_RED}Error: Subvolumes @ or @home not found on $ROOT_PART.${C_RESET}"
-        echo "${C_RED}Cannot proceed with standard Arch layout mount.${C_RESET}"
-        umount /mnt
-        exit 1
-    fi
-    umount /mnt
-fi
-
-# 4. MOUNTING
-BTRFS_OPTS="rw,noatime,compress=zstd:3,space_cache=v2"
-if is_ssd "$ROOT_PART"; then
-    echo ">> SSD Detected. Adding optimizations."
-    BTRFS_OPTS+=",ssd,discard=async"
-fi
-
-echo ">> Mounting ROOT (@)..."
-mount -o "${BTRFS_OPTS},subvol=@" "$ROOT_PART" /mnt
-
-echo ">> Preparing directories..."
-mkdir -p /mnt/{home,boot}
-
-echo ">> Mounting HOME (@home)..."
-mount -o "${BTRFS_OPTS},subvol=@home" "$ROOT_PART" /mnt/home
-
-if [[ "$BOOT_MODE" == "UEFI" ]]; then
-    echo ">> Mounting EFI..."
-    mount "$ESP_PART" /mnt/boot
-fi
-
-echo -e "${C_GREEN}Disks mounted successfully.${C_RESET}"
-if [[ "$BOOT_MODE" == "UEFI" ]]; then
-    lsblk -f "$ROOT_PART" "$ESP_PART"
-else
-    lsblk -f "$ROOT_PART"
-fi
-
-echo -e "\n${C_BOLD}Next Steps:${C_RESET}"
-echo "1. Run 'pacstrap' to install the base system."
-echo "2. Run 'genfstab -U /mnt >> /mnt/etc/fstab' to save this layout."
+echo -e "\n${C_GREEN}${C_BOLD}>> Setup Complete. System is primed for 'pacstrap'.${C_RESET}"
+lsblk -f "$MAPPED_ROOT"
+exit 0
