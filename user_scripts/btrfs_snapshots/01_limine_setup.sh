@@ -2,6 +2,13 @@
 # Arch Linux (EFI + Btrfs root) | Limine core setup
 # Bash 5.3+
 
+# --- USER CONFIGURATION ---
+# Set the path to your custom Limine wallpaper here.
+# Note: Limine STRICTLY supports PNG, JPEG, and BMP formats.
+# Example: LIMINE_WALLPAPER_SOURCE="/home/user/Pictures/splash.png"
+LIMINE_WALLPAPER_SOURCE=""
+# --------------------------
+
 set -Eeuo pipefail
 export LC_ALL=C
 
@@ -581,6 +588,14 @@ configure_limine_defaults() {
         info "Configured ESP_PATH=${esp_target}"
         NEEDS_LIMINE_UPDATE=true
     fi
+
+    # Explicitly force Snapshots to the bottom of the boot order
+    if ! sudo grep -qE '^[[:space:]]*BOOT_ORDER=' "$limine_defaults" 2>/dev/null; then
+        backup_file "$limine_defaults"
+        set_shell_var "$limine_defaults" BOOT_ORDER "*, *lts, *fallback, Snapshots"
+        info "Configured BOOT_ORDER to prioritize kernels over Snapshots."
+        NEEDS_LIMINE_UPDATE=true
+    fi
 }
 
 deploy_limine() {
@@ -598,7 +613,19 @@ deploy_limine() {
     if [[ ! -f "${esp_target}/EFI/limine/limine_x64.efi" || "$canonical_present" == false ]]; then
         purge_limine_fallback_entries "$esp_partuuid"
         info "Installing Limine EFI entry."
-        sudo limine-install
+        
+        # Safely attempt UEFI fallback if standard install fails on buggy firmware
+        if ! sudo limine-install; then
+            warn "Standard limine-install failed. Attempting UEFI fallback installation..."
+            if sudo limine-install --skip-uefi --fallback; then
+                info "Fallback installation successful. Updating /etc/default/limine overrides."
+                set_shell_var "/etc/default/limine" SKIP_UEFI "yes"
+                set_shell_var "/etc/default/limine" ENABLE_LIMINE_FALLBACK "yes"
+            else
+                fatal "Fallback limine-install also failed."
+            fi
+        fi
+        
         CACHE_EFIBOOTMGR_OUTPUT=""
         NEEDS_LIMINE_UPDATE=true
     fi
@@ -620,6 +647,54 @@ deploy_limine() {
 
     [[ -f /boot/limine.conf ]] || fatal "/boot/limine.conf was not created."
     info "Limine deployment completed."
+}
+
+apply_limine_theme() {
+    local conf="/boot/limine.conf"
+    [[ -f "$conf" ]] || return 0
+
+    local theme_marker="# --- UI Theme ---"
+    if ! sudo grep -qF "$theme_marker" "$conf"; then
+        local tmp
+        tmp="$(mktemp)"
+        ACTIVE_TEMP_FILES+=("$tmp")
+        
+        cat <<EOF > "$tmp"
+$theme_marker
+term_palette: 1e1e2e;f38ba8;a6e3a1;f9e2af;89b4fa;f5c2e7;94e2d5;cdd6f4
+term_palette_bright: 585b70;f38ba8;a6e3a1;f9e2af;89b4fa;f5c2e7;94e2d5;cdd6f4
+term_background: 00000000
+term_foreground: cdd6f4
+term_background_bright: 00000000
+term_foreground_bright: cdd6f4
+EOF
+
+        if [[ -n "${LIMINE_WALLPAPER_SOURCE:-}" && -f "$LIMINE_WALLPAPER_SOURCE" ]]; then
+            local ext="${LIMINE_WALLPAPER_SOURCE##*.}"
+            ext="${ext,,}"
+            if [[ "$ext" =~ ^(png|jpg|jpeg|bmp)$ ]]; then
+                local esp_target
+                esp_target="$(detect_esp_mountpoint 2>/dev/null || true)"
+                if [[ -n "$esp_target" ]]; then
+                    local wp_dest="${esp_target}/limine-wallpaper.${ext}"
+                    sudo cp "$LIMINE_WALLPAPER_SOURCE" "$wp_dest"
+                    echo "wallpaper: boot():/limine-wallpaper.${ext}" >> "$tmp"
+                    echo "wallpaper_style: stretched" >> "$tmp"
+                    info "Installed Limine wallpaper to $wp_dest"
+                fi
+            else
+                warn "Wallpaper must be PNG, JPEG, or BMP format. Skipping wallpaper injection."
+            fi
+        fi
+        
+        echo "# ----------------" >> "$tmp"
+        echo "" >> "$tmp"
+        
+        sudo cat "$conf" >> "$tmp"
+        backup_file "$conf"
+        atomic_write "$conf" "$tmp"
+        info "Applied Catppuccin theme and wallpaper to Limine configuration."
+    fi
 }
 
 preflight_checks() {
@@ -650,3 +725,4 @@ execute "Install limine-mkinitcpio-hook" install_aur_packages
 require_cmd limine-install
 require_cmd limine-update
 execute "Deploy Limine" deploy_limine
+execute "Apply Limine UI Theme & Wallpaper" apply_limine_theme
