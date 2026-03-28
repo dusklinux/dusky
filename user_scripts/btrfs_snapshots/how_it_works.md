@@ -1,0 +1,34 @@
+- **Common behavior across all three**
+  - Interactive by default; `--auto` skips prompts.
+  - Must be run as a regular user with `sudo`, not as root.
+  - Use strict Bash error handling, sudo keepalive, cleanup traps, timestamped backups, and atomic file writes.
+
+- **Script 1 — Limine core setup**
+  - Installs core packages: `limine`, `efibootmgr`, `kernel-modules-hook`, `btrfs-progs`; installs matching kernel headers if DKMS is present.
+  - Builds `/etc/kernel/cmdline` from the live system: Btrfs root UUID, root subvolume, mount options, `ro`/`rw`, dm-crypt setup, and microcode handling.
+  - Detects whether mkinitcpio uses `encrypt` or `sd-encrypt` and emits the matching kernel parameters.
+  - Ensures `/etc/default/limine` exists; sets `BOOT_ORDER` if missing; only fixes `ESP_PATH` if that key already exists and is wrong.
+  - Installs AUR `limine-mkinitcpio-hook` if needed, auto-installing a Java provider if its build deps are missing.
+  - Detects the ESP, removes duplicate/fallback Limine UEFI boot entries, runs `limine-install` (with fallback mode if standard install fails), runs `limine-update` when needed, deduplicates the canonical Limine entry, and moves it to the front of `BootOrder`.
+  - Optionally prepends a Catppuccin-style theme to `/boot/limine.conf`; if a valid wallpaper path is configured, copies it to the ESP and references it from Limine.
+
+- **Script 2 — Snapper isolated root/home snapshot layout**
+  - Reinstalls `snapper`, `boost-libs`, and `btrfs-progs`; verifies `snapper` is runnable; requires both `/` and `/home` to be on Btrfs, with `/home` as a subvolume.
+  - Stops active `snapper-timeline.timer` and `snapper-cleanup.timer` during setup.
+  - Creates Snapper configs for `root` and `home`, first unmounting/removing conflicting empty `.snapshots` directories/subvolumes if necessary.
+  - Mounts the filesystem top level (`subvolid=5`) and creates top-level subvolumes `@snapshots` and `@home_snapshots`.
+  - Prepares `/.snapshots` and `/home/.snapshots` as plain mountpoints, writes validated `/etc/fstab` entries for them, mounts them, and verifies UUID + subvolume correctness.
+  - Tunes both Snapper configs: disables timeline snapshots, keeps numbered cleanup, limits regular and important snapshots to 5 each, disables space/free limits.
+  - Disables Btrfs quotas on `/`.
+  - Enforces a flat Btrfs layout by deleting nested `/var/lib/machines` and `/var/lib/portables` subvolumes unless they are separately mounted, then overrides tmpfiles rules so they are recreated as normal directories.
+
+- **Script 3 — OverlayFS + snap-pac + Limine/Snapper integration**
+  - Verifies the previous isolated layout exists: `/.snapshots` must come from `@snapshots`, and `/home/.snapshots` from `@home_snapshots`.
+  - Installs AUR `limine-snapper-sync`; installs `limine-mkinitcpio-hook` only if `limine-update` is not already available; installs Java if needed for AUR builds.
+  - Detects the effective mkinitcpio `HOOKS` array and writes a managed drop-in that injects `btrfs-overlayfs` or `sd-btrfs-overlayfs` immediately after `filesystems`.
+  - Calls `limine-update` after hook injection.
+  - Rewrites `/etc/limine-snapper-sync.conf` so `ROOT_SUBVOLUME_PATH` matches the live root subvolume and `ROOT_SNAPSHOTS_PATH` is `/@snapshots`.
+  - Installs/configures `snap-pac` so both `root` and `home` create pacman transaction snapshots.
+  - If a root `snap-pac` snapshot exists but home lacks one, creates the missing home `snap-pac` snapshot.
+  - Ensures a baseline snapshot exists for both `root` and `home` with description **“Baseline after Limine + Snapper integration”**; removes older copies of that baseline if they used `cleanup=important` and recreates them as `cleanup=number`.
+  - Enables `snapper-cleanup.timer` and `limine-snapper-sync.service`; if the service did not finish successfully, runs `limine-snapper-sync` manually.
