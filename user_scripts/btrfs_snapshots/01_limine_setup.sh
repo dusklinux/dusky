@@ -60,7 +60,7 @@ execute() {
 
 backup_file() {
     local file="$1"
-    [[ -e "$file" ]] || return 0
+    sudo test -e "$file" || return 0
     [[ -v BACKED_UP["$file"] ]] && return 0
 
     local stamp
@@ -72,6 +72,25 @@ backup_file() {
 
 require_cmd() {
     command -v "$1" >/dev/null 2>&1 || fatal "Required command not found: $1"
+}
+
+sudo_path_exists() { sudo test -e "$1"; }
+sudo_path_is_file() { sudo test -f "$1"; }
+sudo_path_is_dir() { sudo test -d "$1"; }
+
+sudo_path_mtime() {
+    sudo stat -c %Y -- "$1" 2>/dev/null || return 1
+}
+
+# FAT/VFAT timestamps are coarse; allow small slack so we don't spuriously
+# rebuild forever when the ESP stores mtimes at lower resolution.
+sudo_path_not_older_than() {
+    local lhs="$1" rhs="$2" lhs_m rhs_m slop=2
+    sudo_path_is_file "$lhs" || return 1
+    sudo_path_is_file "$rhs" || return 0
+    lhs_m="$(sudo_path_mtime "$lhs")" || return 1
+    rhs_m="$(sudo_path_mtime "$rhs")" || return 1
+    (( lhs_m + slop >= rhs_m ))
 }
 
 atomic_write() {
@@ -185,7 +204,7 @@ detect_esp_mountpoint() {
     if command -v bootctl >/dev/null 2>&1; then
         local esp
         esp="$(bootctl --print-esp-path 2>/dev/null || true)"
-        if [[ -n "$esp" && -d "$esp" ]]; then
+        if [[ -n "$esp" ]] && sudo_path_is_dir "$esp"; then
             CACHE_ESP_PATH="$esp"
             printf '%s\n' "$CACHE_ESP_PATH"
             return 0
@@ -444,11 +463,16 @@ limine_state_appears_current() {
     [[ -n "$esp_target" ]] || return 1
     loader_path="${esp_target}/EFI/limine/limine_x64.efi"
 
-    [[ -f /boot/limine.conf ]] || return 1
-    [[ -f "$loader_path" ]] || return 1
+    sudo_path_is_file /boot/limine.conf || return 1
+    sudo_path_is_file "$loader_path" || return 1
 
-    [[ ! -f /etc/kernel/cmdline || /boot/limine.conf -nt /etc/kernel/cmdline ]] || return 1
-    [[ ! -f /etc/default/limine || /boot/limine.conf -nt /etc/default/limine ]] || return 1
+    if sudo_path_is_file /etc/kernel/cmdline; then
+        sudo_path_not_older_than /boot/limine.conf /etc/kernel/cmdline || return 1
+    fi
+
+    if sudo_path_is_file /etc/default/limine; then
+        sudo_path_not_older_than /boot/limine.conf /etc/default/limine || return 1
+    fi
 
     return 0
 }
@@ -580,7 +604,7 @@ configure_limine_defaults() {
     fi
 
     esp_target="$(detect_esp_mountpoint)" || fatal "Could not detect a mounted ESP."
-    current_esp="$(grep -E '^[[:space:]]*ESP_PATH=' "$limine_defaults" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)"
+    current_esp="$(sudo grep -E '^[[:space:]]*ESP_PATH=' "$limine_defaults" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)"
 
     if [[ "$current_esp" != "$esp_target" ]]; then
         backup_file "$limine_defaults"
@@ -589,7 +613,6 @@ configure_limine_defaults() {
         NEEDS_LIMINE_UPDATE=true
     fi
 
-    # Explicitly force Snapshots to the bottom of the boot order
     if ! sudo grep -qE '^[[:space:]]*BOOT_ORDER=' "$limine_defaults" 2>/dev/null; then
         backup_file "$limine_defaults"
         set_shell_var "$limine_defaults" BOOT_ORDER "*, *lts, *fallback, Snapshots"
@@ -610,11 +633,10 @@ deploy_limine() {
         canonical_present=true
     fi
 
-    if [[ ! -f "${esp_target}/EFI/limine/limine_x64.efi" || "$canonical_present" == false ]]; then
+    if ! sudo_path_is_file "${esp_target}/EFI/limine/limine_x64.efi" || [[ "$canonical_present" == false ]]; then
         purge_limine_fallback_entries "$esp_partuuid"
         info "Installing Limine EFI entry."
-        
-        # Safely attempt UEFI fallback if standard install fails on buggy firmware
+
         if ! sudo limine-install; then
             warn "Standard limine-install failed. Attempting UEFI fallback installation..."
             if sudo limine-install --skip-uefi --fallback; then
@@ -625,12 +647,12 @@ deploy_limine() {
                 fatal "Fallback limine-install also failed."
             fi
         fi
-        
+
         CACHE_EFIBOOTMGR_OUTPUT=""
         NEEDS_LIMINE_UPDATE=true
     fi
 
-    if [[ "$NEEDS_LIMINE_UPDATE" == true || ! -f /boot/limine.conf ]]; then
+    if [[ "$NEEDS_LIMINE_UPDATE" == true ]] || ! limine_state_appears_current; then
         info "Refreshing Limine configuration..."
         sudo limine-update
     fi
@@ -645,21 +667,34 @@ deploy_limine() {
         warn "No canonical Limine NVRAM entry found; BootOrder left unchanged."
     fi
 
-    [[ -f /boot/limine.conf ]] || fatal "/boot/limine.conf was not created."
+    sudo_path_is_file /boot/limine.conf || fatal "/boot/limine.conf was not created."
     info "Limine deployment completed."
+}
+
+limine_conf_has_theme_directives() {
+    local conf="$1"
+    sudo grep -qE '^[[:space:]]*(term_palette(_bright)?|term_background(_bright)?|term_foreground(_bright)?|wallpaper(_style)?|interface_branding(_color)?):' "$conf" 2>/dev/null
 }
 
 apply_limine_theme() {
     local conf="/boot/limine.conf"
-    [[ -f "$conf" ]] || return 0
+    sudo_path_is_file "$conf" || return 0
 
     local theme_marker="# --- UI Theme ---"
-    if ! sudo grep -qF "$theme_marker" "$conf"; then
-        local tmp
-        tmp="$(mktemp)"
-        ACTIVE_TEMP_FILES+=("$tmp")
-        
-        cat <<EOF > "$tmp"
+    if sudo grep -qF "$theme_marker" "$conf"; then
+        return 0
+    fi
+
+    if limine_conf_has_theme_directives "$conf"; then
+        info "Limine configuration already contains theme directives; leaving existing theme unchanged."
+        return 0
+    fi
+
+    local tmp
+    tmp="$(mktemp)"
+    ACTIVE_TEMP_FILES+=("$tmp")
+
+    cat <<EOF > "$tmp"
 $theme_marker
 term_palette: 1e1e2e;f38ba8;a6e3a1;f9e2af;89b4fa;f5c2e7;94e2d5;cdd6f4
 term_palette_bright: 585b70;f38ba8;a6e3a1;f9e2af;89b4fa;f5c2e7;94e2d5;cdd6f4
@@ -669,32 +704,31 @@ term_background_bright: 00000000
 term_foreground_bright: cdd6f4
 EOF
 
-        if [[ -n "${LIMINE_WALLPAPER_SOURCE:-}" && -f "$LIMINE_WALLPAPER_SOURCE" ]]; then
-            local ext="${LIMINE_WALLPAPER_SOURCE##*.}"
-            ext="${ext,,}"
-            if [[ "$ext" =~ ^(png|jpg|jpeg|bmp)$ ]]; then
-                local esp_target
-                esp_target="$(detect_esp_mountpoint 2>/dev/null || true)"
-                if [[ -n "$esp_target" ]]; then
-                    local wp_dest="${esp_target}/limine-wallpaper.${ext}"
-                    sudo cp "$LIMINE_WALLPAPER_SOURCE" "$wp_dest"
-                    echo "wallpaper: boot():/limine-wallpaper.${ext}" >> "$tmp"
-                    echo "wallpaper_style: stretched" >> "$tmp"
-                    info "Installed Limine wallpaper to $wp_dest"
-                fi
-            else
-                warn "Wallpaper must be PNG, JPEG, or BMP format. Skipping wallpaper injection."
+    if [[ -n "${LIMINE_WALLPAPER_SOURCE:-}" && -f "$LIMINE_WALLPAPER_SOURCE" ]]; then
+        local ext="${LIMINE_WALLPAPER_SOURCE##*.}"
+        ext="${ext,,}"
+        if [[ "$ext" =~ ^(png|jpg|jpeg|bmp)$ ]]; then
+            local esp_target
+            esp_target="$(detect_esp_mountpoint 2>/dev/null || true)"
+            if [[ -n "$esp_target" ]]; then
+                local wp_dest="${esp_target}/limine-wallpaper.${ext}"
+                sudo cp "$LIMINE_WALLPAPER_SOURCE" "$wp_dest"
+                echo "wallpaper: boot():/limine-wallpaper.${ext}" >> "$tmp"
+                echo "wallpaper_style: stretched" >> "$tmp"
+                info "Installed Limine wallpaper to $wp_dest"
             fi
+        else
+            warn "Wallpaper must be PNG, JPEG, or BMP format. Skipping wallpaper injection."
         fi
-        
-        echo "# ----------------" >> "$tmp"
-        echo "" >> "$tmp"
-        
-        sudo cat "$conf" >> "$tmp"
-        backup_file "$conf"
-        atomic_write "$conf" "$tmp"
-        info "Applied Catppuccin theme and wallpaper to Limine configuration."
     fi
+
+    echo "# ----------------" >> "$tmp"
+    echo "" >> "$tmp"
+
+    sudo cat "$conf" >> "$tmp"
+    backup_file "$conf"
+    atomic_write "$conf" "$tmp"
+    info "Applied Catppuccin theme and wallpaper to Limine configuration."
 }
 
 preflight_checks() {
