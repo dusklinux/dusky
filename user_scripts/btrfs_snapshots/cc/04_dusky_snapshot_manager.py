@@ -664,6 +664,25 @@ def handle_restore_pair(config1: str, snap_id1: str, config2: str, snap_id2: str
         )
 
 
+def handle_delete(config: str, snap_id: str) -> None:
+    snap_id = validate_snapshot_id(snap_id)
+    if snap_id == "0":
+        fail(f"[!] Fatal: Cannot delete snapshot ID 0 (the active system state) for config '{config}'.")
+    
+    print(f"[*] Deleting snapshot ID {snap_id} for '{config}'...")
+    run_cmd(["snapper", "-c", config, "delete", snap_id])
+    print(f"[+] Snapshot ID {snap_id} deleted successfully.")
+
+
+def handle_delete_pair(config1: str, snap_id1: str, config2: str, snap_id2: str) -> None:
+    if config1 == config2:
+        fail("[!] Fatal: Coordinated deletion requires two distinct snapper configs.")
+        
+    handle_delete(config1, snap_id1)
+    handle_delete(config2, snap_id2)
+    print("\n[+] Coordinated deletion complete.")
+
+
 def main() -> None:
     if os.geteuid() != 0:
         fail("[!] This script requires root privileges. Please run with sudo.")
@@ -675,7 +694,7 @@ def main() -> None:
     parser.add_argument(
         "-c",
         "--config",
-        help="Target Snapper configuration (required for list/create/restore)",
+        help="Target Snapper configuration (required for list/create/restore/delete)",
     )
     parser.add_argument(
         "--json",
@@ -692,17 +711,25 @@ def main() -> None:
     group.add_argument("-l", "--list", action="store_true", help="List snapshots for the configuration")
     group.add_argument("-C", "--create", metavar="DESC", help="Create a new snapshot with a description")
     group.add_argument("-R", "--restore", metavar="ID", help="Restore subvolume to the specified snapshot ID")
+    group.add_argument("-D", "--delete", metavar="ID", help="Delete the specified snapshot ID")
     group.add_argument(
         "--restore-pair",
         nargs=4,
         metavar=("CFG1", "ID1", "CFG2", "ID2"),
         help="Coordinated restore of two configs on the same Btrfs filesystem",
     )
+    group.add_argument(
+        "--delete-pair",
+        nargs=4,
+        metavar=("CFG1", "ID1", "CFG2", "ID2"),
+        help="Coordinated deletion of two snapshots",
+    )
 
     args = parser.parse_args()
 
-    if (args.list or args.create is not None or args.restore is not None) and not args.config:
-        parser.error("-c/--config is required with --list, --create, and --restore")
+    # Require -c/--config for single-target actions
+    if (args.list or args.create is not None or args.restore is not None or args.delete is not None) and not args.config:
+        parser.error("-c/--config is required with --list, --create, --restore, and --delete")
 
     if args.list:
         handle_list(args.config, args.json)
@@ -710,6 +737,10 @@ def main() -> None:
         handle_create(args.config, args.create)
     elif args.restore is not None:
         handle_restore(args.config, args.restore, args.no_remount)
+    elif args.delete is not None:
+        handle_delete(args.config, args.delete)
+    elif args.delete_pair is not None:
+        handle_delete_pair(*args.delete_pair)
     else:
         handle_restore_pair(*args.restore_pair)
 

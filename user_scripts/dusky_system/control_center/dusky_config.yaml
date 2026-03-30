@@ -298,7 +298,7 @@ pages:
                 display_max_length: 45
               on_action:
                 type: "exec"
-                command: "sudo ~/user_scripts/btrfs_snapshots/cc/bash_wrapper_for_cc.sh '{raw_date}' '{description}'"
+                command: "sudo ~/user_scripts/btrfs_snapshots/cc/bash_wrapper_for_restore.sh '{raw_date}' '{description}'"
 
         - type: section
           properties:
@@ -335,6 +335,59 @@ pages:
               on_action:
                 type: "exec"
                 command: "sudo ~/user_scripts/btrfs_snapshots/cc/04_dusky_snapshot_manager.py -c home -R {id}"
+
+        - type: section
+          properties:
+            title: Snapshot Cleanup
+            description: Safely remove old or unneeded states.
+          items:
+            - type: async_selector
+              properties:
+                title: "Delete Combined Snapshot (Root + Home)"
+                description: "Removes both synchronized states."
+                icon: edit-delete-symbolic
+                list_command: "sudo ~/user_scripts/btrfs_snapshots/cc/04_dusky_snapshot_manager.py -c root -l --json"
+                display_template: "[{date}] {description}"
+                button_text: "Delete Both"
+                style: "destructive"
+                sort: "reverse"
+                auto_refresh: true
+                display_max_length: 45
+              on_action:
+                type: "exec"
+                command: "sudo ~/user_scripts/btrfs_snapshots/cc/bash_wrapper_for_delete.sh '{raw_date}' '{description}'"
+
+            - type: async_selector
+              properties:
+                title: "Delete System Snapshot (Root Only)"
+                description: "Removes a specific system state."
+                icon: drive-harddisk-system-symbolic
+                list_command: "sudo ~/user_scripts/btrfs_snapshots/cc/04_dusky_snapshot_manager.py -c root -l --json"
+                display_template: "[{id}] {date} | {description}"
+                button_text: "Delete Root"
+                style: "destructive"
+                sort: "reverse"
+                auto_refresh: true
+                display_max_length: 45
+              on_action:
+                type: "exec"
+                command: "sudo ~/user_scripts/btrfs_snapshots/cc/04_dusky_snapshot_manager.py -c root -D {id}"
+
+            - type: async_selector
+              properties:
+                title: "Delete Data Snapshot (Home Only)"
+                description: "Removes a specific personal data state."
+                icon: user-home-symbolic
+                list_command: "sudo ~/user_scripts/btrfs_snapshots/cc/04_dusky_snapshot_manager.py -c home -l --json"
+                display_template: "[{id}] {date} | {description}"
+                button_text: "Delete Home"
+                style: "destructive"
+                sort: "reverse"
+                auto_refresh: true
+                display_max_length: 45
+              on_action:
+                type: "exec"
+                command: "sudo ~/user_scripts/btrfs_snapshots/cc/04_dusky_snapshot_manager.py -c home -D {id}"
 
         - type: section
           properties:

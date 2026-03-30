@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Script Name: configure_zram.sh
-# Description: Configures zram-generator dynamically based on available RAM.
-#              - > 8 GiB RAM:  zram-size = ram - 2000
-#              - <= 8 GiB RAM: zram-size = ram (full)
+# Script Name: 009_zram_config.sh
+# Description: Configures zram-generator for an Arch Linux installation.
+#              Utilizes zram-generator's native math evaluation to dynamically
+#              size ZRAM at boot time, making the install hardware-agnostic.
 # Context:     Arch Linux Install (Chrooted Environment)
 # ==============================================================================
 
@@ -15,118 +15,99 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 # Constants & Configuration
 # ------------------------------------------------------------------------------
-# 8 GiB in KiB (8 * 1024 * 1024)
-readonly THRESHOLD_KB=8388608
-readonly CONFIG_PATH="/etc/systemd/zram-generator.conf"
-readonly MOUNT_TARGET="/mnt/zram1"
+readonly CONFIG_DIR="/etc/systemd/zram-generator.conf.d"
+readonly CONFIG_FILE="${CONFIG_DIR}/99-elite-zram.conf"
+readonly MOUNT_POINT="/mnt/zram1"
 
-# ANSI Colors (using $'...' for immediate escape interpretation)
+# The formula pushed to zram-generator to be evaluated at *every boot*.
+# Shape: 1:1 up to 8192 MiB -> flat at 8192 MiB until 10192 MiB -> (ram - 2000 MiB) above that.
+readonly ZRAM_SIZE_EXPR='min(ram, 8192) + max(ram - 10192, 0)'
+readonly COMPRESSION_ALGORITHM='zstd'
+readonly FS_OPTIONS='rw,nosuid,nodev,discard,X-mount.mode=1777'
+
+# ANSI Colors
 readonly RED=$'\033[0;31m'
 readonly GREEN=$'\033[0;32m'
 readonly BLUE=$'\033[0;34m'
-readonly NC=$'\033[0m' # No Color
+readonly YELLOW=$'\033[0;33m'
+readonly NC=$'\033[0m'
 
 # ------------------------------------------------------------------------------
 # Helper Functions
 # ------------------------------------------------------------------------------
-log_info()    { printf '%s[INFO]%s %s\n' "$BLUE" "$NC" "$*"; }
-log_success() { printf '%s[SUCCESS]%s %s\n' "$GREEN" "$NC" "$*"; }
-log_error()   { printf '%s[ERROR]%s %s\n' "$RED" "$NC" "$*" >&2; }
+log_info()    { printf '%b %s\n' "${BLUE}[INFO]${NC}" "$*"; }
+log_success() { printf '%b %s\n' "${GREEN}[SUCCESS]${NC}" "$*"; }
+log_warn()    { printf '%b %s\n' "${YELLOW}[WARN]${NC}" "$*"; }
+log_error()   { printf '%b %s\n' "${RED}[ERROR]${NC}" "$*" >&2; }
 
 die() {
     log_error "$@"
     exit 1
 }
 
-check_root() {
+check_chroot_root() {
+    # In a chroot, you should naturally be EUID 0. Sudo is avoided here 
+    # as it may not be configured or installed in the base system yet.
     if [[ $EUID -ne 0 ]]; then
-        die "This script must be run as root (or inside the chroot)."
+        die "This script must be run as root inside the chroot environment."
     fi
-}
-
-# Pure Bash function to read MemTotal from /proc/meminfo
-# Eliminates the need for grep/awk subprocesses
-get_total_ram_kb() {
-    local key val unit
-    if [[ ! -r /proc/meminfo ]]; then
-        return 1
-    fi
-
-    while read -r key val unit; do
-        if [[ "$key" == "MemTotal:" ]]; then
-            echo "$val"
-            return 0
-        fi
-    done < /proc/meminfo
-    return 1
 }
 
 # ------------------------------------------------------------------------------
 # Main Logic
 # ------------------------------------------------------------------------------
 main() {
-    check_root
+    check_chroot_root
 
-    log_info "Analyzing system memory..."
-    sleep 1
-
-    # 1. Get Memory (Pure Bash)
-    local total_mem_kb
-    total_mem_kb=$(get_total_ram_kb) || die "Could not read MemTotal from /proc/meminfo"
-
-    # 2. Validate Integer
-    if [[ ! "$total_mem_kb" =~ ^[0-9]+$ ]]; then
-        die "Invalid memory value detected: $total_mem_kb"
+    # Optional sanity check: Warn if the generator isn't installed yet, 
+    # but don't fail, as package installation order during chroot can vary.
+    if [[ ! -f "/usr/lib/systemd/system-generators/zram-generator" ]]; then
+        log_warn "zram-generator binary not found. Ensure it is installed before first boot."
     fi
 
-    local total_mem_gb=$(( total_mem_kb / 1024 / 1024 ))
+    log_info "Preparing directories..."
+    install -d -m 0755 -- "$CONFIG_DIR" "$MOUNT_POINT"
 
-    # 3. Determine ZRAM Parameter
-    # Logic: If > 8GB, reserve 2000MB. If <= 8GB, use full RAM.
-    local zram_size_param=""
+    log_info "Drafting ZRAM configuration atomically..."
     
-    if (( total_mem_kb > THRESHOLD_KB )); then
-        zram_size_param="ram - 2000"
-        log_info "Detected ${total_mem_gb}GB RAM (> 8GB). Setting size to 'ram - 2000'."
-    else
-        zram_size_param="ram"
-        log_info "Detected ${total_mem_gb}GB RAM (<= 8GB). Setting size to full 'ram'."
-    fi
-    sleep 1
+    # Create a temporary file in the target directory to ensure they are on 
+    # the same filesystem, allowing for a truly atomic `mv` operation.
+    local tmp_config
+    tmp_config="$(mktemp "${CONFIG_DIR}/.99-elite-zram.conf.tmp.XXXXXX")"
+    
+    # Ensure the temp file is destroyed if the script exits unexpectedly
+    trap 'rm -f -- "$tmp_config"' EXIT
 
-    # 4. Prepare Mount Point
-    if [[ ! -d "$MOUNT_TARGET" ]]; then
-        log_info "Creating mount point: $MOUNT_TARGET"
-        mkdir -p "$MOUNT_TARGET"
-        sleep 1
-    else
-        log_info "Mount point $MOUNT_TARGET already exists."
-    fi
+    # Write configuration to the temporary file
+    cat >"$tmp_config" <<EOF
+# Managed by Elite Arch Linux Installer.
+# Dynamically calculates memory at boot via systemd zram-generator.
 
-    # 5. Write Configuration Atomically
-    log_info "Writing configuration to $CONFIG_PATH..."
-    sleep 1
-
-cat <<EOF > "$CONFIG_PATH"
 [zram0]
-zram-size = ${zram_size_param}
-compression-algorithm = zstd
+zram-size = ${ZRAM_SIZE_EXPR}
+compression-algorithm = ${COMPRESSION_ALGORITHM}
+swap-priority = 100
+options = discard
 
 [zram1]
-zram-size = ${zram_size_param}
+zram-size = ${ZRAM_SIZE_EXPR}
 fs-type = ext2
-mount-point = ${MOUNT_TARGET}
-compression-algorithm = zstd
-options = rw,nosuid,nodev,discard,X-mount.mode=1777
+mount-point = ${MOUNT_POINT}
+compression-algorithm = ${COMPRESSION_ALGORITHM}
+options = ${FS_OPTIONS}
 EOF
 
-    # 6. Verify Write
-    if [[ -s "$CONFIG_PATH" ]]; then
-        log_success "Zram configuration generated successfully."
-        sleep 1
-    else
-        die "Failed to write configuration file."
-    fi
+    # Set proper permissions before moving
+    chmod 0644 -- "$tmp_config"
+    
+    # Atomically replace any existing configuration file
+    mv -f -- "$tmp_config" "$CONFIG_FILE"
+    
+    # Disarm the trap since the file has been successfully renamed
+    trap - EXIT
+
+    log_success "ZRAM configuration generated successfully at ${CONFIG_FILE}"
+    log_info "Systemd will evaluate RAM and create devices dynamically on next boot."
 }
 
 # Execute

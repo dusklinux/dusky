@@ -7,10 +7,21 @@ sudo pacman -Syu usbmuxd
 sudo systemctl start usbmuxd
 ```
 
-pelrain recovery mode: 
-make sure it's exicutable first 
+pelrain recovery mode:
+
 ```bash
-sudo chmod u+x .....
+paru -S --needed palera1n --noconfirm
+```
+
+```bash
+palera1n -D
+```
+```bash
+palera1n -h
+```
+or download the binary and make it exicutable 
+```bash
+sudo chmod u+x palera1n
 ```
 
 ```
@@ -21,7 +32,7 @@ sudo /mnt/zram1/future_restore/iphonee/palera1n-linux-x86_64 -D
 gaster : (to boot untrusted images)
 make sure it's exicutable first 
 ```bash
-sudo chmod u+x .....
+sudo chmod u+x gaster
 ```
 
 ```
@@ -36,9 +47,10 @@ sudo /mnt/zram1/future_restore/iphonee/gaster reset
 to set nonce
 make sure it's exicutable first 
 ```bash
-sudo chmod u+x .....
+sudo chmod u+x futurerestore
 ```
 
+this will need to be run several times cuz it fails on the first try sometimes. 
 ```
 sudo ./futurerestore -t /mnt/zram1/future_restore/iphonee/4878275665063854_iPhone10,2_d21ap_16.6-20G75_27325c8258be46e69d9ee57fa9a8fbc28b873df434e5e702a8b27999551138ae.shsh2 --use-pwndfu --set-nonce --latest-sep --latest-baseband /mnt/zram1/future_restore/iphonee/iPhone_5.5_P3_16.6_20G75_Restore.ipsw
 ```
@@ -51,6 +63,7 @@ sudo systemctl stop usbmuxd && sudo usbmuxd -p -f
 ```
 
 futurerestoring main 
+, this also needs to be run a few times before it suceeds, sometimes the phone needs to be disconnected and quickly reconneced during the process, like at the place it gets stuck is where the phone should quickly be reconneced
 ```
 sudo ./futurerestore -t /mnt/zram1/future_restore/iphonee/4878275665063854_iPhone10,2_d21ap_16.6-20G75_27325c8258be46e69d9ee57fa9a8fbc28b873df434e5e702a8b27999551138ae.shsh2 --latest-sep --latest-baseband /mnt/zram1/future_restore/iphonee/iPhone_5.5_P3_16.6_20G75_Restore.ipsw
 ```

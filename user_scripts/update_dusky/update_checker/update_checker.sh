@@ -2,7 +2,7 @@
 # -----------------------------------------------------------------------------
 # Dusky Git Checker & TUI Viewer
 # -----------------------------------------------------------------------------
-# Target: Arch Linux (latest) / Bash 5.3 / Bare Git Repo
+# Target: Arch Linux (latest) / Bash 5.3.9 / Bare Git Repo
 # Requires: git, coreutils (sleep, timeout, mktemp, mv, rm), util-linux (flock, stty), openssh
 # Optional: notify-send
 # -----------------------------------------------------------------------------
@@ -23,7 +23,8 @@ declare -r STATE_DIR="${STATE_FILE%/*}"
 declare -ri NOTIFY_THRESHOLD=30
 declare -ri TIMEOUT_SEC=15
 declare -ri TIMEOUT_KILL_SEC=2
-declare -ri LOCK_WAIT_SEC=$(( TIMEOUT_SEC + TIMEOUT_KILL_SEC + 1 ))
+# Covers the worst-case lock hold time: primary fetch + HTTPS fallback fetch.
+declare -ri LOCK_WAIT_SEC=$(( (TIMEOUT_SEC + TIMEOUT_KILL_SEC) * 2 + 1 ))
 declare -r LOCK_BASENAME="dusky_git_fetch.${UID}.lock"
 
 # TUI settings
@@ -42,7 +43,7 @@ declare -i DEBUG=0
 [[ $_debug_env =~ ^[1-9][0-9]*$ ]] && DEBUG=$_debug_env
 unset _debug_env
 
-# Refspec for bare repo fetch
+# Default refspec for --fix-config
 declare -r FETCH_REFSPEC='+refs/heads/*:refs/remotes/origin/*'
 
 # Git command
@@ -142,11 +143,19 @@ origin_to_https_url() {
 }
 
 get_lock_file() {
+    local lock_dir=''
+
     if [[ -n ${XDG_RUNTIME_DIR:-} && -d ${XDG_RUNTIME_DIR:-} && -w ${XDG_RUNTIME_DIR:-} ]]; then
-        printf '%s/%s' "$XDG_RUNTIME_DIR" "$LOCK_BASENAME"
+        lock_dir=$XDG_RUNTIME_DIR
     else
-        printf '/tmp/%s' "$LOCK_BASENAME"
+        lock_dir=$STATE_DIR
+        if [[ -e $lock_dir && ! -d $lock_dir ]]; then
+            return 1
+        fi
+        [[ -d $lock_dir ]] || mkdir -p -m 700 -- "$lock_dir"
     fi
+
+    printf '%s/%s' "$lock_dir" "$LOCK_BASENAME"
 }
 
 git_fetch() {
@@ -172,14 +181,14 @@ git_fetch() {
 _git_rev_count() {
     local -n _out_ref=$1
     local revspec=$2
-    local count=''
+    local _raw_count=''
 
-    if ! count=$("${GIT_CMD[@]}" rev-list --count "$revspec" 2>/dev/null); then
+    if ! _raw_count=$("${GIT_CMD[@]}" rev-list --count "$revspec" 2>/dev/null); then
         return 1
     fi
 
-    [[ $count =~ ^[0-9]+$ ]] || return 1
-    _out_ref=$count
+    [[ $_raw_count =~ ^[0-9]+$ ]] || return 1
+    _out_ref=$_raw_count
 }
 
 write_state_file() {
@@ -300,23 +309,56 @@ validate_terminal() {
 
 declare FETCH_INFO=""
 
+get_fetch_remote() {
+    local head_branch='' remote=''
+
+    if head_branch=$("${GIT_CMD[@]}" symbolic-ref --quiet --short HEAD 2>/dev/null) &&
+       [[ -n $head_branch ]] &&
+       remote=$("${GIT_CMD[@]}" config --get "branch.${head_branch}.remote" 2>/dev/null) &&
+       [[ -n $remote ]]; then
+        printf '%s' "$remote"
+        return 0
+    fi
+
+    if "${GIT_CMD[@]}" remote get-url origin &>/dev/null; then
+        printf 'origin'
+        return 0
+    fi
+
+    return 1
+}
+
 robust_fetch() {
     FETCH_INFO=""
 
-    local lock_file='' origin_url='' https_url='' redacted_url=''
+    local lock_file='' remote_url='' https_url='' redacted_url='' fetch_remote='' fetch_refspec=''
     local lock_fd=-1
     local -i rc=1
 
-    if ! origin_url=$("${GIT_CMD[@]}" remote get-url origin 2>/dev/null); then
-        FETCH_INFO="No 'origin' remote configured"
-        _debug "No origin remote found"
+    if ! fetch_remote=$(get_fetch_remote); then
+        FETCH_INFO="No suitable remote configured"
+        _debug "No fetch remote found"
         return 1
     fi
 
-    _redact_url "$origin_url" redacted_url
-    _debug "Origin URL: $redacted_url"
+    fetch_refspec="+refs/heads/*:refs/remotes/${fetch_remote}/*"
 
-    lock_file=$(get_lock_file)
+    if ! remote_url=$("${GIT_CMD[@]}" remote get-url "$fetch_remote" 2>/dev/null); then
+        FETCH_INFO="Remote '${fetch_remote}' is not configured"
+        _debug "Failed to resolve remote URL for: $fetch_remote"
+        return 1
+    fi
+
+    _redact_url "$remote_url" redacted_url
+    _debug "Fetch remote: $fetch_remote"
+    _debug "Remote URL: $redacted_url"
+
+    if ! lock_file=$(get_lock_file); then
+        FETCH_INFO="Cannot determine fetch lock file"
+        _debug "Failed to determine fetch lock file"
+        return 1
+    fi
+
     if ! exec {lock_fd}> "$lock_file"; then
         FETCH_INFO="Cannot open fetch lock file"
         _debug "Failed to open fetch lock: $lock_file"
@@ -330,20 +372,20 @@ robust_fetch() {
         return 1
     fi
 
-    _debug "Trying: git fetch origin with refspec"
-    if git_fetch origin "$FETCH_REFSPEC"; then
-        FETCH_INFO="Fetched via origin"
+    _debug "Trying: git fetch ${fetch_remote} with refspec ${fetch_refspec}"
+    if git_fetch "$fetch_remote" "$fetch_refspec"; then
+        FETCH_INFO="Fetched via ${fetch_remote}"
         _debug "Fetch succeeded"
         rc=0
     else
         _debug "Primary fetch failed, attempting HTTPS fallback"
-        if ! origin_to_https_url "$origin_url" https_url; then
+        if ! origin_to_https_url "$remote_url" https_url; then
             FETCH_INFO="Primary fetch failed and no HTTPS fallback is available"
             _debug "URL format not recognized"
         else
             _redact_url "$https_url" redacted_url
             _debug "HTTPS URL: $redacted_url"
-            if git_fetch "$https_url" "$FETCH_REFSPEC"; then
+            if git_fetch "$https_url" "$fetch_refspec"; then
                 FETCH_INFO="Fetched via HTTPS fallback"
                 _debug "HTTPS fetch succeeded"
                 rc=0
@@ -394,12 +436,14 @@ get_upstream_ref() {
 
 run_background_check() {
     local previous_state=''
+    local -i have_previous_state=0
     local -i previous_count=-2147483648
     local upstream=''
     local -i count=0
 
     if previous_state=$(read_state_value 2>/dev/null); then
         previous_count=$previous_state
+        have_previous_state=1
     fi
 
     if ! validate_environment; then
@@ -411,6 +455,9 @@ run_background_check() {
         _debug "Fetch failed: $FETCH_INFO"
         if [[ $FETCH_INFO == "Another update check is already running" ]]; then
             _debug "Leaving existing state file unchanged"
+            if (( ! have_previous_state )); then
+                write_state_file -1
+            fi
             exit 0
         fi
         write_state_file -1
@@ -433,7 +480,8 @@ run_background_check() {
 
     write_state_file "$count"
 
-    if (( count >= NOTIFY_THRESHOLD && previous_count < NOTIFY_THRESHOLD )) &&
+    if (( count >= NOTIFY_THRESHOLD )) &&
+       (( ! have_previous_state || (previous_count >= 0 && previous_count < NOTIFY_THRESHOLD) )) &&
        [[ -x /usr/bin/notify-send ]]; then
         /usr/bin/timeout --kill-after=1 2 \
             /usr/bin/notify-send -u normal -t 5000 -i software-update-available \
@@ -785,26 +833,25 @@ nav_edge() {
 }
 
 handle_mouse() {
-    local seq="$1"
-    if [[ "$seq" =~ ^\[\<([0-9]+)\;([0-9]+)\;([0-9]+)([Mm])$ ]]; then
-        local -i btn="${BASH_REMATCH[1]}"
-        local -i col="${BASH_REMATCH[2]}"
-        local -i row="${BASH_REMATCH[3]}"
-        local act="${BASH_REMATCH[4]}"
+    local seq=$1
 
-        if [[ "$act" == "M" ]]; then
+    if [[ $seq =~ ^\[\<([0-9]+)\;([0-9]+)\;([0-9]+)([Mm])$ ]]; then
+        local -i btn=${BASH_REMATCH[1]}
+        local -i row=${BASH_REMATCH[3]}
+        local act=${BASH_REMATCH[4]}
+
+        if [[ $act == M ]]; then
             case $btn in
-                0) # Left click
-                    local -i idx=$(( row - ITEM_START_ROW - 1 ))
-                    
+                0)
+                    local -i idx=$(( SCROLL_OFFSET + row - ITEM_START_ROW - 1 ))
                     if (( idx >= 0 && idx < TOTAL_COMMITS )); then
                         SELECTED_ROW=$idx
                     fi
                     ;;
-                64) # Scroll Up
+                64)
                     nav_step -1
                     ;;
-                65) # Scroll Down
+                65)
                     nav_step 1
                     ;;
             esac
@@ -820,7 +867,7 @@ main() {
     validate_environment || exit 1
     validate_terminal || exit 1
 
-    printf '\n%sFetching updates from origin...%s\n' "$C_CYAN" "$C_RESET"
+    printf '\n%sFetching updates...%s\n' "$C_CYAN" "$C_RESET"
 
     if ! robust_fetch; then
         printf '%s[WARNING] Fetch failed: %s%s\n' "$C_YELLOW" "$FETCH_INFO" "$C_RESET"
@@ -863,7 +910,7 @@ main() {
             while IFS= read -rsn1 -t 0.05 ch; do
                 seq+="$ch"
             done
-            
+
             if [[ -z "$seq" ]]; then
                 key="ESC"
             else
@@ -886,20 +933,20 @@ main() {
         fi
 
         case "$key" in
-            q|Q|$'\x03'|ESC) 
-                break 
+            q|Q|$'\x03'|ESC)
+                break
                 ;;
-            k|K) 
-                nav_step -1 
+            k|K)
+                nav_step -1
                 ;;
-            j|J) 
-                nav_step 1 
+            j|J)
+                nav_step 1
                 ;;
-            g)   
-                nav_edge home 
+            g)
+                nav_edge home
                 ;;
-            G)   
-                nav_edge end 
+            G)
+                nav_edge end
                 ;;
             $'\n')
                 ;;

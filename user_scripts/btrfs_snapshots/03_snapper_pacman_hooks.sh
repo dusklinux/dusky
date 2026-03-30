@@ -315,6 +315,26 @@ snapshot_with_description_exists() {
     '
 }
 
+baseline_snapshot_ids_with_cleanup() {
+    sudo snapper --csv -c "$1" list 2>/dev/null | awk -F',' -v desc="$2" -v cleanup="$3" '
+        NR == 1 {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "number") num_col = i
+                else if ($i == "cleanup") cleanup_col = i
+                else if ($i == "description") desc_col = i
+            }
+            next
+        }
+        num_col && cleanup_col && desc_col &&
+        $desc_col == desc &&
+        $cleanup_col == cleanup &&
+        $num_col ~ /^[0-9]+$/ &&
+        $num_col != "0" {
+            print $num_col
+        }
+    '
+}
+
 ensure_home_snap_pac_snapshot() {
     if ! snapshot_with_description_exists root "snap-pac"; then
         info "No root snap-pac snapshot detected; nothing to backfill for home."
@@ -332,15 +352,28 @@ ensure_home_snap_pac_snapshot() {
 
 create_post_config_baseline_snapshot() {
     local desc="Baseline after Limine + Snapper integration"
+    local cfg snap_id
+
+    # Migrate old important baseline snapshots into the rolling "number" pool
+    for cfg in root home; do
+        while IFS= read -r snap_id; do
+            [[ -n "$snap_id" ]] || continue
+            [[ "$snap_id" =~ ^[0-9]+$ ]] || fatal "Unexpected non-numeric snapshot id parsed for ${cfg}: ${snap_id}"
+            [[ "$snap_id" == "0" ]] && continue
+            sudo snapper -c "$cfg" delete "$snap_id"
+            info "Removed old important baseline snapshot ${cfg}#${snap_id} so it can be recreated with number cleanup."
+        done < <(baseline_snapshot_ids_with_cleanup "$cfg" "$desc" "important")
+    done
+
     if ! snapshot_with_description_exists "root" "$desc"; then
-        sudo snapper -c root create -t single -c important -d "$desc"
+        sudo snapper -c root create -t single -c number -d "$desc"
         info "Created baseline root snapshot."
     else
         info "Baseline root snapshot already exists."
     fi
 
     if ! snapshot_with_description_exists "home" "$desc"; then
-        sudo snapper -c home create -t single -c important -d "$desc"
+        sudo snapper -c home create -t single -c number -d "$desc"
         info "Created baseline home snapshot."
     else
         info "Baseline home snapshot already exists."

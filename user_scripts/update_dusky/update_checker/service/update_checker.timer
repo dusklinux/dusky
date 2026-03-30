@@ -2,20 +2,18 @@
 Description=Dusky Update Checker Timer (Every 6H)
 
 [Timer]
-# Wait 5 minutes after boot/login before the first check
-# (Prevents slowing down the startup process)
-OnBootSec=10min
+# Wait 10 minutes after the user service manager starts
+# (typically login, or boot if lingering is enabled)
+OnStartupSec=10min
 
 # Run 6 hours after the last run finished
 OnUnitActiveSec=6h
 
-# IMPORTANT for distributed scripts:
-# Adds a random delay of 0-5 minutes to prevent all users
-# from hitting GitHub at the exact same second.
+# Adds a random delay of 0-10 minutes to avoid synchronized requests
 RandomizedDelaySec=600
 
-# If the computer was off during the last scheduled run,
-# run immediately upon booting up.
+# If a scheduled run was missed while the timer was inactive,
+# trigger once when it becomes active again
 Persistent=true
 
 [Install]

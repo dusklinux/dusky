@@ -42,6 +42,7 @@ Tools       | aria2                 | High-speed download utility (Pair with uge
 Tools       | uget                  | Download Manager GUI (Pair with aria2)
 Tools       | libdvdcss             | Portable abstraction library for DVD decryption
 Internet    | filezilla             | Fast and reliable FTP/SFTP client
+Internet    | zapret2               | Deep Packet Inspection circumvetntion for blocked sites
 Internet    | qbittorrent           | Feature-rich BitTorrent client (Qt-based)
 Internet    | networkmanager-openvpn| NetworkManager VPN plugin for OpenVPN (with GUI)
 Internet    | vesktop               | Custom Discord client (Vencord + Electron)
