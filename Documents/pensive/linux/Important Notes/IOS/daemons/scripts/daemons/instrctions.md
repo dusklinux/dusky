@@ -9,7 +9,7 @@ powerselector
 
 
 scp /home/dusk/Documents/pensive/linux/Important\ Notes/IOS/daemons/scripts/daemons/daemonmanager root@192.168.29.75:/var/jb/basebin/
-scp /home/dusk/Documents/pensive/linux/Important\ Notes/IOS/daemons/scripts/daemons/daemon.cfg root@192.168.29.75:/var/jb/basebin/daemon.cfg
+scp /home/dusk/Documents/pensive/linux/Important\ Notes/IOS/daemons/scripts/daemons/daemon.cfg root@192.168.29.75:/var/jb/basebin/
 
 
 ssh reboot command
