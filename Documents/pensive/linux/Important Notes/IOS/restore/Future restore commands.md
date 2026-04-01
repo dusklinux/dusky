@@ -9,6 +9,7 @@ sudo systemctl start usbmuxd
 
 pelrain recovery mode:
 
+or do vol up , vol down, power button until screen turns black, then quickly vol down+ power for 3 seconds , then release power button but keep holding down vol down for 5 seconds and then release. shoudl be on a black screen. and connected to pc the whole time btw
 ```bash
 paru -S --needed palera1n --noconfirm
 ```

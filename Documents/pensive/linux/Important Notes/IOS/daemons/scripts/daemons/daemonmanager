@@ -1,0 +1,1638 @@
+#!/bin/sh
+# DaemonManager v8.2
+# Scope:
+#   - Manages launchd services in the mobile user's bootstrap domain only.
+#   - Tracks only this script's own changes.
+#   - reset undoes only tracked changes.
+#
+# Config support:
+#   - "apply" with no args reads daemon.cfg
+#   - Search order for daemon.cfg:
+#       1) --config <path>
+#       2) ./daemon.cfg
+#       3) daemon.cfg next to this script
+#   - Config line format:
+#       <label> yes
+#       <label> no
+#     Compatibility:
+#       yes/off/disable/disabled => disable
+#       no/on/enable/enabled     => enable
+#
+# State file columns:
+#   1: label
+#   2: plist_path
+#   3: had_visibility_before_disable (0/1)
+#   4: AssistiveTouchEnabled previous value (""/0/1)
+#   5: AssistiveTouchUIEnabled previous value (""/0/1)
+#   6: pre_disabled_before_script (0/1)
+#
+# Backward compatibility:
+#   - Old 2-column rows are supported.
+#   - Missing visibility metadata defaults to 0.
+#   - Missing pre-disabled metadata defaults to 0.
+
+export LC_ALL=C
+export PATH="/var/jb/usr/bin:/var/jb/usr/sbin:/var/jb/bin:/var/jb/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+umask 077
+
+STATE_FILE="/var/mobile/Library/Preferences/com.daemonmanager.state.tsv"
+ACCESSIBILITY_PLIST="/var/mobile/Library/Preferences/com.apple.Accessibility.plist"
+PLIST_DIRS="/System/Library/LaunchAgents /System/Library/LaunchDaemons /var/jb/Library/LaunchAgents /var/jb/Library/LaunchDaemons"
+LOCKDIR="${STATE_FILE}.lock"
+TAB="$(printf '\t')"
+PYTHON_BIN=""
+CONFIG_FILE=""
+DEFAULT_CONFIG_NAME="daemon.cfg"
+
+FAIL_LOG="/tmp/daemonmanager.fail.$$"
+RESET_SNAPSHOT=""
+LOCK_HELD=0
+PRINTED_FAILURE_SUMMARY=0
+
+LAST_FAILURE_REASON=""
+LAST_CMD_OUTPUT=""
+LAST_NOOP=0
+LAST_RUN_DURATION_MS=0
+
+STEP_MODE=0
+BATCH_MODE=0
+STOP_REQUESTED=0
+
+STATE_ROW_PATH=""
+STATE_ROW_HAD_VIS=""
+STATE_ROW_AT_PREV=""
+STATE_ROW_AT_UI_PREV=""
+STATE_ROW_PRE_DISABLED=""
+
+release_lock() {
+    if [ "$LOCK_HELD" -eq 1 ]; then
+        rmdir "$LOCKDIR" 2>/dev/null
+        LOCK_HELD=0
+    fi
+}
+
+cleanup() {
+    [ -n "$FAIL_LOG" ] && rm -f "$FAIL_LOG" 2>/dev/null
+    [ -n "$RESET_SNAPSHOT" ] && rm -f "$RESET_SNAPSHOT" 2>/dev/null
+    release_lock
+}
+trap cleanup EXIT HUP INT TERM
+
+get_mobile_uid() {
+    _uid="$(id -u mobile 2>/dev/null)"
+    if [ -n "$_uid" ]; then
+        printf '%s\n' "$_uid"
+    else
+        printf '501\n'
+    fi
+}
+
+MOBILE_UID="$(get_mobile_uid)"
+DOMAIN="user/$MOBILE_UID"
+
+info() {
+    printf '%s\n' "$*"
+}
+
+warn() {
+    printf 'Warning: %s\n' "$*" >&2
+}
+
+error() {
+    printf 'Error: %s\n' "$*" >&2
+}
+
+set_failure() {
+    LAST_FAILURE_REASON="$*"
+    LAST_NOOP=0
+}
+
+reset_status_flags() {
+    LAST_FAILURE_REASON=""
+    LAST_NOOP=0
+}
+
+mark_noop() {
+    LAST_NOOP=1
+}
+
+run_cmd() {
+    LAST_CMD_OUTPUT="$("$@" 2>&1)"
+    _status=$?
+    if [ $_status -ne 0 ] && [ -n "$LAST_CMD_OUTPUT" ]; then
+        printf '%s\n' "$LAST_CMD_OUTPUT" >&2
+    fi
+    return $_status
+}
+
+acquire_lock() {
+    _i=0
+    while ! mkdir "$LOCKDIR" 2>/dev/null; do
+        _i=$((_i + 1))
+        if [ $_i -ge 30 ]; then
+            error "Could not acquire lock: $LOCKDIR"
+            return 1
+        fi
+        sleep 1
+    done
+    LOCK_HELD=1
+    return 0
+}
+
+now_ms() {
+    _py="$(resolve_python 2>/dev/null)"
+    if [ -n "$_py" ] && [ -x "$_py" ]; then
+        "$_py" - <<'PYEOF' 2>/dev/null
+import time
+print(time.time_ns() // 1_000_000)
+PYEOF
+        return 0
+    fi
+
+    _sec="$(date +%s 2>/dev/null)"
+    if [ -n "$_sec" ]; then
+        printf '%s\n' "$((_sec * 1000))"
+    else
+        printf '0\n'
+    fi
+}
+
+format_ms() {
+    _ms="$1"
+    [ -n "$_ms" ] || _ms=0
+    [ "$_ms" -ge 0 ] 2>/dev/null || _ms=0
+    _sec=$((_ms / 1000))
+    _rem=$((_ms % 1000))
+    printf '%s.%03ss' "$_sec" "$_rem"
+}
+
+can_prompt() {
+    [ "$STEP_MODE" -eq 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ]
+}
+
+prompt_tty() {
+    _prompt="$1"
+    printf '%s' "$_prompt" >/dev/tty
+    IFS= read -r _reply </dev/tty || _reply=""
+    printf '%s' "$_reply"
+}
+
+prompt_continue_after_success() {
+    can_prompt || return 0
+    [ "$BATCH_MODE" -eq 1 ] || return 0
+
+    _ans="$(prompt_tty "  Continue to next? [Y/n]: ")"
+    _ans_lc="$(printf '%s' "$_ans" | tr '[:upper:]' '[:lower:]')"
+    case "$_ans_lc" in
+        ""|y|yes) return 0 ;;
+        n|no) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+prompt_retry_after_failure() {
+    can_prompt || return 1
+
+    _ans="$(prompt_tty "  Retry this daemon? [y/N]: ")"
+    _ans_lc="$(printf '%s' "$_ans" | tr '[:upper:]' '[:lower:]')"
+    case "$_ans_lc" in
+        y|yes|r|retry) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+record_failure_item() {
+    _action="$1"
+    _label="$2"
+    _dur="$3"
+    _reason_clean="$(printf '%s' "$4" | tr '\n\t' '  ')"
+    printf '%s\t%s\t%s\t%s\n' "$_action" "$_label" "$_dur" "$_reason_clean" >> "$FAIL_LOG"
+}
+
+print_failure_items() {
+    [ -s "$FAIL_LOG" ] || return 0
+
+    info ""
+    info "Failed items:"
+    while IFS="$TAB" read -r _action _label _dur _reason; do
+        [ -n "$_label" ] || continue
+        printf '  %s: %s (%s)\n' "$_action" "$_label" "$_dur"
+        [ -n "$_reason" ] && printf '      %s\n' "$_reason"
+    done < "$FAIL_LOG"
+    PRINTED_FAILURE_SUMMARY=1
+}
+
+run_action_with_timing() {
+    _verb="$1"
+    _label="$2"
+    _fn="$3"
+    shift 3
+
+    while :; do
+        info "$_verb: $_label"
+        _start_ms="$(now_ms)"
+        "$_fn" "$_label" "$@"
+        _rc=$?
+        _end_ms="$(now_ms)"
+
+        if [ -n "$_start_ms" ] && [ -n "$_end_ms" ]; then
+            LAST_RUN_DURATION_MS=$((_end_ms - _start_ms))
+        else
+            LAST_RUN_DURATION_MS=0
+        fi
+        [ "$LAST_RUN_DURATION_MS" -ge 0 ] 2>/dev/null || LAST_RUN_DURATION_MS=0
+        _dur_text="$(format_ms "$LAST_RUN_DURATION_MS")"
+
+        if [ $_rc -eq 0 ]; then
+            if [ "$LAST_NOOP" -eq 1 ]; then
+                info "  No change ($_dur_text)"
+            else
+                info "  Done ($_dur_text)"
+            fi
+
+            if prompt_continue_after_success; then
+                return 0
+            fi
+
+            STOP_REQUESTED=1
+            return 0
+        fi
+
+        [ -n "$LAST_FAILURE_REASON" ] || LAST_FAILURE_REASON="Operation failed for $_label"
+        info "  Failed ($_dur_text)"
+        warn "$LAST_FAILURE_REASON"
+
+        if prompt_retry_after_failure; then
+            info "  Retrying..."
+            continue
+        fi
+
+        record_failure_item "$_verb" "$_label" "$_dur_text" "$LAST_FAILURE_REASON"
+        return $_rc
+    done
+}
+
+chown_mobile_if_possible() {
+    _path="$1"
+    [ -e "$_path" ] || return 0
+
+    chown mobile:mobile "$_path" 2>/dev/null && return 0
+    chown 501:501 "$_path" 2>/dev/null && return 0
+    return 0
+}
+
+ensure_state_file() {
+    _dir="$(dirname "$STATE_FILE")"
+    [ -d "$_dir" ] || mkdir -p "$_dir" || return 1
+
+    if [ ! -f "$STATE_FILE" ]; then
+        : > "$STATE_FILE" || return 1
+        chmod 600 "$STATE_FILE" 2>/dev/null
+        chown_mobile_if_possible "$STATE_FILE"
+    fi
+    return 0
+}
+
+state_get_row() {
+    ensure_state_file || return 1
+    awk -F '\t' -v label="$1" '
+        $1 == label { print; found=1; exit }
+        END { if (!found) exit 1 }
+    ' "$STATE_FILE"
+}
+
+load_state_entry() {
+    STATE_ROW_PATH=""
+    STATE_ROW_HAD_VIS=""
+    STATE_ROW_AT_PREV=""
+    STATE_ROW_AT_UI_PREV=""
+    STATE_ROW_PRE_DISABLED=""
+
+    _row="$(state_get_row "$1" 2>/dev/null)" || return 1
+
+    IFS="$TAB" read -r _label STATE_ROW_PATH STATE_ROW_HAD_VIS STATE_ROW_AT_PREV STATE_ROW_AT_UI_PREV STATE_ROW_PRE_DISABLED <<EOF
+$_row
+EOF
+
+    [ -n "$STATE_ROW_HAD_VIS" ] || STATE_ROW_HAD_VIS="0"
+    [ -n "$STATE_ROW_PRE_DISABLED" ] || STATE_ROW_PRE_DISABLED="0"
+    return 0
+}
+
+state_add_or_update() {
+    _label="$1"
+    _path="$2"
+    _had_vis="$3"
+    _at_prev="$4"
+    _at_ui_prev="$5"
+    _pre_disabled="$6"
+
+    ensure_state_file || return 1
+
+    [ -n "$_had_vis" ] || _had_vis="0"
+    [ -n "$_pre_disabled" ] || _pre_disabled="0"
+
+    _tmp="${STATE_FILE}.tmp.$$"
+    awk -F '\t' -v OFS='\t' \
+        -v label="$_label" \
+        -v path="$_path" \
+        -v had_vis="$_had_vis" \
+        -v at_prev="$_at_prev" \
+        -v at_ui_prev="$_at_ui_prev" \
+        -v pre_disabled="$_pre_disabled" '
+        $1 != label { print }
+        END { print label, path, had_vis, at_prev, at_ui_prev, pre_disabled }
+    ' "$STATE_FILE" > "$_tmp" || {
+        rm -f "$_tmp"
+        return 1
+    }
+
+    mv -f "$_tmp" "$STATE_FILE" || {
+        rm -f "$_tmp"
+        return 1
+    }
+
+    chmod 600 "$STATE_FILE" 2>/dev/null
+    chown_mobile_if_possible "$STATE_FILE"
+    return 0
+}
+
+state_remove() {
+    _label="$1"
+
+    ensure_state_file || return 1
+
+    _tmp="${STATE_FILE}.tmp.$$"
+    awk -F '\t' -v OFS='\t' -v label="$_label" '
+        $1 != label { print }
+    ' "$STATE_FILE" > "$_tmp" || {
+        rm -f "$_tmp"
+        return 1
+    }
+
+    mv -f "$_tmp" "$STATE_FILE" || {
+        rm -f "$_tmp"
+        return 1
+    }
+
+    chmod 600 "$STATE_FILE" 2>/dev/null
+    chown_mobile_if_possible "$STATE_FILE"
+    return 0
+}
+
+validate_label() {
+    _label="$1"
+    case "$_label" in
+        ""|*[!A-Za-z0-9._-]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+is_assistivetouch_label() {
+    _l="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    [ "$_l" = "com.apple.assistivetouchd" ]
+}
+
+warn_if_sensitive_label() {
+    case "$1" in
+        com.apple.SpringBoard|com.apple.backboardd|com.apple.apsd|com.apple.configd|com.apple.locationd|com.apple.powerd)
+            warn "$1 is sensitive. Disabling it may destabilize the device or require a userspace reboot/reboot to recover."
+            ;;
+    esac
+}
+
+resolve_python() {
+    [ -n "$PYTHON_BIN" ] && [ -x "$PYTHON_BIN" ] && {
+        printf '%s\n' "$PYTHON_BIN"
+        return 0
+    }
+
+    for _candidate in \
+        "${PYTHON:-}" \
+        python3 python3.14 python3.13 python3.12 python3.11 python3.10 \
+        /var/jb/usr/bin/python3 /var/jb/usr/bin/python3.14 /var/jb/usr/bin/python3.13 /var/jb/usr/bin/python3.12 /var/jb/usr/bin/python3.11 /var/jb/usr/bin/python3.10 \
+        /var/jb/usr/local/bin/python3 /var/jb/usr/local/bin/python3.14 /var/jb/usr/local/bin/python3.13 /var/jb/usr/local/bin/python3.12 /var/jb/usr/local/bin/python3.11 /var/jb/usr/local/bin/python3.10 \
+        /usr/bin/python3
+    do
+        [ -n "$_candidate" ] || continue
+
+        case "$_candidate" in
+            */*)
+                if [ -x "$_candidate" ]; then
+                    PYTHON_BIN="$_candidate"
+                    printf '%s\n' "$PYTHON_BIN"
+                    return 0
+                fi
+                ;;
+            *)
+                _resolved="$(command -v "$_candidate" 2>/dev/null)"
+                if [ -n "$_resolved" ] && [ -x "$_resolved" ]; then
+                    PYTHON_BIN="$_resolved"
+                    printf '%s\n' "$PYTHON_BIN"
+                    return 0
+                fi
+                ;;
+        esac
+    done
+
+    return 1
+}
+
+resolve_invoked_script_path() {
+    case "$0" in
+        */*)
+            printf '%s\n' "$0"
+            return 0
+            ;;
+        *)
+            _resolved="$(command -v "$0" 2>/dev/null)"
+            if [ -n "$_resolved" ]; then
+                printf '%s\n' "$_resolved"
+                return 0
+            fi
+            ;;
+    esac
+    return 1
+}
+
+resolve_default_config() {
+    if [ -n "$CONFIG_FILE" ]; then
+        printf '%s\n' "$CONFIG_FILE"
+        return 0
+    fi
+
+    if [ -f "./$DEFAULT_CONFIG_NAME" ]; then
+        printf '%s\n' "./$DEFAULT_CONFIG_NAME"
+        return 0
+    fi
+
+    _script_path="$(resolve_invoked_script_path 2>/dev/null)"
+    if [ -n "$_script_path" ]; then
+        _script_dir="$(dirname "$_script_path")"
+        if [ -f "$_script_dir/$DEFAULT_CONFIG_NAME" ]; then
+            printf '%s\n' "$_script_dir/$DEFAULT_CONFIG_NAME"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+find_canonical_label_from_plists() {
+    _token="$1"
+    _py="$(resolve_python 2>/dev/null)" || return 1
+    [ -n "$_py" ] && [ -x "$_py" ] || return 1
+
+    "$_py" - "$_token" $PLIST_DIRS <<'PYEOF'
+import os
+import plistlib
+import sys
+
+token = sys.argv[1]
+dirs = sys.argv[2:]
+
+low = token.lower()
+targets = {low}
+if "." not in token:
+    targets.add(("com.apple." + token).lower())
+
+hits = []
+seen = set()
+
+def add(label):
+    if not label:
+        return
+    if label not in seen:
+        seen.add(label)
+        hits.append(label)
+
+for d in dirs:
+    if not os.path.isdir(d):
+        continue
+    try:
+        names = os.listdir(d)
+    except Exception:
+        continue
+
+    for name in names:
+        if not name.endswith(".plist"):
+            continue
+
+        base = name[:-6]
+        if base.lower() in targets:
+            add(base)
+
+        path = os.path.join(d, name)
+        try:
+            with open(path, "rb") as f:
+                data = plistlib.load(f)
+        except Exception:
+            continue
+
+        if isinstance(data, dict):
+            label = data.get("Label")
+            if isinstance(label, str) and label.lower() in targets:
+                add(label)
+
+if len(hits) == 1:
+    print(hits[0])
+    raise SystemExit(0)
+
+pref = [h for h in hits if h.lower() == low or h.lower() == ("com.apple." + token).lower()]
+if len(pref) == 1:
+    print(pref[0])
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PYEOF
+}
+
+prepare_label() {
+    _arg="$1"
+    _arg_lc="$(printf '%s' "$_arg" | tr '[:upper:]' '[:lower:]')"
+
+    case "$_arg_lc" in
+        assistivetouch|assistivetouchd|com.apple.assistivetouchd)
+            _label="com.apple.assistivetouchd"
+            ;;
+        *)
+            case "$_arg" in
+                *.*)
+                    _label="$_arg"
+                    ;;
+                *)
+                    _found="$(find_canonical_label_from_plists "$_arg" 2>/dev/null)"
+                    if [ -n "$_found" ]; then
+                        _label="$_found"
+                    else
+                        _label="com.apple.$(printf '%s' "$_arg" | tr '[:upper:]' '[:lower:]')"
+                    fi
+                    ;;
+            esac
+            ;;
+    esac
+
+    if ! validate_label "$_label"; then
+        error "Invalid daemon label: $1"
+        return 1
+    fi
+
+    printf '%s\n' "$_label"
+}
+
+normalize_cfg_mode() {
+    _mode="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    case "$_mode" in
+        yes|off|disable|disabled)
+            printf '%s\n' "disable"
+            return 0
+            ;;
+        no|on|enable|enabled)
+            printf '%s\n' "enable"
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+service_visible_in_domain() {
+    launchctl print "$DOMAIN/$1" >/dev/null 2>&1
+}
+
+launchd_is_disabled() {
+    launchctl print-disabled "$DOMAIN" 2>/dev/null | awk -F'"' -v label="$1" '
+        $2 == label && /=> disabled/ { found=1 }
+        END { exit(found ? 0 : 1) }
+    '
+}
+
+raw_disabled_labels() {
+    launchctl print-disabled "$DOMAIN" 2>/dev/null | awk -F'"' '
+        /=> disabled/ { print $2 }
+    ' | sort -u
+}
+
+service_print_path() {
+    launchctl print "$DOMAIN/$1" 2>/dev/null | awk -F' = ' '
+        /^[[:space:]]*path = / { print $2; exit }
+    '
+}
+
+path_is_launchagent() {
+    case "$1" in
+        */LaunchAgents/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+resolve_plist_path() {
+    _label="$1"
+    _path="$(service_print_path "$_label")"
+    if [ -n "$_path" ] && [ -f "$_path" ]; then
+        printf '%s\n' "$_path"
+        return 0
+    fi
+
+    for _dir in $PLIST_DIRS; do
+        [ -d "$_dir" ] || continue
+        _path="$_dir/$_label.plist"
+        if [ -f "$_path" ]; then
+            printf '%s\n' "$_path"
+            return 0
+        fi
+    done
+
+    _py="$(resolve_python 2>/dev/null)"
+    if [ -n "$_py" ] && [ -x "$_py" ]; then
+        _path="$("$_py" - "$_label" $PLIST_DIRS <<'PYEOF'
+import os
+import plistlib
+import sys
+
+label = sys.argv[1]
+dirs = sys.argv[2:]
+
+for d in dirs:
+    if not os.path.isdir(d):
+        continue
+    try:
+        names = os.listdir(d)
+    except Exception:
+        continue
+
+    for name in names:
+        if not name.endswith(".plist"):
+            continue
+        path = os.path.join(d, name)
+        try:
+            with open(path, "rb") as f:
+                data = plistlib.load(f)
+        except Exception:
+            continue
+
+        if isinstance(data, dict) and data.get("Label") == label:
+            print(path)
+            raise SystemExit(0)
+
+raise SystemExit(1)
+PYEOF
+)"
+        if [ -n "$_path" ] && [ -f "$_path" ]; then
+            printf '%s\n' "$_path"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+get_assistivetouch_pref_values() {
+    _py="$(resolve_python 2>/dev/null)"
+    [ -n "$_py" ] && [ -x "$_py" ] || return 1
+
+    "$_py" - "$ACCESSIBILITY_PLIST" <<'PYEOF'
+import os
+import plistlib
+import sys
+
+path = sys.argv[1]
+data = {}
+
+if os.path.exists(path):
+    try:
+        with open(path, "rb") as f:
+            loaded = plistlib.load(f)
+        if isinstance(loaded, dict):
+            data = loaded
+    except Exception:
+        data = {}
+
+def conv(v):
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    if isinstance(v, int):
+        return "1" if v else "0"
+    return ""
+
+print(f"{conv(data.get('AssistiveTouchEnabled'))}\t{conv(data.get('AssistiveTouchUIEnabled'))}")
+PYEOF
+}
+
+set_assistivetouch_pref_values() {
+    _enabled="$1"
+    _ui_enabled="$2"
+    [ -n "$_enabled" ] || _enabled="__EMPTY__"
+    [ -n "$_ui_enabled" ] || _ui_enabled="__EMPTY__"
+
+    _py="$(resolve_python 2>/dev/null)"
+    if [ -z "$_py" ] || [ ! -x "$_py" ]; then
+        error "python3 not found; cannot update $ACCESSIBILITY_PLIST"
+        return 1
+    fi
+
+    if ! "$_py" - "$ACCESSIBILITY_PLIST" "$_enabled" "$_ui_enabled" <<'PYEOF'
+import os
+import plistlib
+import sys
+
+path = sys.argv[1]
+enabled = sys.argv[2]
+ui_enabled = sys.argv[3]
+tmp = path + ".tmp"
+
+data = {}
+mode = None
+
+if os.path.exists(path):
+    try:
+        st = os.stat(path)
+        mode = st.st_mode & 0o777
+    except Exception:
+        mode = None
+    try:
+        with open(path, "rb") as f:
+            loaded = plistlib.load(f)
+        if isinstance(loaded, dict):
+            data = loaded
+    except Exception:
+        data = {}
+
+def apply_value(d, key, value):
+    if value == "__EMPTY__":
+        d.pop(key, None)
+    else:
+        d[key] = int(value)
+
+apply_value(data, "AssistiveTouchEnabled", enabled)
+apply_value(data, "AssistiveTouchUIEnabled", ui_enabled)
+
+try:
+    with open(tmp, "wb") as f:
+        plistlib.dump(data, f, fmt=plistlib.FMT_BINARY)
+    if mode is not None:
+        try:
+            os.chmod(tmp, mode)
+        except Exception:
+            pass
+    os.replace(tmp, path)
+except Exception:
+    try:
+        os.unlink(tmp)
+    except Exception:
+        pass
+    raise
+PYEOF
+    then
+        error "Failed to update $ACCESSIBILITY_PLIST"
+        return 1
+    fi
+
+    chown_mobile_if_possible "$ACCESSIBILITY_PLIST"
+    return 0
+}
+
+disable_job() {
+    reset_status_flags
+
+    _label="$1"
+    _at_prev="$2"
+    _at_ui_prev="$3"
+
+    warn_if_sensitive_label "$_label"
+
+    if launchd_is_disabled "$_label"; then
+        mark_noop
+        return 0
+    fi
+
+    _had_visibility=0
+    if service_visible_in_domain "$_label"; then
+        _had_visibility=1
+    fi
+
+    _plist_path="$(resolve_plist_path "$_label" 2>/dev/null)"
+
+    if [ -z "$_plist_path" ] && [ $_had_visibility -eq 0 ]; then
+        set_failure "Refusing to disable unresolved label: $_label (no loaded job or plist path found in $DOMAIN)"
+        return 1
+    fi
+
+    if ! run_cmd launchctl disable "$DOMAIN/$_label"; then
+        set_failure "launchctl disable failed for $_label"
+        return 1
+    fi
+
+    if ! launchd_is_disabled "$_label"; then
+        set_failure "$_label does not appear disabled in $DOMAIN after launchctl disable"
+        return 1
+    fi
+
+    if ! state_add_or_update "$_label" "$_plist_path" "$_had_visibility" "$_at_prev" "$_at_ui_prev" "0"; then
+        launchctl enable "$DOMAIN/$_label" >/dev/null 2>&1
+        if launchd_is_disabled "$_label"; then
+            set_failure "Failed to record state and rollback failed for $_label"
+        else
+            set_failure "Failed to record state; launchd change was rolled back for $_label"
+        fi
+        return 1
+    fi
+
+    if [ $_had_visibility -eq 1 ]; then
+        if ! run_cmd launchctl bootout "$DOMAIN/$_label"; then
+            if service_visible_in_domain "$_label"; then
+                warn "bootout did not fully unload $_label; disabled state is still set"
+            fi
+        fi
+    fi
+
+    return 0
+}
+
+enable_job() {
+    reset_status_flags
+
+    _label="$1"
+    _preferred_path="$2"
+    _tracked_had_visibility="$3"
+    _defer_state_remove="$4"
+
+    _is_tracked=0
+    if load_state_entry "$_label"; then
+        _is_tracked=1
+        [ -n "$_preferred_path" ] || _preferred_path="$STATE_ROW_PATH"
+        [ -n "$_tracked_had_visibility" ] || _tracked_had_visibility="$STATE_ROW_HAD_VIS"
+    fi
+
+    _was_disabled=0
+    if launchd_is_disabled "$_label"; then
+        _was_disabled=1
+    fi
+
+    if [ $_was_disabled -eq 0 ] && [ -z "$_tracked_had_visibility" ]; then
+        if service_visible_in_domain "$_label"; then
+            mark_noop
+            return 0
+        fi
+    fi
+
+    if [ $_was_disabled -eq 1 ]; then
+        if ! run_cmd launchctl enable "$DOMAIN/$_label"; then
+            set_failure "launchctl enable failed for $_label"
+            return 1
+        fi
+
+        if launchd_is_disabled "$_label"; then
+            set_failure "$_label still appears disabled in $DOMAIN after launchctl enable"
+            return 1
+        fi
+    fi
+
+    _plist_path="$_preferred_path"
+    if [ -z "$_plist_path" ] || [ ! -f "$_plist_path" ]; then
+        _plist_path="$(resolve_plist_path "$_label" 2>/dev/null)"
+    fi
+
+    _visible=0
+    if service_visible_in_domain "$_label"; then
+        _visible=1
+    fi
+
+    _attempt_bootstrap=0
+    if [ $_visible -eq 0 ] && [ -n "$_plist_path" ] && [ -f "$_plist_path" ]; then
+        if [ -n "$_tracked_had_visibility" ]; then
+            if [ "$_tracked_had_visibility" = "1" ]; then
+                _attempt_bootstrap=1
+            fi
+        else
+            if path_is_launchagent "$_plist_path"; then
+                _attempt_bootstrap=1
+            fi
+        fi
+    fi
+
+    _bootstrap_failed=0
+    if [ $_attempt_bootstrap -eq 1 ]; then
+        if ! run_cmd launchctl bootstrap "$DOMAIN" "$_plist_path"; then
+            if ! service_visible_in_domain "$_label"; then
+                _bootstrap_failed=1
+            fi
+        fi
+    fi
+
+    _visible=0
+    if service_visible_in_domain "$_label"; then
+        _visible=1
+    fi
+
+    if [ $_visible -eq 1 ]; then
+        if ! run_cmd launchctl kickstart -k -p "$DOMAIN/$_label"; then
+            warn "kickstart did not report success for $_label; it may be on-demand or condition-gated"
+        fi
+    fi
+
+    if launchd_is_disabled "$_label"; then
+        set_failure "$_label still appears disabled in $DOMAIN after enable sequence"
+        return 1
+    fi
+
+    if [ -n "$_tracked_had_visibility" ]; then
+        if [ "$_tracked_had_visibility" = "1" ] && [ $_visible -ne 1 ]; then
+            if [ $_bootstrap_failed -eq 1 ]; then
+                set_failure "Disabled state was cleared, but bootstrap failed and $_label is not visible in $DOMAIN"
+            else
+                set_failure "Disabled state was cleared, but $_label is not visible in $DOMAIN"
+            fi
+            return 1
+        fi
+    else
+        if [ $_visible -ne 1 ] && [ -n "$_plist_path" ] && [ -f "$_plist_path" ] && path_is_launchagent "$_plist_path"; then
+            if [ $_bootstrap_failed -eq 1 ]; then
+                set_failure "Disabled state was cleared, but bootstrap failed and $_label is not visible in $DOMAIN"
+            else
+                set_failure "Disabled state was cleared, but $_label is not visible in $DOMAIN"
+            fi
+            return 1
+        fi
+    fi
+
+    if [ $_is_tracked -eq 1 ] && [ "$_defer_state_remove" != "1" ]; then
+        if ! state_remove "$_label"; then
+            set_failure "Enabled $_label, but failed to update $STATE_FILE"
+            return 1
+        fi
+    fi
+
+    if [ $_was_disabled -eq 0 ] && [ $_visible -eq 1 ] && [ -z "$_tracked_had_visibility" ]; then
+        mark_noop
+    fi
+
+    return 0
+}
+
+disable_assistivetouch() {
+    reset_status_flags
+
+    _label="com.apple.assistivetouchd"
+    _daemon_pre_disabled=0
+    if launchd_is_disabled "$_label"; then
+        _daemon_pre_disabled=1
+    fi
+
+    _prefs="$(get_assistivetouch_pref_values 2>/dev/null)"
+    if [ $? -ne 0 ]; then
+        set_failure "python3 not found; cannot read $ACCESSIBILITY_PLIST"
+        return 1
+    fi
+
+    IFS="$TAB" read -r _prev_enabled _prev_ui <<EOF
+$_prefs
+EOF
+
+    if [ $_daemon_pre_disabled -eq 1 ] && [ "$_prev_enabled" = "0" ] && [ "$_prev_ui" = "0" ]; then
+        mark_noop
+        return 0
+    fi
+
+    _prefs_changed=0
+    if [ "$_prev_enabled" != "0" ] || [ "$_prev_ui" != "0" ]; then
+        if ! set_assistivetouch_pref_values "0" "0"; then
+            set_failure "Failed to update $ACCESSIBILITY_PLIST"
+            return 1
+        fi
+        _prefs_changed=1
+    fi
+
+    if [ $_daemon_pre_disabled -eq 1 ]; then
+        if ! state_add_or_update "$_label" "" "0" "$_prev_enabled" "$_prev_ui" "1"; then
+            if [ $_prefs_changed -eq 1 ]; then
+                set_assistivetouch_pref_values "$_prev_enabled" "$_prev_ui" >/dev/null 2>&1
+            fi
+            set_failure "Failed to record state for $_label"
+            return 1
+        fi
+        return 0
+    fi
+
+    if ! disable_job "$_label" "$_prev_enabled" "$_prev_ui"; then
+        _reason="$LAST_FAILURE_REASON"
+        if [ $_prefs_changed -eq 1 ]; then
+            set_assistivetouch_pref_values "$_prev_enabled" "$_prev_ui" >/dev/null 2>&1
+        fi
+        set_failure "$_reason"
+        return 1
+    fi
+
+    return 0
+}
+
+enable_assistivetouch() {
+    reset_status_flags
+
+    _mode="$1"
+    _label="com.apple.assistivetouchd"
+    _tracked=0
+
+    if load_state_entry "$_label"; then
+        _tracked=1
+    fi
+
+    if [ "$_mode" = "restore" ] && [ $_tracked -eq 1 ] && [ "$STATE_ROW_PRE_DISABLED" = "1" ]; then
+        if ! set_assistivetouch_pref_values "$STATE_ROW_AT_PREV" "$STATE_ROW_AT_UI_PREV"; then
+            set_failure "Failed to restore $ACCESSIBILITY_PLIST"
+            return 1
+        fi
+        if ! state_remove "$_label"; then
+            set_failure "AssistiveTouch prefs were restored, but failed to update $STATE_FILE"
+            return 1
+        fi
+        return 0
+    fi
+
+    if [ "$_mode" = "restore" ]; then
+        _target_enabled="$STATE_ROW_AT_PREV"
+        _target_ui="$STATE_ROW_AT_UI_PREV"
+        [ -n "$_target_enabled" ] || _target_enabled="1"
+        [ -n "$_target_ui" ] || _target_ui="1"
+
+        if ! enable_job "$_label" "$STATE_ROW_PATH" "$STATE_ROW_HAD_VIS" "1"; then
+            return 1
+        fi
+
+        if ! set_assistivetouch_pref_values "$_target_enabled" "$_target_ui"; then
+            set_failure "Daemon restored, but failed to restore $ACCESSIBILITY_PLIST"
+            return 1
+        fi
+
+        if [ $_tracked -eq 1 ]; then
+            if ! state_remove "$_label"; then
+                set_failure "AssistiveTouch restored, but failed to update $STATE_FILE"
+                return 1
+            fi
+        fi
+
+        return 0
+    fi
+
+    if ! enable_job "$_label" "" "1" "1"; then
+        return 1
+    fi
+
+    if ! set_assistivetouch_pref_values "1" "1"; then
+        set_failure "Daemon enabled, but failed to update $ACCESSIBILITY_PLIST"
+        return 1
+    fi
+
+    if [ $_tracked -eq 1 ]; then
+        if ! state_remove "$_label"; then
+            set_failure "AssistiveTouch enabled, but failed to update $STATE_FILE"
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
+disable_job_action() {
+    _label="$1"
+    disable_job "$_label" "" ""
+}
+
+enable_job_action() {
+    _label="$1"
+    enable_job "$_label" "" "" "0"
+}
+
+reset_enable_job_action() {
+    _label="$1"
+    _path="$2"
+    _had_vis="$3"
+    enable_job "$_label" "$_path" "$_had_vis" "0"
+}
+
+disable_assistivetouch_action() {
+    _unused="$1"
+    disable_assistivetouch
+}
+
+enable_assistivetouch_force_action() {
+    _unused="$1"
+    enable_assistivetouch "force"
+}
+
+enable_assistivetouch_restore_action() {
+    _unused="$1"
+    enable_assistivetouch "restore"
+}
+
+list_disabled() {
+    ensure_state_file || {
+        error "Could not access state file: $STATE_FILE"
+        return 1
+    }
+
+    info "Tracked by this script in $DOMAIN:"
+    if [ ! -s "$STATE_FILE" ]; then
+        info "  (none)"
+    else
+        while IFS="$TAB" read -r _label _path _had_vis _at_prev _at_ui_prev _pre_disabled; do
+            [ -n "$_label" ] || continue
+            [ -n "$_had_vis" ] || _had_vis="0"
+            [ -n "$_pre_disabled" ] || _pre_disabled="0"
+
+            if launchd_is_disabled "$_label"; then
+                _state="launchd-disabled"
+            else
+                _state="tracked-only"
+            fi
+
+            printf '  %s [%s]\n' "$_label" "$_state"
+            printf '      had_visibility_before_disable: %s\n' "$_had_vis"
+            printf '      pre_disabled_before_script:    %s\n' "$_pre_disabled"
+            if [ -n "$_path" ]; then
+                printf '      plist: %s\n' "$_path"
+            fi
+            if is_assistivetouch_label "$_label"; then
+                printf '      AssistiveTouchEnabled prev:    %s\n' "${_at_prev:-<unset>}"
+                printf '      AssistiveTouchUIEnabled prev:  %s\n' "${_at_ui_prev:-<unset>}"
+            fi
+        done < "$STATE_FILE"
+    fi
+
+    info ""
+    info "Raw launchd-disabled entries in $DOMAIN:"
+    _raw="$(raw_disabled_labels)"
+    if [ -n "$_raw" ]; then
+        printf '%s\n' "$_raw" | sed 's/^/  /'
+    else
+        info "  (none)"
+    fi
+}
+
+process_toggle_batch() {
+    _mode="$1"
+    shift
+
+    _requested=$#
+    _ok=0
+    _fail=0
+    _processed=0
+
+    if [ "$_requested" -gt 1 ]; then
+        BATCH_MODE=1
+    else
+        BATCH_MODE=0
+    fi
+    STOP_REQUESTED=0
+
+    while [ $# -gt 0 ]; do
+        _raw="$1"
+        shift
+        _processed=$((_processed + 1))
+
+        _label="$(prepare_label "$_raw")" || {
+            error "Invalid daemon: $_raw"
+            record_failure_item "$_mode" "$_raw" "0.000s" "Invalid daemon label"
+            _fail=$((_fail + 1))
+            continue
+        }
+
+        if is_assistivetouch_label "$_label"; then
+            if [ "$_mode" = "disable" ]; then
+                run_action_with_timing "Disabling" "$_label" disable_assistivetouch_action
+            else
+                run_action_with_timing "Enabling" "$_label" enable_assistivetouch_force_action
+            fi
+        else
+            if [ "$_mode" = "disable" ]; then
+                run_action_with_timing "Disabling" "$_label" disable_job_action
+            else
+                run_action_with_timing "Enabling" "$_label" enable_job_action
+            fi
+        fi
+
+        _rc=$?
+        if [ $_rc -eq 0 ]; then
+            _ok=$((_ok + 1))
+        else
+            _fail=$((_fail + 1))
+        fi
+
+        if [ "$STOP_REQUESTED" -eq 1 ]; then
+            warn "Stopped early by user request."
+            break
+        fi
+    done
+
+    if [ "$_requested" -gt 1 ]; then
+        info ""
+        info "Batch complete."
+        info "  Requested:  $_requested"
+        info "  Processed:  $_processed"
+        info "  Succeeded:  $_ok"
+        info "  Failed:     $_fail"
+        print_failure_items
+    fi
+
+    if [ $_fail -ne 0 ] || [ "$STOP_REQUESTED" -eq 1 ]; then
+        return 1
+    fi
+
+    return 0
+}
+
+apply_config_file() {
+    _path="$1"
+
+    if [ -z "$_path" ]; then
+        _path="$(resolve_default_config 2>/dev/null)"
+        if [ -z "$_path" ]; then
+            error "Config file not found. Use --config <path> or place daemon.cfg in the current directory or next to this script."
+            return 1
+        fi
+    fi
+
+    if [ ! -f "$_path" ]; then
+        error "Config file not found: $_path"
+        return 1
+    fi
+
+    if [ ! -r "$_path" ]; then
+        error "Config file not readable: $_path"
+        return 1
+    fi
+
+    _requested="$(awk '
+        {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            if (line == "" || line ~ /^#/) next
+            c++
+        }
+        END { print c + 0 }
+    ' "$_path" 2>/dev/null)"
+
+    if [ -z "$_requested" ] || [ "$_requested" -eq 0 ]; then
+        info "Nothing to apply. No actionable entries in $_path."
+        return 0
+    fi
+
+    if [ "$_requested" -gt 1 ]; then
+        BATCH_MODE=1
+    else
+        BATCH_MODE=0
+    fi
+    STOP_REQUESTED=0
+
+    info "APPLY: Processing $_path for $DOMAIN..."
+    info ""
+
+    _ok=0
+    _fail=0
+    _processed=0
+    _lineno=0
+
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        _lineno=$((_lineno + 1))
+
+        _trimmed="$(printf '%s' "$_line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        [ -n "$_trimmed" ] || continue
+
+        case "$_trimmed" in
+            \#*) continue ;;
+        esac
+
+        _processed=$((_processed + 1))
+
+        set -- $_trimmed
+
+        if [ $# -lt 2 ]; then
+            error "Invalid config line $_lineno: $_line"
+            record_failure_item "Config" "<line $_lineno>" "0.000s" "Invalid config line"
+            _fail=$((_fail + 1))
+            continue
+        fi
+
+        _raw_label="$1"
+        _raw_mode="$2"
+
+        if [ $# -gt 2 ]; then
+            case "$3" in
+                \#*) : ;;
+                *)
+                    error "Invalid config line $_lineno: $_line"
+                    record_failure_item "Config" "$_raw_label" "0.000s" "Invalid config line: too many fields"
+                    _fail=$((_fail + 1))
+                    continue
+                    ;;
+            esac
+        fi
+
+        _label="$(prepare_label "$_raw_label")" || {
+            record_failure_item "Config" "$_raw_label" "0.000s" "Invalid daemon label"
+            _fail=$((_fail + 1))
+            continue
+        }
+
+        _action="$(normalize_cfg_mode "$_raw_mode" 2>/dev/null)"
+        if [ -z "$_action" ]; then
+            error "Invalid config mode on line $_lineno for $_raw_label: $_raw_mode"
+            record_failure_item "Config" "$_label" "0.000s" "Invalid mode: $_raw_mode"
+            _fail=$((_fail + 1))
+            continue
+        fi
+
+        if is_assistivetouch_label "$_label"; then
+            if [ "$_action" = "disable" ]; then
+                run_action_with_timing "Disabling" "$_label" disable_assistivetouch_action
+            else
+                run_action_with_timing "Enabling" "$_label" enable_assistivetouch_force_action
+            fi
+        else
+            if [ "$_action" = "disable" ]; then
+                run_action_with_timing "Disabling" "$_label" disable_job_action
+            else
+                run_action_with_timing "Enabling" "$_label" enable_job_action
+            fi
+        fi
+
+        _rc=$?
+        if [ $_rc -eq 0 ]; then
+            _ok=$((_ok + 1))
+        else
+            _fail=$((_fail + 1))
+        fi
+
+        if [ "$STOP_REQUESTED" -eq 1 ]; then
+            warn "Apply stopped early by user request."
+            break
+        fi
+    done < "$_path"
+
+    info ""
+    info "Apply complete."
+    info "  Config file: $_path"
+    info "  Requested:   $_requested"
+    info "  Processed:   $_processed"
+    info "  Succeeded:   $_ok"
+    info "  Failed:      $_fail"
+
+    print_failure_items
+
+    if [ "$STOP_REQUESTED" -eq 1 ] || [ $_fail -ne 0 ]; then
+        return 1
+    fi
+
+    return 0
+}
+
+reset_all() {
+    ensure_state_file || {
+        error "Could not access state file: $STATE_FILE"
+        return 1
+    }
+
+    if [ ! -s "$STATE_FILE" ]; then
+        info "Nothing to reset. No script-tracked services are disabled."
+        return 0
+    fi
+
+    BATCH_MODE=1
+    STOP_REQUESTED=0
+
+    _total_tracked="$(awk -F '\t' 'NF > 0 && $1 != "" { c++ } END { print c + 0 }' "$STATE_FILE")"
+
+    info "RESET: Re-enabling services tracked by this script in $DOMAIN..."
+    info "(This does not touch unrelated launchd-disabled entries.)"
+    info ""
+
+    RESET_SNAPSHOT="${STATE_FILE}.snapshot.$$"
+    cp "$STATE_FILE" "$RESET_SNAPSHOT" || {
+        error "Failed to create reset snapshot"
+        return 1
+    }
+
+    _ok=0
+    _fail=0
+    _processed=0
+
+    while IFS="$TAB" read -r _label _path _had_vis _at_prev _at_ui_prev _pre_disabled; do
+        [ -n "$_label" ] || continue
+        [ -n "$_had_vis" ] || _had_vis="0"
+        [ -n "$_pre_disabled" ] || _pre_disabled="0"
+        _processed=$((_processed + 1))
+
+        if is_assistivetouch_label "$_label"; then
+            run_action_with_timing "Enabling" "$_label" enable_assistivetouch_restore_action
+        else
+            run_action_with_timing "Enabling" "$_label" reset_enable_job_action "$_path" "$_had_vis"
+        fi
+
+        _rc=$?
+        if [ $_rc -eq 0 ]; then
+            _ok=$((_ok + 1))
+        else
+            _fail=$((_fail + 1))
+        fi
+
+        if [ "$STOP_REQUESTED" -eq 1 ]; then
+            warn "Reset stopped early by user request."
+            break
+        fi
+    done < "$RESET_SNAPSHOT"
+
+    rm -f "$RESET_SNAPSHOT"
+    RESET_SNAPSHOT=""
+
+    _remaining="$(awk -F '\t' 'NF > 0 && $1 != "" { c++ } END { print c + 0 }' "$STATE_FILE" 2>/dev/null)"
+
+    info ""
+    info "Reset complete."
+    info "  Total tracked at start: $_total_tracked"
+    info "  Processed:              $_processed"
+    info "  Succeeded:              $_ok"
+    info "  Failed:                 $_fail"
+    info "  Remaining tracked:      $_remaining"
+
+    print_failure_items
+
+    if [ "$STOP_REQUESTED" -eq 1 ] || [ $_fail -ne 0 ]; then
+        warn "Some services could not be fully restored. Remaining entries are still kept in $STATE_FILE."
+        return 1
+    fi
+
+    return 0
+}
+
+usage() {
+    cat <<EOF
+DaemonManager v8.2 - Manage launchd services in $DOMAIN
+
+Notes:
+  - This script tracks only the services it changes.
+  - "reset" undoes only this script's own changes.
+  - Scope is limited to the mobile user's bootstrap domain: $DOMAIN
+  - Global flags:
+      --step, -s
+        Batch step mode. After each successful toggle, press Enter to continue.
+        On failures, you can retry; Enter skips to the next item.
+      --config <path>, -c <path>
+        Override the config file path for "apply" with no args or "apply-file".
+
+Config file:
+  - Default name: daemon.cfg
+  - Search order:
+      1) --config <path>
+      2) ./daemon.cfg
+      3) daemon.cfg next to this script
+  - Format:
+      com.apple.ABDatabaseDoctor yes
+      com.apple.absd no
+  - Meanings:
+      yes/off/disable/disabled => disable
+      no/on/enable/enabled     => enable
+
+Usage:
+  $0 [--step] [--config path] list
+  $0 [--step] [--config path] apply
+  $0 [--step] apply <daemon> <yes|no>
+  $0 [--step] [--config path] apply-file [path]
+  $0 [--step] disable <name-or-label> [more-labels...]
+  $0 [--step] enable <name-or-label> [more-labels...]
+  $0 [--step] reset
+  $0 help
+
+Examples:
+  $0 apply
+  $0 --config /var/mobile/daemon.cfg apply
+  $0 apply com.apple.tipsd yes
+  $0 disable tipsd gamed
+  $0 enable gamed
+  $0 --step reset
+EOF
+}
+
+main() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --step|-s)
+                STEP_MODE=1
+                shift
+                ;;
+            --config|-c)
+                if [ -z "$2" ]; then
+                    error "Missing path for $1"
+                    return 2
+                fi
+                CONFIG_FILE="$2"
+                shift 2
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
+    _cmd="$1"
+    if [ $# -gt 0 ]; then
+        shift
+    fi
+
+    case "$_cmd" in
+        list)
+            list_disabled
+            ;;
+        apply)
+            acquire_lock || return 1
+
+            if [ $# -eq 0 ]; then
+                apply_config_file ""
+                return $?
+            fi
+
+            if [ $# -ne 2 ]; then
+                error "Usage: $0 [--step] apply <daemon> <yes|no>"
+                return 2
+            fi
+
+            _label="$(prepare_label "$1")" || return 2
+            _mode="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+
+            case "$_mode" in
+                yes)
+                    if is_assistivetouch_label "$_label"; then
+                        run_action_with_timing "Disabling" "$_label" disable_assistivetouch_action
+                    else
+                        run_action_with_timing "Disabling" "$_label" disable_job_action
+                    fi
+                    ;;
+                no)
+                    if is_assistivetouch_label "$_label"; then
+                        run_action_with_timing "Enabling" "$_label" enable_assistivetouch_force_action
+                    else
+                        run_action_with_timing "Enabling" "$_label" enable_job_action
+                    fi
+                    ;;
+                *)
+                    error "Third argument must be exactly yes or no"
+                    return 2
+                    ;;
+            esac
+            ;;
+        apply-file|sync)
+            acquire_lock || return 1
+
+            if [ $# -gt 1 ]; then
+                error "Usage: $0 [--step] [--config path] apply-file [path]"
+                return 2
+            fi
+
+            if [ $# -eq 1 ]; then
+                apply_config_file "$1"
+            else
+                apply_config_file ""
+            fi
+            ;;
+        disable)
+            if [ $# -eq 0 ]; then
+                error "Usage: $0 [--step] disable <daemon> [more-daemons...]"
+                return 2
+            fi
+            acquire_lock || return 1
+            process_toggle_batch "disable" "$@"
+            ;;
+        enable)
+            if [ $# -eq 0 ]; then
+                error "Usage: $0 [--step] enable <daemon> [more-daemons...]"
+                return 2
+            fi
+            acquire_lock || return 1
+            process_toggle_batch "enable" "$@"
+            ;;
+        reset|undo)
+            acquire_lock || return 1
+            reset_all
+            ;;
+        help|--help|-h|"")
+            usage
+            ;;
+        *)
+            error "Unknown command: $_cmd"
+            usage
+            return 2
+            ;;
+    esac
+}
+
+main "$@"
+_rc=$?
+
+if [ -s "$FAIL_LOG" ] && [ "$PRINTED_FAILURE_SUMMARY" -eq 0 ]; then
+    print_failure_items
+fi
+
+exit $_rc
