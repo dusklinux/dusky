@@ -54,10 +54,17 @@ SUNSET_READY_TIMEOUT = 3.0
 SUNSET_FALLBACK_READY_TIMEOUT = 1.5
 LIVE_REFRESH_INTERVAL_SECONDS = 2
 
+# DDC commands can be slow (I2C bus)
+DDC_QUERY_TIMEOUT = 3.0
+DDC_CONTROL_TIMEOUT = 3.0
+
 # Prevent a freshly user-set value from being stomped by an in-flight/stale read.
 # This especially matters for brightness, where the UI can otherwise snap back
 # momentarily if a refresh races the backend update.
 BRIGHTNESS_POST_SUBMIT_REFRESH_GRACE_SECONDS = max(1.5, QUERY_TIMEOUT + 0.5)
+
+# DDC setvcp can be slower
+DDC_POST_SUBMIT_REFRESH_GRACE_SECONDS = max(3.0, DDC_CONTROL_TIMEOUT + 1.0)
 
 
 def clamp(value: float, lower: float, upper: float) -> float:
@@ -158,6 +165,7 @@ HYPRCTL = shutil.which("hyprctl")
 HYPRSUNSET = shutil.which("hyprsunset")
 PGREP = shutil.which("pgrep")
 SYSTEMCTL = shutil.which("systemctl")
+DDCUTIL = shutil.which("ddcutil")
 
 
 @functools.cache
@@ -210,7 +218,9 @@ def _sysfs_backlight_candidates() -> tuple[tuple[int, int, Path], ...]:
 
 
 @functools.cache
-def _best_sysfs_backlight(*, require_writable: bool = False) -> tuple[Path, Path] | None:
+def _best_sysfs_backlight(
+    *, require_writable: bool = False
+) -> tuple[Path, Path] | None:
     for _, _, entry in _sysfs_backlight_candidates():
         brightness_path = entry / "brightness"
         max_brightness_path = entry / "max_brightness"
@@ -254,11 +264,29 @@ def _has_hyprland_session() -> bool:
     return bool(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"))
 
 
+# DDC external monitor detection
+@functools.cache
+def _ddc_display_count() -> int:
+    """Return the number of DDC-capable displays detected. Cached at import time."""
+    if DDCUTIL is None:
+        return 0
+    result = run_command(
+        [DDCUTIL, "detect", "--brief"],
+        timeout=DDC_QUERY_TIMEOUT,
+        capture_stdout=True,
+    )
+    if result is None or result.returncode != 0:
+        return 0
+    count = sum(1 for line in result.stdout.splitlines() if line.startswith("Display"))
+    return count
+
+
 HAS_VOLUME = WPCTL is not None
 HAS_BRIGHTNESS = _preferred_sysfs_backlight() is not None and (
     BRIGHTNESSCTL is not None or _has_writable_sysfs_backlight()
 )
 HAS_SUNSET = HYPRCTL is not None and HYPRSUNSET is not None and _has_hyprland_session()
+HAS_DDC_BRIGHTNESS = DDCUTIL is not None and _ddc_display_count() > 0
 
 
 def get_volume() -> float | None:
@@ -323,7 +351,9 @@ def _read_sysfs_brightness() -> float | None:
         return None
 
     value = clamp((current / maximum) * 100.0, 0.0, 100.0)
-    LOG.debug("Brightness read via sysfs (%s): %.3f%%", brightness_path.parent.name, value)
+    LOG.debug(
+        "Brightness read via sysfs (%s): %.3f%%", brightness_path.parent.name, value
+    )
     return value
 
 
@@ -413,6 +443,60 @@ def apply_brightness(value: float) -> None:
             return
 
     LOG.warning("Failed to set brightness to %s%%", brightness)
+
+
+# DDC external monitor brightness (VCP feature 0x10)
+# VCP code 10 (0x0A) = Brightness
+_DDC_VCP_BRIGHTNESS = "10"
+
+
+def get_ddc_brightness() -> float | None:
+    """Read brightness from the first DDC-capable external monitor (0–100)."""
+    if DDCUTIL is None:
+        return None
+
+    result = run_command(
+        [DDCUTIL, "getvcp", _DDC_VCP_BRIGHTNESS],
+        timeout=DDC_QUERY_TIMEOUT,
+        capture_stdout=True,
+    )
+    if result is None or result.returncode != 0:
+        return None
+
+    # ddcutil output example:
+    #   VCP code 0x10 (Brightness                    ):  current value =  75, max value = 100
+    for line in result.stdout.splitlines():
+        if "current value" not in line:
+            continue
+        # Extract "current value = <N>"
+        parts = line.split("current value")
+        if len(parts) < 2:
+            continue
+        after = parts[1].lstrip(" =")
+        token = after.split(",")[0].strip()
+        value = parse_float(token)
+        if value is not None:
+            LOG.debug("DDC brightness read: %.1f", value)
+            return clamp(value, 0.0, 100.0)
+
+    return None
+
+
+def apply_ddc_brightness(value: float) -> None:
+    """Set DDC external monitor brightness (1–100)."""
+    if DDCUTIL is None:
+        return
+
+    brightness = int(clamp(round(value), 0, 100))
+    result = run_command(
+        [DDCUTIL, "setvcp", _DDC_VCP_BRIGHTNESS, str(brightness), "--noverify"],
+        timeout=DDC_CONTROL_TIMEOUT,
+    )
+    if result is None or result.returncode != 0:
+        LOG.warning("Failed to set DDC brightness to %s%%", brightness)
+        return
+
+    LOG.debug("DDC brightness written: %s%%", brightness)
 
 
 def get_hyprsunset_state() -> float:
@@ -787,7 +871,9 @@ class CompactSliderRow(Gtk.Box):
         self._user_revision = 0
         self._has_value = False
 
-        self._post_submit_refresh_grace_seconds = max(0.0, post_submit_refresh_grace_seconds)
+        self._post_submit_refresh_grace_seconds = max(
+            0.0, post_submit_refresh_grace_seconds
+        )
         self._pending_local_value: float | None = None
         self._pending_local_deadline = 0.0
 
@@ -949,6 +1035,7 @@ class SliderWindow(Adw.ApplicationWindow):
         volume_submit: Callable[[float], None] | None,
         brightness_submit: Callable[[float], None] | None,
         sunset_submit: Callable[[float], None] | None,
+        ddc_brightness_submit: Callable[[float], None] | None,
     ) -> None:
         super().__init__(application=app)
 
@@ -1003,6 +1090,20 @@ class SliderWindow(Adw.ApplicationWindow):
                 get_brightness,
                 brightness_submit,
                 post_submit_refresh_grace_seconds=BRIGHTNESS_POST_SUBMIT_REFRESH_GRACE_SECONDS,
+            )
+            self._rows.append(row)
+            card_box.append(row)
+
+        if HAS_DDC_BRIGHTNESS and ddc_brightness_submit is not None:
+            row = CompactSliderRow(
+                "󰃠",
+                "ddc-brightness",
+                0,
+                100,
+                1,
+                get_ddc_brightness,
+                ddc_brightness_submit,
+                post_submit_refresh_grace_seconds=DDC_POST_SUBMIT_REFRESH_GRACE_SECONDS,
             )
             self._rows.append(row)
             card_box.append(row)
@@ -1083,9 +1184,16 @@ class SliderApp(Adw.Application):
             LatestValueExecutor("volume", apply_volume) if HAS_VOLUME else None
         )
         self._brightness_executor = (
-            LatestValueExecutor("brightness", apply_brightness) if HAS_BRIGHTNESS else None
+            LatestValueExecutor("brightness", apply_brightness)
+            if HAS_BRIGHTNESS
+            else None
         )
         self._sunset_controller = HyprsunsetController() if HAS_SUNSET else None
+        self._ddc_brightness_executor = (
+            LatestValueExecutor("ddc-brightness", apply_ddc_brightness)
+            if HAS_DDC_BRIGHTNESS
+            else None
+        )
 
     def do_startup(self) -> None:
         Adw.Application.do_startup(self)
@@ -1094,6 +1202,11 @@ class SliderApp(Adw.Application):
         if LOG.isEnabledFor(logging.DEBUG):
             if (name := _preferred_backlight_name()) is not None:
                 LOG.debug("Selected backlight device: %s", name)
+            if HAS_DDC_BRIGHTNESS:
+                LOG.debug(
+                    "DDC external monitor brightness: enabled (%d display(s))",
+                    _ddc_display_count(),
+                )
 
         quit_action = Gio.SimpleAction.new("quit", None)
         quit_action.connect("activate", lambda *_args: self.quit())
@@ -1139,10 +1252,12 @@ class SliderApp(Adw.Application):
 
             scale.volume highlight { background-color: #89b4fa; }
             scale.brightness highlight { background-color: #f9e2af; }
+            scale.ddc-brightness highlight { background-color: #cba6f7; }
             scale.sunset highlight { background-color: #fab387; }
 
             .icon-volume { color: #89b4fa; }
             .icon-brightness { color: #f9e2af; }
+            .icon-ddc-brightness { color: #cba6f7; }
             .icon-sunset { color: #fab387; }
 
             .icon-label {
@@ -1170,9 +1285,18 @@ class SliderApp(Adw.Application):
 
         self._window = SliderWindow(
             self,
-            volume_submit=self._volume_executor.submit if self._volume_executor else None,
-            brightness_submit=self._brightness_executor.submit if self._brightness_executor else None,
-            sunset_submit=self._sunset_controller.submit if self._sunset_controller else None,
+            volume_submit=self._volume_executor.submit
+            if self._volume_executor
+            else None,
+            brightness_submit=self._brightness_executor.submit
+            if self._brightness_executor
+            else None,
+            sunset_submit=self._sunset_controller.submit
+            if self._sunset_controller
+            else None,
+            ddc_brightness_submit=self._ddc_brightness_executor.submit
+            if self._ddc_brightness_executor
+            else None,
         )
         self._window.set_visible(False)
 
@@ -1189,6 +1313,9 @@ class SliderApp(Adw.Application):
 
         if self._sunset_controller is not None:
             self._sunset_controller.stop()
+
+        if self._ddc_brightness_executor is not None:
+            self._ddc_brightness_executor.stop()
 
         if self._brightness_executor is not None:
             self._brightness_executor.stop()
