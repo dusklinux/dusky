@@ -19,7 +19,7 @@ Conservative legend:
 | 8   | accessoryupdaterd             | Firmware updates for Apple/supported accessories                                             | if-unused                      |
 | 9   | accountsd                     | System accounts database and access management                                               | NO                             |
 | 10  | activityawardsd               | Fitness/Activity awards processing                                                           | if-unused                      |
-| 11  | adid                          | Advertising identifier service                                                               | yes                            |
+| 11  | adid                          | apple id account login                                                                       | NO                             |
 | 12  | AdminLite                     | system watchdog daemon                                                                       | NO                             |
 | 13  | afcd                          | Apple File Conduit for USB file access and Finder/iTunes file sharing                        | yes                            |
 | 14  | aggregated                    | System analytics aggregation                                                                 | yes                            |
