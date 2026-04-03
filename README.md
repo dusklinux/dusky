@@ -48,11 +48,11 @@ Here's what it looks like.
 ![waybar_minimal](Pictures/readme_assets/waybar_minimal.webp)
 
 
-### There's also a brand new Dusky Control Center that acts as a system overview GUI for settings and features, it's exhaustive in it's scope, almost anything you want to set/change can be done from this one stop shop intuitive GUI app. I'll keep adding more quality of life features to it over time.
+### There's also a brand new Dusky Control Center that acts as a system overview GUI for settings and features, it's exhaustive in its scope, almost anything you want to set/change can be done from this one stop shop intuitive GUI app. I'll keep adding more quality of life features to it over time.
 
 ![Dusky Control Center](Pictures/readme_assets/dusky_control_center.webp)
 
-This repository is the result of 8 months of tinkering/breaking/fixing and polishing. Its a labor of love designed to feel as easy to install as a "standard" distribution but with the raw power and minimalism of arch. **please consider starring ⭐ this repo** as a token of support.
+This repository is the result of 8 months of tinkering/breaking/fixing and polishing. Its a labor of love designed to feel as easy to install as a "standard" distribution but with the raw power and minimalism of arch. **Please consider starring ⭐ this repo** as a token of support.
 
 
 ## ⚠️ Prerequisites & Hardware
@@ -99,7 +99,7 @@ After installing arch, boot into the OS and then run this in the terminal.
 
 i use a bare git repository method to drop files exactly where they belong in your home directory.
 
-make sure your connected to the internet and git is installed, 
+make sure you're connected to the internet and git is installed, 
 ```
 sudo pacman -Syu --needed git
 ```
@@ -116,12 +116,12 @@ git --git-dir=$HOME/dusky/ --work-tree=$HOME checkout -f
 
 > Note:
 > 
-> This will immediately list a few errors at the top, but dont worry, that's expected behaviour, the errors will later go away on there own after matugen generates colors and cycles through a wallpaper. 
+> This will immediately list a few errors at the top, but don't worry, that's expected behaviour, the errors will later go away on their own after matugen generates colors and cycles through a wallpaper. 
 
 
 ### Step 2: Run the Orchestra
 
-Run the master script to install dependencies, themes, and services, this will take a while. because it sets up everything. You'll be promted to say yes/no during setup, so dont leave it running unattended.
+Run the master script to install dependencies, themes, and services. This will take a while because it sets up everything. You'll be prompted to say yes/no during setup, so don't leave it running unattended.
 
 ```bash
 ~/user_scripts/arch_setup_scripts/ORCHESTRA.sh
@@ -135,7 +135,7 @@ The `ORCHESTRA.sh` is a "conductor" that manages ~80 subscripts.
 
 - **Safe:** You can re-run it as many times as you like without breaking things.
 
-- **Time:** Expect 30–60 minutes. We use `paru` to install a few AUR packages, and compiling from source takes time. Grab a coffee!
+- **Time:** Expect 30–60 minutes. We use `paru` to install a few AUR packages, and compiling from source takes time. Grab a coffee! ☕
 
 
 ## ⌨️ Usage & Keybinds
@@ -173,13 +173,13 @@ Note : i've purposely decided to not use quickshell for anything in the interest
 
 - Circle to search type feature. uses Google lens. 
 
-- TUI for chaining your hyprland's appearience like gaps, shadow color, blur strength, opacity strength and a lot more!!
+- TUI for chaining your hyprland's appearance like gaps, shadow color, blur strength, opacity strength and a lot more!!
 
 - AI llm local inference using ollama side bar (terminal, incredibly resource efficient).
 
 - Keybind TUI setter that auto checks for conflicts and unbinds any existing keybind in the default hyprland keybind.conf .
 
-- Easily switch Swaync's side to either lift or right.
+- Easily switch Swaync's side to either left or right.
 
 - Airmon wifi script for wifi testing/password cracking
     (only use on access points that you own, i'm not legally responsible if you use it for nefarious purposes)
@@ -187,13 +187,13 @@ Note : i've purposely decided to not use quickshell for anything in the interest
 
 - Quick audio input/output switch with a keybind, e.g. if you have bluetooth headphones connected, you can quickly switch to speakers without disconnecting. 
 
-- Mono/Sterio audio toggling. 
+- Mono/Stereo audio toggling. 
 
 - Supports touchpad gestures for volume/brightness, locking the screen, invoking swaync, pause/play, muting.(requires a laptop or a touchpad for pc)
 
 - Battery notifier for laptops, you can customize it to show notifications at certain levels.
 
-- Togglable power saver mode.
+- Toggleable power saver mode.
 
 - System clean up (cache purge) - removes unwanted files to reclaim storage. 
 
@@ -205,13 +205,13 @@ Note : i've purposely decided to not use quickshell for anything in the interest
 
 - Openssh auto setup. with or without tailscale.
 
-- Auto warp - cloudflaire setup and toggleable right from rofi. 
+- Auto warp - cloudflare setup and toggleable right from rofi. 
 
 - Vnc setup for iphones (wired).
 
 - Dynamic frantional scalling script so you can scale your display with a keybind. 
 
-- Toggle window transparancy, blur and shadow with a single keybind. 
+- Toggle window transparency, blur and shadow with a single keybind. 
 
 - Hypridle TUI configuration.
 
@@ -223,13 +223,13 @@ Note : i've purposely decided to not use quickshell for anything in the interest
 
 - Neovim configured, you could also use your own later on, or install lazyvim or any another neovim rice.
 
-- Github repo integration so you can easily create your own repo to backup all files, this uses bare repo so your specific existing files, listed in ~/.git_dusky_list will backup to github, you can add more files/remove existing ones from this text file.
+- Github repo integration so you can easily create your own repo to backup all files, this uses bare repo so your specific existing files, listed in `~/.git_dusky_list` will backup to github, you can add more files/remove existing ones from this text file.
 
 - Btrfs system compression ratio - scans your os files to see how much space zstd compression is saving you. 
 
-- Drive manager, easily lock/unlock encrypted drives from the terminal using "unlock media or lock media", it automaticlaly mounts your drives at a specified path, also unmounts when you lock it. This requires you to first configure the ~/user_scripts/drives/drive_manager.sh script with your drives' uuid. 
+- Drive manager, easily lock/unlock encrypted drives from the terminal using "unlock media or lock media", it automatically mounts your drives at a specified path, also unmounts when you lock it. This requires you to first configure the ~/user_scripts/drives/drive_manager.sh script with your drives' uuid. 
 
-- Ntfs drives have a tendency to not unlock if the drive had previously been disconnected without unmounting first, because of corrupted metadata, i've a script that fixes this in ntfs_fix.sh .
+- NTFS drives have a tendency to not unlock if the drive had previously been disconnected without unmounting first, because of corrupted metadata, i've a script that fixes this in ntfs_fix.sh .
 
 
 **RoFI menus:**
@@ -263,7 +263,7 @@ or
 - Mechanical keypress sounds
 toggleable with a keybind or from rofi. 
 
-- Wlogout is drawn using a dynamic script that respects your frational scaling. 
+- Wlogout is drawn using a dynamic script that respects your fractional scaling. 
 
 
 **Performance and System:**
