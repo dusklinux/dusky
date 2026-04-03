@@ -99,13 +99,13 @@ post_hook   = '''
   pkill -SIGUSR1 -x kitty || :
 '''
 
-# [templates.opencode]
-# input_path = '~/.config/matugen/templates/opencode-colors.json'
-# output_path = '~/.config/matugen/generated/opencode.json'
-# post_hook   = '''
-# ln -nfs "$HOME/.config/matugen/generated/matugen-opencode.json" "$HOME/.config/opencode/generated/matugen-opencode.json"
-# pkill -SIGUSR1 -x kitty || :
-# '''
+[templates.opencode]
+input_path = '~/.config/matugen/templates/opencode-colors.json'
+output_path = '~/.config/matugen/generated/opencode.json'
+post_hook   = '''
+ln -nfs "$HOME/.config/matugen/generated/opencode.json" "$HOME/.config/opencode/themes/matugen-opencode.json"
+pkill -SIGUSR1 -x kitty || :
+'''
 
 # [templates.vscode]
 # input_path  = '~/.config/matugen/templates/vscode.json'

@@ -41,6 +41,7 @@ main() {
     local -a target_dirs=(
         "${HOME}/.config/gtk-4.0"
         "${HOME}/.config/btop/themes"
+        "${HOME}/.config/opencode/themes"
         "${HOME}/.cache/wal"
     )
 
