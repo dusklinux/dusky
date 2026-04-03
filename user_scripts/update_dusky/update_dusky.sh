@@ -1089,7 +1089,11 @@ run_logged_command() {
     local timestamp="" arg=""
 
     if [[ -z "$LOG_FILE" || ! -w "$LOG_FILE" ]]; then
-        "${cmd[@]}" || rc=$?
+        # Subshell severs the lock before running unlogged commands
+        (
+            [[ -n "${LOCK_FD:-}" ]] && exec {LOCK_FD}>&- 2>/dev/null || true
+            "${cmd[@]}"
+        ) || rc=$?
         return "$rc"
     fi
 
@@ -1102,7 +1106,11 @@ run_logged_command() {
         printf '\n'
     } >> "$LOG_FILE"
 
-    "${cmd[@]}" > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2) || rc=$?
+    # Subshell severs the lock for BOTH the payload and the asynchronous tee processes
+    (
+        [[ -n "${LOCK_FD:-}" ]] && exec {LOCK_FD}>&- 2>/dev/null || true
+        "${cmd[@]}" > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2)
+    ) || rc=$?
 
     sleep 0.2
 
