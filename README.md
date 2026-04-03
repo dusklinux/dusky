@@ -252,13 +252,12 @@ Note : i've purposely decided to not use quickshell for anything in the interest
 
 
 **Speech-to-Text:**
-- Whisper - for cpu 
-or 
-- Parakeet - for nvidia gpus. might also work on Amd (not sure)
+- Whisper - for cpu.
+- Parakeet - for nvidia gpus. (might also work on amd)
 
 
 **Text-to-Speech:**
-- Kokoro for both cpu and gpu
+- Kokoro for both cpu and gpu.
 
 - Mechanical keypress sounds
 toggleable with a keybind or from rofi. 
