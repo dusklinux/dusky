@@ -1,11 +1,15 @@
 <p align="center">
     <img width="500" height="219" alt="image" src="https://github.com/user-attachments/assets/4945ceb9-ed68-4d80-91dc-647c454450e9" />
 </p>
+
 <p align="center">
     <img src="https://img.shields.io/badge/dusky-hyprland-b1cbd1?style=for-the-badge&labelColor=1c3439&logo=linux&logoColor=b1cbd1"/>
     <img src="https://img.shields.io/badge/Arch_Linux-b1cbd1?style=for-the-badge&logo=archlinux&logoColor=b1cbd1&labelColor=1c3439"/>
     <img src="https://img.shields.io/badge/CachyOS-b1cbd1?style=for-the-badge&labelColor=1c3439&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyODgiIGhlaWdodD0iMjg4IiB2aWV3Qm94PSIwIDAgMjguOCAyOC44Ij48cGF0aCBmaWxsPSIjYjFjYmQxIiBkPSJNNy43Nzg1NjUzIDQuNDY5MzQ1OEgxOS42NzcxNjhsLTMuMDExNzEyIDUuMjA4NjMzaC02LjQ1MzA3N0w3LjUyMzU2NTYgMTQuMzI2MDY1bDIuNzI1NzgwNCA0LjcxNTIzMWgxMi41ODgxNTlsLTMuMDg5NDE5IDUuMzM5MTUxSDcuNTIzMTg4NEwxLjYyNDk5OTkgMTQuMTgzMDk5bDUuNjQ2MjA2NS05Ljc2MzU0NjFaIi8+PGVsbGlwc2UgY3g9IjI1LjE0NDQ2NCIgY3k9IjE2Ljg3OTIxMyIgcng9IjIuMDMwNTM2MiIgcnk9IjIuMDI2ODA4MyIgZmlsbD0iI2IxY2JkMSIvPjxlbGxpcHNlIGN4PSIyMC44NjA4MDIiIGN5PSIxMi4xNTYzMjYiIHJ4PSIxLjU0MTYwNjMiIHJ5PSIxLjUzODc3NiIgZmlsbD0iI2IxY2JkMSIvPjxlbGxpcHNlIGN4PSIyMi45NzIxMDUiIGN5PSI2LjgyOTYwNjUiIHJ4PSIwLjc5Mzg1NTk3IiByeT0iMC43OTIzOTg1NyIgZmlsbD0iI2IxY2JkMSIvPjwvc3ZnPg=="/>
     <img src="https://img.shields.io/github/last-commit/dusklinux/dusky?style=for-the-badge&color=b1cbd1&labelColor=1c3439"/>
+</p>
+
+<p align="center">
     <img src="https://img.shields.io/github/stars/dusklinux/dusky?style=for-the-badge&color=b1cbd1&labelColor=1c3439"/>
     <img src="https://img.shields.io/github/forks/dusklinux/dusky?style=for-the-badge&color=b1cbd1&labelColor=1c3439"/>
 </p>
