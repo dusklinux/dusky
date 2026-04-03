@@ -120,6 +120,27 @@ post_hook   = '''
 ln -nfs "$HOME/.config/matugen/generated/opencode.json" "$HOME/.config/opencode/themes/matugen.json"
 pkill -SIGUSR1 -x kitty || :
 '''
+# [templates.ghostty]
+# input_path  = '~/.config/matugen/templates/ghostty'
+# output_path = '~/.config/matugen/generated/ghostty-colors.ghostty'
+# post_hook   = '''
+#     mkdir -p "$HOME/.config/ghostty"
+
+#     ln -nfs "$HOME/.config/matugen/generated/ghostty-colors.ghostty" \
+#             "$HOME/.config/ghostty/colors.ghostty"
+
+#     grep -qxF 'config-file = "?colors.ghostty"' "$HOME/.config/ghostty/config.ghostty" 2>/dev/null || \
+#     echo 'config-file = "?colors.ghostty"' >> "$HOME/.config/ghostty/config.ghostty"
+#     pkill -SIGUSR1 -x ghostty || :
+# '''
+
+# [templates.opencode]
+# input_path = '~/.config/matugen/templates/opencode-colors.json'
+# output_path = '~/.config/matugen/generated/opencode.json'
+# post_hook   = '''
+# ln -nfs "$HOME/.config/matugen/generated/matugen-opencode.json" "$HOME/.config/opencode/themes/matugen-opencode.json"
+# pkill -SIGUSR1 -x $TERMINAL || :
+# '''
 
 # [templates.vscode]
 # input_path  = '~/.config/matugen/templates/vscode.json'
