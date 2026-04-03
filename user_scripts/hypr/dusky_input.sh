@@ -45,7 +45,7 @@ declare -ra TABS=("Keyboard" "Mouse" "Touchpad" "Cursor" "Gestures")
 # Item Registration
 register_items() {
     # Tab 0: Keyboard (Block: 'input')
-    register 0 "Layout"             'kb_layout|cycle|input|us,uk,de,fr,es||' "us"
+    register 0 "Layout"             'kb_layout|cycle|input|us,gb,de,fr,es||' "us"
     register 0 "Numlock Default"    'numlock_by_default|bool|input|||'       "true"
     register 0 "Repeat Rate"        'repeat_rate|int|input|10|100|5'        "35"
     register 0 "Repeat Delay"       'repeat_delay|int|input|100|1000|50'    "250"

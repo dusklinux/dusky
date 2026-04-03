@@ -19,6 +19,7 @@
 .config/hypr/xdph.conf
 .config/kitty/kitty.conf
 .config/kitty/instruction for theme.txt
+.config/Kvantum/kvantum.kvconfig
 .config/matugen/config.toml
 .config/matugen/templates/
 .config/matugen/presets/

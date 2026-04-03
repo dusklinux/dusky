@@ -5,8 +5,8 @@ After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
-# Using 'simple' prevents Systemd from killing the app if D-Bus signaling is delayed [cite: 2, 3]
-Type=simple
+Type=dbus
+BusName=org.dusky.sliders
 
 # Forces Python to flush logs immediately for real-time debugging
 Environment=PYTHONUNBUFFERED=1

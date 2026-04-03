@@ -5,9 +5,8 @@ After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
-# CRITICAL FIX: Changed from 'dbus' to 'simple'. 
-# This prevents Systemd from killing the app if it doesn't signal the bus immediately.
-Type=simple
+Type=dbus
+BusName=com.github.dusky.controlcenter
 
 # CRITICAL: Forces Python to flush logs immediately for real-time debugging
 Environment=PYTHONUNBUFFERED=1
