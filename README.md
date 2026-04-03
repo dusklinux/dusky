@@ -97,14 +97,14 @@ After installing arch, boot into the OS and then run this in the terminal.
 
 ### Step 1: Clone Dotfiles (Bare Repo Method)
 
-i use a bare git repository method to drop files exactly where they belong in your home directory.
+I use a bare git repository method to drop files exactly where they belong in your home directory.
 
 make sure you're connected to the internet and git is installed, 
 ```
 sudo pacman -Syu --needed git
 ```
 
-clone the repo
+clone the repository,
 ```
 git clone --bare --depth 1 https://github.com/dusklinux/dusky.git $HOME/dusky
 ```
