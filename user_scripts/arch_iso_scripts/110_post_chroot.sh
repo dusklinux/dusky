@@ -5,7 +5,7 @@
 #
 
 # Auto mode example:
-# ROOT_PASS='testroot' USER_PASS='testuser' ./003_post_chroot.sh --auto
+# TARGET_USER='myuser' ROOT_PASS='testroot' USER_PASS='testuser' ./003_post_chroot.sh --auto
 
 # --- 1. Safety & Environment ---
 set -Eeuo pipefail
@@ -35,7 +35,6 @@ trap 'printf "${RESET}\n"' EXIT
 
 # --- 3. Defaults & CLI ---
 DEFAULT_HOSTNAME="${DEFAULT_HOSTNAME:-workstation}"
-DEFAULT_USER="${DEFAULT_USER:-dusk}"
 DEFAULT_TZ="${DEFAULT_TZ:-Asia/Kolkata}"
 AUTO_MODE="${AUTO_MODE:-0}"
 readonly USER_GROUPS='wheel,input,audio,video,storage,optical,network,lp,power,games,rfkill'
@@ -49,18 +48,17 @@ Modes:
     Prompts for missing hostname/user values.
     Passwords are set interactively with passwd and retried until accepted.
 
-  Strict auto (--auto or AUTO_MODE=1):
-    Prompts for nothing.
-    Requires:
-      ROOT_PASS
-      USER_PASS
+  Auto (--auto or AUTO_MODE=1):
+    Uses default for hostname.
+    Requires TARGET_USER, ROOT_PASS, and USER_PASS. If omitted, it will
+    gracefully fallback to interactive prompts (requires an active TTY).
 
 Optional environment variables:
   TARGET_HOSTNAME   Default: ${DEFAULT_HOSTNAME}
-  TARGET_USER       Default: ${DEFAULT_USER}
+  TARGET_USER       Required (will prompt if not provided)
   TARGET_TZ         Default: detected timezone or ${DEFAULT_TZ}
-  ROOT_PASS         Required in strict auto
-  USER_PASS         Required in strict auto
+  ROOT_PASS         Password for root
+  USER_PASS         Password for user
 EOF
 }
 
@@ -83,7 +81,7 @@ while (($# > 0)); do
 done
 
 has_tty() {
-    [[ -t 0 && -t 1 ]]
+    [[ -t 0 ]]
 }
 
 ensure_tty() {
@@ -188,7 +186,7 @@ get_dynamic_timezone() {
 if [[ "$AUTO_MODE" != "1" ]]; then
     if has_tty; then
         if can_run_strict_auto; then
-            if prompt_yes_no "Run in autonomous mode (no further prompts; uses defaults for missing hostname/user/timezone)"; then
+            if prompt_yes_no "Run in autonomous mode (no further prompts; uses defaults for missing hostname/timezone)"; then
                 AUTO_MODE=1
             fi
         else
@@ -216,41 +214,54 @@ if [[ ! -f "/usr/share/zoneinfo/$TARGET_TZ" ]]; then
     exit 1
 fi
 
-if [[ "$AUTO_MODE" == "1" ]]; then
-    FINAL_HOST="${TARGET_HOSTNAME:-$DEFAULT_HOSTNAME}"
-    FINAL_USER="${TARGET_USER:-$DEFAULT_USER}"
-
-    if ! can_run_strict_auto; then
-        log_error "Strict auto mode requires non-empty ROOT_PASS and USER_PASS."
+# Hostname Setup
+if [[ -n "${TARGET_HOSTNAME:-}" ]]; then
+    FINAL_HOST="$TARGET_HOSTNAME"
+elif [[ "$AUTO_MODE" == "1" ]]; then
+    FINAL_HOST="$DEFAULT_HOSTNAME"
+else
+    ensure_tty
+    if ! read -r -p "Enter hostname [Default: ${DEFAULT_HOSTNAME}]: " INPUT_HOST; then
+        log_error "Failed to read hostname."
         exit 1
     fi
-else
-    if [[ -z "${TARGET_HOSTNAME:-}" ]]; then
-        ensure_tty
-        if ! read -r -p "Enter hostname [Default: ${DEFAULT_HOSTNAME}]: " INPUT_HOST; then
-            log_error "Failed to read hostname."
-            exit 1
-        fi
-        FINAL_HOST="${INPUT_HOST:-$DEFAULT_HOSTNAME}"
-    else
-        FINAL_HOST="$TARGET_HOSTNAME"
-    fi
+    FINAL_HOST="${INPUT_HOST:-$DEFAULT_HOSTNAME}"
+fi
 
-    if [[ -z "${TARGET_USER:-}" ]]; then
-        ensure_tty
-        if ! read -r -p "Enter username [Default: ${DEFAULT_USER}]: " INPUT_USER; then
-            log_error "Failed to read username."
-            exit 1
-        fi
-        FINAL_USER="${INPUT_USER:-$DEFAULT_USER}"
-    else
-        FINAL_USER="$TARGET_USER"
+# Username Setup
+if [[ -n "${TARGET_USER:-}" ]]; then
+    FINAL_USER="$TARGET_USER"
+else
+    if [[ "$AUTO_MODE" == "1" ]] && ! has_tty; then
+        log_error "Auto mode requires TARGET_USER to be set when no TTY is present."
+        exit 1
     fi
+    ensure_tty
+    while true; do
+        read -r -p "Enter username for the new system: " INPUT_USER
+        if [[ -n "${INPUT_USER:-}" ]]; then
+            FINAL_USER="$INPUT_USER"
+            break
+        else
+            log_error "Username cannot be empty. Please enter a valid username."
+        fi
+    done
 fi
 
 if [[ -z "${FINAL_HOST:-}" || -z "${FINAL_USER:-}" ]]; then
     log_error "Hostname and username cannot be empty. Aborting deployment."
     exit 1
+fi
+
+if [[ "$AUTO_MODE" == "1" ]]; then
+    if ! can_run_strict_auto; then
+        if ! has_tty; then
+            log_error "Auto mode requires non-empty ROOT_PASS and USER_PASS when no TTY is present."
+            exit 1
+        else
+            log_info "AUTO_MODE enabled but credentials missing. Will prompt interactively."
+        fi
+    fi
 fi
 
 export -n ROOT_PASS USER_PASS 2>/dev/null || true
