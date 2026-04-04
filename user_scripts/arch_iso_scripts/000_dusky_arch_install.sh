@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  UNIFIED ARCH ORCHESTRATOR (v3.5 - The Master Engine)
+#  UNIFIED ARCH ORCHESTRATOR (v3.6 - Session Aware Engine)
 #  Context: Self-aware Phase 1 (ISO) and Phase 2 (Chroot) execution.
 #  Usage: ./000_dusky_arch_install.sh [--auto|-a] [--dry-run|-d] [--reset]
 # ==============================================================================
@@ -380,6 +380,95 @@ main() {
         printf "\n%s%s=== ARCH ORCHESTRATOR (PHASE 2: CHROOT) ===%s\n\n" "$B" "$HL" "$RS"
     else
         printf "\n%s%s=== ARCH ORCHESTRATOR (PHASE 1: ISO) ===%s\n\n" "$B" "$HL" "$RS"
+    fi
+
+    # --- EXECUTION MODE SELECTION (From ORCHESTRA.sh) ---
+    if (( AUTO_MODE == 0 && DRY_RUN == 0 && IN_CHROOT == 0 )); then
+        printf "%s>>> EXECUTION MODE <<<%s\n" "$Y" "$RS"
+        read -r -p "Do you want to run interactively (prompt before every script)? [y/N]: " _mode_choice
+        if [[ "${_mode_choice,,}" != "y" && "${_mode_choice,,}" != "yes" ]]; then
+            AUTO_MODE=1
+            log INFO "Autonomous mode selected. Running all scripts without confirmation."
+        else
+            log INFO "Interactive mode selected. You will be asked before each script."
+        fi
+        printf "\n"
+    fi
+
+    # --- SESSION RECOVERY (From ORCHESTRA.sh) ---
+    local total_scripts=${#INSTALL_SEQUENCE[@]}
+    local completed_scripts=0
+    declare -A temp_seen_keys=()
+
+    for entry in "${INSTALL_SEQUENCE[@]}"; do
+        local raw_command script_name
+        IFS='|' read -r raw_command _ <<< "$entry"
+        raw_command="${raw_command#"${raw_command%%[![:space:]]*}"}"
+        read -r script_name _ <<< "$raw_command"
+        
+        (( ++temp_seen_keys["$script_name"] ))
+        local t_state_key="${script_name}|${temp_seen_keys["$script_name"]}"
+        
+        if [[ -n "${COMPLETED_SCRIPTS[$t_state_key]:-}" ]]; then
+            (( ++completed_scripts ))
+        fi
+    done
+
+    if [[ -s "$STATE_FILE" && $completed_scripts -gt 0 ]]; then
+        if [[ $completed_scripts -eq $total_scripts ]]; then
+            printf "%s>>> ALL %s SCRIPTS COMPLETED <<<%s\n" "$G" "$(( IN_CHROOT ? "PHASE 2" : "PHASE 1" ))" "$RS"
+            if (( AUTO_MODE == 0 )); then
+                if (( ! IN_CHROOT )); then
+                    printf "Phase 1 (ISO) is already fully completed.\n"
+                    read -r -p "Do you want to [C]ontinue to Phase 2, [S]tart Phase 1 over, or [Q]uit? [C/s/q]: " _done_choice
+                    case "${_done_choice,,}" in
+                        s|start)
+                            rm -f "$STATE_FILE"
+                            load_state
+                            completed_scripts=0
+                            log INFO "Phase 1 state reset. Starting fresh."
+                            ;;
+                        q|quit)
+                            log INFO "Exiting as requested."
+                            exit 0
+                            ;;
+                        *)
+                            log INFO "Continuing to Phase 2 boundary crossing..."
+                            ;;
+                    esac
+                else
+                    printf "Phase 2 (Chroot) is already fully completed.\n"
+                    read -r -p "Do you want to [S]tart Phase 2 over or [Q]uit and finalize? [s/Q]: " _done_choice
+                    if [[ "${_done_choice,,}" == "s" || "${_done_choice,,}" == "start" ]]; then
+                        rm -f "$STATE_FILE"
+                        load_state
+                        completed_scripts=0
+                        log INFO "Phase 2 state reset. Starting fresh."
+                    else
+                        log INFO "Finalizing Phase 2. Exiting chroot."
+                    fi
+                fi
+            else
+                log INFO "Autonomous mode: Proceeding through completed scripts..."
+            fi
+            printf "\n"
+        else
+            printf "%s>>> PREVIOUS %s SESSION DETECTED <<<%s\n" "$Y" "$(( IN_CHROOT ? "PHASE 2" : "PHASE 1" ))" "$RS"
+            if (( AUTO_MODE == 0 )); then
+                read -r -p "Do you want to [C]ontinue where you left off or [S]tart over? [C/s]: " _session_choice
+                if [[ "${_session_choice,,}" == "s" || "${_session_choice,,}" == "start" ]]; then
+                    rm -f "$STATE_FILE"
+                    load_state
+                    completed_scripts=0
+                    log INFO "State reset. Starting fresh."
+                else
+                    log INFO "Continuing from previous state ($completed_scripts/$total_scripts completed)."
+                fi
+            else
+                log INFO "Autonomous mode: Continuing from existing state ($completed_scripts/$total_scripts completed)."
+            fi
+            printf "\n"
+        fi
     fi
 
     # --- COMPREHENSIVE PRE-FLIGHT AUDIT ---
