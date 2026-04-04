@@ -19,7 +19,7 @@ declare -ar pkgs_hyprland=(
 
 # Group 3: GUI, Toolkits & Fonts
 declare -ar pkgs_appearance=(
-  "qt5-wayland" "qt6-wayland" "gtk3" "gtk4" "nwg-look" "qt5ct" "qt6ct" "qt6-svg" "qt6-multimedia-ffmpeg" "adw-gtk-theme" "upower" "plocate" "matugen" "ttf-font-awesome" "ttf-jetbrains-mono-nerd" "noto-fonts-emoji" "sassc" "python-packaging" "python" "fontconfig"
+  "qt5-wayland" "qt6-wayland" "gtk3" "gtk4" "nwg-look" "qt5ct" "qt6ct" "qt6-svg" "qt6-multimedia-ffmpeg" "adw-gtk-theme" "upower" "plocate" "matugen" "ttf-font-awesome" "ttf-jetbrains-mono-nerd" "noto-fonts-emoji" "sassc" "python-packaging" "python" "fontconfig" "papirus-icon-theme" "papirus-folders"
 )
 
 # Group 4: Desktop Experience
@@ -60,7 +60,7 @@ declare -ar pkgs_dev=(
 
 # Group 10: Multimedia
 declare -ar pkgs_multimedia=(
-  "ffmpeg" "mpv" "mpv-mpris" "satty" "swayimg" "resvg" "imagemagick" "libheif" "ffmpegthumbnailer" "grim" "slurp" "wl-clipboard" "wl-clip-persist" "cliphist" "tesseract-data-eng"
+  "ffmpeg" "mpv" "mpv-mpris" "satty" "swayimg" "resvg" "imagemagick" "libheif" "ffmpegthumbnailer" "grim" "slurp" "wl-clipboard" "wl-clip-persist" "cliphist" "tesseract-data-eng" "gpu-screen-recorder-ui"
 )
 
 # Group 11: Sys Admin
