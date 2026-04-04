@@ -87,8 +87,6 @@ trap 'abort_with_signal SIGTERM 143' TERM
 # "bibata-cursor-theme-bin"
 
 declare -ar PACKAGES=(
-  "papirus-icon-theme-git"
-  "papirus-folders-git"
 )
 
 # Delay before auto-retrying
@@ -181,7 +179,7 @@ collect_uninstalled_packages() {
   local -n output_ref=$2
 
   output_ref=()
-  
+
   if (( ${#input_ref[@]} == 0 )); then
     return 0
   fi
