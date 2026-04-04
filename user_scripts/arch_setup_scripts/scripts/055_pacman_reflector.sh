@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 # Autonomous Pacman Mirror Orchestrator
 # Resolves mirror selection, handles stale pacman locks via /proc inspection,
-# and blocks downstream execution until synchronization work is complete.
+# limits timeouts, runs in parallel, and provides asynchronous visual feedback.
+# Configures systemd timers for weekly background maintenance.
 
 set -euo pipefail
+
+# --- STRICT ABORT TRAP ---
+trap 'printf "\n\033[?25h\033[31m!! User aborted script execution.\033[0m\n" >&2; exit 1' SIGINT SIGTERM
 
 # --- CONFIGURATION ---
 readonly PACMAN_LOCK="/var/lib/pacman/db.lck"
 readonly TARGET_FILE="/etc/pacman.d/mirrorlist"
+readonly REFLECTOR_CONF="/etc/xdg/reflector/reflector.conf"
 
 # --- GLOBAL FALLBACK STORE ---
 read -r -d '' FALLBACK_MIRRORS << 'EOF' || true
@@ -29,6 +34,45 @@ log_ok()   { printf '%s:: %s%s\n' "$G" "$1" "$NC"; }
 log_warn() { printf '%s:: %s%s\n' "$Y" "$1" "$NC"; }
 log_err()  { printf '%s!! %s%s\n' "$R" "$1" "$NC" >&2; }
 
+# --- ASYNCHRONOUS UI WRAPPER ---
+run_with_spinner() {
+    local msg="$1"
+    shift
+    local tmp_log
+    tmp_log="$(mktemp)"
+
+    "$@" > /dev/null 2> "$tmp_log" &
+    local pid=$!
+
+    local delay=0.1
+    local frames=( '⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏' )
+    
+    printf "\033[?25l" 
+    
+    while kill -0 "$pid" 2>/dev/null; do
+        for frame in "${frames[@]}"; do
+            if ! kill -0 "$pid" 2>/dev/null; then break; fi
+            printf "\r%s::%s %s %s" "$B" "$NC" "$frame" "$msg"
+            sleep "$delay"
+        done
+    done
+    
+    printf "\033[?25h\r\033[K" 
+
+    if wait "$pid"; then
+        rm -f "$tmp_log"
+        return 0
+    else
+        local rc=$?
+        log_warn "Process encountered issues. Reviewing trace:"
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && log_warn "  -> $line"
+        done < "$tmp_log"
+        rm -f "$tmp_log"
+        return "$rc"
+    fi
+}
+
 # --- PRE-FLIGHT ---
 if (( EUID != 0 )); then
     log_info "Elevated privileges required. Prompting for sudo password..."
@@ -36,8 +80,6 @@ if (( EUID != 0 )); then
 fi
 
 # --- LOCK MANAGEMENT ---
-# Uses /proc fd inspection to distinguish active pacman lock holders from stale locks.
-# Implements a 60-second circuit breaker to forcefully remove deadlocked instances.
 manage_pacman_lock() {
     local -a active_pids=()
     local last_report=''
@@ -79,13 +121,11 @@ manage_pacman_lock() {
 }
 
 # --- PACMAN WRAPPER ---
-# Avoids the race where the lock is acquired after a pre-check but before pacman starts.
 run_pacman() {
     local rc
-
     while :; do
         manage_pacman_lock
-
+        
         if pacman "$@"; then
             return 0
         else
@@ -96,7 +136,6 @@ run_pacman() {
             log_warn "Pacman lock was acquired by another process during transaction startup. Retrying..."
             continue
         fi
-
         return "$rc"
     done
 }
@@ -104,6 +143,30 @@ run_pacman() {
 # --- OS DETECTION ---
 detect_cachyos() {
     [[ -f /etc/os-release ]] && grep -q '^ID=cachyos$' /etc/os-release
+}
+
+# --- SYSTEMD TIMER CONFIGURATION ---
+configure_arch_timer() {
+    log_info "Configuring native systemd timer for automated weekly mirror updates..."
+    
+    mkdir -p "$(dirname "$REFLECTOR_CONF")"
+    
+    cat <<EOF > "$REFLECTOR_CONF"
+--save $TARGET_FILE
+--protocol https
+--latest 50
+--fastest 10
+--sort rate
+--threads 10
+--connection-timeout 2
+--download-timeout 2
+EOF
+
+    if systemctl enable --now reflector.timer &>/dev/null; then
+        log_ok "reflector.timer is now active."
+    else
+        log_warn "Failed to enable reflector.timer. Check systemctl status."
+    fi
 }
 
 # --- CACHYOS SYNC ---
@@ -115,7 +178,6 @@ sync_cachyos() {
         exit 1
     fi
 
-    # Network jitter mitigation
     export CURL_OPTIONS="-4"
     local attempt
     local max_attempts=3
@@ -124,7 +186,7 @@ sync_cachyos() {
     for (( attempt = 1; attempt <= max_attempts; attempt++ )); do
         manage_pacman_lock
 
-        if cachyos-rate-mirrors; then
+        if run_with_spinner "Benchmarking CachyOS mirrors..." cachyos-rate-mirrors; then
             success=1
             break
         fi
@@ -140,8 +202,11 @@ sync_cachyos() {
     else
         log_ok "CachyOS mirrors optimized."
     fi
+    
+    if systemctl list-unit-files | grep -q 'cachyos-mirrorlist.timer'; then
+        systemctl enable --now cachyos-mirrorlist.timer &>/dev/null || true
+    fi
 
-    # Final database sync
     log_info "Synchronizing pacman databases..."
     run_pacman -Syy || log_warn "Pacman database sync returned non-zero, but pipeline will continue."
 }
@@ -167,17 +232,21 @@ sync_arch() {
     fi
 
     if command -v reflector &>/dev/null; then
-        log_info "Benchmarking global network topology (this takes ~10 seconds)..."
         manage_pacman_lock
 
-        if reflector --latest 50 \
-                     --protocol https \
-                     --fastest 10 \
-                     --sort rate \
-                     --save "$TARGET_FILE"; then
-            log_ok "Arch mirrors topologically optimized."
+        if run_with_spinner "Benchmarking 50 global mirrors (10 threads)..." \
+            reflector --latest 50 \
+                      --protocol https \
+                      --threads 10 \
+                      --connection-timeout 2 \
+                      --download-timeout 2 \
+                      --fastest 10 \
+                      --sort rate \
+                      --save "$TARGET_FILE"; then
+            log_ok "Arch mirrors topologically optimized in parallel."
+            configure_arch_timer
         else
-            log_warn "Reflector encountered an API routing error."
+            log_warn "Reflector routing error. Bypassing..."
             log_info "Applying highly-available Global CDN Fallback to guarantee pipeline integrity..."
             manage_pacman_lock
             printf '%s\n' "$FALLBACK_MIRRORS" > "$TARGET_FILE"
@@ -190,25 +259,12 @@ sync_arch() {
         log_ok "Global CDN fallback applied."
     fi
 
-    # Final database sync
     log_info "Synchronizing pacman databases..."
     run_pacman -Syy || log_warn "Pacman database sync returned non-zero, but pipeline will continue."
 }
 
 # --- ENTRY POINT ---
 main() {
-    local auto_mode=0
-
-    for arg in "$@"; do
-        if [[ "$arg" == "--auto" ]]; then
-            auto_mode=1
-        fi
-    done
-
-    if (( auto_mode )); then
-        log_info "Autonomous mode (--auto) explicitly requested."
-    fi
-
     printf '\n%s:: Commencing Zero-Interaction Mirror Orchestration%s\n' "$B" "$NC"
 
     manage_pacman_lock
