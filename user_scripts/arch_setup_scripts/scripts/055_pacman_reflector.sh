@@ -31,13 +31,8 @@ log_err()  { printf '%s!! %s%s\n' "$R" "$1" "$NC" >&2; }
 
 # --- PRE-FLIGHT ---
 if (( EUID != 0 )); then
-    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-        log_info "Elevated privileges required. Re-executing with sudo..."
-        exec sudo -n -- "$0" "$@"
-    fi
-
-    log_err "Elevated privileges required. Run as root or configure passwordless sudo for autonomous execution."
-    exit 1
+    log_info "Elevated privileges required. Prompting for sudo password..."
+    exec sudo -- "$0" "$@"
 fi
 
 # --- LOCK MANAGEMENT ---
