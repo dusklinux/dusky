@@ -229,8 +229,8 @@ post_hook   = '''
 # input_path  = '~/.config/matugen/templates/spotify-colors.ini'
 # output_path = '~/.config/matugen/generated/spotify-colors.ini'
 # post_hook   = '''
-# if command -v spicetify >/dev/null 2>&1 && [ -d "$HOME/.config/spicetify/Themes/Comfy" ]; then
-#     ln -nfs "$HOME/.config/matugen/generated/spotify-colors.ini" "$HOME/.config/spicetify/Themes/Comfy/color.ini"
+# if command -v spicetify >/dev/null 2>&1 && [ -d "$HOME/.config/spicetify/Themes/wal" ]; then
+#     ln -nfs "$HOME/.config/matugen/generated/spotify-colors.ini" "$HOME/.config/spicetify/Themes/wal/color.ini"
 #     spicetify apply -n || :
 #     hyprctl dispatch sendshortcut "CTRL SHIFT, R, class:^(spotify)$" || :
 # fi
