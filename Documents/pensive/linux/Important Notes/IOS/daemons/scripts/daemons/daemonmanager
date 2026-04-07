@@ -1,9 +1,10 @@
 #!/bin/sh
-# DaemonManager v8.3 (Locking Disabled)
+# DaemonManager v8.5
 # Scope:
 #   - Manages launchd services in the mobile user's bootstrap domain only.
 #   - Tracks only this script's own changes.
 #   - reset undoes only tracked changes.
+#   - Labels that resolve only to LaunchDaemons are intentionally refused.
 #
 # Config support:
 #   - "apply" with no args reads daemon.cfg
@@ -37,7 +38,12 @@ umask 077
 
 STATE_FILE="/var/mobile/Library/Preferences/com.daemonmanager.state.tsv"
 ACCESSIBILITY_PLIST="/var/mobile/Library/Preferences/com.apple.Accessibility.plist"
-PLIST_DIRS="/System/Library/LaunchAgents /System/Library/LaunchDaemons /var/jb/Library/LaunchAgents /var/jb/Library/LaunchDaemons"
+
+# Discovery paths:
+# - We still search both LaunchAgents and LaunchDaemons so labels can be resolved
+# - But this script's mutation scope remains the mobile user's bootstrap domain only
+DISCOVERY_PLIST_DIRS="/System/Library/LaunchAgents /System/Library/LaunchDaemons /var/jb/Library/LaunchAgents /var/jb/Library/LaunchDaemons"
+
 TAB="$(printf '\t')"
 PYTHON_BIN=""
 CONFIG_FILE=""
@@ -67,7 +73,8 @@ cleanup() {
     [ -n "$FAIL_LOG" ] && rm -f "$FAIL_LOG" 2>/dev/null
     [ -n "$RESET_SNAPSHOT" ] && rm -f "$RESET_SNAPSHOT" 2>/dev/null
 }
-trap cleanup EXIT HUP INT TERM
+trap 'cleanup; exit 143' HUP INT TERM
+trap cleanup EXIT
 
 get_mobile_uid() {
     _uid="$(id -u mobile 2>/dev/null)"
@@ -378,6 +385,61 @@ warn_if_sensitive_label() {
     esac
 }
 
+is_root() {
+    [ "$(id -u 2>/dev/null)" = "0" ]
+}
+
+last_cmd_is_op_not_permitted() {
+    _msg_lc="$(printf '%s' "$LAST_CMD_OUTPUT" | tr '[:upper:]' '[:lower:]')"
+    case "$_msg_lc" in
+        *operation\ not\ permitted*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+path_is_launchdaemon() {
+    case "$1" in
+        */LaunchDaemons/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+path_is_launchagent() {
+    case "$1" in
+        */LaunchAgents/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+set_launchctl_permission_failure() {
+    _verb="$1"
+    _label="$2"
+    set_failure "launchctl $_verb failed for $_label: Operation not permitted. This shell does not have permission to mutate launchd state for $DOMAIN. Use a real root shell with launchd privileges (SSH root is known-good; terminal app shells may still be denied)."
+}
+
+set_launchdaemon_scope_failure() {
+    _verb="$1"
+    _label="$2"
+    _path="$3"
+    set_failure "Refusing to $_verb $_label: $_path is a LaunchDaemon. This script only manages the mobile user's bootstrap domain ($DOMAIN), not system-domain daemons."
+}
+
+set_unresolved_scope_failure() {
+    _verb="$1"
+    _label="$2"
+    set_failure "Refusing to $_verb unresolved label: $_label (no loaded job or plist path found in $DOMAIN)"
+}
+
+require_mutation_context() {
+    if ! is_root; then
+        error "This script must be run as root for apply/disable/enable/reset."
+        error "If using NewTerm, switch to root first (for example, via su)."
+        error "Note: even a root shell from a terminal app may still be denied by launchctl; if that happens, use SSH root."
+        return 1
+    fi
+    return 0
+}
+
 resolve_python() {
     [ -n "$PYTHON_BIN" ] && [ -x "$PYTHON_BIN" ] && {
         printf '%s\n' "$PYTHON_BIN"
@@ -460,7 +522,7 @@ find_canonical_label_from_plists() {
     _py="$(resolve_python 2>/dev/null)" || return 1
     [ -n "$_py" ] && [ -x "$_py" ] || return 1
 
-    "$_py" - "$_token" $PLIST_DIRS <<'PYEOF'
+    "$_py" - "$_token" $DISCOVERY_PLIST_DIRS <<'PYEOF'
 import os
 import plistlib
 import sys
@@ -595,13 +657,6 @@ service_print_path() {
     '
 }
 
-path_is_launchagent() {
-    case "$1" in
-        */LaunchAgents/*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
 resolve_plist_path() {
     _label="$1"
     _path="$(service_print_path "$_label")"
@@ -610,7 +665,7 @@ resolve_plist_path() {
         return 0
     fi
 
-    for _dir in $PLIST_DIRS; do
+    for _dir in $DISCOVERY_PLIST_DIRS; do
         [ -d "$_dir" ] || continue
         _path="$_dir/$_label.plist"
         if [ -f "$_path" ]; then
@@ -621,7 +676,7 @@ resolve_plist_path() {
 
     _py="$(resolve_python 2>/dev/null)"
     if [ -n "$_py" ] && [ -x "$_py" ]; then
-        _path="$("$_py" - "$_label" $PLIST_DIRS <<'PYEOF'
+        _path="$("$_py" - "$_label" $DISCOVERY_PLIST_DIRS <<'PYEOF'
 import os
 import plistlib
 import sys
@@ -789,13 +844,22 @@ disable_job() {
 
     _plist_path="$(resolve_plist_path "$_label" 2>/dev/null)"
 
+    if [ -n "$_plist_path" ] && path_is_launchdaemon "$_plist_path" && [ $_had_visibility -eq 0 ]; then
+        set_launchdaemon_scope_failure "disable" "$_label" "$_plist_path"
+        return 1
+    fi
+
     if [ -z "$_plist_path" ] && [ $_had_visibility -eq 0 ]; then
-        set_failure "Refusing to disable unresolved label: $_label (no loaded job or plist path found in $DOMAIN)"
+        set_unresolved_scope_failure "disable" "$_label"
         return 1
     fi
 
     if ! run_cmd launchctl disable "$DOMAIN/$_label"; then
-        set_failure "launchctl disable failed for $_label"
+        if last_cmd_is_op_not_permitted; then
+            set_launchctl_permission_failure "disable" "$_label"
+        else
+            set_failure "launchctl disable failed for $_label"
+        fi
         return 1
     fi
 
@@ -845,16 +909,23 @@ enable_job() {
         _was_disabled=1
     fi
 
-    if [ $_was_disabled -eq 0 ] && [ -z "$_tracked_had_visibility" ]; then
-        if service_visible_in_domain "$_label"; then
-            mark_noop
-            return 0
-        fi
+    _visible=0
+    if service_visible_in_domain "$_label"; then
+        _visible=1
+    fi
+
+    if [ $_was_disabled -eq 0 ] && [ -z "$_tracked_had_visibility" ] && [ $_visible -eq 1 ]; then
+        mark_noop
+        return 0
     fi
 
     if [ $_was_disabled -eq 1 ]; then
         if ! run_cmd launchctl enable "$DOMAIN/$_label"; then
-            set_failure "launchctl enable failed for $_label"
+            if last_cmd_is_op_not_permitted; then
+                set_launchctl_permission_failure "enable" "$_label"
+            else
+                set_failure "launchctl enable failed for $_label"
+            fi
             return 1
         fi
 
@@ -869,15 +940,21 @@ enable_job() {
         _plist_path="$(resolve_plist_path "$_label" 2>/dev/null)"
     fi
 
-    _visible=0
-    if service_visible_in_domain "$_label"; then
-        _visible=1
+    if [ $_was_disabled -eq 0 ] && [ -z "$_tracked_had_visibility" ] && [ $_visible -eq 0 ]; then
+        if [ -z "$_plist_path" ]; then
+            set_unresolved_scope_failure "enable" "$_label"
+            return 1
+        fi
+        if path_is_launchdaemon "$_plist_path"; then
+            set_launchdaemon_scope_failure "enable" "$_label" "$_plist_path"
+            return 1
+        fi
     fi
 
     _attempt_bootstrap=0
     if [ $_visible -eq 0 ] && [ -n "$_plist_path" ] && [ -f "$_plist_path" ]; then
         if [ -n "$_tracked_had_visibility" ]; then
-            if [ "$_tracked_had_visibility" = "1" ]; then
+            if [ "$_tracked_had_visibility" = "1" ] && path_is_launchagent "$_plist_path"; then
                 _attempt_bootstrap=1
             fi
         else
@@ -1399,7 +1476,7 @@ reset_all() {
         [ -n "$_label" ] || continue
         [ -n "$_had_vis" ] || _had_vis="0"
         [ -n "$_pre_disabled" ] || _pre_disabled="0"
-        
+
         _processed=$((_processed + 1))
         CURRENT_PROGRESS="[$_processed/$_total_tracked] "
 
@@ -1447,7 +1524,12 @@ reset_all() {
 
 check_dependencies() {
     _missing=0
-    
+
+    if ! command -v launchctl >/dev/null 2>&1; then
+        error "Missing dependency: launchctl"
+        _missing=1
+    fi
+
     if ! command -v awk >/dev/null 2>&1; then
         error "Missing dependency: awk (gawk). Please install it from Sileo."
         _missing=1
@@ -1465,18 +1547,22 @@ check_dependencies() {
 
 usage() {
     cat <<EOF
-DaemonManager v8.3 - Manage launchd services in $DOMAIN (Locking Disabled)
+DaemonManager v8.5 - Manage launchd services in $DOMAIN (user domain only)
 
 Notes:
   - This script tracks only the services it changes.
   - "reset" undoes only this script's own changes.
   - Scope is limited to the mobile user's bootstrap domain: $DOMAIN
-  - Global flags:
-      --step, -s
-        Batch step mode. After each successful toggle, press Enter to continue.
-        On failures, you can retry; Enter skips to the next item.
-      --config <path>, -c <path>
-        Override the config file path for "apply" with no args or "apply-file".
+  - Labels that resolve only to LaunchDaemons are intentionally refused
+  - Mutating commands must be run from a root shell with launchd privileges
+  - If a terminal app shell is denied by launchctl, use SSH root instead
+
+Global flags:
+  --step, -s
+    Batch step mode. After each successful toggle, press Enter to continue.
+    On failures, you can retry; Enter skips to the next item.
+  --config <path>, -c <path>
+    Override the config file path for "apply" with no args or "apply-file".
 
 Config file:
   - Default name: daemon.cfg
@@ -1498,6 +1584,7 @@ Usage:
   $0 help
 
 Examples:
+  $0 list
   $0 apply
   $0 --config /var/mobile/daemon.cfg apply
   $0 apply com.apple.tipsd yes
@@ -1509,7 +1596,7 @@ EOF
 
 main() {
     check_dependencies
-    
+
     while [ $# -gt 0 ]; do
         case "$1" in
             --step|-s)
@@ -1544,6 +1631,8 @@ main() {
             list_disabled
             ;;
         apply)
+            require_mutation_context || return 1
+
             if [ $# -eq 0 ]; then
                 apply_config_file ""
                 return $?
@@ -1579,6 +1668,8 @@ main() {
             esac
             ;;
         apply-file|sync)
+            require_mutation_context || return 1
+
             if [ $# -gt 1 ]; then
                 error "Usage: $0 [--step] [--config path] apply-file [path]"
                 return 2
@@ -1591,6 +1682,8 @@ main() {
             fi
             ;;
         disable)
+            require_mutation_context || return 1
+
             if [ $# -eq 0 ]; then
                 error "Usage: $0 [--step] disable <daemon> [more-daemons...]"
                 return 2
@@ -1598,6 +1691,8 @@ main() {
             process_toggle_batch "disable" "$@"
             ;;
         enable)
+            require_mutation_context || return 1
+
             if [ $# -eq 0 ]; then
                 error "Usage: $0 [--step] enable <daemon> [more-daemons...]"
                 return 2
@@ -1605,6 +1700,7 @@ main() {
             process_toggle_batch "enable" "$@"
             ;;
         reset|undo)
+            require_mutation_context || return 1
             reset_all
             ;;
         help|--help|-h|"")
