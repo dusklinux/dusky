@@ -504,17 +504,18 @@ _build_aur_package() {
     rm -rf -- "$pkg_clone_root"
     mkdir -p -- "$pkg_clone_root"
 
-    # ── Step D: Fetch PKGBUILD with paru -G ───────────────────────────────────
+# ── Step D: Fetch PKGBUILD with paru -G ───────────────────────────────────
     log_step "Fetching PKGBUILD for '${pkg}'..."
 
     local -i attempt
     for (( attempt = 1; attempt <= MAX_ATTEMPTS; attempt++ )); do
-        if paru -G \
-            --clonedir   "$pkg_clone_root" \
+        # Wrap in a subshell to cd into the target directory before fetching,
+        # as paru -G always extracts into the current working directory.
+        if ( cd "$pkg_clone_root" && paru -G \
             --skipreview \
             --noprogressbar \
             --noconfirm  \
-            "$pkg" 2>&1; then
+            "$pkg" ) 2>&1; then
             break
         fi
         if (( attempt == MAX_ATTEMPTS )); then
@@ -557,12 +558,14 @@ _build_aur_package() {
             -type f 2>/dev/null | sort
     )
 
-    # ── Step F: Build — paru -B (no install) ─────────────────────────────────
-    # PKGDEST  → built package lands directly in OFFLINE_REPO_DIR.
+# ── Step F: Build — paru -B (no install) ─────────────────────────────────
+    # PKGDEST  → temporary dir to prevent paru panics on root-owned directories 
+    #            like lost+found in the target repo. Moved after success.
     # BUILDDIR → makepkg src/pkg work tree (inside our temp dir, auto-cleaned).
     # SRCDEST  → downloaded source tarballs (inside our temp dir, auto-cleaned).
     local build_work_dir="${CLONE_BASE_DIR}/work_${pkg}"
-    mkdir -p -- "${build_work_dir}" "${build_work_dir}/src"
+    local temp_pkgdest="${build_work_dir}/pkgdest"
+    mkdir -p -- "${build_work_dir}" "${build_work_dir}/src" "${temp_pkgdest}"
 
     log_step "Building '${pkg}' → PKGDEST=${OFFLINE_REPO_DIR}"
     log_step "Build timeout: ${BUILD_TIMEOUT_SEC}s per attempt"
@@ -575,7 +578,7 @@ _build_aur_package() {
         # form correctly captures the real non-zero exit code while remaining
         # safe under set -e (the || suppresses errexit on the left-hand side).
         local build_rc=0
-        PKGDEST="${OFFLINE_REPO_DIR}"   \
+        PKGDEST="${temp_pkgdest}"       \
         BUILDDIR="${build_work_dir}"    \
         SRCDEST="${build_work_dir}/src" \
         timeout "${BUILD_TIMEOUT_SEC}"  \
@@ -588,6 +591,10 @@ _build_aur_package() {
             2>&1 || build_rc=$?
 
         if (( build_rc == 0 )); then
+            # Move built packages to the final destination so Step G detects them.
+            for built_pkg in "$temp_pkgdest"/*.pkg.tar.*; do
+                [[ -f "$built_pkg" ]] && mv -- "$built_pkg" "$OFFLINE_REPO_DIR/"
+            done
             break
         fi
 
