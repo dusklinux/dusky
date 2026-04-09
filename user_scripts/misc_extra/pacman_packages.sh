@@ -19,7 +19,6 @@ declare -ar pkgs_misc=(
     "gvfs-smb"
     "gvfs-mtp"
     "gvfs-gphoto2"
-    "gvfs-google"
     "gvfs-nfs"
     "gvfs-afc"
     "gvfs-dnssd"
