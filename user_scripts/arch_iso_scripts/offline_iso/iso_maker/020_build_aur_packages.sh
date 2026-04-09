@@ -155,7 +155,7 @@ _parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --auto)
-                OFFLINE_REPO_DIR='/srv/offline-repo'
+                OFFLINE_REPO_DIR='/srv/offline-repo/aur'
                 INTERACTIVE_MODE=0
                 shift
                 ;;
@@ -182,7 +182,7 @@ _prompt_repo_dir() {
 
     printf '\n%s==>%s %sSelect Offline Repository Target Location%s\n' \
         "${BOLD}${CYAN}" "${RESET}" "${BOLD}" "${RESET}"
-    printf '  1) System Default  (/srv/offline-repo)\n'
+    printf '  1) System Default  (/srv/offline-repo/aur)\n'
     printf '  2) Current working directory  (%s)\n' "$(pwd)"
     printf '  3) Custom absolute path\n\n'
 
@@ -191,7 +191,7 @@ _prompt_repo_dir() {
         read -r -p "  Enter choice [1-3] (default=1): " choice
         choice="${choice:-1}"
         case "$choice" in
-            1) OFFLINE_REPO_DIR='/srv/offline-repo'; break ;;
+            1) OFFLINE_REPO_DIR='/srv/offline-repo/aur'; break ;;
             2) OFFLINE_REPO_DIR="$(pwd)";             break ;;
             3)
                 read -r -p "  Enter absolute path: " OFFLINE_REPO_DIR
