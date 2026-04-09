@@ -20,6 +20,7 @@ declare -ra ISO_SEQUENCE=(
 )
 
 declare -ra CHROOT_SEQUENCE=(
+  "051_pacman_repo_switch.sh --offline"
   "100_etc_skel.sh --auto"
   "110_post_chroot.sh --auto"
   "120_mkintcpip_optimizer.sh | IGNORE"
