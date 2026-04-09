@@ -138,7 +138,7 @@ Think of building this ISO like manufacturing a car.
 1. **The Foundry (`010` & `020`):** First, we need to manufacture all the raw steel, bolts, and engine parts (downloading the Arch/AUR packages into `/srv/offline-repo`). 
 2. **The Clean Room (ZRAM):** We set up a hyper-fast, sterile environment in our RAM to assemble the chassis.
 3. **The Cargo (Payload):** We put the instruction manuals and custom tools inside the glovebox (staging your scripts in `airootfs`).
-4. **The Payload (`030`):** We build the car, but right before the factory doors close, we sneak a massive 6GB shipping container of spare parts (the offline repo) into the trunk, completely bypassing the car's internal cabin space (the RAM).
+4. **The Payload (`030`):** We build the car, but right before the factory doors close, we sneak a massive 2-3GB shipping container of spare parts (the offline repo) into the trunk, completely bypassing the car's internal cabin space (the RAM).
 
 ---
 
@@ -158,7 +158,7 @@ sudo ~/user_scripts/arch_iso_scripts/offline_iso/iso_maker/010_download_pacman_p
 # Safely drops root, builds AUR packages with paru, downloads official dependencies, and adds them to the repo.
 ~/user_scripts/arch_iso_scripts/offline_iso/iso_maker/020_build_aur_packages.sh --auto
 ```
-*(Verify that `/srv/offline-repo` now contains roughly 6GB of `.pkg.tar.zst` files and an `archrepo.db` file).*
+*(Verify that `/srv/offline-repo` now contains roughly 2-3GB of `.pkg.tar.zst` files and an `archrepo.db` file).*
 
 ```bash
 ls -lah /srv/offline-repo/official/ | wc -l
@@ -221,7 +221,7 @@ cp -a ~/user_scripts/arch_iso_scripts/offline_iso/iso_maker/030_build_iso.sh /mn
 ---
 
 ### Step 4: The Payload (Build the ISO)
-*Execute the master script. It patches `mkarchiso` to sneak the 6GB repository into the ISO's root folder (`/bootmnt/arch/repo`) rather than compressing it into the Live OS RAM.*
+*Execute the master script. It patches `mkarchiso` to sneak the 2-3GB repository into the ISO's root folder (`/bootmnt/arch/repo`) rather than compressing it into the Live OS RAM.*
 
 ```bash
 # 1. Navigate to the ZRAM workspace
@@ -245,8 +245,8 @@ sudo ./030_build_iso.sh
 #### What Exactly Happens During This Run?
 1. **The Setup:** The script copies the system's `mkarchiso` to a temporary custom version.
 2. **The Hook:** It injects a few lines of bash code directly into the `_build_iso_image()` function of the custom tool.
-3. **The Build:** `mkarchiso` runs normally, building the `airootfs` out of standard Arch packages. Because the 6GB repo is *not* in the profile, it is completely ignored during the heavy RAM-compression phase.
-4. **The Injection:** Just seconds before the final `.iso` is stitched together, the hook fires. It copies the 6GB repository directly into `work/iso/arch/repo`.
+3. **The Build:** `mkarchiso` runs normally, building the `airootfs` out of standard Arch packages. Because the 2-3GB repo is *not* in the profile, it is completely ignored during the heavy RAM-compression phase.
+4. **The Injection:** Just seconds before the final `.iso` is stitched together, the hook fires. It copies the 2-3GB repository directly into `work/iso/arch/repo`.
 5. **The Magic:** The resulting ISO burns to your USB. When you boot the target machine, the Live OS RAM remains virtually empty and lightning-fast. Meanwhile, the ISO root is mounted at `/run/archiso/bootmnt/`, giving `051_pacman_repo_switch.sh` immediate, uncompressed access to `/run/archiso/bootmnt/arch/repo`.
 
 ---
