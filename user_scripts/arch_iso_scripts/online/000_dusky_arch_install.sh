@@ -617,9 +617,21 @@ main() {
             log INFO "Unmounting filesystems securely..."
             umount -R "$CHROOT_MNT"
             log OK "All filesystems flushed and unmounted."
-            printf "\n%s>>> POWERING OFF IN 5 SECONDS. PULL YOUR USB DRIVE WHEN SCREEN GOES BLACK. <<<%s\n" "$Y" "$RS"
-            sleep 5
-            poweroff
+            
+            # --- NEW: Ask before powering off ---
+            printf "\n"
+            local _poweroff_choice="y"
+            if [[ -t 0 ]]; then
+                read -r -p ">>> System is completely unmounted. Power off now? [Y/n]: " _poweroff_choice || _poweroff_choice="y"
+            fi
+            
+            if [[ "${_poweroff_choice,,}" != "n" && "${_poweroff_choice,,}" != "no" ]]; then
+                printf "\n%s>>> POWERING OFF. PULL YOUR USB DRIVE WHEN SCREEN GOES BLACK. <<<%s\n" "$Y" "$RS"
+                sleep 2
+                poweroff
+            else
+                log INFO "Power off aborted. You are now back in the Live ISO environment."
+            fi
         else
             if (( AUTO_MODE )); then
                 log INFO "AUTO_MODE is enabled; skipping interactive shell prompt."
