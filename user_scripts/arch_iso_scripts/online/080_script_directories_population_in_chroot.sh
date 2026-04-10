@@ -13,7 +13,7 @@ set -euo pipefail
 # --- 2. Configuration ---
 readonly MNT_POINT="/mnt"
 readonly SRC_DIR="dusky"
-readonly POST_CHROOT_SRC="${SRC_DIR}/user_scripts/arch_iso_scripts/001_post_chroot"
+readonly POST_CHROOT_SRC="${SRC_DIR}/user_scripts/arch_iso_scripts/online"
 
 # --- 3. Logging (TTY Aware) ---
 if [[ -t 1 ]]; then
