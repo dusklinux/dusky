@@ -418,7 +418,7 @@ run_auto_mode() {
 
     print_available_disks
 
-    read -r -p "Enter target drive to WIPE and PROVISION (e.g., nvme0n1): " raw_drive
+    read -r -p "Enter target drive to PROVISION (e.g., nvme0n1): " raw_drive
     local target_input="/dev/${raw_drive#/dev/}"
 
     if [[ ! -b "$target_input" ]]; then
@@ -431,44 +431,98 @@ run_auto_mode() {
 
     validate_target_disk "$target_dev"
 
+    # --- NEW: Wipe vs Specific Partition Logic ---
+    echo ""
+    read -r -p "Do you want to [W]ipe the entire drive or use a [S]pecific existing partition? [w/S]: " wipe_choice
+    
+    local wipe_entire_disk=0
+    local format_efi=1
+    local part_boot=""
+    local part_root=""
+
+    if [[ "${wipe_choice,,}" == "w" || "${wipe_choice,,}" == "wipe" ]]; then
+        wipe_entire_disk=1
+    fi
+
+    if (( wipe_entire_disk == 0 )); then
+        echo -e "\n${C_CYAN}Available partitions on $target_dev:${C_RESET}"
+        lsblk -o NAME,SIZE,TYPE,FSTYPE,PARTLABEL "$target_dev"
+        echo ""
+
+        read -r -p "Enter the existing ROOT partition to overwrite (e.g., nvme0n1p2): " raw_root
+        local root_input="/dev/${raw_root#/dev/}"
+        if [[ ! -b "$root_input" ]]; then
+            echo -e "${C_RED}Critical: Root partition $root_input not found. Aborting.${C_RESET}"
+            exit 1
+        fi
+        part_root=$(readlink -f "$root_input")
+        validate_partition_on_target "$part_root" "$target_dev" "Root"
+
+        if [[ "$BOOT_MODE" == "UEFI" ]]; then
+            read -r -p "Enter the existing EFI partition (e.g., nvme0n1p1): " raw_efi
+            local efi_input="/dev/${raw_efi#/dev/}"
+            if [[ ! -b "$efi_input" ]]; then
+                echo -e "${C_RED}Critical: EFI partition $efi_input not found. Aborting.${C_RESET}"
+                exit 1
+            fi
+            part_boot=$(readlink -f "$efi_input")
+            validate_partition_on_target "$part_boot" "$target_dev" "EFI"
+
+            if [[ "$part_boot" == "$part_root" ]]; then
+                echo -e "${C_RED}Critical: EFI and Root cannot be the same partition. Aborting.${C_RESET}"
+                exit 1
+            fi
+
+            # Prevent accidental destruction of dual-boot EFI loaders
+            read -r -p "Format this EFI partition? (Say 'n' if sharing with Windows) [y/N]: " fmt_choice
+            if [[ "${fmt_choice,,}" != "y" && "${fmt_choice,,}" != "yes" ]]; then
+                format_efi=0
+            fi
+        fi
+    fi
+
     local luks_pass
     luks_pass=$(prompt_luks_password)
 
-    echo -e "\n${C_RED}${C_BOLD}!!! WARNING: WIPING ALL DATA ON $target_dev IN 5 SECONDS !!!${C_RESET}"
+    if (( wipe_entire_disk == 1 )); then
+        echo -e "\n${C_RED}${C_BOLD}!!! WARNING: WIPING ALL DATA ON $target_dev IN 5 SECONDS !!!${C_RESET}"
+    else
+        echo -e "\n${C_RED}${C_BOLD}!!! WARNING: OVERWRITING SELECTED PARTITIONS ON $target_dev IN 5 SECONDS !!!${C_RESET}"
+    fi
     sleep 5
 
     teardown_device "$target_dev"
     ensure_mapper_name_available "$target_dev"
 
-    echo -e "${C_YELLOW}>> Zapping partition table...${C_RESET}"
-    wipefs -a "$target_dev"
-    sgdisk --zap-all "$target_dev"
+    if (( wipe_entire_disk == 1 )); then
+        echo -e "${C_YELLOW}>> Zapping partition table...${C_RESET}"
+        wipefs -a "$target_dev"
+        sgdisk --zap-all "$target_dev"
 
-    echo -e "${C_YELLOW}>> Writing new GPT layout...${C_RESET}"
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        sgdisk -n 1:0:+2G -t 1:ef00 -c 1:"EFI System" "$target_dev"
-        sgdisk -n 2:0:0   -t 2:8309 -c 2:"Linux LUKS" "$target_dev"
-    else
-        sgdisk -n 1:0:+1M -t 1:ef02 -c 1:"BIOS Boot"  "$target_dev"
-        sgdisk -n 2:0:0   -t 2:8309 -c 2:"Linux LUKS" "$target_dev"
-    fi
+        echo -e "${C_YELLOW}>> Writing new GPT layout...${C_RESET}"
+        if [[ "$BOOT_MODE" == "UEFI" ]]; then
+            sgdisk -n 1:0:+2G -t 1:ef00 -c 1:"EFI System" "$target_dev"
+            sgdisk -n 2:0:0   -t 2:8309 -c 2:"Linux LUKS" "$target_dev"
+        else
+            sgdisk -n 1:0:+1M -t 1:ef02 -c 1:"BIOS Boot"  "$target_dev"
+            sgdisk -n 2:0:0   -t 2:8309 -c 2:"Linux LUKS" "$target_dev"
+        fi
 
-    partprobe "$target_dev"
-    udevadm settle
+        partprobe "$target_dev"
+        udevadm settle
 
-    local part_boot
-    local part_root
-    part_boot=$(get_partition_path "$target_dev" 1)
-    part_root=$(get_partition_path "$target_dev" 2)
+        part_boot=$(get_partition_path "$target_dev" 1)
+        part_root=$(get_partition_path "$target_dev" 2)
 
-    if ! wait_for_block_device "$part_root" 10; then
-        echo -e "${C_RED}Critical: Root partition $part_root did not appear after partitioning. Aborting.${C_RESET}"
-        exit 1
-    fi
+        if ! wait_for_block_device "$part_root" 10; then
+            echo -e "${C_RED}Critical: Root partition $part_root did not appear after partitioning. Aborting.${C_RESET}"
+            exit 1
+        fi
 
-    if [[ "$BOOT_MODE" == "UEFI" ]] && ! wait_for_block_device "$part_boot" 10; then
-        echo -e "${C_RED}Critical: EFI partition $part_boot did not appear after partitioning. Aborting.${C_RESET}"
-        exit 1
+        if [[ "$BOOT_MODE" == "UEFI" ]] && ! wait_for_block_device "$part_boot" 10; then
+            echo -e "${C_RED}Critical: EFI partition $part_boot did not appear after partitioning. Aborting.${C_RESET}"
+            exit 1
+        fi
     fi
 
     echo -e "${C_YELLOW}>> Clearing residual signatures on Root ($part_root)...${C_RESET}"
@@ -484,9 +538,13 @@ run_auto_mode() {
     mkfs.btrfs -f -L "ARCH_ROOT" "/dev/mapper/${TARGET_CRYPT_NAME}"
 
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        echo -e "${C_YELLOW}>> Clearing residual signatures on EFI ($part_boot)...${C_RESET}"
-        wipefs -af "$part_boot"
-        mkfs.fat -F 32 -n "EFI" "$part_boot"
+        if (( format_efi == 1 )); then
+            echo -e "${C_YELLOW}>> Clearing residual signatures and Formatting EFI ($part_boot)...${C_RESET}"
+            wipefs -af "$part_boot"
+            mkfs.fat -F 32 -n "EFI" "$part_boot"
+        else
+            echo -e "${C_YELLOW}>> Skipping EFI format to preserve existing bootloaders.${C_RESET}"
+        fi
     fi
 
     echo -e "${C_GREEN}>> Autonomous Provisioning Complete.${C_RESET}"
