@@ -7,7 +7,8 @@ set -euo pipefail
 readonly WORKSPACE="/mnt/zram1/dusky_iso"
 readonly OFFLINE_REPO="/srv/offline-repo"
 readonly SOURCE_DIR="${HOME}/user_scripts/arch_iso_scripts/offline_iso"
-readonly RUN_CMD="sudo ./030_build_iso.sh"
+# Chained command for precise, one-click execution from any working directory
+readonly RUN_CMD="cd \"${WORKSPACE}\" && sudo ./030_build_iso.sh"
 
 echo -e "\n[>>>] INITIATING DUSKY ISO STAGING SEQUENCE [<<<]\n"
 
@@ -59,11 +60,10 @@ cp -a "${SOURCE_DIR}/iso_maker/030_build_iso.sh" "${WORKSPACE}/"
 
 # --- Phase 4: Execution Deferral & Clipboard Integration ---
 echo -e "\n[*] Preparing master script for execution..."
-cd "${WORKSPACE}"
-chmod +x 030_build_iso.sh
+chmod +x "${WORKSPACE}/030_build_iso.sh"
 
 echo -e "\n[!] STAGING COMPLETE. Execution deferred to manual intervention."
-echo "[*] Pushing execution command to clipboard..."
+echo "[*] Pushing chained execution command to clipboard..."
 
 if command -v wl-copy >/dev/null 2>&1; then
     echo -n "${RUN_CMD}" | wl-copy
@@ -75,5 +75,5 @@ else
     echo "[!] Clipboard utility not found. Manual copy required."
 fi
 
-echo -e "\n[>] Execute the following command in the workspace when ready:\n"
+echo -e "\n[>] Paste and execute the following chained command when ready:\n"
 echo -e "    ${RUN_CMD}\n"
