@@ -612,6 +612,11 @@ main() {
         if [[ -f "$finish_flag" ]]; then
             rm -f "$finish_flag"
             log OK "Autonomous finish flag detected from 180_exiting_unmounting.sh."
+            
+            # --- THE FIX: Deactivate swap before unmounting ---
+            log INFO "Deactivating swap to release kernel filesystem locks..."
+            swapoff -a 2>/dev/null || true
+            
             log INFO "Unmounting filesystems securely..."
             umount -R "$CHROOT_MNT"
             log OK "All filesystems flushed and unmounted."

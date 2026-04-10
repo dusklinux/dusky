@@ -138,7 +138,8 @@ show_manual_mode() {
     printf "   %b(Note: if you entered with 'arch-chroot /mnt', typing 'exit' once leaves the chroot shell.)%b\n" "${C_WHITE}" "${C_RESET}"
     printf "   %b(On your setup this typically changes from '[root@archiso /]#' back to 'root@archiso ~ #'.)%b\n" "${C_WHITE}" "${C_RESET}"
 
-    print_step "2" "umount -R /mnt" "Unmount all partitions cleanly to flush changes to disk."
+    # --- THE FIX: Add swapoff to manual instructions ---
+    print_step "2" "swapoff -a && umount -R /mnt" "Deactivate swap and unmount all partitions cleanly to flush changes to disk."
     print_warning "Failure to unmount before poweroff may result in data loss or filesystem issues."
 
     print_step "3" "poweroff" "Shutdown the system."
@@ -162,7 +163,8 @@ show_auto_mode() {
 
     printf "\n%bExpected next actions by the live-environment caller:%b\n" "${C_WHITE}${C_BOLD}" "${C_RESET}"
     printf " 1. Let the chrooted command finish and return to the live ISO.\n"
-    printf " 2. Run: %bumount -R /mnt%b\n" "${C_YELLOW}${C_BOLD}" "${C_RESET}"
+    # --- THE FIX: Add swapoff to autonomous instructions ---
+    printf " 2. Run: %bswapoff -a && umount -R /mnt%b\n" "${C_YELLOW}${C_BOLD}" "${C_RESET}"
     printf " 3. Run: %bpoweroff%b\n" "${C_YELLOW}${C_BOLD}" "${C_RESET}"
 
     print_warning "If you launched this from an interactive 'arch-chroot /mnt' shell, you must still type 'exit' once yourself. A child script cannot exit its parent shell."
