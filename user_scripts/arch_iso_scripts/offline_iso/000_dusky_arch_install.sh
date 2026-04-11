@@ -2,7 +2,7 @@
 # ==============================================================================
 #  UNIFIED ARCH ORCHESTRATOR (v3.7 - Session Aware Engine)
 #  Context: Self-aware Phase 1 (ISO) and Phase 2 (Chroot) execution.
-#  Usage: ./000_dusky_arch_install.sh [--auto|-a] [--dry-run|-d] [--reset]
+#  Usage: ./000_dusky_arch_install.sh [--auto|-a] [--manual|-m] [--dry-run|-d] [--reset] [--help|-h]
 # ==============================================================================
 
 # --- 1. SCRIPT SEQUENCES ---
@@ -77,7 +77,7 @@ fi
 # --- 4. STATE, LOCKING & CHROOT AWARENESS ---
 declare -a EXECUTED_SCRIPTS=() SKIPPED_SCRIPTS=() FAILED_SCRIPTS=() SOFT_FAILED_SCRIPTS=() INSTALL_SEQUENCE=()
 declare -gA COMPLETED_SCRIPTS=()
-declare -i DRY_RUN="${DRY_RUN:-0}" AUTO_MODE="${AUTO_MODE:-0}" IN_CHROOT=0 RESET_STATE=0 TOTAL_START_TIME
+declare -i DRY_RUN="${DRY_RUN:-0}" AUTO_MODE="${AUTO_MODE:-1}" IN_CHROOT=0 RESET_STATE=0 TOTAL_START_TIME
 
 # Detect if we are running inside the arch-chroot via inode comparison
 readonly ROOT_STAT="$(stat -c '%d:%i' / 2>/dev/null || true)"
@@ -145,6 +145,17 @@ print_summary() {
 }
 
 # --- 6. HELPER FUNCTIONS ---
+show_help() {
+    printf "\n%s=== UNIFIED ARCH ORCHESTRATOR HELP ===%s\n\n" "$B" "$RS"
+    printf "Usage: %s./%s [OPTIONS]%s\n\n" "$HL" "$SCRIPT_NAME" "$RS"
+    printf "Options:\n"
+    printf "  %s-a, --auto%s      Run autonomously without prompting (Default)\n" "$G" "$RS"
+    printf "  %s-m, --manual%s    Prompt whether to run interactively (step-by-step)\n" "$Y" "$RS"
+    printf "  %s-d, --dry-run%s   Simulate execution without running scripts\n" "$B" "$RS"
+    printf "  %s--reset%s         Reset the state file and start fresh\n" "$R" "$RS"
+    printf "  %s-h, --help%s      Display this help and exit\n\n" "$HL" "$RS"
+}
+
 load_state() {
     unset COMPLETED_SCRIPTS
     declare -gA COMPLETED_SCRIPTS=()
@@ -277,10 +288,16 @@ main() {
     for arg in "$@"; do
         case "$arg" in
             -a|--auto) AUTO_MODE=1 ;;
+            -m|--manual) AUTO_MODE=0 ;;
             -d|--dry-run) DRY_RUN=1 ;;
             --reset) RESET_STATE=1 ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
             *)
                 log ERR "Unknown argument: $arg"
+                log INFO "Use --help to see available options."
                 exit 2
                 ;;
         esac
