@@ -22,6 +22,7 @@ declare -ar pkgs_aur=(
   "tray-tui"
   "wifitui-bin"
   "xdg-terminal-exec"
+  "paru"
 
 #  "papirus-icon-theme-git"
 #  "papirus-folders-git"
