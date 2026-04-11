@@ -634,6 +634,7 @@ Options:
     --help, -h       Show this help message and exit
     --dry-run, -d    Preview execution plan without running anything
     --reset          Clear progress state and start fresh
+    --manual, -m     Prompt to enable interactive mode (ask before each script)
 
 Description:
     This script orchestrates the execution of multiple setup scripts
@@ -649,7 +650,8 @@ Description:
     not supported.
 
 Examples:
-    $(basename "$0")              # Normal run
+    $(basename "$0")              # Normal run (Autonomous Mode)
+    $(basename "$0") --manual     # Run with prompt for Interactive Mode
     $(basename "$0") --dry-run    # Preview what would be executed
     $(basename "$0") --reset      # Reset progress and start over
 EOF
@@ -762,10 +764,15 @@ main() {
     fi
 
     # --- MUTATING ARGUMENT HANDLING ---
+    local force_manual_prompt=0
+
     case "${1:-}" in
         --reset)
             rm -f "$STATE_FILE"
             echo "State file reset. Starting fresh."
+            ;;
+        --manual|-m)
+            force_manual_prompt=1
             ;;
         "")
             ;;
@@ -809,11 +816,16 @@ main() {
 
     # --- EXECUTION MODE SELECTION ---
     local interactive_mode=0
-    echo -e "\n${YELLOW}>>> EXECUTION MODE <<<${RESET}"
-    read -r -p "Do you want to run interactively (prompt before every script)? [y/N]: " _mode_choice
-    if [[ "${_mode_choice,,}" == "y" || "${_mode_choice,,}" == "yes" ]]; then
-        interactive_mode=1
-        log "INFO" "Interactive mode selected. You will be asked before each script."
+
+    if [[ "$force_manual_prompt" -eq 1 ]]; then
+        echo -e "\n${YELLOW}>>> EXECUTION MODE <<<${RESET}"
+        read -r -p "Do you want to run interactively (prompt before every script)? [y/N]: " _mode_choice
+        if [[ "${_mode_choice,,}" == "y" || "${_mode_choice,,}" == "yes" ]]; then
+            interactive_mode=1
+            log "INFO" "Interactive mode selected. You will be asked before each script."
+        else
+            log "INFO" "Autonomous mode selected. Running all scripts without confirmation."
+        fi
     else
         log "INFO" "Autonomous mode selected. Running all scripts without confirmation."
     fi
