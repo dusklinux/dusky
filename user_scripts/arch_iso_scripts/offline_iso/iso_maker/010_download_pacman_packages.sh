@@ -13,7 +13,7 @@
 
 # Group 1: Graphics & Drivers
 declare -ar pkgs_graphics=(
-  "intel-media-driver" "vpl-gpu-rt" "mesa" "vulkan-intel" "mesa-utils" "intel-gpu-tools" "libva" "libva-utils" "vulkan-icd-loader" "vulkan-tools" "sof-firmware" "linux-firmware" "linux-headers" "acpi_call" "base" "base-devel" "intel-ucode" "amd-ucode" "mkinitcpio"
+  "intel-media-driver" "vpl-gpu-rt" "mesa" "vulkan-intel" "mesa-utils" "intel-gpu-tools" "libva" "libva-utils" "vulkan-icd-loader" "vulkan-tools" "sof-firmware" "linux-firmware" "linux-headers" "acpi_call" "base" "base-devel" "intel-ucode" "amd-ucode" "mkinitcpio" "gradle"
 )
 
 # Group 2: Hyprland Core
