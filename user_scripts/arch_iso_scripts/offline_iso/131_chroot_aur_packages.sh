@@ -23,14 +23,15 @@ declare -ar pkgs_aur=(
   "wifitui-bin"
   "xdg-terminal-exec"
   "paru"
+  "python-pywalfox"
 
 #  "papirus-icon-theme-git"
 #  "papirus-folders-git"
 # "fluent-icon-theme-git"
 
-#   snapshot & limine
-#  "limine-mkinitcpio-hook"
-#  "limine-snapper-sync"
+##   snapshot & limine
+  "limine-mkinitcpio-hook"
+  "limine-snapper-sync"
 )
 
 

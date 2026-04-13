@@ -11,9 +11,13 @@
 # SECTION 1 — PACKAGE ARRAYS
 # ==============================================================================
 
+declare -ar pkgs_offline=(
+  "intel-ucode" "amd-ucode" "mkinitcpio" "gradle" "glaze" "python-cssselect" "gradle" "base" "base-devel" "python-lxml" "python-certifi" "python-charset-normalizer" "python-idna" "python-requests" "python-urllib3" "deno" "yt-dlp" "yt-dlp-ejs" "hunspell" "xf86-input-libinput" "xorg-server" "xorg-xauth" "boost-libs"
+ )
+
 # Group 1: Graphics & Drivers
 declare -ar pkgs_graphics=(
-  "intel-media-driver" "vpl-gpu-rt" "mesa" "vulkan-intel" "mesa-utils" "intel-gpu-tools" "libva" "libva-utils" "vulkan-icd-loader" "vulkan-tools" "sof-firmware" "linux-firmware" "linux-headers" "acpi_call" "base" "base-devel" "intel-ucode" "amd-ucode" "mkinitcpio" "gradle"
+  "intel-media-driver" "vpl-gpu-rt" "mesa" "vulkan-intel" "mesa-utils" "intel-gpu-tools" "libva" "libva-utils" "vulkan-icd-loader" "vulkan-tools" "sof-firmware" "linux-firmware" "linux-headers" "acpi_call"
 )
 
 # Group 2: Hyprland Core
