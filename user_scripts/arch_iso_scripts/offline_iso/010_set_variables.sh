@@ -29,7 +29,7 @@ trap 'printf "${RESET}\n"; exit 130' INT
 
 printf "${CYAN}${BOLD}"
 printf "===============================================================\n"
-printf "            ARCH LINUX UNIFIED INSTALLER SETUP                 \n"
+printf "                    Dusky Automated Installer                  \n"
 printf "===============================================================\n"
 printf "${RESET}\n"
 printf "Welcome. Please provide your system credentials upfront.\n"
