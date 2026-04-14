@@ -68,18 +68,6 @@ backup_file() {
 
     local stamp
     printf -v stamp '%(%Y%m%d-%H%M%S)T' -1
-
-    # Purge stale backups of this exact file to prevent constrained partition (ESP) exhaustion
-    local shopt_save
-    shopt_save=$(shopt -p nullglob || true)
-    shopt -s nullglob
-    local -a old_baks=("${file}.bak."*)
-    eval "$shopt_save"
-    
-    if ((${#old_baks[@]} > 0)); then
-        sudo rm -f "${old_baks[@]}" 2>/dev/null || true
-    fi
-
     sudo cp -a -- "$file" "${file}.bak.${stamp}"
     BACKED_UP["$file"]=1
     info "Backup created: ${file}.bak.${stamp}"
@@ -801,7 +789,6 @@ preflight_checks() {
     (( EUID != 0 )) || fatal "Run as regular user with sudo privileges."
     require_cmd sudo
     require_cmd pacman
-    require_cmd df
     require_cmd findmnt
     require_cmd blkid
     require_cmd lsblk
@@ -813,18 +800,6 @@ preflight_checks() {
     [[ -d /sys/firmware/efi ]] || fatal "Not booted in EFI mode."
     [[ -f /etc/mkinitcpio.conf ]] || fatal "/etc/mkinitcpio.conf not found."
     [[ "$(stat -f -c %T /)" == "btrfs" ]] || fatal "Root is not Btrfs."
-    
-    # Pre-flight capacity check to prevent mid-transaction ENOSPC on the ESP
-    local esp_mnt
-    esp_mnt="$(detect_esp_mountpoint 2>/dev/null || true)"
-    if [[ -n "$esp_mnt" ]]; then
-        local avail_kb
-        avail_kb="$(df -k "$esp_mnt" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
-        if [[ -n "$avail_kb" ]] && (( avail_kb < 153600 )); then
-            fatal "ESP ($esp_mnt) has critically low space ($((avail_kb / 1024))MB free). Mid-transaction kernel generation will fail. Clear space before proceeding."
-        fi
-    fi
-
     sudo -v || fatal "Cannot obtain sudo."
     (while true; do sudo -n -v 2>/dev/null || exit; sleep 240; done) &
     SUDO_PID=$!
