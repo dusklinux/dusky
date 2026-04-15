@@ -51,16 +51,28 @@ You can sort the process list by shifting the active column. Use the **`Left`** 
 > [!warning] Architectural Limitation: Network & I/O Sorting
 > `btop++` **cannot** sort the main process list by Network bandwidth or Disk I/O. It can show you global I/O and Network usage in their respective boxes, and it can show you per-process I/O if you press `Enter` on a specific script, but it cannot rank the list by them. Use `iotop` for disk I/O sorting and `nethogs` for network sorting.
 
+### 🕸️ The Browser Problem: Aggregating Child Processes
+Modern browsers (Firefox) and Electron apps spawn dozens of isolated child processes. By default, `btop` shows the memory of each individual sandboxed tab/extension. 
+
+**To see the TOTAL Memory and CPU usage of the entire application:**
+1. Press **`o`** (or `F2`) to open the Options menu.
+2. Press **`6`** to navigate to the `[proc]` tab.
+3. Scroll down to **`Proc aggregate`** and set it to **`True`**. (Alternatively, set `proc_aggregate = true` in your `btop.conf`).
+4. Exit the menu (`Esc`).
+5. Ensure you are in **Tree View** (press **`e`**). 
+
+> *Result:* The parent `firefox` process will now display the accumulated, combined total of all its child processes' CPU and Memory. You can press `Spacebar` or `-` to collapse the tree and cleanly read the total footprint of the app.
+
 ### Process Toggles & Filters
 - **`r` (Reverse):** Reverse the sorting order (High-to-Low vs Low-to-High).
-- **`c` (Per-Core):** Toggles per-core CPU usage math. If your multi-threaded Python script is maxing out a 14-core CPU, standard math might show `1400%`. Pressing `c` scales the calculation so the entire system caps at `100%`.
+- **`c` (Per-Core):** Toggles per-core CPU usage math. Scales multi-threaded CPU calculations so the entire system caps at `100%`.
 - **`%`:** Toggles memory display mode in the processes box (Percent vs Bytes).
 - **`F`:** Pause the process list entirely (freezes the UI to inspect a highly volatile list).
 - **`f` / `/` (Filter):** The sniper rifle. Type `python` or `waybar` and hit `Enter` to isolate processes. Start with `!` to use regex. Press `Delete` to clear.
 
 ### The Corporate Hierarchy: Tree View (`e`)
 > [!info] Understanding Tree View
-> In normal mode, processes are sorted purely by metric. Pressing **`e`** toggles **Tree View**, grouping child processes under their parent. If your main script spawns a dozen worker threads, Tree View lets you see the exact execution hierarchy and trace a runaway thread right back to the parent process.
+> In normal mode, processes are sorted purely by metric. Pressing **`e`** toggles **Tree View**, grouping child processes under their parent. Combined with `Proc aggregate`, this is the most powerful way to read system usage.
 - **`Spacebar` / `+` / `-`:** Expand or collapse the selected process in Tree View.
 - **`u`:** Expand/collapse the selected process's children.
 
