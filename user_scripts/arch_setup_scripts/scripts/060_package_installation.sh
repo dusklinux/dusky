@@ -14,7 +14,7 @@ declare -ar pkgs_graphics=(
 
 # Group 2: Hyprland Core
 declare -ar pkgs_hyprland=(
-  "hyprland" "uwsm" "xorg-xwayland" "xdg-desktop-portal-hyprland" "xdg-desktop-portal-gtk" "xorg-xhost" "polkit" "hyprpolkitagent" "xdg-utils" "socat" "inotify-tools" "libnotify" "file"
+  "hyprland" "uwsm" "xorg-xwayland" "xdg-desktop-portal-hyprland" "xdg-desktop-portal-gtk" "polkit" "hyprpolkitagent" "xdg-utils" "socat" "inotify-tools" "libnotify" "file"
 )
 
 # Group 3: GUI, Toolkits & Fonts

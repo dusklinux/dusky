@@ -25,6 +25,7 @@ Tools       | glances               | CLI curses-based monitoring tool
 Tools       | lazydocker            | TUI for managing Docker containers
 Tools       | kvantum               | SVG-based theme engine for Qt applications
 Tools       | gparted               | GUI partition editor for disk management
+Tools       | xorg-xhost            | to allow unfettered access to xorg root apps, like timeshfit, gparted etc
 Tools       | baobab                | Disk usage analyzer to visualize storage
 Tools       | grsync                | GUI rsync frontend for backups
 Tools       | caligula              | User-friendly, lightweight disk imager

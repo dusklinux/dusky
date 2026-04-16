@@ -9,7 +9,7 @@
 
 # Group 0: Dusky ISO packages
 declare -ar pkgs_offline=(
-  "intel-ucode" "amd-ucode" "mkinitcpio" "gradle" "glaze" "python-cssselect" "gradle" "base" "base-devel" "python-lxml" "python-certifi" "python-charset-normalizer" "python-idna" "python-requests" "python-urllib3" "deno" "yt-dlp" "yt-dlp-ejs" "hunspell" "xf86-input-libinput" "xorg-server" "xorg-xauth" "boost-libs"
+  "intel-ucode" "amd-ucode" "mkinitcpio" "gradle" "glaze" "python-cssselect" "gradle" "base" "base-devel" "python-lxml" "python-certifi" "python-charset-normalizer" "python-idna" "python-requests" "python-urllib3" "deno" "yt-dlp" "yt-dlp-ejs" "hunspell" "xf86-input-libinput" "xorg-xauth" "boost-libs"
  )
 
 # Group 1: Graphics & Drivers
@@ -19,7 +19,7 @@ declare -ar pkgs_graphics=(
 
 # Group 2: Hyprland Core
 declare -ar pkgs_hyprland=(
-  "hyprland" "uwsm" "xorg-xwayland" "xdg-desktop-portal-hyprland" "xdg-desktop-portal-gtk" "xorg-xhost" "polkit" "hyprpolkitagent" "xdg-utils" "socat" "inotify-tools" "libnotify" "file"
+  "hyprland" "uwsm" "xorg-xwayland" "xdg-desktop-portal-hyprland" "xdg-desktop-portal-gtk" "polkit" "hyprpolkitagent" "xdg-utils" "socat" "inotify-tools" "libnotify" "file"
 )
 
 # Group 3: GUI, Toolkits & Fonts
@@ -45,7 +45,7 @@ declare -ar pkgs_filesystem=(
 
 # Group 7: Network & Internet
 declare -ar pkgs_network=(
-  "networkmanager" "wireless-regdb" "iwd" "nm-connection-editor" "inetutils" "wget" "curl" "openssh" "firewalld" "vsftpd" "reflector" "bmon" "ethtool" "httrack" "wavemon" "firefox" "network-manager-applet" "nss-mdns" "dnsmasq" "modemmanager" "usb_modeswitch"
+  "networkmanager" "wireless-regdb" "iwd" "nm-connection-editor" "inetutils" "wget" "curl" "openssh" "firewalld" "vsftpd" "reflector" "bmon" "ethtool" "httrack" "wavemon" "firefox" "nss-mdns" "dnsmasq" "modemmanager" "usb_modeswitch"
 )
 
 # Group 8: Terminal & Shell
