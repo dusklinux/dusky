@@ -18,13 +18,9 @@ if [[ ! -t 0 ]]; then
 fi
 
 if ! command -v gum &>/dev/null; then
-    printf "\e[33m[INFO]\e[0m  'gum' not found. Installing via pacman...\n"
-    if ! pacman -S --noconfirm gum; then
-        printf "\e[31m[ERROR]\e[0m Failed to install 'gum'. Please install it manually:\n" >&2
-        printf "               \e[1mpacman -S gum\e[0m\n" >&2
-        exit 1
-    fi
-    printf "\e[32m[OK]\e[0m    'gum' installed successfully.\n\n"
+    printf "\e[31m[ERROR]\e[0m 'gum' is required but not found in PATH.\n" >&2
+    printf "        Install with: \e[1mpacman -S gum\e[0m\n" >&2
+    exit 1
 fi
 
 # ── 2. Trap & Colour Palette (Catppuccin Mocha) ───────────────────────────────
@@ -52,14 +48,10 @@ gum style \
     "✦   Dusky Automated Installer   ✦"
 
 printf "\n"
-gum style \
-    --foreground "$C_SUBTEXT" \
-    --margin "0 4" \
+gum style --foreground "$C_SUBTEXT" --margin "0 4" \
     "Welcome. Please provide your system credentials upfront."
-gum style \
-    --foreground "$C_OVERLAY" \
-    --margin "0 4" \
-    "The same password is used for LUKS2 encryption, root, and user, you can change it later"
+gum style --foreground "$C_OVERLAY" --margin "0 4" \
+    "These will be securely staged for Phase 2 deployment."
 printf "\n"
 
 # ── 4. Credential Ingestion ───────────────────────────────────────────────────
@@ -68,12 +60,7 @@ declare INGESTED_PASS=""
 declare INGESTED_PASS_VERIFY=""
 
 # ── 4a. Username ──────────────────────────────────────────────────────────────
-gum style \
-    --foreground "$C_CYAN" \
-    --bold \
-    --margin "0 4" \
-    "User Account"
-
+gum style --foreground "$C_CYAN" --bold --margin "0 4" "User Account"
 while true; do
     INGESTED_USER=$(
         gum input \
@@ -112,12 +99,7 @@ done
 printf "\n"
 
 # ── 4b. Password ──────────────────────────────────────────────────────────────
-gum style \
-    --foreground "$C_CYAN" \
-    --bold \
-    --margin "0 4" \
-    "Set Password"
-
+gum style --foreground "$C_CYAN" --bold --margin "0 4" "Set Password"
 while true; do
     INGESTED_PASS=$(
         gum input \
@@ -178,7 +160,6 @@ gum spin \
     --spinner dot \
     --spinner.foreground "$C_YELLOW" \
     --title " Staging credentials for Phase 2..." \
-    --title.foreground "$C_YELLOW" \
     -- sleep 0.8
 
 readonly CREDS_FILE="$(pwd)/.arch_credentials"
@@ -197,10 +178,7 @@ export ROOT_PASS=$(printf '%q' "$INGESTED_PASS")
 export AUTO_MODE=1
 EOF
 then
-    gum style \
-        --foreground "$C_RED" \
-        --bold \
-        --margin "0 4" \
+    gum style --foreground "$C_RED" --bold --margin "0 4" \
         "✗  [ERROR] Failed to write credentials file. Aborting." >&2
     rm -f "$CREDS_FILE"
     exit 1
