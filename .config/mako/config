@@ -1,0 +1,38 @@
+# ======================================
+# ~/.config/mako/config
+# BASE DAEMON PARAMETERS
+# ======================================
+font=monospace 10
+width=350
+height=150
+margin=20
+padding=15
+border-size=2
+border-radius=8
+icons=1
+max-icon-size=48
+default-timeout=5000
+ignore-timeout=0
+max-visible=5
+layer=overlay
+anchor=top-right
+sort=-time
+
+# ======================================
+# MATUGEN THEME INJECTION
+# ======================================
+# MUST remain in the global scope (before any criteria blocks).
+include=~/.config/matugen/generated/mako-colors
+
+# ======================================
+# CRITERIA TIMEOUTS & BEHAVIORS
+# ======================================
+[urgency=low]
+default-timeout=3000
+
+[urgency=normal]
+default-timeout=5000
+
+[urgency=critical]
+default-timeout=0
+ignore-timeout=1
