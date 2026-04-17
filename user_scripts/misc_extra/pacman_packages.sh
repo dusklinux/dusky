@@ -53,6 +53,8 @@ declare -ar pkgs_misc=(
 
     "awww"
 
+    "mako"
+
     "papirus-icon-theme"
 )
 
