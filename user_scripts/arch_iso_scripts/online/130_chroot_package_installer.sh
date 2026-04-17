@@ -14,7 +14,7 @@ declare -ar pkgs_graphics=(
 
 # Group 2: Hyprland Core
 declare -ar pkgs_hyprland=(
-  "hyprland" "uwsm" "xorg-xwayland" "xdg-desktop-portal-hyprland" "xdg-desktop-portal-gtk" "polkit" "hyprpolkitagent" "xdg-utils" "socat" "inotify-tools" "libnotify" "file"
+  "hyprland" "uwsm" "xorg-xwayland" "xdg-desktop-portal-hyprland" "xdg-desktop-portal-gtk" "polkit" "hyprpolkitagent" "xdg-utils" "socat" "inotify-tools" "libnotify" "mako" "file"
 )
 
 # Group 3: GUI, Toolkits & Fonts
@@ -24,7 +24,7 @@ declare -ar pkgs_appearance=(
 
 # Group 4: Desktop Experience
 declare -ar pkgs_desktop=(
-  "waybar" "awww" "hyprlock" "hypridle" "hyprsunset" "hyprpicker" "swaync" "swayosd" "rofi" "libdbusmenu-qt5" "libdbusmenu-glib" "brightnessctl"
+  "waybar" "awww" "hyprlock" "hypridle" "hyprsunset" "hyprpicker" "rofi" "libdbusmenu-qt5" "libdbusmenu-glib" "brightnessctl"
 )
 
 # Group 5: Audio & Bluetooth

@@ -74,7 +74,6 @@ readonly TARGET_FILES=(
     "dusky_workspace_manager.desktop"
     "dusky_site_blocker.desktop"
     "dusky_sliders.desktop"
-    "dusky_swaync_side.desktop"
     "dusky_service_toggle.desktop"
     "file_switcher.desktop"
     "google_image_search.desktop"

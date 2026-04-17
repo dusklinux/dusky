@@ -26,6 +26,7 @@ readonly -a REPO_TARGETS=(
   swww
   papirus-folders-git
   papirus-icon-theme-git
+  swaync
 )
 
 # AUR Packages 

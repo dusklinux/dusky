@@ -28,8 +28,6 @@
 .config/obs-studio/user.ini
 .config/pacman/makepkg.conf
 .config/pacseek/
-.config/swaync/
-.config/swayosd/
 .config/swappy/
 .config/uwsm/
 .config/waybar/01_horizontal_block/

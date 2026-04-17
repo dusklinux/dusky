@@ -74,25 +74,6 @@ input_path  = '~/.config/matugen/templates/colors.css'
 output_path = '~/.config/matugen/generated/waybar-colors.css'
 post_hook   = "pkill -USR2 -x waybar || :"
 
-[templates.swayosd]
-input_path  = '~/.config/matugen/templates/swayosd-colors.css'
-output_path = '~/.config/matugen/generated/swayosd-colors.css'
-post_hook   = "pkill -x swayosd-server || :; sleep 0.1; uwsm app -- swayosd-server >/dev/null 2>&1 & disown"
-
-[templates.swaync]
-input_path  = '~/.config/matugen/templates/colors.css'
-output_path = '~/.config/matugen/generated/swaync-colors.css'
-post_hook   = '''
-bash -c '
-{
-  if command -v swaync-client >/dev/null 2>&1; then
-    swaync-client -R || :
-    swaync-client -rs || :
-  fi
-} >/dev/null 2>&1 </dev/null & disown
-'
-'''
-
 [templates.wlogout]
 input_path  = '~/.config/matugen/templates/colors.css'
 output_path = '~/.config/matugen/generated/wlogout-colors.css'
