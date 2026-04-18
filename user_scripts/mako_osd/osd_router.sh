@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Hyprland Native OSD Router - Stateless IPC Edition
-# Optimized for Bash 5+ and Wayland/UWSM environments
+# Optimized for Bash 5.3.9+ and Wayland/UWSM environments
 # Note: Hardware lock keys (Caps/Num) are handled by the dedicated evdev Python daemon.
 
 SYNC_ID="sys-osd"
@@ -12,7 +12,7 @@ notify() {
     local val="$3"
     
     if [[ -n "$val" ]]; then
-        # Includes int:value for Mako's progress bar
+        # Includes int:value for Mako/Dunst progress bar rendering
         notify-send -a "OSD" -h string:x-canonical-private-synchronous:"$SYNC_ID" -h int:value:"$val" -i "$icon" "$title"
     else
         notify-send -a "OSD" -h string:x-canonical-private-synchronous:"$SYNC_ID" -i "$icon" "$title"
@@ -25,6 +25,10 @@ main() {
 
     case "$action" in
         --vol-up|--vol-down)
+            # Guarantee atomic read-modify-write across concurrent subprocesses
+            exec {lock_fd}> "${XDG_RUNTIME_DIR:-/tmp}/osd_audio.lock"
+            flock -x "$lock_fd"
+
             local icon
             if [[ "$action" == "--vol-up" ]]; then
                 wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ "${step}%+"
@@ -34,13 +38,17 @@ main() {
                 icon="audio-volume-low"
             fi
             
-            # Fast parse: extracts percentage as integer from "Volume: 0.45"
             local vol
             vol=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{print int($2 * 100)}')
             notify "$icon" "Volume: ${vol}%" "$vol"
+            
+            exec {lock_fd}>&- # Release lock
             ;;
 
         --vol-mute)
+            exec {lock_fd}> "${XDG_RUNTIME_DIR:-/tmp}/osd_audio.lock"
+            flock -x "$lock_fd"
+
             wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
             if wpctl get-volume @DEFAULT_AUDIO_SINK@ | grep -q "MUTED"; then
                 notify "audio-volume-muted" "Audio Muted" ""
@@ -49,6 +57,8 @@ main() {
                 vol=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{print int($2 * 100)}')
                 notify "audio-volume-high" "Audio Unmuted" "$vol"
             fi
+            
+            exec {lock_fd}>&-
             ;;
 
         --mic-mute)
@@ -61,15 +71,21 @@ main() {
             ;;
 
         --bright-up|--bright-down)
+            # Serialize backlight state interactions
+            exec {lock_fd}> "${XDG_RUNTIME_DIR:-/tmp}/osd_display.lock"
+            flock -x "$lock_fd"
+
             if [[ "$action" == "--bright-up" ]]; then
                 brightnessctl set "${step}%+" -q
             else
                 brightnessctl set "${step}%-" -q
             fi
-            # Extract percentage integer from brightnessctl CSV output
+            
             local bright
             bright=$(brightnessctl -m | awk -F, '{print int($4)}')
             notify "display-brightness" "Brightness: ${bright}%" "$bright"
+            
+            exec {lock_fd}>&-
             ;;
 
         --kbd-bright-up|--kbd-bright-down)
@@ -100,6 +116,9 @@ main() {
             ;;
 
         --play-pause|--next|--prev|--stop)
+            local old_trackid
+            old_trackid=$(playerctl metadata mpris:trackid 2>/dev/null)
+
             # Execute MPRIS command
             case "$action" in
                 --play-pause) playerctl play-pause ;;
@@ -108,13 +127,22 @@ main() {
                 --stop)       playerctl stop ;;
             esac
             
-            # Allow DBus state a fraction of a second to update before querying
-            sleep 0.1
+            local status metadata new_trackid
+            # Active D-Bus fast-poll (up to 250ms latency tolerance)
+            for ((i=0; i<25; i++)); do
+                status=$(playerctl status 2>/dev/null)
+                new_trackid=$(playerctl metadata mpris:trackid 2>/dev/null)
+                
+                # Exit loop immediately if the MPRIS bus state has physically mutated
+                if [[ "$new_trackid" != "$old_trackid" ]] || \
+                   [[ "$action" == "--play-pause" && -n "$status" ]] || \
+                   [[ "$action" == "--stop" && "$status" == "Stopped" ]]; then
+                    break
+                fi
+                # Zero-fork native bash sleep (10ms)
+                read -r -t 0.01 <> <(:)
+            done
             
-            local status icon title
-            status=$(playerctl status 2>/dev/null)
-            
-            local metadata
             metadata=$(playerctl metadata --format "{{ artist }} - {{ title }}" 2>/dev/null)
             
             # Fallback if metadata is missing or empty

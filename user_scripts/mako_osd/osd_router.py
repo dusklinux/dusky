@@ -18,37 +18,46 @@ _active_tasks: Set[asyncio.Task] = set()
 # Track actively monitored device nodes to prevent duplicate tasks from udev spam
 _monitored_devices: Set[str] = set()
 
-# Guarantee strictly sequential notification dispatch to prevent state race conditions
-_notify_lock = asyncio.Lock()
+# Track active debounced actions to prevent subprocess bombs on key-hold
+_active_actions: Set[str] = set()
 
 
 async def _safe_notify(icon: str, title: str) -> None:
     """
-    Acquires an asynchronous lock before spawning the subprocess, ensuring rapid
-    consecutive events (e.g., double-taps) are processed strictly in order.
+    Fire-and-forget notification dispatch. The synchronous D-Bus hint 
+    is handled natively by Mako/Dunst, replacing overlapping OSDs immediately.
     """
-    async with _notify_lock:
-        process = await asyncio.create_subprocess_exec(
-            "notify-send", "-a", "OSD", 
-            "-h", f"string:x-canonical-private-synchronous:{SYNC_ID}", 
-            "-i", icon, title
-        )
-        await process.wait()
+    process = await asyncio.create_subprocess_exec(
+        "notify-send", "-a", "OSD", 
+        "-h", f"string:x-canonical-private-synchronous:{SYNC_ID}", 
+        "-i", icon, title
+    )
+    # Await completion in a detached task to prevent blocking the event loop
+    wait_task = asyncio.create_task(process.wait())
+    _active_tasks.add(wait_task)
+    wait_task.add_done_callback(_active_tasks.discard)
 
 
 async def trigger_router(action: str, step: str = "10") -> None:
     """
-    Dispatches the stateless bash router script when ACPI/hardware keys are pressed
-    that bypass the Wayland compositor.
+    Dispatches the stateless bash router script with active debouncing.
+    Drops identical rapid-repeat (EV_KEY value=2) events if a subprocess 
+    for this exact action is already executing.
     """
-    process = await asyncio.create_subprocess_exec(ROUTER_SCRIPT, action, step)
-    await process.wait()
+    if action in _active_actions:
+        return
+    _active_actions.add(action)
+    try:
+        process = await asyncio.create_subprocess_exec(ROUTER_SCRIPT, action, step)
+        await process.wait()
+    finally:
+        _active_actions.discard(action)
 
 
 def dispatch_notification(icon: str, title: str) -> None:
     """
     Spawns the notification task and registers a strong reference to prevent 
-    the Python 3.14+ event loop from garbage collecting it while pending.
+    the Python event loop from garbage collecting it while pending.
     """
     task = asyncio.create_task(_safe_notify(icon, title))
     _active_tasks.add(task)
@@ -72,7 +81,10 @@ async def monitor_device(dev_path: str) -> None:
         
         # Determine if this device has Lock LEDs or Keyboard Illumination Keys
         has_led = ecodes.EV_LED in caps
-        has_kbd_keys = ecodes.EV_KEY in caps and (ecodes.KEY_KBDILLUMUP in caps[ecodes.EV_KEY] or ecodes.KEY_KBDILLUMDOWN in caps[ecodes.EV_KEY])
+        has_kbd_keys = ecodes.EV_KEY in caps and (
+            ecodes.KEY_KBDILLUMUP in caps[ecodes.EV_KEY] or 
+            ecodes.KEY_KBDILLUMDOWN in caps[ecodes.EV_KEY]
+        )
         
         if not (has_led or has_kbd_keys):
             return
@@ -103,7 +115,7 @@ async def monitor_device(dev_path: str) -> None:
         # Expected behavior: Gracefully handle devices disconnecting or permission drops dynamically
         pass
     except Exception as e:
-        # Prevent TaskGroup collapse on unexpected bugs, but log the traceback
+        # Log the traceback but do not crash the daemon
         logging.error(f"Unexpected failure on device {dev_path}: {e}", exc_info=True)
     finally:
         # Guarantee file descriptor closure and release the concurrency lock
@@ -121,22 +133,26 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[pyudev.Device] = asyncio.Queue()
     
-    # Attach the udev monitor file descriptor directly to the event loop
-    # This provides zero-overhead, epoll-based wakeup for hot-plug events
-    loop.add_reader(monitor.fileno(), lambda: queue.put_nowait(monitor.poll()))
+    # Filter spurious epoll wakeups natively before queue ingestion using the walrus operator
+    loop.add_reader(
+        monitor.fileno(), 
+        lambda: (dev := monitor.poll()) is not None and queue.put_nowait(dev)
+    )
 
-    # TaskGroup provides strict structural concurrency and reliable cancellation
-    async with asyncio.TaskGroup() as tg:
-        # 1. Enumerate and attach to currently connected devices
-        for device in context.list_devices(subsystem='input'):
-            if device.device_node:
-                tg.create_task(monitor_device(device.device_node))
+    # 1. Enumerate and attach to currently connected devices
+    for device in context.list_devices(subsystem='input'):
+        if device.device_node:
+            task = asyncio.create_task(monitor_device(device.device_node))
+            _active_tasks.add(task)
+            task.add_done_callback(_active_tasks.discard)
 
-        # 2. Maintain daemon lifecycle and watch for newly connected hardware
-        while True:
-            device = await queue.get()
-            if device and device.action == 'add' and device.device_node:
-                tg.create_task(monitor_device(device.device_node))
+    # 2. Maintain daemon lifecycle independently to prevent cascading failures
+    while True:
+        device = await queue.get()
+        if device and device.action == 'add' and device.device_node:
+            task = asyncio.create_task(monitor_device(device.device_node))
+            _active_tasks.add(task)
+            task.add_done_callback(_active_tasks.discard)
 
 
 if __name__ == "__main__":
