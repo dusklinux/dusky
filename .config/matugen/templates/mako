@@ -29,6 +29,9 @@ anchor=bottom-center
 # Margin: Top, Right, Bottom, Left. Lifts the OSD off the bottom edge.
 margin=0,0,80,0
 
+# -- Typography & Formatting --
+text-alignment=center
+
 # -- Contrast Override --
 # Forces a distinct, high-contrast palette specifically for the hardware overlay
 # so text remains legible against both the background and the progress fill.
