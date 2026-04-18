@@ -1,10 +1,14 @@
-# Material You colors
+# Material You colors - Sleek Transparent Theme
 
-background-color={{colors.on_primary.default.hex}}
+# 80% opacity (cc) on the background for a frosted glass look
+background-color={{colors.on_primary.default.hex}}cc
 text-color={{colors.tertiary.default.hex}}
-border-color={{colors.tertiary_container.default.hex}}
-# Per-mode settings
+# 93% opacity (ee) on the border for a subtle edge
+border-color={{colors.tertiary_container.default.hex}}ee
+# Dynamic timeout progress bar color
+progress-color={{colors.primary.default.hex}}
 
+# Per-mode settings
 [mode=do-not-disturb]
 invisible=1
 on-notify=none
@@ -13,4 +17,6 @@ on-notify=none
 on-notify=none
 
 [urgency=high]
+# Solid, intense border and text for critical alerts
 border-color={{colors.error_container.default.hex}}
+text-color={{colors.error.default.hex}}

@@ -1,6 +1,5 @@
 # ======================================
-# ~/.config/mako/config
-# BASE DAEMON PARAMETERS
+# GLOBAL DAEMON PARAMETERS
 # ======================================
 font=monospace 10
 width=350
@@ -15,7 +14,7 @@ default-timeout=5000
 ignore-timeout=0
 max-visible=5
 layer=overlay
-anchor=top-right
+anchor=bottom-left
 sort=-time
 
 # ======================================
@@ -25,7 +24,7 @@ sort=-time
 include=~/.config/matugen/generated/mako-colors
 
 # ======================================
-# CRITERIA TIMEOUTS & BEHAVIORS
+# CRITERIA: TIMEOUTS & URGENCY
 # ======================================
 [urgency=low]
 default-timeout=3000
@@ -36,3 +35,57 @@ default-timeout=5000
 [urgency=critical]
 default-timeout=0
 ignore-timeout=1
+
+# ======================================
+# CRITERIA: AUTOMATION & BEHAVIOR
+# ======================================
+
+# 1. Mute noisy apps entirely
+[app-name=Spotify]
+invisible=1
+
+# 2. The "Scripting Bypass" for Do Not Disturb
+[mode=do-not-disturb app-name=notify-send]
+invisible=0
+
+# 3. Auto-Execute on Receipt (Example)
+# If a backup script sends a failure notice, run a recovery bash script instantly
+# Uses ~ to ensure portability across different users' machines
+[app-name=SystemBackup summary~="Failed"]
+on-notify=exec ~/.local/bin/trigger-recovery.sh
+
+# 4. Click-to-Execute (Interactive Buttons)
+# Click to dismiss the specific notification, then launch a holding Kitty window with pacman
+[summary~="Update System"]
+on-button-left=exec makoctl dismiss -n "$id" && uwsm app -- kitty --hold sudo pacman -Syu
+
+# 5. Visual Overrides for Specific Apps
+# Make screenshot thumbnails massive so you can verify what you clipped
+[app-name=grimblast]
+max-icon-size=84
+format=<b>%s</b>\n%b
+
+# ======================================
+# MATUGEN TEMPLATE REFERENCE
+# ======================================
+# If you are cloning these dotfiles, place the following template
+# into your Matugen template directory and route it to generate
+# ~/.config/matugen/generated/mako-colors
+#
+# # 80% opacity (cc) on the background for a frosted glass look
+# background-color={{colors.on_primary.default.hex}}cc
+# text-color={{colors.tertiary.default.hex}}
+# # 93% opacity (ee) on the border for a subtle edge
+# border-color={{colors.tertiary_container.default.hex}}ee
+# progress-color={{colors.primary.default.hex}}
+#
+# [mode=do-not-disturb]
+# invisible=1
+# on-notify=none
+#
+# [mode=silent]
+# on-notify=none
+#
+# [urgency=high]
+# border-color={{colors.error_container.default.hex}}
+# text-color={{colors.error.default.hex}}
