@@ -98,9 +98,9 @@ Drivers     | usbmuxd               | Socket daemon to multiplex connections to 
 Drivers     | cuda                  | NVIDIA's parallel computing architecture toolkit
 Drivers     | cudnn                 | NVIDIA CUDA Deep Neural Network library
 Hardware    | asusctl               | ASUS ROG/TUF control
-Hardware    | fcitx5                | ASUS ROG/TUF control
-Hardware    | fcitx5-gtk            | ASUS ROG/TUF control
-Hardware    | fcitx5-qt             | ASUS ROG/TUF control
+Hardware    | fcitx5                | For Non-English Keyboard charactors
+Hardware    | fcitx5-gtk            | GTK-front end For Non-English Keyboard charactors
+Hardware    | fcitx5-qt             | QT-front end For Non-English Keyboard charactors
 Hardware    | broadcom-wl-dkms      | Broadcom 802.11 Linux STA wireless driver
 Hardware    | macbook12-spi-driver-dkms | Driver for the keyboard, touchpad and touchbar found in newer MacBook (Pro) models
 "

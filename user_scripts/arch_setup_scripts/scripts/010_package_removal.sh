@@ -27,9 +27,13 @@ readonly -a REPO_TARGETS=(
   papirus-folders-git
   papirus-icon-theme-git
   swaync
+  swayosd
+  fcitx5
+  fcitx5-gtk
+  fcitx5-qt
 )
 
-# AUR Packages 
+# AUR Packages
 # (Processed seamlessly with Repo packages as they share the local pacman DB)
 readonly -a AUR_TARGETS=(
 )
