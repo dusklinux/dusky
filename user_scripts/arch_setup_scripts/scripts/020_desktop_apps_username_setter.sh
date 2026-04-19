@@ -100,6 +100,7 @@ readonly TARGET_FILES=(
     "sysbench_benchmark.desktop"
     "tailscale_setup.desktop"
     "tailscale_uninstall.desktop"
+    "mako_tui.desktop"
     "update_dusky.desktop"
     "warp.desktop"
     "wayclick.desktop"
