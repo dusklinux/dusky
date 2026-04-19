@@ -129,22 +129,6 @@ window#waybar > box {
   border: 1px solid @primary;
 }
 
-#custom-updates.updated {
-  color: alpha(@secondary, 0.6);
-}
-
-#custom-updates.pending {
-  color: @secondary;
-  background-color: alpha(@tertiary_container, 0.3);
-  border: 1px solid alpha(@tertiary, 0.3);
-}
-
-#custom-updates.critical {
-  color: @error;
-  background-color: alpha(@error_container, 0.3);
-  border: 1px solid alpha(@error, 0.5);
-}
-
 /* ─────────────────────────────────────────────────────────────────────────────
    NOTIFICATIONS
    ───────────────────────────────────────────────────────────────────────────── */
