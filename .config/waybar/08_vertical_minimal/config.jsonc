@@ -26,7 +26,6 @@
     
     "modules-right": [
         //"custom/network",
-        "custom/updates",
         "pulseaudio",
         "battery",
         "custom/power"
@@ -106,15 +105,6 @@
     },
 
     // --- UPDATED MODULES WITH NUMBERS ---
-
-    "custom/updates": {
-        "format": "{}",
-        "exec": "~/user_scripts/waybar/update_counter.sh --vertical --pacman --aur --dusky",
-        "return-type": "json",
-        "interval": 7,
-        "on-click": "uwsm-app -- kitty sh -c 'command -v yay >/dev/null && yay || paru'",
-        "escape": true
-    },
 
     "pulseaudio": {
         // Stacked: Icon on top, Volume % below

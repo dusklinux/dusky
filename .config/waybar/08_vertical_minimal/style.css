@@ -72,29 +72,6 @@ window#waybar {
 	border-radius: 30px;
 }
 
-/* --- UPDATES --- */
-#custom-updates {
-    background-color: @surface_container;
-    color: @on_surface;
-    border-radius: 100px;
-    margin: 3px 1px;
-    padding: 6px 0px;
-    font-size: 10px;
-    box-shadow: 0 2px 3px rgba(0, 0, 0, 0.2);
-}
-
-#custom-updates.updated {
-    color: @tertiary;
-}
-
-#custom-updates.pending {
-    color: @primary;
-}
-
-#custom-updates.critical {
-    color: @error;
-}
-
 /* --- CENTER SECTION --- */
 #workspaces {
     background-color: @surface_container_high;
