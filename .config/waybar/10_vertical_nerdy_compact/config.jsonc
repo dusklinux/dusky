@@ -42,14 +42,25 @@
             "modules": [
                 "cpu",
                 "memory",
+                "group/temp_drawer"
+            ]
+        },
+
+        "group/temp_drawer": {
+            "orientation": "inherit",
+            "drawer": {
+                "transition-duration": 300,
+                "transition-left-to-right": true
+            },
+            "modules": [
                 "temperature",
-                "custom/updates",
+                "custom/updates"
             ]
         },
 
         "group/utils": {
             "orientation": "inherit",
-            "drawer": {
+             "drawer": {
                 "transition-duration": 300,
                 "transition-left-to-right": false
             },
