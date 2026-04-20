@@ -1,6 +1,6 @@
 /*
  * ~/.config/waybar/style.css
- * Precision Vertical Layout - Width 10 (Strict) - Fixed Workspaces & Pills
+ * Precision Vertical Layout - Width 10 (Strict) - Numbered Workspaces & Adaptive Network
  */
 
 @import url("../../.config/matugen/generated/waybar-colors.css");
@@ -65,7 +65,6 @@ box#group-media, box#group-hardware, box#group-utils, box#group-connections, box
     padding: 0px;
     margin: 3px 0px; 
     background-color: transparent;
-    color: @on_surface_variant;
     transition: all 0.2s ease-in-out;
 }
 
@@ -73,7 +72,7 @@ box#group-media, box#group-hardware, box#group-utils, box#group-connections, box
  * MODULE SPECIFIC
  * =================================================================== */
 
-/* --- Workspaces: Vertical Pills --- */
+/* --- Workspaces: Vertical Numbers --- */
 #workspaces {
     margin: 0px 0;
     background: transparent;
@@ -81,32 +80,29 @@ box#group-media, box#group-hardware, box#group-utils, box#group-connections, box
 }
 
 #workspaces button {
-    padding: 0px;
-    margin: 9px 8px 3px 9px;
-    background-color: alpha(@secondary, 0.5); 
-    border-radius: 12px;
-    color: transparent;
+    padding: 2px 0px;
+    margin: 2px 0px;
+    background-color: transparent;
+    color: @on_surface_variant;
     transition: all 0.2s ease-in-out;
 }
 
 #workspaces button.empty {
-    padding: 0px;
-    margin: 9px 8px 3px 9px;
-    min-height: 8px;
-    min-width: 6px;
-    background-color: alpha(@outline, 0.2); 
-    color: transparent;
+    color: alpha(@on_surface, 0.3); 
+    background-color: transparent;
     box-shadow: none;
 }
 
 #workspaces button.active {
-    min-height: 24px;
-    background-color: @primary;
-    box-shadow: 0 0 4px alpha(@primary, 0.4);
+    background-color: alpha(@primary, 0.15);
+    color: @primary;
+    border-radius: 4px;
+    font-weight: 900;
 }
 
 #workspaces button.urgent {
-    background-color: @error;
+    color: @error;
+    background-color: alpha(@error, 0.15);
 }
 
 /* --- Clock and Bottom Gap Control --- */
@@ -114,7 +110,7 @@ box#group-media, box#group-hardware, box#group-utils, box#group-connections, box
     font-weight: 900;
     background-color: @surface_container_highest; 
     border-radius: 6px;
-    color: @on_surface;
+    color: @primary;
     padding: 4px 0px;
     margin-top: 3px;
     margin-bottom: 0px; 
@@ -126,60 +122,67 @@ box#group-bottom {
     margin-top: 2px; 
 }
 
-/* --- Hardware Group --- */
+/* --- Hardware Group (Tertiary Color Map) --- */
 #cpu, #memory, #temperature {
-    color: @primary;
+    color: @tertiary;
     font-weight: bold;
 }
 
-/* --- Battery --- */
-#battery {
-    font-weight: 700;
-    color: @primary;
-}
-#battery.charging, #battery.plugged { color: @tertiary; }
-#battery.warning { color: @error; animation: blink-critical 1s infinite alternate; }
-#battery.critical { color: @error_container; }
-
-/* --- Interactive Elements --- */
+/* --- Interactive Elements (Secondary Color Map) --- */
 #pulseaudio, #backlight {
-    color: @primary;
+    color: @secondary;
     font-weight: bold;
 }
 #pulseaudio.muted { color: @error; }
 
-/* --- Custom Modules --- */
-#custom-power {
-    color: @error;
-    font-size: 12px;
+/* --- Battery --- */
+#battery {
+    font-weight: 700;
+    color: @secondary;
 }
+#battery.charging, #battery.plugged { color: @primary; }
+#battery.warning { color: @error; animation: blink-critical 1s infinite alternate; }
+#battery.critical { color: @error_container; }
 
-#custom-updates {
-    color: @tertiary;
-    font-weight: bold;
-}
-
-#custom-theme { color: @tertiary; }
+/* --- NETWORK METER DYNAMIC CLASSES --- */
 #custom-network {
     font-size: 9px;
-    color: @primary;
+    transition: color 0.1s ease-in-out, text-shadow 0.1s ease-in-out;
+}
+/* Subtle when idling or browsing lightly */
+#custom-network.network-kb { 
+    color: @secondary; 
     font-weight: bold;
 }
-
-#custom-audiorouter.active { color: @primary; }
-#custom-audiorouter.inactive { color: @surface_container_highest; }
-
-#custom-cava {
-    color: @tertiary;
+/* Glowing Alert State when pulling massive bandwidth */
+#custom-network.network-mb { 
+    color: @primary; 
+    font-weight: 900;
+    text-shadow: 0 0 5px alpha(@primary, 0.7);
+}
+/* Absolute disconnect */
+#custom-network.network-disconnected { 
+    color: @error; 
 }
 
+/* --- Other Custom Modules --- */
+#bluetooth { color: @secondary; }
+#custom-power { color: @error; font-size: 12px; }
+#custom-updates { color: @tertiary; font-weight: bold; }
+#custom-theme { color: @secondary; }
+#custom-notification, #custom-inhibit-suspend, #custom-app-tray { color: @on_surface_variant; }
+#custom-audiorouter.active { color: @primary; }
+#custom-audiorouter.inactive { color: @surface_container_highest; }
+#custom-cava { color: @tertiary; }
+
+/* --- Unified Hover States --- */
 #battery:hover, #clock:hover, #cpu:hover, #memory:hover, #temperature:hover,
 #pulseaudio:hover, #backlight:hover, #bluetooth:hover, #custom-network:hover,
 #custom-theme:hover, #custom-power:hover, #custom-notification:hover,
 #custom-audiorouter:hover, #custom-app-tray:hover, #custom-cava:hover,
 #custom-updates:hover {
     color: @primary;
-    text-shadow: 0 0 3px alpha(@primary, 0.4);
+    text-shadow: 0 0 4px alpha(@primary, 0.5);
 }
 
 /* ===================================================================

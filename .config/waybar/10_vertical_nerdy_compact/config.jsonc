@@ -73,7 +73,7 @@
         },
 
         "group/connections": {
-            "orientation": "inherit",
+             "orientation": "inherit",
             "modules": [
                 "custom/network",
                 "bluetooth"
@@ -82,7 +82,7 @@
 
         "group/bottom": {
             "orientation": "inherit",
-            "drawer": {
+             "drawer": {
                 "transition-duration": 300,
                 "transition-left-to-right": false
             },
@@ -97,7 +97,7 @@
             "on-click": "activate",
             "all-outputs": true,
             "sort-by-number": true,
-            "format": " ",
+            "format": "{id}",
             "persistent-workspaces": {
                  "*": 4
             },
@@ -278,7 +278,7 @@
             "justify": "center",
             "align": 0.5,
             "format": "{}",
-            "exec": "if pgrep -x 'hypridle' > /dev/null;\nthen echo '{\"text\": \"󰌾\", \"tooltip\": \"Suspend is enabled. Click to disable.\", \"class\": \"enabled\"}';\nelse echo '{\"text\": \"\", \"tooltip\": \"Suspend is disabled. Click to enable.\", \"class\": \"disabled\"}';\nfi",
+            "exec": "if pgrep -x 'hypridle' > /dev/null;\nthen echo '{\"text\": \"󰌾\", \"tooltip\": \"Suspend is enabled.\\nClick to disable.\", \"class\": \"enabled\"}';\nelse echo '{\"text\": \"\", \"tooltip\": \"Suspend is disabled.\\nClick to enable.\", \"class\": \"disabled\"}';\nfi",
             "return-type": "json",
             "interval": 5,
             "signal": 9,
