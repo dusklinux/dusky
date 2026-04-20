@@ -63,7 +63,7 @@ box#group-media, box#group-hardware, box#group-utils, box#group-connections, box
 #custom-theme, #custom-power, #custom-notification, #custom-inhibit-suspend,
 #custom-app-tray, #custom-network, #custom-audiorouter, #custom-cava {
     padding: 0px;
-    margin: 3px 0px; /* Locked to rigid 0px geometry to appease GTK and force natural centering */
+    margin: 3px 0px; 
     background-color: transparent;
     color: @on_surface_variant;
     transition: all 0.2s ease-in-out;
@@ -170,7 +170,7 @@ box#group-bottom {
 #custom-audiorouter.inactive { color: @surface_container_highest; }
 
 #custom-cava {
-    color: @tertiary; /* Matugen tertiary color for visual pop */
+    color: @tertiary;
 }
 
 #battery:hover, #clock:hover, #cpu:hover, #memory:hover, #temperature:hover,

@@ -106,6 +106,8 @@
         },
 
         "battery": {
+            "justify": "center",
+            "align": 0.5,
             "format": "{icon}\n{capacity}\n{power:.0f}W",
             "format-charging": "\n+{capacity}\n{power:.0f}W",
             "format-plugged": "\n{capacity}",
@@ -121,6 +123,8 @@
         },
 
         "pulseaudio":{
+            "justify": "center",
+            "align": 0.5,
             "format": "{icon}\n{volume}",
             "format-muted": "󰖁",
             "on-click": "uwsm-app -- pavucontrol",
@@ -133,6 +137,8 @@
         },
 
         "backlight": {
+            "justify": "center",
+            "align": 0.5,
             "device": "intel_backlight",
             "format": "{icon}\n{percent}",
             "format-icons": ["","","","","","","","","","","","","","",""],
@@ -148,6 +154,8 @@
         },
 
         "cpu": {
+            "justify": "center",
+            "align": 0.5,
             "format": "\n{usage}",
             "tooltip": true,
             "on-click": "uwsm-app -- kitty --class htop -e htop",
@@ -157,6 +165,8 @@
         },
 
         "memory": {
+            "justify": "center",
+            "align": 0.5,
             "format": "\n{percentage}",
             "interval": 2,
             "on-click": "uwsm-app -- kitty --class io_monitor.sh -e \"$HOME/user_scripts/drives/io_monitor.sh\"",
@@ -168,6 +178,8 @@
         },
 
         "temperature": {
+            "justify": "center",
+            "align": 0.5,
             "thermal-zone": 6, 
             "critical-threshold": 65,
             "format-critical": "🔥\n{temperatureC}",
@@ -177,6 +189,8 @@
         },
 
         "bluetooth": {
+            "justify": "center",
+            "align": 0.5,
             "format": "",
             "format-disabled": "󰂲",
             "format-connected": "",
@@ -186,6 +200,8 @@
         },
 
         "clock": {
+            "justify": "center",
+            "align": 0.5,
             "format": "{:%I\n%M}",
             "tooltip-format": "<big>{:%A, %d %B}</big>\n<tt><small>{calendar}</small></tt>",
             "interval": 60,
@@ -213,6 +229,8 @@
         },
 
         "custom/audiorouter": {
+            "justify": "center",
+            "align": 0.5,
             "format": "{}",
             "return-type": "json",
             "interval": 2,
@@ -221,6 +239,8 @@
         },
 
         "custom/network": {
+            "justify": "center",
+            "align": 0.5,
             "return-type": "json",
             "tooltip": true,
             "tooltip-format": "LMB: wifitui\nRMB: WiFi ON\nMMB: WiFi OFF",
@@ -232,6 +252,8 @@
         },
 
         "custom/updates": {
+            "justify": "center",
+            "align": 0.5,
             "exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_v 2>/dev/null",
             "return-type": "json",
             "format": "{}",
@@ -239,6 +261,8 @@
         },
 
         "custom/notification": {
+            "justify": "center",
+            "align": 0.5,
             "tooltip-format": "Left: Notifications\nRight: Do not disturb",
             "format": "{}",
             "return-type": "json",
@@ -251,8 +275,10 @@
         },
 
         "custom/inhibit-suspend": {
+            "justify": "center",
+            "align": 0.5,
             "format": "{}",
-            "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰌾\", \"tooltip\": \"Suspend is enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"\", \"tooltip\": \"Suspend is disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
+            "exec": "if pgrep -x 'hypridle' > /dev/null;\nthen echo '{\"text\": \"󰌾\", \"tooltip\": \"Suspend is enabled. Click to disable.\", \"class\": \"enabled\"}';\nelse echo '{\"text\": \"\", \"tooltip\": \"Suspend is disabled. Click to enable.\", \"class\": \"disabled\"}';\nfi",
             "return-type": "json",
             "interval": 5,
             "signal": 9,
@@ -261,6 +287,8 @@
         },
 
         "custom/theme": {
+            "justify": "center",
+            "align": 0.5,
             "format": "",
             "tooltip": true,
             "tooltip-format": "Switch wallpapers\nLMB: Dark Mode\nRMB: Light Mode\nMMB: Waypaper",
@@ -270,12 +298,16 @@
         },
 
         "custom/app-tray": {
+            "justify": "center",
+            "align": 0.5,
             "format": "",
             "tooltip-format": "Open Terminal App Tray!",
             "on-click": "uwsm-app -- kitty --class tray-tui -e tray-tui"
         },
 
         "custom/power": {
+            "justify": "center",
+            "align": 0.5,
             "format": "",
             "tooltip": true,
             "tooltip-format": "Power Menu",
@@ -283,6 +315,8 @@
         },
 
         "custom/cava": {
+            "justify": "center",
+            "align": 0.5,
             "format": "{}",
             "return-type": "json",
             "exec": "$HOME/user_scripts/waybar/cava.sh --vert --bars 6 --clean",
