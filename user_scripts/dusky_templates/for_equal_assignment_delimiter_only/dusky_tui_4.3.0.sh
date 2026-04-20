@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Dusky TUI Engine - Master v4.1.1
-# -----------------------------------------------------------------------------
+# Dusky TUI Engine - Master v4.3.0
+# Features: Block Parsing, Picker View, Text Entry, Tab State, Sudo Gateway
 # Target: Arch Linux / Hyprland / UWSM / Wayland
 # -----------------------------------------------------------------------------
 
@@ -12,10 +12,9 @@ shopt -s extglob
 # ▼ USER CONFIGURATION (EDIT THIS SECTION) ▼
 # =============================================================================
 
-# POINT THIS TO YOUR REAL CONFIG FILE
 declare -r CONFIG_FILE="${HOME}/.config/hypr/change_me.conf"
 declare -r APP_TITLE="Input Config Editor"
-declare -r APP_VERSION="v4.1.1 (Stable)"
+declare -r APP_VERSION="v4.3.0 (Master)"
 
 # Dimensions & Layout
 declare -ri MAX_DISPLAY_ROWS=14
@@ -29,14 +28,6 @@ declare -ri ITEM_START_ROW=$(( HEADER_ROWS + 1 ))
 
 declare -ra TABS=("General" "Input" "Display" "Misc")
 
-# Item Registration
-# Config field format:
-#   'key|type|block|min|max|step'
-#
-# Block semantics are exact scope paths:
-#   ''                 = top-level key
-#   'general'          = key inside general { ... }
-#   'input/touchpad'   = key inside input { touchpad { ... } }
 register_items() {
     # Tab 0: General
     register 0 "Enable Logs"    'logs_enabled|bool|general|||'          "true"
@@ -59,11 +50,57 @@ register_items() {
     register_child "advanced_settings" "Tap to Click"    'tap-to-click|bool|input/touchpad|||'            "true"
 
     register 3 "Shadow Color"   'col.shadow|cycle|general|0xee1a1a1a,0xff000000||' "0xee1a1a1a"
+
+    # --- ADVANCED ACTION EXAMPLES ---
+    register 3 "Custom Path (Text Entry)"   'demo_text|action||||' ""
+    register 3 "Select Theme (Picker)"      'demo_picker|action||||' ""
+    register 3 "Restart Systemd (Sudo)"     'demo_sudo|action||||' ""
 }
 
-# Post-Write Hook
+# --- Action Event Handlers ---
+
+action_demo_text() {
+    local input=""
+    prompt_line_input "Enter a custom file path:" input
+    if [[ -n "$input" ]]; then
+        set_status "You typed: $input"
+    else
+        clear_status
+    fi
+}
+
+action_demo_picker() {
+    PICKER_TITLE="Select a Workspace Theme"
+    PICKER_ITEMS=("Catppuccin Mocha" "Nord" "Dracula" "Gruvbox" "Tokyo Night")
+    PICKER_HINTS=("Warm & Pastel" "Arctic Cold" "Vampire Dark" "Retro Groove" "Neon Lights")
+    PICKER_CALLBACK="picker_cb_demo_theme"
+    PICKER_SELECTED=0
+    PICKER_SCROLL=0
+    
+    PARENT_ROW=$SELECTED_ROW
+    PARENT_SCROLL=$SCROLL_OFFSET
+    CURRENT_VIEW=2
+    clear_status
+}
+
+picker_cb_demo_theme() {
+    local selected="$1"
+    set_status "Selected Theme: $selected"
+}
+
+action_demo_sudo() {
+    if ! sudo -n true 2>/dev/null; then
+        if ! acquire_sudo; then
+            return 0
+        fi
+    fi
+    # If we got here, we have root privileges.
+    # sudo systemctl restart some-service.service
+    set_status "Sudo acquired! Service restart simulated."
+}
+
 post_write_action() {
-    : # Reload command here
+    : # Hook for automatic reloading
 }
 
 # =============================================================================
@@ -107,12 +144,32 @@ declare -a TAB_ZONES=()
 declare -i TAB_SCROLL_START=0
 declare ORIGINAL_STTY=""
 
+# Per-tab state preservation
+declare -a TAB_SAVED_ROW=()
+declare -a TAB_SAVED_SCROLL=()
+for (( _ti = 0; _ti < TAB_COUNT; _ti++ )); do
+    TAB_SAVED_ROW+=("0")
+    TAB_SAVED_SCROLL+=("0")
+done
+unset _ti
+
 # View State
-declare -i CURRENT_VIEW=0      # 0=Main List, 1=Detail/Sub-Page
-declare CURRENT_MENU_ID=""     # ID of the currently open menu
-declare -i PARENT_ROW=0        # Saved row to return to
-declare -i PARENT_SCROLL=0     # Saved scroll to return to
-declare -gi RESIZE_PENDING=0   # SIGWINCH flag
+declare -i CURRENT_VIEW=0
+declare CURRENT_MENU_ID=""
+declare -i PARENT_ROW=0
+declare -i PARENT_SCROLL=0
+declare -gi RESIZE_PENDING=0
+
+# Picker View State
+declare PICKER_TITLE=""
+declare -a PICKER_ITEMS=()
+declare -a PICKER_HINTS=()
+declare PICKER_CALLBACK=""
+declare -i PICKER_SELECTED=0
+declare -i PICKER_SCROLL=0
+
+# Sudo credential state
+declare -i SUDO_AUTHENTICATED=0
 
 # Temp file globals
 declare _TMPFILE=""
@@ -129,17 +186,16 @@ declare -ri MIN_TERM_ROWS=$(( HEADER_ROWS + MAX_DISPLAY_ROWS + 5 ))
 declare -gi LAST_WRITE_CHANGED=0
 declare STATUS_MESSAGE=""
 
-# --- Click Zones for Arrows ---
+# Click Zones
 declare LEFT_ARROW_ZONE=""
 declare RIGHT_ARROW_ZONE=""
 
-# --- Data Structures ---
+# Data Structures
 declare -A ITEM_MAP=()
 declare -A VALUE_CACHE=()
 declare -A CONFIG_CACHE=()
 declare -A DEFAULTS=()
 
-# Initialize Tab arrays
 for (( _ti = 0; _ti < TAB_COUNT; _ti++ )); do
     declare -ga "TAB_ITEMS_${_ti}=()"
 done
@@ -175,6 +231,43 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# ── Sudo Credential Gateway ──
+acquire_sudo() {
+    if sudo -n true 2>/dev/null; then
+        SUDO_AUTHENTICATED=1
+        return 0
+    fi
+
+    # Temporarily exit TUI mode
+    printf '%s%s%s' "$MOUSE_OFF" "$CURSOR_SHOW" "$C_RESET" 2>/dev/null || :
+    if [[ -n "${ORIGINAL_STTY:-}" ]]; then
+        stty "$ORIGINAL_STTY" 2>/dev/null || :
+    fi
+
+    printf '%s%s' "$CLR_SCREEN" "$CURSOR_HOME"
+    printf '\n'
+    printf '  %s┌────────────────────────────────────────────────┐%s\n' "$C_MAGENTA" "$C_RESET"
+    printf '  %s│%s  System operation requires administrator access  %s│%s\n' "$C_MAGENTA" "$C_YELLOW" "$C_MAGENTA" "$C_RESET"
+    printf '  %s└────────────────────────────────────────────────┘%s\n' "$C_MAGENTA" "$C_RESET"
+    printf '\n'
+
+    local -i result=0
+    sudo -v 2>/dev/null || result=$?
+
+    # Re-enter TUI mode
+    stty -icanon -echo min 1 time 0 2>/dev/null
+    printf '%s%s%s%s' "$MOUSE_ON" "$CURSOR_HIDE" "$CLR_SCREEN" "$CURSOR_HOME"
+
+    if (( result == 0 )); then
+        SUDO_AUTHENTICATED=1
+        set_status "Authentication successful."
+        return 0
+    else
+        set_status "Authentication failed or cancelled."
+        return 1
+    fi
+}
 
 resolve_write_target() {
     WRITE_TARGET=$(realpath -e -- "$CONFIG_FILE")
@@ -229,7 +322,15 @@ draw_small_terminal_notice() {
     printf '%sResize the terminal, then continue. Press q to quit.%s%s' "$C_CYAN" "$C_RESET" "$CLR_EOS"
 }
 
-# --- String Helpers ---
+get_active_context() {
+    if (( CURRENT_VIEW == 0 )); then
+        REPLY_CTX="${CURRENT_TAB}"
+        REPLY_REF="TAB_ITEMS_${CURRENT_TAB}"
+    else
+        REPLY_CTX="${CURRENT_MENU_ID}"
+        REPLY_REF="SUBMENU_ITEMS_${CURRENT_MENU_ID}"
+    fi
+}
 
 strip_ansi() {
     local v="$1"
@@ -261,7 +362,7 @@ register() {
     fi
 
     case "$type" in
-        bool|int|float|cycle|menu) ;;
+        bool|int|float|cycle|menu|action) ;;
         *) log_err "Invalid type for '${label}': ${type}"; exit 1 ;;
     esac
 
@@ -336,7 +437,7 @@ register_child() {
     fi
 
     case "$type" in
-        bool|int|float|cycle) ;;
+        bool|int|float|cycle|action) ;;
         menu)
             log_err "Register Error: Nested menus are not supported for '${label}'."
             exit 1
@@ -388,9 +489,6 @@ populate_config_cache() {
     local awk_out
     local -i awk_rc=0
 
-    # SURGICAL PATCH v4.1.1: 
-    # Use non-printable ASCII Unit Separator (\x1F) to guarantee flawless parsing
-    # regardless of target config architecture.
     awk_out=$(LC_ALL=C awk '
         function trim(s) {
             sub(/^[[:space:]]+/, "", s)
@@ -493,7 +591,6 @@ populate_config_cache() {
         exit 1
     fi
 
-    # Read strictly via the non-printable delimiter
     while IFS=$'\x1F' read -r key_part value_part; do
         [[ -n "${key_part:-}" ]] || continue
         CONFIG_CACHE["$key_part"]="$value_part"
@@ -728,7 +825,7 @@ write_value_to_file() {
         _TMPMODE=""
         set_status "Refusing empty write."
         return 1
-    fi
+    }
 
     commit_tmpfile || {
         rm -f -- "$_TMPFILE" 2>/dev/null || :
@@ -836,7 +933,7 @@ modify_value() {
             idx=$(( (idx + direction + count) % count ))
             new_val="${opts[idx]}"
             ;;
-        menu) return 0 ;;
+        menu|action) return 0 ;;
         *) return 0 ;;
     esac
 
@@ -866,20 +963,25 @@ reset_defaults() {
     local REPLY_REF REPLY_CTX
     get_active_context
     local -n _rd_items_ref="$REPLY_REF"
-    local item def_val
+    local item def_val type
     local -i any_written=0 any_failed=0
 
     for item in "${_rd_items_ref[@]}"; do
+        IFS='|' read -r _ type _ _ _ _ <<< "${ITEM_MAP["${REPLY_CTX}::${item}"]}"
+        case "$type" in
+            menu|action) continue ;;
+        esac
+        
         def_val="${DEFAULTS["${REPLY_CTX}::${item}"]:-}"
-    if [[ -n "$def_val" ]]; then
-        if set_absolute_value "$item" "$def_val"; then
-            if (( LAST_WRITE_CHANGED )); then
-                any_written=1
+        if [[ -n "$def_val" ]]; then
+            if set_absolute_value "$item" "$def_val"; then
+                if (( LAST_WRITE_CHANGED )); then
+                    any_written=1
+                fi
+            else
+                any_failed=1
             fi
-        else
-            any_failed=1
         fi
-    fi
     done
 
     if (( any_written )); then
@@ -893,6 +995,38 @@ reset_defaults() {
     fi
 
     return 0
+}
+
+# --- Line input prompt ---
+
+prompt_line_input() {
+    local prompt_text="$1"
+    local __result_var="$2"
+    local input=""
+
+    printf '%s%s' "$MOUSE_OFF" "$CURSOR_SHOW"
+    stty "$ORIGINAL_STTY" < /dev/tty 2>/dev/null || :
+
+    local -i prompt_row=$(( HEADER_ROWS + MAX_DISPLAY_ROWS + 6 ))
+    if (( prompt_row > TERM_ROWS - 1 )); then
+        prompt_row=$(( TERM_ROWS - 1 ))
+    fi
+    printf '\033[%d;1H%s' "$prompt_row" "$CLR_EOS"
+    printf '%s%s%s ' "$C_YELLOW" "$prompt_text" "$C_RESET"
+
+    if ! IFS= read -r input < /dev/tty; then
+        input=""
+    fi
+
+    if ! stty -icanon -echo min 1 time 0 < /dev/tty 2>/dev/null; then
+        :
+    fi
+    printf '%s%s%s%s' "$CURSOR_HIDE" "$MOUSE_ON" "$CLR_SCREEN" "$CURSOR_HOME"
+
+    input="${input#"${input%%[![:space:]]*}"}"
+    input="${input%"${input##*[![:space:]]}"}"
+
+    printf -v "$__result_var" '%s' "$input"
 }
 
 # --- UI Rendering Engine ---
@@ -968,6 +1102,9 @@ render_item_list() {
         case "$type" in
             menu)
                 display="${C_YELLOW}[+] Open Menu ...${C_RESET}"
+                ;;
+            action)
+                display="${C_GREEN}▶ press Enter${C_RESET}"
                 ;;
             *)
                 case "$val" in
@@ -1194,6 +1331,115 @@ draw_detail_view() {
     printf '%s' "$buf"
 }
 
+draw_picker_view() {
+    local buf="" pad_buf=""
+    local -i left_pad right_pad vis_len pad_needed
+
+    buf+="${CURSOR_HOME}"
+    buf+="${C_MAGENTA}┌${H_LINE}┐${C_RESET}${CLR_EOL}"$'\n'
+
+    local title=" PICKER "
+    local sub=" ${PICKER_TITLE} "
+    strip_ansi "$title"; local -i t_len=${#REPLY}
+    strip_ansi "$sub"; local -i s_len=${#REPLY}
+    vis_len=$(( t_len + s_len ))
+    left_pad=$(( (BOX_INNER_WIDTH - vis_len) / 2 ))
+    if (( left_pad < 0 )); then left_pad=0; fi
+    right_pad=$(( BOX_INNER_WIDTH - vis_len - left_pad ))
+    if (( right_pad < 0 )); then right_pad=0; fi
+
+    printf -v pad_buf '%*s' "$left_pad" ''
+    buf+="${C_MAGENTA}│${pad_buf}${C_YELLOW}${title}${C_GREY}${sub}${C_MAGENTA}"
+    printf -v pad_buf '%*s' "$right_pad" ''
+    buf+="${pad_buf}│${C_RESET}${CLR_EOL}"$'\n'
+
+    local breadcrumb=" « Esc to cancel"
+    strip_ansi "$breadcrumb"; local -i b_len=${#REPLY}
+    pad_needed=$(( BOX_INNER_WIDTH - b_len ))
+    if (( pad_needed < 0 )); then pad_needed=0; fi
+    printf -v pad_buf '%*s' "$pad_needed" ''
+    buf+="${C_MAGENTA}│${C_CYAN}${breadcrumb}${C_RESET}${pad_buf}${C_MAGENTA}│${C_RESET}${CLR_EOL}"$'\n'
+    buf+="${C_MAGENTA}└${H_LINE}┘${C_RESET}${CLR_EOL}"$'\n'
+
+    local -i count=${#PICKER_ITEMS[@]}
+    local -i i
+
+    if (( count == 0 )); then
+        PICKER_SELECTED=0; PICKER_SCROLL=0
+    else
+        if (( PICKER_SELECTED < 0 )); then PICKER_SELECTED=0; fi
+        if (( PICKER_SELECTED >= count )); then PICKER_SELECTED=$(( count - 1 )); fi
+        if (( PICKER_SELECTED < PICKER_SCROLL )); then PICKER_SCROLL=$PICKER_SELECTED; fi
+        if (( PICKER_SELECTED >= PICKER_SCROLL + MAX_DISPLAY_ROWS )); then
+            PICKER_SCROLL=$(( PICKER_SELECTED - MAX_DISPLAY_ROWS + 1 ))
+        fi
+        local -i max_scroll=$(( count - MAX_DISPLAY_ROWS ))
+        if (( max_scroll < 0 )); then max_scroll=0; fi
+        if (( PICKER_SCROLL > max_scroll )); then PICKER_SCROLL=$max_scroll; fi
+    fi
+
+    local -i vstart=$PICKER_SCROLL
+    local -i vend=$(( PICKER_SCROLL + MAX_DISPLAY_ROWS ))
+    if (( vend > count )); then vend=$count; fi
+
+    if (( PICKER_SCROLL > 0 )); then
+        buf+="${C_GREY}    ▲ (more above)${CLR_EOL}${C_RESET}"$'\n'
+    else
+        buf+="${CLR_EOL}"$'\n'
+    fi
+
+    local item hint padded
+    local -i max_len=$(( ITEM_PADDING - 1 ))
+    for (( i = vstart; i < vend; i++ )); do
+        item="${PICKER_ITEMS[i]}"
+        hint="${PICKER_HINTS[i]:-}"
+
+        if (( ${#item} > ITEM_PADDING )); then
+            printf -v padded "%-${max_len}s…" "${item:0:max_len}"
+        else
+            printf -v padded "%-${ITEM_PADDING}s" "$item"
+        fi
+
+        local hint_trim="$hint"
+        if (( ${#hint_trim} > 32 )); then
+            hint_trim="${hint_trim:0:31}…"
+        fi
+
+        if (( i == PICKER_SELECTED )); then
+            buf+="${C_CYAN} ➤ ${C_INVERSE}${padded}${C_RESET} ${C_GREY}${hint_trim}${C_RESET}${CLR_EOL}"$'\n'
+        else
+            buf+="    ${padded} ${C_GREY}${hint_trim}${C_RESET}${CLR_EOL}"$'\n'
+        fi
+    done
+    local -i rows_rendered=$(( vend - vstart ))
+    for (( i = rows_rendered; i < MAX_DISPLAY_ROWS; i++ )); do
+        buf+="${CLR_EOL}"$'\n'
+    done
+
+    if (( count > MAX_DISPLAY_ROWS )); then
+        local pos_info="[$(( PICKER_SELECTED + 1 ))/${count}]"
+        if (( vend < count )); then
+            buf+="${C_GREY}    ▼ (more below) ${pos_info}${CLR_EOL}${C_RESET}"$'\n'
+        else
+            buf+="${C_GREY}                   ${pos_info}${CLR_EOL}${C_RESET}"$'\n'
+        fi
+    else
+        buf+="${CLR_EOL}"$'\n'
+    fi
+
+    buf+=$'\n'"${C_CYAN} [↑/↓ j/k] Navigate  [Enter] Select  [Esc] Cancel  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
+    if [[ -n "$STATUS_MESSAGE" ]]; then
+        buf+="${C_CYAN} Status: ${C_RED}${STATUS_MESSAGE}${C_RESET}${CLR_EOL}${CLR_EOS}"
+    else
+        if (( count == 0 )); then
+            buf+="${C_CYAN} ${C_YELLOW}(no items — press Esc to go back)${C_RESET}${CLR_EOL}${CLR_EOS}"
+        else
+            buf+="${C_CYAN} ${count} item(s)${C_RESET}${CLR_EOL}${CLR_EOS}"
+        fi
+    fi
+    printf '%s' "$buf"
+}
+
 draw_ui() {
     update_terminal_size
 
@@ -1205,7 +1451,39 @@ draw_ui() {
     case $CURRENT_VIEW in
         0) draw_main_view ;;
         1) draw_detail_view ;;
+        2) draw_picker_view ;;
     esac
+}
+
+# --- Picker Helper Functions ---
+
+exit_picker() {
+    CURRENT_VIEW=0
+    SELECTED_ROW=$PARENT_ROW
+    SCROLL_OFFSET=$PARENT_SCROLL
+    PICKER_ITEMS=()
+    PICKER_HINTS=()
+    PICKER_TITLE=""
+    PICKER_CALLBACK=""
+    load_active_values
+}
+
+picker_navigate() {
+    local -i dir=$1
+    local -i count=${#PICKER_ITEMS[@]}
+    (( count == 0 )) && return 0
+    PICKER_SELECTED=$(( (PICKER_SELECTED + dir + count) % count ))
+}
+
+picker_confirm() {
+    local -i count=${#PICKER_ITEMS[@]}
+    (( count == 0 )) && { exit_picker; return; }
+    local chosen="${PICKER_ITEMS[PICKER_SELECTED]}"
+    local cb="$PICKER_CALLBACK"
+    exit_picker
+    if [[ -n "$cb" ]] && declare -F "$cb" &>/dev/null; then
+        "$cb" "$chosen"
+    fi
 }
 
 # --- Input Handling ---
@@ -1255,14 +1533,29 @@ adjust() {
     get_active_context
     local -n _adj_items_ref="$REPLY_REF"
     if (( ${#_adj_items_ref[@]} == 0 )); then return 0; fi
-    modify_value "${_adj_items_ref[SELECTED_ROW]}" "$dir"
+    
+    local label="${_adj_items_ref[SELECTED_ROW]}"
+    local type
+    IFS='|' read -r _ type _ _ _ _ <<< "${ITEM_MAP["${REPLY_CTX}::${label}"]}"
+    
+    if [[ "$type" == "action" ]]; then return 0; fi
+    
+    modify_value "$label" "$dir"
 }
 
 switch_tab() {
     local -i dir=${1:-1}
+    
+    # Save State
+    TAB_SAVED_ROW[CURRENT_TAB]=$SELECTED_ROW
+    TAB_SAVED_SCROLL[CURRENT_TAB]=$SCROLL_OFFSET
+
     CURRENT_TAB=$(( (CURRENT_TAB + dir + TAB_COUNT) % TAB_COUNT ))
-    SELECTED_ROW=0
-    SCROLL_OFFSET=0
+
+    # Restore State
+    SELECTED_ROW=${TAB_SAVED_ROW[CURRENT_TAB]:-0}
+    SCROLL_OFFSET=${TAB_SAVED_SCROLL[CURRENT_TAB]:-0}
+
     load_active_values
     clear_status
 }
@@ -1270,34 +1563,54 @@ switch_tab() {
 set_tab() {
     local -i idx=$1
     if (( idx != CURRENT_TAB && idx >= 0 && idx < TAB_COUNT )); then
+        
+        # Save State
+        TAB_SAVED_ROW[CURRENT_TAB]=$SELECTED_ROW
+        TAB_SAVED_SCROLL[CURRENT_TAB]=$SCROLL_OFFSET
+
         CURRENT_TAB=$idx
-        SELECTED_ROW=0
-        SCROLL_OFFSET=0
+
+        # Restore State
+        SELECTED_ROW=${TAB_SAVED_ROW[CURRENT_TAB]:-0}
+        SCROLL_OFFSET=${TAB_SAVED_SCROLL[CURRENT_TAB]:-0}
+
         load_active_values
         clear_status
     fi
 }
 
-check_drilldown() {
-    local -n _dd_items_ref="TAB_ITEMS_${CURRENT_TAB}"
-    if (( ${#_dd_items_ref[@]} == 0 )); then return 1; fi
+activate_item() {
+    local REPLY_REF REPLY_CTX
+    get_active_context
+    local -n _act_ref="$REPLY_REF"
+    if (( ${#_act_ref[@]} == 0 )); then return 1; fi
 
-    local item="${_dd_items_ref[SELECTED_ROW]}"
-    local config="${ITEM_MAP["${CURRENT_TAB}::${item}"]}"
+    local item="${_act_ref[SELECTED_ROW]}"
+    local config="${ITEM_MAP["${REPLY_CTX}::${item}"]}"
     local key type
     IFS='|' read -r key type _ _ _ _ <<< "$config"
 
-    if [[ "$type" == "menu" ]]; then
-        PARENT_ROW=$SELECTED_ROW
-        PARENT_SCROLL=$SCROLL_OFFSET
-
-        CURRENT_MENU_ID="$key"
-        CURRENT_VIEW=1
-        SELECTED_ROW=0
-        SCROLL_OFFSET=0
-        load_active_values
-        return 0
-    fi
+    case "$type" in
+        menu)
+            PARENT_ROW=$SELECTED_ROW
+            PARENT_SCROLL=$SCROLL_OFFSET
+            CURRENT_MENU_ID="$key"
+            CURRENT_VIEW=1
+            SELECTED_ROW=0
+            SCROLL_OFFSET=0
+            load_active_values
+            return 0
+            ;;
+        action)
+            if declare -F "action_${key}" &>/dev/null; then
+                "action_${key}"
+                load_active_values
+            else
+                set_status "No handler defined for action: ${key}"
+            fi
+            return 0
+            ;;
+    esac
     return 1
 }
 
@@ -1331,11 +1644,9 @@ handle_mouse() {
     x=$field2
     y=$field3
 
-    # Wheel events (button codes 64/65) — handle before motion filter
     if (( button == 64 )); then navigate -1; return 0; fi
     if (( button == 65 )); then navigate 1; return 0; fi
 
-    # Ignore button releases entirely
     if [[ "$terminator" != "M" ]]; then return 0; fi
 
     if (( y == TAB_ROW )); then
@@ -1369,7 +1680,6 @@ handle_mouse() {
                 fi
             done
         else
-            # Detail view: only left-click on TAB_ROW navigates back
             if (( button == 0 )); then
                 go_back
             fi
@@ -1396,14 +1706,50 @@ handle_mouse() {
             if (( x > ADJUST_THRESHOLD )); then
                 if (( button == 0 )); then
                     if (( CURRENT_VIEW == 0 )); then
-                        check_drilldown || adjust 1
+                        activate_item || adjust 1
                     else
-                        adjust 1
+                        activate_item || adjust 1
                     fi
                 elif (( button == 2 )); then
                     adjust -1
                 fi
-                # Middle-click (button 1) is intentionally ignored
+            fi
+        fi
+    fi
+    return 0
+}
+
+handle_mouse_picker() {
+    local input="$1"
+    local -i button x y
+
+    local body="${input#'[<'}"
+    if [[ "$body" == "$input" ]]; then return 0; fi
+
+    local terminator="${body: -1}"
+    if [[ "$terminator" != "M" && "$terminator" != "m" ]]; then return 0; fi
+    body="${body%[Mm]}"
+
+    local field1 field2 field3
+    IFS=';' read -r field1 field2 field3 <<< "$body"
+    if [[ ! "$field1" =~ ^[0-9]+$ ]]; then return 0; fi
+    if [[ ! "$field2" =~ ^[0-9]+$ ]]; then return 0; fi
+    if [[ ! "$field3" =~ ^[0-9]+$ ]]; then return 0; fi
+    button=$field1; x=$field2; y=$field3
+
+    if (( button == 64 )); then picker_navigate -1; return 0; fi
+    if (( button == 65 )); then picker_navigate 1; return 0; fi
+
+    if [[ "$terminator" != "M" ]]; then return 0; fi
+
+    local -i effective_start=$(( ITEM_START_ROW + 1 ))
+    if (( y >= effective_start && y < effective_start + MAX_DISPLAY_ROWS )); then
+        local -i clicked_idx=$(( y - effective_start + PICKER_SCROLL ))
+        local -i count=${#PICKER_ITEMS[@]}
+        if (( clicked_idx >= 0 && clicked_idx < count )); then
+            PICKER_SELECTED=$clicked_idx
+            if (( button == 0 )); then
+                picker_confirm
             fi
         fi
     fi
@@ -1456,7 +1802,7 @@ handle_key_main() {
         G)                 navigate_end 1 ;;
         $'\t')             switch_tab 1 ;;
         r|R)               reset_defaults ;;
-        ''|$'\n')          check_drilldown || adjust 1 ;;
+        ''|$'\n')          activate_item || adjust 1 ;;
         $'\x7f'|$'\x08'|$'\e\n') adjust -1 ;;
         q|Q|$'\x03')       exit 0 ;;
     esac
@@ -1487,8 +1833,32 @@ handle_key_detail() {
         g)                 navigate_end 0 ;;
         G)                 navigate_end 1 ;;
         r|R)               reset_defaults ;;
-        ''|$'\n')          adjust 1 ;;
+        ''|$'\n')          activate_item || adjust 1 ;;
         $'\x7f'|$'\x08'|$'\e\n') adjust -1 ;;
+        q|Q|$'\x03')       exit 0 ;;
+    esac
+}
+
+handle_key_picker() {
+    local key="$1"
+
+    case "$key" in
+        '[A'|'OA')           picker_navigate -1; return ;;
+        '[B'|'OB')           picker_navigate 1; return ;;
+        '[5~')               picker_navigate -$MAX_DISPLAY_ROWS; return ;;
+        '[6~')               picker_navigate $MAX_DISPLAY_ROWS; return ;;
+        '[H'|'[1~')          PICKER_SELECTED=0; return ;;
+        '[F'|'[4~')          PICKER_SELECTED=$(( ${#PICKER_ITEMS[@]} - 1 )); return ;;
+        '['*'<'*[Mm])        handle_mouse_picker "$key"; return ;;
+    esac
+
+    case "$key" in
+        ESC)               exit_picker ;;
+        k|K)               picker_navigate -1 ;;
+        j|J)               picker_navigate 1 ;;
+        g)                 PICKER_SELECTED=0 ;;
+        G)                 PICKER_SELECTED=$(( ${#PICKER_ITEMS[@]} - 1 )) ;;
+        ''|$'\n')          picker_confirm ;;
         q|Q|$'\x03')       exit 0 ;;
     esac
 }
@@ -1518,6 +1888,7 @@ handle_input_router() {
     case $CURRENT_VIEW in
         0) handle_key_main "$key" ;;
         1) handle_key_detail "$key" ;;
+        2) handle_key_picker "$key" ;;
     esac
 }
 
