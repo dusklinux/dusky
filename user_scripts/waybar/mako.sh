@@ -40,6 +40,17 @@ jq -c -n \
     --arg dnd "$DND_STATE" \
     --arg mode "$MODE" '
     
+    # Helper for vertical alignment centering
+    def pad3:
+        tostring |
+        length as $l |
+        if $l >= 3 then .
+        elif $l == 2 then "\u2005" + . + "\u2005"
+        elif $l == 1 then " " + . + " "
+        else "   " end;
+
+    "󰂛" as $dnd_icon | "󰂚" as $norm_icon |
+
     # 1. Construct O(1) lookup dictionary for blacklisted IDs
     ($bl | split("\n") | map(select(length > 0)) | reduce .[] as $id ({}; .[$id] = true)) as $blacklist_dict
     
@@ -53,13 +64,13 @@ jq -c -n \
     # 3. Native JSON structural generation based on parsed arguments
     | if ($dnd != "") then
         {
-            "text": (if $mode == "vertical" then (if $count == 0 then "0\n󰂛" else "\($count)\n󰂛" end) else (if $count == 0 then "󰂛" else "󰂛 \($count)" end) end),
+            "text": (if $mode == "vertical" then ($count | pad3) + "\n" + ($dnd_icon | pad3) else (if $count == 0 then $dnd_icon else "\($dnd_icon) \($count)" end) end),
             "tooltip": "Do Not Disturb (\($count) pending)",
             "class": (if $count == 0 then "dnd" else "dnd-pending" end)
         }
       else
         {
-            "text": (if $mode == "vertical" then (if $count == 0 then "0\n󰂚" else "\($count)\n󰂚" end) else (if $count == 0 then "󰂚 0" else "󰂚 \($count)" end) end),
+            "text": (if $mode == "vertical" then ($count | pad3) + "\n" + ($norm_icon | pad3) else (if $count == 0 then "\($norm_icon) 0" else "\($norm_icon) \($count)" end) end),
             "tooltip": (if $count == 0 then "No notifications" else "\($count) pending notifications" end),
             "class": (if $count == 0 then "empty" else "pending" end)
         }
