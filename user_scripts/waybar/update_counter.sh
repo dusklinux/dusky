@@ -139,8 +139,6 @@ sanitize_count "$TMP_DIR/dsk" DSK_COUNT
 # ---------------------------------------------------------
 # Unified JSON Processing via jq
 # ---------------------------------------------------------
-# We pass the MODULE_ORDER array as a space-separated string to jq.
-# jq handles the dynamic mapping, guaranteeing visual layout matches CLI order.
 jq -c -n \
     --arg mode "$MODE" \
     --arg order "${MODULE_ORDER[*]:-}" \
@@ -151,13 +149,25 @@ jq -c -n \
     # Define strict 3-char clamping function
     def clamp: if . > 999 then 999 else . end;
     
+    # Advanced Typographic Alignment Function
+    # U+2005 (Four-per-em space) is exactly 0.5 character widths.
+    # U+0020 (Standard space) is exactly 1.0 character widths.
+    # This mathematically guarantees sub-character center alignment in GTK.
+    def pad3:
+        tostring |
+        length as $l |
+        if $l >= 3 then .
+        elif $l == 2 then "\u2005" + . + "\u2005"
+        elif $l == 1 then " " + . + " "
+        else "   " end;
+    
     "󰣇" as $pac_icon | "󰏔" as $aur_icon | "" as $dsk_icon | "󰸞" as $check_icon |
 
     ($pac_c + $aur_c + $dsk_c) as $total |
 
     if $total == 0 then
         {
-            "text": (if $mode == "vertical" then "0\n\($check_icon)" else "\($check_icon) 0" end),
+            "text": (if $mode == "vertical" then ("0" | pad3) + "\n" + ($check_icon | pad3) else "\($check_icon) 0" end),
             "tooltip": "System is completely up to date.",
             "class": "updated"
         }
@@ -174,8 +184,9 @@ jq -c -n \
         )) as $items |
 
         # Handle structural rendering based on requested axis
+        # Note: pad3 is ONLY applied vertically to preserve horizontal flow.
         (if $mode == "vertical" then
-            ($items | map("\(.c)\n\(.i)") | join("\n\n"))
+            ($items | map("\( .c | pad3 )\n\( .i | pad3 )") | join("\n\n"))
         else
             ($items | map("\(.i) \(.c)") | join("  "))
         end) as $text |
