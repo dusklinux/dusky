@@ -194,7 +194,7 @@ render_axis() {
                 elif . == "aur" and $aur_c > 0 then 
                     { c: ($aur_c | clamp), i: $aur_icon, name: "AUR", desc: "Arch User Repository Packages" }
                 elif . == "dusky" and $dsk_c > 0 then 
-                    { c: ($dsk_c | clamp), i: $dsk_icon, name: "Dusky", desc: "Custom Environment Commits" }
+                    { c: ($dsk_c | clamp), i: $dsk_icon, name: "Dusky", desc: "Dusky Github Commits" }
                 else empty end
             )) as $items |
 
