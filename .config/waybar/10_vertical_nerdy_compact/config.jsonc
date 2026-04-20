@@ -42,7 +42,8 @@
             "modules": [
                 "cpu",
                 "memory",
-                "temperature"
+                "temperature",
+                "custom/updates",
             ]
         },
 
@@ -217,6 +218,13 @@
             "on-click-middle": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
             "interval": 2, 
             "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --vertical"
+        },
+
+        "custom/updates": {
+            "exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_v 2>/dev/null",
+            "return-type": "json",
+            "format": "{}",
+            "tooltip": true
         },
 
         "custom/notification": {

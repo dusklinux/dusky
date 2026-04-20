@@ -154,6 +154,11 @@ box#group-bottom {
     font-size: 12px;
 }
 
+#custom-updates {
+    color: @tertiary;
+    font-weight: bold;
+}
+
 #custom-theme { color: @tertiary; }
 #custom-network {
     font-size: 9px;
@@ -168,10 +173,11 @@ box#group-bottom {
     color: @tertiary; /* Matugen tertiary color for visual pop */
 }
 
-#battery:hover, #clock:hover, #cpu:hover, #memory:hover, #temperature:hover, 
+#battery:hover, #clock:hover, #cpu:hover, #memory:hover, #temperature:hover,
 #pulseaudio:hover, #backlight:hover, #bluetooth:hover, #custom-network:hover,
-#custom-theme:hover, #custom-power:hover, #custom-notification:hover, 
-#custom-audiorouter:hover, #custom-app-tray:hover, #custom-cava:hover {
+#custom-theme:hover, #custom-power:hover, #custom-notification:hover,
+#custom-audiorouter:hover, #custom-app-tray:hover, #custom-cava:hover,
+#custom-updates:hover {
     color: @primary;
     text-shadow: 0 0 3px alpha(@primary, 0.4);
 }
