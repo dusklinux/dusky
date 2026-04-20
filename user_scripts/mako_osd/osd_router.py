@@ -3,7 +3,6 @@ import os
 import asyncio
 import logging
 import pyudev
-import time
 from typing import Set
 from evdev import InputDevice, ecodes
 
@@ -20,17 +19,6 @@ IGNORE_RAW_CAPSLOCK = False
 _active_tasks: Set[asyncio.Task] = set()
 _monitored_devices: Set[str] = set()
 _active_actions: Set[str] = set()
-
-# --- Global State Tracking & Startup Grace Period ---
-# Deduplicates EV_LED sync broadcasts from Wayland compositors and 
-# absorbs the initial boot/enumeration storm without spamming the OSD.
-_led_states = {
-    ecodes.LED_CAPSL: None,
-    ecodes.LED_NUML: None
-}
-_DAEMON_START_TIME = time.monotonic()
-_STARTUP_GRACE_PERIOD = 2.0  # seconds
-# ----------------------------------------------------
 
 
 async def _safe_notify(icon: str, title: str) -> None:
@@ -98,24 +86,12 @@ async def monitor_device(dev_path: str) -> None:
         async for event in device.async_read_loop():
             # 1. Handle Stateful Hardware LEDs (Lock Keys)
             if event.type == ecodes.EV_LED:
-                if event.code in _led_states:
-                    # Deduplicate: Ignore compositor sync broadcasts if state hasn't changed
-                    if _led_states[event.code] == event.value:
-                        continue
-                    
-                    # Update our internal tracker
-                    _led_states[event.code] = event.value
-                    
-                    # Absorb the initial Wayland/kernel synchronization storm silently
-                    if time.monotonic() - _DAEMON_START_TIME < _STARTUP_GRACE_PERIOD:
-                        continue
-                    
+                if event.code == ecodes.LED_CAPSL and not IGNORE_RAW_CAPSLOCK:
                     state = "ON" if event.value == 1 else "OFF"
-                    
-                    if event.code == ecodes.LED_CAPSL and not IGNORE_RAW_CAPSLOCK:
-                        dispatch_notification(f"caps-lock-{state.lower()}", f"Caps Lock: {state}")
-                    elif event.code == ecodes.LED_NUML:
-                        dispatch_notification(f"num-lock-{state.lower()}", f"Num Lock: {state}")
+                    dispatch_notification(f"caps-lock-{state.lower()}", f"Caps Lock: {state}")
+                elif event.code == ecodes.LED_NUML:
+                    state = "ON" if event.value == 1 else "OFF"
+                    dispatch_notification(f"num-lock-{state.lower()}", f"Num Lock: {state}")
             
             # 2. Handle ACPI/Hardware Keys (Keyboard Backlight)
             elif event.type == ecodes.EV_KEY and event.value in (1, 2): 
