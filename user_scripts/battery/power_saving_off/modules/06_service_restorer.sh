@@ -40,7 +40,6 @@ readonly -a TARGET_PROCESSES=(
 readonly -a TARGET_USER_SERVICES=(
     "battery_notify"
     "hypridle"
-    "swaync"
     "gvfs-daemon"
     "gvfs-metadata"
     "network_meter"

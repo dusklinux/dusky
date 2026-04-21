@@ -176,7 +176,7 @@
 	
 	"custom/notifications": {
                 "tooltip": true,
-                "tooltip-format": "Left Click: Launch SwayNC\n Right Click: Do Not Disturb",
+                "tooltip-format": "Left Click: Launch Mako\n Right Click: Do Not Disturb",
                 "format": "{icon}",
                 "format-icons": {
                 	"notification": "",
@@ -189,10 +189,11 @@
                 	"dnd-inhibited-none": ""
                 },
                 "return-type": "json",
-                "exec-if": "which swaync-client",
-                "exec": "swaync-client -swb",
-                "on-click": "sleep 0.1 && swaync-client -t -sw",
-                "on-click-right": "swaync-client -d -sw",
+                "exec-if": "which makoctl",
+                "exec": "~/user_scripts/waybar/mako.sh",
+                "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+                "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+                "signal": 8,
                 "escape": true,
                 "min-length": 3,
                 "max-length": 3,
@@ -345,9 +346,9 @@
 		"max-length": 7,
 		"on-click": "uwsm-app -- pavucontrol",
 		"on-click-right": "uwsm-app -- kitty --class cava -e cava",
-		"on-click-middle": "swayosd-client --output-volume mute-toggle",
-		"on-scroll-up": "swayosd-client --output-volume raise",
-		"on-scroll-down": "swayosd-client --output-volume lower",
+		"on-click-middle": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+		"on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
+		"on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%",
 		"tooltip-format": "<b>Output Device</b>: {desc}\n\nLMB: Pavucontrol\nRMB: Cava\nMMB: Mute Toggle\nScroll: Volume"
 	},
 
@@ -357,9 +358,9 @@
 		"format-source-muted": "󰍭 {volume}%",
 		"min-length": 7,
 		"max-length": 7,
-		"on-click": "swayosd-client --input-volume mute-toggle",
-		"on-scroll-up": "swayosd-client --input-volume raise",
-		"on-scroll-down": "swayosd-client --input-volume lower",
+		"on-click": "pactl set-source-mute @DEFAULT_SOURCE@ toggle",
+		"on-scroll-up": "pactl set-source-volume @DEFAULT_SOURCE@ +5%",
+		"on-scroll-down": "pactl set-source-volume @DEFAULT_SOURCE@ -5%",
 		"tooltip-format": "<b>Input Device</b>: {desc}"
 	},
 
@@ -372,8 +373,8 @@
 		"max-length": 7,
 		"on-click": "uwsm-app -- ~/user_scripts/sliders/dusky_sliders.py",
 		"on-click-right": "uwsm-app -- ~/user_scripts/sliders/dusky_sliders.py",
-		"on-scroll-up": "swayosd-client --brightness raise",
-		"on-scroll-down": "swayosd-client --brightness lower",
+		"on-scroll-up": "brightnessctl set +5%",
+		"on-scroll-down": "brightnessctl set 5%-",
 		"tooltip": false
 	},
 

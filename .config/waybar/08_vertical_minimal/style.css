@@ -16,7 +16,6 @@ window#waybar {
 
 /* UNIFIED CAPSULE STYLE */
 #clock,
-#custom-notification,
 #workspaces,
 #group-stats,
 #pulseaudio,
@@ -66,12 +65,6 @@ window#waybar {
     color: @error;
 }
 
-#custom-notification {
-    color: @on_surface_variant;
-	padding: 6px 4px 6px 3px;
-	border-radius: 30px;
-}
-
 /* --- CENTER SECTION --- */
 #workspaces {
     background-color: @surface_container_high;
@@ -95,7 +88,7 @@ window#waybar {
     color: @on_primary;
 }
 
-#workspaces button.urgent {;
+#workspaces button.urgent {
     background-color: @error;
     color: @on_error;
 }

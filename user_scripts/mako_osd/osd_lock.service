@@ -1,0 +1,14 @@
+[Unit]
+Description=Hardware Lock Key OSD Daemon
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+# Ensure this path matches the location of your script
+ExecStart=/usr/bin/python3 %h/user_scripts/mako_osd/osd_router.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

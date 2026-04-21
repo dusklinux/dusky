@@ -3,11 +3,14 @@
 Master Slider Widget for Hyprland (Dusky Sliders)
 Native GTK4 + Libadwaita custom card implementation.
 Tuned for current Arch Linux + Python 3.14.
+
+Includes hybrid sysfs + zero-lag async ddcutil support for external monitors.
+Features detached execution queues for decoupled, zero-latency local panel updates.
 """
 
 from __future__ import annotations
 
-import functools
+import json
 import logging
 import math
 import os
@@ -39,7 +42,6 @@ if not logging.getLogger().handlers:
 
 LOG = logging.getLogger(APP_ID)
 
-# Keep command output locale-stable so numeric parsing remains reliable.
 COMMAND_ENV = dict(os.environ)
 COMMAND_ENV["LC_ALL"] = "C"
 COMMAND_ENV["LANG"] = "C"
@@ -53,10 +55,6 @@ CONTROL_TIMEOUT = 2.0
 SUNSET_READY_TIMEOUT = 3.0
 SUNSET_FALLBACK_READY_TIMEOUT = 1.5
 LIVE_REFRESH_INTERVAL_SECONDS = 2
-
-# Prevent a freshly user-set value from being stomped by an in-flight/stale read.
-# This especially matters for brightness, where the UI can otherwise snap back
-# momentarily if a refresh races the backend update.
 BRIGHTNESS_POST_SUBMIT_REFRESH_GRACE_SECONDS = max(1.5, QUERY_TIMEOUT + 0.5)
 
 
@@ -150,66 +148,88 @@ def _resolve_state_dir() -> Path | None:
 
 
 STATE_DIR = _resolve_state_dir()
+if STATE_DIR is None:
+    LOG.warning("Could not resolve a writable state directory. Settings will not be persisted.")
+
 STATE_FILE = None if STATE_DIR is None else STATE_DIR / "hyprsunset_state.txt"
+DDCUTIL_CACHE_FILE = None if STATE_DIR is None else STATE_DIR / "ddcutil_buses.json"
 
 WPCTL = shutil.which("wpctl")
 BRIGHTNESSCTL = shutil.which("brightnessctl")
+DDCUTIL = shutil.which("ddcutil")
 HYPRCTL = shutil.which("hyprctl")
 HYPRSUNSET = shutil.which("hyprsunset")
 PGREP = shutil.which("pgrep")
 SYSTEMCTL = shutil.which("systemctl")
 
 
-@functools.cache
+# --- BACKLIGHT DISCOVERY ---
+_BACKLIGHT_DISCOVERY_TTL_SECONDS = 5.0
+_backlight_discovery_lock = threading.Lock()
+_backlight_candidates_cache: tuple[float, tuple[tuple[int, int, Path], ...]] | None = None
+
 def _sysfs_backlight_candidates() -> tuple[tuple[int, int, Path], ...]:
+    global _backlight_candidates_cache
+
+    now = time.monotonic()
+    with _backlight_discovery_lock:
+        cached = _backlight_candidates_cache
+        if cached is not None and (now - cached[0]) < _BACKLIGHT_DISCOVERY_TTL_SECONDS:
+            return cached[1]
+
     base = Path("/sys/class/backlight")
     if not base.is_dir():
-        return ()
-
-    try:
-        entries = tuple(base.iterdir())
-    except OSError:
-        return ()
-
-    candidates: list[tuple[int, int, Path]] = []
-
-    for entry in entries:
-        if not entry.is_dir():
-            continue
-
-        brightness_path = entry / "brightness"
-        max_brightness_path = entry / "max_brightness"
-        if not brightness_path.is_file() or not max_brightness_path.is_file():
-            continue
-
+        result: tuple[tuple[int, int, Path], ...] = ()
+    else:
         try:
-            max_value = int(max_brightness_path.read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            continue
+            entries = tuple(base.iterdir())
+        except OSError:
+            entries = ()
 
-        if max_value <= 0:
-            continue
+        candidates: list[tuple[int, int, Path]] = []
 
-        name = entry.name.lower()
-        priority = 0
-        if name.startswith("intel_backlight"):
-            priority = 400
-        elif name.startswith("amdgpu_bl"):
-            priority = 350
-        elif name.startswith("nvidia"):
-            priority = 300
-        elif "backlight" in name:
-            priority = 200
-        elif name.startswith("acpi_video"):
-            priority = 100
+        for entry in entries:
+            if not entry.is_dir():
+                continue
 
-        candidates.append((priority, max_value, entry))
+            brightness_path = entry / "brightness"
+            max_brightness_path = entry / "max_brightness"
+            if not brightness_path.is_file() or not max_brightness_path.is_file():
+                continue
 
-    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    return tuple(candidates)
+            try:
+                max_value = int(max_brightness_path.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                continue
+
+            if max_value <= 0:
+                continue
+
+            name = entry.name.lower()
+            priority = 0
+            if name.startswith("intel_backlight"):
+                priority = 400
+            elif name.startswith("amdgpu_bl"):
+                priority = 350
+            elif name.startswith("nvidia"):
+                priority = 300
+            elif name.startswith("ddcci"):
+                priority = 250
+            elif "backlight" in name:
+                priority = 200
+            elif name.startswith("acpi_video"):
+                priority = 100
+
+            candidates.append((priority, max_value, entry))
+
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        result = tuple(candidates)
+
+    with _backlight_discovery_lock:
+        _backlight_candidates_cache = (now, result)
+    return result
 
 
-@functools.cache
 def _best_sysfs_backlight(*, require_writable: bool = False) -> tuple[Path, Path] | None:
     for _, _, entry in _sysfs_backlight_candidates():
         brightness_path = entry / "brightness"
@@ -219,16 +239,13 @@ def _best_sysfs_backlight(*, require_writable: bool = False) -> tuple[Path, Path
             continue
 
         return brightness_path, max_brightness_path
-
     return None
 
 
-@functools.cache
 def _preferred_sysfs_backlight() -> tuple[Path, Path] | None:
     return _best_sysfs_backlight(require_writable=True) or _best_sysfs_backlight()
 
 
-@functools.cache
 def _preferred_backlight_name() -> str | None:
     sysfs_paths = _preferred_sysfs_backlight()
     if sysfs_paths is None:
@@ -254,11 +271,100 @@ def _has_hyprland_session() -> bool:
     return bool(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"))
 
 
+# Global capabilities flag encompasses both internal logic and ddcutil availability
 HAS_VOLUME = WPCTL is not None
-HAS_BRIGHTNESS = _preferred_sysfs_backlight() is not None and (
+HAS_BRIGHTNESS = (_preferred_sysfs_backlight() is not None and (
     BRIGHTNESSCTL is not None or _has_writable_sysfs_backlight()
-)
+)) or (DDCUTIL is not None)
 HAS_SUNSET = HYPRCTL is not None and HYPRSUNSET is not None and _has_hyprland_session()
+
+
+# --- DDCUTIL ASYNC BACKGROUND INTEGRATION ---
+_ddcutil_buses: list[int] = []
+_ddcutil_lock = threading.Lock()
+_ddcutil_last_known_brightness: float = 50.0
+_ddcutil_user_overridden: bool = False
+
+def _load_ddcutil_buses() -> None:
+    global _ddcutil_buses
+    if DDCUTIL_CACHE_FILE and DDCUTIL_CACHE_FILE.is_file():
+        try:
+            data = json.loads(DDCUTIL_CACHE_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                with _ddcutil_lock:
+                    _ddcutil_buses = [int(x) for x in data]
+        except Exception:
+            pass
+
+    if DDCUTIL:
+        start_daemon_thread("ddcutil-detect", _refresh_ddcutil_buses_worker)
+
+
+def _refresh_ddcutil_buses_worker() -> None:
+    if not DDCUTIL:
+        return
+    
+    # Detect displays. Using timeout=15 as some I2C buses can be sluggish.
+    result = run_command([DDCUTIL, "detect", "-t"], timeout=15.0, capture_stdout=True)
+    if not result or result.returncode != 0:
+        return
+
+    buses = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("I2C bus:"):
+            parts = line.split("i2c-")
+            if len(parts) == 2 and parts[1].isdigit():
+                buses.append(int(parts[1]))
+
+    with _ddcutil_lock:
+        _ddcutil_buses.clear()
+        _ddcutil_buses.extend(buses)
+
+    if buses:
+        # Seed initial brightness from the first valid display
+        vcp_res = run_command(
+            [DDCUTIL, "getvcp", "10", "-t", "--bus", str(buses[0])], 
+            timeout=5.0, 
+            capture_stdout=True
+        )
+        if vcp_res and vcp_res.returncode == 0:
+            parts = vcp_res.stdout.strip().split()
+            if len(parts) >= 4 and parts[3].isdigit():
+                with _ddcutil_lock:
+                    # Prevent race where a fresh user input is stomped by the delayed detection
+                    if not _ddcutil_user_overridden:
+                        global _ddcutil_last_known_brightness
+                        _ddcutil_last_known_brightness = float(parts[3])
+
+    if DDCUTIL_CACHE_FILE:
+        try:
+            DDCUTIL_CACHE_FILE.write_text(json.dumps(buses), encoding="utf-8")
+        except OSError:
+            pass
+
+
+def apply_ddcutil_brightness(value: float) -> None:
+    global _ddcutil_last_known_brightness
+    global _ddcutil_user_overridden
+    
+    with _ddcutil_lock:
+        _ddcutil_user_overridden = True
+        _ddcutil_last_known_brightness = float(int(clamp(round(value), 1, 100)))
+        buses = list(_ddcutil_buses)
+        
+    if not buses or not DDCUTIL:
+        return
+        
+    percent = int(_ddcutil_last_known_brightness)
+    
+    # Executed within a detached executor queue to prevent Head-of-Line blocking 
+    # of the microsecond-latency sysfs local panel writes.
+    for bus in buses:
+        run_command(
+            [DDCUTIL, "setvcp", "10", str(percent), "--bus", str(bus), "--noverify"], 
+            timeout=3.0
+        )
 
 
 def get_volume() -> float | None:
@@ -313,8 +419,12 @@ def _read_sysfs_brightness() -> float | None:
         return None
 
     brightness_path, max_brightness_path = sysfs_paths
+    
+    actual_path = brightness_path.with_name("actual_brightness")
+    read_path = actual_path if actual_path.is_file() else brightness_path
+
     try:
-        current = parse_float(brightness_path.read_text(encoding="utf-8"))
+        current = parse_float(read_path.read_text(encoding="utf-8"))
         maximum = parse_float(max_brightness_path.read_text(encoding="utf-8"))
     except OSError:
         return None
@@ -323,7 +433,12 @@ def _read_sysfs_brightness() -> float | None:
         return None
 
     value = clamp((current / maximum) * 100.0, 0.0, 100.0)
-    LOG.debug("Brightness read via sysfs (%s): %.3f%%", brightness_path.parent.name, value)
+    LOG.debug(
+        "Brightness read via sysfs (%s, source=%s): %.3f%%", 
+        brightness_path.parent.name, 
+        read_path.name, 
+        value
+    )
     return value
 
 
@@ -362,57 +477,51 @@ def _write_sysfs_brightness(value: float) -> bool:
 
 
 def get_brightness() -> float | None:
-    # Prefer direct sysfs reads: lower overhead, no subprocess parsing,
-    # and tied to the exact selected backlight device.
     if (value := _read_sysfs_brightness()) is not None:
         return value
 
-    if (base_cmd := _brightnessctl_command_base()) is None:
-        return None
-
-    result = run_command(
-        [*base_cmd, "-m"],
-        timeout=QUERY_TIMEOUT,
-        capture_stdout=True,
-    )
-    if result is None or result.returncode != 0:
-        return None
-
-    lines = result.stdout.splitlines()
-    if not lines:
-        return None
-
-    parts = lines[0].split(",")
-    if len(parts) < 5:
-        return None
-
-    percent_text = parts[4].rstrip("%")
-    value = parse_float(percent_text)
-    if value is None:
-        return None
-
-    value = clamp(value, 0.0, 100.0)
-    LOG.debug("Brightness read via brightnessctl: %.3f%%", value)
-    return value
-
-
-def apply_brightness(value: float) -> None:
-    brightness = int(clamp(round(value), 1, 100))
-
-    # Prefer direct sysfs writes when available for consistency and lower latency.
-    if _write_sysfs_brightness(brightness):
-        return
-
     if (base_cmd := _brightnessctl_command_base()) is not None:
+        result = run_command(
+            [*base_cmd, "-m"],
+            timeout=QUERY_TIMEOUT,
+            capture_stdout=True,
+        )
+        if result is not None and result.returncode == 0:
+            lines = result.stdout.splitlines()
+            if lines and len(parts := lines[0].split(",")) >= 5:
+                percent_text = parts[4].rstrip("%")
+                if (value := parse_float(percent_text)) is not None:
+                    value = clamp(value, 0.0, 100.0)
+                    LOG.debug("Brightness read via brightnessctl: %.3f%%", value)
+                    return value
+
+    # Desktop Fallback: If sysfs failed, check if we have DDC monitors.
+    with _ddcutil_lock:
+        has_ddc = bool(_ddcutil_buses)
+        last_known = _ddcutil_last_known_brightness
+
+    if has_ddc:
+        return last_known
+
+    return None
+
+
+def apply_local_brightness(value: float) -> None:
+    """Dedicated fast-path apply logic strictly for local sysfs/ACPI panels."""
+    brightness = int(clamp(round(value), 1, 100))
+    success = _write_sysfs_brightness(brightness)
+
+    if not success and (base_cmd := _brightnessctl_command_base()) is not None:
         result = run_command(
             [*base_cmd, "-q", "set", f"{brightness}%"],
             timeout=CONTROL_TIMEOUT,
         )
         if result is not None and result.returncode == 0:
             LOG.debug("Brightness written via brightnessctl: %s%%", brightness)
-            return
+            success = True
 
-    LOG.warning("Failed to set brightness to %s%%", brightness)
+    if not success:
+        LOG.debug("Local sysfs/brightnessctl apply failed or not applicable.")
 
 
 def get_hyprsunset_state() -> float:
@@ -517,6 +626,7 @@ class LatestValueExecutor:
         self.flush(timeout)
         with self._condition:
             self._running = False
+            self._pending = None # Drops jobs submitted during flush block
             self._condition.notify_all()
         self._thread.join(timeout=timeout)
         if self._thread.is_alive():
@@ -730,10 +840,6 @@ class HyprsunsetController:
             if proc is not None:
                 if proc.poll() is None:
                     return
-                try:
-                    proc.wait(timeout=0)
-                except subprocess.SubprocessError:
-                    pass
                 self._fallback_process = None
 
             try:
@@ -759,10 +865,14 @@ class HyprsunsetController:
         except Exception:
             LOG.exception("Unhandled exception while waiting for hyprsunset fallback")
         finally:
+            was_active_backend = False
             with self._process_lock:
                 if self._fallback_process is proc:
                     self._fallback_process = None
-            self._ready.clear()
+                    was_active_backend = True
+
+            if was_active_backend and not self._is_hyprsunset_running():
+                self._ready.clear()
 
 
 class CompactSliderRow(Gtk.Box):
@@ -1076,20 +1186,37 @@ class SliderWindow(Adw.ApplicationWindow):
 
 class SliderApp(Adw.Application):
     def __init__(self) -> None:
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
 
         self._window: SliderWindow | None = None
+        
         self._volume_executor = (
             LatestValueExecutor("volume", apply_volume) if HAS_VOLUME else None
         )
+        
+        # Fork the brightness pipeline into two Detached Queues to prevent Head-of-Line Blocking
         self._brightness_executor = (
-            LatestValueExecutor("brightness", apply_brightness) if HAS_BRIGHTNESS else None
+            LatestValueExecutor("local_brightness", apply_local_brightness) if HAS_BRIGHTNESS else None
         )
+        self._ddc_executor = (
+            LatestValueExecutor("ddc_brightness", apply_ddcutil_brightness) if DDCUTIL else None
+        )
+        
         self._sunset_controller = HyprsunsetController() if HAS_SUNSET else None
+
+    def _submit_brightness_combo(self, value: float) -> None:
+        """Dispatches payload to decoupled execution threads instantly."""
+        if self._brightness_executor is not None:
+            self._brightness_executor.submit(value)
+        if self._ddc_executor is not None:
+            self._ddc_executor.submit(value)
 
     def do_startup(self) -> None:
         Adw.Application.do_startup(self)
         self.hold()
+        
+        # Initialize async DDC monitor detection
+        _load_ddcutil_buses()
 
         if LOG.isEnabledFor(logging.DEBUG):
             if (name := _preferred_backlight_name()) is not None:
@@ -1153,7 +1280,7 @@ class SliderApp(Adw.Application):
             .value-label {
                 font-size: 14px;
                 font-weight: 700;
-                color: alpha(currentColor, 0.8);
+                opacity: 0.8;
                 font-family: "JetBrainsMono Nerd Font", monospace;
                 font-variant-numeric: tabular-nums;
             }
@@ -1171,7 +1298,7 @@ class SliderApp(Adw.Application):
         self._window = SliderWindow(
             self,
             volume_submit=self._volume_executor.submit if self._volume_executor else None,
-            brightness_submit=self._brightness_executor.submit if self._brightness_executor else None,
+            brightness_submit=self._submit_brightness_combo if HAS_BRIGHTNESS else None,
             sunset_submit=self._sunset_controller.submit if self._sunset_controller else None,
         )
         self._window.set_visible(False)
@@ -1192,6 +1319,9 @@ class SliderApp(Adw.Application):
 
         if self._brightness_executor is not None:
             self._brightness_executor.stop()
+            
+        if self._ddc_executor is not None:
+            self._ddc_executor.stop()
 
         if self._volume_executor is not None:
             self._volume_executor.stop()

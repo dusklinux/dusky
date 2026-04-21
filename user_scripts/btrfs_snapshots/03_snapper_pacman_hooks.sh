@@ -19,6 +19,8 @@ declare -A CACHE_MNT_OPTS=()
 declare -a ACTIVE_TEMP_FILES=()
 
 SUDO_PID=""
+ESP_SUFFICIENT_FOR_SYNC=true
+ESP_CAPACITY_WARN=""
 
 cleanup() {
     local f
@@ -156,13 +158,77 @@ ensure_aur_build_prereqs() {
     sudo pacman -S --needed --noconfirm "$provider"
 }
 
+check_esp_capacity() {
+    local esp_mnt esp_total_kb
+    esp_mnt="$(findmnt -n -e -o TARGET -M /boot 2>/dev/null || findmnt -n -e -o TARGET -M /efi 2>/dev/null || findmnt -n -e -o TARGET -M /boot/efi 2>/dev/null || true)"
+    if [[ -n "$esp_mnt" ]]; then
+        esp_total_kb="$(df -k "$esp_mnt" 2>/dev/null | awk 'NR==2 {print $2}' || true)"
+        if [[ -n "$esp_total_kb" ]] && [[ "$esp_total_kb" =~ ^[0-9]+$ ]]; then
+            # We use 1,950,000 KB (~1.95GB) to reliably catch 500MB/1GB ESPs 
+            # while allowing standard 2GB partitions with slight filesystem overhead to pass.
+            if (( esp_total_kb < 1950000 )); then
+                ESP_SUFFICIENT_FOR_SYNC=false
+                ESP_CAPACITY_WARN="ESP ($esp_mnt) is under 2GB (~$((esp_total_kb / 1024))MB). Bootloader snapshot sync will be disabled."
+            fi
+        fi
+    fi
+}
+
+uninstall_and_cleanup_limine_snapper_sync() {
+    info "Cleaning up legacy limine-snapper-sync to prevent out-of-space pacman hook notifications..."
+    
+    # Halt active daemon/paths
+    sudo systemctl stop limine-snapper-sync.service 2>/dev/null || true
+    sudo systemctl disable limine-snapper-sync.service 2>/dev/null || true
+    sudo systemctl stop limine-snapper-sync.path 2>/dev/null || true
+    sudo systemctl disable limine-snapper-sync.path 2>/dev/null || true
+
+    # Strip the package to obliterate the alpm hooks
+    if pacman -Q limine-snapper-sync >/dev/null 2>&1; then
+        info "Uninstalling limine-snapper-sync..."
+        sudo pacman -Rns --noconfirm limine-snapper-sync || true
+    fi
+    
+    # Forensic sweep of the ESP to reclaim hostage storage
+    local esp_mnt
+    esp_mnt="$(findmnt -n -e -o TARGET -M /boot 2>/dev/null || findmnt -n -e -o TARGET -M /efi 2>/dev/null || findmnt -n -e -o TARGET -M /boot/efi 2>/dev/null || true)"
+    
+    if [[ -n "$esp_mnt" ]]; then
+        local snap_dirs=("limine-snapshots" "EFI/limine/snapshots" "limine/snapshots")
+        local dir
+        for dir in "${snap_dirs[@]}"; do
+            if sudo test -d "$esp_mnt/$dir"; then
+                info "Reclaiming space: Deleting orphaned snapshots at $esp_mnt/$dir..."
+                sudo rm -rf "$esp_mnt/$dir"
+            fi
+        done
+        
+        # Purge auto-generated include configs
+        sudo rm -f "$esp_mnt/limine-snapshots.conf" 2>/dev/null || true
+        sudo rm -f "$esp_mnt/EFI/limine/limine-snapshots.conf" 2>/dev/null || true
+    fi
+    
+    sudo rm -f /etc/limine-snapper-sync.conf
+}
+
 install_aur_packages() {
     local sync_in=false hook_in=false
     pacman -Q limine-snapper-sync >/dev/null 2>&1 && sync_in=true
     pacman -Q limine-mkinitcpio-hook >/dev/null 2>&1 && hook_in=true
 
     local -a pkgs=()
-    [[ "$sync_in" == false ]] && pkgs+=(limine-snapper-sync)
+    
+    if [[ "$ESP_SUFFICIENT_FOR_SYNC" == true ]]; then
+        [[ "$sync_in" == false ]] && pkgs+=(limine-snapper-sync)
+    else
+        [[ -n "$ESP_CAPACITY_WARN" ]] && warn "$ESP_CAPACITY_WARN"
+        if [[ "$sync_in" == true ]]; then
+            warn "limine-snapper-sync is installed but ESP is too small. Initiating complete teardown..."
+            uninstall_and_cleanup_limine_snapper_sync
+            sync_in=false
+        fi
+    fi
+
     if [[ "$hook_in" == false ]] && ! command -v limine-update >/dev/null 2>&1; then
         pkgs+=(limine-mkinitcpio-hook)
     fi
@@ -244,9 +310,18 @@ EOF
     info "Configured dynamic ${target_hook} injection in ${managed_file}"
 }
 
-rebuild_initramfs() { sudo limine-update; }
+rebuild_initramfs() { 
+    info "Recompiling early boot images to inject overlayfs hooks..."
+    sudo mkinitcpio -P < <(echo "n")
+    sudo limine-update || true
+}
 
 configure_sync_daemon() {
+    if [[ "$ESP_SUFFICIENT_FOR_SYNC" == false ]]; then
+        info "Skipping limine-snapper-sync configuration (ESP capacity insufficient)."
+        return 0
+    fi
+
     local conf_file="/etc/limine-snapper-sync.conf" root_subvol root_subvol_path tmp
     [[ -f "$conf_file" ]] || fatal "$conf_file not found."
 
@@ -354,7 +429,6 @@ create_post_config_baseline_snapshot() {
     local desc="Baseline after Limine + Snapper integration"
     local cfg snap_id
 
-    # Migrate old important baseline snapshots into the rolling "number" pool
     for cfg in root home; do
         while IFS= read -r snap_id; do
             [[ -n "$snap_id" ]] || continue
@@ -382,6 +456,15 @@ create_post_config_baseline_snapshot() {
 
 enable_services_and_sync() {
     sudo systemctl enable --now snapper-cleanup.timer
+    info "Enabled snapper cleanup timer."
+
+    if [[ "$ESP_SUFFICIENT_FOR_SYNC" == false ]]; then
+        warn "ESP is less than 2GB. limine-snapper-sync integration is disabled."
+        sudo systemctl disable --now limine-snapper-sync.service 2>/dev/null || true
+        warn "Btrfs snapshots will still be taken automatically by snap-pac, but must be restored manually via Live USB if needed."
+        return 0
+    fi
+
     sudo systemctl enable --now limine-snapper-sync.service
 
     if [[ "$(systemctl show -p Result --value limine-snapper-sync.service 2>/dev/null || true)" == "success" ]]; then
@@ -393,8 +476,11 @@ enable_services_and_sync() {
 
 preflight_checks() {
     (( EUID != 0 )) || fatal "Run as regular user with sudo."
-    require_cmd sudo; require_cmd pacman; require_cmd findmnt; require_cmd awk; require_cmd sed; require_cmd grep; require_cmd stat; require_cmd mktemp; require_cmd cmp
+    require_cmd sudo; require_cmd pacman; require_cmd findmnt; require_cmd awk; require_cmd sed; require_cmd grep; require_cmd stat; require_cmd mktemp; require_cmd cmp; require_cmd df
     [[ -d /sys/firmware/efi ]] || fatal "Not booted in EFI mode."
+    
+    check_esp_capacity
+    
     sudo -v || fatal "Cannot obtain sudo privileges."
     (while true; do sudo -n -v 2>/dev/null || exit; sleep 240; done) &
     SUDO_PID=$!
@@ -403,7 +489,12 @@ preflight_checks() {
 preflight_checks
 execute "Verify layout" verify_previous_setup
 execute "Install AUR packages" install_aur_packages
-require_cmd limine-update; require_cmd limine-snapper-sync; require_cmd snapper
+
+require_cmd limine-update; require_cmd snapper
+if [[ "$ESP_SUFFICIENT_FOR_SYNC" == true ]]; then
+    require_cmd limine-snapper-sync
+fi
+
 execute "Inject OverlayFS hook" configure_mkinitcpio_overlay_hook
 execute "Rebuild initramfs" rebuild_initramfs
 execute "Configure sync daemon" configure_sync_daemon

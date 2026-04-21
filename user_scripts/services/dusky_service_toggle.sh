@@ -6,21 +6,6 @@
 # ENGINE:       Dusky TUI Engine v3.9.1 (Adapted)
 # VERSION:      3.0.0
 # ==============================================================================
-#
-# v3.0.0 CHANGELOG:
-#   - FEATURE: Tab-based UI with "User Services" and "System Services" tabs.
-#   - FEATURE: Dynamic service discovery — uninstalled services are hidden.
-#   - FEATURE: Sudo credential prompting for system service toggles.
-#   - FEATURE: Terminal state save/restore around sudo password entry.
-#   - FEATURE: Per-tab scroll and selection state preservation.
-#   - FEATURE: Mouse support (click, scroll wheel, tab clicks).
-#   - FEATURE: Buffered rendering — zero flicker redraws.
-#   - FEATURE: Scroll windowing with indicators for large lists.
-#   - FEATURE: Feedback messages with auto-clear countdown.
-#   - ENGINE: Full Dusky TUI Engine v3.9.1 pattern compliance.
-#   - FIX: Hardened base-10 coercion for all integer contexts.
-#   - FIX: Robust signal handling and cleanup on all exit paths.
-# ==============================================================================
 
 set -euo pipefail
 shopt -s extglob
@@ -29,7 +14,7 @@ shopt -s extglob
 # ▼ USER CONFIGURATION (EDIT THIS SECTION) ▼
 # =============================================================================
 
-declare -r APP_TITLE="Dusky Service Manager"
+declare -r APP_TITLE="Dusky Services"
 declare -r APP_VERSION="v3.0.0"
 
 # Dimensions & Layout
@@ -56,6 +41,8 @@ declare -ra USER_SERVICE_DEFS=(
     "dusky_sliders.service|Dusky Sliders Service"
     "update_checker.timer|Automatic Update Checker"
     "hypridle.service|Hyprland Idle Daemon"
+    "hyprsunset.service|Night Light/BlueLight Filter"
+    "osd_lock.service|OSD for CapsLock,NumLock,ScrollLock"
 )
 
 declare -ra SYSTEM_SERVICE_DEFS=(

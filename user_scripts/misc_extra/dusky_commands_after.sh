@@ -29,6 +29,7 @@ declare -ra FLEET_COMMANDS=(
 #    "U | systemctl --user disable dusky.service || true"
 #    "S | systemctl enable --now tlp.service || true"
     "U | hyprctl reload"
+    "U | systemctl --user enable --now mako.service || true"
 )
 
 # ==============================================================================

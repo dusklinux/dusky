@@ -31,6 +31,8 @@ POST_SCRIPT_DELAY=0
 
 INSTALL_SEQUENCE=(
 
+    "U | 003_network_connect.sh"
+
 # ------ CUSTOM PATH SCRIPTS -------
     "U | deploy_dotfiles.sh --force"
 
@@ -45,6 +47,7 @@ INSTALL_SEQUENCE=(
     "U | 040_long_sleep_timeout.sh --auto"
 #    "S | 045_battery_limiter.sh"
     "S | 050_pacman_config.sh --auto"
+    "S | 051_pacman_hooks.sh --auto"
     "S | 055_pacman_reflector.sh"
     "S | 060_package_installation.sh"
     "U | 065_enabling_user_services.sh"
@@ -91,7 +94,6 @@ INSTALL_SEQUENCE=(
 
     "U | 237_text_editer_switcher.sh --gnome-text-editor"
     "U | 238_terminal_switcher.sh --kitty"
-    "U | 240_swaync_dgpu_fix.sh --disable"
 #    "S | 245_asusd_service_fix.sh"
 #    "S | 250_ftp_arch.sh"
 #    "U | 255_tldr_update.sh"
@@ -116,7 +118,7 @@ INSTALL_SEQUENCE=(
 #    "U | 356_dusky_plugin_manager.sh"
     "U | 360_obsidian_pensive_vault_configure.sh"
     "U | 365_cache_purge.sh"
-    "S | 370_arch_install_scripts_cleanup.sh"
+    "S | 370_arch_install_scripts_cleanup.sh --auto"
     "U | 375_cursor_theme_bibata_classic_modern.sh"
     "U | 376_generate_colorfiles_for_current_wallpaer.sh"
     "U | 380_nvidia_open_source.sh --auto"
@@ -136,8 +138,8 @@ INSTALL_SEQUENCE=(
     "U | 440_config_bat_notify.sh --default"
     "U | 455_hyprctl_reload.sh"
     "U | 460_switch_clipboard.sh --terminal"
-    "S | 465_sddm_setup.sh --auto"
-    "U | 470_vesktop_matugen.sh --auto"
+#    "S | 465_sddm_setup.sh --auto"
+#    "U | 470_vesktop_matugen.sh --auto"
     "U | 475_reverting_sleep_timeout.sh"
     "U | 480_dusky_commands.sh"
     "S | 485_sudoers_nopassword.sh"
@@ -634,6 +636,7 @@ Options:
     --help, -h       Show this help message and exit
     --dry-run, -d    Preview execution plan without running anything
     --reset          Clear progress state and start fresh
+    --manual, -m     Prompt to enable interactive mode (ask before each script)
 
 Description:
     This script orchestrates the execution of multiple setup scripts
@@ -649,7 +652,8 @@ Description:
     not supported.
 
 Examples:
-    $(basename "$0")              # Normal run
+    $(basename "$0")              # Normal run (Autonomous Mode)
+    $(basename "$0") --manual     # Run with prompt for Interactive Mode
     $(basename "$0") --dry-run    # Preview what would be executed
     $(basename "$0") --reset      # Reset progress and start over
 EOF
@@ -762,10 +766,15 @@ main() {
     fi
 
     # --- MUTATING ARGUMENT HANDLING ---
+    local force_manual_prompt=0
+
     case "${1:-}" in
         --reset)
             rm -f "$STATE_FILE"
             echo "State file reset. Starting fresh."
+            ;;
+        --manual|-m)
+            force_manual_prompt=1
             ;;
         "")
             ;;
@@ -809,11 +818,16 @@ main() {
 
     # --- EXECUTION MODE SELECTION ---
     local interactive_mode=0
-    echo -e "\n${YELLOW}>>> EXECUTION MODE <<<${RESET}"
-    read -r -p "Do you want to run interactively (prompt before every script)? [y/N]: " _mode_choice
-    if [[ "${_mode_choice,,}" == "y" || "${_mode_choice,,}" == "yes" ]]; then
-        interactive_mode=1
-        log "INFO" "Interactive mode selected. You will be asked before each script."
+
+    if [[ "$force_manual_prompt" -eq 1 ]]; then
+        echo -e "\n${YELLOW}>>> EXECUTION MODE <<<${RESET}"
+        read -r -p "Do you want to run interactively (prompt before every script)? [y/N]: " _mode_choice
+        if [[ "${_mode_choice,,}" == "y" || "${_mode_choice,,}" == "yes" ]]; then
+            interactive_mode=1
+            log "INFO" "Interactive mode selected. You will be asked before each script."
+        else
+            log "INFO" "Autonomous mode selected. Running all scripts without confirmation."
+        fi
     else
         log "INFO" "Autonomous mode selected. Running all scripts without confirmation."
     fi

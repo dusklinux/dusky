@@ -67,8 +67,8 @@ Conservative legend:
 | 56  | bookassetd                    | Apple Books asset management                                                                 | if-unused                      |
 | 57  | bookdatastored                | Apple Books data storage and sync                                                            | if-unused                      |
 | 58  | bootps                        | BOOTP/DHCP service used for tethering or USB networking                                      | no                             |
-| 59  | BTServer.avrcp                | Bluetooth media control profile support                                                      | if-unused                      |
-| 60  | BTServer.le                   | Bluetooth Low Energy support                                                                 | if-unused                      |
+| 59  | BTServer.avrcp                | Bluetooth media control profile support, Prevents pause/play on the headphones if disabled   | NO                             |
+| 60  | BTServer.le                   | Bluetooth Low Energy support, saves power                                                    | NO                             |
 | 61  | BTServer.map                  | Bluetooth Message Access Profile support                                                     | if-unused                      |
 | 62  | BTServer.pbap                 | Bluetooth Phone Book Access Profile support                                                  | if-unused                      |
 | 63  | businessservicesd             | Apple business-related services; public role unclear                                         | no                             |
@@ -158,8 +158,8 @@ Conservative legend:
 | 147 | exchangesyncd                 | Microsoft Exchange sync daemon                                                               | if-unused                      |
 | 148 | facemetricsd                  | Face ID metrics / attention support                                                          | no                             |
 | 149 | factory.NFQRCoded             | Factory/diagnostic QR or NFC code support                                                    | yes                            |
-| 150 | fairplayd.H2                  | FairPlay DRM daemon                                                                          | no                             |
-| 151 | fairplaydeviceidentityd       | FairPlay device identity support                                                             | no                             |
+| 150 | fairplayd.H2                  | FairPlay DRM daemon, apps installed from the app store dont launch if disabled               | NO                             |
+| 151 | fairplaydeviceidentityd       | FairPlay device identity support, apps installed from the app store dont launch if disabled  | NO                             |
 | 152 | familycircled                 | Family Sharing management daemon                                                             | if-unused                      |
 | 153 | FamilyControlsAgent           | Family Controls / Screen Time family enforcement                                             | if-unused                      |
 | 154 | familynotificationd           | Family Sharing notifications daemon                                                          | if-unused                      |
@@ -299,7 +299,7 @@ Conservative legend:
 | 288 | neagent-ios                   | Network Extension agent for VPNs/filters                                                     | if-unused                      |
 | 289 | nearbyd                       | Nearby interaction and proximity service                                                     | if-unused                      |
 | 290 | nehelper-embedded             | Network Extension helper service                                                             | if-unused                      |
-| 291 | nesessionmanager              | Manages Network Extension sessions such as VPNs                                              | if-unused                      |
+| 291 | nesessionmanager              | DISABLING CAUSES MASSIVE POWER DRAW                                                          | NO                             |
 | 292 | NetworkLinkConditioner        | Developer network-throttling tool                                                            | yes                            |
 | 293 | networkserviceproxy           | Network proxy service used by Private Relay and related features                             | if-unused                      |
 | 294 | newsd                         | Apple News background service                                                                | if-unused                      |

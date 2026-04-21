@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Package
+Target = *
+
+[Action]
+Description = Refreshing Waybar Update Counter State for all users...
+When = PostTransaction
+Exec = /usr/bin/bash -c 'shopt -s nullglob; for dir in /home/*/; do dir="${dir%/}"; user="${dir##*/}"; script="${dir}/user_scripts/waybar/update_counter.sh"; [[ -x "$script" ]] && runuser -u "$user" -- /usr/bin/bash "$script" --pacman --aur --dusky; done'

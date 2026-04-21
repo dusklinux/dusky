@@ -11,48 +11,13 @@
 declare -ar pkgs_misc=(
     "wl-clip-persist"
 
-    # nemo
-    "nemo"
-    "nemo-fileroller"
-    "file-roller"
-    "gvfs"
-    "gvfs-smb"
-    "gvfs-mtp"
-    "gvfs-gphoto2"
-    "gvfs-google"
-    "gvfs-nfs"
-    "gvfs-afc"
-    "gvfs-dnssd"
-    "ffmpegthumbnailer"
-    "webp-pixbuf-loader"
-    "poppler-glib"
-    "libgsf"
-    "gnome-epub-thumbnailer"
-    "resvg"
-    "nemo-python"
-    "nemo-compare"
-    "meld"
-    "nemo-media-columns"
-    "nemo-audio-tab"
-    "nemo-image-converter"
-    "nemo-emblems"
-    "nemo-repairer"
-    "nemo-share"
-    "python-gobject"
-    "dconf-editor"
-    "xreader"
-    "gst-libav"
-    "gst-plugins-good"
-    "nemo-pastebin"
-
-    # "nemo-terminal"
-
-
     "satty"
-
     "matugen"
-
     "awww"
+
+    "mako"
+    "python-evdev"
+    "python-pyudev"
 
     "papirus-icon-theme"
 )

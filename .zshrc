@@ -405,38 +405,83 @@ _win_completion() {
 compdef _win_completion win
 
 
-# -----------------------------------------------------------------------------
-#  Pacman / Expac Metrics
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Pacman/Expac Utility: Unified Package Querying (Platinum Edition)
+# Usage: pkg <command> [count]
+# =============================================================================
 
-# 1. STORAGE HOGS (ALL)
-# Lists largest packages (deps included) using raw bytes for perfect sorting
-# Usage: pkg_hogs_all [n]
-pkg_hogs_all() {
-    expac '%m\t%n' | sort -rn | head -n "${1:-20}" | numfmt --to=iec-i --suffix=B --field=1
+# DRY Header Helper — defined once at source time, not re-created on every pkg call.
+# Args: $1 = title string, $2 = count integer
+_pkg_header() {
+    print -P "\n%F{blue}::%f %B${1}%b (Top ${2})"
+    print -P "%F{238}------------------------------------------------------------%f"
 }
 
-# 2. STORAGE HOGS (EXPLICIT ONLY)
-# Pipes explicit list into expac (The correct way to filter)
-# Usage: pkg_hogs [n]
-pkg_hogs() {
-    # pacman -Qeq lists explicit names -> expac reads from stdin (-)
-    pacman -Qeq | expac '%m\t%n' - | sort -rn | head -n "${1:-20}" | numfmt --to=iec-i --suffix=B --field=1
+pkg() {
+    # 1. Pre-flight Check: Ultra-fast Zsh native dependency validation
+    if (( ! $+commands[expac] )); then
+        print -u2 -P "%F{red}✖ Error:%f 'expac' is not installed. Run: sudo pacman -S expac"
+        return 1
+    fi
+
+    # 2. Scope & Defaults
+    local cmd="${1:-help}"
+    local num="${2:-20}"
+
+    # 3. Strict Validation: Must be a POSITIVE integer (no zeros, no letters)
+    if [[ ! "$num" =~ ^[1-9][0-9]*$ ]]; then
+        print -u2 -P "%F{red}✖ Error:%f Count must be a positive integer (1 or higher)."
+        return 1
+    fi
+
+    # 4. Core Execution Pipeline
+    case "${cmd:l}" in
+        hogs|size|all)
+            _pkg_header "Largest Packages (Including Dependencies)" "$num"
+            expac '%m|%n' | sort -rn | head -n "$num" | numfmt --to=iec-i --suffix=B --field=1 --delimiter='|' | column -t -s '|'
+            ;;
+
+        explicit|user)
+            _pkg_header "Largest Explicitly Installed Packages" "$num"
+            pacman -Qeq | expac '%m|%n' - | sort -rn | head -n "$num" | numfmt --to=iec-i --suffix=B --field=1 --delimiter='|' | column -t -s '|'
+            ;;
+
+        new|recent|latest)
+            _pkg_header "Recently Installed Packages" "$num"
+            expac --timefmt='%Y-%m-%d %T' '%l|%n' | sort -r | head -n "$num" | column -t -s '|'
+            ;;
+
+        old|ancient)
+            _pkg_header "Oldest Installed Packages" "$num"
+            expac --timefmt='%Y-%m-%d %T' '%l|%n' | sort | head -n "$num" | column -t -s '|'
+            ;;
+
+        help|*)
+            print -P "\n%F{green}Usage:%f pkg <command> [count (default: 20)]\n"
+            print -P "%BCommands:%b"
+            print "  hogs, size, all          - List largest packages (overall)"
+            print "  explicit, user           - List largest explicitly installed packages"
+            print "  new, recent, latest      - List recently installed (newest first)"
+            print "  old, ancient             - List oldest installed (oldest first)\n"
+            print -P "%BExamples:%b"
+            print "  pkg size 10        # Top 10 largest packages overall"
+            print "  pkg explicit 50    # Top 50 largest packages you explicitly installed\n"
+
+            [[ "${cmd:l}" == "help" ]] && return 0 || return 1
+            ;;
+    esac
+
+    # 5. Trailing newline for prompt breathing room
+    print ""
 }
 
-# 3. RECENTLY INSTALLED
-# Lists packages by install date (Newest top)
-# Usage: pkg_new [n]
-pkg_new() {
-    expac --timefmt='%Y-%m-%d %T' '%l\t%n' | sort -r | head -n "${1:-20}"
+# Native Zsh tab-completion — proper named function, unambiguously correct.
+_pkg() {
+    _arguments \
+        "1:command:(hogs size all explicit user new recent latest old ancient help)" \
+        "2:count: "
 }
-
-# 4. ANCIENT PACKAGES
-# Lists packages by install date (Oldest top)
-# Usage: pkg_old [n]
-pkg_old() {
-    expac --timefmt='%Y-%m-%d %T' '%l\t%n' | sort | head -n "${1:-20}"
-}
+compdef _pkg pkg
 
 # -----------------------------------------------------------------------------
 # [6] PLUGINS & PROMPT INITIALIZATION

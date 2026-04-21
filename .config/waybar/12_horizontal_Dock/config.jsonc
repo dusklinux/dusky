@@ -87,8 +87,8 @@
                     ""
                 ]
             },
-            "on-scroll-up": "swayosd-client --output-volume raise",
-            "on-scroll-down": "swayosd-client --output-volume lower",
+            "on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
+            "on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%",
             "on-click": "pavucontrol",
             "ignored-sinks": [
                 "Easy Effects Sink"
@@ -121,23 +121,13 @@
         },
         "custom/notification": {
             "tooltip": true,
-            "tooltip-format": "Left Click: Launch Overwatch\n Right Click: Do Not Disturb",
-            "format": "{icon}",
-            "format-icons": {
-                "notification": "",
-                "none": "",
-                "dnd-notification": "",
-                "dnd-none": "",
-                "inhibited-notification": "",
-                "inhibited-none": "",
-                "dnd-inhibited-notification": "",
-                "dnd-inhibited-none": ""
-            },
+            "tooltip-format": "Left Click: Launch Notifications\n Right Click: Do Not Disturb",
+            "format": "{}",
             "return-type": "json",
-            "exec-if": "which swaync-client",
-            "exec": "swaync-client -swb",
-            "on-click": "sleep 0.1 && swaync-client -t -sw",
-            "on-click-right": "swaync-client -d -sw",
+            "exec-if": "which makoctl",
+            "exec": "~/user_scripts/waybar/mako.sh",
+            "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+            "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
             "escape": true
         }
     }

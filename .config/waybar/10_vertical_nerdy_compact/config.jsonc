@@ -42,13 +42,25 @@
             "modules": [
                 "cpu",
                 "memory",
-                "temperature"
+                "group/temp_drawer"
+            ]
+        },
+
+        "group/temp_drawer": {
+            "orientation": "inherit",
+            "drawer": {
+                "transition-duration": 300,
+                "transition-left-to-right": true
+            },
+            "modules": [
+                "temperature",
+                "custom/updates"
             ]
         },
 
         "group/utils": {
             "orientation": "inherit",
-            "drawer": {
+             "drawer": {
                 "transition-duration": 300,
                 "transition-left-to-right": false
             },
@@ -61,7 +73,7 @@
         },
 
         "group/connections": {
-            "orientation": "inherit",
+             "orientation": "inherit",
             "modules": [
                 "custom/network",
                 "bluetooth"
@@ -70,7 +82,7 @@
 
         "group/bottom": {
             "orientation": "inherit",
-            "drawer": {
+             "drawer": {
                 "transition-duration": 300,
                 "transition-left-to-right": false
             },
@@ -85,7 +97,7 @@
             "on-click": "activate",
             "all-outputs": true,
             "sort-by-number": true,
-            "format": " ",
+            "format": "{id}",
             "persistent-workspaces": {
                  "*": 4
             },
@@ -94,6 +106,8 @@
         },
 
         "battery": {
+            "justify": "center",
+            "align": 0.5,
             "format": "{icon}\n{capacity}\n{power:.0f}W",
             "format-charging": "\n+{capacity}\n{power:.0f}W",
             "format-plugged": "\n{capacity}",
@@ -109,19 +123,22 @@
         },
 
         "pulseaudio":{
+            "justify": "center",
+            "align": 0.5,
             "format": "{icon}\n{volume}",
             "format-muted": "󰖁",
             "on-click": "uwsm-app -- pavucontrol",
-            "on-click-middle": "swayosd-client --output-volume mute-toggle",
-            "on-click-right": "uwsm-app -- kitty --class cava -e cava",
-            "on-scroll-up": "swayosd-client --output-volume raise",
-            "on-scroll-down": "swayosd-client --output-volume lower",
+            "on-click-middle": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+            "on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
+            "on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%",
             "format-icons": ["󰖁", "", ""],
             "tooltip": true,
             "tooltip-format": "{desc}\n\nLMB: pavucontrol\nRMB: cava\nMMB: Mute"
         },
 
         "backlight": {
+            "justify": "center",
+            "align": 0.5,
             "device": "intel_backlight",
             "format": "{icon}\n{percent}",
             "format-icons": ["","","","","","","","","","","","","","",""],
@@ -130,13 +147,15 @@
             "on-click": "uwsm-app -- \"$HOME/user_scripts/sliders/dusky_sliders.py\"",
             "on-click-right": "uwsm-app -- \"$HOME/user_scripts/sliders/dusky_sliders.py\"",
             "on-click-middle": "uwsm-app -- \"$HOME/user_scripts/rofi/shader_menu.sh\"",
-            "on-scroll-up": "swayosd-client --brightness raise",
-            "on-scroll-down": "swayosd-client --brightness lower",
+            "on-scroll-up": "brightnessctl set +5%",
+            "on-scroll-down": "brightnessctl set 5%-",
             "min-length": 4,
             "interval": 60
         },
 
         "cpu": {
+            "justify": "center",
+            "align": 0.5,
             "format": "\n{usage}",
             "tooltip": true,
             "on-click": "uwsm-app -- kitty --class htop -e htop",
@@ -146,6 +165,8 @@
         },
 
         "memory": {
+            "justify": "center",
+            "align": 0.5,
             "format": "\n{percentage}",
             "interval": 2,
             "on-click": "uwsm-app -- kitty --class io_monitor.sh -e \"$HOME/user_scripts/drives/io_monitor.sh\"",
@@ -157,6 +178,8 @@
         },
 
         "temperature": {
+            "justify": "center",
+            "align": 0.5,
             "thermal-zone": 6, 
             "critical-threshold": 65,
             "format-critical": "🔥\n{temperatureC}",
@@ -166,6 +189,8 @@
         },
 
         "bluetooth": {
+            "justify": "center",
+            "align": 0.5,
             "format": "",
             "format-disabled": "󰂲",
             "format-connected": "",
@@ -175,6 +200,8 @@
         },
 
         "clock": {
+            "justify": "center",
+            "align": 0.5,
             "format": "{:%I\n%M}",
             "tooltip-format": "<big>{:%A, %d %B}</big>\n<tt><small>{calendar}</small></tt>",
             "interval": 60,
@@ -202,6 +229,8 @@
         },
 
         "custom/audiorouter": {
+            "justify": "center",
+            "align": 0.5,
             "format": "{}",
             "return-type": "json",
             "interval": 2,
@@ -210,6 +239,8 @@
         },
 
         "custom/network": {
+            "justify": "center",
+            "align": 0.5,
             "return-type": "json",
             "tooltip": true,
             "tooltip-format": "LMB: wifitui\nRMB: WiFi ON\nMMB: WiFi OFF",
@@ -220,30 +251,34 @@
             "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --vertical"
         },
 
-        "custom/notification": {
-            "tooltip-format": "Left: Notifications\nRight: Do not disturb",
-            "format": "{icon}",
-            "format-icons": {
-                "notification": "<span foreground='red'><sup></sup></span>",
-                "none": "",
-                "dnd-notification": "<span foreground='red'><sup></sup></span>",
-                "dnd-none": "",
-                "inhibited-notification": "<span foreground='red'><sup></sup></span>",
-                "inhibited-none": "",
-                "dnd-inhibited-notification": "<span foreground='red'><sup></sup></span>",
-                "dnd-inhibited-none": ""
-            },
+        "custom/updates": {
+            "justify": "center",
+            "align": 0.5,
+            "exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_v 2>/dev/null",
             "return-type": "json",
-            "exec-if": "command -v swaync-client", 
-            "exec": "swaync-client -swb",
-            "on-click": "swaync-client -t -sw",
-            "on-click-right": "swaync-client -d -sw",
+            "format": "{}",
+            "tooltip": true
+        },
+
+        "custom/notification": {
+            "justify": "center",
+            "align": 0.5,
+            "tooltip-format": "Left: Notifications\nRight: Do not disturb",
+            "format": "{}",
+            "return-type": "json",
+            "exec-if": "which makoctl",
+            "exec": "~/user_scripts/waybar/mako.sh --vertical",
+            "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+            "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+            "signal": 8,
             "escape": true
         },
 
         "custom/inhibit-suspend": {
+            "justify": "center",
+            "align": 0.5,
             "format": "{}",
-            "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰌾\", \"tooltip\": \"Suspend is enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"\", \"tooltip\": \"Suspend is disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
+            "exec": "if pgrep -x 'hypridle' > /dev/null;\nthen echo '{\"text\": \"󰌾\", \"tooltip\": \"Suspend is enabled.\\nClick to disable.\", \"class\": \"enabled\"}';\nelse echo '{\"text\": \"\", \"tooltip\": \"Suspend is disabled.\\nClick to enable.\", \"class\": \"disabled\"}';\nfi",
             "return-type": "json",
             "interval": 5,
             "signal": 9,
@@ -252,6 +287,8 @@
         },
 
         "custom/theme": {
+            "justify": "center",
+            "align": 0.5,
             "format": "",
             "tooltip": true,
             "tooltip-format": "Switch wallpapers\nLMB: Dark Mode\nRMB: Light Mode\nMMB: Waypaper",
@@ -261,12 +298,16 @@
         },
 
         "custom/app-tray": {
+            "justify": "center",
+            "align": 0.5,
             "format": "",
             "tooltip-format": "Open Terminal App Tray!",
             "on-click": "uwsm-app -- kitty --class tray-tui -e tray-tui"
         },
 
         "custom/power": {
+            "justify": "center",
+            "align": 0.5,
             "format": "",
             "tooltip": true,
             "tooltip-format": "Power Menu",
@@ -274,6 +315,8 @@
         },
 
         "custom/cava": {
+            "justify": "center",
+            "align": 0.5,
             "format": "{}",
             "return-type": "json",
             "exec": "$HOME/user_scripts/waybar/cava.sh --vert --bars 6 --clean",

@@ -1,0 +1,102 @@
+# ======================================
+# GLOBAL DAEMON PARAMETERS
+# ======================================
+on-notify=exec pkill -RTMIN+8 waybar
+font=monospace 10
+width=350
+height=150
+margin=20
+padding=15
+border-size=2
+border-radius=8
+icons=1
+max-icon-size=48
+default-timeout=5000
+ignore-timeout=0
+max-visible=6
+layer=overlay
+anchor=bottom-left
+sort=-time
+history=1
+max-history=50
+on-button-left=invoke-default-action
+
+# ======================================
+# MATUGEN THEME INJECTION
+# ======================================
+# MUST remain in the global scope (before any criteria blocks).
+include=~/.config/matugen/generated/mako-colors
+
+# ======================================
+# DO NOT DISTURB MODE
+# ======================================
+# Drops all incoming notifications silently into the history buffer
+[mode=do-not-disturb]
+invisible=1
+
+# Allow critical system notifications to punch through DND
+[mode=do-not-disturb urgency=critical]
+invisible=0
+
+# ======================================
+# CRITERIA: TIMEOUTS & URGENCY
+# ======================================
+[urgency=low]
+default-timeout=2000
+
+[urgency=normal]
+default-timeout=3000
+
+[urgency=critical]
+default-timeout=5000
+
+# ======================================
+# CRITERIA: AUTOMATION & BEHAVIOR
+# ======================================
+
+# 1. Mute noisy apps entirely
+[app-name=Spotify]
+invisible=1
+
+# 2. Auto-Execute on Receipt (Example)
+# If a backup script sends a failure notice, run a recovery bash script instantly
+# Uses ~ to ensure portability across different users' machines
+# [app-name=SystemBackup summary~="Failed"]
+# on-notify=exec sh -c '~/.local/bin/trigger-recovery.sh & pkill -RTMIN+8 waybar'
+
+# 4. Visual Overrides for Specific Apps
+# Make screenshot thumbnails massive so you can verify what you clipped
+[app-name=grimblast]
+max-icon-size=84
+format=<b>%s</b>\n%b
+
+# ======================================
+# MATUGEN TEMPLATE REFERENCE
+# ======================================
+# If you are cloning these dotfiles, place the following template
+# into your Matugen template directory and route it to generate
+# ~/.config/matugen/generated/mako-colors
+#
+# # 80% opacity (cc) on the background for a frosted glass look
+# background-color={{colors.on_primary.default.hex}}cc
+# text-color={{colors.tertiary.default.hex}}
+# # 93% opacity (ee) on the border for a subtle edge
+# border-color={{colors.tertiary_container.default.hex}}ee
+# progress-color={{colors.primary.default.hex}}
+#
+# [mode=silent]
+# on-notify=none
+#
+# [urgency=high]
+# border-color={{colors.error_container.default.hex}}
+# text-color={{colors.error.default.hex}}
+#
+# ======================================
+# OSD HARDWARE OVERLAY
+# ======================================
+[app-name=OSD]
+# anchor=bottom-center
+# Optional: You can also strip the border or adjust margins specifically for the OSD here
+# border-size=0
+# margin=0,0,50,0
+default-timeout=1000

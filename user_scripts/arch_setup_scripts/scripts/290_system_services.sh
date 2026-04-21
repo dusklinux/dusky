@@ -30,7 +30,6 @@ readonly TARGET_SERVICES=(
     "acpid.service"
     "vsftpd.service"
     "reflector.timer"
-    "swayosd-libinput-backend.service"
     "systemd-resolved.service"
 )
 

@@ -1384,13 +1384,13 @@ pages:
         terminal: false
     - type: button
       properties:
-        title: SwayNC Side Switch
-        description: Toggle notification center side
+        title: Mako Notifications Configurator
+        description: Mako TUI
         icon: preferences-system-notifications-symbolic
-        button_text: "Switch"
+        button_text: "Tweak"
       on_press:
         type: exec
-        command: kitty --class dusky_swaync_side.sh --hold sh -c $HOME/user_scripts/swaync/dusky_swaync_side.sh
+        command: kitty --class tui_mako.sh --hold sh -c $HOME/user_scripts/mako_osd/mako_tui/tui_mako.sh
         terminal: false
   - type: section
     properties:
@@ -1837,27 +1837,27 @@ pages:
 
     - type: navigation
       properties:
-        title: Notifications (SwayNC)
-        description: Configure notification center
+        title: Notifications (Mako)
+        description: Configure notifications
         icon: preferences-system-notifications-symbolic
       layout:
         - type: section
           properties:
-            title: SwayNC Configs
+            title: Mako Config
           items:
             - type: button
               properties:
-                title: SwayNC Side Switch
-                description: Toggle notification center side
+                title: Mako Side Switch
+                description: Customize notification
                 icon: preferences-system-notifications-symbolic
-                button_text: "Switch"
+                button_text: "TUI"
               on_press:
                 type: exec
-                command: kitty --class dusky_swaync_side.sh --hold sh -c $HOME/user_scripts/swaync/dusky_swaync_side.sh
+                command: kitty --class tui_mako.sh --hold sh -c $HOME/user_scripts/mako_osd/mako_tui/tui_mako.sh
                 terminal: false
             - type: button
               properties:
-                title: Active SwayNC
+                title: mako config
                 description: Edit Current Configuration
                 icon: preferences-system-symbolic
                 buttons:
@@ -1865,21 +1865,16 @@ pages:
                     button_text: "Config"
                     on_press:
                       type: exec
-                      command: gnome-text-editor "$HOME/.config/swaync/config.json"
-                  - icon: text-x-script-symbolic
-                    button_text: "Style"
-                    on_press:
-                      type: exec
-                      command: gnome-text-editor "$HOME/.config/swaync/style.css"
+                      command: gnome-text-editor "$HOME/.config/mako/config"
 
         - type: section
           properties:
-            title: Available Themes
-            description: Located in ~/.config/swaync/themes/
+            title: Path
+            description: Located in ~/.config/mako/config
           items:
             - type: directory_generator
               properties:
-                path: ~/.config/swaync/themes
+                path: ~/.config/mako/config
                 sort: name
               item_template:
                 type: expander
@@ -2686,17 +2681,6 @@ pages:
       on_press:
         type: exec
         command: kitty --class 175_animation_default.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/175_animation_default.sh"
-        terminal: false
-    - type: button
-      properties:
-        title: SwayNC DGPU Fix
-        description: Fix notification rendering on NVIDIA
-        icon: video-display-symbolic
-        style: destructive
-        button_text: "Caution"
-      on_press:
-        type: exec
-        command: kitty --class 240_swaync_dgpu_fix.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/240_swaync_dgpu_fix.sh"
         terminal: false
     - type: button
       properties:

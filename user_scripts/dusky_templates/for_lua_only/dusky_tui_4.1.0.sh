@@ -112,6 +112,7 @@ declare -i CURRENT_VIEW=0      # 0=Main List, 1=Detail/Sub-Page
 declare CURRENT_MENU_ID=""     # ID of the currently open menu
 declare -i PARENT_ROW=0        # Saved row to return to
 declare -i PARENT_SCROLL=0     # Saved scroll to return to
+declare -gi RESIZE_PENDING=0   # SIGWINCH flag
 
 # Temp file globals
 declare _TMPFILE=""
@@ -279,6 +280,23 @@ register() {
         exit 1
     fi
 
+    # cycle: validate options are file-safe (no '}', no '#', no whitespace, no newlines)
+    if [[ "$type" == "cycle" ]]; then
+        local _opt
+        local -a _opts
+        IFS=',' read -r -a _opts <<< "$min"
+        if (( ${#_opts[@]} == 0 )); then
+            log_err "Register Error: Cycle '${label}' has no options."
+            exit 1
+        fi
+        for _opt in "${_opts[@]}"; do
+            if [[ -z "$_opt" || "$_opt" == *[[:space:]\}\#]* ]]; then
+                log_err "Register Error: Cycle '${label}' contains an unsafe option: '${_opt}'"
+                exit 1
+            fi
+        done
+    fi
+
     ITEM_MAP["${tab_idx}::${label}"]="$config"
     if [[ -n "$default_val" ]]; then
         DEFAULTS["${tab_idx}::${label}"]="$default_val"
@@ -288,9 +306,8 @@ register() {
     _reg_tab_ref+=("$label")
 
     if [[ "$type" == "menu" ]]; then
-        if ! declare -p "SUBMENU_ITEMS_${key}" &>/dev/null; then
-            declare -ga "SUBMENU_ITEMS_${key}=()"
-        fi
+        # Always create (or reset) the submenu array so register_child can detect a real parent
+        declare -ga "SUBMENU_ITEMS_${key}=()"
     fi
 }
 
@@ -302,6 +319,12 @@ register_child() {
 
     if [[ ! "$parent_id" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
         log_err "Register Error: Menu ID '${parent_id}' contains invalid characters."
+        exit 1
+    fi
+
+    # Parent menu MUST already be registered via register(... menu ...).
+    if ! declare -p "SUBMENU_ITEMS_${parent_id}" &>/dev/null; then
+        log_err "Register Error: register_child called for unknown menu '${parent_id}' (label '${label}'). Register the parent menu first."
         exit 1
     fi
 
@@ -337,8 +360,20 @@ register_child() {
         exit 1
     fi
 
-    if ! declare -p "SUBMENU_ITEMS_${parent_id}" &>/dev/null; then
-        declare -ga "SUBMENU_ITEMS_${parent_id}=()"
+    if [[ "$type" == "cycle" ]]; then
+        local _opt
+        local -a _opts
+        IFS=',' read -r -a _opts <<< "$min"
+        if (( ${#_opts[@]} == 0 )); then
+            log_err "Register Error: Cycle '${label}' has no options."
+            exit 1
+        fi
+        for _opt in "${_opts[@]}"; do
+            if [[ -z "$_opt" || "$_opt" == *[[:space:]\}\#]* ]]; then
+                log_err "Register Error: Cycle '${label}' contains an unsafe option: '${_opt}'"
+                exit 1
+            fi
+        done
     fi
 
     ITEM_MAP["${parent_id}::${label}"]="$config"
@@ -1413,6 +1448,7 @@ navigate() {
     local -i count=${#_nav_items_ref[@]}
     if (( count == 0 )); then return 0; fi
     SELECTED_ROW=$(( (SELECTED_ROW + dir + count) % count ))
+    clear_status
 }
 
 navigate_page() {
@@ -1425,6 +1461,7 @@ navigate_page() {
     SELECTED_ROW=$(( SELECTED_ROW + dir * MAX_DISPLAY_ROWS ))
     if (( SELECTED_ROW < 0 )); then SELECTED_ROW=0; fi
     if (( SELECTED_ROW >= count )); then SELECTED_ROW=$(( count - 1 )); fi
+    clear_status
 }
 
 navigate_end() {
@@ -1439,6 +1476,7 @@ navigate_end() {
     else
         SELECTED_ROW=$(( count - 1 ))
     fi
+    clear_status
 }
 
 adjust() {
@@ -1456,6 +1494,7 @@ switch_tab() {
     SELECTED_ROW=0
     SCROLL_OFFSET=0
     load_active_values
+    clear_status
 }
 
 set_tab() {
@@ -1465,6 +1504,7 @@ set_tab() {
         SELECTED_ROW=0
         SCROLL_OFFSET=0
         load_active_values
+        clear_status
     fi
 }
 
@@ -1496,6 +1536,7 @@ go_back() {
     SELECTED_ROW=$PARENT_ROW
     SCROLL_OFFSET=$PARENT_SCROLL
     load_active_values
+    clear_status
 }
 
 handle_mouse() {
@@ -1520,8 +1561,11 @@ handle_mouse() {
     x=$field2
     y=$field3
 
+    # Wheel events (button codes 64/65) — handle before motion filter
     if (( button == 64 )); then navigate -1; return 0; fi
     if (( button == 65 )); then navigate 1; return 0; fi
+
+    # Ignore button releases entirely
     if [[ "$terminator" != "M" ]]; then return 0; fi
 
     if (( y == TAB_ROW )); then
@@ -1555,7 +1599,10 @@ handle_mouse() {
                 fi
             done
         else
-            go_back
+            # Detail view: only left-click on TAB_ROW navigates back
+            if (( button == 0 )); then
+                go_back
+            fi
             return 0
         fi
     fi
@@ -1583,9 +1630,10 @@ handle_mouse() {
                     else
                         adjust 1
                     fi
-                else
+                elif (( button == 2 )); then
                     adjust -1
                 fi
+                # Middle-click (button 1) is intentionally ignored
             fi
         fi
     fi
@@ -1704,11 +1752,6 @@ handle_input_router() {
 }
 
 main() {
-    if (( BASH_VERSINFO[0] < 5 )); then
-        log_err "Bash 5.0+ required"
-        exit 1
-    fi
-
     if [[ ! -t 0 ]]; then
         log_err "TTY required"
         exit 1
@@ -1738,18 +1781,32 @@ main() {
     populate_config_cache
 
     ORIGINAL_STTY=$(stty -g 2>/dev/null) || ORIGINAL_STTY=""
-    stty -icanon -echo min 1 time 0 2>/dev/null
+    if [[ -z "$ORIGINAL_STTY" ]]; then
+        log_err "Failed to read terminal settings (stty -g). A controlling TTY is required."
+        exit 1
+    fi
+
+    if ! stty -icanon -echo min 1 time 0 2>/dev/null; then
+        log_err "Failed to configure terminal for raw input (stty)."
+        exit 1
+    fi
 
     printf '%s%s%s%s' "$MOUSE_ON" "$CURSOR_HIDE" "$CLR_SCREEN" "$CURSOR_HOME"
     load_active_values
 
-    trap 'draw_ui' WINCH
+    trap 'RESIZE_PENDING=1' WINCH
 
     local key
     while true; do
         draw_ui
         if ! IFS= read -rsn1 key; then
+            if (( RESIZE_PENDING )); then
+                RESIZE_PENDING=0
+            fi
             continue
+        fi
+        if (( RESIZE_PENDING )); then
+            RESIZE_PENDING=0
         fi
         handle_input_router "$key"
     done

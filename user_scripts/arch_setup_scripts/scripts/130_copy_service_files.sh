@@ -43,6 +43,9 @@ readonly SERVICES_CONFIG=(
 
     # dusky sliders
     "$HOME/user_scripts/sliders/service/dusky_sliders.service | disable"
+    
+    # dusky osd
+    "$HOME/user_scripts/mako_osd/osd_lock.service | enable"
 )
 
 # XDG Standard: ~/.config/systemd/user

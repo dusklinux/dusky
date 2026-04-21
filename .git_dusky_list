@@ -21,6 +21,7 @@
 .config/kitty/instruction for theme.txt
 .config/Kvantum/kvantum.kvconfig
 .config/matugen/config.toml
+.config/mako/config
 .config/matugen/templates/
 .config/matugen/presets/
 .config/mpv/mpv.conf
@@ -28,8 +29,6 @@
 .config/obs-studio/user.ini
 .config/pacman/makepkg.conf
 .config/pacseek/
-.config/swaync/
-.config/swayosd/
 .config/swappy/
 .config/uwsm/
 .config/waybar/01_horizontal_block/

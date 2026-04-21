@@ -113,8 +113,8 @@
         "on-click": "uwsm-app -- ~/user_scripts/sliders/dusky_sliders.py",
         "on-click-right": "uwsm-app -- ~/user_scripts/sliders/dusky_sliders.py",
         "on-click-middle": "uwsm-app -- ~/user_scripts/rofi/shader_menu.sh",
-        "on-scroll-up": "swayosd-client --brightness raise",
-        "on-scroll-down": "swayosd-client --brightness lower"
+        "on-scroll-up": "brightnessctl set +5%",
+        "on-scroll-down": "brightnessctl set 5%-"
     },
     "clock": {
         "format": "{:%I:%M %p}",
@@ -150,22 +150,13 @@
 
     },
     "custom/notification": {
-        "format": "{icon}",
-        "format-icons": {
-            "notification": "󱅫",
-            "none": "󰂜",
-            "dnd-notification": "󱅫",
-            "dnd-none": "󰂛",
-            "inhibited-notification": "󱅫",
-            "inhibited-none": "󰂜",
-            "dnd-inhibited-notification": "󱅫",
-            "dnd-inhibited-none": "󰂛"
-        },
+        "format": "{}",
         "return-type": "json",
-        "exec-if": "which swaync-client",
-        "exec": "swaync-client -swb",
-        "on-click": "swaync-client -t -sw",
-        "on-click-right": "swaync-client -d -sw",
+        "exec-if": "which makoctl",
+        "exec": "~/user_scripts/waybar/mako.sh",
+        "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+        "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+        "signal": 8,
         "escape": true
     }
 }

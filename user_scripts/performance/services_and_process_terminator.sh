@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# performance_toggle.sh (v5.1 - Elite Edition)
+# performance_toggle.sh (v5.2 - Elite Edition)
 #
 # A hyper-reliable, Bash 5.0+ utility to terminate Wayland/Hyprland resources.
 # Engineered for absolute state correctness, race-condition immunity, and safety.
@@ -44,16 +44,29 @@ _cleanup() {
 trap '_cleanup error "$LINENO"' ERR
 trap '_cleanup' EXIT
 
+# Safely terminate or hand off to an interactive shell.
+# Refuses to exec a shell when stdin/stdout are not a TTY (UWSM/keybind contexts).
+_exit_or_shell() {
+    local code="${1:-0}"
+    trap - ERR EXIT
+    if [[ "$AUTO_MODE" == true || ! -t 0 || ! -t 1 ]]; then
+        exit "$code"
+    fi
+    exec "${SHELL:-/bin/bash}"
+}
+
 # --- RESOURCE CONFIGURATION ---
 
+# Note: Items in the PROCESSES arrays must not exceed 15 characters due to the kernel's 
+# TASK_COMM_LEN limit enforced by `pgrep -x`. Use system/user services for longer names.
 declare -ra DEFAULT_PROCESSES=("hyprsunset" "awww-daemon" "waybar" "blueman-manager")
 declare -ra OPTIONAL_PROCESSES=("inotifywait" "wl-paste" "wl-copy" "firefox" "discord")
 
 declare -ra DEFAULT_SYSTEM_SERVICES=("firewalld" "vsftpd" "waydroid-container" "logrotate.timer" "sshd")
-declare -ra OPTIONAL_SYSTEM_SERVICES=("udisks2" "swayosd-libinput-backend" "warp-svc" "NetworkManager")
+declare -ra OPTIONAL_SYSTEM_SERVICES=("udisks2" "warp-svc" "NetworkManager")
 
-declare -ra DEFAULT_USER_SERVICES=("battery_notify" "blueman-applet" "hypridle" "hyprpolkitagent" "swaync" "gvfs-daemon" "waybar" "blueman-manager" "gvfs-metadata" "network_meter" "dusky_sliders" "dusky")
-declare -ra OPTIONAL_USER_SERVICES=("gnome-keyring-daemon" "swayosd-server" "pipewire-pulse.socket" "pipewire.socket" "wireplumber" "pipewire")
+declare -ra DEFAULT_USER_SERVICES=("battery_notify" "blueman-applet" "hypridle" "hyprpolkitagent" "gvfs-daemon" "waybar" "blueman-manager" "gvfs-metadata" "network_meter" "dusky_sliders" "dusky")
+declare -ra OPTIONAL_USER_SERVICES=("gnome-keyring-daemon" "pipewire-pulse.socket" "pipewire.socket" "wireplumber" "pipewire")
 
 declare -ra DEFAULT_SCRIPTS=("dusky_main.py" "dusky_stt_main.py")
 declare -ra OPTIONAL_SCRIPTS=()
@@ -75,18 +88,30 @@ contains_element() {
     return 1
 }
 
-# Safely identifies script PIDs. 
-# Uses `-ww` to prevent line truncation. Filters out text editors/pagers from the `comm` field
-# to prevent collateral damage (e.g., won't kill `nano dusky_main.py`).
+# Safely identifies script PIDs.
+# Matches the target only when it appears as a discrete path-stripped token in the
+# arguments field (not anywhere on the line). Filters out editors/pagers/inspection
+# tools by comm to prevent collateral damage.
 get_script_pids() {
     local target="$1"
     local mypid="$$"
-    
+
     ps -ww -eo pid=,comm=,args= | awk -v tgt="$target" -v me="$mypid" '
-        $1 != me && index($0, tgt) {
-            # If the executing binary is an editor or pager, ignore it.
-            if ($2 ~ /^(nano|vim|vi|nvim|cat|less|more|tail|head|grep|awk)$/) next;
-            print $1
+        {
+            pid  = $1
+            comm = $2
+            args = $0
+            sub(/^[[:space:]]*[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+/, "", args)
+        }
+        pid == me { next }
+        comm ~ /^(nano|vim|vi|nvim|emacs|emacsclient|kate|gedit|code|codium|micro|helix|hx|cat|bat|less|more|tail|head|grep|rg|awk|sed|file|stat|ls|find|fzf|tee|xargs)$/ { next }
+        {
+            n = split(args, parts, /[[:space:]]+/)
+            for (i = 1; i <= n; i++) {
+                token = parts[i]
+                sub(/.*\//, "", token)
+                if (token == tgt) { print pid; next }
+            }
         }
     '
 }
@@ -97,7 +122,7 @@ is_active() {
         proc)   pgrep -x "$name" &>/dev/null ;;
         sys)    systemctl is-active --quiet "$name" 2>/dev/null ;;
         user)   systemctl --user is-active --quiet "$name" 2>/dev/null ;;
-        script) 
+        script)
             local pids
             pids=$(get_script_pids "$name")
             [[ -n "$pids" ]]
@@ -108,19 +133,29 @@ is_active() {
 
 gather_candidates() {
     local item
+    local -A seen=()
+
     for item in "${DEFAULT_PROCESSES[@]}" "${OPTIONAL_PROCESSES[@]}"; do
+        [[ -v seen["proc:$item"] ]] && continue
+        seen["proc:$item"]=1
         is_active "$item" "proc" && printf 'proc:%s|%s (Process)\n' "$item" "$item"
     done
     for item in "${DEFAULT_SYSTEM_SERVICES[@]}" "${OPTIONAL_SYSTEM_SERVICES[@]}"; do
+        [[ -v seen["sys:$item"] ]] && continue
+        seen["sys:$item"]=1
         is_active "$item" "sys" && printf 'sys:%s|%s (System Svc)\n' "$item" "$item"
     done
     for item in "${DEFAULT_USER_SERVICES[@]}" "${OPTIONAL_USER_SERVICES[@]}"; do
+        [[ -v seen["user:$item"] ]] && continue
+        seen["user:$item"]=1
         is_active "$item" "user" && printf 'user:%s|%s (User Svc)\n' "$item" "$item"
     done
     for item in "${DEFAULT_SCRIPTS[@]}" "${OPTIONAL_SCRIPTS[@]}"; do
+        [[ -v seen["script:$item"] ]] && continue
+        seen["script:$item"]=1
         is_active "$item" "script" && printf 'script:%s|%s (Script)\n' "$item" "$item"
     done
-    return 0 # CRITICAL: Guarantees idempotence by overriding the last loop's short-circuit exit code.
+    return 0
 }
 
 is_default_item() {
@@ -134,7 +169,7 @@ is_default_item() {
     esac
 }
 
-# Unified PID tracking. Solves respawn race conditions by tracking the EXACT PIDs 
+# Unified PID tracking. Solves respawn race conditions by tracking the EXACT PIDs
 # grabbed at the moment of execution, utilizing native `kill -0` syscalls.
 terminate_pids() {
     local -n target_pids=$1
@@ -144,7 +179,7 @@ terminate_pids() {
 
     local i p
     local -a remaining_pids
-    
+
     for i in {1..20}; do
         remaining_pids=()
         for p in "${target_pids[@]}"; do
@@ -152,7 +187,7 @@ terminate_pids() {
                 remaining_pids+=("$p")
             fi
         done
-        
+
         # If the remaining list is empty, all processes have successfully died.
         ((${#remaining_pids[@]} == 0)) && return 0
         sleep 0.1
@@ -183,15 +218,32 @@ perform_stop() {
             terminate_pids pids
             ;;
         sys)
-            if ! { ((EUID == 0)) && systemctl stop "$name" || sudo systemctl stop "$name"; } 2>/dev/null; then
-                [[ "$(systemctl show --value --property LoadState "$name" 2>/dev/null || true)" == "not-found" ]] && printf 'Warning: Unit %s not found\n' "$name" >&2
+            local stop_err stop_rc=0
+            if ((EUID == 0)); then
+                stop_err=$(systemctl stop "$name" 2>&1) || stop_rc=$?
+            else
+                stop_err=$(sudo systemctl stop "$name" 2>&1) || stop_rc=$?
+            fi
+            if ((stop_rc != 0)); then
+                if [[ "$(systemctl show --value --property LoadState "$name" 2>/dev/null)" == "not-found" ]]; then
+                    printf 'Warning: Unit %s not found\n' "$name" >&2
+                else
+                    printf 'Error stopping %s: %s\n' "$name" "$stop_err" >&2
+                fi
                 return 1
             fi
-            sleep 0.2; ! is_active "$name" "sys"
+            sleep 0.2
+            [[ "$(systemctl show --value --property ActiveState "$name" 2>/dev/null)" == "inactive" ]]
             ;;
         user)
-            if ! systemctl --user stop "$name" 2>/dev/null; then return 1; fi
-            sleep 0.2; ! is_active "$name" "user"
+            local stop_err stop_rc=0
+            stop_err=$(systemctl --user stop "$name" 2>&1) || stop_rc=$?
+            if ((stop_rc != 0)); then
+                printf 'Error stopping %s: %s\n' "$name" "$stop_err" >&2
+                return 1
+            fi
+            sleep 0.2
+            [[ "$(systemctl --user show --value --property ActiveState "$name" 2>/dev/null)" == "inactive" ]]
             ;;
         *) return 1 ;;
     esac
@@ -201,12 +253,10 @@ perform_stop() {
 
 mapfile -t CANDIDATES < <(gather_candidates)
 
-if [[ ${#CANDIDATES[@]} -eq 0 ]]; then
+if ((${#CANDIDATES[@]} == 0)); then
     gum style --border normal --padding "1 2" --border-foreground 212 "System Clean" "All monitored targets are inactive."
     printf '\n'
-    trap - ERR EXIT
-    [[ "$AUTO_MODE" == true ]] && exit 0
-    exec "${SHELL:-/bin/bash}"
+    _exit_or_shell 0
 fi
 
 declare -a SELECTED_ITEMS=()
@@ -231,16 +281,19 @@ else
 
     gum style --border double --padding "1 2" --border-foreground 57 "Performance Terminator"
 
-    SELECTION_RESULT=$(gum choose --no-limit --height 15 --header "Select resources to FREE. (SPACE: toggle, ENTER: confirm)" --selected="$PRE_SELECTED_STR" "${OPTIONS_DISPLAY[@]}" || true)
-    
-    [[ -z "$SELECTION_RESULT" ]] && { printf 'Cancelled.\n'; exit 0; }
+    SELECTION_RESULT=$(gum choose --no-limit --height 15 \
+        --header "Select resources to FREE. (SPACE: toggle, ENTER: confirm)" \
+        --selected="$PRE_SELECTED_STR" "${OPTIONS_DISPLAY[@]}") || {
+        printf 'Cancelled.\n'
+        exit 0
+    }
 
     while IFS= read -r line; do
         [[ -n "$line" ]] && SELECTED_ITEMS+=("${DATA_MAP[$line]}")
     done <<< "$SELECTION_RESULT"
 fi
 
-[[ ${#SELECTED_ITEMS[@]} -eq 0 ]] && { trap - ERR EXIT; [[ "$AUTO_MODE" == true ]] && exit 0; exec "${SHELL:-/bin/bash}"; }
+((${#SELECTED_ITEMS[@]} == 0)) && _exit_or_shell 0
 
 # Sudo Authentication
 for item in "${SELECTED_ITEMS[@]}"; do
@@ -258,10 +311,10 @@ for item in "${SELECTED_ITEMS[@]}"; do
     type="${item%%:*}" name="${item#*:}"
     printf ' • Stopping %s...' "$name"
     if perform_stop "$type" "$name"; then
-        printf '\r \033[0;32m✔\033[0m Stopped %s     \n' "$name"
+        printf '\r \033[0;32m✔\033[0m Stopped %s\033[K\n' "$name"
         SUCCESS_LIST+=("$type: $name")
     else
-        printf '\r \033[0;31m✘\033[0m Failed %s      \n' "$name"
+        printf '\r \033[0;31m✘\033[0m Failed %s\033[K\n' "$name"
         FAIL_LIST+=("$type: $name")
     fi
 done
@@ -277,10 +330,13 @@ printf '%b' "$REPORT"
 trap - ERR EXIT
 
 if [[ "$AUTO_MODE" == true ]]; then
-    [[ ${#FAIL_LIST[@]} -gt 0 ]] && exit 1
+    ((${#FAIL_LIST[@]} > 0)) && exit 1
     exit 0
 fi
 
-printf '%s\n' "-----------------------------------------------------"
-printf '%s\n' "Session Active. Type 'exit' to close."
-exec "${SHELL:-/bin/bash}"
+if [[ -t 0 && -t 1 ]]; then
+    printf '%s\n' "-----------------------------------------------------"
+    printf '%s\n' "Session Active. Type 'exit' to close."
+    exec "${SHELL:-/bin/bash}"
+fi
+exit $(( ${#FAIL_LIST[@]} > 0 ? 1 : 0 ))

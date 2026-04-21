@@ -179,6 +179,7 @@ declare -A CUSTOM_SCRIPT_PATHS=(
     ["dusky_matugen_config_tui.sh"]="user_scripts/theme_matugen/dusky_matugen_config_tui.sh"
     ["dusky_firefox_tui.sh"]="user_scripts/theme_matugen/dusky_firefox_tui.sh"
     ["theme_ctl.sh"]="user_scripts/theme_matugen/theme_ctl.sh"
+    ["update_counter.sh"]="user_scripts/waybar/update_counter.sh"
 )
 
 # ------------------------------------------------------------------------------
@@ -220,6 +221,7 @@ declare -ra UPDATE_SEQUENCE=(
 #    "U | 040_long_sleep_timeout.sh"
 #    "S | 045_battery_limiter.sh"
 #    "S | 050_pacman_config.sh --auto"
+    "S | 051_pacman_hooks.sh --auto"
 #    "S | 055_pacman_reflector.sh"
 #    "S | 060_package_installation.sh"
 #    "U | 065_enabling_user_services.sh"
@@ -323,6 +325,7 @@ declare -ra UPDATE_SEQUENCE=(
 #    "U | ignore-fail | dusky_firefox_tui.sh --sync --all"
     "U | ignore-fail | hypr_anim.sh --current"
     "U | ignore-fail | theme_ctl.sh refresh"
+    "U | ignore-fail | update_counter.sh"
     "U | dusky_commands_after.sh"
 )
 

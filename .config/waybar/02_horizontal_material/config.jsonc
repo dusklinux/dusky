@@ -151,9 +151,9 @@
           },
           "on-click": "uwsm-app -- pavucontrol",
           "on-click-right": "uwsm-app -- kitty --class cava -e cava",
-          "on-click-middle": "swayosd-client --output-volume mute-toggle",
-          "on-scroll-up": "swayosd-client --output-volume raise",
-          "on-scroll-down": "swayosd-client --output-volume lower",
+          "on-click-middle": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+          "on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
+          "on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%",
           "scroll-step": 5,
           "max-volume": 150
       },
@@ -165,9 +165,9 @@
           "format-source-muted": "󰍭 {volume}%",
           "on-click": "uwsm-app -- pavucontrol",
           "on-click-right": "uwsm-app -- ~/user_scripts/audio/mic_switch.sh",
-          "on-click-middle": "swayosd-client --input-volume mute-toggle",
-          "on-scroll-up": "swayosd-client --input-volume raise",
-          "on-scroll-down": "swayosd-client --input-volume lower",
+          "on-click-middle": "pactl set-source-mute @DEFAULT_SOURCE@ toggle",
+          "on-scroll-up": "pactl set-source-volume @DEFAULT_SOURCE@ +5%",
+          "on-scroll-down": "pactl set-source-volume @DEFAULT_SOURCE@ -5%",
           "tooltip-format": "<b>Input Device</b>: {desc}"
       },
 
@@ -367,10 +367,11 @@
               "dnd-inhibited-none": "󰂛 "
           },
           "return-type": "json",
-          "exec-if": "which swaync-client",
-          "exec": "swaync-client -swb",
-          "on-click": "swaync-client -t -sw",
-          "on-click-right": "swaync-client -d -sw",
+          "exec-if": "which makoctl",
+          "exec": "~/user_scripts/waybar/mako.sh",
+          "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+          "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+          "signal": 8,
           "escape": true,
           "tooltip-format": "Notifications\n\n LMB  Toggle Panel\n RMB  Do Not Disturb"
       },

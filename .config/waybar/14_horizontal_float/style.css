@@ -229,7 +229,7 @@ window#waybar #workspaces button.active {
     box-shadow: inset 0 0 10px alpha(@on_surface, 0.05);
 }
 
-/* If you have the SwayOSD or brightness sliders 
+/* If you have the brightness sliders
    you can add a "pulsing" effect when they are very high */
 
 #backlight:hover {

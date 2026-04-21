@@ -17,7 +17,6 @@ window#waybar {
 
 /* UNIFIED CAPSULE STYLE */
 #clock,
-#custom-notification,
 #workspaces,
 #group-stats,
 #pulseaudio,
@@ -73,10 +72,6 @@ window#waybar {
 #memory.critical, 
 #temperature.critical {
     color: @error;
-}
-
-#custom-notification {
-    color: @on_surface_variant;
 }
 
 /* --- CENTER SECTION --- */
