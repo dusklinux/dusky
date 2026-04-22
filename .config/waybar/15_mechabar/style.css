@@ -50,154 +50,98 @@ tooltip label {
 	color: @hover-fg;
 }
 
-/*---------------
-    weather
----------------*/
+/*-----------------------------------
+    Center Outer Tier (Low Bg)
+------------------------------------*/
 
-#custom-left_div.2 {
+#custom-left_div.2,
+#custom-right_div.5 {
 	color: @surface_container_low;
 }
-#custom-weather {
+
+#network,
+#custom-net-speed,
+#bluetooth,
+#custom-weather,
+#custom-updates-trigger,
+#custom-updates {
 	background-color: @surface_container_low;
+	padding: 0 6px;
 }
 
-/*------------
-    memory
-------------*/
+/*-----------------------------------
+    Center Middle Tier (Surface Bg)
+------------------------------------*/
 
-#custom-left_div.3 {
-	background-color: @surface_container_low;
-	color: @surface;
-}
-#memory {
-	background-color: @surface;
-}
-
-/*---------
-    cpu
----------*/
-
-#custom-left_div.4 {
-	background-color: @surface;
-	color: @surface_container_high;
-}
-#cpu {
-	background-color: @surface_container_high;
-}
-#custom-left_inv.1 {
-	color: @surface_container_high;
-}
-
-/*-----------------
-    distro icon
------------------*/
-
-#custom-left_div.5,
-#custom-right_div.2 {
-	color: @secondary;
-}
-#custom-distro {
-	padding: 0 10px 0 5px;
-	background-color: @secondary;
-	color: @background;
-}
-
-/*--------------------
-    idle inhibitor
---------------------*/
-
-#custom-right_inv.1 {
-	color: @surface_container_high;
-}
-#idle_inhibitor {
-	background-color: @surface_container_high;
-}
-
-/*--------------------
-    notifications
---------------------*/
-
-#custom-right_inv.2 {
-	color: @surface_container_high;
-}
-#custom-notifications {
-	background-color: @surface_container_high;
-}
-
-/*----------
-    time
-----------*/
-
-#clock.time {
-	padding-right: 6px;
-	background-color: @surface_container_high;
-}
-#custom-right_div.3 {
-	background-color: @surface;
-	color: @surface_container_high;
-}
-
-/*----------
-    date
-----------*/
-
-#clock.date {
-	padding-left: 6px;
-	background-color: @surface;
-}
+#custom-left_div.3,
 #custom-right_div.4 {
 	background-color: @surface_container_low;
 	color: @surface;
 }
 
+#memory,
+#clock.date {
+	background-color: @surface;
+	padding: 0 6px;
+}
+
+/*-----------------------------------
+    Center Inner Tier (High Bg)
+------------------------------------*/
+
+#custom-left_div.4,
+#custom-right_div.3 {
+	background-color: @surface;
+	color: @surface_container_high;
+}
+
+#cpu,
+#clock.time {
+	background-color: @surface_container_high;
+	padding: 0 6px;
+}
+
+/*-----------------------------------
+    Center Apex (Distro Arch Logo)
+------------------------------------*/
+
+#custom-left_inv.1,
+#custom-right_inv.1 {
+	color: @surface_container_high;
+}
+
+#custom-left_div.5,
+#custom-right_div.2 {
+	color: @secondary;
+}
+
+#custom-distro {
+	background-color: @secondary;
+	color: @background;
+	padding: 0 10px 0 5px;
+}
+
 /*-----------------
-    system tray
+    Left & Right Blocks
 -----------------*/
-
-#network {
-	background-color: @surface_container_low;
-	padding: 0 6px 0 4px;
-}
-#bluetooth {
-	background-color: @surface_container_low;
-	padding: 0 5px;
-}
-#custom-update {
-	background-color: @surface_container_low;
-	padding: 0 8px 0 2px;
-}
-#custom-right_div.5 {
-	color: @surface_container_low;
-}
-
-/*----------------
-    workspaces
-----------------*/
 
 #custom-left_div.1,
 #custom-right_div.1 {
 	color: @surface_container_low;
 }
 #workspaces {
-	padding: 0 1px;
 	background-color: @surface_container_low;
+	padding: 0 1px;
 }
 #workspaces button.active label,
 #workspaces button.focused label {
 	color: @secondary;
 }
 
-/*------------------
-    window title
-------------------*/
-
-#window {
-	margin: 0 12px;
+#custom-notifications {
+	background-color: @surface_container_low;
+	padding: 0 6px;
 }
-
-/*----------------
-    media info
-----------------*/
 
 #cava {
 	font-family: "JetBrainsMono Nerd Font";
@@ -205,18 +149,11 @@ tooltip label {
 	padding-right: 8px;
 }
 
-#mpris {
-	background-color: @surface_container_low;
-	padding: 0 5px;
-}
+#mpris,
 #custom-mpris-trigger {
 	background-color: @surface_container_low;
 	padding: 0 5px;
 }
-
-/*------------
-    volume
-------------*/
 
 #custom-left_div.6 {
 	color: @surface_container_low;
@@ -226,21 +163,14 @@ tooltip label {
 	background-color: @surface;
 }
 
-/*----------------
-    brightness
-----------------*/
-
 #custom-left_div.7 {
 	background-color: @surface_container_low;
 	color: @surface;
 }
 #backlight {
 	background-color: @surface_container_high;
+	padding: 0 6px;
 }
-
-/*-------------
-    battery
--------------*/
 
 #custom-left_div.8 {
 	background-color: @surface;
@@ -248,36 +178,44 @@ tooltip label {
 }
 #battery {
 	background-color: @surface_container_high;
+	padding: 0 6px;
 }
 #custom-left_inv.2 {
 	color: @surface_container_high;
 }
 
-/*----------------
-    power menu
-----------------*/
-
 #custom-power {
-	padding: 0 10px 0 10px;
-	color: @secondary;
 	background-color: @background;
+	color: @secondary;
+	padding: 0 10px 0 10px;
 }
 
+#custom-inhibit-suspend {
+	padding: 0 6px;
+}
+
+/*-----------------
+    Hover & States
+-----------------*/
+
 #custom-trigger:hover,
-#idle_inhibitor:hover,
+#custom-inhibit-suspend:hover,
 #custom-notifications:hover,
 #clock.date:hover,
 #network:hover,
+#custom-net-speed:hover,
 #bluetooth:hover,
-#custom-update:hover,
+#custom-updates-trigger:hover,
+#custom-updates:hover,
 #mpris:hover,
 #pulseaudio:hover,
 #wireplumber:hover {
 	color: @hover-fg;
 }
 
-/* inactive state */
-#idle_inhibitor.deactivated,
+#custom-inhibit-suspend.disabled,
+#custom-net-speed.network-disconnected,
+#custom-updates.updated,
 #custom-notifications.dnd-none,
 #custom-notifications.dnd-inhibited-none,
 #mpris.paused,
@@ -285,6 +223,10 @@ tooltip label {
 #pulseaudio.input.source-muted,
 #wireplumber.muted {
 	color: @hover-fg;
+}
+
+#custom-updates.pending {
+	color: @secondary;
 }
 
 #memory.warning,

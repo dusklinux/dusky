@@ -1,41 +1,35 @@
 {
-
-  "position": "top",
+	"position": "top",
 	"modules-left": [
 		"group/user",
 		"custom/right_div#4",
 		"hyprland/workspaces",
-		"custom/right_div#1",
-		"hyprland/window"
+		"custom/notifications",
+		"custom/right_div#1"
 	],
 	"modules-center": [
-//		Commented out bc it makes the waybar asymmetrical
-//		"hyprland/language",
 		"custom/left_div#2",
-		"custom/weather",
+		"network",
+		"custom/net-speed",
+		"bluetooth",
 		"custom/left_div#3",
 		"memory",
 		"custom/left_div#4",
 		"cpu",
-		"custom/notifications",
 		"custom/left_inv#1",
 		"custom/left_div#5",
 		"custom/distro",
 		"custom/right_div#2",
 		"custom/right_inv#1",
-		"idle_inhibitor",
 		"clock#time",
 		"custom/right_div#3",
 		"clock#date",
 		"custom/right_div#4",
-		"network",
-		"bluetooth",
+		"custom/weather",
+		"group/updates-drawer",
 		"custom/right_div#5"
-//		Commented out bc it makes the waybar asymmetrical
-//		"custom/update"
 	],
 	"modules-right": [
-		"custom/cava",
 		"custom/left_div#2",
 		"group/mpris-drawer",
 		"custom/left_div#3",
@@ -43,9 +37,7 @@
 		"custom/left_div#4",
 		"group/backlight-drawer",
 		"custom/left_inv#1",
-//		"custom/left_div#5",
-		"custom/power"
-//		"custom/right_div#2",
+		"group/power-drawer"
 	],
 
 	"layer": "top",
@@ -94,30 +86,49 @@
 		"cursor": true
 	},
 
-	"hyprland/window": {
-		"format": "{}",
-		"rewrite": {
-			"": "Desktop",
-			"kitty": "Terminal",
-			"zsh": "Terminal",
-			"~": "Terminal"
-		},
-		"swap-icon-label": false
+	"network": {
+		"interval": 10,
+		"format": "󰤨",
+		"format-ethernet": "󰈀",
+		"format-wifi": "{icon}",
+		"format-disconnected": "󰤯",
+		"format-disabled": "󰤮",
+		"format-icons": [
+			"󰤟", "󰤢", "󰤥", "󰤨"
+		],
+		"on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
+		"on-click-right": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
+		"tooltip-format": "<b>Gateway</b>: {gwaddr}",
+		"tooltip-format-ethernet": "<b>Interface</b>: {ifname}",
+		"tooltip-format-wifi": "<b>Network</b>: {essid}\n<b>IP Addr</b>: {ipaddr}/{cidr}\n<b>Strength</b>: {signalStrength}%\n<b>Frequency</b>: {frequency} GHz\n<b>Up</b>: {bandwidthUpBytes}  <b>Down</b>: {bandwidthDownBytes}",
+		"tooltip-format-disconnected": "Wi-Fi Disconnected",
+		"tooltip-format-disabled": "Wi-Fi Disabled"
 	},
 
-	"hyprland/language": {
-		"format-en": "en",
-		"min-length": 3,
-		"max-length": 3
-	},
-
-	"custom/weather": {
-		"format": "{}",
-		"exec": "python3 ~/user_scripts/waybar/weather.py",
-		"interval": 1800,
+	"custom/net-speed": {
+		"exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --horizontal",
 		"return-type": "json",
-		"min-length": 8,
-		"max-length": 8
+		"format": "{}",
+		"interval": 1,
+		"tooltip": true
+	},
+
+	"bluetooth": {
+		"format": "󰂯",
+		"format-disabled": "󰂲",
+		"format-off": "󰂲",
+		"format-on": "󰂰",
+		"format-connected": "󰂱",
+		"on-click": "uwsm-app -- blueman-manager",
+		"on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui",
+		"tooltip-format": "Device Addr: {device_address}",
+		"tooltip-format-disabled": "Bluetooth Disabled",
+		"tooltip-format-off": "Bluetooth Off",
+		"tooltip-format-on": "Bluetooth Disconnected",
+		"tooltip-format-connected": "Device: {device_alias}",
+		"tooltip-format-enumerate-connected": "Device: {device_alias}",
+		"tooltip-format-connected-battery": "Device: {device_alias}\nBattery: {device_battery_percentage}%",
+		"tooltip-format-enumerate-connected-battery": "Device: {device_alias}\nBattery: {device_battery_percentage}%"
 	},
 
 	"memory": {
@@ -129,8 +140,6 @@
 			"warning": 75,
 			"critical": 90
 		},
-		"min-length": 7,
-		"max-length": 7,
 		"tooltip-format": "Memory Used: {used:0.0f}/{total:0.0f} GB"
 	},
 
@@ -139,8 +148,6 @@
 		"format": "󰍛 {usage}%",
 		"format-warning": "󰀨 {usage}%",
 		"format-critical": "󰀨 {usage}%",
-		"min-length": 5,
-		"max-length": 5,
 		"states": {
 			"warning": 75,
 			"critical": 90
@@ -154,55 +161,13 @@
 		"tooltip-format": "Control Center"
 	},
 
-	"idle_inhibitor": {
-		"format": "{icon}",
-		"format-icons": {
-			"activated": "󰈈",
-			"deactivated": "󰈉"
-		},
-		"min-length": 3,
-		"max-length": 3,
-		"tooltip-format-activated": "<b>Idle Inhibitor</b>: Activated",
-		"tooltip-format-deactivated": "<b>Idle Inhibitor</b>: Deactivated",
-		"start-activated": false
-	},
-
 	"clock#time": {
-    "format": "{:%I:%M %p}",
-		"min-length": 5,
-		"max-length": 5,
-		"tooltip-format": "<b>Standard Time</b>: <span text_transform='lowercase'>{:%I:%M %p}</span>"
+		"format": "{:%H:%M}",
+		"tooltip-format": "<b>Standard Time</b>: {:%H:%M}"
 	},
-	
-	"custom/notifications": {
-                "tooltip": true,
-                "tooltip-format": "Left Click: Launch Mako\n Right Click: Do Not Disturb",
-                "format": "{icon}",
-                "format-icons": {
-                	"notification": "",
-                	"none": "",
-                	"dnd-notification": "",
-                	"dnd-none": "",
-                	"inhibited-notification": "",
-                	"inhibited-none": "",
-                	"dnd-inhibited-notification": "",
-                	"dnd-inhibited-none": ""
-                },
-                "return-type": "json",
-                "exec-if": "which makoctl",
-                "exec": "~/user_scripts/waybar/mako.sh",
-                "on-click": "~/user_scripts/rofi/rofi_mako.sh",
-                "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
-                "signal": 8,
-                "escape": true,
-                "min-length": 3,
-                "max-length": 3,
-        },
 
 	"clock#date": {
 		"format": "󰸗 {:%m-%d}",
-		"min-length": 8,
-		"max-length": 8,
 		"tooltip-format": "{calendar}",
 		"calendar": {
 			"mode": "month",
@@ -220,63 +185,62 @@
 		}
 	},
 
-	"network": {
-		"interval": 10,
-		"format": "󰤨",
-		"format-ethernet": "󰈀",
-		"format-wifi": "{icon}",
-		"format-disconnected": "󰤯",
-		"format-disabled": "󰤮",
-		"format-icons": [
-			"󰤟", "󰤢", "󰤥", "󰤨"
-		],
-		"min-length": 2,
-		"max-length": 2,
-		"on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
-		"on-click-right": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
-		"tooltip-format": "<b>Gateway</b>: {gwaddr}",
-		"tooltip-format-ethernet": "<b>Interface</b>: {ifname}",
-		"tooltip-format-wifi": "<b>Network</b>: {essid}\n<b>IP Addr</b>: {ipaddr}/{cidr}\n<b>Strength</b>: {signalStrength}%\n<b>Frequency</b>: {frequency} GHz\n<b>Up</b>: {bandwidthUpBytes}  <b>Down</b>: {bandwidthDownBytes}",
-		"tooltip-format-disconnected": "Wi-Fi Disconnected",
-		"tooltip-format-disabled": "Wi-Fi Disabled"
-	},
-
-	"bluetooth": {
-		"format": "󰂯",
-		"format-disabled": "󰂲",
-		"format-off": "󰂲",
-		"format-on": "󰂰",
-		"format-connected": "󰂱",
-		"min-length": 2,
-		"max-length": 2,
-		"on-click": "uwsm-app -- blueman-manager",
-		"on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui",
-		"tooltip-format": "Device Addr: {device_address}",
-		"tooltip-format-disabled": "Bluetooth Disabled",
-		"tooltip-format-off": "Bluetooth Off",
-		"tooltip-format-on": "Bluetooth Disconnected",
-		"tooltip-format-connected": "Device: {device_alias}",
-		"tooltip-format-enumerate-connected": "Device: {device_alias}",
-		"tooltip-format-connected-battery": "Device: {device_alias}\nBattery: {device_battery_percentage}%",
-		"tooltip-format-enumerate-connected-battery": "Device: {device_alias}\nBattery: {device_battery_percentage}%"
-	},
-
-	"custom/update": {
-		"format": "󰏔 {}",
-		"exec": "checkupdates 2>/dev/null | wc -l || echo 0",
-		"interval": 3600,
-		"signal": 1,
-		"min-length": 3,
-		"max-length": 3,
-		"on-click": "kitty sh -c 'command -v yay >/dev/null && yay || paru'",
-		"on-click-right": "pkill -RTMIN+1 waybar",
-		"tooltip-format": "System Updates"
-	},
-
-	"custom/cava": {
+	"custom/weather": {
 		"format": "{}",
-		"exec": "$HOME/user_scripts/waybar/cava.sh --8 --clean",
-		"spacing": 2
+		"exec": "python3 ~/user_scripts/waybar/weather.py",
+		"interval": 1800,
+		"return-type": "json"
+	},
+
+	"custom/inhibit-suspend": {
+		"format": "{}",
+		"exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
+		"return-type": "json",
+		"interval": 5,
+		"signal": 9,
+		"on-click": "uwsm-app -- ~/user_scripts/waybar/toggle_hypridle.sh",
+		"escape": true
+	},
+
+	"group/updates-drawer": {
+		"orientation": "horizontal",
+		"drawer": {
+			"transition-duration": 400,
+			"children-class": "updates-drawer",
+			"click-to-reveal": false,
+			"transition-left-to-right": false
+		},
+		"modules": [
+			"custom/updates-trigger",
+			"custom/updates"
+		]
+	},
+
+	"custom/updates-trigger": {
+		"format": "",
+		"tooltip": false
+	},
+
+	"custom/updates": {
+		"exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+		"return-type": "json",
+		"format": "{}",
+		"tooltip": true
+	},
+
+  "custom/notifications": {
+		"justify": "center",
+		"align": 0.5,
+		"tooltip-format": "Left Click: Launch Mako\nRight Click: Do Not Disturb",
+		"format": "{}",
+		"return-type": "json",
+		"exec-if": "which makoctl",
+		"exec": "~/user_scripts/waybar/mako.sh --horizontal",
+		"interval": 2,
+		"on-click": "~/user_scripts/rofi/rofi_mako.sh",
+		"on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+		"signal": 8,
+		"escape": true
 	},
 
 	"group/mpris-drawer": {
@@ -342,8 +306,6 @@
 			"headset": "󰋎",
 			"headset-muted": "󰋐"
 		},
-		"min-length": 7,
-		"max-length": 7,
 		"on-click": "uwsm-app -- pavucontrol",
 		"on-click-right": "uwsm-app -- kitty --class cava -e cava",
 		"on-click-middle": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
@@ -356,8 +318,6 @@
 		"format": "{format_source}",
 		"format-source": "󰍬 {volume}%",
 		"format-source-muted": "󰍭 {volume}%",
-		"min-length": 7,
-		"max-length": 7,
 		"on-click": "pactl set-source-mute @DEFAULT_SOURCE@ toggle",
 		"on-scroll-up": "pactl set-source-volume @DEFAULT_SOURCE@ +5%",
 		"on-scroll-down": "pactl set-source-volume @DEFAULT_SOURCE@ -5%",
@@ -369,8 +329,6 @@
 		"format-icons": [
 			"", "", "", "", "", "", "", "", ""
 		],
-		"min-length": 7,
-		"max-length": 7,
 		"on-click": "uwsm-app -- ~/user_scripts/sliders/dusky_sliders.py",
 		"on-click-right": "uwsm-app -- ~/user_scripts/sliders/dusky_sliders.py",
 		"on-scroll-up": "brightnessctl set +5%",
@@ -389,15 +347,27 @@
 			"󰂎", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"
 		],
 		"format-charging": "󰉁 {capacity}%",
-		"min-length": 7,
-		"max-length": 7,
-		"tooltip-format": "<b>Discharging</b>: {time}",
-		"tooltip-format-charging": "<b>Charging</b>: {time}",
+		"tooltip-format": "<b>Discharging</b>: {time}\n<b>Power Draw</b>: {power:.2f} W",
+		"tooltip-format-charging": "<b>Charging</b>: {time}\n<b>Power Input</b>: {power:.2f} W",
 		"events": {
 			"on-discharging-warning": "notify-send 'Battery Low (20%)' -u critical -i 'battery-020' -h string:x-canonical-private-synchronous:battery",
 			"on-discharging-critical": "notify-send 'Battery Critical (10%)' -u critical -i 'battery-010' -h string:x-canonical-private-synchronous:battery",
 			"on-charging-100": "notify-send 'Battery Full (100%)' -i 'battery-100-charged' -h string:x-canonical-private-synchronous:battery"
 		}
+	},
+
+	"group/power-drawer": {
+		"orientation": "horizontal",
+		"drawer": {
+			"transition-duration": 400,
+			"children-class": "power-drawer",
+			"click-to-reveal": false,
+			"transition-left-to-right": false
+		},
+		"modules": [
+			"custom/power",
+			"custom/inhibit-suspend"
+		]
 	},
 
 	"custom/power": {
@@ -406,71 +376,23 @@
 		"tooltip-format": "Power Menu"
 	},
 
-	"custom/left_div#1": {
-		"format": "",
-		"tooltip": false
-	},
-	"custom/left_div#2": {
-		"format": "",
-		"tooltip": false
-	},
-	"custom/left_div#3": {
-		"format": "",
-		"tooltip": false
-	},
-	"custom/left_div#4": {
-		"format": "",
-		"tooltip": false
-	},
-	"custom/left_div#5": {
-		"format": "",
-		"tooltip": false
-	},
-	"custom/left_div#6": {
-		"format": "",
-		"tooltip": false
-	},
-	"custom/left_div#7": {
-		"format": "",
-		"tooltip": false
-	},
-	"custom/left_div#8": {
-		"format": "",
-		"tooltip": false
-	},
+	"custom/left_div#1": { "format": "", "tooltip": false },
+	"custom/left_div#2": { "format": "", "tooltip": false },
+	"custom/left_div#3": { "format": "", "tooltip": false },
+	"custom/left_div#4": { "format": "", "tooltip": false },
+	"custom/left_div#5": { "format": "", "tooltip": false },
+	"custom/left_div#6": { "format": "", "tooltip": false },
+	"custom/left_div#7": { "format": "", "tooltip": false },
+	"custom/left_div#8": { "format": "", "tooltip": false },
 
-	"custom/left_inv#1": {
-		"format": "",
-		"tooltip": false
-	},
-	"custom/left_inv#2": {
-		"format": "",
-		"tooltip": false
-	},
+	"custom/left_inv#1": { "format": "", "tooltip": false },
+	"custom/left_inv#2": { "format": "", "tooltip": false },
 
-	"custom/right_div#1": {
-		"format": "",
-		"tooltip": false
-	},
-	"custom/right_div#2": {
-		"format": "",
-		"tooltip": false
-	},
-	"custom/right_div#3": {
-		"format": "",
-		"tooltip": false
-	},
-	"custom/right_div#4": {
-		"format": "",
-		"tooltip": false
-	},
-	"custom/right_div#5": {
-		"format": "",
-		"tooltip": false
-	},
+	"custom/right_div#1": { "format": "", "tooltip": false },
+	"custom/right_div#2": { "format": "", "tooltip": false },
+	"custom/right_div#3": { "format": "", "tooltip": false },
+	"custom/right_div#4": { "format": "", "tooltip": false },
+	"custom/right_div#5": { "format": "", "tooltip": false },
 
-	"custom/right_inv#1": {
-		"format": "",
-		"tooltip": false
-	}
+	"custom/right_inv#1": { "format": "", "tooltip": false }
 }

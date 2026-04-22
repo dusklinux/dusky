@@ -70,7 +70,7 @@ jq -c -n \
         }
       else
         {
-            "text": (if $mode == "vertical" then ($count | pad3) + "\n" + ($norm_icon | pad3) else (if $count == 0 then "\($norm_icon) 0" else "\($norm_icon) \($count)" end) end),
+            "text": (if $mode == "vertical" then ($count | pad3) + "\n" + ($norm_icon | pad3) else (if $count == 0 then $norm_icon else "\($norm_icon) \($count)" end) end),
             "tooltip": (if $count == 0 then "No notifications" else "\($count) pending notifications" end),
             "class": (if $count == 0 then "empty" else "pending" end)
         }

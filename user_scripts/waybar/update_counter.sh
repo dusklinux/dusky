@@ -177,7 +177,7 @@ render_axis() {
             elif $l == 1 then " " + . + " "
             else "   " end;
         
-        "󰣇" as $pac_icon | "󰏔" as $aur_icon | "" as $dsk_icon | "󰸞" as $check_icon |
+        "󰣇" as $pac_icon | "󰏔" as $aur_icon | "D" as $dsk_icon | "󰸞" as $check_icon |
 
         ($pac_c + $aur_c + $dsk_c) as $total |
 

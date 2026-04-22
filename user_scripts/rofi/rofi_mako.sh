@@ -81,7 +81,7 @@ done <<< "$MENU_PAYLOAD"
 
 # 3. Execute Rofi
 SELECTED_INDEX=$(echo -n "$MENU_STRING" | rofi -dmenu -i -p "󰎟 Notifications" \
-    -mesg "<b>Alt+y</b>: Clear All  |  <b>Alt+t</b>: Toggle DND  |  <b>Enter/Click</b>: Action/Dismiss" \
+    -mesg "<b>Alt+y</b>: Clear All  |  <b>Alt+t</b>: Toggle DND  |  <b>Click</b>: Action/Dismiss" \
     -markup-rows \
     -sep '\x1e' \
     -format 'i' \
