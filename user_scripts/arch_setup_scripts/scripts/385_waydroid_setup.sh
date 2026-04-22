@@ -4,7 +4,7 @@
 # Name:        Arch Linux Waydroid Setup (Hyprland/UWSM Optimized)
 # Description: Automates Waydroid installation, image setup, and optimization.
 #              Handles kernel checks, direct ZIP extraction, and networking.
-# Version:     2.5 (Feature: User Consent Prompt)
+# Version:     2.6 (Feature: UFW & Firewalld Dual Support)
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -273,15 +273,22 @@ if [[ "$(sysctl -n net.ipv4.ip_forward)" -eq 0 ]]; then
     log_success "IP Forwarding enabled."
 fi
 
-# 7b. Firewall
+# 7b. Firewall (DUAL SUPPORT: Firewalld & UFW)
 if systemctl is-active --quiet firewalld; then
     log_info "Firewalld detected. Applying rules..."
     firewall-cmd --zone=trusted --add-interface=waydroid0 --permanent >/dev/null
     firewall-cmd --zone=trusted --add-masquerade --permanent >/dev/null
     firewall-cmd --reload >/dev/null
-    log_success "Firewall rules applied."
+    log_success "Firewalld rules applied."
+elif command -v ufw &>/dev/null && systemctl is-active --quiet ufw; then
+    log_info "UFW detected. Applying rules..."
+    # Allow inbound traffic from the container to the host (for ADB, local DNS, etc.)
+    ufw allow in on waydroid0 >/dev/null 2>&1 || true
+    # Allow the container traffic to be forwarded/routed to the internet
+    ufw route allow in on waydroid0 >/dev/null 2>&1 || true
+    log_success "UFW rules applied."
 else
-    log_info "Firewalld not running. If you have network issues, check iptables/nftables."
+    log_info "No active firewall manager detected. If you have network issues, check raw iptables/nftables."
 fi
 
 # 7c. Permission Fixes
