@@ -81,12 +81,13 @@ done <<< "$MENU_PAYLOAD"
 
 # 3. Execute Rofi
 SELECTED_INDEX=$(echo -n "$MENU_STRING" | rofi -dmenu -i -p "󰎟 Notifications" \
-    -mesg "<b>Alt+y</b>: Clear All  |  <b>Enter/Click</b>: Action &amp; Dismiss" \
+    -mesg "<b>Alt+y</b>: Clear All  |  <b>Alt+t</b>: Toggle DND  |  <b>Enter/Click</b>: Action &amp; Dismiss" \
     -markup-rows \
     -sep '\x1e' \
     -format 'i' \
     -eh 2 \
     -kb-custom-2 "Alt+y" \
+    -kb-custom-3 "Alt+t" \
     -hover-select \
     -me-select-entry '' \
     -me-accept-entry 'MousePrimary' \
@@ -127,6 +128,15 @@ case $ROFI_EXIT in
             systemctl --user restart mako.service
         else
             pkill -x mako && uwsm app -- mako &
+        fi
+        ;;
+    12)
+        # Alt+T Toggle Do Not Disturb
+        if makoctl mode | grep -qw "do-not-disturb"; then
+            makoctl mode -r do-not-disturb
+            notify-send -a "mako" -u normal "󰂚  Do Not Disturb" "Disabled"
+        else
+            makoctl mode -a do-not-disturb
         fi
         ;;
 esac
