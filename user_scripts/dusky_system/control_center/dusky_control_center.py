@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import subprocess
 import sys
 import threading
 import traceback
@@ -146,6 +147,7 @@ class ItemType(StrEnum):
     GRID_CARD = "grid_card"
     EXPANDER = "expander"
     DIRECTORY_GENERATOR = "directory_generator"
+    FILE_GENERATOR = "file_generator"
     ASYNC_SELECTOR = "async_selector"
 
 class SectionType(StrEnum):
@@ -1152,6 +1154,11 @@ class DuskyControlCenter(Adw.Application):
                 yield from self._iter_item_hits(gen_item, query, breadcrumb, page_idx, nav_path)
             return
 
+        if item_type == ItemType.FILE_GENERATOR:
+            for gen_item in self._process_file_generator(item):
+                yield from self._iter_item_hits(gen_item, query, breadcrumb, page_idx, nav_path)
+            return
+
         title = str(props.get("title", "")).strip()
         desc = str(props.get("description", "")).strip()
 
@@ -1463,6 +1470,9 @@ class DuskyControlCenter(Adw.Application):
             if item.get("type") == ItemType.DIRECTORY_GENERATOR:
                 for gen_item in self._process_directory_generator(item):
                     append_grid_item(gen_item)
+            elif item.get("type") == ItemType.FILE_GENERATOR:
+                for gen_item in self._process_file_generator(item):
+                    append_grid_item(gen_item)
             else:
                 append_grid_item(item)
 
@@ -1486,6 +1496,9 @@ class DuskyControlCenter(Adw.Application):
         for item in section.get("items", []):
             if item.get("type") == ItemType.DIRECTORY_GENERATOR:
                 for gen_item in self._process_directory_generator(item):
+                    group.add(self._build_item_row(gen_item, ctx))
+            elif item.get("type") == ItemType.FILE_GENERATOR:
+                for gen_item in self._process_file_generator(item):
                     group.add(self._build_item_row(gen_item, ctx))
             else:
                 group.add(self._build_item_row(item, ctx))
@@ -1542,6 +1555,82 @@ class DuskyControlCenter(Adw.Application):
         frozen = tuple(generated)
         self._directory_generator_cache[cache_key] = frozen
         yield from frozen
+
+    def _process_file_generator(self, config: ConfigItem) -> Iterator[ConfigItem]:
+        """Generate items from files in a directory, with optional glob filtering.
+
+        Properties:
+          path      – base directory to scan
+          glob      – glob pattern (default "*.conf")
+          recursive – if true, also scans immediate subdirectories (default false)
+
+        Template variables:
+          {name}        – filename stem (e.g. "wg0", "us-nyc-wg-506")
+          {filename}    – filename with extension (e.g. "wg0.conf")
+          {path}        – absolute path (e.g. "/etc/wireguard/wg0.conf")
+          {name_pretty} – human-readable stem (e.g. "Wg0", "Us Nyc Wg 506")
+          {relpath}     – path relative to base (e.g. "wg0.conf", "mullvad/us-nyc-wg-506.conf")
+          {subdir}      – parent dir name for subdir files, empty for top-level
+
+        Intentionally not cached so newly added configs appear without Ctrl+R.
+        Symlinks are included — wg-quick resolves them as root; we only need the name.
+        """
+        props = config.get("properties", {})
+        if not isinstance(props, dict):
+            return
+
+        template = config.get("item_template")
+        if not isinstance(template, dict):
+            return
+
+        path_str = props.get("path", "")
+        glob_pattern = props.get("glob", "*.conf")
+        recursive = bool(props.get("recursive", False))
+
+        if not isinstance(path_str, str) or not path_str:
+            return
+
+        base_path = Path(path_str).expanduser()
+
+        def _iter_files() -> Iterator[Path]:
+            try:
+                for p in base_path.glob(glob_pattern):
+                    if p.is_file() or p.is_symlink():
+                        yield p
+            except (OSError, PermissionError):
+                return
+            if recursive:
+                try:
+                    for subdir in sorted(base_path.iterdir()):
+                        if not subdir.is_dir() or subdir.is_symlink():
+                            continue
+                        try:
+                            for p in subdir.glob(glob_pattern):
+                                if p.is_file() or p.is_symlink():
+                                    yield p
+                        except (OSError, PermissionError):
+                            continue
+                except (OSError, PermissionError):
+                    return
+
+        files = sorted(_iter_files(), key=lambda p: (p.parent != base_path, p.name.casefold()))
+
+        for filepath in files:
+            stem = filepath.stem
+            is_subdir = filepath.parent != base_path
+            subdir_name = filepath.parent.name if is_subdir else ""
+            relpath = f"{subdir_name}/{filepath.name}" if is_subdir else filepath.name
+            variables = {
+                "name": stem,
+                "filename": filepath.name,
+                "path": str(filepath),
+                "name_pretty": stem.replace("_", " ").replace("-", " ").title(),
+                "relpath": relpath,
+                "subdir": subdir_name,
+            }
+            gen_item = self._inject_variables(template, variables)
+            if isinstance(gen_item, dict):
+                yield gen_item
 
     def _inject_variables(self, item: Any, vars: dict[str, str]) -> Any:
         """Recursively replace variables in strings."""

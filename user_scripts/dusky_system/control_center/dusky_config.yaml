@@ -803,6 +803,111 @@ pages:
         type: exec
         command: kitty --class 325_hosts_files_block.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/325_hosts_files_block.sh"
         terminal: false
+- id: wireguard
+  title: WireGuard
+  icon: network-vpn-symbolic
+  layout:
+  - type: warning_banner
+    properties:
+      title: "Privilege Requirements"
+      message: "Toggling tunnels uses sudo (wg-quick). Run the setup script once to configure NOPASSWD rules and fix /etc/wireguard permissions."
+  - type: section
+    properties:
+      title: VPN Tunnels
+      description: "Scans /etc/wireguard/ and immediate subdirectories for *.conf files"
+    items:
+      - type: file_generator
+        properties:
+          path: /etc/wireguard
+          glob: "*.conf"
+          recursive: true
+        item_template:
+          type: expander
+          properties:
+            title: "{name_pretty}"
+            description: "{relpath}"
+            icon: network-vpn-symbolic
+          items:
+            - type: toggle
+              properties:
+                title: "Enable Tunnel"
+                description: "Bring tunnel up or down"
+                icon: network-vpn-symbolic
+                state_command: "[ -d /sys/class/net/{name} ] && echo yes || echo no"
+                interval: 5
+              on_toggle:
+                enabled:
+                  type: exec
+                  command: "sudo wg-quick up {path}"
+                  terminal: false
+                disabled:
+                  type: exec
+                  command: "sudo wg-quick down {path}"
+                  terminal: false
+            - type: button
+              properties:
+                title: "Edit Config"
+                description: "{path}"
+                icon: document-edit-symbolic
+                button_text: "Edit"
+              on_press:
+                type: exec
+                command: "kitty --class dusky_wg_edit --hold sh -c 'sudo $EDITOR {path}'"
+                terminal: false
+            - type: button
+              properties:
+                title: "Live Status"
+                description: "Open wg show {name} in terminal"
+                icon: utilities-terminal-symbolic
+                button_text: "Show"
+              on_press:
+                type: exec
+                command: "kitty --class dusky_wg_status --hold sh -c 'sudo wg show {name} 2>/dev/null || echo Inactive; echo; printf \"Press Enter to close...\"; read'"
+                terminal: false
+            - type: button
+              properties:
+                title: "Delete Tunnel"
+                description: "Permanently remove {relpath}"
+                icon: list-remove-symbolic
+                button_text: "Delete"
+              on_press:
+                type: exec
+                command: "kitty --class dusky_wg_delete --hold sh -c 'printf \"\\e[1;31mDelete {relpath}?\\e[0m [y/N] \"; read c; case $c in [Yy]) sudo rm {path} && echo \"Deleted {relpath}.\" || echo \"Failed.\";; *) echo \"Aborted.\";; esac; echo; printf \"Press Enter to close...\"; read'"
+                terminal: false
+  - type: section
+    properties:
+      title: Management
+    items:
+      - type: button
+        properties:
+          title: "New Tunnel Config"
+          description: "Create a new wg-quick config (auto chown root:root 600)"
+          icon: list-add-symbolic
+          button_text: "New"
+        on_press:
+          type: exec
+          command: "kitty --class dusky_wg_new --hold sh -c '$HOME/user_scripts/networking/dusky_wireguard_new.sh'"
+          terminal: false
+      - type: button
+        properties:
+          title: "All Tunnels Status"
+          description: "wg show all"
+          icon: network-vpn-symbolic
+          button_text: "Show"
+        on_press:
+          type: exec
+          command: "kitty --class dusky_wg_status --hold sh -c 'sudo wg show all; echo; echo \"Press Enter to close...\"; read'"
+          terminal: false
+      - type: button
+        properties:
+          title: "Setup Permissions"
+          description: "Run once: sets /etc/wireguard to 750 root:wheel and adds sudoers rules"
+          icon: security-medium-symbolic
+          button_text: "Setup"
+        on_press:
+          type: exec
+          command: "kitty --class dusky_wg_setup --hold sh -c '$HOME/user_scripts/networking/dusky_wireguard_setup.sh'"
+          terminal: false
 - id: hardware
   title: Hardware
   icon: input-keyboard-symbolic
