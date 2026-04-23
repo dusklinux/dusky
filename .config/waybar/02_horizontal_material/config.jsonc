@@ -1,472 +1,327 @@
-  /////////////////////////////////
-  //                             //
-  //  // Waybar configuration//  //
-  //                             //
-  /////////////////////////////////
+{
+    "layer": "top",
+    "position": "bottom",
+    "height": 38,
+    "spacing": 2,
+    "margin-top": 0,
+    "margin-bottom": 0,
+    "reload_style_on_change": true,
 
-  {
-      "layer": "top",
-      "position": "bottom",
-      "height": 38,
-      "spacing": 2,
-      "margin-top": 0,
-      "margin-bottom": 0,
-      "reload_style_on_change": true,
+    // =========================================================
+    // MODULE ORDER
+    // =========================================================
 
-      /////////////////////////////////////////////
-      //                                         //
-      //  // Choose the order of the modules //  //
-      //                                         //
-      /////////////////////////////////////////////
+    "modules-left": [
+        "group/launcher-drawer",
+        "custom/firefox",
+        "custom/terminal",
+        "custom/text-editor",
+        "custom/files",
+        "group/updates-drawer",
+        "group/net-drawer"
+    ],
+    "modules-center": [
+        "wlr/taskbar"
+    ],
+    "modules-right": [
+        "group/group-tools",
+        "tray",
+        "clock",
+        "custom/notifs",
+        "group/battery-drawer"
+    ],
 
-      "modules-left": ["custom/launcher", "custom/firefox", "custom/terminal", "custom/code", "custom/files", "group/mpris-drawer", "cava"],
-      "modules-center": ["wlr/taskbar"],
-      "modules-right": ["group/group-tools", "group/pulseaudio", "group/laptop", "tray", "clock", "custom/notifs", "group/group-power"],
+    // =========================================================
+    // CENTER TASKBAR
+    // =========================================================
 
+    "wlr/taskbar": {
+        "format": "{icon}",
+        "icon-size": 20,
+        "tooltip-format": "{title:.50}",
+        "on-click": "minimize",
+        "on-click-middle": "close",
+        "on-click-right": "fullscreen"
+    },
 
-      ///////////////////////////////////
-      //                               //
-      //  // Modules configuration//   //
-      //                               //
-      ///////////////////////////////////
+    // =========================================================
+    // DRAWERS (LEFT WING)
+    // =========================================================
 
+    "group/launcher-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "launcher-drawer",
+            "transition-left-to-right": true
+        },
+        "modules": [
+            "custom/launcher",
+            "custom/inhibit-suspend",
+            "custom/lock",
+            "custom/reboot",
+            "custom/quit"
+        ]
+    },
 
-      "wlr/taskbar":
-      {
-          "format": "{icon}",
-          "icon-size": 20,
-          "tooltip-format": "{title:.50}",
-          "on-click": "minimize",
-          "on-click-middle": "close",
-          "on-click-right": "fullscreen"
-      },
+    "group/updates-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "updates-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": true
+        },
+        "modules": [
+            "custom/updates-trigger",
+            "custom/updates"
+        ]
+    },
 
-      "ext/workspaces":
-      {
-          "format": "{icon}",
-          "format-icons":
-          {
-              "urgent": "",
-              "active": "",
-              "default": ""
-          },
-          "sort-by-number": true,
-          "on-click": "activate"
-      },
+    "group/net-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "net-drawer",
+            "transition-left-to-right": true
+        },
+        "modules": [
+            "custom/net-speed",
+            "network",
+            "bluetooth"
+        ]
+    },
 
-      "keyboard-state":
-      {
-          "capslock": true,
-          "format": "{icon}",
-          "format-icons":
-          {
-              "locked": " Caps ",
-              "unlocked": ""
-          }
-      },
+    // =========================================================
+    // DRAWERS (RIGHT WING)
+    // =========================================================
 
-      "idle_inhibitor":
-      {
-          "format": "{icon}",
-          "format-icons":
-          {
-              "activated": "",
-              "deactivated": ""
-          }
-      },
+    "group/group-tools": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "other-apps",
+            "transition-left-to-right": false
+        },
+        "modules": [
+            "custom/snip",
+            "custom/clip",
+            "custom/calculator"
+        ]
+    },
 
-      "tray":
-      {
-          "icon-size": 20,
-          "spacing": 10
-      },
+    "group/battery-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "battery-drawer",
+            "transition-left-to-right": false
+        },
+        "modules": [
+            "battery",
+            "backlight",
+            "pulseaudio#output"
+        ]
+    },
 
-      "clock":
-      {
-          "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>",
-          "format-alt": "{:%d-%m-%Y}",
-          "format": "{:%I:%M %p}",
-          "on-click-right": "uwsm-app -- gnome-clocks",
-          "on-click-middle": "uwsm-app -- kitty --class peaclock -e peaclock"
-      },
+    // =========================================================
+    // LEFT MODULES (APPS, NETWORK, UPDATES & LAUNCHER)
+    // =========================================================
 
-      "backlight":
-      {
-          "device": "acpi_video0", // Assuming acpi_video0, adjust if needed
-          "tooltip": false,
-          "format": "{icon}  {percent}%",
-          "format-icons": ["", ""],
-          "on-scroll-up": "brightnessctl s +5%",
-          "on-scroll-down": "brightnessctl s 5%-"
-      },
+    "custom/launcher": {
+        "format": "󰣇 ",
+        "tooltip": true,
+        "tooltip-format": "Control Center",
+        "on-click": "gdbus call --session --dest com.github.dusky.controlcenter --object-path /com/github/dusky/controlcenter --method org.freedesktop.Application.Activate '{}'"
+    },
 
-      "battery":
-      {
-          "states": {
-              "good": 95,
-              "warning": 30,
-              "critical": 15
-          },
-          "format": "{icon} {capacity}%",
-          "format-charging": "󰂄 {capacity}%",
-          "format-plugged": "󰂄 {capacity}%",
-          "format-alt": "{icon} {capacity}%",
-          "format-icons": ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
-          "tooltip-format": "<b>LMB</b>: Balanced | <b>MMB</b>: Performance | <b>RMB</b>: Power Saver\n\nTime until full: {time}",
-          "on-click": "~/user_scripts/tlpctl/tlpctl.sh set balanced",
-          "on-click-middle": "~/user_scripts/tlpctl/tlpctl.sh set performance",
-          "on-click-right": "~/user_scripts/tlpctl/tlpctl.sh set power-saver"
-      },
+    "custom/inhibit-suspend": {
+        "format": "{}",
+        "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
+        "return-type": "json",
+        "interval": 5,
+        "signal": 9,
+        "on-click": "uwsm-app -- ~/user_scripts/waybar/toggle_hypridle.sh",
+        "escape": true
+    },
 
-      "group/laptop":
-      {
-          "orientation": "inherit",
-          "drawer": {
-              "transition-duration": 500,
-              "children-class": "other-apps",
-              "click-to-reveal": false,
-              "transition-left-to-right": false
-          },
-          "modules": [
-              "battery",
-              "backlight"
-          ]
-      },
+    "custom/lock": {
+        "format": "󰍁",
+        "tooltip": true,
+        "tooltip-format": "Lock",
+        "on-click": "$HOME/user_scripts/hyprlock/lock.sh"
+    },
 
-      "pulseaudio#output":
-      {
-          "format": "{icon} {volume}%",
-          "format-muted": "󰖁",
-          "format-bluetooth": "󰂰 {volume}%",
-          "format-bluetooth-muted": "󰂲",
-          "format-icons":
-          {
-              "headphone": "󰋋",
-              "hands-free": "󰋎",
-              "headset": "󰋎",
-              "phone": "",
-              "portable": "",
-              "car": "",
-              "default": ["󰕿", "󰖀", "󰕾"]
-          },
-          "on-click": "uwsm-app -- pavucontrol",
-          "on-click-right": "uwsm-app -- kitty --class cava -e cava",
-          "on-click-middle": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
-          "on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
-          "on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%",
-          "scroll-step": 5,
-          "max-volume": 150
-      },
+    "custom/reboot": {
+        "format": "󰜉",
+        "tooltip": true,
+        "tooltip-format": "Reboot",
+        "on-click": "systemctl reboot"
+    },
 
-      "pulseaudio#input":
-      {
-          "format": "{format_source}",
-          "format-source": "󰍬 {volume}%",
-          "format-source-muted": "󰍭 {volume}%",
-          "on-click": "uwsm-app -- pavucontrol",
-          "on-click-right": "uwsm-app -- ~/user_scripts/audio/mic_switch.sh",
-          "on-click-middle": "pactl set-source-mute @DEFAULT_SOURCE@ toggle",
-          "on-scroll-up": "pactl set-source-volume @DEFAULT_SOURCE@ +5%",
-          "on-scroll-down": "pactl set-source-volume @DEFAULT_SOURCE@ -5%",
-          "tooltip-format": "<b>Input Device</b>: {desc}"
-      },
+    "custom/quit": {
+        "format": "󰗼",
+        "tooltip": true,
+        "tooltip-format": "Logout",
+        "on-click": "hyprctl dispatch exit"
+    },
 
-      "group/pulseaudio":
-      {
-          "orientation": "inherit",
-          "drawer": {
-              "transition-duration": 500,
-              "children-class": "other-apps",
-              "click-to-reveal": false,
-              "transition-left-to-right": false
-          },
-          "modules": [
-              "pulseaudio#output",
-              "pulseaudio#input"
-          ]
-      },
+    "custom/updates-trigger": {
+        "format": "",
+        "exec": "echo ''",
+        "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "interval": 5,
+        "tooltip": false
+    },
 
+    "custom/updates": {
+        "exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "return-type": "json",
+        "format": "󰏔 {}",
+        "tooltip": true,
+        "on-click": "uwsm-app -- kitty sh -c 'command -v yay >/dev/null && yay || paru'"
+    },
 
-      ///////////////////////////
-      //                       //
-      //  // Custom module //  //
-      //                       //
-      ///////////////////////////  
+    "custom/net-speed": {
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --horizontal",
+        "return-type": "json",
+        "format": "{}",
+        "interval": 1,
+        "tooltip": true
+    },
 
+    "network": {
+        "format-wifi": "󰤨",
+        "format-ethernet": "󰈀",
+        "format-disconnected": "󰤭",
+        "tooltip-format-wifi": "󰤨 {essid}\n󱑽 {signalStrength}%\n󰩟 {ipaddr}",
+        "tooltip-format-ethernet": "󰈀 Ethernet\n󰩟 {ipaddr}",
+        "tooltip-format-disconnected": "󰤭 Disconnected",
+        "on-click": "uwsm-app -- kitty --class wifitui -e wifitui"
+    },
 
-      "custom/countdown":
-      {
-          "exec": "~/.config/waybar/custom/scripts/countdown/countdown.sh",
-          "return-type": "json",
-          "format": "{}",
-          "interval": 3600,
-          "on-click-right": "foot bash ~/.config/waybar/custom/scripts/countdown/countdown.sh interactive",
-          "on-scroll-up": "~/.config/waybar/custom/scripts/countdown/countdown.sh scroll-up",
-          "on-scroll-down": "~/.config/waybar/custom/scripts/countdown/countdown.sh scroll-down"
-      },
+    "bluetooth": {
+        "format": "󰂯",
+        "format-disabled": "󰂲",
+        "format-connected": "󰂱 {num_connections}",
+        "tooltip-format": "{controller_alias}\n{controller_address}",
+        "tooltip-format-connected": "Connected: {num_connections}",
+        "on-click": "uwsm-app -- blueman-manager",
+        "on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui"
+    },
 
-      "group/group-tools":
-      {
-          "orientation": "inherit",
-          "drawer":
-          {
-              "transition-duration": 500,
-              "children-class": "other-apps",
-              "transition-left-to-right": false
-          },
-          "modules": [
-              "custom/snip",
-              "idle_inhibitor",
-              "custom/clip",
-              "custom/galculator",
-              "custom/taskmanager"
+    "custom/firefox": {
+        "format": "",
+        "tooltip": true,
+        "tooltip-format": "Browser",
+        "on-click": "firefox"
+    },
 
-          ]
-      },
+    "custom/terminal": {
+        "format": "",
+        "tooltip": true,
+        "tooltip-format": "Terminal",
+        "on-click": "kitty"
+    },
 
-      "cava":
-      {
-          "framerate": 30,
-          "autosens": 1,
-          "bars": 12,
-          "lower_cutoff_freq": 50,
-          "higher_cutoff_freq": 10000,
-          "hide_on_silence": false,
-          "method": "pulse",
-          "source": "auto",
-          "stereo": true,
-          "reverse": false,
-          "bar_delimiter": 0,
-          "monstercat": false,
-          "waves": false,
-          "noise_reduction": 0.77,
-          "input_delay": 2,
-          "format-icons": ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"],
-          "on-click": "uwsm-app -- kitty --class cava -e cava",
-          "on-click-right": "mode"
-      },
+    "custom/text-editor": {
+        "format": "󰏫",
+        "tooltip": true,
+        "tooltip-format": "GNOME Text Editor",
+        "on-click": "uwsm-app -- gnome-text-editor"
+    },
 
+    "custom/files": {
+        "format": "",
+        "tooltip": true,
+        "tooltip-format": "File Manager",
+        "on-click": "nemo"
+    },
 
-      ///////////////////////////
-      //                       //
-      //  // Apps section //   //
-      //                       //
-      ///////////////////////////
+    // =========================================================
+    // RIGHT MODULES (TOOLS, TRAY & TELEMETRY)
+    // =========================================================
 
+    "custom/snip": {
+        "format": "",
+        "tooltip": true,
+        "tooltip-format": "Screenshot",
+        "on-click": "uwsm-app -- ~/user_scripts/images/dusky_screenshot.sh --region --freeze --no-notify --smart",
+        "on-click-right": "uwsm-app -- ~/user_scripts/images/dusky_screenshot.sh --region --freeze --annotate --no-notify --tool arrow --smart"
+    },
 
-       "group/group-apps":
-      {
-          "orientation": "inherit",
-          "drawer":
-          {
-              "transition-duration": 500,
-              "children-class": "other-apps",
-              "transition-left-to-right": true
-          },
-          "modules": [
-              "custom/firefox",
-              "custom/terminal",
-              "custom/mpris-trigger",
-              "custom/files"
-          ]
-      },
+    "custom/clip": {
+        "format": "",
+        "tooltip": true,
+        "tooltip-format": "Clipboard",
+        "on-click": "uwsm-app -- pkill rofi; rofi -modi 'clipboard:~/user_scripts/rofi/rofi_cliphist.sh' -show clipboard"
+    },
 
-      "custom/launcher":
-      {
-          "format": "󰣇 ",
-          "tooltip": true,
-          "tooltip-format": "Control Center",
-          "on-click": "gdbus call --session --dest com.github.dusky.controlcenter --object-path /com/github/dusky/controlcenter --method org.freedesktop.Application.Activate '{}'"
-      },
+    "custom/calculator": {
+        "format": "",
+        "tooltip": true,
+        "tooltip-format": "Calculator",
+        "on-click": "uwsm-app -- pkill rofi; ~/user_scripts/rofi/calculator.sh"
+    },
 
-      "custom/firefox":
-      {
-          "format": "",
-          "tooltip": true,
-          "tooltip-format": "Browser",
-          "on-click": "firefox"
-      },
+    "tray": {
+        "icon-size": 20,
+        "spacing": 10
+    },
 
-      "custom/terminal":
-      {
-          "format": "",
-          "tooltip": true,
-          "tooltip-format": "Terminal",
-          "on-click": "kitty"
-      },
+    "clock": {
+        "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>",
+        "format-alt": "{:%d-%m-%Y}",
+        "format": "{:%I:%M %p}",
+        "on-click-right": "uwsm-app -- gnome-clocks",
+        "on-click-middle": "uwsm-app -- kitty --class peaclock -e peaclock"
+    },
 
-      "custom/code":
-      {
-          "format": " ",
-          "tooltip": true,
-          "tooltip-format": "Code Editor",
-          "on-click": "vscodium"
-      },
+    "custom/notifs": {
+        "format": "{}",
+        "return-type": "json",
+        "exec-if": "which makoctl",
+        "exec": "~/user_scripts/waybar/mako.sh",
+        "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+        "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+        "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+        "signal": 8,
+        "escape": true,
+        "tooltip-format": "Notifications\nLMB: Toggle Panel\nMMB: Clear All\nRMB: Do Not Disturb"
+    },
 
-      "custom/taskmanager":
-      {
-          "format": "",
-          "tooltip": true,
-          "tooltip-format": "Task Manager",
-          "on-click": "uwsm-app -- kitty --hold --class performance.sh -e ~/user_scripts/performance/services_and_process_terminator.sh"
-      },
+    "battery": {
+        "states": {
+            "good": 95,
+            "warning": 30,
+            "critical": 15
+        },
+        "format": "{icon} {capacity}%",
+        "format-charging": "󰂄 {capacity}%",
+        "format-plugged": "󰂄 {capacity}%",
+        "format-icons": ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
+        "tooltip-format": "Time: {timeTo}\nHealth: {health}%\nPower Draw: {power:.2f} W",
+        "on-click": "~/user_scripts/tlpctl/tlpctl.sh set balanced",
+        "on-click-middle": "~/user_scripts/tlpctl/tlpctl.sh set performance",
+        "on-click-right": "~/user_scripts/tlpctl/tlpctl.sh set power-saver"
+    },
 
-      "custom/calculator":
-      {
-          "format": "",
-          "tooltip": true,
-          "tooltip-format": "Calculator",
-          "on-click": "uwsm-app -- pkill rofi; ~/user_scripts/rofi/calculator.sh"
-      },
+    "backlight": {
+        "device": "intel_backlight",
+        "format": "{icon} {percent}%",
+        "format-icons": ["", ""],
+        "on-scroll-up": "brightnessctl s +5%",
+        "on-scroll-down": "brightnessctl s 5%-",
+        "tooltip-format": "Brightness: {percent}%"
+    },
 
-      "custom/music":
-      {
-          "format": "",
-          "tooltip": true,
-          "tooltip-format": "Music",
-          "on-click": "env LD_PRELOAD=/usr/lib/spotify-adblock.so spotify --uri=%U >/dev/null 2>&1 &",
-          "on-click-right": "g4music"
-      },
-
-      "custom/files":
-      {
-          "format": "",
-          "tooltip": true,
-          "tooltip-format": "File Manager",
-          "on-click": "nemo"
-      },
-
-      "custom/snip":
-      {
-          "format": "",
-          "tooltip": true,
-          "tooltip-format": "Screenshot",
-          "on-click": "uwsm-app -- ~/user_scripts/images/dusky_screenshot.sh --region --freeze --no-notify --smart",
-          "on-click-right": "uwsm-app -- ~/user_scripts/images/dusky_screenshot.sh --region --freeze --annotate --no-notify --tool arrow --smart"
-      },
-
-      "custom/clip":
-      {
-          "format": "",
-          "tooltip": true,
-          "tooltip-format": "Clipboard",
-          "on-click": "uwsm-app -- pkill rofi; rofi -modi 'clipboard:~/user_scripts/rofi/rofi_cliphist.sh' -show clipboard"
-      },
-
-      "custom/notifs":
-      {
-          "format": "{icon}",
-          "format-icons": {
-              "notification": "󱅫 ",
-              "none": "󰂚 ",
-              "dnd-notification": "󱏧 ",
-              "dnd-none": "󰂛 ",
-              "inhibited-notification": "󱅫 ",
-              "inhibited-none": "󰂚 ",
-              "dnd-inhibited-notification": "󱏧 ",
-              "dnd-inhibited-none": "󰂛 "
-          },
-          "return-type": "json",
-          "exec-if": "which makoctl",
-          "exec": "~/user_scripts/waybar/mako.sh",
-          "on-click": "~/user_scripts/rofi/rofi_mako.sh",
-          "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
-          "signal": 8,
-          "escape": true,
-          "tooltip-format": "Notifications\n\n LMB  Toggle Panel\n RMB  Do Not Disturb"
-      },
-
-
-      ///////////////////////////
-      //                       //
-      //  // Power section //  //
-      //                       //
-      ///////////////////////////
-
-
-      "group/group-power":
-      {
-          "orientation": "inherit",
-          "drawer":
-          {
-              "transition-duration": 500,
-              "children-class": "not-power",
-              "transition-left-to-right": false
-          },
-          "modules": [
-              "custom/power",
-              "custom/quit",
-              "custom/lock",
-              "custom/reboot"
-          ]
-      },
-
-      "group/mpris-drawer":
-      {
-          "orientation": "inherit",
-          "drawer":
-          {
-              "transition-duration": 500,
-              "children-class": "mpris-drawer",
-              "click-to-reveal": false,
-              "transition-left-to-right": true
-          },
-          "modules": ["custom/mpris-trigger", "mpris"]
-      },
-
-      "custom/mpris-trigger":
-      {
-          "format": "",
-          "tooltip": false,
-          "on-click": "uwsm-app -- ~/user_scripts/spotify/spotify_toggle.sh"
-      },
-
-      "mpris":
-      {
-          "format": "{player_icon} {title} - {artist}",
-          "format-paused": "{status_icon} {title} - {artist}",
-          "tooltip-format": "Playing: {title} - {artist}",
-          "tooltip-format-paused": "Paused: {title} - {artist}",
-          "player-icons":
-          {
-              "default": "󰐊"
-          },
-          "status-icons":
-          {
-              "paused": "󰏤"
-          },
-          "max-length": 1000
-      },
-
-      "custom/quit":
-      {
-          "format": "󰗼",
-          "tooltip": true,
-          "tooltip-format": "Logout",
-          "on-click": "hyprctl dispatch exit"
-      },
-
-      "custom/lock":
-      {
-          "format": "󰍁",
-          "tooltip": true,
-          "tooltip-format": "Lock",
-          "on-click": "$HOME/user_scripts/hyprlock/lock.sh"
-      },
-
-      "custom/reboot":
-      {
-          "format": "󰜉",
-          "tooltip": true,
-          "tooltip-format": "Reboot",
-          "on-click": "systemctl reboot"
-      },
-
-      "custom/power":
-      {
-          "format": " ",
-          "tooltip": true,
-          "tooltip-format": "Shutdown",
-          "on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh"
-      }
-  }
+    "pulseaudio#output": {
+        "format": "{icon} {volume}%",
+        "format-muted": "󰖁",
+        "format-icons": { "default": ["󰕿", "󰖀", "󰕾"] },
+        "on-click": "uwsm-app -- pavucontrol",
+        "on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
+        "on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%",
+        "tooltip-format": "Volume: {volume}%\nLMB: Pavucontrol"
+    }
+}

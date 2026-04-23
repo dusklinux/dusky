@@ -1,11 +1,9 @@
-/*style_2*/
-
 @import url("../../.config/matugen/generated/waybar-colors.css");
 
 * {
     border: none;
     border-radius: 0;
-    font-family: "Atkinson Hyperlegible Next";
+    font-family: "Atkinson Hyperlegible Next", "JetBrainsMono Nerd Font";
     font-size: 14px;
     min-height: 0;
 }
@@ -21,110 +19,63 @@ tooltip {
      border: 1px solid @tertiary;
 }
 
-/* Modules: Base Style */
+/* =========================================================
+   UNIVERSAL PILL STYLING
+   ========================================================= */
+
 #clock,
-#custom-countdown,
-#backlight,
-#battery,
-#pulseaudio.output,
-#pulseaudio.input,
-#custom-snip,
-#custom-clip,
-#custom-taskmanager,
-#custom-calculator,
 #tray,
-#idle_inhibitor,
-#custom-power,
-#custom-reboot,
-#custom-quit,
-#custom-lock,
-#mpris,
 #custom-notifs,
-#custom-launcher {
-    background: alpha(@surface_container, 0.8);
-    padding: 2px 12px;
-    margin: 4px;
-    color: @on_surface;
-    border-radius: 25px; 
-    border: 3px solid transparent;
-    transition: all 0.3s ease-out;
-}
-
-#cava {
-    background: alpha(@surface_container, 0.8);
-    padding: 2px 12px;
-    margin: 4px;
-    color: @on_surface;
-    border-radius: 25px; 
-    border: 3px solid transparent;
-    transition: all 0.3s ease-out;
-    font-family: "JetBrainsMono Nerd Font";
-    letter-spacing: 2px;
-}
-
-/* Modules: App Launcher Strip */
+#custom-net-speed,
+#custom-updates-trigger,
+#custom-updates,
+#network,
+#bluetooth,
+#pulseaudio.output,
+#battery,
+#backlight,
+#custom-launcher,
 #custom-firefox,
 #custom-terminal,
-#custom-code {
+#custom-text-editor,
+#custom-files,
+#custom-snip,
+#custom-clip,
+#custom-calculator,
+#custom-inhibit-suspend,
+#custom-lock,
+#custom-reboot,
+#custom-quit {
     background: alpha(@surface_container, 0.8);
-    padding: 2px 12px;
-    margin-top: 4px;
-    margin-right: 2px;
-    margin-bottom: 4px;
+    padding: 2px 14px;
+    margin: 4px;
     color: @on_surface;
+    border-radius: 25px; 
     border: 3px solid transparent;
-    border-radius: 0;
     transition: all 0.3s ease-out;
 }
 
-#custom-firefox {
-    margin-left: 2px;
-    border-radius: 25px 0 0 25px;
-}
+/* =========================================================
+   HOVER EFFECTS
+   ========================================================= */
 
-#custom-mpris-trigger {
-    background: alpha(@surface_container, 0.8);
-    padding: 2px 12px;
-    margin-top: 4px;
-    margin-right: 4px;
-    margin-bottom: 4px;
-    color: @on_surface;
-    border: 3px solid transparent;
-    border-radius: 0 25px 25px 0;
-    transition: all 0.3s ease-out;
-}
-
-#custom-files {
-    background: alpha(@surface_container, 0.8);
-    padding: 2px 12px;
-    margin-top: 4px;
-    margin-right: 2px;
-    margin-bottom: 4px;
-    color: @on_surface;
-    border: 3px solid transparent;
-    border-radius: 0;
-    transition: all 0.3s ease-out;
-}
-
-/* Modules: Hover Effects */
 #backlight:hover,
 #battery:hover,
-#cava:hover,
+#network:hover,
+#bluetooth:hover,
 #clock:hover,
-#mpris:hover,
 #pulseaudio.output:hover,
-#pulseaudio.input:hover,
 #custom-snip:hover,
+#custom-clip:hover,
+#custom-calculator:hover,
 #custom-firefox:hover,
 #custom-terminal:hover,
-#custom-code:hover,
-#custom-taskmanager:hover,
-#custom-calculator:hover,
-#custom-mpris-trigger:hover,
+#custom-text-editor:hover,
 #custom-files:hover,
-#idle_inhibitor:hover,
+#custom-updates-trigger:hover,
+#custom-updates:hover,
 #custom-notifs:hover,
-#custom-clip:hover {
+#custom-inhibit-suspend:hover {
     color: @secondary;
     background: alpha(@on_secondary, 0.8); 
     border-color: alpha(@secondary_container, 0.8);
@@ -136,7 +87,7 @@ tooltip {
     border-color: alpha(@tertiary_container, 0.8);
 }
 
-#custom-power:hover,
+/* Power Options inside Launcher Drawer */
 #custom-reboot:hover,
 #custom-quit:hover,
 #custom-lock:hover {
@@ -145,31 +96,44 @@ tooltip {
     border-color: alpha(@error_container, 0.8);
 }
 
-#custom-countdown {
-    background: alpha(@primary_fixed_dim, 0.8); 
-    color: @surface;
+/* =========================================================
+   DYNAMIC NETWORK SPEED CLASSES
+   ========================================================= */
+
+#custom-net-speed.network-kb { 
+    color: @secondary; 
+    font-weight: bold;
 }
+
+#custom-net-speed.network-mb { 
+    color: @primary; 
+    background: alpha(@primary_container, 0.8);
+    border-color: alpha(@primary_fixed_dim, 0.8);
+    font-weight: 900;
+    text-shadow: 0 0 5px alpha(@primary, 0.7);
+}
+
+#custom-net-speed.network-disconnected { 
+    color: @error; 
+    background: alpha(@error_container, 0.8);
+}
+
+/* =========================================================
+   STATE CLASSES
+   ========================================================= */
 
 #pulseaudio.muted {
     background: alpha(@secondary_fixed_dim, 0.8); 
     color: @surface;
 }
 
-#custom-power {
-    padding: 0px 12px 0px 9px;
+#custom-inhibit-suspend.disabled {
+    color: @tertiary;
 }
 
-#keyboard-state {
-    background: transparent;
-}
-
-#keyboard-state label.locked {
-    background: alpha(@primary_fixed_dim, 0.8); 
-    color: @surface;
-    padding: 0px 12px;
-    margin: 4px 0px;
-    border-radius: 25px;
-}
+/* =========================================================
+   WLR TASKBAR (CENTER)
+   ========================================================= */
 
 #taskbar {
     background: alpha(@surface_container, 0.8);
