@@ -274,7 +274,8 @@
     "backlight": {
         "device": "intel_backlight",
         "format": "{icon} {percent}%",
-        "format-icons": ["", ""],
+        "format-icons": [" ", " "],
+        "on-click": "uwsm-app -- ~/user_scripts/sliders/dusky_sliders.py",
         "on-scroll-up": "brightnessctl s +5%",
         "on-scroll-down": "brightnessctl s 5%-",
         "tooltip-format": "Brightness: {percent}%"
