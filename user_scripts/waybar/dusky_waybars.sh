@@ -113,13 +113,13 @@ get_time_ms() {
 }
 
 kill_waybar() {
-    pkill waybar 2>/dev/null || :
+    pkill -x waybar 2>/dev/null || :
     local -i i
     for (( i = 0; i < 15; i++ )); do
-        pgrep waybar &>/dev/null || return 0
+        pgrep -x waybar &>/dev/null || return 0
         sleep 0.1
     done
-    pkill -9 waybar 2>/dev/null || :
+    pkill -9 -x waybar 2>/dev/null || :
     sleep 0.2
     return 0
 }
