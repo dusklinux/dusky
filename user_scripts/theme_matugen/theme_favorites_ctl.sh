@@ -8,7 +8,7 @@ FAV_FILE="$STATE_DIR/favorites.list"
 CACHE_FILE="$STATE_DIR/current_wallpaper.cache"
 INDEX_FILE="$STATE_DIR/favorites.index"
 
-THEME_CTL="$HOME/Documents/dusky/user_scripts/theme_matugen/theme_ctl.sh"
+THEME_CTL="dusky-theme-ctl"
 
 mkdir -p "$STATE_DIR"
 touch "$FAV_FILE" "$CACHE_FILE" "$INDEX_FILE"
