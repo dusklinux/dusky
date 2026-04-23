@@ -9,10 +9,10 @@
 	],
 	"modules-center": [
 		"custom/left_div#2",
-    "group/net-speed-drawer",
 		"group/updates-drawer",
 		"bluetooth",
 		"network",
+    "group/net-speed-drawer",
 		"custom/left_div#3",
 		"memory",
 		"custom/left_div#4",
