@@ -1,5 +1,4 @@
 // horizontal_block
-
 {
   "layer": "top",
   "exclusive": true,
@@ -16,23 +15,20 @@
   "modules-left": [
     "custom/launcher",
     "hyprland/workspaces",
-    "clock",
     "custom/weather",
-    "custom/notification",
-    "custom/theme-toggle"
+    "custom/notification"
   ],
 
   "modules-center": [
+    "clock",
     "group/mpris-drawer"
   ],
 
   "modules-right": [
     "tray",
-    "custom/net-speed",
-    "network",
-    "bluetooth",
+    "group/network-drawer",
     "pulseaudio#output",
-    "backlight",
+    "group/backlight-drawer",
     "cpu",
     "memory",
     "battery",
@@ -41,6 +37,35 @@
   ],
 
   // --- DRAWERS & GROUPS ---
+
+  "group/network-drawer": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 400,
+      "children-class": "network-drawer",
+      "click-to-reveal": false,
+      "transition-left-to-right": false
+    },
+    "modules": [
+      "custom/net-speed",
+      "network",
+      "bluetooth"
+    ]
+  },
+
+  "group/backlight-drawer": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 400,
+      "children-class": "backlight-drawer",
+      "click-to-reveal": false,
+      "transition-left-to-right": false
+    },
+    "modules": [
+      "backlight",
+      "custom/theme-toggle"
+    ]
+  },
 
   "group/updates-drawer": {
     "orientation": "horizontal",
@@ -115,9 +140,9 @@
 
   "custom/weather": {
     "format": "{}",
-    "exec": "curl -s 'wttr.in/?format=%c%t' | head -c 15",
+    "exec": "python3 ~/user_scripts/waybar/weather.py",
     "interval": 1800,
-    "tooltip-format": "Weather Conditions"
+    "return-type": "json"
   },
 
   "custom/inhibit-suspend": {
@@ -146,21 +171,21 @@
     "on-click": "uwsm-app -- kitty sh -c 'command -v yay >/dev/null && yay || paru'"
   },
 
-"custom/notification": {
-        "justify": "center",
-        "align": 0.5,
-        "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
-        "format": "{}",
-        "return-type": "json",
-        "exec-if": "which makoctl",
-        "exec": "~/user_scripts/waybar/mako.sh --horizontal",
-        "interval": 2,
-        "on-click": "~/user_scripts/rofi/rofi_mako.sh",
-        "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
-        "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
-        "signal": 8,
-        "escape": true
-    },
+  "custom/notification": {
+    "justify": "center",
+    "align": 0.5,
+    "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+    "format": "{}",
+    "return-type": "json",
+    "exec-if": "which makoctl",
+    "exec": "~/user_scripts/waybar/mako.sh --horizontal",
+    "interval": 2,
+    "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+    "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+    "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+    "signal": 8,
+    "escape": true
+  },
 
   "custom/theme-toggle": {
     "format": "",
