@@ -4,6 +4,29 @@
 
 @import url("../../.config/matugen/generated/waybar-colors.css");
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSLUCENCY CONTROLS (GLASSY MODE)
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color glass_bar         alpha(@surface, 0.5);
+@define-color glass_module      alpha(@surface_container, 0.3);
+@define-color glass_module_dark alpha(@surface_container, 0.4);
+@define-color glass_hover       alpha(@surface_container_highest, 0.5);
+@define-color glass_tooltip     alpha(@surface, 0.08);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Remove this line to flip the master switch to OPAQUE
+
+@define-color glass_bar         @surface;
+@define-color glass_module      @surface_container;
+@define-color glass_module_dark @surface_container;
+@define-color glass_hover       @surface_container_high;
+@define-color glass_tooltip     @surface_container_highest;
+
+   Remove this line to flip the master switch to OPAQUE */
+
 * {
     border: none;
     border-radius: 0;
@@ -20,13 +43,11 @@ window#waybar {
 
 /* The actual bar container */
 window#waybar > box {
-    background-color: alpha(@surface, 0.4); /* Glass transparency */
+    background-color: @glass_bar; 
     border: 1px solid alpha(@outline, 0.2);  /* Thin glass edge */
     border-radius: 20px;
     margin: 4px 6px;
     padding: 2px 6px;
-    /* Soft shadow for depth */
-    
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -44,12 +65,11 @@ window#waybar > box {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   PACMAN "GHOST" WORKSPACES (COMPROMISED LOGIC)
+   PACMAN "GHOST" WORKSPACES
    ───────────────────────────────────────────────────────────────────────────── */
 
-
 #workspaces {
-    background: rgba(255, 255, 255, 0.05); /* Very light glass */
+    background: rgba(255, 255, 255, 0.05); /* Left native deliberately to respect Ghost logic */
     margin: 4px 4px;
     border-radius: 20px;
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -64,22 +84,16 @@ window#waybar > box {
     border-radius: 12px;
 }
 
-/* 1. STATE: EMPTY GHOSTS (Default inactive colors) */
-/* These colors only show when the workspace has NO apps and is NOT focused */
-
 #workspaces button.empty:nth-child(1) { color: alpha(@tertiary, 0.3); } 
 #workspaces button.empty:nth-child(2) { color: alpha(@tertiary, 0.3); } 
 #workspaces button.empty:nth-child(3) { color: alpha(@tertiary, 0.3); } 
 #workspaces button.empty:nth-child(4) { color: alpha(@tertiary, 0.3); } 
 #workspaces button.empty:nth-child(5) { color: alpha(@tertiary, 0.3); } 
 
-/* This rule targets any workspace that HAS an app open */
 #workspaces button:not(.empty) {
     color: @on_surface; 
     text-shadow: 0 0 10px rgba(30, 30, 255, 0.8);
 }
-
-/* 3. STATE: ACTIVE (PACMAN) */
 
 window#waybar #workspaces button.active {
     color: @primary; 
@@ -89,59 +103,44 @@ window#waybar #workspaces button.active {
     border: 1px solid @primary;
 }
 
-/* 4. URGENT STATE */
 #workspaces button.urgent {
     color: #ffffff;
     background: #ff0000;
 }
 
-/* Music/MPRIS */
-#mpris {
-    background: alpha(@secondary_container, 0.1);
-    color: @secondary;
-    padding: 0 12px;
-    margin: 4px 4px;
-    border-radius: 12px;
-    border-bottom: 2px solid alpha(@secondary, 0.3);
-}
-
 /* ─────────────────────────────────────────────────────────────────────────────
-   CENTER MODULES - UNIFIED GLASS PODS (Matches CPU/Memory/Audio)
+   CENTER MODULES - UNIFIED GLASS PODS
    ───────────────────────────────────────────────────────────────────────────── */
 
-/* Unified Base for Center Pods */
 #custom-notification, 
 #clock, 
-#custom-inhibit-suspend {
-    background: alpha(@surface_container, 0.3); /* Same glass as right side */
+#custom-updates,
+#custom-updates-trigger {
+    background: @glass_module;
     padding: 0 12px;
     margin: 4px 3px;
     border-radius: 10px;
     transition: all 0.3s ease-in-out;
 }
 
-/* 1. NOTIFICATION - Secondary Accent */
-#custom-notification {
+/* Updates Drawer Setup */
+#custom-updates, #custom-updates-trigger {
     color: @secondary;
     border-bottom: 2px solid alpha(@secondary, 0.4);
 }
 
-/* 2. CLOCK - Primary Accent (The Focal Point) */
+/* CLOCK - Primary Accent */
 #clock {
     color: @primary;
     border-bottom: 2px solid alpha(@primary, 0.4);
     font-weight: 800;
 }
 
-/* 3. INHIBIT-SUSPEND - Warm Accent */
-#custom-inhibit-suspend {
-    color: @error;
-    border-bottom: 2px solid alpha(@error, 0.4);
+/* NOTIFICATION - Secondary Accent */
+#custom-notification {
+    color: @secondary;
+    border-bottom: 2px solid alpha(@secondary, 0.4);
 }
-
-/* ─────────────────────────────────────────────────────────
-   DYNAMIC STATES (Dreamy Glows)
-   ───────────────────────────────────────────────────────── */
 
 /* Notification Active - Matugen Alert */
 #custom-notification.notification {
@@ -150,48 +149,42 @@ window#waybar #workspaces button.active {
     text-shadow: 0 0 8px alpha(@primary, 0.6);
 }
 
-/* Coffee Mode Activated - Amber/Clyde Orange */
-#custom-inhibit-suspend.activated {
-    color: @error;
-    border-bottom: 2px solid @error;
-    text-shadow: 0 0 8px alpha(@error, 0.6);
-    background: alpha(@error, 0.1);
-}
-
-/* ─────────────────────────────────────────────────────────
-   HOVER EFFECTS
-   ───────────────────────────────────────────────────────── */
-
 #custom-notification:hover, 
-#clock:hover, 
-#custom-inhibit-suspend:hover {
-    background: alpha(@surface_container_highest, 0.5);
-    /* Subtle neon lift */
+#clock:hover,
+#custom-updates:hover,
+#custom-updates-trigger:hover {
+    background: @glass_hover;
     text-shadow: 0 0 8px alpha(@on_surface, 0.3);
 }
+
 /* ─────────────────────────────────────────────────────────────────────────────
    RIGHT MODULES
    ───────────────────────────────────────────────────────────────────────────── */
 
-/* Common base for all right-side modules */
 #network, 
+#custom-net-speed,
 #pulseaudio, 
 #backlight {
     padding: 0 12px;
     margin: 4px 2px;
     border-radius: 10px;
-    background: alpha(@surface_container, 0.3); /* Consistent Dreamy Glass */
+    background: @glass_module; 
     transition: all 0.3s ease-in-out;
 }
 
-/* 1. NETWORK - Secondary Accent */
-#network {
+/* 1. NETWORK DRAWER ELEMENTS */
+#network, #custom-net-speed {
     color: @secondary;
     padding: 0px 12px 2px 8px;
     margin: 4px 2px;
     border-radius: 10px;
     font-size: 16px;
     border-bottom: 2px solid alpha(@secondary, 0.2);
+}
+
+#custom-net-speed {
+    font-size: 13px;
+    padding: 0px 8px 2px 8px;
 }
 
 #network.disconnected {
@@ -216,33 +209,19 @@ window#waybar #workspaces button.active {
     border-bottom: 2px solid alpha(@primary, 0.2);
 }
 
-/* ─────────────────────────────────────────────────────────
-   HOVER & SPECIAL STATES
-   ───────────────────────────────────────────────────────── */
-
-/* Hover glow for all three */
+/* Hover glow for right side */
 #network:hover, 
+#custom-net-speed:hover,
 #pulseaudio:hover, 
 #backlight:hover {
-    background: alpha(@surface_container_highest, 0.5);
-    /* Subtle neon lift on hover */
+    background: @glass_hover;
     box-shadow: inset 0 0 10px alpha(@on_surface, 0.05);
 }
 
-/* If you have the brightness sliders
-   you can add a "pulsing" effect when they are very high */
+#backlight:hover { text-shadow: 0 0 8px alpha(@secondary, 0.6); }
+#pulseaudio:hover { text-shadow: 0 0 8px alpha(@primary, 0.6); }
+#network:hover, #custom-net-speed:hover { text-shadow: 0 0 8px alpha(@tertiary, 0.6); }
 
-#backlight:hover {
-    text-shadow: 0 0 8px alpha(@secondary, 0.6);
-}
-
-#pulseaudio:hover {
-    text-shadow: 0 0 8px alpha(@primary, 0.6);
-}
-
-#network:hover {
-    text-shadow: 0 0 8px alpha(@tertiary, 0.6);
-}
 /* ─────────────────────────────────────────────────────────────────────────────
    CPU & MEMORY (MATUGEN GLASS)
    ───────────────────────────────────────────────────────────────────────────── */
@@ -251,11 +230,10 @@ window#waybar #workspaces button.active {
     padding: 0 10px;
     margin: 4px 2px;
     border-radius: 10px;
-    background: alpha(@surface_container, 0.3); /* Consistent Glass background */
+    background: @glass_module;
     transition: all 0.3s ease-in-out;
 }
 
-/* Individual Colors */
 #cpu {
     color: @primary;
     border-bottom: 2px solid alpha(@primary, 0.2);
@@ -266,18 +244,13 @@ window#waybar #workspaces button.active {
     border-bottom: 2px solid alpha(@secondary, 0.2);
 }
 
-/* Hover effect */
-#cpu:hover, #memory:hover {
-    background: alpha(@surface_container_highest, 0.5);
-}
+#cpu:hover, #memory:hover { background: @glass_hover; }
 
-/* Warning State (Over 70% usage) */
 #cpu.warning, #memory.warning {
     color: @tertiary;
     background: alpha(@tertiary_container, 0.4);
 }
 
-/* Critical State (Over 90% usage) - Dreamy Pulse Animation */
 #cpu.critical, #memory.critical {
     color: @on_error_container;
     background: alpha(@error_container, 0.6);
@@ -295,25 +268,25 @@ window#waybar #workspaces button.active {
     }
 }
 
-/* Common style for right-side bubbles */
+/* ─────────────────────────────────────────────────────────────────────────────
+   BATTERY & TRAY
+   ───────────────────────────────────────────────────────────────────────────── */
+
 #battery, #tray {
     padding: 0 10px;
     margin: 4px 2px;
     border-radius: 10px;
-    background: alpha(@surface_container, 0.3); /* Consistent Glass background */
+    background: @glass_module;
     transition: all 0.3s ease-in-out;
 }
 
-/* Battery Dynamic Styling */
-
 #battery:hover {
-    background: alpha(@surface_container_highest, 0.6);
+    background: @glass_hover;
     color: @primary;
 }
 
 #battery {
     color: @primary;
-    background: alpha(@surface_container, 0.3);
     border-bottom: 2px solid alpha(@primary, 0.2);
 }
 
@@ -322,7 +295,7 @@ window#waybar #workspaces button.active {
     padding: 0 10px;
     margin: 4px 2px;
     border-radius: 10px;
-    background: alpha(@surface_container, 0.3);
+    background: @glass_module;
     border-bottom: 2px solid alpha(@primary, 0.2);
 }
 
@@ -333,15 +306,35 @@ window#waybar #workspaces button.active {
     animation: blink 1s infinite alternate;
 }
 
-/* System Tray Glass */
 #tray {
-    
     color: @primary;
-    padding: 0 10px;
-    margin: 4px 2px;
-    border-radius: 10px;
     border-bottom: 2px solid alpha(@primary, 0.2);
-    background: alpha(@surface_container_low, 0.2);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POWER DRAWER (IDLE & POWER BUTTON)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-inhibit-suspend {
+    background: @glass_module_dark;
+    padding: 0 12px;
+    margin: 6px 2px;
+    border-radius: 10px;
+    transition: all 0.3s ease-in-out;
+    color: @error;
+    border-bottom: 2px solid alpha(@error, 0.4);
+}
+
+#custom-inhibit-suspend.activated {
+    color: @error;
+    border-bottom: 2px solid @error;
+    text-shadow: 0 0 8px alpha(@error, 0.6);
+    background: alpha(@error, 0.1);
+}
+
+#custom-inhibit-suspend:hover {
+    background: @glass_hover;
+    text-shadow: 0 0 8px alpha(@on_surface, 0.3);
 }
 
 /* Power Button Gem */
@@ -360,7 +353,7 @@ window#waybar #workspaces button.active {
    ───────────────────────────────────────────────────────────────────────────── */
 
 tooltip {
-    background: alpha(@surface_container_highest, 0.9);
+    background: @glass_tooltip;
     border-radius: 12px;
     border: 1px solid alpha(@outline, 0.3);
 }

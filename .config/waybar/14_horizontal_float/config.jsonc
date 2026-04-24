@@ -12,9 +12,51 @@
     "margin-left": 15,
     "margin-right": 15,
 
-    "modules-left": ["custom/launcher", "hyprland/workspaces", "mpris"],
-    "modules-center": ["custom/notification", "clock", "custom/inhibit-suspend"],
-    "modules-right": ["network", "cpu", "memory", "pulseaudio", "backlight", "battery", "tray", "custom/power"],
+    "modules-left": ["custom/launcher", "hyprland/workspaces"],
+    "modules-center": ["group/updates-drawer", "clock", "custom/notification"],
+    "modules-right": ["group/network-drawer", "cpu", "memory", "pulseaudio", "backlight", "battery", "tray", "group/power-drawer"],
+
+    "group/network-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "network-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": true
+        },
+        "modules": [
+            "custom/net-speed",
+            "network"
+        ]
+    },
+
+    "group/updates-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "updates-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": true
+        },
+        "modules": [
+            "custom/updates-trigger",
+            "custom/updates"
+        ]
+    },
+
+    "group/power-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "power-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": false
+        },
+        "modules": [
+            "custom/power",
+            "custom/inhibit-suspend"
+        ]
+    },
 
     "custom/launcher": {
       "format": "󰣇",
@@ -40,53 +82,56 @@
             "persistent": "󰊠"
         }
     },
-    
-    "mpris": {
-      "format": "{player_icon} {title}",
-      "format-paused": "{status_icon} <i>{title}</i>",
-      "format-stopped": "",
-      "max-length": 25,
-      "player-icons": {
-        "default": "󰎆",
-        "mpv": "󰎇",
-        "spotify": "󰓇",
-        "firefox": "󰈹"
-      },
-      "status-icons": {
-        "paused": "󰏤"
-      },
-      "tooltip-format": "{player} - {artist}\n{title}\n{album}",
-      "on-click": "playerctl play-pause",
-      "on-scroll-up": "playerctl next",
-      "on-scroll-down": "playerctl previous"
+
+    "custom/updates-trigger": {
+        "format": "",
+        "exec": "echo ''",
+        "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "interval": 5,
+        "tooltip": false
     },
 
-    "custom/notification": {
-        "format": "{icon}",
-        "format-icons": {
-            "notification": "󱅫",
-            "none": "󰂚",
-            "dnd-notification": "󱏧",
-            "dnd-none": "󰂛",
-            "inhibited-notification": "󱅫",
-            "inhibited-none": "󰂚",
-            "dnd-inhibited-notification": "󱏧",
-            "dnd-inhibited-none": "󰂛"
-        },
+    "custom/updates": {
+        "exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
         "return-type": "json",
-        "exec-if": "which makoctl",
-        "exec": "~/user_scripts/waybar/mako.sh",
-        "on-click": "~/user_scripts/rofi/rofi_mako.sh",
-        "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
-        "signal": 8,
-        "escape": true,
-        "tooltip-format": "Notifications\n\nLMB: Toggle Panel\nRMB: Do Not Disturb"
+        "format": "󰏔 {}",
+        "tooltip": true,
+        "on-click": "uwsm-app -- kitty sh -c 'command -v yay >/dev/null && yay || paru'"
     },
+
+  "custom/notification": {
+    "justify": "center",
+    "align": 0.5,
+    "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+    "format": "{}",
+    "return-type": "json",
+    "exec-if": "which makoctl",
+    "exec": "~/user_scripts/waybar/mako.sh --horizontal",
+    "interval": 2,
+    "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+    "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+    "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+    "signal": 8,
+    "escape": true
+  },
 
     "clock": {
         "format": "{:%I:%M %p}",
         "format-alt": "󰃭 {:%A, %B %d}",
-        "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>"
+        "tooltip-format": "<tt><span size='12pt' font='JetBrainsMono Nerd Font'>{calendar}</span></tt>",
+        "calendar": {
+            "mode": "month",
+            "mode-mon-col": 3,
+            "weeks-pos": "right",
+            "on-scroll": 1,
+            "format": {
+                "months": "<span color='#ffb786'><b>{}</b></span>",
+                "days": "<span color='#e2e2e2'>{}</span>",
+                "weeks": "<span color='#c9ca93'>W{}</span>",
+                "weekdays": "<span color='#ffb786'><b>{}</b></span>",
+                "today": "<span color='#131313' background='#ffb786'><b>{}</b></span>"
+            }
+        }
     },
     
     "custom/inhibit-suspend": {
@@ -99,8 +144,14 @@
         "escape": true
     },
 
-    
-    
+    "custom/net-speed": {
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --horizontal",
+        "return-type": "json",
+        "format": "{}",
+        "interval": 1,
+        "tooltip": true
+    },
+
     "network": {
         "format-wifi": "󰤨",
         "format-ethernet": "󰈀",
