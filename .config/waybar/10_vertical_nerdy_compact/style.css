@@ -5,6 +5,34 @@
 
 @import url("../../.config/matugen/generated/waybar-colors.css");
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSLUCENCY CONTROLS (GLASSY MODE)
+   Tweak the decimals (0.0 to 1.0) here to adjust granular glassiness.
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color glass_bar         alpha(@background, 0.4);
+@define-color glass_group       alpha(@surface_container_highest, 0.0);
+@define-color glass_module      alpha(@surface_container_highest, 0.0);
+@define-color glass_tooltip     alpha(@surface_container, 0.07);
+@define-color glass_active_ws   alpha(@primary, 0.15);
+@define-color glass_urgent_ws   alpha(@error, 0.15);
+@define-color glass_border      alpha(@outline_variant, 1.0);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Remove this line to flip the master switch to OPAQUE
+
+@define-color glass_bar         @background;
+@define-color glass_group       @surface_container_highest;
+@define-color glass_module      @surface_container_highest;
+@define-color glass_tooltip     @surface_container;
+@define-color glass_active_ws   @primary_container;
+@define-color glass_urgent_ws   @error_container;
+@define-color glass_border      @outline_variant;
+
+   Remove this line to flip the master switch to OPAQUE */
+
 /* ===================================================================
  * GLOBAL
  * =================================================================== */
@@ -23,15 +51,15 @@
 }
 
 window#waybar {
-    background: @background; 
+    background: @glass_bar; 
     color: @on_surface;
-    border-right: 1px solid alpha(@outline_variant, 0.3); 
+    border-right: 1px solid @glass_border; 
 }
 
 tooltip {
-    background: alpha(@surface_container, 0.95);
+    background: @glass_tooltip;
     color: @on_surface;
-    border: 1px solid @outline_variant;
+    border: 1px solid @glass_border;
     border-radius: 4px;
 }
 
@@ -51,7 +79,7 @@ tooltip label {
 
 /* --- Group Pill Backgrounds (Fixed Visibility) --- */
 box#group-media, box#group-hardware, box#group-updates-drawer, box#group-utils, box#group-connections, box#group-bottom {
-    background-color: @surface_container_highest;
+    background-color: @glass_group;
     border-radius: 12px;
     padding: 6px 0px;
     margin: 4px 0px;
@@ -95,7 +123,7 @@ box#group-media, box#group-hardware, box#group-updates-drawer, box#group-utils, 
 }
 
 #workspaces button.active {
-    background-color: alpha(@primary, 0.15);
+    background-color: @glass_active_ws;
     color: @primary;
     border-radius: 4px;
     font-weight: 900;
@@ -103,13 +131,13 @@ box#group-media, box#group-hardware, box#group-updates-drawer, box#group-utils, 
 
 #workspaces button.urgent {
     color: @error;
-    background-color: alpha(@error, 0.15);
+    background-color: @glass_urgent_ws;
 }
 
 /* --- Clock and Bottom Gap Control --- */
 #clock {
     font-weight: 900;
-    background-color: @surface_container_highest; 
+    background-color: @glass_module; 
     border-radius: 6px;
     color: @primary;
     padding: 4px 0px;

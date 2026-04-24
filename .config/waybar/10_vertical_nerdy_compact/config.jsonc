@@ -70,8 +70,7 @@
             "modules": [
                 "custom/notification",
                 "custom/theme",
-                "custom/app-tray",
-                "custom/inhibit-suspend"
+                "custom/app-tray"
             ]
         },
 
@@ -92,6 +91,7 @@
             "modules": [
                 "custom/power",
                 "custom/audiorouter",
+                "custom/inhibit-suspend",
                 "tray"
             ]
         },
