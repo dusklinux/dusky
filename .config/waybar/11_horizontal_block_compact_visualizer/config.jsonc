@@ -14,12 +14,11 @@
   // --- MODULE LAYOUT ---
   "modules-left": [
     "custom/launcher",
+    "group/network-drawer",
+    "group/updates-drawer",
     "clock",
-    "custom/inhibit-suspend",
-    "custom/updates",
     "custom/notification",
-    "tray",
-    "custom/cava"
+    "tray"
   ],
 
   "modules-center": [
@@ -28,15 +27,58 @@
 
   "modules-right": [
     "mpris",
-    "network",
     "bluetooth",
     "pulseaudio#output",
     "backlight",
     "cpu",
     "memory",
     "battery",
-    "custom/power"
+    "group/power-drawer"
   ],
+
+  // --- DRAWERS & GROUPS ---
+
+  "group/network-drawer": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 400,
+      "children-class": "network-drawer",
+      "click-to-reveal": false,
+      "transition-left-to-right": true
+    },
+    "modules": [
+      "custom/net-speed",
+      "network"
+    ]
+  },
+
+  "group/updates-drawer": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 400,
+      "children-class": "updates-drawer",
+      "click-to-reveal": false,
+      "transition-left-to-right": true
+    },
+    "modules": [
+      "custom/updates-trigger",
+      "custom/updates"
+    ]
+  },
+
+  "group/power-drawer": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 400,
+      "children-class": "power-drawer",
+      "click-to-reveal": false,
+      "transition-left-to-right": false
+    },
+    "modules": [
+      "custom/power",
+      "custom/inhibit-suspend"
+    ]
+  },
 
   // --- MODULE CONFIGURATION ---
 
@@ -62,7 +104,7 @@
         "days": "<span color='#e2e2e2'>{}</span>",
         "weeks": "<span color='#c9ca93'>W{}</span>",
         "weekdays": "<span color='#ffb786'><b>{}</b></span>",
-        "today": "<span color='#131313' background='#ffb786'><b> {} </b></span>"
+        "today": "<span color='#131313' background='#ffb786'><b>{}</b></span>"
       }
     }
   },
@@ -77,33 +119,36 @@
     "escape": true
   },
 
-"custom/updates": {
+  "custom/updates-trigger": {
+    "format": "",
+    "exec": "echo ''",
+    "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+    "interval": 5,
+    "tooltip": false
+  },
+
+  "custom/updates": {
     "exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
     "return-type": "json",
-    "format": "{}",
-    "tooltip": true
-},
+    "format": "󰏔 {}",
+    "tooltip": true,
+    "on-click": "uwsm-app -- kitty sh -c 'command -v yay >/dev/null && yay || paru'"
+  },
 
   "custom/notification": {
-    "format": "{icon}",
-    "format-icons": {
-      "notification": "󱅫",
-      "none": "󰂚",
-      "dnd-notification": "󱏧",
-      "dnd-none": "󰂛",
-      "inhibited-notification": "󱅫",
-      "inhibited-none": "󰂚",
-      "dnd-inhibited-notification": "󱏧",
-      "dnd-inhibited-none": "󰂛"
-    },
+    "justify": "center",
+    "align": 0.5,
+    "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+    "format": "{}",
     "return-type": "json",
     "exec-if": "which makoctl",
-    "exec": "~/user_scripts/waybar/mako.sh",
+    "exec": "~/user_scripts/waybar/mako.sh --horizontal",
+    "interval": 2,
     "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+    "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
     "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
     "signal": 8,
-    "escape": true,
-    "tooltip-format": "Notifications\n\n LMB Toggle Panel\n RMB  Do Not Disturb"
+    "escape": true
   },
 
   "custom/theme-toggle": {
@@ -162,7 +207,6 @@
     "on-scroll-down": "playerctl previous"
   },
 
-  // --- CUSTOM NET SPEED ---
   "custom/net-speed": {
     "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --horizontal",
     "return-type": "json",
@@ -276,10 +320,5 @@
     "exec": "lrcsnc",
     "escape": true,
     "min-length": 1
-  },
-
-  "custom/cava": {
-    "format": "{}",
-    "exec": "$HOME/user_scripts/waybar/cava.sh"
   }
 }
