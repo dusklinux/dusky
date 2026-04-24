@@ -1,5 +1,28 @@
 @import url("../../.config/matugen/generated/waybar-colors.css");
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY CONTROLS (GLASSY MODE)
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color glass_module      alpha(@surface_container, 0.4);
+@define-color glass_module_low  alpha(@surface_container_low, 0.4);
+@define-color glass_primary     alpha(@primary, 0.85);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Remove this line to flip the master switch to OPAQUE
+
+@define-color glass_module      @surface_container;
+@define-color glass_module_low  @surface_container_low;
+@define-color glass_primary     @primary;
+
+   Remove this line to flip the master switch to OPAQUE */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RESET & FOUNDATIONS
+   ───────────────────────────────────────────────────────────────────────────── */
+
 * {
     font-family: "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
     font-size: 13px;
@@ -14,57 +37,45 @@ window#waybar {
     color: @on_surface;
 }
 
-/* UNIFIED CAPSULE STYLE */
+/* ─────────────────────────────────────────────────────────────────────────────
+   UNIFIED CAPSULE STYLE
+   ───────────────────────────────────────────────────────────────────────────── */
 #clock,
+#custom-weather,
+#custom-net-speed,
 #custom-notification,
+#custom-updates,
 #workspaces,
-#group-stats,
 #pulseaudio,
+#bluetooth,
+#network,
 #battery,
-#custom-network {
-    background-color: @surface_container;
+#cpu,
+#memory,
+#custom-power,
+#custom-inhibit-suspend {
+    background-color: @glass_module;
     min-width: 20px;
     color: @on_surface;
     border-radius: 100px;
-    
-    /* CHANGED: Reduced side margins from 2px to 1px to fit the 38px width */
     margin: 1px 3px; 
     font-size: 15px;
-    
     padding: 0px 7px 0px 8px;
-    box-shadow: 0 2px 3px rgba(0, 0, 0, 0.2);
+    /* Box-shadow removed completely to fix blur bleeding artifact */
+    transition: all 0.2s ease;
 }
 
 /* --- LEFT SECTION --- */
 #clock {
-    background-color: @primary;
+    background-color: @glass_primary;
     color: @on_primary;
-    font-size: 12px; 
+    font-size: 13px;
     padding-right: 8px;
 }
 
-#group-stats {
-    background-color: @surface_container_low;
-    padding: 8px;
-}
-
-#cpu, #memory, #temperature {
-    background: transparent;
-    box-shadow: none;
-    margin: 0 4px;
-    padding: 0;
-    font-size: 12px;
+#custom-weather, #custom-updates, #custom-net-speed {
     color: @on_surface_variant;
-    
-    /* ADDED: Strong black text-shadow for visibility on light backgrounds */
-    text-shadow: 1px 1px 2px rgba(0, 0, 0, 1.0);
-}
-
-/* ADDED: Critical State Coloring (Red when > 80%) */
-#cpu.critical, 
-#memory.critical, 
-#temperature.critical {
-    color: @error;
+    font-size: 12px;
 }
 
 #custom-notification {
@@ -73,17 +84,16 @@ window#waybar {
 
 /* --- CENTER SECTION --- */
 #workspaces {
-    background-color: @surface_container_high;
+    background-color: alpha(@surface_container_high, 0.6);
     padding: 0 6px;
 }
 
 #workspaces button {
-    /* CHANGED: Reduced horizontal margin */
     margin: 6px 2px;
     padding: 0 2px;
     border-radius: 16px;
     color: @on_surface_variant;
-    background-color: @surface_container_highest;
+    background-color: alpha(@surface_container_highest, 0.5);
     transition: all 0.2s ease;
 }
 
@@ -103,23 +113,41 @@ window#waybar {
 }
 
 /* --- RIGHT SECTION --- */
-#custom-network {
-    font-size: 12px;
-    padding: 0 8px;
-}
-
 #pulseaudio, #battery {
     font-size: 12px; 
     padding: 0 8px;
 }
 
+#bluetooth, #network {
+    font-size: 13px;
+    color: @on_surface_variant;
+}
+
+#network.disconnected { color: @error; }
+
 #battery.charging { color: @tertiary; }
 #battery.warning { color: @error; }
 
+#cpu, #memory {
+    font-size: 12px;
+    color: @on_surface_variant;
+}
+
+#cpu.critical, #memory.critical {
+    color: @error;
+}
+
+#custom-inhibit-suspend {
+    color: @on_surface_variant;
+    font-size: 14px;
+}
+
+#custom-inhibit-suspend.disabled {
+    color: @tertiary;
+}
+
 #custom-power {
-    /*background-color: @error_container;
-    color: @on_error_container;*/
-    font-size: 16px; /* Slightly smaller icon to match narrow width */
+    font-size: 16px; 
     border-radius: 100px;
     margin: 3px 1px;
     padding: 3px 4px 3px 0px;
@@ -129,4 +157,23 @@ window#waybar {
 #custom-power:hover {
     background-color: @error;
     color: @on_error;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TOOLTIPS
+   ───────────────────────────────────────────────────────────────────────────── */
+tooltip {
+    /* Lowered alpha to 0.4 for purely transparent background, letting Hyprland blur handle the rest */
+    background-color: alpha(@surface, 0.4); 
+    border: 1px solid alpha(@outline_variant, 0.4);
+    border-radius: 12px;
+    /* Kill GTK's native shadow and images to completely stop the blur bleed effect */
+    box-shadow: none;
+    background-image: none;
+}
+
+tooltip label {
+    padding: 6px 10px;
+    color: @on_surface;
+    font-size: 12px;
 }

@@ -1,6 +1,6 @@
-//Minimal Horizontal
+// Minimal Horizontal - Drawer Edition
 {
-	"reload_style_on_change": true,
+    "reload_style_on_change": true,
     "layer": "top",
     "position": "top",
     "spacing": 0,
@@ -15,9 +15,8 @@
     // MODULE LAYOUT
     // ===================================================================
     "modules-left": [ 
-        "clock", 
-        //"group/stats",        
-        "custom/notification"
+        "group/clock-drawer",
+        "group/notif-drawer"
     ],
     
     "modules-center": [ 
@@ -25,27 +24,176 @@
     ],
     
     "modules-right": [ 
-        //"custom/network",      
-        "pulseaudio",
-        "battery",
-        "custom/power"
+        "group/audio-drawer",
+        "group/battery-drawer",
+        "group/power-drawer"
     ],
+
+    // ===================================================================
+    // GROUP / DRAWER CONFIGURATION
+    // ===================================================================
+
+    "group/clock-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "clock-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": true
+        },
+        "modules": ["clock", "custom/weather", "custom/net-speed"]
+    },
+
+    "group/notif-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "notif-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": true
+        },
+        "modules": ["custom/notification", "custom/updates"]
+    },
+
+    "group/audio-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "audio-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": false
+        },
+        "modules": ["pulseaudio", "bluetooth", "network"]
+    },
+
+    "group/battery-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "battery-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": false
+        },
+        "modules": ["battery", "cpu", "memory"]
+    },
+
+    "group/power-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "power-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": false
+        },
+        "modules": ["custom/power", "custom/inhibit-suspend"]
+    },
 
     // ===================================================================
     // MODULE CONFIGURATION
     // ===================================================================
 
     "hyprland/workspaces": {
-        //"format": "{name}",
         "format": "",
         "on-click": "activate",
         "sort-by-number": true,
         "persistent-workspaces": {}
     },
 
-    "group/stats": {
-        "orientation": "vertical",
-        "modules": [ "cpu", "memory", "temperature" ]
+    "clock": {
+        "format": "{:%I:%M}",
+        "tooltip-format": "<tt><span size='12pt' font='JetBrainsMono Nerd Font'>{calendar}</span></tt>",
+        "on-click": "uwsm-app -- gnome-clocks",
+        "interval": 60,
+        "calendar": {
+            "mode": "month",
+            "mode-mon-col": 3,
+            "weeks-pos": "right",
+            "on-scroll": 1,
+            "format": {
+                "months": "<span color='#ffb786'><b>{}</b></span>",
+                "days": "<span color='#e2e2e2'>{}</span>",
+                "weeks": "<span color='#c9ca93'>W{}</span>",
+                "weekdays": "<span color='#ffb786'><b>{}</b></span>",
+                "today": "<span color='#131313' background='#ffb786'><b>{}</b></span>"
+            }
+        }
+    },
+
+    "custom/weather": {
+        "format": "{}",
+        "exec": "python3 ~/user_scripts/waybar/weather.py",
+        "interval": 1800,
+        "return-type": "json"
+    },
+
+    "custom/net-speed": {
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --horizontal",
+        "return-type": "json",
+        "format": "{}",
+        "interval": 1,
+        "tooltip": true
+    },
+
+    "custom/notification": {
+        "format": "{}",
+        "return-type": "json",
+        "exec-if": "which makoctl",
+        "exec": "~/user_scripts/waybar/mako.sh --horizontal",
+        "interval": 2,
+        "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+        "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+        "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+        "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+        "signal": 8,
+        "escape": true
+    },
+
+    "custom/updates": {
+        "exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "return-type": "json",
+        "format": "󰏔 {}",
+        "tooltip": true,
+        "on-click": "uwsm-app -- kitty sh -c 'command -v yay >/dev/null && yay || paru'"
+    },
+
+    "pulseaudio": {
+        "format": "{icon} ",
+        "format-muted": "󰖁",
+        "on-click": "uwsm-app -- pavucontrol",
+        "format-icons": ["", "", ""],
+        "tooltip-format": "Volume: {volume}%"
+    },
+
+    "bluetooth": {
+        "format": "󰂯",
+        "format-disabled": "󰂲",
+        "format-connected": "󰂱 {num_connections}",
+        "format-connected-battery": "󰂱 {device_battery_percentage}%",
+        "tooltip-format": "{controller_alias}\n{controller_address}\n\n{device_enumerate}",
+        "tooltip-format-connected": "{controller_alias}\n\n{device_enumerate}",
+        "tooltip-format-enumerate-connected": "󰂱 {device_alias}",
+        "tooltip-format-enumerate-connected-battery": "󰂱 {device_alias} ({device_battery_percentage}%)",
+        "on-click": "uwsm-app -- blueman-manager",
+        "on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui"
+    },
+
+    "network": {
+        "format-wifi": "󰤨",
+        "format-ethernet": "󰈀",
+        "format-disconnected": "󰤭",
+        "format-linked": "󰈁",
+        "tooltip-format-wifi": "󰤨 {essid}\n󱑽 {signalStrength}%\n󰩟 {ipaddr}",
+        "tooltip-format-ethernet": "󰈀 Ethernet\n󰩟 {ipaddr}",
+        "tooltip-format-disconnected": "󰤭 Disconnected",
+        "on-click": "uwsm-app -- kitty --class wifitui -e wifitui"
+    },
+
+    "battery": {
+        "format": "{icon} {capacity}",
+        "format-charging": " {capacity}",
+        "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
+        "interval": 5,
+        "tooltip-format": "{timeTo}\nHealth: {health}%"
     },
 
     "cpu": {
@@ -68,64 +216,20 @@
         }
     },
 
-    "temperature": {
-        "thermal-zone": 6,
-        "format": " {temperatureC}",
-        "critical-threshold": 80,
-        "format-critical": "🔥\n{temperatureC}",
-        "tooltip-format": "Temp: {temperatureC}°C"
-    },
-
-    "clock": {
-        "format": "{:%I:%M %p}",
-        "tooltip-format": "{:%A, %d %B %Y}",
-        "on-click": "uwsm-app -- gnome-clocks",
-        "interval": 60
-    },
-
-    "custom/notification": {
-        "format": "{}",
-        "return-type": "json",
-        "exec-if": "which makoctl",
-        "exec": "~/user_scripts/waybar/mako.sh",
-        "on-click": "~/user_scripts/rofi/rofi_mako.sh",
-        "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
-        "signal": 8,
-        "escape": true
-    },
-
-    // --- UPDATED MODULES WITH NUMBERS ---
-
-    "pulseaudio": {
-        // Stacked: Icon on top, Volume % below
-        "format": "{icon} ",
-        "format-muted": "󰖁",
-        "on-click": "uwsm-app -- pavucontrol",
-        "format-icons": ["", "", ""],
-        "tooltip-format": "Volume: {volume}%"
-    },
-
-    "battery": {
-        // Stacked: Icon on top, Capacity % below
-        "format": "{icon} {capacity}",
-        "format-charging": " {capacity}",
-        "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
-        "interval": 5,
-        "tooltip-format": "{timeTo}\nHealth: {health}%"
-    },
-
-    "custom/network": {
-        "return-type": "json",
-        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh vertical",
-        "interval": 1, 
-        "on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
-        "on-click-right": "nmcli radio wifi on",
-        "on-click-middle": "nmcli radio wifi off"
-    },
-
     "custom/power": {
         "format": "",
-        "tooltip": false,
-        "on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh"
+        "tooltip-format": "Power Menu\nRight-click: Control Center",
+        "on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh",
+        "on-click-right": "uwsm-app -- python3 ~/user_scripts/dusky_system/control_center/dusky_control_center.py"
+    },
+
+    "custom/inhibit-suspend": {
+        "format": "{}",
+        "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
+        "return-type": "json",
+        "interval": 5,
+        "signal": 9,
+        "on-click": "uwsm-app -- ~/user_scripts/waybar/toggle_hypridle.sh",
+        "escape": true
     }
 }
