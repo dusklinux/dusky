@@ -1,5 +1,35 @@
 @import url("../../.config/matugen/generated/waybar-colors.css");
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSLUCENCY CONTROLS (GLASSY MODE)
+   Tweak the decimals (0.0 to 1.0) here to adjust granular glassiness.
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color glass_module           alpha(@surface_container, 0.4);
+@define-color glass_module_low       alpha(@surface_container_low, 0.4);
+@define-color glass_module_high      alpha(@surface_container_high, 0.4);
+@define-color glass_primary          alpha(@primary, 0.8);
+@define-color glass_workspace_btn    alpha(@surface_container_highest, 0.4);
+@define-color glass_workspace_active alpha(@primary, 0.9);
+@define-color glass_workspace_hover  alpha(@on_primary_fixed_variant, 0.5);
+@define-color glass_tooltip          alpha(@surface_container_highest, 0.85);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Remove this line to flip the master switch to OPAQUE
+
+@define-color glass_module           @surface_container;
+@define-color glass_module_low       @surface_container_low;
+@define-color glass_module_high      @surface_container_high;
+@define-color glass_primary          @primary;
+@define-color glass_workspace_btn    @surface_container_highest;
+@define-color glass_workspace_active @primary;
+@define-color glass_workspace_hover  @on_primary_fixed_variant;
+@define-color glass_tooltip          @surface_container_highest;
+
+   Remove this line to flip the master switch to OPAQUE */
+
 * {
     font-family: "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
     font-size: 13px;
@@ -26,28 +56,28 @@ window#waybar {
 #backlight,
 #bluetooth,
 #custom-inhibit-suspend {
-    background-color: @surface_container;
+    background-color: @glass_module;
     color: @on_surface;
     border-radius: 100px;
-    
-    /* CHANGED: Reduced side margins from 2px to 1px to fit the 38px width */
     margin: 3px 1px; 
-    
     padding: 6px 0px;
-    box-shadow: 0 2px 3px rgba(0, 0, 0, 0.2);
+    
+    /* FIX: Box-shadow and background-image removed completely to fix the compositor blur bleeding artifact */
+    box-shadow: none;
+    background-image: none;
+    transition: all 0.2s ease;
 }
 
 /* --- TOP SECTION --- */
 #clock {
-    background-color: @primary;
+    background-color: @glass_primary;
     color: @on_primary;
-    /* CHANGED: 10px ensures 4 digits (e.g. 12:00) fit comfortably */
     font-size: 10px; 
     padding-bottom: 7px;
 }
 
 #group-stats {
-    background-color: @surface_container_low;
+    background-color: @glass_module_low;
     padding: 8px 0;
 }
 
@@ -58,12 +88,9 @@ window#waybar {
     padding: 0;
     font-size: 10px;
     color: @on_surface_variant;
-    
-    /* ADDED: Strong black text-shadow for visibility on light backgrounds */
     text-shadow: 1px 1px 2px rgba(0, 0, 0, 1.0);
 }
 
-/* ADDED: Critical State Coloring (Red when > 80%) */
 #cpu.critical, 
 #memory.critical, 
 #temperature.critical {
@@ -72,23 +99,23 @@ window#waybar {
 
 /* --- CENTER SECTION --- */
 #workspaces {
-    background-color: @surface_container_high;
+    background-color: @glass_module_high;
     padding: 2px 0;
 }
 
 #workspaces button {
     padding: 0;
-    /* CHANGED: Reduced horizontal margin */
     margin: 2px 4px;
     padding: 2px 0;
     border-radius: 16px;
     color: @on_surface_variant;
-    background-color: @surface_container_highest;
+    background-color: @glass_workspace_btn;
     transition: all 0.2s ease;
+    box-shadow: none;
 }
 
 #workspaces button.active {
-    background-color: @primary;
+    background-color: @glass_workspace_active;
     padding: 8px 0;
     color: @on_primary;
 }
@@ -99,7 +126,7 @@ window#waybar {
 }
 
 #workspaces button:hover {
-    background-color: @on_primary_fixed_variant;
+    background-color: @glass_workspace_hover;
 }
 
 /* --- BOTTOM SECTION --- */
@@ -111,7 +138,6 @@ window#waybar {
 #backlight,
 #bluetooth,
 #custom-inhibit-suspend {
-    /* CHANGED: 10px guarantees fits in 38px width */
     font-size: 10px; 
     padding: 8px 0;
 }
@@ -120,15 +146,31 @@ window#waybar {
 #battery.warning { color: @error; }
 
 #custom-power {
-    /*background-color: @error_container;
-    color: @on_error_container;*/
-    font-size: 16px; /* Slightly smaller icon to match narrow width */
+    font-size: 16px; 
     border-radius: 100px;
     margin: 3px 1px;
     padding: 3px 4px 3px 0px;
+    box-shadow: none;
 }
 
 #custom-power:hover {
     background-color: @error;
     color: @on_error;
+}
+
+/* --- TOOLTIPS --- */
+tooltip {
+    /* Lowered alpha for purely transparent background, letting Hyprland blur handle the rest */
+    background-color: alpha(@surface, 0.4); 
+    border: 1px solid alpha(@outline_variant, 0.4);
+    border-radius: 12px;
+    /* Kill GTK's native shadow and images to completely stop the blur bleed effect */
+    box-shadow: none;
+    background-image: none;
+}
+
+tooltip label {
+    padding: 6px 10px;
+    color: @on_surface;
+    font-size: 12px;
 }
