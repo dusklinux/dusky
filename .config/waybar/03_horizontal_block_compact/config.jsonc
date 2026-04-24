@@ -15,11 +15,12 @@
   // --- MODULE LAYOUT ---
   "modules-left": [
     "custom/launcher",
+    "group/network-drawer",
     "group/updates-drawer",
+    "group/mpris-drawer",
     "clock",
-    "custom/notification",
-    "custom/theme-toggle",
-    "group/mpris-drawer"
+    "custom/weather",
+    "custom/notification"
   ],
 
   "modules-center": [
@@ -27,11 +28,8 @@
   ],
 
   "modules-right": [
-    "custom/net-speed",
-    "network",
-    "bluetooth",
     "pulseaudio#output",
-    "backlight",
+    "group/brightness-drawer",
     "cpu",
     "memory",
     "battery",
@@ -39,6 +37,35 @@
   ],
 
   // --- DRAWERS & GROUPS ---
+
+  "group/network-drawer": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 400,
+      "children-class": "network-drawer",
+      "click-to-reveal": false,
+      "transition-left-to-right": true
+    },
+    "modules": [
+      "custom/net-speed",
+      "network",
+      "bluetooth"
+    ]
+  },
+
+  "group/brightness-drawer": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 400,
+      "children-class": "brightness-drawer",
+      "click-to-reveal": false,
+      "transition-left-to-right": false
+    },
+    "modules": [
+      "backlight",
+      "custom/theme-toggle"
+    ]
+  },
 
   "group/updates-drawer": {
     "orientation": "horizontal",
@@ -127,26 +154,27 @@
     }
   },
 
+  "custom/weather": {
+    "format": "{}",
+    "exec": "python3 ~/user_scripts/waybar/weather.py",
+    "interval": 1800,
+    "return-type": "json"
+  },
+
   "custom/notification": {
-    "format": "{icon}",
-    "format-icons": {
-      "notification": "󱅫",
-      "none": "󰂚",
-      "dnd-notification": "󱏧",
-      "dnd-none": "󰂛",
-      "inhibited-notification": "󱅫",
-      "inhibited-none": "󰂚",
-      "dnd-inhibited-notification": "󱏧",
-      "dnd-inhibited-none": "󰂛"
-    },
+    "justify": "center",
+    "align": 0.5,
+    "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+    "format": "{}",
     "return-type": "json",
     "exec-if": "which makoctl",
-    "exec": "~/user_scripts/waybar/mako.sh",
+    "exec": "~/user_scripts/waybar/mako.sh --horizontal",
+    "interval": 2,
     "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+    "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
     "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
     "signal": 8,
-    "escape": true,
-    "tooltip-format": "Notifications\n\n LMB  Toggle Panel\n RMB  Do Not Disturb"
+    "escape": true
   },
 
   "custom/theme-toggle": {

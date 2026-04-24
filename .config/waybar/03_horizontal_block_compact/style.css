@@ -1,8 +1,42 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   WAYBAR PREMIUM THEME - Compact Edition (Refined & Mirrored from Translucent)
+   WAYBAR NEO THEME - Compact Edition
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @import url("../../.config/matugen/generated/waybar-colors.css");
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSLUCENCY CONTROLS (GLASSY MODE)
+   Tweak the decimals (0.0 to 1.0) here to adjust granular glassiness.
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color glass_bar         alpha(@surface, 0.1);
+@define-color glass_module      alpha(@surface_container, 0.4);
+@define-color glass_module_dark alpha(@surface_container, 0.5);
+@define-color glass_hover       alpha(@surface_container_high, 0.25);
+@define-color glass_tooltip     alpha(@surface, 0.08);
+@define-color glass_mpris       alpha(@secondary_container, 0.5);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MASTER OPAQUE SWITCH
+   GTK3 CSS cannot compute variables inside alpha() functions. 
+   To toggle off ALL translucency, simply UNCOMMENT the block below by removing
+   the  from the first line. GTK's "last definition wins" rule will instantly 
+   overwrite the glassy variables above and hot-reload Waybar.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Remove this line to flip the master switch to OPAQUE
+
+@define-color glass_bar         @surface;
+@define-color glass_module      @surface_container;
+@define-color glass_module_dark @surface_container;
+@define-color glass_hover       @surface_container_high;
+@define-color glass_tooltip     @surface_container_highest;
+@define-color glass_mpris       @secondary_container;
+
+   Remove this line to flip the master switch to OPAQUE */
 
 /* ─────────────────────────────────────────────────────────────────────────────
    RESET & FOUNDATIONS
@@ -25,7 +59,7 @@ window#waybar {
    ───────────────────────────────────────────────────────────────────────────── */
 
 window#waybar > box {
-  background-color: alpha(@surface, 0.3);
+  background-color: @glass_bar;
   border-radius: 10px;
   border: 1px solid alpha(@outline_variant, 0.14);
   margin: 2px 0;
@@ -59,7 +93,7 @@ window#waybar > box {
   padding: 0px 8px;
   margin: 1px 2px;
   border-radius: 10px;
-  background-color: alpha(@surface_container, 0.35);
+  background-color: @glass_module_dark;
   color: @secondary;
   transition: all 0.2s ease-in-out;
 }
@@ -72,20 +106,20 @@ window#waybar > box {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   CLOCK
+   CLOCK & WEATHER
    ───────────────────────────────────────────────────────────────────────────── */
 
-#clock {
+#clock, #custom-weather {
   padding: 0px 5px 0px 5px;
   margin: 1px 2px;
   border-radius: 10px;
-  background-color: alpha(@surface_container, 0.35);
+  background-color: @glass_module_dark;
   color: @on_surface;
   font-weight: 700;
   transition: all 0.2s ease-in-out;
 }
 
-#clock:hover {
+#clock:hover, #custom-weather:hover {
   background-color: alpha(@surface_container_highest, 0.9);
   border: 1px solid alpha(@primary, 0.3);
 }
@@ -98,7 +132,7 @@ window#waybar > box {
   padding: 0px 12px 0px 9px;
   margin: 1px 2px;
   border-radius: 10px;
-  background-color: alpha(@surface_container, 0.35);
+  background-color: @glass_module_dark;
   color: @on_surface;
   font-size: 14px;
   transition: all 0.2s ease-in-out;
@@ -116,7 +150,7 @@ window#waybar > box {
   padding: 0 8px;
   margin: 1px 2px;
   border-radius: 10px;
-  background-color: alpha(@surface_container, 0);
+  background-color: transparent;
   color: @secondary;
   font-size: 14px;
   transition: all 0.2s ease-in-out;
@@ -135,7 +169,7 @@ window#waybar > box {
   padding: 0px 0px 0px 0px;
   margin: 1px 6px;
   border-radius: 10px;
-  background-color: alpha(@surface_container, 0.2);
+  background-color: @glass_module;
   border: 1px solid alpha(@outline_variant, 0.1);
 }
 
@@ -153,7 +187,7 @@ window#waybar > box {
 #workspaces button.empty {
   padding: 0 6px;
   min-width: 20px;
-  background-color: alpha(@surface_container_high, 0);
+  background-color: transparent;
   color: alpha(@on_surface_variant, 0.4);
 }
 
@@ -201,7 +235,7 @@ window#waybar > box {
   padding: 0 10px;
   margin: 1px 2px;
   border-radius: 10px;
-  background-color: alpha(@secondary_container, 0.3);
+  background-color: @glass_mpris;
   color: @secondary;
   font-size: 14px;
   transition: all 0.2s ease-in-out;
@@ -218,7 +252,7 @@ window#waybar > box {
   padding: 0 10px;
   margin: 1px 2px;
   border-radius: 10px;
-  background-color: alpha(@secondary_container, 0.3);
+  background-color: @glass_mpris;
   color: @on_secondary_container;
   font-size: 12px;
   border: 1px solid alpha(@secondary, 0.15);
@@ -242,54 +276,52 @@ window#waybar > box {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   NETWORK & DYNAMIC BANDWIDTH METER
+   NETWORK & BLUETOOTH DRAWER
    ───────────────────────────────────────────────────────────────────────────── */
 
-#custom-net-speed {
-  padding: 0px 12px 0px 8px;
+#network, #custom-net-speed {
+  padding: 0px 8px;
   margin: 1px 2px;
-  background-color: alpha(@surface_container, 0.2);
+  background-color: @glass_module;
   border-radius: 10px;
   color: @on_surface;
-  font-size: 10px;
-  transition: all 0.2s ease-in-out;
-}
-
-#network {
-  padding: 1px 14px 0px 9px;
-  margin: 1px 2px;
-  background-color: alpha(@surface_container, 0.2);
-  border-radius: 10px;
-  color: @on_surface;
-  font-size: 14px;
+  font-size: 11px;
   transition: all 0.2s ease-in-out;
 }
 
 #network:hover, #custom-net-speed:hover {
-  background-color: alpha(@surface_container_high, 0.45);
+  background-color: @glass_hover;
 }
 
-#custom-net-speed.network-kb { color: @secondary; font-weight: bold; }
-#custom-net-speed.network-mb { color: @primary; font-weight: 900; text-shadow: 0 0 5px alpha(@primary, 0.7); }
-#custom-net-speed.network-disconnected, #network.disconnected { color: @error; padding: 1px 14px 0px 9px; }
-#network.linked, #network.ethernet { color: @tertiary; padding: 1px 13px 0px 9px; }
-#network.wifi { color: @primary_fixed; padding: 1px 14px 0px 9px; }
+#custom-net-speed.network-kb { 
+  color: @secondary; 
+  font-weight: bold; 
+}
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   BLUETOOTH
-   ───────────────────────────────────────────────────────────────────────────── */
+#custom-net-speed.network-mb {
+  color: @primary;
+  font-weight: 900;
+  text-shadow: 0 0 5px alpha(@primary, 0.7);
+}
+
+#custom-net-speed.network-disconnected, #network.disconnected { 
+  color: @error; 
+}
+
+#network.linked, #network.ethernet { color: @tertiary; }
+#network.wifi { color: @primary_fixed; }
 
 #bluetooth {
-  padding: 0px 8px 0px 8px;
+  padding: 0px 8px;
   margin: 1px 2px;
-  background-color: alpha(@surface_container, 0.2);
+  background-color: @glass_module;
   border-radius: 10px;
   color: @on_surface;
   font-size: 12px;
   transition: all 0.2s ease-in-out;
 }
 
-#bluetooth:hover { background-color: alpha(@surface_container_high, 0.45); }
+#bluetooth:hover { background-color: @glass_hover; }
 #bluetooth.disabled { color: alpha(@on_surface_variant, 0.6); }
 #bluetooth.connected { color: @primary_fixed; }
 
@@ -300,31 +332,31 @@ window#waybar > box {
 #pulseaudio.output {
   padding: 0px 12px 0px 9px;
   margin: 1px 2px;
-  background-color: alpha(@surface_container, 0.2);
+  background-color: @glass_module;
   border-radius: 10px;
   color: @on_surface;
   font-size: 12px;
   transition: all 0.2s ease-in-out;
 }
 
-#pulseaudio.output:hover { background-color: alpha(@surface_container_high, 0.45); }
+#pulseaudio.output:hover { background-color: @glass_hover; }
 #pulseaudio.output.muted { color: alpha(@on_surface_variant, 0.4); }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   BACKLIGHT
+   BRIGHTNESS & THEME DRAWER
    ───────────────────────────────────────────────────────────────────────────── */
 
 #backlight {
   padding: 0px 13px 0px 8px;
   margin: 1px 2px;
   border-radius: 10px;
-  background-color: alpha(@surface_container, 0.2);
+  background-color: @glass_module;
   color: @tertiary;
   font-size: 12px;
   transition: all 0.2s ease-in-out;
 }
 
-#backlight:hover { background-color: alpha(@surface_container_high, 0.45); }
+#backlight:hover { background-color: @glass_hover; }
 
 /* ─────────────────────────────────────────────────────────────────────────────
    CPU
@@ -333,14 +365,14 @@ window#waybar > box {
 #cpu {
   padding: 0 8px;
   margin: 1px 2px;
-  background-color: alpha(@surface_container, 0.2);
+  background-color: @glass_module;
   border-radius: 10px;
   color: @on_surface_variant;
   font-size: 12px;
   transition: all 0.2s ease-in-out;
 }
 
-#cpu:hover { background-color: alpha(@surface_container_high, 0.45); }
+#cpu:hover { background-color: @glass_hover; }
 #cpu.warning { color: @tertiary; background-color: alpha(@tertiary_container, 0.2); }
 #cpu.critical {
   color: @error;
@@ -355,14 +387,14 @@ window#waybar > box {
 #memory {
   padding: 0 8px;
   margin: 1px 2px;
-  background-color: alpha(@surface_container, 0.2);
+  background-color: @glass_module;
   border-radius: 10px;
   color: @on_surface_variant;
   font-size: 11px;
   transition: all 0.2s ease-in-out;
 }
 
-#memory:hover { background-color: alpha(@surface_container_high, 0.45); }
+#memory:hover { background-color: @glass_hover; }
 #memory.warning { color: @tertiary; background-color: alpha(@tertiary_container, 0.2); }
 #memory.critical {
   color: @error;
@@ -377,14 +409,14 @@ window#waybar > box {
 #battery {
   padding: 0px 5px 0px 5px;
   margin: 1px 2px;
-  background-color: alpha(@surface_container, 0.35);
+  background-color: @glass_module_dark;
   border-radius: 10px;
   color: @on_surface;
   font-weight: 700;
   transition: all 0.2s ease-in-out;
 }
 
-#battery:hover { background-color: alpha(@surface_container_high, 0.45); }
+#battery:hover { background-color: @glass_hover; }
 #battery.good { color: @tertiary; }
 #battery.charging, #battery.plugged, #battery.full {
   color: @tertiary;
@@ -410,14 +442,14 @@ window#waybar > box {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   IDLE INHIBITOR (Inside Power Drawer)
+   IDLE INHIBITOR (Now inside Power Drawer)
    ───────────────────────────────────────────────────────────────────────────── */
 
 #custom-inhibit-suspend {
   padding: 0px 12px 0px 9px;
   margin: 1px 2px;
   border-radius: 10px;
-  background-color: alpha(@surface_container, 0.35);
+  background-color: @glass_module_dark;
   color: @on_surface;
   font-size: 14px;
   transition: all 0.2s ease-in-out;
@@ -434,7 +466,7 @@ window#waybar > box {
 
 #custom-inhibit-suspend.enabled {
   color: @on_surface_variant;
-  background-color: alpha(@surface_container, 0.35);
+  background-color: @glass_module_dark;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -463,8 +495,8 @@ window#waybar > box {
    ───────────────────────────────────────────────────────────────────────────── */
 
 tooltip {
-  background-color: alpha(@surface_container_high, 0.95);
-  border: 1px solid alpha(@outline_variant, 0.3);
+  background-color: @glass_tooltip;
+  border: 1px solid alpha(@outline_variant, 0.5);
   border-radius: 12px;
 }
 
