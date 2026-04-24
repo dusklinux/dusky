@@ -314,10 +314,11 @@ def write_state(record: StateRecord) -> None:
             prefix=f".{STATE_FILE.name}.",
             suffix=".tmp",
         ) as temp_file:
+            # Assign immediately before risky I/O operations
+            temp_path = Path(temp_file.name)
             temp_file.write(data)
             temp_file.flush()
             os.fsync(temp_file.fileno())
-            temp_path = Path(temp_file.name)
 
         temp_path.replace(STATE_FILE)
 
@@ -331,7 +332,7 @@ def write_state(record: StateRecord) -> None:
     except OSError:
         with suppress(OSError):
             if temp_path is not None:
-                temp_path.unlink()
+                temp_path.unlink(missing_ok=True)
 
 
 def fetch_json(url: str, params: dict[str, object] | None = None, timeout: float = 5.0) -> JsonDict | None:
@@ -391,29 +392,7 @@ def get_ip_location() -> tuple[float | None, float | None, str, str]:
 
 
 def reverse_geocode(lat: float, lon: float) -> tuple[str, str]:
-    # Primary: Open-Meteo reverse geocoding.
-    data = fetch_json(
-        "https://geocoding-api.open-meteo.com/v1/reverse",
-        params={
-            "latitude": lat,
-            "longitude": lon,
-            "count": 1,
-            "language": "en",
-        },
-        timeout=5.0,
-    )
-
-    if data:
-        results = data.get("results")
-        if isinstance(results, list) and results:
-            first = results[0]
-            if isinstance(first, dict):
-                country_code = normalize_country_code(first.get("country_code"))
-                city = normalize_city(first.get("name"))
-                if country_code:
-                    return country_code, city
-
-    # Fallback: BigDataCloud reverse geocoder.
+    # Primary: BigDataCloud reverse geocoder.
     data = fetch_json(
         "https://api.bigdatacloud.net/data/reverse-geocode-client",
         params={
@@ -442,10 +421,15 @@ def resolve_unit(
         return "imperial"
     if args.celsius:
         return "metric"
-    if country_code in IMPERIAL_COUNTRIES:
-        return "imperial"
+        
+    # If geolocation succeeded, unconditionally establish the unit by region.
+    if country_code:
+        return "imperial" if country_code in IMPERIAL_COUNTRIES else "metric"
+        
+    # Fallback only when offline or if geolocation explicitly failed.
     if matching_state and matching_state.effective_unit in {"metric", "imperial"}:
         return matching_state.effective_unit
+        
     return "metric"
 
 
