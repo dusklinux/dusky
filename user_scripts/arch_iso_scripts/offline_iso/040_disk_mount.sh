@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# MODULE: 004_disk_mount.sh
+# MODULE: 040_disk_mount.sh
 # CONTEXT: Arch ISO Environment
 # PURPOSE: BTRFS Subvolume Generation, NOCOW Attributes, and FHS Mounting
 # ==============================================================================
@@ -14,13 +14,13 @@ readonly C_YELLOW=$'\033[33m'
 readonly C_CYAN=$'\033[36m'
 readonly C_RESET=$'\033[0m'
 
-readonly MAPPED_ROOT="/dev/mapper/cryptroot"
 readonly TEMP_MNT="/mnt/btrfs_temp"
 readonly SWAPFILE_PATH="/mnt/swap/swapfile"
 readonly SWAPFILE_SIZE_BYTES=4294967296
 readonly EFI_GPT_TYPE="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 readonly BTRFS_OPTS="rw,noatime,compress=zstd:3,space_cache=v2,discard=async"
 
+MAPPED_ROOT=""
 SUCCESS=0
 EFI_PART=""
 ROOT_PART=""
@@ -128,27 +128,59 @@ teardown_state() {
 }
 
 # --- Root Device Resolution ---
-resolve_root_ancestry() {
-    local mapped_name="${MAPPED_ROOT##*/}"
-    local backing_part=""
-    local root_disk_name=""
+determine_root_partition() {
+    local auto_mode="$1"
 
-    backing_part=$(cryptsetup status "$mapped_name" 2>/dev/null | awk -F': *' '
-        $1 ~ /^[[:space:]]*device$/ { print $2; exit }
-    ' || true)
+    if [[ -b "/dev/mapper/cryptroot" ]]; then
+        MAPPED_ROOT="/dev/mapper/cryptroot"
+        local mapped_name="${MAPPED_ROOT##*/}"
+        local backing_part=""
 
-    if [[ -z "$backing_part" ]]; then
-        echo -e "${C_RED}Critical: Failed to determine the encrypted root partition behind $MAPPED_ROOT.${C_RESET}"
-        exit 1
+        backing_part=$(cryptsetup status "$mapped_name" 2>/dev/null | awk -F': *' '
+            $1 ~ /^[[:space:]]*device$/ { print $2; exit }
+        ' || true)
+
+        if [[ -z "$backing_part" ]]; then
+            echo -e "${C_RED}Critical: Failed to determine the encrypted root partition behind $MAPPED_ROOT.${C_RESET}"
+            exit 1
+        fi
+
+        ROOT_PART=$(readlink -f "$backing_part")
+    else
+        echo -e "${C_YELLOW}>> /dev/mapper/cryptroot not found. Assuming unencrypted root.${C_RESET}"
+        if (( auto_mode == 1 )); then
+            local -a btrfs_parts=()
+            local part fstype
+            while read -r part fstype; do
+                [[ "$fstype" == "btrfs" ]] && btrfs_parts+=("$part")
+            done < <(lsblk -pnro NAME,FSTYPE 2>/dev/null || true)
+
+            if (( ${#btrfs_parts[@]} == 1 )); then
+                ROOT_PART=$(readlink -f "${btrfs_parts[0]}")
+                MAPPED_ROOT="$ROOT_PART"
+                echo -e "${C_CYAN}Auto-detected unencrypted BTRFS root: $ROOT_PART${C_RESET}"
+            else
+                echo -e "${C_RED}Critical: Could not auto-detect a unique unencrypted BTRFS root partition. Please run interactively.${C_RESET}"
+                exit 1
+            fi
+        else
+            echo -e "${C_CYAN}Available block devices:${C_RESET}"
+            lsblk -o NAME,SIZE,TYPE,FSTYPE,PARTLABEL
+            echo ""
+            read -r -p "Enter your BTRFS root partition (e.g., nvme0n1p2): " raw_root
+            ROOT_PART=$(readlink -f "/dev/${raw_root#/dev/}")
+            MAPPED_ROOT="$ROOT_PART"
+        fi
     fi
 
-    ROOT_PART=$(readlink -f "$backing_part")
     if [[ ! -b "$ROOT_PART" ]]; then
-        echo -e "${C_RED}Critical: Backing root partition $ROOT_PART is not a valid block device.${C_RESET}"
+        echo -e "${C_RED}Critical: Root partition $ROOT_PART is not a valid block device.${C_RESET}"
         exit 1
     fi
 
+    local root_disk_name=""
     root_disk_name=$(lsblk -ndo PKNAME "$ROOT_PART" 2>/dev/null | head -n1 || true)
+
     if [[ -z "$root_disk_name" ]]; then
         echo -e "${C_RED}Critical: Failed to determine the parent disk for $ROOT_PART.${C_RESET}"
         exit 1
@@ -165,7 +197,7 @@ validate_root_state() {
     local root_fstype=""
 
     if [[ ! -b "$MAPPED_ROOT" ]]; then
-        echo -e "${C_RED}Critical: $MAPPED_ROOT not found. Did you run the partitioning module?${C_RESET}"
+        echo -e "${C_RED}Critical: $MAPPED_ROOT not found. Aborting.${C_RESET}"
         exit 1
     fi
 
@@ -174,8 +206,6 @@ validate_root_state() {
         echo -e "${C_RED}Critical: $MAPPED_ROOT is not a Btrfs filesystem. Aborting.${C_RESET}"
         exit 1
     fi
-
-    resolve_root_ancestry
 }
 
 # --- EFI Detection / Validation ---
@@ -193,7 +223,7 @@ validate_efi_partition() {
     fi
 
     if [[ "$part" == "$ROOT_PART" ]]; then
-        echo -e "${C_RED}Critical: EFI partition cannot be the same as the encrypted root partition.${C_RESET}"
+        echo -e "${C_RED}Critical: EFI partition cannot be the same as the root partition.${C_RESET}"
         exit 1
     fi
 
@@ -424,6 +454,7 @@ run_common() {
     local auto_mode="$1"
 
     teardown_state
+    determine_root_partition "$auto_mode"
     validate_root_state
     determine_efi_partition "$auto_mode"
     construct_subvolume_matrix
