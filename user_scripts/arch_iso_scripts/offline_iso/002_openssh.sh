@@ -46,8 +46,8 @@ readonly REAL_USER="root"
 # --- 4. Package Installation ---
 if ! pacman -Qi openssh &>/dev/null; then
     info "Syncing ephemeral DB and installing OpenSSH..."
-    # CRITICAL: -S required for ISO
-    if install_output=$(pacman -S --noconfirm --needed openssh 2>&1); then
+    # CRITICAL: -Sy required for ISO
+    if install_output=$(pacman -Sy --noconfirm --needed openssh 2>&1); then
         success "OpenSSH installed."
     else
         error "Installation failed:"

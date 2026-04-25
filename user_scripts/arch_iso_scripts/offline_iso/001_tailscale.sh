@@ -89,8 +89,8 @@ log_step "Phase 1: Tailscale Network"
 
 if ! pkg_installed tailscale; then
     log_info "Synchronizing ephemeral pacman DB and installing Tailscale..."
-    # CRITICAL: -S is required on Arch ISO as databases are not synced on boot
-    pacman -S --needed --noconfirm tailscale || die "Failed to install tailscale."
+    # CRITICAL: -Sy is required on Arch ISO as databases are not synced on boot
+    pacman -Sy --needed --noconfirm tailscale || die "Failed to install tailscale."
 fi
 
 log_info "Starting Tailscale daemon..."
