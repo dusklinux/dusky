@@ -51,6 +51,7 @@ INSTALL_SEQUENCE=(
     "S | 055_pacman_reflector.sh"
     "S | 060_package_installation.sh"
     "U | 065_enabling_user_services.sh"
+    "S | 068_ufw_firewall.sh"
     "S | 070_openssh_setup.sh --auto"
     "U | 075_changing_shell_zsh.sh"
     "S | 080_aur_paru_fallback_yay.sh --paru"
