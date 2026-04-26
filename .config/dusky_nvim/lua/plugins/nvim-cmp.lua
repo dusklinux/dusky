@@ -9,7 +9,10 @@ return {
       "hrsh7th/cmp-buffer",
       "hrsh7th/cmp-path",       -- path completions (files/dirs)
       "hrsh7th/cmp-cmdline",    -- optional: completion in : and / cmdline
-      "L3MON4D3/LuaSnip",       -- snippet engine (optional)
+      { 
+        "L3MON4D3/LuaSnip", 
+        build = "make install_jsregexp" 
+      },                        -- snippet engine (optional)
       "saadparwaiz1/cmp_luasnip",
     },
     config = function()
