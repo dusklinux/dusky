@@ -30,8 +30,9 @@ declare -ar pkgs_aur=(
 # "fluent-icon-theme-git"
 
 ##   snapshot & limine
-  "limine-mkinitcpio-hook"
-  "limine-snapper-sync"
+
+#  "limine-mkinitcpio-hook"
+#  "limine-snapper-sync"
 )
 
 

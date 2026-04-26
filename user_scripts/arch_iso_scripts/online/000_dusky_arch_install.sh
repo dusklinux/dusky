@@ -29,6 +29,7 @@ declare -ra CHROOT_SEQUENCE=(
   "130_chroot_package_installer.sh --auto"
   "135_plymouth_setup.sh"
 # "150_limine_bootloader.sh --auto"
+  "154_mkinitcpio_hooks_restore.sh"
   "155_limine_setup.sh --auto"
   "156_snapper_isolation_subvolume.sh --auto"
   "157_snapper_pacman_hooks.sh --auto"
