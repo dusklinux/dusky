@@ -16,14 +16,14 @@ else
     readonly C_BOLD="" C_CYAN="" C_GREEN="" C_YELLOW="" C_RESET=""
 fi
 
-printf "${C_BOLD}${C_CYAN}[INFO]${C_RESET} Generating definitive initramfs...\n"
-printf "----------------------------------------\n"
+printf "%s%s[INFO]%s Generating definitive initramfs...\n" "${C_BOLD}" "${C_CYAN}" "${C_RESET}"
+printf "%s\n" "----------------------------------------"
 
 # We feed 'n' to safely bypass the limine-mkinitcpio-hook prompt if it fires.
 mkinitcpio -P < <(echo "n") || {
-    printf "----------------------------------------\n"
-    printf "${C_BOLD}${C_YELLOW}[WARN]${C_RESET} mkinitcpio returned a non-zero exit code (usually benign firmware warnings).\n"
+    printf "%s\n" "----------------------------------------"
+    printf "%s%s[WARN]%s mkinitcpio returned a non-zero exit code (usually benign firmware warnings).\n" "${C_BOLD}" "${C_YELLOW}" "${C_RESET}"
 }
 
-printf "----------------------------------------\n"
-printf "${C_BOLD}${C_GREEN}[OK]${C_RESET} Final initramfs generation complete.\n"
+printf "%s\n" "----------------------------------------"
+printf "%s%s[OK]%s Final initramfs generation complete.\n" "${C_BOLD}" "${C_GREEN}" "${C_RESET}"
