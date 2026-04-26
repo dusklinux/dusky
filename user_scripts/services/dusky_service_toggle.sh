@@ -43,7 +43,7 @@ declare -ra USER_SERVICE_DEFS=(
     "hypridle.service|Hyprland Idle Daemon"
     "hyprsunset.service|Night Light/BlueLight Filter"
     "osd_lock.service|OSD for CapsLock,NumLock,ScrollLock"
-    "hyprpolkitagent|Root Password Prompt for Root Apps"
+    "hyprpolkitagent.service|Root Password Prompt for Root Apps"
 )
 
 declare -ra SYSTEM_SERVICE_DEFS=(
