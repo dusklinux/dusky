@@ -32,6 +32,32 @@ log_success() { printf "${GREEN}[SUCCESS]${NC} %s\n" "$1"; }
 log_warn()    { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
 log_error()   { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; }
 
+# --- Terminal Lifecycle Management (TUI Hooks) ---
+cleanup_and_pause() {
+    local exit_code=$?
+    
+    # Bypass pause if running in an automated pipeline (e.g., Packer, Archiso builds)
+    if [[ "${DUSKY_BATCH_MODE:-0}" == "1" ]]; then
+        exit "${exit_code}"
+    fi
+
+    # Only pause if connected to an interactive terminal
+    if [[ -t 0 ]]; then
+        printf "\n${BLUE}====================================================${NC}\n"
+        if [[ ${exit_code} -eq 0 ]]; then
+            printf "${GREEN}Script completed successfully.${NC}\n"
+        else
+            printf "${RED}Script exited abruptly with error code: ${exit_code}.${NC}\n"
+        fi
+        printf "${YELLOW}Press [ENTER] to close this terminal window...${NC}\n"
+        read -r
+    fi
+    exit "${exit_code}"
+}
+
+# Bind the cleanup function to script exit (fires on success AND failure)
+trap cleanup_and_pause EXIT
+
 # --- CLI Parsing ---
 parse_args() {
     while [[ $# -gt 0 ]]; do
