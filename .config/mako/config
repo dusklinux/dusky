@@ -20,6 +20,8 @@ sort=-time
 history=1
 max-history=50
 on-button-left=invoke-default-action
+actions=1
+on-button-right=exec makoctl menu -n "$MAKO_NOTIFICATION_ID" -- rofi -dmenu -p Action:
 
 # ======================================
 # MATUGEN THEME INJECTION
