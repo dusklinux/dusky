@@ -643,6 +643,13 @@ configure_limine_defaults() {
         info "Configured BOOT_ORDER to prioritize kernels over Snapshots."
         NEEDS_LIMINE_UPDATE=true
     fi
+
+    if ! shell_var_key_present "$limine_defaults" TIMEOUT; then
+        backup_file "$limine_defaults"
+        set_shell_var "$limine_defaults" TIMEOUT "0"
+        info "Configured TIMEOUT to 0 for instant Plymouth handoff."
+        NEEDS_LIMINE_UPDATE=true
+    fi
 }
 
 deploy_limine() {
@@ -702,61 +709,8 @@ limine_conf_has_theme_directives() {
 }
 
 apply_limine_theme() {
-    local esp_target conf
-    
-    esp_target="$(detect_esp_mountpoint 2>/dev/null || true)"
-    [[ -n "$esp_target" ]] || return 0
-    
-    conf="${esp_target}/limine.conf"
-    path_is_file "$conf" || return 0
-
-    local theme_marker="# --- UI Theme ---"
-    if grep -qF "$theme_marker" "$conf"; then
-        return 0
-    fi
-
-    if limine_conf_has_theme_directives "$conf"; then
-        info "Limine configuration already contains theme directives; leaving existing theme unchanged."
-        return 0
-    fi
-
-    local tmp
-    tmp="$(mktemp)"
-    ACTIVE_TEMP_FILES+=("$tmp")
-
-    cat <<EOF > "$tmp"
-$theme_marker
-term_palette: 1e1e2e;f38ba8;a6e3a1;f9e2af;89b4fa;f5c2e7;94e2d5;cdd6f4
-term_palette_bright: 585b70;f38ba8;a6e3a1;f9e2af;89b4fa;f5c2e7;94e2d5;cdd6f4
-term_background: 00000000
-term_foreground: cdd6f4
-term_background_bright: 00000000
-term_foreground_bright: cdd6f4
-EOF
-
-    if [[ -n "${LIMINE_WALLPAPER_SOURCE:-}" && -f "$LIMINE_WALLPAPER_SOURCE" ]]; then
-        local ext="${LIMINE_WALLPAPER_SOURCE##*.}"
-        ext="${ext,,}"
-        if [[ "$ext" =~ ^(png|jpg|jpeg|bmp)$ ]]; then
-            if [[ -n "$esp_target" ]]; then
-                local wp_dest="${esp_target}/limine-wallpaper.${ext}"
-                cp "$LIMINE_WALLPAPER_SOURCE" "$wp_dest"
-                echo "wallpaper: boot():/limine-wallpaper.${ext}" >> "$tmp"
-                echo "wallpaper_style: stretched" >> "$tmp"
-                info "Installed Limine wallpaper to $wp_dest"
-            fi
-        else
-            warn "Wallpaper must be PNG, JPEG, or BMP format. Skipping wallpaper injection."
-        fi
-    fi
-
-    echo "# ----------------" >> "$tmp"
-    echo "" >> "$tmp"
-
-    cat "$conf" >> "$tmp"
-    backup_file "$conf"
-    atomic_write "$conf" "$tmp"
-    info "Applied Catppuccin theme and wallpaper to Limine configuration."
+    info "Skipping Limine theme injection. Plymouth handles the UI, and legacy term_palette commands break Limine 11+."
+    return 0
 }
 
 preflight_checks() {
