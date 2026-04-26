@@ -21,7 +21,6 @@
 # Set core applications and configure the system's search path for executables.
 # These are fundamental for defining your work environment.
 
-
 # Set the default terminal emulator.
 export TERMINAL='kitty'
 # Set the default web browser.
@@ -39,12 +38,12 @@ export MAKEFLAGS="-j$(nproc)"
 # --- Pyenv (Python Version Management) ---
 # Initializes pyenv to manage multiple Python versions.
 
-##	export PYENV_ROOT="$HOME/.pyenv"
-##	export PATH="$PYENV_ROOT/bin:$PATH"
-##	if command -v pyenv 1>/dev/null 2>&1; then
-##	  eval "$(pyenv init --path)"
-##	  eval "$(pyenv init -)"
-##	fi
+##    export PYENV_ROOT="$HOME/.pyenv"
+##    export PATH="$PYENV_ROOT/bin:$PATH"
+##    if command -v pyenv 1>/dev/null 2>&1; then
+##      eval "$(pyenv init --path)"
+##      eval "$(pyenv init -)"
+##    fi
 
 # Configure the path where Zsh looks for commands.
 # Uncomment and modify if you have local binaries (e.g., in ~/.local/bin).
@@ -80,16 +79,16 @@ setopt EXTENDED_GLOB        # Enable extended globbing features (e.g., `^` for n
 
 # Optimized initialization: Only regenerate cache once every 24 hours.
 autoload -Uz compinit
-# If .zcompdump exists AND was modified within the last 24 hours (.mh-24)
-if [[ -n ${ZDOTDIR:-$HOME}/.zcompdump(#qN.mh-24) ]]; then
+local zcompdump="${ZDOTDIR:-$HOME}/.zcompdump"
+local dump_cache=($zcompdump(#qN.mh-24)) # Array expansion forces glob evaluation without subshells
+
+if (( ${#dump_cache} )); then
   compinit -C  # Trust the fresh cache, skip checks (FAST)
 else
   compinit     # Cache is old or missing, regenerate it (SLOW)
-  # Optional: Explicitly touch the file to reset the timer if compinit doesn't
-  touch "${ZDOTDIR:-$HOME}/.zcompdump"
+  # Explicitly touch the file to reset the timer
+  touch "$zcompdump"
 fi
-
-
 
 # Style the completion menu.
 # ':completion:*' is a pattern that applies to all completion widgets.
@@ -107,9 +106,9 @@ zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' # Case-insensitive mat
 # --- Vi Mode Keybindings ---
 # Enables the use of Vim-like keybindings in the shell for modal editing.
 bindkey -v
-# Set the timeout for ambiguous key sequences (e.g., after pressing ESC).
-# A low value makes the transition to normal mode in Vi mode feel instantaneous.
-export KEYTIMEOUT=40
+# Set the timeout for ambiguous key sequences (in centiseconds).
+# 1 = 10ms, making the transition to normal mode in Vi mode practically instantaneous.
+export KEYTIMEOUT=1
 
 # --- Neovim Integration ---
 # Press 'v' in normal mode to edit the current command in Neovim.
@@ -153,7 +152,7 @@ alias rm='rm -I'
 alias ln='ln -v'
 
 alias disk_usage='sudo btrfs filesystem usage /' # The TRUTH about BTRFS space
-alias df='df -hT'                           # Show filesystem types
+alias df='df -hT'                                # Show filesystem types
 
 # VNC iphone daemon.
 alias iphone_vnc='~/user_scripts/networking/iphone_vnc.sh'
@@ -210,7 +209,7 @@ alias git_dusky='/usr/bin/git --git-dir=$HOME/dusky/ --work-tree=$HOME'
 alias git_dusky_add_list='(cd $HOME && git_dusky add --pathspec-from-file=.git_dusky_list)'
 
 # 3. Alias for discarding all local changes (both staged and unstaged) and revert the state of tracked files to exactly match the last commit (HEAD), this is a destructive operation. (DANGER ZONE)
- alias git_dusky_restore='echo "git --git-dir=$HOME/dusky/ --work-tree=$HOME reset --hard HEAD" && git_dusky reset --hard HEAD'
+alias git_dusky_restore='echo "git --git-dir=$HOME/dusky/ --work-tree=$HOME reset --hard HEAD" && git_dusky reset --hard HEAD'
 
 # 4. Delta/Diff Alias
 alias gitdelta='git_dusky_add_list && git_dusky diff HEAD'
@@ -294,12 +293,12 @@ sudo() {
 #change the current working directory when exiting Yazi
 
 function y() {
-	local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
-	yazi "$@" --cwd-file="$tmp"
-	if cwd="$(cat -- "$tmp")" && [ -n "$cwd" ] && [ "$cwd" != "$PWD" ]; then
-		builtin cd -- "$cwd"
-	fi
-	rm -f -- "$tmp"
+    local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
+    yazi "$@" --cwd-file="$tmp"
+    if cwd="$(cat -- "$tmp")" && [ -n "$cwd" ] && [ "$cwd" != "$PWD" ]; then
+        builtin cd -- "$cwd"
+    fi
+    rm -f -- "$tmp"
 }
 
 # --- sysbench benchmark ---
@@ -311,9 +310,9 @@ alias nvidia_unbind='~/user_scripts/nvidia_passthrough/nvidia_vfio_bind_unbind.s
 
 #-- LM- Studio--
 llm() {
-    /mnt/media/Documents/do_not_delete_linux/appimages/LM-Studio*(Om[1]) "$@"
+    /mnt/media/Documents/do_not_delete_linux/appimages/LM-Studio*(om[1]) "$@"
 }
-# The (om[1]) glob qualifier picks the most recently modified file
+# The (om[1]) glob qualifier picks the most recently modified file (newest first)
 
 # --- Functions ---
 # Creates a directory and changes into it.
@@ -544,8 +543,8 @@ unset _starship_cache _starship_bin _fzf_cache _fzf_bin
 # -----------------------------------------------------------------------------
 
 # Check if we are on tty1 and no display server is running
-
-if [[ -z "$DISPLAY" ]] && [[ "$(tty)" == "/dev/tty1" ]]; then
+# Using native $TTY and $WAYLAND_DISPLAY variables avoids the overhead of spawning $(tty) subshells
+if [[ -z "$DISPLAY" && -z "$WAYLAND_DISPLAY" && "$TTY" == "/dev/tty1" ]]; then
   if uwsm check may-start; then
     exec uwsm start hyprland.desktop
   fi
