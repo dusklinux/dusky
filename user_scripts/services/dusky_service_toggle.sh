@@ -43,11 +43,13 @@ declare -ra USER_SERVICE_DEFS=(
     "hypridle.service|Hyprland Idle Daemon"
     "hyprsunset.service|Night Light/BlueLight Filter"
     "osd_lock.service|OSD for CapsLock,NumLock,ScrollLock"
+    "hyprpolkitagent|Root Password Prompt for Root Apps"
 )
 
 declare -ra SYSTEM_SERVICE_DEFS=(
     "vsftpd.service|FTP Server (vsftpd)"
     "tlp.service|TLP Power Management"
+    "tlp-pd.service|TLP Daemon"
     "swayosd-libinput-backend.service|SwayOSD Input Backend"
     "sshd.service|SSH Server (OpenSSH)"
     "warp-svc.service|Cloudflare WARP VPN"

@@ -52,7 +52,7 @@ register_items() {
     register 1 "IOMMU"               'iommu|cycle||unset,pt,off,force||'             "unset"
     register 1 "PCIE ASPM"           'pcie_aspm|cycle||unset,default,force,off||'    "unset"
     register 1 "USB Autosuspend"     'usbcore.autosuspend|cycle||unset,-1,1||'       "unset"
-    register 1 "Mem Limit"           'mem|cycle||unset,4G,8G,16G,32G||'              "unset"
+    register 1 "Mem Limit"           'mem|cycle||unset,6G,8G,16G,32G||'              "unset"
     register 1 "Clock Source"        'clocksource|cycle||unset,tsc,hpet,acpi_pm||'   "unset"
     register 1 "ACPI Backlight"      'acpi_backlight|cycle||unset,video,vendor,native||' "unset"
 

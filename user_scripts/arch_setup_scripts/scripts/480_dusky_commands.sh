@@ -33,6 +33,7 @@ declare -ra FLEET_COMMANDS=(
     'U | ln -nfs "/usr/share/themes/adw-gtk3/gtk-4.0/libadwaita-tweaks.css" "$HOME/.config/gtk-4.0/libadwaita-tweaks.css"'
     'U | "$HOME/user_scripts/dusky_system/reload_cc/cc_restart.sh" --quiet &'
     'U | "$HOME/user_scripts/sliders/reload_sliders/reload_sliders.sh" --quiet &'
+    'U | "mkdir -p ~/Documents/dusky_backups/"
 
     # --- System Services ---
 #    "U | systemctl --user disable dusky.service || true"
