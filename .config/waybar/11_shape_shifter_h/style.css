@@ -8,25 +8,25 @@
    TRANSLUCENCY CONTROLS (GLASSY MODE)
    Tweak the decimals (0.0 to 1.0) here to adjust granular glassiness.
    ───────────────────────────────────────────────────────────────────────────── */
-@define-color glass_bar                       alpha(@surface, 0.08);
-@define-color glass_module                    alpha(@surface_container, 0.0);
-@define-color glass_hover                     alpha(@surface_container_highest, 0.4);
-@define-color glass_theme_toggle_hover        alpha(@secondary, 0.15);
-@define-color glass_tray                      alpha(@surface_container, 0.4);
-@define-color glass_tray_hover                alpha(@surface_container_high, 0.06);
-@define-color glass_tray_needs_attention      alpha(@error, 0.2);
-@define-color glass_workspaces                alpha(@surface_container, 0.5);
-@define-color glass_workspace_btn             alpha(@surface_container_highest, 0.4);
-@define-color glass_workspace_btn_empty       alpha(@surface_container_high, 0.2);
-@define-color glass_workspace_btn_visible     alpha(@surface_container_highest, 0.6);
-@define-color glass_mpris                     alpha(@secondary_container, 0.4);
-@define-color glass_mpris_hover               alpha(@secondary_container, 0.7);
-@define-color glass_inhibit_disabled          alpha(@tertiary_container, 0.3);
-@define-color glass_warning_bg                alpha(@tertiary_container, 0.2);
-@define-color glass_critical_bg               alpha(@error_container, 0.3);
-@define-color glass_battery_charging_bg       alpha(@tertiary_container, 0.25);
-@define-color glass_battery_warning_bg        alpha(@primary_container, 1);
-@define-color glass_tooltip                   alpha(@surface_container_high, 0.06);
+@define-color glass_bar                       transparent;
+@define-color glass_module                    @surface_container;
+@define-color glass_hover                     @surface_container_highest;
+@define-color glass_theme_toggle_hover        @secondary;
+@define-color glass_tray                      @surface_container;
+@define-color glass_tray_hover                @surface_container_high;
+@define-color glass_tray_needs_attention      @error;
+@define-color glass_workspaces                @surface_container;
+@define-color glass_workspace_btn             @surface_container_highest;
+@define-color glass_workspace_btn_empty       @surface_container_high;
+@define-color glass_workspace_btn_visible     @surface_container_highest;
+@define-color glass_mpris                     @secondary_container;
+@define-color glass_mpris_hover               @secondary_container;
+@define-color glass_inhibit_disabled          @tertiary_container;
+@define-color glass_warning_bg                @tertiary_container;
+@define-color glass_critical_bg               @error_container;
+@define-color glass_battery_charging_bg       @tertiary_container;
+@define-color glass_battery_warning_bg        @primary_container;
+@define-color glass_tooltip                   @surface_container_high;
 
 /* ─────────────────────────────────────────────────────────────────────────────
    MASTER OPAQUE SWITCH
@@ -74,6 +74,9 @@
   font-family: "JetBrainsMono Nerd Font", "Symbols Nerd Font", sans-serif;
   font-weight: 600;
   font-size: 13px;
+  /* Nullify implicit GTK3 shadows to prevent compositor blur jaggedness */
+  box-shadow: none;
+  text-shadow: none;
 }
 
 window#waybar {
@@ -250,7 +253,7 @@ window#waybar > box {
   margin: 1px 2px;
   border-radius: 12px;
   background-color: @glass_bar;
-  border: 1px solid alpha(@outline_variant, 0.1);
+  border: none;
 }
 
 #workspaces button {
