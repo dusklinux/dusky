@@ -103,7 +103,8 @@ post_hook   = '''
 input_path  = '~/.config/matugen/templates/zellij.kdl'
 output_path = '~/.config/matugen/generated/zellij.kdl'
 post_hook   = '''
-  ln -nfs "$HOME/.config/matugen/generated/zellij.kdl" "$HOME/.config/zellij/matugen.kdl"
+  mkdir -p "$HOME/.config/zellij/themes"
+  ln -nfs "$HOME/.config/matugen/generated/zellij.kdl" "$HOME/.config/zellij/themes/matugen.kdl"
   touch ~/.config/zellij/config.kdl || :
 '''
 
