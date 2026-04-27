@@ -257,8 +257,8 @@
         "custom/updates-trigger": {
             "justify": "center",
             "align": 0.5,
-            "format": "",
-            "exec": "echo ''",
+            "format": "",
+            "exec": "echo ''",
             "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_v 2>/dev/null",
             "interval": 5,
             "tooltip": false
