@@ -101,7 +101,7 @@ tooltip label {
     min-width: 12px;
     min-height: 12px;
     border-radius: 50%;
-    background-color: @glass_primary_mild;
+    background-color: alpha(@primary, 0.4);
     color: transparent;
     font-size: 0px;
     border: none;
