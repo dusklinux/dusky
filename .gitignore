@@ -3,4 +3,4 @@ user_scripts/tts_stt/dusky_kokoro/trigger.sh
 user_scripts/tts_stt/dusky_whisper/trigger.sh
 user_scripts/tts_stt/dusky_parakeet/trigger.sh
 .config/uwsm/env.d/gpu
-.config/zellij/matugen.kdl
+.config/zellij/themes/matugen.kdl
