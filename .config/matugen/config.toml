@@ -99,6 +99,14 @@ post_hook   = '''
   pkill -SIGUSR1 -x kitty || :
 '''
 
+[templates.zellij]
+input_path  = '~/.config/matugen/templates/zellij.kdl'
+output_path = '~/.config/matugen/generated/zellij.kdl'
+post_hook   = '''
+  ln -nfs "$HOME/.config/matugen/generated/zellij.kdl" "$HOME/.config/zellij/matugen.kdl"
+  touch ~/.config/zellij/config.kdl || :
+'''
+
 [templates.opencode]
 input_path = '~/.config/matugen/templates/opencode-colors.json'
 output_path = '~/.config/matugen/generated/opencode.json'
