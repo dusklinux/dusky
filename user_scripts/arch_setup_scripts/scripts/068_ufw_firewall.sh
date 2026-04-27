@@ -90,11 +90,13 @@ ensure_sysctl() {
 }
 
 ensure_sysctl "net/ipv4/ip_forward" "$UFW_SYSCTL"
-ensure_sysctl "net/ipv6/conf/default/forwarding" "$UFW_SYSCTL"
-ensure_sysctl "net/ipv6/conf/all/forwarding" "$UFW_SYSCTL"
+if [[ -f /proc/net/if_inet6 ]]; then
+    ensure_sysctl "net/ipv6/conf/default/forwarding" "$UFW_SYSCTL"
+    ensure_sysctl "net/ipv6/conf/all/forwarding" "$UFW_SYSCTL"
+fi
 success "Kernel IP forwarding enabled."
 
-# --- 7. Strict Default Policies ---
+# --- 7. Strict Default Policies & Dynamic IPv6 ---
 info "Enforcing strict default forward policies..."
 UFW_DEFAULT="/etc/default/ufw"
 
@@ -103,8 +105,17 @@ if [[ -f "$UFW_DEFAULT" ]]; then
         sed -i 's/^DEFAULT_FORWARD_POLICY="ACCEPT"/DEFAULT_FORWARD_POLICY="DROP"/' "$UFW_DEFAULT"
         success "Reverted insecure DEFAULT_FORWARD_POLICY to DROP."
     fi
-    if grep -q "^IPV6=no" "$UFW_DEFAULT"; then
-        sed -i 's/^IPV6=no/IPV6=yes/' "$UFW_DEFAULT"
+    
+    # Kernel-Aware IPv6 Toggle to prevent ip6tables-restore crashes
+    if [[ -f /proc/net/if_inet6 ]]; then
+        if grep -q "^IPV6=no" "$UFW_DEFAULT"; then
+            sed -i 's/^IPV6=no/IPV6=yes/' "$UFW_DEFAULT"
+        fi
+    else
+        if grep -q "^IPV6=yes" "$UFW_DEFAULT"; then
+            sed -i 's/^IPV6=yes/IPV6=no/' "$UFW_DEFAULT"
+        fi
+        warn "IPv6 is disabled in kernel. Dynamically set IPV6=no in UFW."
     fi
 fi
 
@@ -131,7 +142,7 @@ else
 fi
 
 # --- 9. Docker iptables Bypass Mitigation ---
-info "Enforcing UFW state over Docker daemon (IPv4 & IPv6)..."
+info "Enforcing UFW state over Docker daemon..."
 
 apply_docker_mitigation() {
     local rules_file="$1"
@@ -145,10 +156,11 @@ apply_docker_mitigation() {
         wan_drop_rule="-A DOCKER-USER -i $WAN_IFACE -j DROP"
     fi
 
-    # The newline must be within the block boundaries to ensure clean idempotency
+    # CRITICAL: Ensure trailing newline exists before appending to prevent syntax corruption
+    [ -n "$(tail -c1 "$rules_file")" ] && echo >> "$rules_file"
+
     cat << EOF >> "$rules_file"
 # BEGIN DOCKER-USER MITIGATION
-
 *filter
 :DOCKER-USER - [0:0]
 -A DOCKER-USER -i docker0 -j ACCEPT
@@ -167,8 +179,12 @@ EOF
 }
 
 apply_docker_mitigation "/etc/ufw/after.rules"
-apply_docker_mitigation "/etc/ufw/after6.rules"
-success "Appended hardened DOCKER-USER chain to /etc/ufw/after.rules and after6.rules."
+if [[ -f /proc/net/if_inet6 ]]; then
+    apply_docker_mitigation "/etc/ufw/after6.rules"
+    success "Appended hardened DOCKER-USER chain to IPv4 & IPv6 rules."
+else
+    success "Appended hardened DOCKER-USER chain to IPv4 rules (IPv6 skipped)."
+fi
 
 # --- 10. SSH Port Detection ---
 SSH_PORT="22"
@@ -219,7 +235,19 @@ success "Configured strict ingress & route forwarding rules."
 info "Activating UFW..."
 
 systemctl enable ufw.service >/dev/null 2>&1
-ufw --force enable >/dev/null
+
+# Fail-safe execution: Catches missing kernel logging modules (xt_LOG)
+if ! ufw --force enable >/dev/null 2>&1; then
+    warn "Activation failed ('Could not load logging rules')."
+    info "Attempting fallback: Disabling UFW logging (missing netfilter modules?)..."
+    ufw logging off >/dev/null 2>&1 || true
+    
+    if ! ufw --force enable >/dev/null; then
+        die "UFW failed to activate entirely. Check your kernel netfilter support."
+    else
+        success "UFW activated successfully (Logging disabled as fallback)."
+    fi
+fi
 
 # Fix: Restart Tailscale to re-inject netfilter chains wiped by UFW reload
 if systemctl is-active --quiet tailscaled.service 2>/dev/null; then
