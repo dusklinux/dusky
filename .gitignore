@@ -4,3 +4,4 @@ user_scripts/tts_stt/dusky_whisper/trigger.sh
 user_scripts/tts_stt/dusky_parakeet/trigger.sh
 .config/uwsm/env.d/gpu
 .config/zellij/themes/matugen.kdl
+.config/foot/foot-colors.ini

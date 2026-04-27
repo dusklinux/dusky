@@ -99,6 +99,14 @@ post_hook   = '''
   pkill -SIGUSR1 -x kitty || :
 '''
 
+[templates.foot]
+input_path  = '~/.config/matugen/templates/foot-colors.ini'
+output_path = '~/.config/matugen/generated/foot-colors.ini'
+post_hook   = '''
+  ln -nfs "$HOME/.config/matugen/generated/foot-colors.ini" "$HOME/.config/foot/foot-colors.ini"
+  touch "$HOME/.config/foot/foot.ini" || :
+'''
+
 [templates.zellij]
 input_path  = '~/.config/matugen/templates/zellij.kdl'
 output_path = '~/.config/matugen/generated/zellij.kdl'
