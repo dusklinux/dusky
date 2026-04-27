@@ -524,10 +524,17 @@ if $_fzf_bin --zsh > /dev/null 2>&1; then
 fi
 
 
-# -- Zoxide----
-if command -v zoxide >/dev/null; then
-    eval "$(zoxide init zsh)"
+# -- Zoxide (Cached) --
+_zoxide_cache="$HOME/.zoxide-init.zsh"
+_zoxide_bin="$(command -v zoxide)"
+
+if [[ -n "$_zoxide_bin" ]]; then
+  if [[ ! -f "$_zoxide_cache" || "$_zoxide_bin" -nt "$_zoxide_cache" ]]; then
+    "$_zoxide_bin" init zsh >! "$_zoxide_cache"
+  fi
+  source "$_zoxide_cache"
 fi
+unset _zoxide_cache _zoxide_bin
 
 
 # --- Autosuggestions ---
