@@ -5,6 +5,7 @@
 #              - Resurrection: Detects & fixes deleted/phantom installs.
 #              - Warm-Up: Robust monitor for 'prefs' AND 'offline.bnk'.
 #              - Auto-Heals: Segfaults, Version Mismatches, and Permissions.
+#              - Matugen: Autonomously uncomments TOML block via robust AWK.
 # -----------------------------------------------------------------------------
 
 # Strict Mode
@@ -45,7 +46,7 @@ check_system() {
     fi
 
     local missing=()
-    for cmd in curl sudo pkill; do
+    for cmd in curl sudo pkill awk; do
         if ! command -v "$cmd" &>/dev/null; then missing+=("$cmd"); fi
     done
     
@@ -299,6 +300,118 @@ apply_changes() {
     fi
 }
 
+# --- 8. Matugen Integration ---
+uncomment_matugen_template() {
+    local matugen_conf="${XDG_CONFIG_HOME:-$HOME/.config}/matugen/config.toml"
+    
+    if [[ -f "$matugen_conf" ]]; then
+        log_info "Enabling Spicetify template in Matugen config..."
+        local tmp_conf
+        tmp_conf=$(mktemp)
+        
+        # Robust AWK engine adapted from Dusky TUI to safely navigate multiline strings
+        TARGET_KEY="spicetify" NEW_VALUE="true" \
+        LC_ALL=C awk '
+        function is_blank(line) { return line ~ /^[[:space:]]*$/ }
+        function is_comment(line) { return line ~ /^[[:space:]]*#/ }
+        function strip_comment_prefix(line,    t) {
+            t = line
+            sub(/^[[:space:]]*#[[:space:]]?/, "", t)
+            return t
+        }
+        function is_toml_header(line,    t) {
+            t = line
+            sub(/^[[:space:]]*#?[[:space:]]*/, "", t)
+            return t ~ /^\[.*\][[:space:]]*(#.*)?$/
+        }
+        function template_name(line,    t) {
+            t = line
+            sub(/^[[:space:]]*#?[[:space:]]*/, "", t)
+            if (t !~ /^\[templates\.[^]]+\][[:space:]]*(#.*)?$/) { return "" }
+            sub(/^\[templates\./, "", t)
+            sub(/\][[:space:]]*(#.*)?$/, "", t)
+            return t
+        }
+        function count_token(str, tok,    n, p, step, rest) {
+            n = 0
+            rest = str
+            step = length(tok)
+            p = index(rest, tok)
+            while (p) {
+                n++
+                rest = substr(rest, p + step)
+                p = index(rest, tok)
+            }
+            return n
+        }
+        function update_multiline_state(line,    s, c) {
+            s = strip_comment_prefix(line)
+            if (!in_multiline) {
+                c = count_token(s, triple_sq)
+                if (c % 2 == 1) {
+                    in_multiline = 1
+                    multiline_token = triple_sq
+                    return
+                }
+                c = count_token(s, triple_dq)
+                if (c % 2 == 1) {
+                    in_multiline = 1
+                    multiline_token = triple_dq
+                }
+                return
+            }
+            c = count_token(s, multiline_token)
+            if (c % 2 == 1) {
+                in_multiline = 0
+                multiline_token = ""
+            }
+        }
+        {
+            lines[++line_count] = $0
+        }
+        END {
+            triple_sq = sprintf("%c%c%c", 39, 39, 39)
+            triple_dq = "\"\"\""
+            start = 0
+            end = line_count
+            in_multiline = 0
+            multiline_token = ""
+            for (i = 1; i <= line_count; i++) {
+                if (template_name(lines[i]) == ENVIRON["TARGET_KEY"]) {
+                    start = i
+                    break
+                }
+            }
+            if (!start) exit 1
+            for (i = start + 1; i <= line_count; i++) {
+                if (!in_multiline && is_toml_header(lines[i])) {
+                    end = i - 1
+                    break
+                }
+                update_multiline_state(lines[i])
+            }
+            for (i = 1; i <= line_count; i++) {
+                line = lines[i]
+                if (i >= start && i <= end) {
+                    if (ENVIRON["NEW_VALUE"] == "true") {
+                        sub(/^#[[:space:]]?/, "", line)
+                    }
+                }
+                print line
+            }
+        }
+        ' "$matugen_conf" > "$tmp_conf" || true
+        
+        if [[ -s "$tmp_conf" ]]; then
+            mv -f "$tmp_conf" "$matugen_conf"
+            log_success "Matugen Spicetify template activated."
+        else
+            rm -f "$tmp_conf"
+            log_warn "Spicetify block not found in Matugen config."
+        fi
+    fi
+}
+
 # --- Main Runtime ---
 main() {
     check_system
@@ -318,11 +431,15 @@ main() {
     prepare_assets
     apply_changes "$detected_path"
 
+    # Autonomously enable Matugen theming since Spicetify succeeded
+    uncomment_matugen_template
+
     echo ""
     log_success "Setup Complete."
     
     if ! pgrep -u "$EUID" -x spotify >/dev/null; then
         nohup spotify >/dev/null 2>&1 &
+        disown # Detaches the process so the shell doesn't output "Killed" on exit
     fi
 }
 

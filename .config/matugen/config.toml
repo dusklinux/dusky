@@ -235,7 +235,7 @@ post_hook   = '''
 # if command -v spicetify >/dev/null 2>&1 && [ -d "$HOME/.config/spicetify/Themes/Comfy" ]; then
 #     ln -nfs "$HOME/.config/matugen/generated/spotify-colors.ini" "$HOME/.config/spicetify/Themes/Comfy/color.ini"
 #     spicetify apply -n || :
-#     hyprctl dispatch sendshortcut "CTRL SHIFT, R, class:^(spotify)$" || :
+#     hyprctl dispatch sendshortcut "CTRL_SHIFT, R, class:^(Spotify)$" || :
 # fi
 # '''
 
