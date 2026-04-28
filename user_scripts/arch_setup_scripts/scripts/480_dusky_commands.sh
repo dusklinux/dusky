@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# misc standalone commands that need to run to complete the installation
 # ==============================================================================
 #  DUSKY FLEET PATCHER (Enterprise Edition - V3)
 #  Description: Idempotent, concurrency-safe fleet orchestrator.
