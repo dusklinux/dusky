@@ -3,7 +3,7 @@
 # Script: 405_spicetify_matugen_setup.sh
 # Description: "Golden State" Spicetify Setup.
 #              - Resurrection: Detects & fixes deleted/phantom installs.
-#              - Warm-Up: Uses 'timeout' to safely generate 'offline.bnk'.
+#              - Warm-Up: Robust monitor for 'prefs' AND 'offline.bnk'.
 #              - Auto-Heals: Segfaults, Version Mismatches, and Permissions.
 # -----------------------------------------------------------------------------
 
@@ -45,7 +45,7 @@ check_system() {
     fi
 
     local missing=()
-    for cmd in git curl sudo pkill timeout; do
+    for cmd in curl sudo pkill; do
         if ! command -v "$cmd" &>/dev/null; then missing+=("$cmd"); fi
     done
     
@@ -61,7 +61,6 @@ ensure_packages_updated() {
     elif command -v yay &>/dev/null; then helper="yay"
     else die "No AUR helper found."; fi
 
-    # GPG Key (Fixed: Removed bad fallback)
     if ! gpg --list-keys "$SPOTIFY_AUR_KEY" &>/dev/null; then
         log_info "Importing Spotify GPG key..."
         if ! gpg --keyserver keyserver.ubuntu.com --recv-keys "$SPOTIFY_AUR_KEY"; then
@@ -116,56 +115,63 @@ fix_spotify_permissions() {
     REPLY="$spotify_path"
 }
 
-# --- 4. The Warm Up (Simplified) ---
+# --- 4. The Warm Up (Monitored Initialization) ---
 warm_up_spotify() {
-    log_info "Warming up Spotify (10s) to generate 'offline.bnk'..."
+    local prefs_file="${SPOTIFY_PREFS_DIR}/prefs"
     
-    pkill -u "$EUID" -x spotify || true
-    
-    # Run for 10s then kill
-    timeout -k 5s 10s spotify >/dev/null 2>&1 || true
-    
-    # Check if successful (Optional verification)
-    if [[ -f "$HOME/.cache/spotify/offline.bnk" ]]; then
-        log_success "Warm up successful (offline.bnk generated)."
-    else
-        log_info "Warm up complete (offline.bnk check skipped)."
-    fi
-}
-
-# --- 5. Configuration ---
-prepare_assets() {
-    log_info "Downloading assets..."
-    local mk_dir="${SPICETIFY_CONFIG_DIR}/CustomApps/marketplace"
-    if [[ ! -d "$mk_dir" ]]; then
-        curl -fsSL "https://raw.githubusercontent.com/spicetify/spicetify-marketplace/main/resources/install.sh" | bash
+    # Verify BOTH prefs and offline.bnk exist
+    if [[ -f "$prefs_file" ]] && find "$HOME/.cache/spotify" -name "offline.bnk" 2>/dev/null | grep -q "offline.bnk"; then
+        log_success "Core files ('prefs' and 'offline.bnk') found. Spotify is ready."
+        return 0
     fi
 
-    local ext_dir="${SPICETIFY_CONFIG_DIR}/Extensions"
-    mkdir -p "$ext_dir"
-    if [[ ! -f "$ext_dir/adblock.js" ]]; then
-        curl -fsSL "https://raw.githubusercontent.com/rxri/spicetify-extensions/main/adblock/adblock.js" -o "$ext_dir/adblock.js"
-    fi
-
-    local comfy_dir="${SPICETIFY_CONFIG_DIR}/Themes/Comfy"
-    mkdir -p "$(dirname "$comfy_dir")"
-    if [[ ! -d "$comfy_dir" ]]; then
-        git clone --depth 1 https://github.com/Comfy-Themes/Spicetify "$comfy_dir"
-    elif [[ -d "$comfy_dir/.git" ]]; then
-        if [[ -L "$comfy_dir/color.ini" ]]; then
-             log_info "Matugen detected. Preserving theme colors."
-        else
-             git -C "$comfy_dir" pull --ff-only || true
+    log_warn "Spotify is missing required init files ('prefs' or 'offline.bnk')."
+    log_warn "=========================================================="
+    log_warn " Spotify is launching..."
+    log_warn " PLEASE LOG IN or KEEP WINDOW OPEN to generate cache."
+    log_warn "=========================================================="
+    
+    # Launch in background and allow kernel scheduling buffer
+    nohup spotify >/dev/null 2>&1 &
+    sleep 3
+    
+    log_info "Waiting for initialization..."
+    
+    local wait_time=0
+    local max_wait=300 # 5 minute hard timeout
+    
+    while [[ ! -f "$prefs_file" ]] || ! find "$HOME/.cache/spotify" -name "offline.bnk" 2>/dev/null | grep -q "offline.bnk"; do
+        # Defend against premature closure (user closing window, crash)
+        if ! pgrep -u "$EUID" -x spotify >/dev/null; then
+            log_warn "Spotify process died prematurely. Relaunching..."
+            nohup spotify >/dev/null 2>&1 &
+            sleep 3
         fi
-    fi
+        
+        sleep 2
+        ((wait_time+=2))
+        
+        if ((wait_time >= max_wait)); then
+            kill_spotify_hard
+            die "Timeout: 5 minutes elapsed waiting for Spotify initialization. Aborting."
+        fi
+    done
+    
+    log_success "Initialization complete! All core files generated."
+    
+    # Allow Spotify daemon a moment to flush local configs to disk before killing
+    sleep 3
+    kill_spotify_hard
 }
 
+# --- 5. Configuration & Assets ---
 configure_spicetify() {
     local install_path="$1"
-    log_info "Configuring Spicetify..."
+    log_info "Configuring Spicetify Paths..."
     
+    # Ensure Spicetify generates default configs
     if [[ ! -f "$SPICETIFY_CONFIG_DIR/config-xpui.ini" ]]; then
-        spicetify >/dev/null 2>&1 || true
+        spicetify config >/dev/null 2>&1 || true
     fi
 
     spicetify config \
@@ -176,10 +182,46 @@ configure_spicetify() {
         inject_css 1 \
         replace_colors 1 \
         overwrite_assets 1 \
-        extensions adblock.js > /dev/null
+        inject_theme_js 1 \
+        extensions adblock.js \
+        custom_apps marketplace > /dev/null
 }
 
-# --- 6. The Kill Switch ---
+prepare_assets() {
+    log_info "Downloading assets..."
+    
+    # Marketplace (Using || true to prevent early exit if it attempts to apply and fails)
+    local mk_dir="${SPICETIFY_CONFIG_DIR}/CustomApps/marketplace"
+    if [[ ! -d "$mk_dir" ]]; then
+        log_info "Installing Marketplace..."
+        curl -fsSL "https://raw.githubusercontent.com/spicetify/spicetify-marketplace/main/resources/install.sh" | bash || true
+    fi
+
+    # Adblock
+    local ext_dir="${SPICETIFY_CONFIG_DIR}/Extensions"
+    mkdir -p "$ext_dir"
+    if [[ ! -f "$ext_dir/adblock.js" ]]; then
+        log_info "Installing Adblock extension..."
+        curl -fsSL "https://raw.githubusercontent.com/rxri/spicetify-extensions/main/adblock/adblock.js" -o "$ext_dir/adblock.js" || true
+    fi
+
+    # Native Comfy Theme Setup (Bypasses the rogue install.sh entirely)
+    local comfy_dir="${SPICETIFY_CONFIG_DIR}/Themes/Comfy"
+    mkdir -p "$comfy_dir"
+    
+    log_info "Installing Comfy Theme natively..."
+    curl -fsSL --output "$comfy_dir/user.css" "https://raw.githubusercontent.com/Comfy-Themes/Spicetify/main/Comfy/user.css"
+    curl -fsSL --output "$comfy_dir/theme.js" "https://raw.githubusercontent.com/Comfy-Themes/Spicetify/main/Comfy/theme.js"
+
+    # Matugen Protection: Do not overwrite if the orchestrator has already created the symlink
+    if [[ ! -L "$comfy_dir/color.ini" ]]; then
+        curl -fsSL --output "$comfy_dir/color.ini" "https://raw.githubusercontent.com/Comfy-Themes/Spicetify/main/Comfy/color.ini"
+    else
+        log_success "Matugen symlink detected for color.ini. Preserving."
+    fi
+}
+
+# --- 6. Process Management ---
 kill_spotify_hard() {
     if pgrep -u "$EUID" -x spotify >/dev/null; then
         log_info "Closing Spotify..."
@@ -212,7 +254,7 @@ nuke_cache_and_heal() {
     log_heal "Reinstalling binary..."
     "$helper" -S --noconfirm spotify
 
-    # Fixed: Independent deletions
+    # Scrub volatile caching while preserving user prefs
     rm -rf "$HOME/.cache/spotify"
     rm -rf "$HOME/.config/spotify/Users" 
     rm -rf "$HOME/.config/spotify/GPUCache"
@@ -224,6 +266,7 @@ nuke_cache_and_heal() {
         sudo chmod -R a+wr "${path}/Apps"
     fi
     
+    # Validation check to regenerate 'offline.bnk' missing after cache wipe
     warm_up_spotify
 }
 
@@ -233,18 +276,18 @@ apply_changes() {
     log_info "Applying patches..."
     kill_spotify_hard
 
-    # Attempt 1
+    # Primary vector
     if spicetify backup apply enable-devtools; then
         log_success "Spicetify applied successfully."
         return 0
     fi
 
-    # Attempt 2: Nuclear Heal
+    # Fallback vector
     log_heal "Patch failed. Initiating Nuclear Protocol."
     nuke_cache_and_heal "$install_path"
     
-    # CRITICAL FIX: Re-verify path and RE-CONFIGURE Spicetify
-    fix_spotify_permissions # Update REPLY
+    # State reset
+    fix_spotify_permissions
     install_path="$REPLY"
     configure_spicetify "$install_path"
 
@@ -256,7 +299,7 @@ apply_changes() {
     fi
 }
 
-# --- Main ---
+# --- Main Runtime ---
 main() {
     check_system
     ensure_packages_updated
@@ -265,14 +308,14 @@ main() {
     fix_spotify_permissions
     detected_path="$REPLY"
 
-    # Ensure clean slate
+    # Normalize environment
     kill_spotify_hard
     
-    # Warm up to generate offline.bnk
+    # State generation & path mapping
     warm_up_spotify
-
-    prepare_assets
     configure_spicetify "$detected_path"
+    
+    prepare_assets
     apply_changes "$detected_path"
 
     echo ""
