@@ -131,8 +131,6 @@ INSTALL_SEQUENCE=(
 #    "U | 405_spicetify_matugen_setup.sh"
     "U | 410_waybar_swap_config.sh --toggle"
     "U | 415_mpv_setup.sh"
-#    "U | 420_kokoro_gpu_setup.sh" #requires nvidia gpu with at least 4gb vram
-#    "U | 425_parakeet_gpu_setup.sh" #requires nvidia gpu with at least 4gb vram
 #    "S | 430_btrfs_zstd_compression_stats.sh"
     "U | 434_wayclick_soundpacks_download.sh --auto"
 #    "U | 435_key_sound_wayclick_setup.sh --setup"
