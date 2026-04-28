@@ -309,29 +309,40 @@ uncomment_matugen_template() {
         local tmp_conf
         tmp_conf=$(mktemp)
         
-        # Robust AWK engine adapted from Dusky TUI to safely navigate multiline strings
+        # 1:1 Robust AWK engine ported from Dusky TUI
         TARGET_KEY="spicetify" NEW_VALUE="true" \
         LC_ALL=C awk '
-        function is_blank(line) { return line ~ /^[[:space:]]*$/ }
-        function is_comment(line) { return line ~ /^[[:space:]]*#/ }
+        function is_blank(line) {
+            return line ~ /^[[:space:]]*$/
+        }
+
+        function is_comment(line) {
+            return line ~ /^[[:space:]]*#/
+        }
+
         function strip_comment_prefix(line,    t) {
             t = line
             sub(/^[[:space:]]*#[[:space:]]?/, "", t)
             return t
         }
+
         function is_toml_header(line,    t) {
             t = line
             sub(/^[[:space:]]*#?[[:space:]]*/, "", t)
             return t ~ /^\[.*\][[:space:]]*(#.*)?$/
         }
+
         function template_name(line,    t) {
             t = line
             sub(/^[[:space:]]*#?[[:space:]]*/, "", t)
-            if (t !~ /^\[templates\.[^]]+\][[:space:]]*(#.*)?$/) { return "" }
+            if (t !~ /^\[templates\.[^]]+\][[:space:]]*(#.*)?$/) {
+                return ""
+            }
             sub(/^\[templates\./, "", t)
             sub(/\][[:space:]]*(#.*)?$/, "", t)
             return t
         }
+
         function count_token(str, tok,    n, p, step, rest) {
             n = 0
             rest = str
@@ -344,8 +355,10 @@ uncomment_matugen_template() {
             }
             return n
         }
+
         function update_multiline_state(line,    s, c) {
             s = strip_comment_prefix(line)
+
             if (!in_multiline) {
                 c = count_token(s, triple_sq)
                 if (c % 2 == 1) {
@@ -353,6 +366,7 @@ uncomment_matugen_template() {
                     multiline_token = triple_sq
                     return
                 }
+
                 c = count_token(s, triple_dq)
                 if (c % 2 == 1) {
                     in_multiline = 1
@@ -360,43 +374,88 @@ uncomment_matugen_template() {
                 }
                 return
             }
+
             c = count_token(s, multiline_token)
             if (c % 2 == 1) {
                 in_multiline = 0
                 multiline_token = ""
             }
         }
+
         {
             lines[++line_count] = $0
         }
+
         END {
             triple_sq = sprintf("%c%c%c", 39, 39, 39)
             triple_dq = "\"\"\""
+
             start = 0
             end = line_count
             in_multiline = 0
             multiline_token = ""
+
             for (i = 1; i <= line_count; i++) {
                 if (template_name(lines[i]) == ENVIRON["TARGET_KEY"]) {
                     start = i
                     break
                 }
             }
-            if (!start) exit 1
+
+            if (!start) {
+                exit 1
+            }
+
             for (i = start + 1; i <= line_count; i++) {
                 if (!in_multiline && is_toml_header(lines[i])) {
                     end = i - 1
                     break
                 }
+
+                if (!in_multiline && is_blank(lines[i]) && i + 3 <= line_count) {
+                    c1 = lines[i + 1]
+                    c2 = lines[i + 2]
+                    c3 = lines[i + 3]
+
+                    s1 = strip_comment_prefix(c1)
+                    s2 = strip_comment_prefix(c2)
+                    s3 = strip_comment_prefix(c3)
+
+                    if (is_comment(c1) && is_comment(c2) && is_comment(c3) &&
+                        s1 ~ /^-{3,}$/ &&
+                        s2 !~ /^[[:space:]]*$/ &&
+                        s2 !~ /^[[:space:]]*\[/ &&
+                        s2 !~ /=/ &&
+                        s3 ~ /^-{3,}$/) {
+
+                        j = i + 4
+                        while (j <= line_count && is_blank(lines[j])) {
+                            j++
+                        }
+
+                        if (j > line_count || is_toml_header(lines[j])) {
+                            end = i - 1
+                            break
+                        }
+                    }
+                }
+
                 update_multiline_state(lines[i])
             }
+
             for (i = 1; i <= line_count; i++) {
                 line = lines[i]
+
                 if (i >= start && i <= end) {
                     if (ENVIRON["NEW_VALUE"] == "true") {
                         sub(/^#[[:space:]]?/, "", line)
+                    } else if (ENVIRON["NEW_VALUE"] == "false") {
+                        if (line !~ /^#/ && line !~ /^[[:space:]]*$/) {
+                            line = "# " line
+                        }
                     }
                 }
+
                 print line
             }
         }
