@@ -22,6 +22,8 @@ SCRIPT_SEARCH_DIRS=(
     "${HOME}/user_scripts/rofi"
     "${HOME}/user_scripts/theme_matugen"
     "${HOME}/user_scripts/btrfs_snapshots"
+    "${HOME}/user_scripts/tts_stt/dusky_kokoro"
+    "${HOME}/user_scripts/tts_stt/dusky_parakeet"
     # "${HOME}/my_other_scripts"
     # "/opt/shared_team_scripts"
 )
@@ -108,9 +110,7 @@ INSTALL_SEQUENCE=(
 #    "S | 320_systemdboot_optimization.sh"
     "S | 325_hosts_files_block.sh"
     "S | 330_gtk_root_symlink.sh"
-    "S | 335_preload_config.sh"
-    "U | 340_kokoro_cpu.sh"
-    "U | 345_faster_whisper_cpu.sh"
+#    "S | 335_preload_config.sh"
     "S | 350_dns_systemd_resolve.sh"
     "U | 355_hyprexpo_plugin.sh"
     "U | 356_dusky_plugin_manager.sh"
@@ -145,6 +145,8 @@ INSTALL_SEQUENCE=(
 # ------ CUSTOM PATH SCRIPTS -------
 
     "U | rofi_wallpaper_selctor.sh --cache-only --progress"
+    "U | kokoro_installer.sh"
+    "U | parakeet_installer.sh"
 
 # ------ Btrfs Snapshot configuration -------
 
