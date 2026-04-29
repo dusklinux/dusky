@@ -227,34 +227,83 @@ alias lock='$HOME/user_scripts/drives/drive_manager.sh lock'
 # Battery stats
 
 batstat() {
-    local bat=""
-    # Instantly auto-detect the first battery directory (BAT0, BAT1, etc.)
-    for d in /sys/class/power_supply/BAT*; do
-        if [[ -d "$d" ]]; then
-            bat="$d"
-            break
-        fi
-    done
+    # Isolate shell options to prevent user's global Zsh config from breaking the function
+    emulate -L zsh
+    
+    local bat="" target="$1" live_mode=0
+
+    # Parse arguments (supports 'live' or 'bat_name live')
+    if [[ "$1" == "live" ]]; then
+        live_mode=1
+    elif [[ "$2" == "live" ]]; then
+        live_mode=1
+        target="$1"
+    fi
+
+    # 1. Hardware Detection (Driver Agnostic)
+    if [[ -n "$target" && "$target" != "live" && -d "/sys/class/power_supply/$target" ]]; then
+        bat="/sys/class/power_supply/$target"
+    else
+        # (N) ensures nullglob behavior so it doesn't fail if the directory is empty
+        for d in /sys/class/power_supply/*(N); do
+            if [[ -f "$d/type" ]]; then
+                local dev_type
+                read -r dev_type < "$d/type" 2>/dev/null
+                if [[ "$dev_type" == "Battery" ]]; then
+                    bat="$d"
+                    break
+                fi
+            fi
+        done
+    fi
 
     if [[ -z "$bat" ]]; then
         printf "Error: No battery detected in /sys/class/power_supply/\n" >&2
         return 1
     fi
 
-    local cap stat pwr_now curr_now volt_now
-    cap=$(cat "$bat/capacity" 2>/dev/null)
-    stat=$(cat "$bat/status" 2>/dev/null)
+    # 2. Core Logic (True Zero-Fork)
+    _get_bat_stats() {
+        local cap stat curr volt power
+        float watts=0.0
 
-    if [[ -f "$bat/power_now" ]]; then
-        # Modern hardware exposes power_now in microwatts. Divide by 1,000,000.
-        awk -v c="$cap" -v s="$stat" '{printf "Capacity: %s%% | Power Draw: %.2f W (%s)\n", c, $1/1000000, s}' "$bat/power_now" 2>/dev/null
-    elif [[ -f "$bat/current_now" && -f "$bat/voltage_now" ]]; then
-        # Fallback: calculate power if only current (μA) and voltage (μV) are exposed.
-        curr_now=$(cat "$bat/current_now" 2>/dev/null)
-        volt_now=$(cat "$bat/voltage_now" 2>/dev/null)
-        awk -v c="$cap" -v s="$stat" -v a="$curr_now" -v v="$volt_now" 'BEGIN {printf "Capacity: %s%% | Power Draw: %.2f W (%s)\n", c, (a * v)/1000000000000, s}'
+        read -r cap < "$bat/capacity" 2>/dev/null
+        read -r stat < "$bat/status" 2>/dev/null
+
+        # Fallbacks for empty reads (Race Condition Mitigation)
+        cap=${cap:-"N/A"}
+        stat=${stat:-"Unknown"}
+
+        # Native Zsh floating-point math completely replaces 'awk'
+        if [[ -f "$bat/power_now" ]]; then
+            read -r power < "$bat/power_now" 2>/dev/null
+            (( watts = ${power:-0} / 1000000.0 ))
+            printf "Capacity: %s%% | Power Draw: %.2f W (%s)" "$cap" "$watts" "$stat"
+        elif [[ -f "$bat/current_now" && -f "$bat/voltage_now" ]]; then
+            read -r curr < "$bat/current_now" 2>/dev/null
+            read -r volt < "$bat/voltage_now" 2>/dev/null
+            (( watts = (${curr:-0} * ${volt:-0}) / 1000000000000.0 ))
+            printf "Capacity: %s%% | Power Draw: %.2f W (%s)" "$cap" "$watts" "$stat"
+        else
+            printf "Capacity: %s%% | Power Draw: N/A (%s)" "$cap" "$stat"
+        fi
+    }
+
+    # 3. Execution & Cleanup
+    if (( live_mode )); then
+        printf "\e[?25l" # Hide cursor
+        
+        # Trap signals: Restore cursor -> CLEAR the trap -> Exit cleanly
+        trap 'printf "\e[?25h\n"; trap - INT TERM; return 0' INT TERM
+        
+        while true; do
+            printf "\r\e[K"
+            _get_bat_stats
+            sleep 1
+        done
     else
-        printf "Capacity: %s%% | Power Draw: N/A (%s)\n" "$cap" "$stat"
+        _get_bat_stats
+        printf "\n"
     fi
 }
 
