@@ -1065,6 +1065,16 @@ main() {
         exit 1
     fi
 
+    # Ensure asusd config directory exists (required for asusd service)
+    if [[ ! -d /etc/asusd ]]; then
+        mkdir -p /etc/asusd 2>/dev/null || true
+    fi
+
+    # Ensure asusd is running
+    if ! systemctl is-active --quiet asusd.service 2>/dev/null; then
+        systemctl start asusd.service 2>/dev/null || true
+    fi
+
     register_items
 
     # Show a loading message before the blocking hardware queries begin
