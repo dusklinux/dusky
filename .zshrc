@@ -223,6 +223,42 @@ alias unlock='$HOME/user_scripts/drives/drive_manager.sh unlock'
 # lock block_devices
 alias lock='$HOME/user_scripts/drives/drive_manager.sh lock'
 
+
+# Battery stats
+
+batstat() {
+    local bat=""
+    # Instantly auto-detect the first battery directory (BAT0, BAT1, etc.)
+    for d in /sys/class/power_supply/BAT*; do
+        if [[ -d "$d" ]]; then
+            bat="$d"
+            break
+        fi
+    done
+
+    if [[ -z "$bat" ]]; then
+        printf "Error: No battery detected in /sys/class/power_supply/\n" >&2
+        return 1
+    fi
+
+    local cap stat pwr_now curr_now volt_now
+    cap=$(cat "$bat/capacity" 2>/dev/null)
+    stat=$(cat "$bat/status" 2>/dev/null)
+
+    if [[ -f "$bat/power_now" ]]; then
+        # Modern hardware exposes power_now in microwatts. Divide by 1,000,000.
+        awk -v c="$cap" -v s="$stat" '{printf "Capacity: %s%% | Power Draw: %.2f W (%s)\n", c, $1/1000000, s}' "$bat/power_now" 2>/dev/null
+    elif [[ -f "$bat/current_now" && -f "$bat/voltage_now" ]]; then
+        # Fallback: calculate power if only current (μA) and voltage (μV) are exposed.
+        curr_now=$(cat "$bat/current_now" 2>/dev/null)
+        volt_now=$(cat "$bat/voltage_now" 2>/dev/null)
+        awk -v c="$cap" -v s="$stat" -v a="$curr_now" -v v="$volt_now" 'BEGIN {printf "Capacity: %s%% | Power Draw: %.2f W (%s)\n", c, (a * v)/1000000000000, s}'
+    else
+        printf "Capacity: %s%% | Power Draw: N/A (%s)\n" "$cap" "$stat"
+    fi
+}
+
+
 # Weather query via wttr.in
 # Usage: wthr [location]
 # use with "-s" flag to only get one line.
