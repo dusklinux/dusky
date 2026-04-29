@@ -230,18 +230,50 @@ batstat() {
     # Isolate shell options for predictable execution
     emulate -L zsh
     
-    # Strictly scope all variables at the function level
-    local bat="" target="$1" live_mode=0 d dev_type
-    local cap stat curr volt power
+    local bat="" target="" mode="static" output_format="human"
+    local arg d dev_type cap stat curr volt power
     float watts=0.0
 
-    # Parse arguments cleanly
-    if [[ "$1" == "live" ]]; then
-        live_mode=1
-        target=""
-    elif [[ "$2" == "live" ]]; then
-        live_mode=1
+    # The Architect-Grade Help Page
+    _show_help() {
+        printf "\e[1;34m::\e[0m \e[1mbatstat\e[0m - Zero-fork battery monitor\n\n"
+        printf "\e[1mUSAGE:\e[0m\n"
+        printf "  batstat [COMMAND] [FORMAT] [TARGET]\n\n"
+        printf "\e[1mCOMMANDS:\e[0m\n"
+        printf "  \e[32mhelp\e[0m    Show this help page (default with no args)\n"
+        printf "  \e[32mstatic\e[0m  Print the current battery stats once and exit\n"
+        printf "  \e[32mlive\e[0m    Run a flicker-free, 1-second updating TUI\n\n"
+        printf "\e[1mFORMATS (Static mode only):\e[0m\n"
+        printf "  \e[32mhuman\e[0m   Standard readable output (default)\n"
+        printf "  \e[32mjson\e[0m    Output as a JSON object (for Waybar/Eww integration)\n"
+        printf "  \e[32mterse\e[0m   Raw values only: <capacity> <watts> <status>\n\n"
+        printf "\e[1mTARGET:\e[0m\n"
+        printf "  Optional battery name (e.g., BAT1, macsmc-battery).\n"
+        printf "  If omitted, auto-detects the first available battery natively.\n\n"
+        printf "\e[1mEXAMPLES:\e[0m\n"
+        printf "  batstat live\n"
+        printf "  batstat static json\n"
+        printf "  batstat terse static BAT1\n"
+    }
+
+    # Trigger help if absolutely no arguments are passed
+    if (( $# == 0 )); then
+        _show_help
+        return 0
     fi
+
+    # Order-independent argument parser
+    for arg in "$@"; do
+        case "$arg" in
+            help|-h|--help) _show_help; return 0 ;;
+            live) mode="live" ;;
+            static) mode="static" ;;
+            json) output_format="json" ;;
+            terse) output_format="terse" ;;
+            human) output_format="human" ;;
+            *) target="$arg" ;; # Unrecognized flags are assumed to be battery targets
+        esac
+    done
 
     # Hardware Detection: Target specific battery or find the first one natively
     if [[ -n "$target" && -d "/sys/class/power_supply/$target" ]]; then
@@ -269,11 +301,10 @@ batstat() {
         read -r cap < "$bat/capacity" 2>/dev/null
         read -r stat < "$bat/status" 2>/dev/null
 
-        # Fallbacks for empty reads
         cap=${cap:-"N/A"}
         stat=${stat:-"Unknown"}
 
-        # Native Zsh floating-point arithmetic (zero subshells)
+        # Native Zsh floating-point arithmetic
         if [[ -f "$bat/power_now" ]]; then
             read -r power < "$bat/power_now" 2>/dev/null
             (( watts = ${power:-0} / 1000000.0 ))
@@ -283,14 +314,28 @@ batstat() {
             (( watts = (${curr:-0} * ${volt:-0}) / 1000000000000.0 ))
         fi
         
-        printf "Capacity: %s%% | Power Draw: %.2f W (%s)" "$cap" "$watts" "$stat"
+        # Route the output format
+        if [[ "$output_format" == "json" ]]; then
+            printf '{"capacity": "%s", "power_w": %.2f, "status": "%s"}' "$cap" "$watts" "$stat"
+        elif [[ "$output_format" == "terse" ]]; then
+            printf "%s %.2f %s" "$cap" "$watts" "$stat"
+        else
+            printf "Capacity: %s%% | Power Draw: %.2f W (%s)" "$cap" "$watts" "$stat"
+        fi
     }
 
     # Execution Engine
-    if (( live_mode )); then
+    if [[ "$mode" == "live" ]]; then
+        # UX Guardrail: Prevent JSON/Terse spam in the live TUI
+        if [[ "$output_format" != "human" ]]; then
+            printf "Warning: '%s' format is meant for static scripts. Forcing 'human' output for live TUI.\n" "$output_format" >&2
+            output_format="human"
+            sleep 1.5
+        fi
+        
         printf "\e[?25l" # Hide cursor
         
-        # Zsh native 'always' block guarantees cursor restoration on Ctrl+C
+        # Zsh native 'always' block guarantees clean teardown
         {
             while true; do
                 printf "\r\e[K"
