@@ -227,27 +227,29 @@ alias lock='$HOME/user_scripts/drives/drive_manager.sh lock'
 # Battery stats
 
 batstat() {
-    # Isolate shell options to prevent user's global Zsh config from breaking the function
+    # Isolate shell options for predictable execution
     emulate -L zsh
     
-    local bat="" target="$1" live_mode=0
+    # Strictly scope all variables at the function level
+    local bat="" target="$1" live_mode=0 d dev_type
+    local cap stat curr volt power
+    float watts=0.0
 
-    # Parse arguments (supports 'live' or 'bat_name live')
+    # Parse arguments cleanly
     if [[ "$1" == "live" ]]; then
         live_mode=1
+        target=""
     elif [[ "$2" == "live" ]]; then
         live_mode=1
-        target="$1"
     fi
 
-    # 1. Hardware Detection (Driver Agnostic)
-    if [[ -n "$target" && "$target" != "live" && -d "/sys/class/power_supply/$target" ]]; then
+    # Hardware Detection: Target specific battery or find the first one natively
+    if [[ -n "$target" && -d "/sys/class/power_supply/$target" ]]; then
         bat="/sys/class/power_supply/$target"
     else
-        # (N) ensures nullglob behavior so it doesn't fail if the directory is empty
+        # (N) prevents failure if the directory is completely empty
         for d in /sys/class/power_supply/*(N); do
             if [[ -f "$d/type" ]]; then
-                local dev_type
                 read -r dev_type < "$d/type" 2>/dev/null
                 if [[ "$dev_type" == "Battery" ]]; then
                     bat="$d"
@@ -262,45 +264,42 @@ batstat() {
         return 1
     fi
 
-    # 2. Core Logic (True Zero-Fork)
+    # Core Logic: True Zero-Fork
     _get_bat_stats() {
-        local cap stat curr volt power
-        float watts=0.0
-
         read -r cap < "$bat/capacity" 2>/dev/null
         read -r stat < "$bat/status" 2>/dev/null
 
-        # Fallbacks for empty reads (Race Condition Mitigation)
+        # Fallbacks for empty reads
         cap=${cap:-"N/A"}
         stat=${stat:-"Unknown"}
 
-        # Native Zsh floating-point math completely replaces 'awk'
+        # Native Zsh floating-point arithmetic (zero subshells)
         if [[ -f "$bat/power_now" ]]; then
             read -r power < "$bat/power_now" 2>/dev/null
             (( watts = ${power:-0} / 1000000.0 ))
-            printf "Capacity: %s%% | Power Draw: %.2f W (%s)" "$cap" "$watts" "$stat"
         elif [[ -f "$bat/current_now" && -f "$bat/voltage_now" ]]; then
             read -r curr < "$bat/current_now" 2>/dev/null
             read -r volt < "$bat/voltage_now" 2>/dev/null
             (( watts = (${curr:-0} * ${volt:-0}) / 1000000000000.0 ))
-            printf "Capacity: %s%% | Power Draw: %.2f W (%s)" "$cap" "$watts" "$stat"
-        else
-            printf "Capacity: %s%% | Power Draw: N/A (%s)" "$cap" "$stat"
         fi
+        
+        printf "Capacity: %s%% | Power Draw: %.2f W (%s)" "$cap" "$watts" "$stat"
     }
 
-    # 3. Execution & Cleanup
+    # Execution Engine
     if (( live_mode )); then
         printf "\e[?25l" # Hide cursor
         
-        # Trap signals: Restore cursor -> CLEAR the trap -> Exit cleanly
-        trap 'printf "\e[?25h\n"; trap - INT TERM; return 0' INT TERM
-        
-        while true; do
-            printf "\r\e[K"
-            _get_bat_stats
-            sleep 1
-        done
+        # Zsh native 'always' block guarantees cursor restoration on Ctrl+C
+        {
+            while true; do
+                printf "\r\e[K"
+                _get_bat_stats
+                sleep 1
+            done
+        } always {
+            printf "\e[?25h\n" # Restore cursor and drop a clean newline
+        }
     else
         _get_bat_stats
         printf "\n"
