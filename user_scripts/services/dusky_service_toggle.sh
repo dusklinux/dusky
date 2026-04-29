@@ -41,7 +41,6 @@ declare -ra USER_SERVICE_DEFS=(
     "dusky_sliders.service|Dusky Sliders Service"
     "update_checker.timer|Automatic Update Checker"
     "hypridle.service|Hyprland Idle Daemon"
-    "hyprsunset.service|Night Light/BlueLight Filter"
     "osd_lock.service|OSD for CapsLock,NumLock,ScrollLock"
     "hyprpolkitagent.service|Root Password Prompt for Root Apps"
 )
