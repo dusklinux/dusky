@@ -543,25 +543,16 @@ snapper_cleanup_counts() {
 
 tune_snapper() {
     local cfg="$1"
-    local default_limit=5 reserve=3
-    local number_count=0 important_count=0
-    local number_limit="$default_limit" important_limit="$default_limit"
+    local strict_limit=6
 
-    read -r number_count important_count < <(snapper_cleanup_counts "$cfg")
+    info "Enforcing strict cleanup limits for ${cfg}: NUMBER_LIMIT=${strict_limit}"
 
-    if (( number_count > default_limit )); then
-        number_limit=$(( number_count + reserve ))
-    fi
-    if (( important_count > default_limit )); then
-        important_limit=$(( important_count + reserve ))
-    fi
-
-    # CHROOT FIX: Inject --no-dbus
+    # CHROOT FIX: Inject --no-dbus to bypass dead systemd/dbus in arch-chroot
     snapper --no-dbus -c "$cfg" set-config \
         TIMELINE_CREATE="no" \
         NUMBER_CLEANUP="yes" \
-        NUMBER_LIMIT="${number_limit}" \
-        NUMBER_LIMIT_IMPORTANT="${important_limit}" \
+        NUMBER_LIMIT="${strict_limit}" \
+        NUMBER_LIMIT_IMPORTANT="${strict_limit}" \
         SPACE_LIMIT="0.0" \
         FREE_LIMIT="0.0"
 }

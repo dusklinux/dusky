@@ -26,6 +26,9 @@ readonly SERVICES=(
     "vsftpd.service"
     "reflector.timer"
     "systemd-resolved.service"
+    "snapper-cleanup.timer"
+    "snapper-cleanup.service"
+
 )
 
 # 3. Formatting

@@ -31,6 +31,8 @@ readonly TARGET_SERVICES=(
     "vsftpd.service"
     "reflector.timer"
     "systemd-resolved.service"
+    "snapper-cleanup.timer"
+    "snapper-cleanup.service"
 )
 
 # ------------------------------------------------------------------------------
