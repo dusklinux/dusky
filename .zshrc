@@ -543,28 +543,30 @@ compdef _win_completion win
 _pkg_header() {
     print -P "\n%F{blue}::%f %B${1}%b (Top ${2})"
     print -P "%F{238}------------------------------------------------------------%f"
+    # Precisely aligned header: 19 chars (Date) + 2 spaces + 8 chars (Size) + 2 spaces + Package
+    print -P "%F{242}INSTALL DATE             SIZE  PACKAGE%f"
+    print -P "%F{238}------------------------------------------------------------%f"
 }
 
 pkg() {
-    # 1. Dependency Validation (Fast Zsh native hash check)
+    # 1. Dependency Validation
     if (( ! $+commands[expac] )); then
         print -u2 -P "\n%F{red}✖ Error:%f 'expac' is not installed."
         print -u2 -P "  Please install it first: %F{cyan}sudo pacman -S expac%f\n"
         return 1
     fi
 
-    # 2. State Initialization (Strict integer typing for numeric flags)
+    # 2. State Initialization
     local target="all"
     local metric=""
     local -i count=20
     local -i show_help=0
 
-    # Trigger help immediately if zero arguments are passed
     if (( $# == 0 )); then
         show_help=1
     fi
 
-    # 3. Argument Tokenizer: Parse args in ANY order, case-insensitive
+    # 3. Argument Tokenizer: Case-insensitive, order-agnostic
     for arg in "$@"; do
         case "${arg:l}" in
             help|-h|--help)
@@ -586,7 +588,6 @@ pkg() {
                 metric="old"
                 ;;
             *)
-                # Strict Validation: Must be a POSITIVE integer
                 if [[ "$arg" =~ ^[1-9][0-9]*$ ]]; then
                     count="$arg"
                 else
@@ -598,7 +599,7 @@ pkg() {
         esac
     done
 
-    # 4. Intuitive Help Menu Overlay
+    # 4. Help Menu Overlay
     if (( show_help )); then
         print -P "\n%F{blue}::%f %Bpkg%b — Advanced Package Query Tool"
         print -P "%F{238}------------------------------------------------------------%f"
@@ -621,39 +622,34 @@ pkg() {
         return 0
     fi
 
-    # Set default metric if none was explicitly requested
+    # Set default metric
     [[ -z "$metric" ]] && metric="size"
 
-    # 5. Dynamic Pipeline Construction (Using Zsh Arrays for secure expansion)
-    local -a expac_args sort_cmd
+    # 5. Dynamic Pipeline Construction
+    # We lock expac to ALWAYS output: Date | Size(bytes) | Name
+    local -a expac_args=(--timefmt='%Y-%m-%d %H:%M:%S' '%l|%m|%n')
+    local -a sort_cmd
     local title_metric=""
-    local col_align=""
 
+    # We sort against specific pipe-delimited columns (-t '|')
     case "$metric" in
         size)
             title_metric="Largest"
-            expac_args=('%m|%n')
-            sort_cmd=(sort -rn)
-            col_align="--table-right=1" # Right-align sizes for better readability
+            sort_cmd=(sort -t '|' -k2 -rn) # Sort numerically by column 2 (Size)
             ;;
         new)
             title_metric="Newest"
-            expac_args=(--timefmt='%Y-%m-%d %T' '%l|%n')
-            sort_cmd=(sort -r)
-            col_align="--table-right=1,2" # Right-align dates and times
+            sort_cmd=(sort -t '|' -k1 -r)  # Sort reverse-chronologically by column 1 (Date)
             ;;
         old)
             title_metric="Oldest"
-            expac_args=(--timefmt='%Y-%m-%d %T' '%l|%n')
-            sort_cmd=(sort)
-            col_align="--table-right=1,2"
+            sort_cmd=(sort -t '|' -k1)     # Sort chronologically by column 1 (Date)
             ;;
     esac
 
     local title_full=""
     if [[ "$target" == "explicit" ]]; then
         title_full="${title_metric} Explicitly Installed Packages"
-        expac_args+=(-) # Safely append stdin target for expac
     else
         title_full="${title_metric} Installed Packages (Overall)"
     fi
@@ -661,22 +657,17 @@ pkg() {
     # 6. Core Execution Pipeline
     _pkg_header "$title_full" "$count"
 
-    # Fork execution paths. We use word splitting '=' carefully by keeping array expansion unquoted inside commands.
+    # Raw ANSI color injection via Awk stream processing
+    # $1 = Date(Grey), $2 = Size(Yellow), $3 = Name(Bold Arch Blue)
+    local awk_color='{ printf "\033[38;5;246m%s\033[0m  \033[38;5;220m%s\033[0m  \033[1;38;5;39m%s\033[0m\n", $1, $2, $3 }'
+
+    # Notice the `numfmt --padding=8`. This guarantees right-alignment of sizes (e.g. '  4.8GiB') without needing `column`
     if [[ "$target" == "explicit" ]]; then
-        if [[ "$metric" == "size" ]]; then
-            pacman -Qeq | expac "${expac_args[@]}" 2>/dev/null | "${sort_cmd[@]}" | head -n "$count" | numfmt --to=iec-i --suffix=B --field=1 --delimiter='|' | column -t -s '|' $=col_align
-        else
-            pacman -Qeq | expac "${expac_args[@]}" 2>/dev/null | "${sort_cmd[@]}" | head -n "$count" | column -t -s '|' $=col_align
-        fi
+        pacman -Qeq | expac "${expac_args[@]}" - 2>/dev/null | "${sort_cmd[@]}" | head -n "$count" | numfmt --to=iec-i --suffix=B --field=2 --delimiter='|' --padding=8 | awk -F '|' "$awk_color"
     else
-        if [[ "$metric" == "size" ]]; then
-            expac "${expac_args[@]}" | "${sort_cmd[@]}" | head -n "$count" | numfmt --to=iec-i --suffix=B --field=1 --delimiter='|' | column -t -s '|' $=col_align
-        else
-            expac "${expac_args[@]}" | "${sort_cmd[@]}" | head -n "$count" | column -t -s '|' $=col_align
-        fi
+        expac "${expac_args[@]}" 2>/dev/null | "${sort_cmd[@]}" | head -n "$count" | numfmt --to=iec-i --suffix=B --field=2 --delimiter='|' --padding=8 | awk -F '|' "$awk_color"
     fi
 
-    # 7. Trailing newline for prompt breathing room
     print ""
 }
 
