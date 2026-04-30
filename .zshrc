@@ -538,7 +538,7 @@ compdef _win_completion win
 # Usage: pkg <command> [count]
 # =============================================================================
 
-# DRY Header Helper — defined once at source time, not re-created on every pkg call.
+# DRY Header Helper — defined once at source time.
 # Args: $1 = title string, $2 = count integer
 _pkg_header() {
     print -P "\n%F{blue}::%f %B${1}%b (Top ${2})"
@@ -546,60 +546,137 @@ _pkg_header() {
 }
 
 pkg() {
-    # 1. Pre-flight Check: Ultra-fast Zsh native dependency validation
+    # 1. Dependency Validation (Fast Zsh native hash check)
     if (( ! $+commands[expac] )); then
-        print -u2 -P "%F{red}✖ Error:%f 'expac' is not installed. Run: sudo pacman -S expac"
+        print -u2 -P "\n%F{red}✖ Error:%f 'expac' is not installed."
+        print -u2 -P "  Please install it first: %F{cyan}sudo pacman -S expac%f\n"
         return 1
     fi
 
-    # 2. Scope & Defaults
-    local cmd="${1:-help}"
-    local num="${2:-20}"
+    # 2. State Initialization (Strict integer typing for numeric flags)
+    local target="all"
+    local metric=""
+    local -i count=20
+    local -i show_help=0
 
-    # 3. Strict Validation: Must be a POSITIVE integer (no zeros, no letters)
-    if [[ ! "$num" =~ ^[1-9][0-9]*$ ]]; then
-        print -u2 -P "%F{red}✖ Error:%f Count must be a positive integer (1 or higher)."
-        return 1
+    # Trigger help immediately if zero arguments are passed
+    if (( $# == 0 )); then
+        show_help=1
     fi
 
-    # 4. Core Execution Pipeline
-    case "${cmd:l}" in
-        hogs|size|all)
-            _pkg_header "Largest Packages (Including Dependencies)" "$num"
-            expac '%m|%n' | sort -rn | head -n "$num" | numfmt --to=iec-i --suffix=B --field=1 --delimiter='|' | column -t -s '|'
+    # 3. Argument Tokenizer: Parse args in ANY order, case-insensitive
+    for arg in "$@"; do
+        case "${arg:l}" in
+            help|-h|--help)
+                show_help=1
+                ;;
+            explicit|user)
+                target="explicit"
+                ;;
+            all)
+                target="all"
+                ;;
+            hogs|size)
+                metric="size"
+                ;;
+            new|recent|latest)
+                metric="new"
+                ;;
+            old|ancient)
+                metric="old"
+                ;;
+            *)
+                # Strict Validation: Must be a POSITIVE integer
+                if [[ "$arg" =~ ^[1-9][0-9]*$ ]]; then
+                    count="$arg"
+                else
+                    print -u2 -P "\n%F{red}✖ Error:%f Unknown argument or invalid count: '%F{yellow}$arg%f'"
+                    print -u2 -P "  Run %F{green}pkg help%f for usage details.\n"
+                    return 1
+                fi
+                ;;
+        esac
+    done
+
+    # 4. Intuitive Help Menu Overlay
+    if (( show_help )); then
+        print -P "\n%F{blue}::%f %Bpkg%b — Advanced Package Query Tool"
+        print -P "%F{238}------------------------------------------------------------%f"
+        print -P "%F{green}Usage:%f pkg [target] [metric] [count]"
+        print -P "       %F{242}(Arguments can be provided in ANY order)%f\n"
+        
+        print -P "%BTargets:%b (Default: all)"
+        print -P "  %F{cyan}all%f                  - System-wide packages (includes dependencies)"
+        print -P "  %F{cyan}explicit%f, %F{cyan}user%f       - Only packages you explicitly installed\n"
+        
+        print -P "%BMetrics:%b (Default: size)"
+        print -P "  %F{cyan}size%f, %F{cyan}hogs%f           - Sort by installed size (largest first)"
+        print -P "  %F{cyan}new%f, %F{cyan}recent%f, %F{cyan}latest%f - Sort by installation date (newest first)"
+        print -P "  %F{cyan}old%f, %F{cyan}ancient%f        - Sort by installation date (oldest first)\n"
+        
+        print -P "%BExamples:%b"
+        print -P "  %F{yellow}pkg explicit new 20%f  # Top 20 most recently explicitly installed"
+        print -P "  %F{yellow}pkg 50 size%f          # Top 50 largest packages overall"
+        print -P "  %F{yellow}pkg old%f              # Top 20 oldest packages overall\n"
+        return 0
+    fi
+
+    # Set default metric if none was explicitly requested
+    [[ -z "$metric" ]] && metric="size"
+
+    # 5. Dynamic Pipeline Construction (Using Zsh Arrays for secure expansion)
+    local -a expac_args sort_cmd
+    local title_metric=""
+    local col_align=""
+
+    case "$metric" in
+        size)
+            title_metric="Largest"
+            expac_args=('%m|%n')
+            sort_cmd=(sort -rn)
+            col_align="--table-right=1" # Right-align sizes for better readability
             ;;
-
-        explicit|user)
-            _pkg_header "Largest Explicitly Installed Packages" "$num"
-            pacman -Qeq | expac '%m|%n' - | sort -rn | head -n "$num" | numfmt --to=iec-i --suffix=B --field=1 --delimiter='|' | column -t -s '|'
+        new)
+            title_metric="Newest"
+            expac_args=(--timefmt='%Y-%m-%d %T' '%l|%n')
+            sort_cmd=(sort -r)
+            col_align="--table-right=1,2" # Right-align dates and times
             ;;
-
-        new|recent|latest)
-            _pkg_header "Recently Installed Packages" "$num"
-            expac --timefmt='%Y-%m-%d %T' '%l|%n' | sort -r | head -n "$num" | column -t -s '|'
-            ;;
-
-        old|ancient)
-            _pkg_header "Oldest Installed Packages" "$num"
-            expac --timefmt='%Y-%m-%d %T' '%l|%n' | sort | head -n "$num" | column -t -s '|'
-            ;;
-
-        help|*)
-            print -P "\n%F{green}Usage:%f pkg <command> [count (default: 20)]\n"
-            print -P "%BCommands:%b"
-            print "  hogs, size, all          - List largest packages (overall)"
-            print "  explicit, user           - List largest explicitly installed packages"
-            print "  new, recent, latest      - List recently installed (newest first)"
-            print "  old, ancient             - List oldest installed (oldest first)\n"
-            print -P "%BExamples:%b"
-            print "  pkg size 10        # Top 10 largest packages overall"
-            print "  pkg explicit 50    # Top 50 largest packages you explicitly installed\n"
-
-            [[ "${cmd:l}" == "help" ]] && return 0 || return 1
+        old)
+            title_metric="Oldest"
+            expac_args=(--timefmt='%Y-%m-%d %T' '%l|%n')
+            sort_cmd=(sort)
+            col_align="--table-right=1,2"
             ;;
     esac
 
-    # 5. Trailing newline for prompt breathing room
+    local title_full=""
+    if [[ "$target" == "explicit" ]]; then
+        title_full="${title_metric} Explicitly Installed Packages"
+        expac_args+=(-) # Safely append stdin target for expac
+    else
+        title_full="${title_metric} Installed Packages (Overall)"
+    fi
+
+    # 6. Core Execution Pipeline
+    _pkg_header "$title_full" "$count"
+
+    # Fork execution paths. We use word splitting '=' carefully by keeping array expansion unquoted inside commands.
+    if [[ "$target" == "explicit" ]]; then
+        if [[ "$metric" == "size" ]]; then
+            pacman -Qeq | expac "${expac_args[@]}" 2>/dev/null | "${sort_cmd[@]}" | head -n "$count" | numfmt --to=iec-i --suffix=B --field=1 --delimiter='|' | column -t -s '|' $=col_align
+        else
+            pacman -Qeq | expac "${expac_args[@]}" 2>/dev/null | "${sort_cmd[@]}" | head -n "$count" | column -t -s '|' $=col_align
+        fi
+    else
+        if [[ "$metric" == "size" ]]; then
+            expac "${expac_args[@]}" | "${sort_cmd[@]}" | head -n "$count" | numfmt --to=iec-i --suffix=B --field=1 --delimiter='|' | column -t -s '|' $=col_align
+        else
+            expac "${expac_args[@]}" | "${sort_cmd[@]}" | head -n "$count" | column -t -s '|' $=col_align
+        fi
+    fi
+
+    # 7. Trailing newline for prompt breathing room
     print ""
 }
 
