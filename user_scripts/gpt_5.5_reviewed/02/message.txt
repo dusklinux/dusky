@@ -1,0 +1,21 @@
+I’ll perform a full reliability audit of the uploaded Bash/Lua TUI, verify current Hyprland Lua-config assumptions, stress the parser, mutator, and atomic write paths, then return an audit summary plus the complete hardened script.
+
+I confirmed the Lua-first model implies required modules must be tracked and mutations should preserve user code by touching only targeted literals. The cache also needs a Bash-side output quota.
+
+Thought for 33m 29s
+
+I audited the uploaded dusky_tui_5.0.sh against the current Hyprland Lua-config direction. The current wiki confirms Hyprland 0.55+ deprecates hyprlang in favor of hyprland.lua, recommends require() for split configs, and notes Lua configs can execute arbitrary code, so treating config evaluation as hostile is the right baseline.
+
+I won’t expose private scratchpad reasoning, but here is the actionable audit trace:
+
+Key issues found and hardened
+
+populate_config_cache had unbounded IPC growth and did not reliably detect a final unterminated partial field when EOF arrived without a trailing NUL. I added source-size, field-size, record-count, and protocol-byte caps, plus explicit partial-field detection.
+The parser sandbox used one shared Lua environment for require()d files; Hyprland documents require() as separate file scope, so I changed the sandbox to execute required modules in fresh environments while sharing only the inert hl capture surface.
+The sandbox now fails closed on NULs, non-finite numbers, excessive nesting, massive tables, oversized strings, oversized output, and output close/write failures.
+write_value_to_file did not check lock-file open failure, value-transfer write failure, scratch stat failure, or stale source changes between mutation and atomic commit. Those paths are now explicit.
+Atomic writes now use same-directory temp files, checked sync -f before mv -T, permission preservation, cleanup registration, and a source signature check to reject stale writes if the config changed mid-edit.
+The mutator now handles hl.config({ ... }) and hl.config { ... }, bracket string keys, long-bracket strings with delimiter escalation, escaped string keys via Lua’s own literal parser, and refuses computed expressions instead of corrupting custom logic.
+TTY handling now reads from /dev/tty, restores stty on HUP/INT/QUIT/TERM/EXIT, avoids emitting alternate-screen cleanup during --help, and disables IXON to avoid Ctrl-S terminal freezes.
+Integer and float bounds are validated at registration, float math rejects non-finite values, and integer arithmetic avoids unsafe oversized Bash arithmetic input.
+I ran bash -n on the generated script and verified --help no longer emits cleanup escape sequences. I could not execute the embedded Lua tests in this Debian container because no Lua interpreter is installed and the container cannot reach package repositories; the script now explicitly requires Lua 5.4, which matches the intended latest Arch target.
