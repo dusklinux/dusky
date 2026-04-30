@@ -13,12 +13,14 @@ GTK4/Libadwaita compatible with proper lifecycle management via `do_unroot`.
 from __future__ import annotations
 
 import atexit
+import json
 import logging
 import math
+import os
 import shlex
+import signal
 import subprocess
 import threading
-import json
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
@@ -286,12 +288,13 @@ class RowContext(TypedDict, total=False):
 class PollSlot:
     """
     Atomic state for one polling channel.
-    Encapsulates the lifecycle of a single repeating task (source ID, cancellable, running state).
+    Encapsulates the lifecycle of a single repeating task.
     """
 
     source_id: int = 0
     cancellable: Any = None
     is_running: bool = False
+    generation: int = 0
 
 
 @dataclass(slots=True)
@@ -318,30 +321,37 @@ class WidgetState:
         return (self.icon, self.monitor, self.value, self.misc)
 
     def mark_destroyed_and_get_sources(self) -> tuple[int, ...]:
-        """Atomically marks destroyed, cancels async ops, and returns source IDs for cleanup."""
+        """Mark destroyed, detach cleanup handles under lock, then cancel outside the lock."""
+        sources: list[int] = []
+        cancellables: list[Any] = []
+
         with self.lock:
+            if self.is_destroyed:
+                return ()
+
             self.is_destroyed = True
 
-            # Cancel all in-flight monitor/subprocess operations across all slots.
             for slot in self._slots:
-                if isinstance(slot.cancellable, Gio.FileMonitor):
-                    with suppress(Exception):
-                        slot.cancellable.cancel()
-                elif slot.cancellable is not None:
-                    with suppress(Exception):
-                        slot.cancellable.cancel()
+                if slot.cancellable is not None:
+                    cancellables.append(slot.cancellable)
+
                 slot.cancellable = None
+                slot.is_running = False
 
-            # Harvest source IDs
-            sources: list[int] = []
-            for slot in self._slots:
-                sources.append(slot.source_id)
-                slot.source_id = 0
+                if slot.source_id > 0:
+                    sources.append(slot.source_id)
+                    slot.source_id = 0
 
-            sources.append(self.debounce_source_id)
-            self.debounce_source_id = 0
+            if self.debounce_source_id > 0:
+                sources.append(self.debounce_source_id)
+                self.debounce_source_id = 0
 
-            return tuple(sources)
+        for cancellable in cancellables:
+            with suppress(Exception):
+                cancellable.cancel()
+
+        return tuple(sources)
+
 
 
 # =============================================================================
@@ -733,16 +743,30 @@ class AsyncPollingMixin:
         Begin a periodic polling loop bound to a specific state *slot*.
         Safely replaces any existing timer on the same slot.
         """
+        interval = max(1, interval)
+
         if immediate:
             self._poll_command(slot, command, on_output, timeout)
+
+        old_source_id = 0
+        with self._state.lock:
+            if self._state.is_destroyed:
+                return
+            old_source_id = slot.source_id
+            slot.source_id = 0
+
+        _safe_source_remove(old_source_id)
 
         with self._state.lock:
             if self._state.is_destroyed:
                 return
-            if slot.source_id > 0:
-                GLib.source_remove(slot.source_id)
             slot.source_id = GLib.timeout_add_seconds(
-                interval, self._poll_tick, slot, command, on_output, timeout,
+                interval,
+                self._poll_tick,
+                slot,
+                command,
+                on_output,
+                timeout,
             )
 
     def _poll_tick(
@@ -773,23 +797,36 @@ class AsyncPollingMixin:
         timeout: int,
     ) -> None:
         """Cancel any in-flight operation on *slot*, then launch a new one."""
+        old_handle: Any = None
+
         with self._state.lock:
             if self._state.is_destroyed:
                 slot.is_running = False
                 return
+
+            slot.generation += 1
+            generation = slot.generation
             slot.is_running = True
-            if slot.cancellable is not None:
-                with suppress(Exception):
-                    slot.cancellable.cancel()
-                slot.cancellable = None
+
+            old_handle = slot.cancellable
+            slot.cancellable = None
+
+        if old_handle is not None:
+            with suppress(Exception):
+                old_handle.cancel()
+
+        handle: _AsyncCommandHandle | None = None
 
         def on_result(output: str | None) -> None:
             with self._state.lock:
-                if slot.cancellable is handle:
-                    slot.cancellable = None
-                    slot.is_running = False
-                if self._state.is_destroyed:
+                if self._state.is_destroyed or slot.generation != generation:
                     return
+                if slot.cancellable is not handle:
+                    return
+
+                slot.cancellable = None
+                slot.is_running = False
+
             if output is not None:
                 on_output(output)
 
@@ -798,16 +835,25 @@ class AsyncPollingMixin:
         except Exception as e:
             log.error("Failed to execute async shell command: %s", e)
             with self._state.lock:
-                slot.is_running = False
+                if slot.generation == generation:
+                    slot.is_running = False
             return
 
+        cancel_new_handle = False
+
         with self._state.lock:
-            if not self._state.is_destroyed and handle:
-                slot.cancellable = handle
-            else:
-                if handle:
-                    handle.cancel()
+            if self._state.is_destroyed or slot.generation != generation:
+                cancel_new_handle = handle is not None
+                if slot.generation == generation:
+                    slot.is_running = False
+            elif handle is None:
                 slot.is_running = False
+            else:
+                slot.cancellable = handle
+
+        if cancel_new_handle and handle is not None:
+            with suppress(Exception):
+                handle.cancel()
 
 
 # =============================================================================
@@ -1070,26 +1116,71 @@ class ButtonRow(BaseActionRow):
                 self.btn.add_css_class("default-action")
 
     def _start_dynamic_poll(self) -> None:
-        # Use 'misc' slot for button text polling
-        self._update_dynamic_state()
+        # Use 'misc' slot for button text polling. File I/O is kept off the GTK thread.
+        self._queue_dynamic_state_read()
+
         with self._state.lock:
             if not self._state.is_destroyed:
-                self._state.misc.source_id = GLib.timeout_add_seconds(2, self._update_dynamic_state)
+                self._state.misc.source_id = GLib.timeout_add_seconds(
+                    2,
+                    self._update_dynamic_state,
+                )
 
     def _update_dynamic_state(self) -> bool:
+        if not self.get_mapped():
+            return GLib.SOURCE_CONTINUE
+
+        self._queue_dynamic_state_read()
+        return GLib.SOURCE_CONTINUE
+
+    def _queue_dynamic_state_read(self) -> None:
+        with self._state.lock:
+            if self._state.is_destroyed or self._state.misc.is_running:
+                return
+
+            self._state.misc.is_running = True
+            self._state.misc.generation += 1
+            generation = self._state.misc.generation
+
+        if not _submit_task_safe(lambda: self._read_dynamic_state_async(generation), self._state):
+            with self._state.lock:
+                if self._state.misc.generation == generation:
+                    self._state.misc.is_running = False
+
+    def _read_dynamic_state_async(self, generation: int) -> None:
+        value: str | None = None
+
         try:
-            path = Path(self.text_file).expanduser()
-            if not path.exists():
-                return True
-            val = path.read_text().strip()
-            new_label = self.text_map.get(val, self.text_map.get("default", self.btn.get_label()))
-            if self.btn.get_label() != new_label:
-                self.btn.set_label(new_label)
-            new_style = self.style_map.get(val, self.style_map.get("default", self.base_style))
-            self._apply_base_style(new_style)
-        except Exception:
-            pass
-        return True
+            path = Path(str(self.text_file)).expanduser()
+            if path.exists():
+                value = path.read_text(encoding="utf-8").strip()
+        except Exception as e:
+            log.debug("Failed to read button dynamic state file %r: %s", self.text_file, e)
+
+        GLib.idle_add(self._apply_dynamic_state, generation, value)
+
+    def _apply_dynamic_state(self, generation: int, value: str | None) -> bool:
+        with self._state.lock:
+            if self._state.misc.generation == generation:
+                self._state.misc.is_running = False
+
+            if self._state.is_destroyed or self._state.misc.generation != generation:
+                return GLib.SOURCE_REMOVE
+
+        if value is None:
+            return GLib.SOURCE_REMOVE
+
+        text_map = self.text_map if isinstance(self.text_map, dict) else {}
+        style_map = self.style_map if isinstance(self.style_map, dict) else {}
+
+        new_label = text_map.get(value, text_map.get("default", self.btn.get_label()))
+        if self.btn.get_label() != new_label:
+            self.btn.set_label(new_label)
+
+        new_style = style_map.get(value, style_map.get("default", self.base_style))
+        self._apply_base_style(str(new_style).lower())
+
+        return GLib.SOURCE_REMOVE
 
     def _on_button_clicked(self, _button: Gtk.Button) -> None:
         self._trigger_action(self.on_action)
@@ -1668,11 +1759,18 @@ class SelectionRow(DynamicIconMixin, Adw.ComboRow):
 
     def _start_selection_monitor(self) -> None:
         # SelectionRow uses 'value' slot for selection monitoring
-        interval = _safe_int(self.properties.get("interval"), DEFAULT_INTERVAL_SECONDS)
+        interval = max(
+            1,
+            _safe_int(self.properties.get("interval"), DEFAULT_INTERVAL_SECONDS),
+        )
+
         with self._state.lock:
             if self._state.is_destroyed:
                 return
-            self._state.value.source_id = GLib.timeout_add_seconds(interval, self._check_selection_tick)
+            self._state.value.source_id = GLib.timeout_add_seconds(
+                interval,
+                self._check_selection_tick,
+            )
 
     def _on_map(self, _widget: Gtk.Widget) -> None:
         self._queue_selection_fetch()
@@ -2140,22 +2238,50 @@ class AsyncSelectorRow(DynamicIconMixin, Adw.PreferencesRow):
     def _on_refresh_clicked(self, _btn: Gtk.Button) -> None:
         if not self.list_command or self._fetch_in_progress:
             return
+
         self._fetch_in_progress = True
         self.refresh_btn.set_sensitive(False)
+
         if self.action_btn:
             self.action_btn.set_sensitive(False)
-        _submit_task_safe(self._fetch_data_async, self._state)
+
+        if _submit_task_safe(self._fetch_data_async, self._state):
+            return
+
+        self._fetch_in_progress = False
+        self.refresh_btn.set_sensitive(True)
+
+        if self.action_btn:
+            self.action_btn.set_sensitive(bool(self.json_data) and self.has_action)
+
+        utility.toast(self.toast_overlay, "✖ Failed to queue data fetch", 4)
+
+    def _signal_process_group(self, proc: subprocess.Popen, sig: signal.Signals) -> None:
+        if proc.poll() is not None:
+            return
+
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            return
+        except Exception:
+            with suppress(Exception):
+                proc.send_signal(sig)
 
     def _kill_and_reap_process(self, proc: subprocess.Popen) -> None:
         if proc.poll() is None:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            self._signal_process_group(proc, signal.SIGTERM)
+
         try:
-            proc.communicate(timeout=2)
+            proc.communicate(timeout=1)
+            return
+        except subprocess.TimeoutExpired:
+            self._signal_process_group(proc, signal.SIGKILL)
         except Exception:
-            pass
+            return
+
+        with suppress(Exception):
+            proc.communicate(timeout=1)
 
     def _cancel_active_fetch(self) -> None:
         with self._state.lock:
@@ -2164,10 +2290,7 @@ class AsyncSelectorRow(DynamicIconMixin, Adw.PreferencesRow):
         if proc is None or proc.poll() is not None:
             return
 
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        self._signal_process_group(proc, signal.SIGKILL)
 
     def _fetch_data_async(self) -> None:
         with self._state.lock:
@@ -2188,6 +2311,7 @@ class AsyncSelectorRow(DynamicIconMixin, Adw.PreferencesRow):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                start_new_session=True,
             )
 
             with self._state.lock:
@@ -2466,13 +2590,14 @@ class GridCard(DynamicIconMixin, GridCardBase):
             self._start_dynamic_style_poll()
 
     def _start_dynamic_style_poll(self) -> None:
-        # Fetch immediately to bypass the initial get_mapped() delay
-        _submit_task_safe(self._fetch_dynamic_state_async, self._state)
+        # Fetch immediately to bypass the initial get_mapped() delay.
+        self._queue_dynamic_state_fetch()
 
         with self._state.lock:
             if not self._state.is_destroyed:
                 self._state.value.source_id = GLib.timeout_add_seconds(
-                    MONITOR_INTERVAL_SECONDS, self._dynamic_state_tick,
+                    MONITOR_INTERVAL_SECONDS,
+                    self._dynamic_state_tick,
                 )
 
     def _dynamic_state_tick(self) -> bool:
@@ -2483,26 +2608,44 @@ class GridCard(DynamicIconMixin, GridCardBase):
         if not self.get_mapped():
             return GLib.SOURCE_CONTINUE
 
-        _submit_task_safe(self._fetch_dynamic_state_async, self._state)
+        self._queue_dynamic_state_fetch()
         return GLib.SOURCE_CONTINUE
 
-    def _fetch_dynamic_state_async(self) -> None:
+    def _queue_dynamic_state_fetch(self) -> None:
+        with self._state.lock:
+            if self._state.is_destroyed or self._state.value.is_running:
+                return
+
+            self._state.value.is_running = True
+            self._state.value.generation += 1
+            generation = self._state.value.generation
+
+        if not _submit_task_safe(lambda: self._fetch_dynamic_state_async(generation), self._state):
+            with self._state.lock:
+                if self._state.value.generation == generation:
+                    self._state.value.is_running = False
+
+    def _fetch_dynamic_state_async(self, generation: int) -> None:
         """Runs in the background thread pool."""
         val: str | None = None
+
         try:
             if self.text_file:
                 path = _expand_path(self.text_file)
                 if path.exists():
                     val = path.read_text(encoding="utf-8").strip()
         except Exception as e:
-            log.debug(f"Failed to read dynamic state file {self.text_file}: {e}")
+            log.debug("Failed to read dynamic state file %r: %s", self.text_file, e)
 
-        GLib.idle_add(self._apply_dynamic_state_ui, val)
+        GLib.idle_add(self._apply_dynamic_state_ui, generation, val)
 
-    def _apply_dynamic_state_ui(self, val: str | None) -> bool:
+    def _apply_dynamic_state_ui(self, generation: int, val: str | None) -> bool:
         """Runs on the GTK main thread."""
         with self._state.lock:
-            if self._state.is_destroyed:
+            if self._state.value.generation == generation:
+                self._state.value.is_running = False
+
+            if self._state.is_destroyed or self._state.value.generation != generation:
                 return GLib.SOURCE_REMOVE
 
         if val is not None:
@@ -2517,24 +2660,44 @@ class GridCard(DynamicIconMixin, GridCardBase):
 
     def _start_badge_monitor(self, path_str: str) -> None:
         self._check_badge_tick(path_str)
+
         with self._state.lock:
             if self._state.is_destroyed:
                 return
             self._state.misc.source_id = GLib.timeout_add_seconds(
-                DEFAULT_INTERVAL_SECONDS, self._check_badge_tick, path_str,
+                DEFAULT_INTERVAL_SECONDS,
+                self._check_badge_tick,
+                path_str,
             )
 
     def _check_badge_tick(self, path_str: str) -> bool:
         if not self.get_mapped():
             return GLib.SOURCE_CONTINUE
+
         with self._state.lock:
             if self._state.is_destroyed:
                 return GLib.SOURCE_REMOVE
-        _submit_task_safe(lambda: self._fetch_badge_async(path_str), self._state)
+
+        self._queue_badge_fetch(path_str)
         return GLib.SOURCE_CONTINUE
 
-    def _fetch_badge_async(self, path_str: str) -> None:
+    def _queue_badge_fetch(self, path_str: str) -> None:
+        with self._state.lock:
+            if self._state.is_destroyed or self._state.misc.is_running:
+                return
+
+            self._state.misc.is_running = True
+            self._state.misc.generation += 1
+            generation = self._state.misc.generation
+
+        if not _submit_task_safe(lambda: self._fetch_badge_async(path_str, generation), self._state):
+            with self._state.lock:
+                if self._state.misc.generation == generation:
+                    self._state.misc.is_running = False
+
+    def _fetch_badge_async(self, path_str: str, generation: int) -> None:
         count_text: str | None = None
+
         try:
             path = _expand_path(path_str)
             if path.exists():
@@ -2543,18 +2706,24 @@ class GridCard(DynamicIconMixin, GridCardBase):
                     count_text = content
         except Exception:
             pass
-        GLib.idle_add(self._update_badge_ui, count_text)
 
-    def _update_badge_ui(self, text: str | None) -> bool:
+        GLib.idle_add(self._update_badge_ui, generation, count_text)
+
+    def _update_badge_ui(self, generation: int, text: str | None) -> bool:
         with self._state.lock:
-            if self._state.is_destroyed:
+            if self._state.misc.generation == generation:
+                self._state.misc.is_running = False
+
+            if self._state.is_destroyed or self._state.misc.generation != generation:
                 return GLib.SOURCE_REMOVE
+
         if self.badge_label:
             if text:
                 self.badge_label.set_label(text)
                 self.badge_label.set_visible(True)
             else:
                 self.badge_label.set_visible(False)
+
         return GLib.SOURCE_REMOVE
 
     def _on_clicked(self, _button: Gtk.Button) -> None:

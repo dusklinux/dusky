@@ -41,8 +41,8 @@ from typing import (
 # =============================================================================
 # VERSION CHECK
 # =============================================================================
-if sys.version_info < (3, 13):
-    sys.exit("[FATAL] Python 3.13+ is required.")
+if sys.version_info < (3, 14, 4):
+    sys.exit("[FATAL] Python 3.14.4+ is required.")
 
 # =============================================================================
 # LOGGING CONFIGURATION
@@ -293,6 +293,7 @@ class DuskyControlCenter(Adw.Application):
         "_reload_running",
         "_reload_queued",
         "_directory_generator_cache",
+        "_file_generator_cache",
     )
 
     def __init__(self) -> None:
@@ -309,6 +310,7 @@ class DuskyControlCenter(Adw.Application):
         self._reload_running = False
         self._reload_queued = False
         self._directory_generator_cache: dict[int, tuple[ConfigItem, ...]] = {}
+        self._file_generator_cache: dict[int, tuple[ConfigItem, ...]] = {}
 
     def _init_widget_refs(self) -> None:
         """Initialize or reset all widget references to None."""
@@ -360,6 +362,7 @@ class DuskyControlCenter(Adw.Application):
         self._cancel_debounce()
         self._remove_css_provider()
         self._directory_generator_cache.clear()
+        self._file_generator_cache.clear()
         Adw.Application.do_shutdown(self)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -439,9 +442,16 @@ class DuskyControlCenter(Adw.Application):
             if "properties" in value and not isinstance(value["properties"], dict):
                 raise TypeError(f"{where}.properties must be a dictionary")
 
-            for key in ("on_press", "on_toggle", "on_change", "on_action", "value"):
+            for key in ("on_press", "on_toggle", "on_change", "on_action"):
                 if key in value and value[key] is not None and not isinstance(value[key], dict):
                     raise TypeError(f"{where}.{key} must be a dictionary or null")
+
+            if (
+                "value" in value
+                and value["value"] is not None
+                and not isinstance(value["value"], (dict, str))
+            ):
+                raise TypeError(f"{where}.value must be a dictionary, string, or null")
 
             if "item_template" in value:
                 if not isinstance(value["item_template"], dict):
@@ -639,8 +649,7 @@ class DuskyControlCenter(Adw.Application):
                 self._activate_search()
                 return True
             case (True, Gdk.KEY_q):
-                if self._window:
-                    self._window.close()
+                self.quit()
                 return True
             case (False, Gdk.KEY_Escape):
                 if self._search_bar and self._search_bar.get_search_mode():
@@ -777,6 +786,7 @@ class DuskyControlCenter(Adw.Application):
         """
         self._cancel_debounce()
         self._directory_generator_cache.clear()
+        self._file_generator_cache.clear()
         self._state.last_visible_page = None
 
         self._search_page = None
@@ -1557,7 +1567,7 @@ class DuskyControlCenter(Adw.Application):
         yield from frozen
 
     def _process_file_generator(self, config: ConfigItem) -> Iterator[ConfigItem]:
-        """Generate items from files in a directory, with optional glob filtering.
+        """Generate items from files in a directory, with per-loaded-config caching.
 
         Properties:
           path      – base directory to scan
@@ -1572,22 +1582,36 @@ class DuskyControlCenter(Adw.Application):
           {relpath}     – path relative to base (e.g. "wg0.conf", "mullvad/us-nyc-wg-506.conf")
           {subdir}      – parent dir name for subdir files, empty for top-level
 
-        Intentionally not cached so newly added configs appear without Ctrl+R.
+        The cache is scoped to the loaded config generation and is cleared on hot
+        reload. This keeps generated widget IDs stable between UI construction and
+        search/highlight traversal without hiding newly added files after Ctrl+R.
         Symlinks are included — wg-quick resolves them as root; we only need the name.
         """
+        cache_key = id(config)
+        cached = self._file_generator_cache.get(cache_key)
+        if cached is not None:
+            yield from cached
+            return
+
+        generated: list[ConfigItem] = []
+
         props = config.get("properties", {})
         if not isinstance(props, dict):
+            self._file_generator_cache[cache_key] = ()
             return
 
         template = config.get("item_template")
         if not isinstance(template, dict):
+            self._file_generator_cache[cache_key] = ()
             return
 
         path_str = props.get("path", "")
-        glob_pattern = props.get("glob", "*.conf")
+        glob_raw = props.get("glob", "*.conf")
+        glob_pattern = glob_raw if isinstance(glob_raw, str) and glob_raw else "*.conf"
         recursive = bool(props.get("recursive", False))
 
-        if not isinstance(path_str, str) or not path_str:
+        if not isinstance(path_str, str) or not path_str.strip():
+            self._file_generator_cache[cache_key] = ()
             return
 
         base_path = Path(path_str).expanduser()
@@ -1597,23 +1621,32 @@ class DuskyControlCenter(Adw.Application):
                 for p in base_path.glob(glob_pattern):
                     if p.is_file() or p.is_symlink():
                         yield p
+            except (OSError, PermissionError, ValueError):
+                return
+
+            if not recursive:
+                return
+
+            try:
+                subdirs = sorted(
+                    (p for p in base_path.iterdir() if p.is_dir() and not p.is_symlink()),
+                    key=lambda p: p.name.casefold(),
+                )
             except (OSError, PermissionError):
                 return
-            if recursive:
-                try:
-                    for subdir in sorted(base_path.iterdir()):
-                        if not subdir.is_dir() or subdir.is_symlink():
-                            continue
-                        try:
-                            for p in subdir.glob(glob_pattern):
-                                if p.is_file() or p.is_symlink():
-                                    yield p
-                        except (OSError, PermissionError):
-                            continue
-                except (OSError, PermissionError):
-                    return
 
-        files = sorted(_iter_files(), key=lambda p: (p.parent != base_path, p.name.casefold()))
+            for subdir in subdirs:
+                try:
+                    for p in subdir.glob(glob_pattern):
+                        if p.is_file() or p.is_symlink():
+                            yield p
+                except (OSError, PermissionError, ValueError):
+                    continue
+
+        files = sorted(
+            _iter_files(),
+            key=lambda p: (p.parent != base_path, p.parent.name.casefold(), p.name.casefold()),
+        )
 
         for filepath in files:
             stem = filepath.stem
@@ -1630,7 +1663,11 @@ class DuskyControlCenter(Adw.Application):
             }
             gen_item = self._inject_variables(template, variables)
             if isinstance(gen_item, dict):
-                yield gen_item
+                generated.append(gen_item)
+
+        frozen = tuple(generated)
+        self._file_generator_cache[cache_key] = frozen
+        yield from frozen
 
     def _inject_variables(self, item: Any, vars: dict[str, str]) -> Any:
         """Recursively replace variables in strings."""
