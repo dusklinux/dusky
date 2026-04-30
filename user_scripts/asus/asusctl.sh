@@ -1067,12 +1067,15 @@ main() {
 
     # Ensure asusd config directory exists (required for asusd service)
     if [[ ! -d /etc/asusd ]]; then
-        mkdir -p /etc/asusd 2>/dev/null || true
+        sudo mkdir -p /etc/asusd 2>/dev/null || true
     fi
 
     # Ensure asusd is running
     if ! systemctl is-active --quiet asusd.service 2>/dev/null; then
-        systemctl start asusd.service 2>/dev/null || true
+        if ! sudo systemctl start asusd.service 2>/dev/null; then
+            log_err "asusd is not running. Start it with: sudo systemctl start asusd"
+            exit 1
+        fi
     fi
 
     register_items
