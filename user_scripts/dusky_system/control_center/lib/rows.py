@@ -562,6 +562,10 @@ def _batch_source_remove(*source_ids: int) -> None:
 
 
 def _submit_task_safe(func: Callable[[], None], state: WidgetState) -> bool:
+    with state.lock:
+        if state.is_destroyed:
+            return False
+
     try:
         _get_executor().submit(func)
         return True
@@ -906,25 +910,32 @@ class StateMonitorMixin(AsyncPollingMixin):
                 timeout=SUBPROCESS_TIMEOUT_SHORT,
                 immediate=True,
             )
-        else:
-            # Native Linux inotify event listener (Zero CPU idle)
-            key = str(self.properties.get("key", "")).strip()
-            file_path = utility.SETTINGS_DIR / key
-            try:
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                if not file_path.exists():
-                    file_path.touch()
+            return
 
-                gfile = Gio.File.new_for_path(str(file_path))
-                monitor = gfile.monitor_file(Gio.FileMonitorFlags.NONE, None)
-                monitor.connect("changed", self._on_file_changed)
+        key = str(self.properties.get("key", "")).strip()
+        settings_dir = utility.SETTINGS_DIR.resolve()
+        file_path = (settings_dir / key).resolve()
 
-                # Note: Gio.FileMonitor is stored in the cancellable field for cleanup parity.
-                # Both FileMonitor and async command handles expose .cancel(), enabling shared teardown logic.
-                with self._state.lock:
-                    self._state.monitor.cancellable = monitor
-            except Exception as e:
-                log.error(f"File monitor setup failed for {key}: {e}")
+        if not file_path.is_relative_to(settings_dir):
+            log.error("Refusing to monitor setting key outside SETTINGS_DIR: %r", key)
+            return
+
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            if not file_path.exists():
+                file_path.touch()
+
+            gfile = Gio.File.new_for_path(str(file_path.parent))
+            monitor = gfile.monitor_directory(Gio.FileMonitorFlags.NONE, None)
+            monitor.connect("changed", self._on_file_changed, key, file_path.name)
+
+            with self._state.lock:
+                if self._state.is_destroyed:
+                    monitor.cancel()
+                    return
+                self._state.monitor.cancellable = monitor
+        except Exception as e:
+            log.error("File monitor setup failed for %s: %s", key, e)
 
     def _handle_state_output(self, output: str) -> None:
         new_state = output.strip().lower() in TRUE_VALUES
@@ -936,16 +947,34 @@ class StateMonitorMixin(AsyncPollingMixin):
         file: Gio.File,
         other_file: Gio.File | None,
         event_type: Gio.FileMonitorEvent,
+        key: str,
+        target_name: str,
     ) -> None:
         with self._state.lock:
             if self._state.is_destroyed:
                 return
 
-        if event_type in (Gio.FileMonitorEvent.CHANGES_DONE_HINT, Gio.FileMonitorEvent.CREATED):
-            key = str(self.properties.get("key", "")).strip()
-            val = utility.load_setting(key, default=False)
-            if isinstance(val, bool):
-                self._apply_state_update(val)
+        changed_name = file.get_basename() if file is not None else None
+        other_name = other_file.get_basename() if other_file is not None else None
+        if target_name not in (changed_name, other_name):
+            return
+
+        handled_events = {
+            Gio.FileMonitorEvent.CHANGED,
+            Gio.FileMonitorEvent.CHANGES_DONE_HINT,
+            Gio.FileMonitorEvent.CREATED,
+        }
+
+        for optional_event in ("MOVED_IN", "RENAMED"):
+            if event := getattr(Gio.FileMonitorEvent, optional_event, None):
+                handled_events.add(event)
+
+        if event_type not in handled_events:
+            return
+
+        val = utility.load_setting(key, default=False)
+        if isinstance(val, bool):
+            self._apply_state_update(val)
 
     def _apply_state_update(self, new_state: bool) -> bool:
         raise NotImplementedError

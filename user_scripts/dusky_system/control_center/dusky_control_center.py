@@ -41,8 +41,8 @@ from typing import (
 # =============================================================================
 # VERSION CHECK
 # =============================================================================
-if sys.version_info < (3, 14, 4):
-    sys.exit("[FATAL] Python 3.14.4+ is required.")
+if sys.version_info < (3, 14, 3):
+    sys.exit("[FATAL] Python 3.14.3+ is required.")
 
 # =============================================================================
 # LOGGING CONFIGURATION
@@ -275,26 +275,6 @@ class DuskyControlCenter(Adw.Application):
     Manages the application lifecycle, UI construction, hot-reload functionality,
     and search capabilities for the Dusky Control Center.
     """
-
-    __slots__ = (
-        "_state",
-        "_sidebar_list",
-        "_stack",
-        "_toast_overlay",
-        "_search_bar",
-        "_search_entry",
-        "_search_btn",
-        "_search_page",
-        "_search_results_group",
-        "_css_provider",
-        "_display",
-        "_window",
-        "_split_view",
-        "_reload_running",
-        "_reload_queued",
-        "_directory_generator_cache",
-        "_file_generator_cache",
-    )
 
     def __init__(self) -> None:
         super().__init__(
@@ -894,6 +874,7 @@ class DuskyControlCenter(Adw.Application):
             self._search_btn.set_active(False)
         if self._search_entry:
             self._search_entry.set_text("")
+            self._cancel_debounce()
 
         if self._state.last_visible_page and self._stack:
             self._stack.set_visible_child_name(self._state.last_visible_page)
