@@ -2110,7 +2110,7 @@ box.quick-icon-toggle.active image { color: @accent_color; }
 box.quick-icon-toggle.normal { opacity: 1.0; }
 
 .notification-badge {
-    background-color: @error_color; color: white;
+    background-color: @accent_color ; color: black;
     font-size: 11px; font-weight: 900; border-radius: 12px;
     min-width: 18px; min-height: 18px; padding: 0 5px;
     margin-top: -2px; margin-right: -2px;
