@@ -761,6 +761,7 @@ class DdcManager:
         "_lock",
         "_started",
         "_workers",
+        "_last_rescan_time",
     )
 
     def __init__(self, cache_file: Path | None) -> None:
@@ -771,6 +772,7 @@ class DdcManager:
         self._last_requested: float | None = None
         self._started = False
         self._detect_thread: threading.Thread | None = None
+        self._last_rescan_time = 0.0
 
     def start(self) -> None:
         if DDCUTIL is None:
@@ -789,6 +791,11 @@ class DdcManager:
             return
 
         with self._lock:
+            now = time.monotonic()
+            if now - self._last_rescan_time < 60.0:
+                return
+            self._last_rescan_time = now
+
             thread = self._detect_thread
             if thread is not None and thread.is_alive():
                 return
@@ -945,7 +952,8 @@ class DdcManager:
 
         for bus in buses:
             display = self._query_display(bus)
-            discovered[bus] = display if display is not None else DdcDisplay(bus=bus)
+            if display is not None:
+                discovered[bus] = display
 
         removed_workers: list[LatestValueWorker] = []
 
@@ -1810,6 +1818,9 @@ class QuickPanalWindow(Adw.ApplicationWindow):
         self.set_decorated(False)
         self.add_css_class("panel-window")
 
+        # Catch compositor close requests and reroute to hiding the window
+        self.connect("close-request", self._on_close_request)
+
         key_ctrl = Gtk.EventControllerKey()
         key_ctrl.connect("key-pressed", self._on_key_pressed)
         self.add_controller(key_ctrl)
@@ -2036,13 +2047,19 @@ class QuickPanalWindow(Adw.ApplicationWindow):
         cmd = self.power_cmds.get(profile_name)
         if cmd: execute_cmd(cmd)
 
+    def _on_close_request(self, _window: Gtk.Window) -> bool:
+        self.set_visible(False)
+        return True
+
     def _on_visible_changed(self, *args):
         if self.is_visible():
-            self._update_ui_state()
-            self._timer_id = GLib.timeout_add(2000, self._update_ui_state)
-        elif self._timer_id:
-            GLib.source_remove(self._timer_id)
-            self._timer_id = None
+            if self._timer_id is None:
+                self._update_ui_state()
+                self._timer_id = GLib.timeout_add(2000, self._update_ui_state)
+        else:
+            if self._timer_id is not None:
+                GLib.source_remove(self._timer_id)
+                self._timer_id = None
 
     def _on_key_pressed(self, ctrl, keyval, keycode, state):
         if keyval == Gdk.KEY_Escape:
@@ -2191,7 +2208,9 @@ class QuickPanalApp(Adw.Application):
 
     @override
     def do_shutdown(self):
-        if self.window and self.window._timer_id: GLib.source_remove(self.window._timer_id)
+        if self.window and self.window._timer_id is not None: 
+            GLib.source_remove(self.window._timer_id)
+            self.window._timer_id = None
         if self.pool: self.pool.shutdown()
         if self._sunset_controller is not None: self._sunset_controller.stop()
         if self._local_brightness_worker is not None: self._local_brightness_worker.stop()
