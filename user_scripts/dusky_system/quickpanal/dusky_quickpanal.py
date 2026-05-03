@@ -1696,12 +1696,13 @@ class MediaCard(Gtk.Box):
         self.audio_btn.connect("clicked", lambda _: execute_cmd(f"uwsm app -- {HOME}/user_scripts/audio/audio_switch.sh"))
         header_box.append(self.audio_btn)
 
-        self._player_model = Gtk.StringList.new(["Auto"])
-        self.player_combo = Gtk.DropDown.new(model=self._player_model)
-        self.player_combo.set_valign(Gtk.Align.CENTER)
-        self.player_combo.connect("notify::selected", lambda *_: self.refresh_async())
-        header_box.append(self.player_combo)
+        self.player_btn = Gtk.Button(label="Auto", css_classes=["flat"])
+        self.player_btn.set_valign(Gtk.Align.CENTER)
+        self.player_btn.set_tooltip_text("Click to cycle active media players")
+        self.player_btn.connect("clicked", self._on_player_cycle)
+        header_box.append(self.player_btn)
         self.append(header_box)
+        self._current_player_idx = 0
 
         prog_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.elapsed_lbl = Gtk.Label(label="0:00", css_classes=["media-time"])
@@ -1736,9 +1737,17 @@ class MediaCard(Gtk.Box):
         b.connect("clicked", cb)
         return b
 
+    def _on_player_cycle(self, _):
+        if not self._cache_players: return
+        self._current_player_idx = (self._current_player_idx + 1) % (len(self._cache_players) + 1)
+        self.player_btn.set_label("Auto" if self._current_player_idx == 0 else self._cache_players[self._current_player_idx - 1].capitalize())
+        self.refresh_async()
+
     def _get_player(self) -> str | None:
-        idx = self.player_combo.get_selected()
-        return self._cache_players[idx - 1] if 0 < idx <= len(self._cache_players) else None
+        if self._current_player_idx == 0 or not self._cache_players: return None
+        if self._current_player_idx <= len(self._cache_players):
+            return self._cache_players[self._current_player_idx - 1]
+        return None
 
     def _cmd(self, args: list[str]):
         self._pool.submit(lambda: _playerctl(args, self._get_player()))
@@ -1767,8 +1776,12 @@ class MediaCard(Gtk.Box):
         if state.players != self._cache_players:
             cur = self._get_player()
             self._cache_players = state.players.copy()
-            self._player_model.splice(0, self._player_model.get_n_items(), ["Auto"] + [p.capitalize() for p in state.players])
-            self.player_combo.set_selected(state.players.index(cur) + 1 if cur in state.players else 0)
+            if cur in state.players:
+                self._current_player_idx = state.players.index(cur) + 1
+                self.player_btn.set_label(cur.capitalize())
+            else:
+                self._current_player_idx = 0
+                self.player_btn.set_label("Auto")
             
         self.title_lbl.set_markup(f'<span weight="bold">{GLib.markup_escape_text(state.title or "Unknown")}</span>')
         self.artist_lbl.set_label(state.artist or " ")
@@ -1913,21 +1926,46 @@ class QuickPanalWindow(Adw.ApplicationWindow):
         for tg in (self.tg_wifi, self.tg_bt, self.tg_perf, self.tg_idle, self.tg_dnd, self.tg_blur, self.tg_shader, self.tg_settings, self.tg_theme, self.tg_updates): self.flow.append(tg)
         main_box.append(self.flow)
 
-        # --- Power Management ComboRow ---
+        # --- Power Management Segmented Control ---
         self.power_group = Adw.PreferencesGroup()
-        self.power_combo = Adw.ComboRow(title="Power Profile")
+        self.power_row = Adw.ActionRow(title="Power Profile")
         power_icon = Gtk.Image.new_from_icon_name("power-profile-balanced-symbolic")
         power_icon.add_css_class("accent-icon")
-        self.power_combo.add_prefix(power_icon)
-        self.power_mapping = ["Balanced", "Performance", "Power Saver"]
+        self.power_row.add_prefix(power_icon)
+        
         self.power_cmds = {
             "Balanced": "tlpctl balanced && notify-send 'Power Profile' 'Switched to Balanced'",
             "Performance": "tlpctl performance && notify-send 'Power Profile' 'Switched to Performance'",
             "Power Saver": "tlpctl power-saver && notify-send 'Power Profile' 'Switched to Power Saver'"
         }
-        self.power_combo.set_model(Gtk.StringList.new(self.power_mapping))
-        self.power_combo.connect("notify::selected", self._on_power_selected)
-        self.power_group.add(self.power_combo)
+
+        self.power_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.power_box.add_css_class("linked")
+        self.power_box.set_valign(Gtk.Align.CENTER)
+        self.power_box.set_margin_top(8)
+        self.power_box.set_margin_bottom(8)
+
+        self.btn_save = Gtk.ToggleButton(icon_name="power-profile-power-saver-symbolic")
+        self.btn_save.set_tooltip_text("Power Saver")
+        
+        self.btn_bal = Gtk.ToggleButton(icon_name="power-profile-balanced-symbolic")
+        self.btn_bal.set_tooltip_text("Balanced")
+        
+        self.btn_perf = Gtk.ToggleButton(icon_name="power-profile-performance-symbolic")
+        self.btn_perf.set_tooltip_text("Performance")
+        
+        self.btn_bal.set_group(self.btn_save)
+        self.btn_perf.set_group(self.btn_save)
+
+        self.btn_save.connect("toggled", self._on_power_toggled, "Power Saver")
+        self.btn_bal.connect("toggled", self._on_power_toggled, "Balanced")
+        self.btn_perf.connect("toggled", self._on_power_toggled, "Performance")
+
+        for btn in (self.btn_save, self.btn_bal, self.btn_perf): 
+            self.power_box.append(btn)
+            
+        self.power_row.add_suffix(self.power_box)
+        self.power_group.add(self.power_row)
         main_box.append(self.power_group)
 
         # --- Hardware Sliders Injection ---
@@ -2080,17 +2118,15 @@ class QuickPanalWindow(Adw.ApplicationWindow):
         else: self.tg_blur.update_state(icon="edit-opacity-symbolic", css_class="normal", tooltip="Visuals: Performance Mode\nLMB: Toggle")
 
     def _apply_power_profile(self, profile: str):
-        mapping = {"balanced": 0, "performance": 1, "power-saver": 2}
-        idx = mapping.get(profile)
-        if idx is not None and self.power_combo.get_selected() != idx:
+        mapping = {"balanced": self.btn_bal, "performance": self.btn_perf, "power-saver": self.btn_save}
+        target_btn = mapping.get(profile)
+        if target_btn and not target_btn.get_active():
             self._updating_power = True
-            self.power_combo.set_selected(idx)
+            target_btn.set_active(True)
             self._updating_power = False
 
-    def _on_power_selected(self, *args):
-        if self._updating_power: return
-        idx = self.power_combo.get_selected()
-        profile_name = self.power_mapping[idx]
+    def _on_power_toggled(self, button: Gtk.ToggleButton, profile_name: str):
+        if not button.get_active() or self._updating_power: return
         cmd = self.power_cmds.get(profile_name)
         if cmd: execute_cmd(cmd)
 
