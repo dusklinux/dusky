@@ -164,6 +164,7 @@ declare RIGHT_ARROW_ZONE=""
 # Selection State
 declare -A SELECTIONS=()
 declare -A DESCRIPTIONS=()
+declare -A INSTALLED_PKGS=()
 
 # Execution State
 declare -i DO_INSTALL=0
@@ -203,6 +204,11 @@ trim() {
 # --- Core Logic Engine ---
 
 parse_data() {
+    # Pre-cache installed packages for O(1) rendering checks
+    while read -r _inst_pkg; do
+        INSTALLED_PKGS["$_inst_pkg"]=1
+    done < <(pacman -Qq 2>/dev/null || true)
+
     local line category pkg desc
     local -A category_map
     local -i cat_idx
@@ -321,6 +327,8 @@ render_item_list() {
 
         if [[ "$selected" == "true" ]]; then
             check_mark="${C_GREEN}[x]${C_RESET}"
+        elif [[ -n "${INSTALLED_PKGS[$item]:-}" ]]; then
+            check_mark="${C_GREEN}[✓]${C_RESET}"
         else
             check_mark="${C_GREY}[ ]${C_RESET}"
         fi
