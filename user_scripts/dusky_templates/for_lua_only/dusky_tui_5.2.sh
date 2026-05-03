@@ -13,7 +13,7 @@ shopt -s extglob
 
 : "${XDG_CONFIG_HOME:=${HOME}/.config}"
 declare CONFIG_FILE="${DUSKY_CONFIG_FILE:-${XDG_CONFIG_HOME}/hypr/hyprland.lua}"
-declare -r APP_TITLE="Hyprland Lua Config Editor"
+declare -r APP_TITLE="Dusky Config Editor"
 declare -r APP_VERSION="v5.2.0-lua"
 
 # Parser limits for untrusted config evaluation.

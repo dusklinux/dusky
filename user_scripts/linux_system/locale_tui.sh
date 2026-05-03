@@ -12,7 +12,7 @@ shopt -s extglob
 # USER CONFIGURATION
 # =============================================================================
 
-declare -r APP_TITLE="Arch System Region Manager"
+declare -r APP_TITLE="Dusky System Region Manager"
 declare -r APP_VERSION="v1.0.1"
 
 # Dimensions & layout.

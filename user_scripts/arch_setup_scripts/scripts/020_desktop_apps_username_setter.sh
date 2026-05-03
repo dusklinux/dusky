@@ -64,6 +64,7 @@ readonly TARGET_FILES=(
     "dusky_input.desktop"
     "dusky_gsettings.desktop"
     "dusky_keybinds.desktop"
+    "dusky_locale_tui.desktop"
     "dusky_monitor.desktop"
     "dusky_matugen_presets.desktop"
     "dusky_network.desktop"
