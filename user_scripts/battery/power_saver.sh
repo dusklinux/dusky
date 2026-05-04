@@ -157,7 +157,9 @@ set_hardware_profiles() {
                 asus_out=$(asusctl profile get 2>/dev/null || true)
                 # Zero-fork Bash regex to extract the Active Profile name
                 if [[ "$asus_out" =~ Active[[:space:]]profile:[[:space:]]*([A-Za-z]+) ]]; then
-                    save_state "asus_profile" "${BASH_REMATCH[1]}"
+                    # Force Title Case via native Bash parameter expansion
+                    local matched_prof="${BASH_REMATCH[1]^}"
+                    save_state "asus_profile" "$matched_prof"
                 fi
             fi
         fi
@@ -251,11 +253,18 @@ set_hardware_profiles() {
             sudo tlp ac || true
         fi
 
+        # SYNCHRONIZATION BARRIER:
+        # Give tlp-pd and asusd 1 full second to finish broadcasting and processing 
+        # ACPI/D-Bus power-state events before we explicitly override the asusctl profile.
+        sleep 1
+
         # ASUSCTL (Stateful Restore)
         if has_cmd asusctl; then
             local prev_asus
             prev_asus=$(get_state "asus_profile")
             if [[ -n "$prev_asus" ]]; then
+                # Strictly enforce Title Case for asusctl compliance (Quiet, Balanced, Performance)
+                prev_asus="${prev_asus^}"
                 log_info "Restoring asusctl profile to ${prev_asus}..."
                 asusctl profile set "$prev_asus" || true
                 clear_state "asus_profile"
