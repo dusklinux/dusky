@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# =============================================================================
+# ==============================================================================
 # Dusky Power Management Orchestrator (Elite Edition)
 # A monolithic, intelligent power state manager for Arch/Hyprland ecosystems.
 # Optimized for zero-fork I/O, strict UWSM session isolation, Async DDC/CI,
 # highly resilient process termination, and 100% modular configuration.
-# =============================================================================
+# ==============================================================================
 
 set -euo pipefail
 
@@ -41,6 +41,34 @@ readonly -a TARGET_SYSTEM_SERVICES=("firewalld" "vsftpd" "waydroid-container" "l
 
 # Note: 'hypridle' explicitly removed to preserve Wayland DPMS idle power-saving management.
 readonly -a TARGET_USER_SERVICES=("battery_notify" "update_checker.timer" "osd_lock" "blueman-applet" "gvfs-daemon" "gvfs-metadata" "network_meter" "dusky_quickpanal" "dusky")
+
+# ==============================================================================
+#  USER CONFIGURATION AREA — Custom Workflows
+# ==============================================================================
+# Add custom commands to execute during the power transition lifecycles.
+# Commands are evaluated safely in an isolated subshell to prevent crashes.
+# *ENABLE_COMMANDS is for when enabling power saver
+# *DISABLE_COMMANDS is for when disableing power saver
+
+readonly -a PRE_ENABLE_COMMANDS=(
+    # e.g., "killall some_custom_app"
+    "command -v warp-cli &>/dev/null && warp-cli disconnect || true"
+)
+
+readonly -a POST_ENABLE_COMMANDS=(
+    # e.g., "notify-send 'Power Saver Mode Enabled'"
+    "sudo systemctl stop warp-svc.service || true"
+)
+
+readonly -a PRE_DISABLE_COMMANDS=(
+    # e.g., "warp-cli connect"
+)
+
+readonly -a POST_DISABLE_COMMANDS=(
+    # e.g., "notify-send 'Performance Mode Restored'"
+
+)
+# ==============================================================================
 
 # --- INITIALIZATION ---
 mkdir -p "${STATE_DIR}"
@@ -84,6 +112,30 @@ ensure_root() {
         log_info "Privilege escalation required for hardware/service modules."
         sudo -v || { log_error "Sudo authentication failed."; exit 1; }
     fi
+}
+
+# --- UTILITY: CUSTOM COMMAND EXECUTION ---
+# Safely executes arbitrary string commands from the user arrays.
+# Borrows logic from Dusky Fleet Patcher for high resilience.
+execute_custom_commands() {
+    local -n cmd_array=$1
+    if ((${#cmd_array[@]} == 0)); then return 0; fi
+
+    local cmd result
+    for cmd in "${cmd_array[@]}"; do
+        # Skip empty strings or comment-only strings
+        [[ "$cmd" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${cmd//[[:space:]]/}" ]] && continue
+
+        log_info "Executing hook: $cmd"
+        result=0
+        # Safe execution isolated from the main orchestrator thread
+        bash -c "set -eo pipefail; $cmd" || result=$?
+        
+        if (( result != 0 )); then
+            log_warn "Hook command failed (exit $result): $cmd"
+        fi
+    done
 }
 
 # --- UTILITY: PROCESS MANAGEMENT ---
@@ -420,7 +472,6 @@ manage_services() {
         done
 
         if has_cmd playerctl; then playerctl -a pause || true; fi
-        if has_cmd warp-cli; then warp-cli disconnect &>/dev/null || true; fi
 
         # System Services
         for svc in "${TARGET_SYSTEM_SERVICES[@]}"; do
@@ -575,6 +626,8 @@ enable_power_saver() {
     ensure_root
     save_state "power_saver_active" "true"
 
+    execute_custom_commands PRE_ENABLE_COMMANDS
+
     manage_animations "enable"
     manage_services "enable"
     set_hardware_profiles "enable"
@@ -587,6 +640,9 @@ enable_power_saver() {
 
     # Update global GUI state
     printf "true" > "${GUI_STATE_FILE}"
+    
+    execute_custom_commands POST_ENABLE_COMMANDS
+    
     log_step "POWER SAVING ENABLED. System optimized."
 }
 
@@ -598,6 +654,8 @@ disable_power_saver() {
     fi
 
     ensure_root
+
+    execute_custom_commands PRE_DISABLE_COMMANDS
 
     manage_animations "disable"
     set_hardware_profiles "disable"
@@ -613,6 +671,9 @@ disable_power_saver() {
     
     # Update global GUI state
     printf "false" > "${GUI_STATE_FILE}"
+    
+    execute_custom_commands POST_DISABLE_COMMANDS
+    
     log_step "PERFORMANCE MODE RESTORED. Constraints lifted."
 }
 
