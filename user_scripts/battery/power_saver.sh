@@ -52,12 +52,12 @@ readonly -a TARGET_USER_SERVICES=("battery_notify" "update_checker.timer" "osd_l
 
 readonly -a PRE_ENABLE_COMMANDS=(
     # e.g., "killall some_custom_app"
-    "command -v warp-cli &>/dev/null && warp-cli disconnect || true"
+    "command -v warp-cli &>/dev/null && warp-cli disconnect &>/dev/null || true"
 )
 
 readonly -a POST_ENABLE_COMMANDS=(
     # e.g., "notify-send 'Power Saver Mode Enabled'"
-    "sudo systemctl stop warp-svc.service || true"
+    "sudo systemctl stop warp-svc.service &>/dev/null || true"
 )
 
 readonly -a PRE_DISABLE_COMMANDS=(
