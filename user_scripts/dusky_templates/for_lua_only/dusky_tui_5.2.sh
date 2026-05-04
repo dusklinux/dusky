@@ -5,7 +5,7 @@
 # Based on TUI Template v5.2
 # -----------------------------------------------------------------------------
 
-set -E -o pipefail
+set -Eeuo pipefail
 shopt -s extglob
 
 # =============================================================================
@@ -2670,14 +2670,14 @@ main() {
     local key
     while true; do
         # FIX: Protect the UI rendering math and shorthands
-        draw_ui || true
+        draw_ui
         
         if IFS= read -rsn1 -t "$READ_LOOP_TIMEOUT" key < /dev/tty; then
             # FIX: Replaced '&&' shorthand with standard if-statement
             if (( RESIZE_PENDING )); then RESIZE_PENDING=0; fi
             
             # FIX: Protect the navigation and input router math
-            handle_input_router "$key" || true
+            handle_input_router "$key"
         else
             if (( RESIZE_PENDING )); then RESIZE_PENDING=0; fi
         fi
