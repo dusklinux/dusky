@@ -55,8 +55,8 @@ if not logging.getLogger().handlers:
 LOG: Final = logging.getLogger(APP_ID)
 
 COMMAND_ENV: Final = os.environ.copy()
-COMMAND_ENV["LC_ALL"] = "C"
-COMMAND_ENV["LANG"] = "C"
+COMMAND_ENV["LC_ALL"] = "C.UTF-8"
+COMMAND_ENV["LANG"] = "C.UTF-8"
 
 type CommandArg = str | os.PathLike[str]
 type FloatGetter = Callable[[], float | None]
@@ -1915,7 +1915,24 @@ class QuickPanalWindow(Adw.ApplicationWindow):
         self.flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, valign=Gtk.Align.START, halign=Gtk.Align.CENTER, max_children_per_line=5, min_children_per_line=5, column_spacing=14, row_spacing=14)
         self.tg_wifi = QuickIconToggle("network-wireless-symbolic", "Wi-Fi\nLMB: Network Manager", on_left=f"uwsm app -- kitty --class dusky_network.sh {HOME}/user_scripts/network_manager/dusky_network.sh")
         self.tg_bt = QuickIconToggle("bluetooth-active-symbolic", "Bluetooth\nLMB: Blueman", on_left="uwsm app -- blueman-manager")
-        self.tg_perf = QuickIconToggle("utilities-system-monitor-symbolic", "Performance\nLMB: Monitor | RMB: Services", on_left=f"uwsm app -- kitty --class services_and_process_terminator.sh {HOME}/user_scripts/performance/services_and_process_terminator.sh", on_right=f"uwsm app -- kitty --class dusky_service_toggle.sh {HOME}/user_scripts/services/dusky_service_toggle.sh")
+
+# --- [MODIFIED: FOOT TERMINAL INTEGRATION] ---
+        power_saver_toggle_cmd = (
+            f"uwsm app -- foot --app-id=power_saver.sh bash -c '"
+            f"if [ \"$(cat {HOME}/.config/dusky/settings/power_saver_state 2>/dev/null)\" = \"true\" ]; then "
+            f"{HOME}/user_scripts/battery/power_saver.sh --disable; "
+            f"else {HOME}/user_scripts/battery/power_saver.sh --enable; fi'"
+        )
+
+        self.tg_perf = QuickIconToggle(
+            "power-profile-performance-symbolic",
+            "Power & Performance\nLMB: Toggle Power Saver | MMB: Monitor | RMB: Services",
+            on_left=power_saver_toggle_cmd,
+            on_middle=f"uwsm app -- foot --app-id=services_and_process_terminator.sh {HOME}/user_scripts/performance/services_and_process_terminator.sh",
+            on_right=f"uwsm app -- foot --app-id=dusky_service_toggle.sh {HOME}/user_scripts/services/dusky_service_toggle.sh"
+        )
+        # ---------------------------------------------
+
         self.tg_idle = QuickIconToggle("timer-symbolic", "Hypridle\nLMB: Toggle | RMB: Lock Screen", on_left=f"uwsm app -- {HOME}/user_scripts/waybar/toggle_hypridle.sh", on_right=f"uwsm-app -- {HOME}/user_scripts/hyprlock/lock.sh")
         self.tg_dnd = QuickIconToggle("notification-symbolic", "Do Not Disturb", on_left=f"{HOME}/user_scripts/rofi/rofi_mako.sh", on_middle=f"{HOME}/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar", on_right="makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar")
         self.tg_blur = QuickIconToggle("edit-opacity-symbolic", "Visuals\nLMB: Toggle Blur/Shadow", on_left=f"uwsm app -- {HOME}/user_scripts/hypr/hypr_blur_opacity_shadow_toggle.sh toggle")
@@ -2023,11 +2040,31 @@ class QuickPanalWindow(Adw.ApplicationWindow):
         self.pool.submit(self._fetch_hardware_metrics)
         self.pool.submit(self._fetch_network)
         self.pool.submit(self._fetch_updates)
+        self.pool.submit(self._fetch_power_saver) # [MODIFIED: POWER SAVER POLLING INTEGRATION]
         
         for row in self._slider_rows: row.refresh_async()
         if PLAYERCTL: self.media_module.refresh_async()
         
         return GLib.SOURCE_CONTINUE
+
+    # --- [MODIFIED: POWER SAVER LOGIC] ---
+    def _fetch_power_saver(self):
+        state_file = f"{HOME}/.config/dusky/settings/power_saver_state"
+        is_active = False
+        try:
+            with open(state_file, "r") as f:
+                is_active = f.read().strip() == "true"
+        except FileNotFoundError:
+            pass
+        GLib.idle_add(self._apply_power_saver, is_active)
+
+    def _apply_power_saver(self, is_active: bool):
+        tooltip = "Power & Performance\nLMB: Toggle Power Saver\nMMB: Process Terminator | RMB: Services"
+        if is_active:
+            self.tg_perf.update_state(icon="battery-good-charging-symbolic", css_class="power-saver-active", tooltip=tooltip)
+        else:
+            self.tg_perf.update_state(icon="ac-adapter", css_class="normal", tooltip=tooltip)
+    # --------------------------------------
 
     def _fetch_weather(self):
         data = fetch_json_output(f"python3 {HOME}/user_scripts/waybar/weather.py")
@@ -2200,6 +2237,16 @@ box.quick-icon-toggle:hover { background-color: rgba(255, 255, 255, 0.12); }
 box.quick-icon-toggle.active { background-color: alpha(@accent_bg_color, 0.3); border: 1px solid alpha(@accent_bg_color, 0.5); }
 box.quick-icon-toggle.active image { color: @accent_color; }
 box.quick-icon-toggle.normal { opacity: 1.0; }
+
+/* --- [MODIFIED: POWER SAVER CSS INJECTION] --- */
+box.quick-icon-toggle.power-saver-active {
+    background-color: alpha(#a6e3a1, 0.3);
+    border: 1px solid alpha(#a6e3a1, 0.5);
+}
+box.quick-icon-toggle.power-saver-active image {
+    color: #a6e3a1;
+}
+/* --------------------------------------------- */
 
 .notification-badge {
     background-color: @accent_color ; color: black;
