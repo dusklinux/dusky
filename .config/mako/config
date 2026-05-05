@@ -107,3 +107,36 @@ format=<b>%s</b>\n%b
 # border-size=0
 # margin=0,0,50,0
 default-timeout=1000
+
+# ======================================
+# DUSKY KEYS VISUALIZER
+# ======================================
+[app-name=dusky-keys]
+# 1. Position
+anchor=bottom-center
+margin=0,0,20,0
+
+# 2. Dimensions
+width=200
+height=40
+padding=0
+
+# 3. Create the "Oval / Pill" shape
+border-radius=20
+border-size=2
+
+# 4. Center align and format the text properly
+icons=0
+text-alignment=center
+font=monospace 14
+format=%s
+
+# 5. Visuals
+# Comment these out so it inherits your Matugen theme automatically
+# background-color=#111111E6
+# text-color=#FFFFFF
+# border-color=#555555
+
+# ======================================
+# 
+# ======================================
