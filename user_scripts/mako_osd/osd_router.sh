@@ -79,7 +79,7 @@ main() {
             
             local bright
             bright=$(brightnessctl -m | awk -F, '{print int($4 + 0.5)}')
-            notify "display-brightness" "Brightness: ${bright}%" "$bright"
+            notify "gpm-brightness-lcd" "Brightness: ${bright}%" "$bright"
             
             exec {lock_fd}>&-
             ;;
