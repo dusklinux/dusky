@@ -45,7 +45,7 @@ readonly SERVICES_CONFIG=(
     "$HOME/user_scripts/dusky_system/quickpanal/service/dusky_quickpanal.service | disable"
 
     # dusky osd
-    "$HOME/user_scripts/mako_osd/osd_lock.service | enable"
+    "$HOME/user_scripts/mako_osd/osd_routher/osd_lock.service | enable"
 )
 
 # XDG Standard: ~/.config/systemd/user

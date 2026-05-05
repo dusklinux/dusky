@@ -46,7 +46,7 @@ readonly SERVICES_CONFIG=(
 
 
     # dusky osd
-    "$HOME/user_scripts/mako_osd/osd_lock.service | enable"
+    "$HOME/user_scripts/mako_osd/osd_routher/osd_lock.service | enable"
 )
 
 # XDG Standard: ~/.config/systemd/user

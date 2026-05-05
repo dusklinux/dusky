@@ -6,7 +6,7 @@ After=graphical-session.target
 [Service]
 Type=simple
 # Ensure this path matches the location of your script
-ExecStart=/usr/bin/python3 %h/user_scripts/mako_osd/osd_router.py
+ExecStart=/usr/bin/python3 %h/user_scripts/mako_osd/osd_routher/osd_router.py
 Restart=on-failure
 RestartSec=2
 
