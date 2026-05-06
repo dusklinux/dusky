@@ -1,0 +1,176 @@
+@import url("../../.config/matugen/generated/waybar-colors.css");
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSLUCENCY CONTROLS (GLASSY MODE)
+   Tweak the decimals (0.0 to 1.0) here to adjust granular glassiness.
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color glass_module            alpha(@surface_container, 0.6);
+@define-color glass_module_low        alpha(@surface_container_low, 0.6);
+@define-color glass_module_high       alpha(@surface_container_high, 0.6);
+@define-color glass_primary_container alpha(@primary_container, 0.6);
+@define-color glass_tooltip           alpha(@surface_container_highest, 0.15);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* WAYBAR_OPAQUE_SWITCH_START */
+
+@define-color glass_module            @surface_container;
+@define-color glass_module_low        @surface_container_low;
+@define-color glass_module_high       @surface_container_high;
+@define-color glass_primary_container @primary_container;
+@define-color glass_tooltip           @surface_container_highest;
+
+/* WAYBAR_OPAQUE_SWITCH_END */
+
+* {
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono NF", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
+    font-size: 13px;
+    font-weight: bold;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+    margin: 2px;
+    box-shadow: none;
+    background-image: none;
+}
+
+window#waybar {
+    background: transparent;
+    color: @on_surface;
+}
+
+/* --- TOOLTIP STYLING --- */
+tooltip {
+    background-color: @glass_tooltip;
+    border: 1px solid alpha(@outline_variant, 0.5);
+    border-radius: 10px;
+}
+
+tooltip label {
+    color: @on_surface;
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+/* UNIFIED CAPSULE STYLE */
+#clock,
+#workspaces,
+#group-stats,
+#pulseaudio,
+#backlight,
+#bluetooth,
+#battery,
+#custom-network,
+#custom-notification,
+#custom-updates,
+#custom-inhibit-suspend {
+    background-color: @glass_module;
+    color: @on_surface;
+    border-radius: 10px;
+    margin: 3px 1px; 
+    padding: 6px 2px 6px 3px;
+}
+
+/* --- TOP SECTION --- */
+#clock {
+    background-color: @glass_primary_container;
+    color: @on_primary_container;
+    font-size: 10px; 
+    padding-bottom: 8px;
+}
+
+/* Drawer modules inheriting capsule sizing */
+#custom-notification,
+#custom-updates {
+    font-size: 10px;
+}
+
+#group-stats {
+    background-color: @glass_module_low;
+    padding: 8px 0;
+}
+
+#cpu label, 
+#memory label, 
+#temperature label {
+    -gtk-icon-transform: scale(1);
+    margin: 0 1px; 
+}
+
+#cpu, #memory, #temperature {
+    background: transparent;
+    margin: 4px 0;
+    padding: 0px 1px 0px 1px;
+    font-size: 10px;
+    color: @on_surface_variant;
+    min-width: 22px;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 1.0);
+}
+
+#cpu.critical, 
+#memory.critical, 
+#temperature.critical {
+    color: @error;
+}
+
+/* --- CENTER SECTION --- */
+#workspaces {
+    background-color: @glass_module_high;
+    padding: 2px 0;
+}
+
+#workspaces button {
+    padding: 2px 0;
+    margin: 1px 2px;
+    border-radius: 9px;
+    color: @on_surface_variant;
+    background: transparent;
+    transition: all 0.2s ease;
+}
+
+#workspaces button.active {
+    background-color: @primary;
+    color: @on_primary;
+}
+
+#workspaces button.urgent {
+    background-color: @error;
+    color: @on_error;
+}
+
+#workspaces button:hover {
+    background-color: @surface_container_highest;
+}
+
+/* --- BOTTOM SECTION --- */
+#custom-network {
+    font-size: 10px;
+    padding: 8px 2px 8px 0px;
+}
+
+#pulseaudio, #backlight, #bluetooth, #battery {
+    font-size: 10px; 
+    padding: 8px 0;
+}
+
+#battery.charging { color: @tertiary; }
+#battery.warning { color: @error; }
+
+#custom-power {
+    background-color: transparent;
+    color: @error;
+    font-size: 16px;
+    margin-top: 6px;
+    margin-bottom: 2px;
+    padding: 0;
+}
+
+#custom-power:hover {
+    color: @error_container;
+}
+
+#custom-inhibit-suspend {
+    font-size: 10px;
+}

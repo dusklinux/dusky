@@ -191,7 +191,7 @@ generate_terminal_block() {
     printf '%s\n' \
         "${MARKER_START}" \
         'unbind = $mainMod, V' \
-        'bindd = $mainMod, V, Clipboard History, exec, $scripts/clipboard/close_terminal_clipboard.sh uwsm-app -- kitty --class terminal_clipboard.sh -e "$scripts/clipboard/terminal_clipboard.sh"' \
+        'bind = $mainMod, V, exec, ~/user_scripts/clipboard/close_terminal_clipboard.sh foot --app-id=terminal_clipboard.sh ~/user_scripts/clipboard/terminal_clipboard.sh' \
         "${MARKER_END}"
 }
 
@@ -201,7 +201,7 @@ generate_terminal_block() {
 generate_functional_lines() {
     printf '%s\n' \
         'unbind = $mainMod, V' \
-        'bindd = $mainMod, V, Clipboard History, exec, $scripts/clipboard/close_terminal_clipboard.sh uwsm-app -- kitty --class terminal_clipboard.sh -e "$scripts/clipboard/terminal_clipboard.sh"'
+        'bind = $mainMod, V, exec, ~/user_scripts/clipboard/close_terminal_clipboard.sh foot --app-id=terminal_clipboard.sh ~/user_scripts/clipboard/terminal_clipboard.sh'
 }
 
 # --- Helper: Write state file with trailing newline --------------------------

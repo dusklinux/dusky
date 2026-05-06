@@ -12,10 +12,16 @@ IFS=$'\n\t'
 trap 'printf "\n[WARN] Script interrupted. Exiting.\n" >&2; exit 130' INT TERM
 
 # --- Configuration ---
-readonly TARGET_URL='https://addons.mozilla.org/en-US/firefox/addon/pywalfox/'
 readonly BROWSER_BIN='firefox'
 readonly NATIVE_HOST_PKG='python-pywalfox'
 readonly THEME_ENGINE_PKG='matugen'
+
+# Autonomous Extension Configs
+# Using Mozilla's official dynamic routing endpoint for enterprise policies
+readonly XPI_URL="https://addons.mozilla.org/firefox/downloads/latest/pywalfox/latest.xpi"
+readonly FIREFOX_ROOT="/usr/lib/firefox"
+readonly FIREFOX_DIST="${FIREFOX_ROOT}/distribution"
+readonly POLICIES_FILE="${FIREFOX_DIST}/policies.json"
 
 # --- Visual Styling ---
 if command -v tput &>/dev/null && (( $(tput colors 2>/dev/null || echo 0) >= 8 )); then
@@ -48,36 +54,35 @@ preflight() {
     if ((EUID == 0)); then die 'Run as normal user, not Root.'; fi
 }
 
-# --- Main Logic ---
-main() {
-    preflight
+show_help() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
 
-    # 1. Interactive Prompt (No Timeout)
-    printf '\n%b>>> OPTIONAL SETUP: FIREFOX, PYWALFOX & MATUGEN%b\n' "${C_WARN}" "${C_RESET}"
-    printf 'This will install Firefox, Matugen, and the Pywalfox backend.\n'
-    printf '%bDo you want to proceed? [y/N]:%b ' "${C_BOLD}" "${C_RESET}"
-    
-    local response=''
-    read -r response || true
+Automated provisioning for Firefox, Matugen, and the Pywalfox ecosystem via Enterprise Policies.
 
-    if [[ ! "${response,,}" =~ ^y(es)?$ ]]; then
-        log_info 'Skipping setup by user request.'
-        exit 0
-    fi
+Options:
+  -h, --help       Show this help message and exit.
+  --ext-only       Skip package checks and native host rebuilding. Only reinstalls/updates 
+                   the Pywalfox Firefox extension policy to pull the latest version.
+EOF
+}
 
-    # 2. Standard Packages
+# --- Core Modules ---
+
+install_core_packages() {
     log_info "Ensuring ${BROWSER_BIN} and ${THEME_ENGINE_PKG} are installed..."
     if sudo pacman -S --needed --noconfirm "${BROWSER_BIN}" "${THEME_ENGINE_PKG}"; then
         log_success "Core packages verified."
     else
         die "Failed to install standard packages."
     fi
+}
 
-    # 3. The Critical Pywalfox Logic (The "Smart" Part)
+install_native_backend() {
     log_info "Handling ${NATIVE_HOST_PKG}..."
     local helper
     if helper=$(check_aur_helper); then
-        # Check if installed, then NUKE it to force clean state
+        # Idempotent cleanup
         if pacman -Qq "${NATIVE_HOST_PKG}" &>/dev/null; then
             log_warn "Existing ${NATIVE_HOST_PKG} found. Removing to enforce clean rebuild..."
             sudo pacman -Rns --noconfirm "${NATIVE_HOST_PKG}" || true
@@ -87,8 +92,11 @@ main() {
         if "$helper" -S --rebuild --noconfirm "${NATIVE_HOST_PKG}"; then
             log_success "${NATIVE_HOST_PKG} ready."
             
-            # Auto-register manifest
             if command -v pywalfox &>/dev/null; then
+                # 0-Day Patch: Ensure the user's mozilla directory exists before manifest registration
+                log_info "Initializing Mozilla directories for 0-day setup..."
+                mkdir -p "${HOME}/.mozilla/native-messaging-hosts"
+                
                 log_info "Refreshing manifest..."
                 pywalfox install || log_warn "Manifest update failed (non-fatal)."
             fi
@@ -98,31 +106,100 @@ main() {
     else
         log_warn "No AUR helper found. Skipping Pywalfox backend."
     fi
+}
 
-    # 4. Instructions
+deploy_extension_policy() {
+    log_info "Deploying Pywalfox Enterprise Extension Policy..."
+    
+    if [[ ! -d "$FIREFOX_ROOT" ]]; then
+        die "Firefox root not found at $FIREFOX_ROOT. Installation may be corrupted."
+    fi
+
+    # Clean up any legacy, root-owned physical files from previous script iterations
+    if [[ -f "${FIREFOX_ROOT}/extensions/pywalfox.xpi" ]]; then
+        log_warn "Cleaning up legacy root-owned extension file..."
+        sudo rm -f "${FIREFOX_ROOT}/extensions/pywalfox.xpi"
+    fi
+
+    # Create the distribution directory and ensure strict permissions
+    sudo mkdir -p "$FIREFOX_DIST"
+    sudo chmod 755 "$FIREFOX_DIST"
+
+    # Write the policy payload
+    # 'normal_installed' acts autonomously but prevents the "isManaged" GUI lockout
+    sudo tee "$POLICIES_FILE" > /dev/null <<EOF
+{
+  "policies": {
+    "ExtensionSettings": {
+      "*": {
+        "installation_mode": "allowed"
+      },
+      "pywalfox@frewacom.org": {
+        "installation_mode": "normal_installed",
+        "install_url": "${XPI_URL}"
+      }
+    }
+  }
+}
+EOF
+
+    sudo chmod 644 "$POLICIES_FILE"
+    log_success "Enterprise policy applied."
+}
+
+finish_setup() {
     hash -r 2>/dev/null || true
     if [[ -t 1 ]]; then clear; fi
 
     printf '%b%b' "${C_BOLD}" "${C_BLUE}"
     cat <<'BANNER'
    ╔═══════════════════════════════════════╗
-   ║      PYWALFOX SETUP ASSISTANT         ║
+   ║      PYWALFOX SETUP COMPLETED         ║
    ║      Arch / Hyprland / UWSM           ║
    ╚═══════════════════════════════════════╝
 BANNER
     printf '%b\n' "${C_RESET}"
-    printf "%b[Action Required]%b: Open Firefox -> Install Extensions -> Pywalfox -> 'Fetch Pywal Colors'\n" "${C_WARN}" "${C_RESET}"
-    printf "Press %b[ENTER]%b to launch Firefox..." "${C_GREEN}" "${C_RESET}"
-    read -r || true
+    log_success "Zero-touch setup finished successfully."
+    log_info "The extension will automatically install the first time you open Firefox."
+}
 
-    # 5. Launch Browser (UWSM Aware)
-    log_info "Launching..."
-    if command -v uwsm &>/dev/null; then
-        uwsm app -- "${BROWSER_BIN}" "${TARGET_URL}" &>/dev/null &
+# --- Main Logic Execution ---
+main() {
+    preflight
+
+    # Argument Parsing
+    local ext_only=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            --ext-only)
+                ext_only=1
+                shift
+                ;;
+            *)
+                log_warn "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+
+    printf '\n%b>>> AUTOMATED SETUP: FIREFOX, PYWALFOX & MATUGEN%b\n' "${C_BLUE}" "${C_RESET}"
+
+    if (( ext_only == 1 )); then
+        log_info "Running in EXTENSION-ONLY mode..."
+        deploy_extension_policy
     else
-        nohup "${BROWSER_BIN}" "${TARGET_URL}" &>/dev/null 2>&1 &
+        log_info "Running FULL autonomous 0-day installation..."
+        install_core_packages
+        install_native_backend
+        deploy_extension_policy
     fi
-    disown &>/dev/null || true
+
+    finish_setup
 }
 
 main "$@"

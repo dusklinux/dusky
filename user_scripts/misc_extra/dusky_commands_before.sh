@@ -28,6 +28,7 @@ declare -ra FLEET_COMMANDS=(
     "U | sed -i 's/^zen$/zen-browser/' ~/.config/dusky/settings/browser_switch.smart || true"
     "U | mkdir -p ~/.config/opencode/themes || true"
     "U | mkdir -p ~/.config/Kvantum/matugen || true"
+    "U | systemctl --user disable --now dusky_sliders.service || true"
     # --- System Services ---
 #    "U | systemctl --user disable dusky.service || true"
 #    "S | systemctl enable --now tlp.service || true"
@@ -95,8 +96,14 @@ init_sudo() {
     # Hardened Keepalive
     (
         exec 9>&- # Ensure keepalive subshell doesn't hold the flock
+        exec >/dev/null 2>&1 # FIX: Detach FDs so we don't hold the logger pipe open
+        
+        # Allow immediate termination without leaving orphaned sleep processes
+        trap 'exit 0' TERM
+        
         while kill -0 $$ 2>/dev/null; do
-            sleep "$SUDO_REFRESH_INTERVAL"
+            sleep "$SUDO_REFRESH_INTERVAL" &
+            wait $! 2>/dev/null
             sudo -n true 2>/dev/null || exit 0
         done
     ) &
@@ -106,7 +113,7 @@ init_sudo() {
 
 # 7. Cleanup & I/O Flushing
 cleanup() {
-    # FIX: Capture the incoming exit code BEFORE executing any commands that reset $?
+    # Capture the incoming exit code BEFORE executing any commands that reset $?
     local exit_code=$?
     set +o errexit
     
@@ -172,7 +179,6 @@ main() {
             local cmd="${BASH_REMATCH[2]}"
             local entry_orig="${mode} | ${cmd}"
             
-            # FIX: Generate the hash in Phase 1 to accurately verify state
             local cmd_hash
             read -r cmd_hash _ < <(printf '%s' "$entry_orig" | sha256sum)
 
@@ -180,7 +186,6 @@ main() {
             parsed_cmds+=("$cmd")
             parsed_hashes+=("$cmd_hash")
 
-            # FIX: Only flag for sudo if the root command hasn't been executed yet
             if [[ "$mode" == "S" ]] && [[ -z "${COMPLETED_PATCHES[$cmd_hash]:-}" ]]; then
                 needs_sudo=1
             fi

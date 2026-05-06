@@ -1,0 +1,270 @@
+@import url("../../.config/matugen/generated/waybar-colors.css");
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSLUCENCY CONTROLS (GLASSY MODE)
+   Tweak the decimals (0.0 to 1.0) here to adjust granular glassiness.
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color glass_bar                       alpha(@surface, 0.6);
+@define-color glass_module                    alpha(@surface_container, 0.8);
+@define-color glass_hover_bg                  alpha(@on_secondary, 0.8);
+@define-color glass_hover_border              alpha(@secondary_container, 0.8);
+@define-color glass_launcher_hover_bg         alpha(@on_tertiary, 0.8);
+@define-color glass_launcher_hover_border     alpha(@tertiary_container, 0.8);
+@define-color glass_error_hover_bg            alpha(@on_error, 0.8);
+@define-color glass_error_hover_border        alpha(@error_container, 0.8);
+@define-color glass_primary_bg                alpha(@primary_container, 0.8);
+@define-color glass_primary_border            alpha(@primary_fixed_dim, 0.8);
+@define-color glass_primary_shadow            alpha(@primary, 0.7);
+@define-color glass_error_bg                  alpha(@error_container, 0.8);
+@define-color glass_muted_bg                  alpha(@secondary_fixed_dim, 0.8);
+@define-color glass_taskbar_bg                alpha(@secondary_container, 0.8);
+@define-color glass_taskbar_border_hover      alpha(@primary, 0.8);
+@define-color glass_taskbar_border_active     alpha(@tertiary, 0.8);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* WAYBAR_OPAQUE_SWITCH_START */
+@define-color glass_bar                       alpha(@surface, 0.6);
+@define-color glass_module                    @surface_container;
+@define-color glass_hover_bg                  @on_secondary;
+@define-color glass_hover_border              @secondary_container;
+@define-color glass_launcher_hover_bg         @on_tertiary;
+@define-color glass_launcher_hover_border     @tertiary_container;
+@define-color glass_error_hover_bg            @on_error;
+@define-color glass_error_hover_border        @error_container;
+@define-color glass_primary_bg                @primary_container;
+@define-color glass_primary_border            @primary_fixed_dim;
+@define-color glass_primary_shadow            @primary;
+@define-color glass_error_bg                  @error_container;
+@define-color glass_muted_bg                  @secondary_fixed_dim;
+@define-color glass_taskbar_bg                @secondary_container;
+@define-color glass_taskbar_border_hover      @primary;
+@define-color glass_taskbar_border_active     @tertiary;
+/* WAYBAR_OPAQUE_SWITCH_END */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RESET & FOUNDATIONS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+* {
+    border: none;
+    border-radius: 0;
+    font-family: "Atkinson Hyperlegible Next", "JetBrainsMono Nerd Font";
+    font-size: 14px;
+    min-height: 0;
+}
+
+window#waybar {
+    background: @glass_bar; 
+    color: @on_surface;      
+}
+
+tooltip {
+     border-radius: 12px;
+     background-color: @surface_container;
+     border: 1px solid @tertiary;
+}
+
+/* =========================================================
+   UNIVERSAL PILL STYLING
+   ========================================================= */
+
+#clock,
+#tray,
+#custom-notifs,
+#custom-net-speed,
+#custom-updates-trigger,
+#custom-updates,
+#network,
+#bluetooth,
+#pulseaudio.output,
+#battery,
+#backlight,
+#custom-launcher,
+#custom-firefox,
+#custom-terminal,
+#custom-text-editor,
+#custom-files,
+#custom-snip,
+#custom-clip,
+#custom-calculator,
+#custom-inhibit-suspend,
+#custom-lock,
+#custom-reboot,
+#custom-quit {
+    background: @glass_module;
+    padding: 2px 14px;
+    margin: 4px;
+    color: @on_surface;
+    border-radius: 25px; 
+    border: 3px solid transparent;
+    transition: all 0.3s ease-out;
+}
+
+/* =========================================================
+   GROUPED APPS STRIP (LEFT)
+   ========================================================= */
+
+#custom-firefox {
+    border-radius: 25px 0 0 25px;
+    margin-right: 2px;
+    padding-right: 10px;
+}
+
+#custom-terminal, 
+#custom-text-editor,
+#custom-files {
+    border-radius: 0px;
+    margin-left: 0px;
+    margin-right: 2px;
+}
+
+/* Snip serves as the right-cap of the pill when the drawer is closed */
+#custom-snip {
+    border-radius: 0 25px 25px 0;
+    margin-left: 0px;
+    margin-right: 0px;
+}
+
+/* The expanding drawer elements that slide out */
+#custom-clip {
+    border-radius: 0px;
+    margin-left: 2px;
+    margin-right: 2px;
+}
+
+#custom-calculator {
+    border-radius: 0 25px 25px 0;
+    margin-left: 0px;
+    margin-right: 0px;
+}
+
+/* =========================================================
+   FUSED CLOCK & BATTERY (FAR RIGHT)
+   ========================================================= */
+
+#clock {
+    border-radius: 25px 0 0 25px;
+    margin-right: 0px;
+    padding-right: 8px;
+}
+
+#battery {
+    border-radius: 0 25px 25px 0;
+    margin-left: 0px;
+    padding-left: 8px;
+}
+
+/* =========================================================
+   HOVER EFFECTS
+   ========================================================= */
+
+#backlight:hover,
+#battery:hover,
+#network:hover,
+#bluetooth:hover,
+#clock:hover,
+#pulseaudio.output:hover,
+#custom-snip:hover,
+#custom-clip:hover,
+#custom-calculator:hover,
+#custom-firefox:hover,
+#custom-terminal:hover,
+#custom-text-editor:hover,
+#custom-files:hover,
+#custom-updates-trigger:hover,
+#custom-updates:hover,
+#custom-notifs:hover,
+#custom-inhibit-suspend:hover {
+    color: @secondary;
+    background: @glass_hover_bg; 
+    border-color: @glass_hover_border;
+}
+
+#custom-launcher:hover {
+    color: @tertiary;
+    background: @glass_launcher_hover_bg;
+    border-color: @glass_launcher_hover_border;
+}
+
+#custom-reboot:hover,
+#custom-quit:hover,
+#custom-lock:hover {
+    color: @error;
+    background: @glass_error_hover_bg;
+    border-color: @glass_error_hover_border;
+}
+
+/* =========================================================
+   DYNAMIC NETWORK SPEED CLASSES
+   ========================================================= */
+
+#custom-net-speed.network-kb { 
+    color: @secondary; 
+    font-weight: bold;
+}
+
+#custom-net-speed.network-mb { 
+    color: @primary; 
+    background: @glass_primary_bg;
+    border-color: @glass_primary_border;
+    font-weight: 900;
+    text-shadow: 0 0 5px @glass_primary_shadow;
+}
+
+#custom-net-speed.network-disconnected { 
+    color: @error; 
+    background: @glass_error_bg;
+}
+
+/* =========================================================
+   STATE CLASSES
+   ========================================================= */
+
+#pulseaudio.muted {
+    background: @glass_muted_bg; 
+    color: @surface;
+}
+
+#custom-inhibit-suspend.disabled {
+    color: @tertiary;
+}
+
+/* =========================================================
+   WLR TASKBAR (CENTER)
+   ========================================================= */
+
+#taskbar {
+    background: @glass_module;
+    padding: 0 15px;
+    margin: 4px;
+    border: transparent;
+    border-radius: 25px;
+}
+
+#taskbar.empty {
+    background: transparent;
+    padding: 0;
+    margin: 0;
+}
+
+#taskbar button {
+    background: transparent;
+    padding: 0 8px;
+    margin: 0 2px;
+    border-bottom: 3px solid transparent;
+    transition: all 0.3s ease-out;
+    border-radius: 4px;
+}
+
+#taskbar button:hover {
+    background: @glass_taskbar_bg;
+    border-bottom-color: @glass_taskbar_border_hover;
+}
+
+#taskbar button.active {
+    background: @glass_taskbar_bg;
+    border-bottom-color: @glass_taskbar_border_active;
+}

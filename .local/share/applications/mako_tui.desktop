@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Mako TUI
+GenericName=Notification Configurator
+Comment=Customize Notifications
+Exec=uwsm-app -- kitty --class tui_mako.sh -e /home/dusk/user_scripts/mako_osd/mako_tui/tui_mako.sh
+Terminal=false
+Categories=Settings;Notifications;System;Utility;
+Keywords=dusky;mako;notifications;alert;dnd;notify;tui;config;settings;
+Icon=preferences-system-notifications
+StartupNotify=true
+StartupWMClass=tui_mako

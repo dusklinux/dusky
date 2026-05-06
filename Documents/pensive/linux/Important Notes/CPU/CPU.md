@@ -13,6 +13,20 @@
 
 ---
 
+
+some commands to run to find out about your cpu 
+
+```bash
+/lib/ld-linux-x86-64.so.2 --help
+```
+
+```bash
+sudo lshw -C cpu
+```
+
+```bash
+lscpu
+```
 ## Package Reference
 
 ### Core diagnostic packages

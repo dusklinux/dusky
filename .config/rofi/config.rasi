@@ -10,21 +10,18 @@ configuration {
     show-icons:     true;
     icon-theme:     "Papirus-Dark";
     font:           "JetBrainsMono Nerd Font 11";
-
     /* ─────────────────────────────────────────────────────────────────────
        Text Layout / Mode Labels
        ───────────────────────────────────────────────────────────────────── */
     display-drun:       " Apps";
     display-run:        " Run";
     display-clipboard:  "󰅌 Clip";
-    
     /* ─────────────────────────────────────────────────────────────────────
        Keybindings - General
        ───────────────────────────────────────────────────────────────────── */
     kb-cancel:              "Escape";
     kb-remove-char-back:    "BackSpace,Shift+BackSpace";
     kb-accept-entry:        "Return,KP_Enter";
-    
     /* ─────────────────────────────────────────────────────────────────────
        Keybindings - Custom Actions (for clipboard script)
        
@@ -55,7 +52,6 @@ configuration {
     var-urgent-bg:        @error-container;
     var-active-bg:        @primary;
     var-message-bg:       @surface-container;
-    
     /* Text Colors */
     var-text-def:         @on-surface;
     var-text-dim:         @on-surface-variant;
@@ -64,8 +60,6 @@ configuration {
     
     /* Borders */
     var-border:           @outline;
-
-
     /* =====================================================================
        2. ROFI INTERNAL VARIABLES
        ===================================================================== */
@@ -74,19 +68,16 @@ configuration {
     background-color:     @var-win-bg;
     text-color:           @var-text-def;
     border-color:         @var-border;
-
     /* Element States (Normal) */
-    normal-background:            transparent; 
+    normal-background:            transparent;
     normal-foreground:            @var-text-def;
     alternate-normal-background:  transparent;
     alternate-normal-foreground:  @var-text-def;
-
     /* Element States (Selected/Active) */
     selected-normal-background:   @var-active-bg;
     selected-normal-foreground:   @var-text-active;
     active-background:            @var-active-bg;
     active-foreground:            @var-text-active;
-
     /* Element States (Urgent) */
     urgent-background:            @var-urgent-bg;
     urgent-foreground:            @var-text-urgent;
@@ -132,7 +123,7 @@ inputbar {
 
 prompt {
     enabled:            true;
-    background-color:   inherit;
+    background-color:   transparent;
     text-color:         @var-text-dim;
     font:               "JetBrainsMono Nerd Font Bold 11";
 }
@@ -140,7 +131,7 @@ prompt {
 entry {
     placeholder:        "Search...";
     placeholder-color:  @var-text-dim;
-    background-color:   inherit;
+    background-color:   transparent;
     text-color:         @var-text-def;
     cursor:             text;
 }

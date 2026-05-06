@@ -4,7 +4,7 @@
 # ==============================================================================
 # Title:        Arch Linux MPV + UOSC + Thumbfast Auto-Config
 # Description:  Automated, idempotent setup for MPV on Hyprland/Wayland.
-# Version:      11.0 (Hardened: Crash Fixes + Network Retries + Stable Stack)
+# Version:      11.1 (Offline-Capable, Hardened)
 # ==============================================================================
 
 # Strict Mode
@@ -19,7 +19,6 @@ readonly SCRIPTS_DIR="$MPV_CONFIG_DIR/scripts"
 readonly UOSC_URL="https://github.com/tomasklaen/uosc/releases/latest/download/uosc.zip"
 readonly THUMBFAST_REPO="https://github.com/po5/thumbfast.git"
 
-# Added 'curl' to dependencies
 readonly DEPENDENCIES=(mpv unzip git curl yt-dlp mpv-mpris)
 
 # --- Colors ---
@@ -42,7 +41,6 @@ log_error()   { printf "${C_RED}[ERROR]${C_RESET} %s\n" "$1" >&2; }
 # --- Cleanup Trap ---
 TEMP_DIR=""
 cleanup() {
-    # Safer cleanup check
     if [[ -n "${TEMP_DIR:-}" && -d "$TEMP_DIR" ]]; then
         rm -rf -- "$TEMP_DIR"
     fi
@@ -55,7 +53,6 @@ install_config_file() {
     local new_content="$2"
     local temp_file="$TEMP_DIR/$(basename "$target_path").tmp"
 
-    # Use printf for safer file writing
     printf "%s\n" "$new_content" > "$temp_file"
 
     if [[ -f "$target_path" ]]; then
@@ -81,6 +78,14 @@ install_config_file() {
 log_info "Starting MPV Setup..."
 TEMP_DIR=$(mktemp -d)
 
+# --- Network Detection ---
+NETWORK_AVAILABLE=true
+# Fast, dependency-free Bash native TCP check to ensure connectivity
+if ! timeout 2 bash -c '</dev/tcp/github.com/443' 2>/dev/null; then
+    NETWORK_AVAILABLE=false
+    log_warn "No internet connection detected. Operating in offline mode."
+fi
+
 # ------------------------------------------------------------------------------
 # Step 1: Smart Dependency Check
 # ------------------------------------------------------------------------------
@@ -94,6 +99,10 @@ done
 
 if [[ ${#MISSING_PKGS[@]} -gt 0 ]]; then
     log_warn "Missing packages detected: ${MISSING_PKGS[*]}"
+    if [[ "$NETWORK_AVAILABLE" == false ]]; then
+        log_warn "Cannot install packages in offline mode. Exiting gracefully."
+        exit 0
+    fi
     if ! sudo pacman -S --needed --noconfirm "${MISSING_PKGS[@]}"; then
         log_error "Failed to install packages."
         exit 1
@@ -114,7 +123,10 @@ mkdir -p "$SCRIPTS_DIR"
 if [[ -d "$MPV_CONFIG_DIR/scripts/uosc" && -f "$MPV_CONFIG_DIR/script-opts/uosc.conf" ]]; then
     log_info "UOSC appears to be installed."
 else
-    # Added --retry logic for network resilience
+    if [[ "$NETWORK_AVAILABLE" == false ]]; then
+        log_warn "Cannot download UOSC in offline mode. Exiting gracefully."
+        exit 0
+    fi
     if ! curl -fsSL --connect-timeout 30 --retry 3 --retry-delay 2 "$UOSC_URL" -o "$TEMP_DIR/uosc.zip"; then
         log_error "Failed to download UOSC."
         exit 1
@@ -134,12 +146,20 @@ TARGET_THUMBFAST_DIR="$SCRIPTS_DIR/thumbfast_repo"
 TARGET_THUMBFAST_LINK="$SCRIPTS_DIR/thumbfast.lua"
 
 if [[ -d "$TARGET_THUMBFAST_DIR/.git" ]]; then
-    if git -C "$TARGET_THUMBFAST_DIR" pull --quiet; then
-        log_success "Thumbfast repo updated."
+    if [[ "$NETWORK_AVAILABLE" == true ]]; then
+        if git -C "$TARGET_THUMBFAST_DIR" pull --quiet; then
+            log_success "Thumbfast repo updated."
+        else
+            log_warn "Thumbfast update failed."
+        fi
     else
-        log_warn "Thumbfast update failed."
+        log_info "Offline mode: Skipping Thumbfast repository pull."
     fi
 else
+    if [[ "$NETWORK_AVAILABLE" == false ]]; then
+        log_warn "Cannot clone Thumbfast in offline mode. Exiting gracefully."
+        exit 0
+    fi
     rm -rf -- "$TARGET_THUMBFAST_DIR"
     if ! git clone --quiet --depth 1 "$THUMBFAST_REPO" "$TARGET_THUMBFAST_DIR"; then
         log_error "Failed to clone Thumbfast."
@@ -149,7 +169,6 @@ else
 fi
 
 if [[ -f "$TARGET_THUMBFAST_DIR/thumbfast.lua" ]]; then
-    # Improved symlink check: Ensure it points to the correct location
     if [[ -L "$TARGET_THUMBFAST_LINK" && "$(readlink -f "$TARGET_THUMBFAST_LINK")" == "$(readlink -f "$TARGET_THUMBFAST_DIR/thumbfast.lua")" ]]; then
         log_success "Thumbfast link is correct."
     else
@@ -170,20 +189,15 @@ GPU_CONFIG=""
 SELECTED_RENDER_NODE=""
 
 # --- Logic: Find the target Render Node ---
-
-# 1. Check if user specified a DRM device (Hyprland/UWSM)
-# CRITICAL FIX: Use ${VAR:-} to prevent "unbound variable" crash if AQ_DRM_DEVICES is unset
 ENV_DRM_DEVICE="${AQ_DRM_DEVICES:-}"
 ENV_DRM_DEVICE="${ENV_DRM_DEVICE%%:*}"
 
 if [[ -n "$ENV_DRM_DEVICE" && -e "$ENV_DRM_DEVICE" ]]; then
     log_info "Environment preference detected: $ENV_DRM_DEVICE"
     
-    # Resolve the physical device path of the preferred card
     if [[ -L "/sys/class/drm/$(basename "$ENV_DRM_DEVICE")/device" ]]; then
         PREFERRED_PHYS_PATH=$(readlink -f "/sys/class/drm/$(basename "$ENV_DRM_DEVICE")/device")
         
-        # Look for a render node that matches this physical path
         for dev in /dev/dri/renderD*; do
             if [[ ! -e "$dev" ]]; then continue; fi
             DEV_PHYS_PATH=$(readlink -f "/sys/class/drm/$(basename "$dev")/device")
@@ -197,13 +211,11 @@ if [[ -n "$ENV_DRM_DEVICE" && -e "$ENV_DRM_DEVICE" ]]; then
     fi
 fi
 
-# 2. Fallback: If no env var or mapping failed, scan for first valid GPU
 if [[ -z "$SELECTED_RENDER_NODE" ]]; then
     log_info "No environment preference found. Scanning for primary GPU..."
     for dev in /dev/dri/renderD*; do
         if [[ ! -e "$dev" ]]; then continue; fi
         
-        # Check driver to skip VFIO
         sys_path="/sys/class/drm/$(basename "$dev")/device/driver"
         if [[ -L "$sys_path" ]]; then
             driver=$(basename "$(readlink -f "$sys_path")")
@@ -219,9 +231,7 @@ if [[ -z "$SELECTED_RENDER_NODE" ]]; then
 fi
 
 # --- Logic: Generate Config for Selected Node ---
-
 if [[ -n "$SELECTED_RENDER_NODE" ]]; then
-    # Get Driver Name
     sys_path="/sys/class/drm/$(basename "$SELECTED_RENDER_NODE")/device/driver"
     if [[ -L "$sys_path" ]]; then
         driver_name=$(basename "$(readlink -f "$sys_path")")
@@ -235,12 +245,10 @@ if [[ -n "$SELECTED_RENDER_NODE" ]]; then
         log_success "NVIDIA Driver detected."
         GPU_CONFIG="hwdec=auto"
     elif [[ "$driver_name" == "i915" || "$driver_name" == "amdgpu" || "$driver_name" == "xe" || "$driver_name" == "radeon" ]]; then
-        # Intel/AMD Setup - Force VAAPI on specific device
         log_success "Mesa/Legacy Driver ($driver_name) detected."
         GPU_CONFIG="hwdec=vaapi
 vaapi-device=$SELECTED_RENDER_NODE"
     else
-        # Generic Fallback (e.g., nouveau, virtio)
         log_info "Generic/Unknown Driver ($driver_name). Using safe defaults."
         GPU_CONFIG="hwdec=auto-safe"
     fi
@@ -264,8 +272,6 @@ osd-bar=no
 border=no
 
 # --- Video / Wayland Optimization ---
-# We stick to 'gpu' (OpenGL) to ensure instant startup on Intel/VFIO setups.
-# 'gpu-next' (Vulkan) can introduce shader compilation lag on some hardware.
 vo=gpu
 gpu-context=wayland
 

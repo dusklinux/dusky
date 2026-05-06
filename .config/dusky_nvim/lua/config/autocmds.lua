@@ -1,3 +1,4 @@
+-- lua/config/autocmds.lua
 -- ================================================================================================
 -- TITLE : auto-commands
 -- ABOUT : automatically run code on defined events (e.g. save, yank)
@@ -32,5 +33,17 @@ vim.api.nvim_create_autocmd("TextYankPost", {
   pattern = "*",
   callback = function()
     vim.hl.on_yank({ higroup = "IncSearch", timeout = 200 })
+  end,
+})
+
+-- ================================================================================================
+-- NATIVE TREESITTER INTEGRATION (Neovim 0.12+)
+-- ================================================================================================
+-- Replaces nvim-treesitter plugin. Automatically attaches the native C-core 
+-- highlighter to any buffer where a matching parser is found.
+vim.api.nvim_create_autocmd("FileType", {
+  group = vim.api.nvim_create_augroup("NativeTreesitterHighlight", { clear = true }),
+  callback = function(args)
+    pcall(vim.treesitter.start, args.buf)
   end,
 })

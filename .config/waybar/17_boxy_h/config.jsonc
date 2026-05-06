@@ -1,0 +1,218 @@
+{
+  "reload_style_on_change": true,
+  "layer": "top",
+  "position": "top",
+  "spacing": 0,
+  "height": 15,
+  "margin": "0",
+  "modules-left": [
+    "clock",
+    "hyprland/window"
+  ],
+  "modules-center": [
+    "hyprland/workspaces",
+    "custom/inhibit-suspend"
+  ],
+  "modules-right": [
+    "group/tray-expander",
+    "backlight",
+    "bluetooth",
+    "network",
+    "pulseaudio",
+    "cpu",
+    "memory",
+    "battery"
+  ],
+  "hyprland/workspaces": {
+    "on-click": "activate",
+    "format": "{id}",
+    "format-icons": {
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4",
+      "5": "5",
+      "6": "6",
+      "7": "7",
+      "8": "8",
+      "9": "9"
+    },
+    "persistent-workspaces": {
+      "1": [],
+      "2": [],
+      "3": [],
+      "4": [],
+      "5": [],
+      "6": [],
+      "7": [],
+      "8": []
+    }
+  },
+  "hyprland/window": {
+    "format": "{title} - {class}",
+    "max-length": 45,
+    "rewrite": {
+      " - ": "",
+      "(.*?) - Chromium - chromium": " Chromium ",
+      "(.*chrome)...(.*)": " Chrome ",
+      "(.*) - Obsidian - .* - obsidian": " Obsidian ",
+      "(.*nvim)...(.*)": " nvim ",
+      "(.*code) - (.*)": " VSCode ",
+      "^.*btop( .*|$)": " BTOP ",
+      "^.*cmatrix( .*|$)": " CMATRIX ",
+      "(.*) - Spotify": " Spotify ",
+      "(.*) - com.mitchellh.ghostty": " Ghostty ",
+      "(.*) - Alacritty": " Alacritty ",
+      "(.*) - BeeperTexts": " Beeper ",
+      "(.*Discord)...(.*).. (.*)": " Discord ",
+      "(.*) - org.gnome.Nautilus": " Nautilus ",
+      "(.*) - fish": " fish ",
+      "(.*Steam)...(.*)": " Steam "
+    }
+  },
+  "backlight": {
+    "device": "intel_backlight",
+    "format": "{icon} {percent}",
+    "format-icons": ["󰃞", "󰃟", "󰃠"],
+    "tooltip-format": "Brightness: {percent}%"
+  },
+  "cpu": {
+    "interval": 2,
+    "format": "󰍛 {usage}%",
+    "on-click-right": "uwsm-app -- kitty --class htop -e htop"
+  },
+  "memory": {
+    "interval": 2,
+    "format": "󰍛 {percentage}%",
+    "on-click-right": "uwsm-app -- kitty --class io_monitor.sh -e $HOME/user_scripts/drives/io_monitor.sh",
+    "states": {
+      "warning": 70,
+      "critical": 90
+    }
+  },
+  "clock": {
+    "format": "{:%I:%M %p  %a %e }",
+    "format-alt": "{:%A %d/%m/%Y}",
+    "tooltip-format": "<span>{calendar}</span>",
+    "calendar": {
+      "mode": "month",
+      "mode-mon-col": 3,
+      "on-click-right": "mode",
+      "format": {
+        "months": "<span weight='bold'>{}</span>",
+        "weekdays": "<span weight='bold'>{}</span>",
+        "today": "<span weight='bold' underline='single'>{}</span>"
+      }
+    }
+  },
+  "custom/inhibit-suspend": {
+    "format": "{}",
+    "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰌾\", \"tooltip\": \"Auto-suspend ENABLED\\nClick to disable hypridle\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Auto-suspend DISABLED\\nClick to enable hypridle\", \"class\": \"disabled\"}'; fi",
+    "return-type": "json",
+    "interval": 5,
+    "signal": 9,
+    "on-click": "uwsm-app -- ~/user_scripts/waybar/toggle_hypridle.sh",
+    "escape": true
+  },
+  "network": {
+    "format-icons": [
+      "󰤯",
+      "󰤟",
+      "󰤢",
+      "󰤥",
+      "󰤨"
+    ],
+    "format": "{icon}",
+    "format-wifi": "{icon}",
+    "format-ethernet": "󰈀",
+    "format-disconnected": "󰤮",
+    "tooltip-format-wifi": "{essid} ({frequency} GHz)\n⇣{bandwidthDownBytes}  ⇡{bandwidthUpBytes}",
+    "tooltip-format-ethernet": "⇣{bandwidthDownBytes}  ⇡{bandwidthUpBytes}",
+    "tooltip-format-disconnected": "Disconnected",
+    "interval": 3,
+    "spacing": 1,
+    "on-click": "uwsm-app -- kitty --class wifitui -e wifitui"
+  },
+  "battery": {
+    "format": "{icon} {capacity}%",
+    "format-discharging": "{icon} {capacity}%",
+    "format-charging": "{icon} {capacity}%",
+    "format-plugged": "󰂄",
+    "format-icons": {
+      "charging": [
+        "󰢜",
+        "󰂆",
+        "󰂇",
+        "󰂈",
+        "󰢝",
+        "󰂉",
+        "󰢞",
+        "󰂊",
+        "󰂋",
+        "󰂅"
+      ],
+      "default": [
+        "󰁺",
+        "󰁻",
+        "󰁼",
+        "󰁽",
+        "󰁾",
+        "󰁿",
+        "󰂀",
+        "󰂁",
+        "󰂂",
+        "󰁹"
+      ]
+    },
+    "format-full": "󱟢",
+    "tooltip-format-discharging": "{power:>1.0f}W↓ {capacity}%",
+    "tooltip-format-charging": "{power:>1.0f}W↑ {capacity}%",
+    "interval": 5,
+    "states": {
+      "warning": 20,
+      "critical": 10
+    }
+  },
+  "bluetooth": {
+    "format": "󰂯",
+    "format-off": "󰂲",
+    "format-connected": "󰂱",
+    "tooltip-format": "Devices connected: {num_connections}",
+    "on-click": "uwsm-app -- blueman-manager",
+    "on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui"
+  },
+  "pulseaudio": {
+    "format": "{icon} {volume}%",
+    "on-click": "uwsm-app -- pavucontrol",
+    "on-click-right": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+    "tooltip-format": "Playing at {volume}%",
+    "scroll-step": 5,
+    "format-muted": "󰝟",
+    "format-icons": {
+      "default": [
+        "󰕿",
+        "󰖀",
+        "󰕾"
+      ]
+    }
+  },
+  "group/tray-expander": {
+    "orientation": "inherit",
+    "drawer": {
+      "transition-duration": 600,
+      "children-class": "tray-group-item"
+    },
+    "modules": [
+      "custom/expand-icon",
+      "tray"
+    ]
+  },
+  "custom/expand-icon": {
+    "format": "󰌟 ",
+    "tooltip": false
+  },
+  "tray": {
+    "icon-size": 12,
+    "spacing": 12
+  }
+}

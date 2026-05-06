@@ -1,0 +1,236 @@
+{
+    "layer": "top",
+    "position": "top",
+    "height": 32,
+    "margin-top": 4,
+    "margin-left": 8,
+    "margin-right": 8,
+    "spacing": 0,
+    "reload_style_on_change": true,
+    
+    // --- MODULE LAYOUT ---
+    "modules-left": [
+        "group/left-pill",
+        "custom/notification",
+        "group/updates-drawer"
+    ],
+    "modules-center": [
+        "hyprland/workspaces"
+    ],
+    "modules-right": [
+        "group/expandable",
+        "group/network-drawer",
+        "battery",
+        "group/power-drawer"
+    ],
+
+    // --- GROUPS & DRAWERS ---
+    "group/left-pill": {
+        "orientation": "horizontal",
+        "modules": [
+            "custom/settings",
+            "clock"
+        ]
+    },
+    
+    "group/expandable": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 500,
+            "children-class": "expanded-child",
+            "transition-left-to-right": false
+        },
+        "modules": [
+            "custom/expand",
+            "cpu",
+            "memory",
+            "disk",
+            "temperature"
+        ]
+    },
+
+    "group/updates-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "updates-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": true
+        },
+        "modules": [
+            "custom/updates-trigger",
+            "custom/updates"
+        ]
+    },
+
+    "group/network-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "network-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": false
+        },
+        "modules": [
+            "custom/net-speed",
+            "network",
+            "bluetooth"
+        ]
+    },
+
+    "group/power-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "power-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": false
+        },
+        "modules": [
+            "custom/power",
+            "custom/inhibit-suspend"
+        ]
+    },
+
+    // --- MODULE CONFIGURATION ---
+    "custom/settings": {
+        "format": "󰣇",
+        "tooltip": true,
+        "tooltip-format": "Control Center",
+        "on-click": "python3 ~/user_scripts/dusky_system/control_center/dusky_control_center.py",
+        "on-click-right": "gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate '{}'"
+    },
+    
+    "clock": {
+        "format": "{:%I:%M %p}",
+        "format-alt": "{:%A, %B %d, %Y}",
+        "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>",
+        "on-click": "uwsm-app -- gnome-clocks"
+    },
+
+    "custom/notification": {
+        "justify": "center",
+        "align": 0.5,
+        "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+        "format": "{}",
+        "return-type": "json",
+        "exec-if": "which makoctl",
+        "exec": "~/user_scripts/waybar/mako.sh --horizontal",
+        "interval": 2,
+        "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+        "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+        "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+        "signal": 8,
+        "escape": true
+    },
+
+    "custom/updates-trigger": {
+        "format": "",
+        "exec": "echo ''",
+        "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "interval": 5,
+        "tooltip": false
+    },
+
+    "custom/updates": {
+        "exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "return-type": "json",
+        "format": "{}",
+        "tooltip": true,
+        "on-click": "uwsm-app -- kitty --class system_update.sh --hold -e ~/user_scripts/update_dusky/system_update.sh --all"
+    },
+
+    "hyprland/workspaces": {
+        "active-only": false,
+        "all-outputs": true,
+        "format": "",
+        "on-click": "activate",
+        "persistent-workspaces": {
+            "*": 5
+        }
+    },
+    
+    "custom/expand": {
+        "format": "",
+        "tooltip": false
+    },
+    
+    "cpu": {
+        "interval": 2,
+        "format": " {usage}%",
+        "on-click": "uwsm-app -- kitty -e btop"
+    },
+    
+    "memory": {
+        "interval": 2,
+        "format": " {percentage}%"
+    },
+    
+    "disk": {
+        "interval": 30,
+        "format": " {percentage_used}%",
+        "path": "/"
+    },
+    
+    "temperature": {
+        "thermal-zone": 8,
+        "interval": 2,
+        "format": " {temperatureC}°C",
+        "critical-threshold": 80
+    },
+
+    "custom/net-speed": {
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --horizontal",
+        "return-type": "json",
+        "format": "{}",
+        "interval": 1,
+        "tooltip": true
+    },
+    
+    "network": {
+        "format-wifi": "",
+        "format-ethernet": "󰈀",
+        "format-disconnected": "󰤭",
+        "tooltip-format-wifi": "{essid} ({signalStrength}%)",
+        "on-click": "uwsm-app -- kitty -e wifitui"
+    },
+    
+    "bluetooth": {
+        "format": "",
+        "format-connected": " {num_connections}",
+        "tooltip-format": "{controller_alias}\n{num_connections} connected",
+        "on-click": "uwsm-app -- blueman-manager"
+    },
+    
+    "battery": {
+        "states": {
+            "good": 95,
+            "warning": 30,
+            "critical": 15
+        },
+        "format": "{icon} {capacity}%",
+        "format-icons": [
+            "",
+            "",
+            "",
+            "",
+            ""
+        ]
+    },
+
+    "custom/power": {
+        "format": "⏻",
+        "on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh",
+        "tooltip-format": "Power Menu"
+    },
+
+    "custom/inhibit-suspend": {
+        "format": "{}",
+        "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
+        "return-type": "json",
+        "interval": 5,
+        "signal": 9,
+        "on-click": "uwsm-app -- ~/user_scripts/waybar/toggle_hypridle.sh",
+        "escape": true
+    }
+}

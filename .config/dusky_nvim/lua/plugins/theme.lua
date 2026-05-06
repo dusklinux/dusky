@@ -50,20 +50,25 @@ return {
       
       apply_tweaks()
 
-      -- 3. Live Reloading (Libuv Signal Listener)
-      -- This correctly listens for 'pkill -USR1 nvim' on Arch/Linux
-      local signal = vim.uv.new_signal()
-      signal:start("sigusr1", function()
-        vim.schedule(function()
-          load_theme()
-          apply_tweaks()
-          -- Optional: Refresh lualine if it's loaded to pick up new globals
-          if package.loaded["lualine"] then
-            require("lualine").refresh()
-          end
-          vim.notify("Theme reloaded via SIGUSR1")
-        end)
-      end)
+      -- 3. Live Reloading (NATIVE SIGNAL LISTENER)
+      -- CRITICAL FIX: Replaced raw vim.uv.new_signal() with Neovim's native autocmd
+      -- to prevent event-loop hijacking and panics in 0.12+
+      vim.api.nvim_create_autocmd("Signal", {
+        pattern = "SIGUSR1",
+        callback = function()
+          vim.schedule(function()
+            load_theme()
+            apply_tweaks()
+            
+            -- Refresh lualine if it's loaded to pick up new globals
+            if package.loaded["lualine"] then
+              require("lualine").refresh()
+            end
+            
+            vim.notify("Theme dynamically reloaded via Matugen", vim.log.levels.INFO)
+          end)
+        end,
+      })
     end,
   },
 }

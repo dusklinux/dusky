@@ -258,19 +258,19 @@ if $AUDIO_PKGS_INSTALLED || ! systemctl --user is-active pipewire.service >/dev/
 fi
 
 # --- 6a. CONFIG FILE CHECK ---
-if [[ ! -f "${CONFIG_DIR}/config.json" ]]; then
+if [[ ! -f "${CONFIG_DIR}/${AUDIO_PACK}/config.json" ]]; then
     if $INTERACTIVE; then
-        while [[ ! -f "${CONFIG_DIR}/config.json" ]]; do
+        while [[ ! -f "${CONFIG_DIR}/${AUDIO_PACK}/config.json" ]]; do
             printf "\n%b[ACTION REQUIRED]%b Missing config.json in: %s\n" \
-                "${C_YELLOW}" "${C_RESET}" "${CONFIG_DIR}"
-            mkdir -p "$CONFIG_DIR" 2>/dev/null || true
+                "${C_YELLOW}" "${C_RESET}" "${CONFIG_DIR}/${AUDIO_PACK}"
+            mkdir -p "${CONFIG_DIR}/${AUDIO_PACK}" 2>/dev/null || true
             printf "       Please ensure 'config.json' exists in this folder.\n"
             printf "       %bPress Enter to re-scan...%b" "${C_DIM}" "${C_RESET}"
             read -r
         done
         printf "%b[CHECK]%b Configuration found.\n" "${C_GREEN}" "${C_RESET}"
     else
-        notify_user "Missing config.json in ~/.config/wayclick. Run in terminal."
+        notify_user "Missing config.json in ~/.config/wayclick/${AUDIO_PACK}. Run in terminal."
         exit 1
     fi
 fi
@@ -388,7 +388,7 @@ C_RESET  = "\033[0m"
 CONFIG_DIR  = sys.argv[1]
 PACK_NAME   = sys.argv[2]
 ASSET_DIR   = os.path.join(CONFIG_DIR, PACK_NAME)
-CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+CONFIG_FILE = os.path.join(ASSET_DIR, "config.json")
 
 ENABLE_TRACKPADS = os.environ.get('ENABLE_TRACKPADS', 'false').lower() == 'true'
 AUTO_DETECT      = os.environ.get('WC_AUTO_DETECT', 'true').lower() == 'true'

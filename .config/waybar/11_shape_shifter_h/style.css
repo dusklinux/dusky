@@ -1,0 +1,421 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   WAYBAR PREMIUM THEME - Compact Edition (Optimized)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@import url("../../.config/matugen/generated/waybar-colors.css");
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSLUCENCY CONTROLS (GLASSY MODE)
+   Tweak the decimals (0.0 to 1.0) here to adjust granular glassiness.
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color glass_bar                       transparent;
+@define-color glass_module                    @surface_container;
+@define-color glass_hover                     @surface_container_highest;
+@define-color glass_theme_toggle_hover        @secondary;
+@define-color glass_tray                      @surface_container;
+@define-color glass_tray_hover                @surface_container_high;
+@define-color glass_tray_needs_attention      @error;
+@define-color glass_workspaces                @surface_container;
+@define-color glass_workspace_btn             @surface_container_highest;
+@define-color glass_workspace_btn_empty       @surface_container_high;
+@define-color glass_workspace_btn_visible     @surface_container_highest;
+@define-color glass_mpris                     @secondary_container;
+@define-color glass_mpris_hover               @secondary_container;
+@define-color glass_inhibit_disabled          @tertiary_container;
+@define-color glass_warning_bg                @tertiary_container;
+@define-color glass_critical_bg               @error_container;
+@define-color glass_battery_charging_bg       @tertiary_container;
+@define-color glass_battery_warning_bg        @primary_container;
+@define-color glass_tooltip                   @surface_container_high;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MASTER OPAQUE SWITCH
+   GTK CSS cannot compute variables inside alpha() functions. 
+   To toggle off ALL translucency, simply UNCOMMENT the block below by removing
+   the block comments. GTK's "last definition wins" rule will instantly 
+   overwrite the glassy variables above and hot-reload Waybar.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* WAYBAR_OPAQUE_SWITCH_START */
+@define-color glass_bar                       transparent;
+@define-color glass_module                    @surface_container;
+@define-color glass_hover                     @surface_container_highest;
+@define-color glass_theme_toggle_hover        @secondary;
+@define-color glass_tray                      @surface_container;
+@define-color glass_tray_hover                @surface_container_high;
+@define-color glass_tray_needs_attention      @error;
+@define-color glass_workspaces                @surface_container;
+@define-color glass_workspace_btn             @surface_container_highest;
+@define-color glass_workspace_btn_empty       @surface_container_high;
+@define-color glass_workspace_btn_visible     @surface_container_highest;
+@define-color glass_mpris                     @secondary_container;
+@define-color glass_mpris_hover               @secondary_container;
+@define-color glass_inhibit_disabled          @tertiary_container;
+@define-color glass_warning_bg                @tertiary_container;
+@define-color glass_critical_bg               @error_container;
+@define-color glass_battery_charging_bg       @tertiary_container;
+@define-color glass_battery_warning_bg        @primary_container;
+@define-color glass_tooltip                   @surface_container_high;
+
+/* WAYBAR_OPAQUE_SWITCH_END */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RESET & FOUNDATIONS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+* {
+  border: none;
+  border-radius: 0;
+  min-height: 0;
+  font-family: "JetBrainsMono Nerd Font", "Symbols Nerd Font", sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  /* Nullify implicit GTK3 shadows to prevent compositor blur jaggedness */
+  box-shadow: none;
+  text-shadow: none;
+}
+
+window#waybar {
+  background: transparent;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BAR CONTAINER
+   ───────────────────────────────────────────────────────────────────────────── */
+
+window#waybar > box {
+  background-color: @glass_bar;
+  border-radius: 14px;
+  border: none;
+  margin: 4px 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   GLOBAL HOVER GLOWS (Imported from Vertical Layout)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#clock:hover, #custom-weather:hover, #custom-notification:hover,
+#network:hover, #custom-net-speed:hover, #bluetooth:hover,
+#pulseaudio.output:hover, #backlight:hover, #cpu:hover, #memory:hover,
+#battery:hover, #custom-updates:hover, #custom-updates-trigger:hover,
+#custom-mpris-trigger:hover, #custom-inhibit-suspend:hover {
+  color: @primary;
+  background-color: @glass_hover;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MODULE PILLS (Base Styling)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-launcher {
+  padding: 0px 13px 2px 8px;
+  margin: 5px 2px 5px 6px;
+  border-radius: 10px;
+  background-image: linear-gradient(135deg, @primary_container 0%, @primary_fixed_dim 100%);
+  color: @on_primary_container;
+  font-size: 19px;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-launcher:hover {
+  background-image: linear-gradient(135deg, @primary_fixed_dim 0%, @primary 100%);
+}
+
+#clock, #custom-weather, #custom-notification, #custom-inhibit-suspend,
+#custom-updates-trigger, #custom-updates, #custom-mpris-trigger,
+#network, #custom-net-speed, #bluetooth, #pulseaudio.output,
+#backlight, #cpu, #memory, #battery {
+  padding: 0px 10px;
+  margin: 5px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @on_surface_variant;
+  transition: all 0.2s ease-in-out;
+}
+
+/* Base Overrides for specific colors */
+#clock { color: @on_surface; font-weight: 700; }
+#custom-weather, #backlight, #custom-net-speed { color: @tertiary; }
+#custom-notification { color: @on_surface; font-size: 14px; }
+#network { color: @on_surface; font-size: 14px; }
+#bluetooth { color: @on_surface; font-size: 11px; }
+#pulseaudio.output { color: @on_surface; font-size: 11px; }
+#battery { color: @on_surface; font-weight: 700; }
+#custom-updates-trigger, #custom-updates, #custom-mpris-trigger { color: @secondary; font-size: 13px; }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   DYNAMIC NETWORK CLASSES (Imported from Vertical Layout)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-net-speed.network-kb {
+  color: @secondary;
+  font-weight: bold;
+}
+
+#custom-net-speed.network-mb {
+  color: @primary;
+  font-weight: 900;
+}
+
+#custom-net-speed.network-disconnected {
+  color: @error;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CRITICAL ANIMATIONS (Imported from Vertical Layout)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+@keyframes blink-critical {
+  to { color: @on_surface; }
+}
+
+#cpu.critical, #memory.critical {
+  color: @error;
+  background-color: @glass_critical_bg;
+  animation: blink-critical 1s infinite alternate;
+}
+
+#battery.critical:not(.charging) {
+  color: @on_error;
+  background-image: linear-gradient(135deg, @error_container 0%, @error 100%);
+  animation: blink-critical 1s ease-in-out infinite alternate;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   THEME TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-theme-toggle {
+  padding: 0 8px;
+  margin: 5px 2px;
+  border-radius: 10px;
+  background-color: transparent;
+  color: @secondary;
+  font-size: 14px;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-theme-toggle:hover {
+  color: @secondary_container;
+  background-color: @glass_theme_toggle_hover;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRAY
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#tray {
+  padding: 0 8px;
+  margin: 5px 2px;
+  border-radius: 10px;
+  background-color: @glass_tray;
+  transition: all 0.2s ease-in-out;
+}
+
+#tray:hover {
+  background-color: @glass_tray_hover;
+}
+
+#tray > .passive { -gtk-icon-effect: dim; }
+#tray > .needs-attention {
+  -gtk-icon-effect: highlight;
+  background-color: @glass_tray_needs_attention;
+  border-radius: 6px;
+}
+
+#tray menu {
+  background-color: @surface_container_high;
+  border: 1px solid @outline_variant;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+#tray menu menuitem {
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: @on_surface;
+}
+
+#tray menu menuitem:hover {
+  background-color: @surface_container_highest;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   WORKSPACES
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#workspaces {
+  padding: 0px 0px 0px 0px;
+  margin: 1px 2px;
+  border-radius: 12px;
+  background-color: @glass_bar;
+  border: none;
+}
+
+#workspaces button {
+  padding: 0px 8px 0px 8px;
+  margin: 3px 2px;
+  min-width: 12px;
+  border-radius: 20px;
+  background-color: @glass_workspace_btn;
+  color: @on_surface_variant;
+  font-size: 12px;
+  transition: all 0.2s ease-in-out;
+}
+
+#workspaces button.empty {
+  padding: 0px 8px 0px 8px;
+  min-width: 12px;
+  border-radius: 20px;
+  background-color: @glass_workspace_btn_empty;
+  font-size: 12px;
+  color: alpha(@on_surface_variant, 0.4);
+}
+
+#workspaces button.visible {
+  background-color: @glass_workspace_btn_visible;
+  color: @on_surface;
+}
+
+#workspaces button.active {
+  padding: 0px 1px 0px 1px;
+  min-width: 28px;
+  background-image: linear-gradient(135deg, @primary_container 0%, @primary_fixed_dim 100%);
+  color: @on_primary_container;
+  font-weight: 700;
+}
+
+#workspaces button:hover {
+  background-color: @surface_container_highest;
+  color: @on_surface;
+}
+
+#workspaces button.active:hover {
+  background-image: linear-gradient(135deg, @primary_fixed_dim 0%, @primary 100%);
+}
+
+#workspaces button.urgent {
+  background-image: linear-gradient(135deg, @error_container 0%, @error 100%);
+  color: @on_error;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MPRIS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#mpris {
+  padding: 0 10px;
+  margin: 5px 2px;
+  border-radius: 10px;
+  background-color: @glass_mpris;
+  color: @on_secondary_container;
+  font-size: 12px;
+  border: 1px solid alpha(@secondary, 0.15);
+  transition: all 0.2s ease-in-out;
+}
+
+#mpris:hover {
+  background-color: @glass_mpris_hover;
+  border: 1px solid alpha(@secondary, 0.3);
+  color: @primary;
+}
+
+#mpris.playing { color: @secondary; }
+#mpris.paused { color: alpha(@on_secondary_container, 0.6); }
+
+#mpris.stopped {
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  background-color: transparent;
+  border: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SPECIFIC STATES
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-inhibit-suspend.disabled {
+  color: @tertiary;
+  background-color: @glass_inhibit_disabled;
+  border: 1px solid alpha(@tertiary, 0.2);
+}
+
+#custom-inhibit-suspend.enabled {
+  color: @on_surface_variant;
+}
+
+#network.disconnected, #bluetooth.disabled, #pulseaudio.output.muted {
+  color: alpha(@on_surface_variant, 0.4);
+}
+
+#network.linked, #network.ethernet, #battery.good {
+  color: @tertiary;
+}
+
+#network.wifi, #bluetooth.connected {
+  color: @primary_fixed;
+}
+
+#cpu.warning, #memory.warning {
+  color: @tertiary;
+  background-color: @glass_warning_bg;
+}
+
+#battery.charging, #battery.plugged, #battery.full {
+  color: @tertiary;
+  background-color: @glass_battery_charging_bg;
+  border: 1px solid alpha(@tertiary, 0.15);
+}
+
+#battery.warning:not(.charging) {
+  color: @primary_fixed;
+  background-color: @glass_battery_warning_bg;
+  border: 1px solid alpha(@primary, 0.2);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POWER BUTTON
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-power {
+  padding: 0px 12px 0px 9px;
+  margin: 5px 6px 5px 2px;
+  border-radius: 10px;
+  background-image: linear-gradient(135deg, @primary_container 0%, @primary_fixed_dim 100%);
+  color: @on_primary_container;
+  font-size: 14px;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-power:hover {
+  background-color: @error;
+  background-image: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TOOLTIPS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+tooltip {
+  background-color: @glass_tooltip;
+  border: 1px solid alpha(@outline_variant, 0.3);
+  border-radius: 12px;
+}
+
+tooltip label {
+  padding: 6px 10px;
+  color: @on_surface;
+  font-size: 12px;
+}

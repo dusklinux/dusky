@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# Arch Linux VSFTPD Automation Script
-# Target Environment: Arch Linux / Hyprland / UWSM
-# Description: Automates the setup of a secure vsftpd server based on specific
-#              MOC FTP notes. Handles firewall, permissions, and config generation.
-# ==============================================================================
+# Automates the setup of a secure vsftpd server
 
 # 1. Strict Mode & Environment Setup
 set -euo pipefail
@@ -61,20 +56,58 @@ FTP_ROOT="${USER_PATH_INPUT:-$DEFAULT_PATH}"
 log_info "Target User: $REAL_USER"
 log_info "FTP Root:    $FTP_ROOT"
 
-# 5. Package Installation
-log_info "Updating system and installing dependencies (vsftpd, firewalld)..."
-pacman -Sy --needed --noconfirm vsftpd firewalld
+# 5. Package Installation & Firewall Detection
+# Determine which firewall to use without breaking existing setups.
+FIREWALL_CMD=""
+
+if systemctl is-active --quiet ufw; then
+    FIREWALL_CMD="ufw"
+elif systemctl is-active --quiet firewalld; then
+    FIREWALL_CMD="firewalld"
+elif command -v ufw >/dev/null 2>&1; then
+    # Neither is active, but UFW is installed
+    FIREWALL_CMD="ufw"
+else
+    # Default original behavior: Assume/Install firewalld
+    FIREWALL_CMD="firewalld"
+fi
+
+if [[ "$FIREWALL_CMD" == "ufw" ]]; then
+    log_info "UFW detected as primary firewall framework."
+    log_info "Updating system and installing dependencies (vsftpd)..."
+    pacman -Syu --needed --noconfirm vsftpd
+else
+    log_info "Firewalld designated as primary firewall framework."
+    log_info "Updating system and installing dependencies (vsftpd, firewalld)..."
+    pacman -Syu --needed --noconfirm vsftpd firewalld
+fi
 
 # 6. Firewall Configuration
-log_info "Configuring Firewalld..."
-# Ensure service is running before using firewall-cmd
-systemctl enable --now firewalld
+if [[ "$FIREWALL_CMD" == "ufw" ]]; then
+    log_info "Configuring UFW..."
+    # Ensure UFW systemd service is active before manipulating rules
+    systemctl enable --now ufw.service
 
-# Add rules idempotently
-firewall-cmd --permanent --add-service=ftp > /dev/null
-firewall-cmd --permanent --add-port=40000-40100/tcp > /dev/null
-firewall-cmd --reload > /dev/null
-log_success "Firewall rules applied (Port 21, 40000-40100)."
+    # Add rules idempotently
+    ufw allow 21/tcp > /dev/null
+    ufw allow 40000:40100/tcp > /dev/null
+    
+    # Force enable bypasses the interactive "may disrupt ssh" warning
+    ufw --force enable > /dev/null
+    ufw reload > /dev/null
+    log_success "Firewall rules applied via UFW (Port 21, 40000-40100)."
+
+else
+    log_info "Configuring Firewalld..."
+    # Ensure service is running before using firewall-cmd
+    systemctl enable --now firewalld
+
+    # Add rules idempotently
+    firewall-cmd --permanent --add-service=ftp > /dev/null
+    firewall-cmd --permanent --add-port=40000-40100/tcp > /dev/null
+    firewall-cmd --reload > /dev/null
+    log_success "Firewall rules applied via Firewalld (Port 21, 40000-40100)."
+fi
 
 # 7. VSFTPD Configuration Generation
 log_info "Generating /etc/vsftpd.conf..."

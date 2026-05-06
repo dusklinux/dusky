@@ -168,10 +168,10 @@ resolve_tuning_profile() {
     # Use 29 to account for hardware-reserved RAM on 32GB physical machines
     if [[ "$target_mode" == "AGGRESSIVE" ]] || [[ "$target_mode" == "AUTO" && "$SYSTEM_RAM_GB" -ge 29 ]]; then
         EXPECTED_MODE="AGGRESSIVE"
-        EXPECTED_VFS_PRESSURE=50
-        EXPECTED_SCALE_FACTOR=150
-        EXPECTED_DIRTY_BYTES=1073741824
-        EXPECTED_DIRTY_BG_BYTES=268435456
+        EXPECTED_VFS_PRESSURE=10
+        EXPECTED_SCALE_FACTOR=200
+        EXPECTED_DIRTY_BYTES=4294967296
+        EXPECTED_DIRTY_BG_BYTES=1073741824
     else
         EXPECTED_MODE="STANDARD"
         EXPECTED_VFS_PRESSURE=100
@@ -183,8 +183,8 @@ resolve_tuning_profile() {
     # Static Constants
     EXPECTED_PAGE_CLUSTER=0
     EXPECTED_BOOST_FACTOR=0
-    EXPECTED_COMPACTION=20
-    EXPECTED_MIN_FREE=131072
+    EXPECTED_COMPACTION=10
+    EXPECTED_MIN_FREE=1048576
     EXPECTED_MAX_MAP_COUNT=2147483642
 }
 

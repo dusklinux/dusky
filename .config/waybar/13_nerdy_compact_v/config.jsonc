@@ -1,0 +1,350 @@
+[
+    {
+        "layer": "top",
+        "position": "left",
+        "spacing": 0,
+        "width": 10,
+        "margin-top": 0,
+        "margin-bottom": 0,
+        "margin-left": -2,
+        "margin-right": 0,
+        "fixed-center": true,
+        "reload_style_on_change": true,
+
+        "modules-left": [
+            "battery",
+            "group/media",
+            "group/hardware"
+        ],
+        
+        "modules-center": [
+            "hyprland/workspaces"
+        ],
+        
+        "modules-right": [
+            "custom/cava",
+            "group/updates-drawer",
+            "group/utils",
+            "group/connections",
+            "clock",
+            "group/bottom"
+        ],
+
+        "group/media": {
+            "orientation": "inherit",
+            "modules": [
+                "pulseaudio",
+                "backlight"
+            ]
+        },
+
+        "group/hardware": {
+            "orientation": "inherit",
+            "modules": [
+                "cpu",
+                "memory",
+                "temperature"
+            ]
+        },
+
+        "group/updates-drawer": {
+            "orientation": "inherit",
+            "drawer": {
+                "transition-duration": 400,
+                "children-class": "updates-drawer",
+                "click-to-reveal": false,
+                "transition-left-to-right": false
+            },
+            "modules": [
+                "custom/updates-trigger",
+                "custom/updates"
+            ]
+        },
+
+        "group/utils": {
+            "orientation": "inherit",
+             "drawer": {
+                "transition-duration": 300,
+                "transition-left-to-right": false
+            },
+            "modules": [
+                "custom/notification",
+                "custom/theme",
+                "custom/app-tray"
+            ]
+        },
+
+        "group/connections": {
+            "orientation": "inherit",
+            "modules": [
+                "custom/network",
+                "bluetooth"
+            ]
+        },
+
+        "group/bottom": {
+            "orientation": "inherit",
+            "drawer": {
+                "transition-duration": 300,
+                "transition-left-to-right": false
+            },
+            "modules": [
+                "custom/power",
+                "custom/audiorouter",
+                "custom/inhibit-suspend",
+                "tray"
+            ]
+        },
+
+        "hyprland/workspaces": {
+            "on-click": "activate",
+            "all-outputs": true,
+            "sort-by-number": true,
+            "format": "{id}",
+            "persistent-workspaces": {
+                 "*": 4
+            },
+            "on-scroll-up": "hyprctl dispatch workspace e-1",
+            "on-scroll-down": "hyprctl dispatch workspace e+1"
+        },
+
+        "battery": {
+            "justify": "center",
+            "align": 0.5,
+            "format": "{icon}\n{capacity}\n{power:.0f}W",
+            "format-charging": "\n+{capacity}\n{power:.0f}W",
+            "format-plugged": "\n{capacity}",
+            "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
+            "interval": 10,
+            "states": {
+                "warning": 40,
+                "critical": 20
+            },
+            "tooltip-format": "{timeTo}\nHealth 󱟦 {health}%\nPower Draw {power:.2f} W",
+            "on-click": "uwsm-app -- kitty --class power_saver.sh --hold -e \"$HOME/user_scripts/battery/power_saving/power_saver.sh\"",
+            "on-click-right": "uwsm-app -- kitty --class dusky_hypridle.sh -e \"$HOME/user_scripts/hypridle/dusky_hypridle.sh\""
+        },
+
+        "pulseaudio":{
+            "justify": "center",
+            "align": 0.5,
+            "format": "{icon}\n{volume}",
+            "format-muted": "󰖁",
+            "on-click": "uwsm-app -- pavucontrol",
+            "on-click-middle": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+            "on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
+            "on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%",
+            "format-icons": ["󰖁", "", ""],
+            "tooltip": true,
+            "tooltip-format": "{desc}\n\nLMB: pavucontrol\nRMB: cava\nMMB: Mute"
+        },
+
+        "backlight": {
+            "justify": "center",
+            "align": 0.5,
+            "device": "intel_backlight",
+            "format": "{icon}\n{percent}",
+            "format-icons": ["","","","","","","","","","","","","","",""],
+            "tooltip": true,
+            "tooltip-format": "LMB: Brightness Slider\nRMB: hyprsunset Slider\nMMB: Shaders",
+            "on-click": "uwsm-app -- \"$HOME/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py\"",
+            "on-click-right": "uwsm-app -- \"$HOME/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py\"",
+            "on-click-middle": "uwsm-app -- \"$HOME/user_scripts/rofi/shader_menu.sh\"",
+            "on-scroll-up": "brightnessctl set +5%",
+            "on-scroll-down": "brightnessctl set 5%-",
+            "min-length": 4,
+            "interval": 60
+        },
+
+        "cpu": {
+            "justify": "center",
+            "align": 0.5,
+            "format": "\n{usage}",
+            "tooltip": true,
+            "on-click": "uwsm-app -- kitty --class htop -e htop",
+            "on-click-right": "uwsm-app -- kitty --class sysbench_benchmark.sh -e \"$HOME/user_scripts/performance/sysbench_benchmark.sh\"",
+            "tooltip-format": "CPU: {usage}%\nAvg Freq: {avg_frequency}GHz",
+            "interval": 2
+        },
+
+        "memory": {
+            "justify": "center",
+            "align": 0.5,
+            "format": "\n{percentage}",
+            "interval": 2,
+            "on-click": "uwsm-app -- kitty --class io_monitor.sh -e \"$HOME/user_scripts/drives/io_monitor.sh\"",
+            "states": {
+               "critical": 80
+            },
+            "tooltip": true,
+            "tooltip-format":"Used {used} GiB\nAvail {avail} Gib\nSwap {swapUsed} GiB"
+        },
+
+        "temperature": {
+            "justify": "center",
+            "align": 0.5,
+            "thermal-zone": 6, 
+            "critical-threshold": 65,
+            "format-critical": "🔥\n{temperatureC}",
+            "format": "\n{temperatureC}",
+            "interval": 2,
+            "tooltip-format": "Package: {temperatureC}°C"
+        },
+
+        "bluetooth": {
+            "justify": "center",
+            "align": 0.5,
+            "format": "",
+            "format-disabled": "󰂲",
+            "format-connected": "",
+            "tooltip-format": "Devices connected: {num_connections}",
+            "on-click": "uwsm-app -- blueman-manager",
+            "on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui"
+        },
+
+        "clock": {
+            "justify": "center",
+            "align": 0.5,
+            "format": "{:%I\n%M}",
+            "tooltip-format": "<big>{:%A, %d %B}</big>\n<tt><small>{calendar}</small></tt>",
+            "interval": 60,
+            "on-click": "uwsm-app -- gnome-clocks",
+            "on-click-middle": "uwsm-app -- kitty --class peaclock -e peaclock",
+            "calendar": {
+                "mode": "year",
+                "mode-mon-col": 3,
+                "weeks-pos": "right",
+                "on-scroll": 1,
+                "on-click-right": "mode",
+                "format": {
+                    "months": "<span color='#ffead3'><b>{}</b></span>",
+                    "days": "<span color='#ecc6d9'><b>{}</b></span>",
+                    "weeks": "<span color='#99ffdd'><b>W{}</b></span>",
+                    "weekdays": "<span color='#ffcc66'><b>{}</b></span>",
+                    "today": "<span color='#ff6699'><b><u>{}</u></b></span>"
+                }
+            },
+            "actions": {
+                "on-click-right": "mode",
+                "on-scroll-up": "shift_up",
+                "on-scroll-down": "shift_down"
+            }
+        },
+
+        "custom/audiorouter": {
+            "justify": "center",
+            "align": 0.5,
+            "format": "{}",
+            "return-type": "json",
+            "interval": 2,
+            "exec": "$HOME/user_scripts/audio/router/audio_routing_output_to_mic.py --waybar",
+            "on-click": "uwsm-app -- \"$HOME/user_scripts/audio/router/audio_routing_output_to_mic.py\""
+        },
+
+        "custom/network": {
+            "justify": "center",
+            "align": 0.5,
+            "return-type": "json",
+            "tooltip": true,
+            "tooltip-format": "LMB: wifitui\nRMB: WiFi ON\nMMB: WiFi OFF",
+            "on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
+            "on-click-right": "systemctl --user restart network_meter.service && nmcli radio wifi on && notify-send 'Turned ON WiFi'",
+            "on-click-middle": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
+            "interval": 2, 
+            "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --vertical"
+        },
+
+        "custom/updates-trigger": {
+            "justify": "center",
+            "align": 0.5,
+            "format": "",
+            "exec": "echo ''",
+            "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_v 2>/dev/null",
+            "interval": 5,
+            "tooltip": false
+        },
+
+        "custom/updates": {
+            "justify": "center",
+            "align": 0.5,
+            "exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_v 2>/dev/null",
+            "return-type": "json",
+            "format": "{}",
+            "tooltip": true,
+            "on-click": "uwsm-app -- kitty --class system_update.sh --hold -e ~/user_scripts/update_dusky/system_update.sh --all"
+        },
+
+        "custom/notification": {
+            "justify": "center",
+            "align": 0.5,
+            "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+            "format": "{}",
+            "return-type": "json",
+            "exec-if": "which makoctl",
+            "exec": "~/user_scripts/waybar/mako.sh --vertical",
+            "interval": 2,
+            "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+            "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+            "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+            "signal": 8,
+            "escape": true
+        },
+
+        "custom/inhibit-suspend": {
+            "justify": "center",
+            "align": 0.5,
+            "format": "{}",
+            "exec": "if pgrep -x 'hypridle' > /dev/null;\nthen echo '{\"text\": \"󰌾\", \"tooltip\": \"Suspend is enabled.\\nClick to disable.\", \"class\": \"enabled\"}';\nelse echo '{\"text\": \"\", \"tooltip\": \"Suspend is disabled.\\nClick to enable.\", \"class\": \"disabled\"}';\nfi",
+            "return-type": "json",
+            "interval": 5,
+            "signal": 9,
+            "on-click": "uwsm-app -- \"$HOME/user_scripts/waybar/toggle_hypridle.sh\"",
+            "escape": true
+        },
+
+        "custom/theme": {
+            "justify": "center",
+            "align": 0.5,
+            "format": "",
+            "tooltip": true,
+            "tooltip-format": "Switch wallpapers\nLMB: Dark Mode\nRMB: Light Mode\nMMB: Waypaper",
+            "on-click": "uwsm-app -- \"$HOME/user_scripts/theme_matugen/theme_ctl.sh\" set --mode dark",
+            "on-click-right": "uwsm-app -- \"$HOME/user_scripts/theme_matugen/theme_ctl.sh\" set --mode light",
+            "on-click-middle": "uwsm-app -- waypaper"
+        },
+
+        "custom/app-tray": {
+            "justify": "center",
+            "align": 0.5,
+            "format": "",
+            "tooltip-format": "Open Terminal App Tray!",
+            "on-click": "uwsm-app -- kitty --class tray-tui -e tray-tui"
+        },
+
+        "custom/power": {
+            "justify": "center",
+            "align": 0.5,
+            "format": "",
+            "tooltip": true,
+            "tooltip-format": "Power Menu",
+            "on-click": "uwsm-app -- \"$HOME/user_scripts/wlogout/wlogout_scale.sh\""
+        },
+
+        "custom/cava": {
+            "justify": "center",
+            "align": 0.5,
+            "format": "{}",
+            "return-type": "json",
+            "exec": "$HOME/user_scripts/waybar/cava.sh --vert --bars 6 --clean",
+            "on-click": "uwsm-app -- kitty --class cava -e cava",
+            "tooltip": false
+        },
+        
+        "tray": {
+            "icon-size": 18,
+            "show-passive-items": true,
+            "spacing": 1, 
+            "rotate": 90
+        }
+    }
+]

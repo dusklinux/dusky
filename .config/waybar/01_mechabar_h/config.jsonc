@@ -1,0 +1,425 @@
+{
+	"position": "top",
+	"modules-left": [
+		"group/user",
+		"custom/right_div#4",
+		"hyprland/workspaces",
+		"custom/notifications",
+		"custom/right_div#1"
+	],
+	"modules-center": [
+		"custom/left_div#2",
+		"group/updates-drawer",
+		"bluetooth",
+		"network",
+    "group/net-speed-drawer",
+		"custom/left_div#3",
+		"memory",
+		"custom/left_div#4",
+		"cpu",
+		"custom/left_inv#1",
+		"custom/left_div#5",
+		"custom/distro",
+		"custom/right_div#2",
+		"custom/right_inv#1",
+		"clock#time",
+		"custom/right_div#3",
+		"clock#date",
+		"custom/right_div#4",
+		"custom/weather",
+		"custom/right_div#5"
+	],
+	"modules-right": [
+		"custom/left_div#2",
+		"group/mpris-drawer",
+		"custom/left_div#3",
+		"group/pulseaudio",
+		"custom/left_div#4",
+		"group/backlight-drawer",
+		"custom/left_inv#1",
+		"group/power-drawer"
+	],
+
+	"layer": "top",
+	"tooltip": true,
+	"height": 0,
+	"width": 0,
+	"margin": 0,
+	"spacing": 0,
+	"mode": "dock",
+	"reload_style_on_change": true,
+
+	"group/user": {
+		"orientation": "horizontal",
+		"modules": [
+			"custom/trigger",
+			"tray"
+		],
+		"drawer": {
+			"transition-duration": 300,
+			"transition-left-to-right": true,
+			"click-to-reveal": false
+		}
+	},
+
+	"tray": {
+		"icon-size": 15,
+		"spacing": 6,
+		"show-passive-items": true
+	},
+
+	"custom/trigger": {
+		"format": "󰍜",
+		"min-length": 4,
+		"max-length": 4,
+		"tooltip-format": "System Tray"
+	},
+
+	"hyprland/workspaces": {
+		"format": "{icon}",
+		"format-icons": {
+			"active": "",
+			"default": ""
+		},
+		"on-scroll-up": "hyprctl dispatch workspace +1",
+		"on-scroll-down": "hyprctl dispatch workspace -1",
+		"cursor": true
+	},
+
+	"network": {
+		"interval": 10,
+		"format": "󰤨",
+		"format-ethernet": "󰈀",
+		"format-wifi": "{icon}",
+		"format-disconnected": "󰤯",
+		"format-disabled": "󰤮",
+		"format-icons": [
+			"󰤟", "󰤢", "󰤥", "󰤨"
+		],
+		"on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
+		"on-click-right": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
+		"tooltip-format": "<b>Gateway</b>: {gwaddr}",
+		"tooltip-format-ethernet": "<b>Interface</b>: {ifname}",
+		"tooltip-format-wifi": "<b>Network</b>: {essid}\n<b>IP Addr</b>: {ipaddr}/{cidr}\n<b>Strength</b>: {signalStrength}%\n<b>Frequency</b>: {frequency} GHz\n<b>Up</b>: {bandwidthUpBytes}  <b>Down</b>: {bandwidthDownBytes}",
+		"tooltip-format-disconnected": "Wi-Fi Disconnected",
+		"tooltip-format-disabled": "Wi-Fi Disabled"
+	},
+
+	"custom/net-speed": {
+		"exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --horizontal",
+		"return-type": "json",
+		"format": "{}",
+		"interval": 1,
+		"tooltip": true
+	},
+
+	"bluetooth": {
+		"format": "󰂯",
+		"format-disabled": "󰂲",
+		"format-off": "󰂲",
+		"format-on": "󰂰",
+		"format-connected": "󰂱",
+		"on-click": "uwsm-app -- blueman-manager",
+		"on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui",
+		"tooltip-format": "Device Addr: {device_address}",
+		"tooltip-format-disabled": "Bluetooth Disabled",
+		"tooltip-format-off": "Bluetooth Off",
+		"tooltip-format-on": "Bluetooth Disconnected",
+		"tooltip-format-connected": "Device: {device_alias}",
+		"tooltip-format-enumerate-connected": "Device: {device_alias}",
+		"tooltip-format-connected-battery": "Device: {device_alias}\nBattery: {device_battery_percentage}%",
+		"tooltip-format-enumerate-connected-battery": "Device: {device_alias}\nBattery: {device_battery_percentage}%"
+	},
+
+	"memory": {
+		"interval": 10,
+		"format": "󰘚 {percentage}%",
+		"format-warning": "󰀧 {percentage}%",
+		"format-critical": "󰀧 {percentage}%",
+    "on-click": "uwsm-app -- kitty --class io_monitor.sh -e \"$HOME/user_scripts/drives/io_monitor.sh\"",
+		"states": {
+			"warning": 75,
+			"critical": 90
+		},
+		"tooltip-format": "Memory Used: {used:0.0f}/{total:0.0f} GB"
+	},
+
+	"cpu": {
+		"interval": 10,
+		"format": "󰍛 {usage}%",
+		"format-warning": "󰀨 {usage}%",
+		"format-critical": "󰀨 {usage}%",
+		"states": {
+			"warning": 75,
+			"critical": 90
+		},
+		"tooltip": false
+	},
+
+	"custom/distro": {
+		"format": "󰣇",
+		"on-click": "gdbus call --session --dest com.github.dusky.controlcenter --object-path /com/github/dusky/controlcenter --method org.freedesktop.Application.Activate '{}'",
+		"on-click-right": "gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate '{}'",
+		"tooltip-format": "Control Center"
+	},
+
+	"clock#time": {
+		"format": "{:%H:%M}",
+		"tooltip-format": "<b>Standard Time</b>: {:%H:%M}"
+	},
+
+	"clock#date": {
+		"format": "󰸗 {:%m-%d}",
+		"tooltip-format": "{calendar}",
+		"calendar": {
+			"mode": "month",
+			"mode-mon-col": 6,
+			"format": {
+				"months": "<span alpha='100%'><b>{}</b></span>",
+				"days": "<span alpha='90%' font='monospace'>{}</span>",
+				"weekdays": "<span alpha='80%'><i>{}</i></span>",
+				"weeks": "<span alpha='90%' font='monospace'> {} </span>",
+				"today": "<span alpha='100%'><b><u>{}</u></b></span>"
+			}
+		},
+		"actions": {
+			"on-click": "mode"
+		}
+	},
+
+	"custom/weather": {
+		"format": "{}",
+		"exec": "python3 ~/user_scripts/waybar/weather.py",
+		"interval": 1800,
+		"return-type": "json"
+	},
+
+	"custom/inhibit-suspend": {
+		"format": "{}",
+		"exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
+		"return-type": "json",
+		"interval": 5,
+		"signal": 9,
+		"on-click": "uwsm-app -- ~/user_scripts/waybar/toggle_hypridle.sh",
+		"escape": true
+	},
+
+	"group/updates-drawer": {
+		"orientation": "horizontal",
+		"drawer": {
+			"transition-duration": 400,
+			"children-class": "updates-drawer",
+			"click-to-reveal": false,
+			"transition-left-to-right": false
+		},
+		"modules": [
+			"custom/updates-trigger",
+			"custom/updates"
+		]
+	},
+
+  "custom/net-speed-trigger": {
+        "format": "⇵",
+        "tooltip": false
+    },
+
+    "group/net-speed-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "net-speed-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": true
+        },
+        "modules": [
+            "custom/net-speed-trigger",
+            "custom/net-speed"
+        ]
+    },
+
+  "custom/updates-trigger": {
+    "format": "",
+    "exec": "echo ''",
+    "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+    "interval": 5,
+    "tooltip": false
+  },
+
+	"custom/updates": {
+		"exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+		"return-type": "json",
+		"format": "{}",
+		"tooltip": true,
+		"on-click": "uwsm-app -- kitty --class system_update.sh --hold -e ~/user_scripts/update_dusky/system_update.sh --all"
+	},
+
+  "custom/notifications": {
+		"justify": "center",
+		"align": 0.5,
+		"tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+		"format": "{}",
+		"return-type": "json",
+		"exec-if": "which makoctl",
+		"exec": "~/user_scripts/waybar/mako.sh --horizontal",
+		"interval": 2,
+		"on-click": "~/user_scripts/rofi/rofi_mako.sh",
+    "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+		"on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+		"signal": 8,
+		"escape": true
+	},
+
+	"group/mpris-drawer": {
+		"orientation": "inherit",
+		"drawer": {
+			"transition-duration": 800,
+			"children-class": "mpris-drawer",
+			"click-to-reveal": false,
+			"transition-left-to-right": false
+		},
+		"modules": ["custom/mpris-trigger", "mpris"]
+	},
+
+  "custom/mpris-trigger": {
+        "format": "♪",
+        "on-click": "uwsm-app -- pavucontrol",
+        "tooltip": false
+    },
+
+	"mpris": {
+		"format": "{player_icon} {title} - {artist}",
+		"format-paused": "{status_icon} {title} - {artist}",
+		"tooltip-format": "Playing: {title} - {artist}",
+		"tooltip-format-paused": "Paused: {title} - {artist}",
+		"player-icons": {
+			"default": "󰐊"
+		},
+		"status-icons": {
+			"paused": "󰏤"
+		},
+		"max-length": 1000
+	},
+
+	"group/pulseaudio": {
+		"orientation": "horizontal",
+		"modules": [
+			"pulseaudio#output",
+			"pulseaudio#input"
+		],
+		"drawer": {
+			"transition-left-to-right": false
+		}
+	},
+
+	"group/backlight-drawer": {
+		"orientation": "horizontal",
+		"drawer": {
+			"transition-left-to-right": false
+		},
+		"modules": [
+			"battery",
+			"backlight"
+		]
+	},
+
+	"pulseaudio#output": {
+		"format": "{icon} {volume}%",
+		"format-muted": "{icon} {volume}%",
+		"format-icons": {
+			"default": [ "󰕿", "󰖀", "󰕾" ],
+			"default-muted": "󰝟",
+			"headphone": "󰋋",
+			"headphone-muted": "󰟎",
+			"headset": "󰋎",
+			"headset-muted": "󰋐"
+		},
+		"on-click": "uwsm-app -- pavucontrol",
+		"on-click-right": "uwsm-app -- kitty --class cava -e cava",
+		"on-click-middle": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+		"on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
+		"on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%",
+		"tooltip-format": "<b>Output Device</b>: {desc}\n\nLMB: Pavucontrol\nRMB: Cava\nMMB: Mute Toggle\nScroll: Volume"
+	},
+
+	"pulseaudio#input": {
+		"format": "{format_source}",
+		"format-source": "󰍬 {volume}%",
+		"format-source-muted": "󰍭 {volume}%",
+		"on-click": "pactl set-source-mute @DEFAULT_SOURCE@ toggle",
+		"on-scroll-up": "pactl set-source-volume @DEFAULT_SOURCE@ +5%",
+		"on-scroll-down": "pactl set-source-volume @DEFAULT_SOURCE@ -5%",
+		"tooltip-format": "<b>Input Device</b>: {desc}"
+	},
+
+	"backlight": {
+		"format": "{icon} {percent}%",
+		"format-icons": [
+			"", "", "", "", "", "", "", "", ""
+		],
+		"on-click": "uwsm-app -- ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
+		"on-click-right": "uwsm-app -- ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
+		"on-scroll-up": "brightnessctl set +5%",
+		"on-scroll-down": "brightnessctl set 5%-",
+		"tooltip": false
+	},
+
+	"battery": {
+		"states": {
+			"warning": 20,
+			"critical": 10
+		},
+		"format": "{icon} {capacity}%",
+		"format-time": "{H}h {M}min",
+		"format-icons": [
+			"󰂎", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"
+		],
+		"format-charging": "󰉁 {capacity}%",
+		"tooltip-format": "<b>Discharging</b>: {time}\n<b>Power Draw</b>: {power:.2f} W",
+		"tooltip-format-charging": "<b>Charging</b>: {time}\n<b>Power Input</b>: {power:.2f} W",
+		"events": {
+			"on-discharging-warning": "notify-send 'Battery Low (20%)' -u critical -i 'battery-020' -h string:x-canonical-private-synchronous:battery",
+			"on-discharging-critical": "notify-send 'Battery Critical (10%)' -u critical -i 'battery-010' -h string:x-canonical-private-synchronous:battery",
+			"on-charging-100": "notify-send 'Battery Full (100%)' -i 'battery-100-charged' -h string:x-canonical-private-synchronous:battery"
+		}
+	},
+
+	"group/power-drawer": {
+		"orientation": "horizontal",
+		"drawer": {
+			"transition-duration": 400,
+			"children-class": "power-drawer",
+			"click-to-reveal": false,
+			"transition-left-to-right": false
+		},
+		"modules": [
+			"custom/power",
+			"custom/inhibit-suspend"
+		]
+	},
+
+	"custom/power": {
+		"format": "󰤄",
+		"on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh",
+		"tooltip-format": "Power Menu"
+	},
+
+	"custom/left_div#1": { "format": "", "tooltip": false },
+	"custom/left_div#2": { "format": "", "tooltip": false },
+	"custom/left_div#3": { "format": "", "tooltip": false },
+	"custom/left_div#4": { "format": "", "tooltip": false },
+	"custom/left_div#5": { "format": "", "tooltip": false },
+	"custom/left_div#6": { "format": "", "tooltip": false },
+	"custom/left_div#7": { "format": "", "tooltip": false },
+	"custom/left_div#8": { "format": "", "tooltip": false },
+
+	"custom/left_inv#1": { "format": "", "tooltip": false },
+	"custom/left_inv#2": { "format": "", "tooltip": false },
+
+	"custom/right_div#1": { "format": "", "tooltip": false },
+	"custom/right_div#2": { "format": "", "tooltip": false },
+	"custom/right_div#3": { "format": "", "tooltip": false },
+	"custom/right_div#4": { "format": "", "tooltip": false },
+	"custom/right_div#5": { "format": "", "tooltip": false },
+
+	"custom/right_inv#1": { "format": "", "tooltip": false }
+}

@@ -1,0 +1,979 @@
+**`.github/workflows/build.yml`**
+```yaml
+name: Build TrollStore IPA
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Build Tools
+        run: brew install xcodegen ldid
+
+      - name: Generate Project & Compile
+        run: |
+          xcodegen generate
+          xcodebuild clean build \
+            -project DaemonApp.xcodeproj \
+            -scheme DaemonApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Inject Entitlements & Package IPA
+        run: |
+          rm -rf Payload DaemonApp.ipa
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/DaemonApp.app Payload/
+          ldid -S"DaemonApp/entitlements.plist" Payload/DaemonApp.app/DaemonApp
+          zip -qry DaemonApp.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DaemonApp-iOS16
+          path: DaemonApp.ipa
+```
+
+**`project.yml`**
+```yaml
+name: DaemonApp
+
+options:
+  bundleIdPrefix: com.nugget
+
+targets:
+  DaemonApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: DaemonApp
+        excludes:
+          - entitlements.plist
+    info:
+      properties:
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+    settings:
+      CODE_SIGN_IDENTITY: ""
+      CODE_SIGNING_REQUIRED: "NO"
+      CODE_SIGNING_ALLOWED: "NO"
+```
+
+**`DaemonApp/entitlements.plist`**
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.private.security.no-sandbox</key>
+    <true/>
+    <key>platform-application</key>
+    <true/>
+</dict>
+</plist>
+```
+
+**`DaemonApp/DaemonApp.swift`**
+```swift
+import SwiftUI
+
+@main
+struct DaemonAppEntry: App {
+    @StateObject private var model = AppModel()
+
+    var body: some Scene {
+        WindowGroup {
+            MainView()
+                .environmentObject(model)
+                .preferredColorScheme(model.isDarkTheme ? .dark : .light)
+        }
+    }
+}
+```
+
+**`DaemonApp/AppModel.swift`**
+```swift
+import Foundation
+import Combine
+import Darwin
+
+struct LaunchdService: Identifiable, Hashable {
+    enum Kind: String {
+        case agent = "LaunchAgent"
+        case daemon = "LaunchDaemon"
+        case unresolved = "Unresolved"
+    }
+
+    let label: String
+    let plistPath: String?
+    let domain: String?
+    let kind: Kind
+
+    var id: String {
+        if let domain, let plistPath {
+            return "\(domain)|\(plistPath)"
+        }
+        return "unresolved|\(label)"
+    }
+
+    var metadataText: String {
+        switch kind {
+        case .unresolved:
+            return "Unresolved import"
+        default:
+            return "\(kind.rawValue) • \(domain ?? "unknown")"
+        }
+    }
+
+    static func unresolved(label: String) -> LaunchdService {
+        LaunchdService(label: label, plistPath: nil, domain: nil, kind: .unresolved)
+    }
+}
+
+private struct DisabledServiceKey: Hashable {
+    let domain: String
+    let label: String
+}
+
+private struct ProcessResult {
+    let exitCode: Int32
+    let output: String
+}
+
+final class AppModel: ObservableObject {
+    @Published private(set) var configDaemons: [LaunchdService] = []
+    @Published private(set) var allDaemons: [LaunchdService] = []
+    @Published private(set) var isProcessing: Set<String> = []
+    @Published private(set) var isScanningDaemons = false
+    @Published private(set) var isRefreshingState = false
+    @Published private(set) var daemonManagerAvailable = false
+    @Published private(set) var environmentWarning: String?
+
+    @Published var ramUsageText = "Calculating RAM..."
+    @Published var isDarkTheme = true
+    @Published var errorMessage: String?
+
+    private var disabledServices: Set<DisabledServiceKey>?
+    private var ambiguousLabels: Set<String> = []
+    private var importedLabels: [String] = []
+    private var timer: Timer?
+
+    private let mobileDomain: String
+    private let daemonManagerPath = "/var/jb/basebin/daemonmanager"
+
+    init() {
+        if let pw = getpwnam("mobile") {
+            mobileDomain = "user/\(pw.pointee.pw_uid)"
+        } else {
+            mobileDomain = "user/501"
+        }
+
+        validateEnvironment()
+        startRAMTimer()
+        fetchAllDaemons()
+        refreshState()
+    }
+
+    deinit {
+        timer?.invalidate()
+    }
+
+    func refreshAll() {
+        validateEnvironment()
+        fetchAllDaemons()
+        refreshState()
+    }
+
+    func dismissError() {
+        errorMessage = nil
+    }
+
+    func isDisabled(_ service: LaunchdService) -> Bool? {
+        guard let domain = service.domain, let disabledServices else {
+            return nil
+        }
+
+        return disabledServices.contains(DisabledServiceKey(domain: domain, label: service.label))
+    }
+
+    func canToggle(_ service: LaunchdService) -> Bool {
+        daemonManagerAvailable &&
+        service.domain != nil &&
+        !ambiguousLabels.contains(service.label) &&
+        disabledServices != nil
+    }
+
+    func toggleUnavailableReason(_ service: LaunchdService) -> String? {
+        if !daemonManagerAvailable {
+            return "Missing executable dependency: \(daemonManagerPath)"
+        }
+
+        if service.domain == nil {
+            return "This imported label could not be resolved to a scanned launchd plist."
+        }
+
+        if ambiguousLabels.contains(service.label) {
+            return "This label exists more than once in the scanned plist set, so label-only toggling is ambiguous."
+        }
+
+        if disabledServices == nil {
+            return "Current launchd disabled-state has not finished loading yet."
+        }
+
+        return nil
+    }
+
+    private func startRAMTimer() {
+        timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.updateRAMUsage()
+        }
+        updateRAMUsage()
+    }
+
+    private func updateRAMUsage() {
+        let hostPort = mach_host_self()
+        defer { mach_port_deallocate(mach_task_self_, hostPort) }
+
+        var pageSize: vm_size_t = 0
+        guard host_page_size(hostPort, &pageSize) == KERN_SUCCESS else { return }
+
+        var vmStats = vm_statistics64()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<vm_statistics64>.stride / MemoryLayout<integer_t>.stride
+        )
+
+        let status = withUnsafeMutablePointer(to: &vmStats) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(hostPort, HOST_VM_INFO64, $0, &count)
+            }
+        }
+
+        guard status == KERN_SUCCESS else { return }
+
+        let totalBytes = Double(ProcessInfo.processInfo.physicalMemory)
+        let freeBytes = Double(vmStats.free_count + vmStats.speculative_count) * Double(pageSize)
+        let usedBytes = max(0, totalBytes - freeBytes)
+
+        let totalGB = totalBytes / 1_073_741_824.0
+        let usedGB = usedBytes / 1_073_741_824.0
+
+        DispatchQueue.main.async {
+            self.ramUsageText = String(format: "System RAM: %.2f GB Used / %.2f GB Total", usedGB, totalGB)
+        }
+    }
+
+    func refreshState(completion: (() -> Void)? = nil) {
+        DispatchQueue.main.async {
+            self.isRefreshingState = true
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let domains = ["system", self.mobileDomain]
+            var merged = Set<DisabledServiceKey>()
+            var failures: [String] = []
+
+            for domain in domains {
+                let result = self.posixRun(executable: "/bin/launchctl", args: ["print-disabled", domain])
+
+                guard result.exitCode == 0 else {
+                    let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let message = detail.isEmpty
+                        ? "launchctl print-disabled \(domain) failed with exit code \(result.exitCode)."
+                        : "launchctl print-disabled \(domain) failed:\n\(detail)"
+                    failures.append(message)
+                    continue
+                }
+
+                merged.formUnion(self.parseDisabledServices(from: result.output, domain: domain))
+            }
+
+            DispatchQueue.main.async {
+                if failures.isEmpty {
+                    self.disabledServices = merged
+                } else {
+                    self.disabledServices = nil
+                    self.errorMessage = failures.joined(separator: "\n\n")
+                }
+
+                self.isRefreshingState = false
+                completion?()
+            }
+        }
+    }
+
+    func fetchAllDaemons() {
+        DispatchQueue.main.async {
+            self.isScanningDaemons = true
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let fileManager = FileManager.default
+            let locations: [(path: String, kind: LaunchdService.Kind, domain: String)] = [
+                ("/System/Library/LaunchAgents", .agent, self.mobileDomain),
+                ("/System/Library/LaunchDaemons", .daemon, "system"),
+                ("/var/jb/Library/LaunchAgents", .agent, self.mobileDomain),
+                ("/var/jb/Library/LaunchDaemons", .daemon, "system")
+            ]
+
+            var servicesByID: [String: LaunchdService] = [:]
+
+            for location in locations {
+                let directoryURL = URL(fileURLWithPath: location.path, isDirectory: true)
+
+                guard let fileURLs = try? fileManager.contentsOfDirectory(
+                    at: directoryURL,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                ) else {
+                    continue
+                }
+
+                for fileURL in fileURLs where fileURL.pathExtension == "plist" {
+                    guard let service = self.loadService(from: fileURL, kind: location.kind, domain: location.domain) else {
+                        continue
+                    }
+                    servicesByID[service.id] = service
+                }
+            }
+
+            let services = servicesByID.values.sorted(by: Self.sortServices)
+            let ambiguous = Set(
+                Dictionary(grouping: services, by: \.label)
+                    .filter { $0.value.count > 1 }
+                    .map(\.key)
+            )
+
+            DispatchQueue.main.async {
+                self.allDaemons = services
+                self.ambiguousLabels = ambiguous
+                self.isScanningDaemons = false
+                self.resolveImportedConfig()
+            }
+        }
+    }
+
+    func toggleDaemon(_ service: LaunchdService, enable: Bool) {
+        guard canToggle(service) else {
+            if let reason = toggleUnavailableReason(service) {
+                presentError(reason)
+            }
+            return
+        }
+
+        DispatchQueue.main.async {
+            self.isProcessing.insert(service.id)
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let action = enable ? "enable" : "disable"
+            let result = self.posixRun(
+                executable: "/bin/sh",
+                args: [self.daemonManagerPath, action, service.label]
+            )
+
+            guard result.exitCode == 0 else {
+                let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                let message = detail.isEmpty
+                    ? "Failed to \(action) \(service.label) (exit code \(result.exitCode))."
+                    : "Failed to \(action) \(service.label):\n\(detail)"
+
+                DispatchQueue.main.async {
+                    self.isProcessing.remove(service.id)
+                    self.errorMessage = message
+                }
+                return
+            }
+
+            self.refreshState {
+                self.isProcessing.remove(service.id)
+            }
+        }
+    }
+
+    func importConfig(url: URL) {
+        do {
+            let data = try Data(contentsOf: url)
+            guard let content = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16) else {
+                presentError("Unsupported text encoding in imported config.")
+                return
+            }
+
+            let labels = parseImportedLabels(from: content)
+
+            DispatchQueue.main.async {
+                self.importedLabels = labels
+                self.resolveImportedConfig()
+            }
+        } catch {
+            presentError("Failed to import config: \(error.localizedDescription)")
+        }
+    }
+
+    private func validateEnvironment() {
+        let fileManager = FileManager.default
+        let available =
+            fileManager.fileExists(atPath: daemonManagerPath) &&
+            fileManager.isExecutableFile(atPath: daemonManagerPath)
+
+        DispatchQueue.main.async {
+            self.daemonManagerAvailable = available
+            self.environmentWarning = available ? nil : "Missing executable dependency: \(self.daemonManagerPath)"
+        }
+    }
+
+    private func resolveImportedConfig() {
+        guard !importedLabels.isEmpty else {
+            configDaemons = []
+            return
+        }
+
+        let grouped = Dictionary(grouping: allDaemons, by: \.label)
+        var resolved: [LaunchdService] = []
+        var seen = Set<String>()
+
+        for label in importedLabels {
+            if let matches = grouped[label], !matches.isEmpty {
+                for service in matches.sorted(by: Self.sortServices) where seen.insert(service.id).inserted {
+                    resolved.append(service)
+                }
+            } else {
+                let unresolved = LaunchdService.unresolved(label: label)
+                if seen.insert(unresolved.id).inserted {
+                    resolved.append(unresolved)
+                }
+            }
+        }
+
+        configDaemons = resolved
+    }
+
+    private func parseImportedLabels(from content: String) -> [String] {
+        var labels: [String] = []
+        var seen = Set<String>()
+
+        for rawLine in content.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !line.isEmpty, !line.hasPrefix("#") else {
+                continue
+            }
+
+            guard let firstToken = line.split(whereSeparator: \.isWhitespace).first else {
+                continue
+            }
+
+            let label = String(firstToken)
+            if seen.insert(label).inserted {
+                labels.append(label)
+            }
+        }
+
+        return labels
+    }
+
+    private func parseDisabledServices(from output: String, domain: String) -> Set<DisabledServiceKey> {
+        var disabled = Set<DisabledServiceKey>()
+        let trimSet = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",;"))
+
+        for rawLine in output.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: trimSet)
+            let parts = line.components(separatedBy: "\"")
+
+            guard parts.count >= 3 else { continue }
+            guard let arrowRange = line.range(of: "=>") else { continue }
+
+            let label = parts[1]
+            let rawValue = line[arrowRange.upperBound...]
+                .trimmingCharacters(in: trimSet)
+                .lowercased()
+
+            if rawValue == "true" || rawValue == "disabled" {
+                disabled.insert(DisabledServiceKey(domain: domain, label: label))
+            }
+        }
+
+        return disabled
+    }
+
+    private func loadService(from plistURL: URL, kind: LaunchdService.Kind, domain: String) -> LaunchdService? {
+        guard let data = try? Data(contentsOf: plistURL) else {
+            return nil
+        }
+
+        let plistObject: Any
+        do {
+            plistObject = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+        } catch {
+            return nil
+        }
+
+        guard let plist = plistObject as? [String: Any] else {
+            return nil
+        }
+
+        let fallbackLabel = plistURL.deletingPathExtension().lastPathComponent
+        let trimmedLabel = (plist["Label"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = (trimmedLabel?.isEmpty == false) ? trimmedLabel! : fallbackLabel
+
+        return LaunchdService(
+            label: label,
+            plistPath: plistURL.path,
+            domain: domain,
+            kind: kind
+        )
+    }
+
+    private static func sortServices(_ lhs: LaunchdService, _ rhs: LaunchdService) -> Bool {
+        let lhsLabel = lhs.label.localizedLowercase
+        let rhsLabel = rhs.label.localizedLowercase
+
+        if lhsLabel != rhsLabel {
+            return lhsLabel < rhsLabel
+        }
+
+        let lhsDomain = lhs.domain ?? ""
+        let rhsDomain = rhs.domain ?? ""
+
+        if lhsDomain != rhsDomain {
+            return lhsDomain < rhsDomain
+        }
+
+        return (lhs.plistPath ?? "") < (rhs.plistPath ?? "")
+    }
+
+    private func presentError(_ message: String) {
+        DispatchQueue.main.async {
+            self.errorMessage = message
+        }
+    }
+
+    private func posixRun(executable: String, args: [String]) -> ProcessResult {
+        var argv: [UnsafeMutablePointer<CChar>?] = ([executable] + args).map { strdup($0) } + [nil]
+        defer {
+            for case let pointer? in argv {
+                free(pointer)
+            }
+        }
+
+        let environment = [
+            "PATH=/var/jb/usr/bin:/var/jb/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "LC_ALL=C"
+        ]
+        var env: [UnsafeMutablePointer<CChar>?] = environment.map { strdup($0) } + [nil]
+        defer {
+            for case let pointer? in env {
+                free(pointer)
+            }
+        }
+
+        var fileActions = posix_spawn_file_actions_t()
+        let initStatus = posix_spawn_file_actions_init(&fileActions)
+        guard initStatus == 0 else {
+            return ProcessResult(
+                exitCode: -1,
+                output: "posix_spawn_file_actions_init failed: \(initStatus)"
+            )
+        }
+        defer {
+            posix_spawn_file_actions_destroy(&fileActions)
+        }
+
+        var outPipe: [Int32] = [-1, -1]
+        guard pipe(&outPipe) == 0 else {
+            return ProcessResult(
+                exitCode: -1,
+                output: "pipe() failed: \(String(cString: strerror(errno)))"
+            )
+        }
+        defer {
+            if outPipe[0] != -1 { close(outPipe[0]) }
+            if outPipe[1] != -1 { close(outPipe[1]) }
+        }
+
+        guard posix_spawn_file_actions_adddup2(&fileActions, outPipe[1], STDOUT_FILENO) == 0 else {
+            return ProcessResult(exitCode: -1, output: "posix_spawn_file_actions_adddup2(stdout) failed")
+        }
+
+        guard posix_spawn_file_actions_adddup2(&fileActions, outPipe[1], STDERR_FILENO) == 0 else {
+            return ProcessResult(exitCode: -1, output: "posix_spawn_file_actions_adddup2(stderr) failed")
+        }
+
+        guard posix_spawn_file_actions_addclose(&fileActions, outPipe[0]) == 0 else {
+            return ProcessResult(exitCode: -1, output: "posix_spawn_file_actions_addclose(read) failed")
+        }
+
+        guard posix_spawn_file_actions_addclose(&fileActions, outPipe[1]) == 0 else {
+            return ProcessResult(exitCode: -1, output: "posix_spawn_file_actions_addclose(write) failed")
+        }
+
+        var pid: pid_t = 0
+        let spawnStatus = posix_spawn(&pid, executable, &fileActions, nil, argv, env)
+        guard spawnStatus == 0 else {
+            return ProcessResult(
+                exitCode: Int32(spawnStatus),
+                output: "posix_spawn failed: \(String(cString: strerror(spawnStatus)))"
+            )
+        }
+
+        close(outPipe[1])
+        outPipe[1] = -1
+
+        let output = readAll(from: outPipe[0])
+
+        close(outPipe[0])
+        outPipe[0] = -1
+
+        var waitStatus: Int32 = 0
+        while waitpid(pid, &waitStatus, 0) == -1 {
+            if errno == EINTR {
+                continue
+            }
+
+            return ProcessResult(
+                exitCode: -1,
+                output: output + "\nwaitpid() failed: \(String(cString: strerror(errno)))"
+            )
+        }
+
+        return ProcessResult(
+            exitCode: decodeWaitStatus(waitStatus),
+            output: output
+        )
+    }
+
+    private func readAll(from fileDescriptor: Int32) -> String {
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+
+        while true {
+            let bytesRead = read(fileDescriptor, &buffer, buffer.count)
+
+            if bytesRead > 0 {
+                data.append(contentsOf: buffer[..<bytesRead])
+            } else if bytesRead == 0 {
+                break
+            } else if errno == EINTR {
+                continue
+            } else {
+                break
+            }
+        }
+
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private func decodeWaitStatus(_ status: Int32) -> Int32 {
+        let signal = status & 0x7F
+        if signal == 0 {
+            return (status >> 8) & 0xFF
+        }
+        return 128 + signal
+    }
+}
+```
+
+**`DaemonApp/MainView.swift`**
+```swift
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct MainView: View {
+    @EnvironmentObject var model: AppModel
+    @State private var showFilePicker = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                VStack(spacing: 16) {
+                    Text(model.ramUsageText)
+                        .font(.system(.subheadline, design: .monospaced).weight(.bold))
+                        .foregroundColor(model.isDarkTheme ? .green : .blue)
+
+                    HStack(spacing: 12) {
+                        Button(action: { showFilePicker = true }) {
+                            Label("Import Config", systemImage: "square.and.arrow.down")
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(action: model.refreshAll) {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+
+                    if model.isScanningDaemons || model.isRefreshingState {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+                .padding()
+                .background(Color(UIColor.secondarySystemBackground))
+
+                if let warning = model.environmentWarning {
+                    Text(warning)
+                        .font(.footnote)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                        .padding(.vertical, 10)
+                        .background(Color.orange.opacity(0.2))
+                }
+
+                TabView {
+                    DaemonListView(
+                        services: model.configDaemons,
+                        emptyMessage: "No config loaded. Tap 'Import Config'."
+                    )
+                    .tabItem {
+                        Label("Config", systemImage: "doc.text")
+                    }
+
+                    DaemonListView(
+                        services: model.allDaemons,
+                        emptyMessage: model.isScanningDaemons ? "Scanning launchd plist directories..." : "No launchd services found."
+                    )
+                    .tabItem {
+                        Label("Services", systemImage: "cpu")
+                    }
+                }
+            }
+            .navigationTitle("DaemonManager")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: { model.isDarkTheme.toggle() }) {
+                        Image(systemName: model.isDarkTheme ? "sun.max" : "moon")
+                            .foregroundColor(.primary)
+                    }
+                }
+            }
+            .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.text]) { result in
+                switch result {
+                case .success(let url):
+                    let access = url.startAccessingSecurityScopedResource()
+                    defer {
+                        if access {
+                            url.stopAccessingSecurityScopedResource()
+                        }
+                    }
+                    model.importConfig(url: url)
+
+                case .failure(let error):
+                    model.errorMessage = "File import failed: \(error.localizedDescription)"
+                }
+            }
+            .alert(
+                "Error",
+                isPresented: Binding(
+                    get: { model.errorMessage != nil },
+                    set: { if !$0 { model.dismissError() } }
+                )
+            ) {
+                Button("OK", role: .cancel) {
+                    model.dismissError()
+                }
+            } message: {
+                Text(model.errorMessage ?? "")
+            }
+        }
+    }
+}
+
+struct DaemonListView: View {
+    @EnvironmentObject var model: AppModel
+
+    let services: [LaunchdService]
+    let emptyMessage: String
+
+    @State private var searchText = ""
+    @State private var filter: FilterType = .all
+
+    enum FilterType: String, CaseIterable {
+        case all = "All"
+        case enabled = "Enabled"
+        case disabled = "Disabled"
+    }
+
+    private var filteredServices: [LaunchdService] {
+        var result = services
+
+        if !searchText.isEmpty {
+            result = result.filter { $0.label.localizedCaseInsensitiveContains(searchText) }
+        }
+
+        switch filter {
+        case .all:
+            break
+        case .enabled:
+            result = result.filter { model.isDisabled($0) == false }
+        case .disabled:
+            result = result.filter { model.isDisabled($0) == true }
+        }
+
+        return result
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Filter", selection: $filter) {
+                ForEach(FilterType.allCases, id: \.self) { type in
+                    Text(type.rawValue).tag(type)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding()
+
+            if services.isEmpty {
+                Spacer()
+                Text(emptyMessage)
+                    .foregroundColor(.secondary)
+                Spacer()
+            } else if filteredServices.isEmpty {
+                Spacer()
+                Text("No matching services.")
+                    .foregroundColor(.secondary)
+                Spacer()
+            } else {
+                List(filteredServices) { service in
+                    DaemonRow(service: service)
+                }
+                .listStyle(.plain)
+                .searchable(text: $searchText, prompt: "Search labels")
+            }
+        }
+    }
+}
+
+struct DaemonRow: View {
+    @EnvironmentObject var model: AppModel
+
+    let service: LaunchdService
+    @State private var isExpanded = false
+
+    private var isProcessing: Bool {
+        model.isProcessing.contains(service.id)
+    }
+
+    private var toggleBinding: Binding<Bool> {
+        Binding(
+            get: { !(model.isDisabled(service) ?? true) },
+            set: { newValue in model.toggleDaemon(service, enable: newValue) }
+        )
+    }
+
+    private var statusColor: Color {
+        switch model.isDisabled(service) {
+        case true:
+            return .red
+        case false:
+            return .green
+        case nil:
+            return .gray
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 8, height: 8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(service.label)
+                        .font(.system(.callout, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Text(service.metadataText)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer()
+
+                if isProcessing {
+                    ProgressView()
+                        .frame(width: 44)
+                } else if model.canToggle(service) {
+                    Toggle("", isOn: toggleBinding)
+                        .labelsHidden()
+                        .tint(.green)
+                } else {
+                    Image(systemName: "questionmark.circle")
+                        .foregroundColor(.orange)
+                        .frame(width: 24)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            }
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(DaemonDescriptions.get(for: service.label))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    if let path = service.plistPath {
+                        Text(path)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .textSelection(.enabled)
+                    }
+
+                    if let reason = model.toggleUnavailableReason(service) {
+                        Text(reason)
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                    }
+                }
+                .padding(.leading, 20)
+            }
+        }
+        .padding(.vertical, 6)
+        .disabled(isProcessing)
+        .opacity(isProcessing ? 0.6 : 1.0)
+    }
+}
+
+struct DaemonDescriptions {
+    static let dict: [String: String] = [
+        "com.apple.tipsd": "Handles Tips content and related suggestion delivery.",
+        "com.apple.crash_mover": "Moves or processes crash logs in the background.",
+        "com.apple.powerd": "Core power-management service. Disabling it can destabilize the device.",
+        "com.apple.SpringBoard": "Main iOS shell and UI process. Disabling it can break the interface.",
+        "com.apple.searchd": "Supports search indexing and related queries.",
+        "com.apple.wifid": "Core Wi-Fi service. Disabling it can break wireless connectivity."
+    ]
+
+    static func get(for label: String) -> String {
+        if let description = dict[label] {
+            return description
+        }
+
+        if label.localizedCaseInsensitiveContains("accessibility") {
+            return "Related to iOS accessibility features."
+        }
+
+        return "Toggles launchd disabled-state through the external wrapper script."
+    }
+}
+```

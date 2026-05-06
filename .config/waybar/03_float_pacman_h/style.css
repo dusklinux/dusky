@@ -1,0 +1,371 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Ghost Glaze
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@import url("../../.config/matugen/generated/waybar-colors.css");
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSLUCENCY CONTROLS (GLASSY MODE)
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color glass_bar         alpha(@surface, 0.5);
+@define-color glass_module      alpha(@surface_container, 0.3);
+@define-color glass_module_dark alpha(@surface_container, 0.4);
+@define-color glass_hover       alpha(@surface_container_highest, 0.5);
+@define-color glass_tooltip     alpha(@surface, 0.08);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* WAYBAR_OPAQUE_SWITCH_START */
+
+@define-color glass_bar         @surface;
+@define-color glass_module      @surface_container;
+@define-color glass_module_dark @surface_container;
+@define-color glass_hover       @surface_container_high;
+@define-color glass_tooltip     @surface_container_highest;
+
+/* WAYBAR_OPAQUE_SWITCH_END */
+
+* {
+    border: none;
+    border-radius: 0;
+    font-family: "JetBrainsMono Nerd Font", "Symbols Nerd Font", sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    min-height: 0;
+}
+
+/* Base Window - Invisible to allow floating modules */
+window#waybar {
+    background: transparent;
+}
+
+/* The actual bar container */
+window#waybar > box {
+    background-color: @glass_bar; 
+    border: 1px solid alpha(@outline, 0.2);  /* Thin glass edge */
+    border-radius: 20px;
+    margin: 4px 6px;
+    padding: 2px 6px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   LEFT MODULES
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* App Launcher Gem */
+#custom-launcher {
+    background: linear-gradient(135deg, @primary, @primary_fixed_dim);
+    color: @on_primary;
+    padding: 0px 13px 2px 8px;
+    margin: 6px 4px 6px 4px;
+    border-radius: 18px;
+    font-size: 16px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PACMAN "GHOST" WORKSPACES
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#workspaces {
+    background: rgba(255, 255, 255, 0.05); /* Left native deliberately to respect Ghost logic */
+    margin: 4px 4px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 2px 6px;
+    border-bottom: 2px solid alpha(@primary, 0.3);
+}
+
+#workspaces button {
+    padding: 0 8px;
+    margin: 3px 1px;
+    transition: all 0.3s ease-in-out;
+    border-radius: 12px;
+}
+
+#workspaces button.empty:nth-child(1) { color: alpha(@tertiary, 0.3); } 
+#workspaces button.empty:nth-child(2) { color: alpha(@tertiary, 0.3); } 
+#workspaces button.empty:nth-child(3) { color: alpha(@tertiary, 0.3); } 
+#workspaces button.empty:nth-child(4) { color: alpha(@tertiary, 0.3); } 
+#workspaces button.empty:nth-child(5) { color: alpha(@tertiary, 0.3); } 
+
+#workspaces button:not(.empty) {
+    color: @on_surface; 
+    text-shadow: 0 0 10px rgba(30, 30, 255, 0.8);
+}
+
+window#waybar #workspaces button.active {
+    color: @primary; 
+    background: alpha(@primary, 0.2);
+    min-width: 42px;
+    text-shadow: 0 0 15px @primary, 0 0 20px @primary;
+    border: 1px solid @primary;
+}
+
+#workspaces button.urgent {
+    color: #ffffff;
+    background: #ff0000;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CENTER MODULES - UNIFIED GLASS PODS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-notification, 
+#clock, 
+#custom-updates,
+#custom-updates-trigger {
+    background: @glass_module;
+    padding: 0 12px;
+    margin: 4px 3px;
+    border-radius: 10px;
+    transition: all 0.3s ease-in-out;
+}
+
+/* Updates Drawer Setup */
+#custom-updates, #custom-updates-trigger {
+    color: @secondary;
+    border-bottom: 2px solid alpha(@secondary, 0.4);
+}
+
+/* CLOCK - Primary Accent */
+#clock {
+    color: @primary;
+    border-bottom: 2px solid alpha(@primary, 0.4);
+    font-weight: 800;
+}
+
+/* NOTIFICATION - Secondary Accent */
+#custom-notification {
+    color: @secondary;
+    border-bottom: 2px solid alpha(@secondary, 0.4);
+}
+
+/* Notification Active - Matugen Alert */
+#custom-notification.notification {
+    color: @primary;
+    border-bottom: 2px solid @primary;
+    text-shadow: 0 0 8px alpha(@primary, 0.6);
+}
+
+#custom-notification:hover, 
+#clock:hover,
+#custom-updates:hover,
+#custom-updates-trigger:hover {
+    background: @glass_hover;
+    text-shadow: 0 0 8px alpha(@on_surface, 0.3);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RIGHT MODULES
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#network, 
+#custom-net-speed,
+#pulseaudio, 
+#backlight {
+    padding: 0 12px;
+    margin: 4px 2px;
+    border-radius: 10px;
+    background: @glass_module; 
+    transition: all 0.3s ease-in-out;
+}
+
+/* 1. NETWORK DRAWER ELEMENTS */
+#network, #custom-net-speed {
+    color: @secondary;
+    padding: 0px 12px 2px 8px;
+    margin: 4px 2px;
+    border-radius: 10px;
+    font-size: 16px;
+    border-bottom: 2px solid alpha(@secondary, 0.2);
+}
+
+#custom-net-speed {
+    font-size: 13px;
+    padding: 0px 8px 2px 8px;
+}
+
+#network.disconnected {
+    color: @error;
+    border-bottom: 2px solid alpha(@primary, 0.2);
+}
+
+/* 2. PULSEAUDIO - Primary Accent */
+#pulseaudio {
+    color: @primary;
+    border-bottom: 2px solid alpha(@primary, 0.2);
+}
+
+#pulseaudio.muted {
+    color: alpha(@on_surface_variant, 0.4);
+    border-bottom: 2px solid alpha(@primary, 0.2);
+}
+
+/* 3. BACKLIGHT - Secondary Accent */
+#backlight {
+    color: @secondary;
+    border-bottom: 2px solid alpha(@primary, 0.2);
+}
+
+/* Hover glow for right side */
+#network:hover, 
+#custom-net-speed:hover,
+#pulseaudio:hover, 
+#backlight:hover {
+    background: @glass_hover;
+    box-shadow: inset 0 0 10px alpha(@on_surface, 0.05);
+}
+
+#backlight:hover { text-shadow: 0 0 8px alpha(@secondary, 0.6); }
+#pulseaudio:hover { text-shadow: 0 0 8px alpha(@primary, 0.6); }
+#network:hover, #custom-net-speed:hover { text-shadow: 0 0 8px alpha(@tertiary, 0.6); }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CPU & MEMORY (MATUGEN GLASS)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#cpu, #memory {
+    padding: 0 10px;
+    margin: 4px 2px;
+    border-radius: 10px;
+    background: @glass_module;
+    transition: all 0.3s ease-in-out;
+}
+
+#cpu {
+    color: @primary;
+    border-bottom: 2px solid alpha(@primary, 0.2);
+}
+
+#memory {
+    color: @secondary;
+    border-bottom: 2px solid alpha(@secondary, 0.2);
+}
+
+#cpu:hover, #memory:hover { background: @glass_hover; }
+
+#cpu.warning, #memory.warning {
+    color: @tertiary;
+    background: alpha(@tertiary_container, 0.4);
+}
+
+#cpu.critical, #memory.critical {
+    color: @on_error_container;
+    background: alpha(@error_container, 0.6);
+    animation: cpu-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes cpu-pulse {
+    from {
+        box-shadow: 0 0 2px alpha(@error, 0.2);
+        background: alpha(@error_container, 0.4);
+    }
+    to {
+        box-shadow: 0 0 12px alpha(@error, 0.6);
+        background: alpha(@error_container, 0.8);
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BATTERY & TRAY
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#battery, #tray {
+    padding: 0 10px;
+    margin: 4px 2px;
+    border-radius: 10px;
+    background: @glass_module;
+    transition: all 0.3s ease-in-out;
+}
+
+#battery:hover {
+    background: @glass_hover;
+    color: @primary;
+}
+
+#battery {
+    color: @primary;
+    border-bottom: 2px solid alpha(@primary, 0.2);
+}
+
+#battery.charging, #battery.plugged {
+    color: @primary;
+    padding: 0 10px;
+    margin: 4px 2px;
+    border-radius: 10px;
+    background: @glass_module;
+    border-bottom: 2px solid alpha(@primary, 0.2);
+}
+
+#battery.critical:not(.charging) {
+    background: alpha(@error, 0.6);
+    color: @on_error;
+    border-bottom: 2px solid alpha(@error, 0.3);
+    animation: blink 1s infinite alternate;
+}
+
+#tray {
+    color: @primary;
+    border-bottom: 2px solid alpha(@primary, 0.2);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POWER DRAWER (IDLE & POWER BUTTON)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-inhibit-suspend {
+    background: @glass_module_dark;
+    padding: 0 12px;
+    margin: 6px 2px;
+    border-radius: 10px;
+    transition: all 0.3s ease-in-out;
+    color: @error;
+    border-bottom: 2px solid alpha(@error, 0.4);
+}
+
+#custom-inhibit-suspend.activated {
+    color: @error;
+    border-bottom: 2px solid @error;
+    text-shadow: 0 0 8px alpha(@error, 0.6);
+    background: alpha(@error, 0.1);
+}
+
+#custom-inhibit-suspend:hover {
+    background: @glass_hover;
+    text-shadow: 0 0 8px alpha(@on_surface, 0.3);
+}
+
+/* Power Button Gem */
+#custom-power {
+    background: linear-gradient(135deg, @primary, @primary_fixed_dim);
+    color: @on_primary;
+    padding: 0px 13px 2px 8px;
+    margin: 6px 4px 6px 4px;
+    border-radius: 18px;
+    font-size: 16px;
+    box-shadow: 0 0 8px alpha(@secondary, 0.3);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TOOLTIPS & ANIMATIONS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+tooltip {
+    background: @glass_tooltip;
+    border-radius: 12px;
+    border: 1px solid alpha(@outline, 0.3);
+}
+
+tooltip label {
+    color: @on_surface;
+    padding: 8px;
+}
+
+@keyframes blink {
+    to {
+        background-color: @error;
+        color: @on_error;
+    }
+}

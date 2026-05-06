@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# HYPRLAND SCREENSHOT ARCHITECTURE (THE UNBREAKABLE MASTER v9)
-# Bash 5.3+ | Atomic IPC | Smart Click-Math | Perfect Freeze | Stacking Fix
+# HYPRLAND SCREENSHOT ARCHITECTURE (THE UNBREAKABLE MASTER v10)
+# Bash 5.3+ | Atomic IPC | Smart Click-Math | Perfect Freeze | Subshell Free
 # ==============================================================================
 
 set -euo pipefail
@@ -91,7 +91,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- 3. CONCURRENCY PREVENTER ---
+# --- 3. CONCURRENCY PREVENTER (Slurp Debounce) ---
 if pkill -x slurp >/dev/null 2>&1; then
     exit 0 
 fi
@@ -125,6 +125,12 @@ get_visible_clients() {
 }
 
 # --- 5. SELECTION LOGIC ---
+
+# Prevent black borders during slurp capture in Hyprland
+if [[ "$MODE" =~ ^(region|window|smart)$ ]]; then
+    command -v hyprctl >/dev/null && hyprctl keyword layerrule "match:namespace ^selection$, no_anim on" >/dev/null 2>&1 || true
+fi
+
 case "$MODE" in
     fullscreen)
         if [[ "$FULLSCREEN_MODE" == "focused" ]]; then
@@ -218,8 +224,9 @@ fi
 
 unfreeze_screen 
 
-# --- 7. ATOMIC PUBLISHING (Timestamp Based) ---
-FILENAME="${PREFIX}-$(date +'%Y-%m-%d_%H-%M-%S').png"
+# --- 7. ATOMIC PUBLISHING (Timestamp & PID Based) ---
+printf -v TS '%(%Y-%m-%d_%H-%M-%S)T' -1
+FILENAME="${PREFIX}-${TS}_${BASHPID}.png"
 FILE_PATH="${SAVE_DIR}/${FILENAME}"
 
 if PUBLISH_ERR=$(mv -T --no-copy --update=none-fail -- "$TEMP_FILE" "$FILE_PATH" 2>&1); then

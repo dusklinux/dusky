@@ -281,9 +281,7 @@ load_plugins {
 // simplified_ui true
  
 // Choose the theme that is specified in the themes section.
-// Default: default
-// 
-// theme "dracula"
+theme "matugen"
  
 // Choose the base input mode of zellij.
 // Default: normal

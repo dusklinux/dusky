@@ -1,6 +1,6 @@
 ===================================================================
- Starting Deep asusctl Forensic Extraction: 20260309_153653 
- Logging directly to: /home/dusk/Documents/a_swaync/asusctl_full_dump_20260309_153653.log
+ Starting Deep asusctl Forensic Extraction: 20260506_165756 
+ Logging directly to: /home/dusk/user_scripts/asus/commands/asusctl_full_dump_20260506_165756.log
 ===================================================================
 
 [?] CLI MAP: asusctl
@@ -852,9 +852,9 @@ Options:
 [+] STATE PROBE: System Info
 -------------------------------------------------------------------
 $ asusctl info
-asusctl v6.3.4
+asusctl v6.3.7
 
-Software version: 6.3.4
+Software version: 6.3.7
   Product family: ASUS TUF Gaming F15
       Board name: FX507ZE
 
@@ -869,7 +869,7 @@ Current battery charge limit: 75%
 [+] STATE PROBE: Keyboard Brightness State
 -------------------------------------------------------------------
 $ asusctl leds get
-Current keyboard led brightness: High
+Current keyboard led brightness: Off
 -------------------------------------------------------------------
 
 [+] STATE PROBE: Available Profiles
@@ -885,15 +885,15 @@ Performance
 $ asusctl profile get
 Active profile: Quiet
 
-AC profile Performance
-Battery profile Performance
+AC profile Quiet
+Battery profile Quiet
 -------------------------------------------------------------------
 
 [+] STATE PROBE: Enabled Fan Profiles
 -------------------------------------------------------------------
 $ asusctl fan-curve --get-enabled
-CPU: enabled: false, 50c:0%,60c:20%,70c:40%,80c:54%,85c:70%,90c:85%,95c:100%,100c:100%
-GPU: enabled: false, 50c:0%,60c:20%,70c:40%,80c:54%,85c:70%,90c:85%,95c:100%,100c:100%
+CPU: enabled: false, 58c:15%,61c:25%,64c:32%,67c:32%,70c:42%,73c:57%,76c:57%,76c:57%
+GPU: enabled: false, 58c:12%,62c:15%,65c:24%,66c:33%,69c:36%,73c:45%,77c:45%,77c:45%
 -------------------------------------------------------------------
 
 [+] STATE PROBE: Fan Curves Per Profile
@@ -905,14 +905,14 @@ Fan curves for Quiet
 [
     (
         fan: CPU,
-        pwm: (0, 51, 102, 140, 179, 217, 255, 255),
-        temp: (50, 60, 70, 80, 85, 90, 95, 100),
+        pwm: (40, 66, 84, 84, 109, 147, 147, 147),
+        temp: (58, 61, 64, 67, 70, 73, 76, 76),
         enabled: false,
     ),
     (
         fan: GPU,
-        pwm: (0, 51, 102, 140, 179, 217, 255, 255),
-        temp: (50, 60, 70, 80, 85, 90, 95, 100),
+        pwm: (33, 40, 63, 86, 94, 117, 117, 117),
+        temp: (58, 62, 65, 66, 69, 73, 77, 77),
         enabled: false,
     ),
 ]
@@ -941,14 +941,14 @@ Fan curves for Performance
 [
     (
         fan: CPU,
-        pwm: (128, 153, 179, 204, 230, 255, 255, 255),
-        temp: (30, 40, 50, 60, 70, 80, 90, 100),
+        pwm: (53, 84, 84, 109, 147, 155, 181, 198),
+        temp: (30, 55, 59, 62, 65, 67, 70, 72),
         enabled: false,
     ),
     (
         fan: GPU,
-        pwm: (128, 153, 179, 204, 230, 255, 255, 255),
-        temp: (30, 40, 50, 60, 70, 80, 90, 100),
+        pwm: (35, 63, 86, 94, 117, 170, 186, 201),
+        temp: (30, 55, 60, 63, 66, 69, 72, 74),
         enabled: false,
     ),
 ]
@@ -972,7 +972,7 @@ nv_dynamic_boost:
   default: 15
 
 panel_overdrive:
-  current: [0,(1)]
+  current: [(0),1]
 
 ppt_pl1_spl:
   current: 28..[90]..90
@@ -1010,7 +1010,7 @@ nv_dynamic_boost:
 $ asusctl armoury get panel_overdrive
 Multiple asusd interfaces devices found
 panel_overdrive:
-  current: [0,(1)]
+  current: [(0),1]
 
 $ asusctl armoury get ppt_pl1_spl
 Multiple asusd interfaces devices found
@@ -1032,7 +1032,7 @@ $ asusctl slash --list
 
 Error: Did not find xyz.ljones.Slash
 
-Software version: 6.3.4
+Software version: 6.3.7
   Product family: ASUS TUF Gaming F15
       Board name: FX507ZE
 
@@ -1040,14 +1040,14 @@ Supported interfaces:
 
 [
     "xyz.ljones.AsusArmoury",
+    "xyz.ljones.Aura",
+    "xyz.ljones.AsusArmoury",
+    "xyz.ljones.AsusArmoury",
     "xyz.ljones.AsusArmoury",
     "xyz.ljones.Platform",
-    "xyz.ljones.Backlight",
     "xyz.ljones.FanCurves",
+    "xyz.ljones.Backlight",
     "xyz.ljones.AsusArmoury",
-    "xyz.ljones.AsusArmoury",
-    "xyz.ljones.AsusArmoury",
-    "xyz.ljones.Aura",
     "xyz.ljones.AsusArmoury",
     "xyz.ljones.AsusArmoury",
 ]
@@ -1067,16 +1067,14 @@ $ asusctl scsi --list
 
 Error: Did not find xyz.ljones.ScsiAura
 
-Software version: 6.3.4
+Software version: 6.3.7
   Product family: ASUS TUF Gaming F15
       Board name: FX507ZE
 
 Supported interfaces:
 
 [
-    "xyz.ljones.Platform",
-    "xyz.ljones.Backlight",
-    "xyz.ljones.FanCurves",
+    "xyz.ljones.AsusArmoury",
     "xyz.ljones.AsusArmoury",
     "xyz.ljones.AsusArmoury",
     "xyz.ljones.AsusArmoury",
@@ -1084,7 +1082,9 @@ Supported interfaces:
     "xyz.ljones.AsusArmoury",
     "xyz.ljones.AsusArmoury",
     "xyz.ljones.AsusArmoury",
-    "xyz.ljones.AsusArmoury",
+    "xyz.ljones.Backlight",
+    "xyz.ljones.Platform",
+    "xyz.ljones.FanCurves",
 ]
 
 Supported properties on Platform:
@@ -1098,5 +1098,5 @@ Supported properties on Platform:
 
 ===================================================================
  Deep Extraction Complete. 
- Data securely logged to: /home/dusk/Documents/a_swaync/asusctl_full_dump_20260309_153653.log
+ Data securely logged to: /home/dusk/user_scripts/asus/commands/asusctl_full_dump_20260506_165756.log
 ===================================================================

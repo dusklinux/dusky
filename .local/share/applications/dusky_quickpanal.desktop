@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Dusky Quick Panal
+GenericName=System Controls
+Comment=Adjust Various Settings
+Exec=uwsm-app -- /home/dusk/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py
+Terminal=false
+Categories=Audio;HardwareSettings;Settings;Utility;
+Keywords=dusky;quickpanal;sliders;brightness;nightlight;hyprsunset;display;volume;sound;audio;control;
+Icon=preferences-system
+StartupNotify=true
+StartupWMClass=org.dusky.quickpanal

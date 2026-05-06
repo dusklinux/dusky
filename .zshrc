@@ -21,7 +21,6 @@
 # Set core applications and configure the system's search path for executables.
 # These are fundamental for defining your work environment.
 
-
 # Set the default terminal emulator.
 export TERMINAL='kitty'
 # Set the default web browser.
@@ -39,12 +38,12 @@ export MAKEFLAGS="-j$(nproc)"
 # --- Pyenv (Python Version Management) ---
 # Initializes pyenv to manage multiple Python versions.
 
-##	export PYENV_ROOT="$HOME/.pyenv"
-##	export PATH="$PYENV_ROOT/bin:$PATH"
-##	if command -v pyenv 1>/dev/null 2>&1; then
-##	  eval "$(pyenv init --path)"
-##	  eval "$(pyenv init -)"
-##	fi
+##    export PYENV_ROOT="$HOME/.pyenv"
+##    export PATH="$PYENV_ROOT/bin:$PATH"
+##    if command -v pyenv 1>/dev/null 2>&1; then
+##      eval "$(pyenv init --path)"
+##      eval "$(pyenv init -)"
+##    fi
 
 # Configure the path where Zsh looks for commands.
 # Uncomment and modify if you have local binaries (e.g., in ~/.local/bin).
@@ -80,16 +79,16 @@ setopt EXTENDED_GLOB        # Enable extended globbing features (e.g., `^` for n
 
 # Optimized initialization: Only regenerate cache once every 24 hours.
 autoload -Uz compinit
-# If .zcompdump exists AND was modified within the last 24 hours (.mh-24)
-if [[ -n ${ZDOTDIR:-$HOME}/.zcompdump(#qN.mh-24) ]]; then
+local zcompdump="${ZDOTDIR:-$HOME}/.zcompdump"
+local dump_cache=($zcompdump(#qN.mh-24)) # Array expansion forces glob evaluation without subshells
+
+if (( ${#dump_cache} )); then
   compinit -C  # Trust the fresh cache, skip checks (FAST)
 else
   compinit     # Cache is old or missing, regenerate it (SLOW)
-  # Optional: Explicitly touch the file to reset the timer if compinit doesn't
-  touch "${ZDOTDIR:-$HOME}/.zcompdump"
+  # Explicitly touch the file to reset the timer
+  touch "$zcompdump"
 fi
-
-
 
 # Style the completion menu.
 # ':completion:*' is a pattern that applies to all completion widgets.
@@ -107,9 +106,9 @@ zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' # Case-insensitive mat
 # --- Vi Mode Keybindings ---
 # Enables the use of Vim-like keybindings in the shell for modal editing.
 bindkey -v
-# Set the timeout for ambiguous key sequences (e.g., after pressing ESC).
-# A low value makes the transition to normal mode in Vi mode feel instantaneous.
-export KEYTIMEOUT=40
+# Set the timeout for ambiguous key sequences (in centiseconds).
+# 1 = 10ms, making the transition to normal mode in Vi mode practically instantaneous.
+export KEYTIMEOUT=1
 
 # --- Neovim Integration ---
 # Press 'v' in normal mode to edit the current command in Neovim.
@@ -153,7 +152,7 @@ alias rm='rm -I'
 alias ln='ln -v'
 
 alias disk_usage='sudo btrfs filesystem usage /' # The TRUTH about BTRFS space
-alias df='df -hT'                           # Show filesystem types
+alias df='df -hT'                                # Show filesystem types
 
 # VNC iphone daemon.
 alias iphone_vnc='~/user_scripts/networking/iphone_vnc.sh'
@@ -210,7 +209,7 @@ alias git_dusky='/usr/bin/git --git-dir=$HOME/dusky/ --work-tree=$HOME'
 alias git_dusky_add_list='(cd $HOME && git_dusky add --pathspec-from-file=.git_dusky_list)'
 
 # 3. Alias for discarding all local changes (both staged and unstaged) and revert the state of tracked files to exactly match the last commit (HEAD), this is a destructive operation. (DANGER ZONE)
- alias git_dusky_restore='echo "git --git-dir=$HOME/dusky/ --work-tree=$HOME reset --hard HEAD" && git_dusky reset --hard HEAD'
+alias git_dusky_restore='echo "git --git-dir=$HOME/dusky/ --work-tree=$HOME reset --hard HEAD" && git_dusky reset --hard HEAD'
 
 # 4. Delta/Diff Alias
 alias gitdelta='git_dusky_add_list && git_dusky diff HEAD'
@@ -223,6 +222,135 @@ alias unlock='$HOME/user_scripts/drives/drive_manager.sh unlock'
 
 # lock block_devices
 alias lock='$HOME/user_scripts/drives/drive_manager.sh lock'
+
+
+# Battery stats
+
+batstat() {
+    # Isolate shell options for predictable execution
+    emulate -L zsh
+    
+    local bat="" target="" mode="static" output_format="human"
+    local arg d dev_type cap stat curr volt power
+    float watts=0.0
+
+    # The Architect-Grade Help Page
+    _show_help() {
+        printf "\e[1;34m::\e[0m \e[1mbatstat\e[0m - Zero-fork battery monitor\n\n"
+        printf "\e[1mUSAGE:\e[0m\n"
+        printf "  batstat [COMMAND] [FORMAT] [TARGET]\n\n"
+        printf "\e[1mCOMMANDS:\e[0m\n"
+        printf "  \e[32mhelp\e[0m    Show this help page (default with no args)\n"
+        printf "  \e[32mstatic\e[0m  Print the current battery stats once and exit\n"
+        printf "  \e[32mlive\e[0m    Run a flicker-free, 1-second updating TUI\n\n"
+        printf "\e[1mFORMATS (Static mode only):\e[0m\n"
+        printf "  \e[32mhuman\e[0m   Standard readable output (default)\n"
+        printf "  \e[32mjson\e[0m    Output as a JSON object (for Waybar/Eww integration)\n"
+        printf "  \e[32mterse\e[0m   Raw values only: <capacity> <watts> <status>\n\n"
+        printf "\e[1mTARGET:\e[0m\n"
+        printf "  Optional battery name (e.g., BAT1, macsmc-battery).\n"
+        printf "  If omitted, auto-detects the first available battery natively.\n\n"
+        printf "\e[1mEXAMPLES:\e[0m\n"
+        printf "  batstat live\n"
+        printf "  batstat static json\n"
+        printf "  batstat terse static BAT1\n"
+    }
+
+    # Trigger help if absolutely no arguments are passed
+    if (( $# == 0 )); then
+        _show_help
+        return 0
+    fi
+
+    # Order-independent argument parser
+    for arg in "$@"; do
+        case "$arg" in
+            help|-h|--help) _show_help; return 0 ;;
+            live) mode="live" ;;
+            static) mode="static" ;;
+            json) output_format="json" ;;
+            terse) output_format="terse" ;;
+            human) output_format="human" ;;
+            *) target="$arg" ;; # Unrecognized flags are assumed to be battery targets
+        esac
+    done
+
+    # Hardware Detection: Target specific battery or find the first one natively
+    if [[ -n "$target" && -d "/sys/class/power_supply/$target" ]]; then
+        bat="/sys/class/power_supply/$target"
+    else
+        # (N) prevents failure if the directory is completely empty
+        for d in /sys/class/power_supply/*(N); do
+            if [[ -f "$d/type" ]]; then
+                read -r dev_type < "$d/type" 2>/dev/null
+                if [[ "$dev_type" == "Battery" ]]; then
+                    bat="$d"
+                    break
+                fi
+            fi
+        done
+    fi
+
+    if [[ -z "$bat" ]]; then
+        printf "Error: No battery detected in /sys/class/power_supply/\n" >&2
+        return 1
+    fi
+
+    # Core Logic: True Zero-Fork
+    _get_bat_stats() {
+        read -r cap < "$bat/capacity" 2>/dev/null
+        read -r stat < "$bat/status" 2>/dev/null
+
+        cap=${cap:-"N/A"}
+        stat=${stat:-"Unknown"}
+
+        # Native Zsh floating-point arithmetic
+        if [[ -f "$bat/power_now" ]]; then
+            read -r power < "$bat/power_now" 2>/dev/null
+            (( watts = ${power:-0} / 1000000.0 ))
+        elif [[ -f "$bat/current_now" && -f "$bat/voltage_now" ]]; then
+            read -r curr < "$bat/current_now" 2>/dev/null
+            read -r volt < "$bat/voltage_now" 2>/dev/null
+            (( watts = (${curr:-0} * ${volt:-0}) / 1000000000000.0 ))
+        fi
+        
+        # Route the output format
+        if [[ "$output_format" == "json" ]]; then
+            printf '{"capacity": "%s", "power_w": %.2f, "status": "%s"}' "$cap" "$watts" "$stat"
+        elif [[ "$output_format" == "terse" ]]; then
+            printf "%s %.2f %s" "$cap" "$watts" "$stat"
+        else
+            printf "Capacity: %s%% | Power Draw: %.2f W (%s)" "$cap" "$watts" "$stat"
+        fi
+    }
+
+    # Execution Engine
+    if [[ "$mode" == "live" ]]; then
+        # UX Guardrail: Prevent JSON/Terse spam in the live TUI
+        if [[ "$output_format" != "human" ]]; then
+            printf "Warning: '%s' format is meant for static scripts. Forcing 'human' output for live TUI.\n" "$output_format" >&2
+            output_format="human"
+            sleep 1.5
+        fi
+        
+        printf "\e[?25l" # Hide cursor
+        
+        # Zsh native 'always' block guarantees clean teardown
+        {
+            while true; do
+                printf "\r\e[K"
+                _get_bat_stats
+                sleep 1
+            done
+        } always {
+            printf "\e[?25h\n" # Restore cursor and drop a clean newline
+        }
+    else
+        _get_bat_stats
+        printf "\n"
+    fi
+}
+
 
 # Weather query via wttr.in
 # Usage: wthr [location]
@@ -294,12 +422,12 @@ sudo() {
 #change the current working directory when exiting Yazi
 
 function y() {
-	local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
-	yazi "$@" --cwd-file="$tmp"
-	if cwd="$(cat -- "$tmp")" && [ -n "$cwd" ] && [ "$cwd" != "$PWD" ]; then
-		builtin cd -- "$cwd"
-	fi
-	rm -f -- "$tmp"
+    local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
+    yazi "$@" --cwd-file="$tmp"
+    if cwd="$(cat -- "$tmp")" && [ -n "$cwd" ] && [ "$cwd" != "$PWD" ]; then
+        builtin cd -- "$cwd"
+    fi
+    rm -f -- "$tmp"
 }
 
 # --- sysbench benchmark ---
@@ -311,9 +439,9 @@ alias nvidia_unbind='~/user_scripts/nvidia_passthrough/nvidia_vfio_bind_unbind.s
 
 #-- LM- Studio--
 llm() {
-    /mnt/media/Documents/do_not_delete_linux/appimages/LM-Studio*(Om[1]) "$@"
+    /mnt/media/Documents/do_not_delete_linux/appimages/LM-Studio*(om[1]) "$@"
 }
-# The (om[1]) glob qualifier picks the most recently modified file
+# The (om[1]) glob qualifier picks the most recently modified file (newest first)
 
 # --- Functions ---
 # Creates a directory and changes into it.
@@ -405,38 +533,151 @@ _win_completion() {
 compdef _win_completion win
 
 
-# -----------------------------------------------------------------------------
-#  Pacman / Expac Metrics
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Pacman/Expac Utility: Unified Package Querying (Platinum Edition)
+# Usage: pkg <command> [count]
+# =============================================================================
 
-# 1. STORAGE HOGS (ALL)
-# Lists largest packages (deps included) using raw bytes for perfect sorting
-# Usage: pkg_hogs_all [n]
-pkg_hogs_all() {
-    expac '%m\t%n' | sort -rn | head -n "${1:-20}" | numfmt --to=iec-i --suffix=B --field=1
+# DRY Header Helper — defined once at source time.
+# Args: $1 = title string, $2 = count integer
+_pkg_header() {
+    print -P "\n%F{blue}::%f %B${1}%b (Top ${2})"
+    print -P "%F{238}------------------------------------------------------------%f"
+    # Precisely aligned header: 19 chars (Date) + 2 spaces + 8 chars (Size) + 2 spaces + Package
+    print -P "%F{242}INSTALL DATE             SIZE  PACKAGE%f"
+    print -P "%F{238}------------------------------------------------------------%f"
 }
 
-# 2. STORAGE HOGS (EXPLICIT ONLY)
-# Pipes explicit list into expac (The correct way to filter)
-# Usage: pkg_hogs [n]
-pkg_hogs() {
-    # pacman -Qeq lists explicit names -> expac reads from stdin (-)
-    pacman -Qeq | expac '%m\t%n' - | sort -rn | head -n "${1:-20}" | numfmt --to=iec-i --suffix=B --field=1
+pkg() {
+    # 1. Dependency Validation
+    if (( ! $+commands[expac] )); then
+        print -u2 -P "\n%F{red}✖ Error:%f 'expac' is not installed."
+        print -u2 -P "  Please install it first: %F{cyan}sudo pacman -S expac%f\n"
+        return 1
+    fi
+
+    # 2. State Initialization
+    local target="all"
+    local metric=""
+    local -i count=20
+    local -i show_help=0
+
+    if (( $# == 0 )); then
+        show_help=1
+    fi
+
+    # 3. Argument Tokenizer: Case-insensitive, order-agnostic
+    for arg in "$@"; do
+        case "${arg:l}" in
+            help|-h|--help)
+                show_help=1
+                ;;
+            explicit|user)
+                target="explicit"
+                ;;
+            all)
+                target="all"
+                ;;
+            hogs|size)
+                metric="size"
+                ;;
+            new|recent|latest)
+                metric="new"
+                ;;
+            old|ancient)
+                metric="old"
+                ;;
+            *)
+                if [[ "$arg" =~ ^[1-9][0-9]*$ ]]; then
+                    count="$arg"
+                else
+                    print -u2 -P "\n%F{red}✖ Error:%f Unknown argument or invalid count: '%F{yellow}$arg%f'"
+                    print -u2 -P "  Run %F{green}pkg help%f for usage details.\n"
+                    return 1
+                fi
+                ;;
+        esac
+    done
+
+    # 4. Help Menu Overlay
+    if (( show_help )); then
+        print -P "\n%F{blue}::%f %Bpkg%b — Advanced Package Query Tool"
+        print -P "%F{238}------------------------------------------------------------%f"
+        print -P "%F{green}Usage:%f pkg [target] [metric] [count]"
+        print -P "       %F{242}(Arguments can be provided in ANY order)%f\n"
+        
+        print -P "%BTargets:%b (Default: all)"
+        print -P "  %F{cyan}all%f                  - System-wide packages (includes dependencies)"
+        print -P "  %F{cyan}explicit%f, %F{cyan}user%f       - Only packages you explicitly installed\n"
+        
+        print -P "%BMetrics:%b (Default: size)"
+        print -P "  %F{cyan}size%f, %F{cyan}hogs%f           - Sort by installed size (largest first)"
+        print -P "  %F{cyan}new%f, %F{cyan}recent%f, %F{cyan}latest%f - Sort by installation date (newest first)"
+        print -P "  %F{cyan}old%f, %F{cyan}ancient%f        - Sort by installation date (oldest first)\n"
+        
+        print -P "%BExamples:%b"
+        print -P "  %F{yellow}pkg explicit new 20%f  # Top 20 most recently explicitly installed"
+        print -P "  %F{yellow}pkg 50 size%f          # Top 50 largest packages overall"
+        print -P "  %F{yellow}pkg old%f              # Top 20 oldest packages overall\n"
+        return 0
+    fi
+
+    # Set default metric
+    [[ -z "$metric" ]] && metric="size"
+
+    # 5. Dynamic Pipeline Construction
+    # We lock expac to ALWAYS output: Date | Size(bytes) | Name
+    local -a expac_args=(--timefmt='%Y-%m-%d %H:%M:%S' '%l|%m|%n')
+    local -a sort_cmd
+    local title_metric=""
+
+    # We sort against specific pipe-delimited columns (-t '|')
+    case "$metric" in
+        size)
+            title_metric="Largest"
+            sort_cmd=(sort -t '|' -k2 -rn) # Sort numerically by column 2 (Size)
+            ;;
+        new)
+            title_metric="Newest"
+            sort_cmd=(sort -t '|' -k1 -r)  # Sort reverse-chronologically by column 1 (Date)
+            ;;
+        old)
+            title_metric="Oldest"
+            sort_cmd=(sort -t '|' -k1)     # Sort chronologically by column 1 (Date)
+            ;;
+    esac
+
+    local title_full=""
+    if [[ "$target" == "explicit" ]]; then
+        title_full="${title_metric} Explicitly Installed Packages"
+    else
+        title_full="${title_metric} Installed Packages (Overall)"
+    fi
+
+    # 6. Core Execution Pipeline
+    _pkg_header "$title_full" "$count"
+
+    # Raw ANSI color injection via Awk stream processing
+    # $1 = Date(Grey), $2 = Size(Yellow), $3 = Name(Bold Arch Blue)
+    local awk_color='{ printf "\033[38;5;246m%s\033[0m  \033[38;5;220m%s\033[0m  \033[1;38;5;39m%s\033[0m\n", $1, $2, $3 }'
+
+    # Notice the `numfmt --padding=8`. This guarantees right-alignment of sizes (e.g. '  4.8GiB') without needing `column`
+    if [[ "$target" == "explicit" ]]; then
+        pacman -Qeq | expac "${expac_args[@]}" - 2>/dev/null | "${sort_cmd[@]}" | head -n "$count" | numfmt --to=iec-i --suffix=B --field=2 --delimiter='|' --padding=8 | awk -F '|' "$awk_color"
+    else
+        expac "${expac_args[@]}" 2>/dev/null | "${sort_cmd[@]}" | head -n "$count" | numfmt --to=iec-i --suffix=B --field=2 --delimiter='|' --padding=8 | awk -F '|' "$awk_color"
+    fi
+
+    print ""
 }
 
-# 3. RECENTLY INSTALLED
-# Lists packages by install date (Newest top)
-# Usage: pkg_new [n]
-pkg_new() {
-    expac --timefmt='%Y-%m-%d %T' '%l\t%n' | sort -r | head -n "${1:-20}"
+# Native Zsh tab-completion — proper named function, unambiguously correct.
+_pkg() {
+    _arguments \
+        "1:command:(hogs size all explicit user new recent latest old ancient help)" \
+        "2:count: "
 }
-
-# 4. ANCIENT PACKAGES
-# Lists packages by install date (Oldest top)
-# Usage: pkg_old [n]
-pkg_old() {
-    expac --timefmt='%Y-%m-%d %T' '%l\t%n' | sort | head -n "${1:-20}"
-}
+compdef _pkg pkg
 
 # -----------------------------------------------------------------------------
 # [6] PLUGINS & PROMPT INITIALIZATION
@@ -479,6 +720,20 @@ if $_fzf_bin --zsh > /dev/null 2>&1; then
   fi
 fi
 
+
+# -- Zoxide (Cached) --
+_zoxide_cache="$HOME/.zoxide-init.zsh"
+_zoxide_bin="$(command -v zoxide)"
+
+if [[ -n "$_zoxide_bin" ]]; then
+  if [[ ! -f "$_zoxide_cache" || "$_zoxide_bin" -nt "$_zoxide_cache" ]]; then
+    "$_zoxide_bin" init zsh >! "$_zoxide_cache"
+  fi
+  source "$_zoxide_cache"
+fi
+unset _zoxide_cache _zoxide_bin
+
+
 # --- Autosuggestions ---
 if [ -f /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh ]; then
     # Config MUST be set before sourcing
@@ -491,6 +746,8 @@ if [[ -f "/usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting
   source "/usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 fi
 
+
+
 # Cleanup variables to keep environment clean
 unset _starship_cache _starship_bin _fzf_cache _fzf_bin
 
@@ -499,8 +756,8 @@ unset _starship_cache _starship_bin _fzf_cache _fzf_bin
 # -----------------------------------------------------------------------------
 
 # Check if we are on tty1 and no display server is running
-
-if [[ -z "$DISPLAY" ]] && [[ "$(tty)" == "/dev/tty1" ]]; then
+# Using native $TTY and $WAYLAND_DISPLAY variables avoids the overhead of spawning $(tty) subshells
+if [[ -z "$DISPLAY" && -z "$WAYLAND_DISPLAY" && "$TTY" == "/dev/tty1" ]]; then
   if uwsm check may-start; then
     exec uwsm start hyprland.desktop
   fi

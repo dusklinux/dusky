@@ -1,0 +1,253 @@
+{
+    "layer": "top",
+    "position": "top",
+    "mod": "dock",
+    "name": "waybar",
+    "exclusive": true,
+    "passthrough": false,
+    "reload_style_on_change": true,
+    "gtk-layer-shell": true,
+    "height": 40,
+    "margin-top": 10,
+    "margin-left": 15,
+    "margin-right": 15,
+
+    "modules-left": ["custom/launcher", "hyprland/workspaces"],
+    "modules-center": ["group/updates-drawer", "clock", "custom/notification"],
+    "modules-right": ["group/network-drawer", "cpu", "memory", "pulseaudio", "backlight", "battery", "tray", "group/power-drawer"],
+
+    "group/network-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "network-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": true
+        },
+        "modules": [
+            "custom/net-speed",
+            "network"
+        ]
+    },
+
+    "group/updates-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "updates-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": true
+        },
+        "modules": [
+            "custom/updates-trigger",
+            "custom/updates"
+        ]
+    },
+
+    "group/power-drawer": {
+        "orientation": "horizontal",
+        "drawer": {
+            "transition-duration": 400,
+            "children-class": "power-drawer",
+            "click-to-reveal": false,
+            "transition-left-to-right": false
+        },
+        "modules": [
+            "custom/power",
+            "custom/inhibit-suspend"
+        ]
+    },
+
+    "custom/launcher": {
+      "format": "󰣇",
+      "on-click": "python3 ~/user_scripts/dusky_system/control_center/dusky_control_center.py",
+      "on-click-right": "gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate '{}'",
+      "tooltip-format": "Control Center"
+    },
+
+    "hyprland/workspaces": {
+        "format": "{icon}",
+        "on-click": "activate",
+        "all-outputs": true,
+        "sort-by-number": true,
+        "persistent-workspaces": {
+            "1": [],
+            "2": [],
+            "3": [],
+            "4": [],
+            "5": []
+        },
+        "format-icons": {
+            "active": "󰮯",
+            "default": "󰊠",
+            "persistent": "󰊠"
+        }
+    },
+
+    "custom/updates-trigger": {
+        "format": "",
+        "exec": "echo ''",
+        "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "interval": 5,
+        "tooltip": false
+    },
+
+    "custom/updates": {
+        "exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "return-type": "json",
+        "format": "{}",
+        "tooltip": true,
+        "on-click": "uwsm-app -- kitty --class system_update.sh --hold -e ~/user_scripts/update_dusky/system_update.sh --all"
+    },
+
+  "custom/notification": {
+    "justify": "center",
+    "align": 0.5,
+    "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+    "format": "{}",
+    "return-type": "json",
+    "exec-if": "which makoctl",
+    "exec": "~/user_scripts/waybar/mako.sh --horizontal",
+    "interval": 2,
+    "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+    "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+    "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+    "signal": 8,
+    "escape": true
+  },
+
+    "clock": {
+        "format": "{:%I:%M %p}",
+        "format-alt": "󰃭 {:%A, %B %d}",
+        "tooltip-format": "<tt><span size='12pt' font='JetBrainsMono Nerd Font'>{calendar}</span></tt>",
+        "calendar": {
+            "mode": "month",
+            "mode-mon-col": 3,
+            "weeks-pos": "right",
+            "on-scroll": 1,
+            "format": {
+                "months": "<span color='#ffb786'><b>{}</b></span>",
+                "days": "<span color='#e2e2e2'>{}</span>",
+                "weeks": "<span color='#c9ca93'>W{}</span>",
+                "weekdays": "<span color='#ffb786'><b>{}</b></span>",
+                "today": "<span color='#131313' background='#ffb786'><b>{}</b></span>"
+            }
+        }
+    },
+    
+    "custom/inhibit-suspend": {
+        "format": "{}",
+        "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰛊\", \"tooltip\": \"Auto-suspend ENABLED\\nClick to disable hypridle\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Auto-suspend DISABLED\\nClick to enable hypridle\", \"class\": \"disabled\"}'; fi",
+        "return-type": "json",
+        "interval": 5,
+        "signal": 9,
+        "on-click": "uwsm-app -- ~/user_scripts/waybar/toggle_hypridle.sh",
+        "escape": true
+    },
+
+    "custom/net-speed": {
+        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --horizontal",
+        "return-type": "json",
+        "format": "{}",
+        "interval": 1,
+        "tooltip": true
+    },
+
+    "network": {
+        "format-wifi": "󰤨",
+        "format-ethernet": "󰈀",
+        "format-disconnected": "󰤭",
+        "format-linked": "󰈁",
+        "tooltip-format-wifi": "󰤨 {essid}\n󱑽 {signalStrength}%\n󰩟 {ipaddr}",
+        "tooltip-format-ethernet": "󰈀 Ethernet\n󰩟 {ipaddr}",
+        "tooltip-format-disconnected": "󰤭 Disconnected",
+        "on-click": "uwsm-app -- kitty --class wifitui -e wifitui"
+    },
+    
+    "cpu": {
+      "interval": 2,
+      "format": "󰍛 {usage}%",
+      "on-click": "kitty -e btop",
+      "states": {
+        "warning": 70,
+        "critical": 90
+      }
+    },
+    
+    "memory": {
+        "format": "󰍛 {percentage}%",
+        "format-alt": "󰍛 {used:0.1f}G",
+        "interval": 3,
+        "on-click-right": "uwsm-app -- kitty --class io_monitor.sh -e $HOME/user_scripts/drives/io_monitor.sh",
+        "tooltip-format": "RAM: {used:0.2f} GiB / {total:0.2f} GiB ({percentage}%)\nAvailable: {avail:0.2f} GiB\nSwap: {swapUsed:0.2f} GiB / {swapTotal:0.2f} GiB\n\nRMB: I/O Monitor",
+        "states": {
+            "warning": 70,
+            "critical": 85
+        }
+    },
+    
+    "pulseaudio": {
+      "format": "{icon} {volume}%",
+      "format-muted": "󰖁",
+      "format-bluetooth": "󰂰 {volume}%",
+      "format-bluetooth-muted": "󰂲",
+      "format-icons": {
+        "headphone": "󰋋",
+        "hands-free": "󰋎",
+        "headset": "󰋎",
+        "phone": "",
+        "portable": "",
+        "car": "",
+        "default": ["󰕿", "󰖀", "󰕾"]
+      },
+      "on-click": "uwsm-app -- pavucontrol",
+      "on-click-right": "uwsm-app -- kitty --class cava -e cava",
+      "on-click-middle": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+      "on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
+      "on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%",
+      "tooltip-format": "{desc}\nVolume: {volume}%\n\nLMB: Pavucontrol\nRMB: Cava\nMMB: Mute Toggle\nScroll: Volume",
+      "scroll-step": 5,
+      "max-volume": 150
+    },
+
+    "backlight": {
+      "format": "{icon} {percent}",
+      "tooltip-format": "Brightness: {percent}%\n\n LMB  Brightness\n RMB  Night Light\n MMB  Shaders",
+      "on-click": "uwsm-app -- ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
+      "on-click-right": "uwsm-app -- ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
+      "on-click-middle": "uwsm-app -- ~/user_scripts/rofi/shader_menu.sh",
+      "on-scroll-up": "brightnessctl set +5%",
+      "on-scroll-down": "brightnessctl set 5%-",
+      "format-icons": ["󰃞", "󰃟", "󰃠"]
+    },
+    
+    "battery": {
+        "format": "{icon} {capacity}%",
+        "format-alt": "{icon} {capacity}% {power:.1f}W",
+        "format-charging": "󰂄 {capacity}%",
+        "format-plugged": "󰂄 {capacity}%",
+        "format-full": "󱟢",
+        "format-warning": "{icon} {capacity}%",
+        "format-critical": "󰂃 {capacity}%",
+        "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
+        "interval": 5,
+        "states": {
+            "warning": 30,
+            "critical": 15
+        },
+        "tooltip-format": "{timeTo}\nHealth: {health}%\nPower Draw: {power:.2f} W\nCycles: {cycles}\n\nLMB: Toggle Format\nRMB: Timeout Settings",
+        "on-click-right": "uwsm-app -- kitty --class dusky_hypridle.sh -e $HOME/user_scripts/hypridle/dusky_hypridle.sh"
+    },
+    
+    "tray": {
+      "icon-size": 15,
+      "spacing": 6,
+      "show-passive-items": true
+    },
+    
+    "custom/power": {
+      "format": "⏻",
+      "on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh",
+      "tooltip-format": "Power Menu"
+    }
+}

@@ -87,8 +87,6 @@ trap 'abort_with_signal SIGTERM 143' TERM
 # "bibata-cursor-theme-bin"
 
 declare -ar PACKAGES=(
-  "papirus-icon-theme-git"
-  "papirus-folders-git"
 )
 
 # Delay before auto-retrying

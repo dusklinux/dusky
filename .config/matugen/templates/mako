@@ -1,10 +1,15 @@
-# Material You colors
+# Material You colors - Sleek Transparent Theme
 
-background-color={{colors.on_primary.default.hex}}
-text-color={{colors.tertiary.default.hex}}
-border-color={{colors.tertiary_container.default.hex}}
+# 40% opacity (66) on the background for a glassy Hyprland blur effect
+background-color={{colors.surface.default.hex}}ff
+# Text color matching the primary accent color
+text-color={{colors.primary.default.hex}}
+# 93% opacity (ee) on the border using your primary accent color
+border-color={{colors.primary.default.hex}}ee
+# Dynamic timeout progress bar color
+progress-color={{colors.primary.default.hex}}
+
 # Per-mode settings
-
 [mode=do-not-disturb]
 invisible=1
 on-notify=none
@@ -13,4 +18,32 @@ on-notify=none
 on-notify=none
 
 [urgency=high]
+# Solid, intense border and text for critical alerts
 border-color={{colors.error_container.default.hex}}
+text-color={{colors.error.default.hex}}
+
+# ======================================
+# OSD HARDWARE OVERLAY
+# ======================================
+[app-name=OSD]
+anchor=bottom-center
+
+# outer-margin: Top, Right, Bottom, Left.
+# This physically pushes the Wayland surface 150px up from the bottom monitor edge.
+outer-margin=0,0,30,0
+
+# Reset standard margin so it doesn't compound the spacing
+margin=0
+
+# -- Typography & Formatting --
+text-alignment=center
+
+# -- Contrast Override --
+background-color={{colors.surface.default.hex}}ff
+progress-color={{colors.primary_container.default.hex}}
+text-color={{colors.primary.default.hex}}
+
+# Optional: Gives the OSD a slightly more defined border to stand out
+border-size=0
+border-radius=22
+border-color={{colors.primary.default.hex}}

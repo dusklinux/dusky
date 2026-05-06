@@ -80,7 +80,7 @@ export CLUTTER_BACKEND=wayland
 # Clipboard Persistence
 # Commented out: Ephemeral clipboard (resets on reboot).
 # Uncommented: Persistent clipboard.
-export CLIPHIST_DB_PATH="${XDG_RUNTIME_DIR}/cliphist.db"
+# export CLIPHIST_DB_PATH="${XDG_RUNTIME_DIR}/cliphist.db"
 
 
 # -----------------------------------------------------------------------------

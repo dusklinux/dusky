@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=Dusky SwayNC Side
-Comment=Toggle SwayNC position (Left/Right)
-Exec=uwsm-app -- kitty --class dusky_swaync_side.sh -e /home/dusk/user_scripts/swaync/dusky_swaync_side.sh
-Icon=preferences-system-notifications
-Type=Application
-Keywords=dusky;swaync;notification;panel;toggle;switch;side;
-Categories=System;Settings;Utility;
-Terminal=false

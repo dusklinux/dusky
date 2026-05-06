@@ -68,6 +68,18 @@ backup_file() {
 
     local stamp
     printf -v stamp '%(%Y%m%d-%H%M%S)T' -1
+
+    # Purge stale backups of this exact file to prevent constrained partition (ESP) exhaustion
+    local shopt_save
+    shopt_save=$(shopt -p nullglob || true)
+    shopt -s nullglob
+    local -a old_baks=("${file}.bak."*)
+    eval "$shopt_save"
+    
+    if ((${#old_baks[@]} > 0)); then
+        sudo rm -f "${old_baks[@]}" 2>/dev/null || true
+    fi
+
     sudo cp -a -- "$file" "${file}.bak.${stamp}"
     BACKED_UP["$file"]=1
     info "Backup created: ${file}.bak.${stamp}"
@@ -220,7 +232,7 @@ detect_esp_mountpoint() {
         if mountpoint -q "$candidate"; then
             fstype="$(findmnt -M "$candidate" -no FSTYPE 2>/dev/null || true)"
             case "$fstype" in
-                vfat|fat|msdos)
+                vfat|fat|msdos|fat32)
                     CACHE_ESP_PATH="$candidate"
                     printf '%s\n' "$CACHE_ESP_PATH"
                     return 0
@@ -248,10 +260,16 @@ set_shell_var() {
     escaped_value="${escaped_value//&/\\&}"
     escaped_value="${escaped_value//|/\\|}"
     sudo touch "$file"
+    
     if sudo grep -qE "^[[:space:]]*${key}=" "$file"; then
-        sudo sed -i -E "s|^[[:space:]]*${key}=.*|${key}=\"${escaped_value}\"|" "$file"
+        sudo sed -i -E "s|^[[:space:]]*${key}=.*|${key}=${escaped_value}|" "$file"
+    elif sudo grep -qE "^[[:space:]]*#[[:space:]]*${key}=" "$file"; then
+        sudo sed -i -E "s|^[[:space:]]*#[[:space:]]*${key}=.*|${key}=${escaped_value}|" "$file"
     else
-        printf '%s="%s"\n' "$key" "$value" | sudo tee -a "$file" >/dev/null
+        if sudo test -s "$file" && [[ "$(sudo tail -c1 "$file" | wc -l)" -eq 0 ]]; then
+            echo "" | sudo tee -a "$file" >/dev/null
+        fi
+        printf '%s=%s\n' "$key" "$value" | sudo tee -a "$file" >/dev/null
     fi
 }
 
@@ -499,21 +517,23 @@ prepare_limine_nvram_for_install() {
 }
 
 limine_state_appears_current() {
-    local esp_target loader_path
+    local esp_target loader_path limine_conf
 
     esp_target="$(detect_esp_mountpoint 2>/dev/null || true)"
     [[ -n "$esp_target" ]] || return 1
+    
     loader_path="${esp_target}/EFI/limine/limine_x64.efi"
+    limine_conf="${esp_target}/limine.conf"
 
-    sudo_path_is_file /boot/limine.conf || return 1
+    sudo_path_is_file "$limine_conf" || return 1
     sudo_path_is_file "$loader_path" || return 1
 
     if sudo_path_is_file /etc/kernel/cmdline; then
-        sudo_path_not_older_than /boot/limine.conf /etc/kernel/cmdline || return 1
+        sudo_path_not_older_than "$limine_conf" /etc/kernel/cmdline || return 1
     fi
 
     if sudo_path_is_file /etc/default/limine; then
-        sudo_path_not_older_than /boot/limine.conf /etc/default/limine || return 1
+        sudo_path_not_older_than "$limine_conf" /etc/default/limine || return 1
     fi
 
     return 0
@@ -574,6 +594,12 @@ configure_cmdline() {
     [[ ",${mount_opts}," == *",ro,"* ]] && root_mode="ro"
 
     cmdline_parts+=("${root_mode}" "rootfstype=btrfs")
+    
+    # --- PLYMOUTH SILENT BOOT PARAMETERS ---
+    # Injected dynamically to guarantee Plymouth takes over instantly on live systems.
+    cmdline_parts+=("quiet" "splash" "loglevel=3" "rd.udev.log_level=3" "vt.global_cursor_default=0")
+    # ---------------------------------------
+
     [[ -n "$rootflags" ]] && cmdline_parts+=("rootflags=${rootflags}")
 
     crypt_source=""
@@ -645,10 +671,6 @@ configure_limine_defaults() {
 
     esp_target="$(detect_esp_mountpoint)" || fatal "Could not detect a mounted ESP."
 
-    # Do NOT force-add ESP_PATH when absent.
-    # Evidence from your Arch logs shows it does not persist there and causes
-    # needless rewrites + limine-update on every rerun.
-    # Only correct it if an explicit key already exists but is wrong.
     if shell_var_key_present "$limine_defaults" ESP_PATH; then
         current_esp="$(read_shell_var_from_file "$limine_defaults" ESP_PATH)"
         if [[ "$current_esp" != "$esp_target" ]]; then
@@ -661,14 +683,21 @@ configure_limine_defaults() {
 
     if ! shell_var_key_present "$limine_defaults" BOOT_ORDER; then
         backup_file "$limine_defaults"
-        set_shell_var "$limine_defaults" BOOT_ORDER "*, *lts, *fallback, Snapshots"
+        set_shell_var "$limine_defaults" BOOT_ORDER "\"*, *lts, *fallback, Snapshots\""
         info "Configured BOOT_ORDER to prioritize kernels over Snapshots."
+        NEEDS_LIMINE_UPDATE=true
+    fi
+
+    if ! shell_var_key_present "$limine_defaults" TIMEOUT; then
+        backup_file "$limine_defaults"
+        set_shell_var "$limine_defaults" TIMEOUT "0"
+        info "Configured TIMEOUT to 0 for instant Plymouth handoff."
         NEEDS_LIMINE_UPDATE=true
     fi
 }
 
 deploy_limine() {
-    local esp_target esp_partuuid canonical_present=false canonical_entry=""
+    local esp_target esp_partuuid canonical_present=false canonical_entry="" limine_conf
 
     esp_target="$(detect_esp_mountpoint)" || fatal "Could not detect ESP mount."
     esp_partuuid="$(get_mount_partuuid "$esp_target" || true)"
@@ -713,74 +742,21 @@ deploy_limine() {
         warn "No canonical Limine NVRAM entry found; BootOrder left unchanged."
     fi
 
-    sudo_path_is_file /boot/limine.conf || fatal "/boot/limine.conf was not created."
+    limine_conf="${esp_target}/limine.conf"
+    sudo_path_is_file "$limine_conf" || fatal "${limine_conf} was not created."
     info "Limine deployment completed."
 }
 
-limine_conf_has_theme_directives() {
-    local conf="$1"
-    sudo grep -qE '^[[:space:]]*(term_palette(_bright)?|term_background(_bright)?|term_foreground(_bright)?|wallpaper(_style)?|interface_branding(_color)?):' "$conf" 2>/dev/null
-}
-
 apply_limine_theme() {
-    local conf="/boot/limine.conf"
-    sudo_path_is_file "$conf" || return 0
-
-    local theme_marker="# --- UI Theme ---"
-    if sudo grep -qF "$theme_marker" "$conf"; then
-        return 0
-    fi
-
-    if limine_conf_has_theme_directives "$conf"; then
-        info "Limine configuration already contains theme directives; leaving existing theme unchanged."
-        return 0
-    fi
-
-    local tmp
-    tmp="$(mktemp)"
-    ACTIVE_TEMP_FILES+=("$tmp")
-
-    cat <<EOF > "$tmp"
-$theme_marker
-term_palette: 1e1e2e;f38ba8;a6e3a1;f9e2af;89b4fa;f5c2e7;94e2d5;cdd6f4
-term_palette_bright: 585b70;f38ba8;a6e3a1;f9e2af;89b4fa;f5c2e7;94e2d5;cdd6f4
-term_background: 00000000
-term_foreground: cdd6f4
-term_background_bright: 00000000
-term_foreground_bright: cdd6f4
-EOF
-
-    if [[ -n "${LIMINE_WALLPAPER_SOURCE:-}" && -f "$LIMINE_WALLPAPER_SOURCE" ]]; then
-        local ext="${LIMINE_WALLPAPER_SOURCE##*.}"
-        ext="${ext,,}"
-        if [[ "$ext" =~ ^(png|jpg|jpeg|bmp)$ ]]; then
-            local esp_target
-            esp_target="$(detect_esp_mountpoint 2>/dev/null || true)"
-            if [[ -n "$esp_target" ]]; then
-                local wp_dest="${esp_target}/limine-wallpaper.${ext}"
-                sudo cp "$LIMINE_WALLPAPER_SOURCE" "$wp_dest"
-                echo "wallpaper: boot():/limine-wallpaper.${ext}" >> "$tmp"
-                echo "wallpaper_style: stretched" >> "$tmp"
-                info "Installed Limine wallpaper to $wp_dest"
-            fi
-        else
-            warn "Wallpaper must be PNG, JPEG, or BMP format. Skipping wallpaper injection."
-        fi
-    fi
-
-    echo "# ----------------" >> "$tmp"
-    echo "" >> "$tmp"
-
-    sudo cat "$conf" >> "$tmp"
-    backup_file "$conf"
-    atomic_write "$conf" "$tmp"
-    info "Applied Catppuccin theme and wallpaper to Limine configuration."
+    info "Skipping Limine theme injection. Plymouth handles the UI, and legacy term_palette commands break Limine 11+."
+    return 0
 }
 
 preflight_checks() {
     (( EUID != 0 )) || fatal "Run as regular user with sudo privileges."
     require_cmd sudo
     require_cmd pacman
+    require_cmd df
     require_cmd findmnt
     require_cmd blkid
     require_cmd lsblk
@@ -792,6 +768,18 @@ preflight_checks() {
     [[ -d /sys/firmware/efi ]] || fatal "Not booted in EFI mode."
     [[ -f /etc/mkinitcpio.conf ]] || fatal "/etc/mkinitcpio.conf not found."
     [[ "$(stat -f -c %T /)" == "btrfs" ]] || fatal "Root is not Btrfs."
+    
+    # Pre-flight capacity check to prevent mid-transaction ENOSPC on the ESP
+    local esp_mnt
+    esp_mnt="$(detect_esp_mountpoint 2>/dev/null || true)"
+    if [[ -n "$esp_mnt" ]]; then
+        local avail_kb
+        avail_kb="$(df -k "$esp_mnt" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+        if [[ -n "$avail_kb" ]] && (( avail_kb < 153600 )); then
+            fatal "ESP ($esp_mnt) has critically low space ($((avail_kb / 1024))MB free). Mid-transaction kernel generation will fail. Clear space before proceeding."
+        fi
+    fi
+
     sudo -v || fatal "Cannot obtain sudo."
     (while true; do sudo -n -v 2>/dev/null || exit; sleep 240; done) &
     SUDO_PID=$!

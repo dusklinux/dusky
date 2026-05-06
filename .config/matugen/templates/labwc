@@ -1,0 +1,21 @@
+window.active.border.color: {{colors.primary.default.hex}}
+window.inactive.border.color: {{colors.background.default.hex}}
+window.active.title.bg.color: {{colors.primary_container.default.hex}}
+window.active.label.text.color: {{colors.on_primary_container.default.hex}}
+window.inactive.label.text.color: {{colors.on_secondary_container.default.hex}}
+window.inactive.title.bg.color: {{colors.secondary_container.default.hex}}
+window.inactive.button.unpressed.image.color: {{colors.on_secondary_container.default.hex}}
+window.active.button.unpressed.image.color: {{colors.on_primary_container.default.hex}}
+window.button.hover.bg.color: {{colors.background.default.hex_alpha|set_alpha: 0.2}}
+
+menu.items.bg.color: {{colors.secondary_container.default.hex}}
+menu.items.text.color: {{colors.on_secondary_container.default.hex}}
+menu.items.active.bg.color: {{colors.primary_container.default.hex}}
+menu.items.active.text.color: {{colors.on_primary_container.default.hex}}
+menu.separator.color: {{colors.tertiary_container.default.hex}}
+menu.title.bg.color: {{colors.on_tertiary_container.default.hex}}
+
+osd.bg.color: {{colors.secondary_container.default.hex}}
+osd.label.text.color: {{colors.on_secondary_container.default.hex}}
+
+snapping.overlay.edge.bg.color: {{colors.primary_container.default.hex_alpha|set_alpha: 0.5}}

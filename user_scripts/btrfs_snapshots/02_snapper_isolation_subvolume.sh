@@ -551,28 +551,15 @@ snapper_cleanup_counts() {
 
 tune_snapper() {
     local cfg="$1"
-    local default_limit=5 reserve=3
-    local number_count=0 important_count=0
-    local number_limit="$default_limit" important_limit="$default_limit"
+    local strict_limit=6
 
-    read -r number_count important_count < <(snapper_cleanup_counts "$cfg")
-
-    if (( number_count > default_limit )); then
-        number_limit=$(( number_count + reserve ))
-    fi
-    if (( important_count > default_limit )); then
-        important_limit=$(( important_count + reserve ))
-    fi
-
-    if (( number_limit > default_limit || important_limit > default_limit )); then
-        warn "Preserving existing ${cfg} snapshot history by using adaptive cleanup limits: NUMBER_LIMIT=${number_limit}, NUMBER_LIMIT_IMPORTANT=${important_limit}"
-    fi
+    info "Enforcing strict cleanup limits for ${cfg}: NUMBER_LIMIT=${strict_limit}"
 
     sudo snapper -c "$cfg" set-config \
         TIMELINE_CREATE="no" \
         NUMBER_CLEANUP="yes" \
-        NUMBER_LIMIT="${number_limit}" \
-        NUMBER_LIMIT_IMPORTANT="${important_limit}" \
+        NUMBER_LIMIT="${strict_limit}" \
+        NUMBER_LIMIT_IMPORTANT="${strict_limit}" \
         SPACE_LIMIT="0.0" \
         FREE_LIMIT="0.0"
 }

@@ -431,25 +431,6 @@ ensure_awww_running() {
     wait_for_process "awww-daemon" || die "awww-daemon failed to start"
 }
 
-ensure_swaync_running() {
-    process_running "swaync" && return 0
-
-    log "Starting swaync..."
-
-    if command -v uwsm-app >/dev/null 2>&1; then
-        uwsm-app -- swaync >/dev/null 2>&1 99>&- &
-    else
-        swaync >/dev/null 2>&1 99>&- &
-    fi
-
-    if ! wait_for_process "swaync"; then
-        warn "swaync failed to start. Matugen hooks might fail."
-        return 0
-    fi
-
-    sleep 0.5
-}
-
 # --- WALLPAPER SELECTION ---
 
 load_wallpapers() {
@@ -572,8 +553,6 @@ generate_colors() {
 
     [[ -f "$img" ]] || die "Image file does not exist: $img"
 
-    ensure_swaync_running
-
     log "Matugen: Mode=[${THEME_MODE}] Type=[${MATUGEN_TYPE}] Contrast=[${MATUGEN_CONTRAST}] Index=[${SOURCE_COLOR_INDEX}] Base16=[${BASE16_BACKEND}]"
 
     cmd=(matugen)
@@ -618,8 +597,6 @@ apply_solid_color() {
 
     [[ "$hex" =~ ^#?[a-fA-F0-9]{6}$ ]] || die "Invalid HEX color: $hex"
     [[ "$hex" != \#* ]] && hex="#${hex}"
-
-    ensure_swaync_running
 
     log "Matugen Solid Color: Hex=[${hex}] Mode=[${THEME_MODE}] Type=[${MATUGEN_TYPE}] Contrast=[${MATUGEN_CONTRAST}] Base16=[${BASE16_BACKEND}]"
 

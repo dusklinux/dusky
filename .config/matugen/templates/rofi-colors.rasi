@@ -27,7 +27,7 @@
     on-error: {{colors.on_error.default.hex}};
     error-container: {{colors.error_container.default.hex}}80;
     on-error-container: {{colors.on_error_container.default.hex}};
-    surface: {{colors.surface.default.hex}}CC;
+    surface: {{colors.surface.default.hex}}ff;
     on-surface: {{colors.on_surface.default.hex}};
     on-surface-variant: {{colors.on_surface_variant.default.hex}};
     outline: {{colors.outline.default.hex}};

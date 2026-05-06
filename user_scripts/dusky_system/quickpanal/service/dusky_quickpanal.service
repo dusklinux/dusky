@@ -1,0 +1,28 @@
+[Unit]
+Description=Dusky Quick Panal Daemon
+# Wait for Hyprland to be ready to avoid "Display not found" errors
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=org.dusky.quickpanal
+
+# Forces Python to flush logs immediately for real-time debugging
+Environment=PYTHONUNBUFFERED=1
+
+# Enable RAM Tracking
+MemoryAccounting=yes
+
+# Replace the path below with the actual path to the new python quickpanal script
+ExecStart=%h/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py --gapplication-service
+
+# Restart automatically if it crashes
+Restart=always
+RestartSec=3
+
+SyslogIdentifier=dusky-quickpanal
+Slice=app.slice
+
+[Install]
+WantedBy=graphical-session.target

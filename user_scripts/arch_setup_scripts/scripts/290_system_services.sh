@@ -24,14 +24,15 @@ readonly TARGET_SERVICES=(
     "udisks2.service"
     "thermald.service"
     "bluetooth.service"
-    "firewalld.service"
+    "ufw.service"
     "fstrim.timer"
     "systemd-timesyncd.service"
     "acpid.service"
     "vsftpd.service"
     "reflector.timer"
-    "swayosd-libinput-backend.service"
     "systemd-resolved.service"
+    "snapper-cleanup.timer"
+    "snapper-cleanup.service"
 )
 
 # ------------------------------------------------------------------------------

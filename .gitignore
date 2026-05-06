@@ -2,4 +2,9 @@
 user_scripts/tts_stt/dusky_kokoro/trigger.sh
 user_scripts/tts_stt/dusky_whisper/trigger.sh
 user_scripts/tts_stt/dusky_parakeet/trigger.sh
+user_scripts/dusky_system/click_away_to_dismiss/hyprland-focus-grab-v1-client-protocol.h
+user_scripts/dusky_system/click_away_to_dismiss/hyprland-focus-grab-v1-client-protocol.c
+user_scripts/dusky_system/click_away_to_dismiss/libwaylandgrab.so
 .config/uwsm/env.d/gpu
+.config/zellij/themes/matugen.kdl
+.config/foot/foot-colors.ini

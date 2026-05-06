@@ -286,6 +286,15 @@ EOF
 # These will override or add to the defaults found in ~/.config/hypr/source/autostart.conf
 # ==============================================================================
 
+# EG: dusky glance (uncomment any one)
+# exec-once = ~/user_scripts/rofi/dusky_glance.sh --cpu
+# exec-once = ~/user_scripts/rofi/dusky_glance.sh --ram
+# exec-once = ~/user_scripts/rofi/dusky_glance.sh --temp
+# exec-once = ~/user_scripts/rofi/dusky_glance.sh --battery
+# exec-once = ~/user_scripts/rofi/dusky_glance.sh --network
+# exec-once = ~/user_scripts/rofi/dusky_glance.sh --uptime
+# exec-once = ~/user_scripts/rofi/dusky_glance.sh --workspace
+# exec-once = ~/user_scripts/rofi/dusky_glance.sh --clock
 EOF
             ;;
         "plugins.conf")

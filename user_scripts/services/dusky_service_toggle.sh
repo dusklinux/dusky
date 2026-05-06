@@ -6,21 +6,6 @@
 # ENGINE:       Dusky TUI Engine v3.9.1 (Adapted)
 # VERSION:      3.0.0
 # ==============================================================================
-#
-# v3.0.0 CHANGELOG:
-#   - FEATURE: Tab-based UI with "User Services" and "System Services" tabs.
-#   - FEATURE: Dynamic service discovery — uninstalled services are hidden.
-#   - FEATURE: Sudo credential prompting for system service toggles.
-#   - FEATURE: Terminal state save/restore around sudo password entry.
-#   - FEATURE: Per-tab scroll and selection state preservation.
-#   - FEATURE: Mouse support (click, scroll wheel, tab clicks).
-#   - FEATURE: Buffered rendering — zero flicker redraws.
-#   - FEATURE: Scroll windowing with indicators for large lists.
-#   - FEATURE: Feedback messages with auto-clear countdown.
-#   - ENGINE: Full Dusky TUI Engine v3.9.1 pattern compliance.
-#   - FIX: Hardened base-10 coercion for all integer contexts.
-#   - FIX: Robust signal handling and cleanup on all exit paths.
-# ==============================================================================
 
 set -euo pipefail
 shopt -s extglob
@@ -29,7 +14,7 @@ shopt -s extglob
 # ▼ USER CONFIGURATION (EDIT THIS SECTION) ▼
 # =============================================================================
 
-declare -r APP_TITLE="Dusky Service Manager"
+declare -r APP_TITLE="Dusky Services"
 declare -r APP_VERSION="v3.0.0"
 
 # Dimensions & Layout
@@ -53,14 +38,17 @@ declare -ra USER_SERVICE_DEFS=(
     "battery_notify.service|Battery Level Notifications"
     "network_meter.service|Waybar Network Traffic Monitor"
     "dusky.service|Dusky Background Service"
-    "dusky_sliders.service|Dusky Sliders Service"
+    "dusky_quickpanal.service|Dusky quickpanal Service"
     "update_checker.timer|Automatic Update Checker"
     "hypridle.service|Hyprland Idle Daemon"
+    "osd_lock.service|OSD for CapsLock,NumLock,ScrollLock"
+    "hyprpolkitagent.service|(Polkit) Root Password Prompt"
 )
 
 declare -ra SYSTEM_SERVICE_DEFS=(
     "vsftpd.service|FTP Server (vsftpd)"
     "tlp.service|TLP Power Management"
+    "tlp-pd.service|TLP Daemon"
     "swayosd-libinput-backend.service|SwayOSD Input Backend"
     "sshd.service|SSH Server (OpenSSH)"
     "warp-svc.service|Cloudflare WARP VPN"

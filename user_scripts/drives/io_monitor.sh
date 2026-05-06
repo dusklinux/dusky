@@ -194,7 +194,7 @@ main() {
     # Launch sequence
     clear
     printf '%s╔═══════════════════════════════════════════════════════════════╗%s\n' "$C_CYAN" "$C_RESET"
-    printf '%s║  %sI/O Dashboard%s :: Monitoring /dev/%-27s%s║%s\n' "$C_CYAN" "$C_BOLD" "$C_RESET$C_CYAN" "$drive" "$C_CYAN" "$C_RESET"
+    printf '%s║  %sI/O Dashboard%s :: Monitoring /dev/%-27s%s ║%s\n' "$C_CYAN" "$C_BOLD" "$C_RESET$C_CYAN" "$drive" "$C_CYAN" "$C_RESET"
     printf '%s╚═══════════════════════════════════════════════════════════════╝%s\n' "$C_CYAN" "$C_RESET"
     printf '%sPress Ctrl+C to exit.%s\n\n' "$C_GREY" "$C_RESET"
     sleep 0.8

@@ -4,3 +4,4 @@ Description=Dusky Update Checker Service
 [Service]
 Type=oneshot
 ExecStart=%h/user_scripts/update_dusky/update_checker/update_checker.sh --num
+ExecStartPost=%h/user_scripts/waybar/update_counter.sh --pacman --aur --dusky

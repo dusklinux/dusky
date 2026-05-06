@@ -25,6 +25,7 @@ Tools       | glances               | CLI curses-based monitoring tool
 Tools       | lazydocker            | TUI for managing Docker containers
 Tools       | kvantum               | SVG-based theme engine for Qt applications
 Tools       | gparted               | GUI partition editor for disk management
+Tools       | xorg-xhost            | to allow unfettered access to xorg root apps, like timeshfit, gparted etc
 Tools       | baobab                | Disk usage analyzer to visualize storage
 Tools       | grsync                | GUI rsync frontend for backups
 Tools       | caligula              | User-friendly, lightweight disk imager
@@ -45,6 +46,7 @@ Internet    | filezilla             | Fast and reliable FTP/SFTP client
 Internet    | zapret2               | Deep Packet Inspection circumvetntion for blocked sites
 Internet    | qbittorrent           | Feature-rich BitTorrent client (Qt-based)
 Internet    | networkmanager-openvpn| NetworkManager VPN plugin for OpenVPN (with GUI)
+Internet    | network-manager-applet| NetworkManager applet, GUI, System Tray
 Internet    | vesktop               | Custom Discord client (Vencord + Electron)
 Internet    | beeper-v4-bin         | Universal chat app (Matrix bridge)
 Productivity| pinta                 | Simple drawing/editing tool (Paint.NET clone)
@@ -70,6 +72,7 @@ Media       | ttf-font-awesome      | Iconic font designed for Bootstrap - woff2
 Media       | woff2-font-awesome    | Iconic font designed for Bootstrap - woff2 format
 Media       | ttf-jetbrains-mono-nerd | Patched font JetBrains Mono from nerd fonts library
 Media       | awesome-terminal-fonts| fonts/icons for powerlines
+Media       | papirus-folders-git   | folder color themeing for file manager
 Media       | ttf-opensans          | Sans-serif typeface commissioned by Google
 Media       | ttf-meslo-nerd        | Patched font Meslo LG from nerd fonts library
 Media       | obs-studio            | Software for video recording and live streaming
@@ -95,6 +98,9 @@ Drivers     | usbmuxd               | Socket daemon to multiplex connections to 
 Drivers     | cuda                  | NVIDIA's parallel computing architecture toolkit
 Drivers     | cudnn                 | NVIDIA CUDA Deep Neural Network library
 Hardware    | asusctl               | ASUS ROG/TUF control
+Hardware    | fcitx5                | For Non-English Keyboard charactors
+Hardware    | fcitx5-gtk            | GTK-front end For Non-English Keyboard charactors
+Hardware    | fcitx5-qt             | QT-front end For Non-English Keyboard charactors
 Hardware    | broadcom-wl-dkms      | Broadcom 802.11 Linux STA wireless driver
 Hardware    | macbook12-spi-driver-dkms | Driver for the keyboard, touchpad and touchbar found in newer MacBook (Pro) models
 "
@@ -158,6 +164,7 @@ declare RIGHT_ARROW_ZONE=""
 # Selection State
 declare -A SELECTIONS=()
 declare -A DESCRIPTIONS=()
+declare -A INSTALLED_PKGS=()
 
 # Execution State
 declare -i DO_INSTALL=0
@@ -197,6 +204,11 @@ trim() {
 # --- Core Logic Engine ---
 
 parse_data() {
+    # Pre-cache installed packages for O(1) rendering checks
+    while read -r _inst_pkg; do
+        INSTALLED_PKGS["$_inst_pkg"]=1
+    done < <(pacman -Qq 2>/dev/null || true)
+
     local line category pkg desc
     local -A category_map
     local -i cat_idx
@@ -314,7 +326,9 @@ render_item_list() {
         desc="${DESCRIPTIONS[$item]:-}"
 
         if [[ "$selected" == "true" ]]; then
-            check_mark="${C_GREEN}[x]${C_RESET}"
+            check_mark="${C_GREEN}[]${C_RESET}"
+        elif [[ -n "${INSTALLED_PKGS[$item]:-}" ]]; then
+            check_mark="${C_GREEN}[✓]${C_RESET}"
         else
             check_mark="${C_GREY}[ ]${C_RESET}"
         fi

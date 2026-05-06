@@ -1,0 +1,241 @@
+# ======================================
+# GLOBAL DAEMON PARAMETERS
+# ======================================
+on-notify=exec pkill -RTMIN+8 waybar
+font=monospace 10
+width=350
+height=150
+margin=20
+padding=15
+border-size=2
+border-radius=8
+icons=1
+max-icon-size=48
+icon-path=/usr/share/icons/Papirus-Dark:/usr/share/icons/Papirus-Light:/usr/share/icons/Papirus:/usr/share/icons/breeze-dark:/usr/share/icons/breeze:/usr/share/icons/Adwaita:/usr/share/icons/AdwaitaLegacy:/usr/share/icons/hicolor
+default-timeout=5000
+ignore-timeout=0
+max-visible=6
+layer=overlay
+anchor=bottom-left
+sort=-time
+history=1
+max-history=50
+on-button-left=invoke-default-action
+actions=1
+on-button-right=exec makoctl menu -n "$MAKO_NOTIFICATION_ID" -- rofi -dmenu -p Action:
+
+# ======================================
+# MATUGEN THEME INJECTION
+# ======================================
+# MUST remain in the global scope (before any criteria blocks).
+include=~/.config/matugen/generated/mako-colors
+
+# ======================================
+# DO NOT DISTURB MODE
+# ======================================
+# Drops all incoming notifications silently into the history buffer
+[mode=do-not-disturb]
+invisible=1
+
+# Allow critical system notifications to punch through DND
+[mode=do-not-disturb urgency=critical]
+invisible=0
+
+# ======================================
+# CRITERIA: TIMEOUTS & URGENCY
+# ======================================
+[urgency=low]
+default-timeout=2000
+
+[urgency=normal]
+default-timeout=3000
+
+[urgency=critical]
+default-timeout=5000
+
+# ======================================
+# CRITERIA: AUTOMATION & BEHAVIOR
+# ======================================
+
+# 1. Mute noisy apps entirely
+[app-name=Spotify]
+invisible=1
+
+# 2. Auto-Execute on Receipt (Example)
+# If a backup script sends a failure notice, run a recovery bash script instantly
+# Uses ~ to ensure portability across different users' machines
+# [app-name=SystemBackup summary~="Failed"]
+# on-notify=exec sh -c '~/.local/bin/trigger-recovery.sh & pkill -RTMIN+8 waybar'
+
+# 3. Dusky Updates Click Action
+[summary="Dusky Dotfiles"]
+on-button-left=exec kitty --class update_dusky.sh --hold ~/user_scripts/update_dusky/update_dusky.sh
+
+# 4. Visual Overrides for Specific Apps
+# Make screenshot thumbnails massive so you can verify what you clipped
+[app-name=grimblast]
+max-icon-size=84
+format=<b>%s</b>\n%b
+
+# ======================================
+# MATUGEN TEMPLATE REFERENCE
+# ======================================
+# If you are cloning these dotfiles, place the following template
+# into your Matugen template directory and route it to generate
+# ~/.config/matugen/generated/mako-colors
+#
+# # 80% opacity (cc) on the background for a frosted glass look
+# background-color={{colors.on_primary.default.hex}}cc
+# text-color={{colors.tertiary.default.hex}}
+# # 93% opacity (ee) on the border for a subtle edge
+# border-color={{colors.tertiary_container.default.hex}}ee
+# progress-color={{colors.primary.default.hex}}
+#
+# [mode=silent]
+# on-notify=none
+#
+# [urgency=high]
+# border-color={{colors.error_container.default.hex}}
+# text-color={{colors.error.default.hex}}
+#
+# ======================================
+# OSD HARDWARE OVERLAY
+# ======================================
+[app-name=OSD]
+# anchor=bottom-center
+# Optional: You can also strip the border or adjust margins specifically for the OSD here
+# border-size=0
+# margin=0,0,50,0
+width=240
+height=48
+border-radius=24
+default-timeout=1000
+
+# ======================================
+# DUSKY KEYS VISUALIZER
+# ======================================
+[app-name=dusky-keys]
+# 1. Position
+anchor=bottom-center
+margin=0,0,20,0
+
+# 2. Dimensions
+width=200
+height=40
+padding=0
+
+# 3. Create the "Oval / Pill" shape
+border-radius=20
+border-size=2
+
+# 4. Center align and format the text properly
+icons=0
+text-alignment=center
+font=monospace 14
+format=%s
+
+# 5. Visuals
+# Comment these out so it inherits your Matugen theme automatically
+# background-color=#111111E6
+# text-color=#FFFFFF
+# border-color=#555555
+
+# ======================================
+# DUSKY CAVA VISUALIZER
+# ======================================
+[app-name=dusky-cava]
+# 1. Position (Moved to the bottom)
+anchor=bottom-center
+# Margin pushes it 20px up from the bottom edge
+margin=0,0,20,0
+
+# 2. Dimensions (Thinner height, wider width to eliminate '...')
+width=380
+height=40
+padding=0
+
+# 3. Pill Shape (Radius must be exactly half of the height: 40 / 2 = 20)
+border-radius=20
+border-size=2
+
+# 4. Typography (Scaled down font to fit the thinner height)
+icons=0
+text-alignment=center
+font=monospace 22
+format=%s
+
+# ======================================
+# DUSKY CAVA ALERTS
+# ======================================
+[app-name=dusky-cava-alert]
+anchor=bottom-center
+margin=0,0,20,0
+width=300
+height=40
+border-radius=20
+text-alignment=center
+font=monospace 12
+
+# ======================================
+# DUSKY GLANCE (NARROW MODULES)
+# ======================================
+# Handles: Clock, CPU, Temp, RAM
+[app-name=dusky-glance-narrow]
+anchor=bottom-right
+margin=0,20,20,0
+width=174
+height=56
+padding=0
+border-radius=20
+border-size=0
+icons=0
+text-alignment=center
+format=%b
+on-button-left=exec bash -c "pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dusky_glance.sh"
+
+# ======================================
+# DUSKY GLANCE (WIDE MODULES)
+# ======================================
+# Handles: Network Meter, Battery
+[app-name=dusky-glance-wide]
+anchor=bottom-right
+margin=0,20,20,0
+width=210
+height=56
+padding=0
+border-radius=20
+border-size=0
+icons=0
+text-alignment=center
+format=%b
+on-button-left=exec bash -c "pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dusky_glance.sh"
+
+# ======================================
+# DUSKY GLANCE (TIMERS & POMODORO)
+# ======================================
+[app-name=dusky-glance-timer]
+anchor=bottom-right
+margin=0,20,20,0
+width=240
+height=56
+padding=0
+border-radius=20
+border-size=0
+icons=0
+text-alignment=center
+format=%b
+on-button-left=exec bash -c "pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dusky_glance.sh"
+
+# ======================================
+# DUSKY GLANCE ALERTS (TIMERS)
+# ======================================
+[app-name=dusky-glance-alert]
+anchor=top-center
+width=300
+height=80
+border-radius=12
+text-alignment=center
+
+# Standard dismiss action for timer alerts
+on-button-left=dismiss
+

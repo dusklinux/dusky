@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Package
+Target = *
+
+[Action]
+Description = Triggering Dusky Update Checker Service for active sessions...
+When = PostTransaction
+Exec = /usr/bin/bash -c 'shopt -s nullglob; for dir in /home/*/; do user="${dir##*/}"; uid=$(id -u "$user" 2>/dev/null); [[ -n "$uid" && -d "/run/user/$uid" ]] && runuser -u "$user" -- bash -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user start update_checker.service"; done'

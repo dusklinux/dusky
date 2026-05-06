@@ -74,28 +74,14 @@ input_path  = '~/.config/matugen/templates/colors.css'
 output_path = '~/.config/matugen/generated/waybar-colors.css'
 post_hook   = "pkill -USR2 -x waybar || :"
 
-[templates.swayosd]
-input_path  = '~/.config/matugen/templates/swayosd-colors.css'
-output_path = '~/.config/matugen/generated/swayosd-colors.css'
-post_hook   = "pkill -x swayosd-server || :; sleep 0.1; uwsm app -- swayosd-server >/dev/null 2>&1 & disown"
-
-[templates.swaync]
-input_path  = '~/.config/matugen/templates/colors.css'
-output_path = '~/.config/matugen/generated/swaync-colors.css'
-post_hook   = '''
-bash -c '
-{
-  if command -v swaync-client >/dev/null 2>&1; then
-    swaync-client -R || :
-    swaync-client -rs || :
-  fi
-} >/dev/null 2>&1 </dev/null & disown
-'
-'''
-
 [templates.wlogout]
 input_path  = '~/.config/matugen/templates/colors.css'
 output_path = '~/.config/matugen/generated/wlogout-colors.css'
+
+[templates.mako]
+input_path  = '~/.config/matugen/templates/mako'
+output_path = '~/.config/matugen/generated/mako-colors'
+post_hook = 'makoctl reload'
 
 [templates.rofi]
 input_path  = '~/.config/matugen/templates/rofi-colors.rasi'
@@ -111,6 +97,23 @@ output_path = '~/.config/matugen/generated/kitty-colors.conf'
 post_hook   = '''
   ln -nfs "$HOME/.config/matugen/generated/kitty-colors.conf" "$HOME/.config/kitty/kitty-colors.conf"
   pkill -SIGUSR1 -x kitty || :
+'''
+
+[templates.foot]
+input_path  = '~/.config/matugen/templates/foot-colors.ini'
+output_path = '~/.config/matugen/generated/foot-colors.ini'
+post_hook   = '''
+  ln -nfs "$HOME/.config/matugen/generated/foot-colors.ini" "$HOME/.config/foot/foot-colors.ini"
+  touch "$HOME/.config/foot/foot.ini" || :
+'''
+
+[templates.zellij]
+input_path  = '~/.config/matugen/templates/zellij.kdl'
+output_path = '~/.config/matugen/generated/zellij.kdl'
+post_hook   = '''
+  mkdir -p "$HOME/.config/zellij/themes"
+  ln -nfs "$HOME/.config/matugen/generated/zellij.kdl" "$HOME/.config/zellij/themes/matugen.kdl"
+  touch ~/.config/zellij/config.kdl || :
 '''
 
 [templates.opencode]
@@ -232,7 +235,7 @@ post_hook   = '''
 # if command -v spicetify >/dev/null 2>&1 && [ -d "$HOME/.config/spicetify/Themes/Comfy" ]; then
 #     ln -nfs "$HOME/.config/matugen/generated/spotify-colors.ini" "$HOME/.config/spicetify/Themes/Comfy/color.ini"
 #     spicetify apply -n || :
-#     hyprctl dispatch sendshortcut "CTRL SHIFT, R, class:^(spotify)$" || :
+#     hyprctl dispatch sendshortcut "CTRL_SHIFT, R, class:^(Spotify)$" || :
 # fi
 # '''
 
@@ -277,12 +280,12 @@ post_hook   = '''
   systemctl --user restart dusky.service || :
 '''
 
-[templates.dusky_sliders]
+[templates.dusky_quickpanal]
 input_path  = '/dev/null'
 output_path = '/dev/null'
 post_hook   = '''
-  systemctl --user reset-failed dusky_sliders.service || :
-  systemctl --user restart dusky_sliders.service || :
+  systemctl --user reset-failed dusky_quickpanal.service || :
+  systemctl --user restart dusky_quickpanal.service || :
 '''
 
 

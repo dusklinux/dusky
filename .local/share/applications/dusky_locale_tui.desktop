@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Region Manager
+GenericName=System Settings TUI
+Comment=Unified TUI for managing Timezone, NTP, Locale, and Keymap via systemd
+Exec=uwsm app -- kitty --hold --class locale_tui.sh -e /home/dusk/user_scripts/locale/locale_tui.sh
+Icon=preferences-system
+Terminal=false
+Categories=System;Settings;Utility;ConsoleOnly;
+Keywords=arch;systemd;timezone;locale;ntp;keymap;time;date;region;
+StartupNotify=true

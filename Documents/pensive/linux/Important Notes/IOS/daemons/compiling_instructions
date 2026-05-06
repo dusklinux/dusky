@@ -1,0 +1,91 @@
+To successfully compile this iOS app without a Mac, we are going to use **GitHub Actions**. This is a cloud-based CI/CD (Continuous Integration / Continuous Deployment) service. When you upload your code to GitHub, GitHub spins up a temporary macOS server, installs Apple’s official compilers, builds your app, signs it for TrollStore, and gives you a downloadable `.ipa` file.
+
+Here is the exhaustive, foolproof, step-by-step guide to setting up your repository and compiling the app. 
+
+### Phase 1: Creating the Local Project Structure
+On your Linux machine, open your terminal. We must create a specific directory structure. **Do not deviate from these folder names**, as the `project.yml` file strictly relies on them to tell the cloud macOS server how to build the app.
+
+1. **Create the root directory and subdirectories:**
+   ```bash
+   mkdir -p TrollApp/.github/workflows
+   mkdir -p TrollApp/DaemonApp
+   cd TrollApp
+   ```
+
+2. **Create the blank files:**
+   ```bash
+   touch .github/workflows/build.yml
+   touch project.yml
+   touch DaemonApp/entitlements.plist
+   touch DaemonApp/DaemonApp.swift
+   touch DaemonApp/AppModel.swift
+   touch DaemonApp/MainView.swift
+   ```
+
+3. **Populate the files:**
+   Open each of these files in your preferred text editor (like Neovim or Nano) and paste the exact code from the finalized codebase (`ai_2`) into them. 
+   * *Critical Check:* Make sure `build.yml` is exactly inside `.github/workflows/`. Make sure `project.yml` is in the root `TrollApp/` directory.
+
+### Phase 2: Initializing the Local Git Repository
+We need to package this folder into a Git repository so GitHub can track it.
+
+1. **Initialize Git and rename the default branch to `main`:**
+   Inside the `TrollApp` directory, run:
+   ```bash
+   git init
+   git branch -m main
+   ```
+   *(Note: The GitHub Actions script specifically listens for code pushed to the `main` branch. If your branch is named `master`, the automated build will not trigger).*
+
+2. **Stage and commit your files:**
+   ```bash
+   git add .
+   git commit -m "Initial commit of DaemonManager TrollStore app"
+   ```
+
+### Phase 3: Creating the GitHub Repository
+1. Open your web browser and log in to [GitHub](https://github.com).
+2. In the top-right corner, click the **+ (plus icon)** and select **New repository**.
+3. **Repository name:** Name it `DaemonManager` (or anything you prefer, the name here doesn't affect the build).
+4. **Visibility:** Set it to **Private** (recommended, so your personal code remains hidden).
+5. **Initialize this repository with:** Do **NOT** check any boxes (do not add a README, .gitignore, or license). You want a completely empty repository.
+6. Click **Create repository**.
+
+### Phase 4: Pushing Your Code to Trigger the Build
+After clicking "Create," GitHub will show you a page with terminal commands. Look for the section titled: **"…or push an existing repository from the command line"**.
+
+1. **Link your local folder to GitHub:**
+   Copy the first command they provide and run it in your Linux terminal. It will look like this:
+   ```bash
+   git remote add origin https://github.com/YourUsername/DaemonManager.git
+   ```
+
+2. **Push the code to the cloud:**
+   Run the following command:
+   ```bash
+   git push -u origin main
+   ```
+   *(You may be prompted to enter your GitHub username and a Personal Access Token/password).*
+
+### Phase 5: Monitoring the Compilation
+The moment you press Enter on that `git push` command, GitHub detects the `.github/workflows/build.yml` file and immediately boots up a macOS server to start compiling.
+
+1. Go back to your repository page on GitHub in your web browser.
+2. Click on the **Actions** tab near the top center of the screen.
+3. You will see a workflow running titled **"Build TrollStore IPA"** with a spinning yellow circle next to it.
+4. Click on the text **"Build TrollStore IPA"**.
+5. On the next screen, click on the **"build"** job on the left sidebar to watch the live terminal output from the macOS cloud server.
+
+**What the cloud server is doing right now:**
+* **Checkout:** Downloading your code to the macOS server.
+* **Install Build Tools:** Installing `xcodegen` (which translates your `project.yml` into a real Apple `.xcodeproj` file) and `ldid` (the jailbreak tool used to fake-sign the app).
+* **Compile:** Running Apple's official `xcodebuild` compiler to turn your Swift code into an iOS binary.
+* **Package:** Taking the compiled app, injecting your `entitlements.plist` so TrollStore can give it root permissions, and zipping it into `DaemonApp.ipa`.
+
+### Phase 6: Downloading the Artifact
+1. The build process will take approximately 1 to 3 minutes.
+2. Once the spinning yellow circle turns into a **green checkmark**, the compilation is successful.
+3. Scroll down to the bottom of that summary page.
+4. You will see a section called **Artifacts**.
+5. Click on **`DaemonApp-iOS16`** to download the compiled `.zip` file to your Linux machine.
+6. Extract the downloaded zip file, and inside you will find your finalized, ready-to-install **`DaemonApp.ipa`**.

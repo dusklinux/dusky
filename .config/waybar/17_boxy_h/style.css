@@ -1,0 +1,185 @@
+/* ========================================================================== */
+/* Imports */
+/* ========================================================================== */
+@import url("../matugen/generated/waybar-colors.css");
+
+/* ========================================================================== */
+/* Color Variables */
+/* ========================================================================== */
+@define-color hover-fg      alpha(@on_surface, 0.75);
+@define-color border-accent shade(@primary, 0.7);
+
+/* ========================================================================== */
+/* Base */
+/* ========================================================================== */
+* {
+  border: none;
+  font-family: "JetBrains Mono Nerd Font Propo", "CaskaydiaMono Nerd Font Propo", monospace;
+  font-size: 13px;
+  min-height: 0;
+}
+
+window#waybar {
+  background: transparent;
+  color: @on_surface;
+}
+
+/* ========================================================================== */
+/* Containers */
+/* ========================================================================== */
+.modules-left,
+.modules-right,
+.modules-center {
+  border: 2px solid @border-accent;
+  background-color: @surface;
+  box-shadow: 1px 1px 3px 2px alpha(#000000, 0.8);
+}
+
+.modules-left {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+#clock {
+  border: 2px solid @border-accent;
+  background-color: @surface;
+  box-shadow: 1px 1px 3px 2px alpha(#000000, 0.8);
+}
+
+#hyprland-window,
+#window {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: @primary;
+}
+
+/* ========================================================================== */
+/* Modules */
+/* ========================================================================== */
+#hyprland-window,
+#tray,
+#cpu,
+#memory,
+#battery,
+#network,
+#bluetooth,
+#pulseaudio,
+#backlight,
+#custom-inhibit-suspend {
+  min-width: 12px;
+  margin: 0 8px;
+}
+
+/* ========================================================================== */
+/* Inhibit Suspend States */
+/* ========================================================================== */
+#custom-inhibit-suspend.enabled {
+  color: @primary;
+}
+
+#custom-inhibit-suspend.disabled {
+  color: @on_surface_variant;
+}
+
+/* ========================================================================== */
+/* Workspaces */
+/* ========================================================================== */
+#workspaces {
+  padding: 0px 2px;
+  margin: 2px 6px;
+  border-radius: 8px;
+  background-color: alpha(@surface_container, 0.5);
+}
+
+#workspaces button {
+  padding: 0px 6px 0px 6px;
+  margin: 1px 2px;
+  min-width: 14px;
+  border-radius: 6px;
+  background-color: transparent;
+  color: @on_surface_variant;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s ease-in-out;
+}
+
+#workspaces button.empty {
+  padding: 0 6px;
+  min-width: 16px;
+  background-color: transparent;
+  color: alpha(@on_surface_variant, 0.4);
+}
+
+#workspaces button.visible {
+  background-color: alpha(@surface_container_highest, 0.6);
+  color: @on_surface;
+}
+
+#workspaces button.active {
+  padding: 0px 2px 0px 2px;
+  min-width: 24px;
+  background-color: @primary_container;
+  color: @on_primary_container;
+  font-weight: 700;
+}
+
+#workspaces button:hover {
+  background-color: @surface_container_highest;
+  color: @on_surface;
+}
+
+#workspaces button.active:hover {
+  background-color: @primary_fixed_dim;
+}
+
+#workspaces button.urgent {
+  background-color: @error_container;
+  color: @on_error;
+}
+
+/* ========================================================================== */
+/* Utility */
+/* ========================================================================== */
+.hidden {
+  opacity: 0;
+}
+
+tooltip {
+  opacity: 0.95;
+  background: @surface;
+  font-size: 9px;
+  border: 2px solid @border-accent;
+  padding: 4px;
+}
+
+tooltip label {
+  color: @on_surface;
+}
+
+/* ========================================================================== */
+/* Spacing (Margins & Padding) */
+/* ========================================================================== */
+.modules-left,
+.modules-right,
+.modules-center {
+  margin: 6px 8px 6px 8px;
+  padding: 1px;
+}
+
+#clock {
+  margin: 0 10px 0 0px;
+  padding: 6px 10px;
+}
+
+/* ========================================================================== */
+/* Tray Expander */
+/* ========================================================================== */
+#tray-expander {
+  margin: 0 8px;
+}
+
+#custom-expand-icon {
+  margin-right: 0;
+}

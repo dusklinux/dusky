@@ -1,10 +1,25 @@
 #!/usr/bin/env bash
 # Requires Bash 5.3.0 or higher
 # -----------------------------------------------------------------------------
-# OPTIMIZED MICROPHONE INPUT SWITCHER FOR HYPRLAND
-# Dependencies: hyprland, pulseaudio-utils (pactl), jq, swayosd-client
+# OPTIMIZED MICROPHONE INPUT SWITCHER FOR HYPRLAND (MAKO OSD EDITION)
+# Dependencies: hyprland, pulseaudio-utils (pactl), jq, libnotify (notify-send)
 # -----------------------------------------------------------------------------
 set -euo pipefail
+
+SYNC_ID="sys-osd"
+
+# Core notification wrapper for Mako
+notify() {
+    local icon="$1"
+    local title="$2"
+    local val="${3:-}"
+    
+    if [[ -n "$val" ]]; then
+        notify-send -a "OSD" -h string:x-canonical-private-synchronous:"$SYNC_ID" -h int:value:"$val" -i "$icon" "$title"
+    else
+        notify-send -a "OSD" -h string:x-canonical-private-synchronous:"$SYNC_ID" -i "$icon" "$title"
+    fi
+}
 
 # 1. Elite DevOps Bash 5.3+ Check
 if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 3) )); then
@@ -13,20 +28,17 @@ if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 3) ))
 fi
 
 # 2. Dependency check
-for cmd in pactl jq hyprctl swayosd-client; do
+for cmd in pactl jq notify-send; do
     if ! command -v "$cmd" &>/dev/null; then
         printf "Error: Required command '%s' not found.\n" "$cmd" >&2
         exit 1
     fi
 done
 
-# 3. Get the currently focused monitor for OSD notification (Bash 5.3 Non-forking)
-FOCUSED_MONITOR=${ hyprctl monitors -j | jq -r '.[] | select(.focused == true).name // empty'; }
-
-# 4. Get the current default source
+# 3. Get the current default source (Bash 5.3 Non-forking)
 CURRENT_SOURCE=${ pactl get-default-source 2>/dev/null || echo ""; }
 
-# 5. THE LOGIC CORE
+# 4. THE LOGIC CORE
 # Filter out monitor sources, check availability, sort, and extract TSV payload
 SOURCE_DATA=${ pactl -f json list sources 2>/dev/null | jq -r --arg current "$CURRENT_SOURCE" '
   [ .[]
@@ -51,31 +63,27 @@ SOURCE_DATA=${ pactl -f json list sources 2>/dev/null | jq -r --arg current "$CU
     end
 '; }
 
-# 6. Error handling: No sources found
+# 5. Error handling: No sources found
 if [[ -z "$SOURCE_DATA" ]]; then
-    swayosd-client ${FOCUSED_MONITOR:+--monitor "$FOCUSED_MONITOR"} \
-        --custom-message "No Input Devices Available" \
-        --custom-icon "microphone-sensitivity-muted-symbolic"
+    notify "microphone-sensitivity-muted-symbolic" "No Input Devices Available" ""
     exit 1
 fi
 
-# 7. Parse the output safely
+# 6. Parse the output safely
 IFS=$'\t' read -r NEXT_NAME NEXT_DESC NEXT_VOL NEXT_MUTE <<< "$SOURCE_DATA"
 
-# 8. Ensure volume is numeric (fallback to 0)
+# 7. Ensure volume is numeric (fallback to 0)
 if ! [[ "$NEXT_VOL" =~ ^[0-9]+$ ]]; then
     NEXT_VOL=0
 fi
 
-# 9. Switch the default source
+# 8. Switch the default source
 if ! pactl set-default-source "$NEXT_NAME" 2>/dev/null; then
-    swayosd-client ${FOCUSED_MONITOR:+--monitor "$FOCUSED_MONITOR"} \
-        --custom-message "Failed to switch input" \
-        --custom-icon "dialog-error-symbolic"
+    notify "dialog-error-symbolic" "Failed to switch input" ""
     exit 1
 fi
 
-# 10. Move all currently recording applications to the new source
+# 9. Move all currently recording applications to the new source
 # Using a process substitution loop to avoid subshell variable scoping issues
 while IFS=$'\t' read -r output_id _; do
     if [[ -n "$output_id" ]]; then
@@ -83,7 +91,7 @@ while IFS=$'\t' read -r output_id _; do
     fi
 done < <(pactl list short source-outputs 2>/dev/null)
 
-# 11. Determine icon based on volume and mute status
+# 10. Determine icon based on volume and mute status
 if [[ "$NEXT_MUTE" == "true" ]] || (( NEXT_VOL == 0 )); then
     ICON="microphone-sensitivity-muted-symbolic"
 elif (( NEXT_VOL <= 33 )); then
@@ -94,10 +102,7 @@ else
     ICON="microphone-sensitivity-high-symbolic"
 fi
 
-# 12. Display the OSD notification
-swayosd-client \
-    ${FOCUSED_MONITOR:+--monitor "$FOCUSED_MONITOR"} \
-    --custom-message "${NEXT_DESC:-Unknown Device}" \
-    --custom-icon "$ICON"
+# 11. Display the OSD notification (passing volume for Mako bar support)
+notify "$ICON" "${NEXT_DESC:-Unknown Device}" "$NEXT_VOL"
 
 exit 0

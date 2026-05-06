@@ -247,7 +247,7 @@ sudo nvim /etc/preload.conf
 > # unit: signed_integer_percent
 > # default: -10
 > #
-> memtotal = 0
+> memtotal = 50
 > 
 > # memfree: precentage of free memory
 > #
@@ -261,7 +261,7 @@ sudo nvim /etc/preload.conf
 > # unit: signed_integer_percent
 > # default: 0
 > #
-> memcached = 0
+> memcached = 10
 > 
 > 
 > ###########################################################################
@@ -304,7 +304,7 @@ sudo nvim /etc/preload.conf
 > # unit: seconds
 > # default: 3600
 > #
-> autosave = 1800
+> autosave = 3600
 > 
 > # mapprefix:
 > #
@@ -328,7 +328,7 @@ sudo nvim /etc/preload.conf
 > #
 > # default: (empty list, accept all)
 > # Added /usr/local/ for self-compiled tools common in Arch
-> mapprefix = /opt;/usr/;/usr/local/;/lib;/var/cache/;!/
+> mapprefix = /opt;/usr/;/lib;/var/cache/;!/
 > # exeprefix:
 > #
 > # The syntax for this is exactly the same as for mapprefix.  The only
@@ -336,7 +336,7 @@ sudo nvim /etc/preload.conf
 > # files instead of maps.
 > #
 > # default: (empty list, accept all)
-> exeprefix = /opt;/usr/;/usr/local/;/lib;!/
+> exeprefix = /opt;!/usr/sbin/;!/usr/local/sbin/;!/usr/local/;/usr/;/lib;!/
 > # maxprocs
 > #
 > # Maximum number of processes to use to do parallel readahead.  If

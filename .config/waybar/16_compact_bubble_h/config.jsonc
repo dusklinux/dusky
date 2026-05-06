@@ -1,0 +1,359 @@
+//horizontal_block_compact
+
+{
+  "layer": "top",
+  "exclusive": true,
+  "reload_style_on_change": true,
+  "position": "top",
+  "spacing": 4,
+  "height": 26,
+  "margin-top": 2,
+  "margin-left": 10,
+  "margin-right": 10,
+  "margin-bottom": 0,
+
+  // --- MODULE LAYOUT ---
+  "modules-left": [
+    "custom/launcher",
+    "group/network-drawer",
+    "group/updates-drawer",
+    "group/mpris-drawer",
+    "clock",
+    "custom/weather",
+    "custom/notification"
+  ],
+
+  "modules-center": [
+    "hyprland/workspaces"
+  ],
+
+  "modules-right": [
+    "pulseaudio#output",
+    "group/brightness-drawer",
+    "cpu",
+    "memory",
+    "battery",
+    "group/power-drawer"
+  ],
+
+  // --- DRAWERS & GROUPS ---
+
+  "group/network-drawer": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 400,
+      "children-class": "network-drawer",
+      "click-to-reveal": false,
+      "transition-left-to-right": true
+    },
+    "modules": [
+      "custom/net-speed",
+      "network",
+      "bluetooth"
+    ]
+  },
+
+  "group/brightness-drawer": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 400,
+      "children-class": "brightness-drawer",
+      "click-to-reveal": false,
+      "transition-left-to-right": false
+    },
+    "modules": [
+      "backlight",
+      "custom/theme-toggle"
+    ]
+  },
+
+  "group/updates-drawer": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 400,
+      "children-class": "updates-drawer",
+      "click-to-reveal": false,
+      "transition-left-to-right": true
+    },
+    "modules": [
+      "custom/updates-trigger",
+      "custom/updates"
+    ]
+  },
+
+  "group/mpris-drawer": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 600,
+      "children-class": "mpris-drawer",
+      "click-to-reveal": false,
+      "transition-left-to-right": true
+    },
+    "modules": [
+      "custom/mpris-trigger",
+      "mpris"
+    ]
+  },
+
+  "group/power-drawer": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 400,
+      "children-class": "power-drawer",
+      "click-to-reveal": false,
+      "transition-left-to-right": false
+    },
+    "modules": [
+      "custom/power",
+      "custom/inhibit-suspend"
+    ]
+  },
+
+  // --- MODULE CONFIGURATION ---
+
+  "custom/launcher": {
+    "format": "󰣇",
+    "on-click": "uwsm-app -- python3 ~/user_scripts/dusky_system/control_center/dusky_control_center.py",
+    "on-click-right": "gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate '{}'",
+    "tooltip-format": "Control Center"
+  },
+
+  "custom/updates-trigger": {
+    "format": "",
+    "exec": "echo ''",
+    "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+    "interval": 5,
+    "tooltip": false
+  },
+
+  "custom/updates": {
+    "exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+    "return-type": "json",
+    "format": "{}",
+    "tooltip": true,
+    "on-click": "uwsm-app -- kitty --class system_update.sh --hold -e ~/user_scripts/update_dusky/system_update.sh --all"
+  },
+
+  "clock": {
+    "format": "{:%I:%M}",
+    "format-alt": "󰃭 {:%A, %B %d}",
+    "tooltip-format": "<tt><span size='12pt' font='JetBrainsMono Nerd Font'>{calendar}</span></tt>",
+    "on-click-right": "uwsm-app -- gnome-clocks",
+    "on-click-middle": "uwsm-app -- kitty --class peaclock -e peaclock",
+    "calendar": {
+      "mode": "month",
+      "mode-mon-col": 3,
+      "weeks-pos": "right",
+      "on-scroll": 1,
+      "format": {
+        "months": "<span color='#ffb786'><b>{}</b></span>",
+        "days": "<span color='#e2e2e2'>{}</span>",
+        "weeks": "<span color='#c9ca93'>W{}</span>",
+        "weekdays": "<span color='#ffb786'><b>{}</b></span>",
+        "today": "<span color='#131313' background='#ffb786'><b>{}</b></span>"
+      }
+    }
+  },
+
+  "custom/weather": {
+    "format": "{}",
+    "exec": "python3 ~/user_scripts/waybar/weather.py",
+    "interval": 1800,
+    "return-type": "json"
+  },
+
+  "custom/notification": {
+    "justify": "center",
+    "align": 0.5,
+    "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+    "format": "{}",
+    "return-type": "json",
+    "exec-if": "which makoctl",
+    "exec": "~/user_scripts/waybar/mako.sh --horizontal",
+    "interval": 2,
+    "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+    "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+    "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+    "signal": 8,
+    "escape": true
+  },
+
+  "custom/theme-toggle": {
+    "format": "",
+    "tooltip-format": "Theme Controls\n\n LMB  Dark Mode\n RMB  Light Mode\n MMB  Wallpaper",
+    "on-click": "uwsm-app -- ~/user_scripts/theme_matugen/theme_ctl.sh set --mode dark",
+    "on-click-right": "uwsm-app -- ~/user_scripts/theme_matugen/theme_ctl.sh set --mode light",
+    "on-click-middle": "uwsm-app -- waypaper"
+  },
+
+  "hyprland/workspaces": {
+    "on-click": "activate",
+    "format": "{icon}",
+    "format-window-separator": " ",
+    "window-rewrite-default": "",
+    "window-rewrite": {
+      "class<firefox>": "",
+      "class<kitty>": "",
+      "class<discord>": "",
+      "class<vlc>": "󰕼",
+      "class<Code>": "󰨞",
+      "class<thunar>": "󰝰",
+      "class<spotify>": "",
+      "class<obsidian>": "󰎞"
+    },
+    "persistent-workspaces": {
+      "*": 5
+    },
+    "on-scroll-up": "hyprctl dispatch workspace e-1",
+    "on-scroll-down": "hyprctl dispatch workspace e+1"
+  },
+
+  "custom/mpris-trigger": {
+    "format": "♪",
+    "exec": "echo '♪'",
+    "exec-if": "playerctl status 2>/dev/null | grep -qE 'Playing|Paused'",
+    "interval": 1,
+    "tooltip": false
+  },
+
+  "mpris": {
+    "format": "{player_icon} {title}",
+    "format-paused": "{status_icon} <i>{title}</i>",
+    "format-stopped": "",
+    "max-length": 25,
+    "player-icons": {
+      "default": "󰎆",
+      "mpv": "󰎇",
+      "spotify": "󰓇",
+      "firefox": "󰈹"
+    },
+    "status-icons": {
+      "paused": "󰏤"
+    },
+    "tooltip-format": "{player} - {artist}\n{title}\n{album}",
+    "on-click": "playerctl play-pause",
+    "on-scroll-up": "playerctl next",
+    "on-scroll-down": "playerctl previous"
+  },
+
+  "custom/net-speed": {
+    "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --horizontal",
+    "return-type": "json",
+    "format": "{}",
+    "interval": 1,
+    "tooltip": true
+  },
+
+  "network": {
+    "format-wifi": "󰤨",
+    "format-ethernet": "󰈀",
+    "format-disconnected": "󰤭",
+    "format-linked": "󰈁",
+    "tooltip-format-wifi": "󰤨 {essid}\n󱑽 {signalStrength}%\n󰩟 {ipaddr}",
+    "tooltip-format-ethernet": "󰈀 Ethernet\n󰩟 {ipaddr}",
+    "tooltip-format-disconnected": "󰤭 Disconnected",
+    "on-click": "uwsm-app -- kitty --class wifitui -e wifitui"
+  },
+
+  "bluetooth": {
+    "format": "󰂯",
+    "format-disabled": "󰂲",
+    "format-connected": "󰂱 {num_connections}",
+    "format-connected-battery": "󰂱 {device_battery_percentage}%",
+    "tooltip-format": "{controller_alias}\n{controller_address}\n\n{device_enumerate}",
+    "tooltip-format-connected": "{controller_alias}\n\n{device_enumerate}",
+    "tooltip-format-enumerate-connected": "󰂱 {device_alias}",
+    "tooltip-format-enumerate-connected-battery": "󰂱 {device_alias} ({device_battery_percentage}%)",
+    "on-click": "uwsm-app -- blueman-manager",
+    "on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui"
+  },
+
+  "pulseaudio#output": {
+    "format": "{icon} {volume}%",
+    "format-muted": "󰖁",
+    "format-bluetooth": "󰂰 {volume}%",
+    "format-bluetooth-muted": "󰂲",
+    "format-icons": {
+      "headphone": "󰋋",
+      "hands-free": "󰋎",
+      "headset": "󰋎",
+      "phone": "",
+      "portable": "",
+      "car": "",
+      "default": ["󰕿", "󰖀", "󰕾"]
+    },
+    "on-click": "uwsm-app -- pavucontrol",
+    "on-click-right": "uwsm-app -- kitty --class cava -e cava",
+    "on-click-middle": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+    "on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
+    "on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%",
+    "tooltip-format": "{desc}\nVolume: {volume}%\n\nLMB: Pavucontrol\nRMB: Cava\nMMB: Mute Toggle\nScroll: Volume",
+    "scroll-step": 5,
+    "max-volume": 150
+  },
+
+  "backlight": {
+    "format": "{icon} {percent}",
+    "tooltip-format": "Brightness: {percent}%\n\n LMB  Brightness\n RMB  Night Light\n MMB  Shaders",
+    "on-click": "uwsm-app -- ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
+    "on-click-right": "uwsm-app -- ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
+    "on-click-middle": "uwsm-app -- ~/user_scripts/rofi/shader_menu.sh",
+    "on-scroll-up": "brightnessctl set +5%",
+    "on-scroll-down": "brightnessctl set 5%-",
+    "format-icons": ["󰃞", "󰃟", "󰃠"]
+  },
+
+  "cpu": {
+    "interval": 2,
+    "format": "󰍛 {usage}%",
+    "on-click": "uwsm-app -- kitty -e btop",
+    "states": {
+      "warning": 70,
+      "critical": 90
+    }
+  },
+  
+  "memory": {
+    "format": "󰍛 {percentage}%",
+    "format-alt": "󰍛 {used:0.1f}G",
+    "interval": 3,
+    "on-click-right": "uwsm-app -- kitty --class io_monitor.sh -e $HOME/user_scripts/drives/io_monitor.sh",
+    "tooltip-format": "RAM: {used:0.2f} GiB / {total:0.2f} GiB ({percentage}%)\nAvailable: {avail:0.2f} GiB\nSwap: {swapUsed:0.2f} GiB / {swapTotal:0.2f} GiB\n\nRMB: I/O Monitor",
+    "states": {
+      "warning": 70,
+      "critical": 85
+    }
+  },
+
+  "battery": {
+    "states": {
+      "good": 80,
+      "warning": 30,
+      "critical": 15
+    },
+    "on-click": "uwsm-app -- kitty --class power_saver.sh --hold -e $HOME/user_scripts/battery/power_saving/power_saver.sh",
+    "on-click-right": "uwsm-app -- kitty --class dusky_hypridle.sh -e $HOME/user_scripts/hypridle/dusky_hypridle.sh",
+    "format": "{icon} {capacity}%",
+    "format-charging": "󰂄 {capacity}%",
+    "format-plugged": "󰚥 {capacity}%",
+    "format-full": "󰁹 Full",
+    "tooltip-format": "{timeTo}\n\n󱟦 Health: {health}%\n󱐋 Power: {power:.2f}W",
+    "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
+  },
+
+  "custom/inhibit-suspend": {
+    "format": "{}",
+    "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
+    "return-type": "json",
+    "interval": 5,
+    "signal": 9,
+    "on-click": "uwsm-app -- ~/user_scripts/waybar/toggle_hypridle.sh",
+    "escape": true
+  },
+
+  "custom/power": {
+    "format": "⏻",
+    "on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh",
+    "tooltip-format": "Power Menu"
+  }
+}

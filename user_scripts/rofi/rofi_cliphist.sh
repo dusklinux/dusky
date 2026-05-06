@@ -13,6 +13,12 @@ readonly XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
 readonly PINS_DIR="${XDG_DATA_HOME}/rofi-cliphist/pins"
 readonly THUMB_DIR="${XDG_CACHE_HOME}/rofi-cliphist/thumbs"
 
+# --- Persistence Integration ---
+readonly DB_ENV_FILE="${HOME}/.config/dusky/settings/cliphist_db_env"
+if [[ -f "$DB_ENV_FILE" ]]; then
+    source "$DB_ENV_FILE"
+fi
+
 readonly PIN_ICON=" "
 readonly IMG_ICON=" "
 

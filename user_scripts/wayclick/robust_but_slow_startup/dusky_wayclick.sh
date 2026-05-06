@@ -655,23 +655,7 @@ fi
 
 # --- 7. RUNTIME CONFIG CHECKS (run mode only) ---
 if [[ "$RUN_MODE" == "run" ]]; then
-    if [[ ! -f "${CONFIG_DIR}/config.json" ]]; then
-        if $INTERACTIVE; then
-            mkdir -p "$CONFIG_DIR" 2>/dev/null || true
-            while [[ ! -f "${CONFIG_DIR}/config.json" ]]; do
-                printf "\n%b[ACTION REQUIRED]%b Missing config.json in: %s\n" \
-                    "${C_YELLOW}" "${C_RESET}" "${CONFIG_DIR}"
-                printf "       Please ensure 'config.json' exists in this folder.\n"
-                printf "       %bPress Enter to re-scan...%b" "${C_DIM}" "${C_RESET}"
-                read -r
-            done
-            printf "%b[CHECK]%b Configuration found.\n" "${C_GREEN}" "${C_RESET}"
-        else
-            notify_user "Missing config.json in ~/.config/wayclick. Run in terminal."
-            exit 1
-        fi
-    fi
-
+    # 1. Check if the audio pack directory exists first
     if [[ ! -d "${CONFIG_DIR}/${AUDIO_PACK}" ]]; then
         if $INTERACTIVE; then
             printf "\n%b[ERROR]%b Audio pack '%b%s%b' not found in: %s\n" \
@@ -696,6 +680,23 @@ if [[ "$RUN_MODE" == "run" ]]; then
             exit 1
         else
             notify_user "Audio pack '$AUDIO_PACK' not found. Run in terminal."
+            exit 1
+        fi
+    fi
+
+    # 2. Check for config.json INSIDE the audio pack directory
+    if [[ ! -f "${CONFIG_DIR}/${AUDIO_PACK}/config.json" ]]; then
+        if $INTERACTIVE; then
+            while [[ ! -f "${CONFIG_DIR}/${AUDIO_PACK}/config.json" ]]; do
+                printf "\n%b[ACTION REQUIRED]%b Missing config.json in: %s/%s\n" \
+                    "${C_YELLOW}" "${C_RESET}" "${CONFIG_DIR}" "${AUDIO_PACK}"
+                printf "       Please ensure 'config.json' exists in this folder.\n"
+                printf "       %bPress Enter to re-scan...%b" "${C_DIM}" "${C_RESET}"
+                read -r
+            done
+            printf "%b[CHECK]%b Configuration found.\n" "${C_GREEN}" "${C_RESET}"
+        else
+            notify_user "Missing config.json in ~/.config/wayclick/${AUDIO_PACK}. Run in terminal."
             exit 1
         fi
     fi
@@ -805,7 +806,7 @@ if len(sys.argv) != 3:
 CONFIG_DIR = Path(sys.argv[1]).expanduser()
 PACK_NAME = sys.argv[2]
 ASSET_DIR = CONFIG_DIR / PACK_NAME
-CONFIG_FILE = CONFIG_DIR / "config.json"
+CONFIG_FILE = ASSET_DIR / "config.json"
 READY_FILE = os.environ.get("WC_READY_FILE", "").strip()
 
 def env_bool(name: str, default: str) -> bool:

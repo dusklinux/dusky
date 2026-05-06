@@ -1,0 +1,222 @@
+/*
+ * ~/.config/waybar/style.css
+ * Precision Vertical Layout - Width 10 (Strict) - Numbered Workspaces & Adaptive Network
+ */
+
+@import url("../../.config/matugen/generated/waybar-colors.css");
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSLUCENCY CONTROLS (GLASSY MODE)
+   Tweak the decimals (0.0 to 1.0) here to adjust granular glassiness.
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color glass_bar         alpha(@background, 0.4);
+@define-color glass_group       alpha(@surface_container_highest, 0.0);
+@define-color glass_module      alpha(@surface_container_highest, 0.0);
+@define-color glass_tooltip     alpha(@surface_container, 0.07);
+@define-color glass_active_ws   alpha(@primary, 0.15);
+@define-color glass_urgent_ws   alpha(@error, 0.15);
+@define-color glass_border      alpha(@outline_variant, 1.0);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* WAYBAR_OPAQUE_SWITCH_START */
+
+@define-color glass_bar         @background;
+@define-color glass_group       @surface_container_highest;
+@define-color glass_module      @surface_container_highest;
+@define-color glass_tooltip     @surface_container;
+@define-color glass_active_ws   @primary_container;
+@define-color glass_urgent_ws   @error_container;
+@define-color glass_border      @outline_variant;
+
+/* WAYBAR_OPAQUE_SWITCH_END */
+
+/* ===================================================================
+ * GLOBAL
+ * =================================================================== */
+
+* {
+    font-family: "JetBrainsMono Nerd Font Propo", "JetBrainsMono Nerd Font", sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    font-feature-settings: "tnum"; 
+    min-height: 0;
+    min-width: 0;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
+}
+
+window#waybar {
+    background: @glass_bar; 
+    color: @on_surface;
+    border-right: 1px solid @glass_border; 
+}
+
+tooltip {
+    background: @glass_tooltip;
+    color: @on_surface;
+    border: 1px solid @glass_border;
+    border-radius: 4px;
+}
+
+tooltip label {
+    padding: 5px;
+}
+
+/* ===================================================================
+ * MODULE BASE & GROUPS
+ * =================================================================== */
+
+.modules-left > widget > *,
+.modules-center > widget > *,
+.modules-right > widget > * {
+    margin: 4px 0px;
+}
+
+/* --- Group Pill Backgrounds (Fixed Visibility) --- */
+box#group-media, box#group-hardware, box#group-updates-drawer, box#group-utils, box#group-connections, box#group-bottom {
+    background-color: @glass_group;
+    border-radius: 12px;
+    padding: 6px 0px;
+    margin: 4px 0px;
+}
+
+/* --- Internal Module Spacing --- */
+#battery, #cpu, #memory, #temperature,
+#pulseaudio, #backlight, #network, #bluetooth, #tray,
+#custom-theme, #custom-power, #custom-notification, #custom-inhibit-suspend,
+#custom-app-tray, #custom-network, #custom-audiorouter, #custom-cava, 
+#custom-updates, #custom-updates-trigger {
+    padding: 0px;
+    margin: 3px 0px; 
+    background-color: transparent;
+    transition: all 0.2s ease-in-out;
+}
+
+/* ===================================================================
+ * MODULE SPECIFIC
+ * =================================================================== */
+
+/* --- Workspaces: Vertical Numbers --- */
+#workspaces {
+    margin: 0px 0;
+    background: transparent;
+    border-radius: 0px;
+}
+
+#workspaces button {
+    padding: 2px 0px;
+    margin: 2px 0px;
+    background-color: transparent;
+    color: @on_surface_variant;
+    transition: all 0.2s ease-in-out;
+}
+
+#workspaces button.empty {
+    color: alpha(@on_surface, 0.3); 
+    background-color: transparent;
+    box-shadow: none;
+}
+
+#workspaces button.active {
+    background-color: @glass_active_ws;
+    color: @primary;
+    border-radius: 4px;
+    font-weight: 900;
+}
+
+#workspaces button.urgent {
+    color: @error;
+    background-color: @glass_urgent_ws;
+}
+
+/* --- Clock and Bottom Gap Control --- */
+#clock {
+    font-weight: 900;
+    background-color: @glass_module; 
+    border-radius: 6px;
+    color: @primary;
+    padding: 4px 0px;
+    margin-top: 3px;
+    margin-bottom: 0px; 
+    margin-left: 2px;
+    margin-right: 2px;
+}
+
+box#group-bottom {
+    margin-top: 2px; 
+}
+
+/* --- Hardware Group (Tertiary Color Map) --- */
+#cpu, #memory, #temperature {
+    color: @tertiary;
+    font-weight: bold;
+}
+
+/* --- Interactive Elements (Secondary Color Map) --- */
+#pulseaudio, #backlight {
+    color: @secondary;
+    font-weight: bold;
+}
+#pulseaudio.muted { color: @error; }
+
+/* --- Battery --- */
+#battery {
+    font-weight: 700;
+    color: @secondary;
+}
+#battery.charging, #battery.plugged { color: @primary; }
+#battery.warning { color: @error; animation: blink-critical 1s infinite alternate; }
+#battery.critical { color: @error_container; }
+
+/* --- NETWORK METER DYNAMIC CLASSES --- */
+#custom-network {
+    font-size: 9px;
+    transition: color 0.1s ease-in-out, text-shadow 0.1s ease-in-out;
+}
+/* Subtle when idling or browsing lightly */
+#custom-network.network-kb { 
+    color: @secondary; 
+    font-weight: bold;
+}
+/* Glowing Alert State when pulling massive bandwidth */
+#custom-network.network-mb { 
+    color: @primary; 
+    font-weight: 900;
+    text-shadow: 0 0 5px alpha(@primary, 0.7);
+}
+/* Absolute disconnect */
+#custom-network.network-disconnected { 
+    color: @error; 
+}
+
+/* --- Other Custom Modules --- */
+#bluetooth { color: @secondary; }
+#custom-power { color: @error; font-size: 12px; }
+#custom-updates, #custom-updates-trigger { color: @tertiary; font-weight: bold; }
+#custom-theme { color: @secondary; }
+#custom-notification, #custom-inhibit-suspend, #custom-app-tray { color: @on_surface_variant; }
+#custom-audiorouter.active { color: @primary; }
+#custom-audiorouter.inactive { color: @surface_container_highest; }
+#custom-cava { color: @tertiary; }
+
+/* --- Unified Hover States --- */
+#battery:hover, #clock:hover, #cpu:hover, #memory:hover, #temperature:hover,
+#pulseaudio:hover, #backlight:hover, #bluetooth:hover, #custom-network:hover,
+#custom-theme:hover, #custom-power:hover, #custom-notification:hover,
+#custom-audiorouter:hover, #custom-app-tray:hover, #custom-cava:hover,
+#custom-updates:hover, #custom-updates-trigger:hover {
+    color: @primary;
+    text-shadow: 0 0 4px alpha(@primary, 0.5);
+}
+
+/* ===================================================================
+ * ANIMATIONS
+ * =================================================================== */
+@keyframes blink-critical {
+    to { color: @on_surface; }
+}

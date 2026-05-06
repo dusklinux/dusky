@@ -96,6 +96,7 @@ pages:
       properties:
         title: Active Profile
         description: Select performance mode
+        key: performance_profile
         icon: power-profile-balanced-symbolic
         value_command: "tlpctl get"
         interval: 2
@@ -482,6 +483,23 @@ pages:
               terminal: false
   - type: section
     properties:
+      title: Locale & Region
+      icon: ''
+      description: Configure time, date, timezone, and language settings
+    items:
+    - type: button
+      properties:
+        title: Configure System Locale
+        description: Set timezone, time, date, locale, and keymap
+        icon: preferences-system-time-symbolic
+        button_text: "Configure"
+      on_press:
+        type: exec
+        command: kitty --class locale_tui.sh --title "System Region Manager" --hold sh -c "$HOME/user_scripts/locale/locale_tui.sh"
+        terminal: false
+
+  - type: section
+    properties:
       title: Session Management
       icon: system-users-symbolic
       description: Manage user session and login behavior
@@ -760,6 +778,119 @@ pages:
         type: exec
         command: kitty --class tailscale_uninstall --hold sh -c "$HOME/user_scripts/networking/uninstall_tailscale.sh"
         terminal: false
+  - type: section
+    properties:
+      title: WireGuard
+      icon: ''
+      description: ''
+    items:
+    - type: navigation
+      properties:
+        title: WireGuard
+        description: VPN tunnel management
+        icon: network-vpn-symbolic
+      layout:
+        - type: warning_banner
+          properties:
+            title: "Privilege Requirements"
+            message: "Toggling tunnels uses sudo (wg-quick). Run the setup script once to configure NOPASSWD rules and fix /etc/wireguard permissions."
+        - type: section
+          properties:
+            title: VPN Tunnels
+            description: "Scans /etc/wireguard/ and immediate subdirectories for *.conf files"
+          items:
+            - type: file_generator
+              properties:
+                path: /etc/wireguard
+                glob: "*.conf"
+                recursive: true
+              item_template:
+                type: expander
+                properties:
+                  title: "{name_pretty}"
+                  description: "{relpath}"
+                  icon: network-vpn-symbolic
+                items:
+                  - type: toggle
+                    properties:
+                      title: "Enable Tunnel"
+                      description: "Bring tunnel up or down"
+                      icon: network-vpn-symbolic
+                      state_command: "[ -d /sys/class/net/{name} ] && echo yes || echo no"
+                      interval: 5
+                    on_toggle:
+                      enabled:
+                        type: exec
+                        command: "sudo wg-quick up {path}"
+                        terminal: false
+                      disabled:
+                        type: exec
+                        command: "sudo wg-quick down {path}"
+                        terminal: false
+                  - type: button
+                    properties:
+                      title: "Edit Config"
+                      description: "{path}"
+                      icon: document-edit-symbolic
+                      button_text: "Edit"
+                    on_press:
+                      type: exec
+                      command: "kitty --class dusky_wg_edit --hold sh -c 'sudo $EDITOR {path}'"
+                      terminal: false
+                  - type: button
+                    properties:
+                      title: "Live Status"
+                      description: "Open wg show {name} in terminal"
+                      icon: utilities-terminal-symbolic
+                      button_text: "Show"
+                    on_press:
+                      type: exec
+                      command: "kitty --class dusky_wg_status --hold sh -c 'sudo wg show {name} 2>/dev/null || echo Inactive; echo; printf \"Press Enter to close...\"; read'"
+                      terminal: false
+                  - type: button
+                    properties:
+                      title: "Delete Tunnel"
+                      description: "Permanently remove {relpath}"
+                      icon: list-remove-symbolic
+                      button_text: "Delete"
+                    on_press:
+                      type: exec
+                      command: "kitty --class dusky_wg_delete --hold sh -c 'printf \"\\e[1;31mDelete {relpath}?\\e[0m [y/N] \"; read c; case $c in [Yy]) sudo rm {path} && echo \"Deleted {relpath}.\" || echo \"Failed.\";; *) echo \"Aborted.\";; esac; echo; printf \"Press Enter to close...\"; read'"
+                      terminal: false
+        - type: section
+          properties:
+            title: Management
+          items:
+            - type: button
+              properties:
+                title: "New Tunnel Config"
+                description: "Create a new wg-quick config (auto chown root:root 600)"
+                icon: list-add-symbolic
+                button_text: "New"
+              on_press:
+                type: exec
+                command: "kitty --class dusky_wg_new --hold sh -c '$HOME/user_scripts/networking/dusky_wireguard_new.sh'"
+                terminal: false
+            - type: button
+              properties:
+                title: "All Tunnels Status"
+                description: "wg show all"
+                icon: network-vpn-symbolic
+                button_text: "Show"
+              on_press:
+                type: exec
+                command: "kitty --class dusky_wg_status --hold sh -c 'sudo wg show all; echo; echo \"Press Enter to close...\"; read'"
+                terminal: false
+            - type: button
+              properties:
+                title: "Setup Permissions"
+                description: "Run once: sets /etc/wireguard to 750 root:wheel and adds sudoers rules"
+                icon: security-medium-symbolic
+                button_text: "Setup"
+              on_press:
+                type: exec
+                command: "kitty --class dusky_wg_setup --hold sh -c '$HOME/user_scripts/networking/dusky_wireguard_setup.sh'"
+                terminal: false
 
   - type: section
     properties:
@@ -817,6 +948,7 @@ pages:
       properties:
         title: Active Profile
         description: Select performance mode
+        key: performance_profile
         icon: power-profile-balanced-symbolic
         value_command: "tlpctl get"
         interval: 2
@@ -931,11 +1063,11 @@ pages:
       properties:
         title: Night Light
         description: Blue light filter slider
-        icon: weather-clear-night-symbolic
+        icon: preferences-color-symbolic
         button_text: "Open"
       on_press:
         type: exec
-        command: $HOME/user_scripts/sliders/dusky_sliders.py
+        command: $HOME/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py
         terminal: false
   - type: section
     properties:
@@ -1384,13 +1516,13 @@ pages:
         terminal: false
     - type: button
       properties:
-        title: SwayNC Side Switch
-        description: Toggle notification center side
+        title: Mako Notifications Configurator
+        description: Mako TUI
         icon: preferences-system-notifications-symbolic
-        button_text: "Switch"
+        button_text: "Tweak"
       on_press:
         type: exec
-        command: kitty --class dusky_swaync_side.sh --hold sh -c $HOME/user_scripts/swaync/dusky_swaync_side.sh
+        command: kitty --class tui_mako.sh --hold sh -c $HOME/user_scripts/mako_osd/mako_tui/tui_mako.sh
         terminal: false
   - type: section
     properties:
@@ -1837,27 +1969,27 @@ pages:
 
     - type: navigation
       properties:
-        title: Notifications (SwayNC)
-        description: Configure notification center
+        title: Notifications (Mako)
+        description: Configure notifications
         icon: preferences-system-notifications-symbolic
       layout:
         - type: section
           properties:
-            title: SwayNC Configs
+            title: Mako Config
           items:
             - type: button
               properties:
-                title: SwayNC Side Switch
-                description: Toggle notification center side
+                title: Mako Side Switch
+                description: Customize notification
                 icon: preferences-system-notifications-symbolic
-                button_text: "Switch"
+                button_text: "TUI"
               on_press:
                 type: exec
-                command: kitty --class dusky_swaync_side.sh --hold sh -c $HOME/user_scripts/swaync/dusky_swaync_side.sh
+                command: kitty --class tui_mako.sh --hold sh -c $HOME/user_scripts/mako_osd/mako_tui/tui_mako.sh
                 terminal: false
             - type: button
               properties:
-                title: Active SwayNC
+                title: mako config
                 description: Edit Current Configuration
                 icon: preferences-system-symbolic
                 buttons:
@@ -1865,21 +1997,16 @@ pages:
                     button_text: "Config"
                     on_press:
                       type: exec
-                      command: gnome-text-editor "$HOME/.config/swaync/config.json"
-                  - icon: text-x-script-symbolic
-                    button_text: "Style"
-                    on_press:
-                      type: exec
-                      command: gnome-text-editor "$HOME/.config/swaync/style.css"
+                      command: gnome-text-editor "$HOME/.config/mako/config"
 
         - type: section
           properties:
-            title: Available Themes
-            description: Located in ~/.config/swaync/themes/
+            title: Path
+            description: Located in ~/.config/mako/config
           items:
             - type: directory_generator
               properties:
-                path: ~/.config/swaync/themes
+                path: ~/.config/mako/config
                 sort: name
               item_template:
                 type: expander
@@ -2428,7 +2555,17 @@ pages:
                 terminal: false
             - type: button
               properties:
-                title: "Step 2: Install"
+                title: "Step 2: Sound Packs"
+                description: Downlaod Sound Packs
+                icon: audio-speakers-symbolic
+                button_text: "Download"
+              on_press:
+                type: exec
+                command: kitty --class wayclick_soundpacks_download.sh --hold sh -c "$HOME/user_scripts/wayclick/sounds/wayclick_soundpacks_download.sh --auto --force"
+                terminal: false
+            - type: button
+              properties:
+                title: "Step 3: Install"
                 description: Setup Dusky Wayclick
                 icon: system-software-install-symbolic
                 button_text: "Install"
@@ -2438,7 +2575,7 @@ pages:
                 terminal: false
             - type: button
               properties:
-                title: "Step 3: Configuration"
+                title: "Step 4: Configuration"
                 description: Manage Wayclick sounds and logic
                 icon: preferences-desktop-keyboard-shortcuts-symbolic
                 buttons:
@@ -2676,17 +2813,6 @@ pages:
       on_press:
         type: exec
         command: kitty --class 175_animation_default.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/175_animation_default.sh"
-        terminal: false
-    - type: button
-      properties:
-        title: SwayNC DGPU Fix
-        description: Fix notification rendering on NVIDIA
-        icon: video-display-symbolic
-        style: destructive
-        button_text: "Caution"
-      on_press:
-        type: exec
-        command: kitty --class 240_swaync_dgpu_fix.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/240_swaync_dgpu_fix.sh"
         terminal: false
     - type: button
       properties:

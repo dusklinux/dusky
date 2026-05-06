@@ -65,12 +65,10 @@ register_items() {
     register_template 1 "Hyprland"       "hyprland"   "true"  ""
     register_template 1 "Hyprlock"       "hyprlock"   "true"  ""
     register_template 1 "Waybar"         "waybar"     "true"  "waybar"
-    register_template 1 "SwayOSD"        "swayosd"    "true"  "swayosd-server"
-    register_template 1 "SwayNC"         "swaync"     "true"  "swaync"
     register_template 1 "Wlogout"        "wlogout"    "true"  "wlogout"
     register_template 1 "Rofi"           "rofi"       "true"  "rofi"
     register_template 1 "Dusky Control"  "dusky_control_center" "true" ""
-    register_template 1 "Dusky Sliders"  "dusky_sliders"        "true" ""
+    register_template 1 "Dusky QuickPanal"  "dusky_quickpanal"        "true" ""
     register_template 1 "Hyprpolkit"     "hyprpolkitagent"      "true" ""
 
     # Tab 2: Apps

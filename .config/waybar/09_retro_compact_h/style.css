@@ -1,0 +1,632 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   WAYBAR PREMIUM THEME - Compact Edition (Refined)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@import url("../../.config/matugen/generated/waybar-colors.css");
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSLUCENCY CONTROLS (GLASSY MODE)
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color glass_bar             alpha(@surface, 0.6);
+@define-color glass_module          transparent;
+@define-color glass_tooltip         alpha(@surface_container_high, 0.25);
+@define-color glass_border          alpha(@primary, 0.2);
+@define-color glass_border_alt      alpha(@outline_variant, 0.3);
+
+@define-color glass_ws              alpha(@surface_container_highest, 0.4);
+@define-color glass_ws_empty        alpha(@surface_container_high, 0.2);
+@define-color glass_ws_visible      alpha(@surface_container_highest, 0.6);
+@define-color glass_ws_active       alpha(@primary_container, 0.6);
+@define-color glass_ws_urgent       alpha(@error_container, 0.6);
+
+@define-color glass_inhibit         alpha(@primary_container, 0.6);
+@define-color glass_warn            alpha(@tertiary_container, 0.2);
+@define-color glass_crit            alpha(@error_container, 0.3);
+@define-color glass_charge          alpha(@tertiary_container, 0.25);
+@define-color glass_battery_warn    alpha(@primary_container, 0.3);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* WAYBAR_OPAQUE_SWITCH_START */
+
+@define-color glass_bar             alpha(@surface, 0.8);
+@define-color glass_module          @surface_container;
+@define-color glass_tooltip         @surface_container_high;
+@define-color glass_border          alpha(@primary, 0.6);
+@define-color glass_border_alt      @outline_variant;
+
+@define-color glass_ws              @surface_container_highest;
+@define-color glass_ws_empty        @surface_container_high;
+@define-color glass_ws_visible      @surface_container_highest;
+@define-color glass_ws_active       @primary_container;
+@define-color glass_ws_urgent       @error_container;
+
+@define-color glass_inhibit         @primary_container;
+@define-color glass_warn            @tertiary_container;
+@define-color glass_crit            @error_container;
+@define-color glass_charge          @tertiary_container;
+@define-color glass_battery_warn    @primary_container;
+
+/* WAYBAR_OPAQUE_SWITCH_END */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RESET & FOUNDATIONS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+* {
+  border: none;
+  border-radius: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  font-family: "JetBrainsMono Nerd Font", "Symbols Nerd Font", sans-serif;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+window#waybar {
+  background: transparent;
+  margin: 0;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BAR CONTAINER
+   ───────────────────────────────────────────────────────────────────────────── */
+
+window#waybar > box {
+  background-color: @glass_bar;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+  padding: 2px 0;
+  transition: all 0.3s ease;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   LAUNCHER
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-launcher {
+  padding: 0px 12px 0px 8px;
+  margin: 1px 2px 1px 6px;
+  border-radius: 8px;
+  background-color: @glass_module;
+  color: @on_surface;
+  font-size: 15px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-launcher:hover {
+  border: 1px solid @primary;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CLOCK
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#clock {
+  padding: 0px 5px 0px 5px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @on_surface;
+  font-weight: 700;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#clock:hover {
+  padding: 0px 5px 0px 5px;
+  border: 1px solid @primary;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   IDLE INHIBITOR (Power Drawer)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-inhibit-suspend {
+  padding: 0px 12px 0px 9px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @on_surface;
+  font-size: 14px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-inhibit-suspend:hover {
+  border: 1px solid @primary;
+}
+
+#custom-inhibit-suspend.disabled {
+  color: @on_surface;
+  background-color: @glass_inhibit;
+  border: 1px solid @primary;
+}
+
+#custom-inhibit-suspend.enabled {
+  color: @on_surface_variant;
+  background-color: @glass_module;
+  border: 1px solid @glass_border;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   UPDATES DRAWER
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-updates,
+#custom-updates-trigger {
+  padding: 0 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @secondary;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-updates:hover,
+#custom-updates-trigger:hover {
+  border: 1px solid @primary;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   NOTIFICATIONS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-notification {
+  padding: 0px 12px 0px 9px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @on_surface;
+  font-size: 14px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-notification:hover {
+  border: 1px solid @primary;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   THEME TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-theme-toggle {
+  padding: 0 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @secondary;
+  font-size: 14px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-theme-toggle:hover {
+  color: @secondary_container;
+  border: 1px solid @primary;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRAY
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#tray {
+  padding: 0 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#tray:hover {
+  border: 1px solid @primary;
+}
+
+#tray > .passive {
+  -gtk-icon-effect: dim;
+}
+
+#tray > .needs-attention {
+  -gtk-icon-effect: highlight;
+  background-color: alpha(@error, 0.2);
+  border-radius: 6px;
+}
+
+#tray menu {
+  background-color: @surface_container_high;
+  border: 1px solid @outline_variant;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+#tray menu menuitem {
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: @on_surface;
+}
+
+#tray menu menuitem:hover {
+  background-color: @surface_container_highest;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   WORKSPACES
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#workspaces {
+  padding: 0px 0px 0px 0px;
+  margin: 1px 6px;
+  background-color: transparent;
+  border: none;
+}
+
+#workspaces button {
+  padding: 0px 8px 0px 8px;
+  margin: 1px 2px;
+  min-width: 12px;
+  border-radius: 6px;
+  background-color: @glass_ws;
+  color: @on_surface_variant;
+  font-size: 12px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#workspaces button.empty {
+  padding: 0 6px;
+  min-width: 20px;
+  background-color: @glass_ws_empty;
+  color: alpha(@on_surface_variant, 0.4);
+  border: 1px solid @glass_border;
+}
+
+#workspaces button.visible {
+  background-color: @glass_ws_visible;
+  color: @on_surface;
+  border: 1px solid @glass_border;
+}
+
+#workspaces button.active {
+  padding: 0px 1px 0px 1px;
+  min-width: 28px;
+  background-color: @glass_ws_active;
+  color: @on_primary_container;
+  font-weight: 700;
+  border: 1px solid @primary;
+}
+
+#workspaces button:hover {
+  background-color: @surface_container_highest;
+  color: @on_surface;
+  border: 1px solid @primary;
+}
+
+#workspaces button.active:hover {
+  background-color: alpha(@primary_container, 0.8);
+  border: 1px solid @primary;
+}
+
+#workspaces button.urgent {
+  background-color: @glass_ws_urgent;
+  color: @on_error;
+  border: 1px solid @error;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MPRIS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#mpris {
+  padding: 0 10px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @on_secondary_container;
+  font-size: 12px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#mpris:hover {
+  border: 1px solid @primary;
+}
+
+#mpris.playing {
+  color: @secondary;
+}
+
+#mpris.paused {
+  color: alpha(@on_secondary_container, 0.6);
+}
+
+#mpris.stopped {
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  background-color: transparent;
+  border: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   NETWORK & CUSTOM SPEED (Network Drawer)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-net-speed {
+  padding: 0px 12px 0px 8px;
+  margin: 1px 8px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @tertiary;
+  font-size: 10px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-net-speed:hover {
+  border: 1px solid @primary;
+}
+
+#network {
+  padding: 1px 14px 0px 9px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @on_surface;
+  font-size: 14px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#network:hover {
+  border: 1px solid @primary;
+}
+
+#network.disconnected {
+  padding: 1px 14px 0px 9px;
+  color: alpha(@on_surface_variant, 0.4);
+}
+
+#network.linked,
+#network.ethernet {
+  padding: 1px 13px 0px 9px;
+  color: @tertiary;
+}
+
+#network.wifi {
+  color: @primary_fixed;
+  padding: 1px 14px 0px 9px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BLUETOOTH
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#bluetooth {
+  padding: 0px 8px 0px 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @on_surface;
+  font-size: 12px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#bluetooth:hover {
+  border: 1px solid @primary;
+}
+
+#bluetooth.disabled {
+  color: alpha(@on_surface_variant, 0.4);
+}
+
+#bluetooth.connected {
+  color: @on_surface;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PULSEAUDIO OUTPUT
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#pulseaudio.output {
+  padding: 0px 12px 0px 9px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @on_surface;
+  font-size: 12px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#pulseaudio.output:hover {
+  border: 1px solid @primary;
+}
+
+#pulseaudio.output.muted {
+  color: alpha(@on_surface_variant, 0.4);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BACKLIGHT
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#backlight {
+  padding: 0px 13px 0px 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @tertiary;
+  font-size: 12px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#backlight:hover {
+  border: 1px solid @primary;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CPU
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#cpu {
+  padding: 0 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @on_surface_variant;
+  font-size: 12px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#cpu:hover {
+  border: 1px solid @primary;
+}
+
+#cpu.warning {
+  color: @tertiary;
+  background-color: @glass_warn;
+}
+
+#cpu.critical {
+  color: @error;
+  background-color: @glass_crit;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MEMORY
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#memory {
+  padding: 0 8px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @on_surface_variant;
+  font-size: 11px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#memory:hover {
+  border: 1px solid @primary;
+}
+
+#memory.warning {
+  color: @tertiary;
+  background-color: @glass_warn;
+}
+
+#memory.critical {
+  color: @error;
+  background-color: @glass_crit;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BATTERY
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#battery {
+  padding: 0px 5px 0px 5px;
+  margin: 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @on_surface;
+  font-weight: 700;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#battery:hover {
+  border: 1px solid @primary;
+}
+
+#battery.good {
+  color: @tertiary;
+}
+
+#battery.charging,
+#battery.plugged,
+#battery.full {
+  color: @tertiary;
+  background-color: @glass_charge;
+  border: 1px solid alpha(@tertiary, 0.15);
+}
+
+#battery.warning:not(.charging) {
+  color: @primary_fixed;
+  background-color: @glass_battery_warn;
+  border: 1px solid @glass_border;
+}
+
+#battery.critical:not(.charging) {
+  color: @on_error;
+  background-image: linear-gradient(135deg, @error_container 0%, @error 100%);
+  animation: critical-blink 1s ease-in-out infinite;
+  box-shadow: 0 2px 8px alpha(@error, 0.4);
+}
+
+@keyframes critical-blink {
+  0% { opacity: 1; }
+  50% { opacity: 0.8; }
+  100% { opacity: 1; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POWER BUTTON
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#custom-power {
+  padding: 0px 12px 0px 9px;
+  margin: 1px 6px 1px 2px;
+  border-radius: 10px;
+  background-color: @glass_module;
+  color: @on_surface;
+  font-size: 14px;
+  border: 1px solid @glass_border;
+  transition: all 0.2s ease-in-out;
+}
+
+#custom-power:hover {
+  border: 1px solid @primary;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TOOLTIPS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+tooltip {
+  background-color: @glass_tooltip;
+  border: 1px solid @glass_border_alt;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px alpha(@shadow, 0.4);
+}
+
+tooltip label {
+  padding: 6px 10px;
+  color: @on_surface;
+  font-size: 12px;
+}

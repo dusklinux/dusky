@@ -27,18 +27,34 @@ if [[ -r "$PID_FILE" ]]; then
     fi
 fi
 
-# Fixed-width formatter (3 chars) - Keeps UI stable
-fmt() {
-    local s="${1:--}" len=${#1}
+# Formatter for Horizontal Mode (Original Unpadded Behavior)
+fmt_h() {
+    local s="${1:--}"
+    local len="${#s}"
+    
     if (( len == 1 )); then printf ' %s ' "$s"
     elif (( len == 2 )); then printf ' %s' "$s"
     else printf '%.3s' "$s"
     fi
 }
 
-D_UNIT=$(fmt "$UNIT")
-D_UP=$(fmt "$UP")
-D_DOWN=$(fmt "$DOWN")
+# Formatter for Vertical Mode (Strict alignment matching update_counter.sh)
+fmt_v() {
+    local s="${1:--}"
+    # CRITICAL FIX: Evaluated on a separate line to prevent Bash expansion zeroing
+    local len="${#s}" 
+    
+    if (( len >= 3 )); then
+        printf '%.3s' "$s"
+    elif (( len == 2 )); then
+        # Natively pass literal JSON unicode escape so Waybar parses it perfectly
+        printf '\\u2005%s\\u2005' "$s"
+    elif (( len == 1 )); then
+        printf ' %s ' "$s"
+    else
+        printf '   '
+    fi
+}
 
 # Tooltip
 if [[ "$CLASS" == "network-disconnected" ]]; then
@@ -47,13 +63,17 @@ else
     TT="Upload: ${UP} ${UNIT}/s\\nDownload: ${DOWN} ${UNIT}/s"
 fi
 
-# Output
+# Output Selection
 case "${1:-}" in
-    --vertical|vertical)     TEXT="${D_UP}\\n${D_UNIT}\\n${D_DOWN}" ;;
-    --horizontal|horizontal) TEXT="${D_UP} ${D_UNIT} ${D_DOWN}" ;;
-    unit)                    TEXT="$D_UNIT" ;;
-    up|upload)               TEXT="$D_UP" ;;
-    down|download)           TEXT="$D_DOWN" ;;
+    --vertical|vertical)     
+        TEXT="$(fmt_v "$UP")\\n$(fmt_v "$UNIT")\\n$(fmt_v "$DOWN")" 
+        ;;
+    --horizontal|horizontal) 
+        TEXT="$(fmt_h "$UP") $(fmt_h "$UNIT") $(fmt_h "$DOWN")" 
+        ;;
+    unit)                    TEXT="$(fmt_h "$UNIT")" ;;
+    up|upload)               TEXT="$(fmt_h "$UP")" ;;
+    down|download)           TEXT="$(fmt_h "$DOWN")" ;;
     *)                       printf '{}\n'; exit 0 ;;
 esac
 
