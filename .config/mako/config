@@ -189,7 +189,7 @@ height=56
 padding=0
 
 border-radius=20
-border-size=1
+border-size=2
 icons=0
 text-alignment=center
 
@@ -208,7 +208,7 @@ height=56
 padding=0
 
 border-radius=20
-border-size=1
+border-size=2
 icons=0
 text-alignment=center
 
