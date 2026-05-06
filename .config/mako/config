@@ -195,6 +195,9 @@ text-alignment=center
 
 format=%b
 
+# This binds Left-Click to your Rofi script without dismissing the notification!
+on-button-left=exec sh -c 'pkill rofi; uwsm-app -- ~/user_scripts/rofi/dusky_glance.sh'
+
 # ======================================
 # DUSKY GLANCE (WIDE MODULES)
 # ======================================
@@ -214,6 +217,9 @@ text-alignment=center
 
 format=%b
 
+# Apply the same Left-Click bind to the wide modules
+on-button-left=exec sh -c 'pkill rofi; uwsm-app -- ~/user_scripts/rofi/dusky_glance.sh'
+
 # ======================================
 # DUSKY GLANCE ALERTS (TIMERS)
 # ======================================
@@ -223,3 +229,6 @@ width=300
 height=80
 border-radius=12
 text-alignment=center
+
+# Standard dismiss action for timer alerts
+on-button-left=dismiss
