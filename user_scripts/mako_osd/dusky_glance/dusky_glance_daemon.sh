@@ -7,22 +7,25 @@ set -euo pipefail
 
 APP_NAME_NARROW="dusky-glance-narrow"
 APP_NAME_WIDE="dusky-glance-wide"
+APP_NAME_TIMER="dusky-glance-timer"
 SYNC_ID="dusky-glance-sync"
 PID_FILE="${XDG_RUNTIME_DIR:-/run/user/$UID}/dusky_glance.pid"
 
 MODE="${1:-}"
 
 # --- MODULE CATEGORIZATION ---
-# Route pomodoro and timer to the wide Mako app-name so the text isn't cut off
+# Accurately route timers to the widest Mako configuration to prevent clipping
 case "$MODE" in
-    --network|--battery|--pomodoro|--timer) CURRENT_APP="$APP_NAME_WIDE" ;;
-    *) CURRENT_APP="$APP_NAME_NARROW" ;;
+    --network|--battery|--uptime) CURRENT_APP="$APP_NAME_WIDE" ;;
+    --pomodoro|--timer)           CURRENT_APP="$APP_NAME_TIMER" ;;
+    *)                            CURRENT_APP="$APP_NAME_NARROW" ;;
 esac
 
 # --- CORE LIFECYCLE ---
 clear_osd() {
     notify-send -a "$APP_NAME_NARROW" -h string:x-canonical-private-synchronous:"$SYNC_ID" -t 10 " " " " 2>/dev/null || true
     notify-send -a "$APP_NAME_WIDE" -h string:x-canonical-private-synchronous:"$SYNC_ID" -t 10 " " " " 2>/dev/null || true
+    notify-send -a "$APP_NAME_TIMER" -h string:x-canonical-private-synchronous:"$SYNC_ID" -t 10 " " " " 2>/dev/null || true
 }
 
 if [[ -f "$PID_FILE" ]]; then
@@ -80,7 +83,7 @@ play_sound() {
     fi
 }
 
-# --- HARDWARE MODULES ---
+# --- HARDWARE & STATE MODULES ---
 START_SEC=$SECONDS
 
 case "$MODE" in
@@ -135,7 +138,6 @@ case "$MODE" in
             
             if (( left <= 0 )); then
                 if [[ "$PHASE" == "WORK" ]] && (( BREAK_SEC > 0 )); then
-                    # Work finished, switch to break
                     notify-send -u critical -a "dusky-glance-alert" "Break Time!" "Time to take a break!"
                     play_sound "/usr/share/sounds/gnome/default/alarms/glass-bell.oga"
                     
@@ -143,7 +145,6 @@ case "$MODE" in
                     TARGET_SEC=$((SECONDS + BREAK_SEC))
                     continue
                 else
-                    # Break finished (or work finished with no break) -> Loop back to Work
                     msg="Work session finished."
                     (( BREAK_SEC > 0 )) && msg="Break is over. Back to work!"
                     
@@ -156,7 +157,6 @@ case "$MODE" in
                 fi
             fi
             
-            # Emojis stripped. Uses narrow text prefixes to fit perfectly.
             [[ "$PHASE" == "WORK" ]] && prefix="W: " || prefix="B: "
             send_osd "${prefix}$(format_time "$left")"
             sleep 1
@@ -262,7 +262,6 @@ case "$MODE" in
         HEARTBEAT_FILE="$STATE_DIR/heartbeat"
         DAEMON_PID_FILE="$STATE_DIR/daemon.pid"
         
-        # --- ONE-TIME WAKEUP PING ---
         if [[ -d "$STATE_DIR" ]]; then
             printf "" > "$HEARTBEAT_FILE"
             if [[ -r "$DAEMON_PID_FILE" ]]; then
@@ -274,7 +273,6 @@ case "$MODE" in
         fi
         
         while true; do
-            # KEEP AWAKE
             [[ -d "$STATE_DIR" ]] && printf "" > "$HEARTBEAT_FILE"
             
             if [[ -r "$STATE_FILE" ]]; then
@@ -288,6 +286,36 @@ case "$MODE" in
                 send_osd "Offline"
             fi
             sleep 1
+        done
+        ;;
+        
+    --uptime)
+        while true; do
+            if read -r up_time _ < /proc/uptime; then
+                # Strip fractional seconds natively in bash
+                up_sec=${up_time%%.*}
+                h=$(( up_sec / 3600 ))
+                m=$(( (up_sec % 3600) / 60 ))
+                s=$(( up_sec % 60 ))
+                printf -v fmt_up "%02d:%02d:%02d" "$h" "$m" "$s"
+                send_osd "$fmt_up"
+            else
+                send_osd "Up: N/A"
+            fi
+            sleep 1
+        done
+        ;;
+        
+    --workspace)
+        while true; do
+            # Securely extract just the numeric ID of the active workspace natively
+            if ws_id=$(hyprctl activeworkspace 2>/dev/null | awk '/workspace ID/ {print $3}'); then
+                send_osd "WS: $ws_id"
+            else
+                send_osd "WS: ?"
+            fi
+            # Poll at 0.5s to keep it extremely light on the hyprctl socket
+            sleep 0.5
         done
         ;;
 esac

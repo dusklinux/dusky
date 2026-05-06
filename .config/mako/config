@@ -179,7 +179,7 @@ font=monospace 12
 # ======================================
 # DUSKY GLANCE (NARROW MODULES)
 # ======================================
-# Handles: Clock, Timers, CPU, Temp, RAM
+# Handles: Clock, CPU, Temp, RAM
 [app-name=dusky-glance-narrow]
 anchor=bottom-right
 margin=0,20,20,0
@@ -210,6 +210,21 @@ text-alignment=center
 format=%b
 on-button-left=exec bash -c "pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dusky_glance.sh"
 
+# ======================================
+# DUSKY GLANCE (TIMERS & POMODORO)
+# ======================================
+[app-name=dusky-glance-timer]
+anchor=bottom-right
+margin=0,20,20,0
+width=240
+height=56
+padding=0
+border-radius=20
+border-size=2
+icons=0
+text-alignment=center
+format=%b
+on-button-left=exec bash -c "pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dusky_glance.sh"
 
 # ======================================
 # DUSKY GLANCE ALERTS (TIMERS)
@@ -223,3 +238,4 @@ text-alignment=center
 
 # Standard dismiss action for timer alerts
 on-button-left=dismiss
+
