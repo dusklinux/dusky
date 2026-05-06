@@ -177,30 +177,28 @@ text-alignment=center
 font=monospace 12
 
 # ======================================
-# DUSKY TIME TRACKER (BOTTOM RIGHT)
+# DUSKY GLANCE (BOTTOM RIGHT)
 # ======================================
-[app-name=dusky-time]
+[app-name=dusky-glance]
 anchor=bottom-right
 margin=0,20,20,0
 
-# Widened significantly to prevent the "..." truncation
-width=340
-# Slightly taller to accommodate the font perfectly
+# Fixed width for 9-10 character strings
+width=170
 height=56
 padding=0
 
-# Perfect Pill Shape (Half of height)
-border-radius=28
-border-size=2
+border-radius=20
+border-size=1
 icons=0
 text-alignment=center
 
 format=%b
 
 # ======================================
-# DUSKY TIME ALERTS
+# DUSKY GLANCE ALERTS (TIMERS)
 # ======================================
-[app-name=dusky-time-alert]
+[app-name=dusky-glance-alert]
 anchor=top-center
 width=300
 height=80
