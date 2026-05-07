@@ -354,16 +354,13 @@ create_tmpfile_for_target() {
 }
 
 commit_tmpfile_to_target() {
-    local target=$1 target_dir
+    local target=$1
     [[ -n ${_TMPFILE:-} && -f $_TMPFILE && ${_TMPMODE:-} == atomic ]] || return 1
     [[ -e $target && -f $target ]] || return 1
 
     chown --reference="$target" -- "$_TMPFILE" 2>/dev/null || :
     chmod --reference="$target" -- "$_TMPFILE" 2>/dev/null || return 1
-    sync -f -- "$_TMPFILE" 2>/dev/null || return 1
     mv -fT -- "$_TMPFILE" "$target" || return 1
-    path_dirname "$target"; target_dir=$REPLY
-    sync -f -- "$target_dir" 2>/dev/null || :
 
     forget_temp "$_TMPFILE"
     _TMPFILE=""
@@ -658,8 +655,6 @@ write_value_to_file() {
         set_status "Config file exists but is unreadable."
         return 1
     fi
-
-    populate_config_cache
 
     normalize_target "$requested_key" "$requested_scope"
     target_key=$TARGET_KEY

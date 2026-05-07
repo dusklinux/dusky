@@ -367,16 +367,13 @@ create_tmpfile_for_target() {
 }
 
 commit_tmpfile_to_target() {
-    local target=$1 target_dir
+    local target=$1
     [[ -n ${_TMPFILE:-} && -f $_TMPFILE && ${_TMPMODE:-} == atomic ]] || return 1
     [[ -e $target && -f $target ]] || return 1
 
     chown --reference="$target" -- "$_TMPFILE" 2>/dev/null || :
     chmod --reference="$target" -- "$_TMPFILE" 2>/dev/null || return 1
-    sync -f -- "$_TMPFILE" 2>/dev/null || return 1
     mv -fT -- "$_TMPFILE" "$target" || return 1
-    path_dirname "$target"; target_dir=$REPLY
-    sync -f -- "$target_dir" 2>/dev/null || :
 
     forget_temp "$_TMPFILE"
     _TMPFILE=""
@@ -892,7 +889,7 @@ end
 
 local function safe_require(name)
     local norm = normalize_module_name(name)
-    if not norm then fail("invalid module name: " .. safe_tostring(name)) end
+    if not norm then fail("invalid module name: " safe_tostring(name)) end
     if package_loaded[name] ~= nil then return package_loaded[name] end
     if loading[name] then return package_loaded[name] or inert_proxy end
 
@@ -1555,12 +1552,6 @@ write_value_to_file() {
     if [[ ! -f $WRITE_TARGET || ! -r $WRITE_TARGET ]]; then
         release_lock_fd "$lock_fd"
         set_status "Config file disappeared or became unreadable."
-        return 1
-    fi
-
-    if ! populate_config_cache; then
-        release_lock_fd "$lock_fd"
-        set_status "Lua config parse failed; refusing to write."
         return 1
     fi
 
