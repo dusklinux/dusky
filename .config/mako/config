@@ -197,6 +197,7 @@ on-button-left=exec bash -c "pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dus
 # DUSKY GLANCE (WIDE MODULES)
 # ======================================
 # Handles: Network Meter, Battery
+layer=overlay
 [app-name=dusky-glance-wide]
 anchor=bottom-right
 margin=0,20,20,0
@@ -213,6 +214,7 @@ on-button-left=exec bash -c "pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dus
 # ======================================
 # DUSKY GLANCE (TIMERS & POMODORO)
 # ======================================
+layer=overlay
 [app-name=dusky-glance-timer]
 anchor=bottom-right
 margin=0,20,20,0
@@ -229,6 +231,7 @@ on-button-left=exec bash -c "pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dus
 # ======================================
 # DUSKY GLANCE ALERTS (TIMERS)
 # ======================================
+layer=overlay
 [app-name=dusky-glance-alert]
 anchor=top-center
 width=300

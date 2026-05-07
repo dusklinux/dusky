@@ -74,6 +74,7 @@ register_items() {
         if [[ $scope == *"timer"* ]];  then d_width="240"; fi
 
         # Layout & Positioning
+        register "$i" "Layer"           "layer|cycle|$scope|background,bottom,top,overlay||" "overlay"
         register "$i" "Anchor"          "anchor|cycle|$scope|top-right,top-center,top-left,bottom-right,bottom-center,bottom-left,center||" "$d_anchor"
         register "$i" "Margin"          "margin|string|$scope|||" "$d_margin"
         register "$i" "Padding"         "padding|int|$scope|0|100|1" "0"
@@ -1545,8 +1546,8 @@ handle_key_main() {
         j|J) navigate 1 ;;
         l|L) adjust 1 ;;
         h|H) adjust -1 ;;
-        $'\x15') navigate_page -1 ;; # Ctrl+U
-        $'\x04') navigate_page 1 ;; # Ctrl+D
+        $'\x15') navigate_page -1 ;;
+        $'\x04') navigate_page 1 ;;
         g) navigate_end 0 ;;
         G) navigate_end 1 ;;
         $'\t') switch_tab 1 ;;
