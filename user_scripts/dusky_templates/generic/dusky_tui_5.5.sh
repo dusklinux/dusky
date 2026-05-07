@@ -897,7 +897,7 @@ modify_value() {
 }
 
 reset_current_item() {
-    local REPLY_REF REPLY_CTX label type key block
+    local REPLY_REF REPLY_CTX label type key block def_val
     get_active_context
     local -n _items_ref="$REPLY_REF"
     if (( ${#_items_ref[@]} == 0 )); then return 0; fi
@@ -906,12 +906,25 @@ reset_current_item() {
     
     if [[ $type == action || $type == menu ]]; then return 0; fi
     
-    if write_value_to_file "$key" "__DELETE__" "$block"; then
-        load_active_values
-        if (( LAST_WRITE_CHANGED )); then post_write_action; fi
-        set_status "Reset '$label' to default (UNSET)."
+    # Grab the explicitly registered default value, if any
+    def_val=${DEFAULTS["${REPLY_CTX}::${label}"]:-}
+    
+    if [[ -n $def_val ]]; then
+        if write_value_to_file "$key" "$def_val" "$block"; then
+            load_active_values
+            if (( LAST_WRITE_CHANGED )); then post_write_action; fi
+            set_status "Reset '$label' to default ($def_val)."
+        else
+            set_status "Failed to reset '$label'."
+        fi
     else
-        set_status "Failed to reset '$label'."
+        if write_value_to_file "$key" "__DELETE__" "$block"; then
+            load_active_values
+            if (( LAST_WRITE_CHANGED )); then post_write_action; fi
+            set_status "Reset '$label' to default (UNSET)."
+        else
+            set_status "Failed to reset '$label'."
+        fi
     fi
     return 0
 }
