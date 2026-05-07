@@ -2,7 +2,7 @@
 # -----------------------------------------------------------------------------
 # Dusky TUI Engine - Generic Configuration Template
 # Target: Generic Linux Configs (/etc, .conf, .ini, host files)
-# Based on TUI Template v5.3
+# Based on TUI Template v5.4
 # -----------------------------------------------------------------------------
 
 set -Eeuo pipefail
@@ -15,7 +15,7 @@ shopt -s extglob
 : "${XDG_CONFIG_HOME:=${HOME}/.config}"
 declare CONFIG_FILE="${DUSKY_CONFIG_FILE:-${XDG_CONFIG_HOME}/myapp/settings.conf}"
 declare -r APP_TITLE="Generic System Config Editor"
-declare -r APP_VERSION="v5.3"
+declare -r APP_VERSION="v5.4"
 
 # Dimensions & layout.
 declare -ri MAX_DISPLAY_ROWS=14
@@ -54,20 +54,20 @@ register_items() {
 }
 
 action_hostname() {
-    local input=""
-    prompt_line_input "Enter new hostname:" input
-    if [[ -n $input ]]; then
-        set_status "Hostname set to: $input"
+    local user_input=""
+    prompt_line_input "Enter new hostname:" user_input
+    if [[ -n $user_input ]]; then
+        set_status "Hostname set to: $user_input"
     else
         clear_status
     fi
 }
 
 action_demo_text() {
-    local input=""
-    prompt_line_input "Enter a custom file path:" input
-    if [[ -n $input ]]; then
-        set_status "You typed: $input"
+    local user_input=""
+    prompt_line_input "Enter a custom file path:" user_input
+    if [[ -n $user_input ]]; then
+        set_status "You typed: $user_input"
     else
         clear_status
     fi
@@ -672,7 +672,7 @@ write_value_to_file() {
     fi
     scratch=$REPLY
 
-    # AWK Parser with __DELETE__ support
+    # AWK Parser: If val == "__DELETE__", lines matching the key are dropped entirely
     if ! awk -v scope="$target_scope" -v key="$target_key" -v val="$new_val" '
         BEGIN {
             in_scope = (scope == "" ? 1 : 0)
@@ -792,7 +792,7 @@ load_active_values() {
     local -n _lav_items_ref="$REPLY_REF"
 
     for item in "${_lav_items_ref[@]:-}"; do
-        IFS='|' read -r key type block min _ _ <<< "${ITEM_MAP["${REPLY_CTX}::${item}"]}"
+        IFS='|' read -r key type block min dummy_max dummy_step <<< "${ITEM_MAP["${REPLY_CTX}::${item}"]}"
         normalize_target "$key" "$block"
         norm_key=$TARGET_KEY
         norm_scope=$TARGET_SCOPE
@@ -902,7 +902,7 @@ reset_current_item() {
     local -n _items_ref="$REPLY_REF"
     if (( ${#_items_ref[@]} == 0 )); then return 0; fi
     label=${_items_ref[SELECTED_ROW]}
-    IFS='|' read -r key type block _ _ _ <<< "${ITEM_MAP["${REPLY_CTX}::${label}"]:-}"
+    IFS='|' read -r key type block dummy_min dummy_max dummy_step <<< "${ITEM_MAP["${REPLY_CTX}::${label}"]:-}"
     
     if [[ $type == action || $type == menu ]]; then return 0; fi
     
@@ -920,7 +920,7 @@ set_absolute_value() {
     local label=$1 new_val=$2
     local REPLY_REF REPLY_CTX key type block
     get_active_context
-    IFS='|' read -r key type block _ _ _ <<< "${ITEM_MAP["${REPLY_CTX}::${label}"]}"
+    IFS='|' read -r key type block dummy_min dummy_max dummy_step <<< "${ITEM_MAP["${REPLY_CTX}::${label}"]}"
     if write_value_to_file "$key" "$new_val" "$block"; then
         VALUE_CACHE["${REPLY_CTX}::${label}"]=$new_val
         return 0
@@ -935,7 +935,7 @@ reset_defaults() {
     local -n _rd_items_ref="$REPLY_REF"
 
     for item in "${_rd_items_ref[@]:-}"; do
-        IFS='|' read -r _ type _ _ _ _ <<< "${ITEM_MAP["${REPLY_CTX}::${item}"]}"
+        IFS='|' read -r dummy_key type dummy_block dummy_min dummy_max dummy_step <<< "${ITEM_MAP["${REPLY_CTX}::${item}"]}"
         case $type in menu|action) continue ;; esac
         def_val=${DEFAULTS["${REPLY_CTX}::${item}"]:-}
         if [[ -n $def_val ]]; then
@@ -986,7 +986,7 @@ acquire_sudo() {
 }
 
 prompt_line_input() {
-    local prompt_text=$1 __result_var=$2 input="" prompt_row
+    local prompt_text=$1 __result_var=$2 __raw_input="" prompt_row
     [[ $__result_var =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
     printf '%s%s' "$MOUSE_OFF" "$CURSOR_SHOW" || true
     stty "$ORIGINAL_STTY" < /dev/tty 2>/dev/null || :
@@ -996,12 +996,12 @@ prompt_line_input() {
     printf '\033[%d;1H%s' "$prompt_row" "$CLR_EOS" || true
     printf '%s%s%s ' "$C_YELLOW" "$prompt_text" "$C_RESET" || true
 
-    IFS= read -r input < /dev/tty || input=""
+    IFS= read -r __raw_input < /dev/tty || __raw_input=""
 
     stty -icanon -echo -ixon min 0 time 0 < /dev/tty 2>/dev/null || :
     printf '%s%s%s%s' "$CURSOR_HIDE" "$MOUSE_ON" "$CLR_SCREEN" "$CURSOR_HOME" || true
 
-    trim_spaces "$input"
+    trim_spaces "$__raw_input"
     printf -v "$__result_var" '%s' "$REPLY"
 }
 
@@ -1054,18 +1054,19 @@ render_item_list() {
         item=${_items[ri]}
         val=${VALUE_CACHE["${ctx}::${item}"]:-$UNSET_MARKER}
         config=${ITEM_MAP["${ctx}::${item}"]}
-        IFS='|' read -r _ type _ _ _ _ <<< "$config"
+        IFS='|' read -r dummy_key type dummy_block dummy_min dummy_max dummy_step <<< "$config"
         case $type in
             menu) display="${C_YELLOW}[+] Open Menu ...${C_RESET}" ;;
             action) display="${C_GREEN}▶ press Enter${C_RESET}" ;;
             string)
-                if [[ $val == "$UNSET_MARKER" ]]; then display="${C_YELLOW}⚠ UNSET${C_RESET}"
+                if [[ $val == "$UNSET_MARKER" ]]; then
+                    display="${C_GREEN}[✎ Edit]${C_RESET} ${C_YELLOW}⚠ UNSET${C_RESET}"
                 else
-                    local -i max_v=$(( BOX_INNER_WIDTH - ITEM_PADDING - 8 ))
+                    local -i max_v=$(( BOX_INNER_WIDTH - ITEM_PADDING - 12 ))
                     if (( ${#val} > max_v )); then
-                        display="${C_WHITE}${val:0:max_v}…${C_RESET}"
+                        display="${C_GREEN}[✎]${C_RESET} ${C_WHITE}${val:0:max_v}…${C_RESET}"
                     else
-                        display="${C_WHITE}${val}${C_RESET}"
+                        display="${C_GREEN}[✎]${C_RESET} ${C_WHITE}${val}${C_RESET}"
                     fi
                 fi
                 ;;
@@ -1183,7 +1184,7 @@ draw_main_view() {
     render_item_list buf _draw_items_ref "${CURRENT_TAB}" "$_vis_start" "$_vis_end"
     render_scroll_indicator buf below "$count" "$_vis_end"
 
-    buf+=$'\n'"${C_CYAN} [Tab] Category  [r] Reset Item  [R] Reset All  [←/→] Adjust  [Enter] Action  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
+    buf+=$'\n'"${C_CYAN} [Tab] Category  [r] Reset Item  [R] Reset All  [←/→ h/l] Adjust  [Enter] Action  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
     if [[ -n $STATUS_MESSAGE ]]; then buf+="${C_CYAN} Status: ${C_RED}${STATUS_MESSAGE}${C_RESET}${CLR_EOL}${CLR_EOS}"; else buf+="${C_CYAN} File: ${C_WHITE}${WRITE_TARGET}${C_RESET}${CLR_EOL}${CLR_EOS}"; fi
     printf '%s' "$buf" || true
 }
@@ -1213,7 +1214,7 @@ draw_detail_view() {
     render_scroll_indicator buf above "$count" "$_vis_start"
     render_item_list buf _detail_items_ref "${CURRENT_MENU_ID}" "$_vis_start" "$_vis_end"
     render_scroll_indicator buf below "$count" "$_vis_end"
-    buf+=$'\n'"${C_CYAN} [Esc/Sh+Tab] Back  [r] Reset  [R] Reset All  [←/→] Adjust  [Enter] Toggle  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
+    buf+=$'\n'"${C_CYAN} [Esc/Sh+Tab] Back  [r] Reset Item  [R] Reset All  [←/→ h/l] Adjust  [Enter] Toggle  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
     if [[ -n $STATUS_MESSAGE ]]; then buf+="${C_CYAN} Status: ${C_RED}${STATUS_MESSAGE}${C_RESET}${CLR_EOL}${CLR_EOS}"; else buf+="${C_CYAN} Submenu: ${C_WHITE}${CURRENT_MENU_ID}${C_RESET}${CLR_EOL}${CLR_EOS}"; fi
     printf '%s' "$buf" || true
 }
@@ -1344,7 +1345,7 @@ adjust() {
     local -n _items_ref="$REPLY_REF"
     (( ${#_items_ref[@]} == 0 )) && return 0
     label=${_items_ref[SELECTED_ROW]}
-    IFS='|' read -r _ type _ _ _ _ <<< "${ITEM_MAP["${REPLY_CTX}::${label}"]}"
+    IFS='|' read -r dummy_key type dummy_block dummy_min dummy_max dummy_step <<< "${ITEM_MAP["${REPLY_CTX}::${label}"]}"
     [[ $type == action || $type == string ]] && return 0
     modify_value "$label" "$dir"
 }
@@ -1380,7 +1381,7 @@ activate_item() {
     (( ${#_act_ref[@]} == 0 )) && return 1
     item=${_act_ref[SELECTED_ROW]}
     config=${ITEM_MAP["${REPLY_CTX}::${item}"]}
-    IFS='|' read -r key type block _ _ _ <<< "$config"
+    IFS='|' read -r key type block dummy_min dummy_max dummy_step <<< "$config"
     case $type in
         menu)
             PARENT_ROW=$SELECTED_ROW; PARENT_SCROLL=$SCROLL_OFFSET
@@ -1398,7 +1399,7 @@ activate_item() {
             return 0
             ;;
         string)
-            local input="" current_val p_text
+            local user_input="" current_val p_text
             current_val=${VALUE_CACHE["${REPLY_CTX}::${item}"]:-}
             if [[ $current_val == "$UNSET_MARKER" ]]; then current_val=""; fi
             
@@ -1408,11 +1409,11 @@ activate_item() {
             fi
             p_text+=" (blank to UNSET):"
             
-            prompt_line_input "$p_text" input
-            if [[ -z $input ]]; then
+            prompt_line_input "$p_text" user_input
+            if [[ -z $user_input ]]; then
                 write_value_to_file "$key" "__DELETE__" "$block"
             else
-                write_value_to_file "$key" "$input" "$block"
+                write_value_to_file "$key" "$user_input" "$block"
             fi
             
             load_active_values
