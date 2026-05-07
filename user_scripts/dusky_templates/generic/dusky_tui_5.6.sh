@@ -2,7 +2,7 @@
 # -----------------------------------------------------------------------------
 # Dusky TUI Engine - Generic Configuration Template
 # Target: Generic Linux Configs (/etc, .conf, .ini, host files)
-# Based on TUI Template v5.4
+# Based on TUI Template v5.6
 # -----------------------------------------------------------------------------
 
 set -Eeuo pipefail
@@ -15,7 +15,7 @@ shopt -s extglob
 : "${XDG_CONFIG_HOME:=${HOME}/.config}"
 declare CONFIG_FILE="${DUSKY_CONFIG_FILE:-${XDG_CONFIG_HOME}/myapp/settings.conf}"
 declare -r APP_TITLE="Generic System Config Editor"
-declare -r APP_VERSION="v5.4"
+declare -r APP_VERSION="v5.6"
 
 # Dimensions & layout.
 declare -ri MAX_DISPLAY_ROWS=14
@@ -177,7 +177,7 @@ declare LOCK_TARGET=""
 
 declare -i TERM_ROWS=0 TERM_COLS=0
 declare -ri MIN_TERM_COLS=$(( BOX_INNER_WIDTH + 2 ))
-declare -ri MIN_TERM_ROWS=$(( HEADER_ROWS + MAX_DISPLAY_ROWS + 5 ))
+declare -ri MIN_TERM_ROWS=$(( HEADER_ROWS + MAX_DISPLAY_ROWS + 6 ))
 
 declare -gi LAST_WRITE_CHANGED=0
 declare STATUS_MESSAGE=""
@@ -1004,7 +1004,7 @@ prompt_line_input() {
     printf '%s%s' "$MOUSE_OFF" "$CURSOR_SHOW" || true
     stty "$ORIGINAL_STTY" < /dev/tty 2>/dev/null || :
 
-    prompt_row=$(( HEADER_ROWS + MAX_DISPLAY_ROWS + 6 ))
+    prompt_row=$(( HEADER_ROWS + MAX_DISPLAY_ROWS + 7 ))
     (( prompt_row > TERM_ROWS - 1 )) && prompt_row=$(( TERM_ROWS - 1 ))
     printf '\033[%d;1H%s' "$prompt_row" "$CLR_EOS" || true
     printf '%s%s%s ' "$C_YELLOW" "$prompt_text" "$C_RESET" || true
@@ -1061,13 +1061,19 @@ render_item_list() {
     local -n _items=$2
     local ctx=$3
     local -i vs=$4 ve=$5 ri
-    local item val display type config padded_item max_len
+    local item val display type config padded_item max_len def_marker
 
     for (( ri = vs; ri < ve; ri++ )); do
         item=${_items[ri]}
         val=${VALUE_CACHE["${ctx}::${item}"]:-$UNSET_MARKER}
         config=${ITEM_MAP["${ctx}::${item}"]}
         IFS='|' read -r dummy_key type dummy_block dummy_min dummy_max dummy_step <<< "$config"
+        
+        def_marker="  "
+        if [[ -n ${DEFAULTS["${ctx}::${item}"]:-} ]]; then
+            def_marker="${C_YELLOW}• ${C_RESET}"
+        fi
+
         case $type in
             menu) display="${C_YELLOW}[+] Open Menu ...${C_RESET}" ;;
             action) display="${C_GREEN}▶ press Enter${C_RESET}" ;;
@@ -1099,9 +1105,9 @@ render_item_list() {
             printf -v padded_item "%-${ITEM_PADDING}s" "$item"
         fi
         if (( ri == SELECTED_ROW )); then
-            _buf+="${C_CYAN} ➤ ${C_INVERSE}${padded_item}${C_RESET} : ${display}${CLR_EOL}"$'\n'
+            _buf+="${C_CYAN} ➤ ${C_INVERSE}${padded_item}${C_RESET} ${def_marker}: ${display}${CLR_EOL}"$'\n'
         else
-            _buf+="    ${padded_item} : ${display}${CLR_EOL}"$'\n'
+            _buf+="    ${padded_item} ${def_marker}: ${display}${CLR_EOL}"$'\n'
         fi
     done
 
@@ -1197,7 +1203,8 @@ draw_main_view() {
     render_item_list buf _draw_items_ref "${CURRENT_TAB}" "$_vis_start" "$_vis_end"
     render_scroll_indicator buf below "$count" "$_vis_end"
 
-    buf+=$'\n'"${C_CYAN} [Tab] Category  [r] Reset Item  [R] Reset All  [←/→ h/l] Adjust  [Enter] Action  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
+    buf+=$'\n'"${C_CYAN} [Tab] Category   [r] Reset Item   [R] Reset All   [←/→ h/l] Adjust${C_RESET}${CLR_EOL}"$'\n'
+    buf+="${C_CYAN} [Enter] Action   [q] Quit${C_RESET}${CLR_EOL}"$'\n'
     if [[ -n $STATUS_MESSAGE ]]; then buf+="${C_CYAN} Status: ${C_RED}${STATUS_MESSAGE}${C_RESET}${CLR_EOL}${CLR_EOS}"; else buf+="${C_CYAN} File: ${C_WHITE}${WRITE_TARGET}${C_RESET}${CLR_EOL}${CLR_EOS}"; fi
     printf '%s' "$buf" || true
 }
@@ -1227,7 +1234,9 @@ draw_detail_view() {
     render_scroll_indicator buf above "$count" "$_vis_start"
     render_item_list buf _detail_items_ref "${CURRENT_MENU_ID}" "$_vis_start" "$_vis_end"
     render_scroll_indicator buf below "$count" "$_vis_end"
-    buf+=$'\n'"${C_CYAN} [Esc/Sh+Tab] Back  [r] Reset Item  [R] Reset All  [←/→ h/l] Adjust  [Enter] Toggle  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
+    
+    buf+=$'\n'"${C_CYAN} [Esc/Sh+Tab] Back   [r] Reset Item   [R] Reset All   [←/→ h/l] Adjust${C_RESET}${CLR_EOL}"$'\n'
+    buf+="${C_CYAN} [Enter] Toggle/Action   [q] Quit${C_RESET}${CLR_EOL}"$'\n'
     if [[ -n $STATUS_MESSAGE ]]; then buf+="${C_CYAN} Status: ${C_RED}${STATUS_MESSAGE}${C_RESET}${CLR_EOL}${CLR_EOS}"; else buf+="${C_CYAN} Submenu: ${C_WHITE}${CURRENT_MENU_ID}${C_RESET}${CLR_EOL}${CLR_EOS}"; fi
     printf '%s' "$buf" || true
 }
@@ -1275,7 +1284,9 @@ draw_picker_view() {
     else
         buf+="${CLR_EOL}"$'\n'
     fi
-    buf+=$'\n'"${C_CYAN} [↑/↓ j/k] Navigate  [Enter] Select  [Esc] Cancel  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
+    
+    buf+=$'\n'"${C_CYAN} [↑/↓ j/k] Navigate   [Enter] Select${C_RESET}${CLR_EOL}"$'\n'
+    buf+="${C_CYAN} [Esc] Cancel   [q] Quit${C_RESET}${CLR_EOL}"$'\n'
     if [[ -n $STATUS_MESSAGE ]]; then buf+="${C_CYAN} Status: ${C_RED}${STATUS_MESSAGE}${C_RESET}${CLR_EOL}${CLR_EOS}"; elif (( count == 0 )); then buf+="${C_CYAN} ${C_YELLOW}(no items - press Esc to go back)${C_RESET}${CLR_EOL}${CLR_EOS}"; else buf+="${C_CYAN} ${count} item(s)${C_RESET}${CLR_EOL}${CLR_EOS}"; fi
     printf '%s' "$buf" || true
 }
