@@ -79,9 +79,11 @@ register_items() {
         register "$i" "Margin"          "margin|string|$scope|||" "$d_margin"
         register "$i" "Padding"         "padding|int|$scope|0|100|1" "0"
         
-        # Dimensions
-        register "$i" "Width"           "width|int|$scope|10|1000|10" "$d_width"
-        register "$i" "Height"          "height|int|$scope|10|500|2" "$d_height"
+        # Dimensions (Excluded from Global Tab)
+        if (( i > 0 )); then
+            register "$i" "Width"           "width|int|$scope|10|1000|10" "$d_width"
+            register "$i" "Height"          "height|int|$scope|10|500|2" "$d_height"
+        fi
         
         # Borders & Shapes
         register "$i" "Border Size"     "border-size|int|$scope|0|20|1" "0"
@@ -94,8 +96,10 @@ register_items() {
         register "$i" "Background Color" "background-color|cycle|$scope|$colors||" "__DELETE__"
         register "$i" "Border Color"    "border-color|cycle|$scope|$colors||" "__DELETE__"
         
-        # Behavior
-        register "$i" "Default Timeout" "default-timeout|int|$scope|0|60000|500" "5000"
+        # Behavior (Excluded from Global Tab)
+        if (( i > 0 )); then
+            register "$i" "Default Timeout" "default-timeout|int|$scope|0|60000|500" "5000"
+        fi
     done
 }
 
@@ -928,7 +932,11 @@ modify_value() {
             count=${#opts[@]}
             (( count == 0 )) && return 0
             for (( i = 0; i < count; i++ )); do
-                if [[ ${opts[i]} == "$current" ]]; then idx=$i; break; fi
+                cycle_display_value "${opts[i]}" "$min"
+                if [[ $REPLY == "$current" || ${opts[i]} == "$current" ]]; then
+                    idx=$i
+                    break
+                fi
             done
             idx=$(( (idx + direction + count) % count ))
             new_val=${opts[idx]}
@@ -938,7 +946,12 @@ modify_value() {
     esac
 
     if write_value_to_file "$key" "$new_val" "$block"; then
-        VALUE_CACHE["${REPLY_CTX}::${label}"]=$new_val
+        if [[ $type == cycle ]]; then
+            cycle_display_value "$new_val" "$min"
+            VALUE_CACHE["${REPLY_CTX}::${label}"]=$REPLY
+        else
+            VALUE_CACHE["${REPLY_CTX}::${label}"]=$new_val
+        fi
         clear_status
         if (( LAST_WRITE_CHANGED )); then post_write_action; fi
     fi
