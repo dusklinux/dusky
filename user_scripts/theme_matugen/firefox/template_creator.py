@@ -75,7 +75,8 @@ ROLES = {
     "7": {"name": "Borders & Dividers", "prop": "border-color", "var": "var(--outline)"},
     "8": {"name": "Accent Element (Buttons/Links)", "prop": "background-color", "var": "var(--primary)"},
     "9": {"name": "Text on Accent Button", "prop": "color", "var": "var(--on_primary)"},
-    "10": {"name": "Error/Warning Alert", "prop": "background-color", "var": "var(--error)"}
+    "10": {"name": "Error/Warning Alert", "prop": "background-color", "var": "var(--error)"},
+    "11": {"name": "Hide / Remove Element", "prop": "display", "var": "none"}
 }
 
 DEBUG_COLORS = [
