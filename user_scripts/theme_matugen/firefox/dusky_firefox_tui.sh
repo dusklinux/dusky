@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Dusky Firefox Theme Manager - Master v1.6.1
+# Dusky Firefox Theme Manager - Master v1.6.1 (Local Edition)
 # Target: Arch Linux / Hyprland / Wayland (Bash 5.3.9+)
-# Architecture: Cache-and-Probe with Idempotent Deployment & Matugen Sync
+# Architecture: Local Source with Idempotent Deployment & Matugen Sync
 # Based on Dusky TUI Engine v5.9
 # -----------------------------------------------------------------------------
 
@@ -14,10 +14,9 @@ shopt -s extglob
 # =============================================================================
 
 declare -r APP_TITLE="Dusky Firefox Themer"
-declare -r APP_VERSION="v1.6.1 (Stable)"
+declare -r APP_VERSION="v1.6.1 (Local)"
 
-declare -r REPO_URL="https://github.com/dusklinux/dusky-websites/archive/refs/heads/main.tar.gz"
-declare -r CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/dusky_themer"
+declare -r THEME_DIR="$HOME/.config/dusky_sites"
 
 # Category Mapping Array (Target -> Tab Name)
 declare -A THEME_CATEGORIES=(
@@ -320,48 +319,15 @@ ensure_matugen_integration() {
     fi
 }
 
-sync_cache() {
-    printf '%s[*] Syncing cache from %s...%s\n' "$C_CYAN" "$REPO_URL" "$C_RESET"
-    mkdir -p "$CACHE_DIR"
-    local tmp_tar
-    tmp_tar=$(mktemp)
-    
-    if ! curl -sL "$REPO_URL" -o "$tmp_tar"; then
-        log_err "Failed to download repository."
-        rm -f "$tmp_tar"
-        exit 1
-    fi
-    
-    rm -f "$CACHE_DIR"/*.css 2>/dev/null || :
-    local tmp_dir
-    tmp_dir=$(mktemp -d)
-    tar -xzf "$tmp_tar" -C "$tmp_dir"
-    find "$tmp_dir" -type f -name "*.css" -exec cp {} "$CACHE_DIR/" \;
-    
-    rm -f "$tmp_tar"
-    rm -rf "$tmp_dir"
-    printf '%s[*] Sync complete. Repository extracted to %s.%s\n' "$C_GREEN" "$CACHE_DIR" "$C_RESET"
-    sleep 1
-}
-
-probe_cache() {
+probe_themes() {
     local -a files=()
-    if [[ -d "$CACHE_DIR" ]]; then
-        mapfile -t files < <(find "$CACHE_DIR" -maxdepth 1 -type f -name "*.css" -printf "%f\n" | sort)
+    if [[ -d "$THEME_DIR" ]]; then
+        mapfile -t files < <(find "$THEME_DIR" -maxdepth 1 -type f -name "*.css" -printf "%f\n" | sort)
     fi
     
-    # Autonomous auto-healing cache check
     if (( ${#files[@]} == 0 )); then
-        log_warn "No themes found in cache. Autonomously fetching..."
-        sync_cache
-        if [[ -d "$CACHE_DIR" ]]; then
-            mapfile -t files < <(find "$CACHE_DIR" -maxdepth 1 -type f -name "*.css" -printf "%f\n" | sort)
-        fi
-        
-        if (( ${#files[@]} == 0 )); then
-            log_err "Cache is still empty after sync attempt. Check repository or network."
-            exit 1
-        fi
+        log_err "No themes found in $THEME_DIR. Please place your .css files there."
+        exit 1
     fi
     
     local file cat
@@ -448,7 +414,7 @@ deploy_changes() {
         for item in "${_items[@]}"; do
             val="${VALUE_CACHE["${i}::${item}"]}"
             if [[ "$val" == "true" ]]; then
-                cp -f "$CACHE_DIR/$item" "$websites_dir/"
+                cp -f "$THEME_DIR/$item" "$websites_dir/"
                 to_import+=("@import url(\"websites/$item\");")
             else
                 rm -f "$websites_dir/$item" 2>/dev/null || :
@@ -952,24 +918,21 @@ handle_input_router() {
 main() {
     if (( BASH_VERSINFO[0] < 5 )); then log_err "Bash 5.0+ required"; exit 1; fi
 
-    local do_sync=0
     local do_all=0
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --auto) 
-                do_sync=1
+            --auto|--all) 
                 do_all=1
                 ;;
-            --sync) do_sync=1 ;;
-            --all)  do_all=1 ;;
+            --sync)
+                # No-op to prevent breaking existing aliases/crons
+                ;;
             --help|-h)
                 printf "Usage: %s [FLAG]\n\n" "${0##*/}"
                 printf "Options:\n"
-                printf "  --auto      Autonomously sync and enable all available site themes.\n"
-                printf "  --sync      Download/sync latest themes from GitHub.\n"
-                printf "  --all       Enable all available site themes (auto-syncs if needed).\n"
-                printf "  --help      Show this help menu.\n"
+                printf "  --auto, --all   Enable all available site themes.\n"
+                printf "  --help          Show this help menu.\n"
                 exit 0
                 ;;
         esac
@@ -977,17 +940,13 @@ main() {
     done
 
     local dep
-    for dep in curl mktemp tar find grep awk cp mv rm stty chmod; do
+    for dep in mktemp find grep awk cp mv rm stty chmod; do
         if ! command -v "$dep" >/dev/null 2>&1; then log_err "Missing dependency: $dep"; exit 1; fi
     done
 
-    if (( do_sync )); then
-        sync_cache
-    fi
-
     resolve_browser_profile
     ensure_matugen_integration
-    probe_cache
+    probe_themes
 
     if (( do_all )); then
         run_autonomous_all
