@@ -18,6 +18,7 @@ from textual.widgets.option_list import Option
 from textual.screen import ModalScreen
 from textual.reactive import reactive
 from textual.theme import Theme
+from textual.timer import Timer
 
 from rich.text import Text
 
@@ -170,6 +171,20 @@ class PickerScreen(ModalScreen[str | None]):
 # INTERACTIVE COMPONENTS
 # =============================================================================
 
+class ConfigOptionList(OptionList):
+    """Subclassed OptionList with native scroll tracking and cached index."""
+    last_highlighted_idx: int = 0
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        if hasattr(self.app, "_update_scroll_indicators"):
+            self.app._update_scroll_indicators()
+            
+    def watch_max_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_max_scroll_y(old_value, new_value)
+        if hasattr(self.app, "_update_scroll_indicators"):
+            self.app._update_scroll_indicators()
+
 class Shortcut(Label):
     def __init__(self, key_text: str, label: str, action_name: str | None = None) -> None:
         super().__init__(classes="footer-shortcut")
@@ -212,12 +227,11 @@ class FileLink(Label):
             elif event.button == 3:
                 with self.app.suspend():
                     subprocess.run(["nvim", str(expanded_path)])
-        except (FileNotFoundError, OSError) as e:
+        except (FileNotFoundError, OSError):
             if hasattr(self.app, "notify_status"):
                 getattr(self.app, "notify_status")("Error resolving path or launching editor.")
 
 class AppFooter(Vertical):
-    pagination_info = reactive("[1/35]")
     status_msg = reactive("")
 
     def compose(self) -> ComposeResult:
@@ -226,7 +240,6 @@ class AppFooter(Vertical):
             yield Shortcut("r", "Reset Item", "reset_item")
             yield Shortcut("R", "Reset All", "reset_all")
             yield Shortcut("←/→ h/l", "Adjust")
-            yield Label(self.pagination_info, id="pagination-label")
         with Horizontal(id="footer-secondary"):
             yield Shortcut("Enter", "Action", "submit_current")
             yield Shortcut("q", "Quit", "quit")
@@ -235,10 +248,6 @@ class AppFooter(Vertical):
         with Horizontal(id="footer-bottom-row"):
             yield Label("", id="status-bar")
             yield FileLink(id="file-link")
-
-    def watch_pagination_info(self, new_val: str) -> None:
-        for label in self.query("#pagination-label"):
-            label.update(new_val)
 
     def watch_status_msg(self, new_val: str) -> None:
         for bar in self.query("#status-bar"):
@@ -268,6 +277,9 @@ class DuskyApp(App):
         border-title-color: $primary;
         border-title-style: bold;
         border-title-align: center;
+        border-subtitle-color: $primary;
+        border-subtitle-style: bold;
+        border-subtitle-align: right;
         background: transparent;
         padding: 0 1;
     }
@@ -281,14 +293,18 @@ class DuskyApp(App):
     Tab:hover { color: $text; background: $primary 25%; }
     Tab.-active { color: $background; background: $primary; text-style: bold; border: none; }
     
-    OptionList { height: 1fr; scrollbar-size: 0 0; background: transparent; border: none; }
-    OptionList > .option-list--option { padding: 0 1; background: transparent; }
-    OptionList > .option-list--option-hover { background: $primary 10%; }
-    OptionList > .option-list--option-highlighted { background: $primary 20%; }
+    .list-wrapper { height: 1fr; }
+    ConfigOptionList { width: 1fr; height: 1fr; scrollbar-size: 0 0; background: transparent; border: none; }
+    ConfigOptionList > .option-list--option { padding: 0 1; background: transparent; }
+    ConfigOptionList > .option-list--option-hover { background: $primary 10%; }
+    ConfigOptionList > .option-list--option-highlighted { background: $primary 20%; }
+    
+    .indicator-column { width: 2; height: 1fr; background: transparent; }
+    .scroll-up-indicator { dock: top; height: 1; color: $primary; text-style: bold; display: none; }
+    .scroll-down-indicator { dock: bottom; height: 1; color: $primary; text-style: bold; display: none; }
     
     #footer { height: 4; dock: bottom; border-top: solid $secondary; padding-top: 0; background: transparent; }
     #footer-controls { width: 100%; }
-    #pagination-label { dock: right; color: $primary; text-style: bold; margin-right: 1; }
     
     .footer-shortcut { margin-right: 2; padding: 0 1; background: transparent; }
     .footer-shortcut:hover { text-style: bold; color: $text; background: $primary 25%; }
@@ -329,22 +345,28 @@ class DuskyApp(App):
     ]
 
     last_theme_mtime: float = 0.0
+    _status_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="main-box"):
             with TabbedContent(id="tabs"):
                 for i, name in enumerate(TABS):
                     with TabPane(name, id=f"tab-{i}"):
-                        yield OptionList(id=f"list-{i}")
+                        with Horizontal(classes="list-wrapper"):
+                            yield ConfigOptionList(id=f"list-{i}")
+                            with Vertical(classes="indicator-column"):
+                                yield Label("▲", classes="scroll-up-indicator", id=f"up-{i}")
+                                yield Label("▼", classes="scroll-down-indicator", id=f"down-{i}")
             yield AppFooter(id="footer")
 
     def _build_option(self, item: ConfigItem, is_highlighted: bool = False) -> Text:
         """Constructs Rich text cleanly, mitigating arbitrary string injection bugs."""
         txt = Text()
         
-        cursor = "➤ " if is_highlighted else "  "
-        # FIX: Replaced "transparent" with "" as Rich requires valid ANSI/hex colors.
-        txt.append(cursor, style=THEME["accent"] if is_highlighted else "")
+        # Standardized purely geometric cursor to prevent bold font-fallback shifting
+        CURSOR_CHAR = "▶"
+        cursor = f"{CURSOR_CHAR} " if is_highlighted else "  "
+        txt.append(cursor, style=f"{THEME['accent']} bold" if is_highlighted else "")
         
         label_style = f"{THEME['fg']} bold" if is_highlighted else THEME["fg"]
         txt.append(f"{item.label:<35}", style=label_style)
@@ -378,26 +400,27 @@ class DuskyApp(App):
         self.apply_theme_to_engine()
         
         for i in range(len(TABS)):
-            ol = self.query_one(f"#list-{i}", OptionList)
+            ol = self.query_one(f"#list-{i}", ConfigOptionList)
             items = SCHEMA.get(i, [])
             if items:
                 options = [Option(self._build_option(item, is_highlighted=(idx == 0)), id=f"item_{i}_{idx}") for idx, item in enumerate(items)]
                 ol.add_options(options)
-                setattr(ol, "_last_highlighted_idx", 0)
+                ol.last_highlighted_idx = 0
 
         if first_ol := self.current_option_list:
             first_ol.focus()
             self._update_pagination(first_ol)
 
         self.set_interval(0.5, self.watch_theme_file)
+        self.call_after_refresh(self._update_scroll_indicators)
 
     @property
-    def current_option_list(self) -> OptionList | None:
+    def current_option_list(self) -> ConfigOptionList | None:
         try:
             tc = self.query_one(TabbedContent)
             if tc.active:
                 idx = tc.active.split("-")[1]
-                return self.query_one(f"#list-{idx}", OptionList)
+                return self.query_one(f"#list-{idx}", ConfigOptionList)
         except Exception:
             pass
         return None
@@ -414,9 +437,9 @@ class DuskyApp(App):
                 
                 for i in range(len(TABS)):
                     try:
-                        ol = self.query_one(f"#list-{i}", OptionList)
+                        ol = self.query_one(f"#list-{i}", ConfigOptionList)
                         items = SCHEMA.get(i, [])
-                        last_idx = getattr(ol, "_last_highlighted_idx", 0)
+                        last_idx = ol.last_highlighted_idx
                         
                         for idx, item in enumerate(items):
                             is_hl = (idx == last_idx) and (self.current_option_list == ol)
@@ -459,16 +482,20 @@ class DuskyApp(App):
         if ol := self.current_option_list:
             ol.focus()
             self._update_pagination(ol)
+            self._update_scroll_indicators()
 
     @on(OptionList.OptionHighlighted)
     def handle_option_highlight(self, event: OptionList.OptionHighlighted) -> None:
         ol = event.option_list
+        if not isinstance(ol, ConfigOptionList):
+            return
+            
         try:
             tab_idx = int(ol.id.split("-")[1])
         except (AttributeError, IndexError, ValueError):
             return
             
-        last_idx = getattr(ol, "_last_highlighted_idx", None)
+        last_idx = ol.last_highlighted_idx
         
         if last_idx is not None and last_idx != event.option_index:
             try:
@@ -481,20 +508,41 @@ class DuskyApp(App):
             try:
                 item = SCHEMA[tab_idx][event.option_index]
                 ol.replace_option_prompt_at_index(event.option_index, self._build_option(item, True))
-                setattr(ol, "_last_highlighted_idx", event.option_index)
+                ol.last_highlighted_idx = event.option_index
             except (IndexError, KeyError):
                 pass
             
         self._update_pagination(ol)
 
-    def _update_pagination(self, ol: OptionList) -> None:
+    def _update_pagination(self, ol: ConfigOptionList) -> None:
         idx = ol.highlighted if ol.highlighted is not None else 0
         total = ol.option_count
-        self.query_one(AppFooter).pagination_info = f"[{idx + 1}/{total}]" if total else "[0/0]"
+        main_box = self.query_one("#main-box")
+        main_box.border_subtitle = f" {idx + 1}/{total} " if total else " 0/0 "
+
+    def _update_scroll_indicators(self) -> None:
+        tc = self.query_one(TabbedContent)
+        if not tc.active: return
+        
+        try:
+            tab_idx = int(tc.active.split("-")[1])
+            ol = self.query_one(f"#list-{tab_idx}", ConfigOptionList)
+            up_ind = self.query_one(f"#up-{tab_idx}", Label)
+            down_ind = self.query_one(f"#down-{tab_idx}", Label)
+            
+            up_ind.display = ol.scroll_y > 0
+            down_ind.display = ol.scroll_y < ol.max_scroll_y
+        except Exception:
+            pass
 
     def notify_status(self, msg: str) -> None:
-        self.query_one(AppFooter).status_msg = msg
-        self.set_timer(3, lambda: setattr(self.query_one(AppFooter), 'status_msg', ""))
+        app_footer = self.query_one(AppFooter)
+        app_footer.status_msg = msg
+        
+        if self._status_timer is not None:
+            self._status_timer.stop()
+            
+        self._status_timer = self.set_timer(3, lambda: setattr(app_footer, 'status_msg', ""))
 
     def action_next_tab(self) -> None: 
         self.query_one(Tabs).action_next_tab()
@@ -594,7 +642,7 @@ class DuskyApp(App):
     def handle_selection(self, event: OptionList.OptionSelected) -> None:
         self._handle_item_action(event.option_list, event.option_index)
 
-    def _handle_item_action(self, ol: OptionList, index: int) -> None:
+    def _handle_item_action(self, ol: ConfigOptionList, index: int) -> None:
         try:
             tab_idx = int(ol.id.split("-")[1])
             item = SCHEMA[tab_idx][index]
@@ -613,7 +661,7 @@ class DuskyApp(App):
                 self.prompt_picker(ol, tab_idx, index, item)
 
     @work
-    async def prompt_string(self, ol: OptionList, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
+    async def prompt_string(self, ol: ConfigOptionList, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
         new_val = await self.push_screen(TextInputOverlay(f"Enter new {item.label}:", str(item.value)))
         if new_val is not None:
             if item.type_ == "int":
@@ -635,7 +683,7 @@ class DuskyApp(App):
             self.notify_status(f"Written: {item.label} = {new_val}")
 
     @work
-    async def prompt_picker(self, ol: OptionList, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
+    async def prompt_picker(self, ol: ConfigOptionList, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
         new_val = await self.push_screen(PickerScreen(item.label, item.options, item.hints))
         if new_val is not None:
             item.value = new_val
