@@ -99,6 +99,12 @@ post_hook   = '''
   pkill -SIGUSR1 -x kitty || :
 '''
 
+
+[templates.dusky_tui]
+input_path  = '~/.config/matugen/templates/gtk-colors.css'
+output_path = '~/.config/matugen/generated/dusky_tui.css'
+
+
 [templates.foot]
 input_path  = '~/.config/matugen/templates/foot-colors.ini'
 output_path = '~/.config/matugen/generated/foot-colors.ini'
