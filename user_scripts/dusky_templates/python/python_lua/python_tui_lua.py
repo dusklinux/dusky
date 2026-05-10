@@ -4,9 +4,11 @@ import re
 import json
 import subprocess
 import colorsys
+import tempfile
+import shutil
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Dict
 
 from textual import on, events
 from textual.app import App, ComposeResult
@@ -23,6 +25,366 @@ from textual.theme import Theme
 from textual.timer import Timer
 
 from rich.text import Text
+
+# =============================================================================
+# HYPRLAND LUA ENGINE (0.55+ COMPATIBLE - MULTI-FILE SUPPORT)
+# =============================================================================
+
+class HyprlandLuaEngine:
+    """
+    Backend Engine for Hyprland 0.55+ Lua configurations.
+    Tracks all split modules (dofile/require) and uses an embedded 
+    lexical Lua tokenizer to surgically mutate values across multiple files.
+    """
+    def __init__(self, config_path: str = "~/.config/hypr/hyprland.lua"):
+        self.config_path = Path(config_path).expanduser().resolve()
+        self.lua_bin = self._find_lua()
+        self.cache: Dict[str, Any] = {}
+        self.loaded_files: list[str] = []
+        
+        # Guarantee a base file exists for the template
+        if not self.config_path.exists():
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            self.config_path.write_text("hl.config({\n    general = {\n        border_size = 2\n    }\n})\n")
+
+    def _find_lua(self) -> str:
+        for cmd in ["lua5.4", "lua54", "lua"]:
+            try:
+                res = subprocess.run([cmd, "-e", "assert(_VERSION:match('5%.[4-9]'))"], 
+                                     capture_output=True, text=True)
+                if res.returncode == 0:
+                    return cmd
+            except FileNotFoundError:
+                continue
+        raise RuntimeError("Lua 5.4+ not found. Hyprland 0.55+ Lua configs require Lua 5.4.")
+
+    def load_state(self) -> Dict[str, Any]:
+        """Evaluates the config, tracks dofile imports, and returns flattened state."""
+        if not self.config_path.exists():
+            return {}
+
+        lua_evaluator = """
+        local main_path = arg[1]
+        local config_root = {}
+        local loaded_files = {main_path}
+        
+        local function deep_merge(dst, src)
+            for k, v in pairs(src) do
+                if type(v) == "table" then
+                    if type(dst[k]) ~= "table" then dst[k] = {} end
+                    deep_merge(dst[k], v)
+                else
+                    dst[k] = v
+                end
+            end
+            return dst
+        end
+        
+        local inert_proxy = setmetatable({}, { __index = function() return setmetatable({}, { __call = function() return {} end }) end })
+        local hl = setmetatable({}, { __index = function() return inert_proxy end })
+        hl.config = function(tbl) if type(tbl) == "table" then deep_merge(config_root, tbl) end end
+
+        local safe_env = { hl = hl, math = math, string = string, table = table, type = type, pairs = pairs, ipairs = ipairs, tostring = tostring, tonumber = tonumber, print = print, os = os, io = io }
+        safe_env._G = safe_env
+
+        -- Hook dofile to track modular split configs
+        local original_dofile = dofile
+        safe_env.dofile = function(path)
+            table.insert(loaded_files, path)
+            local chunk, err = loadfile(path, "t", safe_env)
+            if chunk then return chunk() else return nil end
+        end
+
+        local chunk, err = loadfile(main_path, "t", safe_env)
+        if chunk then pcall(chunk) end
+
+        -- Export state and file registry as JSON
+        local out_state = {}
+        local function escape_str(s) return '"' .. s:gsub('\\\\', '\\\\\\\\'):gsub('"', '\\\\"'):gsub('\\n', '\\\\n') .. '"' end
+        local function walk(t, scope)
+            for k, v in pairs(t) do
+                if type(k) == "string" then
+                    local new_scope = scope == "" and k or (scope .. "/" .. k)
+                    if type(v) == "table" then walk(v, new_scope)
+                    else table.insert(out_state, escape_str(new_scope) .. ":" .. escape_str(tostring(v))) end
+                end
+            end
+        end
+        walk(config_root, "")
+        
+        local out_files = {}
+        for _, f in ipairs(loaded_files) do table.insert(out_files, escape_str(f)) end
+
+        print('{"state": {' .. table.concat(out_state, ",") .. '}, "files": [' .. table.concat(out_files, ",") .. ']}')
+        """
+        try:
+            res = subprocess.run([self.lua_bin, "-", str(self.config_path)], 
+                                 input=lua_evaluator, text=True, capture_output=True, timeout=3)
+            if res.returncode == 0 and res.stdout.strip():
+                data = json.loads(res.stdout)
+                self.cache = data.get("state", {})
+                self.loaded_files = data.get("files", [str(self.config_path)])
+                return self.cache
+        except Exception as e:
+            print(f"[Engine Error] Failed to load state: {e}")
+        return {}
+
+    def write_value(self, target_key: str, target_scope: str, new_value: Any) -> bool:
+        if not self.loaded_files:
+            self.loaded_files = [str(self.config_path)]
+            
+        if new_value == "__DELETE__":
+            val_str = "__DELETE__"
+        elif isinstance(new_value, bool):
+            val_str = "true" if new_value else "false"
+        elif isinstance(new_value, (int, float)):
+            val_str = str(new_value)
+        else:
+            val_str = f'"{new_value}"'
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as vf:
+            vf.write(val_str)
+            val_file_path = vf.name
+
+        # Exact Lexical Scanner imported from your bash script for maximum safety
+        lua_mutator = """
+        local src_path = assert(arg[1], "missing source")
+        local target_key = assert(arg[2], "missing key")
+        local target_scope = assert(arg[3], "missing scope")
+        local val_path = assert(arg[4], "missing value file")
+        local max_source_bytes = 16 * 1024 * 1024
+
+        local function die(code, msg) io.stderr:write(tostring(msg), "\\n"); os.exit(code) end
+        local function read_file(path, code)
+            local f, err = io.open(path, "rb")
+            if not f then die(code, err or "open failed") end
+            local s, read_err = f:read("*a")
+            f:close()
+            if not s then die(code, read_err or "read failed") end
+            if #s > max_source_bytes then die(code, "source exceeds size limit") end
+            return s
+        end
+
+        local text = read_file(src_path, 4)
+        local new_value = read_file(val_path, 4)
+        local len = #text
+        local tokens = {}
+        local pos = 1
+
+        local function is_alpha(c) return c:match("^[A-Za-z_]$") ~= nil end
+        local function is_alnum(c) return c:match("^[A-Za-z0-9_]$") ~= nil end
+        local function is_space(c) return c == " " or c == "\\t" or c == "\\r" or c == "\\n" end
+        local function add(tp, val, s, e) tokens[#tokens + 1] = { type = tp, val = val, s = s, e = e } end
+
+        local function long_bracket_end_at(p)
+            if text:sub(p, p) ~= "[" then return nil end
+            local q = p + 1
+            while q <= len and text:sub(q, q) == "=" do q = q + 1 end
+            if text:sub(q, q) ~= "[" then return nil end
+            local eqs = text:sub(p + 1, q - 1)
+            local close = "]" .. eqs .. "]"
+            local found = text:find(close, q + 1, true)
+            if not found then die(5, "unterminated long bracket") end
+            return found + #close - 1
+        end
+
+        while pos <= len do
+            local c = text:sub(pos, pos)
+            if is_space(c) then pos = pos + 1
+            elseif c == "-" and text:sub(pos + 1, pos + 1) == "-" then
+                pos = pos + 2
+                local lb_end = long_bracket_end_at(pos)
+                if lb_end then pos = lb_end + 1
+                else
+                    local nl = text:find("\\n", pos, true)
+                    if nl then pos = nl + 1 else pos = len + 1 end
+                end
+            elseif c == "'" or c == '"' then
+                local quote = c
+                local s = pos
+                pos = pos + 1
+                local closed = false
+                while pos <= len do
+                    local ch = text:sub(pos, pos)
+                    if ch == "\\\\" then pos = pos + 2
+                    elseif ch == quote then pos = pos + 1; closed = true; break
+                    else pos = pos + 1 end
+                end
+                add("STRING", text:sub(s, pos - 1), s, pos - 1)
+            elseif c == "[" then
+                local lb_end = long_bracket_end_at(pos)
+                if lb_end then add("STRING", text:sub(pos, lb_end), pos, lb_end); pos = lb_end + 1
+                else add("LBRACK", c, pos, pos); pos = pos + 1 end
+            elseif is_alpha(c) then
+                local s = pos; pos = pos + 1
+                while pos <= len and is_alnum(text:sub(pos, pos)) do pos = pos + 1 end
+                add("IDENT", text:sub(s, pos - 1), s, pos - 1)
+            elseif c:match("^[0-9]$") or (c == "." and text:sub(pos + 1, pos + 1):match("^[0-9]$")) then
+                local s = pos; pos = pos + 1
+                while pos <= len and text:sub(pos, pos):match("^[A-Za-z0-9_%.%+%-]$") do pos = pos + 1 end
+                add("NUMBER", text:sub(s, pos - 1), s, pos - 1)
+            else
+                local map = { ["{"] = "LBRACE", ["}"] = "RBRACE", ["("] = "LPAREN", [")"] = "RPAREN", ["["] = "LBRACK", ["]"] = "RBRACK", ["="] = "EQUALS", [","] = "COMMA", [";"] = "SEMI", ["."] = "DOT" }
+                add(map[c] or "OTHER", c, pos, pos); pos = pos + 1
+            end
+        end
+
+        local function unquote_string(raw)
+            local chunk, err = load("return " .. raw, "t", "t", {})
+            if chunk then local ok, v = pcall(chunk); if ok and type(v)=="string" then return v end end
+            return raw
+        end
+        local function trim(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
+        local function is_lua_number_literal(raw) raw = trim(raw) return raw:match("^[+-]?%d+%.?%d*([eE][+-]?%d+)?$") or raw:match("^[+-]?0[xX][%da-fA-F]+$") end
+
+        local function format_short_string(value, quote)
+            local out = { quote }
+            for i = 1, #value do
+                local ch = value:sub(i, i)
+                if ch == "\\\\" then out[#out+1] = "\\\\\\\\" elseif ch == "\\n" then out[#out+1] = "\\\\n" elseif ch == quote then out[#out+1] = "\\\\" .. quote else out[#out+1] = ch end
+            end
+            out[#out+1] = quote; return table.concat(out)
+        end
+
+        local function format_replacement(old_raw)
+            if new_value == "__DELETE__" then return "nil" end
+            local t = trim(old_raw)
+            if t == "true" or t == "false" or t == "nil" then return new_value end
+            if is_lua_number_literal(t) then return new_value end
+            if t:match("^['\\"]") then return format_short_string(new_value, t:sub(1, 1)) end
+            error("Target expression too complex to rewrite")
+        end
+
+        local matches = {}
+        local function scope_string(parts) return table.concat(parts, "/") end
+
+        local parse_table
+        local function find_rhs_end(i)
+            local j = i; local depth = 0; local block_depth = 0; local rhs_end = i
+            while j <= #tokens do
+                local tp = tokens[j].type; local val = tokens[j].val
+                if tp == "IDENT" then
+                    if val == "function" or val == "if" or val == "for" or val == "while" then block_depth = block_depth + 1
+                    elseif val == "end" and block_depth > 0 then block_depth = block_depth - 1 end
+                end
+                if block_depth == 0 then
+                    if tp == "LBRACE" or tp == "LPAREN" or tp == "LBRACK" then depth = depth + 1
+                    elseif tp == "RBRACE" or tp == "RPAREN" or tp == "RBRACK" then
+                        if depth == 0 then break end; depth = depth - 1
+                    elseif depth == 0 and (tp == "COMMA" or tp == "SEMI") then break end
+                end
+                rhs_end = j; j = j + 1
+            end
+            return rhs_end, j
+        end
+
+        local function key_at(i)
+            local tok = tokens[i]
+            if not tok then return nil, i end
+            if tok.type == "IDENT" and tokens[i + 1] and tokens[i + 1].type == "EQUALS" then return tok.val, i + 2 end
+            if tok.type == "LBRACK" and tokens[i + 1] and tokens[i + 1].type == "STRING" and tokens[i + 2] and tokens[i + 2].type == "RBRACK" and tokens[i + 3] and tokens[i + 3].type == "EQUALS" then return unquote_string(tokens[i + 1].val), i + 4 end
+            return nil, i
+        end
+
+        parse_table = function(i, scope_parts)
+            if not tokens[i] or tokens[i].type ~= "LBRACE" then return i end
+            i = i + 1
+            while i <= #tokens do
+                if tokens[i].type == "RBRACE" then return i + 1 end
+                if tokens[i].type == "COMMA" or tokens[i].type == "SEMI" then i = i + 1 goto continue end
+
+                local key, rhs = key_at(i)
+                if key then
+                    local rhs_end, next_i = find_rhs_end(rhs)
+                    if tokens[rhs] and tokens[rhs].type == "LBRACE" then
+                        scope_parts[#scope_parts + 1] = key
+                        parse_table(rhs, scope_parts)
+                        scope_parts[#scope_parts] = nil
+                    else
+                        local curr_scope = scope_string(scope_parts)
+                        if key == target_key and curr_scope == target_scope then
+                            local raw = text:sub(tokens[rhs].s, tokens[rhs_end].e)
+                            matches[#matches + 1] = { s = tokens[rhs].s, e = tokens[rhs_end].e, raw = raw }
+                        end
+                    end
+                    i = next_i
+                else
+                    local _, next_i = find_rhs_end(i)
+                    if next_i <= i then next_i = i + 1 end
+                    i = next_i
+                end
+                ::continue::
+            end
+            return i
+        end
+
+        local function config_arg_index(i)
+            if not (tokens[i] and tokens[i].type == "IDENT" and tokens[i].val == "hl" and tokens[i + 1] and tokens[i + 1].type == "DOT" and tokens[i + 2] and tokens[i + 2].type == "IDENT" and tokens[i + 2].val == "config") then return nil end
+            if tokens[i + 3] and tokens[i + 3].type == "LPAREN" then return i + 4 end
+            if tokens[i + 3] and tokens[i + 3].type == "LBRACE" then return i + 3 end
+            return nil
+        end
+
+        local stack = {}
+        local function in_function() for n = #stack, 1, -1 do if stack[n] == "function" then return true end end return false end
+        local i = 1
+        while i <= #tokens do
+            local arg = nil
+            if not in_function() then arg = config_arg_index(i) end
+            if arg and tokens[arg] and tokens[arg].type == "LBRACE" then parse_table(arg, {}) end
+            if tokens[i].type == "IDENT" then
+                if tokens[i].val == "function" then stack[#stack + 1] = "function"
+                elseif tokens[i].val == "end" then stack[#stack] = nil end
+            end
+            i = i + 1
+        end
+
+        if #matches == 0 then os.exit(1) end -- Exit 1 means pattern not found in THIS file.
+        if #matches > 1 then os.exit(2) end  -- Ambiguous
+
+        local m = matches[1]
+        local ok, repl_or_err = pcall(format_replacement, m.raw)
+        if not ok then die(3, repl_or_err) end
+        
+        local new_text = text:sub(1, m.s - 1) .. repl_or_err .. text:sub(m.e + 1)
+        io.write(new_text)
+        os.exit(0)
+        """
+
+        success = False
+        try:
+            # We iterate through all tracked files. If the mutator finds it, it outputs the new file.
+            for src_file in self.loaded_files:
+                if not Path(src_file).exists():
+                    continue
+                    
+                res = subprocess.run([self.lua_bin, "-", src_file, target_key, target_scope, val_file_path],
+                                     input=lua_mutator, text=True, capture_output=True, timeout=4)
+                
+                if res.returncode == 0 and res.stdout:
+                    # Write stdout directly back to the matching modular file
+                    with open(src_file, 'w') as f:
+                        f.write(res.stdout)
+                        
+                    cache_key = f"{target_scope}/{target_key}" if target_scope else target_key
+                    if new_value == "__DELETE__":
+                        self.cache.pop(cache_key, None)
+                    else:
+                        self.cache[cache_key] = new_value
+                    success = True
+                    break  # Found and mutated successfully
+                elif res.returncode == 1:
+                    continue  # Key not in this specific file, check the next one
+                else:
+                    print(f"[Engine Warning] Mutator returned {res.returncode} for {src_file}. Error: {res.stderr}")
+                    
+        except Exception as e:
+            print(f"[Engine Error] Exception during mutation: {e}")
+            
+        if os.path.exists(val_file_path):
+            os.unlink(val_file_path)
+            
+        return success
 
 # =============================================================================
 # FOR DIOGNOSING ANY ISSUES, VERY IMPORTANT Commands!!
@@ -91,6 +453,7 @@ def color_to_rgb(val: str) -> tuple[int, int, int]:
         
     m_oklch = re.match(r"oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)", val)
     if m_oklch:
+        # Approximate OKLCH mapping strictly for UI visualization purposes
         l_val, c_val, h_val = float(m_oklch.group(1)), float(m_oklch.group(2)), float(m_oklch.group(3))
         r, g, b = colorsys.hls_to_rgb(h_val/360.0, l_val, min(c_val*2.5, 1.0))
         return (max(0, min(255, int(r*255))), max(0, min(255, int(g*255))), max(0, min(255, int(b*255))))
@@ -274,7 +637,6 @@ class TextInputOverlay(ModalScreen[str | None]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
-
 class PickerScreen(ModalScreen[str | None]):
     BINDINGS = [
         Binding("up,k", "cursor_up", "Up"),
@@ -317,85 +679,6 @@ class PickerScreen(ModalScreen[str | None]):
 
     def action_cursor_down(self) -> None:
         self.query_one(OptionList).action_cursor_down()
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class SearchScreen(ModalScreen[tuple[int, int] | None]):
-    """Native Textual FZF-style Fuzzy Find Modal configured for rapid parameter jumps via Ctrl+F."""
-    
-    BINDINGS = [
-        Binding("escape", "cancel", "Cancel"),
-        Binding("down,j", "cursor_down", "Down"),
-        Binding("up,k", "cursor_up", "Up"),
-    ]
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="search-dialog"):
-            with Vertical(id="search-content"):
-                yield Label("FUZZY FIND (Ctrl+F)", id="modal-title")
-                yield Input(placeholder="Type to filter configurations...", id="search-input")
-                yield OptionList(id="search-list")
-                yield Label("Use ↑/↓ and Enter to jump, Escape to cancel", id="modal-hint")
-
-    def on_mount(self) -> None:
-        self.query_one(Input).focus()
-        self._populate_list("")
-
-    @on(Input.Changed)
-    def handle_input(self, event: Input.Changed) -> None:
-        self._populate_list(event.value)
-
-    def _populate_list(self, query: str) -> None:
-        ol = self.query_one(OptionList)
-        ol.clear_options()
-        self.results = []
-        
-        # Strip spaces for pure FZF-style ordered character matching
-        query = query.lower().replace(" ", "")
-        
-        for tab_idx, tab_items in SCHEMA.items():
-            tab_name = TABS[tab_idx] if tab_idx < len(TABS) else f"Tab {tab_idx}"
-            for item_idx, item in enumerate(tab_items):
-                search_text = f"{tab_name} {item.label} {item.key} {item.type_}".lower()
-                
-                # FZF Algorithm logic: characters must appear in order, but not necessarily consecutively
-                match = True
-                if query:
-                    q_idx, s_idx = 0, 0
-                    while q_idx < len(query) and s_idx < len(search_text):
-                        if query[q_idx] == search_text[s_idx]:
-                            q_idx += 1
-                        s_idx += 1
-                    match = (q_idx == len(query))
-                
-                if match:
-                    txt = Text()
-                    txt.append(f"[{tab_name}] ", style=THEME["accent"])
-                    txt.append(item.label, style="bold")
-                    if item.hints:
-                        txt.append(f" - {item.hints[0]}", style=f"italic {THEME['muted']}")
-                    ol.add_option(Option(txt))
-                    self.results.append((tab_idx, item_idx))
-
-    @on(OptionList.OptionSelected)
-    def on_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option_index is not None and event.option_index < len(self.results):
-            self.dismiss(self.results[event.option_index])
-
-    @on(Input.Submitted)
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        ol = self.query_one(OptionList)
-        if ol.highlighted is not None and ol.highlighted < len(self.results):
-            self.dismiss(self.results[ol.highlighted])
-
-    def action_cursor_down(self) -> None:
-        self.query_one(OptionList).action_cursor_down()
-
-    def action_cursor_up(self) -> None:
-        self.query_one(OptionList).action_cursor_up()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -624,39 +907,12 @@ class DuskyApp(App):
         border-subtitle-align: right;
         background: transparent;
         padding: 0 1;
-        layers: base overlay;
-    }
-    
-    #tab-arrows-container {
-        width: 100%;
-        height: 1;
-        layer: overlay;
-        background: transparent;
-        margin-top: 1; /* Pushes it down to overlay perfectly on the Tabs widget */
-    }
-    
-    .tab-arrow {
-        width: 3;
-        height: 1;
-        content-align: center middle;
-        background: $background;
-        color: $primary;
-        text-style: bold;
-        display: none;
-    }
-    #tab-left { dock: left; }
-    #tab-right { dock: right; }
-    
-    .tab-arrow:hover {
-        color: $text;
-        background: $primary 25%;
     }
     
     TabbedContent { height: 1fr; margin-bottom: 1; background: transparent; }
     ContentSwitcher { height: 1fr; background: transparent; }
     
-    /* Dynamically padded to make room for docked overflow arrows */
-    Tabs { height: 1; margin-bottom: 1; background: transparent; padding: 0 4; }
+    Tabs { height: 1; margin-bottom: 1; background: transparent; }
     Tabs > .underline { display: none; }
     Tab { height: 1; padding: 0 1; color: $primary 60%; background: transparent; border: none; }
     Tab:hover { color: $text; background: $primary 25%; }
@@ -684,20 +940,13 @@ class DuskyApp(App):
     #file-link:hover { text-style: bold; color: $text; background: $primary 25%; }
     
     /* MODAL STYLING WITH ROUNDED CORNERS - ZERO BLEED TRICK */
-    TextInputOverlay, PickerScreen, SearchScreen { align: center middle; background: rgba(0, 0, 0, 0.75); }
+    TextInputOverlay, PickerScreen { align: center middle; background: rgba(0, 0, 0, 0.75); }
     
     #modal-dialog { width: 50; height: auto; background: transparent; border: round $primary; padding: 0; }
     #modal-content { width: 100%; height: auto; background: $background; padding: 1 2; }
     
     #picker-dialog { width: 60; height: 15; background: transparent; border: round $primary; padding: 0; }
     #picker-content { width: 100%; height: 100%; background: $background; padding: 1 2; }
-    
-    #search-dialog { width: 60; height: 20; background: transparent; border: round $primary; padding: 0; }
-    #search-content { width: 100%; height: 100%; background: $background; padding: 1 2; }
-    #search-list { height: 1fr; scrollbar-size: 0 0; background: transparent; border: none; }
-    #search-list > .option-list--option { padding: 0 1; background: transparent; transition: background 100ms linear; }
-    #search-list > .option-list--option-hover { background: $primary 10%; }
-    #search-list > .option-list--option-highlighted { background: $primary 20%; color: $text; text-style: bold; }
     
     #modal-title, #picker-title { color: $primary; margin-bottom: 1; text-style: bold; border-bottom: solid $secondary; }
     #modal-hint { color: $secondary; text-style: italic; content-align: center middle; width: 100%; margin-top: 1; }
@@ -713,7 +962,6 @@ class DuskyApp(App):
 
     BINDINGS = [
         Binding("q,ctrl+c", "quit", "Quit", priority=True),
-        Binding("ctrl+f", "search", "Search", priority=True),
         Binding("tab", "next_tab", "Next Tab", priority=True),
         Binding("shift+tab", "prev_tab", "Prev Tab", priority=True),
         Binding("alt+1", "switch_tab(0)", "Tab 1", show=False),
@@ -730,9 +978,6 @@ class DuskyApp(App):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="main-box"):
-            with Horizontal(id="tab-arrows-container"):
-                yield Label(" ◀ ", id="tab-left", classes="tab-arrow")
-                yield Label(" ▶ ", id="tab-right", classes="tab-arrow")
             with TabbedContent(id="tabs"):
                 for i, name in enumerate(TABS):
                     with TabPane(name, id=f"tab-{i}"):
@@ -795,6 +1040,21 @@ class DuskyApp(App):
 
     async def on_mount(self) -> None:
         self.query_one("#main-box").border_title = " Generic System Config Editor v7.0.4 "
+        
+        # Initialize Engine and load the actual disk state
+        self.engine = HyprlandLuaEngine()
+        loaded_state = self.engine.load_state()
+        
+        for i, items in SCHEMA.items():
+            for item in items:
+                cache_key = f"{item.scope}/{item.key}" if item.scope and item.scope != "DEFAULT" else item.key
+                if cache_key in loaded_state:
+                    raw_val = loaded_state[cache_key]
+                    if item.type_ == "bool": item.value = str(raw_val).lower() == "true"
+                    elif item.type_ == "int": item.value = int(float(raw_val))
+                    elif item.type_ == "float": item.value = float(raw_val)
+                    else: item.value = str(raw_val)
+
         self.apply_theme_to_engine()
         
         for i in range(len(TABS)):
@@ -810,7 +1070,6 @@ class DuskyApp(App):
             self._update_pagination(first_ol)
 
         self.set_interval(0.5, self.watch_theme_file)
-        self.set_interval(0.1, self.check_tab_overflow)
         self.call_after_refresh(self._update_scroll_indicators)
 
     @property
@@ -823,32 +1082,6 @@ class DuskyApp(App):
         except Exception:
             pass
         return None
-
-    def check_tab_overflow(self) -> None:
-        """Dynamically evaluates responsive threshold bounds mapping for the tab arrows."""
-        try:
-            tabs = self.query_one(Tabs)
-            left = self.query_one("#tab-left")
-            right = self.query_one("#tab-right")
-            
-            left.display = tabs.scroll_x > 0
-            right.display = tabs.scroll_x < tabs.max_scroll_x
-        except Exception:
-            pass
-
-    @on(events.Click, "#tab-left")
-    def scroll_tabs_left(self) -> None:
-        try:
-            tabs = self.query_one(Tabs)
-            tabs.scroll_relative(x=-15, animate=True)
-        except Exception: pass
-
-    @on(events.Click, "#tab-right")
-    def scroll_tabs_right(self) -> None:
-        try:
-            tabs = self.query_one(Tabs)
-            tabs.scroll_relative(x=15, animate=True)
-        except Exception: pass
 
     def watch_theme_file(self) -> None:
         try:
@@ -978,31 +1211,6 @@ class DuskyApp(App):
             
         self._status_timer = self.set_timer(3, lambda: setattr(app_footer, 'status_msg', ""))
 
-    def action_search(self) -> None:
-        def check_reply(result: tuple[int, int] | None) -> None:
-            if result is not None:
-                tab_idx, item_idx = result
-                self.action_switch_tab(tab_idx)
-                try:
-                    ol = self.query_one(f"#list-{tab_idx}", ConfigOptionList)
-                    ol.focus()
-                    ol.highlighted = item_idx
-                    ol.scroll_to_highlight()
-                    
-                    # Manually update render cache if we bypassed standard highlight dispatch
-                    item = SCHEMA[tab_idx][item_idx]
-                    if ol.last_highlighted_idx is not None and ol.last_highlighted_idx != item_idx:
-                        old_item = SCHEMA[tab_idx][ol.last_highlighted_idx]
-                        ol.replace_option_prompt_at_index(ol.last_highlighted_idx, self._build_option(old_item, False))
-                        
-                    ol.replace_option_prompt_at_index(item_idx, self._build_option(item, True))
-                    ol.last_highlighted_idx = item_idx
-                    self._update_pagination(ol)
-                except Exception:
-                    pass
-                    
-        self.push_screen(SearchScreen(), check_reply)
-
     def action_next_tab(self) -> None: 
         self.query_one(Tabs).action_next_tab()
         
@@ -1014,6 +1222,22 @@ class DuskyApp(App):
             tc = self.query_one(TabbedContent)
             tc.active = f"tab-{index}"
 
+    def _sync_item(self, item: ConfigItem, new_val: Any, ol: ConfigOptionList, item_idx: int) -> None:
+        """Helper to write configuration before updating the UI state."""
+        success = self.engine.write_value(item.key, item.scope, new_val)
+        if success:
+            item.value = new_val
+            is_hl = (item_idx == ol.highlighted)
+            ol.replace_option_prompt_at_index(item_idx, self._build_option(item, is_hl))
+            self.notify_status(f"Written: {item.label} = {new_val}")
+            
+            # Hot reload trigger
+            if item.type_ == "action" and item.key == "reload":
+                subprocess.run(["hyprctl", "reload"], capture_output=True)
+                self.notify_status("Hyprland Daemon Reloaded.")
+        else:
+            self.notify_status(f"Error: Failed to write {item.label} to file.")
+
     def action_adjust(self, direction: int) -> None:
         ol = self.current_option_list
         if not ol or ol.highlighted is None: return
@@ -1023,20 +1247,21 @@ class DuskyApp(App):
         item_idx = ol.highlighted
         item = SCHEMA.get(tab_idx, [])[item_idx]
         
+        new_val = item.value
         match item.type_:
             case "bool":
-                item.value = not item.value
+                new_val = not item.value
             case "int" | "float":
                 step = item.step or 1
                 new_val = item.value + (direction * step)
                 if item.min_val is not None: new_val = max(item.min_val, new_val)
                 if item.max_val is not None: new_val = min(item.max_val, new_val)
-                item.value = round(new_val, 6) if item.type_ == "float" else int(new_val)
+                new_val = round(new_val, 6) if item.type_ == "float" else int(new_val)
             case "cycle":
                 if not item.options: return
                 try: idx = item.options.index(item.value)
                 except ValueError: idx = 0
-                item.value = item.options[(idx + direction) % len(item.options)]
+                new_val = item.options[(idx + direction) % len(item.options)]
             case "color":
                 r, g, b = color_to_rgb(str(item.value))
                 current_name = get_color_name(r, g, b)
@@ -1044,11 +1269,10 @@ class DuskyApp(App):
                 except ValueError: idx = 0
                 next_name = CYCLE_COLORS[(idx + direction) % len(CYCLE_COLORS)]
                 fmt = parse_color_format(str(item.value))
-                item.value = format_rgb(next_name, fmt, str(item.value))
+                new_val = format_rgb(next_name, fmt, str(item.value))
             case _: return
             
-        ol.replace_option_prompt_at_index(item_idx, self._build_option(item, True))
-        self.notify_status(f"Updated {item.label}")
+        self._sync_item(item, new_val, ol, item_idx)
 
     def action_reset_item(self) -> None:
         ol = self.current_option_list
@@ -1058,9 +1282,7 @@ class DuskyApp(App):
             item_idx = ol.highlighted
             item = SCHEMA[tab_idx][item_idx]
             
-            item.value = item.default
-            ol.replace_option_prompt_at_index(item_idx, self._build_option(item, True))
-            self.notify_status(f"Reset {item.label}")
+            self._sync_item(item, item.default, ol, item_idx)
 
     def action_reset_all(self) -> None:
         tc = self.query_one(TabbedContent)
@@ -1068,13 +1290,10 @@ class DuskyApp(App):
         
         tab_idx = int(tc.active.split("-")[1])
         items = SCHEMA.get(tab_idx, [])
-        for item in items:
-            item.value = item.default
             
         if ol := self.current_option_list:
             for idx, item in enumerate(items):
-                is_hl = (idx == ol.highlighted)
-                ol.replace_option_prompt_at_index(idx, self._build_option(item, is_hl))
+                self._sync_item(item, item.default, ol, idx)
                 
         self.notify_status(f"Reset all items in {TABS[tab_idx]}")
 
@@ -1122,9 +1341,7 @@ class DuskyApp(App):
             
             click_x = getattr(ol, "_last_click_x", 0)
             if threshold <= click_x <= threshold + 12: # Safe bound
-                item.value = item.default
-                ol.replace_option_prompt_at_index(index, self._build_option(item, True))
-                self.notify_status(f"Reset {item.label}")
+                self._sync_item(item, item.default, ol, index)
                 return
                 
         match item.type_:
@@ -1154,20 +1371,14 @@ class DuskyApp(App):
                         self.notify_status("Error: Value must be a float.")
                         return
                         
-                item.value = new_val
-                is_hl = (item_idx == ol.highlighted)
-                ol.replace_option_prompt_at_index(item_idx, self._build_option(item, is_hl))
-                self.notify_status(f"Written: {item.label} = {new_val}")
+                self._sync_item(item, new_val, ol, item_idx)
                 
         self.push_screen(TextInputOverlay(f"Enter new {item.label}:", str(item.value)), check_reply)
 
     def prompt_picker(self, ol: ConfigOptionList, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
         def check_reply(new_val: str | None) -> None:
             if new_val is not None:
-                item.value = new_val
-                is_hl = (item_idx == ol.highlighted)
-                ol.replace_option_prompt_at_index(item_idx, self._build_option(item, is_hl))
-                self.notify_status(f"Selected: {new_val}")
+                self._sync_item(item, new_val, ol, item_idx)
                 
         self.push_screen(PickerScreen(item.label, item.options, item.hints), check_reply)
 
