@@ -766,3 +766,12 @@ fi
 # =============================================================================
 # End of ~/.zshrc
 # =============================================================================
+
+export PATH="$PATH:$HOME/go/bin"
+export SSH_AUTH_SOCK="$HOME/.bitwarden-ssh-agent.sock"
+
+# Pull the Hyprland signature directly from systemd for remote shells
+export $(systemctl --user show-environment | grep HYPRLAND_INSTANCE_SIGNATURE)
+
+# Created by `pipx` on 2026-04-27 23:19:12
+export PATH="$PATH:/home/vcto/.local/bin"
