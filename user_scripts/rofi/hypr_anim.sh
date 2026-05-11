@@ -12,7 +12,7 @@ readonly ANIM_DIR="$CONFIG_DIR/hypr/source/animations"
 readonly LINK_DIR="$ANIM_DIR/active"
 readonly DEST_FILE="$LINK_DIR/active.lua"
 readonly STATE_FILE="$CONFIG_DIR/dusky/settings/dusky_animiation" 
-readonly FALLBACK_ANIM="horizontal_dusky.lua"
+readonly FALLBACK_ANIM="dusky.lua"
 
 # Visual Assets
 readonly ICON_ACTIVE=""   
