@@ -647,12 +647,13 @@ class DuskyTUI(App):
         
         if exists:
             label_style = f"{self.theme_colors['fg']} bold" if is_highlighted else self.theme_colors["fg"]
-            label_text = f"{item.label:<35}"
+            txt.append(f"{item.label:<35}", style=label_style)
         else:
             label_style = f"{self.theme_colors['muted']} strike" if not is_highlighted else f"{self.theme_colors['muted']} strike bold"
-            label_text = f"{item.label + ' [Missing]':<35}"
-            
-        txt.append(label_text, style=label_style)
+            raw_label = f"{item.label} [Missing]"
+            padding_len = max(0, 35 - len(raw_label))
+            txt.append(raw_label, style=label_style)
+            txt.append(" " * padding_len)
         
         val_str = str(item.value)
         def_str = str(item.default)
