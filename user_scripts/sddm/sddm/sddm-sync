@@ -1,0 +1,23 @@
+#!/bin/bash
+# -----------------------------------------------------------------------------
+# sddm-sync — Copy the active Matugen wallpaper to the SDDM theme background.
+# Called by sddm-sync.service with the wallpaper path as $1.
+# Requires root (writes to /usr/share/sddm/themes/dusky/backgrounds/).
+# -----------------------------------------------------------------------------
+
+WALL="$1"
+SDDM_WALL="/usr/share/sddm/themes/dusky/backgrounds/default.jpg"
+
+if [[ -z "$WALL" ]]; then
+    echo "Error: no wallpaper path provided." >&2
+    exit 1
+fi
+
+if [[ ! -f "$WALL" ]]; then
+    echo "Error: image path '$WALL' does not exist." >&2
+    exit 1
+fi
+
+cp "$WALL" "$SDDM_WALL" && chmod 644 "$SDDM_WALL" \
+    && echo "SDDM sync: $WALL" \
+    || { echo "Error: copy failed." >&2; exit 1; }
