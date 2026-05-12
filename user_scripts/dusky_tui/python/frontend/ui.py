@@ -177,8 +177,9 @@ class TextInputOverlay(ModalScreen[str | None]):
         with Vertical(id="modal-dialog"):
             yield Label(self.prompt_text, id="modal-title")
             yield Input(value=self.default_text, id="modal-input")
-            yield Label("Press Enter to save", id="modal-hint")
-            yield Label("  [ Cancel ]  ", classes="modal-close-btn")
+            yield Label("Press Enter to save • Esc to cancel", id="modal-hint")
+            with Horizontal(classes="modal-btn-container"):
+                yield Label(" Cancel ", classes="modal-close-btn")
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
@@ -213,7 +214,8 @@ class PickerScreen(ModalScreen[str | None]):
         with Vertical(id="picker-dialog"):
             yield Label(f"PICKER: {self.picker_title}", id="picker-title")
             yield OptionList(id="picker-list")
-            yield Label("  [ Cancel ]  ", classes="modal-close-btn")
+            with Horizontal(classes="modal-btn-container"):
+                yield Label(" Cancel ", classes="modal-close-btn")
 
     def on_mount(self) -> None:
         ol = self.query_one(OptionList)
@@ -257,7 +259,8 @@ class SearchScreen(ModalScreen[tuple[int, int] | None]):
             yield Label("FUZZY FIND (Ctrl+F)", id="modal-title")
             yield Input(placeholder="Type to filter configurations...", id="search-input")
             yield OptionList(id="search-list")
-            yield Label("  [ Cancel ]  ", classes="modal-close-btn")
+            with Horizontal(classes="modal-btn-container"):
+                yield Label(" Cancel ", classes="modal-close-btn")
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
@@ -330,7 +333,8 @@ class DiffScreen(ModalScreen[None]):
         with Vertical(id="diff-dialog"):
             yield Label("MODIFICATIONS (From Launch)", id="modal-title")
             yield OptionList(id="diff-list")
-            yield Label("  [ Close ]  ", classes="modal-close-btn")
+            with Horizontal(classes="modal-btn-container"):
+                yield Label(" Close ", classes="modal-close-btn")
 
     def on_mount(self) -> None:
         ol = self.query_one(OptionList)
@@ -367,7 +371,8 @@ class ShortcutsInfoScreen(ModalScreen[None]):
         with Vertical(id="shortcuts-dialog"):
             yield Label("KEYBOARD SHORTCUTS", id="modal-title")
             yield OptionList(id="shortcuts-list")
-            yield Label("  [ Close ]  ", classes="modal-close-btn")
+            with Horizontal(classes="modal-btn-container"):
+                yield Label(" Close ", classes="modal-close-btn")
                 
     def on_mount(self) -> None:
         ol = self.query_one(OptionList)
@@ -382,6 +387,7 @@ class ShortcutsInfoScreen(ModalScreen[None]):
             ("shift+tab", "Switch to Previous Tab"),
             ("d", "Show pending or modified items (Diff)"),
             ("u", "Undo last change"),
+            ("ctrl+r", "Redo last undone change"),
             ("ctrl+t", "Toggle between Auto and Batch save modes"),
             ("ctrl+s", "Commit all pending changes (only available in Batch mode)"),
             ("enter", "Trigger action / Input string / Open Picker"),
@@ -644,7 +650,7 @@ class FlowContainer(Widget):
             max_item_w = max(max_item_w, cw)
             max_item_h = max(max_item_h, ch)
 
-        col_w_needed = max_item_w + 2
+        col_w_needed = max_item_w
         max_cols_possible = max(1, width // col_w_needed)
 
         if max_cols_possible >= N:
@@ -675,11 +681,8 @@ class AppFooter(Vertical):
 
     def compose(self) -> ComposeResult:
         with FlowContainer(id="footer-shortcuts-container"):
+            # Cleaned up visual footer footprint - keybind logic remains globally intact
             yield Shortcut("ctrl+s", "Batch Save", "save_batch", id="shortcut-ctrl-s")
-            yield Shortcut("d", "Diff", "show_diff", id="shortcut-d")
-            yield Shortcut("u", "Undo", "undo", id="shortcut-u")
-            yield Shortcut("?", "Help", "toggle_help", id="shortcut-help")
-            yield Shortcut("f1", "Shortcuts", "show_shortcuts", id="shortcut-f1")
             yield Shortcut("/", "Jump", "focus_local_search", id="shortcut-slash")
             yield Shortcut("ctrl+f", "Search", "search", id="shortcut-ctrl-f")
             yield Shortcut("r", "Reset Item", "reset_item", id="shortcut-r")
@@ -795,13 +798,11 @@ class DuskyTUI(App):
     
     TextInputOverlay, PickerScreen, SearchScreen, DiffScreen, ShortcutsInfoScreen { align: center middle; background: rgba(0, 0, 0, 0.75); }
     
-    /* Dialog constrained sizes to force layout calculations and keep close button visible */
-    #picker-dialog { width: 60; height: 15; background: $background; border: round $primary; padding: 1 2; }
-    #search-dialog { width: 60; height: 20; background: $background; border: round $primary; padding: 1 2; }
-    #diff-dialog   { width: 70; height: 25; background: $background; border: round $primary; padding: 1 2; }
-    #shortcuts-dialog { width: 70; height: 28; background: $background; border: round $primary; padding: 1 2; }
-    
-    #modal-dialog { width: 50; height: 12; background: $background; border: round $primary; padding: 1 2; }
+    #picker-dialog { width: 60; height: 70%; background: $background; border: solid $primary; padding: 1 2; }
+    #search-dialog { width: 60; height: 80%; background: $background; border: solid $primary; padding: 1 2; }
+    #diff-dialog   { width: 70; height: 80%; background: $background; border: solid $primary; padding: 1 2; }
+    #shortcuts-dialog { width: 70; height: 80%; background: $background; border: solid $primary; padding: 1 2; }
+    #modal-dialog { width: 50; height: auto; background: $background; border: solid $primary; padding: 1 2; }
     
     #picker-list, #search-list, #diff-list, #shortcuts-list { height: 1fr; scrollbar-size: 0 0; background: transparent; border: none; }
     #search-list > .option-list--option { padding: 0 1; background: transparent; transition: background 100ms linear; }
@@ -811,10 +812,17 @@ class DuskyTUI(App):
     #diff-list > .option-list--option { padding: 0 1; background: transparent; }
     #shortcuts-list > .option-list--option { padding: 0 1; background: transparent; }
     
+    /* Layout isolation technique - perfectly centers the 1-line button dynamically */
+    .modal-btn-container {
+        width: 100%; height: auto; align: center middle;
+        margin-top: 1; background: transparent;
+    }
+    
     .modal-close-btn {
         background: $primary; color: $background; text-style: bold;
-        content-align: center middle; width: 100%; height: 1; margin-top: 1;
+        padding: 0 2; width: auto; height: 1;
     }
+    
     .modal-close-btn:hover { background: $foreground; color: $background; }
     
     #modal-title, #picker-title { color: $primary; margin-bottom: 1; text-style: bold; border-bottom: solid $secondary; }
@@ -832,6 +840,7 @@ class DuskyTUI(App):
         Binding("ctrl+s", "save_batch", "Save Batch", priority=True),
         Binding("d", "show_diff", "Diff", priority=True),
         Binding("u", "undo", "Undo", priority=True),
+        Binding("ctrl+r", "redo", "Redo", priority=True),
         Binding("?", "toggle_help", "Help", priority=True),
         Binding("/", "focus_local_search", "Search Inline", priority=True),
         Binding("tab", "next_tab", "Next Tab", priority=True),
@@ -858,6 +867,7 @@ class DuskyTUI(App):
         
         self.pending_commits: set[tuple[int, int]] = set() 
         self.undo_stack: deque[tuple[int, int, Any, Any]] = deque(maxlen=50) 
+        self.redo_stack: deque[tuple[int, int, Any, Any]] = deque(maxlen=50) 
         self._save_timers: dict[tuple[int, int], Timer] = {}
         
         self.theme_colors = {
@@ -980,9 +990,8 @@ class DuskyTUI(App):
         self._cached_tab_left = self.query_one("#tab-left", Label)
         self._cached_tab_right = self.query_one("#tab-right", Label)
         
-        # Configure Initial Shortcut visibility safely
         try:
-            batch_shortcut = self.query_one("#shortcut-batch-save")
+            batch_shortcut = self.query_one("#shortcut-ctrl-s")
             batch_shortcut.display = not self.auto_save
         except Exception: pass
         
@@ -1052,9 +1061,8 @@ class DuskyTUI(App):
         self._update_footer_legend()
         
         try:
-            batch_shortcut = self.query_one("#shortcut-batch-save")
+            batch_shortcut = self.query_one("#shortcut-ctrl-s")
             batch_shortcut.display = not new
-            # Defer the reflow mathematically until the display change has processed
             self.call_after_refresh(self.query_one("#footer-shortcuts-container", FlowContainer).reflow)
         except Exception: pass
             
@@ -1121,7 +1129,6 @@ class DuskyTUI(App):
         self._theme_toggle = not getattr(self, "_theme_toggle", False)
         theme_name = "dusky_matugen_A" if self._theme_toggle else "dusky_matugen_B"
         
-        # CORRECT THEME VARIABLE INJECTION: Uses "variables={}" strictly
         custom_theme = Theme(
             name=theme_name, 
             primary=self.theme_colors["accent"], 
@@ -1249,9 +1256,10 @@ class DuskyTUI(App):
                         
                 asyncio.create_task(_play())
 
-    def _apply_value(self, tab_idx: int, item_idx: int, item: ConfigItem, new_val: Any, is_undo: bool = False) -> bool:
+    def _apply_value(self, tab_idx: int, item_idx: int, item: ConfigItem, new_val: Any, is_undo: bool = False, batch_mode: bool = False) -> bool:
         if not is_undo:
             self.undo_stack.append((tab_idx, item_idx, item.value, new_val))
+            self.redo_stack.clear()
             
         item.value = new_val
         item.exists_in_target = True
@@ -1260,7 +1268,7 @@ class DuskyTUI(App):
         elif new_val is None: val_str = "nil"
         else: val_str = str(new_val)
 
-        if self.auto_save:
+        if self.auto_save and not batch_mode:
             k = (tab_idx, item_idx)
             if k in self._save_timers:
                 self._save_timers[k].stop()
@@ -1269,7 +1277,8 @@ class DuskyTUI(App):
             )
         else:
             self.pending_commits.add((tab_idx, item_idx))
-            self._update_footer_legend()
+            if not batch_mode:
+                self._update_footer_legend()
             
         self._refresh_single_ui(tab_idx, item_idx, item)
         return True
@@ -1344,15 +1353,26 @@ class DuskyTUI(App):
         self.push_screen(ShortcutsInfoScreen(), lambda _: self.toggle_shortcut_active("f1", False))
 
     def action_undo(self) -> None:
-        self.trigger_shortcut_blink("u")
         if not self.undo_stack:
             self.notify_status("Nothing to undo.")
             return
             
-        tab_idx, item_idx, old_val, _ = self.undo_stack.pop()
+        tab_idx, item_idx, old_val, new_val = self.undo_stack.pop()
+        self.redo_stack.append((tab_idx, item_idx, old_val, new_val))
         item = self.schema[tab_idx][item_idx]
         self._apply_value(tab_idx, item_idx, item, old_val, is_undo=True)
         self.notify_status(f"Undid change to {item.label}")
+
+    def action_redo(self) -> None:
+        if not self.redo_stack:
+            self.notify_status("Nothing to redo.")
+            return
+            
+        tab_idx, item_idx, old_val, new_val = self.redo_stack.pop()
+        self.undo_stack.append((tab_idx, item_idx, old_val, new_val))
+        item = self.schema[tab_idx][item_idx]
+        self._apply_value(tab_idx, item_idx, item, new_val, is_undo=True)
+        self.notify_status(f"Redid change to {item.label}")
 
     def action_toggle_help(self) -> None:
         content_area = self.query_one("#content-area")
@@ -1375,7 +1395,6 @@ class DuskyTUI(App):
         self.call_after_refresh(inp.focus)
 
     def action_clear_local_search(self) -> None:
-        # Handles ESC key globally - drops local search OR pops the active modal screen safely
         inp = self.query_one("#local-search", Input)
         if inp.has_class("-active"):
             inp.remove_class("-active")
@@ -1496,10 +1515,14 @@ class DuskyTUI(App):
             
             for item_idx, item in enumerate(items):
                 if str(item.value) != str(item.default):
-                    if self._apply_value(tab_idx, item_idx, item, item.default):
+                    if self._apply_value(tab_idx, item_idx, item, item.default, batch_mode=True):
                         success_count += 1
                         
             if success_count > 0:
+                if self.auto_save:
+                    self.action_save_batch()
+                else:
+                    self._update_footer_legend()
                 self.notify_status(f"Reset {success_count} items in {self.tabs[tab_idx]}")
                 self.play_reset_sound()
         except Exception: pass
