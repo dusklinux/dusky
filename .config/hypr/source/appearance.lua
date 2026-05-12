@@ -208,4 +208,4 @@ hl.config({
 
 
 -- Sourcing active animations
-dofile(hypr_root .. "/source/animations/active/active.lua")
+require("source.animations.active.active")
