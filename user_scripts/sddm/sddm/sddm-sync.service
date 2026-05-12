@@ -1,0 +1,7 @@
+[Unit]
+Description=Sync wallpaper to SDDM theme
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'wall=$(cat /tmp/sddm-sync-pending 2>/dev/null); /usr/local/bin/sddm-sync "$wall"'

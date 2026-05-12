@@ -65,6 +65,11 @@ post_hook = '''
 input_path  = '~/.config/matugen/templates/hyprland-colors.conf'
 output_path = '~/.config/matugen/generated/hyprland-colors.conf'
 
+[templates.hyprland_lua]
+input_path  = '~/.config/matugen/templates/hyprland-colors.lua'
+output_path = '~/.config/matugen/generated/hyprland-colors.lua'
+post_hook   = 'hyprctl reload || :'
+
 [templates.hyprlock]
 input_path  = '~/.config/matugen/templates/hyprlock-colors.conf'
 output_path = '~/.config/matugen/generated/hyprlock-colors.conf'
@@ -130,14 +135,14 @@ ln -nfs "$HOME/.config/matugen/generated/opencode.json" "$HOME/.config/opencode/
 pkill -SIGUSR1 -x kitty || :
 '''
 
-# [templates.vscode]
-# input_path  = '~/.config/matugen/templates/vscode.json'
-# output_path = '~/.config/matugen/generated/vscode.json'
-# post_hook   = '''
-#   if command -v vscodium >/dev/null 2>&1; then
-#   ln -nfs "$HOME/.config/matugen/generated/vscode.json" "$HOME/.config/VSCodium/User/settings.json"
-#   fi
-# '''
+[templates.vscode]
+input_path  = '~/.config/matugen/templates/vscode.json'
+output_path = '~/.config/matugen/generated/vscode.json'
+post_hook   = '''
+  if command -v code >/dev/null 2>&1; then
+    ln -nfs "$HOME/.config/matugen/generated/vscode.json" "$HOME/.config/Code/User/settings.json"
+  fi
+'''
 
 # [templates.alacritty]
 # input_path  = '~/.config/matugen/templates/alacritty.toml'
@@ -166,12 +171,12 @@ post_hook   = '''
 ln -nfs "$HOME/.config/matugen/generated/yazi-theme.toml" "$HOME/.config/yazi/theme.toml"
 '''
 
-# [templates.zathura]
-# input_path  = '~/.config/matugen/templates/zathura-colors'
-# output_path = '~/.config/matugen/generated/zathura-colors'
-# post_hook   = '''
-# ln -nfs "$HOME/.config/matugen/generated/zathura-colors" "$HOME/.config/zathura/zathurarc"
-# '''
+[templates.zathura]
+input_path  = '~/.config/matugen/templates/zathura-colors'
+output_path = '~/.config/matugen/generated/zathura-colors'
+post_hook   = '''
+ln -nfs "$HOME/.config/matugen/generated/zathura-colors" "$HOME/.config/zathura/zathurarc"
+'''
 
 # [templates.starship]
 # input_path = '~/.config/matugen/templates/starship-colors.toml'
@@ -214,15 +219,15 @@ post_hook   = '''
   fi
 '''
 
-# [templates.vesktop]
-# input_path  = '~/.config/matugen/templates/midnight-discord.css'
-# output_path = '~/.config/matugen/generated/midnight-discord.css'
-# post_hook   = '''
-# if command -v vesktop >/dev/null 2>&1; then
-#   mkdir -p "$HOME/.config/vesktop/themes/"
-#   ln -nfs "$HOME/.config/matugen/generated/midnight-discord.css" "$HOME/.config/vesktop/themes/midnight-discord.css"
-# fi
-# '''
+[templates.vesktop]
+input_path  = '~/.config/matugen/templates/midnight-discord.css'
+output_path = '~/.config/matugen/generated/midnight-discord.css'
+post_hook   = '''
+if command -v vesktop >/dev/null 2>&1; then
+  mkdir -p "$HOME/.config/vesktop/themes/"
+  ln -nfs "$HOME/.config/matugen/generated/midnight-discord.css" "$HOME/.config/vesktop/themes/midnight-discord.css"
+fi
+'''
 
 # [templates.beeper]
 # input_path  = '~/.config/matugen/templates/beeper.css'
@@ -234,16 +239,16 @@ post_hook   = '''
 #   fi
 # '''
 
-# [templates.spicetify]
-# input_path  = '~/.config/matugen/templates/spotify-colors.ini'
-# output_path = '~/.config/matugen/generated/spotify-colors.ini'
-# post_hook   = '''
-# if command -v spicetify >/dev/null 2>&1 && [ -d "$HOME/.config/spicetify/Themes/Comfy" ]; then
-#     ln -nfs "$HOME/.config/matugen/generated/spotify-colors.ini" "$HOME/.config/spicetify/Themes/Comfy/color.ini"
-#     spicetify apply -n || :
-#     hyprctl dispatch sendshortcut "CTRL_SHIFT, R, class:^(Spotify)$" || :
-# fi
-# '''
+[templates.spicetify]
+input_path  = '~/.config/matugen/templates/spotify-colors.ini'
+output_path = '~/.config/matugen/generated/spotify-colors.ini'
+post_hook   = '''
+if command -v spicetify >/dev/null 2>&1 && [ -d "$HOME/.config/spicetify/Themes/Comfy" ]; then
+    ln -nfs "$HOME/.config/matugen/generated/spotify-colors.ini" "$HOME/.config/spicetify/Themes/Comfy/color.ini"
+    spicetify apply -n || :
+    hyprctl dispatch sendshortcut "CTRL SHIFT, R, class:^(spotify)$" || :
+fi
+'''
 
 # [templates.steam]
 # input_path  = '~/.config/matugen/templates/steam.css'
@@ -286,12 +291,12 @@ post_hook   = '''
   systemctl --user restart dusky.service || :
 '''
 
-[templates.dusky_quickpanal]
+[templates.dusky_sliders]
 input_path  = '/dev/null'
 output_path = '/dev/null'
 post_hook   = '''
-  systemctl --user reset-failed dusky_quickpanal.service || :
-  systemctl --user restart dusky_quickpanal.service || :
+  systemctl --user reset-failed dusky_sliders.service || :
+  systemctl --user restart dusky_sliders.service || :
 '''
 
 
@@ -319,8 +324,26 @@ post_hook   = '''
 # '''
 
 [templates.firefox_websites]
-input_path = '~/.config/matugen/templates/firefox_websites.css'
+input_path  = '~/.config/matugen/templates/firefox_websites.css'
 output_path = '~/.config/matugen/generated/firefox_websites.css'
-post_hook = '''
-    ln -nfs "/home/dusk/.config/matugen/generated/firefox_websites.css" "/home/dusk/.config/mozilla/firefox/tox6bnxb.default-release/chrome/colors.css"
+post_hook   = '''
+  ln -nfs "$HOME/.config/matugen/generated/firefox_websites.css" "$HOME/.mozilla/firefox/nnnsdkhm.default-release/chrome/colors.css"
+'''
+
+[templates.zen]
+input_path  = '~/.config/matugen/templates/zen-matugen.css'
+output_path = '~/.config/zen/u8q2ykl6.Default (release)/chrome/matugen-colors.css'
+
+[templates.sddm_sync]
+input_path  = '~/.config/matugen/templates/colors.css'
+output_path = '~/.config/matugen/generated/sddm-sync-check'
+post_hook   = 'printf "%s" "{{image}}" > /tmp/sddm-sync-pending'
+
+[templates.razer]
+input_path  = '~/.config/matugen/templates/razer_sync.sh'
+output_path = '~/.config/matugen/generated/razer_sync.sh'
+post_hook   = '''
+  if command -v polychromatic-cli >/dev/null 2>&1; then
+    bash ~/.config/matugen/generated/razer_sync.sh || :
+  fi
 '''

@@ -217,6 +217,28 @@ setup_avatar() {
     log_success "Avatar updated for user '${target_user}'!"
 }
 
+# --- SDDM Wallpaper Sync ------------------------------------------------------
+
+setup_sddm_sync() {
+    local real_user="${SUDO_USER:-${USER}}"
+    local user_home
+    user_home=$(getent passwd "${real_user}" | cut -d: -f6)
+    local sync_dir="${user_home}/user_scripts/sddm"
+
+    if [[ ! -f "${sync_dir}/sddm-sync" ]]; then
+        log_warn "sddm-sync files not found at ${sync_dir} — skipping wallpaper sync setup."
+        return
+    fi
+
+    log_info "Installing sddm-sync wallpaper sync service..."
+    install -Dm755 "${sync_dir}/sddm-sync"         /usr/local/bin/sddm-sync
+    install -Dm644 "${sync_dir}/sddm-sync.path"    /etc/systemd/system/sddm-sync.path
+    install -Dm644 "${sync_dir}/sddm-sync.service" /etc/systemd/system/sddm-sync.service
+    systemctl daemon-reload
+    systemctl enable --now sddm-sync.path
+    log_success "sddm-sync installed and enabled."
+}
+
 # --- Main ---------------------------------------------------------------------
 
 while [[ $# -gt 0 ]]; do
@@ -235,6 +257,7 @@ get_source_files
 install_theme
 configure_sddm
 setup_avatar
+setup_sddm_sync
 
 printf '\n%bSetup Complete!%b\n' "${GREEN}" "${RESET}"
 printf 'To test properly, use:\n'
