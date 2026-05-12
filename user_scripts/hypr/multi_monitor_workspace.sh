@@ -47,11 +47,29 @@ fi
 
 # --- 6. Dispatch Logic ---
 
+# --- 6a. Lua Dispatcher Mapping ---
+# In Lua config mode, hyprctl dispatch evaluates Lua expressions.
+lua_dispatch() {
+    local disp="$1"
+    local tgt="$2"
+    case "${disp}" in
+        workspace)
+            exec hyprctl dispatch "hl.dsp.focus({workspace=${tgt}})" ;;
+        movetoworkspace)
+            exec hyprctl dispatch "hl.dsp.window.move({workspace=${tgt}})" ;;
+        movetoworkspacesilent)
+            exec hyprctl dispatch "hl.dsp.window.move({workspace=${tgt}, silent=true})" ;;
+        *)
+            # Fallback: try passing through as-is (e.g. custom named dispatchers)
+            exec hyprctl dispatch "${disp} ${tgt}" ;;
+    esac
+}
+
 # Case A: Pass-Through (Relative, Special, Named)
 # If the target is NOT a pure positive integer (contains chars, +, -, or is empty),
 # we pass it directly to Hyprland without doing math.
 if [[ ! "${target}" =~ ^[0-9]+$ ]]; then
-    exec hyprctl dispatch "${dispatcher}" "${target}"
+    lua_dispatch "${dispatcher}" "${target}"
 fi
 
 # Case B: Banked Navigation (Pure Integer)
@@ -69,4 +87,4 @@ fi
 final_target=$(( (bank_base * 10) + target ))
 
 # Execute and replace process
-exec hyprctl dispatch "${dispatcher}" "${final_target}"
+lua_dispatch "${dispatcher}" "${final_target}"

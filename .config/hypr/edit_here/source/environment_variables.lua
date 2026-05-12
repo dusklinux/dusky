@@ -1,0 +1,11 @@
+-- =============================================================================
+-- USER CONFIGURATION: environment_variables.lua
+-- =============================================================================
+-- Add your custom environment variables here.
+-- These will override or add to the defaults found in
+-- ~/.config/hypr/source/environment_variables.lua
+--
+-- NOTE: It is strongly advised to place environment variables in UWSM files:
+--   ~/.config/uwsm/env          (compositor-agnostic variables)
+--   ~/.config/uwsm/env-hyprland (Hyprland-specific variables)
+-- =============================================================================

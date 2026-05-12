@@ -11,6 +11,8 @@ set -euo pipefail
 # --- Constants ---
 readonly APP_NAME="waybar"
 readonly TIMEOUT_SEC=5
+readonly PROXY_SCRIPT="$HOME/user_scripts/hypr/hypr_lua_proxy.py"
+readonly PROXY_SIG="lua_proxy"
 
 # --- Terminal-Aware Colors (stderr detection) ---
 if [[ -t 2 ]]; then
@@ -38,6 +40,7 @@ launch_fallback() {
     log_info "Attempting fallback launch (setsid)..."
     (
         unset XDG_ACTIVATION_TOKEN DESKTOP_STARTUP_ID
+        export HYPRLAND_INSTANCE_SIGNATURE="${PROXY_SIG}"
         setsid "${APP_NAME}" "$@" </dev/null >/dev/null 2>&1 &
     )
     log_success "${APP_NAME} launched (fallback mode)."
@@ -79,6 +82,37 @@ else
     log_info "No running instance found."
 fi
 
+# --- Lua IPC Proxy ---
+# Command socket: Python proxy translates old-style "dispatch workspace N"
+# into valid Lua expressions before forwarding to the real Hyprland socket.
+# Event socket: socat pure pass-through (C-level, zero Python overhead).
+PROXY_CMD_SOCK="${XDG_RUNTIME_DIR}/hypr/${PROXY_SIG}/.socket.sock"
+PROXY_EVT_SOCK="${XDG_RUNTIME_DIR}/hypr/${PROXY_SIG}/.socket2.sock"
+REAL_DIR="${XDG_RUNTIME_DIR}/hypr/$(hyprctl instances -j 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["instance"])' 2>/dev/null || echo "${PROXY_SIG}")"
+
+log_info "Restarting Lua IPC proxy..."
+pkill -f "${PROXY_SCRIPT}" 2>/dev/null || true
+pkill -f "socat.*socket2.*lua_proxy\|socat.*lua_proxy.*socket2" 2>/dev/null || true
+
+# Command socket — Python (needs translation logic)
+python3 "${PROXY_SCRIPT}" >/dev/null 2>&1 &
+disown $!
+
+# Event socket — socat (pure kernel-level pipe, no Python overhead)
+socat \
+    "UNIX-LISTEN:${PROXY_EVT_SOCK},fork,unlink-early" \
+    "UNIX-CONNECT:${REAL_DIR}/.socket2.sock" \
+    >/dev/null 2>&1 &
+disown $!
+
+for (( i = 0; i < 30; i++ )); do
+    [[ -S "${PROXY_CMD_SOCK}" && -S "${PROXY_EVT_SOCK}" ]] && break
+    sleep 0.1
+done
+[[ -S "${PROXY_CMD_SOCK}" && -S "${PROXY_EVT_SOCK}" ]] \
+    && log_success "Lua proxy sockets ready." \
+    || log_err "Lua proxy socket(s) not ready — workspace clicks may be broken."
+
 # --- Launch Sequence ---
 log_info "Starting ${APP_NAME}..."
 
@@ -88,7 +122,9 @@ if command -v systemd-run >/dev/null 2>&1; then
     unit_name="${APP_NAME}-mgr-${EPOCHSECONDS}-$$"
 
     # '--' separates options from the command to prevent flag injection
-    if systemd-run --user --quiet --unit="${unit_name}" -- "${APP_NAME}" "$@" >/dev/null 2>&1; then
+    if systemd-run --user --quiet --unit="${unit_name}" \
+            --setenv=HYPRLAND_INSTANCE_SIGNATURE="${PROXY_SIG}" \
+            -- "${APP_NAME}" "$@" >/dev/null 2>&1; then
         log_success "${APP_NAME} launched via systemd unit: ${unit_name}"
     else
         log_err "systemd-run failed; attempting fallback."

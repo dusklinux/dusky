@@ -26,7 +26,7 @@ if [[ -d "$STATE_DIR" ]]; then
 fi
 
 # 2. Reset workspace (visually cleaner for next boot, non-fatal)
-hyprctl dispatch workspace 1 >/dev/null 2>&1 || :
+hyprctl dispatch "hl.dsp.focus({workspace=1})" >/dev/null 2>&1 || :
 
 # 3. Smart teardown logic
 # Safely check if UWSM is installed, then ask UWSM if it is actively managing the session
@@ -86,7 +86,7 @@ else
 
     # Execute final action
     if [[ "$ACTION" == "logout" ]]; then
-        exec hyprctl dispatch exit
+        exec hyprctl dispatch "hl.dsp.exit()"
     else
         exec systemctl "$ACTION" --no-wall
     fi

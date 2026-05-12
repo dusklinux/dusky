@@ -186,7 +186,7 @@ pages:
         icon: view-refresh-symbolic
       on_press:
         type: exec
-        command: hyprctl reload
+        command: sh -c 'hyprctl reload && hyprctl notify 1 2000 0 " Config reloaded"'
         terminal: false
     - type: grid_card
       properties:
@@ -1928,7 +1928,7 @@ pages:
                 interval: 5
               on_change:
                 type: exec
-                command: "ln -sf $HOME/.config/waybar/{value}/config.jsonc $HOME/.config/waybar/config.jsonc; ln -sf $HOME/.config/waybar/{value}/style.css $HOME/.config/waybar/style.css; killall -SIGUSR2 waybar"
+                command: "ln -sf $HOME/.config/waybar/{value}/config.jsonc $HOME/.config/waybar/config.jsonc; ln -sf $HOME/.config/waybar/{value}/style.css $HOME/.config/waybar/style.css; $HOME/user_scripts/waybar/waybar_autostart.sh"
 
         - type: section
           properties:
@@ -2888,6 +2888,13 @@ pages:
       value:
         type: exec
         command: hyprctl version | grep Hyprland | awk '{print $2}'
+    - type: label
+      properties:
+        title: Config Mode
+        icon: text-x-script
+      value:
+        type: exec
+        command: "test -f $HOME/.config/hypr/hyprland.lua && echo 'Lua' || echo 'Legacy'"
   - type: section
     properties:
       title: System Information

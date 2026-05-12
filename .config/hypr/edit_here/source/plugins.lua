@@ -1,0 +1,7 @@
+-- =============================================================================
+-- USER CONFIGURATION: plugins.lua
+-- =============================================================================
+-- Add your custom plugin settings here.
+-- These will override or add to the defaults found in
+-- ~/.config/hypr/source/plugins.lua
+-- =============================================================================
