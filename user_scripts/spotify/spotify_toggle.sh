@@ -3,8 +3,8 @@
 # Check if spotify process is running
 if pgrep -x "spotify" >/dev/null; then
 	# If running, just toggle the special workspace
-	hyprctl dispatch movetoworkspacesilent "special:music,class:^(Spotify)$"
-	hyprctl dispatch togglespecialworkspace music
+	hyprctl dispatch "hl.dsp.window.move({workspace='special:music', window='class:^(Spotify)$', silent=true})"
+	hyprctl dispatch "hl.dsp.workspace.toggle_special('music')"
 else
 	# If not running, launch it
 	spotify &

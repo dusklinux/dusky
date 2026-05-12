@@ -1,0 +1,10 @@
+# ==============================================================================
+# USER CONFIGURATION: window_rules.conf
+# ==============================================================================
+# Add your custom settings for window_rules here.
+# These will override or add to the defaults found in ~/.config/hypr/source/window_rules.conf
+# ==============================================================================
+
+# force emulators to bypass tiling and hit fullscreen immediately
+windowrule = match:class ^(com.libretro.RetroArch)$, fullscreen on, idle_inhibit always
+windowrule = match:class ^(info.cemu.Cemu)$, fullscreen on, idle_inhibit always

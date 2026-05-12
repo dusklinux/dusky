@@ -14,7 +14,7 @@ shopt -s extglob
 # ▼ USER CONFIGURATION (EDIT THIS SECTION) ▼
 # =============================================================================
 
-declare -r CONFIG_FILE="${HOME}/.config/hypr/edit_here/source/appearance.conf"
+declare -r CONFIG_FILE="${HOME}/.config/hypr/edit_here/source/appearance.lua"
 declare -r APP_TITLE="Dusky Appearances"
 declare -r APP_VERSION="v7.8.0"
 
@@ -33,23 +33,22 @@ declare -ra TABS=("Layout" "Decoration" "Blur" "Shadow" "Snap")
 # Item Registration
 register_items() {
     # Tab 0: Layout & General
-    register 0 "Gaps In"            "gaps_in|int||0|100|1"                  "6"
-    register 0 "Gaps Out"           "gaps_out|int||0|100|1"                 "12"
+    register 0 "Gaps In"            "gaps_in|int|general|0|100|1"           "6"
+    register 0 "Gaps Out"           "gaps_out|int|general|0|100|1"          "12"
     register 0 "Gaps Workspaces"    "gaps_workspaces|int|general|0|100|1"   "0"
-    register 0 "Border Size"        "border_size|int||0|10|1"               "2"
+    register 0 "Border Size"        "border_size|int|general|0|10|1"        "2"
     register 0 "Resize on Border"   "resize_on_border|bool|general|||"      "false"
     register 0 "Allow Tearing"      "allow_tearing|bool|general|||"         "true"
-    register 0 "Single Window Gap"  '$single_window_gap|int||0|100|1'       "10"
 
     # Tab 1: Decoration
-    register 1 "Rounding"           "rounding|int||0|30|1"                  "6"
-    register 1 "Rounding Power"     "rounding_power|float||0.0|10.0|0.1"   "6.0"
-    register 1 "Active Opacity"     "active_opacity|float||0.1|1.0|0.05"   "1.0"
-    register 1 "Inactive Opacity"   "inactive_opacity|float||0.1|1.0|0.05" "1.0"
-    register 1 "Fullscreen Opacity" "fullscreen_opacity|float||0.1|1.0|0.05" "1.0"
-    register 1 "Dim Inactive"       "dim_inactive|bool||||"                 "true"
-    register 1 "Dim Strength"       "dim_strength|float||0.0|1.0|0.05"     "0.2"
-    register 1 "Dim Special"        "dim_special|float||0.0|1.0|0.05"      "0.8"
+    register 1 "Rounding"           "rounding|int|decoration|0|30|1"        "6"
+    register 1 "Rounding Power"     "rounding_power|float|decoration|0.0|10.0|0.1" "6.0"
+    register 1 "Active Opacity"     "active_opacity|float|decoration|0.1|1.0|0.05" "1.0"
+    register 1 "Inactive Opacity"   "inactive_opacity|float|decoration|0.1|1.0|0.05" "1.0"
+    register 1 "Fullscreen Opacity" "fullscreen_opacity|float|decoration|0.1|1.0|0.05" "1.0"
+    register 1 "Dim Inactive"       "dim_inactive|bool|decoration|||"       "true"
+    register 1 "Dim Strength"       "dim_strength|float|decoration|0.0|1.0|0.05" "0.2"
+    register 1 "Dim Special"        "dim_special|float|decoration|0.0|1.0|0.05" "0.8"
 
     # Tab 2: Blur
     register 2 "Blur Enabled"       "enabled|bool|blur|||"                  "false"
@@ -68,8 +67,7 @@ register_items() {
     register 3 "Shadow Power"       "render_power|int|shadow|1|4|1"         "2"
     register 3 "Shadow Sharp"       "sharp|bool|shadow|||"                  "false"
     register 3 "Shadow Scale"       "scale|float|shadow|0.0|1.1|0.05"      "1.0"
-    register 3 "Shadow Ignore Win"  "ignore_window|bool|shadow|||"          "true"
-    register 3 "Shadow Color"       'color|cycle|shadow|rgba(1a1a1aee),$primary||' 'rgba(1a1a1aee)'
+    register 3 "Shadow Color"       'color|cycle|shadow|rgba(1a1a1aee)||' 'rgba(1a1a1aee)'
 
     # Tab 4: Snap
     register 4 "Snap Enabled"       "enabled|bool|snap|||"                  "false"
@@ -80,7 +78,7 @@ register_items() {
 
 # Post-Write Hook
 post_write_action() {
-    : # Reload command here, e.g.: hyprctl reload &>/dev/null || :
+    hyprctl reload &>/dev/null || :
 }
 
 # =============================================================================
@@ -202,17 +200,18 @@ populate_config_cache() {
         fi
     done < <(LC_ALL=C awk '
         BEGIN { depth = 0 }
-        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*--/ { next }
         {
             line = $0
             # Strip inline comments for structural parsing so "}" in comments doesn'"'"'t break blocks
             clean = line
-            sub(/[[:space:]]+#.*$/, "", clean)
+            sub(/[[:space:]]+--.*$/, "", clean)
 
             tmpline = clean
-            while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*\{/)) {
+            # Lua tables use "name = {" syntax; conf uses "name {"
+            while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*(=[[:space:]]*)?\{/)) {
                 block_str = substr(tmpline, RSTART, RLENGTH)
-                sub(/[[:space:]]*\{/, "", block_str)
+                sub(/[[:space:]]*(=[[:space:]]*)?\{/, "", block_str)
                 depth++
                 block_stack[depth] = block_str
                 tmpline = substr(tmpline, RSTART + RLENGTH)
@@ -225,8 +224,12 @@ populate_config_cache() {
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
                     # Strip trailing inline comment from value
-                    sub(/[[:space:]]+#.*$/, "", val)
+                    sub(/[[:space:]]+--.*$/, "", val)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+                    # Strip trailing comma (Lua table syntax)
+                    sub(/,$/, "", val)
+                    # Strip surrounding double-quotes (Lua string values)
+                    if (val ~ /^".*"$/) val = substr(val, 2, length(val) - 2)
                     if (key != "") {
                         current_block = (depth > 0) ? block_stack[depth] : ""
                         print key "|" current_block "=" val
@@ -266,13 +269,14 @@ write_value_to_file() {
     {
         line = $0
         clean = line
-        sub(/^[[:space:]]*#.*/, "", clean)
-        sub(/[[:space:]]+#.*$/, "", clean)
+        sub(/^[[:space:]]*--.*/, "", clean)
+        sub(/[[:space:]]+--.*$/, "", clean)
 
         tmpline = clean
-        while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*\{/)) {
+        # Lua tables use "name = {" syntax; conf uses "name {"
+        while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*(=[[:space:]]*)?\{/)) {
             block_str = substr(tmpline, RSTART, RLENGTH)
-            sub(/[[:space:]]*\{/, "", block_str)
+            sub(/[[:space:]]*(=[[:space:]]*)?\{/, "", block_str)
             depth++
             block_stack[depth] = block_str
             if (do_block && block_str == target_block && !in_target) {
@@ -311,7 +315,19 @@ write_value_to_file() {
             match(rest, /^[[:space:]]*/)
             space_after = substr(rest, RSTART, RLENGTH)
 
-            print before_eq space_after new_value
+            # Detect trailing comma and surrounding quotes from the original value
+            old_val = substr(rest, RSTART + RLENGTH)
+            sub(/[[:space:]]+--.*$/, "", old_val)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", old_val)
+            was_trailing = (old_val ~ /,$/) ? 1 : 0
+            sub(/,$/, "", old_val)
+            was_quoted = (old_val ~ /^".*"$/) ? 1 : 0
+
+            out_val = new_value
+            if (was_quoted && !(new_value ~ /^".*"$/)) out_val = "\"" new_value "\""
+            trailing = was_trailing ? "," : ""
+
+            print before_eq space_after out_val trailing
             replaced = 1
         } else {
             print line

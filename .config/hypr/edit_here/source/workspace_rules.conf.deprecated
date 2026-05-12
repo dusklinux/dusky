@@ -1,0 +1,82 @@
+# ==============================================================================
+# USER CONFIGURATION: workspace_rules.conf
+# ==============================================================================
+# Add your custom rules for workspace here.
+# These will override or add to the defaults found in :
+# ~/.config/hypr/source/workspace_rules.conf
+#
+# This file can also be edited with dusky workspace manager tui,
+# which can be found in dusky control center
+# ==============================================================================
+# USER CONFIGURATION: workspace_rules.conf
+# Managed by Dusky TUI - Granular Matrix v4.4.1
+# ==============================================================================
+
+# --- Global Rules ---
+$global_layout = dwindle
+workspace = r[11-99], layout:$global_layout
+
+# --- Ephemeral Global Override (Resets on reboot) ---
+$ephemeral_layout = monocle
+$ephemeral_enabled = false
+
+# --- Individual Workspaces (1-10) ---
+$ws1_layout = dwindle
+$ws1_persistent = false
+$ws1_master_orient = left
+$ws1_scroll_dir = right
+workspace = 1, layout:$ws1_layout, persistent:$ws1_persistent, layoutopt:orientation:$ws1_master_orient, layoutopt:direction:$ws1_scroll_dir
+
+$ws2_layout = dwindle
+$ws2_persistent = false
+$ws2_master_orient = left
+$ws2_scroll_dir = right
+workspace = 2, layout:$ws2_layout, persistent:$ws2_persistent, layoutopt:orientation:$ws2_master_orient, layoutopt:direction:$ws2_scroll_dir
+
+$ws3_layout = dwindle
+$ws3_persistent = false
+$ws3_master_orient = left
+$ws3_scroll_dir = right
+workspace = 3, layout:$ws3_layout, persistent:$ws3_persistent, layoutopt:orientation:$ws3_master_orient, layoutopt:direction:$ws3_scroll_dir
+
+$ws4_layout = dwindle
+$ws4_persistent = false
+$ws4_master_orient = left
+$ws4_scroll_dir = right
+workspace = 4, layout:$ws4_layout, persistent:$ws4_persistent, layoutopt:orientation:$ws4_master_orient, layoutopt:direction:$ws4_scroll_dir
+
+$ws5_layout = dwindle
+$ws5_persistent = false
+$ws5_master_orient = left
+$ws5_scroll_dir = right
+workspace = 5, layout:$ws5_layout, persistent:$ws5_persistent, layoutopt:orientation:$ws5_master_orient, layoutopt:direction:$ws5_scroll_dir
+
+$ws6_layout = dwindle
+$ws6_persistent = false
+$ws6_master_orient = left
+$ws6_scroll_dir = right
+workspace = 6, layout:$ws6_layout, persistent:$ws6_persistent, layoutopt:orientation:$ws6_master_orient, layoutopt:direction:$ws6_scroll_dir
+
+$ws7_layout = dwindle
+$ws7_persistent = false
+$ws7_master_orient = left
+$ws7_scroll_dir = right
+workspace = 7, layout:$ws7_layout, persistent:$ws7_persistent, layoutopt:orientation:$ws7_master_orient, layoutopt:direction:$ws7_scroll_dir
+
+$ws8_layout = dwindle
+$ws8_persistent = false
+$ws8_master_orient = left
+$ws8_scroll_dir = right
+workspace = 8, layout:$ws8_layout, persistent:$ws8_persistent, layoutopt:orientation:$ws8_master_orient, layoutopt:direction:$ws8_scroll_dir
+
+$ws9_layout = dwindle
+$ws9_persistent = false
+$ws9_master_orient = left
+$ws9_scroll_dir = right
+workspace = 9, layout:$ws9_layout, persistent:$ws9_persistent, layoutopt:orientation:$ws9_master_orient, layoutopt:direction:$ws9_scroll_dir
+
+$ws10_layout = dwindle
+$ws10_persistent = false
+$ws10_master_orient = left
+$ws10_scroll_dir = right
+workspace = 10, layout:$ws10_layout, persistent:$ws10_persistent, layoutopt:orientation:$ws10_master_orient, layoutopt:direction:$ws10_scroll_dir

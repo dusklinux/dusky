@@ -47,14 +47,14 @@ readonly BRIGHT_WHITE=$'\033[0;97m'
 readonly DIM=$'\033[2m'
 
 # --- Paths ---
-readonly SOURCE_CONF="${HOME}/.config/hypr/source/keybinds.conf"
-readonly CUSTOM_CONF="${HOME}/.config/hypr/edit_here/source/keybinds.conf"
+readonly SOURCE_CONF="${HOME}/.config/hypr/source/keybinds.lua"
+readonly CUSTOM_CONF="${HOME}/.config/hypr/edit_here/source/keybinds.lua"
 readonly LOCK_FILE="${CUSTOM_CONF}.lock"
 
 # --- Sentinels ---
 readonly CREATE_MARKER_ID="__CREATE_NEW_BIND__"
 readonly SOURCE_INFO_MARKER="__SOURCE_DIRECTIVE_INFO__"
-readonly EMPTY_BIND_TEMPLATE="bindd = "
+readonly EMPTY_BIND_TEMPLATE="hl.bind(\"MOD + KEY\", hl.dsp.dispatch(\"ARG\"), { description = \"DESC\" })"
 
 # --- Dispatchers (populated at runtime if possible, otherwise fallback) ---
 declare -a KNOWN_DISPATCHERS=(
@@ -165,11 +165,11 @@ _is_comment_or_blank() {
 }
 
 _is_bind_directive() {
-    [[ "$1" =~ ^[[:space:]]*(bind[a-z]*|unbind)[[:space:]]*= ]]
+    [[ "$1" =~ ^[[:space:]]*hl\.(bind|unbind)[[:space:]]*\( ]]
 }
 
 _is_unbind() {
-    [[ "$1" =~ ^[[:space:]]*unbind[[:space:]]*= ]]
+    [[ "$1" =~ ^[[:space:]]*hl\.unbind[[:space:]]*\( ]]
 }
 
 _is_submap_directive() {
@@ -194,14 +194,20 @@ _extract_mods_key() {
     local -n _emk_mods="$1"
     local -n _emk_key="$2"
     local content="$3"
-
-    _emk_mods="${content%%,*}"
-    local remainder="${content#*,}"
-
-    if [[ "$remainder" == "$content" ]]; then
-        _emk_key=""
+    
+    # content is everything after hl.bind( or hl.unbind(
+    local binding="${content%%,*}"
+    binding="${binding#*\"}"
+    binding="${binding%%\"*}"
+    
+    if [[ "$binding" == *"+"* ]]; then
+        _emk_mods="${binding%%+*}"
+        _emk_key="${binding##*+}"
+        _emk_mods="${_emk_mods%%[[:space:]]}"
+        _emk_key="${_emk_key##[[:space:]]}"
     else
-        _emk_key="${remainder%%,*}"
+        _emk_mods=""
+        _emk_key="$binding"
     fi
 
     _trim _emk_mods "$_emk_mods"
@@ -237,14 +243,9 @@ _extract_field() {
 _extract_dispatcher() {
     local bind_type="$1"
     local content="$2"
-    local flags="${bind_type#bind}"
-
-    local dispatcher_idx=2
-    if [[ "$flags" == *d* ]]; then
-        dispatcher_idx=3
-    fi
-
-    _extract_field "$content" "$dispatcher_idx"
+    local disp="${content#*hl.dsp.}"
+    disp="${disp%%(*}"
+    printf "%s" "$disp"
 }
 
 _validate_dispatcher() {
@@ -859,7 +860,7 @@ main() {
                         if [[ "$origin" == "CUST" ]]; then
                             printf '  Remove custom entry from %s\n' "$CUSTOM_CONF"
                         else
-                            printf '  Append "unbind = %s, %s" to %s\n' "$del_mods" "$del_key" "$CUSTOM_CONF"
+                            printf '  Append "hl.unbind(\"%s + %s\")" to %s\n' "$del_mods" "$del_key" "$CUSTOM_CONF"
                         fi
                         read -r -p "Press Enter to continue..."
                         continue
@@ -909,7 +910,7 @@ main() {
                             if [[ -n "$bind_submap" ]]; then
                                 printf 'submap = %s\n' "$bind_submap"
                             fi
-                            printf 'unbind = %s, %s\n' "$del_mods" "$del_key"
+                            printf 'hl.unbind(\"%s + %s\")\n' "$del_mods" "$del_key"
                             if [[ -n "$bind_submap" ]]; then
                                 printf 'submap = reset\n'
                             fi
@@ -1129,7 +1130,7 @@ main() {
             if _exists_in_source "$orig_mods" "$orig_key" "$bind_submap"; then
                 local nk_m="$orig_mods" nk_k="$orig_key"
                 _normalize_bind_parts nk_m nk_k
-                unbind_map["${nk_m}|${nk_k}"]="unbind = ${orig_mods}, ${orig_key}"
+                unbind_map["${nk_m}|${nk_k}"]="hl.unbind(\"${orig_mods} + ${orig_key}\")"
             fi
         fi
 
@@ -1137,7 +1138,7 @@ main() {
         if _exists_in_source "$new_mods" "$new_key" "$bind_submap"; then
             local nk_m="$new_mods" nk_k="$new_key"
             _normalize_bind_parts nk_m nk_k
-            unbind_map["${nk_m}|${nk_k}"]="unbind = ${new_mods}, ${new_key}"
+            unbind_map["${nk_m}|${nk_k}"]="hl.unbind(\"${new_mods} + ${new_key}\")"
         fi
 
         # Build newline-delimited string for display

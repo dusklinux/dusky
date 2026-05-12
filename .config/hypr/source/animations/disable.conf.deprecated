@@ -1,0 +1,8 @@
+
+# // ▄▀█ █▄░█ █ █▀▄▀█ ▄▀█ ▀█▀ █ █▀█ █▄░█
+# // █▀█ █░▀█ █ █░▀░█ █▀█ ░█░ █ █▄█ █░▀█
+
+# See https://wiki.hyprland.org/Configuring/Animations/
+
+animations:enabled=false
+

@@ -1,0 +1,45 @@
+# ----------------------------------------------------- 
+# TRIP PRESET: Psychedelic, Wavy, Disorienting
+# ----------------------------------------------------- 
+
+animations {
+    enabled = true
+
+    # --- The "Hallucination" Curves ---
+    # Starts by going backwards (-0.55), shoots way past target (1.55), then settles.
+    # This creates a massive "wobble" effect.
+    bezier = hallucination, 0.68, -0.55, 0.265, 1.55
+    
+    # Slow, lazy wave for fading
+    bezier = dream, 0.4, 0, 0.2, 1
+    
+    # Constant rotation
+    bezier = linear, 0, 0, 1, 1
+
+    # --- Animation Configs ---
+
+    # Windows: The "Breathing" Effect
+    # They shrink first, then explode in. Duration 9 makes it slow and deliberate.
+    animation = windowsIn, 1, 9, hallucination, popin 0%
+    animation = windowsOut, 1, 9, hallucination, popin 0%
+    
+    # Windows Move: Swimming through syrup
+    animation = windowsMove, 1, 9, hallucination, slide
+
+    # Border: THE SPIN
+    # This makes your border colors rotate infinitely. 
+    # (Requires gradient borders in 'general' settings to be visible)
+    animation = border, 1, 10, dream
+    animation = borderangle, 1, 100, linear, loop
+
+    # Fade: Long, slow dissolves
+    animation = fade, 1, 10, dream
+
+    # Layers: Drifting in from the void
+    animation = layers, 1, 8, dream, popin 50%
+    
+    # Workspaces: The "Warp Tunnel"
+    # slidefade 80% creates a massive ghosting trail effect when switching.
+    animation = workspaces, 1, 12, dream, slidevertfade 80%
+    animation = specialWorkspace, 1, 12, dream, slidefade 80%
+}

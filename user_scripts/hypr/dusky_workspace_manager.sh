@@ -20,7 +20,7 @@ shopt -s extglob
 
 declare -r HYPR_DIR="${HOME}/.config/hypr"
 declare -r EDIT_DIR="${HYPR_DIR}/edit_here/source"
-declare -r CONFIG_FILE="${EDIT_DIR}/workspace_rules.conf"
+declare -r CONFIG_FILE="${EDIT_DIR}/workspace_rules.lua"
 
 declare -r APP_TITLE="Dusky Workspace Manager"
 declare -r APP_VERSION="v4.4.1 (Production)"
@@ -43,16 +43,16 @@ register_items() {
     local i
     for i in {1..10}; do
         register 0 "Workspace $i" "ws_${i}|menu||||" ""
-        register_child "ws_${i}" "Layout"        "\$ws${i}_layout|cycle||dwindle,master,monocle,scrolling||" "dwindle"
-        register_child "ws_${i}" "Persistent"    "\$ws${i}_persistent|bool||||" "false"
-        register_child "ws_${i}" "Master Orient" "\$ws${i}_master_orient|cycle||left,right,top,bottom,center||" "left"
-        register_child "ws_${i}" "Scroll Dir"    "\$ws${i}_scroll_dir|cycle||right,left,up,down||" "right"
+        register_child "ws_${i}" "Layout"        "ws${i}_layout|cycle||dwindle,master,monocle,scrolling||" "dwindle"
+        register_child "ws_${i}" "Persistent"    "ws${i}_persistent|bool||||" "false"
+        register_child "ws_${i}" "Master Orient" "ws${i}_master_orient|cycle||left,right,top,bottom,center||" "left"
+        register_child "ws_${i}" "Scroll Dir"    "ws${i}_scroll_dir|cycle||right,left,up,down||" "right"
     done
 
     # Tab 1: Global Rules & Temporary Overrides
-    register 1 "Temp Global Override Layout" '$ephemeral_layout|cycle||dwindle,master,monocle,scrolling||' "monocle"
-    register 1 "Temp Global Override State"  '$ephemeral_enabled|bool||||' "false"
-    register 1 "Fallback Layout (WS 11+)"    '$global_layout|cycle||dwindle,master,monocle,scrolling||' "dwindle"
+    register 1 "Temp Global Override Layout" 'ephemeral_layout|cycle||dwindle,master,monocle,scrolling||' "monocle"
+    register 1 "Temp Global Override State"  'ephemeral_enabled|bool||||' "false"
+    register 1 "Fallback Layout (WS 11+)"    'global_layout|cycle||dwindle,master,monocle,scrolling||' "dwindle"
 }
 
 # --- CHANGE 1 of 4: post_write_action sets flag instead of blocking ---
@@ -66,12 +66,12 @@ _flush_reload() {
     _NEEDS_RELOAD=0
 
     if command -v hyprctl &>/dev/null; then
-        local eph_val="${CONFIG_CACHE['$ephemeral_enabled|']:-false}"
-        local eph_layout="${CONFIG_CACHE['$ephemeral_layout|']:-dwindle}"
+        local eph_val="${CONFIG_CACHE['ephemeral_enabled|']:-false}"
+        local eph_layout="${CONFIG_CACHE['ephemeral_layout|']:-dwindle}"
         (
             hyprctl reload || true
             if [[ "$eph_val" == "true" ]]; then
-                hyprctl keyword workspace "r[1-99], layout:$eph_layout" || true
+                hyprctl eval "hl.workspace_rule({workspace='r[1-99]',layout='${eph_layout}'})" || true
             fi
         ) </dev/null &>/dev/null &
         disown 2>/dev/null || :
@@ -152,37 +152,55 @@ log_err() {
     printf '%s[ERROR]%s %s\n' "$C_RED" "$C_RESET" "$1" >&2
 }
 
+_generate_workspace_config() {
+    local i
+    {
+        printf '-- ============================================================================\n'
+        printf '-- USER CONFIGURATION: workspace_rules.lua\n'
+        printf '-- Managed by Dusky TUI - Granular Matrix v4.4.1\n'
+        printf '-- WARNING: Edit via the TUI. Manual edits may be overwritten on format change.\n'
+        printf '-- ============================================================================\n\n'
+
+        printf '-- Global layout for workspaces 11+\n'
+        printf 'global_layout    = "dwindle"\n\n'
+
+        printf '-- Ephemeral global override (applied at runtime, not persisted across reboot)\n'
+        printf 'ephemeral_layout  = "monocle"\n'
+        printf 'ephemeral_enabled = false\n\n'
+
+        printf '-- Per-workspace settings (workspaces 1-10)\n'
+        for i in {1..10}; do
+            printf 'ws%d_layout        = "dwindle"\n' "$i"
+            printf 'ws%d_persistent    = false\n' "$i"
+            printf 'ws%d_master_orient = "left"\n' "$i"
+            printf 'ws%d_scroll_dir    = "right"\n' "$i"
+        done
+        printf '\n'
+
+        printf '-- Apply global fallback rule\n'
+        printf 'hl.workspace_rule({ workspace = "r[11-99]", layout = global_layout })\n\n'
+
+        printf '-- Apply per-workspace rules\n'
+        printf 'for i, w in ipairs({\n'
+        for i in {1..10}; do
+            printf '    { layout = ws%d_layout, persistent = ws%d_persistent, layout_opts = { orientation = ws%d_master_orient, direction = ws%d_scroll_dir } },\n' \
+                "$i" "$i" "$i" "$i"
+        done
+        printf '}) do\n'
+        printf '    hl.workspace_rule({ workspace = tostring(i), layout = w.layout, persistent = w.persistent, layout_opts = w.layout_opts })\n'
+        printf 'end\n'
+    } > "${CONFIG_FILE}"
+}
+
 ensure_config_exists() {
     if [[ ! -d "${EDIT_DIR}" ]]; then
         mkdir -p -- "${EDIT_DIR}"
     fi
-    
-    # Auto-heal: Rebuild template if missing or empty
-    if [[ ! -f "${CONFIG_FILE}" || ! -s "${CONFIG_FILE}" ]]; then
-        {
-            printf '# ==============================================================================\n'
-            printf '# USER CONFIGURATION: workspace_rules.conf\n'
-            printf '# Managed by Dusky TUI - Granular Matrix v4.4.1\n'
-            printf '# ==============================================================================\n\n'
-            
-            printf '# --- Global Rules ---\n'
-            printf '$global_layout = dwindle\n'
-            printf 'workspace = r[11-99], layout:$global_layout\n\n'
 
-            printf '# --- Ephemeral Global Override (Resets on reboot) ---\n'
-            printf '$ephemeral_layout = monocle\n'
-            printf '$ephemeral_enabled = false\n\n'
-
-            printf '# --- Individual Workspaces (1-10) ---\n'
-            local i
-            for i in {1..10}; do
-                printf '$ws%d_layout = dwindle\n' "$i"
-                printf '$ws%d_persistent = false\n' "$i"
-                printf '$ws%d_master_orient = left\n' "$i"
-                printf '$ws%d_scroll_dir = right\n' "$i"
-                printf 'workspace = %d, layout:$ws%d_layout, persistent:$ws%d_persistent, layoutopt:orientation:$ws%d_master_orient, layoutopt:direction:$ws%d_scroll_dir\n\n' "$i" "$i" "$i" "$i" "$i"
-            done
-        } > "${CONFIG_FILE}"
+    # Rebuild if missing, empty, or not in TUI-managed variable format (e.g. old conf or array format)
+    if [[ ! -f "${CONFIG_FILE}" || ! -s "${CONFIG_FILE}" ]] || \
+       ! grep -qF 'ws1_layout' "${CONFIG_FILE}" 2>/dev/null; then
+        _generate_workspace_config
     fi
 }
 
@@ -267,16 +285,16 @@ populate_config_cache() {
         fi
     done < <(LC_ALL=C awk '
         BEGIN { depth = 0 }
-        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*--/ { next }
         {
             line = $0
             clean = line
-            sub(/[[:space:]]+#.*$/, "", clean)
+            sub(/[[:space:]]+--.*$/, "", clean)
 
             tmpline = clean
-            while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*\{/)) {
+            while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*(=[[:space:]]*)?\{/)) {
                 block_str = substr(tmpline, RSTART, RLENGTH)
-                sub(/[[:space:]]*\{/, "", block_str)
+                sub(/[[:space:]]*(=[[:space:]]*)?\{/, "", block_str)
                 depth++
                 block_stack[depth] = block_str
                 tmpline = substr(tmpline, RSTART + RLENGTH)
@@ -288,8 +306,11 @@ populate_config_cache() {
                     val = substr(clean, eq_pos + 1)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
-                    sub(/[[:space:]]+#.*$/, "", val)
+                    sub(/[[:space:]]+--.*$/, "", val)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+                    # Strip trailing comma and surrounding quotes (Lua syntax)
+                    sub(/,$/, "", val)
+                    if (val ~ /^".*"$/) val = substr(val, 2, length(val) - 2)
                     if (key != "") {
                         current_block = (depth > 0) ? block_stack[depth] : ""
                         print key "|" current_block "=" val
@@ -331,13 +352,13 @@ write_value_to_file() {
     {
         line = $0
         clean = line
-        sub(/^[[:space:]]*#.*/, "", clean)
-        sub(/[[:space:]]+#.*$/, "", clean)
+        sub(/^[[:space:]]*--.*/, "", clean)
+        sub(/[[:space:]]+--.*$/, "", clean)
 
         tmpline = clean
-        while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*\{/)) {
+        while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*(=[[:space:]]*)?\{/)) {
             block_str = substr(tmpline, RSTART, RLENGTH)
-            sub(/[[:space:]]*\{/, "", block_str)
+            sub(/[[:space:]]*(=[[:space:]]*)?\{/, "", block_str)
             depth++
             block_stack[depth] = block_str
             if (do_block && block_str == target_block && !in_target) {
@@ -364,15 +385,25 @@ write_value_to_file() {
         }
 
         if (do_replace) {
-            match(line, /^[[:space:]]*/)
-            leading = substr(line, RSTART, RLENGTH)
             eq = index(line, "=")
             before_eq = substr(line, 1, eq)
             rest = substr(line, eq + 1)
             match(rest, /^[[:space:]]*/)
             space_after = substr(rest, RSTART, RLENGTH)
 
-            print before_eq space_after new_value
+            # Detect trailing comma and surrounding quotes from the original value
+            old_val = substr(rest, RSTART + RLENGTH)
+            sub(/[[:space:]]+--.*$/, "", old_val)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", old_val)
+            was_trailing = (old_val ~ /,$/) ? 1 : 0
+            sub(/,$/, "", old_val)
+            was_quoted = (old_val ~ /^".*"$/) ? 1 : 0
+
+            out_val = new_value
+            if (was_quoted && !(new_value ~ /^".*"$/)) out_val = "\"" new_value "\""
+            trailing = was_trailing ? "," : ""
+
+            print before_eq space_after out_val trailing
             replaced = 1
         } else {
             print line

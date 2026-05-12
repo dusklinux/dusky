@@ -64,12 +64,12 @@ trim() {
 
 # --- Initialization ---
 init_config_file() {
-    if [[ -f "${CONFIG_DIR}/monitors.conf" ]]; then
-        CONFIG_FILE="${CONFIG_DIR}/monitors.conf"
-        log_debug "Selected config: monitors.conf"
+    if [[ -f "${CONFIG_DIR}/monitors.lua" ]]; then
+        CONFIG_FILE="${CONFIG_DIR}/monitors.lua"
+        log_debug "Selected config: monitors.lua"
     else
-        CONFIG_FILE="${CONFIG_DIR}/monitors.conf"
-        log_debug "Creating new config: monitors.conf"
+        CONFIG_FILE="${CONFIG_DIR}/monitors.lua"
+        log_debug "Creating new config: monitors.lua"
         mkdir -p -- "${CONFIG_DIR}"
         : > "$CONFIG_FILE"
     fi

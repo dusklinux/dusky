@@ -1,0 +1,7 @@
+# ==============================================================================
+# USER CONFIGURATION: plugins.conf
+# ==============================================================================
+# Add your custom settings for plugins here.
+# These will override or add to the defaults found in ~/.config/hypr/source/plugins.conf
+# ==============================================================================
+

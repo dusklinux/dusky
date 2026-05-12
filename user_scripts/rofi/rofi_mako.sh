@@ -119,7 +119,7 @@ case $ROFI_EXIT in
                 # 2. Fallback for expired history items (Brings app to front safely)
                 if [[ -n "$SELECTED_APP" && "$SELECTED_APP" != "notify-send" && "$SELECTED_APP" != "mako" ]]; then
                     # Grouped and backgrounded cleanly to prevent Rofi/Hyprland hanging
-                    { gtk-launch "$SELECTED_APP" || hyprctl dispatch exec "$SELECTED_APP"; } >/dev/null 2>&1 &
+                    { gtk-launch "$SELECTED_APP" || uwsm-app -- "$SELECTED_APP"; } >/dev/null 2>&1 &
                 fi
             fi
             

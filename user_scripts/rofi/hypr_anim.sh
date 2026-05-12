@@ -15,9 +15,9 @@ set -o pipefail
 readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
 readonly ANIM_DIR="$CONFIG_DIR/hypr/source/animations"
 readonly LINK_DIR="$ANIM_DIR/active"
-readonly DEST_FILE="$LINK_DIR/active.conf"
+readonly DEST_FILE="$LINK_DIR/active.lua"
 readonly STATE_FILE="$CONFIG_DIR/dusky/settings/dusky_animiation"
-readonly FALLBACK_ANIM="horizontal_dusky.conf"
+readonly FALLBACK_ANIM="horizontal_dusky.lua"
 
 # Visual Assets (Nerd Fonts)
 readonly ICON_ACTIVE=""   # Checkmark
@@ -153,13 +153,13 @@ if [[ ! -d "$ANIM_DIR" ]]; then
     exit 0
 fi
 
-# Gather .conf files safely
+# Gather .lua files safely
 shopt -s nullglob
-files=("$ANIM_DIR"/*.conf)
+files=("$ANIM_DIR"/*.lua)
 shopt -u nullglob
 
 if [[ ${#files[@]} -eq 0 ]]; then
-    printf '%s\0icon\x1f%s\x1finfo\x1fignore\n' "No .conf files found" "$ICON_ERROR"
+    printf '%s\0icon\x1f%s\x1finfo\x1fignore\n' "No .lua files found" "$ICON_ERROR"
     exit 0
 fi
 

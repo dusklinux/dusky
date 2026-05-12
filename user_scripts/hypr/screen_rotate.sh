@@ -20,8 +20,8 @@ readonly C_RESET=$'\e[0m'
 # 2. Config Paths (Strictly ordered by priority for modular setups)
 # ------------------------------------------------------------------------------
 readonly CONFIG_FILES=(
-    "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/edit_here/source/monitors.conf"
-    "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/source/monitors.conf"
+    "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/edit_here/source/monitors.lua"
+    "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/source/monitors.lua"
 )
 
 # 3. Exit Handling
@@ -44,6 +44,7 @@ die() {
 # 4. Privilege & Dependency Checks
 # ------------------------------------------------------------------------------
 command -v jq &> /dev/null || die "'jq' is missing. Install: sudo pacman -S jq"
+command -v python3 &> /dev/null || die "'python3' is missing."
 command -v hyprctl &> /dev/null || die "'hyprctl' is missing."
 [[ $EUID -ne 0 ]] || die "Root detected. Run as standard user for socket access."
 
@@ -78,69 +79,88 @@ IFS=' ' read -r NAME CURRENT_TRANSFORM FALLBACK_WIDTH FALLBACK_HEIGHT FALLBACK_R
 # Calculate new transform safely
 NEW_TRANSFORM=$(( (CURRENT_TRANSFORM + DIRECTION + 4) % 4 ))
 
-# 7. Surgical Config Parsing (Source of Truth for Parameters)
+# 7. Locate config file
 # ------------------------------------------------------------------------------
-BASE_RULE=""
-RULE_SOURCE="IPC Fallback"
-
+CONF_FILE=""
 for conf in "${CONFIG_FILES[@]}"; do
     if [[ -f "$conf" ]]; then
-        # Use awk to find the last line defining this monitor (last-definition-wins,
-        # matching Hyprland's own config semantics)
-        matched_line=$(awk -v mon="$NAME" '
-            $0 ~ "^[[:space:]]*monitor[[:space:]]*=[[:space:]]*" mon "[[:space:]]*," {
-                line = $0
-            }
-            END { if (line != "") print line }
-        ' "$conf")
-
-        if [[ -n "$matched_line" ]]; then
-            # Strip inline comments
-            matched_line="${matched_line%%#*}"
-
-            # Bash native regex to extract everything after the equals sign
-            if [[ "$matched_line" =~ ^[[:space:]]*monitor[[:space:]]*=[[:space:]]*(.*)$ ]]; then
-                BASE_RULE="${BASH_REMATCH[1]}"
-                # Strip any resulting trailing whitespace efficiently
-                BASE_RULE="${BASE_RULE%"${BASE_RULE##*[![:space:]]}"}"
-                RULE_SOURCE="$conf"
-                break
-            fi
-        fi
+        CONF_FILE="$conf"
+        break
     fi
 done
 
-# 8. Payload Assembly
-# ------------------------------------------------------------------------------
-if [[ -n "$BASE_RULE" ]]; then
-    # STRATEGY A: Config Injection
-    # Strip any existing 'transform, X' pairs surgically using sed to prevent duplicates
-    CLEAN_RULE=$(sed -E 's/,[[:space:]]*transform[[:space:]]*,[[:space:]]*[0-7]//g' <<< "$BASE_RULE")
-
-    # Append the new transform to the pristine config string
-    FINAL_PAYLOAD="${CLEAN_RULE}, transform, ${NEW_TRANSFORM}"
-else
-    # STRATEGY B: IPC Reconstruction (Failsafe for transient/hot-plugged displays)
-    # Rebuild the string using exact values, avoiding 'preferred, auto' completely
-    FINAL_PAYLOAD="${NAME}, ${FALLBACK_WIDTH}x${FALLBACK_HEIGHT}@${FALLBACK_REFRESH}, ${FALLBACK_X}x${FALLBACK_Y}, ${FALLBACK_SCALE}, transform, ${NEW_TRANSFORM}"
+if [[ -z "$CONF_FILE" ]]; then
+    # No config exists yet — create one at the primary edit_here location
+    CONF_FILE="${CONFIG_FILES[0]}"
+    mkdir -p "$(dirname "$CONF_FILE")"
 fi
 
-# 9. Execution
+# 8. Update monitors.lua with new transform and reload
 # ------------------------------------------------------------------------------
-printf '%s[INFO]%s Target: %s%s%s\n' "$C_BLUE" "$C_RESET" "$C_BOLD" "$NAME" "$C_RESET"
-printf '%s[INFO]%s Source: %s\n' "$C_BLUE" "$C_RESET" "$RULE_SOURCE"
-printf '%s[INFO]%s Payload: %s\n' "$C_YELLOW" "$C_RESET" "$FINAL_PAYLOAD"
+printf '%s[INFO]%s Target: %s%s%s | Transform: %d -> %d\n' \
+    "$C_BLUE" "$C_RESET" "$C_BOLD" "$NAME" "$C_RESET" "$CURRENT_TRANSFORM" "$NEW_TRANSFORM"
+printf '%s[INFO]%s Config: %s\n' "$C_BLUE" "$C_RESET" "$CONF_FILE"
 
-if hyprctl keyword monitor "$FINAL_PAYLOAD" > /dev/null; then
+python3 - "$CONF_FILE" "$NAME" "$NEW_TRANSFORM" <<'PYEOF' \
+    || die "Failed to update monitors.lua"
+import sys, re, os, tempfile
+
+conf_path, mon_name, new_transform = sys.argv[1], sys.argv[2], sys.argv[3]
+
+try:
+    with open(conf_path, 'r') as f:
+        text = f.read()
+except FileNotFoundError:
+    text = ''
+
+found = False
+
+def replacer(m):
+    global found
+    line = m.group(0)
+    if f'output = "{mon_name}"' not in line:
+        return line
+    found = True
+    # Remove first, then insert — reversing order would cause the removal regex
+    # to eat the value just inserted, leaving no transform field at all.
+    line = re.sub(r',\s*transform\s*=\s*\d+', '', line)
+    line = re.sub(r'(\s*\}\s*\)\s*)$', f', transform = {new_transform}\\1', line)
+    return line
+
+text = re.sub(r'^.*hl\.monitor\s*\(.*$', replacer, text, flags=re.MULTILINE)
+
+if not found:
+    text += f'\nhl.monitor({{ output = "{mon_name}", mode = "preferred", position = "auto", scale = 1, transform = {new_transform} }})\n'
+
+try:
+    orig_mode = os.stat(conf_path).st_mode
+except FileNotFoundError:
+    orig_mode = 0o644
+
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(conf_path), prefix='.monitors.lua.tmp.')
+try:
+    with os.fdopen(fd, 'w') as f:
+        f.write(text)
+    os.chmod(tmp, orig_mode)
+    os.replace(tmp, conf_path)
+except Exception as e:
+    os.remove(tmp)
+    sys.stderr.write(f'Atomic write failed: {e}\n')
+    sys.exit(1)
+PYEOF
+
+# 9. Apply via reload
+# ------------------------------------------------------------------------------
+if hyprctl reload > /dev/null; then
     printf '%s[SUCCESS]%s Rotation applied: %d -> %d\n' "$C_GREEN" "$C_RESET" "$CURRENT_TRANSFORM" "$NEW_TRANSFORM"
 
     if command -v notify-send &> /dev/null; then
         notify-send -a 'System' 'Display Rotated' \
-            "$(printf 'Monitor: %s\nTransform: %d\nSource: %s' "$NAME" "$NEW_TRANSFORM" "${RULE_SOURCE##*/}")" \
+            "$(printf 'Monitor: %s\nTransform: %d' "$NAME" "$NEW_TRANSFORM")" \
             -h string:x-canonical-private-synchronous:display-rotate
     fi
 else
-    die "Hyprland rejected the monitor payload."
+    die "hyprctl reload failed."
 fi
 
 trap - EXIT

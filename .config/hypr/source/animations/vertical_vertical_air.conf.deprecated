@@ -1,0 +1,33 @@
+# ----------------------------------------------------- 
+# AIR PRESET: Floaty, Soft, Ethereal
+# ----------------------------------------------------- 
+
+animations {
+    enabled = true
+
+    # --- Soft Curves ---
+    # Slow start, slow end. Like a feather falling.
+    bezier = soft, 0.3, 0.3, 0.2, 1
+    bezier = softIn, 0.4, 0, 1, 1
+    
+    # --- Animation Configs ---
+
+    # Windows: Drift in with opacity changes
+    # slidefade 15% gives it that "ghost" tail effect
+    animation = windowsIn, 1, 8, soft, slidefade 15%
+    animation = windowsOut, 1, 8, softIn, slidefade 15%
+    animation = windowsMove, 1, 8, soft, slidefade 15%
+
+    # Border & Fade: Very slow transition
+    animation = border, 1, 10, soft
+    animation = fade, 1, 10, soft
+
+    # Layers: Gentle drift
+    animation = layers, 1, 6, soft, slidefade 10%
+    
+    # Workspaces: The "Elevator in the Clouds"
+    # Long duration (10), vertical slide with heavy fade.
+    animation = workspaces, 1, 10, soft, slidefadevert 40%
+    animation = specialWorkspace, 1, 10, soft, slidefade 40%
+
+}

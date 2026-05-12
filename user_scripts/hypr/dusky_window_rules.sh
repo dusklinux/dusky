@@ -10,7 +10,7 @@ shopt -s extglob
 export LC_NUMERIC=C
 
 # --- Configuration ---
-declare -r TARGET_FILE="${HOME}/.config/hypr/edit_here/source/window_rules.conf"
+declare -r TARGET_FILE="${HOME}/.config/hypr/edit_here/source/window_rules.lua"
 declare -r APP_TITLE="Dusky Window Rule Generator"
 declare -r APP_VERSION="v4.5 (Engine v3.9.1)"
 
@@ -165,43 +165,42 @@ scan_windows() {
         safe_title=$(escape_regex "$title")
         safe_name=$(sanitize_name "$initialClass")
 
-        # Build Block
-        rule_block="${C_DIVIDER}# -----------------------------------------------------${C_RESET}"$'\n'
-        rule_block+="# ${title}"$'\n'
+        # Build Block (Lua format)
+        rule_block="${C_DIVIDER}-- ---------------------------------------------------${C_RESET}"$'\n'
+        rule_block+="-- ${title}"$'\n'
 
-        rule_block+="${C_GREEN}windowrule {${C_RESET}"$'\n'
-        rule_block+="    name = ${safe_name}"$'\n'
-        rule_block+="    match:class = ^(${safe_class})$"$'\n'
-        rule_block+="    ${C_COMMENT}# match:title = ^(${safe_title})\$${C_RESET}"$'\n'
+        rule_block+="${C_GREEN}hl.window_rule({${C_RESET}"$'\n'
+        rule_block+="    name  = \"${safe_name}\","$'\n'
+        rule_block+="    match = { class = \"^(${safe_class})\$\" },"$'\n'
+        rule_block+="    ${C_COMMENT}-- match = { title = \"^(${safe_title})\$\" },${C_RESET}"$'\n'
 
-        rule_block+="    float = on"$'\n'
-        rule_block+="    ${C_COMMENT}# pin = on${C_RESET}"$'\n'
+        rule_block+="    float = true,"$'\n'
+        rule_block+="    ${C_COMMENT}-- pin = true,${C_RESET}"$'\n'
 
-        rule_block+="    size = ${w_w} ${w_h}"$'\n'
-        rule_block+="    ${C_COMMENT}# size = (monitor_w*${r_w}) (monitor_h*${r_h})${C_RESET}"$'\n'
+        rule_block+="    size  = \"${w_w} ${w_h}\","$'\n'
+        rule_block+="    ${C_COMMENT}-- size = \"(monitor_w*${r_w}) (monitor_h*${r_h})\",${C_RESET}"$'\n'
 
-        rule_block+="    move = ${local_x} ${local_y}"$'\n'
-        rule_block+="    ${C_COMMENT}# move = (monitor_w*${r_x}) (monitor_h*${r_y})${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# move = (monitor_w-window_w-20) (monitor_h-window_h-20)${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# center = on${C_RESET}"$'\n'
+        rule_block+="    move  = \"${local_x} ${local_y}\","$'\n'
+        rule_block+="    ${C_COMMENT}-- move = \"(monitor_w*${r_x}) (monitor_h*${r_y})\",${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- move = \"(monitor_w-window_w-20) (monitor_h-window_h-20)\",${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- center = true,${C_RESET}"$'\n'
 
-        rule_block+=$'\n'"    ${C_COMMENT}# --- Visuals & Effects ---${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# opacity [active] [inactive]${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# opacity = 0.9 0.9${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# animation = popin${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# rounding = 10${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# border_color = rgb(ff0000)${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# no_blur = on${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# no_shadow = on${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# no_dim = on${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# opaque = on${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# dim_around = on${C_RESET}"$'\n'
+        rule_block+=$'\n'"    ${C_COMMENT}-- --- Visuals & Effects ---${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- opacity = \"0.9 override 0.9 override\",${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- anim_style = \"popin\",${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- rounding = 10,${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- border_color = \"rgb(ff0000)\",${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- no_blur = true,${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- no_shadow = true,${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- no_dim = true,${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- opaque = true,${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- dim_around = true,${C_RESET}"$'\n'
 
-        rule_block+=$'\n'"    ${C_COMMENT}# --- Placement ---${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# workspace = 2${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# monitor = DP-1${C_RESET}"$'\n'
+        rule_block+=$'\n'"    ${C_COMMENT}-- --- Placement ---${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- workspace = 2,${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}-- monitor = \"DP-1\",${C_RESET}"$'\n'
 
-        rule_block+="${C_GREEN}}${C_RESET}"$'\n'
+        rule_block+="${C_GREEN}})"$'\n'"${C_RESET}"
 
         WINDOW_TITLES+=("${title:0:60}")
         WINDOW_CLASSES+=("$initialClass")

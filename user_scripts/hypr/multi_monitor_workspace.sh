@@ -47,11 +47,41 @@ fi
 
 # --- 6. Dispatch Logic ---
 
+# Translate old-style dispatcher + target into a Lua expression for Hyprland's
+# Lua config mode. hyprctl dispatch evaluates the body as Lua.
+lua_dispatch() {
+    local disp="$1"
+    local tgt="$2"
+    local lua_tgt
+
+    # Numeric targets are unquoted; named/relative targets are quoted strings.
+    if [[ "${tgt}" =~ ^-?[0-9]+$ ]]; then
+        lua_tgt="${tgt}"
+    else
+        lua_tgt="\"${tgt}\""
+    fi
+
+    case "${disp}" in
+        workspace)
+            exec hyprctl dispatch "hl.dsp.focus({workspace=${lua_tgt}})"
+            ;;
+        movetoworkspace)
+            exec hyprctl dispatch "hl.dsp.window.move({workspace=${lua_tgt}})"
+            ;;
+        movetoworkspacesilent)
+            exec hyprctl dispatch "hl.dsp.window.move({workspace=${lua_tgt}, silent=true})"
+            ;;
+        *)
+            exec hyprctl dispatch "${disp}" "${tgt}"
+            ;;
+    esac
+}
+
 # Case A: Pass-Through (Relative, Special, Named)
 # If the target is NOT a pure positive integer (contains chars, +, -, or is empty),
-# we pass it directly to Hyprland without doing math.
+# we pass it directly without doing math.
 if [[ ! "${target}" =~ ^[0-9]+$ ]]; then
-    exec hyprctl dispatch "${dispatcher}" "${target}"
+    lua_dispatch "${dispatcher}" "${target}"
 fi
 
 # Case B: Banked Navigation (Pure Integer)
@@ -69,4 +99,4 @@ fi
 final_target=$(( (bank_base * 10) + target ))
 
 # Execute and replace process
-exec hyprctl dispatch "${dispatcher}" "${final_target}"
+lua_dispatch "${dispatcher}" "${final_target}"

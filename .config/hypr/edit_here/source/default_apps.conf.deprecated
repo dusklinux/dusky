@@ -1,0 +1,13 @@
+# ==============================================================================
+# USER CONFIGURATION: default_apps.conf
+# ==============================================================================
+# Override default applications here.
+# These variables are sourced at the very top of hyprland.conf so they
+# are available for use in all other configuration files.
+# ==============================================================================
+
+$terminal = kitty
+$fileManager = nemo
+$menu        = rofi -show drun
+$browser = firefox
+$textEditor = gnome-text-editor
