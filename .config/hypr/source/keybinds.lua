@@ -183,19 +183,6 @@ hl.define_submap("passthrough", function()
 end)
 
 
--- --- Display Management ---
-hl.bind(
-    "ALT + 7",
-    hl.dsp.exec_cmd("hyprctl keyword monitor eDP-1,1920x1080@48,0x0,1.6 && sleep 2 && hyprctl keyword misc:vrr 0"),
-    { description = "Set Refresh rate to 48Hz Asus Tuf", locked = true }
-)
-
-hl.bind(
-    "ALT + 8",
-    hl.dsp.exec_cmd("hyprctl keyword monitor eDP-1,1920x1080@144,0x0,1.6 && sleep 2 && hyprctl keyword misc:vrr 1"),
-    { description = "Set Refresh rate to 144Hz Asus Tuf", locked = true }
-)
-
 hl.bind(
     "CTRL + ALT + R",
     hl.dsp.exec_cmd(dusky_scripts .. "hypr/screen_rotate.sh -90"),
@@ -272,12 +259,6 @@ hl.bind(
     "ALT + V",
     hl.dsp.exec_cmd([[gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate "{}"]]),
     { description = "Dusky QuickPanal" }
-)
-
-hl.bind(
-    "XF86Launch3",
-    hl.dsp.exec_cmd(terminal .. " --class asusctl.sh -e sudo " .. dusky_scripts .. "asus/asusctl.sh"),
-    { description = "ASUS Control", locked = true }
 )
 
 hl.bind(
