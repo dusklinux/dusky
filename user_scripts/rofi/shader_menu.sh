@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Hyprshade Selector - Interactive shader picker with live preview
-# Requires: rofi, hyprshade, flock
+# Hyprland Shader Selector - Interactive shader picker with live preview
+# Requires: rofi, hyprctl, flock, python3
 #
 
 set -o errexit
@@ -63,7 +63,7 @@ check_dependencies() {
     local -a missing=()
     local cmd
 
-    for cmd in rofi hyprshade flock; do
+    for cmd in rofi hyprctl flock python3; do
         command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
     done
 
@@ -83,12 +83,22 @@ write_latest_token() {
 
 apply_shader_sync() {
     local shader="${1:-off}"
+    local shader_path=""
 
-    if [[ "$shader" == "off" ]]; then
-        hyprshade off
-    else
-        hyprshade on "$shader"
+    if [[ "$shader" != "off" ]]; then
+        # Resolve full path — check user shaders first, then system
+        if [[ -f "${HOME}/.config/hypr/shaders/${shader}.glsl" ]]; then
+            shader_path="${HOME}/.config/hypr/shaders/${shader}.glsl"
+        elif [[ -f "/usr/share/hyprshade/shaders/${shader}.glsl" ]]; then
+            shader_path="/usr/share/hyprshade/shaders/${shader}.glsl"
+        else
+            err "Shader file not found: ${shader}"
+            return 1
+        fi
     fi
+
+    # hl.config() is the Lua-mode equivalent of hyprctl keyword
+    hyprctl eval "hl.config({decoration={screen_shader='${shader_path}'}})" >/dev/null 2>&1
 }
 
 queue_preview() {
@@ -174,14 +184,27 @@ init() {
     trap 'exit 143' TERM
     trap 'exit 129' HUP
 
-    current_output=$(hyprshade current 2>/dev/null || true)
-    ORIGINAL_SHADER=$(trim "$current_output")
-    [[ -z "$ORIGINAL_SHADER" ]] && ORIGINAL_SHADER="off"
-
-    if ! ls_output=$(hyprshade ls 2>/dev/null); then
-        err "Failed to list shaders"
-        exit 1
+    # Get current shader via hyprctl (Lua-mode compatible)
+    local current_path
+    current_path=$(hyprctl -j getoption decoration:screen_shader 2>/dev/null \
+        | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('str',''))" 2>/dev/null || true)
+    current_path=$(trim "$current_path")
+    if [[ -n "$current_path" && "$current_path" != "[[EMPTY]]" ]]; then
+        ORIGINAL_SHADER=$(basename "$current_path" .glsl)
+    else
+        ORIGINAL_SHADER="off"
     fi
+
+    # List shaders from user and system dirs
+    local -a shader_dirs=("${HOME}/.config/hypr/shaders" "/usr/share/hyprshade/shaders")
+    ls_output=""
+    for dir in "${shader_dirs[@]}"; do
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r f; do
+            ls_output+="$(basename "$f" .glsl)"$'\n'
+        done < <(find "$dir" -maxdepth 1 -name "*.glsl" | sort)
+    done
+    [[ -n "$ls_output" ]] || { err "No shaders found"; exit 1; }
 
     SHADERS=("off")
 

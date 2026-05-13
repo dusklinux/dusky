@@ -313,6 +313,13 @@ main() {
     selected_line=${records[selected_index]}
     IFS=$DELIM read -r _ dispatcher argument <<< "$selected_line"
 
+    # In Lua config mode all binds are stored as __lua + internal ID; the ID
+    # is an opaque per-session index and cannot be replayed via hyprctl dispatch.
+    if [[ "$dispatcher" == "__lua" ]]; then
+        hyprctl notify 1 2500 0 " Press the key combination to trigger this bind" 2>/dev/null || true
+        exit 0
+    fi
+
     if [[ -n $argument ]]; then
         hyprctl dispatch "$dispatcher" "$argument" || die "Failed to dispatch: $dispatcher $argument"
     else

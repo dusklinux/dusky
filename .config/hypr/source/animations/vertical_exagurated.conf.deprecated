@@ -1,0 +1,31 @@
+# ----------------------------------------------------- 
+# GELATIN PRESET: Maximum Wobble
+# ----------------------------------------------------- 
+
+animations {
+    enabled = true
+
+    # --- The "Boing" Curve ---
+    # 1.7 overshoot is absolutely ridiculous.
+    bezier = boing, 0.4, 0.8, 0.2, 1.7
+    # A curve that dips below zero for "anticipation"
+    bezier = slingshot, 0.4, -0.4, 0, 1.2
+
+    # --- Animation Configs ---
+
+    # Windows: They pull back (slingshot) then fly in and wobble (boing)
+    animation = windowsIn, 1, 8, boing, popin 10%
+    animation = windowsOut, 1, 8, boing, popin 80%
+    animation = windowsMove, 1, 8, boing, slide
+
+    # Border: Even the borders pulse
+    animation = border, 1, 10, boing
+    animation = fade, 1, 5, boing
+
+    # Layers: Your Waybar will look like it's made of rubber
+    animation = layers, 1, 10, boing, slide
+    
+    # Workspaces: The entire screen is a trampoline
+    animation = workspaces, 1, 10, boing, slidevert
+    animation = specialWorkspace, 1, 10, boing, slide
+}

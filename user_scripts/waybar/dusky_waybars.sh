@@ -33,7 +33,7 @@ readonly CONFIG_ROOT="${HOME}/.config/waybar"
 readonly APP_TITLE="Dusky Waybar Manager"
 readonly APP_VERSION="v4.8.1"
 
-readonly -a UWSM_CMD=(uwsm-app -- waybar)
+readonly -a UWSM_CMD=(systemd-run --user --setenv=HYPRLAND_INSTANCE_SIGNATURE=lua_proxy -- waybar)
 
 declare -ri MAX_DISPLAY_ROWS=14
 declare -ri BOX_WIDTH=76

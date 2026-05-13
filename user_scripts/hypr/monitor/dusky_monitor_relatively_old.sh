@@ -12,7 +12,7 @@ readonly VERSION="7.4.5"
 readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/edit_here"
 # Backups stored in volatile /tmp (cleared on reboot)
 readonly BACKUP_DIR="/tmp/hypr-wizard-backups"
-readonly CONFIG_FILE="${CONFIG_DIR}/source/monitors.conf"
+readonly CONFIG_FILE="${CONFIG_DIR}/source/monitors.lua"
 readonly MAX_BACKUPS=20
 
 # ANSI Colors & Styling

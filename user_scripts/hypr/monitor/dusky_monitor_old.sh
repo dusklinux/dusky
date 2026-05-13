@@ -21,8 +21,8 @@ trap cleanup EXIT
 
 readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/edit_here"
 readonly BACKUP_DIR="/tmp/hypr-wizard-backups"
-CONFIG_FILE="${CONFIG_DIR}/monitors.conf"
-[[ -f "${CONFIG_DIR}/source/monitors.conf" ]] && CONFIG_FILE="${CONFIG_DIR}/source/monitors.conf"
+CONFIG_FILE="${CONFIG_DIR}/monitors.lua"
+[[ -f "${CONFIG_DIR}/source/monitors.lua" ]] && CONFIG_FILE="${CONFIG_DIR}/source/monitors.lua"
 
 # ANSI color codes
 readonly C_R=$'\e[0m' C_RED=$'\e[31m' C_GRN=$'\e[32m' C_YLW=$'\e[33m'

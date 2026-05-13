@@ -1,0 +1,18 @@
+# ==============================================================================
+# USER CONFIGURATION: autostart.conf
+# ==============================================================================
+# Add your custom settings for autostart here.
+# These will override or add to the defaults found in ~/.config/hypr/source/autostart.conf
+# ==============================================================================
+
+# Set pipewire buffer size to 128
+exec-once = pw-metadata -n settings 0 clock.force-quantum 128
+
+# Autostart solaar
+exec-once = solaar --window=hide
+
+# Create the headless output (it will be HEADLESS-2 based on your logs)
+exec-once = hyprctl output create headless
+
+# Start Sunshine as a child process so it inherits the socket signature
+exec-once = bash -c "sleep 2 && sunshine"

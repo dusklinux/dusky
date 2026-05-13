@@ -10,7 +10,7 @@ from pathlib import Path
 
 # --- Immutable Configuration ---
 CONFIG_DIR = Path.home() / ".config/hypr/edit_here/source"
-CONFIG_FILE = CONFIG_DIR / "monitors.conf"
+CONFIG_FILE = CONFIG_DIR / "monitors.lua"
 NOTIFY_TAG = "hypr_scale_adjust"
 MIN_LOGICAL_WIDTH = 640
 MIN_LOGICAL_HEIGHT = 360
@@ -99,7 +99,7 @@ def compute_next_scale(current: float, direction: str, phys_w: int, phys_h: int)
         return max(candidates)
 
 def update_config_atomically(monitor_name: str, new_scale: float) -> None:
-    """Updates the config via state machine and strict POSIX atomic replacement."""
+    """Updates hl.monitor() scale in monitors.lua via strict POSIX atomic replacement."""
     if not CONFIG_FILE.exists():
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.touch()
@@ -111,64 +111,28 @@ def update_config_atomically(monitor_name: str, new_scale: float) -> None:
     found = False
     log_debug(f"Updating config: {monitor_name} -> {new_scale:g}")
 
-    # 1. Process V2 Blocks
-    def v2_replacer(match: re.Match) -> str:
+    def lua_replacer(match: re.Match) -> str:
         nonlocal found
-        block = match.group(0)
-        if re.search(rf"^\s*output\s*=\s*{re.escape(monitor_name)}\b", block, re.MULTILINE):
-            if re.search(r"^\s*scale\s*=.*", block, re.MULTILINE):
-                block = re.sub(r"(^\s*scale\s*=).*$", rf"\1 {new_scale:g}", block, flags=re.MULTILINE)
-            else:
-                block = re.sub(r"(\s*)\}$", rf"\1    scale = {new_scale:g}\n}}", block)
-            found = True
-        return block
-        
-    config_text = re.sub(r"monitorv2\s*\{[^}]*\}", v2_replacer, config_text)
+        line = match.group(0)
+        if f'output = "{monitor_name}"' not in line:
+            return line
+        found = True
+        updated = re.sub(r'(\bscale\s*=\s*)[0-9.]+', rf'\g<1>{new_scale:g}', line)
+        if updated != line:
+            return updated
+        # No scale field yet — insert before closing })
+        return re.sub(r'(\s*\}\s*\)\s*)$', rf', scale = {new_scale:g}\1', line)
 
-    # 2. Process V1 Rules
-    if not found:
-        def v1_replacer(match: re.Match) -> str:
-            nonlocal found
-            mon_name = match.group(2).strip()
-            
-            if mon_name == monitor_name:
-                found = True
-                remainder = match.group(3)
-                comment = ""
-                
-                # FIX: Dynamically capture the comment and all preceding whitespace to preserve formatting
-                c_match = re.search(r'(\s*#.*)', remainder)
-                if c_match:
-                    comment = c_match.group(1)
-                    remainder = remainder[:c_match.start()]
-                
-                parts = remainder.split(",")
-                if len(parts) == 2:
-                    if "disable" in parts[1].strip():
-                        parts = ["", " preferred", " auto", f" {new_scale:g}"]
-                    else:
-                        parts.extend([" auto", f" {new_scale:g}"])
-                elif len(parts) == 3:
-                    parts.append(f" {new_scale:g}")
-                elif len(parts) >= 4:
-                    parts[3] = f" {new_scale:g}"
-                
-                return f"{match.group(1)}{match.group(2)}{','.join(parts)}{comment}"
-            return match.group(0)
+    config_text = re.sub(r'^.*hl\.monitor\s*\(.*$', lua_replacer, config_text, flags=re.MULTILINE)
 
-        config_text = re.sub(r"^(\s*monitor\s*=\s*)([^,\n]+)(,.*)$", v1_replacer, config_text, flags=re.MULTILINE)
-
-    # 3. Append entirely new rule
     if not found:
         log_info(f"Appending new entry for: {monitor_name}")
-        config_text += f"\nmonitor = {monitor_name}, preferred, auto, {new_scale:g}\n"
+        config_text += f'\nhl.monitor({{ output = "{monitor_name}", mode = "preferred", position = "auto", scale = {new_scale:g} }})\n'
 
-    # 4. Strict POSIX Atomic Write
-    fd, temp_path = tempfile.mkstemp(dir=real_path.parent, prefix=".monitors.conf.tmp.")
+    fd, temp_path = tempfile.mkstemp(dir=real_path.parent, prefix=".monitors.lua.tmp.")
     try:
         with os.fdopen(fd, 'w') as temp_file:
             temp_file.write(config_text)
-            
         os.chmod(temp_path, real_path.stat().st_mode)
         os.replace(temp_path, real_path)
     except Exception as e:
@@ -192,21 +156,21 @@ def main():
         notify("Monitor Scale", f"Limit Reached: {current_scale:g}", "normal")
         return
 
-    # Write the target scale to disk
     update_config_atomically(mon_name, new_scale)
     
     log_info(f"Applying scale {new_scale:g} via hyprctl reload")
     subprocess.run(["hyprctl", "reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    # State Verification: Deterministic polling to prevent async race conditions
+    # Poll for Hyprland to apply the new scale. Sleep first so we don't race
+    # the reload — querying immediately almost always returns the old value.
     actual_scale = current_scale
-    for _ in range(25):  # Poll every 100ms for up to 2.5 seconds
-        time.sleep(0.1)
+    time.sleep(0.3)
+    for _ in range(22):  # Poll every 100ms for up to ~2.5 seconds total
         _, _, _, polled_scale = get_active_monitor(mon_name)
         if abs(polled_scale - current_scale) > 0.000001:
             actual_scale = polled_scale
             break
-        actual_scale = polled_scale
+        time.sleep(0.1)
     
     # Verify if Wayland accepted the request or clamped it due to hardware limits
     if abs(actual_scale - new_scale) > 0.000001:

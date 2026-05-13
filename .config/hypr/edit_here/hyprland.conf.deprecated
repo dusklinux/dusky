@@ -1,0 +1,16 @@
+# ==============================================================================
+# USER CONFIGURATION OVERLAY
+# ==============================================================================
+# This file sources all your custom configuration files.
+# Edit the specific files in 'source/' to apply your changes.
+# ==============================================================================
+
+source = ~/.config/hypr/edit_here/source/monitors.conf
+source = ~/.config/hypr/edit_here/source/keybinds.conf
+source = ~/.config/hypr/edit_here/source/appearance.conf
+source = ~/.config/hypr/edit_here/source/autostart.conf
+source = ~/.config/hypr/edit_here/source/plugins.conf
+source = ~/.config/hypr/edit_here/source/window_rules.conf
+source = ~/.config/hypr/edit_here/source/workspace_rules.conf
+source = ~/.config/hypr/edit_here/source/environment_variables.conf
+source = ~/.config/hypr/edit_here/source/input.conf

@@ -26,7 +26,7 @@ shopt -s extglob
 # ▼ USER CONFIGURATION (EDIT THIS SECTION) ▼
 # =============================================================================
 
-declare -r CONFIG_FILE="${HOME}/.config/hypr/edit_here/source/input.conf"
+declare -r CONFIG_FILE="${HOME}/.config/hypr/edit_here/source/input.lua"
 declare -r APP_TITLE="Dusky Input"
 declare -r APP_VERSION="v5.4.0 (Hardened)"
 
@@ -63,7 +63,7 @@ register_items() {
 
     # Tab 2: Touchpad (Block: 'touchpad')
     register 2 "TP Nat Scroll"      'natural_scroll|bool|touchpad|||'       "true"
-    register 2 "Tap to Click"       'tap-to-click|bool|touchpad|||'         "true"
+    register 2 "Tap to Click"       'tap_to_click|bool|touchpad|||'         "true"
     register 2 "Disable While Typing" 'disable_while_typing|bool|touchpad|||' "true"
     register 2 "Clickfinger Behav"  'clickfinger_behavior|bool|touchpad|||' "false"
     register 2 "Drag Lock"          'drag_lock|bool|touchpad|||'            "false"
@@ -87,7 +87,7 @@ register_items() {
 
 # Post-Write Hook
 post_write_action() {
-    : # Reload command here, e.g.: hyprctl reload &>/dev/null || :
+    hyprctl reload &>/dev/null || :
 }
 
 # =============================================================================
@@ -210,17 +210,18 @@ populate_config_cache() {
         fi
     done < <(LC_ALL=C awk '
         BEGIN { depth = 0 }
-        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*--/ { next }
         {
             line = $0
             # Strip inline comments for structural parsing so "}" in comments doesn'"'"'t break blocks
             clean = line
-            sub(/[[:space:]]+#.*$/, "", clean)
+            sub(/[[:space:]]+--.*$/, "", clean)
 
             tmpline = clean
-            while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*\{/)) {
+            # Lua tables use "name = {" syntax; conf uses "name {"
+            while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*(=[[:space:]]*)?\{/)) {
                 block_str = substr(tmpline, RSTART, RLENGTH)
-                sub(/[[:space:]]*\{/, "", block_str)
+                sub(/[[:space:]]*(=[[:space:]]*)?\{/, "", block_str)
                 depth++
                 block_stack[depth] = block_str
                 tmpline = substr(tmpline, RSTART + RLENGTH)
@@ -233,8 +234,12 @@ populate_config_cache() {
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
                     # Strip trailing inline comment from value
-                    sub(/[[:space:]]+#.*$/, "", val)
+                    sub(/[[:space:]]+--.*$/, "", val)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+                    # Strip trailing comma (Lua table syntax)
+                    sub(/,$/, "", val)
+                    # Strip surrounding double-quotes (Lua string values)
+                    if (val ~ /^".*"$/) val = substr(val, 2, length(val) - 2)
                     if (key != "") {
                         current_block = (depth > 0) ? block_stack[depth] : ""
                         print key "|" current_block "=" val
@@ -274,13 +279,14 @@ write_value_to_file() {
     {
         line = $0
         clean = line
-        sub(/^[[:space:]]*#.*/, "", clean)
-        sub(/[[:space:]]+#.*$/, "", clean)
+        sub(/^[[:space:]]*--.*/, "", clean)
+        sub(/[[:space:]]+--.*$/, "", clean)
 
         tmpline = clean
-        while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*\{/)) {
+        # Lua tables use "name = {" syntax; conf uses "name {"
+        while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*(=[[:space:]]*)?\{/)) {
             block_str = substr(tmpline, RSTART, RLENGTH)
-            sub(/[[:space:]]*\{/, "", block_str)
+            sub(/[[:space:]]*(=[[:space:]]*)?\{/, "", block_str)
             depth++
             block_stack[depth] = block_str
             if (do_block && block_str == target_block && !in_target) {
@@ -316,7 +322,19 @@ write_value_to_file() {
             match(rest, /^[[:space:]]*/)
             space_after = substr(rest, RSTART, RLENGTH)
 
-            print before_eq space_after new_value
+            # Detect trailing comma and surrounding quotes from the original value
+            old_val = substr(rest, RSTART + RLENGTH)
+            sub(/[[:space:]]+--.*$/, "", old_val)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", old_val)
+            was_trailing = (old_val ~ /,$/) ? 1 : 0
+            sub(/,$/, "", old_val)
+            was_quoted = (old_val ~ /^".*"$/) ? 1 : 0
+
+            out_val = new_value
+            if (was_quoted && !(new_value ~ /^".*"$/)) out_val = "\"" new_value "\""
+            trailing = was_trailing ? "," : ""
+
+            print before_eq space_after out_val trailing
             replaced = 1
         } else {
             print line

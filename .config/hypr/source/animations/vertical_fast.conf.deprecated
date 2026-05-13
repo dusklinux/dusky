@@ -1,0 +1,34 @@
+# ----------------------------------------------------- 
+# FAST PRESET: High Performance / Low Latency
+# ----------------------------------------------------- 
+
+animations {
+    enabled = true
+
+    # --- Linear / Sharp Curves ---
+    bezier = linear, 0, 0, 1, 1
+    bezier = md3_decel, 0.05, 0.7, 0.1, 1
+    bezier = instant, 0, 1, 0, 1
+
+    # --- Animation Configs ---
+    
+    # Windows: Instant snap with barely visible deceleration
+    # Duration 2 = ~30ms. Blink and you miss it.
+    animation = windows, 1, 2, md3_decel, slide
+    animation = windowsIn, 1, 2, md3_decel, slide
+    animation = windowsOut, 1, 2, md3_decel, slide
+    animation = windowsMove, 1, 2, md3_decel, slide
+
+    # Border: Instant feedback
+    animation = border, 1, 1, linear
+    animation = fade, 1, 2, md3_decel
+
+    # Layers: Snappy but not jarring
+    animation = layers, 1, 2, md3_decel, slide
+    
+    # Workspaces: Fast vertical slide (200ms)
+    # Enough context to see the movement, fast enough not to wait.
+    animation = workspaces, 1, 2.5, md3_decel, slidevert
+    animation = specialWorkspace, 1, 2.5, md3_decel, slide
+
+}

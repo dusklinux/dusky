@@ -142,9 +142,9 @@ get_current_blur_state() {
     [[ -L "${CONFIG_FILE}" ]] && actual_config=$(realpath -m "${CONFIG_FILE}")
 
     state=$(awk '
-        /^[[:space:]]*blur[[:space:]]*\{/ { in_block = 1; next }
-        in_block && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*true/  { found = "on" }
-        in_block && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*false/ { found = "off" }
+        /^[[:space:]]*blur[[:space:]]*=[[:space:]]*\{/ { in_block = 1; next }
+        in_block && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*true,?/  { found = "on" }
+        in_block && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*false,?/ { found = "off" }
         in_block && /\}/  { in_block = 0 }
         END { print (found ? found : "off") }
     ' "$actual_config" 2>/dev/null) || state="off"
@@ -281,24 +281,8 @@ fi
 
 # --- Apply Changes at Runtime ---
 
-declare -a HYPR_CMDS=(
-    "decoration:blur:enabled ${NEW_ENABLED}"
-    "decoration:shadow:enabled ${NEW_ENABLED}"
-    "decoration:active_opacity ${NEW_ACTIVE}"
-    "decoration:inactive_opacity ${NEW_INACTIVE}"
-)
-
-hypr_errors=0
-for cmd in "${HYPR_CMDS[@]}"; do
-    # shellcheck disable=SC2086
-    if ! hyprctl keyword $cmd &>/dev/null; then
-        ((hypr_errors++)) || true
-    fi
-done
-
-if ((hypr_errors > 0)); then
-    printf 'Warning: %d hyprctl command(s) failed. Is Hyprland running?\n' "$hypr_errors" >&2
-fi
+hyprctl eval "hl.config({decoration={blur={enabled=${NEW_ENABLED}},shadow={enabled=${NEW_ENABLED}},active_opacity=${NEW_ACTIVE},inactive_opacity=${NEW_INACTIVE}}})" &>/dev/null \
+    || printf 'Warning: hl.config() failed. Is Hyprland running?\n' >&2
 
 # Reload dynamic daemons
 if command -v makoctl &>/dev/null; then
@@ -313,5 +297,8 @@ fi
 # --- User Feedback ---
 
 notify "$NOTIFY_MSG"
+
+exit 0
+
 
 exit 0

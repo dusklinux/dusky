@@ -1,0 +1,28 @@
+# ----------------------------------------------------- 
+# DRAMA PRESET: Slow Motion Cinematic
+# ----------------------------------------------------- 
+
+animations {
+    enabled = true
+
+    # --- The "Suspense" Curve ---
+    # Starts incredibly slow, rushes in the middle, slows down again.
+    bezier = slowmo, 0.85, 0, 0.15, 1
+
+    # --- Animation Configs ---
+
+    # Windows: 15 (approx 1.5 seconds). It feels like forever.
+    animation = windows, 1, 15, slowmo, slide
+    animation = windowsMove, 1, 15, slowmo, slide
+
+    # Border: A slow, ominous color change
+    animation = border, 1, 20, slowmo
+    animation = fade, 1, 20, slowmo
+
+    # Layers
+    animation = layers, 1, 12, slowmo, slide
+    
+    # Workspaces: A grand, sweeping scene transition
+    animation = workspaces, 1, 20, slowmo, slidevert
+    animation = specialWorkspace, 1, 20, slowmo, slide
+}

@@ -101,7 +101,7 @@ freeze_screen() {
     if (( FREEZE )); then
         hyprpicker -r -z >/dev/null 2>&1 &
         FREEZE_PID=$!
-        sleep 0.12 
+        sleep 0.12
     fi
 }
 

@@ -1278,6 +1278,47 @@ windowrule {
     center = on
 }
 
+#--- WireGuard terminal windows ---
+windowrule {
+    name = dusky_wg_new
+    match:class = ^(dusky_wg_new)$
+    float = on
+    size = 700 480
+    center = on
+}
+
+windowrule {
+    name = dusky_wg_setup
+    match:class = ^(dusky_wg_setup)$
+    float = on
+    size = 700 420
+    center = on
+}
+
+windowrule {
+    name = dusky_wg_status
+    match:class = ^(dusky_wg_status)$
+    float = on
+    size = 720 400
+    center = on
+}
+
+windowrule {
+    name = dusky_wg_edit
+    match:class = ^(dusky_wg_edit)$
+    float = on
+    size = 700 420
+    center = on
+}
+
+windowrule {
+    name = dusky_wg_delete
+    match:class = ^(dusky_wg_delete)$
+    float = on
+    size = 500 200
+    center = on
+}
+
 #--- music recognition script---
 windowrule {
     name = music_recognition.sh

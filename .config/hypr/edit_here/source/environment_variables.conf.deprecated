@@ -1,0 +1,8 @@
+# ==============================================================================
+# USER CONFIGURATION: environment_variables.conf
+# ==============================================================================
+# Add your custom settings for environment_variables here.
+# These will override or add to the defaults found in ~/.config/hypr/source/environment_variables.conf
+# NOTE: it's strongly advised to place your environment variables in the uwsm files in ~/.config/uwsm/{env,env-hyprland}
+# ==============================================================================
+

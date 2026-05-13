@@ -1,0 +1,35 @@
+# ----------------------------------------------------- 
+# SLAP PRESET: Aggressive, Instant Impact
+# ----------------------------------------------------- 
+
+animations {
+    enabled = true
+
+    # --- The "Impact" Curve ---
+    # Starts at 0, goes straight to 1. No easing.
+    bezier = linear, 0, 0, 1, 1
+    # Accelerate only
+    bezier = accel, 1, 0, 1, 0.5
+
+    # --- Animation Configs ---
+
+    # Windows: Fast entry (3), hard stop.
+    animation = windowsIn, 1, 3, accel, slide
+    # Windows Out: They drop like rocks.
+    animation = windowsOut, 1, 3, accel, slide
+
+    # Windows Move: Zero smoothing.
+    animation = windowsMove, 1, 2, linear, slide
+
+    # Border
+    animation = border, 1, 1, linear
+    animation = fade, 1, 2, linear
+
+    # Layers
+    animation = layers, 1, 2, accel, slide
+
+    # Workspaces: Fast vertical slam
+    animation = workspaces, 1, 3, accel, slidevert
+    animation = specialWorkspace, 1, 3, accel, slide
+
+}
