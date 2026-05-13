@@ -53,31 +53,31 @@ hl.bind(
 
 hl.bind(
     "CTRL + SHIFT + SPACE",
-    hl.dsp.exec_cmd("pkill rofi; " .. HOME .. "/user_scripts/rofi/keybindings.sh"),
+    hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/keybindings.sh"),
     { description = "Show Keybinds" }
 )
 
 hl.bind(
     "SUPER + CTRL + SPACE",
-    hl.dsp.exec_cmd("pkill rofi; " .. HOME .. "/user_scripts/rofi/emoji.sh"),
+    hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/emoji.sh"),
     { description = "Search Emojis" }
 )
 
 hl.bind(
     "SUPER + CTRL + SHIFT + SPACE",
-    hl.dsp.exec_cmd("pkill rofi; " .. HOME .. "/user_scripts/rofi/calculator.sh"),
+    hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/calculator.sh"),
     { description = "Calculator" }
 )
 
 hl.bind(
     "SUPER + SHIFT + SPACE",
-    hl.dsp.exec_cmd("pkill rofi; " .. HOME .. "/user_scripts/rofi/rofi_theme.sh"),
+    hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/rofi_theme.sh"),
     { description = "Matugen Theme Config" }
 )
 
 hl.bind(
     "CTRL + SPACE",
-    hl.dsp.exec_cmd("pkill rofi; " .. HOME .. "/user_scripts/rofi/rofi_wallpaper_selctor.sh"),
+    hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/rofi_wallpaper_selctor.sh"),
     { description = "Rofi Wallpaper Selector" }
 )
 
@@ -89,14 +89,14 @@ hl.bind(
 
 hl.bind(
     "CTRL + ALT + SPACE",
-    hl.dsp.exec_cmd("pkill rofi; " .. HOME .. "/user_scripts/rofi/dusky_glance.sh"),
+    hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/dusky_glance.sh"),
     { description = "Dusky Glance" }
 )
 
 -- Rofi Powermenu
 hl.bind(
     "ALT + SHIFT + SPACE",
-    hl.dsp.exec_cmd("pkill rofi; rofi -show power-menu -modi power-menu:" .. HOME .. "/user_scripts/rofi/powermenu.sh"),
+    hl.dsp.exec_cmd("pkill rofi; rofi -show power-menu -modi power-menu:" .. dusky_scripts .. "rofi/powermenu.sh"),
     { description = "Power Menu" }
 )
 
@@ -138,25 +138,25 @@ hl.bind(
 
 hl.bind(
     "SUPER + apostrophe",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/theme_matugen/theme_ctl.sh next"),
+    hl.dsp.exec_cmd(dusky_scripts .. "theme_matugen/theme_ctl.sh next"),
     { description = "Cycle Next Wallpaper" }
 )
 
 hl.bind(
     "SUPER + SHIFT + apostrophe",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/rofi/rofi_wallpaper_selctor.sh --next-fav"),
+    hl.dsp.exec_cmd(dusky_scripts .. "rofi/rofi_wallpaper_selctor.sh --next-fav"),
     { description = "Cycle Fav Wallpaper" }
 )
 
 hl.bind(
     "ALT + 5",
-    hl.dsp.exec_cmd(terminal .. " -e " .. HOME .. "/user_scripts/drives/drive_manager.sh unlock browser"),
+    hl.dsp.exec_cmd(terminal .. " -e " .. dusky_scripts .. "drives/drive_manager.sh unlock browser"),
     { description = "Unlock Browser" }
 )
 
 hl.bind(
     "ALT + SHIFT + 5",
-    hl.dsp.exec_cmd(terminal .. " -e " .. HOME .. "/user_scripts/drives/drive_manager.sh lock browser"),
+    hl.dsp.exec_cmd(terminal .. " -e " .. dusky_scripts .. "drives/drive_manager.sh lock browser"),
     { description = "Lock Browser", locked = true }
 )
 
@@ -198,13 +198,13 @@ hl.bind(
 
 hl.bind(
     "CTRL + ALT + R",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/hypr/screen_rotate.sh -90"),
+    hl.dsp.exec_cmd(dusky_scripts .. "hypr/screen_rotate.sh -90"),
     { description = "Rotate Screen Clockwise", locked = true }
 )
 
 hl.bind(
     "CTRL + ALT + SHIFT + R",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/hypr/screen_rotate.sh +90"),
+    hl.dsp.exec_cmd(dusky_scripts .. "hypr/screen_rotate.sh +90"),
     { description = "Rotate Screen Anti-Clockwise", locked = true }
 )
 
@@ -232,7 +232,7 @@ hl.bind(
 -- --- Waybar Toggle ---
 hl.bind(
     "ALT + 9",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/waybar/waybar_autostart.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "waybar/waybar_autostart.sh"),
     { description = "Start Waybar for 1 Min" }
 )
 
@@ -244,13 +244,13 @@ hl.bind(
 
 hl.bind(
     "SUPER + ALT + W",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/waybar/dusky_waybars.sh --toggle"),
+    hl.dsp.exec_cmd(dusky_scripts .. "waybar/dusky_waybars.sh --toggle"),
     { description = "Waybar Swap Configs" }
 )
 
 hl.bind(
     "SUPER + ALT + SHIFT + W",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/waybar/dusky_waybars.sh --back_toggle"),
+    hl.dsp.exec_cmd(dusky_scripts .. "waybar/dusky_waybars.sh --back_toggle"),
     { description = "Waybar Swap Configs" }
 )
 
@@ -258,7 +258,7 @@ hl.bind(
 -- --- Utilities ---
 hl.bind(
     "ALT + F4",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/wlogout/wlogout_scale.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "wlogout/wlogout_scale.sh"),
     { description = "Logout Menu" }
 )
 
@@ -276,45 +276,45 @@ hl.bind(
 
 hl.bind(
     "XF86Launch3",
-    hl.dsp.exec_cmd(terminal .. " --class asusctl.sh -e sudo " .. HOME .. "/user_scripts/asus/asusctl.sh"),
+    hl.dsp.exec_cmd(terminal .. " --class asusctl.sh -e sudo " .. dusky_scripts .. "asus/asusctl.sh"),
     { description = "ASUS Control", locked = true }
 )
 
 hl.bind(
     "SUPER + F",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/hypr/adjust_scale.py +"),
+    hl.dsp.exec_cmd(dusky_scripts .. "hypr/adjust_scale.py +"),
     { description = "Scale Up", locked = true, repeating = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + F",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/hypr/adjust_scale.py -"),
+    hl.dsp.exec_cmd(dusky_scripts .. "hypr/adjust_scale.py -"),
     { description = "Scale Down", locked = true, repeating = true }
 )
 
 hl.bind(
     "SUPER + semicolon",
-    hl.dsp.exec_cmd(terminal .. " --class performance.sh -e " .. HOME .. "/user_scripts/performance/services_and_process_terminator.sh"),
+    hl.dsp.exec_cmd(terminal .. " --class performance.sh -e " .. dusky_scripts .. "performance/services_and_process_terminator.sh"),
     { description = "Kill Process" }
 )
 
 -- --- Wayclick & OSD Key Presses ---
 hl.bind(
     "SUPER + U",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/wayclick/dusky_wayclick.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "wayclick/dusky_wayclick.sh"),
     { description = "Key Press Sound" }
 )
 
 hl.bind(
     "SUPER + SHIFT + U",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/dusky_keys/dusky_keys.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/dusky_keys/dusky_keys.sh"),
     { description = "OSD KEY Presses" }
 )
 
 -- --- Hyprshade (Visual Filters) ---
 hl.bind(
     "SUPER + ALT + S",
-    hl.dsp.exec_cmd("pkill rofi; " .. HOME .. "/user_scripts/rofi/shader_menu.sh"),
+    hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/shader_menu.sh"),
     { description = "Shader Menu" }
 )
 
@@ -333,14 +333,14 @@ hl.bind(
 -- --- Hyprland Animations ---
 hl.bind(
     "SUPER + ALT + A",
-    hl.dsp.exec_cmd("pkill rofi; rofi -show animations -modi \"animations:" .. HOME .. "/user_scripts/rofi/hypr_anim.sh\""),
+    hl.dsp.exec_cmd("pkill rofi; rofi -show animations -modi \"animations:" .. dusky_scripts .. "rofi/hypr_anim.sh\""),
     { description = "Hyprland Animation Rofi Menu" }
 )
 
 -- --- Special Workspace (Spotify) ---
 hl.bind(
     "SUPER + SHIFT + M",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/spotify/spotify_toggle.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "spotify/spotify_toggle.sh"),
     { description = "Special Workspace for Spotify" }
 )
 
@@ -348,7 +348,7 @@ hl.bind(
 -- --- Opacity & Blur Toggles ---
 hl.bind(
     "SUPER + ALT + period",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/hypr/hypr_blur_opacity_shadow_toggle.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "hypr/hypr_blur_opacity_shadow_toggle.sh"),
     { description = "Toggle Blur/Opacity", locked = true }
 )
 
@@ -390,7 +390,7 @@ hl.bind(
 -- --- Clipboard & Screenshot ---
 hl.bind(
     "SUPER + V",
-    hl.dsp.exec_cmd("pkill rofi; rofi -modi \"clipboard:" .. HOME .. "/user_scripts/rofi/rofi_cliphist.sh\" -show clipboard"),
+    hl.dsp.exec_cmd("pkill rofi; rofi -modi \"clipboard:" .. dusky_scripts .. "rofi/rofi_cliphist.sh\" -show clipboard"),
     { description = "Clipboard History" }
 )
 
@@ -402,7 +402,7 @@ hl.bind(
 
 hl.bind(
     "SUPER + S",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/images/dusky_screenshot.sh --region --freeze --no-notify"),
+    hl.dsp.exec_cmd(dusky_scripts .. "images/dusky_screenshot.sh --region --freeze --no-notify"),
     { description = "Quick Screenshot" }
 )
 
@@ -414,7 +414,7 @@ hl.bind(
 
 hl.bind(
     "SUPER + SHIFT + S",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/images/dusky_screenshot.sh --region --freeze --annotate --no-notify --tool arrow"),
+    hl.dsp.exec_cmd(dusky_scripts .. "images/dusky_screenshot.sh --region --freeze --annotate --no-notify --tool arrow"),
     { description = "Screenshot and Annotation" }
 )
 
@@ -426,7 +426,7 @@ hl.bind(
 
 hl.bind(
     "SHIFT + CTRL + ALT + space",
-    hl.dsp.exec_cmd("pkill rofi; " .. HOME .. "/user_scripts/rofi/dusky_rofi_screenshot.sh"),
+    hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/dusky_rofi_screenshot.sh"),
     { description = "Dusky Screenshoter" }
 )
 
@@ -436,7 +436,7 @@ hl.bind(
 -- Google Image Search
 hl.bind(
     "SUPER + G",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/google_image_search/google_image_search.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "google_image_search/google_image_search.sh"),
     { description = "Image Search (Select and search)" }
 )
 
@@ -456,42 +456,42 @@ hl.bind(
 -- ollama Sidebar
 hl.bind(
     "SUPER + ALT + O",
-    hl.dsp.exec_cmd(terminal .. " --class ollama_terminal.sh -e " .. HOME .. "/user_scripts/llm/ollama_terminal.sh"),
+    hl.dsp.exec_cmd(terminal .. " --class ollama_terminal.sh -e " .. dusky_scripts .. "llm/ollama_terminal.sh"),
     { description = "AI LLM Ollama Chat" }
 )
 
 -- Music Recognition
 hl.bind(
     "SUPER + ALT + M",
-    hl.dsp.exec_cmd(terminal .. " --hold --class music_recognition.sh -e " .. HOME .. "/user_scripts/music/music_recognition.sh"),
+    hl.dsp.exec_cmd(terminal .. " --hold --class music_recognition.sh -e " .. dusky_scripts .. "music/music_recognition.sh"),
     { description = "Music Recognition aka Shazam" }
 )
 
 -- Kokoro TTS
 hl.bind(
     "SUPER + O",
-    hl.dsp.exec_cmd("wl-copy \"$(wl-paste -p)\" && " .. HOME .. "/user_scripts/tts_stt/dusky_kokoro/trigger.sh"),
+    hl.dsp.exec_cmd("wl-copy \"$(wl-paste -p)\" && " .. dusky_scripts .. "tts_stt/dusky_kokoro/trigger.sh"),
     { description = "TTS Kokoro GPU" }
 )
 
 -- Kokoro TTS - VC Routed
 hl.bind(
     "SUPER + SHIFT + O",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/audio/router/TTS_VC.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "audio/router/TTS_VC.sh"),
     { description = "TTS VC" }
 )
 
 -- NVIDIA Parakeet
 hl.bind(
     "SUPER + I",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/tts_stt/dusky_parakeet/trigger.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "tts_stt/dusky_parakeet/trigger.sh"),
     { description = "STT Parakeet GPU" }
 )
 
 -- FasterWhisper STT
 -- hl.bind(
 --     "SUPER + SHIFT + I",
---     hl.dsp.exec_cmd(HOME .. "/user_scripts/tts_stt/faster_whisper/faster_whisper_stt.sh"),
+--     hl.dsp.exec_cmd(dusky_scripts .. "tts_stt/faster_whisper/faster_whisper_stt.sh"),
 --     { description = "STT Whisper CPU" }
 -- )
 
@@ -503,7 +503,7 @@ hl.bind(
 -- --- Notification Panel ---
 hl.bind(
     "SUPER + N",
-    hl.dsp.exec_cmd("pkill rofi; " .. HOME .. "/user_scripts/rofi/rofi_mako.sh"),
+    hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/rofi_mako.sh"),
     { description = "Notification History" }
 )
 
@@ -523,7 +523,7 @@ hl.bind(
 -- --- Screen Lock ---
 hl.bind(
     "SUPER + M",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/hyprlock/lock.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "hyprlock/lock.sh"),
     { description = "Lock Screen" }
 )
 
@@ -888,7 +888,7 @@ hl.bind(
 -- The script handles all the math; these binds just pass the 1-10 slot number.
 -- -------------------------------------------------------------------------------------------------
 
-local ws_script = HOME .. "/user_scripts/hypr/multi_monitor_workspace.sh"
+local ws_script = dusky_scripts .. "hypr/multi_monitor_workspace.sh"
 
 -- Helper shorthand so the repeated hl.dsp.exec_cmd calls stay readable
 local function ws(action, n)
@@ -959,139 +959,139 @@ hl.bind(
 -- Standard Media Keys (Repeatable via 'e' flag, Lockscreen bypass via 'l')
 hl.bind(
     "XF86AudioRaiseVolume",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --vol-up 5"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-up 5"),
     { description = "Volume up", locked = true, repeating = true }
 )
 
 hl.bind(
     "XF86AudioLowerVolume",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --vol-down 5"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-down 5"),
     { description = "Volume down", locked = true, repeating = true }
 )
 
 hl.bind(
     "XF86AudioMute",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --vol-mute"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-mute"),
     { description = "Mute", locked = true }
 )
 
 hl.bind(
     "XF86AudioMicMute",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --mic-mute"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --mic-mute"),
     { description = "Mute microphone", locked = true }
 )
 
 hl.bind(
     "XF86MonBrightnessUp",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --bright-up 5"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --bright-up 5"),
     { description = "Brightness up", locked = true, repeating = true }
 )
 
 hl.bind(
     "XF86MonBrightnessDown",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --bright-down 5"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --bright-down 5"),
     { description = "Brightness down", locked = true, repeating = true }
 )
 
 -- Precise Adjustments (Alt Modifier)
 hl.bind(
     "ALT + XF86AudioRaiseVolume",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --vol-up 1"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-up 1"),
     { description = "Volume up precise", locked = true, repeating = true }
 )
 
 hl.bind(
     "ALT + XF86AudioLowerVolume",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --vol-down 1"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-down 1"),
     { description = "Volume down precise", locked = true, repeating = true }
 )
 
 hl.bind(
     "ALT + XF86MonBrightnessUp",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --bright-up 1"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --bright-up 1"),
     { description = "Brightness up precise", locked = true, repeating = true }
 )
 
 hl.bind(
     "ALT + XF86MonBrightnessDown",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --bright-down 1"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --bright-down 1"),
     { description = "Brightness down precise", locked = true, repeating = true }
 )
 
 -- Keyboard Backlight
 hl.bind(
     "XF86KbdBrightnessUp",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --kbd-bright-up 10"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --kbd-bright-up 10"),
     { description = "Keyboard Brightness up", locked = true, repeating = true }
 )
 
 hl.bind(
     "XF86KbdBrightnessDown",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --kbd-bright-down 10"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --kbd-bright-down 10"),
     { description = "Keyboard Brightness down", locked = true, repeating = true }
 )
 
 -- Player Controls (Routed through script for OSD feedback)
 hl.bind(
     "XF86AudioNext",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --next"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --next"),
     { description = "Next track", locked = true }
 )
 
 hl.bind(
     "XF86AudioPrev",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --prev"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --prev"),
     { description = "Previous track", locked = true }
 )
 
 hl.bind(
     "XF86AudioPlay",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --play-pause"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --play-pause"),
     { description = "Play", locked = true }
 )
 
 hl.bind(
     "XF86AudioPause",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --play-pause"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --play-pause"),
     { description = "Pause", locked = true }
 )
 
 hl.bind(
     "XF86AudioStop",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --stop"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --stop"),
     { description = "Stop", locked = true }
 )
 
 hl.bind(
     "SUPER + P",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --play-pause"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --play-pause"),
     { description = "Toggle Pause", locked = true }
 )
 
 -- Custom Audio/Mic Switching Scripts
 hl.bind(
     "ALT + P",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/mako_osd/osd_router/osd_router.sh --vol-mute"),
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-mute"),
     { description = "Mute Audio", locked = true }
 )
 
 -- Mono Audio toggle
 hl.bind(
     "ALT + M",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/audio/mono_audio_pipewire.py"),
+    hl.dsp.exec_cmd(dusky_scripts .. "audio/mono_audio_pipewire.py"),
     { description = "Mono Audio Toggle", locked = true }
 )
 
 -- Audio/Mic Switching
 hl.bind(
     "ALT + O",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/audio/audio_switch.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "audio/audio_switch.sh"),
     { description = "Switch Audio Output", locked = true }
 )
 
 hl.bind(
     "ALT + I",
-    hl.dsp.exec_cmd(HOME .. "/user_scripts/audio/mic_switch.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "audio/mic_switch.sh"),
     { description = "Switch Mic Input", locked = true }
 )
 
