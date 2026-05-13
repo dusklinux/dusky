@@ -171,13 +171,13 @@ switch_terminal() {
     local new_vars
     new_vars=$(awk -v val="$target" '
         BEGIN { found=0 }
-        /^[[:space:]]*local[[:space:]]+terminal[[:space:]]*=/ {
-            print "local terminal = \"" val "\""
+        /^[[:space:]]*terminal[[:space:]]*=/ {
+            print "terminal = \"" val "\""
             found=1
             next
         }
         { print }
-        END { if(!found) print "local terminal = \"" val "\"" }
+        END { if(!found) print "terminal = \"" val "\"" }
     ' "$CONF_VARS")
     atomic_write "$CONF_VARS" "$new_vars"
 
@@ -232,7 +232,7 @@ switch_terminal() {
 
 detect_current() {
     if [[ -f "$CONF_VARS" ]]; then
-        CURRENT_TERM_KEY=$(grep -m1 '^[[:space:]]*local[[:space:]]\+terminal[[:space:]]*=' "$CONF_VARS" | cut -d'=' -f2 | tr -d ' "' || echo "unknown")
+        CURRENT_TERM_KEY=$(grep -m1 '^[[:space:]]*terminal[[:space:]]*=' "$CONF_VARS" | cut -d'=' -f2 | tr -d ' "' || echo "unknown")
         CURRENT_TERM_KEY="${CURRENT_TERM_KEY//[[:space:]]/}"
         
         if [[ -z "$CURRENT_TERM_KEY" ]]; then

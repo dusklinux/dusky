@@ -184,13 +184,13 @@ switch_text_editor() {
     local new_vars
     new_vars=$(awk -v val="$target" '
         BEGIN { found=0 }
-        /^[[:space:]]*local[[:space:]]+textEditor[[:space:]]*=/ {
-            print "local textEditor = \"" val "\""
+        /^[[:space:]]*textEditor[[:space:]]*=/ {
+            print "textEditor = \"" val "\""
             found=1
             next
         }
         { print }
-        END { if(!found) print "local textEditor = \"" val "\"" }
+        END { if(!found) print "textEditor = \"" val "\"" }
     ' "$CONF_VARS")
     atomic_write "$CONF_VARS" "$new_vars"
 
@@ -257,7 +257,7 @@ switch_text_editor() {
 detect_current() {
     # Robust grep/cut to find current variable
     if [[ -f "$CONF_VARS" ]]; then
-        CURRENT_EDITOR_KEY=$(grep -m1 '^[[:space:]]*local[[:space:]]\+textEditor[[:space:]]*=' "$CONF_VARS" | cut -d'=' -f2 | tr -d ' "' || echo "unknown")
+        CURRENT_EDITOR_KEY=$(grep -m1 '^[[:space:]]*textEditor[[:space:]]*=' "$CONF_VARS" | cut -d'=' -f2 | tr -d ' "' || echo "unknown")
         CURRENT_EDITOR_KEY="${CURRENT_EDITOR_KEY//[[:space:]]/}"
         
         # Safe check for empty strings under set -e

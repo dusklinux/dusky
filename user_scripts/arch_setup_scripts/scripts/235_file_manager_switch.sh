@@ -184,13 +184,13 @@ switch_file_manager() {
     local new_vars
     new_vars=$(awk -v val="$target" '
         BEGIN { found=0 }
-        /^[[:space:]]*local[[:space:]]+fileManager[[:space:]]*=/ {
-            print "local fileManager = \"" val "\""
+        /^[[:space:]]*fileManager[[:space:]]*=/ {
+            print "fileManager = \"" val "\""
             found=1
             next
         }
         { print }
-        END { if(!found) print "local fileManager = \"" val "\"" }
+        END { if(!found) print "fileManager = \"" val "\"" }
     ' "$CONF_VARS")
     atomic_write "$CONF_VARS" "$new_vars"
 
@@ -257,7 +257,7 @@ switch_file_manager() {
 detect_current() {
     # Robust grep/cut to find current variable
     if [[ -f "$CONF_VARS" ]]; then
-        CURRENT_FM_KEY=$(grep -m1 '^[[:space:]]*local[[:space:]]\+fileManager[[:space:]]*=' "$CONF_VARS" | cut -d'=' -f2 | tr -d ' "' || echo "unknown")
+        CURRENT_FM_KEY=$(grep -m1 '^[[:space:]]*fileManager[[:space:]]*=' "$CONF_VARS" | cut -d'=' -f2 | tr -d ' "' || echo "unknown")
         CURRENT_FM_KEY="${CURRENT_FM_KEY//[[:space:]]/}"
         
         # Safe check for empty strings under set -e

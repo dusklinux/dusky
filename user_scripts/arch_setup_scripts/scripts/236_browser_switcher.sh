@@ -175,13 +175,13 @@ switch_browser() {
     local new_vars
     new_vars=$(awk -v val="$target" '
         BEGIN { found=0 }
-        /^[[:space:]]*local[[:space:]]+browser[[:space:]]*=/ {
-            print "local browser = \"" val "\""
+        /^[[:space:]]*browser[[:space:]]*=/ {
+            print "browser = \"" val "\""
             found=1
             next
         }
         { print }
-        END { if(!found) print "local browser = \"" val "\"" }
+        END { if(!found) print "browser = \"" val "\"" }
     ' "$CONF_VARS")
     atomic_write "$CONF_VARS" "$new_vars"
 
@@ -257,7 +257,7 @@ switch_browser() {
 detect_current() {
     # Robust grep/cut to find current variable
     if [[ -f "$CONF_VARS" ]]; then
-        CURRENT_BROWSER_KEY=$(grep -m1 '^[[:space:]]*local[[:space:]]\+browser[[:space:]]*=' "$CONF_VARS" | cut -d'=' -f2 | tr -d ' "' || echo "unknown")
+        CURRENT_BROWSER_KEY=$(grep -m1 '^[[:space:]]*browser[[:space:]]*=' "$CONF_VARS" | cut -d'=' -f2 | tr -d ' "' || echo "unknown")
         CURRENT_BROWSER_KEY="${CURRENT_BROWSER_KEY//[[:space:]]/}"
         
         # Safe check for empty strings under set -e
