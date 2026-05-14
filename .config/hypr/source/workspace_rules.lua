@@ -21,7 +21,7 @@
 --   §8  PER-WORKSPACE LAYOUT OVERRIDES  .  dwindle / master / scrolling / custom
 --   §9  RANGE RULES (Global Fallbacks)  .  Catch-all rules for workspace ranges
 --   §10 GLOBAL WORKSPACE BEHAVIOUR  ....  hl.config() options that affect all ws
---       §10a  General (gaps, layout)
+--       §10a  General (layout)
 --       §10b  Dwindle layout
 --       §10c  Master layout
 --       §10d  Scrolling layout
@@ -403,17 +403,12 @@ end
 
 
 -- ----------------------------------------------------------------------------
--- §10a  General — gaps & global layout
--- gaps_in  : inner gap (between windows). Single number or {top,bottom,left,right}
--- gaps_out : outer gap (between windows and screen edge). Same format.
--- gaps_workspaces : extra gap inserted between workspaces in scrolling layout.
+-- §10a  General — global layout
+-- (Note: gaps_in, gaps_out, and gaps_workspaces are configured visually in appearance.lua)
 -- layout   : global default layout. "dwindle" | "master" | "scrolling" | "lua:*"
 -- ----------------------------------------------------------------------------
 hl.config({
     general = {
-        gaps_in         = 5,     -- px between windows
-        gaps_out        = 20,    -- px between windows and monitor edge
-        gaps_workspaces = 0,     -- extra gap between workspaces (scrolling only)
         layout          = "dwindle",  -- global default tiling layout
     },
 })
