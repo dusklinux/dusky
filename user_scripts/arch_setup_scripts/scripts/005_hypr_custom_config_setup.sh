@@ -1644,7 +1644,6 @@ EOF
 -- USER CONFIGURATION: trackpad.lua
 -- ==============================================================================
 -- Add your custom trackpad gesture settings here.
--- These will override or add to the defaults found in ~/.config/hypr/source/
 -- -------------------------------------------------------------------------------------------------
 -- TRACKPAD GESTURES
 -- -------------------------------------------------------------------------------------------------

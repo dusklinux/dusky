@@ -72,7 +72,7 @@ require("source.input")
 
 -- 4a. Trackpad
 -- touchpad gestures.
-require("source.trackpad")
+-- require("source.trackpad")
 
 
 -- 5. APPEARANCE
