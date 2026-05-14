@@ -9,30 +9,37 @@ How `scope` and `key` tell the engine exactly what to edit in the target file:
     [theme.colors]               <-- scope="theme.colors" (Deep nesting supported)
     active_border = #ff89b4fa    <-- key="active_border"
 
-READ BEFORE EDITING:
+STRICT RULES FOR SCHEMA GENERATION (CRITICAL - DO NOT VIOLATE):
 1. UID (Unique Identifier) Rule:
-   - If a variable sits at the root of the file (no section), set scope="DEFAULT".
+   - If a variable sits at the root of the target file (no section), set scope="DEFAULT".
    - If scope is defined, the UID is `scope.key` (e.g., "theme.border_active").
+   - If scope is "DEFAULT", the UID is just the `key` (e.g., "logging").
    - You MUST use the exact UID when using `parent_ref` or `preset_payload`.
 
-2. Grouping Rule:
-   - Items with the same `group` string MUST be placed next to each other in 
-     the list. The UI draws headers sequentially.
+2. Contiguous Grouping Rule (Do NOT interleave):
+   - Items with the same `group` string MUST be placed immediately next to 
+     each other. The UI draws headers sequentially.
+   - Items with a `parent_ref` MUST be placed immediately beneath their parent 
+     "menu" item in a single, unbroken block. Do not break the visual tree.
 
-3. Available Types (`type_`):
+3. Structural Restrictions:
+   - "menu", "preset", and "action" items are PURE UI constructs. They DO NOT 
+     write to the target file. Their `key` is just an internal ID.
+   - Menus can only be ONE level deep. DO NOT nest a menu inside another menu (No parent_ref on menus).
+   - ALL items must have a `default` kwarg. Use `default=None` for menus/presets.
+
+4. Available Types (`type_`):
    - "bool"   : Toggles instantly (True/False)
-   - "int"    : Numeric integer (supports min_val, max_val, step)
+   - "int"    : Numeric integer (supports min_val, max_val, step, or options=[])
    - "float"  : Numeric decimal (supports min_val, max_val, step)
    - "string" : Text input (opens a text overlay)
-   - "cycle"  : Instant left/right cycling through an `options` list
+   - "cycle"  : Instant left/right cycling through an `options` list of strings
    - "picker" : Opens a searchable fullscreen modal from an `options` list
-   - "color"  : Hex, RGB, HSL, or Matugen theme variables
-   - "menu"   : A visual folder to group child items (requires `is_parent=True`)
-   - "action" : Triggers a shell command (put the command string in `default=`)
-   - "preset" : Applies multiple values at once (requires `preset_payload`)
+   - "color"  : Hex, RGB, HSL, or Matugen theme variables (options=[] constrains to theme aliases)
+   - "menu"   : A visual folder to group child items (requires `is_parent=True`, `default=None`)
+   - "action" : Triggers a shell command (put the exact shell command string in `default=`)
+   - "preset" : Applies multiple values at once (requires `preset_payload`, `default=None`)
 
-TESTING THIS SCHEMA:
-  python main.py path/to/this_schema.py
 ===============================================================================
 """
 
@@ -41,23 +48,23 @@ from python.frontend.core_types import ConfigItem
 # =============================================================================
 # 1. CORE APPLICATION ROUTING (REQUIRED)
 # =============================================================================
-ENGINE_TYPE = "ini"                        # Supported: "ini", "lua"
-TARGET_FILE = "~/.config/app/config.ini"   # Where the engine writes the data
-APP_TITLE = "Master Configurator"          # Displayed in the TUI border
+ENGINE_TYPE = "lua"                        # STRICTLY: "ini" or "lua"
+TARGET_FILE = "~/.config/hypr/source/appearance.lua"   # Where the engine writes the data
+APP_TITLE = "Dusky Appearance"          # Displayed in the TUI border
 
 # =============================================================================
-# 2. UI & ENVIRONMENT BEHAVIOR (OPTIONAL)
+# 2. UI & ENVIRONMENT BEHAVIOR
 # =============================================================================
 DEFAULT_MODE = "auto"                      # "auto" (instant save) | "batch" (Ctrl+S required)
-THEME_FILE = "~/.config/matugen/dusky.json" # Matugen color map (Optional)
+THEME_FILE = "~/.config/matugen/generated/dusky_tui.json" # Matugen color map
 
 # =============================================================================
 # 3. TABS DEFINITION
 # Arrays in SCHEMA map directly to the index of these tabs.
 # =============================================================================
 TABS = [
-    "1. General Settings", 
-    "2. Appearance & Menus", 
+    "1. General Settings",
+    "2. Appearance & Menus",
     "3. Profiles & Actions"
 ]
 
@@ -69,14 +76,14 @@ SCHEMA = {
     # TAB 0: STANDARD DATA TYPES
     # -------------------------------------------------------------------------
     0: [
-        # Example of a root-level variable (Not inside any [section])
+        # Example of a root-level variable (Not inside any [section] / category)
         ConfigItem(
             label="Enable Global Logging",
             key="logging",
             scope="DEFAULT",       # UID = "logging"
             type_="bool",
             default=False,
-            group="System Variables", 
+            group="System Variables",
         ),
         ConfigItem(
             label="Enable Animations",
@@ -84,7 +91,7 @@ SCHEMA = {
             scope="core",          # UID = "core.animations"
             type_="bool",
             default=True,
-            group="System Variables", 
+            group="System Variables",
             extended_help="**Animations**\n\nToggles UI animations globally."
         ),
         ConfigItem(
@@ -98,14 +105,14 @@ SCHEMA = {
             step=1,
             group="System Variables" # Must stay adjacent to share the same header
         ),
-        # You can pass options=[] to an int/float to lock the arrow keys to specific numbers!
+        # Using options=[] on an int/float locks the arrow keys to specific numbers
         ConfigItem(
             label="Locked Border Size",
             key="locked_border",
             scope="layout",        # UID = "layout.locked_border"
             type_="int",
             default=2,
-            options=[0, 2, 5, 8, 15], # Arrow keys snap exactly to these values
+            options=[0, 2, 5, 8, 15], # Data types here MUST match type_="int"
             group="System Variables"
         ),
         ConfigItem(
@@ -130,7 +137,7 @@ SCHEMA = {
             default="#a8c8ff",
             group="Theming"
         ),
-        # Using options=[] on a color type constrains the user to theme aliases!
+        # Using options=[] on a color type constrains the user to theme aliases
         ConfigItem(
             label="Inactive Border Color",
             key="border_inactive",
@@ -151,39 +158,39 @@ SCHEMA = {
         ),
         
         # --- HIERARCHY / NESTED MENU IMPLEMENTATION ---
-        # 1. The Parent Folder (Does not write to backend)
+        # 1. The Parent Folder (Does not write to backend, requires is_parent=True)
         ConfigItem(
             label="Typography Settings",
-            key="typography_menu",
-            scope="DEFAULT",       # UID = "typography_menu"
+            key="typography_menu_id", # Arbitrary internal key
+            scope="DEFAULT",          # UID = "typography_menu_id"
             type_="menu",          
             default=None,
-            is_parent=True,        # CRITICAL: Flags this item as an expandable folder
-            expanded=False,        # Starts collapsed
+            is_parent=True,           # CRITICAL: Flags this item as an expandable folder
+            expanded=False,           # Starts collapsed
             group="Fonts"
         ),
-        # 2. Child Item A
+        # 2. Child Item A (MUST be placed immediately after its parent)
         ConfigItem(
             label="System Font Family",
             key="font_family",
-            scope="fonts",         # UID = "fonts.font_family"
+            scope="fonts",            # UID = "fonts.font_family"
             type_="picker",        
             default="JetBrains Mono",
             options=["JetBrains Mono", "Fira Code", "Roboto"],
             hints=["Monospace", "Ligatures", "Sans-Serif"], # Hints map 1:1 with options
-            parent_ref="typography_menu"  # CRITICAL: Links directly to parent's UID
+            parent_ref="typography_menu_id"  # CRITICAL: Links directly to parent's UID
         ),
-        # 3. Child Item B
+        # 3. Child Item B (Contiguous block of children continues)
         ConfigItem(
             label="Font Size",
             key="font_size",
-            scope="fonts",         # UID = "fonts.font_size"
+            scope="fonts",            # UID = "fonts.font_size"
             type_="float",        
             default=11.0,
             min_val=8.0,
             max_val=24.0,
             step=0.5,
-            parent_ref="typography_menu"  # Continues the visual tree line (├─ / └─)
+            parent_ref="typography_menu_id"  # Continues the visual tree line (├─ / └─)
         ),
     ],
 
@@ -194,8 +201,8 @@ SCHEMA = {
         # ACTION: Does not save to config. The `default` string is the shell command.
         ConfigItem(
             label="Clear System Cache",
-            key="clear_cache",
-            scope="system",        # UID = "system.clear_cache"
+            key="action_clear_cache", # Arbitrary internal key
+            scope="DEFAULT",          # UID = "action_clear_cache"
             type_="action",
             default="rm -rf ~/.cache/app_name/* && echo 'Cache Cleared'",
             group="Maintenance",
@@ -204,8 +211,8 @@ SCHEMA = {
         # PRESET: Injects multiple specific values across different tabs/scopes.
         ConfigItem(
             label="Apply 'Performance' Profile",
-            key="preset_performance",
-            scope="DEFAULT",       # UID = "preset_performance"
+            key="preset_perf_id",     # Arbitrary internal key
+            scope="DEFAULT",          # UID = "preset_perf_id"
             type_="preset",
             default=None,
             group="Profiles",
@@ -221,7 +228,7 @@ SCHEMA = {
         ConfigItem(
             label="Factory Reset Everything",
             key="preset_factory_reset",
-            scope="DEFAULT",       # UID = "preset_factory_reset"
+            scope="DEFAULT",          # UID = "preset_factory_reset"
             type_="preset",
             default=None,
             group="Profiles",
@@ -243,7 +250,7 @@ SCHEMA = {
 #     scope          = "DEFAULT",          # "backend_section" or "DEFAULT" for root
 #     type_          = "bool",             # bool | int | float | string | cycle |
 #                                          # color | picker | action | preset | menu
-#     default        = None,               # Fallback/Reset value or shell command for 'action'
+#     default        = None,               # Value must match type_. Use string shell cmd for 'action'. None for preset/menu.
 #     options        = [],                 # Required for cycle/picker. Locks arrow keys for int/color.
 #     hints          = [],                 # Subtitles for picker modals (must match len(options))
 #     preset_payload = {},                 # Dict of {"scope.key": value} for 'preset' type
@@ -252,7 +259,7 @@ SCHEMA = {
 #     step           = None,               # Numeric adjust step
 #     group          = None,               # Section header string in UI
 #     extended_help  = None,               # Markdown string for the help panel
-#     is_parent      = False,              # Set True if type_="menu"
-#     parent_ref     = None,               # Set to parent's UID to nest this item
+#     is_parent      = False,              # ONLY set True if type_="menu"
+#     parent_ref     = None,               # Set to parent's UID to nest this item (Root menus only)
 #     expanded       = False,              # Default state for parent menus
 # )
