@@ -69,6 +69,12 @@ require("source.permissions")
 -- Loaded early so keybinds map correctly to devices.
 require("source.input")
 
+
+-- 4a. Trackpad
+-- touchpad gestures.
+require("source.trackpad")
+
+
 -- 5. APPEARANCE
 -- General settings, decorations (rounding, blur), animations, colors.
 require("source.appearance")
