@@ -275,14 +275,14 @@ class HyprlandLuaEngine(BaseEngine):
             
         return False
 
-    def write_value(self, target_key: str, target_scope: str, new_value: str) -> tuple[bool, str, str]:
+    def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
         """
         Proxy method. Routes single mutations through the unified high-speed batch architecture.
         Guarantees zero behavioral drift between single UI edits and bulk UI presets.
         """
-        return self.write_batch([(target_key, target_scope, new_value)])
+        return self.write_batch([(target_key, target_scope, new_value, item_type)])
 
-    def write_batch(self, changes: list[tuple[str, str, str]]) -> tuple[bool, str, str]:
+    def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
         """
         TRUE ATOMIC AST BATCHING.
         Compiles the entire batch payload into a single Lua table and executes a SINGLE 
@@ -304,13 +304,16 @@ class HyprlandLuaEngine(BaseEngine):
 
         # Build secure, serialized Lua batch table
         lua_table = "return {\n"
-        for key, scope, new_value in changes:
+        for key, scope, new_value, item_type in changes:
             if isinstance(new_value, str) and new_value.startswith("__VAR__"):
                 val_str = new_value[7:]
+            elif item_type == "bool":
+                val_str = "true" if str(new_value).lower() in ("true", "1", "yes", "on", "t", "y") else "false"
+            elif item_type in ("int", "float") or self._is_raw_lua_val(str(new_value)):
+                val_str = new_value
             else:
-                val_str = new_value if self._is_raw_lua_val(new_value) else json.dumps(new_value, ensure_ascii=False)
+                val_str = json.dumps(new_value, ensure_ascii=False)
             
-            # JSON dumps perfectly aligns with Lua's string literal parsing for safe cross-language injection
             lua_table += f"  {{ key = {json.dumps(key, ensure_ascii=False)}, scope = {json.dumps(scope, ensure_ascii=False)}, val = {json.dumps(val_str, ensure_ascii=False)} }},\n"
         lua_table += "}\n"
 

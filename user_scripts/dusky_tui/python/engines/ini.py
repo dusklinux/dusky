@@ -80,11 +80,11 @@ class IniConfigEngine(BaseEngine):
             
         return self.cache
 
-    def write_value(self, target_key: str, target_scope: str, new_value: str) -> tuple[bool, str, str]:
+    def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
         """Proxy method. Routes single mutations through the high-speed batch architecture."""
-        return self.write_batch([(target_key, target_scope, new_value)])
+        return self.write_batch([(target_key, target_scope, new_value, item_type)])
 
-    def write_batch(self, changes: list[tuple[str, str, str]]) -> tuple[bool, str, str]:
+    def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
         """
         O(1) pass batched mutator with atomicity and exact singularity enforcement.
         """
@@ -97,7 +97,7 @@ class IniConfigEngine(BaseEngine):
             if current_mtime > self.file_mtime:
                 return False, f"File {self.config_path.name} was modified externally. Reload required.", ""
 
-        changes_dict = {(scope, key): val for key, scope, val in changes}
+        changes_dict = {(scope, key): val for key, scope, val, _ in changes}
         applied_commits = set()
         out_lines = []
         

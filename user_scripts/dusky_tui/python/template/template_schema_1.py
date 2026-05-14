@@ -40,18 +40,6 @@ STRICT RULES FOR SCHEMA GENERATION (CRITICAL - DO NOT VIOLATE):
    - "action" : Triggers a shell command (put the exact shell command string in `default=`)
    - "preset" : Applies multiple values at once (requires `preset_payload`, `default=None`)
 
-5. Strict Type & Native Value Matching (CRITICAL FOR AST ENGINES):
-   - You MUST map the target configuration's native data type to the correct `type_`. Do not lazily use "string" for numbers or booleans, as AST engines (like Lua) will wrap them in quotes and break the config.
-   - The Python data type of the `default` argument MUST strictly match the declared `type_`:
-     * "bool"   -> default=True (Python boolean, NOT string "true" or "True")
-     * "int"    -> default=10   (Python integer, NOT string "10")
-     * "float"  -> default=1.5  (Python float, NOT string "1.5")
-     * "string" -> default="Text"
-   - For "menu" and "preset", you MUST set `default=None`.
-   - For "action", `default` MUST be the exact shell command string to execute.
-   - If using the `options` array for "int" or "float", the array elements MUST be native numbers (e.g., options=[1, 2, 3], NOT ["1", "2", "3"]).
-   - Inside a `preset_payload`, the injected values MUST also match their target's native Python type (e.g., {"core.animations": False, "layout.gaps": 5}).
-
 ===============================================================================
 """
 

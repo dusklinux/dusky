@@ -311,7 +311,7 @@ EXAMPLES:
             val_str = item.serialize(val_str)
 
             logger.info(f"Headless Injection: {target_key} -> {val_str}")
-            success, msg, _ = engine.write_value(item.key, item.scope, val_str)
+            success, msg, _ = engine.write_value(item.key, item.scope, val_str, item_type=item.type_)
             print(f"[{'OK' if success else 'FAIL'}] {msg}")
             sys.exit(0 if success else 1)
 
@@ -329,7 +329,7 @@ EXAMPLES:
             val = item.serialize(item.default)
 
             logger.info(f"Headless Reset Key: {args.reset_key} -> {val}")
-            success, msg, _ = engine.write_value(item.key, item.scope, val)
+            success, msg, _ = engine.write_value(item.key, item.scope, val, item_type=item.type_)
             print(f"[{'OK' if success else 'FAIL'}] {msg}")
             sys.exit(0 if success else 1)
 
@@ -344,7 +344,7 @@ EXAMPLES:
             for item in unique_items:
                 # NATIVE SERIALIZATION 
                 val = item.serialize(item.default)
-                changes_to_write.append((item.key, item.scope, val))
+                changes_to_write.append((item.key, item.scope, val, item.type_))
             
             # FULLY DEPLOY NATIVE BATCH ARCHITECTURE IN HEADLESS CLI
             success, msg, _ = engine.write_batch(changes_to_write)
@@ -355,8 +355,8 @@ EXAMPLES:
             else:
                 # Graceful fallback logic
                 success_count, skip_count = 0, 0
-                for key, scope, val in changes_to_write:
-                    ok, _, _ = engine.write_value(key, scope, val)
+                for key, scope, val, itype in changes_to_write:
+                    ok, _, _ = engine.write_value(key, scope, val, item_type=itype)
                     if ok: success_count += 1
                     else: skip_count += 1
                 

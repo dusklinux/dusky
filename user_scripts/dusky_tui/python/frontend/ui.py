@@ -1546,7 +1546,7 @@ class DuskyTUI(App):
 
     def _do_auto_save(self, tab_idx: int, item_idx: int, item: ConfigItem, val_str: str, old_val: Any) -> None:
         self._save_timers.pop((tab_idx, item_idx), None)
-        success, msg, _ = self.engine.write_value(item.key, item.scope, val_str)
+        success, msg, _ = self.engine.write_value(item.key, item.scope, val_str, item_type=item.type_)
         if success:
             self.notify_status(f"Updated {item.label}")
         else:
@@ -1619,7 +1619,7 @@ class DuskyTUI(App):
             item = self.schema[tab_idx][item_idx]
             val_str = item.serialize(item.value)
 
-            changes_to_write.append((item.key, item.scope, val_str))
+            changes_to_write.append((item.key, item.scope, val_str, item.type_))
             processed_commits.append((tab_idx, item_idx))
 
         success, msg, _ = self.engine.write_batch(changes_to_write)
@@ -1634,8 +1634,8 @@ class DuskyTUI(App):
         else:
             success_count = 0
             first_error = ""
-            for (key, scope, val_str), commit in zip(changes_to_write, processed_commits):
-                ok, item_msg, _ = self.engine.write_value(key, scope, val_str)
+            for (key, scope, val_str, itype), commit in zip(changes_to_write, processed_commits):
+                ok, item_msg, _ = self.engine.write_value(key, scope, val_str, item_type=itype)
                 if ok:
                     self.pending_commits.discard(commit)
                     success_count += 1
@@ -1944,7 +1944,12 @@ class DuskyTUI(App):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
-                stdout, stderr = await proc.communicate()
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    self.notify_status(f"Action timed out after 10 seconds.")
+                    return
                 
                 if proc.returncode == 0:
                     out = stdout.decode('utf-8').strip()
@@ -2016,7 +2021,7 @@ class DuskyTUI(App):
             if new_val is not None:
                 if item.type_ == "int":
                     try:
-                        parsed_val = int(new_val)
+                        parsed_val = int(new_val, 0)
                         if item.min_val is not None: parsed_val = max(int(item.min_val), parsed_val)
                         if item.max_val is not None: parsed_val = min(int(item.max_val), parsed_val)
                         new_val = parsed_val

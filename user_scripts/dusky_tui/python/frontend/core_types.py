@@ -132,7 +132,7 @@ class BaseEngine(ABC):
         pass
 
     @abstractmethod
-    def write_value(self, target_key: str, target_scope: str, new_value: str) -> tuple[bool, str, str]:
+    def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
         """
         Commits a value change to the configuration backend.
         
@@ -140,20 +140,21 @@ class BaseEngine(ABC):
             target_key: The configuration key to mutate.
             target_scope: The structural scope/category of the key.
             new_value: The stringified new value to inject.
+            item_type: The explicitly declared type to guarantee formatting correctly.
             
         Returns:
             tuple[bool, str, str]: (Success boolean, Status/Error message, Debug/Telemetry output)
         """
         pass
 
-    def write_batch(self, changes: list[tuple[str, str, str]]) -> tuple[bool, str, str]:
+    def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
         """
         Commits multiple value changes to the configuration backend.
         Base implementation loops through write_value. Engine subclasses should override 
         this for atomic AST batch writes to prevent I/O bottlenecks.
         
         Args:
-            changes: A list of tuples containing (target_key, target_scope, new_value)
+            changes: A list of tuples containing (target_key, target_scope, new_value, item_type)
             
         Returns:
             tuple[bool, str, str]: (Success boolean, Status/Error message, Debug/Telemetry output)
@@ -161,10 +162,9 @@ class BaseEngine(ABC):
         success_count = 0
         last_msg = ""
         last_debug = ""
-        for key, scope, val in changes:
-            ok, msg, debug = self.write_value(key, scope, val)
-            if ok:
-                success_count += 1
+        for key, scope, val, itype in changes:
+            ok, msg, debug = self.write_value(key, scope, val, item_type=itype)
+            if ok: success_count += 1
             last_msg = msg
             last_debug = debug
             
