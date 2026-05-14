@@ -1925,9 +1925,45 @@ class DuskyTUI(App):
         match item.type_:
             case "bool" | "cycle": self.action_adjust(1)
             case "int" | "float" | "string" | "color": self.prompt_string(tab_idx, item_idx, item)
-            case "action": self.notify_status(f"Action triggered: {item.label}")
+            case "action": self.execute_action(item)
             case "preset": self.apply_preset(item)
             case "picker": self.prompt_picker(tab_idx, item_idx, item)
+
+    def execute_action(self, item: ConfigItem) -> None:
+        command = str(item.default) if item.default else ""
+        if not command:
+            self.notify_status(f"No command defined for: {item.label}")
+            return
+            
+        self.notify_status(f"Executing: {item.label}...")
+        
+        async def run_task():
+            try:
+                proc = await asyncio.create_subprocess_shell(
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await proc.communicate()
+                
+                if proc.returncode == 0:
+                    out = stdout.decode('utf-8').strip()
+                    if out:
+                        # Only take first line or truncate to fit neatly in the UI status bar
+                        out_single = out.split('\n')[0]
+                        self.notify_status(f"Success: {out_single[:60]}")
+                    else:
+                        self.notify_status(f"Action '{item.label}' completed.")
+                else:
+                    err = stderr.decode('utf-8').strip().split('\n')[0]
+                    if not err:
+                        err = "Unknown execution error"
+                    self.notify_status(f"Action failed: {err[:60]}")
+            except Exception as e:
+                self.notify_status(f"Execution error: {str(e)[:60]}")
+                
+        # Fire and forget onto the event loop so the TUI remains perfectly responsive
+        asyncio.create_task(run_task())
 
     def apply_preset(self, preset_item: ConfigItem) -> None:
         if not preset_item.preset_payload:

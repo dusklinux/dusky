@@ -1,543 +1,258 @@
 #!/usr/bin/env python3
-# =============================================================================
-# DUSKY TUI — SCHEMA TEMPLATE
-# =============================================================================
-#
-# WHAT THIS FILE IS
-# -----------------
-# This is the schema that drives the entire TUI. It tells the app:
-#   1. Which Lua config file to read and write (TARGET_FILE)
-#   2. Which engine to use to parse it (ENGINE_TYPE)
-#   3. What tabs to show in the UI (TABS)
-#   4. What settings live on each tab, their type, and their defaults (SCHEMA)
-#
-# HOW IT MAPS TO YOUR FILE
-# ----------------------------
-# Every ConfigItem has a `scope` and a `key`. These map DIRECTLY to the
-# structure of your target file (e.g., nested tables in Lua, or sections in INI).
-#
-# Example Lua file:
-#
-#   hl.config({
-#       general = {
-#           border_size = 2,          -- scope="general",         key="border_size"
-#           gaps_in     = 5,          -- scope="general",         key="gaps_in"
-#           col = {
-#               active_border = "0xff89b4fa",  -- scope="general/col",  key="active_border"
-#           },
-#       },
-#       decoration = {
-#           rounding = 10,            -- scope="decoration",      key="rounding"
-#       },
-#   })
-#
-# The engine walks the AST and uses scope/key to find the exact token to
-# overwrite in-place — it does NOT regenerate the file from scratch, so all
-# your comments and formatting are preserved.
-#
-# HOW TO LAUNCH THIS SCHEMA
-# -------------------------
-# From the dusky_tui/python directory, run:
-#
-#   python main/main.py ~/user_scripts/my_schema.py
-#
-# Or using dot-notation if placed in a SCHEMA_SEARCH_PATH:
-#
-#   python main/main.py my_module.my_schema
-#
-# HOW TO CREATE A NEW SCHEMA
-# --------------------------
-# 1. Copy this file.
-# 2. Set TARGET_FILE to the absolute path of the config you want to edit.
-# 3. Set ENGINE_TYPE to "lua" or "ini" depending on the target file.
-# 4. Set APP_TITLE to a meaningful name.
-# 5. Edit TABS to list your section names.
-# 6. Edit SCHEMA to map each tab index (0, 1, 2 ...) to a list of ConfigItems.
-# 7. Set scope= and key= on each ConfigItem to match your file's paths.
-# 8. Done. Run it.
-#
-# =============================================================================
+"""
+===============================================================================
+DUSKY TUI: MASTER CONFIGURATION SCHEMA
+===============================================================================
+
+TARGET MAPPING VISUALIZATION:
+How `scope` and `key` tell the engine exactly what to edit in the target file:
+    [theme.colors]               <-- scope="theme.colors" (Deep nesting supported)
+    active_border = #ff89b4fa    <-- key="active_border"
+
+READ BEFORE EDITING:
+1. UID (Unique Identifier) Rule:
+   - If a variable sits at the root of the file (no section), set scope="DEFAULT".
+   - If scope is defined, the UID is `scope.key` (e.g., "theme.border_active").
+   - You MUST use the exact UID when using `parent_ref` or `preset_payload`.
+
+2. Grouping Rule:
+   - Items with the same `group` string MUST be placed next to each other in 
+     the list. The UI draws headers sequentially.
+
+3. Available Types (`type_`):
+   - "bool"   : Toggles instantly (True/False)
+   - "int"    : Numeric integer (supports min_val, max_val, step)
+   - "float"  : Numeric decimal (supports min_val, max_val, step)
+   - "string" : Text input (opens a text overlay)
+   - "cycle"  : Instant left/right cycling through an `options` list
+   - "picker" : Opens a searchable fullscreen modal from an `options` list
+   - "color"  : Hex, RGB, HSL, or Matugen theme variables
+   - "menu"   : A visual folder to group child items (requires `is_parent=True`)
+   - "action" : Triggers a shell command (put the command string in `default=`)
+   - "preset" : Applies multiple values at once (requires `preset_payload`)
+
+TESTING THIS SCHEMA:
+  python main.py path/to/this_schema.py
+===============================================================================
+"""
 
 from python.frontend.core_types import ConfigItem
 
 # =============================================================================
-# SECTION 1 — FILE TARGETS
+# 1. CORE APPLICATION ROUTING (REQUIRED)
 # =============================================================================
-
-# Path to the Lua config file this schema reads from and writes to.
-# Tilde expansion is handled automatically by main.py.
-TARGET_FILE = "~/.config/hypr/edit_here/source/monitors.lua"
-
-# Optional: path to a matugen-generated JSON theme file.
-# Set to None if you don't use matugen.
-THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"
+ENGINE_TYPE = "ini"                        # Supported: "ini", "lua"
+TARGET_FILE = "~/.config/app/config.ini"   # Where the engine writes the data
+APP_TITLE = "Master Configurator"          # Displayed in the TUI border
 
 # =============================================================================
-# SECTION 1.5 — ENGINE CONFIGURATION
+# 2. UI & ENVIRONMENT BEHAVIOR (OPTIONAL)
 # =============================================================================
-# Specifies which backend engine to use for parsing and writing.
-# Options:
-#   "lua" - The AST-preserving engine for Hyprland/Lua tables.
-#   "ini" - The AST-preserving engine for standard Linux config files (e.g., pacman.conf)
-# Note: This is REQUIRED. The router will crash intentionally if this is missing.
-ENGINE_TYPE = "lua"
+DEFAULT_MODE = "auto"                      # "auto" (instant save) | "batch" (Ctrl+S required)
+THEME_FILE = "~/.config/matugen/dusky.json" # Matugen color map (Optional)
 
 # =============================================================================
-# SECTION 2 — APP METADATA
+# 3. TABS DEFINITION
+# Arrays in SCHEMA map directly to the index of these tabs.
 # =============================================================================
-
-APP_TITLE = "configure monitors"
-
-# Controls the initial save mode of the TUI.
-# Options: "auto" (saves on every change) | "batch" (requires Ctrl+S to commit)
-DEFAULT_MODE = "auto"
-
-# =============================================================================
-# SECTION 3 — TABS
-# =============================================================================
-# A flat list of strings, one per tab. The list index (0, 1, 2 ...) is the
-# tab's ID and must match the keys you use in SCHEMA below.
-#
-# Example: TABS = ["General", "Decoration", "Animations", "Keybinds"]
-# =============================================================================
-
 TABS = [
-    "General",       # tab index 0
-    "Decoration",    # tab index 1
-    "Animations",    # tab index 2
-    "Keybinds",      # tab index 3
-    "Profiles",      # tab index 4
+    "1. General Settings", 
+    "2. Appearance & Menus", 
+    "3. Profiles & Actions"
 ]
 
 # =============================================================================
-# SECTION 4 — SCHEMA
+# 4. SCHEMA DEFINITION
 # =============================================================================
-# A dict mapping each tab index (int) to a list of ConfigItem objects.
-# Items appear in the TUI in the order they are listed here.
-#
-# ConfigItem reference — every field explained:
-#
-#   label        (str)        Display name shown in the TUI list.
-#
-#   key          (str)        The table key to read/write. Must match the
-#                             key name exactly as it appears in your config file.
-#
-#   scope        (str)        The slash-separated path of nested tables
-#                             leading to this key, e.g. "general" or
-#                             "general/col". Use "" (empty string) for keys
-#                             sitting at the top level.
-#                             Default is "DEFAULT" — use that if your file
-#                             has a root section literally called DEFAULT.
-#
-#   type_        (str)        One of the following (choose exactly one):
-#
-#     "bool"     Toggle — true/false. Left/Right arrows flip it. No input box.
-#
-#     "int"      Integer — Enter key opens a text box. min_val/max_val/step
-#                supported. Arrow keys nudge by step (unless options=[] is provided).
-#
-#     "float"    Float — same as int but fractional. Arrow keys nudge by step 
-#                (unless options=[] is provided).
-#
-#     "string"   Free-form text — Enter opens a text box. No min/max.
-#
-#     "cycle"    Cycles through a fixed list of strings. Requires options=[].
-#                Arrow keys step forward/back through the list.
-#
-#     "color"    Color value. Arrow keys cycle through named colors (or a custom 
-#                options=[] list) while preserving your original format (0xAARRGGBB, 
-#                #rrggbb, rgb(), rgba(), hsl(), oklch()). Enter opens a text box.
-#
-#     "picker"   Opens a pop-up list of options with optional hint text per
-#                option. Requires options=[] and optionally hints=[].
-#
-#     "action"   A non-editable label that triggers a shell command when
-#                selected. Set default= to the shell command string.
-#
-#     "preset"   A non-editable label that batch-applies multiple configuration 
-#                values simultaneously. Requires the `preset_payload` dict.
-#
-#   default      (Any)        The value the item resets to with `r` or `--default`.
-#                             Use Python booleans (True/False), not strings.
-#
-#   options      (list[Any])  Required for "cycle" and "picker". Optional for "int",
-#                             "float", "string", and "color". If provided on these
-#                             types, the left/right arrow keys will cycle strictly
-#                             through this predefined list instead of doing math or
-#                             default cycling.
-#
-#   hints        (list[str])  Optional for "picker". One hint string per option,
-#                             shown as a subtitle in the picker pop-up. Must be
-#                             the same length as options if provided.
-#
-#   preset_payload(dict)      Required for "preset" type. A dictionary mapping the
-#                             "scope.key" path to the desired value. Or, you can pass
-#                             {"__ALL_DEFAULTS__": True} to restore all items to default.
-#
-#   min_val      (float|None) Minimum value for "int" and "float". Ignored otherwise.
-#   max_val      (float|None) Maximum value for "int" and "float". Ignored otherwise.
-#   step         (float|None) Arrow-key step size for "int" and "float".
-#
-#   group        (str|None)   Optional visual group label. Items with the same
-#                             group string are shown together under that heading.
-#                             Has no effect on the write logic.
-#
-#   extended_help (str|None)  Long-form description shown when you run:
-#                               python main/main.py my_schema --export-docs
-#                             Has no effect at runtime. Use ** for bold.
-#
-# =============================================================================
-
-SCHEMA: dict[int, list[ConfigItem]] = {
-
+SCHEMA = {
     # -------------------------------------------------------------------------
-    # TAB 0 — General
-    # Maps to hl.config({ general = { ... } }) in your Lua file.
+    # TAB 0: STANDARD DATA TYPES
     # -------------------------------------------------------------------------
     0: [
-        # --- BOOL EXAMPLE ---------------------------------------------------
-        # Lua:  general = { no_focus_fallback = false }
+        # Example of a root-level variable (Not inside any [section])
         ConfigItem(
-            label="No Focus Fallback",
-            key="no_focus_fallback",
-            scope="general",
+            label="Enable Global Logging",
+            key="logging",
+            scope="DEFAULT",       # UID = "logging"
             type_="bool",
             default=False,
-            extended_help="If true, focus will not fall back to the desktop "
-                          "when clicking on an empty area.",
+            group="System Variables", 
         ),
-
-        # --- INT EXAMPLE ----------------------------------------------------
-        # Lua:  general = { border_size = 2 }
         ConfigItem(
-            label="Border Size",
-            key="border_size",
-            scope="general",
-            type_="int",
-            default=2,
-            min_val=0,
-            max_val=20,
-            step=1,
-            extended_help="Width of window borders in pixels.",
+            label="Enable Animations",
+            key="animations",
+            scope="core",          # UID = "core.animations"
+            type_="bool",
+            default=True,
+            group="System Variables", 
+            extended_help="**Animations**\n\nToggles UI animations globally."
         ),
-        
-        # --- PREDEFINED OPTIONS EXAMPLE (Overrides math logic) --------------
         ConfigItem(
-            label="Locked Border Size",
-            key="locked_border",
-            scope="general",
-            type_="int",
-            default=2,
-            options=[0, 2, 5, 8, 15], # Left/right arrows will cycle exactly these values
-            extended_help="Cycles precisely between 0, 2, 5, 8, and 15.",
-        ),
-
-        # --- FLOAT EXAMPLE --------------------------------------------------
-        # Lua:  general = { sensitivity = 1.0 }
-        ConfigItem(
-            label="Pointer Sensitivity",
-            key="sensitivity",
-            scope="general",
-            type_="float",
-            default=1.0,
-            min_val=-1.0,
-            max_val=1.0,
-            step=0.1,
-            extended_help="Mouse/touchpad sensitivity. 0 = unmodified.",
-        ),
-
-        # --- INT with GROUP -------------------------------------------------
-        # Visually grouped under "Gaps" in the TUI.
-        # Lua:  general = { gaps_in = 5, gaps_out = 10 }
-        ConfigItem(
-            label="Gaps In",
+            label="Window Gaps",
             key="gaps_in",
-            scope="general",
+            scope="layout",        # UID = "layout.gaps_in"
             type_="int",
             default=5,
             min_val=0,
-            max_val=100,
-            step=1,
-            group="Gaps",
-        ),
-        ConfigItem(
-            label="Gaps Out",
-            key="gaps_out",
-            scope="general",
-            type_="int",
-            default=10,
-            min_val=0,
-            max_val=100,
-            step=1,
-            group="Gaps",
-        ),
-
-        # --- COLOR EXAMPLE --------------------------------------------------
-        # Lua:  general = { col = { active_border = "0xff89b4fa" } }
-        # NOTE: the scope is "general/col" — a slash-joined nested path.
-        ConfigItem(
-            label="Active Border Color",
-            key="active_border",
-            scope="general/col",
-            type_="color",
-            default="0xff89b4fa",
-            extended_help="Color of the active window's border. Accepts "
-                          "0xAARRGGBB, #rrggbb, rgb(), rgba(), hsl(), oklch().",
-        ),
-        ConfigItem(
-            label="Inactive Border Color",
-            key="inactive_border",
-            scope="general/col",
-            type_="color",
-            default="0xff414453",
-            options=["background", "error", "primary", "secondary"], # Constrains to theme values
-        ),
-    ],
-
-    # -------------------------------------------------------------------------
-    # TAB 1 — Decoration
-    # Maps to hl.config({ decoration = { ... } }) in your Lua file.
-    # -------------------------------------------------------------------------
-    1: [
-        # --- INT EXAMPLE ----------------------------------------------------
-        ConfigItem(
-            label="Rounding",
-            key="rounding",
-            scope="decoration",
-            type_="int",
-            default=10,
-            min_val=0,
             max_val=50,
             step=1,
-            extended_help="Corner rounding radius in pixels.",
+            group="System Variables" # Must stay adjacent to share the same header
         ),
-
-        # --- FLOAT EXAMPLE --------------------------------------------------
-        # Lua:  decoration = { active_opacity = 1.0 }
+        # You can pass options=[] to an int/float to lock the arrow keys to specific numbers!
         ConfigItem(
-            label="Active Opacity",
-            key="active_opacity",
-            scope="decoration",
-            type_="float",
-            default=1.0,
-            min_val=0.0,
-            max_val=1.0,
-            step=0.05,
-        ),
-        ConfigItem(
-            label="Inactive Opacity",
-            key="inactive_opacity",
-            scope="decoration",
-            type_="float",
-            default=0.9,
-            min_val=0.0,
-            max_val=1.0,
-            step=0.05,
-        ),
-
-        # --- BOOL EXAMPLE ---------------------------------------------------
-        ConfigItem(
-            label="Drop Shadow",
-            key="drop_shadow",
-            scope="decoration",
-            type_="bool",
-            default=True,
-        ),
-
-        # --- INT in sub-table -----------------------------------------------
-        # Lua:  decoration = { shadow = { range = 15 } }
-        ConfigItem(
-            label="Shadow Range",
-            key="range",
-            scope="decoration/shadow",
-            type_="int",
-            default=15,
-            min_val=0,
-            max_val=100,
-            step=5,
-            group="Shadow",
-        ),
-        ConfigItem(
-            label="Shadow Render Power",
-            key="render_power",
-            scope="decoration/shadow",
-            type_="int",
-            default=3,
-            min_val=1,
-            max_val=4,
-            step=1,
-            group="Shadow",
-        ),
-
-        # --- FLOAT Blur sub-table -------------------------------------------
-        # Lua:  decoration = { blur = { size = 8, passes = 2, new_optimizations = true } }
-        ConfigItem(
-            label="Blur Size",
-            key="size",
-            scope="decoration/blur",
-            type_="int",
-            default=8,
-            min_val=1,
-            max_val=30,
-            step=1,
-            group="Blur",
-        ),
-        ConfigItem(
-            label="Blur Passes",
-            key="passes",
-            scope="decoration/blur",
+            label="Locked Border Size",
+            key="locked_border",
+            scope="layout",        # UID = "layout.locked_border"
             type_="int",
             default=2,
-            min_val=1,
-            max_val=10,
-            step=1,
-            group="Blur",
+            options=[0, 2, 5, 8, 15], # Arrow keys snap exactly to these values
+            group="System Variables"
         ),
         ConfigItem(
-            label="Blur New Optimizations",
-            key="new_optimizations",
-            scope="decoration/blur",
-            type_="bool",
-            default=True,
-            group="Blur",
+            label="User Greeting",
+            key="greeting",
+            scope="core",          # UID = "core.greeting"
+            type_="string",
+            default="Welcome back!",
+            group="Text Overrides"
         ),
     ],
 
     # -------------------------------------------------------------------------
-    # TAB 2 — Animations
+    # TAB 1: UI COMPONENTS & NESTED FOLDERS
     # -------------------------------------------------------------------------
-    2: [
-        # --- BOOL EXAMPLE ---------------------------------------------------
+    1: [
         ConfigItem(
-            label="Enable Animations",
-            key="enabled",
-            scope="animations",
-            type_="bool",
-            default=True,
+            label="Active Border Color",
+            key="border_active",
+            scope="theme",         # UID = "theme.border_active"
+            type_="color",
+            default="#a8c8ff",
+            group="Theming"
         ),
-
-        # --- CYCLE EXAMPLE --------------------------------------------------
-        # options= is required. Arrow keys cycle through them.
-        # Lua:  animations = { first_launch_animation = "slide" }
+        # Using options=[] on a color type constrains the user to theme aliases!
         ConfigItem(
-            label="First Launch Animation",
-            key="first_launch_animation",
-            scope="animations",
-            type_="cycle",
-            default="fade",
-            options=["fade", "slide", "popin", "none"],
-            extended_help="Animation played when a window first appears after "
-                          "compositor startup.",
+            label="Inactive Border Color",
+            key="border_inactive",
+            scope="theme",         # UID = "theme.border_inactive"
+            type_="color",
+            default="#414453",
+            options=["background", "surface", "primary", "error"], 
+            group="Theming"
         ),
-    ],
-
-    # -------------------------------------------------------------------------
-    # TAB 3 — Keybinds
-    # -------------------------------------------------------------------------
-    3: [
-        # --- STRING EXAMPLE -------------------------------------------------
-        # Lua:  hl.config({ binds = { scroll_event_delay = 300 } })
-        # Use "string" when the value is an arbitrary identifier or path.
         ConfigItem(
-            label="Scroll Event Delay",
-            key="scroll_event_delay",
-            scope="binds",
-            type_="int",
-            default=300,
-            min_val=0,
-            max_val=2000,
-            step=50,
-        ),
-
-        # --- PICKER EXAMPLE -------------------------------------------------
-        # options= is required. hints= is optional (one line per option).
-        ConfigItem(
-            label="Mouse Focus Mode",
-            key="follow_mouse",
-            scope="input",
-            type_="picker",
-            default="1",
-            options=["0", "1", "2", "3"],
-            hints=[
-                "0 — Focus follows mouse (aggressive)",
-                "1 — Focus follows mouse, no switch on click",
-                "2 — Focus follows mouse, click moves cursor",
-                "3 — Focus only on click",
-            ],
-            extended_help="Controls how the mouse interacts with window focus.",
-        ),
-
-        # --- ACTION EXAMPLE -------------------------------------------------
-        # "action" items run a shell command when Enter is pressed.
-        # The default= field holds the shell command to execute.
-        # These items are excluded from --export-docs and --default resets.
-        ConfigItem(
-            label="Reload Hyprland Config",
-            key="reload_action",          # key is arbitrary for actions
-            scope="actions",              # scope is arbitrary for actions
-            type_="action",
-            default="hyprctl reload",
-        ),
-    ],
-    
-    # -------------------------------------------------------------------------
-    # TAB 4 — Profiles (Batch/Preset System)
-    # -------------------------------------------------------------------------
-    4: [
-        # --- PRESET EXAMPLE (Custom Payload) ---------------------------------
-        # "preset" items allow applying a batch of configuration changes at once.
-        # They visually reflect their status in the UI (Active/Apply).
-        ConfigItem(
-            label="Performance Mode",
-            key="perf_mode_preset",       # key is arbitrary for presets
-            scope="presets",              # scope is arbitrary for presets
-            type_="preset",
-            default=None,
-            preset_payload={
-                # Map paths via "scope.key" exactly as they exist in your schema
-                "decoration/blur.passes": 0,
-                "decoration.drop_shadow": False,
-                "animations.enabled": False,
-                "general.gaps_in": 0,
-                "general.gaps_out": 0
-            },
-            extended_help="Instantly disables blur, shadows, animations, and gaps for maximum performance."
+            label="Border Style",
+            key="border_style",
+            scope="theme",         # UID = "theme.border_style"
+            type_="cycle",         
+            default="solid",
+            options=["solid", "dashed", "dotted", "hidden"],
+            group="Theming"
         ),
         
-        # --- PRESET EXAMPLE (Global Reset) -----------------------------------
-        # A special payload key "__ALL_DEFAULTS__" invokes the TUI's global reset.
+        # --- HIERARCHY / NESTED MENU IMPLEMENTATION ---
+        # 1. The Parent Folder (Does not write to backend)
         ConfigItem(
-            label="Restore All Defaults",
-            key="restore_defaults",
-            scope="presets",
-            type_="preset",
+            label="Typography Settings",
+            key="typography_menu",
+            scope="DEFAULT",       # UID = "typography_menu"
+            type_="menu",          
             default=None,
-            preset_payload={"__ALL_DEFAULTS__": True},
-            extended_help="Resets every configured item across all tabs back to its default value."
+            is_parent=True,        # CRITICAL: Flags this item as an expandable folder
+            expanded=False,        # Starts collapsed
+            group="Fonts"
+        ),
+        # 2. Child Item A
+        ConfigItem(
+            label="System Font Family",
+            key="font_family",
+            scope="fonts",         # UID = "fonts.font_family"
+            type_="picker",        
+            default="JetBrains Mono",
+            options=["JetBrains Mono", "Fira Code", "Roboto"],
+            hints=["Monospace", "Ligatures", "Sans-Serif"], # Hints map 1:1 with options
+            parent_ref="typography_menu"  # CRITICAL: Links directly to parent's UID
+        ),
+        # 3. Child Item B
+        ConfigItem(
+            label="Font Size",
+            key="font_size",
+            scope="fonts",         # UID = "fonts.font_size"
+            type_="float",        
+            default=11.0,
+            min_val=8.0,
+            max_val=24.0,
+            step=0.5,
+            parent_ref="typography_menu"  # Continues the visual tree line (├─ / └─)
         ),
     ],
+
+    # -------------------------------------------------------------------------
+    # TAB 2: ADVANCED CONTROLS (Presets & Actions)
+    # -------------------------------------------------------------------------
+    2: [
+        # ACTION: Does not save to config. The `default` string is the shell command.
+        ConfigItem(
+            label="Clear System Cache",
+            key="clear_cache",
+            scope="system",        # UID = "system.clear_cache"
+            type_="action",
+            default="rm -rf ~/.cache/app_name/* && echo 'Cache Cleared'",
+            group="Maintenance",
+        ),
+        
+        # PRESET: Injects multiple specific values across different tabs/scopes.
+        ConfigItem(
+            label="Apply 'Performance' Profile",
+            key="preset_performance",
+            scope="DEFAULT",       # UID = "preset_performance"
+            type_="preset",
+            default=None,
+            group="Profiles",
+            preset_payload={
+                # MUST use exact UIDs from the schema above
+                "core.animations": False,      
+                "layout.gaps_in": 0,           
+                "theme.border_style": "solid"  
+            }
+        ),
+        
+        # FACTORY RESET PRESET: Magic payload to revert all items to their `default`
+        ConfigItem(
+            label="Factory Reset Everything",
+            key="preset_factory_reset",
+            scope="DEFAULT",       # UID = "preset_factory_reset"
+            type_="preset",
+            default=None,
+            group="Profiles",
+            preset_payload={
+                "__ALL_DEFAULTS__": True
+            }
+        ),
+    ]
 }
 
-
 # =============================================================================
-# QUICK-REFERENCE: ALL ConfigItem FIELDS IN ONE PLACE
+# QUICK-REFERENCE CHEAT SHEET
 # =============================================================================
+# Copy/Paste this block when building new items to ensure correct kwargs.
 #
 # ConfigItem(
-#     label          = "Human-readable name shown in the TUI",
-#     key            = "lua_key_name",
-#     scope          = "lua/table/path",   # "" for top-level, "/" separates nesting
+#     label          = "Display Name",
+#     key            = "backend_key",
+#     scope          = "DEFAULT",          # "backend_section" or "DEFAULT" for root
 #     type_          = "bool",             # bool | int | float | string | cycle |
-#                                          # color | picker | action | preset
-#     default        = ...,                # Python value: True/False, int, float, str
-#     options        = [],                 # Overrides arrow-key behavior for int/color/etc.
-#     hints          = [],                 # Optional for picker (must match len(options))
-#     preset_payload = {},                 # Dict of {"scope.key": value} for "preset" type
-#     min_val        = None,               # int/float lower bound
-#     max_val        = None,               # int/float upper bound
-#     step           = None,               # arrow-key step size for int/float
-#     group          = None,               # Visual grouping label in the TUI
-#     extended_help  = None,               # Shown in --export-docs output
+#                                          # color | picker | action | preset | menu
+#     default        = None,               # Fallback/Reset value or shell command for 'action'
+#     options        = [],                 # Required for cycle/picker. Locks arrow keys for int/color.
+#     hints          = [],                 # Subtitles for picker modals (must match len(options))
+#     preset_payload = {},                 # Dict of {"scope.key": value} for 'preset' type
+#     min_val        = None,               # Numeric bounds
+#     max_val        = None,               # Numeric bounds
+#     step           = None,               # Numeric adjust step
+#     group          = None,               # Section header string in UI
+#     extended_help  = None,               # Markdown string for the help panel
+#     is_parent      = False,              # Set True if type_="menu"
+#     parent_ref     = None,               # Set to parent's UID to nest this item
+#     expanded       = False,              # Default state for parent menus
 # )
-#
-# =============================================================================

@@ -263,7 +263,8 @@ EXAMPLES:
             for tab_idx, items in SCHEMA.items():
                 print(f"## {TABS[tab_idx]}")
                 for item in items:
-                    if item.type_ == "action": continue
+                    # STRICT UI TYPE EXCLUSION
+                    if item.type_ in ("action", "preset", "menu"): continue
                     print(f"### `{item.key}`")
                     print(f"- **Type:** `{item.type_}`")
                     print(f"- **Default:** `{item.default}`")
@@ -275,7 +276,10 @@ EXAMPLES:
         flat_schema = {}
         for items in SCHEMA.values():
             for item in items:
-                if item.type_ == "action":
+                # STRICT UI TYPE EXCLUSION:
+                # Prevent pure-UI structural macros from polluting backend state checks 
+                # or getting written during a --default wipe.
+                if item.type_ in ("action", "preset", "menu"):
                     continue
                 
                 scoped_key = f"{item.scope}.{item.key}"
