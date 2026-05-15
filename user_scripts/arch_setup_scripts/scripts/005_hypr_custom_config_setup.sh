@@ -128,7 +128,7 @@ get_file_content() {
 -- User Configurable Defaults
 -- -------------------------------------------------------------------------------------------------
 
-terminal    = "kitty"
+terminal    = "foot"
 fileManager = "nemo"
 menu        = "rofi -show drun"
 browser     = "firefox"

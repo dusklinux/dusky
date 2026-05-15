@@ -8,7 +8,7 @@
 -- HYPRLAND KEYBINDINGS
 -- -------------------------------------------------------------------------------------------------
 
--- terminal    = "kitty"
+-- terminal    = "foot"
 -- fileManager = "nemo"
 -- menu        = "rofi -show drun"
 -- browser     = "firefox"
