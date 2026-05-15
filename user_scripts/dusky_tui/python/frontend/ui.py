@@ -1114,7 +1114,7 @@ class DuskyTUI(App):
                 else:
                     txt.append("Apply", style=f"bold {self.theme_colors['accent']}" if exists else f"{self.theme_colors['muted']} italic")
             elif item.type_ == "action":
-                txt.append("⚡ Execute Action", style=f"bold {self.theme_colors['warning']}" if exists else f"{self.theme_colors['muted']} italic")
+                txt.append(" Run", style=f"bold {self.theme_colors['warning']}" if exists else f"{self.theme_colors['muted']} italic")
             # If it's a menu, we just append the blank space above.
         else:
             # Render standard item values
@@ -1176,7 +1176,7 @@ class DuskyTUI(App):
 
         # 2. Add Dynamic Save Button Node
         save_btn = ConfigItem(
-            label="[+] Save Current State as New Preset",
+            label="[+] Save as Preset",
             key="__save_new_preset",
             scope="DEFAULT",
             type_="action",

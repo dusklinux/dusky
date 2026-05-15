@@ -4,6 +4,7 @@
 DUSKY TUI: MASTER CONFIGURATION SCHEMA
 ===============================================================================
 Target: ~/.config/hypr/edit_here/source/appearance.lua
+Engine: lua
 """
 
 from python.frontend.core_types import ConfigItem
@@ -25,20 +26,40 @@ THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"
 # 3. TABS DEFINITION
 # =============================================================================
 TABS = [
-    "General",
-    "Decorations",
-    "Misc",
-    "Presets"
+    "Presets",
+    "Layout",
+    "Colors",
+    "Interactions",
+    "Styling",
+    "Effects",
+    "Smart"
 ]
 
 # =============================================================================
 # COLOR ALIASES
 # =============================================================================
 COLOR_ALIASES = [
+    # Matugen dynamic variables
     "primary", "secondary", "tertiary", "error", "background", 
     "surface", "surface_variant", "outline", "inverse_on_surface", 
     "on_surface", "primary_container", "secondary_container", "tertiary_container",
-    "rgba(1a1a1aee)", "rgba(000000ff)", "rgba(ffffff11)", "rgba(00000000)"
+    
+    # Core system transparencies
+    "rgba(1a1a1aee)", "rgba(ffffff11)", "rgba(00000000)",
+    
+    # Hardcoded base options translated to Hyprland-compliant RGBA strings
+    "rgba(ff0000ff)", # Red
+    "rgba(00ff00ff)", # Green
+    "rgba(0000ffff)", # Blue
+    "rgba(ffa500ff)", # Orange
+    "rgba(ffff00ff)", # Yellow
+    "rgba(800080ff)", # Purple
+    "rgba(00ffffff)", # Cyan
+    "rgba(ffd700ff)", # Golden
+    "rgba(000000ff)", # Black
+    "rgba(ffffffff)", # White
+    "rgba(ffc0cbff)", # Pink
+    "rgba(808080ff)"  # Gray
 ]
 
 # =============================================================================
@@ -46,9 +67,595 @@ COLOR_ALIASES = [
 # =============================================================================
 SCHEMA = {
     # -------------------------------------------------------------------------
-    # TAB 0: GENERAL
+    # TAB 0: PRESETS
     # -------------------------------------------------------------------------
     0: [
+        ConfigItem(
+            label="Reset Dusky Defaults",
+            key="preset_factory_reset",
+            scope="DEFAULT",
+            type_="preset",
+            default=None,
+            group="Reset",
+            preset_payload={"__ALL_DEFAULTS__": True},
+            extended_help="**Reset Dusky Defaults**\n\nReverts every single configuration item across all tabs back to its programmed default state."
+        ),
+        ConfigItem(
+            label="Paper Texture",
+            key="pre_paper_texture",
+            scope="DEFAULT",
+            type_="preset",
+            default=None,
+            group="Presets",
+            preset_payload={
+                "general.border_size": 1,
+                "general.gaps_in": 6,
+                "general.gaps_out": 10,
+                "general.float_gaps": 0,
+                "general.gaps_workspaces": 0,
+                "general.col.active_border": "outline",
+                "general.col.inactive_border": "inverse_on_surface",
+                "general.col.nogroup_border_active": "secondary",
+                "general.col.nogroup_border": "inverse_on_surface",
+                "general.resize_on_border": True,
+                "general.extend_border_grab_area": 15,
+                "general.hover_icon_on_border": True,
+                "general.resize_corner": 0,
+                "general.allow_tearing": True,
+                "decoration.rounding": 0,
+                "decoration.rounding_power": 1.0,
+                "decoration.border_part_of_window": True,
+                "decoration.active_opacity": 0.8,
+                "decoration.inactive_opacity": 0.8,
+                "decoration.fullscreen_opacity": 0.9,
+                "decoration.screen_shader": "",
+                "decoration.dim_inactive": True,
+                "decoration.dim_strength": 0.3,
+                "decoration.dim_special": 0.8,
+                "decoration.dim_around": 0.4,
+                "decoration.dim_modal": True,
+                "decoration/blur.enabled": True,
+                "decoration/blur.size": 3,
+                "decoration/blur.passes": 3,
+                "decoration/blur.ignore_opacity": True,
+                "decoration/blur.new_optimizations": True,
+                "decoration/blur.xray": False,
+                "decoration/blur.noise": 0.6717,
+                "decoration/blur.contrast": 1.6916,
+                "decoration/blur.brightness": 2.0,
+                "decoration/blur.vibrancy": 0.55,
+                "decoration/blur.vibrancy_darkness": 1.0,
+                "decoration/blur.special": False,
+                "decoration/blur.popups": False,
+                "decoration/blur.popups_ignorealpha": 0.2,
+                "decoration/blur.input_methods": False,
+                "decoration/blur.input_methods_ignorealpha": 0.2,
+                "decoration/shadow.enabled": True,
+                "decoration/shadow.range": 6,
+                "decoration/shadow.render_power": 1,
+                "decoration/shadow.sharp": False,
+                "decoration/shadow.color": "background",
+                "decoration/shadow.scale": 1.0,
+                "decoration/glow.enabled": True,
+                "decoration/glow.range": 10,
+                "decoration/glow.render_power": 3,
+                "decoration/glow.color": "primary_container",
+                "workspace_rule/w[tv1]s[false].border_size": 1,
+                "workspace_rule/w[tv1]s[false].gaps_in": 4,
+                "workspace_rule/w[tv1]s[false].gaps_out": 8,
+                "window_rule/single_window_style.rounding": 10,
+                "window_rule/single_window_style.rounding_power": 2.5,
+                "window_rule/single_window_style.opacity": "0.85 override 0.85 override 1.0 override",
+                "window_rule/single_window_style.no_blur": False,
+                "workspace_rule/f[1]s[false].border_size": 1,
+                "workspace_rule/f[1]s[false].gaps_in": 4,
+                "workspace_rule/f[1]s[false].gaps_out": 8,
+                "window_rule/maximized_window_style.rounding": 10,
+                "window_rule/maximized_window_style.opacity": 0.45,
+                "window_rule/maximized_window_style.no_blur": True
+            },
+            extended_help="**Paper Texture**\n\nApplies highly textured noise and contrasting blur parameters to emulate the physical grit of a paper surface beneath transparent windows."
+        ),
+        ConfigItem(
+            label="Retro Noise",
+            key="pre_retro_noise",
+            scope="DEFAULT",
+            type_="preset",
+            default=None,
+            group="Presets",
+            preset_payload={
+                "general.border_size": 1,
+                "general.gaps_in": 4,
+                "general.gaps_out": 8,
+                "general.float_gaps": 0,
+                "general.gaps_workspaces": 0,
+                "general.col.active_border": "primary",
+                "general.col.inactive_border": "inverse_on_surface",
+                "general.col.nogroup_border_active": "secondary",
+                "general.col.nogroup_border": "inverse_on_surface",
+                "general.resize_on_border": True,
+                "general.extend_border_grab_area": 15,
+                "general.hover_icon_on_border": True,
+                "general.resize_corner": 0,
+                "general.allow_tearing": True,
+                "decoration.rounding": 10,
+                "decoration.rounding_power": 2.5,
+                "decoration.border_part_of_window": True,
+                "decoration.active_opacity": 0.85,
+                "decoration.inactive_opacity": 0.85,
+                "decoration.fullscreen_opacity": 1.0,
+                "decoration.screen_shader": "",
+                "decoration.dim_inactive": True,
+                "decoration.dim_strength": 0.3,
+                "decoration.dim_special": 0.8,
+                "decoration.dim_around": 0.4,
+                "decoration.dim_modal": True,
+                "decoration/blur.enabled": True,
+                "decoration/blur.size": 10,
+                "decoration/blur.passes": 2,
+                "decoration/blur.ignore_opacity": True,
+                "decoration/blur.new_optimizations": True,
+                "decoration/blur.xray": False,
+                "decoration/blur.noise": 1.0,
+                "decoration/blur.contrast": 1.1,
+                "decoration/blur.brightness": 2.0,
+                "decoration/blur.vibrancy": 1.0,
+                "decoration/blur.vibrancy_darkness": 1.0,
+                "decoration/blur.special": False,
+                "decoration/blur.popups": False,
+                "decoration/blur.popups_ignorealpha": 0.2,
+                "decoration/blur.input_methods": False,
+                "decoration/blur.input_methods_ignorealpha": 0.2,
+                "decoration/shadow.enabled": True,
+                "decoration/shadow.range": 10,
+                "decoration/shadow.render_power": 1,
+                "decoration/shadow.sharp": False,
+                "decoration/shadow.color": "rgba(1a1a1aee)",
+                "decoration/shadow.scale": 1.0,
+                "decoration/glow.enabled": False,
+                "decoration/glow.range": 10,
+                "decoration/glow.render_power": 3,
+                "decoration/glow.color": "primary_container",
+                "workspace_rule/w[tv1]s[false].border_size": 1,
+                "workspace_rule/w[tv1]s[false].gaps_in": 4,
+                "workspace_rule/w[tv1]s[false].gaps_out": 8,
+                "window_rule/single_window_style.rounding": 10,
+                "window_rule/single_window_style.rounding_power": 2.5,
+                "window_rule/single_window_style.opacity": "0.85 override 0.85 override 1.0 override",
+                "window_rule/single_window_style.no_blur": False,
+                "workspace_rule/f[1]s[false].border_size": 1,
+                "workspace_rule/f[1]s[false].gaps_in": 4,
+                "workspace_rule/f[1]s[false].gaps_out": 8,
+                "window_rule/maximized_window_style.rounding": 10,
+                "window_rule/maximized_window_style.opacity": 0.45,
+                "window_rule/maximized_window_style.no_blur": True
+            },
+            extended_help="**Retro Noise**\n\nForces blur noise, brightness, and vibrancy levels to their absolute maximum, producing an intense, highly saturated CRT distortion effect on all transparent surfaces."
+        ),
+        ConfigItem(
+            label="Translucent Air",
+            key="pre_translucent_air",
+            scope="DEFAULT",
+            type_="preset",
+            default=None,
+            group="Presets",
+            preset_payload={
+                "general.border_size": 0,
+                "general.gaps_in": 4,
+                "general.gaps_out": 10,
+                "general.float_gaps": 0,
+                "general.gaps_workspaces": 0,
+                "general.col.active_border": "primary",
+                "general.col.inactive_border": "inverse_on_surface",
+                "general.col.nogroup_border_active": "secondary",
+                "general.col.nogroup_border": "inverse_on_surface",
+                "general.resize_on_border": True,
+                "general.extend_border_grab_area": 15,
+                "general.hover_icon_on_border": True,
+                "general.resize_corner": 0,
+                "general.allow_tearing": True,
+                "decoration.rounding": 26,
+                "decoration.rounding_power": 1.0,
+                "decoration.border_part_of_window": True,
+                "decoration.active_opacity": 0.95,
+                "decoration.inactive_opacity": 0.85,
+                "decoration.fullscreen_opacity": 1.0,
+                "decoration.screen_shader": "",
+                "decoration.dim_inactive": True,
+                "decoration.dim_strength": 0.3,
+                "decoration.dim_special": 0.0,
+                "decoration.dim_around": 0.4,
+                "decoration.dim_modal": True,
+                "decoration/blur.enabled": False,
+                "decoration/blur.size": 1,
+                "decoration/blur.passes": 1,
+                "decoration/blur.ignore_opacity": True,
+                "decoration/blur.new_optimizations": True,
+                "decoration/blur.xray": False,
+                "decoration/blur.noise": 0.0117,
+                "decoration/blur.contrast": 0.8916,
+                "decoration/blur.brightness": 0.8172,
+                "decoration/blur.vibrancy": 0.1696,
+                "decoration/blur.vibrancy_darkness": 0.0,
+                "decoration/blur.special": False,
+                "decoration/blur.popups": False,
+                "decoration/blur.popups_ignorealpha": 0.2,
+                "decoration/blur.input_methods": False,
+                "decoration/blur.input_methods_ignorealpha": 0.2,
+                "decoration/shadow.enabled": True,
+                "decoration/shadow.range": 4,
+                "decoration/shadow.render_power": 1,
+                "decoration/shadow.sharp": False,
+                "decoration/shadow.color": "rgba(1a1a1aee)",
+                "decoration/shadow.scale": 1.0,
+                "decoration/glow.enabled": False,
+                "decoration/glow.range": 10,
+                "decoration/glow.render_power": 3,
+                "decoration/glow.color": "primary_container",
+                "workspace_rule/w[tv1]s[false].border_size": 0,
+                "workspace_rule/w[tv1]s[false].gaps_in": 4,
+                "workspace_rule/w[tv1]s[false].gaps_out": 12,
+                "window_rule/single_window_style.rounding": 20,
+                "window_rule/single_window_style.rounding_power": 1.0,
+                "window_rule/single_window_style.opacity": "0.85 override 0.85 override 1.0 override",
+                "window_rule/single_window_style.no_blur": False,
+                "workspace_rule/f[1]s[false].border_size": 1,
+                "workspace_rule/f[1]s[false].gaps_in": 4,
+                "workspace_rule/f[1]s[false].gaps_out": 1,
+                "window_rule/maximized_window_style.rounding": 10,
+                "window_rule/maximized_window_style.opacity": 0.45,
+                "window_rule/maximized_window_style.no_blur": True
+            },
+            extended_help="**Translucent Air**\n\nA very lightweight preset. Turns off heavy blur operations entirely, implements soft rounded corners with no hard borders, and offers an airy and minimal look."
+        ),
+        ConfigItem(
+            label="Packed Room",
+            key="pre_packed_room",
+            scope="DEFAULT",
+            type_="preset",
+            default=None,
+            group="Presets",
+            preset_payload={
+                "general.border_size": 0,
+                "general.gaps_in": 1,
+                "general.gaps_out": 0,
+                "general.float_gaps": 0,
+                "general.gaps_workspaces": 0,
+                "general.col.active_border": "primary",
+                "general.col.inactive_border": "inverse_on_surface",
+                "general.col.nogroup_border_active": "secondary",
+                "general.col.nogroup_border": "inverse_on_surface",
+                "general.resize_on_border": True,
+                "general.extend_border_grab_area": 15,
+                "general.hover_icon_on_border": True,
+                "general.resize_corner": 0,
+                "general.allow_tearing": True,
+                "decoration.rounding": 0,
+                "decoration.rounding_power": 1.0,
+                "decoration.border_part_of_window": True,
+                "decoration.active_opacity": 0.9,
+                "decoration.inactive_opacity": 0.9,
+                "decoration.fullscreen_opacity": 1.0,
+                "decoration.screen_shader": "",
+                "decoration.dim_inactive": True,
+                "decoration.dim_strength": 0.3,
+                "decoration.dim_special": 0.0,
+                "decoration.dim_around": 0.0,
+                "decoration.dim_modal": True,
+                "decoration/blur.enabled": True,
+                "decoration/blur.size": 1,
+                "decoration/blur.passes": 1,
+                "decoration/blur.ignore_opacity": True,
+                "decoration/blur.new_optimizations": True,
+                "decoration/blur.xray": False,
+                "decoration/blur.noise": 0.0117,
+                "decoration/blur.contrast": 2.0,
+                "decoration/blur.brightness": 1.0,
+                "decoration/blur.vibrancy": 0.1696,
+                "decoration/blur.vibrancy_darkness": 1.0,
+                "decoration/blur.special": False,
+                "decoration/blur.popups": False,
+                "decoration/blur.popups_ignorealpha": 0.2,
+                "decoration/blur.input_methods": False,
+                "decoration/blur.input_methods_ignorealpha": 0.2,
+                "decoration/shadow.enabled": False,
+                "decoration/shadow.range": 10,
+                "decoration/shadow.render_power": 1,
+                "decoration/shadow.sharp": False,
+                "decoration/shadow.color": "rgba(1a1a1aee)",
+                "decoration/shadow.scale": 1.0,
+                "decoration/glow.enabled": False,
+                "decoration/glow.range": 10,
+                "decoration/glow.render_power": 3,
+                "decoration/glow.color": "primary_container",
+                "workspace_rule/w[tv1]s[false].border_size": 0,
+                "workspace_rule/w[tv1]s[false].gaps_in": 0,
+                "workspace_rule/w[tv1]s[false].gaps_out": 0,
+                "window_rule/single_window_style.rounding": 0,
+                "window_rule/single_window_style.rounding_power": 1.0,
+                "window_rule/single_window_style.opacity": "0.85 override 0.85 override 1.0 override",
+                "window_rule/single_window_style.no_blur": False,
+                "workspace_rule/f[1]s[false].border_size": 1,
+                "workspace_rule/f[1]s[false].gaps_in": 0,
+                "workspace_rule/f[1]s[false].gaps_out": 0,
+                "window_rule/maximized_window_style.rounding": 0,
+                "window_rule/maximized_window_style.opacity": 0.45,
+                "window_rule/maximized_window_style.no_blur": True
+            },
+            extended_help="**Packed Room**\n\nDisables borders, limits gaps to near-zero, entirely drops drop shadows, and sharpens all corners. Maximum screen efficiency for heavy workflow environments."
+        ),
+        ConfigItem(
+            label="Tinted Glass",
+            key="pre_tinted_glass",
+            scope="DEFAULT",
+            type_="preset",
+            default=None,
+            group="Presets",
+            preset_payload={
+                "general.border_size": 1,
+                "general.gaps_in": 0,
+                "general.gaps_out": 0,
+                "general.float_gaps": 0,
+                "general.gaps_workspaces": 0,
+                "general.col.active_border": "primary",
+                "general.col.inactive_border": "inverse_on_surface",
+                "general.col.nogroup_border_active": "secondary",
+                "general.col.nogroup_border": "inverse_on_surface",
+                "general.resize_on_border": True,
+                "general.extend_border_grab_area": 15,
+                "general.hover_icon_on_border": True,
+                "general.resize_corner": 0,
+                "general.allow_tearing": True,
+                "decoration.rounding": 0,
+                "decoration.rounding_power": 1.0,
+                "decoration.border_part_of_window": True,
+                "decoration.active_opacity": 0.9,
+                "decoration.inactive_opacity": 0.9,
+                "decoration.fullscreen_opacity": 1.0,
+                "decoration.screen_shader": "",
+                "decoration.dim_inactive": True,
+                "decoration.dim_strength": 0.3,
+                "decoration.dim_special": 0.0,
+                "decoration.dim_around": 0.0,
+                "decoration.dim_modal": True,
+                "decoration/blur.enabled": True,
+                "decoration/blur.size": 1,
+                "decoration/blur.passes": 1,
+                "decoration/blur.ignore_opacity": True,
+                "decoration/blur.new_optimizations": True,
+                "decoration/blur.xray": False,
+                "decoration/blur.noise": 0.0117,
+                "decoration/blur.contrast": 2.0,
+                "decoration/blur.brightness": 1.0,
+                "decoration/blur.vibrancy": 0.1696,
+                "decoration/blur.vibrancy_darkness": 1.0,
+                "decoration/blur.special": False,
+                "decoration/blur.popups": False,
+                "decoration/blur.popups_ignorealpha": 0.2,
+                "decoration/blur.input_methods": False,
+                "decoration/blur.input_methods_ignorealpha": 0.2,
+                "decoration/shadow.enabled": False,
+                "decoration/shadow.range": 10,
+                "decoration/shadow.render_power": 1,
+                "decoration/shadow.sharp": False,
+                "decoration/shadow.color": "rgba(1a1a1aee)",
+                "decoration/shadow.scale": 1.0,
+                "decoration/glow.enabled": False,
+                "decoration/glow.range": 10,
+                "decoration/glow.render_power": 3,
+                "decoration/glow.color": "primary_container",
+                "workspace_rule/w[tv1]s[false].border_size": 0,
+                "workspace_rule/w[tv1]s[false].gaps_in": 0,
+                "workspace_rule/w[tv1]s[false].gaps_out": 0,
+                "window_rule/single_window_style.rounding": 0,
+                "window_rule/single_window_style.rounding_power": 1.0,
+                "window_rule/single_window_style.opacity": "0.85 override 0.85 override 1.0 override",
+                "window_rule/single_window_style.no_blur": False,
+                "workspace_rule/f[1]s[false].border_size": 1,
+                "workspace_rule/f[1]s[false].gaps_in": 0,
+                "workspace_rule/f[1]s[false].gaps_out": 0,
+                "window_rule/maximized_window_style.rounding": 0,
+                "window_rule/maximized_window_style.opacity": 0.45,
+                "window_rule/maximized_window_style.no_blur": True
+            },
+            extended_help="**Tinted Glass**\n\nCreates a flat, sharp-cornered setup combined with high contrast, heavily darkened vibrancy, and no drop shadows. Replicates the sleek look of modern tinted panels."
+        ),
+        ConfigItem(
+            label="Glassmorphism",
+            key="pre_glass",
+            scope="DEFAULT",
+            type_="preset",
+            default=None,
+            group="Presets",
+            preset_payload={
+                "decoration.active_opacity": 0.75,
+                "decoration.inactive_opacity": 0.65,
+                "decoration/blur.passes": 3,
+                "decoration/blur.size": 15,
+                "general.border_size": 0,
+                "decoration.rounding": 12,
+                "decoration/shadow.enabled": True,
+                "decoration/shadow.range": 30
+            },
+            extended_help="**Glassmorphism Profile**\n\nDeploys heavy transparency combined with intense background blur and soft drop shadows to emulate macOS-style frosted glass environments."
+        ),
+        ConfigItem(
+            label="Elegant Blur",
+            key="pre_elegant_blur",
+            scope="DEFAULT",
+            type_="preset",
+            default=None,
+            group="Presets",
+            preset_payload={
+                "general.border_size": 2,
+                "general.gaps_in": 3,
+                "general.gaps_out": 6,
+                "decoration.rounding": 0,
+                "decoration.rounding_power": 1.0,
+                "decoration.active_opacity": 0.6,
+                "decoration.inactive_opacity": 0.5,
+                "decoration.fullscreen_opacity": 0.8,
+                "decoration.dim_inactive": True,
+                "decoration.dim_strength": 0.3,
+                "decoration/blur.enabled": True,
+                "decoration/blur.size": 9,
+                "decoration/blur.passes": 3,
+                "decoration/shadow.enabled": True,
+                "decoration/shadow.range": 6,
+                "decoration/shadow.render_power": 1,
+                "decoration/shadow.color": "rgba(000000ff)",
+                "decoration/shadow.scale": 1.0,
+                "decoration/glow.enabled": False
+            },
+            extended_help="**Elegant Blur**\n\nApplies a configuration with zero rounding, medium borders, tight gaps, and a heavily dimmed inactive workspace with black drop shadows."
+        ),
+        ConfigItem(
+            label="Gamers Euphoria",
+            key="pre_gamers_euphoria",
+            scope="DEFAULT",
+            type_="preset",
+            default=None,
+            group="Presets",
+            preset_payload={
+                "general.border_size": 1,
+                "general.gaps_in": 3,
+                "general.gaps_out": 6,
+                "general.col.active_border": "outline",
+                "general.col.inactive_border": "primary_container",
+                "decoration.rounding": 28,
+                "decoration.rounding_power": 1,
+                "decoration.border_part_of_window": True,
+                "decoration.active_opacity": 0.8,
+                "decoration.inactive_opacity": 0.7,
+                "decoration.dim_inactive": True,
+                "decoration.dim_strength": 0.3,
+                "decoration/blur.enabled": True,
+                "decoration/blur.size": 6,
+                "decoration/blur.passes": 3,
+                "decoration/blur.contrast": 1.4,
+                "decoration/blur.brightness": 0.8,
+                "decoration/blur.vibrancy": 1.0,
+                "decoration/blur.vibrancy_darkness": 0.6,
+                "decoration/shadow.enabled": True,
+                "decoration/shadow.range": 4,
+                "decoration/shadow.color": "rgba(000000ff)",
+                "decoration/glow.enabled": True,
+                "decoration/glow.range": 3,
+                "decoration/glow.render_power": 1,
+                "decoration/glow.color": "primary_container"
+            },
+            extended_help="**Gamers Euphoria**\n\nA visually immersive preset engineered for gaming setups with intense rounded corners, contrasting outlines, dynamic blur filters, and vibrant neon glow effects."
+        ),
+        ConfigItem(
+            label="Vibrant Soft",
+            key="pre_vibrant_soft",
+            scope="DEFAULT",
+            type_="preset",
+            default=None,
+            group="Presets",
+            preset_payload={
+                "general.border_size": 2,
+                "general.gaps_in": 8,
+                "general.gaps_out": 14,
+                "decoration.rounding": 18,
+                "decoration.rounding_power": 1.7,
+                "decoration.active_opacity": 0.85,
+                "decoration.inactive_opacity": 0.85,
+                "decoration.dim_inactive": True,
+                "decoration.dim_strength": 0.3,
+                "decoration/blur.enabled": True,
+                "decoration/blur.size": 10,
+                "decoration/blur.passes": 2,
+                "decoration/blur.contrast": 0.5,
+                "decoration/blur.brightness": 1.0,
+                "decoration/blur.vibrancy": 1.0,
+                "decoration/blur.vibrancy_darkness": 0.8,
+                "decoration/glow.enabled": False
+            },
+            extended_help="**Vibrant Soft**\n\nA beautifully soft preset that emphasizes deeply saturated background blurs, wide spacious gaps, and thick corner radiuses for an incredibly clean desktop."
+        ),
+        ConfigItem(
+            label="Aura Farm",
+            key="pre_aura_farm",
+            scope="DEFAULT",
+            type_="preset",
+            default=None,
+            group="Presets",
+            preset_payload={
+                "general.border_size": 0,
+                "general.gaps_in": 4,
+                "general.gaps_out": 6,
+                "general.float_gaps": 0,
+                "general.gaps_workspaces": 0,
+                "general.col.active_border": "primary",
+                "general.col.inactive_border": "inverse_on_surface",
+                "general.col.nogroup_border_active": "secondary",
+                "general.col.nogroup_border": "inverse_on_surface",
+                "general.resize_on_border": True,
+                "general.extend_border_grab_area": 15,
+                "general.hover_icon_on_border": True,
+                "general.resize_corner": 0,
+                "general.allow_tearing": True,
+                "decoration.rounding": 0,
+                "decoration.rounding_power": 2.5,
+                "decoration.border_part_of_window": True,
+                "decoration.active_opacity": 0.85,
+                "decoration.inactive_opacity": 0.85,
+                "decoration.fullscreen_opacity": 1.0,
+                "decoration.screen_shader": "",
+                "decoration.dim_inactive": True,
+                "decoration.dim_strength": 0.3,
+                "decoration.dim_special": 0.8,
+                "decoration.dim_around": 0.4,
+                "decoration.dim_modal": True,
+                "decoration/blur.enabled": True,
+                "decoration/blur.size": 6,
+                "decoration/blur.passes": 3,
+                "decoration/blur.ignore_opacity": True,
+                "decoration/blur.new_optimizations": True,
+                "decoration/blur.xray": False,
+                "decoration/blur.noise": 0.0117,
+                "decoration/blur.contrast": 2.0,
+                "decoration/blur.brightness": 0.8172,
+                "decoration/blur.vibrancy": 1.0,
+                "decoration/blur.vibrancy_darkness": 1.0,
+                "decoration/blur.special": False,
+                "decoration/blur.popups": False,
+                "decoration/blur.popups_ignorealpha": 0.2,
+                "decoration/blur.input_methods": False,
+                "decoration/blur.input_methods_ignorealpha": 0.2,
+                "decoration/shadow.enabled": True,
+                "decoration/shadow.range": 10,
+                "decoration/shadow.render_power": 1,
+                "decoration/shadow.sharp": False,
+                "decoration/shadow.color": "rgba(1a1a1aee)",
+                "decoration/shadow.scale": 1.0,
+                "decoration/glow.enabled": True,
+                "decoration/glow.range": 10,
+                "decoration/glow.render_power": 3,
+                "decoration/glow.color": "primary",
+                "workspace_rule/w[tv1]s[false].border_size": 0,
+                "workspace_rule/w[tv1]s[false].gaps_in": 0,
+                "workspace_rule/w[tv1]s[false].gaps_out": 6,
+                "window_rule/single_window_style.rounding": 10,
+                "window_rule/single_window_style.rounding_power": 2.5,
+                "window_rule/single_window_style.opacity": "0.85 override 0.85 override 1.0 override",
+                "window_rule/single_window_style.no_blur": False,
+                "workspace_rule/f[1]s[false].border_size": 1,
+                "workspace_rule/f[1]s[false].gaps_in": 4,
+                "workspace_rule/f[1]s[false].gaps_out": 8,
+                "window_rule/maximized_window_style.rounding": 10,
+                "window_rule/maximized_window_style.opacity": 0.45,
+                "window_rule/maximized_window_style.no_blur": True
+            },
+            extended_help="**Aura Farm**\n\nA visually striking configuration focusing on high vibrancy, intense contrast, and a distinct primary-colored inner glow. Features zero borders and sharp layout styling."
+        ),
+    ],
+
+    # -------------------------------------------------------------------------
+    # TAB 1: LAYOUT
+    # -------------------------------------------------------------------------
+    1: [
         ConfigItem(
             label="Border Size",
             key="border_size",
@@ -58,10 +665,11 @@ SCHEMA = {
             min_val=0,
             max_val=15,
             step=1,
-            group="Layout & Gaps"
+            group="Geometry",
+            extended_help="**Border Size**\n\nSets the absolute pixel width of the borders drawn around application windows. Set to 0 to remove borders entirely."
         ),
         ConfigItem(
-            label="Inner Gaps",
+            label="Gaps In",
             key="gaps_in",
             scope="general",
             type_="int",
@@ -69,10 +677,11 @@ SCHEMA = {
             min_val=0,
             max_val=50,
             step=1,
-            group="Layout & Gaps"
+            group="Geometry",
+            extended_help="**Inner Gaps**\n\nDefines the spacing (in pixels) between adjacent tiled windows. Higher values create a more spaced-out look."
         ),
         ConfigItem(
-            label="Outer Gaps",
+            label="Gaps Out",
             key="gaps_out",
             scope="general",
             type_="int",
@@ -80,10 +689,11 @@ SCHEMA = {
             min_val=0,
             max_val=50,
             step=1,
-            group="Layout & Gaps"
+            group="Geometry",
+            extended_help="**Outer Gaps**\n\nDefines the spacing (in pixels) between windows and the absolute edge of your monitor."
         ),
         ConfigItem(
-            label="Floating Window Gaps",
+            label="Float Gaps",
             key="float_gaps",
             scope="general",
             type_="int",
@@ -91,7 +701,8 @@ SCHEMA = {
             min_val=-1,
             max_val=50,
             step=1,
-            group="Layout & Gaps"
+            group="Geometry",
+            extended_help="**Floating Gaps**\n\nSpecific gap overrides applied only to windows currently in a floating state. Setting this to -1 inherits standard gap behavior."
         ),
         ConfigItem(
             label="Workspace Gaps",
@@ -102,26 +713,34 @@ SCHEMA = {
             min_val=0,
             max_val=50,
             step=1,
-            group="Layout & Gaps"
+            group="Geometry",
+            extended_help="**Workspace Gaps**\n\nAdds horizontal gap padding specifically between adjacent workspaces during transition animations."
         ),
+    ],
 
+    # -------------------------------------------------------------------------
+    # TAB 2: COLORS
+    # -------------------------------------------------------------------------
+    2: [
         ConfigItem(
-            label="Active Border Color",
+            label="Active Border",
             key="col.active_border",
             scope="general",
             type_="color",
             default="primary",
             options=COLOR_ALIASES,
-            group="Border Colors"
+            group="Borders",
+            extended_help="**Active Border**\n\nThe highlight color surrounding the window currently receiving keyboard input."
         ),
         ConfigItem(
-            label="Inactive Border Color",
+            label="Inactive Border",
             key="col.inactive_border",
             scope="general",
             type_="color",
             default="inverse_on_surface",
             options=COLOR_ALIASES,
-            group="Border Colors"
+            group="Borders",
+            extended_help="**Inactive Border**\n\nThe color applied to all background windows that do not have focus."
         ),
         ConfigItem(
             label="No-Group Active Border",
@@ -130,7 +749,8 @@ SCHEMA = {
             type_="color",
             default="secondary",
             options=COLOR_ALIASES,
-            group="Border Colors"
+            group="Borders",
+            extended_help="**No-Group Active Border**\n\nSpecialized active border color for windows that explicitly deny being added to a tabbed group layout."
         ),
         ConfigItem(
             label="No-Group Inactive Border",
@@ -139,19 +759,26 @@ SCHEMA = {
             type_="color",
             default="inverse_on_surface",
             options=COLOR_ALIASES,
-            group="Border Colors"
+            group="Borders",
+            extended_help="**No-Group Inactive Border**\n\nSpecialized inactive border color for windows that explicitly deny being added to a tabbed group layout."
         ),
+    ],
 
+    # -------------------------------------------------------------------------
+    # TAB 3: INTERACTIONS
+    # -------------------------------------------------------------------------
+    3: [
         ConfigItem(
             label="Resize on Border",
             key="resize_on_border",
             scope="general",
             type_="bool",
             default=True,
-            group="Window Interactions"
+            group="Mouse",
+            extended_help="**Resize on Border**\n\nAllows you to dynamically resize windows by clicking and dragging directly on their borders or gap areas."
         ),
         ConfigItem(
-            label="Border Grab Area",
+            label="Extend Border Grab Area",
             key="extend_border_grab_area",
             scope="general",
             type_="int",
@@ -159,7 +786,8 @@ SCHEMA = {
             min_val=0,
             max_val=50,
             step=1,
-            group="Window Interactions"
+            group="Mouse",
+            extended_help="**Extend Grab Area**\n\nExtends the invisible clickable area around window borders. Higher values make it easier to grab."
         ),
         ConfigItem(
             label="Hover Icon on Border",
@@ -167,7 +795,8 @@ SCHEMA = {
             scope="general",
             type_="bool",
             default=True,
-            group="Window Interactions"
+            group="Mouse",
+            extended_help="**Hover Icon**\n\nAutomatically changes your cursor to a directional resize arrow when hovering over an interactive border area."
         ),
         ConfigItem(
             label="Resize Corner",
@@ -178,7 +807,8 @@ SCHEMA = {
             min_val=0,
             max_val=4,
             step=1,
-            group="Window Interactions"
+            group="Behavior",
+            extended_help="**Resize Corner**\n\nForces floating windows to strictly scale from a specific corner (1-4). Set to 0 to disable."
         ),
         ConfigItem(
             label="Allow Tearing",
@@ -186,16 +816,17 @@ SCHEMA = {
             scope="general",
             type_="bool",
             default=True,
-            group="Window Interactions"
+            group="Behavior",
+            extended_help="**Allow Tearing**\n\nMaster switch to allow screen tearing for immediate frame delivery, beneficial for minimizing input latency."
         ),
     ],
 
     # -------------------------------------------------------------------------
-    # TAB 1: DECORATIONS
+    # TAB 4: STYLING
     # -------------------------------------------------------------------------
-    1: [
+    4: [
         ConfigItem(
-            label="Corner Rounding",
+            label="Rounding",
             key="rounding",
             scope="decoration",
             type_="int",
@@ -203,7 +834,8 @@ SCHEMA = {
             min_val=0,
             max_val=50,
             step=1,
-            group="Window Styling"
+            group="Corners",
+            extended_help="**Rounding**\n\nThe layout pixel radius for window corners. Set to 0 for sharp corners."
         ),
         ConfigItem(
             label="Rounding Power",
@@ -214,7 +846,8 @@ SCHEMA = {
             min_val=1.0,
             max_val=4.0,
             step=0.1,
-            group="Window Styling"
+            group="Corners",
+            extended_help="**Rounding Power**\n\nAdjusts the mathematical curve used to clip corners. 2.0 is circular, 4.0 is squircle, 1.0 is triangular."
         ),
         ConfigItem(
             label="Border Part of Window",
@@ -222,7 +855,8 @@ SCHEMA = {
             scope="decoration",
             type_="bool",
             default=True,
-            group="Window Styling"
+            group="Corners",
+            extended_help="**Border Part of Window**\n\nToggles whether the window border is drawn inside the application's allocated space or strictly on the outside."
         ),
         ConfigItem(
             label="Active Opacity",
@@ -233,7 +867,8 @@ SCHEMA = {
             min_val=0.0,
             max_val=1.0,
             step=0.05,
-            group="Window Styling"
+            group="Opacity",
+            extended_help="**Active Opacity**\n\nThe global transparency level for the window you are actively using."
         ),
         ConfigItem(
             label="Inactive Opacity",
@@ -244,7 +879,8 @@ SCHEMA = {
             min_val=0.0,
             max_val=1.0,
             step=0.05,
-            group="Window Styling"
+            group="Opacity",
+            extended_help="**Inactive Opacity**\n\nThe transparency level for background windows."
         ),
         ConfigItem(
             label="Fullscreen Opacity",
@@ -255,27 +891,30 @@ SCHEMA = {
             min_val=0.0,
             max_val=1.0,
             step=0.05,
-            group="Window Styling"
+            group="Opacity",
+            extended_help="**Fullscreen Opacity**\n\nForces a specific transparency level whenever a window enters a fullscreen state."
         ),
         ConfigItem(
-            label="Screen Shader Path",
+            label="Screen Shader",
             key="screen_shader",
             scope="decoration",
             type_="string",
             default="",
-            group="Window Styling"
+            group="Pipeline",
+            extended_help="**Screen Shader**\n\nPath to a custom fragment shader file applied at the very end of the rendering pipeline."
         ),
 
         ConfigItem(
-            label="Dim Inactive Windows",
+            label="Dim Inactive",
             key="dim_inactive",
             scope="decoration",
             type_="bool",
             default=True,
-            group="Dimming Effects"
+            group="Dimming",
+            extended_help="**Dim Inactive**\n\nAutomatically applies a dark overlay to all windows that do not currently possess keyboard focus."
         ),
         ConfigItem(
-            label="Inactive Dim Strength",
+            label="Dim Strength",
             key="dim_strength",
             scope="decoration",
             type_="float",
@@ -283,10 +922,11 @@ SCHEMA = {
             min_val=0.0,
             max_val=1.0,
             step=0.1,
-            group="Dimming Effects"
+            group="Dimming",
+            extended_help="**Dim Strength**\n\nDictates the intensity of the darkness applied to inactive windows."
         ),
         ConfigItem(
-            label="Special Workspace Dim",
+            label="Dim Special Workspace",
             key="dim_special",
             scope="decoration",
             type_="float",
@@ -294,10 +934,11 @@ SCHEMA = {
             min_val=0.0,
             max_val=1.0,
             step=0.1,
-            group="Dimming Effects"
+            group="Dimming",
+            extended_help="**Dim Special**\n\nControls how dark the rest of your screen becomes when a special workspace is open."
         ),
         ConfigItem(
-            label="Dim Around Rules",
+            label="Dim Around",
             key="dim_around",
             scope="decoration",
             type_="float",
@@ -305,38 +946,38 @@ SCHEMA = {
             min_val=0.0,
             max_val=1.0,
             step=0.1,
-            group="Dimming Effects"
+            group="Dimming",
+            extended_help="**Dim Around**\n\nControls the dimming intensity triggered by specific window rules."
         ),
         ConfigItem(
-            label="Dim Modals",
+            label="Dim Modal",
             key="dim_modal",
             scope="decoration",
             type_="bool",
             default=True,
-            group="Dimming Effects"
+            group="Dimming",
+            extended_help="**Dim Modal**\n\nWhen a modal appears, this darkens the main application window beneath it."
         ),
+    ],
 
-        # --- BLUR MENU FOLDER ---
+    # -------------------------------------------------------------------------
+    # TAB 5: EFFECTS
+    # -------------------------------------------------------------------------
+    5: [
+        # --- BLUR HYBRID FOLDER ---
         ConfigItem(
             label="Blur Settings",
-            key="blur_menu_id",
-            scope="DEFAULT",
-            type_="menu",
-            default=None,
-            is_parent=True,
-            expanded=False,
-            group="Render Layers"
-        ),
-        ConfigItem(
-            label="Enable Blur",
             key="enabled",
             scope="decoration/blur",
             type_="bool",
             default=True,
-            parent_ref="blur_menu_id"
+            is_parent=True,
+            expanded=False,
+            group="Blur",
+            extended_help="**Blur Enabled**\n\nToggles the kawase blur engine for transparent interface elements."
         ),
         ConfigItem(
-            label="Blur Size",
+            label="Size",
             key="size",
             scope="decoration/blur",
             type_="int",
@@ -344,10 +985,11 @@ SCHEMA = {
             min_val=1,
             max_val=30,
             step=1,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Blur Size**\n\nThe distance of the blur effect."
         ),
         ConfigItem(
-            label="Blur Passes",
+            label="Passes",
             key="passes",
             scope="decoration/blur",
             type_="int",
@@ -355,7 +997,8 @@ SCHEMA = {
             min_val=1,
             max_val=10,
             step=1,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Blur Passes**\n\nHow many times the blur algorithm is applied."
         ),
         ConfigItem(
             label="Ignore Opacity",
@@ -363,7 +1006,8 @@ SCHEMA = {
             scope="decoration/blur",
             type_="bool",
             default=True,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Ignore Opacity**\n\nForces the blur engine to render at full strength beneath transparent windows."
         ),
         ConfigItem(
             label="New Optimizations",
@@ -371,15 +1015,17 @@ SCHEMA = {
             scope="decoration/blur",
             type_="bool",
             default=True,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**New Optimizations**\n\nEnables aggressive bounding box math to reduce GPU load."
         ),
         ConfigItem(
-            label="X-Ray Mode",
+            label="Xray",
             key="xray",
             scope="decoration/blur",
             type_="bool",
             default=False,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Xray**\n\nForces floating windows to ignore tiled windows behind them when calculating blur."
         ),
         ConfigItem(
             label="Noise",
@@ -390,7 +1036,8 @@ SCHEMA = {
             min_val=0.0,
             max_val=1.0,
             step=0.01,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Noise**\n\nInjects static noise into blurred areas."
         ),
         ConfigItem(
             label="Contrast",
@@ -401,7 +1048,8 @@ SCHEMA = {
             min_val=0.0,
             max_val=2.0,
             step=0.1,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Contrast**\n\nAdjusts contrast scaling strictly within blurred regions."
         ),
         ConfigItem(
             label="Brightness",
@@ -412,7 +1060,8 @@ SCHEMA = {
             min_val=0.0,
             max_val=2.0,
             step=0.1,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Brightness**\n\nAdjusts base brightness scaling of blurred regions."
         ),
         ConfigItem(
             label="Vibrancy",
@@ -423,7 +1072,8 @@ SCHEMA = {
             min_val=0.0,
             max_val=1.0,
             step=0.05,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Vibrancy**\n\nBoosts saturation of colors caught in the blur."
         ),
         ConfigItem(
             label="Vibrancy Darkness",
@@ -434,23 +1084,26 @@ SCHEMA = {
             min_val=0.0,
             max_val=1.0,
             step=0.05,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Vibrancy Darkness**\n\nDictates vibrancy saturation specifically for dark areas."
         ),
         ConfigItem(
-            label="Special Workspace Blur",
+            label="Special",
             key="special",
             scope="decoration/blur",
             type_="bool",
             default=False,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Special Workspace Blur**\n\nForces blur behind the entire screen when a special scratchpad workspace is open."
         ),
         ConfigItem(
-            label="Blur Popups",
+            label="Popups",
             key="popups",
             scope="decoration/blur",
             type_="bool",
             default=False,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Popups**\n\nForces background blur behind context menus and tooltips."
         ),
         ConfigItem(
             label="Popups Ignore Alpha",
@@ -461,38 +1114,45 @@ SCHEMA = {
             min_val=0.0,
             max_val=1.0,
             step=0.1,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Popups Ignore Alpha**\n\nIf popup pixel opacity is lower than this value, the blur engine ignores it."
         ),
         ConfigItem(
-            label="Blur Input Methods",
+            label="Input Methods",
             key="input_methods",
             scope="decoration/blur",
             type_="bool",
             default=False,
-            parent_ref="blur_menu_id"
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Input Methods**\n\nForces background blur behind input method editor windows."
+        ),
+        ConfigItem(
+            label="Input Methods Ignore Alpha",
+            key="input_methods_ignorealpha",
+            scope="decoration/blur",
+            type_="float",
+            default=0.2,
+            min_val=0.0,
+            max_val=1.0,
+            step=0.1,
+            parent_ref="decoration/blur.enabled",
+            extended_help="**Input Methods Ignore Alpha**\n\nIf input method pixel opacity is lower than this value, the blur engine ignores it."
         ),
 
-        # --- SHADOW MENU FOLDER ---
+        # --- SHADOW HYBRID FOLDER ---
         ConfigItem(
             label="Shadow Settings",
-            key="shadow_menu_id",
-            scope="DEFAULT",
-            type_="menu",
-            default=None,
-            is_parent=True,
-            expanded=False,
-            group="Render Layers"
-        ),
-        ConfigItem(
-            label="Enable Shadows",
             key="enabled",
             scope="decoration/shadow",
             type_="bool",
             default=True,
-            parent_ref="shadow_menu_id"
+            is_parent=True,
+            expanded=False,
+            group="Shadows",
+            extended_help="**Shadow Enabled**\n\nToggles drop shadows beneath active and floating windows."
         ),
         ConfigItem(
-            label="Shadow Range",
+            label="Range",
             key="range",
             scope="decoration/shadow",
             type_="int",
@@ -500,7 +1160,8 @@ SCHEMA = {
             min_val=1,
             max_val=50,
             step=1,
-            parent_ref="shadow_menu_id"
+            parent_ref="decoration/shadow.enabled",
+            extended_help="**Range**\n\nThe physical distance in pixels that the shadow extends outward."
         ),
         ConfigItem(
             label="Render Power",
@@ -511,27 +1172,30 @@ SCHEMA = {
             min_val=1,
             max_val=4,
             step=1,
-            parent_ref="shadow_menu_id"
+            parent_ref="decoration/shadow.enabled",
+            extended_help="**Render Power**\n\nControls the decay rate of the shadow."
         ),
         ConfigItem(
-            label="Sharp Shadows",
+            label="Sharp",
             key="sharp",
             scope="decoration/shadow",
             type_="bool",
             default=False,
-            parent_ref="shadow_menu_id"
+            parent_ref="decoration/shadow.enabled",
+            extended_help="**Sharp**\n\nRemoves standard diffusion, converting the shadow into a harsh, solid block color."
         ),
         ConfigItem(
-            label="Shadow Color",
+            label="Color",
             key="color",
             scope="decoration/shadow",
             type_="color",
             default="rgba(1a1a1aee)",
             options=COLOR_ALIASES,
-            parent_ref="shadow_menu_id"
+            parent_ref="decoration/shadow.enabled",
+            extended_help="**Color**\n\nThe color of the drop shadow."
         ),
         ConfigItem(
-            label="Shadow Scale",
+            label="Scale",
             key="scale",
             scope="decoration/shadow",
             type_="float",
@@ -539,30 +1203,24 @@ SCHEMA = {
             min_val=0.0,
             max_val=1.0,
             step=0.1,
-            parent_ref="shadow_menu_id"
+            parent_ref="decoration/shadow.enabled",
+            extended_help="**Scale**\n\nMultiplies the physical size footprint of the shadow geometry."
         ),
 
-        # --- GLOW MENU FOLDER ---
+        # --- GLOW HYBRID FOLDER ---
         ConfigItem(
             label="Glow Settings",
-            key="glow_menu_id",
-            scope="DEFAULT",
-            type_="menu",
-            default=None,
-            is_parent=True,
-            expanded=False,
-            group="Render Layers"
-        ),
-        ConfigItem(
-            label="Enable Glow",
             key="enabled",
             scope="decoration/glow",
             type_="bool",
             default=False,
-            parent_ref="glow_menu_id"
+            is_parent=True,
+            expanded=False,
+            group="Glow",
+            extended_help="**Glow Enabled**\n\nToggles inner window glow."
         ),
         ConfigItem(
-            label="Glow Range",
+            label="Range",
             key="range",
             scope="decoration/glow",
             type_="int",
@@ -570,7 +1228,8 @@ SCHEMA = {
             min_val=1,
             max_val=50,
             step=1,
-            parent_ref="glow_menu_id"
+            parent_ref="decoration/glow.enabled",
+            extended_help="**Range**\n\nThe physical distance in pixels that the glow lighting bleeds outward."
         ),
         ConfigItem(
             label="Render Power",
@@ -581,621 +1240,174 @@ SCHEMA = {
             min_val=1,
             max_val=4,
             step=1,
-            parent_ref="glow_menu_id"
+            parent_ref="decoration/glow.enabled",
+            extended_help="**Render Power**\n\nControls the decay rate of the glow."
         ),
         ConfigItem(
-            label="Glow Color",
+            label="Color",
             key="color",
             scope="decoration/glow",
             type_="color",
             default="primary_container",
             options=COLOR_ALIASES,
-            parent_ref="glow_menu_id"
+            parent_ref="decoration/glow.enabled",
+            extended_help="**Color**\n\nThe distinct color of the glow emission."
         ),
     ],
 
     # -------------------------------------------------------------------------
-    # TAB 2: MISC
+    # TAB 6: SMART (Contextual Overrides)
     # -------------------------------------------------------------------------
-    2: [
+    6: [
+        # --- SINGLE WINDOW EXCLUSIONS ---
         ConfigItem(
-            label="Background Color",
-            key="background_color",
-            scope="misc",
-            type_="color",
-            default="background",
-            options=COLOR_ALIASES,
-            group="Visual Overrides"
-        ),
-        ConfigItem(
-            label="Default Font Family",
-            key="font_family",
-            scope="misc",
-            type_="string",
-            default="Sans",
-            group="Visual Overrides"
-        ),
-        ConfigItem(
-            label="Splash Font Family",
-            key="splash_font_family",
-            scope="misc",
-            type_="string",
-            default="",
-            group="Visual Overrides"
-        ),
-        ConfigItem(
-            label="Disable Hyprland Logo",
-            key="disable_hyprland_logo",
-            scope="misc",
-            type_="bool",
-            default=True,
-            group="Visual Overrides"
-        ),
-        ConfigItem(
-            label="Disable Splash Rendering",
-            key="disable_splash_rendering",
-            scope="misc",
-            type_="bool",
-            default=True,
-            group="Visual Overrides"
-        ),
-        ConfigItem(
-            label="Force Default Wallpaper",
-            key="force_default_wallpaper",
-            scope="misc",
+            label="Single Border Size",
+            key="border_size",
+            scope="workspace_rule/w[tv1]s[false]",
             type_="int",
             default=1,
-            min_val=-1,
-            max_val=2,
+            min_val=0,
+            max_val=15,
             step=1,
-            group="Visual Overrides"
-        ),
-
-        ConfigItem(
-            label="Animate Manual Resizes",
-            key="animate_manual_resizes",
-            scope="misc",
-            type_="bool",
-            default=False,
-            group="System Behavior"
+            group="Single",
+            extended_help="**Single Border Size**\n\nOverrides the border size specifically when there is exactly one tiled window on the workspace."
         ),
         ConfigItem(
-            label="Animate Mouse Dragging",
-            key="animate_mouse_windowdragging",
-            scope="misc",
-            type_="bool",
-            default=False,
-            group="System Behavior"
-        ),
-        ConfigItem(
-            label="Unfocused Render FPS",
-            key="render_unfocused_fps",
-            scope="misc",
+            label="Single Gaps In",
+            key="gaps_in",
+            scope="workspace_rule/w[tv1]s[false]",
             type_="int",
-            default=5,
-            min_val=1,
-            max_val=60,
+            default=4,
+            min_val=0,
+            max_val=50,
             step=1,
-            group="System Behavior"
+            group="Single",
+            extended_help="**Single Gaps In**\n\nOverrides the inner gaps when there is exactly one tiled window present."
         ),
         ConfigItem(
-            label="Enable ANR Dialog",
-            key="enable_anr_dialog",
-            scope="misc",
-            type_="bool",
-            default=True,
-            group="System Behavior"
-        ),
-
-        # --- GROUP MENU ---
-        ConfigItem(
-            label="Window Group Colors",
-            key="group_menu_id",
-            scope="DEFAULT",
-            type_="menu",
-            default=None,
-            is_parent=True,
-            expanded=False,
-            group="Window Groups"
-        ),
-        ConfigItem(
-            label="Active Group Border",
-            key="col.border_active",
-            scope="group",
-            type_="color",
-            default="primary",
-            options=COLOR_ALIASES,
-            parent_ref="group_menu_id"
-        ),
-        ConfigItem(
-            label="Inactive Group Border",
-            key="col.border_inactive",
-            scope="group",
-            type_="color",
-            default="inverse_on_surface",
-            options=COLOR_ALIASES,
-            parent_ref="group_menu_id"
-        ),
-        ConfigItem(
-            label="Active Locked Border",
-            key="col.border_locked_active",
-            scope="group",
-            type_="color",
-            default="tertiary",
-            options=COLOR_ALIASES,
-            parent_ref="group_menu_id"
-        ),
-        ConfigItem(
-            label="Inactive Locked Border",
-            key="col.border_locked_inactive",
-            scope="group",
-            type_="color",
-            default="tertiary_container",
-            options=COLOR_ALIASES,
-            parent_ref="group_menu_id"
-        ),
-
-        # --- GROUPBAR MENU ---
-        ConfigItem(
-            label="Groupbar Settings",
-            key="groupbar_menu_id",
-            scope="DEFAULT",
-            type_="menu",
-            default=None,
-            is_parent=True,
-            expanded=False,
-            group="Window Groups"
-        ),
-        ConfigItem(
-            label="Enable Groupbars",
-            key="enabled",
-            scope="group/groupbar",
-            type_="bool",
-            default=True,
-            parent_ref="groupbar_menu_id"
-        ),
-        ConfigItem(
-            label="Groupbar Height",
-            key="height",
-            scope="group/groupbar",
+            label="Single Gaps Out",
+            key="gaps_out",
+            scope="workspace_rule/w[tv1]s[false]",
             type_="int",
-            default=14,
-            min_val=5,
-            max_val=30,
+            default=8,
+            min_val=0,
+            max_val=50,
             step=1,
-            parent_ref="groupbar_menu_id"
+            group="Single",
+            extended_help="**Single Gaps Out**\n\nOverrides the outer gaps when there is exactly one tiled window present. Set to 0 to make single windows flush with the monitor edge."
         ),
         ConfigItem(
-            label="Render Titles",
-            key="render_titles",
-            scope="group/groupbar",
-            type_="bool",
-            default=True,
-            parent_ref="groupbar_menu_id"
-        ),
-        ConfigItem(
-            label="Stacked Rendering",
-            key="stacked",
-            scope="group/groupbar",
-            type_="bool",
-            default=False,
-            parent_ref="groupbar_menu_id"
-        ),
-        ConfigItem(
-            label="Enable Gradients",
-            key="gradients",
-            scope="group/groupbar",
-            type_="bool",
-            default=False,
-            parent_ref="groupbar_menu_id"
-        ),
-        ConfigItem(
-            label="Text Color",
-            key="text_color",
-            scope="group/groupbar",
-            type_="color",
-            default="on_surface",
-            options=COLOR_ALIASES,
-            parent_ref="groupbar_menu_id"
-        ),
-        ConfigItem(
-            label="Active Color",
-            key="col.active",
-            scope="group/groupbar",
-            type_="color",
-            default="primary",
-            options=COLOR_ALIASES,
-            parent_ref="groupbar_menu_id"
-        ),
-
-        # --- HARDWARE MENU ---
-        ConfigItem(
-            label="Hardware & Pipeline",
-            key="hw_menu_id",
-            scope="DEFAULT",
-            type_="menu",
-            default=None,
-            is_parent=True,
-            expanded=False,
-            group="Advanced Hardware"
-        ),
-        ConfigItem(
-            label="XWayland Nearest Neighbor",
-            key="use_nearest_neighbor",
-            scope="xwayland",
-            type_="bool",
-            default=True,
-            parent_ref="hw_menu_id"
-        ),
-        ConfigItem(
-            label="XWayland Zero Scaling",
-            key="force_zero_scaling",
-            scope="xwayland",
-            type_="bool",
-            default=False,
-            parent_ref="hw_menu_id"
-        ),
-        ConfigItem(
-            label="Nvidia Anti-Flicker",
-            key="nvidia_anti_flicker",
-            scope="opengl",
-            type_="bool",
-            default=True,
-            parent_ref="hw_menu_id"
-        ),
-        ConfigItem(
-            label="Direct Scanout Mode",
-            key="direct_scanout",
-            scope="render",
+            label="Single Rounding",
+            key="rounding",
+            scope="window_rule/single_window_style",
             type_="int",
-            default=0,
-            options=[0, 1, 2],
-            parent_ref="hw_menu_id"
+            default=10,
+            min_val=0,
+            max_val=50,
+            step=1,
+            group="Single",
+            extended_help="**Single Rounding**\n\nOverrides the corner rounding radius when exactly one tiled window is present. Set to 0 to disable rounding for single windows."
         ),
         ConfigItem(
-            label="XP Rendering Mode",
-            key="xp_mode",
-            scope="render",
+            label="Single Rounding Power",
+            key="rounding_power",
+            scope="window_rule/single_window_style",
+            type_="float",
+            default=2.5,
+            min_val=1.0,
+            max_val=4.0,
+            step=0.1,
+            group="Single",
+            extended_help="**Single Rounding Power**\n\nOverrides the mathematical curve used for rounding corners specifically for single windows. 2.0 is circular, 4.0 is squircle, 1.0 is triangular."
+        ),
+        ConfigItem(
+            label="Single Opacity Override",
+            key="opacity",
+            scope="window_rule/single_window_style",
+            type_="string",
+            default="0.85 override 0.85 override 1.0 override",
+            group="Single",
+            extended_help="**Single Opacity Override**\n\nAbsolute opacity rules applied to a single window. Format: '[active] override [inactive] override [fullscreen] override'."
+        ),
+        ConfigItem(
+            label="Single Disable Blur",
+            key="no_blur",
+            scope="window_rule/single_window_style",
             type_="bool",
             default=False,
-            parent_ref="hw_menu_id"
+            group="Single",
+            extended_help="**Single Disable Blur**\n\nDisables the background blur effect for the window when it is the only one on the screen to save GPU resources."
         ),
-    ],
 
-    # -------------------------------------------------------------------------
-    # TAB 3: PRESETS
-    # -------------------------------------------------------------------------
-    3: [
+        # --- MAXIMIZED EXCLUSIONS ---
         ConfigItem(
-            label="Factory Reset Everything",
-            key="preset_factory_reset",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Utility",
-            preset_payload={"__ALL_DEFAULTS__": True}
+            label="Maximized Border Size",
+            key="border_size",
+            scope="workspace_rule/f[1]s[false]",
+            type_="int",
+            default=1,
+            min_val=0,
+            max_val=15,
+            step=1,
+            group="Maximized",
+            extended_help="**Maximized Border Size**\n\nOverrides the border size specifically when a maximized window is present on the workspace."
         ),
         ConfigItem(
-            label="Profile: Performance (Max FPS)",
-            key="preset_perf_id",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Utility",
-            preset_payload={
-                "decoration/blur.enabled": False,
-                "decoration/shadow.enabled": False,
-                "decoration/glow.enabled": False,
-                "misc.animate_manual_resizes": False,
-                "decoration.rounding": 0,
-            }
+            label="Maximized Gaps In",
+            key="gaps_in",
+            scope="workspace_rule/f[1]s[false]",
+            type_="int",
+            default=4,
+            min_val=0,
+            max_val=50,
+            step=1,
+            group="Maximized",
+            extended_help="**Maximized Gaps In**\n\nOverrides the inner gaps specifically when a maximized window is present."
         ),
         ConfigItem(
-            label="Profile: Eye Candy (Max Visuals)",
-            key="preset_visual_id",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Utility",
-            preset_payload={
-                "decoration/blur.enabled": True,
-                "decoration/blur.passes": 3,
-                "decoration/blur.size": 12,
-                "decoration/shadow.enabled": True,
-                "decoration/shadow.range": 25,
-                "decoration/glow.enabled": True,
-                "decoration.rounding": 15,
-                "misc.animate_manual_resizes": True,
-                "misc.animate_mouse_windowdragging": True,
-            }
-        ),
-        
-        # --- THE WILD PRESETS ---
-        ConfigItem(
-            label="Cyberpunk Neon",
-            key="pre_cyber",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "decoration.rounding": 0,
-                "general.border_size": 2,
-                "general.col.active_border": "error",
-                "general.col.inactive_border": "rgba(000000ff)",
-                "decoration/glow.enabled": True,
-                "decoration/glow.color": "error",
-                "decoration/glow.range": 15,
-                "misc.background_color": "rgba(000000ff)"
-            }
+            label="Maximized Gaps Out",
+            key="gaps_out",
+            scope="workspace_rule/f[1]s[false]",
+            type_="int",
+            default=8,
+            min_val=0,
+            max_val=50,
+            step=1,
+            group="Maximized",
+            extended_help="**Maximized Gaps Out**\n\nOverrides the outer gaps specifically when a maximized window is present."
         ),
         ConfigItem(
-            label="Ghosted Glass",
-            key="pre_ghost",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "decoration.active_opacity": 0.6,
-                "decoration.inactive_opacity": 0.4,
-                "general.border_size": 1,
-                "general.col.active_border": "rgba(ffffff11)",
-                "decoration/blur.enabled": True,
-                "decoration/blur.passes": 4,
-                "decoration/blur.size": 8,
-                "decoration/shadow.enabled": False
-            }
+            label="Maximized Rounding",
+            key="rounding",
+            scope="window_rule/maximized_window_style",
+            type_="int",
+            default=10,
+            min_val=0,
+            max_val=50,
+            step=1,
+            group="Maximized",
+            extended_help="**Maximized Rounding**\n\nOverrides the corner rounding radius specifically for maximized windows."
         ),
         ConfigItem(
-            label="Chunky Blocks",
-            key="pre_chunk",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "general.border_size": 6,
-                "general.gaps_in": 15,
-                "general.gaps_out": 25,
-                "decoration.rounding": 20,
-                "decoration/shadow.enabled": False,
-                "decoration/blur.enabled": False,
-                "decoration.active_opacity": 1.0,
-                "decoration.inactive_opacity": 1.0
-            }
+            label="Maximized Opacity",
+            key="opacity",
+            scope="window_rule/maximized_window_style",
+            type_="float",
+            default=0.45,
+            min_val=0.0,
+            max_val=1.0,
+            step=0.05,
+            group="Maximized",
+            extended_help="**Maximized Opacity**\n\nForces a specific transparency level whenever a window enters a floating maximized state."
         ),
         ConfigItem(
-            label="Origami Paper",
-            key="pre_paper",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "decoration/blur.enabled": False,
-                "decoration/shadow.enabled": True,
-                "decoration/shadow.sharp": True,
-                "decoration/shadow.range": 8,
-                "decoration.rounding": 2,
-                "general.col.active_border": "outline",
-                "misc.background_color": "surface"
-            }
-        ),
-        ConfigItem(
-            label="Neon Lights",
-            key="pre_neon",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "decoration/glow.enabled": True,
-                "decoration/glow.range": 25,
-                "decoration/glow.color": "tertiary",
-                "general.border_size": 3,
-                "general.col.active_border": "tertiary",
-                "decoration/shadow.enabled": False,
-                "decoration.rounding": 10
-            }
-        ),
-        ConfigItem(
-            label="Glassmorphism",
-            key="pre_glass",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "decoration.active_opacity": 0.75,
-                "decoration.inactive_opacity": 0.65,
-                "decoration/blur.passes": 3,
-                "decoration/blur.size": 15,
-                "general.border_size": 0,
-                "decoration.rounding": 12,
-                "decoration/shadow.enabled": True,
-                "decoration/shadow.range": 30
-            }
-        ),
-        ConfigItem(
-            label="Harsh Minimalist",
-            key="pre_min",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "general.gaps_in": 0,
-                "general.gaps_out": 0,
-                "decoration.rounding": 0,
-                "general.border_size": 1,
-                "general.col.active_border": "outline",
-                "decoration/shadow.enabled": False,
-                "decoration/blur.enabled": False
-            }
-        ),
-        ConfigItem(
-            label="Retro 8-Bit",
-            key="pre_8bit",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "xwayland.use_nearest_neighbor": True,
-                "decoration.rounding": 0,
-                "general.border_size": 4,
-                "general.col.active_border": "primary",
-                "decoration/shadow.sharp": True,
-                "decoration/shadow.range": 10,
-                "decoration/shadow.color": "primary"
-            }
-        ),
-        ConfigItem(
-            label="The Void",
-            key="pre_void",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "misc.background_color": "rgba(000000ff)",
-                "decoration.active_opacity": 1.0,
-                "decoration.inactive_opacity": 0.3,
-                "general.border_size": 1,
-                "general.col.active_border": "surface_variant",
-                "decoration/glow.enabled": False,
-                "decoration/shadow.enabled": False
-            }
-        ),
-        ConfigItem(
-            label="Round & Bouncy",
-            key="pre_round",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "decoration.rounding": 30,
-                "decoration.rounding_power": 2.0,
-                "general.gaps_in": 10,
-                "general.gaps_out": 20,
-                "general.border_size": 3,
-                "decoration/shadow.enabled": True
-            }
-        ),
-        ConfigItem(
-            label="Corporate Professional",
-            key="pre_corp",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "decoration.rounding": 8,
-                "general.border_size": 1,
-                "general.col.active_border": "primary_container",
-                "decoration/shadow.enabled": True,
-                "decoration/shadow.range": 12,
-                "decoration/blur.size": 5
-            }
-        ),
-        ConfigItem(
-            label="Vaporwave Sunset",
-            key="pre_sunset",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "decoration/glow.enabled": True,
-                "decoration/glow.color": "tertiary",
-                "decoration/shadow.enabled": True,
-                "decoration/shadow.color": "error",
-                "general.col.active_border": "secondary",
-                "decoration.rounding": 0
-            }
-        ),
-        ConfigItem(
-            label="Hacker Terminal",
-            key="pre_hack",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "misc.background_color": "rgba(000000ff)",
-                "general.col.active_border": "primary",
-                "general.col.inactive_border": "rgba(000000ff)",
-                "decoration.rounding": 0,
-                "decoration/glow.enabled": True,
-                "decoration/glow.color": "primary",
-                "decoration/shadow.enabled": False
-            }
-        ),
-        ConfigItem(
-            label="Cotton Candy",
-            key="pre_candy",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "general.col.active_border": "tertiary",
-                "general.col.inactive_border": "tertiary_container",
-                "decoration.rounding": 25,
-                "decoration/glow.enabled": True,
-                "decoration/glow.color": "tertiary",
-                "decoration/blur.enabled": True,
-                "decoration/blur.vibrancy": 0.8
-            }
-        ),
-        ConfigItem(
-            label="Opaque Solid",
-            key="pre_opaque",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "decoration.active_opacity": 1.0,
-                "decoration.inactive_opacity": 1.0,
-                "decoration/blur.enabled": False,
-                "general.border_size": 2,
-                "decoration.rounding": 5
-            }
-        ),
-        ConfigItem(
-            label="Outlined Box",
-            key="pre_outlined",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "general.border_size": 5,
-                "general.gaps_in": 0,
-                "general.gaps_out": 0,
-                "decoration.rounding": 0,
-                "general.col.active_border": "secondary",
-                "decoration/shadow.enabled": False
-            }
-        ),
-        ConfigItem(
-            label="Deep Space",
-            key="pre_space",
-            scope="DEFAULT",
-            type_="preset",
-            default=None,
-            group="Wild Styles",
-            preset_payload={
-                "misc.background_color": "surface_container_lowest",
-                "decoration/blur.enabled": True,
-                "decoration/blur.size": 20,
-                "decoration/glow.enabled": True,
-                "decoration/glow.color": "primary",
-                "general.col.active_border": "surface_variant"
-            }
+            label="Maximized Disable Blur",
+            key="no_blur",
+            scope="window_rule/maximized_window_style",
+            type_="bool",
+            default=True,
+            group="Maximized",
+            extended_help="**Maximized Disable Blur**\n\nDisables the background blur effect entirely for maximized windows to maximize performance."
         ),
     ]
 }
