@@ -656,36 +656,25 @@ class FlowContainer(Widget):
             self.styles.height = 0
             return
 
-        N = len(visible_children)
-        max_item_w = 0
         max_item_h = 1
-        for _, cw, ch in visible_children:
-            max_item_w = max(max_item_w, cw)
+        for _, _, ch in visible_children:
             max_item_h = max(max_item_h, ch)
 
-        col_w_needed = max_item_w
-        max_cols_possible = max(1, width // col_w_needed)
+        x_offset = 0  # This guarantees it aligns perfectly flush with "Edit File"
+        y_offset = 0
+        gap = 2       # This keeps your items spaced evenly
 
-        if max_cols_possible >= N:
-            rows = 1
-            cols = N
-        else:
-            rows = math.ceil(N / max_cols_possible)
-            cols = math.ceil(N / rows)
+        for child, cw, ch in visible_children:
+            # Wrap to the next line if the item exceeds the screen width
+            if x_offset + cw > width and x_offset > 0:
+                x_offset = 0
+                y_offset += max_item_h
+            
+            child.styles.offset = (x_offset, y_offset)
+            x_offset += cw + gap
 
-        if cols > max_cols_possible:
-            cols = max_cols_possible
+        target_height = y_offset + max_item_h
 
-        actual_col_width = width / cols if cols > 0 else width
-
-        for i, (child, _, _) in enumerate(visible_children):
-            r = i // cols
-            c = i % cols
-            x = int(c * actual_col_width)
-            y = r * max_item_h
-            child.styles.offset = (x, y)
-
-        target_height = rows * max_item_h
         if self.styles.height != target_height:
             self.styles.height = target_height
 
