@@ -379,11 +379,18 @@ hl.bind(
 
 
 -- --- Clipboard & Screenshot ---
+-- hl.bind(
+--     "SUPER + V",
+--     hl.dsp.exec_cmd("pkill rofi; rofi -modi \"clipboard:" .. dusky_scripts .. "rofi/rofi_cliphist.sh\" -show clipboard"),
+--     { description = "Clipboard History" }
+-- )
+
 hl.bind(
     "SUPER + V",
-    hl.dsp.exec_cmd("pkill rofi; rofi -modi \"clipboard:" .. dusky_scripts .. "rofi/rofi_cliphist.sh\" -show clipboard"),
+    hl.dsp.exec_cmd("~/user_scripts/clipboard/close_terminal_clipboard.sh foot --app-id=terminal_clipboard.sh ~/user_scripts/clipboard/terminal_clipboard.sh"),
     { description = "Clipboard History" }
 )
+
 
 hl.bind(
     "SUPER + B",

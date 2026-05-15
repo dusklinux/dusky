@@ -15,7 +15,7 @@ readonly -a MENU_COMMAND=(
     -no-custom
     -markup-rows
     -p 'Keybinds'
-    -theme-str 'window {width: 43%;}'
+    -theme-str 'window {width: 53%;}'
     -theme-str 'listview {fixed-height: true;}'
 )
 
