@@ -171,6 +171,7 @@ declare -A CUSTOM_SCRIPT_PATHS=(
     ["cc_restart.sh"]="user_scripts/dusky_system/reload_cc/cc_restart.sh"
     ["dusky_service_manager.sh"]="user_scripts/services/dusky_service_manager.sh"
 #    ["append_defaults_keybinds_edit_here.sh"]="user_scripts/misc_extra/append_defaults_keybinds_edit_here.sh"
+    ["reboot_post_lua_update.sh"]="~/user_scripts/misc_extra/delete_in_3_weeks/reboot_post_lua_update.sh"
     ["dusky_commands_before.sh"]="user_scripts/misc_extra/dusky_commands_before.sh"
     ["dusky_commands_after.sh"]="user_scripts/misc_extra/dusky_commands_after.sh"
     ["rofi_wallpaper_selctor.sh"]="user_scripts/rofi/rofi_wallpaper_selctor.sh"
@@ -327,6 +328,7 @@ declare -ra UPDATE_SEQUENCE=(
     "U | ignore-fail | theme_ctl.sh refresh"
     "U | ignore-fail | update_counter.sh"
     "U | dusky_commands_after.sh"
+    "U | reboot_post_lua_update.sh"
 )
 
 # ==============================================================================
