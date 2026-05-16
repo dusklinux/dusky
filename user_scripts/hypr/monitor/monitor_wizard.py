@@ -251,6 +251,9 @@ class DuskyUI:
         curses.use_default_colors()
         self.stdscr.timeout(100)
         
+        # ENABLE MOUSE CLICKS
+        curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
+        
         curses.init_pair(1, curses.COLOR_CYAN, -1)
         curses.init_pair(2, curses.COLOR_GREEN, -1)
         curses.init_pair(3, curses.COLOR_RED, -1)
@@ -280,14 +283,16 @@ class DuskyUI:
 
     def render_header(self, w):
         self.stdscr.addstr(2, 2, f"{APP_TITLE} - {APP_SUBTITLE}", curses.A_BOLD)
-        self.stdscr.addstr(3, 1, "├" + "─" * (w-2) + "┤", curses.color_pair(1))
+        # FIX: Changed x=1 to x=0 to snap perfectly with the vertical box walls
+        self.stdscr.addstr(3, 0, "├" + "─" * (w-2) + "┤", curses.color_pair(1))
 
         if self.view_state in [0, 3]:
             t1_attr = curses.color_pair(1) | curses.A_REVERSE if self.view_state == 0 else curses.A_DIM
             t2_attr = curses.color_pair(1) | curses.A_REVERSE if self.view_state == 3 else curses.A_DIM
             self.stdscr.addstr(4, 2, " [ MONITORS ] ", t1_attr)
             self.stdscr.addstr(4, 18, " [ GLOBALS ] ", t2_attr)
-            self.stdscr.addstr(5, 1, "├" + "─" * (w-2) + "┤", curses.color_pair(1))
+            # FIX: Changed x=1 to x=0 
+            self.stdscr.addstr(5, 0, "├" + "─" * (w-2) + "┤", curses.color_pair(1))
             return 6
         return 4
 
@@ -341,7 +346,8 @@ class DuskyUI:
     def render_edit(self, start_y, h, w):
         mon = self.current_edit_mon
         self.stdscr.addstr(start_y, 2, f"Editing: {mon['name']}", curses.color_pair(4) | curses.A_BOLD)
-        self.stdscr.addstr(start_y + 1, 1, "├" + "─" * (w-2) + "┤", curses.color_pair(1))
+        # FIX: Changed x=1 to x=0
+        self.stdscr.addstr(start_y + 1, 0, "├" + "─" * (w-2) + "┤", curses.color_pair(1))
         
         fields = self._build_edit_fields(mon)
         list_y = start_y + 2
@@ -364,7 +370,8 @@ class DuskyUI:
     def render_picker(self, start_y, h, w):
         mon = self.current_edit_mon
         self.stdscr.addstr(start_y, 2, f"Select Mode for {mon['name']}", curses.color_pair(4) | curses.A_BOLD)
-        self.stdscr.addstr(start_y + 1, 1, "├" + "─" * (w-2) + "┤", curses.color_pair(1))
+        # FIX: Changed x=1 to x=0
+        self.stdscr.addstr(start_y + 1, 0, "├" + "─" * (w-2) + "┤", curses.color_pair(1))
         
         modes = mon["available_modes"]
         list_start_y = start_y + 2
@@ -400,7 +407,24 @@ class DuskyUI:
             key = self.stdscr.getch()
             if key == ord('q'):
                 break
-                
+            
+            # HANDLE MOUSE CLICKS
+            if key == curses.KEY_MOUSE:
+                try:
+                    _, mx, my, _, bstate = curses.getmouse()
+                    if bstate & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED):
+                        if my == 4 and self.view_state in [0, 3]:
+                            # Map coordinates to the visual tab locations
+                            if 2 <= mx <= 15:
+                                self.view_state = 0
+                                self.selected_row = 0
+                            elif 18 <= mx <= 30:
+                                self.view_state = 3
+                                self.selected_row = 0
+                except curses.error:
+                    pass
+                continue
+
             if key == 9: # TAB
                 if self.view_state == 0: self.view_state = 3
                 elif self.view_state == 3: self.view_state = 0

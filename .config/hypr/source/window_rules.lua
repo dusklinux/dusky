@@ -517,6 +517,16 @@ hl.window_rule({
     center = true
 })
 
+
+--- Dusky Main TUI App ---
+hl.window_rule({
+  name = "dusky_tui",
+  match = { class = "^(dusky_tui)$" },
+  float = true,
+  size = {815,539},
+  center = true
+})
+
 --- Dusky glance_mako_tui.sh ---
 hl.window_rule({
     name = "glance_mako_tui.sh",
