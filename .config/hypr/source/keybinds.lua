@@ -26,22 +26,22 @@
 --     hl.dsp.exec_cmd(terminal),
 --     { description = "Launch Terminal" }
 -- )
---
+-- 
 -- hl.bind(
 --     "SUPER + W",
 --     hl.dsp.exec_cmd(browser),
 --     { description = "Launch Browser" }
 -- )
---
+-- 
 -- hl.bind(
 --     "SUPER + E",
---     hl.dsp.exec_cmd(terminal .. " -e " .. fileManager),
+--     hl.dsp.exec_cmd(fileManager),
 --     { description = "File Manager" }
 -- )
---
+-- 
 -- hl.bind(
 --     "SUPER + R",
---     hl.dsp.exec_cmd(terminal .. " --class nvim -e " .. textEditor),
+--     hl.dsp.exec_cmd(textEditor),
 --     { description = "Open Text Editor" }
 -- )
 
