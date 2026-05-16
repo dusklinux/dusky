@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Script: 500_firefox_matugenfox.sh
+# Script: 401_gecko_engine_colors.sh
 # Description: Zero-touch, permanent autonomous setup for MatugenFox
 # Environment: Arch Linux / Hyprland (Firefox / Zen / LibreWolf / Floorp)
 # -----------------------------------------------------------------------------
@@ -127,11 +127,38 @@ EOF
     fi
 }
 
+configure_flatpaks() {
+    if command -v flatpak &>/dev/null; then
+        log_info "Checking Flatpak sandbox permissions..."
+        local flatpak_apps=(
+            "org.mozilla.firefox"
+            "io.github.zen_browser.zen"
+            "io.gitlab.librewolf-community"
+            "one.ablaze.floorp"
+        )
+        local overrides=0
+        for app in "${flatpak_apps[@]}"; do
+            if flatpak info "$app" &>/dev/null; then
+                # Explicitly grant the sandbox read access to the custom extension directory
+                flatpak override --user --filesystem="${EXT_DIR}:ro" "$app" 2>/dev/null || true
+                overrides=$((overrides + 1))
+            fi
+        done
+        if (( overrides > 0 )); then
+            log_success "Applied filesystem overrides for $overrides Flatpak browser(s)."
+        fi
+    fi
+}
+
 deploy_enterprise_policy() {
     log_info "Deploying permanent Enterprise Policy for MatugenFox..."
     
-    # Target standard paths PLUS user-level managed paths for Flatpaks
+    # Target standard paths PLUS Developer Edition, Nightly, and Flatpaks
     local policy_dirs=(
+        "/usr/lib/firefox-developer-edition/distribution"
+        "/etc/firefox-developer-edition/policies"
+        "/usr/lib/firefox-nightly/distribution"
+        "/etc/firefox-nightly/policies"
         "/usr/lib/firefox/distribution"
         "/etc/firefox/policies"
         "/usr/lib/librewolf/distribution"
@@ -169,13 +196,11 @@ deploy_enterprise_policy() {
                 tmp_json=$(mktemp)
                 
                 # JQ setpath safely creates nested paths without overwriting existing data.
-                # Prepending cat with $cmd_prefix ensures we can read the file even if locked to 600 root:root.
                 if $cmd_prefix cat "$p_file" | jq --arg ext_id "$EXT_ID" --arg xpi_url "file://${XPI_PATH}" \
-                    'setpath(["policies", "ExtensionSettings", $ext_id]; {"installation_mode": "normal_installed", "install_url": $xpi_url})' > "$tmp_json"; then
+                    'setpath(["policies", "ExtensionSettings", $ext_id]; {"installation_mode": "force_installed", "install_url": $xpi_url}) | setpath(["policies", "Preferences", "xpinstall.signatures.required"]; false)' > "$tmp_json"; then
                     
                     $cmd_prefix mv "$tmp_json" "$p_file"
                     
-                    # Prevent ownership vulnerability
                     if [[ -n "$cmd_prefix" ]]; then
                         $cmd_prefix chown root:root "$p_file"
                     fi
@@ -192,9 +217,12 @@ deploy_enterprise_policy() {
   "policies": {
     "ExtensionSettings": {
       "${EXT_ID}": {
-        "installation_mode": "normal_installed",
+        "installation_mode": "force_installed",
         "install_url": "file://${XPI_PATH}"
       }
+    },
+    "Preferences": {
+      "xpinstall.signatures.required": false
     }
   }
 }
@@ -220,9 +248,12 @@ EOF
   "policies": {
     "ExtensionSettings": {
       "${EXT_ID}": {
-        "installation_mode": "normal_installed",
+        "installation_mode": "force_installed",
         "install_url": "file://${XPI_PATH}"
       }
+    },
+    "Preferences": {
+      "xpinstall.signatures.required": false
     }
   }
 }
@@ -235,6 +266,53 @@ EOF
     log_success "Enterprise policy successfully injected into $deployed location(s)."
 }
 
+enforce_browser_prefs() {
+    log_info "Automating about:config settings (disabling signature enforcement)..."
+    
+    local profile_dirs=(
+        "${HOME}/.mozilla/firefox"
+        "${HOME}/.librewolf"
+        "${HOME}/.zen"
+        "${HOME}/.waterfox"
+        "${HOME}/.floorp"
+        "${HOME}/.var/app/io.github.zen_browser.zen/.zen"
+        "${HOME}/.var/app/org.mozilla.firefox/.mozilla/firefox"
+        "${HOME}/.var/app/io.gitlab.librewolf-community/.librewolf"
+        "${HOME}/.var/app/one.ablaze.floorp/.floorp"
+    )
+
+    local updated=0
+    for base_dir in "${profile_dirs[@]}"; do
+        if [[ -d "$base_dir" ]]; then
+            # Find any directory directly under the base_dir
+            while IFS= read -r -d '' profile_dir; do
+                local bname
+                bname="$(basename "$profile_dir")"
+                
+                # Check if it looks like a valid profile (contains a dot, OR already has a prefs.js)
+                if [[ "$bname" == *.* ]] || [[ -f "${profile_dir}/prefs.js" ]]; then
+                    local user_js="${profile_dir}/user.js"
+                    
+                    # Remove existing signature requirement rule if it exists
+                    if [[ -f "$user_js" ]]; then
+                        sed -i '/xpinstall.signatures.required/d' "$user_js"
+                    fi
+                    
+                    # Append the override unconditionally
+                    echo 'user_pref("xpinstall.signatures.required", false);' >> "$user_js"
+                    updated=$((updated + 1))
+                fi
+            done < <(find "$base_dir" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+        fi
+    done
+
+    if (( updated > 0 )); then
+        log_success "Injected signature bypass into $updated browser profile(s)."
+    else
+        log_warn "No browser profiles found to inject user.js preferences."
+    fi
+}
+
 finish_setup() {
     printf '%b%b' "${C_BOLD}" "${C_BLUE}"
     cat <<'BANNER'
@@ -245,8 +323,7 @@ finish_setup() {
 BANNER
     printf '%b\n' "${C_RESET}"
     log_success "MatugenFox is permanently provisioned."
-    log_warn "Note: Ensure signature enforcement is disabled in your browser's about:config"
-    log_warn "(xpinstall.signatures.required = false) if using an unsigned local .xpi file."
+    log_info "Please fully restart your browser for the extension to appear."
 }
 
 # --- Main Execution ---
@@ -256,7 +333,9 @@ main() {
     preflight
     package_extension
     install_native_host
+    configure_flatpaks
     deploy_enterprise_policy
+    enforce_browser_prefs
     finish_setup
 }
 
