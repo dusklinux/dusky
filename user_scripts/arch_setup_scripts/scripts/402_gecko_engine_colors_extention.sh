@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================================
 # MatugenFox – Autonomous Setup & Provisioning Script
-# Version: 3.1.0
+# Version: 3.3.0
 # Target:  Linux (Arch, Fedora, Debian, NixOS, etc.) + macOS
 # Purpose: Zero-touch detection of every installed Firefox-family browser,
 #          profile resolution, native messaging host installation, config
 #          initialization, and autonomous extension deployment.
+#          *ORCHESTRATOR SAFE*: Always exits 0 to prevent pipeline breakage.
 # =============================================================================
 
 set -euo pipefail
+
+# Guarantee a 0 exit code even if an unexpected command failure occurs
+trap 'exit_code=$?; log_err "Unexpected failure at line $LINENO (code $exit_code)."; log_warn "Exiting gracefully (0) to protect parent orchestrator."; exit 0' ERR
 
 # =============================================================================
 # ▼ CONSTANTS ▼
@@ -16,11 +20,12 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly HOST_SCRIPT="$HOME/user_scripts/theme_matugen/firefox/matugenfox_host.py"
+readonly REFRESH_SCRIPT="$HOME/user_scripts/theme_matugen/theme_ctl.sh"
 readonly MANIFEST_NAME="matugenfox.json"
 readonly CONFIG_FILE="$SCRIPT_DIR/config.json"
 readonly EXTENSION_ID="matugenfox@ubaid.com"
 readonly XPI_URL="https://addons.mozilla.org/firefox/downloads/latest/matugenfox/latest.xpi"
-readonly VERSION="3.1.0"
+readonly VERSION="3.3.0"
 
 # =============================================================================
 # ▼ VISUAL STYLING ▼
@@ -44,7 +49,7 @@ log_info()    { printf '%b[INFO]%b    %s\n' "$C_CYAN"    "$C_RESET" "$1"; }
 log_success() { printf '%b[SUCCESS]%b %s\n' "$C_GREEN"   "$C_RESET" "$1"; }
 log_warn()    { printf '%b[WARNING]%b %s\n' "$C_YELLOW"  "$C_RESET" "$1" >&2; }
 log_err()     { printf '%b[ERROR]%b   %s\n' "$C_RED"     "$C_RESET" "$1" >&2; }
-die()         { log_err "$1"; exit 1; }
+die()         { log_err "$1"; log_warn "Bailing out, but exiting safely (0) for orchestrator."; exit 0; }
 
 # =============================================================================
 # ▼ REGISTRY ▼
@@ -467,20 +472,21 @@ update_matugen_toml() {
         return 0
     fi
 
-    # Safely remove existing block if it exists via awk
     local tmp_toml
     tmp_toml=$(mktemp)
     
+    # 1. Safely remove existing [templates.firefox_websites] block via robust awk pattern
+    # 2. Pipe through a second awk block to strip out any trailing empty lines at the EOF
     awk '
-    /^\[templates\.firefox_websites\]/ { skip = 1; next }
-    /^\[.*\]/ && skip { skip = 0 }
+    /^[ \t]*\[[ \t]*templates\.firefox_websites[ \t]*\]/ { skip = 1; next }
+    /^[ \t]*\[/ && skip { skip = 0 }
     !skip { print }
-    ' "$toml_file" > "$tmp_toml"
+    ' "$toml_file" | awk 'NF > 0 {last = NR} {lines[NR] = $0} END {for (i = 1; i <= last; i++) print lines[i]}' > "$tmp_toml"
 
-    # Add a buffer newline before appending
+    # Add a clean buffer newline before appending
     echo "" >> "$tmp_toml"
 
-    # Append the freshly generated block dynamically
+    # Append the freshly generated block dynamically without duplication
     cat <<EOF >> "$tmp_toml"
 [templates.firefox_websites]
 input_path = '~/.config/matugen/templates/firefox_websites.css'
@@ -492,7 +498,23 @@ EOF
     cp "$tmp_toml" "$toml_file"
     rm -f "$tmp_toml"
     
-    log_success "Matugen TOML updated securely with dynamic profile hooks."
+    log_success "Matugen TOML updated securely (old configuration overwritten cleanly)."
+}
+
+# =============================================================================
+# ▼ PHASE 8: THEME REFRESH ▼
+# =============================================================================
+
+run_theme_refresh() {
+    if [[ -x "$REFRESH_SCRIPT" ]]; then
+        log_info "Running theme_ctl.sh refresh to generate Matugen colors..."
+        "$REFRESH_SCRIPT" refresh || log_warn "theme_ctl.sh encountered an error."
+    elif [[ -f "$REFRESH_SCRIPT" ]]; then
+        log_info "Running theme_ctl.sh refresh via bash..."
+        bash "$REFRESH_SCRIPT" refresh || log_warn "theme_ctl.sh encountered an error."
+    else
+        log_warn "Refresh script not found at $REFRESH_SCRIPT. Skipping color generation."
+    fi
 }
 
 # =============================================================================
@@ -534,9 +556,7 @@ BANNER
 
     echo ""
     echo "  ${C_BOLD}Next steps:${C_RESET}"
-    echo "  1. Restart the browser."
-    echo "  2. The extension will automatically install and connect to the host."
-    echo "  3. Open the extension Options to set your color paths."
+    echo "  1. Restart your browser(s) to apply the new enterprise policy and Matugen colors."
     echo ""
 }
 
@@ -583,7 +603,7 @@ main() {
             --skip-extension)    skip_ext=1 ;;
             --skip-bootstrap)    skip_bootstrap=1 ;;
             --skip-config)       skip_config=1 ;;
-            *) log_warn "Unknown option: $1"; show_help; exit 1 ;;
+            *) log_warn "Unknown option: $1"; show_help; exit 0 ;;
         esac
         shift
     done
@@ -617,8 +637,8 @@ main() {
     if (( ! skip_bootstrap )); then bootstrap_profiles; fi
     if (( ! skip_config )); then init_config "$force_run"; fi
     
-    # NEW CALL: Update TOML securely with dynamically retrieved paths
     update_matugen_toml
+    run_theme_refresh
 
     print_report
 }
