@@ -15,7 +15,7 @@
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSPARENCY TOGGLE
    ───────────────────────────────────────────────────────────────────────────── */
-/* WAYBAR_OPAQUE_SWITCH_START
+/* WAYBAR_OPAQUE_SWITCH_START */
 @define-color glass_bar         transparent;
 @define-color glass_group       @surface_container;
 @define-color glass_module      @surface_container;
@@ -24,7 +24,7 @@
 @define-color glass_tooltip     @surface;
 @define-color glass_battery_charging @surface_container;
 @define-color glass_battery_critical @error;
-WAYBAR_OPAQUE_SWITCH_END */
+/* WAYBAR_OPAQUE_SWITCH_END */
 
 * {
     border: none;

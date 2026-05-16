@@ -17,7 +17,7 @@
    TRANSPARENCY TOGGLE
    ───────────────────────────────────────────────────────────────────────────── */
 
-/* WAYBAR_OPAQUE_SWITCH_START
+/* WAYBAR_OPAQUE_SWITCH_START */
 
 @define-color glass_module           @surface_container;
 @define-color glass_module_low       @surface_container_low;
@@ -28,7 +28,7 @@
 @define-color glass_workspace_hover  @on_primary_fixed_variant;
 @define-color glass_tooltip          @surface_container_highest;
 
-WAYBAR_OPAQUE_SWITCH_END */
+/* WAYBAR_OPAQUE_SWITCH_END */
 
 * {
     font-family: "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;

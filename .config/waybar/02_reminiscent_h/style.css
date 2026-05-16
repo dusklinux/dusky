@@ -25,7 +25,7 @@
    TRANSPARENCY TOGGLE
    ───────────────────────────────────────────────────────────────────────────── */
 
-/* WAYBAR_OPAQUE_SWITCH_START
+/* WAYBAR_OPAQUE_SWITCH_START */
 @define-color glass_bar                       alpha(@surface, 0.6);
 @define-color glass_module                    @surface_container;
 @define-color glass_hover_bg                  @on_secondary;
@@ -42,7 +42,7 @@
 @define-color glass_taskbar_bg                @secondary_container;
 @define-color glass_taskbar_border_hover      @primary;
 @define-color glass_taskbar_border_active     @tertiary;
-WAYBAR_OPAQUE_SWITCH_END */
+/* WAYBAR_OPAQUE_SWITCH_END */
 
 /* ─────────────────────────────────────────────────────────────────────────────
    RESET & FOUNDATIONS

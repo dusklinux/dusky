@@ -1,7 +1,7 @@
 # Material You colors - Sleek Transparent Theme
 
 # 40% opacity (66) on the background for a glassy Hyprland blur effect
-background-color={{colors.surface.default.hex}}66
+background-color={{colors.surface.default.hex}}ff
 # Text color matching the primary accent color
 text-color={{colors.primary.default.hex}}
 # 93% opacity (ee) on the border using your primary accent color
@@ -39,7 +39,7 @@ margin=0
 text-alignment=center
 
 # -- Contrast Override --
-background-color={{colors.surface.default.hex}}66
+background-color={{colors.surface.default.hex}}ff
 progress-color={{colors.primary_container.default.hex}}
 text-color={{colors.primary.default.hex}}
 

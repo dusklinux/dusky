@@ -20,7 +20,7 @@
    TRANSPARENCY TOGGLE
    ───────────────────────────────────────────────────────────────────────────── */
 
-/* WAYBAR_OPAQUE_SWITCH_START
+/* WAYBAR_OPAQUE_SWITCH_START */
 
 @define-color glass_bar         @background;
 @define-color glass_outline     @outline;
@@ -31,7 +31,7 @@
 @define-color glass_tooltip     @background;
 @define-color glass_menu        @background;
 
-WAYBAR_OPAQUE_SWITCH_END */
+/* WAYBAR_OPAQUE_SWITCH_END */
 
 * {
 	/* ignore GTK theme */

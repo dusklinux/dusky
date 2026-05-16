@@ -44,7 +44,7 @@
    TRANSPARENCY TOGGLE
    ───────────────────────────────────────────────────────────────────────────── */
 
-/* WAYBAR_OPAQUE_SWITCH_START
+/* WAYBAR_OPAQUE_SWITCH_START */
 
 @define-color glass_bar               transparent;
 @define-color glass_module            @surface_container;
@@ -55,7 +55,7 @@
 @define-color glass_tertiary_mild     @tertiary_container;
 @define-color glass_error_mild        @error_container;
 
-WAYBAR_OPAQUE_SWITCH_END */
+/* WAYBAR_OPAQUE_SWITCH_END */
 
 * {
     border: none;

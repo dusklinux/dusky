@@ -8,13 +8,13 @@
 @define-color glass_surface_dark    alpha(@surface, 1.0);
 @define-color glass_tooltip         alpha(@surface, 0.55);
 
-/* WAYBAR_OPAQUE_SWITCH_START
+/* WAYBAR_OPAQUE_SWITCH_START */
 
 @define-color glass_surface         @surface;
 @define-color glass_surface_dark    @surface;
 @define-color glass_tooltip         @surface;
 
-WAYBAR_OPAQUE_SWITCH_END */
+/* WAYBAR_OPAQUE_SWITCH_END */
 
 * {
     border: none;

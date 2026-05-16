@@ -40,7 +40,7 @@
    TRANSPARENCY TOGGLE
    ───────────────────────────────────────────────────────────────────────────── */
 
-/* WAYBAR_OPAQUE_SWITCH_START
+/* WAYBAR_OPAQUE_SWITCH_START */
 @define-color glass_bar                       transparent;
 @define-color glass_module                    @surface_container;
 @define-color glass_hover                     @surface_container_highest;
@@ -61,7 +61,7 @@
 @define-color glass_battery_warning_bg        @primary_container;
 @define-color glass_tooltip                   @surface_container_high;
 
-WAYBAR_OPAQUE_SWITCH_END */
+/* WAYBAR_OPAQUE_SWITCH_END */
 
 /* ─────────────────────────────────────────────────────────────────────────────
    RESET & FOUNDATIONS

@@ -11,13 +11,13 @@
    TRANSPARENCY TOGGLE
    ───────────────────────────────────────────────────────────────────────────── */
 
-/* WAYBAR_OPAQUE_SWITCH_START
+/* WAYBAR_OPAQUE_SWITCH_START */
 
 @define-color glass_module      @surface_container;
 @define-color glass_module_low  @surface_container_low;
 @define-color glass_primary     @primary;
 
-WAYBAR_OPAQUE_SWITCH_END */
+/* WAYBAR_OPAQUE_SWITCH_END */
 
 /* ─────────────────────────────────────────────────────────────────────────────
    RESET & FOUNDATIONS

@@ -17,7 +17,7 @@
    TRANSPARENCY TOGGLE
    ───────────────────────────────────────────────────────────────────────────── */
 
-/* WAYBAR_OPAQUE_SWITCH_START
+/* WAYBAR_OPAQUE_SWITCH_START */
 
 @define-color glass_bar         @surface;
 @define-color glass_module      @surface_container;
@@ -25,7 +25,7 @@
 @define-color glass_hover       @surface_container_high;
 @define-color glass_tooltip     @surface_container_highest;
 
-WAYBAR_OPAQUE_SWITCH_END */
+/* WAYBAR_OPAQUE_SWITCH_END */
 
 * {
     border: none;
