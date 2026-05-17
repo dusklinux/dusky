@@ -44,7 +44,6 @@ declare -a AUR_PACKAGES=(
     'waypaper'
     'peaclock'
     'tray-tui'
-    'wifitui-bin'
     'xdg-terminal-exec'
     'paru'
     'limine-mkinitcpio-hook'

@@ -98,7 +98,6 @@ declare -ar PACKAGES=(
   "waypaper"
   "peaclock"
   "tray-tui"
-  "wifitui-bin"
   "xdg-terminal-exec"
 
 #  "papirus-icon-theme-git"

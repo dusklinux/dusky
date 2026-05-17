@@ -20,7 +20,6 @@ declare -ar pkgs_aur=(
   "waypaper"
   "peaclock"
   "tray-tui"
-  "wifitui-bin"
   "xdg-terminal-exec"
   "paru"
   "python-pywalfox"
