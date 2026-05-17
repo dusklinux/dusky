@@ -243,6 +243,10 @@ EXAMPLES:
         from python.engines.lua import HyprlandLuaEngine
         engine = HyprlandLuaEngine(config_path=str(TARGET_FILE))
     
+    elif ENGINE_TYPE == "monitor":
+        from python.engines.monitor_engine import MonitorLuaEngine
+        engine = MonitorLuaEngine(config_path=str(TARGET_FILE))
+        
     elif ENGINE_TYPE == "ini":
         from python.engines.ini import IniConfigEngine
         engine = IniConfigEngine(config_path=str(TARGET_FILE))
