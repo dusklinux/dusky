@@ -1,87 +1,22 @@
 @-moz-document domain("web.whatsapp.com") {
-    /* Background */
-    .x6egj2d {
-        background-color: var(--surface) !important;
+    :root {
+        /* Background Colors */
+        --WDS-neutral-gray-50: var(--on_surface) !important;
+        --WDS-neutral-gray-900: var(--surface) !important;
     }
-    
-    /* Button Hover */
-    .xzn9hfk.xzn9hfk:where(.x-default-marker:hover *) {
-        background-color: var(--surface_bright) !important;
+    .xul6ihk.xul6ihk, .xul6ihk.xul6ihk:root {
+        --WDS-background-wash-inset: var(--surface) !important;
+        --WDS-content-default: var(--primary_fixed_dim) !important;
+        --WDS-surface-emphasized: var(--surface_container_low) !important;
+        --WDS-surface-default: var(--surface) !important;
+        --WDS-systems-chat-surface-composer: var(--surface_container_high) !important;
+        --WDS-persistent-always-branded: var(--primary_fixed_dim) !important;
+        --WDS-accent-deemphasized: var(--primary_container) !important;
+        --WDS-systems-bubble-surface-outgoing: var(--surface_container) !important;
+        --WDS-systems-bubble-surface-incoming: var(--surface_container_highest) !important;
+        --WDS-surface-elevated-default: var(--surface_container_low) !important;
+        --WDS-accent: var(--primary_fixed_dim) !important;
+        --WDS-surface-elevated-emphasized: var(--surface_container_low) !important;
     }
-    
-    /* Side Bar */
-    .x1h3rtpe {
-        background-color: var(--surface_container_low) !important;
-    }
-    
-    /* Accent Color */
-    .xyp3urf {
-        background-color: var(--primary_fixed_dim) !important;
-    }
-    
-    /* Main Bar */
-    ._ak9t {
-        background-color: var(--surface) !important;
-    }
-    .x1abdmlv {
-        background-color: var(--primary_container) !important;
-    }
-    ._ak9y {
-        background-color: var(--surface) !important;
-    }
-    ._ak72 {
-        background-color: var(--surface) !important;
-    }
-    
-    /* Text Color */
-    .xk4n5i7 {
-        color: var(--primary_fixed) !important;
-    }
-    .x14ug900 {
-        color: var(--on_surface) !important;
-    }
-    .x1v5yvga {
-        color: var(--primary_fixed_dim) !important;
-    }
-    
-    /* Media */
-    .x1rrvw3c {
-        border-bottom-color: var(--primary_fixed_dim) !important:
-    }
-    .x120ee7l {
-        border-bottom-color: var(--outline_variant) !important;
-    }
-    
-    /
-    .xfn3atn {
-        background-color: var(--primary_fixed_dim) !important;
-    }
-    
-    /* Message */
-    .message-out ._amk6 {
-        background-color: var(--surface_container_highest) !important;
-    }
-    .message-out ._amk7 {
-        color: var(--surface_container_highest) !important;
-    }
-    .xk7ee7b {
-        background-color: var(--surface_container_high) !important;
-    }
-    
-    /* File Search Bar */
-    .xxyb0qf:has(input:focus) {
-        outline-color: var(--primary_fixed_dim) !important;
-    }
-    
-    /* Cursor */
-    .xjdcl3y {
-        caret-color: var(--primary_fixed) !important;
-    }
-    
-    /* Top Main Bar */
-    .x1280gxy {
-        background: var(--surface) !important;
-    }
-    
 }
   
