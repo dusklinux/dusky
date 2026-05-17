@@ -556,7 +556,7 @@ def edit_loop(bind: Optional[Bind], source_binds: list[Bind], custom_binds: list
         elif conflict_src:
             print(f'{YELLOW}CONFLICT (Source){RESET}\n  {conflict_src.raw_call.replace(chr(10)," ")[:80]}')
             print(f'  {DIM}Your custom bind will take precedence.{RESET}')
-            conflict_cust = None
+            # We don't unset conflict_cust here, we let it proceed to override logic
         else:
             print(f'{GREEN}None{RESET}')
 
@@ -603,10 +603,21 @@ def edit_loop(bind: Optional[Bind], source_binds: list[Bind], custom_binds: list
             text = filter_out_bind_from_text(text, new_mods, new_key, bind_submap)
 
         comment = f'-- [{timestamp}] {origin}'
+        
+        # --- [FIX]: Inject exact-case hl.unbind() for source conflicts ---
+        # Hyprland 0.55+ Lua stacks binds. We must explicitly unbind the source 
+        # key to prevent both the default and custom actions from firing.
+        unbind_prefix = ""
+        if conflict_src:
+            if bind_submap:
+                unbind_prefix = f'hl.unbind("{conflict_src.key_str}")\n    '
+            else:
+                unbind_prefix = f'hl.unbind("{conflict_src.key_str}")\n'
+
         if bind_submap:
-            new_block = f'\n{comment}\nhl.define_submap("{bind_submap}", function()\n    {user_line}\nend)\n'
+            new_block = f'\n{comment}\nhl.define_submap("{bind_submap}", function()\n    {unbind_prefix}{user_line}\nend)\n'
         else:
-            new_block = f'\n{comment}\n{user_line}\n'
+            new_block = f'\n{comment}\n{unbind_prefix}{user_line}\n'
 
         text = text.rstrip('\n') + '\n' + new_block
         atomic_write(text, CUSTOM_LUA)
