@@ -170,7 +170,39 @@ register_items() {
 
 # Post-Write Hook
 post_write_action() {
-    : # E.g., restart a service if a specific setting requires it
+    # -------------------------------------------------------------------------
+    # Hyprland & Wayland Live Synchronization 
+    # -------------------------------------------------------------------------
+    local c_theme c_size
+    c_theme=$(gsettings get org.gnome.desktop.interface cursor-theme 2>/dev/null | tr -d "'")
+    c_size=$(gsettings get org.gnome.desktop.interface cursor-size 2>/dev/null)
+
+    # 1. Sync dynamically to Hyprland immediately
+    if command -v hyprctl &>/dev/null && [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
+        if [[ -n "$c_theme" && -n "$c_size" ]]; then
+            hyprctl setcursor "$c_theme" "$c_size" &>/dev/null || true
+        fi
+    fi
+
+    # 2. Update default index.theme (Wayland/Older Spec fallback)
+    if [[ -n "$c_theme" ]]; then
+        mkdir -p ~/.icons/default
+        cat > ~/.icons/default/index.theme <<EOF
+[Icon Theme]
+Inherits=${c_theme}
+EOF
+    fi
+
+    # 3. Update Xresources for XWayland application cursor syncing
+    if [[ -n "$c_size" && -n "$c_theme" ]]; then
+        if [[ -f ~/.Xresources ]]; then
+            sed -i '/^Xcursor\.size:/d' ~/.Xresources 2>/dev/null || true
+            sed -i '/^Xcursor\.theme:/d' ~/.Xresources 2>/dev/null || true
+        fi
+        echo "Xcursor.size: $c_size" >> ~/.Xresources
+        echo "Xcursor.theme: $c_theme" >> ~/.Xresources
+        command -v xrdb &>/dev/null && xrdb -merge ~/.Xresources &>/dev/null || true
+    fi
 }
 
 # =============================================================================
