@@ -975,7 +975,7 @@ hl.window_rule({
     name = "dusky_network.sh",
     match = { class = "^(dusky_network.sh)$" },
     float = true,
-    size = {741, 579},
+    size = {780,530},
     center = true
 })
 
