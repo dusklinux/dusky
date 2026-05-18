@@ -243,6 +243,10 @@ EXAMPLES:
         from python.engines.lua import HyprlandLuaEngine
         engine = HyprlandLuaEngine(config_path=str(TARGET_FILE))
 
+    elif ENGINE_TYPE == "trackpad":
+        from python.engines.trackpad import TrackpadLuaEngine
+        engine = TrackpadLuaEngine(config_path=str(TARGET_FILE))
+
     elif ENGINE_TYPE == "monitor":
         from python.engines.monitor_engine import MonitorLuaEngine
         engine = MonitorLuaEngine(config_path=str(TARGET_FILE))

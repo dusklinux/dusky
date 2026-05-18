@@ -709,13 +709,23 @@ class AppFooter(Vertical):
 
     def compose(self) -> ComposeResult:
         with FlowContainer(id="footer-shortcuts-container"):
-            # Removed Save Preset visual shortcut per request, core Ctrl+P functionality remains active.
+            # --- ACTIVE SHORTCUTS ---
             yield Shortcut("ctrl+s", "Batch Save", "save_batch", id="shortcut-ctrl-s")
             yield Shortcut("/", "Jump", "focus_local_search", id="shortcut-slash")
             yield Shortcut("ctrl+f", "Search", "search", id="shortcut-ctrl-f")
-            yield Shortcut("r", "Reset Item", "reset_item", id="shortcut-r")
+            yield Shortcut("f1", "Shortcuts", "show_shortcuts", id="shortcut-f1")
             yield Shortcut("R", "Reset Page", "reset_all", id="shortcut-R")
             yield Shortcut("q", "Quit", "quit", id="shortcut-q")
+
+            # --- AVAILABLE INACTIVE SHORTCUTS (Uncomment to enable) ---
+            # yield Shortcut("r", "Reset Item", "reset_item", id="shortcut-r")
+            # yield Shortcut("?", "Doc Help", "toggle_help", id="shortcut-help")
+            # yield Shortcut("d", "Show Diff", "show_diff", id="shortcut-d")
+            # yield Shortcut("u", "Undo", "undo", id="shortcut-u")
+            # yield Shortcut("ctrl+r", "Redo", "redo", id="shortcut-redo")
+            # yield Shortcut("ctrl+p", "Save Preset", "save_preset", id="shortcut-ctrl-p")
+            # yield Shortcut("D", "Delete Preset", "delete_user_preset", id="shortcut-D")
+            # yield Shortcut("ctrl+t", "Toggle Mode", "toggle_save_mode", id="shortcut-ctrl-t")
 
         with Horizontal(id="footer-bottom-row"):
             yield FileLink(id="file-link")
