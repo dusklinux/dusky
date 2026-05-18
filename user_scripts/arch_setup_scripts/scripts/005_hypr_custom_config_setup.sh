@@ -5,8 +5,10 @@
 #              All configuration files use Lua syntax (.lua) as of Hyprland 0.55.
 #              hyprlang (.conf) is deprecated and will be dropped in a future release.
 #
-# Usage:       ./005_hypr_custom_config_setup.sh [--force]
-#              --force: Backs up existing 'edit_here' dir and regenerates all templates.
+# Usage:       ./005_hypr_custom_config_setup.sh [--force] [--<filename> ...]
+#              --force:      Backs up existing configs and regenerates templates.
+#              --<filename>: Dynamically targets specific files (e.g., --monitors, --trackpad).
+#                            Combine flags to deploy multiple specific files.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -1850,6 +1852,7 @@ fi
 # 4. Handle Arguments
 # ------------------------------------------------------------------------------
 force_mode=false
+declare -a target_files=()
 
 while [[ $# -gt 0 ]]; do
     case "${1}" in
@@ -1857,22 +1860,77 @@ while [[ $# -gt 0 ]]; do
             force_mode=true
             shift
             ;;
+        --*)
+            # Dynamic flag parsing based on CONFIG_FILES.
+            # E.g. --monitors matches "monitors.lua" or "monitors"
+            flag_name="${1#--}" 
+            matched_file=""
+            for file in "${CONFIG_FILES[@]}"; do
+                if [[ "${file%.lua}" == "${flag_name}" || "${file}" == "${flag_name}" ]]; then
+                    matched_file="${file}"
+                    break
+                fi
+            done
+
+            if [[ -n "${matched_file}" ]]; then
+                target_files+=("${matched_file}")
+            else
+                log_error "Unknown flag or unsupported file: ${1}"
+                log_info "Available file flags are (based on CONFIG_FILES):"
+                for file in "${CONFIG_FILES[@]}"; do
+                    log_info "  --${file%.lua}"
+                done
+                log_error "Usage: ${0##*/} [--force] [--<filename> ...]"
+                exit 1
+            fi
+            shift
+            ;;
         *)
             log_error "Unknown argument: ${1}"
-            log_error "Usage: ${0##*/} [--force]"
+            log_error "Usage: ${0##*/} [--force] [--<filename> ...]"
             exit 1
             ;;
     esac
 done
 
-if [[ "${force_mode}" == true && -d "${EDIT_DIR}" ]]; then
+# Determine if we are deploying everything or just selective files
+all_files_targeted=false
+if [[ ${#target_files[@]} -eq 0 ]]; then
+    # No specific flags passed, deploy everything
+    target_files=("${CONFIG_FILES[@]}")
+    all_files_targeted=true
+else
+    # Remove duplicates if user accidentally typed the same flag twice
+    readarray -t target_files < <(printf '%s\n' "${target_files[@]}" | sort -u)
+fi
+
+# Execute Force Mode backups
+if [[ "${force_mode}" == true ]]; then
     # Bash 5.0+ builtin timestamp (no external 'date' command needed)
     printf -v backup_timestamp '%(%Y%m%d_%H%M%S)T' -1
-    backup_name="edit_here.bak_${backup_timestamp}"
 
-    log_warn "Force mode: Backing up '${EDIT_DIR}' to '${HYPR_DIR}/${backup_name}'..."
-    mv -- "${EDIT_DIR}" "${HYPR_DIR}/${backup_name}"
-    log_success "Backup complete. Proceeding with clean regeneration."
+    if [[ "${all_files_targeted}" == true && -d "${EDIT_DIR}" ]]; then
+        # Traditional force mode: backup the entire directory
+        backup_name="edit_here.bak_${backup_timestamp}"
+        log_warn "Force mode (All Files): Backing up '${EDIT_DIR}' to '${HYPR_DIR}/${backup_name}'..."
+        mv -- "${EDIT_DIR}" "${HYPR_DIR}/${backup_name}"
+        log_success "Backup complete. Proceeding with clean regeneration."
+    elif [[ "${all_files_targeted}" == false ]]; then
+        # Targeted force mode: backup ONLY the specified files
+        log_warn "Force mode (Targeted Files): Backing up specified files..."
+        
+        target_backup_dir="${EDIT_SOURCE_DIR}/backups"
+        mkdir -p -- "${target_backup_dir}"
+        
+        for file in "${target_files[@]}"; do
+            target_path="${EDIT_SOURCE_DIR}/${file}"
+            if [[ -f "${target_path}" ]]; then
+                backup_name="${file}.bak_${backup_timestamp}"
+                mv -- "${target_path}" "${target_backup_dir}/${backup_name}"
+                log_success "  - Backed up: ${file} -> backups/${backup_name}"
+            fi
+        done
+    fi
 fi
 
 # ------------------------------------------------------------------------------
@@ -1888,8 +1946,8 @@ else
     log_info "Directory exists: ${EDIT_SOURCE_DIR} (verifying contents...)"
 fi
 
-# Iterate and create missing files using the content function
-for file in "${CONFIG_FILES[@]}"; do
+# Iterate and create missing files using the target_files array
+for file in "${target_files[@]}"; do
     target_file="${EDIT_SOURCE_DIR}/${file}"
 
     if [[ -f "${target_file}" ]]; then
@@ -1901,10 +1959,33 @@ for file in "${CONFIG_FILES[@]}"; do
     fi
 done
 
-# Generate the user overlay loader: edit_here/hyprland.lua
-# Dynamically built from CONFIG_FILES to prevent list drift.
+# Generate or update the user overlay loader: edit_here/hyprland.lua
 if [[ -f "${NEW_CONF}" ]]; then
-    log_info "Loader file exists: ${NEW_CONF}"
+    log_info "Verifying loader file: ${NEW_CONF}"
+    
+    # "Healing pass": We ensure all targeted files are active in the loader.
+    # We do NOT overwrite the whole file, preserving any manual edits to it.
+    for file in "${target_files[@]}"; do
+        if [[ "${file}" == "default_apps.lua" ]]; then
+            continue
+        fi
+        
+        module_name="${file%.lua}"
+        
+        if [[ -f "${EDIT_SOURCE_DIR}/${file}" ]]; then
+            # If the require line exists but is commented out (e.g. -- require("edit_here.source.monitors"))
+            if grep -Eq "^[[:space:]]*--[[:space:]]*(require\(\"edit_here\.source\.${module_name}\"\).*)" "${NEW_CONF}"; then
+                # Strip the leading comment marker via sed to activate it
+                sed -i -E "s/^[[:space:]]*--[[:space:]]*(require\(\"edit_here\.source\.${module_name}\"\).*)/\1/" "${NEW_CONF}"
+                log_success "  - Activated ${file} in loader."
+            
+            # If the require line is completely missing
+            elif ! grep -Fq "require(\"edit_here.source.${module_name}\")" "${NEW_CONF}"; then
+                printf 'require("edit_here.source.%s")\n' "${module_name}" >> "${NEW_CONF}"
+                log_success "  - Appended ${file} to loader."
+            fi
+        fi
+    done
 else
     log_warn "Loader file missing: ${NEW_CONF} -> Creating..."
 
@@ -1928,9 +2009,16 @@ EOF
         if [[ "${file}" == "default_apps.lua" ]]; then
             continue
         fi
-        # Strip .lua extension to form the Lua module path
+        
         module_name="${file%.lua}"
-        printf 'require("edit_here.source.%s")\n' "${module_name}" >> "${NEW_CONF}"
+        
+        # Guard: Only add active require() if the file actually exists, to prevent
+        # Hyprland crashes on partial deployments (e.g. running just --monitors)
+        if [[ -f "${EDIT_SOURCE_DIR}/${file}" ]]; then
+            printf 'require("edit_here.source.%s")\n' "${module_name}" >> "${NEW_CONF}"
+        else
+            printf '-- require("edit_here.source.%s") -- File missing/not deployed yet\n' "${module_name}" >> "${NEW_CONF}"
+        fi
     done
 
     log_success "Created loader: ${NEW_CONF}"

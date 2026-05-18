@@ -206,6 +206,7 @@ declare -ra UPDATE_SEQUENCE=(
 #================= Scripts =====================
 
     "U | 005_hypr_custom_config_setup.sh"
+    "U | 005_hypr_custom_config_setup.sh --trackpad --autostart --force"
     "U | 010_package_removal.sh --auto"
 
 
