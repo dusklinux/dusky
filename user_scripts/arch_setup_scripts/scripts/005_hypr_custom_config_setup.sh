@@ -866,11 +866,11 @@ EOF
 -- --- XWAYLAND CONFIGURATION ---
 -- to disable xwayland to save 20-30 mbs of ram, disabling will prevent xwayland apps from working
 -- Uncomment the block below to apply:
--- hl.config({
---     xwayland = {
---         enabled = false
---     }
--- })
+hl.config({
+    xwayland = {
+        enabled = true
+    }
+})
 
 -- -------------------------------------------------------------------------------------------------
 -- AUTOSTART COMMANDS

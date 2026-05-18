@@ -31,7 +31,7 @@ TABS = [
 # =============================================================================
 SCHEMA = {
     # -------------------------------------------------------------------------
-    # TAB 0: System Configuration (AST mapped)
+    # TAB 0: System Configuration (AST mapped natively to hl.config)
     # -------------------------------------------------------------------------
     0: [
         ConfigItem(
@@ -121,6 +121,26 @@ SCHEMA = {
             group="Monitors",
             extended_help="**Uptime Glance**\n\nExecutes the Rofi overlay to display how long the operating system has been running since the last boot."
         ),
+        ConfigItem(
+            label="Glance: Workspace",
+            key="action_glance_workspace",
+            scope="DEFAULT",
+            type_="action",
+            default="~/user_scripts/rofi/dusky_glance.sh --workspace",
+            parent_ref="menu_dusky_glance",
+            group="Monitors",
+            extended_help="**Workspace Glance**\n\nExecutes the Rofi overlay to display the current active workspace overview."
+        ),
+        ConfigItem(
+            label="Glance: Clock",
+            key="action_glance_clock",
+            scope="DEFAULT",
+            type_="action",
+            default="~/user_scripts/rofi/dusky_glance.sh --clock",
+            parent_ref="menu_dusky_glance",
+            group="Monitors",
+            extended_help="**Clock Glance**\n\nExecutes the Rofi overlay to display the current time, date, and calendar."
+        ),
 
         # --- INDIVIDUAL ACTIONS: Interface Control ---
         ConfigItem(
@@ -150,6 +170,15 @@ SCHEMA = {
             group="Interface",
             extended_help="**Wallpaper Engine**\n\nManually starts the `awww-daemon` background service responsible for rendering the desktop wallpaper."
         ),
+        ConfigItem(
+            label="Start Network Applet",
+            key="action_nm_applet",
+            scope="DEFAULT",
+            type_="action",
+            default="uwsm-app -- nm-applet",
+            group="Interface",
+            extended_help="**Network Manager Applet**\n\nManually starts the nm-applet tray icon for managing Wi-Fi and network connections."
+        ),
 
         # --- INDIVIDUAL ACTIONS: Background Services ---
         ConfigItem(
@@ -169,6 +198,107 @@ SCHEMA = {
             default="uwsm-app -- xhost +si:localuser:root",
             group="Services",
             extended_help="**XHost Root Access**\n\nGrants local root access to the display server. Required to run graphical administrative applications like GParted or Synaptic Package Manager."
+        ),
+        ConfigItem(
+            label="Start Hypridle (Idle Manager)",
+            key="action_hypridle",
+            scope="DEFAULT",
+            type_="action",
+            default="uwsm-app -- hypridle",
+            group="Services",
+            extended_help="**Hypridle**\n\nManually starts the Hyprland idle daemon responsible for screen dimming and locking."
+        ),
+        ConfigItem(
+            label="Start Layout Notifier",
+            key="action_layout_notify",
+            scope="DEFAULT",
+            type_="action",
+            default="uwsm-app -- $HOME/user_scripts/hypr/layout_notify.sh",
+            group="Services",
+            extended_help="**Layout Notifier**\n\nManually starts the keyboard layout notification script."
+        ),
+
+        # --- HYBRID FOLDER: Clipboard Services ---
+        ConfigItem(
+            label="Clipboard Services",
+            key="menu_clipboard",
+            scope="DEFAULT",
+            type_="menu",
+            default=None,
+            is_parent=True,
+            expanded=False,
+            group="Clipboard",
+            extended_help="**Clipboard Daemons**\n\nManually start various clipboard managers and persistence daemons."
+        ),
+        ConfigItem(
+            label="Start Cliphist (Text)",
+            key="action_cliphist_text",
+            scope="DEFAULT",
+            type_="action",
+            default="uwsm-app -- wl-paste --type text --watch cliphist store",
+            parent_ref="menu_clipboard",
+            group="Clipboard",
+            extended_help="**Cliphist Text**\n\nStarts listening for text copied to the clipboard to store in cliphist history."
+        ),
+        ConfigItem(
+            label="Start Cliphist (Image)",
+            key="action_cliphist_image",
+            scope="DEFAULT",
+            type_="action",
+            default="uwsm-app -- wl-paste --type image --watch cliphist store",
+            parent_ref="menu_clipboard",
+            group="Clipboard",
+            extended_help="**Cliphist Image**\n\nStarts listening for images copied to the clipboard to store in cliphist history."
+        ),
+        ConfigItem(
+            label="Start Cliphist DB (Text)",
+            key="action_cliphist_db_text",
+            scope="DEFAULT",
+            type_="action",
+            default="uwsm-app -- sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store'",
+            parent_ref="menu_clipboard",
+            group="Clipboard",
+            extended_help="**Cliphist Custom DB (Text)**\n\nStarts listening for text with a custom database environment."
+        ),
+        ConfigItem(
+            label="Start Cliphist DB (Image)",
+            key="action_cliphist_db_image",
+            scope="DEFAULT",
+            type_="action",
+            default="uwsm-app -- sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store'",
+            parent_ref="menu_clipboard",
+            group="Clipboard",
+            extended_help="**Cliphist Custom DB (Image)**\n\nStarts listening for images with a custom database environment."
+        ),
+        ConfigItem(
+            label="Start Clip Persist",
+            key="action_clip_persist",
+            scope="DEFAULT",
+            type_="action",
+            default="uwsm-app -- wl-clip-persist --clipboard regular",
+            parent_ref="menu_clipboard",
+            group="Clipboard",
+            extended_help="**Clipboard Persistence**\n\nEnsures clipboard contents are not lost when the application that copied them is closed."
+        ),
+
+        # --- INDIVIDUAL ACTIONS: System Variables ---
+        ConfigItem(
+            label="Update Systemd Environment",
+            key="action_systemd_env",
+            scope="DEFAULT",
+            type_="action",
+            default="systemctl --user import-environment $(env | cut -d'=' -f 1)",
+            group="Environment",
+            extended_help="**Systemd Environment**\n\nImports current environment variables into systemd. Useful for fixing slow app launches (like XDPH)."
+        ),
+        ConfigItem(
+            label="Update DBus Environment",
+            key="action_dbus_env",
+            scope="DEFAULT",
+            type_="action",
+            default="dbus-update-activation-environment --systemd --all",
+            group="Environment",
+            extended_help="**DBus Environment**\n\nUpdates DBus activation environment with all systemd variables."
         ),
     ],
 
