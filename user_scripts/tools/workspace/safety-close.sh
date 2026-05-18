@@ -33,7 +33,7 @@ get_workspace_id() {
 
 close_address() {
     local address="$1"
-    hyprctl dispatch closewindow "address:$address" 2>/dev/null
+    hyprctl dispatch "hl.dsp.window.close({ window = \"address:$address\" })" 2>/dev/null
 }
 
 close_workspace_windows() {
@@ -50,7 +50,7 @@ close_workspace_windows() {
 
     local count=0
     for address in $addresses; do
-        hyprctl dispatch closewindow "address:$address" 2>/dev/null
+        hyprctl dispatch "hl.dsp.window.close({ window = \"address:$address\" })" 2>/dev/null
         ((count++))
         sleep 0.05
     done

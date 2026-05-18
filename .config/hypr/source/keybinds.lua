@@ -536,14 +536,14 @@ hl.bind(
     { description = "Close Window" }
 )
 
--- /user_scripts/tools/workspace/close-workspace.sh -- Not Done/Forgotten
+-- /user_scripts/tools/workspace/close-workspace.sh -- Working Feature but Unsure
 -- hl.bind(
 --     "SUPER + SHIFT + C",
 --     hl.dsp.exec_cmd(dusky_scripts .. "tools/workspace/close-workspace.sh"),
 --     { description = "Close Workspace" }
 -- )
 
--- /user_scripts/tools/workspace/close-workspace.sh -- Not Done/Forgotten
+-- /user_scripts/tools/workspace/close-workspace.sh -- Working Feature but Unsure
 -- hl.bind(
 --     "SUPER + SHIFT + B",
 --     hl.dsp.exec_cmd(dusky_scripts .. "tools/workspace/close-workspace.sh"),
