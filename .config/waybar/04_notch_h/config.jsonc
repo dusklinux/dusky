@@ -5,7 +5,7 @@
         "margin-top": 8,
         "modules-center": [
             "clock",
-            "custom/cava",
+//            "custom/cava",
             "group/mpris-drawer",
             "hyprland/workspaces",
             "group/hide-tray",
