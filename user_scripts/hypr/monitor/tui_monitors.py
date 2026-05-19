@@ -10,7 +10,7 @@ from python.frontend.core_types import ConfigItem
 # =============================================================================
 # 1. CORE APPLICATION ROUTING
 # =============================================================================
-ENGINE_TYPE = "lua"
+ENGINE_TYPE = "monitor"  # CRITICAL FIX: Actively route to the bridged engine
 TARGET_FILE = "~/.config/hypr/edit_here/source/monitors.lua"
 APP_TITLE = "Monitors & Render Settings"
 
