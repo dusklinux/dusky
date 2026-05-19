@@ -1637,6 +1637,154 @@ pages:
                 type: exec
                 command: kitty --class 238_terminal_switcher.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/238_terminal_switcher.sh"
                 terminal: false
+    - type: navigation
+      properties:
+        title: Reset Custom Configs
+        description: Revert individual or all configuration files to default templates
+        icon: edit-delete-symbolic
+      layout:
+        - type: section
+          properties:
+            title: Global Reset
+            description: Reset all configuration files to their default templates
+          items:
+            - type: button
+              properties:
+                title: Reset All Configs
+                description: Force reset all custom configuration files (Destructive!)
+                icon: edit-delete-symbolic
+                style: destructive
+                button_text: "Reset All"
+              on_press:
+                type: exec
+                command: foot --app-id=reset_configs --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force"
+                terminal: false
+        - type: section
+          properties:
+            title: Component Resets
+            description: Reset specific configurations individually
+          items:
+            - type: button
+              properties:
+                title: Default Applications
+                description: Reset default applications settings (default_apps.lua)
+                icon: applications-system-symbolic
+                style: destructive
+                button_text: "Reset"
+              on_press:
+                type: exec
+                command: foot --app-id=reset_configs --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --default_apps"
+                terminal: false
+            - type: button
+              properties:
+                title: Monitors
+                description: Reset monitor and display layout settings (monitors.lua)
+                icon: video-display-symbolic
+                style: destructive
+                button_text: "Reset"
+              on_press:
+                type: exec
+                command: foot --app-id=reset_configs --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --monitors"
+                terminal: false
+            - type: button
+              properties:
+                title: Appearance
+                description: Reset borders, gaps, colors, and rounding (appearance.lua)
+                icon: applications-graphics-symbolic
+                style: destructive
+                button_text: "Reset"
+              on_press:
+                type: exec
+                command: foot --app-id=reset_configs --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --appearance"
+                terminal: false
+            - type: button
+              properties:
+                title: Workspace Rules
+                description: Reset custom workspace behavior settings (workspace_rules.lua)
+                icon: view-grid-symbolic
+                style: destructive
+                button_text: "Reset"
+              on_press:
+                type: exec
+                command: foot --app-id=reset_configs --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --workspace_rules"
+                terminal: false
+            - type: button
+              properties:
+                title: Keybinds
+                description: Reset custom keyboard shortcuts (keybinds.lua)
+                icon: input-keyboard-symbolic
+                style: destructive
+                button_text: "Reset"
+              on_press:
+                type: exec
+                command: foot --app-id=reset_configs --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --keybinds"
+                terminal: false
+            - type: button
+              properties:
+                title: Input
+                description: Reset keyboard, layout, and general input configurations (input.lua)
+                icon: input-mouse-symbolic
+                style: destructive
+                button_text: "Reset"
+              on_press:
+                type: exec
+                command: foot --app-id=reset_configs --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --input"
+                terminal: false
+            - type: button
+              properties:
+                title: Trackpad
+                description: Reset touchpad and gesture configurations (trackpad.lua)
+                icon: input-touchpad-symbolic
+                style: destructive
+                button_text: "Reset"
+              on_press:
+                type: exec
+                command: foot --app-id=reset_configs --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --trackpad"
+                terminal: false
+            - type: button
+              properties:
+                title: Window Rules
+                description: Reset custom rules for specific application windows (window_rules.lua)
+                icon: application-x-executable-symbolic
+                style: destructive
+                button_text: "Reset"
+              on_press:
+                type: exec
+                command: foot --app-id=reset_configs --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --window_rules"
+                terminal: false
+            - type: button
+              properties:
+                title: Autostart
+                description: Reset background applications launched on login (autostart.lua)
+                icon: system-run-symbolic
+                style: destructive
+                button_text: "Reset"
+              on_press:
+                type: exec
+                command: foot --app-id=reset_configs --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --autostart"
+                terminal: false
+            - type: button
+              properties:
+                title: Environment Variables
+                description: Reset environment variables for UWSM and Hyprland (environment_variables.lua)
+                icon: preferences-desktop-display-symbolic
+                style: destructive
+                button_text: "Reset"
+              on_press:
+                type: exec
+                command: foot --app-id=reset_configs --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --environment_variables"
+                terminal: false
+            - type: button
+              properties:
+                title: Plugins
+                description: Reset custom Hyprland plugin manager integrations (plugins.lua)
+                icon: application-x-addon-symbolic
+                style: destructive
+                button_text: "Reset"
+              on_press:
+                type: exec
+                command: foot --app-id=reset_configs --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --plugins"
+                terminal: false
   - type: section
     properties:
       title: Core Configuration

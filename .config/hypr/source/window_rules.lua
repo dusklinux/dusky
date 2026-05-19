@@ -1064,6 +1064,22 @@ hl.window_rule({
     center = true
 })
 
+
+-- Reset user configs ---
+hl.window_rule({
+    name = "reset_configs",
+    match = {
+        class = "^(reset_configs)$",
+    },
+    float = true,
+    size = {913, 579},
+    -- size = {"monitor_w * 0.4755", "monitor_h * 0.5361"},
+--     move = {507, 224},
+     move = {"monitor_w * 0.2641", "monitor_h * 0.2074"},
+    -- move = {"monitor_w - window_w - 20", "monitor_h - window_h - 20"},
+})
+
+
 -- Backup Viewer yazi
 hl.window_rule({
     name = "yazi",
