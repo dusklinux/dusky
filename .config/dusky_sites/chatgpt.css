@@ -1,68 +1,26 @@
 @-moz-document domain("chatgpt.com") {
-    /* Map Matugen tokens to ChatGPT's native CSS variables */
-    :root, .dark, html, body {
-        /* Main Surfaces */
-        --main-surface-primary: var(--surface) !important;
-        --main-surface-secondary: var(--surface_container) !important;
-        --main-surface-tertiary: var(--surface_container_highest) !important;
-        --bg-secondary-surface : none !important;
-        
-        /* Sidebar Surfaces */
-        --sidebar-surface-primary: var(--surface_container_low) !important;
-        --sidebar-surface-secondary: var(--surface_container) !important;
-        --sidebar-surface-tertiary: var(--surface_container_high) !important;
-        
-        /* Text Colors */
-        --text-primary: var(--on_surface) !important;
-        --text-secondary: var(--on_surface_variant) !important;
-        --text-tertiary: var(--outline) !important;
-        
-        /* Legacy / Fallback Backgrounds */
-        --bg-gray-800: var(--surface_container) !important;
-        --bg-gray-900: var(--surface) !important;
-        --bg-gray-950: var(--surface_container_low) !important;
-        --bg-black: var(--surface) !important;
-        --white: var(--on_surface) !important;
-        
-        /* Accents */
-        --brand-purple: var(--primary) !important;
-    }
-
-    body {
-        background-color: var(--surface) !important;
-        color: var(--on_surface) !important;
-    }
-
-    /* Main chat wrapper */
-    main {
-        background-color: var(--surface) !important;
-    }
-
-    /* User Message Wrapper - Remove boxy background */
-    [data-message-author-role="user"] > div {
-        background-color: transparent !important;
-    }
-
-    /* Target the actual user bubble (rounded pill) */
-    [data-message-author-role="user"] [class*="rounded-"] {
-        background-color: var(--primary) !important;
-        color: var(--on_primary) !important;
-    }
-
-    /* Input text area fallback */
-    #prompt-textarea {
-        background-color: transparent !important;
-        color: var(--on_surface) !important;
-    }
-
-    /* Action Buttons (Send, Voice, Stop) */
-    [data-testid="send-button"],
-    [data-testid="voice-button"],
-    [data-testid="stop-button"],
-    button[aria-label*="voice" i],
-    button[aria-label*="Voice" i],
-    button[aria-label*="Record" i] {
-        background-color: var(--primary) !important;
-        color: var(--on_primary) !important;
-    }
+  :root, .dark {
+    --gray-750: var(--surface_container_highest) !important;
+    --gray-900: var(--surface_container) !important;
+    --black: var(--surface) !important;
+    --blue-400: var(--primary_container) !important;
+    --default-theme-user-msg-text: var(--surface) !important;
+    --message-surface: var(--primary) !important;
+    --bg-primary: var(--surface_container) !important;
+    --bg-tertiary: var(--surface_container_high) !important;
+    --bg-primary: var(--surface) !important;
+    --bg-secondary: var(--surface_bright) !important;
+    --bg-elevated-secondary: var(--surface_container_low) !important;  
+    --text-primary: var(--on_surface) !important;
+  }
+  
+  .dark\:bg-\[\#353535\]:where(.dark, .dark *):not(:where(.dark .light, .dark .light *)) {
+    background-color: var(--surface_container_high) !important;
+  }
+  .dark[data-oled] [data-composer-surface="true"] {
+    background-color: var(--surface_container) !important;
+  }
+  .dark\:bg-\[\#171717\]:where(.dark, .dark *):not(:where(.dark .light, .dark .light *)) {
+    background-color: var(--surface_container_high) !important;
+  }
 }
