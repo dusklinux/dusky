@@ -2991,6 +2991,45 @@ pages:
                 command: kitty --class 02_cli_plugins_download.sh --hold sh -c "$HOME/user_scripts/nvim/reset/02_cli_plugins_download.sh"
                 terminal: false
 
+- id: addons
+  title: Add-ons
+  icon: applications-addons-symbolic
+  layout:
+  - type: section
+    properties:
+      title: Installed Add-ons
+      icon: emblem-system-symbolic
+      description: Manage your dusker add-ons
+    items:
+    - type: label
+      properties:
+        title: Status
+      value:
+        type: static
+        value: No add-ons installed yet
+    - type: button
+      properties:
+        title: Browse Add-ons
+        description: Coming soon - browse and install community add-ons
+        icon: system-software-install-symbolic
+        button_text: "Soon"
+        style: default
+      on_press:
+        type: exec
+        command: notify-send -i applications-addons-symbolic "Add-ons" "Add-on manager coming soon!"
+        terminal: false
+    - type: button
+      properties:
+        title: Merge Upstream Changes
+        description: Pull latest changes from dusklinux/dusky
+        icon: software-update-available-symbolic
+        button_text: "Merge"
+        style: suggested
+      on_press:
+        type: exec
+        command: kitty --class merge_upstream.sh --title "Upstream Merge" --hold sh -c "$HOME/user_scripts/dusky_system/merge_upstream/merge_upstream.sh"
+        terminal: false
+
 - id: about_dusky
   title: About System
   layout:

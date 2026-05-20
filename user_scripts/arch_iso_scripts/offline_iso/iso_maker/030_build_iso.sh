@@ -83,7 +83,7 @@ sed -i '/^grml-zsh-config$/d' "${PROFILE_DIR}/packages.x86_64" || true
 
 echo "  -> Fetching and staging dotfiles payload into /etc/skel..."
 # 4. Clone the bare repository natively into the skeleton dir.
-git clone --bare --depth 1 "https://github.com/dusklinux/dusky" "${SKEL_DIR}/dusky"
+git clone --bare --depth 1 "https://github.com/veltraced/dusker" "${SKEL_DIR}/dusky"
 
 # 5. Force checkout directly into /etc/skel so subdirectories manifest in the ISO.
 git --git-dir="${SKEL_DIR}/dusky/" --work-tree="${SKEL_DIR}" checkout -f

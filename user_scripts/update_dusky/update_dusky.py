@@ -158,7 +158,7 @@ WORK_TREE = Path.home()
 GIT_DIR = WORK_TREE / "dusky"
 BACKUP_BASE_DIR = WORK_TREE / "Documents" / "dusky_backups"
 
-REPO_URL = "https://github.com/dusklinux/dusky"
+REPO_URL = "https://github.com/veltraced/dusker"
 BRANCH = "main"
 
 # Topologically decoupled search heuristics replacing static path dictionaries.

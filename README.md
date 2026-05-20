@@ -1,9 +1,13 @@
 # dusker
 a fork of [dusky](https://github.com/dusklinux/dusky) by dusklinux. tweaks, addons, and personal changes by [veltraced](https://github.com/veltraced).
 
-> nothing is pushed yet. this is a work in progress.
-
 ---
+
+## what's here
+
+- add-ons tab in the Dusky Control Center (placeholder, ready for customization)
+- upstream merge helper — easy `dusklinux/dusky` sync via `merge_upstream.sh` or the Add-ons tab
+- all deploy/update scripts now point to this repo instead of upstream
 
 ## what's coming
 
@@ -11,6 +15,18 @@ a fork of [dusky](https://github.com/dusklinux/dusky) by dusklinux. tweaks, addo
 - [ ] full vm setup — spin up any iso quickly with minimal effort
 - [ ] gaming mode script bundled in and ready to go (already made)
 - [ ] other stuff as i go
+
+---
+
+## merging upstream
+
+to pull latest changes from the original project without losing your customizations:
+
+```bash
+~/user_scripts/dusky_system/merge_upstream/merge_upstream.sh
+```
+
+or use the **Add-ons → Merge Upstream Changes** button in the Dusky Control Center.
 
 ---
 
@@ -23,11 +39,11 @@ sudo pacman -Syu --needed git
 ```
 
 ```bash
-git clone --bare --depth 1 https://github.com/veltraced/dusker.git $HOME/dusker
+git clone --bare --depth 1 https://github.com/veltraced/dusker.git $HOME/dusky
 ```
 
 ```bash
-git --git-dir=$HOME/dusker/ --work-tree=$HOME checkout -f
+git --git-dir=$HOME/dusky/ --work-tree=$HOME checkout -f
 ```
 
 then run the setup script:

@@ -12,7 +12,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Constants & Configuration
 # -----------------------------------------------------------------------------
-readonly REPO_URL="https://github.com/dusklinux/dusky"
+readonly REPO_URL="https://github.com/veltraced/dusker"
 readonly DOTFILES_DIR="${HOME}/dusky"
 readonly GIT_EXEC="/usr/bin/git"
 
