@@ -3044,8 +3044,8 @@ pages:
     - type: navigation
       properties:
         title: More Add-ons
-        description: Drop your .css files in ~/.config/dusky_sites and run the Firefox TUI
-        icon: document-open-symbolic
+        description: add more addons here
+        icon: emblem-system-symbolic
       layout:
       - type: section
         properties:
