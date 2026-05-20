@@ -1,0 +1,9 @@
+{
+  "bg": "#0a1612",
+  "fg": "#d8e6df",
+  "accent": "#00e0b7",
+  "error": "#ffb4ab",
+  "warning": "#a0d0ca",
+  "success": "#8cd2d9",
+  "muted": "#3d4945"
+}

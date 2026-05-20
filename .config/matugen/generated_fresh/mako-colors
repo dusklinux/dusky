@@ -1,0 +1,49 @@
+# Material You colors - Sleek Transparent Theme
+
+# 40% opacity (66) on the background for a glassy Hyprland blur effect
+background-color=#0a161266
+# Text color matching the primary accent color
+text-color=#00e0b7
+# 93% opacity (ee) on the border using your primary accent color
+border-color=#00e0b7ee
+# Dynamic timeout progress bar color
+progress-color=#00e0b7
+
+# Per-mode settings
+[mode=do-not-disturb]
+invisible=1
+on-notify=none
+
+[mode=silent]
+on-notify=none
+
+[urgency=high]
+# Solid, intense border and text for critical alerts
+border-color=#93000a
+text-color=#ffb4ab
+
+# ======================================
+# OSD HARDWARE OVERLAY
+# ======================================
+[app-name=OSD]
+anchor=bottom-center
+
+# outer-margin: Top, Right, Bottom, Left.
+# This physically pushes the Wayland surface 150px up from the bottom monitor edge.
+outer-margin=0,0,30,0
+
+# Reset standard margin so it doesn't compound the spacing
+margin=0
+
+# -- Typography & Formatting --
+text-alignment=center
+
+# -- Contrast Override --
+background-color=#0a161266
+progress-color=#005140
+text-color=#00e0b7
+
+# Optional: Gives the OSD a slightly more defined border to stand out
+border-size=0
+border-radius=22
+border-color=#00e0b7
