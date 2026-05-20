@@ -5,7 +5,7 @@
    Tweak the decimals (0.0 to 1.0) here to adjust granular glassiness.
    ───────────────────────────────────────────────────────────────────────────── */
 @define-color glass_bar                       transparent;
-@define-color glass_module                    alpha(@surface_container, 0.45);
+@define-color glass_module                    alpha(@surface_container, 0.7);
 @define-color glass_hover_bg                  alpha(@on_secondary, 0.8);
 @define-color glass_hover_border              alpha(@secondary_container, 0.8);
 @define-color glass_launcher_hover_bg         alpha(@on_tertiary, 0.8);
