@@ -8,6 +8,7 @@ a fork of [dusky](https://github.com/dusklinux/dusky) by dusklinux. tweaks, addo
 - add-ons tab in the Dusky Control Center (placeholder, ready for customization)
 - upstream merge helper — easy `dusklinux/dusky` sync via `merge_upstream.sh` or the Add-ons tab
 - all deploy/update scripts now point to this repo instead of upstream
+- (currently of course)
 
 ## what's coming
 
