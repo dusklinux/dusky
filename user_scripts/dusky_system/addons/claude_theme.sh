@@ -10,12 +10,15 @@ log_info() { printf "${C_INFO}[INFO]${C_RESET} %s\n" "$1"; }
 log_success() { printf "${C_SUCCESS}[OK]${C_RESET} %s\n" "$1"; }
 log_error() { printf "${C_ERROR}[ERR]${C_RESET} %s\n" "$1"; }
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SITES_DIR="${HOME}/.config/dusky_sites"
+CLAUDE_CSS="${SITES_DIR}/claude.css"
 
-mkdir -p "$SITES_DIR"
+mkdir -p "${SITES_DIR}"
 
-cat > "${SITES_DIR}/claude.css" << 'CLAUDE_CSS'
+tmpf=$(mktemp)
+trap 'rm -f "$tmpf"' EXIT
+
+cat > "$tmpf" << 'CLAUDE_EOF'
 @-moz-document domain("claude.ai") {
   :root {
     --bg-100: var(--surface) !important;
@@ -72,7 +75,14 @@ cat > "${SITES_DIR}/claude.css" << 'CLAUDE_CSS'
     background-color: var(--outline_variant) !important;
   }
 }
-CLAUDE_CSS
+CLAUDE_EOF
+
+if mv "$tmpf" "$CLAUDE_CSS" 2>/dev/null; then
+    :
+else
+    sudo mv "$tmpf" "$CLAUDE_CSS"
+    sudo chown "$(whoami):$(whoami)" "$CLAUDE_CSS"
+fi
 
 log_success "claude.css deployed."
 
