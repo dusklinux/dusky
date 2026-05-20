@@ -107,6 +107,7 @@ declare -ar PACKAGES=(
 # snapshot & limine
   "limine-mkinitcpio-hook"
   "limine-snapper-sync"
+  "input-remapper-git"
 )
 
 # Delay before auto-retrying

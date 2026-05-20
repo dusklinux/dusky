@@ -26,6 +26,7 @@ SCRIPT_SEARCH_DIRS=(
     "${HOME}/user_scripts/btrfs_snapshots"
     "${HOME}/user_scripts/tts_stt/dusky_kokoro"
     "${HOME}/user_scripts/tts_stt/dusky_parakeet"
+    "${HOME}/user_scripts/performance"
     # "${HOME}/my_other_scripts"
     # "/opt/shared_team_scripts"
 )

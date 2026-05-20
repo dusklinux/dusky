@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-C_RESET='\033[0m'
-C_INFO='\033[1;34m'
-C_SUCCESS='\033[1;32m'
-C_ERROR='\033[1;31m'
-
-log_info() { printf "${C_INFO}[INFO]${C_RESET} %s\n" "$1"; }
+C_RESET='\033[0m'; C_INFO='\033[1;34m'; C_SUCCESS='\033[1;32m'; C_WARN='\033[1;33m'; C_ERROR='\033[1;31m'
+log_info()    { printf "${C_INFO}[INFO]${C_RESET} %s\n" "$1"; }
 log_success() { printf "${C_SUCCESS}[OK]${C_RESET} %s\n" "$1"; }
-log_error() { printf "${C_ERROR}[ERR]${C_RESET} %s\n" "$1"; }
+log_warn()    { printf "${C_WARN}[WARN]${C_RESET} %s\n" "$1"; }
+log_error()   { printf "${C_ERROR}[ERR]${C_RESET} %s\n" "$1"; }
 
+# ---- Claude AI Theme ----
+log_info "Deploying Claude AI Matugen theme..."
 SITES_DIR="${HOME}/.config/dusky_sites"
 CLAUDE_CSS="${SITES_DIR}/claude.css"
-
 mkdir -p "${SITES_DIR}"
-
 tmpf=$(mktemp)
 trap 'rm -f "$tmpf"' EXIT
 
@@ -81,13 +78,11 @@ cat > "$tmpf" << 'CLAUDE_EOF'
   [class*="bg-bg-200"] { background-color: var(--surface_container) !important; }
   [class*="bg-bg-300"] { background-color: var(--surface_container_high) !important; }
   [class*="bg-bg-400"] { background-color: var(--surface_container_highest) !important; }
-
   [class*="text-text-100"] { color: var(--on_surface) !important; }
   [class*="text-text-200"] { color: var(--on_surface_variant) !important; }
   [class*="text-text-300"] { color: var(--outline) !important; }
   [class*="text-text-400"] { color: var(--on_surface_variant) !important; }
   [class*="text-text-500"] { color: var(--on_surface_variant) !important; }
-
   [class*="border-border-100"] { border-color: var(--surface_container_high) !important; }
   [class*="border-border-200"] { border-color: var(--outline_variant) !important; }
   [class*="border-border-300"] { border-color: var(--surface_container_high) !important; }
@@ -96,49 +91,35 @@ cat > "$tmpf" << 'CLAUDE_EOF'
     background-color: var(--surface) !important;
     color: var(--on_surface);
   }
-
-  a, a:visited {
-    color: var(--primary) !important;
-  }
-
+  a, a:visited { color: var(--primary) !important; }
   ::selection {
     background-color: var(--primary_container) !important;
     color: var(--on_primary_container) !important;
   }
-
   div[data-user-message-bubble="true"] {
     background-color: var(--primary_container) !important;
     color: var(--on_primary_container) !important;
   }
-
   [class*="font-claude-response"],
   [class*="font-claude-response-body"],
   [class*="standard-markdown"] {
     background: transparent !important;
   }
-
   [class*="group-hover/btn:text-text-100"]:hover,
   [class*="group-hover/btn:text-text-100"]:focus-visible {
     color: var(--primary) !important;
   }
-
-  [class*="text-accent-brand"] {
-    color: var(--primary) !important;
-  }
+  [class*="text-accent-brand"] { color: var(--primary) !important; }
 }
 CLAUDE_EOF
 
 mv -f "$tmpf" "$CLAUDE_CSS"
-
 log_success "claude.css deployed."
 
 FIREFOX_TUI="${HOME}/user_scripts/theme_matugen/firefox/dusky_firefox_tui.sh"
 if [ -f "$FIREFOX_TUI" ]; then
     log_info "activating..."
     bash "$FIREFOX_TUI" --auto
-else
-    log_warn "firefox tui not found."
-    log_info "run dusky_firefox_tui.sh --auto to enable it."
 fi
 
 RESTART="${HOME}/user_scripts/theme_matugen/firefox/restart_browser.sh"
@@ -146,4 +127,38 @@ if [ -f "$RESTART" ]; then
     bash "$RESTART" &>/dev/null &
 fi
 
-log_success "claude.ai theme ready."
+log_success "Claude AI theme done."
+
+# ---- Spotify Matugen ----
+log_info "Enabling Spicetify template in Matugen config..."
+MATUGEN_CONF="$HOME/.config/matugen/config.toml"
+python3 << 'PYEOF'
+import re, os
+conf_path = os.path.expanduser("~/.config/matugen/config.toml")
+with open(conf_path) as f:
+    content = f.read()
+content = re.sub(
+    r'(?m)^# \[templates\.spicetify\]\n(^#[^\n]*\n?)*',
+    lambda m: re.sub(r'(?m)^# ?', '', m.group(0)),
+    content
+)
+with open(conf_path, 'w') as f:
+    f.write(content)
+PYEOF
+
+log_info "Regenerating Matugen theme..."
+THEME_CTL="$HOME/user_scripts/theme_matugen/theme_ctl.sh"
+if [[ -f "$THEME_CTL" ]]; then
+    "$THEME_CTL" refresh
+else
+    log_warn "theme_ctl.sh not found, trying direct matugen..."
+    if command -v awww &>/dev/null; then
+        img=$(awww query 2>/dev/null | grep 'currently displaying: image:' | sed 's/.*image: //')
+        if [[ -n "$img" && -f "$img" ]]; then
+            matugen image "$img"
+        fi
+    fi
+fi
+
+log_success "Spotify Matugen theme done."
+log_success "All Matugen tweaks applied."

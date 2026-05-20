@@ -95,8 +95,8 @@ if TYPE_CHECKING:
 # =============================================================================
 # CONSTANTS
 # =============================================================================
-APP_ID: Final[str] = "com.github.dusky.controlcenter"
-APP_TITLE: Final[str] = "Dusky Control Center"
+APP_ID: Final[str] = "com.github.veltraced.dusker"
+APP_TITLE: Final[str] = "Dusker"
 CONFIG_FILENAME: Final[str] = "dusky_config.yaml"
 CSS_FILENAME: Final[str] = "dusky_style.css"
 SCRIPT_DIR: Final[Path] = Path(__file__).resolve().parent
@@ -268,12 +268,12 @@ class ApplicationState:
     config_error: str | None = None
 
 
-class DuskyControlCenter(Adw.Application):
+class DuskerControlCenter(Adw.Application):
     """
     Main Application Controller.
 
     Manages the application lifecycle, UI construction, hot-reload functionality,
-    and search capabilities for the Dusky Control Center.
+    and search capabilities for the Dusker Control Center.
     """
 
     def __init__(self) -> None:
@@ -1207,7 +1207,7 @@ class DuskyControlCenter(Adw.Application):
         title_box = Gtk.Box(spacing=8)
         icon = Gtk.Image.new_from_icon_name(ICON_SYSTEM)
         icon.add_css_class("sidebar-header-icon")
-        title = Gtk.Label(label="Dusky", css_classes=["title"])
+        title = Gtk.Label(label="Dusker", css_classes=["title"])
         title_box.append(icon)
         title_box.append(title)
         header.set_title_widget(title_box)
@@ -1357,7 +1357,7 @@ class DuskyControlCenter(Adw.Application):
         root_tag: str | None = None,
     ) -> Adw.NavigationPage:
         """
-        Build a navigation page with toolbar and preferences content.
+        Build a navigation page with toolbar and horizontal section flow.
         """
         path = list(ctx.get("path") or [])
         if not path or path[-1] != title:
@@ -1380,34 +1380,44 @@ class DuskyControlCenter(Adw.Application):
         header.set_title_widget(window_title)
         toolbar.add_top_bar(header)
 
-        pref_page = Adw.PreferencesPage()
-        self._populate_pref_content(pref_page, layout, ctx)
+        flow = Gtk.FlowBox()
+        flow.set_valign(Gtk.Align.START)
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_column_spacing(12)
+        flow.set_row_spacing(12)
+        flow.set_max_children_per_line(3)
+        flow.set_min_children_per_line(1)
 
-        toolbar.set_content(pref_page)
+        self._populate_pref_content(flow, layout, ctx)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_child(flow)
+        toolbar.set_content(scroll)
         page.set_child(toolbar)
         return page
 
     def _populate_pref_content(
         self,
-        page: Adw.PreferencesPage,
+        container: Gtk.FlowBox,
         layout: list[ConfigSection],
         ctx: RowContext,
     ) -> None:
-        """Populate a preferences page with sections and items."""
+        """Populate a flow box with horizontal section cards."""
         for section in layout:
             section_type = section.get("type", SectionType.SECTION)
 
             if section_type == SectionType.GRID_SECTION:
-                page.add(self._build_grid_section(section, ctx))
+                container.add(self._build_grid_section(section, ctx))
                 continue
 
             if isinstance(section.get("items"), list):
-                page.add(self._build_standard_section(section, ctx))
+                container.add(self._build_standard_section(section, ctx))
                 continue
 
             group = Adw.PreferencesGroup()
             group.add(self._build_item_row(section, ctx))
-            page.add(group)
+            container.add(group)
 
     def _build_grid_section(
         self,
@@ -1821,7 +1831,7 @@ class DuskyControlCenter(Adw.Application):
 # =============================================================================
 def main() -> int:
     """Application entry point."""
-    app = DuskyControlCenter()
+    app = DuskerControlCenter()
     return app.run(sys.argv)
 
 

@@ -19,6 +19,7 @@ readonly TARGET_SERVICES=(
   "warp-svc.service"
   "preload"
   "asusd.service"
+  "input-remapper.service"
   # Add more services below:
   # "bluetooth.service"
 )

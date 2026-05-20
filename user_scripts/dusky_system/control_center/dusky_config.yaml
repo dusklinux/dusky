@@ -2993,28 +2993,23 @@ pages:
 
 - id: addons
   title: Add-ons
-  icon: applications-addons-symbolic
+  icon: utilities-terminal-symbolic
   layout:
   - type: section
     properties:
-      title: Theme Add-ons
-      icon: applications-graphics-symbolic
-      description: Extra site themes for Matugen Firefox theming
+      title: Matugen Tweaks
+      icon: ''
+      description: ''
     items:
     - type: button
       properties:
-        title: Install Claude Theme
-        description: Matugen theme for claude.ai
-        icon: accessories-text-editor-symbolic
+        title: Matugen Tweaks
+        description: Spotify and Claude Matugen
+        icon: applications-utilities-symbolic
       on_press:
         type: exec
-        command: kitty --class claude_theme.sh --title "Claude Theme" --hold sh -c "$HOME/user_scripts/dusky_system/addons/claude_theme.sh"
+        command: kitty --class matugen_tweaks.sh --title "Matugen Tweaks" --hold sh -c "$HOME/user_scripts/dusky_system/addons/matugen_tweaks.sh"
         terminal: false
-    - type: navigation
-      properties:
-        title: More Add-ons
-        description: add more addons here
-        icon: document-open-symbolic
 
   - type: section
     properties:

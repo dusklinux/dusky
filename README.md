@@ -5,15 +5,14 @@ a fork of [dusky](https://github.com/dusklinux/dusky) by dusklinux. tweaks, addo
 
 ## what's here
 
-- add-ons & tweaks (obviously)
-- more soon
-
-## what's coming
-
-- [ ] performance optimizations and system tweaks
-- [ ] full vm setup — full vm installer script with all dependices
-- [ ] gaming mode script bundled in and ready to go (already made)
-- [ ] other stuff as i go
+- claude.ai matugen theme
+- spotify/spicetify matugen theme fix
+- matugen tweaks addon (one-click claude + spotify)
+- gaming mode script (`~/user_scripts/performance/gaming_mode.sh`)
+- full vm setup (kvm + storage + vfio)
+- input remapper pre-configured
+- dusker control center with horizontal layout
+- performance tweaks and system optimizations
 
 ---
 
@@ -25,7 +24,7 @@ to pull latest changes from the original project without losing your customizati
 ~/user_scripts/dusky_system/merge_upstream/merge_upstream.sh
 ```
 
-or use the **Add-ons → Merge Upstream Changes** button in the Dusky Control Center.
+or use the **Add-ons → Merge Upstream Changes** button in Dusker.
 
 ---
 
