@@ -3,6 +3,7 @@ import os
 import re
 import stat
 import tempfile
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -11,18 +12,23 @@ from python.frontend.core_types import BaseEngine
 class IniConfigEngine(BaseEngine):
     """
     Production-grade AST-like engine for INI-style and Arch Linux configuration files 
-    (e.g., pacman.conf, makepkg.conf).
+    (e.g., pacman.conf, makepkg.conf, mako/config).
     
-    Provides strict atomicity, concurrency protection (mtime locks), and precise 
-    preservation of structural comments and documentation keys.
+    Provides strict atomicity, concurrency protection (mtime locks), precise 
+    preservation of structural comments, and dynamic assignment operator detection.
     """
     
-    # Matches a section header like [options]
+    # Matches a section header like [options] or [mode=do-not-disturb]
     _RE_SECTION = re.compile(r"^\s*\[(.*?)\]\s*$")
     
-    # Matches a key, intelligently separating it from comment prefixes and values
-    # Group 1: Prefix (whitespace + optional # or ;), Group 2: Key, Group 3: Value/Tail
-    _RE_KEY = re.compile(r"^([ \t]*[#;][ \t]*|[ \t]*)([a-zA-Z0-9_.-]+)(?:([ \t]*=.*)|[ \t]*)$")
+    # Matches a key, intelligently separating it from comment prefixes, assignment operators, and values
+    # Group 1: Leading whitespace
+    # Group 2: Comment char (# or ; or empty)
+    # Group 3: Whitespace after comment char
+    # Group 4: Key
+    # Group 5: Assignment operator (e.g., ' = ', '=', or None)
+    # Group 6: Value (or None)
+    _RE_KEY = re.compile(r"^([ \t]*)([#;]?)([ \t]*)([a-zA-Z0-9_.-]+)(?:([ \t]*=[ \t]*)(.*)|[ \t]*)$")
     
     def __init__(self, config_path: str = "/etc/pacman.conf"):
         self.config_path = Path(config_path).expanduser().resolve()
@@ -45,38 +51,29 @@ class IniConfigEngine(BaseEngine):
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    
-                    # 1. Scope/Section change
                     sec_match = self._RE_SECTION.match(line)
                     if sec_match:
                         current_scope = sec_match.group(1).strip()
                         continue
                         
-                    # 2. Skip comments during load (we only want the live state)
-                    if line.startswith('#') or line.startswith(';'):
-                        continue
+                    match = self._RE_KEY.match(line.rstrip('\n'))
+                    if match:
+                        ws1, cmt, ws2, key, assign_op, val = match.groups()
                         
-                    # 3. Parse Keys and Valueless Flags
-                    if '=' in line:
-                        key, val = line.split('=', 1)
-                        key = key.strip()
-                        val = val.strip()
-                        
-                        # Strip standard UI string quotes if present
-                        if val.startswith('"') and val.endswith('"') and len(val) >= 2:
-                            val = val[1:-1]
-                            
-                        self.cache[f"{current_scope}/{key}"] = val
-                    else:
-                        # Valueless flags (like 'Color', 'ILoveCandy')
-                        key = line.strip()
-                        self.cache[f"{current_scope}/{key}"] = True
-                        
+                        # Only load active (uncommented) keys
+                        if not cmt:
+                            if assign_op is not None:
+                                v = val.strip()
+                                # Strip standard UI string quotes if present
+                                if v.startswith('"') and v.endswith('"') and len(v) >= 2:
+                                    v = v[1:-1]
+                                self.cache[f"{current_scope}/{key}"] = v
+                            else:
+                                # Valueless flags (like 'Color', 'ILoveCandy')
+                                self.cache[f"{current_scope}/{key}"] = True
+                                
         except (OSError, IOError) as e:
-            print(f"Failed to read INI file {self.config_path}: {e}")
+            print(f"Failed to read config file {self.config_path}: {e}")
             
         return self.cache
 
@@ -87,6 +84,7 @@ class IniConfigEngine(BaseEngine):
     def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
         """
         O(1) pass batched mutator with atomicity and exact singularity enforcement.
+        Now featuring dynamic syntax heuristics for cross-daemon compatibility.
         """
         if not changes:
             return True, "No pending changes.", ""
@@ -112,6 +110,10 @@ class IniConfigEngine(BaseEngine):
 
         current_scope = "DEFAULT"
         
+        # Heuristics: Analyze assignment styles to match the file's native format
+        assign_op_counts = {}
+        valueless_count = 0
+        
         # --- PASS 1: Inline Replacement & Singularity Enforcement ---
         for line in lines:
             sec_match = self._RE_SECTION.match(line)
@@ -121,10 +123,15 @@ class IniConfigEngine(BaseEngine):
                 continue
                 
             match = self._RE_KEY.match(line.rstrip('\n'))
-            
             if match:
-                prefix = match.group(1)
-                key = match.group(2)
+                ws1, cmt, ws2, key, assign_op, old_val = match.groups()
+                
+                # Gather telemetry for appended keys
+                if assign_op is not None:
+                    assign_op_counts[assign_op] = assign_op_counts.get(assign_op, 0) + 1
+                else:
+                    if not cmt: # Only count active valueless flags
+                        valueless_count += 1
                 
                 lookup_key = (current_scope, key)
                 if lookup_key in changes_dict:
@@ -138,28 +145,49 @@ class IniConfigEngine(BaseEngine):
                         # FIRST HIT: Mutate this line to become the single active state
                         applied_commits.add(lookup_key)
                         
-                        if new_val in ("false", "nil", "__DELETE__"):
-                            if not ('#' in prefix or ';' in prefix):
-                                out_lines.append(f"#{line.lstrip()}") # Disable safely
-                            else:
+                        is_delete_signal = str(new_val) == "__DELETE__" or str(new_val) == "nil"
+                        is_false_signal = str(new_val).lower() == "false"
+                        
+                        if is_delete_signal:
+                            if cmt:
                                 out_lines.append(line)                # Already disabled
-                                
-                        elif new_val == "true":
-                            out_lines.append(f"{key}\n")              # Valueless flag enabled
-                            
+                            else:
+                                out_lines.append(f"{ws1}#{ws2}{key}{(assign_op or '')}{(old_val or '')}\n") # Disable safely
+                        elif is_false_signal:
+                            if assign_op is not None:
+                                out_lines.append(f"{ws1}{key}{assign_op}{new_val}\n")
+                            else:
+                                # For valueless flags, false means disable (comment out)
+                                if cmt:
+                                    out_lines.append(line)
+                                else:
+                                    out_lines.append(f"{ws1}#{ws2}{key}\n")
                         else:
-                            out_lines.append(f"{key} = {new_val}\n")  # Key=Value enabled
+                            # Enable / Modify
+                            if assign_op is not None:
+                                out_lines.append(f"{ws1}{key}{assign_op}{new_val}\n")
+                            else:
+                                if str(new_val).lower() == "true":
+                                    out_lines.append(f"{ws1}{key}\n")
+                                else:
+                                    dominant_op = max(assign_op_counts, key=assign_op_counts.get) if assign_op_counts else "="
+                                    out_lines.append(f"{ws1}{key}{dominant_op}{new_val}\n")
                     else:
                         # SUBSEQUENT HITS: Mute duplicates to prevent overriding
-                        if not ('#' in prefix or ';' in prefix):
-                            out_lines.append(f"#{line.lstrip()}")
-                        else:
+                        if cmt:
                             out_lines.append(line)
+                        else:
+                            out_lines.append(f"{ws1}#{ws2}{key}{(assign_op or '')}{(old_val or '')}\n")
                             
                     continue # Bypass appending the original unmodified line
                     
             out_lines.append(line)
             
+        # Determine dominant assignment operator for new keys
+        dominant_assign_op = "="
+        if assign_op_counts:
+            dominant_assign_op = max(assign_op_counts, key=assign_op_counts.get)
+
         # --- PASS 2: Append Missing Keys ---
         missing_changes = [k for k in changes_dict if k not in applied_commits]
         if missing_changes:
@@ -184,10 +212,11 @@ class IniConfigEngine(BaseEngine):
                 # Create scope header if it doesn't exist
                 if scope not in scope_end_indices and scope != "DEFAULT":
                     # Ensure preceding newline for clean formatting
-                    if insert_idx > 0 and not out_lines[insert_idx - 1].endswith('\n\n'):
-                        out_lines.append("\n")
-                    out_lines.append(f"[{scope}]\n")
-                    insert_idx = len(out_lines)
+                    if insert_idx > 0 and not out_lines[insert_idx - 1].endswith('\n\n') and out_lines[insert_idx - 1] != '\n':
+                        out_lines.insert(insert_idx, "\n")
+                        insert_idx += 1
+                    out_lines.insert(insert_idx, f"[{scope}]\n")
+                    insert_idx += 1
                     
                 lines_to_insert = []
                 for key in missing_by_scope[scope]:
@@ -195,12 +224,24 @@ class IniConfigEngine(BaseEngine):
                     if isinstance(val, str) and val.startswith("__VAR__"):
                         val = val[7:]
                         
-                    if val in ("false", "nil", "__DELETE__"):
+                    is_delete_signal = str(val) == "__DELETE__" or str(val) == "nil"
+                    is_false_signal = str(val).lower() == "false"
+                    
+                    if is_delete_signal:
                         continue 
-                    elif val == "true":
-                        lines_to_insert.append(f"{key}\n")
+                    elif is_false_signal:
+                        if valueless_count > 0:
+                            pass # We don't append a valueless flag if it's explicitly set to false
+                        else:
+                            lines_to_insert.append(f"{key}{dominant_assign_op}{val}\n")
+                    elif str(val).lower() == "true":
+                        # Smart Valueless vs Assignment resolution
+                        if valueless_count > 0:
+                            lines_to_insert.append(f"{key}\n")
+                        else:
+                            lines_to_insert.append(f"{key}{dominant_assign_op}true\n")
                     else:
-                        lines_to_insert.append(f"{key} = {val}\n")
+                        lines_to_insert.append(f"{key}{dominant_assign_op}{val}\n")
                         
                 if lines_to_insert:
                     out_lines = out_lines[:insert_idx] + lines_to_insert + out_lines[insert_idx:]
@@ -242,6 +283,14 @@ class IniConfigEngine(BaseEngine):
                     pass
 
         if success:
+            # Smart Reload Heuristics for Arch Linux Daemons
+            filename = self.config_path.name.lower()
+            try:
+                if filename == "config" and "mako" in str(self.config_path.parent).lower():
+                    subprocess.run(["makoctl", "reload"], check=False, capture_output=True)
+            except Exception:
+                pass
+
             if len(applied_commits) == len(changes):
                 return True, f"Successfully batched {len(changes)} INI commits.", ""
             else:
