@@ -5,13 +5,13 @@ a fork of [dusky](https://github.com/dusklinux/dusky) by dusklinux. tweaks, addo
 
 ## what's here
 
-- new claude.ai matugen
-- (currently of course)
+- add-ons & tweaks (obviously)
+- more soon
 
 ## what's coming
 
 - [ ] performance optimizations and system tweaks
-- [ ] full vm setup — spin up any iso quickly with minimal effort
+- [ ] full vm setup — full vm installer script with all dependices
 - [ ] gaming mode script bundled in and ready to go (already made)
 - [ ] other stuff as i go
 
