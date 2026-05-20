@@ -77,12 +77,7 @@ cat > "$tmpf" << 'CLAUDE_EOF'
 }
 CLAUDE_EOF
 
-if mv "$tmpf" "$CLAUDE_CSS" 2>/dev/null; then
-    :
-else
-    sudo mv "$tmpf" "$CLAUDE_CSS"
-    sudo chown "$(whoami):$(whoami)" "$CLAUDE_CSS"
-fi
+mv "$tmpf" "$CLAUDE_CSS"
 
 log_success "claude.css deployed."
 

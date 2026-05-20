@@ -3010,7 +3010,7 @@ pages:
         style: suggested
       on_press:
         type: exec
-        command: kitty --class claude_theme.sh --title "Claude Theme" --hold sh -c "$HOME/user_scripts/dusky_system/addons/claude_theme.sh"
+            command: kitty --class claude_theme.sh --title "Claude Theme" --hold sh -c "$HOME/user_scripts/dusky_system/addons/claude_theme.sh"
         terminal: false
     - type: navigation
       properties:
