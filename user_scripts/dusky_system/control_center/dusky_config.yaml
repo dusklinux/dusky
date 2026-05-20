@@ -3045,7 +3045,7 @@ pages:
       properties:
         title: More Add-ons
         description: add more addons here
-        icon: emblem-system-symbolic
+        icon: document-open-symbolic
       layout:
       - type: section
         properties:
