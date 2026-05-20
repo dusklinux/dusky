@@ -1,6 +1,6 @@
 {
     "layer": "top",
-    "position": "bottom",
+    "position": "top",
     "height": 38,
     "spacing": 2,
     "margin-top": 0,
@@ -17,7 +17,7 @@
         "group/updates-drawer"
     ],
     "modules-center": [
-        "wlr/taskbar"
+        "hyprland/workspaces"
     ],
     "modules-right": [
         "group/net-drawer",
@@ -27,16 +27,12 @@
     ],
 
     // =========================================================
-    // CENTER TASKBAR
+    // CENTER WORKSPACES
     // =========================================================
 
-    "wlr/taskbar": {
-        "format": "{icon}",
-        "icon-size": 20,
-        "tooltip-format": "{title:.50}",
-        "on-click": "activate",
-        "on-click-middle": "close",
-        "on-click-right": "fullscreen"
+    "hyprland/workspaces": {
+        "format": "{name}",
+        "on-click": "activate"
     },
 
     // =========================================================

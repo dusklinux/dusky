@@ -4,7 +4,7 @@
    TRANSLUCENCY CONTROLS (GLASSY MODE)
    Tweak the decimals (0.0 to 1.0) here to adjust granular glassiness.
    ───────────────────────────────────────────────────────────────────────────── */
-@define-color glass_bar                       alpha(@surface, 0.6);
+@define-color glass_bar                       @surface;
 @define-color glass_module                    alpha(@surface_container, 0.8);
 @define-color glass_hover_bg                  alpha(@on_secondary, 0.8);
 @define-color glass_hover_border              alpha(@secondary_container, 0.8);
@@ -17,16 +17,16 @@
 @define-color glass_primary_shadow            alpha(@primary, 0.7);
 @define-color glass_error_bg                  alpha(@error_container, 0.8);
 @define-color glass_muted_bg                  alpha(@secondary_fixed_dim, 0.8);
-@define-color glass_taskbar_bg                alpha(@secondary_container, 0.8);
-@define-color glass_taskbar_border_hover      alpha(@primary, 0.8);
-@define-color glass_taskbar_border_active     alpha(@tertiary, 0.8);
+@define-color glass_workspace_bg              alpha(@secondary_container, 0.8);
+@define-color glass_workspace_border_active   alpha(@tertiary, 0.8);
+@define-color glass_workspace_border_occupied alpha(@primary, 0.8);
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSPARENCY TOGGLE
    ───────────────────────────────────────────────────────────────────────────── */
 
-/* WAYBAR_OPAQUE_SWITCH_START */
-@define-color glass_bar                       alpha(@surface, 0.6);
+/* WAYBAR_OPAQUE_SWITCH_START
+@define-color glass_bar                       @surface;
 @define-color glass_module                    @surface_container;
 @define-color glass_hover_bg                  @on_secondary;
 @define-color glass_hover_border              @secondary_container;
@@ -39,10 +39,10 @@
 @define-color glass_primary_shadow            @primary;
 @define-color glass_error_bg                  @error_container;
 @define-color glass_muted_bg                  @secondary_fixed_dim;
-@define-color glass_taskbar_bg                @secondary_container;
-@define-color glass_taskbar_border_hover      @primary;
-@define-color glass_taskbar_border_active     @tertiary;
-/* WAYBAR_OPAQUE_SWITCH_END */
+@define-color glass_workspace_bg              @secondary_container;
+@define-color glass_workspace_border_active   @tertiary;
+@define-color glass_workspace_border_occupied @primary;
+WAYBAR_OPAQUE_SWITCH_END */
 
 /* ─────────────────────────────────────────────────────────────────────────────
    RESET & FOUNDATIONS
@@ -233,38 +233,42 @@ tooltip {
 }
 
 /* =========================================================
-   WLR TASKBAR (CENTER)
-   ========================================================= */
+    WORKSPACES (CENTER)
+    ========================================================= */
 
-#taskbar {
+#workspaces {
     background: @glass_module;
-    padding: 0 15px;
+    padding: 0 8px;
     margin: 4px;
     border: transparent;
     border-radius: 25px;
 }
 
-#taskbar.empty {
+#workspaces button {
     background: transparent;
-    padding: 0;
-    margin: 0;
-}
-
-#taskbar button {
-    background: transparent;
-    padding: 0 8px;
-    margin: 0 2px;
-    border-bottom: 3px solid transparent;
+    padding: 2px 10px;
+    margin: 2px;
+    border-radius: 25px;
+    color: @on_surface_variant;
     transition: all 0.3s ease-out;
-    border-radius: 4px;
 }
 
-#taskbar button:hover {
-    background: @glass_taskbar_bg;
-    border-bottom-color: @glass_taskbar_border_hover;
+#workspaces button:hover {
+    background: @glass_workspace_bg;
+    color: @on_surface;
 }
 
-#taskbar button.active {
-    background: @glass_taskbar_bg;
-    border-bottom-color: @glass_taskbar_border_active;
+#workspaces button.active {
+    background: @glass_workspace_border_active;
+    color: @on_tertiary;
+}
+
+#workspaces button.urgent {
+    background: @error_container;
+    color: @on_error;
+}
+
+#workspaces button.empty {
+    background: transparent;
+    color: @surface_variant;
 }
