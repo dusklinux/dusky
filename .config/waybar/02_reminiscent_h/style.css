@@ -238,22 +238,22 @@ tooltip {
 
 #workspaces {
     background: @glass_module;
-    padding: 0 6px;
+    padding: 0 4px;
     margin: 4px;
     border-radius: 25px;
 }
 
 #workspaces button {
     background: transparent;
-    padding: 0 6px;
-    margin: 3px 1px;
+    padding: 0 4px;
+    margin: 2px 1px;
     border-radius: 25px;
-    min-width: 22px;
-    min-height: 22px;
-    font-size: 11px;
-    font-weight: 600;
+    min-width: 18px;
+    min-height: 18px;
+    font-size: 10px;
+    font-weight: 700;
     color: @surface_variant;
-    transition: background 0.2s ease, color 0.2s ease;
+    transition: background 0.15s ease, color 0.15s ease;
 }
 
 #workspaces button:hover {
@@ -269,9 +269,4 @@ tooltip {
 #workspaces button.urgent {
     background: @error_container;
     color: @on_error;
-}
-
-#workspaces button.empty {
-    background: transparent;
-    color: @surface_variant;
 }
