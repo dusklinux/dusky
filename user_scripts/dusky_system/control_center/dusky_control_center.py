@@ -103,7 +103,7 @@ SCRIPT_DIR: Final[Path] = Path(__file__).resolve().parent
 
 # UI Layout Constants
 WINDOW_DEFAULT_WIDTH: Final[int] = 1180
-WINDOW_DEFAULT_HEIGHT: Final[int] = 720
+WINDOW_DEFAULT_HEIGHT: Final[int] = 780
 SIDEBAR_MIN_WIDTH: Final[int] = 180
 SIDEBAR_MAX_WIDTH: Final[int] = 180
 SIDEBAR_WIDTH_FRACTION: Final[float] = 0.25
