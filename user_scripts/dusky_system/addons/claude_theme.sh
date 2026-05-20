@@ -20,7 +20,10 @@ trap 'rm -f "$tmpf"' EXIT
 
 cat > "$tmpf" << 'CLAUDE_EOF'
 @-moz-document domain("claude.ai") {
+  html { color-scheme: dark !important; }
+
   :root {
+    --bg-000: var(--surface_container_low) !important;
     --bg-100: var(--surface) !important;
     --bg-200: var(--surface_container) !important;
     --bg-300: var(--surface_container_high) !important;
@@ -28,50 +31,89 @@ cat > "$tmpf" << 'CLAUDE_EOF'
     --text-100: var(--on_surface) !important;
     --text-200: var(--on_surface_variant) !important;
     --text-300: var(--outline) !important;
-    --accent-100: var(--primary) !important;
-    --accent-200: var(--primary_container) !important;
-    --accent-300: var(--secondary) !important;
-    --danger-100: var(--error) !important;
-    --border-100: var(--outline_variant) !important;
-    --border-200: var(--outline) !important;
+    --text-400: var(--on_surface_variant) !important;
+    --text-500: var(--on_surface_variant) !important;
+    --border-100: var(--surface_container_high) !important;
+    --border-200: var(--outline_variant_rgb) !important;
+    --border-300: var(--surface_container_high_rgb) !important;
+    --accent-brand: var(--primary) !important;
+    --always-black: 0 0 0 !important;
   }
-  body {
-    background-color: var(--surface) !important;
-    color: var(--on_surface) !important;
-  }
-  [class*="bg-bg"],
+
+  [class*="bg-bg-000"] { background-color: var(--surface_container_low) !important; }
   [class*="bg-bg-100"] { background-color: var(--surface) !important; }
   [class*="bg-bg-200"] { background-color: var(--surface_container) !important; }
   [class*="bg-bg-300"] { background-color: var(--surface_container_high) !important; }
   [class*="bg-bg-400"] { background-color: var(--surface_container_highest) !important; }
-  [class*="text-text"],
+
   [class*="text-text-100"] { color: var(--on_surface) !important; }
   [class*="text-text-200"] { color: var(--on_surface_variant) !important; }
   [class*="text-text-300"] { color: var(--outline) !important; }
-  [class*="text-accent"],
-  a, [class*="text-link"] { color: var(--primary) !important; }
-  [class*="border-border"] { border-color: var(--outline_variant) !important; }
-  button:not([class*="ghost"]):not([class*="secondary"]) {
-    background-color: var(--primary) !important;
-    color: var(--on_primary) !important;
-  }
-  button:hover:not([class*="ghost"]):not([class*="secondary"]) {
-    background-color: var(--primary_container) !important;
-  }
-  input, textarea, [contenteditable="true"] {
-    background-color: var(--surface_container) !important;
-    color: var(--on_surface) !important;
-    border-color: var(--outline_variant) !important;
-  }
-  pre, code, [class*="code-block"] {
-    background-color: var(--surface_container_high) !important;
+  [class*="text-text-400"] { color: var(--on_surface_variant) !important; }
+  [class*="text-text-500"] { color: var(--on_surface_variant) !important; }
+
+  [class*="border-border-100"] { border-color: var(--surface_container_high) !important; }
+  [class*="border-border-200"] { border-color: var(--outline_variant) !important; }
+  [class*="border-border-300"] { border-color: var(--surface_container_high) !important; }
+
+  body {
+    background-color: var(--surface) !important;
     color: var(--on_surface) !important;
   }
+
+  a, a:visited {
+    color: var(--primary) !important;
+  }
+
   ::selection {
     background-color: var(--primary_container) !important;
     color: var(--on_primary_container) !important;
   }
-  ::-webkit-scrollbar-thumb {
+
+  div[data-user-message-bubble="true"] {
+    background-color: var(--primary_container) !important;
+    color: var(--on_primary_container) !important;
+  }
+
+  [class*="font-claude-response"],
+  [class*="font-claude-response-body"],
+  [class*="standard-markdown"] {
+    background: transparent !important;
+  }
+
+  [class*="group-hover/btn:text-text-100"]:hover,
+  [class*="group-hover/btn:text-text-100"]:focus-visible {
+    color: var(--primary) !important;
+  }
+
+  [class*="text-accent-brand"] {
+    color: var(--primary) !important;
+  }
+
+
+
+  [class*="bg-surface-3"] {
+    background-color: var(--surface_container_high) !important;
+  }
+
+  [class*="cds-root"] [class*="text-primary"] {
+    color: var(--on_surface) !important;
+  }
+
+  [class*="cds-root"] [class*="text-danger"] {
+    color: var(--error) !important;
+  }
+
+  [class*="cds-root"] [data-highlighted] {
+    background-color: var(--surface_container) !important;
+  }
+
+  [class*="cds-root"] [data-highlighted][class*="fill-danger"] {
+    background-color: var(--error_container) !important;
+    color: var(--on_error_container) !important;
+  }
+
+  [class*="cds-root"] [class*="bg-border"] {
     background-color: var(--outline_variant) !important;
   }
 }
