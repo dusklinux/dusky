@@ -2997,27 +2997,83 @@ pages:
   layout:
   - type: section
     properties:
-      title: Installed Add-ons
-      icon: emblem-system-symbolic
-      description: Manage your dusker add-ons
+      title: Theme Add-ons
+      icon: applications-graphics-symbolic
+      description: Extra site themes for Matugen Firefox theming
     items:
-    - type: label
+    - type: navigation
       properties:
-        title: Status
-      value:
-        type: static
-        value: No add-ons installed yet
-    - type: button
+        title: Claude AI
+        description: Matugen theme for claude.ai
+        icon: accessories-text-editor-symbolic
+        badge_text: "installed"
+      layout:
+      - type: section
+        properties:
+          title: Claude AI Theme
+          description: Makes claude.ai match your system colors
+          icon: ''
+        items:
+        - type: label
+          properties:
+            title: What this does
+          value:
+            type: static
+            value: Maps Claude AI's CSS variables to Matugen colors so claude.ai blends with your theme.
+        - type: button
+          properties:
+            title: Install Theme
+            description: Deploy claude.css to dusky_sites and activate it
+            icon: system-software-install-symbolic
+            button_text: "Install"
+            style: suggested
+          on_press:
+            type: exec
+            command: kitty --class claude_theme.sh --title "Claude Theme" --hold sh -c "$HOME/user_scripts/dusky_system/addons/claude_theme.sh"
+            terminal: false
+        - type: button
+          properties:
+            title: Enable in Firefox
+            description: Run the Firefox TUI to toggle the theme on
+            icon: web-browser-symbolic
+            button_text: "Configure"
+          on_press:
+            type: exec
+            command: kitty --class dusky_firefox_tui.sh --title "Firefox Theme Manager" --hold sh -c "$HOME/user_scripts/theme_matugen/firefox/dusky_firefox_tui.sh"
+            terminal: false
+    - type: navigation
       properties:
-        title: Browse Add-ons
-        description: Coming soon - browse and install community add-ons
-        icon: system-software-install-symbolic
-        button_text: "Soon"
-        style: default
-      on_press:
-        type: exec
-        command: notify-send -i applications-addons-symbolic "Add-ons" "Add-on manager coming soon!"
-        terminal: false
+        title: More Add-ons
+        description: Drop your .css files in ~/.config/dusky_sites and run the Firefox TUI
+        icon: document-open-symbolic
+      layout:
+      - type: section
+        properties:
+          title: Custom Sites
+        items:
+        - type: label
+          properties:
+            title: How to add your own
+          value:
+            type: static
+            value: Create a .css file in ~/.config/dusky_sites/ using @-moz-document domain("yoursite.com") and map its CSS vars to var(--primary), var(--surface), etc.
+        - type: button
+          properties:
+            title: Open dusky_sites
+            description: Browse installed site themes
+            icon: folder-open-symbolic
+            button_text: "Open"
+          on_press:
+            type: exec
+            command: kitty -e sh -c "ls -la ~/.config/dusky_sites/ && read -p 'press enter to close'"
+            terminal: false
+
+  - type: section
+    properties:
+      title: Maintenance
+      icon: ''
+      description: ''
+    items:
     - type: button
       properties:
         title: Merge Upstream Changes
