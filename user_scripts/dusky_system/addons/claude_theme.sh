@@ -28,6 +28,7 @@ cat > "$tmpf" << 'CLAUDE_EOF'
     --bg-200: var(--surface_container) !important;
     --bg-300: var(--surface_container_high) !important;
     --bg-400: var(--surface_container_highest) !important;
+    --text-000: var(--on_primary) !important;
     --text-100: var(--on_surface) !important;
     --text-200: var(--on_surface_variant) !important;
     --text-300: var(--outline) !important;
@@ -37,7 +38,42 @@ cat > "$tmpf" << 'CLAUDE_EOF'
     --border-200: var(--outline_variant_rgb) !important;
     --border-300: var(--surface_container_high_rgb) !important;
     --accent-brand: var(--primary) !important;
+    --accent-100: var(--primary) !important;
+    --accent-200: var(--primary_container) !important;
+    --accent-300: var(--secondary) !important;
+    --danger-000: var(--error) !important;
+    --danger-100: var(--error_container) !important;
+    --danger-200: var(--error) !important;
+    --warning-000: var(--tertiary) !important;
+    --warning-100: var(--tertiary_container) !important;
+    --warning-200: var(--tertiary) !important;
+    --brand-000: var(--primary) !important;
+    --brand-100: var(--primary_container) !important;
+    --brand-200: var(--primary) !important;
+    --oncolor-100: var(--on_primary) !important;
     --always-black: 0 0 0 !important;
+  }
+
+  [data-mode="dark"] .cds-root,
+  .cds-root[data-mode="dark"] {
+    --cds-surface-3: var(--surface_container_high) !important;
+    --cds-surface-popover: var(--surface_container_high) !important;
+    --cds-surface-panel: var(--surface_container) !important;
+    --cds-text-primary: var(--on_surface) !important;
+    --cds-text-secondary: var(--on_surface_variant) !important;
+    --cds-text-muted: var(--outline) !important;
+    --cds-text-danger: var(--error) !important;
+    --cds-border: var(--outline_variant) !important;
+    --cds-border-strong: var(--outline) !important;
+    --cds-fill-ghost-hover: var(--surface_container) !important;
+    --cds-fill-danger: var(--error) !important;
+    --cds-fill-danger-hover: var(--error_container) !important;
+    --cds-fill-primary-hover: var(--surface_container_high) !important;
+    --cds-fill-secondary: var(--surface_container) !important;
+    --cds-bg-accent: var(--primary_container) !important;
+    --cds-text-accent: var(--primary) !important;
+    --cds-on-danger: var(--on_error) !important;
+    --cds-bg-danger: var(--error_container) !important;
   }
 
   [class*="bg-bg-000"] { background-color: var(--surface_container_low) !important; }
@@ -58,7 +94,7 @@ cat > "$tmpf" << 'CLAUDE_EOF'
 
   body {
     background-color: var(--surface) !important;
-    color: var(--on_surface) !important;
+    color: var(--on_surface);
   }
 
   a, a:visited {
@@ -88,33 +124,6 @@ cat > "$tmpf" << 'CLAUDE_EOF'
 
   [class*="text-accent-brand"] {
     color: var(--primary) !important;
-  }
-
-
-
-  [class*="bg-surface-3"] {
-    background-color: var(--surface_container_high) !important;
-  }
-
-  [class*="cds-root"] [class*="text-primary"] {
-    color: var(--on_surface) !important;
-  }
-
-  [class*="cds-root"] [class*="text-danger"] {
-    color: var(--error) !important;
-  }
-
-  [class*="cds-root"] [data-highlighted] {
-    background-color: var(--surface_container) !important;
-  }
-
-  [class*="cds-root"] [data-highlighted][class*="fill-danger"] {
-    background-color: var(--error_container) !important;
-    color: var(--on_error_container) !important;
-  }
-
-  [class*="cds-root"] [class*="bg-border"] {
-    background-color: var(--outline_variant) !important;
   }
 }
 CLAUDE_EOF
