@@ -272,10 +272,18 @@ run_pacman() {
     tee -- "$stderr_file" <"$stderr_pipe" >&2 &
     tee_pid=$!
 
-    if command env LC_ALL=C pacman "$@" 2>"$stderr_pipe"; then
-      rc=0
+    if ! [[ -t 1 ]] && command -v script >/dev/null 2>&1; then
+      if script -q -c "env LC_ALL=C pacman ${extra_args[*]} $*" /dev/null 2>"$stderr_pipe"; then
+        rc=0
+      else
+        rc=$?
+      fi
     else
-      rc=$?
+      if command env LC_ALL=C pacman "${extra_args[@]}" "$@" 2>"$stderr_pipe"; then
+        rc=0
+      else
+        rc=$?
+      fi
     fi
 
     rm -f -- "$stderr_pipe"
@@ -381,7 +389,7 @@ install_group() {
     fi
 
     if (( HAS_TTY )); then
-      if run_pacman --sync --needed --noconfirm -- "$pkg" >/dev/null 2>&1; then
+      if run_pacman --sync --needed --noconfirm -- "$pkg"; then
         printf '  %s[+] Installed:%s %s\n' "$GREEN" "$RESET" "$pkg"
         continue
       fi
