@@ -3001,55 +3001,22 @@ pages:
       icon: applications-graphics-symbolic
       description: Extra site themes for Matugen Firefox theming
     items:
-    - type: navigation
+    - type: button
       properties:
-        title: Claude AI
-        description: Matugen theme for claude.ai
+        title: Install Claude Theme
+        description: Matugen theme for claude.ai - one click
         icon: accessories-text-editor-symbolic
-      layout:
-      - type: section
-        properties:
-          title: Claude AI Theme
-          description: one-click install
-          icon: ''
-        items:
-        - type: button
-          properties:
-            title: Install Claude Theme
-            description: Deploys claude.css, enables it in Firefox, restarts browser
-            icon: system-software-install-symbolic
-            button_text: "Install"
-            style: suggested
-          on_press:
-            type: exec
-            command: kitty --class claude_theme.sh --title "Claude Theme" --hold sh -c "$HOME/user_scripts/dusky_system/addons/claude_theme.sh"
-            terminal: false
+        button_text: "Install"
+        style: suggested
+      on_press:
+        type: exec
+        command: kitty --class claude_theme.sh --title "Claude Theme" --hold sh -c "$HOME/user_scripts/dusky_system/addons/claude_theme.sh"
+        terminal: false
     - type: navigation
       properties:
         title: More Add-ons
         description: add more addons here
         icon: document-open-symbolic
-      layout:
-      - type: section
-        properties:
-          title: Custom Sites
-        items:
-        - type: label
-          properties:
-            title: How to add your own
-          value:
-            type: static
-            value: Create a .css file in ~/.config/dusky_sites/ using @-moz-document domain("yoursite.com") and map its CSS vars to var(--primary), var(--surface), etc.
-        - type: button
-          properties:
-            title: Open dusky_sites
-            description: Browse installed site themes
-            icon: folder-open-symbolic
-            button_text: "Open"
-          on_press:
-            type: exec
-            command: kitty -e sh -c "ls -la ~/.config/dusky_sites/ && read -p 'press enter to close'"
-            terminal: false
 
   - type: section
     properties:
