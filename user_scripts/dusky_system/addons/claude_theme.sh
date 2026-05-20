@@ -10,37 +10,84 @@ log_info() { printf "${C_INFO}[INFO]${C_RESET} %s\n" "$1"; }
 log_success() { printf "${C_SUCCESS}[OK]${C_RESET} %s\n" "$1"; }
 log_error() { printf "${C_ERROR}[ERR]${C_RESET} %s\n" "$1"; }
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SITES_DIR="${HOME}/.config/dusky_sites"
-CLAUDE_CSS="${SITES_DIR}/claude.css"
-SOURCE_CSS="$(dirname "$0")/../../.config/dusky_sites/claude.css"
-
-# find absolute path if running from somewhere else
-if [ ! -f "$SOURCE_CSS" ]; then
-    SOURCE_CSS="${HOME}/.config/dusky_sites/claude.css"
-fi
 
 mkdir -p "$SITES_DIR"
 
-if [ -f "$CLAUDE_CSS" ]; then
-    log_info "claude.css already installed."
-else
-    if [ -f "$SOURCE_CSS" ]; then
-        cp "$SOURCE_CSS" "$CLAUDE_CSS"
-    else
-        log_error "can't find claude.css source"
-        exit 1
-    fi
-    log_success "claude.css installed."
-fi
+cat > "${SITES_DIR}/claude.css" << 'CLAUDE_CSS'
+@-moz-document domain("claude.ai") {
+  :root {
+    --bg-100: var(--surface) !important;
+    --bg-200: var(--surface_container) !important;
+    --bg-300: var(--surface_container_high) !important;
+    --bg-400: var(--surface_container_highest) !important;
+    --text-100: var(--on_surface) !important;
+    --text-200: var(--on_surface_variant) !important;
+    --text-300: var(--outline) !important;
+    --accent-100: var(--primary) !important;
+    --accent-200: var(--primary_container) !important;
+    --accent-300: var(--secondary) !important;
+    --danger-100: var(--error) !important;
+    --border-100: var(--outline_variant) !important;
+    --border-200: var(--outline) !important;
+  }
+  body {
+    background-color: var(--surface) !important;
+    color: var(--on_surface) !important;
+  }
+  [class*="bg-bg"],
+  [class*="bg-bg-100"] { background-color: var(--surface) !important; }
+  [class*="bg-bg-200"] { background-color: var(--surface_container) !important; }
+  [class*="bg-bg-300"] { background-color: var(--surface_container_high) !important; }
+  [class*="bg-bg-400"] { background-color: var(--surface_container_highest) !important; }
+  [class*="text-text"],
+  [class*="text-text-100"] { color: var(--on_surface) !important; }
+  [class*="text-text-200"] { color: var(--on_surface_variant) !important; }
+  [class*="text-text-300"] { color: var(--outline) !important; }
+  [class*="text-accent"],
+  a, [class*="text-link"] { color: var(--primary) !important; }
+  [class*="border-border"] { border-color: var(--outline_variant) !important; }
+  button:not([class*="ghost"]):not([class*="secondary"]) {
+    background-color: var(--primary) !important;
+    color: var(--on_primary) !important;
+  }
+  button:hover:not([class*="ghost"]):not([class*="secondary"]) {
+    background-color: var(--primary_container) !important;
+  }
+  input, textarea, [contenteditable="true"] {
+    background-color: var(--surface_container) !important;
+    color: var(--on_surface) !important;
+    border-color: var(--outline_variant) !important;
+  }
+  pre, code, [class*="code-block"] {
+    background-color: var(--surface_container_high) !important;
+    color: var(--on_surface) !important;
+  }
+  ::selection {
+    background-color: var(--primary_container) !important;
+    color: var(--on_primary_container) !important;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--outline_variant) !important;
+  }
+}
+CLAUDE_CSS
 
-# run the firefox tui to deploy
+log_success "claude.css deployed."
+
 FIREFOX_TUI="${HOME}/user_scripts/theme_matugen/firefox/dusky_firefox_tui.sh"
 if [ -f "$FIREFOX_TUI" ]; then
-    log_info "deploying firefox theme..."
+    log_info "activating..."
     bash "$FIREFOX_TUI" --auto
 else
-    log_info "firefox tui not found, just the css is in place."
-    log_info "run dusky_firefox_tui.sh --auto to activate it."
+    log_warn "firefox tui not found."
+    log_info "run dusky_firefox_tui.sh --auto to enable it."
 fi
 
-log_success "done. claude.ai will theme on next matugen refresh."
+RESTART="${HOME}/user_scripts/theme_matugen/firefox/restart_browser.sh"
+if [ -f "$RESTART" ]; then
+    bash "$RESTART" &>/dev/null &
+fi
+
+log_success "claude.ai theme ready."

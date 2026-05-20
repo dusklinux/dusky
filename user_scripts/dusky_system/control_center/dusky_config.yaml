@@ -3006,40 +3006,23 @@ pages:
         title: Claude AI
         description: Matugen theme for claude.ai
         icon: accessories-text-editor-symbolic
-        badge_text: "installed"
       layout:
       - type: section
         properties:
           title: Claude AI Theme
-          description: Makes claude.ai match your system colors
+          description: one-click install
           icon: ''
         items:
-        - type: label
-          properties:
-            title: What this does
-          value:
-            type: static
-            value: Maps Claude AI's CSS variables to Matugen colors so claude.ai blends with your theme.
         - type: button
           properties:
-            title: Install Theme
-            description: Deploy claude.css to dusky_sites and activate it
+            title: Install Claude Theme
+            description: Deploys claude.css, enables it in Firefox, restarts browser
             icon: system-software-install-symbolic
             button_text: "Install"
             style: suggested
           on_press:
             type: exec
             command: kitty --class claude_theme.sh --title "Claude Theme" --hold sh -c "$HOME/user_scripts/dusky_system/addons/claude_theme.sh"
-            terminal: false
-        - type: button
-          properties:
-            title: Enable in Firefox
-            description: Run the Firefox TUI to toggle the theme on
-            icon: web-browser-symbolic
-            button_text: "Configure"
-          on_press:
-            type: exec
-            command: kitty --class dusky_firefox_tui.sh --title "Firefox Theme Manager" --hold sh -c "$HOME/user_scripts/theme_matugen/firefox/dusky_firefox_tui.sh"
             terminal: false
     - type: navigation
       properties:
