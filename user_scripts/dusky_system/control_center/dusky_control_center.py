@@ -95,8 +95,8 @@ if TYPE_CHECKING:
 # =============================================================================
 # CONSTANTS
 # =============================================================================
-APP_ID: Final[str] = "com.github.veltraced.dusker"
-APP_TITLE: Final[str] = "Dusker"
+APP_ID: Final[str] = "com.github.dusky.controlcenter"
+APP_TITLE: Final[str] = "Dusky Control Center"
 CONFIG_FILENAME: Final[str] = "dusky_config.yaml"
 CSS_FILENAME: Final[str] = "dusky_style.css"
 SCRIPT_DIR: Final[Path] = Path(__file__).resolve().parent
@@ -268,12 +268,12 @@ class ApplicationState:
     config_error: str | None = None
 
 
-class DuskerControlCenter(Adw.Application):
+class DuskyControlCenter(Adw.Application):
     """
     Main Application Controller.
 
     Manages the application lifecycle, UI construction, hot-reload functionality,
-    and search capabilities for the Dusker Control Center.
+    and search capabilities for the Dusky Control Center.
     """
 
     def __init__(self) -> None:
@@ -1207,7 +1207,7 @@ class DuskerControlCenter(Adw.Application):
         title_box = Gtk.Box(spacing=8)
         icon = Gtk.Image.new_from_icon_name(ICON_SYSTEM)
         icon.add_css_class("sidebar-header-icon")
-        title = Gtk.Label(label="Dusker", css_classes=["title"])
+        title = Gtk.Label(label="Dusky Control Center", css_classes=["title"])
         title_box.append(icon)
         title_box.append(title)
         header.set_title_widget(title_box)
@@ -1821,7 +1821,7 @@ class DuskerControlCenter(Adw.Application):
 # =============================================================================
 def main() -> int:
     """Application entry point."""
-    app = DuskerControlCenter()
+    app = DuskyControlCenter()
     return app.run(sys.argv)
 
 
