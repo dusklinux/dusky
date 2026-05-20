@@ -1,10 +1,7 @@
 @-moz-document domain("web.whatsapp.com") {
-    :root {
-        /* Background Colors */
+    :root, .xul6ihk.xul6ihk, .xul6ihk.xul6ihk:root {
         --WDS-neutral-gray-50: var(--on_surface) !important;
         --WDS-neutral-gray-900: var(--surface) !important;
-    }
-    .xul6ihk.xul6ihk, .xul6ihk.xul6ihk:root {
         --WDS-background-wash-inset: var(--surface) !important;
         --WDS-content-default: var(--primary_fixed_dim) !important;
         --WDS-surface-emphasized: var(--surface_container_low) !important;

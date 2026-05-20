@@ -259,6 +259,10 @@ EXAMPLES:
         from python.engines.systemd import SystemdEngine
         engine = SystemdEngine()
 
+    elif ENGINE_TYPE == "hyprlang":
+        from python.engines.hyprlang import HyprlangEngine
+        engine = HyprlangEngine(config_path=str(TARGET_FILE))
+
     else:
         print(f"[-] Fatal: Unknown ENGINE_TYPE '{ENGINE_TYPE}' specified in schema '{schema_path.name}'.")
         print("[i] Supported engines are: 'lua', 'ini'")

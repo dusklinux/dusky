@@ -32,7 +32,8 @@ TABS = [
     "Interactions",
     "Styling",
     "Effects",
-    "Smart"
+    "Smart",
+    "Special"
 ]
 
 # =============================================================================
@@ -1002,18 +1003,6 @@ SCHEMA = {
             extended_help="**Dim Strength**\n\nDictates the intensity of the darkness applied to inactive windows."
         ),
         ConfigItem(
-            label="Dim Special Workspace",
-            key="dim_special",
-            scope="decoration",
-            type_="float",
-            default=0.8,
-            min_val=0.0,
-            max_val=1.0,
-            step=0.1,
-            group="Dimming",
-            extended_help="**Dim Special**\n\nControls how dark the rest of your screen becomes when a special workspace is open."
-        ),
-        ConfigItem(
             label="Dim Around",
             key="dim_around",
             scope="decoration",
@@ -1162,15 +1151,6 @@ SCHEMA = {
             step=0.05,
             parent_ref="decoration/blur.enabled",
             extended_help="**Vibrancy Darkness**\n\nDictates vibrancy saturation specifically for dark areas."
-        ),
-        ConfigItem(
-            label="Special",
-            key="special",
-            scope="decoration/blur",
-            type_="bool",
-            default=False,
-            parent_ref="decoration/blur.enabled",
-            extended_help="**Special Workspace Blur**\n\nForces blur behind the entire screen when a special scratchpad workspace is open."
         ),
         ConfigItem(
             label="Popups",
@@ -1487,6 +1467,129 @@ SCHEMA = {
             default=True,
             group="Maximized",
             extended_help="**Maximized Disable Blur**\n\nDisables the background blur effect entirely for maximized windows to maximize performance."
+        ),
+    ],
+
+    # -------------------------------------------------------------------------
+    # TAB 7: SPECIAL WORKSPACE
+    # -------------------------------------------------------------------------
+    7: [
+        # --- BACKGROUND ---
+        ConfigItem(
+            label="Dim Background",
+            key="dim_special",
+            scope="decoration",
+            type_="float",
+            default=0.8,
+            min_val=0.0,
+            max_val=1.0,
+            step=0.1,
+            group="Background",
+            extended_help="**Dim Special**\n\nControls how dark the rest of your screen becomes when a special workspace is open."
+        ),
+        ConfigItem(
+            label="Blur Background",
+            key="special",
+            scope="decoration/blur",
+            type_="bool",
+            default=False,
+            group="Background",
+            extended_help="**Special Workspace Blur**\n\nForces kawase blur behind the entire screen when a special scratchpad workspace is open."
+        ),
+
+        # --- GEOMETRY ---
+        ConfigItem(
+            label="Border Size",
+            key="border_size",
+            scope="workspace_rule/special:magic",
+            type_="int",
+            default=8,
+            min_val=0,
+            max_val=30,
+            step=1,
+            group="Geometry",
+            extended_help="**Magic Border Size**\n\nSets the absolute pixel width of the borders drawn around the magic scratchpad windows."
+        ),
+        ConfigItem(
+            label="Gaps In",
+            key="gaps_in",
+            scope="workspace_rule/special:magic",
+            type_="int",
+            default=26,
+            min_val=0,
+            max_val=100,
+            step=1,
+            group="Geometry",
+            extended_help="**Magic Gaps In**\n\nDefines the spacing between windows inside the magic scratchpad."
+        ),
+        ConfigItem(
+            label="Gaps Out",
+            key="gaps_out",
+            scope="workspace_rule/special:magic",
+            type_="int",
+            default=80,
+            min_val=0,
+            max_val=200,
+            step=1,
+            group="Geometry",
+            extended_help="**Magic Gaps Out**\n\nDefines the large outer margin around the magic scratchpad, making it feel centered and floating."
+        ),
+
+        # --- STYLING ---
+        ConfigItem(
+            label="Border Color",
+            key="border_color",
+            scope="window_rule/special_magic_style",
+            type_="color",
+            default="secondary",
+            options=COLOR_ALIASES,
+            group="Styling",
+            extended_help="**Magic Border Color**\n\nThe color of the border for windows in the magic scratchpad. Usually distinct from normal windows."
+        ),
+        ConfigItem(
+            label="Rounding",
+            key="rounding",
+            scope="window_rule/special_magic_style",
+            type_="int",
+            default=12,
+            min_val=0,
+            max_val=50,
+            step=1,
+            group="Styling",
+            extended_help="**Magic Rounding**\n\nThe corner rounding radius for magic scratchpad windows."
+        ),
+        ConfigItem(
+            label="Rounding Power",
+            key="rounding_power",
+            scope="window_rule/special_magic_style",
+            type_="float",
+            default=2.5,
+            min_val=1.0,
+            max_val=4.0,
+            step=0.1,
+            group="Styling",
+            extended_help="**Magic Rounding Power**\n\nAdjusts the mathematical curve used to clip corners. 2.0 is circular, 4.0 is squircle, 1.0 is triangular."
+        ),
+        ConfigItem(
+            label="Opacity",
+            key="opacity",
+            scope="window_rule/special_magic_style",
+            type_="float",
+            default=0.92,
+            min_val=0.0,
+            max_val=1.0,
+            step=0.05,
+            group="Styling",
+            extended_help="**Magic Opacity**\n\nThe transparency level for magic scratchpad windows."
+        ),
+        ConfigItem(
+            label="Disable Blur",
+            key="no_blur",
+            scope="window_rule/special_magic_style",
+            type_="bool",
+            default=False,
+            group="Styling",
+            extended_help="**Magic Disable Blur**\n\nDisables the kawase background blur effect strictly for magic scratchpad windows."
         ),
     ]
 }

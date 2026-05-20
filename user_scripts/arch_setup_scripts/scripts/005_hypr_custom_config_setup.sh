@@ -838,6 +838,52 @@ hl.window_rule({
     -- immediate = false,
 })
 
+
+
+-- -------------------------------------------------------------------------------------------------
+-- SPECIAL WORKSPACE APPEARANCE
+-- "magic"  → toggled with SUPER+Z  (hl.dsp.workspace.toggle_special("magic"))
+--
+-- A special workspace is a floating overlay that appears on top of your current workspace.
+-- The background dims according to decoration.dim_special (currently 0.8 in hl.config()).
+-- The blur *behind* the overlay is controlled by decoration.blur.special (currently false).
+--
+-- WHAT CANNOT BE SET PER SPECIAL WORKSPACE (global hl.config() only):
+--   • dim_special   → decoration.dim_special        ← already 0.8 in your hl.config()
+--   • blur.special  → decoration.blur.special       ← currently false; set true to blur behind it
+--   • col.active_border / col.inactive_border       ← global only; use border_color in window_rule
+-- -------------------------------------------------------------------------------------------------
+
+-- Workspace-level: gaps + border thickness for the magic scratchpad
+hl.workspace_rule({
+    workspace   = "special:magic",
+    gaps_in     = 26,    -- gap between windows inside the scratchpad
+    gaps_out    = 80,   -- large outer margin so it feels centered/floating, not edge-to-edge
+    border_size = 8,    -- slightly thicker than your global 1, makes it feel distinct
+})
+
+-- Window-level: per-window appearance for everything inside special:magic
+hl.window_rule({
+    name           = "special_magic_style",
+    match          = { workspace = "special:magic" },
+
+    -- ROUNDING: slightly more than global 10 for a softer "popup" feel
+    rounding       = 12,
+    rounding_power = 2.5,
+
+    -- OPACITY: more opaque than your global 0.85 so it pops against the dimmed background
+    opacity        = 0.92,
+
+    -- BORDER COLOR: secondary instead of primary so you can visually tell this isn't a normal window
+    border_color   = secondary,
+
+    -- BLUR: keep enabled to match your global blur.enabled = true
+    no_blur        = false,
+})
+
+
+
+
 -- -------------------------------------------------------------------------------------------------
 --  ANIMATIONS
 -- -------------------------------------------------------------------------------------------------

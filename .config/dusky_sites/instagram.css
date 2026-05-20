@@ -6,21 +6,7 @@
         --ig-elevated-background: var(--surface_container_low_rgb) !important;
     }
     
-    /* Comment Section */
-    .x1q2y9iw {
-        background-color: var(--surface_container_low) !important;
-    }
-    ._at8n {
-        background-color: var(--surface_container_low) !important;
-    }
-    
-    /* More Card */
-    .x82u2s1 {
-        background-color: var(--surface_container_low) !important;
-    }
-    
-    /* Also From Meta */
-    .xgf5ljw {
+    .x1q2y9iw, ._at8n, .x82u2s1, .xgf5ljw, .x7r02ix {
         background-color: var(--surface_container_low) !important;
     }
     
@@ -29,14 +15,8 @@
         background-color: var(--surface_container_high) !important;
     }
     
-    /* Message Pill */
-    .x7r02ix {
-        background-color: var(--surface_container_low) !important;
-    }
-    
     /* Story Background */
     .x5qyhuo {
         background-color: var(--surface) !important;
     }
-
 }

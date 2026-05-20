@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ==============================================================================
-#  DUSKY UPDATER (v9.3) — BLEEDING EDGE ARCH / PYTHON 3.14 TUI
+#  DUSKY UPDATER (v9.4.1) — BLEEDING EDGE ARCH / PYTHON 3.14 TUI
 # ==============================================================================
 import asyncio
 import json
@@ -8,10 +8,12 @@ import shutil
 import subprocess
 import sys
 import importlib.util
+import importlib
+import site
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Tuple, Dict, Any
+from typing import Literal, Optional
 
 # --- Enforcement: Bleeding-Edge Python 3.14+ ---
 if sys.version_info < (3, 14):
@@ -37,6 +39,9 @@ def bootstrap_dependencies() -> bool:
         if not verify_sudo(): sys.exit(1)
         try:
             subprocess.run(['sudo', 'pacman', '-S', '--noconfirm'] + missing, check=True)
+            # Reconstruct module paths forcefully to accommodate identical runtime continuity
+            importlib.invalidate_caches()
+            importlib.reload(site)
         except subprocess.CalledProcessError:
             sys.stdout.write("\033[1;31m[FATAL]\033[0m Dependency resolution failed.\n")
             sys.exit(1)
@@ -54,33 +59,48 @@ try:
     from textual.widgets import RichLog, Static, ProgressBar, ListView, ListItem, Label, ContentSwitcher
     from textual.reactive import reactive
 except ImportError:
-    sys.stdout.write("\033[1;31m[FATAL]\033[0m UI library import failed post-resolution.\n")
+    sys.stdout.write("\033[1;31m[FATAL]\033[0m UI library import failed post-resolution. Ensure Arch mirrors are synced.\n")
     sys.exit(1)
 
 # ==============================================================================
 #  THEME COMPILER (MATUGEN JSON)
 # ==============================================================================
-def compile_theme() -> Dict[str, str]:
-    theme: Dict[str, str] = {
+def compile_theme() -> dict[str, str]:
+    theme: dict[str, str] = {
         "bg": "#1a110e", "fg": "#f1dfd9", "accent": "#ffb59b",
         "error": "#ffb4ab", "warning": "#e7bdaf", "success": "#d5c68e", "muted": "#53433e"
     }
     theme_path = Path.home() / ".config/matugen/generated/dusky_tui.json"
     if theme_path.is_file():
         try:
-            theme.update(json.loads(theme_path.read_text(encoding="utf-8")))
+            data = json.loads(theme_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                theme.update({str(k): str(v) for k, v in data.items()})
         except (json.JSONDecodeError, OSError):
             pass
     return theme
 
 THEME = compile_theme()
 
+# --- UTILITY: RESILIENT RGB TRANSLATION ---
+def get_rgb_color(hex_str: str, default: tuple[int, int, int] = (255, 181, 155)) -> tuple[int, int, int]:
+    try:
+        clean_hex = hex_str.lstrip('#')
+        if len(clean_hex) >= 6:
+            return int(clean_hex[0:2], 16), int(clean_hex[2:4], 16), int(clean_hex[4:6], 16)
+        elif len(clean_hex) == 3:
+            return int(clean_hex[0]*2, 16), int(clean_hex[1]*2, 16), int(clean_hex[2]*2, 16)
+    except (ValueError, IndexError, Exception):
+        pass
+    return default
+
 # --- ULTRA-MODERN MINIMAL CSS ARCHITECTURE ---
+# Eradicated fallacious ':active' pseudo-class invocation to strictly conform with Textual lexer axioms.
 DUSKY_CSS = f"""
 Screen {{ background: {THEME['bg']}; color: {THEME['fg']}; }}
 #sidebar {{
     width: 35%; 
-    border-right: vkey {THEME['muted']} 30%; 
+    border-right: solid {THEME['muted']}4d; 
     background: {THEME['bg']};
     height: 100%;
     scrollbar-size-vertical: 1;
@@ -95,10 +115,18 @@ RichLog {{
     height: 1fr; background: transparent; color: {THEME['fg']};
     border: none; padding: 1 2;
     scrollbar-size-vertical: 1;
-    scrollbar-color: {THEME['accent']} 40%;
-    scrollbar-color-hover: {THEME['accent']} 80%;
-    scrollbar-color-active: {THEME['accent']};
-    scrollbar-background: transparent;
+}}
+ScrollBar {{
+    background: transparent;
+}}
+ScrollBar > .scrollbar--track {{
+    background: transparent;
+}}
+ScrollBar > .scrollbar--bar {{
+    color: {THEME['accent']}66;
+}}
+ScrollBar > .scrollbar--bar:hover {{
+    color: {THEME['accent']}cc;
 }}
 ListView {{ background: transparent; overflow-x: hidden; height: 100%; scrollbar-size-vertical: 1; }}
 ListItem {{ 
@@ -107,7 +135,7 @@ ListItem {{
     background: transparent;
 }}
 ListItem:focus {{ 
-    background: {THEME['accent']} 10%; 
+    background: {THEME['accent']}1a; 
     border-left: tall {THEME['accent']};
 }}
 .header-panel {{
@@ -116,11 +144,11 @@ ListItem:focus {{
     color: {THEME['accent']};
     content-align: center middle; 
     text-style: bold;
-    border-bottom: hkey {THEME['muted']} 30%;
+    border-bottom: solid {THEME['muted']}4d;
 }}
 ProgressBar {{ dock: bottom; margin: 0; height: 1; }}
 ProgressBar > .progress--bar {{ color: {THEME['accent']}; }}
-ProgressBar > .progress--remaining {{ background: {THEME['muted']} 20%; }}
+ProgressBar > .progress--remaining {{ background: {THEME['muted']}33; }}
 """
 
 # ==============================================================================
@@ -129,32 +157,30 @@ ProgressBar > .progress--remaining {{ background: {THEME['muted']} 20%; }}
 WORK_TREE = Path.home()
 GIT_DIR = WORK_TREE / "dusky"
 BACKUP_BASE_DIR = WORK_TREE / "Documents" / "dusky_backups"
-SCRIPT_DIR = WORK_TREE / "user_scripts" / "arch_setup_scripts" / "scripts"
 
 REPO_URL = "https://github.com/dusklinux/dusky"
 BRANCH = "main"
 
-CUSTOM_SCRIPT_PATHS = {
-    "warp_toggle.sh": "user_scripts/networking/warp_toggle.sh",
-    "fix_theme_dir.sh": "user_scripts/misc_extra/fix_theme_dir.sh",
-    "backup_hyprlang_files.sh": "user_scripts/misc_extra/backup_hyprlang_files.sh",
-    "pacman_packages.sh": "user_scripts/misc_extra/pacman_packages.sh",
-    "paru_packages.sh": "user_scripts/misc_extra/paru_packages.sh",
-    "copy_service_files.sh": "user_scripts/misc_extra/copy_service_files.sh",
-    "update_checker.sh": "user_scripts/update_dusky/update_checker/update_checker.sh",
-    "cc_restart.sh": "user_scripts/dusky_system/reload_cc/cc_restart.sh",
-    "dusky_service_manager.sh": "user_scripts/services/dusky_service_manager.sh",
-    "reboot_post_lua_update.sh": "user_scripts/misc_extra/delete_in_3_weeks/reboot_post_lua_update.sh",
-    "dusky_commands_before.sh": "user_scripts/misc_extra/dusky_commands_before.sh",
-    "system_update.sh": "user_scripts/update_dusky/system_update.sh",
-    "dusky_commands_after.sh": "user_scripts/misc_extra/dusky_commands_after.sh",
-    "rofi_wallpaper_selctor.sh": "user_scripts/rofi/rofi_wallpaper_selctor.sh",
-    "hypr_anim.sh": "user_scripts/rofi/hypr_anim.sh",
-    "dusky_matugen_config_tui.sh": "user_scripts/theme_matugen/config/dusky_matugen_config_tui.sh",
-    "dusky_firefox_tui.sh": "user_scripts/theme_matugen/firefox/dusky_firefox_tui.sh",
-    "theme_ctl.sh": "user_scripts/theme_matugen/theme_ctl.sh",
-    "update_counter.sh": "user_scripts/waybar/update_counter.sh",
-}
+# Topologically decoupled search heuristics replacing static path dictionaries.
+SCRIPT_SEARCH_DIRS = [
+    "user_scripts/arch_setup_scripts/scripts",
+    "user_scripts/arch_setup_scripts",
+    "user_scripts/rofi",
+    "user_scripts/theme_matugen",
+    "user_scripts/theme_matugen/config",
+    "user_scripts/theme_matugen/firefox",
+    "user_scripts/btrfs_snapshots",
+    "user_scripts/tts_stt/dusky_kokoro",
+    "user_scripts/tts_stt/dusky_parakeet",
+    "user_scripts/networking",
+    "user_scripts/misc_extra",
+    "user_scripts/misc_extra/delete_in_3_weeks",
+    "user_scripts/update_dusky/update_checker",
+    "user_scripts/update_dusky",
+    "user_scripts/dusky_system/reload_cc",
+    "user_scripts/services",
+    "user_scripts/waybar"
+]
 
 UPDATE_SEQUENCE = [
     "U | backup_hyprlang_files.sh",
@@ -194,6 +220,24 @@ UPDATE_SEQUENCE = [
     "U | interactive | reboot_post_lua_update.sh"
 ]
 
+def resolve_script_path(script_name: str) -> Optional[Path]:
+    """
+    Executes a heuristic directory traversal to dynamically locate scripts.
+    CRITICAL: This must only be invoked POST-Git synchronization to ensure
+    newly pulled topological additions are correctly identified.
+    """
+    if "/" in script_name:
+        p = Path(script_name)
+        absolute_target = p if p.is_absolute() else WORK_TREE / p
+        return absolute_target if absolute_target.is_file() else None
+        
+    for directory in SCRIPT_SEARCH_DIRS:
+        candidate = WORK_TREE / directory / script_name
+        if candidate.is_file():
+            return candidate
+            
+    return None
+
 # ==============================================================================
 #  STRUCTURAL PATTERN MATCHING & PARSING
 # ==============================================================================
@@ -204,7 +248,6 @@ class DuskyTask:
     ignore_fail: bool
     interactive: bool
     args: list[str]
-    path: Path | None = None
     status: Literal['pending', 'running', 'success', 'failed', 'skipped'] = 'pending'
 
 def parse_manifest(sequence: list[str]) -> list[DuskyTask]:
@@ -231,6 +274,8 @@ def parse_manifest(sequence: list[str]) -> list[DuskyTask]:
             case _:
                 continue
                 
+        if not cmd_tokens: continue
+        
         script_name, *args = cmd_tokens
         
         ignore_fail = bool(flags.intersection({"ignore", "ignore-fail", "true"}))
@@ -239,17 +284,15 @@ def parse_manifest(sequence: list[str]) -> list[DuskyTask]:
         if not interactive and any(script_name.startswith(s) for s in interactive_heuristics):
             interactive = True
 
-        path = WORK_TREE / CUSTOM_SCRIPT_PATHS.get(script_name, f"user_scripts/arch_setup_scripts/scripts/{script_name}")
-        
         tasks.append(DuskyTask(
             name=script_name, mode=mode, # type: ignore
             ignore_fail=ignore_fail, interactive=interactive,
-            args=args, path=path
+            args=args
         ))
     return tasks
 
 # ==============================================================================
-#  GIT ASYNCHRONOUS ENGINE (Transpiled from update_dusky.sh)
+#  GIT ASYNCHRONOUS ENGINE
 # ==============================================================================
 class GitEngine:
     def __init__(self, app: App):
@@ -258,7 +301,7 @@ class GitEngine:
         self.git_cmd_base = ['git', f'--git-dir={GIT_DIR}', f'--work-tree={WORK_TREE}']
         BACKUP_BASE_DIR.mkdir(parents=True, exist_ok=True)
 
-    async def _run(self, *args: str, check: bool = True, task_idx: int = -1) -> Tuple[int, str, str]:
+    async def _run(self, *args: str, check: bool = True, task_idx: int = -1) -> tuple[int, str, str]:
         cmd = self.git_cmd_base + list(args)
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -277,7 +320,7 @@ class GitEngine:
         return proc.returncode, out, err
 
     async def _clear_git_locks(self, task_idx: int):
-        """Clears stale Git lock files that cause 'Could not reset index' fatal errors."""
+        """Clears stale Git lock files that precipitate catastrophic 'Could not reset index' failures."""
         for lock in ['index.lock', 'config.lock', 'HEAD.lock', 'ORIG_HEAD.lock', 'FETCH_HEAD.lock']:
             lock_path = GIT_DIR / lock
             if lock_path.exists():
@@ -288,7 +331,6 @@ class GitEngine:
                     self.app.log_task(f"[bold {THEME['warning']}]Failed to clear {lock}: {e}[/]", task_idx) # type: ignore
 
     def _collect_dir_collision_roots(self, root_rel: str, tracked_exact: set, tracked_descendants: set, out_set: set):
-        """Transpiled bash logic: deep scans to move entire directories if they conflict with Git file tracking."""
         stack = [root_rel]
         while stack:
             rel = stack.pop()
@@ -304,7 +346,11 @@ class GitEngine:
                 out_set.add(rel)
                 continue
                 
-            children = [p.name for p in abs_path.iterdir()]
+            try:
+                children = [p.name for p in abs_path.iterdir()]
+            except OSError:
+                children = []
+
             if rel in tracked_descendants:
                 if not children:
                     out_set.add(rel)
@@ -315,7 +361,6 @@ class GitEngine:
                 out_set.add(rel)
 
     async def _backup_worktree_collisions(self, ref: str, honor_tracked: bool, task_idx: int) -> bool:
-        """Surgically extracts complex structural file/symlink/dir mismatches before Git Reset executes."""
         _, ls_tree, _ = await self._run('ls-tree', '-r', '-z', '--name-only', ref, task_idx=-1)
         incoming = [f for f in ls_tree.split('\0') if f]
 
@@ -337,7 +382,6 @@ class GitEngine:
         for target_path in incoming:
             abs_path = WORK_TREE / target_path
             
-            # Phase A: Check if the exact target path has a structural conflict
             if abs_path.exists() or abs_path.is_symlink():
                 if abs_path.is_dir() and not abs_path.is_symlink():
                     if honor_tracked and target_path in tracked_descendants:
@@ -347,7 +391,6 @@ class GitEngine:
                 elif not honor_tracked or target_path not in tracked_exact:
                     collision_candidates.add(target_path)
                     
-            # Phase B: Check if an ancestor dir in the worktree is secretly a file/symlink
             ancestor = ""
             remaining = target_path
             while '/' in remaining:
@@ -361,7 +404,6 @@ class GitEngine:
                             collision_candidates.add(ancestor)
                         break
 
-        # Filter redundancies (resolve to uppermost roots)
         collision_roots = set()
         for coll in collision_candidates:
             skip = False
@@ -387,8 +429,11 @@ class GitEngine:
             
             dest = backup_dir / coll
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(src), str(dest))
-            self.app.log_task(f"[dim]Secured structural conflict: {escape(coll)}[/dim]", task_idx) # type: ignore
+            try:
+                shutil.move(str(src), str(dest))
+                self.app.log_task(f"[dim]Secured structural conflict: {escape(coll)}[/dim]", task_idx) # type: ignore
+            except Exception as e:
+                self.app.log_task(f"[bold {THEME['warning']}]Failed to backup collision {escape(coll)}: {escape(str(e))}[/]", task_idx) # type: ignore
 
         msg = f"[bold {THEME['warning']}]Secured {len(collision_roots)} structural tree collisions.[/]"
         self.log(msg)
@@ -414,10 +459,11 @@ class GitEngine:
                     'git', 'clone', '--bare', '--branch', BRANCH, REPO_URL, str(GIT_DIR),
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
                 )
-                async for line in proc.stdout: # type: ignore
-                    decoded = line.decode('utf-8', errors='replace').strip()
-                    self.log(f"[dim]{escape(decoded)}[/dim]")
-                    self.app.log_task(f"[dim]{escape(decoded)}[/dim]", idx) # type: ignore
+                if proc.stdout:
+                    async for line in proc.stdout: 
+                        decoded = line.decode('utf-8', errors='replace').strip()
+                        self.log(f"[dim]{escape(decoded)}[/dim]")
+                        self.app.log_task(f"[dim]{escape(decoded)}[/dim]", idx) # type: ignore
                 await proc.wait()
                 
                 if proc.returncode != 0: raise RuntimeError("Clone sequence failed.")
@@ -439,9 +485,13 @@ class GitEngine:
             
             await self._run('fetch', 'origin', f'+refs/heads/{BRANCH}:refs/remotes/origin/{BRANCH}', task_idx=idx)
             
-            _, local_head, _ = await self._run('rev-parse', '--verify', '-q', 'HEAD', check=False, task_idx=-1)
-            _, remote_head, _ = await self._run('rev-parse', '--verify', '-q', f'origin/{BRANCH}', check=False, task_idx=-1)
+            rc, local_head, _ = await self._run('rev-parse', '--verify', '-q', 'HEAD', check=False, task_idx=-1)
+            local_head = local_head.strip() if rc == 0 else ""
             
+            rc, remote_head, _ = await self._run('rev-parse', '--verify', '-q', f'origin/{BRANCH}', check=False, task_idx=-1)
+            remote_head = remote_head.strip() if rc == 0 else ""
+            
+            diff_out = ""
             if local_head and remote_head:
                 _, diff_out, _ = await self._run('diff', f'{local_head}..{remote_head}', check=False, task_idx=-1)
                 self.app.git_diff_text = diff_out # type: ignore
@@ -452,54 +502,65 @@ class GitEngine:
                 else:
                     self.app.log_task(f"[bold {THEME['success']}]State matched. Zero differential divergence found.[/]", idx) # type: ignore
             
-            if local_head == remote_head:
+            if local_head and local_head == remote_head:
                 msg = f"\n[bold {THEME['success']}]Repository synchronization perfect. Origin matched.[/]"
                 self.log(msg); self.app.log_task(msg, idx) # type: ignore
                 self.app.update_task_state(idx, "success") # type: ignore
                 for i in range(2, 5): self.app.update_task_state(i, "skipped") # type: ignore
                 return True
             
-            _, behind, _ = await self._run('rev-list', '--count', f'{local_head}..{remote_head}', task_idx=-1)
+            if not local_head:
+                behind = "all (bootstrap)"
+            else:
+                _, behind, _ = await self._run('rev-list', '--count', f'{local_head}..{remote_head}', task_idx=-1)
+                
             msg = f"\n[bold {THEME['accent']}]Local branch behind by {behind} commits.[/]"
             self.log(msg); self.app.log_task(msg, idx) # type: ignore
             self.app.update_task_state(idx, "success") # type: ignore
 
             # ---------------------------------------------------------
-            # Task 2: Forensic Collision Backup (Structural Deep Scan)
+            # Task 2: Forensic Collision Backup
             # ---------------------------------------------------------
             idx = 2
             self.app.update_task_state(idx, "running") # type: ignore
             self.app.log_task(f"[bold {THEME['accent']}]>>> PROCESS INITIATED:[/] Forensic Collision Backup\n", idx) # type: ignore
             
-            # Transpiled bash deep-scan algorithm deployed
             await self._backup_worktree_collisions(f'origin/{BRANCH}', honor_tracked=True, task_idx=idx)
             self.app.update_task_state(idx, "success") # type: ignore
 
             # ---------------------------------------------------------
-            # Task 3: BTRFS CoW Snapshot
+            # Task 3: BTRFS CoW Snapshot (Safe Skip on Initial Setup)
             # ---------------------------------------------------------
             idx = 3
             self.app.update_task_state(idx, "running") # type: ignore
             self.app.log_task(f"[bold {THEME['accent']}]>>> PROCESS INITIATED:[/] Atomic Snapshot (CoW)\n", idx) # type: ignore
             
-            _, diff, _ = await self._run('diff-index', '--raw', '--name-only', 'HEAD', check=False, task_idx=-1)
-            modified = [f for f in diff.split('\n') if f.strip()]
-            if modified:
-                snap_dir = BACKUP_BASE_DIR / f"cow_snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                snap_dir.mkdir(parents=True)
-                copied = 0
-                for file in modified:
-                    src = WORK_TREE / file
-                    if src.exists() or src.is_symlink():
-                        dest = snap_dir / file
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        await asyncio.create_subprocess_exec('cp', '-a', '--reflink=auto', str(src), str(dest))
-                        self.app.log_task(f"[dim]CoW Snapshot: {escape(file)}[/dim]", idx) # type: ignore
-                        copied += 1
-                msg = f"[bold {THEME['success']}]Atomic BTRFS CoW Snapshot secured ({copied} items).[/]"
-                self.log(msg); self.app.log_task(msg, idx) # type: ignore
+            if local_head:
+                _, diff, _ = await self._run('diff-index', '--name-only', 'HEAD', check=False, task_idx=-1)
+                modified = [f for f in diff.split('\n') if f.strip()]
+                if modified:
+                    snap_dir = BACKUP_BASE_DIR / f"cow_snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    snap_dir.mkdir(parents=True)
+                    copied = 0
+                    for file in modified:
+                        src = WORK_TREE / file
+                        if src.exists() or src.is_symlink():
+                            dest = snap_dir / file
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            
+                            # CRITICAL FIX: Explicit process await prevents catastrophic race condition
+                            # against the 'git reset --hard' mechanism that executes next.
+                            proc = await asyncio.create_subprocess_exec('cp', '-a', '--reflink=auto', str(src), str(dest))
+                            await proc.wait()
+                            
+                            self.app.log_task(f"[dim]CoW Snapshot: {escape(file)}[/dim]", idx) # type: ignore
+                            copied += 1
+                    msg = f"[bold {THEME['success']}]Atomic BTRFS CoW Snapshot secured ({copied} items).[/]"
+                    self.log(msg); self.app.log_task(msg, idx) # type: ignore
+                else:
+                    self.app.log_task(f"[bold {THEME['success']}]No local tracked modifications found. Snapshot skipped.[/]", idx) # type: ignore
             else:
-                self.app.log_task(f"[bold {THEME['success']}]No local tracked modifications found. Snapshot skipped.[/]", idx) # type: ignore
+                self.app.log_task(f"[bold {THEME['success']}]Initial bootstrap phase. Tracked references empty. Snapshot skipped.[/]", idx) # type: ignore
                 
             self.app.update_task_state(idx, "success") # type: ignore
 
@@ -523,10 +584,12 @@ class GitEngine:
             for i in range(5):
                 if self.app.tasks[i].status == "running": # type: ignore
                     self.app.update_task_state(i, "failed") # type: ignore
+                elif self.app.tasks[i].status == "pending": # type: ignore
+                    self.app.update_task_state(i, "skipped") # type: ignore
             return False
 
 # ==============================================================================
-#  TEXTUAL UI COMPONENTS (REACTIVE ARCHITECTURE)
+#  TEXTUAL UI COMPONENTS
 # ==============================================================================
 class MainLogItem(ListItem):
     def compose(self) -> ComposeResult:
@@ -544,7 +607,16 @@ class TaskItem(ListItem):
     def compose(self) -> ComposeResult:
         yield Label(id=f"lbl-{self.task_index}")
 
+    def on_mount(self) -> None:
+        self._update_label()
+
     def watch_status(self, old_status: str, new_status: str) -> None:
+        self._update_label()
+
+    def _update_label(self) -> None:
+        if not self.is_mounted:
+            return
+
         if self.dusky_task.mode == 'GIT':
             badge = f"[bold {THEME['accent']}]GIT[/]"
         elif self.dusky_task.mode == 'S':
@@ -557,7 +629,7 @@ class TaskItem(ListItem):
         cmd_str = escape(cmd_str)
 
         suffix = ""
-        if self.dusky_task.name == "Fetch Upstream & Diff" and getattr(self.app, 'git_diff_text', None) and new_status in ("success", "skipped"):
+        if self.dusky_task.name == "Fetch Upstream & Diff" and getattr(self.app, 'git_diff_text', None) and self.status in ("success", "skipped"):
             suffix = f" [dim {THEME['success']}](Diff recorded)[/]"
 
         icons = {
@@ -567,14 +639,14 @@ class TaskItem(ListItem):
             'failed':  f"[bold {THEME['error']}]✗[/]", 
             'skipped': f"[dim {THEME['warning']}]-[/]"
         }
-        icon = icons.get(new_status, "❓")
+        icon = icons.get(self.status, "❓")
 
         color_map = {
             'running': f"bold {THEME['fg']}", 'pending': f"dim {THEME['muted']}",
             'success': f"bold {THEME['success']}", 'failed': f"bold {THEME['error']}",
             'skipped': f"dim {THEME['warning']}"
         }
-        color = color_map.get(new_status, "white")
+        color = color_map.get(self.status, "white")
         
         try:
             self.query_one(Label).update(f" {icon}  {badge}  [{color}]{cmd_str}[/]{suffix}")
@@ -591,12 +663,11 @@ class DuskyApp(App):
         super().__init__()
         self.tasks = tasks
         self.has_sudo = has_sudo
-        self.sudo_task: asyncio.Task | None = None
         self.abort_flag = False
         self.git_diff_text = ""
 
     def compose(self) -> ComposeResult:
-        yield Static(" 🦅 DUSKY PIPELINE ENGINE (v9.3 — Elegance Edition)", classes="header-panel")
+        yield Static(" 🦅 DUSKY PIPELINE ENGINE (v9.4.1 — Elegance Edition)", classes="header-panel")
         
         with Horizontal():
             with Vertical(id="sidebar"):
@@ -622,15 +693,17 @@ class DuskyApp(App):
         self.log_main(f"[bold {THEME['fg']}] ARCHITECTURE INITIALIZATION — {datetime.now().strftime('%H:%M:%S')}[/]")
         self.log_main(f"[bold {THEME['accent']}]======================================================[/]")
         
+        # RELIABILITY FIX: Native Textual Timer binds sudo keepalive strictly to App lifecycle
+        # preventing resource leak out-of-bounds.
         if self.has_sudo:
-            self.sudo_task = asyncio.create_task(self.sudo_keepalive())
+            self.set_interval(60.0, self.ping_sudo)
         
         self.run_worker(self.execute_pipeline(), exclusive=True, thread=False)
 
     def log_main(self, message: str) -> None:
         self.query_one("#log-main", RichLog).write(message)
 
-    def log_task(self, message: Any, index: int) -> None:
+    def log_task(self, message: any, index: int) -> None:
         try:
             self.query_one(f"#log-task-{index}", RichLog).write(message)
         except Exception:
@@ -640,32 +713,37 @@ class DuskyApp(App):
         self.tasks[index].status = new_status # type: ignore
         list_view = self.query_one("#task_list", ListView)
         
-        child = list_view.children[index + 1]
-        if isinstance(child, TaskItem):
-            child.status = new_status
+        try:
+            task_nodes = list_view.query(TaskItem).nodes
+            if index < len(task_nodes):
+                task_nodes[index].status = new_status
+        except Exception:
+            pass
             
         if new_status == "running" and list_view.index in [None, 0, index]:
             list_view.index = index + 1
             
-        self.progress.advance(1)
+        if new_status in ("success", "failed", "skipped"):
+            self.progress.advance(1)
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         item = event.item
+        if item is None:
+            return
         switcher = self.query_one("#log_switcher", ContentSwitcher)
         if isinstance(item, MainLogItem):
             switcher.current = "log-main"
         elif isinstance(item, TaskItem):
             switcher.current = f"log-task-{item.task_index}"
 
-    async def sudo_keepalive(self) -> None:
+    async def ping_sudo(self) -> None:
+        """Lightweight background keep-alive tied inherently to the app runtime lifecycle."""
         try:
-            while not self.abort_flag:
-                proc = await asyncio.create_subprocess_exec(
-                    'sudo', '-n', '-v', stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
-                )
-                await proc.wait()
-                await asyncio.sleep(60)
-        except asyncio.CancelledError:
+            proc = await asyncio.create_subprocess_exec(
+                'sudo', '-n', '-v', stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+            )
+            await proc.wait()
+        except Exception:
             pass
 
     async def execute_pipeline(self) -> None:
@@ -675,6 +753,10 @@ class DuskyApp(App):
         if not await git_engine.execute_phase():
             self.abort_flag = True
             self.log_main(f"\n[bold {THEME['error']} blink]SYSTEM HALTED. GIT INTEGRITY VIOLATION.[/]")
+            
+            # Synchronize pipeline list state to match visual halt
+            for index in range(5, len(self.tasks)):
+                self.update_task_state(index, "skipped")
             return
 
         self.log_main(f"\n[bold {THEME['accent']}]═══ Phase 2: Configuration Pipeline Execution ═══[/]\n")
@@ -682,7 +764,10 @@ class DuskyApp(App):
         success_count, fail_count = 0, 0
 
         for index in range(5, len(self.tasks)):
-            if self.abort_flag: break
+            if self.abort_flag: 
+                self.update_task_state(index, "skipped")
+                continue
+
             task = self.tasks[index]
             self.update_task_state(index, "running")
             
@@ -690,15 +775,18 @@ class DuskyApp(App):
             self.log_main(f"\n[bold {THEME['warning']}]>[/] Executing Process: [bold {THEME['fg']}]{escape(cmd_str)}[/]")
             self.log_task(f"[bold {THEME['accent']}]>>> PROCESS INITIATED:[/] {escape(cmd_str)}\n", index)
 
-            if not task.path or not task.path.is_file():
-                err = f"[bold {THEME['error']}][ERROR][/] Architecture File Missing: {escape(str(task.path))}"
+            # Heuristic Path Resolution executes here to accommodate temporally novel scripts introduced via upstream pull.
+            resolved_path = resolve_script_path(task.name)
+
+            if not resolved_path:
+                err = f"[bold {THEME['error']}][ERROR][/] Architecture File Missing: {escape(task.name)}"
                 self.log_main(err); self.log_task(err, index)
                 self.update_task_state(index, "failed")
                 fail_count += 1
                 if not task.ignore_fail: self.abort_flag = True
                 continue
 
-            exec_cmd = [str(task.path)] + task.args
+            exec_cmd = [str(resolved_path)] + task.args
             if task.mode == 'S': exec_cmd = ['sudo', '-n'] + exec_cmd
             
             try:
@@ -707,14 +795,15 @@ class DuskyApp(App):
                     self.log_task(f"[dim]Interactive flag detected. Console control delegated to user.[/]", index)
                     
                     with self.suspend():
-                        sys.stdout.write(f"\n\033[1;38;2;{int(THEME['accent'][1:3],16)};{int(THEME['accent'][3:5],16)};{int(THEME['accent'][5:7],16)}m=== DUSKY INTERACTIVE ABSTRACTION: {task.name} ===\033[0m\n\n")
+                        r, g, b = get_rgb_color(THEME['accent'])
+                        sys.stdout.write(f"\n\033[1;38;2;{r};{g};{b}m=== DUSKY INTERACTIVE ABSTRACTION: {task.name} ===\033[0m\n\n")
                         sys.stdout.flush()
                         
                         proc = await asyncio.create_subprocess_exec(*exec_cmd, cwd=str(WORK_TREE))
                         await proc.wait()
                         rc = proc.returncode
                         
-                        sys.stdout.write(f"\n\033[1;38;2;{int(THEME['accent'][1:3],16)};{int(THEME['accent'][3:5],16)};{int(THEME['accent'][5:7],16)}m=== ABSTRACTION TERMINATED (Code: {rc}) ===\033[0m\n")
+                        sys.stdout.write(f"\n\033[1;38;2;{r};{g};{b}m=== ABSTRACTION TERMINATED (Code: {rc}) ===\033[0m\n")
                         sys.stdout.flush()
                     
                     self.log_task(f"\n[bold {THEME['success']}]PTY control returned. Exit Code: {rc}[/]", index)
@@ -723,9 +812,10 @@ class DuskyApp(App):
                     proc = await asyncio.create_subprocess_exec(
                         *exec_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=str(WORK_TREE)
                     )
-                    async for line in proc.stdout: # type: ignore
-                        decoded = line.decode('utf-8', errors='replace').rstrip()
-                        self.log_task(Text.from_ansi(decoded), index)
+                    if proc.stdout:
+                        async for line in proc.stdout: 
+                            decoded = line.decode('utf-8', errors='replace').rstrip()
+                            self.log_task(Text.from_ansi(decoded), index)
 
                     await proc.wait()
                     rc = proc.returncode
@@ -765,7 +855,6 @@ class DuskyApp(App):
             self.log_main(f"\n[bold {THEME['success']}]ARCHITECTURE DEPLOYMENT COMPLETED.[/]")
 
         self.log_main("\n[dim]Press 'Ctrl+C' or 'Q' to terminate abstraction shell.[/dim]")
-        if self.sudo_task: self.sudo_task.cancel()
 
     def action_quit(self) -> None:
         self.abort_flag = True

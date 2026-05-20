@@ -5,6 +5,8 @@ ENGINE_TYPE = "systemd"
 TARGET_FILE = "/etc/systemd/system"
 APP_TITLE = "Dusky Service Manager"
 DEFAULT_MODE = "auto"
+THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"
+
 
 TABS = [
     "Core User",

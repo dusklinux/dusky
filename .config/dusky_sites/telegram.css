@@ -1,10 +1,7 @@
 @-moz-document domain("web.telegram.org") {
     /* For A version of Telegram Web */
-    html, body {
-        /* Message card */
+    html, body, html.theme-dark {
         --action-message-bg: var(--surface_container_low) !important;
-    }
-    html.theme-dark {
         --color-chat-hover: var(--surface_container_high) !important;
         --color-chat-active: var(--primary_container) !important;
         --color-background-selected: var(--surface_container_high) !important;

@@ -13,7 +13,9 @@
         /* Text Colors */
         --fgColor-default: var(--on_surface) !important;
         --fgColor-muted: var(--on_surface_variant) !important;
+        --fgColor-onEmphasis: var(--surface) !important;
         --fgColor-accent: var(--primary) !important;
+        --fgColor-white: var(--surface) !important;
 
         /* Buttons */
         --button-primary-bgColor-rest: var(--primary) !important;
@@ -48,6 +50,8 @@
         --control-checked-bgColor-rest: var(--primary) !important;
         --control-checked-bgColor-hover: var(--primary_fixed_dim) !important;
         --control-checked-bgColor-active: var(--primary_fixed) !important;
+        --controlTrack-bgColor-rest: var(--surface_container_lowest) !important;
+        --controlKnob-bgColor-rest: var(--surface_variant) !important;
 
         /* Star button */
         --button-star-iconColor: var(--primary) !important;
