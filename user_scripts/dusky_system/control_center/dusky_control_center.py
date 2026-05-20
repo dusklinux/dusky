@@ -103,7 +103,7 @@ SCRIPT_DIR: Final[Path] = Path(__file__).resolve().parent
 
 # UI Layout Constants
 WINDOW_DEFAULT_WIDTH: Final[int] = 1180
-WINDOW_DEFAULT_HEIGHT: Final[int] = 780
+WINDOW_DEFAULT_HEIGHT: Final[int] = 720
 SIDEBAR_MIN_WIDTH: Final[int] = 180
 SIDEBAR_MAX_WIDTH: Final[int] = 180
 SIDEBAR_WIDTH_FRACTION: Final[float] = 0.25
@@ -1357,7 +1357,7 @@ class DuskerControlCenter(Adw.Application):
         root_tag: str | None = None,
     ) -> Adw.NavigationPage:
         """
-        Build a navigation page with toolbar and horizontal section flow.
+        Build a navigation page with toolbar and preferences content.
         """
         path = list(ctx.get("path") or [])
         if not path or path[-1] != title:
@@ -1380,44 +1380,34 @@ class DuskerControlCenter(Adw.Application):
         header.set_title_widget(window_title)
         toolbar.add_top_bar(header)
 
-        flow = Gtk.FlowBox()
-        flow.set_valign(Gtk.Align.START)
-        flow.set_selection_mode(Gtk.SelectionMode.NONE)
-        flow.set_column_spacing(12)
-        flow.set_row_spacing(12)
-        flow.set_max_children_per_line(3)
-        flow.set_min_children_per_line(1)
+        pref_page = Adw.PreferencesPage()
+        self._populate_pref_content(pref_page, layout, ctx)
 
-        self._populate_pref_content(flow, layout, ctx)
-
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_child(flow)
-        toolbar.set_content(scroll)
+        toolbar.set_content(pref_page)
         page.set_child(toolbar)
         return page
 
     def _populate_pref_content(
         self,
-        container: Gtk.FlowBox,
+        page: Adw.PreferencesPage,
         layout: list[ConfigSection],
         ctx: RowContext,
     ) -> None:
-        """Populate a flow box with horizontal section cards."""
+        """Populate a preferences page with sections and items."""
         for section in layout:
             section_type = section.get("type", SectionType.SECTION)
 
             if section_type == SectionType.GRID_SECTION:
-                container.add(self._build_grid_section(section, ctx))
+                page.add(self._build_grid_section(section, ctx))
                 continue
 
             if isinstance(section.get("items"), list):
-                container.add(self._build_standard_section(section, ctx))
+                page.add(self._build_standard_section(section, ctx))
                 continue
 
             group = Adw.PreferencesGroup()
             group.add(self._build_item_row(section, ctx))
-            container.add(group)
+            page.add(group)
 
     def _build_grid_section(
         self,
