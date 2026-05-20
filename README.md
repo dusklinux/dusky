@@ -5,9 +5,7 @@ a fork of [dusky](https://github.com/dusklinux/dusky) by dusklinux. tweaks, addo
 
 ## what's here
 
-- add-ons tab in the Dusky Control Center (placeholder, ready for customization)
-- upstream merge helper — easy `dusklinux/dusky` sync via `merge_upstream.sh` or the Add-ons tab
-- all deploy/update scripts now point to this repo instead of upstream
+- new claude.ai matugen
 - (currently of course)
 
 ## what's coming
