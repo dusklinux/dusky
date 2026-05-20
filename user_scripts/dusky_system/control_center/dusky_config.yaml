@@ -3004,10 +3004,8 @@ pages:
     - type: button
       properties:
         title: Install Claude Theme
-        description: Matugen theme for claude.ai - one click
+        description: Matugen theme for claude.ai
         icon: accessories-text-editor-symbolic
-        button_text: "Install"
-        style: suggested
       on_press:
         type: exec
         command: kitty --class claude_theme.sh --title "Claude Theme" --hold sh -c "$HOME/user_scripts/dusky_system/addons/claude_theme.sh"
