@@ -79,8 +79,8 @@ input_path  = '~/.config/matugen/templates/colors.css'
 output_path = '~/.config/matugen/generated/wlogout-colors.css'
 
 [templates.mako]
-input_path  = '~/.config/matugen/templates/mako'
-output_path = '~/.config/matugen/generated/mako-colors'
+input_path  = '~/.config/matugen/templates/mako.ini'
+output_path = '~/.config/matugen/generated/mako-colors.ini'
 post_hook   = '''
   makoctl reload || :
 '''
