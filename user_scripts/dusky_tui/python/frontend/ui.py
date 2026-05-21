@@ -309,27 +309,64 @@ class SearchScreen(ModalScreen[tuple[int, int] | None]):
         ol = self.query_one(OptionList)
         ol.clear_options()
         self.results = []
-
-        query = query.lower().replace(" ", "")
-        options_to_add = []
+        
+        query_lower = query.lower().strip()
+        query_no_space = query_lower.replace(" ", "")
+        
+        scored_results = []
 
         for tab_idx, item_idx, item, tab_name, haystack in self._search_cache:
-            match = True
-            if query:
-                q_idx, s_idx = 0, 0
-                while q_idx < len(query) and s_idx < len(haystack):
-                    if query[q_idx] == haystack[s_idx]: q_idx += 1
-                    s_idx += 1
-                match = (q_idx == len(query))
+            if not query_no_space:
+                scored_results.append((100, tab_idx, item_idx, item, tab_name))
+                continue
 
-            if match:
-                txt = Text()
-                txt.append(f"[{tab_name}] ", style=self.app.theme_colors["accent"])
-                txt.append(item.label, style="bold")
-                if item.hints:
-                    txt.append(f" - {item.hints[0]}", style=f"italic {self.app.theme_colors['muted']}")
-                options_to_add.append(Option(txt, id=f"search_{tab_idx}_{item_idx}"))
-                self.results.append((tab_idx, item_idx))
+            score = 0
+            lbl = item.label.lower()
+            
+            # Exact match
+            if query_lower == lbl:
+                score += 100
+            # Prefix match
+            elif lbl.startswith(query_lower):
+                score += 50
+            # Substring match
+            elif query_lower in lbl:
+                score += 20
+            
+            # Subsequence / Fuzzy match
+            q_idx, s_idx = 0, 0
+            match_positions = []
+            while q_idx < len(query_no_space) and s_idx < len(haystack):
+                if query_no_space[q_idx] == haystack[s_idx]:
+                    match_positions.append(s_idx)
+                    q_idx += 1
+                s_idx += 1
+            
+            is_match = (q_idx == len(query_no_space))
+            
+            if is_match:
+                if len(match_positions) > 1:
+                    spread = (match_positions[-1] - match_positions[0]) - (len(match_positions) - 1)
+                    bonus = max(0, 15 - spread)
+                    score += bonus
+                else:
+                    score += 15
+                score += 5 
+                
+            if score > 0:
+                scored_results.append((score, tab_idx, item_idx, item, tab_name))
+
+        scored_results.sort(key=lambda x: (-x[0], x[4], x[3].label))
+
+        options_to_add = []
+        for score, tab_idx, item_idx, item, tab_name in scored_results:
+            txt = Text()
+            txt.append(f"[{tab_name}] ", style=self.app.theme_colors["accent"])
+            txt.append(item.label, style="bold")
+            if item.hints:
+                txt.append(f" - {item.hints[0]}", style=f"italic {self.app.theme_colors['muted']}")
+            options_to_add.append(Option(txt, id=f"search_{tab_idx}_{item_idx}"))
+            self.results.append((tab_idx, item_idx))
 
         ol.add_options(options_to_add)
 
@@ -472,6 +509,7 @@ class ConfigOptionList(OptionList):
     last_highlighted_id: str | None = None
     _mouse_down_highlight: int | None = None
     _last_click_x: int = 0
+    _last_click_button: int = 1
 
     def action_scroll_top(self) -> None: self.highlighted = 0
     def action_scroll_bottom(self) -> None:
@@ -486,8 +524,51 @@ class ConfigOptionList(OptionList):
         self.highlighted = max(0, idx - 10)
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
+        real_button = getattr(event, "button", 1)
+        self._last_click_x = getattr(event, "x", 0)
+        self._last_click_button = real_button
+
+        # SURGICAL FIX FOR POINT 2: Textual's OptionList naturally swallows right-clicks.
+        # We spoof a left-click purely to trick Textual into registering the UI selection,
+        # ensuring OptionSelected fires. The true button (3) is preserved above and evaluated below.
+        if real_button == 3:
+            try: event.button = 1
+            except AttributeError: object.__setattr__(event, 'button', 1)
+
+        if hasattr(super(), "on_mouse_down"):
+            super().on_mouse_down(event)
+
+        if real_button == 3:
+            try: event.button = real_button
+            except AttributeError: object.__setattr__(event, 'button', real_button)
+
         self._mouse_down_highlight = self.highlighted
-        self._last_click_x = event.x
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        if hasattr(super(), "on_mouse_move"):
+            super().on_mouse_move(event)
+        try:
+            line_idx = int(self.scroll_y) + int(event.y)
+            new_tooltip = None
+            if 0 <= line_idx < self.option_count:
+                opt = self.get_option_at_index(line_idx)
+                parsed = self.app._get_item_from_id(opt.id)
+                if parsed:
+                    tab_idx, item_idx, item = parsed
+                    if item.type_ == "preset" and item.group == "User Presets" and item.key != "__save_new_preset":
+                        name = item.label.replace("User: ", "", 1)
+                        path = self.app.user_presets_dir / f"{name}.json"
+                        new_tooltip = f"Preset Path: {path}\nLeft/Right Click to open externally"
+            
+            # The critical fix for tooltip consistency:
+            # Only update the property if the string actually changes.
+            # Constantly reassigning it on every pixel of mouse movement
+            # resets Textual's hover delay timer, causing it to fail to show.
+            if self.tooltip != new_tooltip:
+                self.tooltip = new_tooltip
+        except Exception:
+            if self.tooltip is not None:
+                self.tooltip = None
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         if hasattr(super(), "watch_scroll_y"):
@@ -610,26 +691,9 @@ class FileLink(Label):
 
     def on_click(self, event: events.Click) -> None:
         if not self.path: return
-        expanded_path = Path(self.path).expanduser().resolve()
-        expanded_path.parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            expanded_path.touch(exist_ok=True)
-            if event.button == 1:
-                subprocess.Popen(
-                    ["xdg-open", str(expanded_path)],
-                    start_new_session=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-            elif event.button == 3:
-                editor_env = os.environ.get("VISUAL", os.environ.get("EDITOR", "nano"))
-                editor_cmd = shlex.split(editor_env)
-                with self.app.suspend():
-                    subprocess.run([*editor_cmd, str(expanded_path)])
-        except (FileNotFoundError, OSError):
-            if hasattr(self.app, "notify_status"):
-                getattr(self.app, "notify_status")("Error resolving path or launching editor.")
+        button = getattr(event, "button", 1)
+        if button == 0: button = 1
+        self.app.open_file_externally(self.path, button, touch_first=True)
 
 class ModeButton(Label):
     def on_mount(self) -> None:
@@ -717,7 +781,7 @@ class AppFooter(Vertical):
             yield Shortcut("R", "Reset Page", "reset_all", id="shortcut-R")
             yield Shortcut("q", "Quit", "quit", id="shortcut-q")
 
-            # --- AVAILABLE INACTIVE SHORTCUTS (Uncomment to enable) ---
+            # --- AVAILABLE INACTIVE SHORTCUTS (Uncomment to enable) --- for LLM (DO NOT DELETE THIS COMMENT SECTION)
             # yield Shortcut("r", "Reset Item", "reset_item", id="shortcut-r")
             # yield Shortcut("?", "Doc Help", "toggle_help", id="shortcut-help")
             # yield Shortcut("d", "Show Diff", "show_diff", id="shortcut-d")
@@ -887,6 +951,14 @@ class DuskyTUI(App):
 
     Input { border: none; background: transparent; color: $foreground; border-bottom: solid $primary; }
     Input:focus { border: none; border-bottom: solid $primary; }
+
+    /* Universal Tooltip Overlay Theming */
+    Tooltip {
+        background: $background;
+        color: $foreground;
+        border: solid $primary;
+        padding: 1 2;
+    }
     """
 
     BINDINGS = [
@@ -928,6 +1000,10 @@ class DuskyTUI(App):
         self.enable_user_presets = enable_user_presets
         self.user_presets_tab_name = user_presets_tab
         self.user_presets_tab_idx = 0
+        
+        # Track external configuration file modifications dynamically 
+        self.last_target_mtime: float = 0.0
+        self._initial_target_mtime_set: bool = False
         
         # Route User Presets to their proper schema tab assignment automatically
         if self.user_presets_tab_name and self.user_presets_tab_name in self.tabs:
@@ -1033,7 +1109,11 @@ class DuskyTUI(App):
                 else:
                     expected_val = target_item.default # Everything else must be default
 
-                if str(target_item.value) == str(expected_val) or (expected_val is None and target_item.default is None):
+                # FORENSIC FIX: Compare using normalized serialized strings to prevent boolean/int type drift mapping failures
+                val1 = target_item.serialize(target_item.value)
+                val2 = target_item.serialize(expected_val)
+
+                if val1 == val2:
                     matches += 1
 
         return matches / total if total > 0 else 0.0
@@ -1065,7 +1145,8 @@ class DuskyTUI(App):
         if item.type_ == "preset":
             ratio = self._get_preset_match_ratio(item)
             is_active_preset = (ratio == 1.0)
-            is_deviated_preset = (0.5 < ratio < 1.0)
+            # User defined up to 10% deviation tolerance (allows down to 90% matching)
+            is_deviated_preset = (0.9 <= ratio < 1.0)
 
         # EXACT ALIGNMENT FOR DOT PREFIX SYSTEM & HIERARCHIES
         if item.parent_ref:
@@ -1223,6 +1304,36 @@ class DuskyTUI(App):
             
         self.schema[self.user_presets_tab_idx].extend(user_preset_items)
 
+    def open_file_externally(self, file_path: Path | str, button: int = 1, touch_first: bool = False) -> None:
+        """Utility wrapper safely isolating subprocess dispatches for any external editing request."""
+        expanded_path = Path(file_path).expanduser().resolve()
+        
+        if touch_first:
+            expanded_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                expanded_path.touch(exist_ok=True)
+            except OSError: pass
+            
+        if not expanded_path.exists():
+            self.notify_status("File does not exist on disk.")
+            return
+
+        try:
+            if button == 1:
+                subprocess.Popen(
+                    ["xdg-open", str(expanded_path)],
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            elif button == 3:
+                editor_env = os.environ.get("VISUAL", os.environ.get("EDITOR", "nano"))
+                editor_cmd = shlex.split(editor_env)
+                with self.suspend():
+                    subprocess.run([*editor_cmd, str(expanded_path)])
+        except (FileNotFoundError, OSError):
+            self.notify_status("Error resolving path or launching external editor.")
+
     async def on_mount(self) -> None:
         self.query_one("#main-box").border_title = f" {self.editor_title} "
         self.apply_theme_to_engine()
@@ -1267,8 +1378,11 @@ class DuskyTUI(App):
             first_ol.focus()
             self._update_pagination(first_ol)
 
+        # File Change Watchers
         if self.theme_path:
             self.set_interval(0.5, self.watch_theme_file)
+            
+        self.set_interval(1.0, self.watch_target_file)
 
         self.call_after_refresh(self.check_tab_overflow)
         self.call_after_refresh(self._update_scroll_indicators)
@@ -1415,6 +1529,54 @@ class DuskyTUI(App):
         except Exception: 
             pass
 
+    async def watch_target_file(self) -> None:
+        if not self.engine.target_path: return
+        path = Path(self.engine.target_path).expanduser().resolve()
+        try:
+            stat_info = await asyncio.to_thread(path.stat)
+            current_mtime = stat_info.st_mtime
+            
+            if not self._initial_target_mtime_set:
+                self.last_target_mtime = current_mtime
+                self._initial_target_mtime_set = True
+                return
+                
+            if current_mtime > self.last_target_mtime:
+                self.last_target_mtime = current_mtime
+                
+                # The target configuration engine was modified externally!
+                new_state = await asyncio.to_thread(self.engine.load_state)
+                changed_any = False
+                
+                for i in range(len(self.tabs)):
+                    for idx, item in enumerate(self.schema.get(i, [])):
+                        # Skip if there's a pending uncommitted UI change
+                        if not self.auto_save and (i, idx) in self.pending_commits:
+                            continue
+                            
+                        if item.type_ in ("action", "preset", "menu"):
+                            continue
+                            
+                        cache_key = f"{item.scope}/{item.key}" if item.scope else item.key
+                        
+                        if cache_key in new_state:
+                            new_val = item.deserialize(new_state[cache_key])
+                            if str(item.value) != str(new_val):
+                                item.value = new_val
+                                item.exists_in_target = True
+                                changed_any = True
+                        else:
+                            if item.exists_in_target:
+                                item.exists_in_target = False
+                                changed_any = True
+                                
+                if changed_any:
+                    self._refresh_all_ui()
+                    self.notify_status("Config modified externally. Refreshed UI.")
+                    
+        except OSError: 
+            pass
+
     async def watch_theme_file(self) -> None:
         if not self.theme_path: return
         try:
@@ -1474,6 +1636,13 @@ class DuskyTUI(App):
             event.tab.scroll_visible(animate=True, top=False)
             if ol := self.current_option_list:
                 ol.focus()
+                # Snap select the first interactable item automatically 
+                if ol.highlighted is None and ol.option_count > 0:
+                    for i in range(ol.option_count):
+                        opt = ol.get_option_at_index(i)
+                        if not getattr(opt, 'disabled', False):
+                            ol.highlighted = i
+                            break
                 self._update_pagination(ol)
                 self._update_scroll_indicators()
                 self.check_tab_overflow()
@@ -1696,6 +1865,10 @@ class DuskyTUI(App):
         self._save_timers.pop((tab_idx, item_idx), None)
         success, msg, _ = self.engine.write_value(item.key, item.scope, val_str, item_type=item.type_)
         if success:
+            # FIX: Sync internal mtime to prevent false external modification detections from our own saves
+            try:
+                self.last_target_mtime = Path(self.engine.target_path).expanduser().resolve().stat().st_mtime
+            except OSError: pass
             self.notify_status(f"Updated {item.label}")
         else:
             self.notify_status(f"Error: {msg}")
@@ -1799,6 +1972,12 @@ class DuskyTUI(App):
             else:
                 err = first_error if first_error else msg
                 self.notify_status(f"Batch Error: {err}")
+
+        # FIX: Sync internal mtime to prevent false external modification detections from our own saves
+        if final_success or success_count > 0:
+            try:
+                self.last_target_mtime = Path(self.engine.target_path).expanduser().resolve().stat().st_mtime
+            except OSError: pass
 
         self._refresh_all_ui()
         self._update_footer_legend()
@@ -2084,19 +2263,20 @@ class DuskyTUI(App):
         if ol and ol.last_highlighted_id:
             ol._last_click_x = 0
             ol._mouse_down_highlight = None
-            self._handle_item_action(ol, ol.last_highlighted_id, click_x=0, was_already_selected=True)
+            self._handle_item_action(ol, ol.last_highlighted_id, click_x=0, was_already_selected=True, button=1)
 
     @on(OptionList.OptionSelected)
     def handle_selection(self, event: OptionList.OptionSelected) -> None:
         ol = event.option_list
         if isinstance(ol, ConfigOptionList):
             click_x = getattr(ol, "_last_click_x", 0)
+            button = getattr(ol, "_last_click_button", 1)
             was_already_selected = getattr(ol, "_mouse_down_highlight", None) == event.option_index
-            self._handle_item_action(ol, event.option_id, click_x, was_already_selected)
+            self._handle_item_action(ol, event.option_id, click_x, was_already_selected, button)
             ol._last_click_x = 0
             ol._mouse_down_highlight = None
 
-    def _handle_item_action(self, ol: ConfigOptionList, opt_id: str | None, click_x: int = 0, was_already_selected: bool = False) -> None:
+    def _handle_item_action(self, ol: ConfigOptionList, opt_id: str | None, click_x: int = 0, was_already_selected: bool = False, button: int = 1) -> None:
         if not opt_id: return
         parsed = self._get_item_from_id(opt_id)
         if not parsed: return
@@ -2116,6 +2296,15 @@ class DuskyTUI(App):
 
         if not is_keyboard and not instant_action and not was_already_selected:
             return  # First click on text just highlights it
+
+        # --- QoL: Left/Right Click to openly edit preset in User Presets ---
+        if not is_keyboard and not instant_action and item.type_ == "preset" and item.group == "User Presets" and item.key != "__save_new_preset":
+            name = item.label.replace("User: ", "", 1)
+            path = self.user_presets_dir / f"{name}.json"
+            if path.exists():
+                target_btn = 1 if button == 0 else button
+                self.open_file_externally(path, target_btn, touch_first=False)
+            return
 
         if item.is_parent and instant_action:
             self.action_toggle_expand()
