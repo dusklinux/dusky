@@ -24,7 +24,6 @@
 .config/kitty/instruction for theme.txt
 .config/Kvantum/kvantum.kvconfig
 .config/matugen/config.toml
-.config/mako/config
 .config/matugen/templates/
 .config/matugen/generated_fresh/
 .config/mpv/mpv.conf
