@@ -1,9 +1,10 @@
 @-moz-document domain("web.whatsapp.com") {
-    :root, .xul6ihk.xul6ihk, .xul6ihk.xul6ihk:root {
+    * {
         --WDS-neutral-gray-50: var(--on_surface) !important;
         --WDS-neutral-gray-900: var(--surface) !important;
         --WDS-background-wash-inset: var(--surface) !important;
-        --WDS-content-default: var(--primary_fixed_dim) !important;
+        --WDS-background-elevated-wash-inset: var(--surface) !important;
+        --WDS-content-default: var(--on_surface) !important;
         --WDS-surface-emphasized: var(--surface_container_low) !important;
         --WDS-surface-default: var(--surface) !important;
         --WDS-systems-chat-surface-composer: var(--surface_container_high) !important;
@@ -16,4 +17,3 @@
         --WDS-surface-elevated-emphasized: var(--surface_container_low) !important;
     }
 }
-  

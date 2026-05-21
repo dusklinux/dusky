@@ -1,0 +1,31 @@
+@-moz-document domain("claude.ai") {
+    .cds-root {
+        --cds-gray-0: var(--on_surface_variant) !important;
+        --cds-gray-700: var(--surface_container_low) !important;
+        --cds-gray-900: var(--surface_bright) !important;
+    }
+    .bg-bg-000 {
+        background-color: var(--surface_container) !important;
+    }
+    .bg-bg-100 {
+        background-color: var(--surface) !important;
+    }
+    .hover\:bg-bg-100:hover {
+        background-color: var(--surface_container_high) !important;
+    }
+    .bg-bg-300 {
+        background-color: var(--surface_rgb) !important;
+    }
+    ._ghost_10ocf_96 {
+        --button-hover-bg: var(--surface_container) !important;
+    }
+    .text-text-100 {
+        color: var(--on_surface) !important;
+    }
+    .data-\[popup-open\]\:bg-bg-400[data-popup-open] {
+        background-color: var(--surface_container_highest) !important;
+    }
+    .border-border-200 {
+        border-color: var(--outline_variant) !important;
+    }
+}

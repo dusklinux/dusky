@@ -12,6 +12,7 @@
     --bg-secondary: var(--surface_bright) !important;
     --bg-elevated-secondary: var(--surface_container_low) !important;  
     --text-primary: var(--on_surface) !important;
+    --bg-secondary-surface: var(--surface) !important;
   }
   
   .dark\:bg-\[\#353535\]:where(.dark, .dark *):not(:where(.dark .light, .dark .light *)) {

@@ -1,0 +1,14 @@
+@-moz-document domain("archlinux.org") {
+    :not(#archnavbar *):not(a):not(code):not(input):not(#id_maintainer):not(#id_flagged):not(#qjump *):not(#id_repo *):not(#id_arch *):not(#id_setlang):not(#pkglist-search > form:nth-child(2) > fieldset:nth-child(2) > div:nth-child(2) > select:nth-child(2)):not(button):not(#pkglist-search > form:nth-child(2) > fieldset:nth-child(2) > div:nth-child(4) > select:nth-child(2)):not(#pkglist-search > form:nth-child(2) > fieldset:nth-child(2) > div:nth-child(5) > select:nth-child(2)):not(#pkglist-search > form:nth-child(2) > fieldset:nth-child(2) > div:nth-child(6) > select:nth-child(2)):not(#pkglist-search > form:nth-child(2) > fieldset:nth-child(2) > div:nth-child(7) > select:nth-child(2)):not(svg):not(svg *):not(img):not(i):not(.icon):not([class*="icon"]):not(.comments-header h3 span.text) {
+        background: var(--surface) !important;
+        color: var(--on_surface) !important;
+    }
+
+    code {
+        background: var(--surface_container_high) !important;
+    }
+
+    #brdmenu a {
+        background: var(--surface) !important;
+    }
+}
