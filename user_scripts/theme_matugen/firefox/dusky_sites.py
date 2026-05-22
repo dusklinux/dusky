@@ -608,7 +608,7 @@ def main():
         console.clear()
         console.print(Panel.fit(
             "[bold cyan]Dusky Wayland CSS Generator[/] (AST Edition)\n"
-            "[dim]Powered by tinycss2 | Built for Arch Linux[/]",
+            "[dim]Powered by tinycss2 | Built for Dusky[/]",
             border_style="magenta"
         ))
         
