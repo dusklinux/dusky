@@ -303,13 +303,25 @@ def extract_css_variables(text: str) -> list[str]:
 def get_smart_input(prompt_msg: str) -> str:
     """Safely captures massive multi-line CSS pastes avoiding premature truncation."""
     console.print(f"[bold cyan]{prompt_msg}[/]")
-    console.print("[dim](Paste content. Type 'END' on a new line to finish, or press Ctrl+D)[/]")
+    console.print("[dim](Paste content. Type 'END' on a new line to finish, or press Ctrl+D or press Return Twice)[/]")
     lines = []
+    empty_count = 0
     while True:
         try:
             line = input()
             if line.strip().upper() == "END":
                 break
+                
+            if line == "":
+                empty_count += 1
+                if empty_count >= 2:
+                    # Remove the first empty line added by the initial Return
+                    if lines and lines[-1] == "":
+                        lines.pop()
+                    break
+            else:
+                empty_count = 0
+                
             lines.append(line)
         except EOFError:
             break
