@@ -11,6 +11,7 @@
             "cpu",
             "group/hide-tray",
             "group/battery-drawer",
+            "network",
             "custom/notification",
             "group/updates-drawer"
         ],
@@ -91,7 +92,6 @@
                 "transition-left-to-right": false
             },
             "modules": [
-                "network",
                 "battery",
                 "backlight",
                 "bluetooth",
