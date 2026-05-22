@@ -64,13 +64,14 @@ tooltip label {
     padding: 0px 4px;
     margin: 0px 2px;
     border-radius: 45px;
-    background-color: transparent;
-    color: alpha(@tertiary, 0.3);
+    background-color: alpha(@tertiary, 0.18);
+    color: alpha(@tertiary, 0.8);
     transition: background 0.3s ease-in-out, color 0.3s ease-in-out, min-width 0.3s ease-in-out;
 }
 
-#workspaces button.occupied {
-    color: alpha(@tertiary, 0.8);
+#workspaces button.empty {
+    background-color: alpha(@tertiary, 0.05);
+    color: alpha(@tertiary, 0.25);
 }
 
 #workspaces button.active {
@@ -123,15 +124,6 @@ tooltip label {
     padding: 0 4px 0 8px;
 }
 
-#mpris {
-    color: @tertiary;
-    font-size: 12px;
-    background-color: transparent;
-    padding: 0 6px;
-    margin: 3px 4px;
-    border-radius: 45px;
-}
-
 #pulseaudio,
 #bluetooth,
 #backlight,
@@ -182,15 +174,6 @@ tooltip label {
 #custom-updates-trigger,
 #custom-updates {
     color: @secondary;
-    font-size: 12px;
-}
-
-#custom-mpris-trigger {
-    color: @tertiary;
-    padding: 0 6px;
-    margin: 3px 0 3px 4px;
-    border-radius: 45px;
-    background-color: transparent;
     font-size: 12px;
 }
 
