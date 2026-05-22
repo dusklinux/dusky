@@ -4,20 +4,17 @@
         "reload_style_on_change": true,
         "margin-top": 8,
         "modules-center": [
+            "custom/arch",
             "clock",
-//            "custom/cava",
-            // "group/mpris-drawer",
             "hyprland/workspaces",
+            "memory",
+            "cpu",
             "group/hide-tray",
             "group/battery-drawer",
             "custom/notification",
             "group/updates-drawer"
         ],
 
-        "custom/cava": {
-            "format": "{}",
-            "exec": "$HOME/user_scripts/waybar/cava.sh --10 --clean"
-        },
 
 /*        "group/mpris-drawer": {
             "orientation": "inherit",
@@ -78,7 +75,7 @@
                 "persistent": "󰊠"
             },
             "persistent-workspaces": {
-                "*": 4
+                "*": 5
             },
             "on-click": "activate",
             "on-scroll-down": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e+1\" })'",
@@ -106,7 +103,7 @@
             "format": "{icon}",
             "format-charging": "",
             "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
-            "interval": 5,
+            "interval": 30,
             "tooltip-format": "Capacity: {capacity}%\n{timeTo}\nHealth: {health}%"
         },
 
@@ -157,9 +154,9 @@
 
         "custom/inhibit-suspend": {
             "format": "{}",
-            "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
+            "exec": "if pgrep -f 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
             "return-type": "json",
-            "interval": 5,
+            "interval": 30,
             "signal": 9,
             "on-click": "uwsm-app -- ~/user_scripts/waybar/toggle_hypridle.sh",
             "escape": true
@@ -217,7 +214,7 @@
             "format": "",
             "exec": "echo ''",
             "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
-            "interval": 5,
+            "interval": 18000,
             "tooltip": false
         },
 
@@ -227,6 +224,23 @@
             "format": "{}",
             "tooltip": true,
             "on-click": "uwsm-app -- kitty --class system_update.sh --hold -e ~/user_scripts/update_dusky/system_update.sh --all"
+        },
+
+        "custom/arch": {
+            "format": "",
+            "on-click": "gdbus call --session --dest com.github.dusky.controlcenter --object-path /com/github/dusky/controlcenter --method org.freedesktop.Application.Activate '{}'",
+            "tooltip": false
+        },
+
+        "memory": {
+            "format": " {used:.1f} GB",
+            "interval": 10,
+            "tooltip-format": "{used:.1f} GB / {total:.1f} GB"
+        },
+
+        "cpu": {
+            "format": " {usage}%",
+            "interval": 10
         }
     }
 ]
