@@ -1500,7 +1500,7 @@ pages:
         button_text: "Tweak"
       on_press:
         type: exec
-        command: kitty --class tui_mako.sh --hold sh -c $HOME/user_scripts/mako_osd/mako_tui/tui_mako.sh
+        command: foot --app-id=dusky_tui --hold ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/mako_osd/mako_tui/tui_mako.py
         terminal: false
   - type: section
     properties:
@@ -2110,7 +2110,7 @@ pages:
                 button_text: "TUI"
               on_press:
                 type: exec
-                command: kitty --class tui_mako.sh --hold sh -c $HOME/user_scripts/mako_osd/mako_tui/tui_mako.sh
+                command: foot --app-id=dusky_tui --hold ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/mako_osd/mako_tui/tui_mako.py
                 terminal: false
             - type: button
               properties:
