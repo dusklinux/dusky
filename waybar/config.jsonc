@@ -103,7 +103,7 @@
             "format": "{icon}",
             "format-charging": "",
             "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
-            "interval": 10,
+            "interval": 30,
             "tooltip-format": "Capacity: {capacity}%\n{timeTo}\nHealth: {health}%"
         },
 
@@ -154,7 +154,7 @@
 
         "custom/inhibit-suspend": {
             "format": "{}",
-            "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
+            "exec": "if pgrep -f 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
             "return-type": "json",
             "interval": 30,
             "signal": 9,
