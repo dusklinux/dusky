@@ -1,0 +1,225 @@
+@import url("../../.config/matugen/generated/waybar-colors.css");
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+@define-color glass_surface         alpha(@surface, 0.7);
+@define-color glass_surface_dark    alpha(@surface, 1.0);
+@define-color glass_tooltip         alpha(@surface, 0.7);
+
+/* WAYBAR_OPAQUE_SWITCH_START
+@define-color glass_surface         @surface;
+@define-color glass_surface_dark    @surface;
+@define-color glass_tooltip         @surface;
+WAYBAR_OPAQUE_SWITCH_END */
+
+* {
+    border: none;
+    border-radius: 0px;
+
+    font-family: "Space Grotesk", "JetBrainsMono Nerd Font Propo", sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+
+    min-height: 16px;
+    margin: 0;
+}
+
+window#waybar {
+    background: transparent;
+}
+
+.modules-center {
+    background: @glass_surface;
+    border: 2px solid alpha(@primary, 0.5);
+    border-radius: 6px;
+    padding: 0 12px;
+}
+
+tooltip,
+tooltip.background,
+tooltip decoration,
+.tooltip {
+    background: transparent;
+    background-color: transparent;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+}
+
+tooltip label {
+    color: @primary;
+    background-color: @glass_tooltip;
+    padding: 4px 10px;
+    border-radius: 12px;
+}
+
+#workspaces {
+    padding: 6px 2px;
+    margin: 0 0 0 4px;
+}
+
+#workspaces button {
+    padding: 0px 4px;
+    margin: 0px 2px;
+    border-radius: 45px;
+    background-color: transparent;
+    color: alpha(@tertiary, 0.45);
+    transition: all 0.3s ease-in-out;
+}
+
+#workspaces button.active {
+    background: linear-gradient(135deg, @primary 0%, @secondary 100%);
+    color: @on_primary;
+    min-height: 16px;
+    min-width: 24px;
+    transition: all 0.3s ease-in-out;
+}
+
+#workspaces button:hover {
+    background: linear-gradient(135deg, @primary 50%, @secondary 100%);
+    color: @on_primary;
+    min-width: 20px;
+    background-size: 400% 400%;
+}
+
+#battery,
+#pulseaudio,
+#network,
+#clock,
+#memory,
+#cpu,
+#custom-media,
+#window,
+#custom-launcher,
+#custom-notification,
+#submap,
+#bluetooth,
+#backlight,
+#custom-inhibit-suspend,
+#custom-updates-trigger,
+#custom-updates {
+    background-color: transparent;
+    padding: 0px 6px;
+    margin: 3px 4px;
+    border-radius: 45px;
+    border: none;
+    box-shadow: none;
+}
+
+#clock {
+    color: @tertiary;
+    font-size: 12px;
+}
+
+#custom-arch {
+    color: @tertiary;
+    font-size: 14px;
+    padding: 0 4px 0 8px;
+}
+
+#mpris {
+    color: @tertiary;
+    font-size: 12px;
+    background-color: transparent;
+    padding: 0 6px;
+    margin: 3px 4px;
+    border-radius: 45px;
+}
+
+#pulseaudio,
+#bluetooth,
+#backlight,
+#custom-inhibit-suspend {
+    color: @tertiary;
+    font-size: 12px;
+}
+
+#network {
+    color: @secondary;
+    font-size: 12px;
+}
+
+#memory {
+    color: @tertiary;
+    font-size: 12px;
+}
+
+#cpu {
+    color: @tertiary;
+    font-size: 12px;
+}
+
+#taskbar {
+    background: transparent;
+    padding: 0;
+    margin: 0;
+}
+
+#taskbar button {
+    background: transparent;
+    border: none;
+    padding: 0 4px;
+    margin: 0;
+    border-radius: 0;
+}
+
+#battery {
+    color: @secondary;
+    font-size: 12px;
+}
+
+#custom-notification {
+    color: @tertiary;
+    font-size: 12px;
+}
+
+#custom-updates-trigger,
+#custom-updates {
+    color: @secondary;
+    font-size: 12px;
+}
+
+#custom-mpris-trigger {
+    color: @tertiary;
+    padding: 0 6px;
+    margin: 3px 0 3px 4px;
+    border-radius: 45px;
+    background-color: transparent;
+    font-size: 12px;
+}
+
+#tray {
+    background-color: transparent;
+    padding: 0 6px;
+    margin: 3px 0;
+    border-radius: 45px;
+}
+
+#tray .passive {
+    -gtk-icon-effect: dim;
+}
+
+#tray .needs-attention {
+    -gtk-icon-effect: highlight;
+    background-color: @accent;
+}
+
+.hide-tray-drawer {
+    background-color: transparent;
+    border-radius: 20px;
+    margin-right: 8px;
+}
+
+#hide-tray {
+    background: transparent;
+    border-radius: 20px;
+    margin-right: 8px;
+    padding: 4px 0;
+}
+
+.battery-drawer,
+.updates-drawer {
+    background-color: transparent;
+}
