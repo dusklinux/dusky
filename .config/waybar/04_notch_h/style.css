@@ -65,8 +65,12 @@ tooltip label {
     margin: 0px 2px;
     border-radius: 45px;
     background-color: transparent;
-    color: alpha(@tertiary, 0.45);
+    color: alpha(@tertiary, 0.3);
     transition: background 0.3s ease-in-out, color 0.3s ease-in-out, min-width 0.3s ease-in-out;
+}
+
+#workspaces button.occupied {
+    color: alpha(@tertiary, 0.8);
 }
 
 #workspaces button.active {
