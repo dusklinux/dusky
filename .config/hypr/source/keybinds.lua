@@ -225,8 +225,8 @@ hl.bind(
 
 hl.bind(
     "ALT + 0",
-    hl.dsp.exec_cmd("makoctl dismiss -a"),
-    { description = "Clear Screen Notifications", locked = true }
+    hl.dsp.exec_cmd("foot --app-id=dusky_tui tray-tui"),
+    { description = "system Tray TUI" }
 )
 
 hl.bind(
