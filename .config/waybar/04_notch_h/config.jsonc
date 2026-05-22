@@ -91,6 +91,7 @@
                 "transition-left-to-right": false
             },
             "modules": [
+                "network",
                 "battery",
                 "backlight",
                 "bluetooth",
@@ -129,6 +130,18 @@
             "tooltip-format-enumerate-connected-battery": "󰂱 {device_alias} ({device_battery_percentage}%)",
             "on-click": "uwsm-app -- blueman-manager",
             "on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui"
+        },
+
+        "network": {
+            "format": "{icon}",
+            "format-wifi": "󰤨",
+            "format-ethernet": "󰈀",
+            "format-disconnected": "󰤭",
+            "tooltip-format-wifi": "󰤨 {essid}\n󱑽 {signalStrength}%\n⬇ {bandwidthDownBytes} ⬆ {bandwidthUpBytes}",
+            "tooltip-format-ethernet": "󰈀 Ethernet\n⬇ {bandwidthDownBytes} ⬆ {bandwidthUpBytes}",
+            "tooltip-format-disconnected": "󰤭 Disconnected",
+            "on-click": "uwsm-app -- ~/user_scripts/network_manager/dusky_network.sh",
+            "interval": 30
         },
 
         "pulseaudio": {
