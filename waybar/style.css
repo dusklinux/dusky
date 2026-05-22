@@ -66,7 +66,7 @@ tooltip label {
     border-radius: 45px;
     background-color: transparent;
     color: alpha(@tertiary, 0.45);
-    transition: all 0.3s ease-in-out;
+    transition: background 0.3s ease-in-out, color 0.3s ease-in-out, min-width 0.3s ease-in-out;
 }
 
 #workspaces button.active {
@@ -74,7 +74,7 @@ tooltip label {
     color: @on_primary;
     min-height: 16px;
     min-width: 24px;
-    transition: all 0.3s ease-in-out;
+    transition: background 0.3s ease-in-out, color 0.3s ease-in-out, min-width 0.3s ease-in-out;
 }
 
 #workspaces button:hover {

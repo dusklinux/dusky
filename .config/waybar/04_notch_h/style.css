@@ -1,26 +1,24 @@
-@import url("../matugen/generated/waybar-colors.css");
+@import url("../../.config/matugen/generated/waybar-colors.css");
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSPARENCY TOGGLE
    ───────────────────────────────────────────────────────────────────────────── */
 
-@define-color glass_surface         alpha(@surface, 0.55);
+@define-color glass_surface         alpha(@surface, 0.7);
 @define-color glass_surface_dark    alpha(@surface, 1.0);
-@define-color glass_tooltip         alpha(@surface, 0.55);
+@define-color glass_tooltip         alpha(@surface, 0.7);
 
-/* WAYBAR_OPAQUE_SWITCH_START */
-
+/* WAYBAR_OPAQUE_SWITCH_START
 @define-color glass_surface         @surface;
 @define-color glass_surface_dark    @surface;
 @define-color glass_tooltip         @surface;
-
-/* WAYBAR_OPAQUE_SWITCH_END */
+WAYBAR_OPAQUE_SWITCH_END */
 
 * {
     border: none;
     border-radius: 0px;
 
-    font-family: "Adwaita Sans", "JetBrainsMono Nerd Font Propo", sans-serif;
+    font-family: "Space Grotesk", "JetBrainsMono Nerd Font Propo", sans-serif;
     font-weight: 700;
     font-size: 13px;
 
@@ -33,9 +31,10 @@ window#waybar {
 }
 
 .modules-center {
-    background: @glass_surface_dark;
-    border-radius: 20px;
-    padding: 0 6px;
+    background: @glass_surface;
+    border: 2px solid alpha(@primary, 0.5);
+    border-radius: 6px;
+    padding: 0 12px;
 }
 
 tooltip,
@@ -62,12 +61,12 @@ tooltip label {
 }
 
 #workspaces button {
-    padding: 0px 2px;
+    padding: 0px 4px;
     margin: 0px 2px;
     border-radius: 45px;
-    background-color: @glass_surface;
+    background-color: transparent;
     color: alpha(@tertiary, 0.45);
-    transition: all 0.3s ease-in-out;
+    transition: background 0.3s ease-in-out, color 0.3s ease-in-out, min-width 0.3s ease-in-out;
 }
 
 #workspaces button.active {
@@ -75,7 +74,7 @@ tooltip label {
     color: @on_primary;
     min-height: 16px;
     min-width: 24px;
-    transition: all 0.3s ease-in-out;
+    transition: background 0.3s ease-in-out, color 0.3s ease-in-out, min-width 0.3s ease-in-out;
 }
 
 #workspaces button:hover {
@@ -89,6 +88,8 @@ tooltip label {
 #pulseaudio,
 #network,
 #clock,
+#memory,
+#cpu,
 #custom-media,
 #window,
 #custom-launcher,
@@ -99,7 +100,7 @@ tooltip label {
 #custom-inhibit-suspend,
 #custom-updates-trigger,
 #custom-updates {
-    background-color: @glass_surface;
+    background-color: transparent;
     padding: 0px 6px;
     margin: 3px 4px;
     border-radius: 45px;
@@ -112,10 +113,16 @@ tooltip label {
     font-size: 12px;
 }
 
+#custom-arch {
+    color: @tertiary;
+    font-size: 14px;
+    padding: 0 4px 0 8px;
+}
+
 #mpris {
     color: @tertiary;
     font-size: 12px;
-    background-color: @glass_surface;
+    background-color: transparent;
     padding: 0 6px;
     margin: 3px 4px;
     border-radius: 45px;
@@ -134,6 +141,30 @@ tooltip label {
     font-size: 12px;
 }
 
+#memory {
+    color: @tertiary;
+    font-size: 12px;
+}
+
+#cpu {
+    color: @tertiary;
+    font-size: 12px;
+}
+
+#taskbar {
+    background: transparent;
+    padding: 0;
+    margin: 0;
+}
+
+#taskbar button {
+    background: transparent;
+    border: none;
+    padding: 0 4px;
+    margin: 0;
+    border-radius: 0;
+}
+
 #battery {
     color: @secondary;
     font-size: 12px;
@@ -150,29 +181,17 @@ tooltip label {
     font-size: 12px;
 }
 
-#custom-cava {
-    color: @tertiary;
-    padding: 0 6px;
-    margin: 3px 4px;
-    border-radius: 45px;
-    background-color: @glass_surface;
-}
-
 #custom-mpris-trigger {
     color: @tertiary;
     padding: 0 6px;
     margin: 3px 0 3px 4px;
     border-radius: 45px;
-    background-color: @glass_surface;
+    background-color: transparent;
     font-size: 12px;
 }
 
-#custom-dropdown {
-    padding: 0 6px 0 12px;
-}
-
 #tray {
-    background-color: @glass_surface;
+    background-color: transparent;
     padding: 0 6px;
     margin: 3px 0;
     border-radius: 45px;
@@ -188,16 +207,9 @@ tooltip label {
 }
 
 .hide-tray-drawer {
-    background-color: @glass_surface;
+    background-color: transparent;
     border-radius: 20px;
     margin-right: 8px;
-}
-
-.cava-mpris-drawer,
-.mpris-drawer,
-.battery-drawer,
-.updates-drawer {
-    background-color: transparent;
 }
 
 #hide-tray {
@@ -205,4 +217,9 @@ tooltip label {
     border-radius: 20px;
     margin-right: 8px;
     padding: 4px 0;
+}
+
+.battery-drawer,
+.updates-drawer {
+    background-color: transparent;
 }
