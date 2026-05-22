@@ -26,6 +26,16 @@ THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"
 ENABLE_USER_PRESETS = True                 
 USER_PRESETS_TAB = "Profiles"              
 
+
+# Displays a popup when the TUI is first launched
+GLOBAL_POPUP = {
+    "title": "Color Application Notice",
+    "message": "To apply color changes, you must regenerate them by changing your wallpaper or using 'Regenerate' in the Profiles tab.",
+    "level": "info",           
+    "require_confirm": False,  
+    "cancel_quits": False      
+}
+
 # =============================================================================
 # 3. GLOBAL COLOR PALETTES (MATUGEN + HARDCODED)
 # =============================================================================
