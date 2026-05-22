@@ -1,0 +1,246 @@
+[
+    {
+        "position": "top",
+        "reload_style_on_change": true,
+        "margin-top": 8,
+        "modules-center": [
+            "custom/arch",
+            "clock",
+            "hyprland/workspaces",
+            "memory",
+            "cpu",
+            "group/hide-tray",
+            "group/battery-drawer",
+            "custom/notification",
+            "group/updates-drawer"
+        ],
+
+
+/*        "group/mpris-drawer": {
+            "orientation": "inherit",
+            "drawer": {
+                "transition-duration": "0.3",
+                "children-class": "mpris-drawer",
+                "click-to-reveal": false
+            },
+            "modules": ["custom/mpris-trigger", "mpris"]
+        },*/
+
+/*        "custom/mpris-trigger": {
+            "format": "♪",
+            "tooltip": false
+        },*/
+
+/*        "mpris": {
+            "format": "{player_icon} {title}",
+            "format-paused": "{status_icon} <i>{position} {artist}</i>",
+            "format-stopped": "",
+            "player-icons": {
+                "default": "",
+                "firefox": "",
+                "mpv": "",
+                "spotify": ""
+            },
+            "status-icons": {
+                "paused": ""
+            },
+            "max-length": 20
+        },*/
+
+        "clock": {
+            "format": "{:%I:%M %p}",
+            "format-alt": "{:%a, %b %d}",
+            "tooltip-format": "<tt><span size='12pt' font='JetBrainsMono Nerd Font'>{calendar}</span></tt>",
+            "calendar": {
+                "mode": "month",
+                "mode-mon-col": 3,
+                "weeks-pos": "right",
+                "on-scroll": 1,
+                "format": {
+                    "months": "<span color='#ffb786'><b>{}</b></span>",
+                    "days": "<span color='#e2e2e2'>{}</span>",
+                    "weeks": "<span color='#c9ca93'>W{}</span>",
+                    "weekdays": "<span color='#ffb786'><b>{}</b></span>",
+                    "today": "<span color='#131313' background='#ffb786'><b>{}</b></span>"
+                }
+            }
+        },
+
+        "hyprland/workspaces": {
+            "format": "{icon}",
+            "format-icons": {
+                "active": "󰮯",
+                "visible": "",
+                "default": "󰊠",
+                "persistent": "󰊠"
+            },
+            "persistent-workspaces": {
+                "*": 5
+            },
+            "on-click": "activate",
+            "on-scroll-down": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e+1\" })'",
+            "on-scroll-up": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e-1\" })'"
+        },
+
+        "group/battery-drawer": {
+            "orientation": "inherit",
+            "drawer": {
+                "transition-duration": "0.3",
+                "children-class": "battery-drawer",
+                "click-to-reveal": false,
+                "transition-left-to-right": false
+            },
+            "modules": [
+                "battery",
+                "backlight",
+                "bluetooth",
+                "pulseaudio",
+                "custom/inhibit-suspend"
+            ]
+        },
+
+        "battery": {
+            "format": "{icon}",
+            "format-charging": "",
+            "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
+            "interval": 30,
+            "tooltip-format": "Capacity: {capacity}%\n{timeTo}\nHealth: {health}%"
+        },
+
+        "backlight": {
+            "format": "{icon} {percent}",
+            "tooltip-format": "Brightness: {percent}%\n\n LMB  Brightness\n RMB  Night Light\n MMB  Shaders",
+            "on-click": "uwsm-app -- ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
+            "on-click-right": "uwsm-app -- ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
+            "on-click-middle": "uwsm-app -- ~/user_scripts/rofi/shader_menu.sh",
+            "on-scroll-up": "brightnessctl set +5%",
+            "on-scroll-down": "brightnessctl set 5%-",
+            "format-icons": ["󰃞", "󰃟", "󰃠"]
+        },
+
+        "bluetooth": {
+            "format": "󰂯",
+            "format-disabled": "󰂲",
+            "format-connected": "󰂱 {num_connections}",
+            "format-connected-battery": "󰂱 {device_battery_percentage}%",
+            "tooltip-format": "{controller_alias}\n{controller_address}\n\n{device_enumerate}",
+            "tooltip-format-connected": "{controller_alias}\n\n{device_enumerate}",
+            "tooltip-format-enumerate-connected": "󰂱 {device_alias}",
+            "tooltip-format-enumerate-connected-battery": "󰂱 {device_alias} ({device_battery_percentage}%)",
+            "on-click": "uwsm-app -- blueman-manager",
+            "on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui"
+        },
+
+        "pulseaudio": {
+            "format": "{icon}  {volume}%",
+            "format-muted": "",
+            "format-icons": {
+                "headphone": "",
+                "hands-free": "󰋋",
+                "headset": "󰋋",
+                "phone": "",
+                "phone-muted": "",
+                "portable": "",
+                "car": "",
+                "default": ["", "", ""]
+            },
+            "on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
+            "on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%",
+            "on-click": "pavucontrol",
+            "ignored-sinks": [
+                "Easy Effects Sink"
+            ]
+        },
+
+        "custom/inhibit-suspend": {
+            "format": "{}",
+            "exec": "if pgrep -f 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
+            "return-type": "json",
+            "interval": 30,
+            "signal": 9,
+            "on-click": "uwsm-app -- ~/user_scripts/waybar/toggle_hypridle.sh",
+            "escape": true
+        },
+
+        "tray": {
+            "spacing": 10
+        },
+
+        "group/hide-tray": {
+            "orientation": "inherit",
+            "drawer": {
+                "transition-duration": "0.5",
+                "children-class": "hide-tray-drawer",
+                "transition-left-to-right": true,
+                "click-to-reveal": false
+            },
+            "modules": ["custom/dropdown#arrow", "tray"]
+        },
+
+        "custom/dropdown#arrow": {
+            "format": "",
+            "tooltip": true,
+            "tooltip-format": "Reveal tray"
+        },
+
+        "custom/notification": {
+            "tooltip": true,
+            "tooltip-format": "Left Click: Launch Notifications\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+            "format": "{}",
+            "return-type": "json",
+            "exec-if": "which makoctl",
+            "exec": "~/user_scripts/waybar/mako.sh",
+            "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+            "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+            "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+            "escape": true
+        },
+
+        "group/updates-drawer": {
+            "orientation": "inherit",
+            "drawer": {
+                "transition-duration": "0.3",
+                "children-class": "updates-drawer",
+                "click-to-reveal": false,
+                "transition-left-to-right": true
+            },
+            "modules": [
+                "custom/updates-trigger",
+                "custom/updates"
+            ]
+        },
+
+        "custom/updates-trigger": {
+            "format": "",
+            "exec": "echo ''",
+            "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+            "interval": 18000,
+            "tooltip": false
+        },
+
+        "custom/updates": {
+            "exec": "tail -F ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+            "return-type": "json",
+            "format": "{}",
+            "tooltip": true,
+            "on-click": "uwsm-app -- kitty --class system_update.sh --hold -e ~/user_scripts/update_dusky/system_update.sh --all"
+        },
+
+        "custom/arch": {
+            "format": "",
+            "on-click": "gdbus call --session --dest com.github.dusky.controlcenter --object-path /com/github/dusky/controlcenter --method org.freedesktop.Application.Activate '{}'",
+            "tooltip": false
+        },
+
+        "memory": {
+            "format": " {used:.1f} GB",
+            "interval": 10,
+            "tooltip-format": "{used:.1f} GB / {total:.1f} GB"
+        },
+
+        "cpu": {
+            "format": " {usage}%",
+            "interval": 10
+        }
+    }
+]
