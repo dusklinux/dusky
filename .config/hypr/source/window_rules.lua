@@ -970,6 +970,25 @@ hl.window_rule({
     center = true
 })
 
+---res_mon---
+hl.window_rule({
+    name = "res_mon",
+    match = {
+        class = "^(res_mon)$",
+    },
+    float = true,
+
+    size = {699, 458},
+    -- size = {"monitor_w * 0.3641", "monitor_h * 0.4241"},
+
+    --    move = {740, 158},
+    -- move = {"monitor_w * 0.3854", "monitor_h * 0.1463"},
+    -- move = {"monitor_w - window_w - 20", "monitor_h - window_h - 20"},
+ 
+    animation = "slide bottom",   -- always slide in from the bottom
+})
+
+
 --- nmcli script ---
 hl.window_rule({
     name = "dusky_network.sh",
