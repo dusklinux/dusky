@@ -294,6 +294,21 @@ read_state() {
 }
 
 write_state() {
+    # Strictly define the canonical ordering for the configuration file
+    local -a key_order=(
+        THEME_MODE
+        MATUGEN_TYPE
+        MATUGEN_CONTRAST
+        SOURCE_COLOR_INDEX
+        BASE16_BACKEND
+        AWWW_TRANS_TYPE
+        AWWW_TRANS_DURATION
+        AWWW_TRANS_FPS
+        AWWW_TRANS_BEZIER
+        AWWW_TRANS_ANGLE
+        AWWW_TRANS_POS
+    )
+
     local -A current_state=(
         [THEME_MODE]="$THEME_MODE"
         [MATUGEN_TYPE]="$MATUGEN_TYPE"
@@ -335,9 +350,11 @@ write_state() {
         printf '# Dusky Theme State File\n' > "$_TEMP_FILE"
     fi
 
-    # Append anything totally new
-    for key in "${!current_state[@]}"; do
-        printf '%s="%s"\n' "$key" "${current_state[$key]}"
+    # Append any totally new/missing keys according to our STRICT canonical order
+    for key in "${key_order[@]}"; do
+        if [[ -v current_state["$key"] ]]; then
+            printf '%s="%s"\n' "$key" "${current_state[$key]}"
+        fi
     done >> "$_TEMP_FILE"
 
     mv -fT -- "$_TEMP_FILE" "$STATE_FILE"
