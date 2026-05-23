@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # MatugenFox – Autonomous Setup & Provisioning Script
-# Version: 3.3.3 (Final Forensic Audit)
+# Version: 3.6.0 (Golden Copy: Cutting-Edge Bash Optimized)
 # Target:  Linux (Arch, Fedora, Debian, NixOS, etc.) + macOS
 # Purpose: Zero-touch detection of every installed Firefox-family browser,
 #          profile resolution, native messaging host installation, config
@@ -10,6 +10,7 @@
 # =============================================================================
 
 set -euo pipefail
+shopt -s extglob # Required for robust whitespace trimming during INI parsing
 
 # Guarantee a 0 exit code even if an unexpected command failure occurs
 trap 'exit_code=$?; log_err "Unexpected failure at line $LINENO (code $exit_code)."; log_warn "Exiting gracefully (0) to protect parent orchestrator."; exit 0' ERR
@@ -26,7 +27,7 @@ readonly MANIFEST_NAME="matugenfox.json"
 readonly CONFIG_FILE="$HOST_DIR/config.json"
 readonly EXTENSION_ID="matugenfox@ubaid.com"
 readonly XPI_URL="https://addons.mozilla.org/firefox/downloads/latest/matugenfox/latest.xpi"
-readonly VERSION="3.3.3"
+readonly VERSION="3.6.0"
 
 # =============================================================================
 # ▼ VISUAL STYLING ▼
@@ -53,6 +54,21 @@ log_err()     { printf '%b[ERROR]%b   %s\n' "$C_RED"     "$C_RESET" "$1" >&2; }
 die()         { log_err "$1"; log_warn "Bailing out, but exiting safely (0) for orchestrator."; exit 0; }
 
 # =============================================================================
+# ▼ HELPERS ▼
+# =============================================================================
+
+# Hardened sudo check: Prevents orchestrator hangs if password is required 
+# and the shell is running non-interactively.
+can_use_sudo() {
+    if ! command -v sudo &>/dev/null; then return 1; fi
+    # If we have a TTY, we can safely prompt for a password
+    if [[ -t 0 ]] && sudo -v < /dev/null &>/dev/null; then return 0; fi
+    # If we are non-interactive, check if passwordless sudo is allowed
+    if sudo -n true &>/dev/null; then return 0; fi
+    return 1
+}
+
+# =============================================================================
 # ▼ REGISTRY ▼
 # =============================================================================
 
@@ -60,6 +76,9 @@ declare -A BROWSER_DIRS=()
 declare -a BROWSER_ORDER=()
 declare -A BROWSER_NMH_RESOLVED=()
 declare -A BROWSER_POLICY_RESOLVED=()
+
+# Global array for resolved profile paths
+declare -ga RESOLVED_PROFILES=()
 
 declare -A BROWSER_LABEL=(
     ["firefox"]="Firefox"
@@ -145,7 +164,6 @@ browser_is_real() {
     return 1
 }
 
-declare -ga RESOLVED_PROFILES=()
 resolve_profiles() {
     local base_dir="$1"
     RESOLVED_PROFILES=()
@@ -155,8 +173,10 @@ resolve_profiles() {
     if [[ -f "$ini" ]]; then
         local default_rel=""
         while IFS='=' read -r key val; do
+            # Safely trim trailing and leading spaces via extglob
             key="${key##*( )}"; key="${key%%*( )}"
             val="${val##*( )}"; val="${val%%*( )}"
+            
             if [[ "$key" == "Default" && -n "$val" ]]; then
                 [[ "$val" == /* ]] && default_rel="$val" || default_rel="$base_dir/$val"
                 if [[ -d "$default_rel" && -z "${seen[$default_rel]:-}" ]]; then
@@ -167,26 +187,33 @@ resolve_profiles() {
         done < <(grep -A1 '^\[Install' "$ini" 2>/dev/null | grep -i '^Default' || true)
     fi
 
-    local pattern dir
+    # Modern Bash array mapping for null-delimited 'find' output 
+    local -a dirs
+    local pattern
     for pattern in "*.default-release" "*.default" "*.Default*"; do
-        while IFS= read -r -d '' dir; do
+        readarray -d '' dirs < <(find "$base_dir" -maxdepth 1 -type d -name "$pattern" -print0 2>/dev/null | sort -z)
+        for dir in "${dirs[@]}"; do
             [[ -z "$dir" ]] && continue
             if [[ -z "${seen[$dir]:-}" ]]; then
                 RESOLVED_PROFILES+=("$dir")
                 seen["$dir"]=1
             fi
-        done < <(find "$base_dir" -maxdepth 1 -type d -name "$pattern" -print0 2>/dev/null | sort -z)
+        done
     done
 
-    local prefs_file
-    while IFS= read -r -d '' prefs_file; do
-        dir="$(dirname "$prefs_file")"
-        [[ -z "$dir" || "$dir" == "$base_dir" ]] && continue
-        if [[ -z "${seen[$dir]:-}" ]]; then
-            RESOLVED_PROFILES+=("$dir")
-            seen["$dir"]=1
+    # Fallback checking prefs.js to catch exceptionally named profiles
+    local -a pref_files
+    readarray -d '' pref_files < <(find "$base_dir" -mindepth 2 -maxdepth 2 -type f -name "prefs.js" -print0 2>/dev/null | sort -z)
+    for prefs_file in "${pref_files[@]}"; do
+        [[ -z "$prefs_file" ]] && continue
+        local p_dir
+        p_dir="$(dirname "$prefs_file")"
+        [[ "$p_dir" == "$base_dir" ]] && continue
+        if [[ -z "${seen[$p_dir]:-}" ]]; then
+            RESOLVED_PROFILES+=("$p_dir")
+            seen["$p_dir"]=1
         fi
-    done < <(find "$base_dir" -mindepth 2 -maxdepth 2 -type f -name "prefs.js" -print0 2>/dev/null | sort -z)
+    done
 }
 
 # =============================================================================
@@ -196,18 +223,18 @@ resolve_profiles() {
 check_dependencies() {
     log_info "Checking system dependencies..."
     local missing=()
-    for dep in matugen python3 jq awk; do
+    for dep in matugen python3 jq awk sed; do
         if ! command -v "$dep" &>/dev/null; then missing+=("$dep"); fi
     done
 
     if (( ${#missing[@]} > 0 )); then
         if command -v pacman &>/dev/null; then
             log_info "Arch Linux detected. Attempting to install missing dependencies: ${missing[*]}"
-            if command -v sudo &>/dev/null; then
+            if can_use_sudo; then
                 sudo pacman -S --needed --noconfirm "${missing[@]}" || die "Failed to install dependencies via pacman."
                 log_success "Dependencies installed successfully."
             else
-                die "Missing dependencies: ${missing[*]}. 'sudo' is required to run pacman."
+                die "Missing dependencies: ${missing[*]}. Interactive 'sudo' is required, but unavailable or disabled."
             fi
         else
             log_warn "Missing dependencies: ${missing[*]}"
@@ -277,12 +304,10 @@ MANIFEST
                 installed=$((installed + 1))
                 log_success "Manifest → $nmh_dir"
 
-                # V3.3.3 FIX: Punch sandbox holes for Flatpak installations
                 if [[ "$nmh_dir" == *".var/app/"* ]] && command -v flatpak &>/dev/null; then
                     local app_id="${nmh_dir#*.var/app/}"
                     app_id="${app_id%%/*}"
                     log_info "Applying Flatpak sandbox filesystem overrides for $app_id..."
-                    # Grant access to host script, matugen CSS, and dusky_sites
                     flatpak override --user --filesystem="$HOST_DIR" --filesystem="$HOME/.config/matugen" --filesystem="$HOME/.config/dusky_sites" "$app_id" || log_warn "Failed to apply Flatpak override."
                 fi
 
@@ -311,7 +336,6 @@ deploy_extension_policy() {
     local tmp_policy
     tmp_policy=$(mktemp)
 
-    # Base payload
     cat > "$tmp_policy" <<EOF
 {
   "policies": {
@@ -337,7 +361,7 @@ EOF
                 local mkdir_cmd="mkdir -p"
                 
                 if [[ ! -w "${p_dir%/*}" && ! -w "$p_dir" ]]; then
-                    if command -v sudo &>/dev/null && sudo -v &>/dev/null; then
+                    if can_use_sudo; then
                         write_cmd="sudo cp"
                         mkdir_cmd="sudo mkdir -p"
                     else
@@ -352,7 +376,6 @@ EOF
                 fi
 
                 if [[ -f "$target" ]]; then
-                    # Merge using jq safely, instantiating missing root objects if needed
                     log_info "Merging policy into existing $target..."
                     local merged_tmp
                     merged_tmp=$(mktemp)
@@ -415,8 +438,6 @@ bootstrap_profiles() {
             
             local user_js="$profile_path/user.js"
             if ! grep -q "toolkit.legacyUserProfileCustomizations.stylesheets" "$user_js" 2>/dev/null; then
-                # V3.3.3 FIX: Ensure preference starts on a newline so it doesn't break JS syntax 
-                # if the existing file lacks a trailing EOF newline.
                 printf '\nuser_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);\n' >> "$user_js"
                 log_success "$label/$profile_name: Enabled custom CSS loading"
             fi
@@ -433,7 +454,6 @@ bootstrap_profiles() {
 init_config() {
     local force_run=$1
     
-    # Ensure the parent directory exists so the file can be written safely
     mkdir -p "${CONFIG_FILE%/*}" || true
 
     if [[ -f "$CONFIG_FILE" ]] && [[ -s "$CONFIG_FILE" ]] && python3 -c "import json; json.load(open('$CONFIG_FILE'))" 2>/dev/null; then
@@ -446,7 +466,6 @@ init_config() {
     fi
     log_info "Initializing default config.json..."
     
-    # Injected colorsPath & websitesDir directly so the python host is active immediately
     cat > "$CONFIG_FILE" <<'CONFIG'
 {
   "smoothTransitions": false,
@@ -496,18 +515,14 @@ update_matugen_toml() {
     local tmp_toml
     tmp_toml=$(mktemp)
     
-    # 1. Safely remove existing [templates.firefox_websites] block
-    # 2. Strict regex prevents accidental match of bash brackets inside hook blocks
     awk '
     /^[ \t]*\[[ \t]*templates\.firefox_websites[ \t]*\]/ { skip = 1; next }
     /^[ \t]*\[{1,2}[a-zA-Z0-9_.-]+(\.[a-zA-Z0-9_.-]+)*\]{1,2}[ \t]*$/ && skip { skip = 0 }
     !skip { print }
     ' "$toml_file" | awk 'NF > 0 {last = NR} {lines[NR] = $0} END {for (i = 1; i <= last; i++) print lines[i]}' > "$tmp_toml"
 
-    # Add a clean buffer newline before appending
     echo "" >> "$tmp_toml"
 
-    # Append the freshly generated block dynamically without duplication
     cat <<EOF >> "$tmp_toml"
 [templates.firefox_websites]
 input_path = '~/.config/matugen/templates/firefox_websites.css'
@@ -536,6 +551,112 @@ run_theme_refresh() {
     else
         log_warn "Refresh script not found at $REFRESH_SCRIPT. Skipping color generation."
     fi
+}
+
+# =============================================================================
+# ▼ UNINSTALLATION ▼
+# =============================================================================
+
+perform_uninstall() {
+    log_info "Initiating MatugenFox uninstallation sequence..."
+    
+    discover_browsers
+
+    # 1. Remove NMH Manifests & Flatpak overrides
+    log_info "Removing Native Messaging Host manifests..."
+    for browser_id in "${BROWSER_ORDER[@]}"; do
+        local nmh_candidates="${BROWSER_NMH_CANDIDATES[$browser_id]:-}"
+        for nmh_dir in $nmh_candidates; do
+            if [[ -f "$nmh_dir/$MANIFEST_NAME" ]]; then
+                rm -f "$nmh_dir/$MANIFEST_NAME"
+                log_success "Removed manifest from $nmh_dir"
+            fi
+            
+            if [[ "$nmh_dir" == *".var/app/"* ]] && command -v flatpak &>/dev/null; then
+                local app_id="${nmh_dir#*.var/app/}"
+                app_id="${app_id%%/*}"
+                log_info "Reverting Flatpak filesystem overrides for $app_id..."
+                flatpak override --user --nofilesystem="$HOST_DIR" --nofilesystem="$HOME/.config/matugen" --nofilesystem="$HOME/.config/dusky_sites" "$app_id" || true
+            fi
+        done
+    done
+
+    # 2. Revert Enterprise Policies (Cleaner jq payload to remove dangling keys)
+    log_info "Reverting Enterprise Policies..."
+    if command -v jq &>/dev/null; then
+        for browser_id in "${BROWSER_ORDER[@]}"; do
+            local policy_candidates="${BROWSER_POLICY_DIRS[$browser_id]:-}"
+            for p_dir in $policy_candidates; do
+                local target="$p_dir/policies.json"
+                if [[ -f "$target" ]]; then
+                    local write_cmd="cp"
+                    if [[ ! -w "$target" ]] && can_use_sudo; then write_cmd="sudo cp"; fi
+                    
+                    local merged_tmp
+                    merged_tmp=$(mktemp)
+                    
+                    if jq --arg ext "$EXTENSION_ID" 'del(.policies.ExtensionSettings[$ext]) | if .policies.ExtensionSettings == {} then del(.policies.ExtensionSettings) else . end | if .policies == {} then {} else . end' "$target" > "$merged_tmp"; then
+                        $write_cmd "$merged_tmp" "$target" 2>/dev/null || log_warn "Failed to revert policy at $target"
+                        log_success "Cleaned policy at $target"
+                    fi
+                    rm -f "$merged_tmp"
+                fi
+            done
+        done
+    else
+        log_warn "jq not found. Cannot safely revert policies.json automatically."
+    fi
+
+    # 3. Clean Browser Profiles (Safe awk swap, avoids macOS `sed -i` quirks)
+    log_info "Cleaning browser profiles..."
+    for browser_id in "${BROWSER_ORDER[@]}"; do
+        local base="${BROWSER_DIRS[$browser_id]}"
+        resolve_profiles "$base"
+        for profile_path in "${RESOLVED_PROFILES[@]}"; do
+            local user_js="$profile_path/user.js"
+            if [[ -f "$user_js" ]]; then
+                # Safe fallback using awk to strip the specific line, preserving the rest of the file
+                awk '!/toolkit\.legacyUserProfileCustomizations\.stylesheets/' "$user_js" > "$user_js.tmp" || true
+                if [[ -s "$user_js.tmp" ]]; then
+                    mv "$user_js.tmp" "$user_js" 2>/dev/null || rm -f "$user_js.tmp"
+                else
+                    rm -f "$user_js.tmp" 2>/dev/null || true
+                fi
+                log_success "Cleaned user.js in ${profile_path##*/}"
+            fi
+            
+            if [[ -L "$profile_path/chrome/colors.css" ]]; then
+                rm -f "$profile_path/chrome/colors.css"
+                log_success "Removed colors.css symlink in ${profile_path##*/}"
+            fi
+        done
+    done
+
+    # 4. Remove Config File
+    if [[ -f "$CONFIG_FILE" ]]; then
+        rm -f "$CONFIG_FILE"
+        log_success "Removed config.json"
+    fi
+
+    # 5. Remove Matugen TOML Block
+    local toml_file="$HOME/.config/matugen/config.toml"
+    if [[ -f "$toml_file" ]] && command -v awk &>/dev/null; then
+        log_info "Removing Firefox block from Matugen TOML..."
+        local tmp_toml
+        tmp_toml=$(mktemp)
+        awk '
+        /^[ \t]*\[[ \t]*templates\.firefox_websites[ \t]*\]/ { skip = 1; next }
+        /^[ \t]*\[{1,2}[a-zA-Z0-9_.-]+(\.[a-zA-Z0-9_.-]+)*\]{1,2}[ \t]*$/ && skip { skip = 0 }
+        !skip { print }
+        ' "$toml_file" | awk 'NF > 0 {last = NR} {lines[NR] = $0} END {for (i = 1; i <= last; i++) print lines[i]}' > "$tmp_toml"
+        cp "$tmp_toml" "$toml_file"
+        rm -f "$tmp_toml"
+        log_success "Cleaned Matugen TOML."
+    fi
+
+    echo ""
+    log_success "MatugenFox uninstallation complete."
+    exit 0
 }
 
 # =============================================================================
@@ -595,6 +716,7 @@ ${C_BOLD}Usage:${C_RESET} $(basename "$0") [OPTIONS]
 ${C_BOLD}Options:${C_RESET}
   -h, --help           Show this help message and exit.
   -f, --force          Force run execution (overwrites skip conditions/idempotency checks).
+  -u, --uninstall      Remove configurations, overrides, and policies added by this script.
   --detect-only        Only detect browsers and profiles; don't install anything.
   --skip-dependencies  Skip automatic package manager dependency installation.
   --skip-extension     Skip deploying the enterprise policy for auto-install.
@@ -614,11 +736,13 @@ main() {
     local skip_bootstrap=0
     local skip_config=0
     local force_run=0
+    local uninstall=0
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help)           show_help; exit 0 ;;
             -f|--force)          force_run=1 ;;
+            -u|--uninstall)      uninstall=1 ;;
             --detect-only)       detect_only=1 ;;
             --skip-dependencies) skip_deps=1 ;;
             --skip-extension)    skip_ext=1 ;;
@@ -630,12 +754,15 @@ main() {
     done
 
     if (( EUID == 0 )); then die "Do not run as root. Run as your normal user."; fi
-    if (( BASH_VERSINFO[0] < 4 )); then die "Bash 4.0+ required (you have ${BASH_VERSION})."; fi
 
     echo ""
     printf '%b>>> MatugenFox Setup v%s%b\n\n' "$C_CYAN" "$VERSION" "$C_RESET"
 
     init_platform_paths
+
+    if (( uninstall )); then
+        perform_uninstall
+    fi
 
     if (( ! skip_deps )); then check_dependencies; fi
 
