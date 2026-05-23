@@ -141,8 +141,10 @@ is_valid_matugen_type() {
 is_valid_contrast() {
     local value="$1"
     [[ "$value" == "disable" ]] && return 0
-    [[ "$value" =~ ^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] || return 1
-    LC_ALL=C awk -v v="$value" 'BEGIN { exit !(v >= -1 && v <= 1) }'
+    # Pure native Bash float validation for [-1, 1] range 
+    # (Updated to safely handle leading zeros like 00.5 or 01.0 just like the old script did)
+    [[ "$value" =~ ^[+-]?(0*1(\.0*)?|0*\.[0-9]+|0+|\.[0-9]+)$ ]] && return 0
+    return 1
 }
 
 is_valid_base16_backend() {
@@ -449,6 +451,7 @@ ensure_awww_running() {
         uwsm-app -- awww-daemon --format xrgb >/dev/null 2>&1 99>&- &
     else
         awww-daemon --format xrgb >/dev/null 2>&1 99>&- &
+        disown $! 2>/dev/null || true
     fi
 
     wait_for_process "awww-daemon" || die "awww-daemon failed to start"
@@ -820,16 +823,22 @@ cmd_set() {
                 ;;
             --trans-type)
                 [[ -n "${2:-}" ]] || die "--trans-type requires a value"
+                case "$2" in
+                    disable|none|simple|fade|left|right|top|bottom|wipe|wave|grow|center|any|outer|random) ;;
+                    *) die "--trans-type must be a valid transition type" ;;
+                esac
                 AWWW_TRANS_TYPE="$2"
                 shift 2
                 ;;
             --trans-duration)
                 [[ -n "${2:-}" ]] || die "--trans-duration requires a value"
+                [[ "$2" == "disable" || "$2" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "--trans-duration must be a positive number or 'disable'"
                 AWWW_TRANS_DURATION="$2"
                 shift 2
                 ;;
             --trans-fps)
                 [[ -n "${2:-}" ]] || die "--trans-fps requires a value"
+                [[ "$2" == "disable" || "$2" =~ ^[0-9]+$ ]] || die "--trans-fps must be an integer or 'disable'"
                 AWWW_TRANS_FPS="$2"
                 shift 2
                 ;;
@@ -945,37 +954,37 @@ case "${1:-}" in
             usage
             exit 0
         fi
-        check_deps flock awk pgrep find sort awww awww-daemon matugen
+        check_deps flock pgrep find sort awww awww-daemon matugen
         run_locked cmd_set "$@"
         ;;
     next)
         shift
-        check_deps flock awk pgrep find sort awww awww-daemon matugen
+        check_deps flock pgrep find sort awww awww-daemon matugen
         run_locked next_command "$@"
         ;;
     prev|previous)
         shift
-        check_deps flock awk pgrep find sort awww awww-daemon matugen
+        check_deps flock pgrep find sort awww awww-daemon matugen
         run_locked prev_command "$@"
         ;;
     random)
         shift
-        check_deps flock awk pgrep find sort awww awww-daemon matugen
+        check_deps flock pgrep find sort awww awww-daemon matugen
         run_locked random_command "$@"
         ;;
     refresh|apply)
-        check_deps flock awk pgrep awww awww-daemon matugen
+        check_deps flock pgrep awww awww-daemon matugen
         run_locked regenerate_current
         ;;
     color)
         shift
         [[ -n "${1:-}" ]] || die "color command requires a hex value (e.g., FF0000 or \"#FF0000\")"
         hex_val="$1"
-        check_deps flock awk pgrep matugen
+        check_deps flock pgrep matugen
         run_locked apply_solid_color "$hex_val"
         ;;
     get)
-        check_deps flock awk
+        check_deps flock
         run_locked cmd_get
         ;;
     -h|--help|help)
