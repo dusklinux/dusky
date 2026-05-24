@@ -658,6 +658,7 @@ cmd_preview() {
         printf '  \e[36m[ PREVIEW & FILTERS ]\e[0m\n'
         printf '  \e[33mAlt-H/J/K/L\e[0m : Move Preview Panel (Left/Down/Up/Right)\n'
         printf '  \e[33mAlt-V\e[0m       : Hide / Show Preview Panel\n'
+        printf '  \e[33mAlt-T\e[0m       : Filter Text\n'
         printf '  \e[33mAlt-I\e[0m       : Filter Images Only\n'
         printf '  \e[33mAlt-P\e[0m       : Filter Pinned Only\n'
         printf '  \e[33mAlt-B\e[0m       : Filter Binaries Only\n\n'
@@ -945,6 +946,7 @@ show_menu() {
             --bind="alt-k:transform(${SELF@Q} --move-preview up)" \
             --bind="alt-l:transform(${SELF@Q} --move-preview right)" \
             --bind="alt-v:transform(${SELF@Q} --move-preview hidden)" \
+            --bind="alt-t:change-query(!${ICON_IMG} !${ICON_PIN} !${ICON_BIN} )" \
             --bind="alt-i:change-query($ICON_IMG )" \
             --bind="alt-p:change-query($ICON_PIN )" \
             --bind="alt-b:change-query($ICON_BIN )" \

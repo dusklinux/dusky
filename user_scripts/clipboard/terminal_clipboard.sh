@@ -651,6 +651,7 @@ cmd_preview() {
         printf '  \e[33mAlt-A\e[0m       : Pin selected item(s)\n'
         printf '  \e[33mAlt-D\e[0m       : Delete selected item(s)\n'
         printf '  \e[33mAlt-W\e[0m       : Wipe entire clipboard\n\n'
+        printf '  \e[33mAlt-T\e[0m       : Filter Text\n'
         printf '  \e[33mAlt-I\e[0m       : Filter Images\n'
         printf '  \e[33mAlt-P\e[0m       : Filter Pinned\n'
         printf '  \e[33mAlt-B\e[0m       : Filter Binaries\n\n'
@@ -931,6 +932,7 @@ show_menu() {
             --bind="alt-k:transform(${SELF@Q} --move-preview up)" \
             --bind="alt-l:transform(${SELF@Q} --move-preview right)" \
             --bind="alt-v:transform(${SELF@Q} --move-preview hidden)" \
+            --bind="alt-t:change-query(!${ICON_IMG} !${ICON_PIN} !${ICON_BIN} )" \
             --bind="alt-i:change-query($ICON_IMG )" \
             --bind="alt-p:change-query($ICON_PIN )" \
             --bind="alt-b:change-query($ICON_BIN )" \
