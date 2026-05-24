@@ -32,6 +32,34 @@ configuration {
     kb-custom-2:            "Alt+y";
     kb-custom-3:            "Alt+t";
     /* ─────────────────────────────────────────────────────────────────────
+       Mouse - Single primary-click activates an entry
+       (rofi's default is double-click, which is unintuitive for users
+       who reach for the mouse to pick an item from the visible list).
+       me-select-entry must be cleared first because MousePrimary is
+       bound there by default; rofi refuses to bind the same event twice.
+       ───────────────────────────────────────────────────────────────────── */
+    me-select-entry:        "";
+    me-accept-entry:        "MousePrimary";
+    /* ─────────────────────────────────────────────────────────────────────
+       Frecency-aware search
+
+       Rofi already tracks launch counts in ~/.cache/rofi3.druncache, but
+       its defaults don't use that signal once you start typing. These
+       three turn it on:
+
+         - sort + fzf      → score by match quality, with launch history
+                              breaking ties (PowerToys / Albert style).
+         - matching fuzzy  → forgiving typos ("netweok" still finds the
+                              Network apps).
+         - drun-match-fields drops `categories` so Firefox stops matching
+           every Network/WebBrowser query just because its .desktop file
+           lists those categories.
+       ───────────────────────────────────────────────────────────────────── */
+    sort:                   true;
+    sorting-method:         "fzf";
+    matching:               "fuzzy";
+    drun-match-fields:      "name,generic,exec,keywords";
+    /* ─────────────────────────────────────────────────────────────────────
        Behavior Tweaks
        ───────────────────────────────────────────────────────────────────── */
     scroll-method:          0;
