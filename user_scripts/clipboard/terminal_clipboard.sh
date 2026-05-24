@@ -233,6 +233,83 @@ close_spawned_terminal() {
 }
 
 #==============================================================================
+# STATE FILE I/O (atomic, comment-preserving)
+#==============================================================================
+# Parses KEY="value" / KEY='value' / KEY=value lines. Tolerant of surrounding
+# whitespace and trailing comments. Quietly returns 1 on miss.
+read_state_value() {
+    local key="$1" file="$2" line
+    [[ -r "$file" ]] || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"([^\"]*)\"[[:space:]]*$ ]] \
+        || [[ "$line" =~ ^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\'([^\']*)\'[[:space:]]*$ ]] \
+        || [[ "$line" =~ ^[[:space:]]*${key}[[:space:]]*=[[:space:]]*([^[:space:]#]+) ]]; then
+            printf '%s' "${BASH_REMATCH[1]}"
+            return 0
+        fi
+    done < "$file"
+    return 1
+}
+
+# Rewrites the file with KEY="value" replacing the first matching line,
+# preserving every other line (comments included). Atomic via mktemp+mv.
+# Immune to the sed-RHS metacharacter pitfalls (& and \).
+write_state_value() {
+    local key="$1" value="$2" file="$3"
+    local dir="${file%/*}" tmp line found=0
+
+    [[ -d "$dir" ]] || mkdir -p -m 700 -- "$dir" 2>/dev/null || return 1
+    tmp=$(mktemp "${file}.XXXXXX" 2>/dev/null) || return 1
+
+    if [[ -f "$file" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if (( !found )) && [[ "$line" =~ ^[[:space:]]*${key}[[:space:]]*= ]]; then
+                printf '%s="%s"\n' "$key" "$value"
+                found=1
+            else
+                printf '%s\n' "$line"
+            fi
+        done < "$file" > "$tmp"
+    fi
+
+    (( found )) || printf '%s="%s"\n' "$key" "$value" >> "$tmp"
+
+    if mv -f -- "$tmp" "$file" 2>/dev/null; then
+        return 0
+    fi
+    rm -f -- "$tmp" 2>/dev/null
+    return 1
+}
+
+# Atomically writes the current FZF window dimensions to a session-keyed file.
+# Atomic via mktemp+mv, so a partial/killed write never corrupts the target.
+# session_pid identifies which show_menu session this size belongs to.
+write_preview_size() {
+    local session_pid="${1:-}"
+    is_uint "$session_pid" || return 0
+
+    local p_cols="${FZF_PREVIEW_COLUMNS:-0}"
+    local t_cols="${FZF_COLUMNS:-0}"
+    local p_lines="${FZF_PREVIEW_LINES:-0}"
+    local t_lines="${FZF_LINES:-0}"
+
+    is_uint "$p_cols" && is_uint "$t_cols" && is_uint "$p_lines" && is_uint "$t_lines" || return 0
+    (( t_cols > 0 && t_lines > 0 && p_cols > 0 )) || return 0
+    [[ -d "$CACHE_DIR" ]] || return 0
+
+    local size_file="${CACHE_DIR}/.preview_size_${session_pid}"
+    local tmp
+    tmp=$(mktemp "${size_file}.XXXXXX" 2>/dev/null) || return 0
+
+    if printf '%s %s %s %s\n' "$p_cols" "$t_cols" "$p_lines" "$t_lines" > "$tmp" 2>/dev/null; then
+        mv -f -- "$tmp" "$size_file" 2>/dev/null || rm -f -- "$tmp" 2>/dev/null
+    else
+        rm -f -- "$tmp" 2>/dev/null
+    fi
+    return 0
+}
+
+#==============================================================================
 # TEXT PREVIEW HELPERS
 #==============================================================================
 safe_print_text_file() {
@@ -537,40 +614,27 @@ cmd_list() {
 #==============================================================================
 cmd_rotate_preview() {
     local current next pct
-    
-    current="right,45%,~3,wrap-word"
-    if [[ -r "$USER_STATE_FILE" ]]; then
-        local _pl
-        _pl=$(grep '^PREVIEW_LAYOUT=' "$USER_STATE_FILE" 2>/dev/null | head -n1 | cut -d'"' -f2 | cut -d"'" -f1)
-        [[ -n "$_pl" ]] && current="$_pl"
-    fi
 
-    # Extract dynamic percentage accurately using BASH_REMATCH
+    current=$(read_state_value "PREVIEW_LAYOUT" "$USER_STATE_FILE") || current=""
+    [[ -n "$current" ]] || current="right,45%,~3,wrap-word"
+
     pct=45
     [[ "$current" =~ ,([0-9]+)% ]] && pct="${BASH_REMATCH[1]}"
 
-    # Fluid cycling logic that naturally respects manual mouse drags
-    if [[ "$current" == *"right"* || "$current" == *"left"* ]]; then
+    # Cycle respecting current orientation; advance, flip, hide, restore.
+    if [[ "$current" == right* || "$current" == left* ]]; then
         if (( pct < 60 )); then
             next="right,70%,~3,wrap-word"
         else
             next="down,50%,~3,wrap-word"
         fi
-    elif [[ "$current" == *"down"* || "$current" == *"up"* ]]; then
+    elif [[ "$current" == up* || "$current" == down* ]]; then
         next="hidden"
-    elif [[ "$current" == "hidden" ]]; then
-        next="right,45%,~3,wrap-word"
     else
         next="right,45%,~3,wrap-word"
     fi
 
-    if [[ -w "$USER_STATE_FILE" ]]; then
-        if grep -q '^PREVIEW_LAYOUT=' "$USER_STATE_FILE" 2>/dev/null; then
-            sed -i "s|^PREVIEW_LAYOUT=.*|PREVIEW_LAYOUT=\"$next\"|" "$USER_STATE_FILE"
-        else
-            printf '\nPREVIEW_LAYOUT="%s"\n' "$next" >> "$USER_STATE_FILE"
-        fi
-    fi
+    write_state_value "PREVIEW_LAYOUT" "$next" "$USER_STATE_FILE" 2>/dev/null || :
 
     printf 'change-preview-window(%s)\n' "$next"
 }
@@ -581,14 +645,11 @@ cmd_rotate_preview() {
 cmd_preview() {
     local type="${1:-}" id="${2:-}" session_pid="${3:-}" pin_file img_path info tmp ts_str=""
 
-    # -------------------------------------------------------------------------
-    # Zero-Latency UI State Drag Capture
-    # Captures FZF's real-time exported window dimensions whenever a preview is
-    # triggered. Later parsed to permanently save your custom dragged mouse size.
-    # -------------------------------------------------------------------------
-    if [[ -n "$session_pid" && -n "${FZF_PREVIEW_COLUMNS:-}" && -n "${FZF_COLUMNS:-}" ]]; then
-        printf '%s %s %s %s\n' "$FZF_PREVIEW_COLUMNS" "$FZF_COLUMNS" "${FZF_PREVIEW_LINES:-0}" "${FZF_LINES:-0}" > "${CACHE_DIR}/.preview_size_$session_pid" 2>/dev/null || :
-    fi
+    # Defense-in-depth size capture: every preview re-invocation (selection
+    # change, dimension change) also refreshes the size file atomically. The
+    # primary capture path is now the resize/exit-key execute-silent bindings
+    # in show_menu, which fire synchronously and cannot be raced by Esc.
+    write_preview_size "$session_pid"
 
     is_kitty && kitty_clear
 
@@ -838,10 +899,16 @@ show_menu() {
     local combined_label=" 📋 Clipboard [${mode_label}] "
     local output=""
 
-    # FZF 0.72.0 Core
-    # We pass '$$' directly to capture unique subprocess IDs for the preview file.
-    # CRITICAL FIX: Adding a dummy `# $FZF_PREVIEW_COLUMNS ...` comment tricks FZF's 
-    # static analyzer into seamlessly re-evaluating the script on every drag-resize tick.
+    # The session-scoped capture command. fzf substitutes nothing here; $$ is
+    # expanded by the parent shell to the main script PID, so the size file is
+    # keyed identically on the read side below.
+    local cap="${SELF@Q} --capture-size $$"
+
+    # The preview command intentionally references $FZF_PREVIEW_COLUMNS/_LINES
+    # in a shell comment. fzf scans the command string (comments included) for
+    # those refs and re-invokes the preview command on dimension change. The
+    # comment is stripped by the shell before execution. This is defense in
+    # depth — the authoritative captures happen via the bindings below.
     output=$(
         cmd_list | fzf \
             --multi --ansi --reverse --no-sort --exact --cycle --scheme=history \
@@ -850,7 +917,9 @@ show_menu() {
             --info=hidden --header="Ctrl-/ Rotate Preview  |  Alt-U Pin  |  Alt-Y Delete" --header-first \
             --prompt="  " --pointer="▌" --delimiter="$SEP" --with-nth=1 \
             --track --id-nth=3 \
-            --preview="${SELF@Q} --preview '{2}' '{3}' '$$' # \$FZF_PREVIEW_COLUMNS \$FZF_PREVIEW_LINES \$FZF_COLUMNS \$FZF_LINES" --preview-window="${PREVIEW_LAYOUT:-right,45%,~3,wrap-word}" \
+            --preview="${SELF@Q} --preview '{2}' '{3}' $$ # \$FZF_PREVIEW_COLUMNS \$FZF_PREVIEW_LINES \$FZF_COLUMNS \$FZF_LINES" \
+            --preview-window="${PREVIEW_LAYOUT:-right,45%,~3,wrap-word}" \
+            --bind="resize:execute-silent($cap)" \
             --bind="ctrl-/:transform(${SELF@Q} --rotate-preview)" \
             --bind="alt-i:change-query($ICON_IMG )" \
             --bind="alt-p:change-query($ICON_PIN )" \
@@ -858,48 +927,72 @@ show_menu() {
             --bind="alt-u:execute-silent(${SELF@Q} --batch-pin {+f})+reload-sync(${SELF@Q} --list)" \
             --bind="alt-y:execute-silent(${SELF@Q} --batch-delete {+f})+reload-sync(${SELF@Q} --list)" \
             --bind="alt-t:execute-silent(${SELF@Q} --wipe)+reload-sync(${SELF@Q} --list)" \
-            --bind="enter:accept" \
-            --bind="esc:abort" --bind="ctrl-c:abort"
+            --bind="enter:execute-silent($cap)+accept" \
+            --bind="esc:execute-silent($cap)+abort" \
+            --bind="ctrl-c:execute-silent($cap)+abort"
     ) || true
 
     # -------------------------------------------------------------------------
-    # Drag State Persistence Aggregation
-    # Reads the temporary memory file that was updated on the final mouse drag
-    # inside FZF and bakes it into your config file permanently.
+    # Drag-resize persistence
+    # The size file is written by `resize`, `enter`, `esc`, `ctrl-c` bindings
+    # via execute-silent (synchronous in fzf), guaranteeing the file reflects
+    # the dimensions at the moment of exit. We also pick up writes from the
+    # preview subprocess as defense in depth. The atomic mktemp+mv in
+    # write_preview_size ensures we never read a partial write.
     # -------------------------------------------------------------------------
     local size_file="${CACHE_DIR}/.preview_size_$$"
     if [[ -f "$size_file" ]]; then
-        local p_cols t_cols p_lines t_lines
+        local p_cols=0 t_cols=0 p_lines=0 t_lines=0
         read -r p_cols t_cols p_lines t_lines < "$size_file" 2>/dev/null || true
         rm -f -- "$size_file" 2>/dev/null || :
-        
-        # CRITICAL FIX: Reload PREVIEW_LAYOUT right before evaluating drag boundaries to 
-        # guarantee we don't accidentally overwrite layouts altered via Ctrl-/ rotation.
-        if [[ -r "$USER_STATE_FILE" ]]; then
-            local _pl
-            _pl=$(grep '^PREVIEW_LAYOUT=' "$USER_STATE_FILE" 2>/dev/null | head -n1 | cut -d'"' -f2 | cut -d"'" -f1)
-            [[ -n "$_pl" ]] && PREVIEW_LAYOUT="$_pl"
-        fi
 
-        if (( t_cols > 0 && t_lines > 0 )); then
-            local new_pct new_layout=""
-            if [[ "$PREVIEW_LAYOUT" == *"right"* || "$PREVIEW_LAYOUT" == *"left"* ]]; then
-                new_pct=$(( (p_cols * 100) / t_cols ))
-                (( new_pct < 10 )) && new_pct=10
-                (( new_pct > 90 )) && new_pct=90
-                new_layout=$(echo "$PREVIEW_LAYOUT" | sed -E "s/^(right|left|up|down)(,[0-9]+%)?/\1,${new_pct}%/")
-            elif [[ "$PREVIEW_LAYOUT" == *"up"* || "$PREVIEW_LAYOUT" == *"down"* ]]; then
-                new_pct=$(( (p_lines * 100) / t_lines ))
-                (( new_pct < 10 )) && new_pct=10
-                (( new_pct > 90 )) && new_pct=90
-                new_layout=$(echo "$PREVIEW_LAYOUT" | sed -E "s/^(right|left|up|down)(,[0-9]+%)?/\1,${new_pct}%/")
+        # Re-read PREVIEW_LAYOUT in case Ctrl-/ rotated it during the session.
+        local current_layout
+        current_layout=$(read_state_value "PREVIEW_LAYOUT" "$USER_STATE_FILE") \
+            || current_layout="$PREVIEW_LAYOUT"
+        [[ -n "$current_layout" ]] || current_layout="$PREVIEW_LAYOUT"
+
+        if [[ "$current_layout" != "hidden" ]] \
+            && is_uint "$p_cols" && is_uint "$t_cols" \
+            && is_uint "$p_lines" && is_uint "$t_lines" \
+            && (( t_cols > 0 && t_lines > 0 )); then
+
+            local orient="" old_pct=45
+            if [[ "$current_layout" == right* || "$current_layout" == left* ]]; then
+                orient="h"
+            elif [[ "$current_layout" == up* || "$current_layout" == down* ]]; then
+                orient="v"
             fi
-            
-            if [[ -n "$new_layout" && "$new_layout" != "$PREVIEW_LAYOUT" && "$PREVIEW_LAYOUT" != "hidden" ]]; then
-                if grep -q '^PREVIEW_LAYOUT=' "$USER_STATE_FILE" 2>/dev/null; then
-                    sed -i "s|^PREVIEW_LAYOUT=.*|PREVIEW_LAYOUT=\"$new_layout\"|" "$USER_STATE_FILE"
+            [[ "$current_layout" =~ ,([0-9]+)% ]] && old_pct="${BASH_REMATCH[1]}"
+
+            if [[ -n "$orient" && "$current_layout" =~ ,[0-9]+% ]]; then
+                # Subtract the rounded-border overhead (1 col/line each side)
+                # before computing the percentage. Round to nearest integer.
+                local numer denom new_pct
+                if [[ "$orient" == "h" ]]; then
+                    numer=$p_cols
+                    denom=$(( t_cols - 2 ))
                 else
-                    printf '\nPREVIEW_LAYOUT="%s"\n' "$new_layout" >> "$USER_STATE_FILE"
+                    numer=$p_lines
+                    denom=$(( t_lines - 2 ))
+                fi
+
+                if (( denom > 0 && numer > 0 )); then
+                    new_pct=$(( (numer * 100 + denom / 2) / denom ))
+                    (( new_pct < 10 )) && new_pct=10
+                    (( new_pct > 90 )) && new_pct=90
+
+                    # Drift threshold: rounding plus border-correction error
+                    # can produce a 1% delta with no actual drag. Require ≥2%
+                    # change to count as a real user drag — otherwise repeated
+                    # opens would slowly creep the saved value.
+                    local diff=$(( new_pct > old_pct ? new_pct - old_pct : old_pct - new_pct ))
+                    if (( diff >= 2 )); then
+                        local new_layout="${current_layout/,${old_pct}%/,${new_pct}%}"
+                        if [[ "$new_layout" != "$current_layout" ]]; then
+                            write_state_value "PREVIEW_LAYOUT" "$new_layout" "$USER_STATE_FILE" 2>/dev/null || :
+                        fi
+                    fi
                 fi
             fi
         fi
@@ -928,6 +1021,9 @@ main() {
         --preview)
             [[ $# -ge 3 ]] || exit 1
             cmd_preview "$2" "$3" "${4:-}"
+            ;;
+        --capture-size)
+            write_preview_size "${2:-}"
             ;;
         --rotate-preview)
             cmd_rotate_preview
