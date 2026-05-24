@@ -1132,3 +1132,102 @@ hl.bind(
     hl.dsp.exec_cmd("gnome-calculator"),
     { description = "Calculator" }
 )
+
+
+
+
+-- =============================================================================
+-- APPS THAT NEED ALT+ KEYS SILENCED
+-- Add any app's class name here. Find the class with: hyprctl activewindow
+-- =============================================================================
+
+local alt_passthrough_apps = {
+    ["terminal_clipboard.sh"] = true,
+    ["dusky_tui"] = true,
+    ["wallpaper_selector.py"] = true,
+    -- ["some_other_app"]     = true,   ← add more here, same format
+    -- ["foot_vim"]           = true,
+}
+
+
+-- =============================================================================
+-- CLIPBOARD / ALT-PASSTHROUGH SUBMAP (no changes needed below this section)
+-- =============================================================================
+
+hl.define_submap("clipboard_passthru", function()
+
+    -- ─── Toggle clipboard off (MUST keep working) ────────────────────────────
+    hl.bind("SUPER + V", function()
+        os.execute("pkill -15 -f '^foot.*terminal_clipboard'")
+        hl.dispatch(hl.dsp.exec_cmd(
+            "foot --app-id=terminal_clipboard.sh " ..
+            os.getenv("HOME") .. "/user_scripts/clipboard/terminal_clipboard.sh"
+        ))
+    end, { description = "Clipboard History (passthrough submap)" })
+
+
+    -- ─── Workspace switching (SUPER+1–0) ─────────────────────────────────────
+    local _ws = dusky_scripts .. "hypr/multi_monitor_workspace.sh"
+    local function _w(action, n)
+        return hl.dsp.exec_cmd(_ws .. " " .. action .. " " .. tostring(n))
+    end
+
+    for i = 1, 9 do
+        local n = i
+        hl.bind("SUPER + " .. n, _w("workspace", n))
+    end
+    hl.bind("SUPER + 0", _w("workspace", 10))
+
+    for i = 1, 9 do
+        local n = i
+        hl.bind("SUPER + SHIFT + " .. n, _w("movetoworkspace", n))
+    end
+    hl.bind("SUPER + SHIFT + 0", _w("movetoworkspace", 10))
+
+
+    -- ─── Window management ───────────────────────────────────────────────────
+    hl.bind("SUPER + C",           hl.dsp.window.close(),                           { description = "Close Window" })
+    hl.bind("SUPER + TAB",         hl.dsp.focus({ workspace = "previous" }))
+    hl.bind("SUPER + SHIFT + TAB", hl.dsp.focus({ workspace = "e+1" }))
+    hl.bind("SUPER + h",           hl.dsp.focus({ direction = "l" }))
+    hl.bind("SUPER + l",           hl.dsp.focus({ direction = "r" }))
+    hl.bind("SUPER + k",           hl.dsp.focus({ direction = "u" }))
+    hl.bind("SUPER + j",           hl.dsp.focus({ direction = "d" }))
+    hl.bind("SUPER + X",           hl.dsp.window.pin())
+    hl.bind("SUPER + A",           hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }))
+
+
+    -- ─── Media / hardware keys ───────────────────────────────────────────────
+    local _osd = dusky_scripts .. "mako_osd/osd_router/osd_router.sh"
+
+    hl.bind("XF86AudioRaiseVolume",  hl.dsp.exec_cmd(_osd .. " --vol-up 5"),          { locked = true, repeating = true })
+    hl.bind("XF86AudioLowerVolume",  hl.dsp.exec_cmd(_osd .. " --vol-down 5"),        { locked = true, repeating = true })
+    hl.bind("XF86AudioMute",         hl.dsp.exec_cmd(_osd .. " --vol-mute"),           { locked = true })
+    hl.bind("XF86AudioMicMute",      hl.dsp.exec_cmd(_osd .. " --mic-mute"),           { locked = true })
+    hl.bind("XF86MonBrightnessUp",   hl.dsp.exec_cmd(_osd .. " --bright-up 5"),       { locked = true, repeating = true })
+    hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd(_osd .. " --bright-down 5"),     { locked = true, repeating = true })
+    hl.bind("XF86KbdBrightnessUp",   hl.dsp.exec_cmd(_osd .. " --kbd-bright-up 10"),  { locked = true, repeating = true })
+    hl.bind("XF86KbdBrightnessDown", hl.dsp.exec_cmd(_osd .. " --kbd-bright-down 10"),{ locked = true, repeating = true })
+    hl.bind("XF86AudioNext",         hl.dsp.exec_cmd(_osd .. " --next"),               { locked = true })
+    hl.bind("XF86AudioPrev",         hl.dsp.exec_cmd(_osd .. " --prev"),               { locked = true })
+    hl.bind("XF86AudioPlay",         hl.dsp.exec_cmd(_osd .. " --play-pause"),         { locked = true })
+    hl.bind("XF86AudioPause",        hl.dsp.exec_cmd(_osd .. " --play-pause"),         { locked = true })
+    hl.bind("XF86AudioStop",         hl.dsp.exec_cmd(_osd .. " --stop"),               { locked = true })
+    hl.bind("SUPER + P",             hl.dsp.exec_cmd(_osd .. " --play-pause"),         { locked = true })
+
+
+    -- ─── Emergency exit ───────────────────────────────────────────────────────
+    hl.bind("SUPER + Escape", hl.dsp.submap("reset"),
+        { description = "Force-exit alt passthrough", locked = true })
+
+end)
+
+
+-- ─── Auto-enter / auto-exit on focus change ──────────────────────────────────
+hl.on("window.active", function(w)
+    if w ~= nil and alt_passthrough_apps[w.class] then
+        hl.dispatch(hl.dsp.submap("clipboard_passthru"))
+    else
+        hl.dispatch(hl.dsp.submap("reset"))
+    end
+end)
