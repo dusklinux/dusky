@@ -266,8 +266,8 @@ class WallpaperApp:
             
             # --- SHORTCUTS IN HEADER ---
             shortcuts_data = [
-                ("Alt+H", "Fast Apply"),
-                ("Alt+U", "Favorite"),
+                ("RMB", "Fast Apply"),
+                ("MMB", "Favorite"),
                 ("Alt+T", "Toggle Favs"),
                 ("Alt+Y", "Rebuild Cache")
             ]
@@ -322,6 +322,7 @@ class WallpaperApp:
             self.flowbox.set_filter_func(self.filter_flowbox)
             self.flowbox.connect("child-activated", self.on_child_activated)
             self.flowbox.connect("selected-children-changed", self.on_selection_changed)
+            self.flowbox.connect("button-press-event", self.on_flowbox_button_press)
             
             self.scrolled.add(self.flowbox)
 
@@ -684,6 +685,27 @@ class WallpaperApp:
     def on_child_activated(self, flowbox, child):
         self.apply_wallpaper(getattr(child, 'rel_path', None), regen=True)
 
+    def on_flowbox_button_press(self, widget, event):
+        """Intercepts raw pointer events for Right-Click and Middle-Click interactions."""
+        if event.type == self.Gdk.EventType.BUTTON_PRESS:
+            # Button 2 = Middle Click, Button 3 = Right Click
+            if event.button in (2, 3):
+                # Retrieve the specific child occupying the physical mouse layout coordinates
+                child = self.flowbox.get_child_at_pos(int(event.x), int(event.y))
+                if child:
+                    rel_path = getattr(child, 'rel_path', None)
+                    if rel_path:
+                        # Select the child visibly to guarantee immediate UX feedback
+                        self.flowbox.select_child(child)
+                        
+                        if event.button == 3: # Right Click -> Fast Apply
+                            self.apply_wallpaper(rel_path, regen=False)
+                        elif event.button == 2: # Middle Click -> Toggle Favorite
+                            self.toggle_favorite(rel_path)
+                            
+                        return True # Consume event to prevent GTK defaults
+        return False
+
     def on_key_press(self, widget, event):
         keyval = event.keyval
         state = event.state
@@ -691,6 +713,12 @@ class WallpaperApp:
         is_alt = (state & self.Gdk.ModifierType.MOD1_MASK) != 0
         is_ctrl = (state & self.Gdk.ModifierType.CONTROL_MASK) != 0
         
+        # --- AGGRESSIVE APP KILL SWITCH ---
+        # No matter the focus state, Escape instantly destroys the window
+        if keyval == self.Gdk.KEY_Escape:
+            self.window.close()
+            return True
+
         if keyval == self.Gdk.KEY_q and not is_alt and not is_ctrl and not self.search_entry.is_focus():
             self.window.close()
             return True
@@ -698,12 +726,8 @@ class WallpaperApp:
             self.window.close()
             return True
 
+        # Stop keystrokes from leaking into shortcuts if the search bar is active
         if self.search_entry.is_focus():
-            if keyval == self.Gdk.KEY_Escape:
-                self.search_entry.set_text("") 
-                self.window.set_focus(None)
-                self.flowbox.grab_focus()
-                return True
             return False
 
         if keyval == self.Gdk.KEY_slash and not is_alt and not is_ctrl:
@@ -712,13 +736,6 @@ class WallpaperApp:
             
         if keyval in (self.Gdk.KEY_f, self.Gdk.KEY_F) and is_ctrl:
             self.search_entry.grab_focus()
-            return True
-            
-        if keyval == self.Gdk.KEY_Escape:
-            self.search_entry.set_text("")
-            self.flowbox.invalidate_filter()
-            self.window.set_focus(None)
-            self.flowbox.grab_focus()
             return True
 
         if keyval in (self.Gdk.KEY_t, self.Gdk.KEY_T) and is_ctrl:
@@ -755,9 +772,13 @@ class WallpaperApp:
     def toggle_favorite(self, rel_path: str):
         if rel_path in self.favorites: self.favorites.remove(rel_path)
         else: self.favorites.add(rel_path)
+        
         self._save_favorites()
+        
+        # In-memory O(1) redrawing logic instantly renders/hides the heart icon
         if rel_path in self.loaded_pixbufs:
             self._update_ui_child(rel_path, self.loaded_pixbufs[rel_path], self.current_generation)
+            
         if self.show_only_favorites:
             self.flowbox.invalidate_filter()
             self.GLib.idle_add(self._update_visibility_and_selection)
