@@ -113,6 +113,8 @@ cleanup() {
 
     if [[ "$_INVOCATION_MODE" == "__main__" ]]; then
         is_kitty && kitty_clear 2>/dev/null || :
+        # Aggressively clean up any lingering F1 help state files
+        [[ -d "${CACHE_DIR:-}" ]] && rm -f -- "$CACHE_DIR/.show_help_"* 2>/dev/null || :
     fi
 }
 
@@ -235,8 +237,6 @@ close_spawned_terminal() {
 #==============================================================================
 # STATE FILE I/O (atomic, comment-preserving)
 #==============================================================================
-# Parses KEY="value" / KEY='value' / KEY=value lines. Tolerant of surrounding
-# whitespace and trailing comments. Quietly returns 1 on miss.
 read_state_value() {
     local key="$1" file="$2" line
     [[ -r "$file" ]] || return 1
@@ -251,9 +251,6 @@ read_state_value() {
     return 1
 }
 
-# Rewrites the file with KEY="value" replacing the first matching line,
-# preserving every other line (comments included). Atomic via mktemp+mv.
-# Immune to the sed-RHS metacharacter pitfalls (& and \).
 write_state_value() {
     local key="$1" value="$2" file="$3"
     local dir="${file%/*}" tmp line found=0
@@ -281,9 +278,6 @@ write_state_value() {
     return 1
 }
 
-# Atomically writes the current FZF window dimensions to a session-keyed file.
-# Atomic via mktemp+mv, so a partial/killed write never corrupts the target.
-# session_pid identifies which show_menu session this size belongs to.
 write_preview_size() {
     local session_pid="${1:-}"
     is_uint "$session_pid" || return 0
@@ -644,11 +638,39 @@ cmd_move_preview() {
 cmd_preview() {
     local type="${1:-}" id="${2:-}" session_pid="${3:-}" pin_file img_path info tmp ts_str=""
 
-    # Defense-in-depth size capture: every preview re-invocation (selection
-    # change, dimension change) also refreshes the size file atomically. The
-    # primary capture path is now the resize/exit-key execute-silent bindings
-    # in show_menu, which fire synchronously and cannot be raced by Esc.
     write_preview_size "$session_pid"
+
+    # --- F1 HELP MENU INTERCEPT (VIM EDITION) ---
+    # Intercept normal preview rendering entirely if the toggle file is present
+    if [[ -n "$session_pid" && -f "${CACHE_DIR}/.show_help_${session_pid}" ]]; then
+        is_kitty && kitty_clear
+        printf '\e[1;36m━━━ 💡 VIM SHORTCUTS ━━━\e[0m\n\n'
+        printf '  \e[33mF1\e[0m          : Toggle this help menu\n\n'
+        printf '  \e[36m[ MOVEMENT & SEARCH ]\e[0m\n'
+        printf '  \e[33mj / k\e[0m       : Move Cursor Down / Up\n'
+        printf '  \e[33mg / G\e[0m       : Top / Bottom of list\n'
+        printf '  \e[33mCtrl-D/U\e[0m    : Half page Down / Up\n'
+        printf '  \e[33mh / l\e[0m       : Move cursor Left / Right (in prompt)\n'
+        printf '  \e[33m/\e[0m           : Enter Search mode (Esc to exit search)\n\n'
+        printf '  \e[36m[ SELECTION ]\e[0m\n'
+        printf '  \e[33mv / V\e[0m       : Toggle selection under cursor\n'
+        printf '  \e[33mJ / K\e[0m       : Toggle selection Down / Up\n'
+        printf '  \e[33mCtrl-A\e[0m      : Select All\n\n'
+        printf '  \e[36m[ PREVIEW & FILTERS ]\e[0m\n'
+        printf '  \e[33mAlt-H/J/K/L\e[0m : Move Preview Panel (Left/Down/Up/Right)\n'
+        printf '  \e[33mAlt-V\e[0m       : Hide / Show Preview Panel\n'
+        printf '  \e[33mAlt-I\e[0m       : Filter Images Only\n'
+        printf '  \e[33mAlt-P\e[0m       : Filter Pinned Only\n'
+        printf '  \e[33mAlt-B\e[0m       : Filter Binaries Only\n\n'
+        printf '  \e[36m[ ACTIONS ]\e[0m\n'
+        printf '  \e[33mAlt-A\e[0m       : Pin selected item(s)\n'
+        printf '  \e[33mAlt-D\e[0m       : Delete selected item(s)\n'
+        printf '  \e[33mAlt-W\e[0m       : Wipe entire clipboard\n'
+        printf '  \e[33mEnter\e[0m       : Copy selected to clipboard & exit\n'
+        printf '  \e[33mq / Ctrl-C\e[0m  : Abort / Exit\n'
+        return 0
+    fi
+    # --------------------------------------------
 
     is_kitty && kitty_clear
 
@@ -903,16 +925,21 @@ show_menu() {
     # keyed identically on the read side below.
     local cap="${SELF@Q} --capture-size $$"
 
+    # Establish a fresh toggle state for the help menu based on this process ID
+    local help_file="${CACHE_DIR}/.show_help_$$"
+    rm -f -- "$help_file" 2>/dev/null || :
+
     output=$(
         cmd_list | fzf \
             --multi --ansi --reverse --no-sort --exact --cycle --scheme=history \
             --margin=0 --padding=0 --highlight-line \
             --border=rounded --border-label="$combined_label" --border-label-pos=3 \
-            --info=hidden --header="🅝  j/k/g/G: Move | v/V/J/K: Select | /: Search | Alt-A/D/W: Actions" --header-first \
+            --info=hidden --header=" F1 Help " --header-first \
             --prompt=" 🅝  > " --pointer="▌" --delimiter="$SEP" --with-nth=1 \
             --track --id-nth=3 \
             --preview="${SELF@Q} --preview '{2}' '{3}' $$ # \$FZF_PREVIEW_COLUMNS \$FZF_PREVIEW_LINES \$FZF_COLUMNS \$FZF_LINES" \
             --preview-window="${PREVIEW_LAYOUT:-right,45%,~3,wrap-word}" \
+            --bind="f1:execute-silent(if [ -f ${help_file@Q} ]; then rm -f ${help_file@Q}; else touch ${help_file@Q}; fi)+refresh-preview" \
             --bind="resize:execute-silent($cap)" \
             --bind="alt-h:transform(${SELF@Q} --move-preview left)" \
             --bind="alt-j:transform(${SELF@Q} --move-preview down)" \
@@ -944,6 +971,9 @@ show_menu() {
             --bind="q:execute-silent($cap)+abort" \
             --bind="/:change-prompt( 🔎 > )+unbind(j,k,h,l,g,G,J,K,v,V,q,ctrl-d,ctrl-u,/)+clear-query"
     ) || true
+
+    # Clean up help toggle state on natural exit
+    rm -f -- "$help_file" 2>/dev/null || :
 
     # -------------------------------------------------------------------------
     # Drag-resize persistence

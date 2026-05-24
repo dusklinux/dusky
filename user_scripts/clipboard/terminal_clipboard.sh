@@ -113,6 +113,8 @@ cleanup() {
 
     if [[ "$_INVOCATION_MODE" == "__main__" ]]; then
         is_kitty && kitty_clear 2>/dev/null || :
+        # Aggressively clean up any lingering F1 help state files
+        [[ -d "${CACHE_DIR:-}" ]] && rm -f -- "$CACHE_DIR/.show_help_"* 2>/dev/null || :
     fi
 }
 
@@ -235,8 +237,6 @@ close_spawned_terminal() {
 #==============================================================================
 # STATE FILE I/O (atomic, comment-preserving)
 #==============================================================================
-# Parses KEY="value" / KEY='value' / KEY=value lines. Tolerant of surrounding
-# whitespace and trailing comments. Quietly returns 1 on miss.
 read_state_value() {
     local key="$1" file="$2" line
     [[ -r "$file" ]] || return 1
@@ -251,9 +251,6 @@ read_state_value() {
     return 1
 }
 
-# Rewrites the file with KEY="value" replacing the first matching line,
-# preserving every other line (comments included). Atomic via mktemp+mv.
-# Immune to the sed-RHS metacharacter pitfalls (& and \).
 write_state_value() {
     local key="$1" value="$2" file="$3"
     local dir="${file%/*}" tmp line found=0
@@ -281,9 +278,6 @@ write_state_value() {
     return 1
 }
 
-# Atomically writes the current FZF window dimensions to a session-keyed file.
-# Atomic via mktemp+mv, so a partial/killed write never corrupts the target.
-# session_pid identifies which show_menu session this size belongs to.
 write_preview_size() {
     local session_pid="${1:-}"
     is_uint "$session_pid" || return 0
@@ -644,11 +638,27 @@ cmd_move_preview() {
 cmd_preview() {
     local type="${1:-}" id="${2:-}" session_pid="${3:-}" pin_file img_path info tmp ts_str=""
 
-    # Defense-in-depth size capture: every preview re-invocation (selection
-    # change, dimension change) also refreshes the size file atomically. The
-    # primary capture path is now the resize/exit-key execute-silent bindings
-    # in show_menu, which fire synchronously and cannot be raced by Esc.
     write_preview_size "$session_pid"
+
+    # --- F1 HELP MENU INTERCEPT ---
+    # Intercept normal preview rendering entirely if the toggle file is present
+    if [[ -n "$session_pid" && -f "${CACHE_DIR}/.show_help_${session_pid}" ]]; then
+        is_kitty && kitty_clear
+        printf '\e[1;36m━━━ 💡 SHORTCUTS ━━━\e[0m\n\n'
+        printf '  \e[33mF1\e[0m          : Toggle this help menu\n\n'
+        printf '  \e[33mAlt-H/J/K/L\e[0m : Move Preview (Left/Down/Up/Right)\n'
+        printf '  \e[33mAlt-V\e[0m       : Hide / Show Preview\n\n'
+        printf '  \e[33mAlt-A\e[0m       : Pin selected item(s)\n'
+        printf '  \e[33mAlt-D\e[0m       : Delete selected item(s)\n'
+        printf '  \e[33mAlt-W\e[0m       : Wipe entire clipboard\n\n'
+        printf '  \e[33mAlt-I\e[0m       : Filter Images\n'
+        printf '  \e[33mAlt-P\e[0m       : Filter Pinned\n'
+        printf '  \e[33mAlt-B\e[0m       : Filter Binaries\n\n'
+        printf '  \e[33mEnter\e[0m       : Copy to clipboard & exit\n'
+        printf '  \e[33mEsc/Ctrl-C\e[0m  : Abort\n'
+        return 0
+    fi
+    # ------------------------------
 
     is_kitty && kitty_clear
 
@@ -898,26 +908,23 @@ show_menu() {
     local combined_label=" 📋 Clipboard [${mode_label}] "
     local output=""
 
-    # The session-scoped capture command. fzf substitutes nothing here; $$ is
-    # expanded by the parent shell to the main script PID, so the size file is
-    # keyed identically on the read side below.
     local cap="${SELF@Q} --capture-size $$"
+    
+    # Establish a fresh toggle state for the help menu based on this process ID
+    local help_file="${CACHE_DIR}/.show_help_$$"
+    rm -f -- "$help_file" 2>/dev/null || :
 
-    # The preview command intentionally references $FZF_PREVIEW_COLUMNS/_LINES
-    # in a shell comment. fzf scans the command string (comments included) for
-    # those refs and re-invokes the preview command on dimension change. The
-    # comment is stripped by the shell before execution. This is defense in
-    # depth — the authoritative captures happen via the bindings below.
     output=$(
         cmd_list | fzf \
             --multi --ansi --reverse --no-sort --exact --cycle --scheme=history \
             --margin=0 --padding=0 --highlight-line \
             --border=rounded --border-label="$combined_label" --border-label-pos=3 \
-            --info=hidden --header="Alt-H/J/K/L Move Preview  |  Alt-A Pin  |  Alt-D Delete  |  Alt-W Wipe" --header-first \
+            --info=hidden --header=" F1 Help " --header-first \
             --prompt="  " --pointer="▌" --delimiter="$SEP" --with-nth=1 \
             --track --id-nth=3 \
             --preview="${SELF@Q} --preview '{2}' '{3}' $$ # \$FZF_PREVIEW_COLUMNS \$FZF_PREVIEW_LINES \$FZF_COLUMNS \$FZF_LINES" \
             --preview-window="${PREVIEW_LAYOUT:-right,45%,~3,wrap-word}" \
+            --bind="f1:execute-silent(if [ -f ${help_file@Q} ]; then rm -f ${help_file@Q}; else touch ${help_file@Q}; fi)+refresh-preview" \
             --bind="resize:execute-silent($cap)" \
             --bind="alt-h:transform(${SELF@Q} --move-preview left)" \
             --bind="alt-j:transform(${SELF@Q} --move-preview down)" \
@@ -935,13 +942,11 @@ show_menu() {
             --bind="ctrl-c:execute-silent($cap)+abort"
     ) || true
 
+    # Clean up help toggle state on natural exit
+    rm -f -- "$help_file" 2>/dev/null || :
+
     # -------------------------------------------------------------------------
     # Drag-resize persistence
-    # The size file is written by `resize`, `enter`, `esc`, `ctrl-c` bindings
-    # via execute-silent (synchronous in fzf), guaranteeing the file reflects
-    # the dimensions at the moment of exit. We also pick up writes from the
-    # preview subprocess as defense in depth. The atomic mktemp+mv in
-    # write_preview_size ensures we never read a partial write.
     # -------------------------------------------------------------------------
     local size_file="${CACHE_DIR}/.preview_size_$$"
     if [[ -f "$size_file" ]]; then
