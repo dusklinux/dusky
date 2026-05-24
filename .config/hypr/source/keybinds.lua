@@ -1135,7 +1135,6 @@ hl.bind(
 
 
 
-
 -- =============================================================================
 -- APPS THAT NEED ALT+ KEYS SILENCED
 -- Add any app's class name here. Find the class with: hyprctl activewindow
@@ -1147,16 +1146,17 @@ local alt_passthrough_apps = {
     ["wallpaper_selector.py"] = true,
     -- ["some_other_app"]     = true,   ← add more here, same format
     -- ["foot_vim"]           = true,
+    -- ["some_other_app"]     = true,
 }
 
 
 -- =============================================================================
--- CLIPBOARD / ALT-PASSTHROUGH SUBMAP (no changes needed below this section)
+-- ALT-PASSTHROUGH SUBMAP
 -- =============================================================================
 
 hl.define_submap("clipboard_passthru", function()
 
-    -- ─── Toggle clipboard off (MUST keep working) ────────────────────────────
+    -- ─── Toggle clipboard off ────────────────────────────────────────────────
     hl.bind("SUPER + V", function()
         os.execute("pkill -15 -f '^foot.*terminal_clipboard'")
         hl.dispatch(hl.dsp.exec_cmd(
@@ -1166,27 +1166,27 @@ hl.define_submap("clipboard_passthru", function()
     end, { description = "Clipboard History (passthrough submap)" })
 
 
-    -- ─── Workspace switching (SUPER+1–0) ─────────────────────────────────────
+    -- ─── Workspace switching ─────────────────────────────────────────────────
     local _ws = dusky_scripts .. "hypr/multi_monitor_workspace.sh"
     local function _w(action, n)
         return hl.dsp.exec_cmd(_ws .. " " .. action .. " " .. tostring(n))
     end
 
-    for i = 1, 9 do
-        local n = i
-        hl.bind("SUPER + " .. n, _w("workspace", n))
-    end
+    -- SUPER+1–0: switch to workspace
+    for i = 1, 9 do local n = i; hl.bind("SUPER + " .. n, _w("workspace", n)) end
     hl.bind("SUPER + 0", _w("workspace", 10))
 
-    for i = 1, 9 do
-        local n = i
-        hl.bind("SUPER + SHIFT + " .. n, _w("movetoworkspace", n))
-    end
+    -- SUPER+SHIFT+1–0: move window to workspace (follow)
+    for i = 1, 9 do local n = i; hl.bind("SUPER + SHIFT + " .. n, _w("movetoworkspace", n)) end
     hl.bind("SUPER + SHIFT + 0", _w("movetoworkspace", 10))
+
+    -- SUPER+ALT+1–0: move window to workspace silently (don't follow)
+    for i = 1, 9 do local n = i; hl.bind("SUPER + ALT + " .. n, _w("movetoworkspacesilent", n)) end
+    hl.bind("SUPER + ALT + 0", _w("movetoworkspacesilent", 10))
 
 
     -- ─── Window management ───────────────────────────────────────────────────
-    hl.bind("SUPER + C",           hl.dsp.window.close(),                           { description = "Close Window" })
+    hl.bind("SUPER + C",           hl.dsp.window.close())
     hl.bind("SUPER + TAB",         hl.dsp.focus({ workspace = "previous" }))
     hl.bind("SUPER + SHIFT + TAB", hl.dsp.focus({ workspace = "e+1" }))
     hl.bind("SUPER + h",           hl.dsp.focus({ direction = "l" }))
@@ -1195,6 +1195,23 @@ hl.define_submap("clipboard_passthru", function()
     hl.bind("SUPER + j",           hl.dsp.focus({ direction = "d" }))
     hl.bind("SUPER + X",           hl.dsp.window.pin())
     hl.bind("SUPER + A",           hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }))
+
+    -- Smart float (your existing SUPER+D logic)
+    hl.bind("SUPER + D", hl.dsp.exec_cmd([[
+        if hyprctl activewindow | grep -q 'floating: 0'; then
+            W=$(hyprctl monitors -j | jq '.[] | select(.focused) | ((.width / .scale) * 0.9) | floor')
+            H=$(hyprctl monitors -j | jq '.[] | select(.focused) | ((.height / .scale) * 0.9) | floor')
+            hyprctl --batch "dispatch hl.dsp.window.float({action='set'}); dispatch hl.dsp.window.resize({x=${W}, y=${H}, relative=false})"
+            hyprctl dispatch "hl.dsp.window.center()"
+        else
+            hyprctl dispatch "hl.dsp.window.float({action='unset'})"
+        fi
+    ]]))
+
+    -- Mouse drag to move window
+    hl.bind("SUPER + mouse:272", hl.dsp.window.drag(), { mouse = true })
+    -- Mouse drag to resize window (keeping it since you likely still want it)
+    hl.bind("SUPER + mouse:273", hl.dsp.window.resize(), { mouse = true })
 
 
     -- ─── Media / hardware keys ───────────────────────────────────────────────
@@ -1216,9 +1233,18 @@ hl.define_submap("clipboard_passthru", function()
     hl.bind("SUPER + P",             hl.dsp.exec_cmd(_osd .. " --play-pause"),         { locked = true })
 
 
+    -- =========================================================================
+    -- ↓↓↓ ADD YOUR OWN BINDS HERE — copy any line from keybinds.lua as-is ↓↓↓
+    -- =========================================================================
+
+    -- hl.bind("SUPER + N", hl.dsp.exec_cmd("..."))
+    -- hl.bind("SUPER + S", hl.dsp.exec_cmd("..."))
+
+    -- =========================================================================
+
+
     -- ─── Emergency exit ───────────────────────────────────────────────────────
-    hl.bind("SUPER + Escape", hl.dsp.submap("reset"),
-        { description = "Force-exit alt passthrough", locked = true })
+    hl.bind("SUPER + Escape", hl.dsp.submap("reset"), { locked = true })
 
 end)
 
