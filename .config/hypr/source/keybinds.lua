@@ -1135,140 +1135,140 @@ hl.bind(
 
 
 
--- =============================================================================
--- APPS THAT NEED ALT+ KEYS SILENCED
--- Add any app's class name here. Find the class with: hyprctl activewindow
--- =============================================================================
-
-local alt_passthrough_apps = {
-    ["terminal_clipboard.sh"] = true,
-    ["dusky_tui"] = true,
-    ["wallpaper_selector.py"] = true,
-    -- ["some_other_app"]     = true,   ← add more here, same format
-    -- ["foot_vim"]           = true,
-    -- ["some_other_app"]     = true,
-}
-
-
--- =============================================================================
--- ALT-PASSTHROUGH SUBMAP
--- =============================================================================
-
-hl.define_submap("apps_passthru", function()
-
-    -- ─── Workspace switching ─────────────────────────────────────────────────
-    local _ws = dusky_scripts .. "hypr/multi_monitor_workspace.sh"
-    local function _w(action, n)
-        return hl.dsp.exec_cmd(_ws .. " " .. action .. " " .. tostring(n))
-    end
-
-    -- SUPER+1–0: switch to workspace
-    for i = 1, 9 do local n = i; hl.bind("SUPER + " .. n, _w("workspace", n)) end
-    hl.bind("SUPER + 0", _w("workspace", 10))
-
-    -- SUPER+SHIFT+1–0: move window to workspace (follow)
-    for i = 1, 9 do local n = i; hl.bind("SUPER + SHIFT + " .. n, _w("movetoworkspace", n)) end
-    hl.bind("SUPER + SHIFT + 0", _w("movetoworkspace", 10))
-
-    -- SUPER+ALT+1–0: move window to workspace silently (don't follow)
-    for i = 1, 9 do local n = i; hl.bind("SUPER + ALT + " .. n, _w("movetoworkspacesilent", n)) end
-    hl.bind("SUPER + ALT + 0", _w("movetoworkspacesilent", 10))
-
-
-    -- ─── Window management ───────────────────────────────────────────────────
-    hl.bind("SUPER + C",           hl.dsp.window.close())
-    hl.bind("SUPER + TAB",         hl.dsp.focus({ workspace = "previous" }))
-    hl.bind("SUPER + SHIFT + TAB", hl.dsp.focus({ workspace = "e+1" }))
-    hl.bind("SUPER + h",           hl.dsp.focus({ direction = "l" }))
-    hl.bind("SUPER + l",           hl.dsp.focus({ direction = "r" }))
-    hl.bind("SUPER + k",           hl.dsp.focus({ direction = "u" }))
-    hl.bind("SUPER + j",           hl.dsp.focus({ direction = "d" }))
-    hl.bind("SUPER + X",           hl.dsp.window.pin())
-    hl.bind("SUPER + A",           hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }))
-
-    -- Smart float (your existing SUPER+D logic)
-    hl.bind("SUPER + D", hl.dsp.exec_cmd([[
-        if hyprctl activewindow | grep -q 'floating: 0'; then
-            W=$(hyprctl monitors -j | jq '.[] | select(.focused) | ((.width / .scale) * 0.9) | floor')
-            H=$(hyprctl monitors -j | jq '.[] | select(.focused) | ((.height / .scale) * 0.9) | floor')
-            hyprctl --batch "dispatch hl.dsp.window.float({action='set'}); dispatch hl.dsp.window.resize({x=${W}, y=${H}, relative=false})"
-            hyprctl dispatch "hl.dsp.window.center()"
-        else
-            hyprctl dispatch "hl.dsp.window.float({action='unset'})"
-        fi
-    ]]))
-
-    -- Mouse drag to move window
-    hl.bind("SUPER + mouse:272", hl.dsp.window.drag(), { mouse = true })
-    -- Mouse drag to resize window (keeping it since you likely still want it)
-    hl.bind("SUPER + mouse:273", hl.dsp.window.resize(), { mouse = true })
-
-
-    -- ─── Media / hardware keys ───────────────────────────────────────────────
-    local _osd = dusky_scripts .. "mako_osd/osd_router/osd_router.sh"
-
-    hl.bind("XF86AudioRaiseVolume",  hl.dsp.exec_cmd(_osd .. " --vol-up 5"),          { locked = true, repeating = true })
-    hl.bind("XF86AudioLowerVolume",  hl.dsp.exec_cmd(_osd .. " --vol-down 5"),        { locked = true, repeating = true })
-    hl.bind("XF86AudioMute",         hl.dsp.exec_cmd(_osd .. " --vol-mute"),           { locked = true })
-    hl.bind("XF86AudioMicMute",      hl.dsp.exec_cmd(_osd .. " --mic-mute"),           { locked = true })
-    hl.bind("XF86MonBrightnessUp",   hl.dsp.exec_cmd(_osd .. " --bright-up 5"),       { locked = true, repeating = true })
-    hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd(_osd .. " --bright-down 5"),     { locked = true, repeating = true })
-    hl.bind("XF86KbdBrightnessUp",   hl.dsp.exec_cmd(_osd .. " --kbd-bright-up 10"),  { locked = true, repeating = true })
-    hl.bind("XF86KbdBrightnessDown", hl.dsp.exec_cmd(_osd .. " --kbd-bright-down 10"),{ locked = true, repeating = true })
-    hl.bind("XF86AudioNext",         hl.dsp.exec_cmd(_osd .. " --next"),               { locked = true })
-    hl.bind("XF86AudioPrev",         hl.dsp.exec_cmd(_osd .. " --prev"),               { locked = true })
-    hl.bind("XF86AudioPlay",         hl.dsp.exec_cmd(_osd .. " --play-pause"),         { locked = true })
-    hl.bind("XF86AudioPause",        hl.dsp.exec_cmd(_osd .. " --play-pause"),         { locked = true })
-    hl.bind("XF86AudioStop",         hl.dsp.exec_cmd(_osd .. " --stop"),               { locked = true })
-    hl.bind("SUPER + P",             hl.dsp.exec_cmd(_osd .. " --play-pause"),         { locked = true })
-
-
-  hl.bind(
-      "SUPER + S",
-      hl.dsp.exec_cmd(dusky_scripts .. "images/dusky_screenshot.sh --region --freeze --no-notify"),
-      { description = "Quick Screenshot" }
-  )
-
-  hl.bind(
-      "SHIFT + Print",
-      hl.dsp.exec_cmd([[grim - | wl-copy && notify-send "Fullscreen Screenshot in Clipboard"]]),
-      { description = "Full Screen Quick Screenshot", locked = true }
-  )
-
-  hl.bind(
-      "SUPER + SHIFT + S",
-      hl.dsp.exec_cmd(dusky_scripts .. "images/dusky_screenshot.sh --region --freeze --annotate --no-notify --tool arrow"),
-      { description = "Screenshot and Annotation" }
-  )
-
-  hl.bind(
-      "Print",
-      hl.dsp.exec_cmd("pgrep -x swappy || (grim - | satty -f -)"),
-      { description = "Fullscreen Screenshot and Annotation" }
-  )
-
-
-    -- =========================================================================
-    -- ↓↓↓ ADD YOUR OWN BINDS HERE — copy any line from keybinds.lua as-is ↓↓↓
-    -- =========================================================================
-
-    -- hl.bind("SUPER + N", hl.dsp.exec_cmd("..."))
-    -- hl.bind("SUPER + S", hl.dsp.exec_cmd("..."))
-
-    -- =========================================================================
-
-
-    -- ─── Emergency exit ───────────────────────────────────────────────────────
-    hl.bind("SUPER + Escape", hl.dsp.submap("reset"), { locked = true })
-
-end)
-
-
--- ─── Auto-enter / auto-exit on focus change ──────────────────────────────────
-hl.on("window.active", function(w)
-    if w ~= nil and alt_passthrough_apps[w.class] then
-        hl.dispatch(hl.dsp.submap("apps_passthru"))
-    else
-        hl.dispatch(hl.dsp.submap("reset"))
-    end
-end)
+--  -- =============================================================================
+--  -- APPS THAT NEED ALT+ KEYS SILENCED
+--  -- Add any app's class name here. Find the class with: hyprctl activewindow
+--  -- =============================================================================
+--  
+--  local alt_passthrough_apps = {
+--      ["terminal_clipboard.sh"] = true,
+--      ["dusky_tui"] = true,
+--      ["wallpaper_selector.py"] = true,
+--      -- ["some_other_app"]     = true,   ← add more here, same format
+--      -- ["foot_vim"]           = true,
+--      -- ["some_other_app"]     = true,
+--  }
+--  
+--  
+--  -- =============================================================================
+--  -- ALT-PASSTHROUGH SUBMAP
+--  -- =============================================================================
+--  
+--  hl.define_submap("apps_passthru", function()
+--  
+--      -- ─── Workspace switching ─────────────────────────────────────────────────
+--      local _ws = dusky_scripts .. "hypr/multi_monitor_workspace.sh"
+--      local function _w(action, n)
+--          return hl.dsp.exec_cmd(_ws .. " " .. action .. " " .. tostring(n))
+--      end
+--  
+--      -- SUPER+1–0: switch to workspace
+--      for i = 1, 9 do local n = i; hl.bind("SUPER + " .. n, _w("workspace", n)) end
+--      hl.bind("SUPER + 0", _w("workspace", 10))
+--  
+--      -- SUPER+SHIFT+1–0: move window to workspace (follow)
+--      for i = 1, 9 do local n = i; hl.bind("SUPER + SHIFT + " .. n, _w("movetoworkspace", n)) end
+--      hl.bind("SUPER + SHIFT + 0", _w("movetoworkspace", 10))
+--  
+--      -- SUPER+ALT+1–0: move window to workspace silently (don't follow)
+--      for i = 1, 9 do local n = i; hl.bind("SUPER + ALT + " .. n, _w("movetoworkspacesilent", n)) end
+--      hl.bind("SUPER + ALT + 0", _w("movetoworkspacesilent", 10))
+--  
+--  
+--      -- ─── Window management ───────────────────────────────────────────────────
+--      hl.bind("SUPER + C",           hl.dsp.window.close())
+--      hl.bind("SUPER + TAB",         hl.dsp.focus({ workspace = "previous" }))
+--      hl.bind("SUPER + SHIFT + TAB", hl.dsp.focus({ workspace = "e+1" }))
+--      hl.bind("SUPER + h",           hl.dsp.focus({ direction = "l" }))
+--      hl.bind("SUPER + l",           hl.dsp.focus({ direction = "r" }))
+--      hl.bind("SUPER + k",           hl.dsp.focus({ direction = "u" }))
+--      hl.bind("SUPER + j",           hl.dsp.focus({ direction = "d" }))
+--      hl.bind("SUPER + X",           hl.dsp.window.pin())
+--      hl.bind("SUPER + A",           hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }))
+--  
+--      -- Smart float (your existing SUPER+D logic)
+--      hl.bind("SUPER + D", hl.dsp.exec_cmd([[
+--          if hyprctl activewindow | grep -q 'floating: 0'; then
+--              W=$(hyprctl monitors -j | jq '.[] | select(.focused) | ((.width / .scale) * 0.9) | floor')
+--              H=$(hyprctl monitors -j | jq '.[] | select(.focused) | ((.height / .scale) * 0.9) | floor')
+--              hyprctl --batch "dispatch hl.dsp.window.float({action='set'}); dispatch hl.dsp.window.resize({x=${W}, y=${H}, relative=false})"
+--              hyprctl dispatch "hl.dsp.window.center()"
+--          else
+--              hyprctl dispatch "hl.dsp.window.float({action='unset'})"
+--          fi
+--      ]]))
+--  
+--      -- Mouse drag to move window
+--      hl.bind("SUPER + mouse:272", hl.dsp.window.drag(), { mouse = true })
+--      -- Mouse drag to resize window (keeping it since you likely still want it)
+--      hl.bind("SUPER + mouse:273", hl.dsp.window.resize(), { mouse = true })
+--  
+--  
+--      -- ─── Media / hardware keys ───────────────────────────────────────────────
+--      local _osd = dusky_scripts .. "mako_osd/osd_router/osd_router.sh"
+--  
+--      hl.bind("XF86AudioRaiseVolume",  hl.dsp.exec_cmd(_osd .. " --vol-up 5"),          { locked = true, repeating = true })
+--      hl.bind("XF86AudioLowerVolume",  hl.dsp.exec_cmd(_osd .. " --vol-down 5"),        { locked = true, repeating = true })
+--      hl.bind("XF86AudioMute",         hl.dsp.exec_cmd(_osd .. " --vol-mute"),           { locked = true })
+--      hl.bind("XF86AudioMicMute",      hl.dsp.exec_cmd(_osd .. " --mic-mute"),           { locked = true })
+--      hl.bind("XF86MonBrightnessUp",   hl.dsp.exec_cmd(_osd .. " --bright-up 5"),       { locked = true, repeating = true })
+--      hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd(_osd .. " --bright-down 5"),     { locked = true, repeating = true })
+--      hl.bind("XF86KbdBrightnessUp",   hl.dsp.exec_cmd(_osd .. " --kbd-bright-up 10"),  { locked = true, repeating = true })
+--      hl.bind("XF86KbdBrightnessDown", hl.dsp.exec_cmd(_osd .. " --kbd-bright-down 10"),{ locked = true, repeating = true })
+--      hl.bind("XF86AudioNext",         hl.dsp.exec_cmd(_osd .. " --next"),               { locked = true })
+--      hl.bind("XF86AudioPrev",         hl.dsp.exec_cmd(_osd .. " --prev"),               { locked = true })
+--      hl.bind("XF86AudioPlay",         hl.dsp.exec_cmd(_osd .. " --play-pause"),         { locked = true })
+--      hl.bind("XF86AudioPause",        hl.dsp.exec_cmd(_osd .. " --play-pause"),         { locked = true })
+--      hl.bind("XF86AudioStop",         hl.dsp.exec_cmd(_osd .. " --stop"),               { locked = true })
+--      hl.bind("SUPER + P",             hl.dsp.exec_cmd(_osd .. " --play-pause"),         { locked = true })
+--  
+--  
+--    hl.bind(
+--        "SUPER + S",
+--        hl.dsp.exec_cmd(dusky_scripts .. "images/dusky_screenshot.sh --region --freeze --no-notify"),
+--        { description = "Quick Screenshot" }
+--    )
+--  
+--    hl.bind(
+--        "SHIFT + Print",
+--        hl.dsp.exec_cmd([[grim - | wl-copy && notify-send "Fullscreen Screenshot in Clipboard"]]),
+--        { description = "Full Screen Quick Screenshot", locked = true }
+--    )
+--  
+--    hl.bind(
+--        "SUPER + SHIFT + S",
+--        hl.dsp.exec_cmd(dusky_scripts .. "images/dusky_screenshot.sh --region --freeze --annotate --no-notify --tool arrow"),
+--        { description = "Screenshot and Annotation" }
+--    )
+--  
+--    hl.bind(
+--        "Print",
+--        hl.dsp.exec_cmd("pgrep -x swappy || (grim - | satty -f -)"),
+--        { description = "Fullscreen Screenshot and Annotation" }
+--    )
+--  
+--  
+--      -- =========================================================================
+--      -- ↓↓↓ ADD YOUR OWN BINDS HERE — copy any line from keybinds.lua as-is ↓↓↓
+--      -- =========================================================================
+--  
+--      -- hl.bind("SUPER + N", hl.dsp.exec_cmd("..."))
+--      -- hl.bind("SUPER + S", hl.dsp.exec_cmd("..."))
+--  
+--      -- =========================================================================
+--  
+--  
+--      -- ─── Emergency exit ───────────────────────────────────────────────────────
+--      hl.bind("SUPER + Escape", hl.dsp.submap("reset"), { locked = true })
+--  
+--  end)
+--  
+--  
+--  -- ─── Auto-enter / auto-exit on focus change ──────────────────────────────────
+--  hl.on("window.active", function(w)
+--      if w ~= nil and alt_passthrough_apps[w.class] then
+--          hl.dispatch(hl.dsp.submap("apps_passthru"))
+--      else
+--          hl.dispatch(hl.dsp.submap("reset"))
+--      end
+--  end)
