@@ -416,6 +416,7 @@ main_loop() {
         now=$(get_timestamp)
         
         log "Initial state: $state at $percentage%"
+        STATE_LAST="$state"
         process_battery_event "$state" "$percentage" "$now"
     else
         log "Warning: Could not read initial battery state"
