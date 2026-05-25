@@ -954,6 +954,11 @@ resolve_and_validate_manifest() {
 
     if ((preflight_failures > 0)); then
         log ERROR "Aborting preflight due to ${preflight_failures} resolution error(s)"
+        local _pf_idx
+        for _pf_idx in "${!MANIFEST_PATH_STATE[@]}"; do
+            local _pf_state="${MANIFEST_PATH_STATE[$_pf_idx]}"
+            [[ "$_pf_state" != "ok" ]] && HARD_FAILED_SCRIPTS+=("${MANIFEST_SCRIPT[$_pf_idx]} ($_pf_state)")
+        done
         return 1
     fi
 
