@@ -24,87 +24,87 @@
 -- hl.bind(
 --     "SUPER + Q",
 --     hl.dsp.exec_cmd(terminal),
---     { description = "Launch Terminal" }
+--     { description = "Launch Terminal", submap_universal = true }
 -- )
 -- 
 -- hl.bind(
 --     "SUPER + W",
 --     hl.dsp.exec_cmd(browser),
---     { description = "Launch Browser" }
+--     { description = "Launch Browser", submap_universal = true }
 -- )
 -- 
 -- hl.bind(
 --     "SUPER + E",
 --     hl.dsp.exec_cmd(fileManager),
---     { description = "File Manager" }
+--     { description = "File Manager", submap_universal = true }
 -- )
 -- 
 -- hl.bind(
 --     "SUPER + R",
 --     hl.dsp.exec_cmd(textEditor),
---     { description = "Open Text Editor" }
+--     { description = "Open Text Editor", submap_universal = true }
 -- )
 
 hl.bind(
     "ALT + SPACE",
     hl.dsp.exec_cmd([[pkill rofi; rofi -show drun -run-command "{cmd}"]]),
-    { description = "Launch Menu for Apps" }
+    { description = "Launch Menu for Apps", submap_universal = true }
 )
 
 hl.bind(
     "CTRL + SHIFT + SPACE",
     hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/keybindings.sh"),
-    { description = "Show Keybinds" }
+    { description = "Show Keybinds", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + CTRL + SPACE",
     hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/emoji.sh"),
-    { description = "Search Emojis" }
+    { description = "Search Emojis", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + CTRL + SHIFT + SPACE",
     hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/calculator.sh"),
-    { description = "Calculator" }
+    { description = "Calculator", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + SPACE",
     hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/rofi_theme.sh"),
-    { description = "Matugen Theme Config" }
+    { description = "Matugen Theme Config", submap_universal = true }
 )
 
 hl.bind(
     "CTRL + SPACE",
     hl.dsp.exec_cmd(dusky_scripts .. "images/wallpaper_selector.py"),
-    { description = "Rofi Wallpaper Selector" }
+    { description = "Rofi Wallpaper Selector", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + SPACE",
     hl.dsp.exec_cmd([[gdbus call --session --dest com.github.dusky.controlcenter --object-path /com/github/dusky/controlcenter --method org.freedesktop.Application.Activate "{}"]]),
-    { description = "System Menu" }
+    { description = "System Menu", submap_universal = true }
 )
 
 hl.bind(
     "CTRL + ALT + SPACE",
     hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/dusky_glance.sh"),
-    { description = "Dusky Glance" }
+    { description = "Dusky Glance", submap_universal = true }
 )
 
 -- Rofi Powermenu
 hl.bind(
     "ALT + SHIFT + SPACE",
     hl.dsp.exec_cmd("pkill rofi; rofi -show power-menu -modi power-menu:" .. dusky_scripts .. "rofi/powermenu.sh"),
-    { description = "Power Menu" }
+    { description = "Power Menu", submap_universal = true }
 )
 
 -- System Monitor (btop)
 hl.bind(
     "CTRL + SHIFT + escape",
     hl.dsp.exec_cmd(terminal .. " --class btop -e btop"),
-    { description = "System Monitor" }
+    { description = "System Monitor", submap_universal = true }
 )
 
 
@@ -139,13 +139,13 @@ hl.bind(
 hl.bind(
     "SUPER + apostrophe",
     hl.dsp.exec_cmd(dusky_scripts .. "theme_matugen/theme_ctl.sh next"),
-    { description = "Cycle Next Wallpaper" }
+    { description = "Cycle Next Wallpaper", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + apostrophe",
     hl.dsp.exec_cmd(dusky_scripts .. "rofi/rofi_wallpaper_selctor.sh --next-fav"),
-    { description = "Cycle Fav Wallpaper" }
+    { description = "Cycle Fav Wallpaper", submap_universal = true }
 )
 
 hl.bind(
@@ -186,13 +186,13 @@ end)
 hl.bind(
     "CTRL + ALT + R",
     hl.dsp.exec_cmd(dusky_scripts .. "hypr/monitor/screen_rotate.py -90"),
-    { description = "Rotate Screen Clockwise", locked = true, repeating = true }
+    { description = "Rotate Screen Clockwise", locked = true, repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "CTRL + ALT + SHIFT + R",
     hl.dsp.exec_cmd(dusky_scripts .. "hypr/monitor/screen_rotate.py +90"),
-    { description = "Rotate Screen Anti-Clockwise", locked = true, repeating = true }
+    { description = "Rotate Screen Anti-Clockwise", locked = true, repeating = true, submap_universal = true }
 )
 
 hl.bind(
@@ -202,7 +202,7 @@ hl.bind(
             hl.dispatch(hl.dsp.dpms({ action = "disable" }))
         end, { timeout = 500, type = "oneshot" })
     end,
-    { description = "Screen Off DPMS", locked = true }
+    { description = "Screen Off DPMS", locked = true, submap_universal = true }
 )
 
 hl.bind(
@@ -212,7 +212,7 @@ hl.bind(
             hl.dispatch(hl.dsp.dpms({ action = "enable" }))
         end, { timeout = 500, type = "oneshot" })
     end,
-    { description = "Screen On DPMS", locked = true }
+    { description = "Screen On DPMS", locked = true, submap_universal = true }
 )
 
 
@@ -220,25 +220,25 @@ hl.bind(
 hl.bind(
     "ALT + 9",
     hl.dsp.exec_cmd(dusky_scripts .. "waybar/waybar_toggle.sh"),
-    { description = "Start Waybar for 1 Min" }
+    { description = "Start Waybar for 1 Min", submap_universal = true }
 )
 
 hl.bind(
     "ALT + 0",
     hl.dsp.exec_cmd("pkill tray-tui; foot --app-id=dusky_tui tray-tui"),
-    { description = "system Tray TUI" }
+    { description = "system Tray TUI", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + ALT + W",
     hl.dsp.exec_cmd(dusky_scripts .. "waybar/dusky_waybars.sh --toggle"),
-    { description = "Waybar Swap Configs" }
+    { description = "Waybar Swap Configs", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + ALT + SHIFT + W",
     hl.dsp.exec_cmd(dusky_scripts .. "waybar/dusky_waybars.sh --back_toggle"),
-    { description = "Waybar Swap Configs" }
+    { description = "Waybar Swap Configs", submap_universal = true }
 )
 
 
@@ -246,7 +246,7 @@ hl.bind(
 hl.bind(
     "ALT + F4",
     hl.dsp.exec_cmd(dusky_scripts .. "wlogout/wlogout_scale.sh"),
-    { description = "Logout Menu" }
+    { description = "Logout Menu", submap_universal = true }
 )
 
 hl.bind(
@@ -264,65 +264,65 @@ hl.bind(
 hl.bind(
     "SUPER + F",
     hl.dsp.exec_cmd(dusky_scripts .. "hypr/monitor/adjust_scale.py +"),
-    { description = "Scale Up", locked = true, repeating = true }
+    { description = "Scale Up", locked = true, repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + F",
     hl.dsp.exec_cmd(dusky_scripts .. "hypr/monitor/adjust_scale.py -"),
-    { description = "Scale Down", locked = true, repeating = true }
+    { description = "Scale Down", locked = true, repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + semicolon",
     hl.dsp.exec_cmd(terminal .. " --class performance.sh -e " .. dusky_scripts .. "performance/services_and_process_terminator.sh"),
-    { description = "Kill Process" }
+    { description = "Kill Process", submap_universal = true }
 )
 
 -- --- Wayclick & OSD Key Presses ---
 hl.bind(
     "SUPER + U",
     hl.dsp.exec_cmd(dusky_scripts .. "wayclick/dusky_wayclick.sh"),
-    { description = "Key Press Sound" }
+    { description = "Key Press Sound", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + U",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/dusky_keys/dusky_keys.sh"),
-    { description = "OSD KEY Presses" }
+    { description = "OSD KEY Presses", submap_universal = true }
 )
 
 -- --- Hyprshade (Visual Filters) ---
 hl.bind(
     "SUPER + ALT + S",
     hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/shader_menu.sh"),
-    { description = "Shader Menu" }
+    { description = "Shader Menu", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + ALT + X",
     hl.dsp.exec_cmd("hyprshade off"),
-    { description = "Disable Shader", locked = true }
+    { description = "Disable Shader", locked = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + ALT + V",
     hl.dsp.exec_cmd("hyprshade on vibrance"),
-    { description = "Vibrant Shader", locked = true }
+    { description = "Vibrant Shader", locked = true, submap_universal = true }
 )
 
 -- --- Hyprland Animations ---
 hl.bind(
     "SUPER + ALT + A",
     hl.dsp.exec_cmd("pkill rofi; rofi -show animations -modi \"animations:" .. dusky_scripts .. "rofi/hypr_anim.sh\""),
-    { description = "Hyprland Animation Rofi Menu" }
+    { description = "Hyprland Animation Rofi Menu", submap_universal = true }
 )
 
 -- --- Special Workspace (Spotify) ---
 hl.bind(
     "SUPER + SHIFT + M",
     hl.dsp.exec_cmd(dusky_scripts .. "spotify/spotify_toggle.sh"),
-    { description = "Special Workspace for Spotify" }
+    { description = "Special Workspace for Spotify", submap_universal = true }
 )
 
 
@@ -330,19 +330,19 @@ hl.bind(
 hl.bind(
     "SUPER + ALT + period",
     hl.dsp.exec_cmd(dusky_scripts .. "hypr/hypr_blur_opacity_shadow_toggle.sh"),
-    { description = "Toggle Blur/Opacity", locked = true }
+    { description = "Toggle Blur/Opacity", locked = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + period",
     hl.dsp.window.set_prop({ prop = "opaque", value = "toggle", window = "activewindow" }),
-    { description = "Toggle Opacity", locked = true }
+    { description = "Toggle Opacity", locked = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + comma",
     hl.dsp.window.set_prop({ prop = "no_blur", value = "toggle", window = "activewindow" }),
-    { description = "Toggle Per-Window Blur", locked = true }
+    { description = "Toggle Per-Window Blur", locked = true, submap_universal = true }
 )
 
 
@@ -355,7 +355,7 @@ hl.bind(
         local z = hl.get_config("cursor.zoom_factor")
         hl.config({ cursor = { zoom_factor = z * 1.25 } })
     end,
-    { description = "Zoom In", repeating = true }
+    { description = "Zoom In", repeating = true, submap_universal = true }
 )
 
 hl.bind(
@@ -366,7 +366,7 @@ hl.bind(
         if nz < 1.0 then nz = 1.0 end
         hl.config({ cursor = { zoom_factor = nz } })
     end,
-    { description = "Zoom Out", repeating = true }
+    { description = "Zoom Out", repeating = true, submap_universal = true }
 )
 
 hl.bind(
@@ -374,7 +374,7 @@ hl.bind(
     function()
         hl.config({ cursor = { zoom_factor = 1.0 } })
     end,
-    { description = "Reset Zoom", locked = true }
+    { description = "Reset Zoom", locked = true, submap_universal = true }
 )
 
 
@@ -406,37 +406,37 @@ end, { description = "Clipboard History", submap_universal = true })
 hl.bind(
     "SUPER + B",
     hl.dsp.exec_cmd("pkill hyprpicker || hyprpicker -a"),
-    { description = "Color Picker" }
+    { description = "Color Picker", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + S",
     hl.dsp.exec_cmd(dusky_scripts .. "images/dusky_screenshot.sh --region --freeze --no-notify"),
-    { description = "Quick Screenshot" }
+    { description = "Quick Screenshot", submap_universal = true }
 )
 
 hl.bind(
     "SHIFT + Print",
     hl.dsp.exec_cmd([[grim - | wl-copy && notify-send "Fullscreen Screenshot in Clipboard"]]),
-    { description = "Full Screen Quick Screenshot", locked = true }
+    { description = "Full Screen Quick Screenshot", locked = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + S",
     hl.dsp.exec_cmd(dusky_scripts .. "images/dusky_screenshot.sh --region --freeze --annotate --no-notify --tool arrow"),
-    { description = "Screenshot and Annotation" }
+    { description = "Screenshot and Annotation", submap_universal = true }
 )
 
 hl.bind(
     "Print",
     hl.dsp.exec_cmd("pgrep -x swappy || (grim - | satty -f -)"),
-    { description = "Fullscreen Screenshot and Annotation" }
+    { description = "Fullscreen Screenshot and Annotation", submap_universal = true }
 )
 
 hl.bind(
     "SHIFT + CTRL + ALT + space",
     hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/dusky_rofi_screenshot.sh"),
-    { description = "Dusky Screenshoter" }
+    { description = "Dusky Screenshoter", submap_universal = true }
 )
 
 
@@ -446,62 +446,62 @@ hl.bind(
 hl.bind(
     "SUPER + G",
     hl.dsp.exec_cmd(dusky_scripts .. "google_image_search/google_image_search.sh"),
-    { description = "Image Search (Select and search)" }
+    { description = "Image Search (Select and search)", submap_universal = true }
 )
 
 -- OCR (Tesseract)
 hl.bind(
     "SUPER + T",
     hl.dsp.exec_cmd("pgrep tesseract || (slurp | grim -g - - | tesseract stdin stdout -l eng | wl-copy)"),
-    { description = "OCR Selection" }
+    { description = "OCR Selection", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + T",
     hl.dsp.exec_cmd("grim - | tesseract stdin stdout -l eng | wl-copy"),
-    { description = "OCR Fullscreen" }
+    { description = "OCR Fullscreen", submap_universal = true }
 )
 
 -- ollama Sidebar
 hl.bind(
     "SUPER + ALT + O",
     hl.dsp.exec_cmd(terminal .. " --class ollama_terminal.sh -e " .. dusky_scripts .. "llm/ollama_terminal.sh"),
-    { description = "AI LLM Ollama Chat" }
+    { description = "AI LLM Ollama Chat", submap_universal = true }
 )
 
 -- Music Recognition
 hl.bind(
     "SUPER + ALT + M",
     hl.dsp.exec_cmd(terminal .. " --hold --class music_recognition.sh -e " .. dusky_scripts .. "music/music_recognition.sh"),
-    { description = "Music Recognition aka Shazam" }
+    { description = "Music Recognition aka Shazam", submap_universal = true }
 )
 
 -- Kokoro TTS
 hl.bind(
     "SUPER + O",
     hl.dsp.exec_cmd("wl-copy \"$(wl-paste -p)\" && " .. dusky_scripts .. "tts_stt/dusky_kokoro/trigger.sh"),
-    { description = "TTS Kokoro GPU" }
+    { description = "TTS Kokoro GPU", submap_universal = true }
 )
 
 -- Kokoro TTS - VC Routed
 hl.bind(
     "SUPER + SHIFT + O",
     hl.dsp.exec_cmd(dusky_scripts .. "audio/router/TTS_VC.sh"),
-    { description = "TTS VC" }
+    { description = "TTS VC", submap_universal = true }
 )
 
 -- NVIDIA Parakeet
 hl.bind(
     "SUPER + I",
     hl.dsp.exec_cmd(dusky_scripts .. "tts_stt/dusky_parakeet/trigger.sh"),
-    { description = "STT Parakeet GPU" }
+    { description = "STT Parakeet GPU", submap_universal = true }
 )
 
 -- FasterWhisper STT
 -- hl.bind(
 --     "SUPER + SHIFT + I",
 --     hl.dsp.exec_cmd(dusky_scripts .. "tts_stt/faster_whisper/faster_whisper_stt.sh"),
---     { description = "STT Whisper CPU" }
+--     { description = "STT Whisper CPU", submap_universal = true }
 -- )
 
 
@@ -513,27 +513,27 @@ hl.bind(
 hl.bind(
     "SUPER + N",
     hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/rofi_mako.sh"),
-    { description = "Notification History" }
+    { description = "Notification History", submap_universal = true }
 )
 
 -- --- mako Clear all screen notifications ---
 hl.bind(
     "SUPER + ALT + D",
     hl.dsp.exec_cmd("makoctl dismiss -a"),
-    { description = "Clear Screen Notifications", locked = true }
+    { description = "Clear Screen Notifications", locked = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + ALT + F",
     hl.dsp.exec_cmd([[makoctl menu -- rofi -dmenu -p "Action: "]]),
-    { description = "Interact with the current notification (answer Yes/No prompts)" }
+    { description = "Interact with the current notification (answer Yes/No prompts)", submap_universal = true }
 )
 
 -- --- Screen Lock ---
 hl.bind(
     "SUPER + M",
     hl.dsp.exec_cmd(dusky_scripts .. "hyprlock/lock.sh"),
-    { description = "Lock Screen" }
+    { description = "Lock Screen", submap_universal = true }
 )
 
 
@@ -544,39 +544,39 @@ hl.bind(
 hl.bind(
     "SUPER + C",
     hl.dsp.window.close(),
-    { description = "Close Window" }
+    { description = "Close Window", submap_universal = true }
 )
 
 -- /user_scripts/tools/workspace/close-workspace.sh -- Working Feature but Unsure
 -- hl.bind(
 --     "SUPER + SHIFT + C",
 --     hl.dsp.exec_cmd(dusky_scripts .. "tools/workspace/close-workspace.sh"),
---     { description = "Close Workspace" }
+--     { description = "Close Workspace", submap_universal = true }
 -- )
 
 -- /user_scripts/tools/workspace/close-workspace.sh -- Working Feature but Unsure
 -- hl.bind(
 --     "SUPER + SHIFT + B",
 --     hl.dsp.exec_cmd(dusky_scripts .. "tools/workspace/close-workspace.sh"),
---     { description = "Safety Close Window" }
+--     { description = "Safety Close Window", submap_universal = true }
 -- )
 
 hl.bind(
     "SUPER + A",
     hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }),
-    { description = "Window Fullscreen" }
+    { description = "Window Fullscreen", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + A",
     hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle" }),
-    { description = "Window Maximize" }
+    { description = "Window Maximize", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + X",
     hl.dsp.window.pin(),
-    { description = "Pin Window" }
+    { description = "Pin Window", submap_universal = true }
 )
 
 --------------------------------------------------------------------
@@ -591,7 +591,7 @@ hl.bind(
 hl.bind(
     "SUPER + Y",
     hl.dsp.layout("togglesplit"),
-    { description = "Toggle Window Split" }
+    { description = "Toggle Window Split", submap_universal = true }
 )
 ---------------------------------------------
 hl.bind(
@@ -606,14 +606,14 @@ hl.bind(
             hyprctl dispatch "hl.dsp.window.float({action='unset'})"
         fi
     ]]),
-    { description = "Smart Float" }
+    { description = "Smart Float", submap_universal = true }
 )
 
 
 hl.bind(
     "SUPER + SHIFT + D",
     hl.dsp.window.pseudo({ action = "toggle" }),
-    { description = "Toggle Pseudo" }
+    { description = "Toggle Pseudo", submap_universal = true }
 )
 
 
@@ -621,25 +621,25 @@ hl.bind(
 hl.bind(
     "SUPER + h",
     hl.dsp.focus({ direction = "l" }),
-    { description = "Focus Left", repeating = true }
+    { description = "Focus Left", repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + l",
     hl.dsp.focus({ direction = "r" }),
-    { description = "Focus Right", repeating = true }
+    { description = "Focus Right", repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + k",
     hl.dsp.focus({ direction = "u" }),
-    { description = "Focus Up", repeating = true }
+    { description = "Focus Up", repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + j",
     hl.dsp.focus({ direction = "d" }),
-    { description = "Focus Down", repeating = true }
+    { description = "Focus Down", repeating = true, submap_universal = true }
 )
 
 
@@ -647,25 +647,25 @@ hl.bind(
 hl.bind(
     "SUPER + SHIFT + h",
     hl.dsp.window.move({ direction = "l" }),
-    { description = "Move Left", repeating = true }
+    { description = "Move Left", repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + l",
     hl.dsp.window.move({ direction = "r" }),
-    { description = "Move Right", repeating = true }
+    { description = "Move Right", repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + k",
     hl.dsp.window.move({ direction = "u" }),
-    { description = "Move Up", repeating = true }
+    { description = "Move Up", repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + j",
     hl.dsp.window.move({ direction = "d" }),
-    { description = "Move Down", repeating = true }
+    { description = "Move Down", repeating = true, submap_universal = true }
 )
 
 
@@ -673,25 +673,25 @@ hl.bind(
 hl.bind(
     "SUPER + right",
     hl.dsp.window.resize({ x = 30, y = 0, relative = true }),
-    { description = "Resize Width +", repeating = true }
+    { description = "Resize Width +", repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + left",
     hl.dsp.window.resize({ x = -30, y = 0, relative = true }),
-    { description = "Resize Width -", repeating = true }
+    { description = "Resize Width -", repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + up",
     hl.dsp.window.resize({ x = 0, y = -30, relative = true }),
-    { description = "Resize Height -", repeating = true }
+    { description = "Resize Height -", repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + down",
     hl.dsp.window.resize({ x = 0, y = 30, relative = true }),
-    { description = "Resize Height +", repeating = true }
+    { description = "Resize Height +", repeating = true, submap_universal = true }
 )
 
 
@@ -702,31 +702,31 @@ hl.bind(
 hl.bind(
     "SUPER + TAB",
     hl.dsp.focus({ workspace = "previous" }),
-    { description = "Last Workspace", repeating = true }
+    { description = "Last Workspace", repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "ALT + SHIFT + TAB",
     hl.dsp.focus({ workspace = "e-1" }),
-    { description = "Cycle Backward", repeating = true }
+    { description = "Cycle Backward", repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + TAB",
     hl.dsp.focus({ workspace = "e+1" }),
-    { description = "Cycle Next WS", repeating = true }
+    { description = "Cycle Next WS", repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + mouse_down",
     hl.dsp.focus({ workspace = "e+1" }),
-    { description = "Cycle Next Workspace" }
+    { description = "Cycle Next Workspace", submap_universal = true }
 )
 
 hl.bind(
     "SUPER + mouse_up",
     hl.dsp.focus({ workspace = "e-1" }),
-    { description = "Cycle Previous Workspace" }
+    { description = "Cycle Previous Workspace", submap_universal = true }
 )
 
 hl.bind(
@@ -738,7 +738,7 @@ hl.bind(
 hl.bind(
     "SUPER + SHIFT + Z",
     hl.dsp.window.move({ workspace = "special:magic" }),
-    { description = "Move to Scratchpad" }
+    { description = "Move to Scratchpad", submap_universal = true }
 )
 
 
@@ -753,156 +753,156 @@ hl.bind(
 -- hl.bind(
 --     "SUPER + 1",
 --     hl.dsp.focus({ workspace = "1" }),
---     { description = "Switch To Workspace 1" }
+--     { description = "Switch To Workspace 1", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + 2",
 --     hl.dsp.focus({ workspace = "2" }),
---     { description = "Switch To Workspace 2" }
+--     { description = "Switch To Workspace 2", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + 3",
 --     hl.dsp.focus({ workspace = "3" }),
---     { description = "Switch To Workspace 3" }
+--     { description = "Switch To Workspace 3", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + 4",
 --     hl.dsp.focus({ workspace = "4" }),
---     { description = "Switch To Workspace 4" }
+--     { description = "Switch To Workspace 4", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + 5",
 --     hl.dsp.focus({ workspace = "5" }),
---     { description = "Switch To Workspace 5" }
+--     { description = "Switch To Workspace 5", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + 6",
 --     hl.dsp.focus({ workspace = "6" }),
---     { description = "Switch To Workspace 6" }
+--     { description = "Switch To Workspace 6", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + 7",
 --     hl.dsp.focus({ workspace = "7" }),
---     { description = "Switch To Workspace 7" }
+--     { description = "Switch To Workspace 7", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + 8",
 --     hl.dsp.focus({ workspace = "8" }),
---     { description = "Switch To Workspace 8" }
+--     { description = "Switch To Workspace 8", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + 9",
 --     hl.dsp.focus({ workspace = "9" }),
---     { description = "Switch To Workspace 9" }
+--     { description = "Switch To Workspace 9", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + 0",
 --     hl.dsp.focus({ workspace = "10" }),
---     { description = "Switch To Workspace 10" }
+--     { description = "Switch To Workspace 10", submap_universal = true }
 -- )
 -- 
 -- -- Move Window to Workspace
 -- hl.bind(
 --     "SUPER + SHIFT + 1",
 --     hl.dsp.window.move({ workspace = "1" }),
---     { description = "Move To Workspace 1" }
+--     { description = "Move To Workspace 1", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + SHIFT + 2",
 --     hl.dsp.window.move({ workspace = "2" }),
---     { description = "Move To Workspace 2" }
+--     { description = "Move To Workspace 2", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + SHIFT + 3",
 --     hl.dsp.window.move({ workspace = "3" }),
---     { description = "Move To Workspace 3" }
+--     { description = "Move To Workspace 3", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + SHIFT + 4",
 --     hl.dsp.window.move({ workspace = "4" }),
---     { description = "Move To Workspace 4" }
+--     { description = "Move To Workspace 4", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + SHIFT + 5",
 --     hl.dsp.window.move({ workspace = "5" }),
---     { description = "Move To Workspace 5" }
+--     { description = "Move To Workspace 5", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + SHIFT + 6",
 --     hl.dsp.window.move({ workspace = "6" }),
---     { description = "Move To Workspace 6" }
+--     { description = "Move To Workspace 6", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + SHIFT + 7",
 --     hl.dsp.window.move({ workspace = "7" }),
---     { description = "Move To Workspace 7" }
+--     { description = "Move To Workspace 7", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + SHIFT + 8",
 --     hl.dsp.window.move({ workspace = "8" }),
---     { description = "Move To Workspace 8" }
+--     { description = "Move To Workspace 8", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + SHIFT + 9",
 --     hl.dsp.window.move({ workspace = "9" }),
---     { description = "Move To Workspace 9" }
+--     { description = "Move To Workspace 9", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + SHIFT + 0",
 --     hl.dsp.window.move({ workspace = "10" }),
---     { description = "Move To Workspace 10" }
+--     { description = "Move To Workspace 10", submap_universal = true }
 -- )
 -- 
 -- -- Move Window Silently to Workspace
 -- hl.bind(
 --     "SUPER + ALT + 1",
 --     hl.dsp.window.move({ workspace = "1", follow = false }),
---     { description = "Move Silently To Workspace 1" }
+--     { description = "Move Silently To Workspace 1", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + ALT + 2",
 --     hl.dsp.window.move({ workspace = "2", follow = false }),
---     { description = "Move Silently To Workspace 2" }
+--     { description = "Move Silently To Workspace 2", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + ALT + 3",
 --     hl.dsp.window.move({ workspace = "3", follow = false }),
---     { description = "Move Silently To Workspace 3" }
+--     { description = "Move Silently To Workspace 3", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + ALT + 4",
 --     hl.dsp.window.move({ workspace = "4", follow = false }),
---     { description = "Move Silently To Workspace 4" }
+--     { description = "Move Silently To Workspace 4", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + ALT + 5",
 --     hl.dsp.window.move({ workspace = "5", follow = false }),
---     { description = "Move Silently To Workspace 5" }
+--     { description = "Move Silently To Workspace 5", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + ALT + 6",
 --     hl.dsp.window.move({ workspace = "6", follow = false }),
---     { description = "Move Silently To Workspace 6" }
+--     { description = "Move Silently To Workspace 6", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + ALT + 7",
 --     hl.dsp.window.move({ workspace = "7", follow = false }),
---     { description = "Move Silently To Workspace 7" }
+--     { description = "Move Silently To Workspace 7", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + ALT + 8",
 --     hl.dsp.window.move({ workspace = "8", follow = false }),
---     { description = "Move Silently To Workspace 8" }
+--     { description = "Move Silently To Workspace 8", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + ALT + 9",
 --     hl.dsp.window.move({ workspace = "9", follow = false }),
---     { description = "Move Silently To Workspace 9" }
+--     { description = "Move Silently To Workspace 9", submap_universal = true }
 -- )
 -- hl.bind(
 --     "SUPER + ALT + 0",
 --     hl.dsp.window.move({ workspace = "10", follow = false }),
---     { description = "Move Silently To Workspace 10" }
+--     { description = "Move Silently To Workspace 10", submap_universal = true }
 -- )
 
 
@@ -928,42 +928,42 @@ end
 
 -- ── Switch to Workspace (Context Relative) ────────────────────────────────────
 
-hl.bind("SUPER + 1", ws("workspace", 1),  { description = "Switch To Context 1" })
-hl.bind("SUPER + 2", ws("workspace", 2),  { description = "Switch To Context 2" })
-hl.bind("SUPER + 3", ws("workspace", 3),  { description = "Switch To Context 3" })
-hl.bind("SUPER + 4", ws("workspace", 4),  { description = "Switch To Context 4" })
-hl.bind("SUPER + 5", ws("workspace", 5),  { description = "Switch To Context 5" })
-hl.bind("SUPER + 6", ws("workspace", 6),  { description = "Switch To Context 6" })
-hl.bind("SUPER + 7", ws("workspace", 7),  { description = "Switch To Context 7" })
-hl.bind("SUPER + 8", ws("workspace", 8),  { description = "Switch To Context 8" })
-hl.bind("SUPER + 9", ws("workspace", 9),  { description = "Switch To Context 9" })
-hl.bind("SUPER + 0", ws("workspace", 10), { description = "Switch To Context 10" })
+hl.bind("SUPER + 1", ws("workspace", 1),  { description = "Switch To Context 1", submap_universal = true })
+hl.bind("SUPER + 2", ws("workspace", 2),  { description = "Switch To Context 2", submap_universal = true })
+hl.bind("SUPER + 3", ws("workspace", 3),  { description = "Switch To Context 3", submap_universal = true })
+hl.bind("SUPER + 4", ws("workspace", 4),  { description = "Switch To Context 4", submap_universal = true })
+hl.bind("SUPER + 5", ws("workspace", 5),  { description = "Switch To Context 5", submap_universal = true })
+hl.bind("SUPER + 6", ws("workspace", 6),  { description = "Switch To Context 6", submap_universal = true })
+hl.bind("SUPER + 7", ws("workspace", 7),  { description = "Switch To Context 7", submap_universal = true })
+hl.bind("SUPER + 8", ws("workspace", 8),  { description = "Switch To Context 8", submap_universal = true })
+hl.bind("SUPER + 9", ws("workspace", 9),  { description = "Switch To Context 9", submap_universal = true })
+hl.bind("SUPER + 0", ws("workspace", 10), { description = "Switch To Context 10", submap_universal = true })
 
 -- ── Move Active Window to Workspace (Context Relative) ───────────────────────
 
-hl.bind("SUPER + SHIFT + 1", ws("movetoworkspace", 1),  { description = "Move To Context 1" })
-hl.bind("SUPER + SHIFT + 2", ws("movetoworkspace", 2),  { description = "Move To Context 2" })
-hl.bind("SUPER + SHIFT + 3", ws("movetoworkspace", 3),  { description = "Move To Context 3" })
-hl.bind("SUPER + SHIFT + 4", ws("movetoworkspace", 4),  { description = "Move To Context 4" })
-hl.bind("SUPER + SHIFT + 5", ws("movetoworkspace", 5),  { description = "Move To Context 5" })
-hl.bind("SUPER + SHIFT + 6", ws("movetoworkspace", 6),  { description = "Move To Context 6" })
-hl.bind("SUPER + SHIFT + 7", ws("movetoworkspace", 7),  { description = "Move To Context 7" })
-hl.bind("SUPER + SHIFT + 8", ws("movetoworkspace", 8),  { description = "Move To Context 8" })
-hl.bind("SUPER + SHIFT + 9", ws("movetoworkspace", 9),  { description = "Move To Context 9" })
-hl.bind("SUPER + SHIFT + 0", ws("movetoworkspace", 10), { description = "Move To Context 10" })
+hl.bind("SUPER + SHIFT + 1", ws("movetoworkspace", 1),  { description = "Move To Context 1", submap_universal = true })
+hl.bind("SUPER + SHIFT + 2", ws("movetoworkspace", 2),  { description = "Move To Context 2", submap_universal = true })
+hl.bind("SUPER + SHIFT + 3", ws("movetoworkspace", 3),  { description = "Move To Context 3", submap_universal = true })
+hl.bind("SUPER + SHIFT + 4", ws("movetoworkspace", 4),  { description = "Move To Context 4", submap_universal = true })
+hl.bind("SUPER + SHIFT + 5", ws("movetoworkspace", 5),  { description = "Move To Context 5", submap_universal = true })
+hl.bind("SUPER + SHIFT + 6", ws("movetoworkspace", 6),  { description = "Move To Context 6", submap_universal = true })
+hl.bind("SUPER + SHIFT + 7", ws("movetoworkspace", 7),  { description = "Move To Context 7", submap_universal = true })
+hl.bind("SUPER + SHIFT + 8", ws("movetoworkspace", 8),  { description = "Move To Context 8", submap_universal = true })
+hl.bind("SUPER + SHIFT + 9", ws("movetoworkspace", 9),  { description = "Move To Context 9", submap_universal = true })
+hl.bind("SUPER + SHIFT + 0", ws("movetoworkspace", 10), { description = "Move To Context 10", submap_universal = true })
 
 -- ── Move Window Silently (Context Relative) ───────────────────────────────────
 
-hl.bind("SUPER + ALT + 1", ws("movetoworkspacesilent", 1),  { description = "Silent Move To Context 1" })
-hl.bind("SUPER + ALT + 2", ws("movetoworkspacesilent", 2),  { description = "Silent Move To Context 2" })
-hl.bind("SUPER + ALT + 3", ws("movetoworkspacesilent", 3),  { description = "Silent Move To Context 3" })
-hl.bind("SUPER + ALT + 4", ws("movetoworkspacesilent", 4),  { description = "Silent Move To Context 4" })
-hl.bind("SUPER + ALT + 5", ws("movetoworkspacesilent", 5),  { description = "Silent Move To Context 5" })
-hl.bind("SUPER + ALT + 6", ws("movetoworkspacesilent", 6),  { description = "Silent Move To Context 6" })
-hl.bind("SUPER + ALT + 7", ws("movetoworkspacesilent", 7),  { description = "Silent Move To Context 7" })
-hl.bind("SUPER + ALT + 8", ws("movetoworkspacesilent", 8),  { description = "Silent Move To Context 8" })
-hl.bind("SUPER + ALT + 9", ws("movetoworkspacesilent", 9),  { description = "Silent Move To Context 9" })
-hl.bind("SUPER + ALT + 0", ws("movetoworkspacesilent", 10), { description = "Silent Move To Context 10" })
+hl.bind("SUPER + ALT + 1", ws("movetoworkspacesilent", 1),  { description = "Silent Move To Context 1", submap_universal = true })
+hl.bind("SUPER + ALT + 2", ws("movetoworkspacesilent", 2),  { description = "Silent Move To Context 2", submap_universal = true })
+hl.bind("SUPER + ALT + 3", ws("movetoworkspacesilent", 3),  { description = "Silent Move To Context 3", submap_universal = true })
+hl.bind("SUPER + ALT + 4", ws("movetoworkspacesilent", 4),  { description = "Silent Move To Context 4", submap_universal = true })
+hl.bind("SUPER + ALT + 5", ws("movetoworkspacesilent", 5),  { description = "Silent Move To Context 5", submap_universal = true })
+hl.bind("SUPER + ALT + 6", ws("movetoworkspacesilent", 6),  { description = "Silent Move To Context 6", submap_universal = true })
+hl.bind("SUPER + ALT + 7", ws("movetoworkspacesilent", 7),  { description = "Silent Move To Context 7", submap_universal = true })
+hl.bind("SUPER + ALT + 8", ws("movetoworkspacesilent", 8),  { description = "Silent Move To Context 8", submap_universal = true })
+hl.bind("SUPER + ALT + 9", ws("movetoworkspacesilent", 9),  { description = "Silent Move To Context 9", submap_universal = true })
+hl.bind("SUPER + ALT + 0", ws("movetoworkspacesilent", 10), { description = "Silent Move To Context 10", submap_universal = true })
 
 
 -- -------------------------------------------------------------------------------------------------
@@ -973,13 +973,13 @@ hl.bind("SUPER + ALT + 0", ws("movetoworkspacesilent", 10), { description = "Sil
 hl.bind(
     "SUPER + mouse:272",
     hl.dsp.window.drag(),
-    { description = "Move Window", mouse = true }
+    { description = "Move Window", mouse = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + mouse:273",
     hl.dsp.window.resize(),
-    { description = "Resize Window", mouse = true }
+    { description = "Resize Window", mouse = true, submap_universal = true }
 )
 
 
@@ -991,112 +991,112 @@ hl.bind(
 hl.bind(
     "XF86AudioRaiseVolume",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-up 5"),
-    { description = "Volume up", locked = true, repeating = true }
+    { description = "Volume up", locked = true, repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "XF86AudioLowerVolume",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-down 5"),
-    { description = "Volume down", locked = true, repeating = true }
+    { description = "Volume down", locked = true, repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "XF86AudioMute",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-mute"),
-    { description = "Mute", locked = true }
+    { description = "Mute", locked = true, submap_universal = true }
 )
 
 hl.bind(
     "XF86AudioMicMute",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --mic-mute"),
-    { description = "Mute microphone", locked = true }
+    { description = "Mute microphone", locked = true, submap_universal = true }
 )
 
 hl.bind(
     "XF86MonBrightnessUp",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --bright-up 5"),
-    { description = "Brightness up", locked = true, repeating = true }
+    { description = "Brightness up", locked = true, repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "XF86MonBrightnessDown",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --bright-down 5"),
-    { description = "Brightness down", locked = true, repeating = true }
+    { description = "Brightness down", locked = true, repeating = true, submap_universal = true }
 )
 
 -- Precise Adjustments (Alt Modifier)
 hl.bind(
     "ALT + XF86AudioRaiseVolume",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-up 1"),
-    { description = "Volume up precise", locked = true, repeating = true }
+    { description = "Volume up precise", locked = true, repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "ALT + XF86AudioLowerVolume",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-down 1"),
-    { description = "Volume down precise", locked = true, repeating = true }
+    { description = "Volume down precise", locked = true, repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "ALT + XF86MonBrightnessUp",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --bright-up 1"),
-    { description = "Brightness up precise", locked = true, repeating = true }
+    { description = "Brightness up precise", locked = true, repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "ALT + XF86MonBrightnessDown",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --bright-down 1"),
-    { description = "Brightness down precise", locked = true, repeating = true }
+    { description = "Brightness down precise", locked = true, repeating = true, submap_universal = true }
 )
 
 -- Keyboard Backlight
 hl.bind(
     "XF86KbdBrightnessUp",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --kbd-bright-up 10"),
-    { description = "Keyboard Brightness up", locked = true, repeating = true }
+    { description = "Keyboard Brightness up", locked = true, repeating = true, submap_universal = true }
 )
 
 hl.bind(
     "XF86KbdBrightnessDown",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --kbd-bright-down 10"),
-    { description = "Keyboard Brightness down", locked = true, repeating = true }
+    { description = "Keyboard Brightness down", locked = true, repeating = true, submap_universal = true }
 )
 
 -- Player Controls (Routed through script for OSD feedback)
 hl.bind(
     "XF86AudioNext",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --next"),
-    { description = "Next track", locked = true }
+    { description = "Next track", locked = true, submap_universal = true }
 )
 
 hl.bind(
     "XF86AudioPrev",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --prev"),
-    { description = "Previous track", locked = true }
+    { description = "Previous track", locked = true, submap_universal = true }
 )
 
 hl.bind(
     "XF86AudioPlay",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --play-pause"),
-    { description = "Play", locked = true }
+    { description = "Play", locked = true, submap_universal = true }
 )
 
 hl.bind(
     "XF86AudioPause",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --play-pause"),
-    { description = "Pause", locked = true }
+    { description = "Pause", locked = true, submap_universal = true }
 )
 
 hl.bind(
     "XF86AudioStop",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --stop"),
-    { description = "Stop", locked = true }
+    { description = "Stop", locked = true, submap_universal = true }
 )
 
 hl.bind(
     "SUPER + P",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --play-pause"),
-    { description = "Toggle Pause", locked = true }
+    { description = "Toggle Pause", locked = true, submap_universal = true }
 )
 
 -- Custom Audio/Mic Switching Scripts
@@ -1130,7 +1130,7 @@ hl.bind(
 hl.bind(
     "XF86Calculator",
     hl.dsp.exec_cmd("gnome-calculator"),
-    { description = "Calculator" }
+    { description = "Calculator", submap_universal = true }
 )
 
 
