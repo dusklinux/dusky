@@ -466,7 +466,7 @@ resolve_script() {
         local predefined="${SCRIPT_CONFLICT_RESOLUTIONS[$name]:-}"
         if [[ -n "$predefined" ]]; then
             local explicit_pre="${predefined}"
-            [[ "$explicit_pre" != /* && "$explicit_pre" != ~* ]] && explicit_pre="${HOME}/${explicit_pre}"
+            [[ "$explicit_pre" != /* ]] && explicit_pre="${HOME}/${explicit_pre}"
             if [[ -f "$explicit_pre" && -r "$explicit_pre" ]]; then
                 SCRIPT_CACHE["$name"]="$explicit_pre"
                 log "INFO" "Resolved duplicate '$name' using SCRIPT_CONFLICT_RESOLUTIONS -> $explicit_pre" >&2
@@ -883,15 +883,24 @@ main() {
         if script_path="$(resolve_script "$filename" 2>/dev/null)"; then
             local first_line=""
             read -r first_line < "$script_path" || true
+            first_line="${first_line%$'\r'}" # Strips hidden Windows carriage returns
             local has_py_ext=0
             local has_sh_ext=0
             local has_py_shebang=0
             local has_bash_shebang=0
+            local extracted_interpreter=""
 
             [[ "$script_path" == *.py ]] && has_py_ext=1
             [[ "$script_path" == *.sh ]] && has_sh_ext=1
-            [[ "$first_line" =~ ^#![[:space:]]*(/usr/bin/env[[:space:]]+python.*|/usr/bin/python.*) ]] && has_py_shebang=1
-            [[ "$first_line" =~ ^#![[:space:]]*(/usr/bin/env[[:space:]]+bash.*|/bin/bash.*|/bin/sh.*|/bin/zsh.*|/usr/bin/env[[:space:]]+sh.*) ]] && has_bash_shebang=1
+            
+            local shebang_regex='^#![[:space:]]*(.+)'
+            if [[ "$first_line" =~ $shebang_regex ]]; then
+                extracted_interpreter="${BASH_REMATCH[1]}"
+                [[ "$extracted_interpreter" =~ python ]] && has_py_shebang=1
+                local _interp_base
+                _interp_base="$(basename "${extracted_interpreter%% *}")"
+                [[ "$_interp_base" =~ ^(bash|sh|zsh|dash|ksh)$ ]] && has_bash_shebang=1
+            fi
 
             local resolved_interpreter=""
 
@@ -917,8 +926,14 @@ main() {
                 done
             else
                 if [[ "$has_py_ext" -eq 1 || "$has_py_shebang" -eq 1 ]]; then
-                    resolved_interpreter="python"
                     needs_python=1
+                    if [[ -n "$extracted_interpreter" ]]; then
+                        resolved_interpreter="$extracted_interpreter"
+                    else
+                        resolved_interpreter="python"
+                    fi
+                elif [[ -n "$extracted_interpreter" ]]; then
+                    resolved_interpreter="$extracted_interpreter"
                 else
                     resolved_interpreter="bash"
                 fi
@@ -1122,11 +1137,11 @@ main() {
                 log "RUN" "[${current_index}/${total_scripts}] Executing: ${display_name} (${mode})"
             fi
 
-            local -a interpreter_cmd=()
             local cached_int="${SCRIPT_INTERPRETERS["$filename"]:-}"
+            local -a interpreter_cmd=()
 
             if [[ -n "$cached_int" ]]; then
-                interpreter_cmd=("$cached_int")
+                read -r -a interpreter_cmd <<< "$cached_int" # Safe word-splitting (prevents globbing)
             else
                 # Fallback if somehow missed in dependency scan
                 interpreter_cmd=("bash")

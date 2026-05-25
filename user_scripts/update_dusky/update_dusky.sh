@@ -892,15 +892,24 @@ resolve_and_validate_manifest() {
         # Step 3: Precise Interpreter Detection
         local first_line=""
         read -r first_line < "$script_path" || true
+        first_line="${first_line%$'\r'}" # Strips hidden Windows carriage returns
         local has_py_ext=false
         local has_sh_ext=false
         local has_py_shebang=false
         local has_bash_shebang=false
+        local extracted_interpreter=""
 
         [[ "$script_path" == *.py ]] && has_py_ext=true
         [[ "$script_path" == *.sh ]] && has_sh_ext=true
-        [[ "$first_line" =~ ^#![[:space:]]*(/usr/bin/env[[:space:]]+python.*|/usr/bin/python.*) ]] && has_py_shebang=true
-        [[ "$first_line" =~ ^#![[:space:]]*(/usr/bin/env[[:space:]]+bash.*|/bin/bash.*|/bin/sh.*|/bin/zsh.*|/usr/bin/env[[:space:]]+sh.*) ]] && has_bash_shebang=true
+        
+        local shebang_regex='^#![[:space:]]*(.+)'
+        if [[ "$first_line" =~ $shebang_regex ]]; then
+            extracted_interpreter="${BASH_REMATCH[1]}"
+            [[ "$extracted_interpreter" =~ python ]] && has_py_shebang=true
+            local _interp_base
+            _interp_base="$(basename "${extracted_interpreter%% *}")"
+            [[ "$_interp_base" =~ ^(bash|sh|zsh|dash|ksh)$ ]] && has_bash_shebang=true
+        fi
 
         local resolved_interpreter=""
 
@@ -927,8 +936,14 @@ resolve_and_validate_manifest() {
             done
         else
             if [[ "$has_py_ext" == true || "$has_py_shebang" == true ]]; then
-                resolved_interpreter="python"
                 needs_python=true
+                if [[ -n "$extracted_interpreter" ]]; then
+                    resolved_interpreter="$extracted_interpreter"
+                else
+                    resolved_interpreter="python"
+                fi
+            elif [[ -n "$extracted_interpreter" ]]; then
+                resolved_interpreter="$extracted_interpreter"
             else
                 resolved_interpreter="$BASH_BIN"
             fi
@@ -2975,14 +2990,17 @@ execute_scripts() {
         local -i auto_retry_limit=3
         local -i auto_retry_count=0
 
+        local -a interpreter_cmd=()
+        read -r -a interpreter_cmd <<< "$interpreter" # Safe word-splitting (prevents globbing)
+
         # The Retry/Skip prompt logic natively integrated into the execution sequence
         while true; do
             local rc=0
             
             # Execute in the root WORK_TREE (maintaining expected relative path resolution)
             case "$mode" in
-                S) run_logged_command sudo "$interpreter" "$script_path" "${args[@]}" || rc=$? ;;
-                U) run_logged_command "$interpreter" "$script_path" "${args[@]}" || rc=$? ;;
+                S) run_logged_command sudo "${interpreter_cmd[@]}" "$script_path" "${args[@]}" || rc=$? ;;
+                U) run_logged_command "${interpreter_cmd[@]}" "$script_path" "${args[@]}" || rc=$? ;;
             esac
 
             if ((rc == 0)); then
