@@ -83,7 +83,7 @@ INSTALL_SEQUENCE=(
     "U | 170_waypaper_config_reset.sh"
     "U | 175_animation_default.sh"
     "S | 180_udev_usb_notify.sh"
-    "U | 185_terminal_default.sh"
+    "U | 185_terminal_default.py"
 #    "S | 190_dusk_fstab.sh"
 #    "S | 195_firefox_symlink_parition.sh"
 #    "S | 200_tlp_config.sh"
