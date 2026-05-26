@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #==============================================================================
-# FZF CLIPBOARD MANAGER (v2.3 - Wayland/UWSM Edition)
+# FZF CLIPBOARD MANAGER (v2.4 - Unified Wayland/UWSM Edition)
 # Arch Linux / Hyprland / UWSM clipboard utility
 # Optimized for: Bash 5.3+, FZF 0.72.0+
 #==============================================================================
@@ -30,6 +30,9 @@ if [[ ! -f "$USER_STATE_FILE" ]]; then
 # =============================================================================
 # FZF Preview window default layout (e.g., right,45%,~3,wrap-word OR down,50%,~3,wrap-word)
 PREVIEW_LAYOUT="right,45%,~3,wrap-word"
+
+# Keybinding mode: "false" for standard, "true" for vim
+VIM_MODE="false"
 
 # Future-proofing: Variables for external pruning scripts/cronjobs
 MAX_CLIP_ITEMS=5000
@@ -604,7 +607,7 @@ cmd_list() {
 }
 
 #==============================================================================
-# PREVIEW STATE PERSISTENCE (FZF Transform Action)
+# PREVIEW STATE PERSISTENCE & TOGGLES
 #==============================================================================
 cmd_move_preview() {
     local dir="$1"
@@ -632,11 +635,24 @@ cmd_move_preview() {
     printf 'change-preview-window(%s)\n' "$next"
 }
 
+cmd_toggle_vim() {
+    local current
+    current=$(read_state_value "VIM_MODE" "$USER_STATE_FILE") || current="false"
+    [[ -z "$current" ]] && current="false"
+    
+    if [[ "$current" == "true" ]]; then
+        write_state_value "VIM_MODE" "false" "$USER_STATE_FILE" 2>/dev/null || :
+    else
+        write_state_value "VIM_MODE" "true" "$USER_STATE_FILE" 2>/dev/null || :
+    fi
+}
+
 #==============================================================================
 # PREVIEW LOGIC
 #==============================================================================
 cmd_preview() {
-    local type="${1:-}" id="${2:-}" session_pid="${3:-}" pin_file img_path info tmp ts_str=""
+    # vim_mode is passed directly via $4 as a command line arg to avoid reading the file in the preview loop!
+    local type="${1:-}" id="${2:-}" session_pid="${3:-}" vim_mode="${4:-false}" pin_file img_path info tmp ts_str=""
 
     write_preview_size "$session_pid"
 
@@ -644,19 +660,49 @@ cmd_preview() {
     # Intercept normal preview rendering entirely if the toggle file is present
     if [[ -n "$session_pid" && -f "${CACHE_DIR}/.show_help_${session_pid}" ]]; then
         is_kitty && kitty_clear
-        printf '\e[1;36m━━━ 💡 SHORTCUTS ━━━\e[0m\n\n'
-        printf '  \e[33mF1\e[0m          : Toggle this help menu\n\n'
-        printf '  \e[33mAlt-H/J/K/L\e[0m : Move Preview (Left/Down/Up/Right)\n'
-        printf '  \e[33mAlt-V\e[0m       : Hide / Show Preview\n\n'
-        printf '  \e[33mAlt-A\e[0m       : Pin selected item(s)\n'
-        printf '  \e[33mAlt-D\e[0m       : Delete selected item(s)\n'
-        printf '  \e[33mAlt-W\e[0m       : Wipe entire clipboard\n\n'
-        printf '  \e[33mAlt-T\e[0m       : Filter Text\n'
-        printf '  \e[33mAlt-I\e[0m       : Filter Images\n'
-        printf '  \e[33mAlt-P\e[0m       : Filter Pinned\n'
-        printf '  \e[33mAlt-B\e[0m       : Filter Binaries\n\n'
-        printf '  \e[33mEnter\e[0m       : Copy to clipboard & exit\n'
-        printf '  \e[33mEsc/Ctrl-C\e[0m  : Abort\n'
+        
+        if [[ "$vim_mode" == "true" ]]; then
+            printf '\e[1;36m━━━ 💡 VIM SHORTCUTS ━━━\e[0m\n\n'
+            printf '  \e[33mF1\e[0m          : Toggle this help menu\n'
+            printf '  \e[33mAlt-M\e[0m       : Toggle Vim/Standard Keybinds\n\n'
+            printf '  \e[36m[ MOVEMENT & SEARCH ]\e[0m\n'
+            printf '  \e[33mj / k\e[0m       : Move Cursor Down / Up\n'
+            printf '  \e[33mg / G\e[0m       : Top / Bottom of list\n'
+            printf '  \e[33mCtrl-D/U\e[0m    : Half page Down / Up\n'
+            printf '  \e[33m/\e[0m           : Enter Search mode (Esc to exit search)\n\n'
+            printf '  \e[36m[ SELECTION ]\e[0m\n'
+            printf '  \e[33mv / V\e[0m       : Toggle selection under cursor\n'
+            printf '  \e[33mJ / K\e[0m       : Toggle selection Down / Up\n'
+            printf '  \e[33mCtrl-A\e[0m      : Select All\n\n'
+            printf '  \e[36m[ PREVIEW & FILTERS ]\e[0m\n'
+            printf '  \e[33mAlt-H/J/K/L\e[0m : Move Preview Panel (Left/Down/Up/Right)\n'
+            printf '  \e[33mAlt-V\e[0m       : Hide / Show Preview Panel\n'
+            printf '  \e[33mAlt-T\e[0m       : Filter Text\n'
+            printf '  \e[33mAlt-I\e[0m       : Filter Images Only\n'
+            printf '  \e[33mAlt-P\e[0m       : Filter Pinned Only\n'
+            printf '  \e[33mAlt-B\e[0m       : Filter Binaries Only\n\n'
+            printf '  \e[36m[ ACTIONS ]\e[0m\n'
+            printf '  \e[33mAlt-A\e[0m       : Pin selected item(s)\n'
+            printf '  \e[33mAlt-D\e[0m       : Delete selected item(s)\n'
+            printf '  \e[33mAlt-W\e[0m       : Wipe entire clipboard\n'
+            printf '  \e[33mEnter\e[0m       : Copy selected to clipboard & exit\n'
+            printf '  \e[33mq / Ctrl-C\e[0m  : Abort / Exit\n'
+        else
+            printf '\e[1;36m━━━ 💡 SHORTCUTS ━━━\e[0m\n\n'
+            printf '  \e[33mF1\e[0m          : Toggle this help menu\n'
+            printf '  \e[33mAlt-M\e[0m       : Toggle Vim/Standard Keybinds\n\n'
+            printf '  \e[33mAlt-H/J/K/L\e[0m : Move Preview (Left/Down/Up/Right)\n'
+            printf '  \e[33mAlt-V\e[0m       : Hide / Show Preview\n\n'
+            printf '  \e[33mAlt-A\e[0m       : Pin selected item(s)\n'
+            printf '  \e[33mAlt-D\e[0m       : Delete selected item(s)\n'
+            printf '  \e[33mAlt-W\e[0m       : Wipe entire clipboard\n\n'
+            printf '  \e[33mAlt-T\e[0m       : Filter Text\n'
+            printf '  \e[33mAlt-I\e[0m       : Filter Images\n'
+            printf '  \e[33mAlt-P\e[0m       : Filter Pinned\n'
+            printf '  \e[33mAlt-B\e[0m       : Filter Binaries\n\n'
+            printf '  \e[33mEnter\e[0m       : Copy to clipboard & exit\n'
+            printf '  \e[33mEsc/Ctrl-C\e[0m  : Abort\n'
+        fi
         return 0
     fi
     # ------------------------------
@@ -913,100 +959,157 @@ show_menu() {
     
     # Establish a fresh toggle state for the help menu based on this process ID
     local help_file="${CACHE_DIR}/.show_help_$$"
-    rm -f -- "$help_file" 2>/dev/null || :
+    local toggle_file="${CACHE_DIR}/.toggle_mode_$$"
+    local initial_query=""
+    
+    rm -f -- "$help_file" "$toggle_file" 2>/dev/null || :
 
-    output=$(
-        cmd_list | fzf \
-            --multi --ansi --reverse --no-sort --exact --cycle --scheme=history \
-            --margin=0 --padding=0 --highlight-line \
-            --border=rounded --border-label="$combined_label" --border-label-pos=3 \
-            --info=hidden --header=" F1 Help " --header-first \
-            --prompt="  " --pointer="▌" --delimiter="$SEP" --with-nth=1 \
-            --track --id-nth=3 \
-            --preview="${SELF@Q} --preview '{2}' '{3}' $$ # \$FZF_PREVIEW_COLUMNS \$FZF_PREVIEW_LINES \$FZF_COLUMNS \$FZF_LINES" \
-            --preview-window="${PREVIEW_LAYOUT:-right,45%,~3,wrap-word}" \
-            --bind="f1:execute-silent(if [ -f ${help_file@Q} ]; then rm -f ${help_file@Q}; else touch ${help_file@Q}; fi)+refresh-preview" \
-            --bind="resize:execute-silent($cap)" \
-            --bind="alt-h:transform(${SELF@Q} --move-preview left)" \
-            --bind="alt-j:transform(${SELF@Q} --move-preview down)" \
-            --bind="alt-k:transform(${SELF@Q} --move-preview up)" \
-            --bind="alt-l:transform(${SELF@Q} --move-preview right)" \
-            --bind="alt-v:transform(${SELF@Q} --move-preview hidden)" \
-            --bind="alt-t:change-query(!${ICON_IMG} !${ICON_PIN} !${ICON_BIN} )" \
-            --bind="alt-i:change-query($ICON_IMG )" \
-            --bind="alt-p:change-query($ICON_PIN )" \
-            --bind="alt-b:change-query($ICON_BIN )" \
-            --bind="alt-a:execute-silent(${SELF@Q} --batch-pin {+f})+reload-sync(${SELF@Q} --list)" \
-            --bind="alt-d:execute-silent(${SELF@Q} --batch-delete {+f})+reload-sync(${SELF@Q} --list)" \
-            --bind="alt-w:execute-silent(${SELF@Q} --wipe)+reload-sync(${SELF@Q} --list)" \
-            --bind="enter:execute-silent($cap)+accept" \
-            --bind="esc:execute-silent($cap)+abort" \
-            --bind="ctrl-c:execute-silent($cap)+abort"
-    ) || true
+    # Wrap purely the execution phase so drag-resizes and original layout bindings remain completely intact
+    while true; do
+        local current_vim_mode
+        current_vim_mode=$(read_state_value "VIM_MODE" "$USER_STATE_FILE") || current_vim_mode="false"
+        [[ -z "$current_vim_mode" ]] && current_vim_mode="false"
+        
+        local current_preview_layout
+        current_preview_layout=$(read_state_value "PREVIEW_LAYOUT" "$USER_STATE_FILE") || current_preview_layout="${PREVIEW_LAYOUT:-right,45%,~3,wrap-word}"
+        [[ -n "$current_preview_layout" ]] || current_preview_layout="${PREVIEW_LAYOUT:-right,45%,~3,wrap-word}"
 
-    # Clean up help toggle state on natural exit
-    rm -f -- "$help_file" 2>/dev/null || :
+        # Build arguments intelligently as an array to avoid quoting nightmares and maintain 1:1 original logic
+        local fzf_args=(
+            --multi --ansi --reverse --no-sort --exact --cycle --scheme=history
+            --margin=0 --padding=0 --highlight-line
+            --border=rounded --border-label="$combined_label" --border-label-pos=3
+            --info=hidden --header=" F1 Help | Alt-M Toggle Keys " --header-first
+            --pointer="▌" --delimiter="$SEP" --with-nth=1
+            --track --id-nth=3
+            --query="$initial_query"
+            --preview="${SELF@Q} --preview '{2}' '{3}' $$ ${current_vim_mode@Q} # \$FZF_PREVIEW_COLUMNS \$FZF_PREVIEW_LINES \$FZF_COLUMNS \$FZF_LINES"
+            --preview-window="$current_preview_layout"
+            --bind="f1:execute-silent(if [ -f ${help_file@Q} ]; then rm -f ${help_file@Q}; else touch ${help_file@Q}; fi)+refresh-preview"
+            --bind="resize:execute-silent($cap)"
+            --bind="alt-h:transform(${SELF@Q} --move-preview left)"
+            --bind="alt-j:transform(${SELF@Q} --move-preview down)"
+            --bind="alt-k:transform(${SELF@Q} --move-preview up)"
+            --bind="alt-l:transform(${SELF@Q} --move-preview right)"
+            --bind="alt-v:transform(${SELF@Q} --move-preview hidden)"
+            --bind="alt-t:change-query(!${ICON_IMG} !${ICON_PIN} !${ICON_BIN} )"
+            --bind="alt-i:change-query($ICON_IMG )"
+            --bind="alt-p:change-query($ICON_PIN )"
+            --bind="alt-b:change-query($ICON_BIN )"
+            --bind="alt-a:execute-silent(${SELF@Q} --batch-pin {+f})+reload-sync(${SELF@Q} --list)"
+            --bind="alt-d:execute-silent(${SELF@Q} --batch-delete {+f})+reload-sync(${SELF@Q} --list)"
+            --bind="alt-w:execute-silent(${SELF@Q} --wipe)+reload-sync(${SELF@Q} --list)"
+            --bind="enter:execute-silent($cap)+accept"
+            --bind="alt-m:execute-silent(${SELF@Q} --toggle-vim)+execute-silent(printf '%s' {q} > ${toggle_file@Q})+abort"
+        )
 
-    # -------------------------------------------------------------------------
-    # Drag-resize persistence
-    # -------------------------------------------------------------------------
-    local size_file="${CACHE_DIR}/.preview_size_$$"
-    if [[ -f "$size_file" ]]; then
-        local p_cols=0 t_cols=0 p_lines=0 t_lines=0
-        read -r p_cols t_cols p_lines t_lines < "$size_file" 2>/dev/null || true
-        rm -f -- "$size_file" 2>/dev/null || :
+        if [[ "$current_vim_mode" == "true" ]]; then
+            fzf_args+=(
+                --prompt=" 🅝  > "
+                --bind="esc:change-prompt( 🅝  > )+rebind(j,k,h,l,g,G,J,K,v,V,q,ctrl-d,ctrl-u,/)"
+                --bind="ctrl-c:execute-silent($cap)+abort"
+                --bind="j:down"
+                --bind="k:up"
+                --bind="g:first"
+                --bind="G:last"
+                --bind="J:toggle-down"
+                --bind="K:toggle-up"
+                --bind="v:toggle"
+                --bind="V:toggle"
+                --bind="ctrl-a:select-all"
+                --bind="ctrl-d:half-page-down"
+                --bind="ctrl-u:half-page-up"
+                --bind="q:execute-silent($cap)+abort"
+                --bind="/:change-prompt( 🔎 > )+unbind(j,k,h,l,g,G,J,K,v,V,q,ctrl-d,ctrl-u,/)+clear-query"
+            )
+        else
+            fzf_args+=(
+                --prompt="  "
+                --bind="esc:execute-silent($cap)+abort"
+                --bind="ctrl-c:execute-silent($cap)+abort"
+            )
+        fi
 
-        # Re-read PREVIEW_LAYOUT in case the user moved it during the session.
-        local current_layout
-        current_layout=$(read_state_value "PREVIEW_LAYOUT" "$USER_STATE_FILE") \
-            || current_layout="$PREVIEW_LAYOUT"
-        [[ -n "$current_layout" ]] || current_layout="$PREVIEW_LAYOUT"
+        # Pass constructed array safely
+        output=$(
+            cmd_list | fzf "${fzf_args[@]}"
+        ) || true
 
-        if [[ "$current_layout" != "hidden" ]] \
-            && is_uint "$p_cols" && is_uint "$t_cols" \
-            && is_uint "$p_lines" && is_uint "$t_lines" \
-            && (( t_cols > 0 && t_lines > 0 )); then
+        # -------------------------------------------------------------------------
+        # Drag-resize persistence
+        # -------------------------------------------------------------------------
+        local size_file="${CACHE_DIR}/.preview_size_$$"
+        if [[ -f "$size_file" ]]; then
+            local p_cols=0 t_cols=0 p_lines=0 t_lines=0
+            read -r p_cols t_cols p_lines t_lines < "$size_file" 2>/dev/null || true
+            rm -f -- "$size_file" 2>/dev/null || :
 
-            local orient="" old_pct=45
-            if [[ "$current_layout" == right* || "$current_layout" == left* ]]; then
-                orient="h"
-            elif [[ "$current_layout" == up* || "$current_layout" == down* ]]; then
-                orient="v"
-            fi
-            [[ "$current_layout" =~ ,([0-9]+)% ]] && old_pct="${BASH_REMATCH[1]}"
+            # Re-read PREVIEW_LAYOUT in case the user moved it during the session.
+            local current_layout
+            current_layout=$(read_state_value "PREVIEW_LAYOUT" "$USER_STATE_FILE") \
+                || current_layout="$PREVIEW_LAYOUT"
+            [[ -n "$current_layout" ]] || current_layout="$PREVIEW_LAYOUT"
 
-            if [[ -n "$orient" && "$current_layout" =~ ,[0-9]+% ]]; then
-                # Subtract the rounded-border overhead (1 col/line each side)
-                # before computing the percentage. Round to nearest integer.
-                local numer denom new_pct
-                if [[ "$orient" == "h" ]]; then
-                    numer=$p_cols
-                    denom=$(( t_cols - 2 ))
-                else
-                    numer=$p_lines
-                    denom=$(( t_lines - 2 ))
+            if [[ "$current_layout" != "hidden" ]] \
+                && is_uint "$p_cols" && is_uint "$t_cols" \
+                && is_uint "$p_lines" && is_uint "$t_lines" \
+                && (( t_cols > 0 && t_lines > 0 )); then
+
+                local orient="" old_pct=45
+                if [[ "$current_layout" == right* || "$current_layout" == left* ]]; then
+                    orient="h"
+                elif [[ "$current_layout" == up* || "$current_layout" == down* ]]; then
+                    orient="v"
                 fi
+                [[ "$current_layout" =~ ,([0-9]+)% ]] && old_pct="${BASH_REMATCH[1]}"
 
-                if (( denom > 0 && numer > 0 )); then
-                    new_pct=$(( (numer * 100 + denom / 2) / denom ))
-                    (( new_pct < 10 )) && new_pct=10
-                    (( new_pct > 90 )) && new_pct=90
+                if [[ -n "$orient" && "$current_layout" =~ ,[0-9]+% ]]; then
+                    # FZF provides the *inner content* width/height in p_cols/p_lines.
+                    # To find the true layout percentage, we must add back the preview window's
+                    # overhead (borders, padding, scrollbars). 
+                    # ~3 columns for horizontal overhead, ~2 lines for vertical.
+                    # We also subtract 2 from total terminal size to account for the main rounded borders.
+                    local numer denom new_pct
+                    if [[ "$orient" == "h" ]]; then
+                        numer=$(( p_cols + 3 ))
+                        denom=$(( t_cols - 2 ))
+                    else
+                        numer=$(( p_lines + 2 ))
+                        denom=$(( t_lines - 2 ))
+                    fi
 
-                    # Drift threshold: rounding plus border-correction error
-                    # can produce a 1% delta with no actual drag. Require ≥2%
-                    # change to count as a real user drag — otherwise repeated
-                    # opens would slowly creep the saved value.
-                    local diff=$(( new_pct > old_pct ? new_pct - old_pct : old_pct - new_pct ))
-                    if (( diff >= 2 )); then
-                        local new_layout="${current_layout/,${old_pct}%/,${new_pct}%}"
-                        if [[ "$new_layout" != "$current_layout" ]]; then
-                            write_state_value "PREVIEW_LAYOUT" "$new_layout" "$USER_STATE_FILE" 2>/dev/null || :
+                    if (( denom > 0 && numer > 0 )); then
+                        new_pct=$(( (numer * 100 + denom / 2) / denom ))
+                        (( new_pct < 10 )) && new_pct=10
+                        (( new_pct > 90 )) && new_pct=90
+
+                        # Drift threshold: rounding plus border-correction error
+                        # can produce a slight delta with no actual drag. Require >= 5%
+                        # change to count as a deliberate user drag — otherwise repeated
+                        # opens or toggles would iteratively creep the saved value.
+                        local diff=$(( new_pct > old_pct ? new_pct - old_pct : old_pct - new_pct ))
+                        if (( diff >= 5 )); then
+                            local new_layout="${current_layout/,${old_pct}%/,${new_pct}%}"
+                            if [[ "$new_layout" != "$current_layout" ]]; then
+                                write_state_value "PREVIEW_LAYOUT" "$new_layout" "$USER_STATE_FILE" 2>/dev/null || :
+                            fi
                         fi
                     fi
                 fi
             fi
         fi
-    fi
+        
+        if [[ -f "$toggle_file" ]]; then
+            initial_query=$(cat "$toggle_file" 2>/dev/null)
+            rm -f -- "$toggle_file" 2>/dev/null || :
+            continue
+        fi
+        
+        break
+    done
+
+    # Clean up help and toggle files on natural exit
+    rm -f -- "$help_file" "$toggle_file" 2>/dev/null || :
 
     mapfile -t lines <<< "$output"
     if ((${#lines[@]} == 0)) || [[ -z "${lines[0]:-}" ]]; then
@@ -1030,7 +1133,7 @@ main() {
         --list) cmd_list ;;
         --preview)
             [[ $# -ge 3 ]] || exit 1
-            cmd_preview "$2" "$3" "${4:-}"
+            cmd_preview "$2" "$3" "${4:-}" "${5:-false}"
             ;;
         --capture-size)
             write_preview_size "${2:-}"
@@ -1038,6 +1141,9 @@ main() {
         --move-preview)
             [[ $# -ge 2 ]] || exit 1
             cmd_move_preview "$2"
+            ;;
+        --toggle-vim)
+            cmd_toggle_vim
             ;;
         --batch-pin)
             setup_dirs >/dev/null 2>&1 || :
