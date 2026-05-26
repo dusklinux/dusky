@@ -27,6 +27,9 @@ declare -a EFFECTIVE_HOOKS=()
 declare -A EFFECTIVE_HOOKS_SET=()
 declare -a ACTIVE_TEMP_FILES=()
 
+ESP_SUFFICIENT_FOR_SYNC=true
+ESP_CAPACITY_WARN=""
+
 cleanup() {
     local f
     for f in "${ACTIVE_TEMP_FILES[@]}"; do
@@ -135,6 +138,20 @@ get_effective_hooks() {
     for hook in "${EFFECTIVE_HOOKS[@]}"; do EFFECTIVE_HOOKS_SET["$hook"]=1; done
 }
 
+check_esp_capacity() {
+    local esp_mnt esp_total_kb
+    esp_mnt="$(findmnt -n -e -o TARGET -M /boot 2>/dev/null || findmnt -n -e -o TARGET -M /efi 2>/dev/null || findmnt -n -e -o TARGET -M /boot/efi 2>/dev/null || true)"
+    if [[ -n "$esp_mnt" ]]; then
+        esp_total_kb="$(df -k "$esp_mnt" 2>/dev/null | awk 'NR==2 {print $2}' || true)"
+        if [[ -n "$esp_total_kb" ]] && [[ "$esp_total_kb" =~ ^[0-9]+$ ]]; then
+            if (( esp_total_kb < 1950000 )); then
+                ESP_SUFFICIENT_FOR_SYNC=false
+                ESP_CAPACITY_WARN="ESP ($esp_mnt) is under 2GB (~$((esp_total_kb / 1024))MB). Bootloader snapshot sync will be disabled."
+            fi
+        fi
+    fi
+}
+
 remove_sync_features() {
     # Silence any active services from background running
     systemctl disable limine-snapper-sync.service 2>/dev/null || true
@@ -147,7 +164,32 @@ remove_sync_features() {
     # Completely purge the packages to kill ALPM pacman hooks
     if (( ${#pkgs_to_remove[@]} > 0 )); then
         info "Purging automated sync packages to enforce manual-only policy..."
-        pacman -Rns --noconfirm "${pkgs_to_remove[@]}" || true
+        
+        # Perform a dry-run to detect dependency conflicts silently
+        if pacman -Rnsp "${pkgs_to_remove[@]}" >/dev/null 2>&1; then
+            pacman -Rns --noconfirm "${pkgs_to_remove[@]}" >/dev/null 2>&1 || true
+        else
+            warn "Dependency constraint detected. Safely filtering packages to prevent breakage..."
+            local pkg
+            for pkg in "${pkgs_to_remove[@]}"; do
+                # Test each package individually
+                if pacman -Rnsp "$pkg" >/dev/null 2>&1; then
+                    pacman -Rns --noconfirm "$pkg" >/dev/null 2>&1 || true
+                else
+                    warn "Skipping removal of '$pkg' (required by other installed packages)."
+                    
+                    # Neutralize the hostage package by masking its pacman hooks
+                    local hook_file base_hook
+                    mkdir -p /etc/pacman.d/hooks
+                    while IFS= read -r hook_file; do
+                        [[ -n "$hook_file" && "$hook_file" == *.hook ]] || continue
+                        base_hook="$(basename "$hook_file")"
+                        ln -sf /dev/null "/etc/pacman.d/hooks/$base_hook"
+                        info "Masked ALPM hook '$base_hook' to functionally neutralize '$pkg'."
+                    done < <(pacman -Qlq "$pkg" 2>/dev/null | grep '^/usr/share/libalpm/hooks/')
+                fi
+            done
+        fi
     fi
     
     # Forensic sweep of ESP to prevent hostage capacity issues
@@ -176,7 +218,7 @@ install_aur_packages() {
 
     local -a pkgs=()
     
-    if [[ "$ENABLE_SYNC_FEATURES" == true ]] && [[ "$sync_in" == false ]]; then
+    if [[ "$ENABLE_SYNC_FEATURES" == true && "$ESP_SUFFICIENT_FOR_SYNC" == true ]] && [[ "$sync_in" == false ]]; then
         pkgs+=(limine-snapper-sync)
     fi
     
@@ -252,6 +294,23 @@ EOF
     info "Configured dynamic ${target_hook} injection in ${managed_file}"
 }
 
+rebuild_initramfs() {
+    info "Recompiling early boot images to inject overlayfs hooks..."
+    
+    local shopt_save
+    shopt_save=$(shopt -p nullglob || true)
+    shopt -s nullglob
+    local presets=(/etc/mkinitcpio.d/*.preset)
+    eval "$shopt_save"
+
+    if (( ${#presets[@]} > 0 )); then
+        mkinitcpio -P < <(echo "n") || true
+    else
+        info "No mkinitcpio presets found. Delegating generation to limine-update..."
+    fi
+    
+    limine-update || true
+}
 
 configure_sync_daemon() {
     local conf_file="/etc/limine-snapper-sync.conf" root_subvol root_subvol_path tmp
@@ -397,7 +456,7 @@ enable_services_and_sync() {
     # Do NOT use --now.
     systemctl enable snapper-cleanup.timer
 
-    if [[ "$ENABLE_SYNC_FEATURES" == true ]]; then
+    if [[ "$ENABLE_SYNC_FEATURES" == true && "$ESP_SUFFICIENT_FOR_SYNC" == true ]]; then
         systemctl enable limine-snapper-sync.service
         info "Manually running boot menu sync for offline chroot environment..."
         limine-snapper-sync || true
@@ -405,8 +464,9 @@ enable_services_and_sync() {
 }
 
 preflight_checks() {
-    require_cmd pacman; require_cmd findmnt; require_cmd awk; require_cmd sed; require_cmd grep; require_cmd stat; require_cmd mktemp; require_cmd cmp
+    require_cmd pacman; require_cmd findmnt; require_cmd awk; require_cmd sed; require_cmd grep; require_cmd stat; require_cmd mktemp; require_cmd cmp; require_cmd df
     [[ -d /sys/firmware/efi ]] || fatal "Not booted in EFI mode."
+    check_esp_capacity
 }
 
 preflight_checks
@@ -416,15 +476,36 @@ require_cmd limine-update; require_cmd snapper
 
 # OverlayFS hook is critical for manually booting read-only snapshots even if sync is disabled.
 execute "Inject OverlayFS hook" configure_mkinitcpio_overlay_hook
+execute "Rebuild initramfs" rebuild_initramfs
 
-if [[ "$ENABLE_SYNC_FEATURES" == true ]]; then
+# Master orchestration block
+if [[ "$ENABLE_SYNC_FEATURES" == true && "$ESP_SUFFICIENT_FOR_SYNC" == true ]]; then
     require_cmd limine-snapper-sync
+    
+    # Check and unmask any previously neutralized ALPM hooks to safely restore functionality
+    for _pkg in limine-snapper-sync snap-pac; do
+        if pacman -Q "$_pkg" >/dev/null 2>&1; then
+            while IFS= read -r _hook_file; do
+                [[ -n "$_hook_file" && "$_hook_file" == *.hook ]] || continue
+                _base_hook="$(basename "$_hook_file")"
+                if [[ -L "/etc/pacman.d/hooks/$_base_hook" && "$(readlink "/etc/pacman.d/hooks/$_base_hook")" == "/dev/null" ]]; then
+                    rm -f "/etc/pacman.d/hooks/$_base_hook"
+                    info "Unmasked ALPM hook '$_base_hook' to restore '$_pkg' functionality."
+                fi
+            done < <(pacman -Qlq "$_pkg" 2>/dev/null | grep '^/usr/share/libalpm/hooks/')
+        fi
+    done
+
     execute "Configure sync daemon" configure_sync_daemon
     execute "Install snap-pac" install_snap_pac
     execute "Configure snap-pac" configure_snap_pac
     execute "Ensure home snap-pac snapshot" ensure_home_snap_pac_snapshot
 else
-    info "Sync features are disabled via flag constraint."
+    if [[ "$ENABLE_SYNC_FEATURES" == false ]]; then
+        info "Sync features are disabled via flag constraint."
+    else
+        warn "$ESP_CAPACITY_WARN"
+    fi
     execute "Remove sync features" remove_sync_features
 fi
 
