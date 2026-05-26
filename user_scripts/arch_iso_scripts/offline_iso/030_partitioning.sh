@@ -603,7 +603,7 @@ run_provisioning_wizard() {
 
         echo -e "${C_YELLOW}>> Writing new GPT layout...${C_RESET}"
         if [[ "$BOOT_MODE" == "UEFI" ]]; then
-            sgdisk -n 1:0:+5G -t 1:ef00 -c 1:"EFI System" "$target_dev"
+            sgdisk -n 1:0:+600M -t 1:ef00 -c 1:"EFI System" "$target_dev"
             sgdisk -n 2:0:0   -t 2:8309 -c 2:"Linux LUKS" "$target_dev"
         else
             sgdisk -n 1:0:+1M -t 1:ef02 -c 1:"BIOS Boot"  "$target_dev"
