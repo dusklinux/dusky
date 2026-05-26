@@ -31,6 +31,7 @@ declare -ra BROWSER_CATALOG=(
     "chromium|0|chromium.desktop|Chromium"
     "zen-browser|0|zen.desktop|Zen Browser"
     "brave|0|brave-browser.desktop|Brave"
+    "helium-browser|0|helium-browser.desktop|Helium"
     "librewolf|0|librewolf.desktop|LibreWolf"
     "edge|0|microsoft-edge.desktop|Microsoft Edge"
     "vivaldi|0|vivaldi-stable.desktop|Vivaldi"
