@@ -3,8 +3,8 @@
 # Description: Advanced TUI for Hyprland 0.55+ Lua Keybinds
 #              - Lexically perfect parser (supports multiline functions/closures)
 #              - Auto-installs dependencies via Arch Linux pacman
-#              - Multi-Editor Support (Neovim, Nano, Inline) with Error Trapping
-#              - Syntax Highlighted UI powered by Rich (Synchronous Rendering)
+#              - Dynamic System $EDITOR detection with safe fallbacks
+#              - Synchronous UI rendering natively handled by Rich
 # ==============================================================================
 
 from __future__ import annotations
@@ -100,9 +100,6 @@ class Bind:
 # System Utilities
 # ==============================================================================
 
-def clear_screen() -> None:
-    os.system('clear')
-
 def die(msg: str) -> None:
     console.print(f"[bold red][FATAL][/bold red] {msg}")
     sys.exit(1)
@@ -140,7 +137,7 @@ def reload_hyprland() -> None:
         console.print(Panel(f"Hyprland reload issue:\n{out}\n\nKeybind was saved. Reload manually or restart Hyprland.", title="[bold yellow]WARNING[/bold yellow]", border_style="yellow", expand=False))
 
 def edit_in_editor(initial_text: str, editor_choice: str) -> Optional[str]:
-    """Handles spawning the chosen editor (Neovim/Nano/Inline). Returns None on abort/error."""
+    """Handles spawning the chosen editor (Native/Nano/Inline). Returns None on abort/error."""
     if editor_choice == 'inline':
         console.print("\n[bold yellow]Inline Editing Mode[/bold yellow]")
         console.print("Enter your new Lua code. Press [bold cyan]Ctrl+D[/bold cyan] on a new empty line when finished.")
@@ -149,7 +146,6 @@ def edit_in_editor(initial_text: str, editor_choice: str) -> Optional[str]:
         
         lines = []
         try:
-            # Using standard stdin reading for inline
             for line in sys.stdin:
                 lines.append(line)
         except EOFError:
@@ -158,7 +154,6 @@ def edit_in_editor(initial_text: str, editor_choice: str) -> Optional[str]:
             return None
         return "".join(lines).strip()
 
-    # File-backed editor flow (Neovim/Nano)
     cmd = shlex.split(editor_choice)
     with tempfile.NamedTemporaryFile(mode='w+', suffix='.lua', delete=False, encoding='utf-8') as tf:
         tf.write(initial_text)
@@ -171,7 +166,6 @@ def edit_in_editor(initial_text: str, editor_choice: str) -> Optional[str]:
         with open(filepath, 'r', encoding='utf-8') as f:
             return f.read().strip()
     except subprocess.CalledProcessError:
-        # User quit with error code (e.g., :cq in vim)
         return None
     except KeyboardInterrupt:
         return None
@@ -180,16 +174,27 @@ def edit_in_editor(initial_text: str, editor_choice: str) -> Optional[str]:
             os.remove(filepath)
 
 def get_editor_choice() -> str:
+    """Dynamically probes for $EDITOR before offering fallbacks."""
+    sys_editor = os.environ.get('EDITOR')
+    
     console.print("\n[bold yellow]Select Editor:[/bold yellow]")
-    console.print("  [bold white]\\[1][/bold white] [cyan]Neovim[/cyan] (nvim)")
+    if sys_editor:
+        console.print(f"  [bold white]\\[1][/bold white] [cyan]System Default[/cyan] ({sys_editor})")
+        primary_cmd = sys_editor
+    else:
+        console.print("  [bold white]\\[1][/bold white] [cyan]Neovim[/cyan] (nvim)")
+        primary_cmd = 'nvim'
+        
     console.print("  [bold white]\\[2][/bold white] [cyan]Nano[/cyan] (nano)")
     console.print("  [bold white]\\[3][/bold white] [cyan]Terminal Inline[/cyan] (Standard Input)")
     
     while True:
         choice = console.input("\n[bold cyan]Select [1/2/3] > [/bold cyan]").strip().lower()
-        if choice in ('1', 'nvim', 'n', 'vim'): return 'nvim'
+        if choice == '1': return primary_cmd
         if choice in ('2', 'nano'): return 'nano'
         if choice in ('3', 'inline', 't'): return 'inline'
+        # Secondary fallback if the user types 'nvim' natively
+        if choice in ('nvim', 'vim', 'n'): return 'nvim'
 
 # ==============================================================================
 # Robust Lua Lexical Parsing (Untouched Core Logic)
@@ -442,7 +447,6 @@ def print_binding_info_box(bind: Bind, raw_text: str) -> None:
     console.print(panel)
 
 def format_display(b: Bind) -> str:
-    """Provides the 1-line ANSI output strictly for the FZF list"""
     submap_pfx = f'{PURPLE}[{b.submap}]{RESET} ' if b.submap else ''
     ui_key = b.key_str[:32].ljust(32).replace('\n', ' ').replace('\t', ' ')
 
@@ -483,10 +487,10 @@ def edit_loop(bind: Optional[Bind], source_binds: list[Bind], custom_binds: list
     editor_choice = get_editor_choice()
 
     while True:
-        clear_screen()
+        console.clear()
         
         user_line = edit_in_editor(actual_text, editor_choice)
-        clear_screen()
+        console.clear()
         
         if user_line is None:
             console.print(Panel("[bold yellow]Action Aborted:[/bold yellow] Editor was closed with an error or interrupted.", border_style="yellow", expand=False))
@@ -618,7 +622,7 @@ def edit_loop(bind: Optional[Bind], source_binds: list[Bind], custom_binds: list
         return True
 
 def delete_flow(bind: Bind) -> bool:
-    clear_screen()
+    console.clear()
     
     group_items = []
     if bind.submap: 
@@ -686,7 +690,7 @@ def main() -> None:
 
     try:
         while True:
-            clear_screen()
+            console.clear()
             
             try: src_text = SOURCE_LUA.read_text(encoding='utf-8')
             except FileNotFoundError: src_text = ""
@@ -714,7 +718,7 @@ def main() -> None:
                 except (ValueError, IndexError): idx = -1
                     
                 if 0 <= idx < len(displayed):
-                    clear_screen()
+                    console.clear()
                     print_binding_info_box(displayed[idx], displayed[idx].raw_call.strip())
                 console.input('\n[bold cyan]Press Enter to continue...[/bold cyan]')
                 continue
@@ -738,7 +742,7 @@ def main() -> None:
             if 0 <= idx < len(displayed):
                 selected_bind = displayed[idx]
                 
-                clear_screen()
+                console.clear()
                 print_binding_info_box(selected_bind, selected_bind.raw_call.strip())
                 
                 console.print("\n[bold yellow]Available Actions:[/bold yellow]")
@@ -767,8 +771,7 @@ def main() -> None:
                         if console.input('\n[bold cyan]Select > [/bold cyan]').strip().lower().startswith('q'): sys.exit(0)
 
     except KeyboardInterrupt:
-        # Graceful exit if user hits Ctrl+C on the main menu
-        clear_screen()
+        console.clear()
         sys.exit(0)
 
 if __name__ == '__main__':
