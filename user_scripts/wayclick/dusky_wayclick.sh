@@ -48,7 +48,7 @@ esac
 
 # Audio pack: subfolder name inside ~/.config/wayclick/ containing .wav files.
 # Example:  ~/.config/wayclick/audio_pack_1/click.wav
-readonly AUDIO_PACK="audio_pack_1"
+readonly AUDIO_PACK="nk_cream"
 
 # SDL audio buffer size (in samples). Lower = less latency, but may crackle.
 # If you hear pops/crackles, raise this value one step.
