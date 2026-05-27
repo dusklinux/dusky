@@ -2506,7 +2506,7 @@ pages:
                 button_text: "Setup"
               on_press:
                 type: exec
-                command: kitty --class 03_snapper_pacman_hooks.sh --hold sh -c "$HOME/user_scripts/btrfs_snapshots/03_snapper_pacman_hooks.sh --auto"
+                command: kitty --class 03_snapper_pacman_hooks.sh --hold sh -c "$HOME/user_scripts/btrfs_snapshots/03_snapper_pacman_hooks_for_limine.sh --auto"
                 terminal: false
 
   - type: section
