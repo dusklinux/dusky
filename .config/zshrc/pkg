@@ -1,10 +1,10 @@
 # =============================================================================
-# Dusky Package Atlas (Platinum Edition - Revision 2)
+# Dusky Package Atlas (Platinum Edition - Revision 4)
 # Architecture: FZF 0.72.0+ Responsive Layout, Zero-fork environment metadata,
-#               Zero-quote-hell Bash preview injection, AWK stream filtering,
-#               Single-pass I/O extraction, shatter-proof string reassembly.
+#               Zero-eval stream filtering, Interactive F1 Help Overlay,
+#               Live FZF dynamic pipeline reloading (Sort by Size/Date).
 # Usage: pkg [command] [count]
-#        (Run without arguments to launch the Interactive FZF Atlas)
+#        (Run without count to launch the Interactive FZF Atlas)
 # =============================================================================
 
 # DRY Header Helper — defined once at source time.
@@ -20,11 +20,59 @@ _pkg_interactive() {
     # 1. Strict Environment Isolation
     emulate -L zsh
     setopt localoptions extendedglob
+    local init_mode="${1:-alpha}"
+    local init_target="${2:-all}"
     local LC_ALL=C
 
-    # 2. Compile Preview Script Environment Variable
-    # Exporting the preview logic directly bypasses fzf quote-escaping hell.
-    # Contains bulletproof colon-shatter fixes and single-pass file extraction.
+    # 2. F1 Help Menu Payload (Zero-quote-hell environment export)
+    export DUSKY_PKG_HELP='clear; printf "\n\n  \033[1;38;5;81m󰏖 Dusky Package Atlas - Keyboard Shortcuts\033[0m\n  \033[38;5;238m──────────────────────────────────────────────\033[0m\n  \033[1;33m[CTRL-S]\033[0m  Sort by Largest Package Size (Hogs)\n  \033[1;33m[ALT-S]\033[0m   Sort by Smallest Package Size (Tiny)\n  \033[1;33m[CTRL-D]\033[0m  Sort by Newest Install Date\n  \033[1;33m[CTRL-R]\033[0m  Reset to Default Alphabetical Order\n  \033[1;33m[F1]\033[0m      Show this Help Menu\n  \033[1;33m[ESC]\033[0m     Exit Interactive Atlas\n  \033[1;33m[ENTER]\033[0m   Select Package and Inject to Prompt\n\n  \033[38;5;242mPress any key to return...\033[0m"; read -rsn1'
+
+    # 3. Compile Live List Generator (FZF Reload Pipeline - BUG FIXED: Zero Eval)
+    export DUSKY_PKG_LIST='
+export LC_ALL=C
+mode="$1"
+target="$2"
+
+# Safe array expansion prevents Bash pipe-shatter errors
+case "$mode" in
+    size_desc) sort_args=(-t"|" -k4 -nr) ;;
+    size_asc)  sort_args=(-t"|" -k4 -n) ;;
+    date_desc) sort_args=(-t"|" -k3 -nr) ;;
+    date_asc)  sort_args=(-t"|" -k3 -n) ;;
+    alpha|*)   sort_args=(-t"|" -k1) ;;
+esac
+
+fetch_data() {
+    if [ "$target" = "explicit" ]; then
+        pacman -Qeq | expac "%n|%v|%l|%m|%d" - 2>/dev/null
+    else
+        expac "%n|%v|%l|%m|%d" 2>/dev/null
+    fi
+}
+
+fetch_data | sort "${sort_args[@]}" | awk -F"|" '\''
+    {
+        name = $1; ver = $2; date = $3; size = $4; desc = $5;
+        for(i=6; i<=NF; i++) desc = desc "|" $i
+        if (length(desc) == 0) desc = "<No description provided>"
+        
+        # Mathematical Size Formatting (Bytes to Human Readable)
+        size_mb = size / 1048576
+        if (size_mb >= 1024) { size_fmt = sprintf("%.2f GiB", size_mb/1024) }
+        else if (size_mb >= 1) { size_fmt = sprintf("%.2f MiB", size_mb) }
+        else { size_fmt = sprintf("%.2f KiB", size / 1024) }
+        
+        # Hard cap strings to maintain flawless table geometry
+        disp_name = (length(name) > 25) ? substr(name, 1, 22) "..." : name
+        disp_ver  = (length(ver) > 16)  ? substr(ver, 1, 13) "..."  : ver
+        
+        # Routing format: RAW_CMD|VISUAL_STRING
+        printf "%s|\033[1;38;5;39m%-25s\033[0m \033[38;5;238m│\033[0m \033[38;5;220m%-16s\033[0m \033[38;5;238m│\033[0m \033[38;5;208m%10s\033[0m \033[38;5;238m│\033[0m \033[38;5;250m%s\033[0m\n", name, disp_name, disp_ver, size_fmt, desc
+    }
+'\''
+'
+
+    # 4. Compile Preview Script Environment Variable
     export DUSKY_PKG_PREVIEW='
 export LC_ALL=C
 pkg="$1"
@@ -42,7 +90,6 @@ pacman -Qi "$pkg" 2>/dev/null | awk -F":" '\''
     }
     key == "Version"        { print_kv("Version", val, "220") }
     key == "URL"            { print_kv("URL", val, "114") }
-    key == "Installed Size" { print_kv("Size", val, "208") }
     key == "Install Date"   { print_kv("Installed", val, "250") }
     key == "Build Date"     { print_kv("Released", val, "250") }
     key == "Install Reason" { print_kv("Reason", val, "203") }
@@ -53,16 +100,15 @@ pacman -Qi "$pkg" 2>/dev/null | awk -F":" '\''
 
 printf "\n\033[1;38;5;81m:: \033[1;37mSystem Integration\033[0m\n\033[38;5;238m────────────────────────────────────────────────────────────\033[0m\n"
 
-# Single-Pass Forensic File Extraction (Extreme Speed & Space-Shatter Proof)
+# Single-Pass Forensic File Extraction (Expanded Systemd Coverage)
 pacman -Ql "$pkg" 2>/dev/null | awk '\''
     BEGIN { bins=""; srvs=""; apps="" }
     {
-        # Extracts raw path by bypassing the package name and spacing
         path = substr($0, length($1) + 2)
         
         if (path ~ /^\/usr\/(local\/)?s?bin\/[^\/]+$/) 
             bins = bins "  \033[38;5;114m" path "\033[0m\n"
-        else if (path ~ /^\/usr\/lib\/systemd\/(system|user)\/[^\/]+\.(service|timer|socket|path|mount)$/) 
+        else if (path ~ /^(\/usr|\/etc)\/lib\/systemd\/(system|user)\/.*\.(service|timer|socket|path|mount|conf|target|device)$/) 
             srvs = srvs "  \033[38;5;203m" path "\033[0m\n"
         else if (path ~ /^\/usr\/share\/applications\/[^\/]+\.desktop$/) 
             apps = apps "  \033[38;5;39m" path "\033[0m\n"
@@ -80,25 +126,20 @@ pacman -Ql "$pkg" 2>/dev/null | awk '\''
 '\''
 '
 
-    # 3. Data Stream Construction & Responsive FZF Execution
+    # 5. Resolve Initial Prompt Header
+    local prompt_str="   Search Packages ❯ "
+    case "$init_mode" in
+        size_desc) prompt_str="   Hogs (Largest) ❯ " ;;
+        size_asc)  prompt_str="   Tiny (Smallest) ❯ " ;;
+        date_desc) prompt_str="   Newest (Date) ❯ " ;;
+    esac
+
+    # 6. Data Stream Construction & Responsive FZF Execution
     local fzf_choice
-    fzf_choice=$(expac "%n|%v|%d" | awk -F'|' '{
-        name = $1; ver = $2; desc = $3;
-        
-        # Pipe-Shatter fix: Reassemble descriptions containing literal pipes
-        for(i=4; i<=NF; i++) desc = desc "|" $i
-        if (length(desc) == 0) desc = "<No description provided>"
-        
-        # Hard cap strings to maintain flawless table geometry
-        disp_name = (length(name) > 30) ? substr(name, 1, 27) "..." : name
-        disp_ver  = (length(ver) > 18)  ? substr(ver, 1, 15) "..."  : ver
-        
-        # Routing format: RAW_CMD|VISUAL_STRING
-        printf "%s|\033[1;38;5;39m%-30s\033[0m \033[38;5;238m│\033[0m \033[38;5;220m%-18s\033[0m \033[38;5;238m│\033[0m \033[38;5;250m%s\033[0m\n", name, disp_name, disp_ver, desc
-    }' | fzf --ansi \
+    fzf_choice=$(bash -c "$DUSKY_PKG_LIST" _ "$init_mode" "$init_target" | fzf --ansi \
         --delimiter='\|' \
         --with-nth=2 \
-        --prompt="   Search Packages ❯ " \
+        --prompt="$prompt_str" \
         --pointer="" \
         --marker="✓" \
         --layout=reverse \
@@ -108,8 +149,13 @@ pacman -Ql "$pkg" 2>/dev/null | awk '\''
         --padding=1,2 \
         --margin=1%,2% \
         --info=inline-right \
-        --header="   PACKAGE                        │ VERSION            │ DESCRIPTION" \
+        --header="  PACKAGE                   │ VERSION          │       SIZE │ DESCRIPTION                     [F1] Shortcuts" \
         --header-first \
+        --bind="ctrl-s:reload(bash -c \"\$DUSKY_PKG_LIST\" _ size_desc $init_target)+change-prompt(   Hogs (Largest) ❯ )" \
+        --bind="alt-s:reload(bash -c \"\$DUSKY_PKG_LIST\" _ size_asc $init_target)+change-prompt(   Tiny (Smallest) ❯ )" \
+        --bind="ctrl-d:reload(bash -c \"\$DUSKY_PKG_LIST\" _ date_desc $init_target)+change-prompt(   Newest (Date) ❯ )" \
+        --bind="ctrl-r:reload(bash -c \"\$DUSKY_PKG_LIST\" _ alpha $init_target)+change-prompt(   Search Packages ❯ )" \
+        --bind="f1:execute(bash -c \"\$DUSKY_PKG_HELP\")" \
         --color="bg+:#1e1e2e,bg:#11111b,spinner:#f5e0dc,hl:#f38ba8" \
         --color="fg:#cdd6f4,header:#89b4fa,info:#cba6f7,pointer:#a6e3a1" \
         --color="marker:#f5e0dc,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8" \
@@ -117,10 +163,12 @@ pacman -Ql "$pkg" 2>/dev/null | awk '\''
         --preview='bash -c "$DUSKY_PKG_PREVIEW" _ {1}' \
         --preview-window="right,50%,border-left,<100(down,50%,border-top)")
 
-    # Cleanup Environment
+    # Cleanup Memory
+    unset DUSKY_PKG_LIST
     unset DUSKY_PKG_PREVIEW
+    unset DUSKY_PKG_HELP
 
-    # 4. Action Router (Buffer Injection)
+    # 7. Action Router
     if [[ -n "$fzf_choice" ]]; then
         local target_pkg="${fzf_choice%%|*}"
         print -z "$target_pkg"
@@ -140,19 +188,13 @@ pkg() {
         return 1
     fi
 
-    # 2. Zero-Argument Trigger: Launch Interactive Atlas
-    if (( $# == 0 )); then
-        _pkg_interactive
-        return 0
-    fi
-
-    # 3. State Initialization
+    # 2. State Initialization
     local target="all"
-    local metric="size"
-    local -i count=20
+    local metric=""
+    local -i count=-1
     local -i show_help=0
 
-    # 4. Argument Tokenizer: Case-insensitive, order-agnostic
+    # 3. Argument Tokenizer
     for arg in "$@"; do
         case "${arg:l}" in
             help|-h|--help)
@@ -165,69 +207,72 @@ pkg() {
                 target="all"
                 ;;
             hogs|size)
-                metric="size"
+                metric="size_desc"
+                ;;
+            tiny|small)
+                metric="size_asc"
                 ;;
             new|recent|latest)
-                metric="new"
+                metric="date_desc"
                 ;;
             old|ancient)
-                metric="old"
+                metric="date_asc"
                 ;;
             *)
                 if [[ "$arg" =~ ^[1-9][0-9]*$ ]]; then
                     count="$arg"
                 else
-                    print -u2 -P "\n%F{red}✖ Error:%f Unknown argument or invalid count: '%F{yellow}$arg%f'"
-                    print -u2 -P "  Run %F{green}pkg help%f for usage details.\n"
+                    print -u2 -P "\n%F{red}✖ Error:%f Unknown argument: '%F{yellow}$arg%f'\n"
                     return 1
                 fi
                 ;;
         esac
     done
 
-    # 5. Help Menu Overlay
+    # 4. Help Menu Overlay
     if (( show_help )); then
         print -P "\n%F{blue}::%f %Bpkg%b — Advanced Package Query Tool"
         print -P "%F{238}------------------------------------------------------------%f"
         print -P "%F{green}Usage:%f pkg [target] [metric] [count]"
         print -P "       %F{242}(Arguments can be provided in ANY order)%f"
-        print -P "       %F{14}Run without arguments to launch the Interactive FZF Atlas.%f\n"
+        print -P "       %F{14}Omitting [count] launches the Interactive FZF Atlas.%f\n"
         
-        print -P "%BTargets:%b (Default: all)"
-        print -P "  %F{cyan}all%f                  - System-wide packages (includes dependencies)"
-        print -P "  %F{cyan}explicit%f, %F{cyan}user%f       - Only packages you explicitly installed\n"
+        print -P "%BTargets:%b"
+        print -P "  %F{cyan}all%f                  - System-wide packages (Default)"
+        print -P "  %F{cyan}explicit%f, %F{cyan}user%f       - Only explicitly installed packages\n"
         
-        print -P "%BMetrics:%b (Default: size)"
-        print -P "  %F{cyan}size%f, %F{cyan}hogs%f           - Sort by installed size (largest first)"
-        print -P "  %F{cyan}new%f, %F{cyan}recent%f, %F{cyan}latest%f - Sort by installation date (newest first)"
+        print -P "%BMetrics:%b"
+        print -P "  %F{cyan}size%f, %F{cyan}hogs%f           - Sort by size descending (largest first)"
+        print -P "  %F{cyan}tiny%f, %F{cyan}small%f          - Sort by size ascending (smallest first)"
+        print -P "  %F{cyan}new%f, %F{cyan}recent%f         - Sort by installation date (newest first)"
         print -P "  %F{cyan}old%f, %F{cyan}ancient%f        - Sort by installation date (oldest first)\n"
         
         print -P "%BExamples:%b"
         print -P "  %F{yellow}pkg%f                  # Launch Interactive FZF Package Atlas"
-        print -P "  %F{yellow}pkg explicit new 20%f  # Top 20 most recently explicitly installed"
-        print -P "  %F{yellow}pkg 50 size%f          # Top 50 largest packages overall"
-        print -P "  %F{yellow}pkg old%f              # Top 20 oldest packages overall\n"
+        print -P "  %F{yellow}pkg explicit hogs%f    # Launch Atlas showing explicitly installed Hogs"
+        print -P "  %F{yellow}pkg 50 size%f          # Print classic CLI list of Top 50 largest packages\n"
         return 0
     fi
 
-    # 6. Dynamic Pipeline Construction
+    # 5. Execution Router: Launch Interactive Atlas if no count is provided
+    if (( count == -1 )); then
+        local init_mode="${metric:-alpha}"
+        _pkg_interactive "$init_mode" "$target"
+        return 0
+    fi
+
+    # 6. Fallback: Classic CLI List Execution (if count > 0)
+    metric="${metric:-size_desc}"
     local -a expac_args=(--timefmt='%Y-%m-%d %H:%M:%S' '%l|%m|%n')
     local -a sort_cmd
     local title_metric=""
 
     case "$metric" in
-        size)
-            title_metric="Largest"
-            sort_cmd=(sort -t '|' -k2 -rn) 
-            ;;
-        new)
-            title_metric="Newest"
-            sort_cmd=(sort -t '|' -k1 -r)  
-            ;;
-        old)
-            title_metric="Oldest"
-            sort_cmd=(sort -t '|' -k1)     
-            ;;
+        size_desc) title_metric="Largest";  sort_cmd=(sort -t '|' -k2 -rn) ;;
+        size_asc)  title_metric="Smallest"; sort_cmd=(sort -t '|' -k2 -n) ;;
+        date_desc) title_metric="Newest";   sort_cmd=(sort -t '|' -k1 -r) ;;
+        date_asc)  title_metric="Oldest";   sort_cmd=(sort -t '|' -k1) ;;
+        alpha|*)   title_metric="Alpha";    sort_cmd=(sort -t '|' -k3) ;;
     esac
 
     local title_full=""
@@ -237,9 +282,7 @@ pkg() {
         title_full="${title_metric} Installed Packages (Overall)"
     fi
 
-    # 7. Core Execution Pipeline
     _pkg_header "$title_full" "$count"
-
     local awk_color='{ printf "\033[38;5;246m%s\033[0m  \033[38;5;220m%s\033[0m  \033[1;38;5;39m%s\033[0m\n", $1, $2, $3 }'
 
     if [[ "$target" == "explicit" ]]; then
@@ -254,7 +297,7 @@ pkg() {
 # Native Zsh tab-completion
 _pkg() {
     _arguments \
-        "1:command:(hogs size all explicit user new recent latest old ancient help)" \
+        "1:command:(hogs size tiny small all explicit user new recent latest old ancient help)" \
         "2:count: "
 }
 compdef _pkg pkg
