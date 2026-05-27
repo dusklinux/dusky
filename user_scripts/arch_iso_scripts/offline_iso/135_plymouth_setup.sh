@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Arch Linux (EFI + Btrfs root) | Dusky Graphical Boot & LUKS Setup
-# CHROOT DEPLOYMENT EDITION - FORENSICALLY AUDITED (POSITION-INDEPENDENT)
+# CHROOT DEPLOYMENT EDITION - FORENSICALLY AUDITED (SYSTEMD-BOOT / PLYMOUTH API COMPLIANT)
 
 set -Eeuo pipefail
 export LC_ALL=C
@@ -15,7 +15,6 @@ readonly THEME_NAME="dusky"
 readonly THEME_DIR="/usr/share/plymouth/themes/${THEME_NAME}"
 readonly ASSETS_DIR="${SCRIPT_DIR}/assets/plymouth"
 readonly MKINITCPIO_CONF="/etc/mkinitcpio.conf.d/10-arch-btrfs-luks.conf"
-readonly LIMINE_SCRIPT="${SCRIPT_DIR}/155_limine_setup.sh"
 
 # --- Helpers ---
 fatal() { printf '\033[1;31m[FATAL]\033[0m %s\n' "$1" >&2; exit 1; }
@@ -39,7 +38,7 @@ require_cmd grep
 # --- Execution ---
 info "Ensuring Plymouth is installed..."
 if ! pacman -Q plymouth >/dev/null 2>&1; then
-    # Strict Offline Mode: Respects the airlock established by 051_pacman_repo_switch.sh
+    # Strict Offline Mode: Respects the airlock established by offline repository switching
     if ! pacman -S --needed --noconfirm plymouth; then
         printf "\n\033[1;31m========================================================================\033[0m\n" >&2
         printf "\033[1;31m[CRITICAL ARCHITECTURAL FAILURE]\033[0m\n" >&2
@@ -88,7 +87,7 @@ MonospaceFont=Cantarell 11
 Font=Cantarell 11
 EOF
 
-# Generate .script file
+# Generate .script file (Updated with modern Plymouth Daemon Message API)
 cat << 'EOF' > "${THEME_DIR}/${THEME_NAME}.script"
 Window.SetBackgroundTopColor(0.101, 0.105, 0.149);
 Window.SetBackgroundBottomColor(0.101, 0.105, 0.149);
@@ -108,6 +107,7 @@ global.animation_frame = 0;
 global.password_shown = 0;
 global.max_progress = 0.0;
 
+# --- Progress Bar Logic ---
 fun update_progress_bar(progress) {
     if (progress > global.max_progress) {
         global.max_progress = progress;
@@ -202,6 +202,27 @@ fun display_password_callback (prompt, bullets) {
 Plymouth.SetDisplayNormalFunction(display_normal_callback);
 Plymouth.SetDisplayPasswordFunction(display_password_callback);
 
+# --- System Message / Error Broadcasting (New Modern API Integration) ---
+message_sprite = Sprite();
+message_sprite.SetPosition(Window.GetWidth() / 2, Window.GetHeight() * 0.85, 10000);
+
+fun display_message_callback (text) {
+    # Render text in solid white (1.0, 1.0, 1.0, 1.0)
+    my_image = Image.Text(text, 1.0, 1.0, 1.0, 1.0, "Cantarell 11");
+    message_sprite.SetImage(my_image);
+    message_sprite.SetX(Window.GetWidth() / 2 - my_image.GetWidth() / 2);
+    message_sprite.SetOpacity(1);
+}
+
+fun hide_message_callback (text) {
+    message_sprite.SetOpacity(0);
+}
+
+Plymouth.SetMessageFunction(display_message_callback);
+Plymouth.SetHideMessageFunction(hide_message_callback);
+Plymouth.SetUpdateStatusFunction(display_message_callback);
+
+# --- Progress Bar UI ---
 progress_box.image = Image("progress_box.png");
 progress_box.sprite = Sprite(progress_box.image);
 progress_box.x = Window.GetWidth() / 2 - progress_box.image.GetWidth() / 2;
@@ -236,6 +257,7 @@ plymouth-set-default-theme "$THEME_NAME"
 info "Patching mkinitcpio drop-in config to inject plymouth hook..."
 if [[ -f "$MKINITCPIO_CONF" ]]; then
     # ARCH FIX: sd-plymouth is deprecated. The modern 'plymouth' hook automatically detects systemd environments.
+    # INJECTION: It is optimally injected directly after the 'systemd' or 'udev' hook to catch early boot events.
     if ! grep -q "^[^#]*HOOKS=.*plymouth" "$MKINITCPIO_CONF"; then
         sed -i --follow-symlinks -E 's/^([^#]*HOOKS=\([^)]*systemd)([[:space:]]*)/\1 plymouth /' "$MKINITCPIO_CONF"
         info "Injected modern plymouth hook into $MKINITCPIO_CONF"
@@ -246,22 +268,5 @@ else
     warn "$MKINITCPIO_CONF not found. Ensure 120_mkintcpip_optimizer.sh is run before this script."
 fi
 
-info "Patching 155_limine_setup.sh for silent boot command line parameters..."
-if [[ -f "$LIMINE_SCRIPT" ]]; then
-    if ! grep -q '"splash"' "$LIMINE_SCRIPT"; then
-        sed -i --follow-symlinks -E '/cmdline_parts\+=\(.*rootfstype=btrfs.*\)/a \    cmdline_parts+=("quiet" "splash" "loglevel=3" "rd.udev.log_level=3" "vt.global_cursor_default=0")' "$LIMINE_SCRIPT"
-        
-        if grep -q '"splash"' "$LIMINE_SCRIPT"; then
-            info "Silent boot kernel parameters permanently injected into $LIMINE_SCRIPT"
-        else
-            warn "Failed to inject silent boot parameters. Target array signature in $LIMINE_SCRIPT was not found."
-        fi
-    else
-        info "Silent boot parameters already present in Limine script."
-    fi
-else
-    warn "$LIMINE_SCRIPT not found. Kernel command line parameters were not updated."
-fi
-
 info "Dusky Plymouth deployment successful."
-info "Please run your 140_mkinitcpio_generation.sh and 155_limine_setup.sh scripts to finalize."
+info "Please run your 140_mkinitcpio_generation.sh and 151_systemd_bootloader.sh scripts to finalize."
