@@ -2,7 +2,7 @@
 #==============================================================================
 # FZF CLIPBOARD MANAGER (v2.5 - Unified Wayland/UWSM Edition)
 # Arch Linux / Hyprland / UWSM clipboard utility
-# Optimized for: Bash 5.3+, FZF 0.72.0+
+# Optimized for: Bash 5.3+, FZF 0.73.1+ (Strict 0.73 Syntax & Background Transformations)
 #==============================================================================
 # NOTE: `set -o errexit` is intentionally omitted. Several functions use
 # `return 1` for normal control flow.
@@ -984,57 +984,66 @@ show_menu() {
             --pointer="▌" --delimiter="$SEP" --with-nth=1
             --track --id-nth=3
             --query="$initial_query"
-            --preview="${SELF@Q} --preview '{2}' '{3}' $$ ${current_vim_mode@Q} # \$FZF_PREVIEW_COLUMNS \$FZF_PREVIEW_LINES \$FZF_COLUMNS \$FZF_LINES"
+            --preview="${SELF@Q} --preview {2} {3} $$ ${current_vim_mode@Q} # \$FZF_PREVIEW_COLUMNS \$FZF_PREVIEW_LINES \$FZF_COLUMNS \$FZF_LINES"
             --preview-window="$current_preview_layout"
-            --bind="f1:execute-silent(if [ -f ${help_file@Q} ]; then rm -f ${help_file@Q}; else touch ${help_file@Q}; fi)+refresh-preview"
-            --bind="resize:execute-silent($cap)"
-            --bind="alt-h:transform(${SELF@Q} --move-preview left)"
-            --bind="alt-j:transform(${SELF@Q} --move-preview down)"
-            --bind="alt-k:transform(${SELF@Q} --move-preview up)"
-            --bind="alt-l:transform(${SELF@Q} --move-preview right)"
-            --bind="alt-v:transform(${SELF@Q} --move-preview hidden)"
-            --bind="alt-t:change-query(!${ICON_IMG} !${ICON_PIN} !${ICON_BIN} )"
-            --bind="alt-i:change-query($ICON_IMG )"
-            --bind="alt-p:change-query($ICON_PIN )"
-            --bind="alt-b:change-query($ICON_BIN )"
-            --bind="alt-a:execute-silent(${SELF@Q} --batch-pin {+f})+reload-sync(${SELF@Q} --list)"
-            --bind="alt-d:execute-silent(${SELF@Q} --batch-delete {+f})+reload-sync(${SELF@Q} --list)"
-            --bind="alt-w:execute-silent(${SELF@Q} --wipe)+reload-sync(${SELF@Q} --list)"
-            --bind="enter:execute-silent($cap)+accept"
-            --bind="alt-m:execute-silent(${SELF@Q} --toggle-vim)+execute-silent(printf '%s' {q} > ${toggle_file@Q})+abort"
+            
+            # Use `{...}` exclusively when dealing with bash test conditions containing `[` and `]` internally.
+            # Use `[...]` for everything else, neutralizing issues with `(`, `)`, `{`, and `}` strings entirely.
+            --bind="f1:execute-silent{if [ -f ${help_file@Q} ]; then rm -f ${help_file@Q}; else touch ${help_file@Q}; fi}+refresh-preview"
+            --bind="resize:execute-silent[ $cap & ]"
+            
+            --bind="alt-h:bg-transform[${SELF@Q} --move-preview left]"
+            --bind="alt-j:bg-transform[${SELF@Q} --move-preview down]"
+            --bind="alt-k:bg-transform[${SELF@Q} --move-preview up]"
+            --bind="alt-l:bg-transform[${SELF@Q} --move-preview right]"
+            --bind="alt-v:bg-transform[${SELF@Q} --move-preview hidden]"
+            
+            --bind="alt-t:change-query[!${ICON_IMG} !${ICON_PIN} !${ICON_BIN} ]"
+            --bind="alt-i:change-query[$ICON_IMG ]"
+            --bind="alt-p:change-query[$ICON_PIN ]"
+            --bind="alt-b:change-query[$ICON_BIN ]"
+            
+            --bind="alt-a:execute-silent[${SELF@Q} --batch-pin {+f}]+reload-sync[${SELF@Q} --list]"
+            --bind="alt-d:execute-silent[${SELF@Q} --batch-delete {+f}]+reload-sync[${SELF@Q} --list]"
+            --bind="alt-w:execute-silent[${SELF@Q} --wipe]+reload-sync[${SELF@Q} --list]"
+            --bind="enter:execute-silent[$cap]+accept"
+            --bind="alt-m:execute-silent[${SELF@Q} --toggle-vim]+execute-silent[printf '%s' {q} > ${toggle_file@Q}]+abort"
         )
 
         if [[ "$current_vim_mode" == "true" ]]; then
-            # Reinstating the explicit ignore list to physically lock the text buffer.
-            # Covers alphanumerics, space, backspace, and delete (excluding mapped vim keys).
-            local unmapped="a,b,c,d,e,f,h,i,l,m,n,o,p,r,s,t,u,w,x,y,z,A,B,C,D,E,F,H,I,L,M,N,O,P,Q,R,S,T,U,W,X,Y,Z,0,1,2,3,4,5,6,7,8,9,space,bspace,del"
+            # Canonicalized mapping array WITHOUT backspace/delete.
+            # We let FZF's native `disable-search` implicitly freeze the query buffer during normal mode.
+            # This ensures their default `backward-delete-char` functions operate perfectly when you hit `/` to search.
+            local unmapped="a,b,c,d,e,f,h,i,l,m,n,o,p,r,s,t,u,w,x,y,z,A,B,C,D,E,F,H,I,L,M,N,O,P,Q,R,S,T,U,W,X,Y,Z,0,1,2,3,4,5,6,7,8,9,space"
             local ignore_binds="${unmapped//,/:ignore,}:ignore"
 
             fzf_args+=(
                 --prompt=" 🅝 (q:quit /:search) > "
                 --bind="start:disable-search"
                 --bind="$ignore_binds"
-                --bind="esc:change-prompt( 🅝 (q:quit /:search) > )+disable-search+rebind(j,k,g,G,J,K,v,V,q,ctrl-a,ctrl-d,ctrl-u,/,${unmapped})"
-                --bind="ctrl-c:execute-silent($cap)+abort"
+                
+                # change-prompt contains nested parens; [...] securely wraps the payload.
+                --bind="esc:change-prompt[ 🅝 (q:quit /:search) > ]+disable-search+rebind[${unmapped},j,k,g,G,J,K,v,V,q,ctrl-a,ctrl-d,ctrl-u,/]"
+                --bind="ctrl-c:execute-silent[$cap]+abort"
                 --bind="j:down"
                 --bind="k:up"
                 --bind="g:first"
                 --bind="G:last"
-                --bind="J:toggle-down"
-                --bind="K:toggle-up"
+                --bind="J:toggle+down"
+                --bind="K:toggle+up"
                 --bind="v:toggle"
                 --bind="V:toggle"
                 --bind="ctrl-a:select-all"
                 --bind="ctrl-d:half-page-down"
                 --bind="ctrl-u:half-page-up"
-                --bind="q:execute-silent($cap)+abort"
-                --bind="/:change-prompt( 🔎 > )+enable-search+unbind(j,k,g,G,J,K,v,V,q,ctrl-a,ctrl-d,ctrl-u,/,${unmapped})"
+                --bind="q:execute-silent[$cap]+abort"
+                --bind="/:change-prompt[ 🔎 > ]+enable-search+unbind[${unmapped},j,k,g,G,J,K,v,V,q,ctrl-a,ctrl-d,ctrl-u,/]"
             )
         else
             fzf_args+=(
                 --prompt="  "
-                --bind="esc:execute-silent($cap)+abort"
-                --bind="ctrl-c:execute-silent($cap)+abort"
+                --bind="esc:execute-silent[$cap]+abort"
+                --bind="ctrl-c:execute-silent[$cap]+abort"
             )
         fi
 
