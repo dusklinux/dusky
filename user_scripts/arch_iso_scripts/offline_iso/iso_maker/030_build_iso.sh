@@ -6,6 +6,10 @@
 # ==============================================================================
 set -euo pipefail
 
+# Enforce strict POSIX locale for predictable parsing
+export LC_ALL=C
+export LANG=C
+
 # --- 1. CONFIGURATION ---
 readonly ZRAM_DIR="/mnt/zram1/dusky_iso"
 readonly PROFILE_DIR="${ZRAM_DIR}/profile"
@@ -31,6 +35,11 @@ fi
 
 if [[ ! -d "${OFFLINE_REPO_OFFICIAL}" ]]; then
     echo "[ERR] Official offline repository not found at ${OFFLINE_REPO_OFFICIAL}!" >&2
+    exit 1
+fi
+
+if ! command -v git &>/dev/null; then
+    echo "[ERR] git is required but not installed." >&2
     exit 1
 fi
 
@@ -82,8 +91,18 @@ echo "  -> Pruning conflicting Archiso baseline packages..."
 sed -i '/^grml-zsh-config$/d' "${PROFILE_DIR}/packages.x86_64" || true
 
 echo "  -> Fetching and staging dotfiles payload into /etc/skel..."
-# 4. Clone the bare repository natively into the skeleton dir.
-git clone --bare --depth 1 "https://github.com/dusklinux/dusky" "${SKEL_DIR}/dusky"
+# 4. Clone the bare repository natively into the skeleton dir (with network resilience).
+for attempt in {1..3}; do
+    if git clone --bare --depth 1 "https://github.com/dusklinux/dusky" "${SKEL_DIR}/dusky"; then
+        break
+    fi
+    if (( attempt == 3 )); then
+        echo "[ERR] Git clone failed after 3 attempts. Check network connection." >&2
+        exit 1
+    fi
+    echo "[WARN] Git clone failed. Retrying in 5s..."
+    sleep 5
+done
 
 # 5. Force checkout directly into /etc/skel so subdirectories manifest in the ISO.
 git --git-dir="${SKEL_DIR}/dusky/" --work-tree="${SKEL_DIR}" checkout -f
@@ -177,9 +196,9 @@ echo "  -> Renaming output to ${FINAL_ISO_NAME}..."
 mv "${OUT_DIR}"/*.iso "${OUT_DIR}/${FINAL_ISO_NAME}"
 
 # --- 8. PERMISSIONS RESTORATION ---
-if [[ -n "${SUDO_USER:-}" ]]; then
-    echo "  -> Restoring ownership of the output directory to user: $SUDO_USER..."
-    chown -R "$SUDO_USER:$SUDO_USER" "$OUT_DIR"
+if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
+    echo "  -> Restoring ownership of the output directory to user ID: $SUDO_UID..."
+    chown -R "${SUDO_UID}:${SUDO_GID}" "$OUT_DIR"
 fi
 
 echo -e "\n\e[1;32m[SUCCESS]\e[0m \e[1mISO generation complete!\e[0m"
