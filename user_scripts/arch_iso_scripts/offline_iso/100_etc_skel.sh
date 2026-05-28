@@ -61,7 +61,7 @@ declare -a COPY_TASKS=(
     "dusky/user_scripts/network_manager/dusky_network.sh :: /etc/skel/wifi_connect.sh"
 
     # 4. Network Manager Script
-    "dusky/.config/matugen/generated_fresh/foot-colors.ini :: /etc/skel/.config/foot/foot-colors.ini"
+    "/etc/skel/.config/matugen/generated_fresh/foot-colors.ini :: /etc/skel/.config/foot/foot-colors.ini"
 )
 
 # Files matching these patterns will be forced to be executable (755)
