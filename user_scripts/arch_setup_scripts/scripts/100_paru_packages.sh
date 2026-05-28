@@ -94,7 +94,6 @@ declare -ar PACKAGES=(
   "otf-atkinson-hyperlegible-next"
   "python-pywalfox"
   "hyprshade"
-  "waypaper"
   "peaclock"
   "tray-tui"
   "xdg-terminal-exec"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# 020_build_aur_packages.sh  —  v2.2  (Forensic Pacman 7.1.0 Polish + POSIX Strict)
+# 020_build_aur_packages.sh  —  v3.0  (Dual-Arch CachyOS/Arch Factory Edition)
 #
 # Factory script: Builds AUR packages into an offline pacman repository for
 # use in an offline Arch Linux ISO. Resolves transitive closures, downloads
@@ -26,7 +26,6 @@ declare -a AUR_PACKAGES=(
     'otf-atkinson-hyperlegible-next'
     'python-pywalfox'
     'hyprshade'
-    'waypaper'
     'peaclock'
     'tray-tui'
     'xdg-terminal-exec'
@@ -52,6 +51,7 @@ declare -ir TIMEOUT_SEC=5
 declare -g  OFFLINE_REPO_DIR=''
 declare -g  OFFICIAL_REPO_DIR='/srv/offline-repo/official'
 declare -g  INTERACTIVE_MODE=1
+declare -g  REPO_MODE=0  # 1 = Standard Arch, 2 = CachyOS
 declare -g  CLONE_BASE_DIR=''
 declare -gi _LAST_PKG_SKIPPED=0
 declare -gi _ORPHANS_PRUNED=0
@@ -141,6 +141,14 @@ _print_logo() {
 _parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --arch)
+                REPO_MODE=1
+                shift
+                ;;
+            --cachyos)
+                REPO_MODE=2
+                shift
+                ;;
             --auto)
                 OFFLINE_REPO_DIR='/srv/offline-repo/aur'
                 OFFICIAL_REPO_DIR='/srv/offline-repo/official'
@@ -164,10 +172,30 @@ _parse_args() {
                 shift 2
                 ;;
             *)
-                die "Unknown argument: '$1'"$'\n'"Usage: $0 [--auto | --current | --path <dir> | --official-path <dir>]"
+                die "Unknown argument: '$1'"$'\n'"Usage: $0 [--arch | --cachyos] [--auto | --current | --path <dir>]"
                 ;;
         esac
     done
+}
+
+_prompt_build_mode() {
+  (( REPO_MODE != 0 )) && return 0
+  (( INTERACTIVE_MODE )) || { REPO_MODE=2; return 0; }
+
+  printf '\n%s==>%s %sSelect Target Repository Mode%s\n' "${BOLD}${CYAN}" "${RESET}" "${BOLD}" "${RESET}"
+  printf '  1) Standard Arch Linux (Pure)\n'
+  printf '  2) CachyOS x86-64-v3 (Optimized + Arch Fallback)\n\n'
+  
+  local choice
+  while true; do
+    read -r -p "  Enter choice [1-2] (default=2): " choice
+    choice="${choice:-2}"
+    case "$choice" in
+      1) REPO_MODE=1; break ;;
+      2) REPO_MODE=2; break ;;
+      *) printf "  %sInvalid choice.%s\n" "${RED}" "${RESET}" ;;
+    esac
+  done
 }
 
 _prompt_repo_dir() {
@@ -234,7 +262,15 @@ _check_dependencies() {
 
     (( missing > 0 )) && die "${missing} required tool(s) missing. Cannot continue."
     [[ -r /etc/arch-release ]] || die "Not running on Arch Linux."
-    log_ok "All required tools are present."
+
+    if (( REPO_MODE == 2 )); then
+        if ! pacman -Q cachyos-keyring &>/dev/null; then
+            log_err "CachyOS mode requires 'cachyos-keyring' installed on the HOST build system."
+            die "Please run script 010 interactively first to install the keyring, or install it manually."
+        fi
+    fi
+
+    log_ok "All required tools and keys are present."
 }
 
 _setup_dirs() {
@@ -287,13 +323,60 @@ _pacman_isolated() {
 }
 
 _init_isolated_db() {
-    log_info "Initialising isolated pacman sandbox"
+    local mode_name="Standard Arch"
+    (( REPO_MODE == 2 )) && mode_name="CachyOS v3 Injection"
+
+    log_info "Initialising isolated pacman sandbox (${mode_name})"
 
     [[ -d "${ISOLATED_DB_DIR}" ]] && rm -rf -- "${ISOLATED_DB_DIR}"
-    mkdir -p -- "${ISOLATED_DB_DIR}/local" "${ISOLATED_DB_DIR}/sync"
+    mkdir -p -- "${ISOLATED_DB_DIR}/local" "${ISOLATED_DB_DIR}/sync" "${ISOLATED_DB_DIR}/pacman.d"
 
-    grep -vE '^\s*(IgnorePkg|IgnoreGroup)\s*=' /etc/pacman.conf \
-        > "${ISOLATED_DB_DIR}/pacman.conf"
+    if (( REPO_MODE == 2 )); then
+        log_step "Generating pacman.conf with CachyOS v3 prioritization..."
+        
+        find /etc/pacman.d -maxdepth 1 -type f -exec cp {} "${ISOLATED_DB_DIR}/pacman.d/" \;
+        find "${ISOLATED_DB_DIR}/pacman.d" -type f -exec sed -i 's/\$arch/x86_64/g' {} +
+
+        awk -v sandbox="${ISOLATED_DB_DIR}" '
+        /^#?VerbosePkgLists/ { print "VerbosePkgLists"; next }
+        /^#?Color/ { print "Color\nILoveCandy"; next }
+        /^#?ParallelDownloads/ { print "ParallelDownloads = 10"; next }
+        /^\[options\]/ {
+            print
+            print "Architecture = x86_64_v3 x86_64"
+            next
+        }
+        /^\s*Architecture\s*=/ { next }
+        /^\[core\]/ {
+            print "# --- INJECTED CACHYOS v3 REPOSITORIES ---"
+            print "[cachyos-v3]"
+            print "Server = https://mirror.cachyos.org/repo/x86_64_v3/$repo"
+            print ""
+            print "[cachyos-extra-v3]"
+            print "Server = https://mirror.cachyos.org/repo/x86_64_v3/$repo"
+            print ""
+            print "[cachyos-core-v3]"
+            print "Server = https://mirror.cachyos.org/repo/x86_64_v3/$repo"
+            print ""
+            print "[cachyos]"
+            print "Server = https://mirror.cachyos.org/repo/x86_64/$repo"
+            print "# ----------------------------------------"
+            print ""
+            print "[core]"
+            next
+        }
+        /^\[cachyos/ { skip_cachy = 1; next }
+        /^\[/ { skip_cachy = 0 }
+        skip_cachy == 1 { next }
+        {
+            gsub("/etc/pacman.d/", sandbox "/pacman.d/")
+            if ($0 ~ /^\s*Server\s*=/) { gsub("\\$arch", "x86_64") }
+            print
+        }
+        ' /etc/pacman.conf | grep -vE '^\s*(IgnorePkg|IgnoreGroup)\s*=' > "${ISOLATED_DB_DIR}/pacman.conf"
+    else
+        grep -vE '^\s*(IgnorePkg|IgnoreGroup)\s*=' /etc/pacman.conf > "${ISOLATED_DB_DIR}/pacman.conf"
+    fi
 
     log_step "Syncing package databases into sandbox..."
     _pacman_isolated -Sy || die "Failed to sync package databases into isolated sandbox."
@@ -345,7 +428,7 @@ _extract_runtime_deps() {
     local pkgfile="$1"
     bsdtar -xOf "$pkgfile" .PKGINFO 2>/dev/null \
     | grep '^depend = ' | sed 's/^depend = //' | sed 's/[><=].*//' \
-    | sed 's/[[:space:]]*$//' | grep -v '^$' | grep -v '^so:' | grep -v '^pkgconfig(' \
+    | sed 's/[[:space:]]*$//' | grep -v '^$' | grep -v '^so:' | grep -v '^pkgconfig(' | grep -v '\.so$' \
     || true
 }
 
@@ -460,9 +543,6 @@ _build_aur_package() {
     for (( attempt = 1; attempt <= MAX_ATTEMPTS; attempt++ )); do
         local build_rc=0
         
-        # Native Paru Flags:
-        # --nocheck: Prevents paru from attempting to download massive testing dependencies.
-        # --nopgpfetch: Prevents paru from hitting interactive deadlock if PKGBUILD lacks keys.
         PKGDEST="${temp_pkgdest}" BUILDDIR="${build_work_dir}" SRCDEST="${build_work_dir}/src" \
         timeout "${BUILD_TIMEOUT_SEC}" paru -B "$pkgbuild_dir" \
             --noconfirm \
@@ -599,7 +679,6 @@ EOF
         return 1
     }
 
-    # Only query packages that actually exist in the DBs to avoid complete failure
     local -a valid_targets=()
     local pkg
     for pkg in "${AUR_PACKAGES[@]}"; do
@@ -707,6 +786,9 @@ _print_summary() {
     shift 3
     local -a failed_list=("$@")
 
+    local mode_name="Standard Arch Linux"
+    (( REPO_MODE == 2 )) && mode_name="CachyOS x86-64-v3"
+
     log_info "Build Summary"
 
     local repo_sz
@@ -715,6 +797,7 @@ _print_summary() {
     total_pkg_count=$(find "${OFFLINE_REPO_DIR}" -maxdepth 1 -name '*.pkg.tar.*' ! -name '*.sig' -type f 2>/dev/null | wc -l)
 
     printf '\n'
+    printf '  %s%-42s%s %s\n'  "${BOLD}" "Target Architecture:"                    "${RESET}" "${mode_name}"
     printf '  %s%-42s%s %s\n'  "${BOLD}" "Offline repo path:"                      "${RESET}" "${OFFLINE_REPO_DIR}"
     printf '  %s%-42s%s %s\n'  "${BOLD}" "Repository name:"                        "${RESET}" "${REPO_NAME}"
     printf '  %s%-42s%s %d\n'  "${BOLD}" "Packages built:"                         "${RESET}" "${success_count}"
@@ -742,13 +825,14 @@ main() {
     _print_logo
 
     _check_not_root
+    _prompt_build_mode
     _prompt_repo_dir
 
     OFFLINE_REPO_DIR="$(realpath -m -- "${OFFLINE_REPO_DIR}")"
     [[ "$OFFLINE_REPO_DIR" == "/" ]] && die "Root directory (/) is not a valid repository path."
 
-    _check_dependencies
     _check_sudo_access
+    _check_dependencies
     _setup_dirs
     _init_isolated_db
 

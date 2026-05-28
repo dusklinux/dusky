@@ -16,7 +16,6 @@ declare -ar pkgs_aur=(
   "otf-atkinson-hyperlegible-next"
   "python-pywalfox"
   "hyprshade"
-  "waypaper"
   "peaclock"
   "tray-tui"
   "xdg-terminal-exec"
