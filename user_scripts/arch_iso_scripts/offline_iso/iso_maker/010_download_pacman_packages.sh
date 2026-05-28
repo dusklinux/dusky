@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# 010_download_pacman_packages.sh  —  v6.11 (Awk Quote Fix & Default CachyOS)
+# 010_download_pacman_packages.sh  —  v6.13 (Golden Master)
 #
 # Factory script: resolves the FULL transitive dependency closure of all
 # defined package groups, downloads them into a local directory, then builds
@@ -113,7 +113,7 @@ declare -g REPO_MODE=0  # 1 = Standard Arch, 2 = CachyOS
 
 _setup_colors() {
   BOLD='' GREEN='' YELLOW='' RED='' CYAN='' MAGENTA='' DIM='' RESET=''
-  if [[ -z "${NO_COLOR-}" ]] && [[ -t 1 ]] && command -v tput &>/dev/null; then
+  if [[ -z "${NO_COLOR:-}" ]] && [[ -t 1 ]] && command -v tput &>/dev/null; then
     BOLD=$(tput bold)
     GREEN=$(tput setaf 2)
     YELLOW=$(tput setaf 3)
@@ -207,7 +207,7 @@ _parse_args() {
         shift
         ;;
       --path)
-        [[ -z "${2-}" ]] && die "--path requires a directory argument."
+        [[ -z "${2:-}" ]] && die "--path requires a directory argument."
         OFFLINE_REPO_DIR="$2"
         INTERACTIVE_MODE=0
         shift 2
@@ -357,9 +357,9 @@ _build_master_list() {
   done < <(compgen -A variable 'pkgs_' | sort)
 
   if (( REPO_MODE == 2 )); then
-      log_step "Injecting CachyOS prerequisite packages (cachyos-keyring, cachyos-mirrorlist)..."
-      MASTER_PKGS+=("cachyos-keyring" "cachyos-mirrorlist")
-      (( raw_count += 2 )) || true
+      log_step "Injecting CachyOS prerequisite packages (cachyos-keyring, mirrorlist, rate-mirrors)..."
+      MASTER_PKGS+=("cachyos-keyring" "cachyos-mirrorlist" "cachyos-rate-mirrors")
+      (( raw_count += 3 )) || true
   fi
 
   log_ok "${group_count} groups | ${raw_count} raw | ${#MASTER_PKGS[@]} unique packages."
@@ -587,9 +587,7 @@ _prune_orphans() {
 _prune_old_versions() {
   log_info "Removing old package versions (keeping ${PACCACHE_KEEP})"
   
-  echo y | paccache \
-    -r -k "${PACCACHE_KEEP}" -c "${OFFLINE_REPO_DIR}" \
-    || die "paccache failed."
+  echo y | paccache -r -k "${PACCACHE_KEEP}" -c "${OFFLINE_REPO_DIR}" || die "paccache failed."
     
   log_ok "Cache pruned successfully."
 }
@@ -622,7 +620,7 @@ _generate_repo_database() {
 # ==============================================================================
 
 _restore_permissions() {
-  if [[ -n "${SUDO_UID-}" && -n "${SUDO_GID-}" ]]; then
+  if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
     log_info "Restoring file ownership"
     log_step "Transferring files back to user: $(id -un "$SUDO_UID")"
     
