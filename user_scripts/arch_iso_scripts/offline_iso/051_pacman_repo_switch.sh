@@ -308,31 +308,31 @@ ARCH_BLOCK_EOF
 
     log_info "Online pacman.conf written successfully."
 
-    # Write Standard Arch Mirrorlist
+    # Write Standard Arch Mirrorlist - HARDCODED to x86_64 to prevent $arch expansion bugs
     write_file_atomically "${MIRRORLIST_FILE}" << 'ONLINE_MIRRORLIST_EOF'
 ################################################################################
 # /etc/pacman.d/mirrorlist — ONLINE MODE
 ################################################################################
-Server = https://frankfurt.mirror.pkgbuild.com/$repo/os/$arch
-Server = https://johannesburg.mirror.pkgbuild.com/$repo/os/$arch
-Server = https://london.mirror.pkgbuild.com/$repo/os/$arch
-Server = https://losangeles.mirror.pkgbuild.com/$repo/os/$arch
-Server = https://mirror.moson.org/arch/$repo/os/$arch
-Server = https://mirror.sunred.org/archlinux/$repo/os/$arch
-Server = https://arch.mirror.constant.com/$repo/os/$arch
-Server = https://arch.phinau.de/$repo/os/$arch
-Server = https://mirror.theo546.fr/archlinux/$repo/os/$arch
-Server = https://berlin.mirror.pkgbuild.com/$repo/os/$arch
+Server = https://frankfurt.mirror.pkgbuild.com/$repo/os/x86_64
+Server = https://johannesburg.mirror.pkgbuild.com/$repo/os/x86_64
+Server = https://london.mirror.pkgbuild.com/$repo/os/x86_64
+Server = https://losangeles.mirror.pkgbuild.com/$repo/os/x86_64
+Server = https://mirror.moson.org/arch/$repo/os/x86_64
+Server = https://mirror.sunred.org/archlinux/$repo/os/x86_64
+Server = https://arch.mirror.constant.com/$repo/os/x86_64
+Server = https://arch.phinau.de/$repo/os/x86_64
+Server = https://mirror.theo546.fr/archlinux/$repo/os/x86_64
+Server = https://berlin.mirror.pkgbuild.com/$repo/os/x86_64
 ONLINE_MIRRORLIST_EOF
 
     # Dynamically scaffold CachyOS mirrorlists to prevent `pacman -Syy` crashes
     if [[ "${TARGET_OS}" == "cachyos" ]]; then
         log_info "Scaffolding base CachyOS mirrorlists..."
         write_file_atomically "/etc/pacman.d/cachyos-mirrorlist" << 'EOF'
-Server = https://mirror.cachyos.org/repo/$arch/$repo
+Server = https://mirror.cachyos.org/repo/x86_64/$repo
 EOF
         write_file_atomically "/etc/pacman.d/cachyos-v3-mirrorlist" << 'EOF'
-Server = https://mirror.cachyos.org/repo/$arch_v3/$repo
+Server = https://mirror.cachyos.org/repo/x86_64_v3/$repo
 EOF
     fi
 
@@ -548,7 +548,7 @@ main() {
             --online)  NETWORK_MODE="online"; shift ;;
             --offline) NETWORK_MODE="offline"; shift ;;
             --arch)    TARGET_OS="arch"; shift ;;
-            --cachyos) TARGET_OS="cachyos"; shift ;;
+            --cachyos|--cachy) TARGET_OS="cachyos"; shift ;;
             --help|-h) show_usage; exit 0 ;;
             *)         log_error "Unknown argument: '$1'"; show_usage; exit 1 ;;
         esac
