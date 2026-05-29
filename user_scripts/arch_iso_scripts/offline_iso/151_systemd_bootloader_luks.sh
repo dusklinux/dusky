@@ -3,7 +3,7 @@
 # Script: 151_systemd_bootloader.sh
 # Description: Automated, dynamically-mapped systemd-boot configuration.
 # Architecture: UEFI -> systemd-boot -> LUKS2 (sd-encrypt) -> BTRFS -> Plymouth
-# Standard: systemd v260+ (UAPI.1 Boot Loader Specification)
+# Standard: systemd v260.1+ (UAPI.1 Boot Loader Specification)
 # ==============================================================================
 
 set -euo pipefail
@@ -44,7 +44,6 @@ if [[ ! -d /sys/firmware/efi/efivars ]]; then
     exit 1
 fi
 
-# Ensure systemd-boot is managing the correct ESP (Arch default is /boot)
 ESP_MNT="/boot"
 if ! mountpoint -q "$ESP_MNT"; then
     log_error "$ESP_MNT is NOT a mountpoint. Ensure your FAT32 ESP is mounted."
@@ -66,7 +65,6 @@ pacman -S --needed --noconfirm efibootmgr gawk >/dev/null
 
 log_info "Analyzing filesystem topology..."
 
-# 2a. Determine Root Filesystem
 RAW_ROOT_MNT=$(findmnt -n -e -o SOURCE -T /)
 ROOT_BLK_DEV="${RAW_ROOT_MNT%%\[*}"
 ROOT_UUID=$(findmnt -n -e -o UUID -T / || true)
@@ -76,14 +74,12 @@ if [[ -z "$ROOT_UUID" || "$ROOT_UUID" == "-" ]]; then
 fi
 [[ -z "$ROOT_UUID" ]] && { log_error "Could not resolve root BTRFS UUID."; exit 1; }
 
-# 2b. Determine BTRFS Subvolume (Native Bash Regex - 100% reliable)
 ROOT_OPTS=$(findmnt -n -e -o OPTIONS -T /)
 ROOT_SUBVOL=""
 if [[ "$ROOT_OPTS" =~ subvol=([^,]+) ]]; then
     ROOT_SUBVOL="${BASH_REMATCH[1]}"
 fi
 
-# 2c. Evaluate Effective Mkinitcpio Hooks (Strict Subshell Evaluation)
 HOOKS_STR=$(env -i bash -c '
     source /etc/mkinitcpio.conf >/dev/null 2>&1 || true
     shopt -s nullglob
@@ -93,7 +89,6 @@ HOOKS_STR=$(env -i bash -c '
     echo "${HOOKS[*]:-}"
 ')
 
-# 2d. Trace LUKS Ancestor & Configure Core Command Line
 CRYPT_DEV=$(lsblk -nrspo PATH,TYPE -s -- "$ROOT_BLK_DEV" | awk '$2 == "crypt" { print $1; exit }')
 CMDLINE_BASE="rw rootfstype=btrfs"
 
@@ -106,7 +101,6 @@ if [[ -n "$CRYPT_DEV" ]]; then
     LUKS_UUID=$(blkid -s UUID -o value "$BACKING_DEV")
     [[ -z "$LUKS_UUID" ]] && { log_error "Could not determine LUKS UUID for $BACKING_DEV."; exit 1; }
 
-    # Map parameters based strictly on active hook configuration
     if [[ " $HOOKS_STR " == *" sd-encrypt "* ]]; then
         log_info "Systemd encryption hook (sd-encrypt) detected."
         CMDLINE_BASE="rd.luks.name=${LUKS_UUID}=${MAPPER_NAME} rd.luks.options=discard root=UUID=${ROOT_UUID} ${CMDLINE_BASE}"
@@ -122,7 +116,6 @@ else
     CMDLINE_BASE="root=UUID=${ROOT_UUID} ${CMDLINE_BASE}"
 fi
 
-# 2e. Append Subvolume Parameter
 if [[ -n "$ROOT_SUBVOL" ]]; then
     CMDLINE_BASE="${CMDLINE_BASE} rootflags=subvol=${ROOT_SUBVOL}"
 fi
@@ -130,18 +123,19 @@ fi
 log_success "Topology mapped securely. Base kernel command line established."
 
 # ==============================================================================
-# 3. Systemd-Boot Installation & Entropy Seeding
+# 3. Systemd-Boot Installation (v260.1 Standard)
 # ==============================================================================
 
 log_info "Deploying systemd-boot to $ESP_MNT..."
 
-# Explicitly use --variables=yes to override the default container/chroot block in systemd 258+
+# Use --variables=yes to ensure NVRAM writes inside chroot.
+# Use --efi-boot-option-description-with-device=yes (Systemd 260+) for hardware context in UEFI menu.
 if bootctl is-installed --esp-path="$ESP_MNT" >/dev/null 2>&1; then
     log_info "Existing systemd-boot detected. Performing update..."
-    bootctl update --esp-path="$ESP_MNT" --variables=yes
+    bootctl update --esp-path="$ESP_MNT" --variables=yes --efi-boot-option-description-with-device=yes
 else
     log_info "Performing fresh systemd-boot installation..."
-    if ! bootctl install --esp-path="$ESP_MNT" --variables=yes; then
+    if ! bootctl install --esp-path="$ESP_MNT" --variables=yes --efi-boot-option-description-with-device=yes; then
         log_warn "Installation returned non-zero (common on restricted firmware). Verifying deployment..."
         if ! bootctl is-installed --esp-path="$ESP_MNT" >/dev/null 2>&1; then
              log_error "bootctl installation failed completely."
@@ -150,13 +144,8 @@ else
     fi
 fi
 
-# Systemd 243+ Security standard: Initialize Early-Boot Random Seed in ESP
-log_info "Initializing cryptographic random seed for early-boot entropy..."
-bootctl random-seed --esp-path="$ESP_MNT" --variables=yes || log_warn "Could not store EFI system token (normal on locked firmware)."
+log_success "systemd-boot binaries deployed. Early-boot entropy seeded automatically."
 
-log_success "systemd-boot binaries deployed and random seed generated."
-
-# Configure the main loader (default @saved enables pressing 'd' in menu to lock a default kernel)
 LOADER_CONF="$ESP_MNT/loader/loader.conf"
 cat > "$LOADER_CONF" <<EOF
 default  @saved
@@ -166,43 +155,49 @@ editor   no
 EOF
 
 # ==============================================================================
-# 4. UAPI.1 Boot Loader Specification Entry Generation
+# 4. Deferred Hook Bridging & BLS Generation
 # ==============================================================================
 
-log_info "Scanning for installed kernels and microcode..."
+log_info "Staging kernels for deferred mkinitcpio generation..."
 
-shopt -s nullglob
-KERNELS=("$ESP_MNT"/vmlinuz-*)
-UCODES=("$ESP_MNT"/*-ucode.img)
-shopt -u nullglob
+# Because the 90-mkinitcpio-install hook was suppressed during pacstrap, 
+# the kernel binaries were never moved to /boot. We must copy them manually 
+# so mkinitcpio -P has a target to read from in Script 158.
+
+declare -a KERNELS=()
+for kdir in /usr/lib/modules/*; do
+    if [[ -f "$kdir/pkgbase" && -f "$kdir/vmlinuz" ]]; then
+        KNAME="$(<"$kdir/pkgbase")"
+        KERNELS+=("$KNAME")
+        
+        log_info "Copying kernel binary for '$KNAME' to $ESP_MNT/vmlinuz-$KNAME..."
+        cp -p "$kdir/vmlinuz" "$ESP_MNT/vmlinuz-$KNAME"
+    fi
+done
 
 if (( ${#KERNELS[@]} == 0 )); then
-    log_error "No kernels found in $ESP_MNT. Did pacstrap complete successfully?"
+    log_error "No valid kernel payloads found in /usr/lib/modules. pacstrap failure?"
     exit 1
 fi
 
-# Ensure the BLS entries directory exists
-mkdir -p "$ESP_MNT/loader/entries"
+shopt -s nullglob
+UCODES=("$ESP_MNT"/*-ucode.img)
+shopt -u nullglob
 
-# Define Plymouth specific parameters
+mkdir -p "$ESP_MNT/loader/entries"
 PLYMOUTH_ARGS="quiet splash loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0 nowatchdog"
 
-for kernel_path in "${KERNELS[@]}"; do
-    # Pure native bash string manipulation (avoids spawning `sed` subprocesses)
-    kbase="${kernel_path##*/}"
-    KNAME="${kbase#vmlinuz-}"
-    
+for KNAME in "${KERNELS[@]}"; do
     ENTRY_FILE="$ESP_MNT/loader/entries/arch-${KNAME}.conf"
     FALLBACK_FILE="$ESP_MNT/loader/entries/arch-${KNAME}-fallback.conf"
     
     log_info "Generating BLS Type #1 entries for: Arch Linux ($KNAME)"
 
-    # --- Primary Entry (With Plymouth Graphical Splash) ---
+    # --- Primary Entry ---
     {
         printf "title   Arch Linux (%s)\n" "$KNAME"
-        printf "linux   /%s\n" "$kbase"
+        printf "linux   /vmlinuz-%s\n" "$KNAME"
         
-        # Microcode must precede the initramfs in systemd-boot configs
         for ucode in "${UCODES[@]}"; do
             printf "initrd  /%s\n" "${ucode##*/}"
         done
@@ -211,21 +206,18 @@ for kernel_path in "${KERNELS[@]}"; do
         printf "options %s %s\n" "$CMDLINE_BASE" "$PLYMOUTH_ARGS"
     } > "$ENTRY_FILE"
 
-    # --- Fallback Entry (Recovery Mode, No Splash) ---
-    if [[ -f "$ESP_MNT/initramfs-${KNAME}-fallback.img" ]]; then
-        {
-            printf "title   Arch Linux (%s - Fallback Recovery)\n" "$KNAME"
-            printf "linux   /%s\n" "$kbase"
-            
-            for ucode in "${UCODES[@]}"; do
-                printf "initrd  /%s\n" "${ucode##*/}"
-            done
-            
-            printf "initrd  /initramfs-%s-fallback.img\n" "$KNAME"
-            # Exclude PLYMOUTH_ARGS to ensure terminal output is completely visible during a kernel panic
-            printf "options %s\n" "$CMDLINE_BASE"
-        } > "$FALLBACK_FILE"
-    fi
+    # --- Fallback Entry ---
+    {
+        printf "title   Arch Linux (%s - Fallback Recovery)\n" "$KNAME"
+        printf "linux   /vmlinuz-%s\n" "$KNAME"
+        
+        for ucode in "${UCODES[@]}"; do
+            printf "initrd  /%s\n" "${ucode##*/}"
+        done
+        
+        printf "initrd  /initramfs-%s-fallback.img\n" "$KNAME"
+        printf "options %s\n" "$CMDLINE_BASE"
+    } > "$FALLBACK_FILE"
 done
 
 # ==============================================================================
@@ -235,4 +227,4 @@ done
 log_info "Enabling systemd-boot-update.service (Auto-updates bootloader)..."
 systemctl enable systemd-boot-update.service >/dev/null 2>&1 || true
 
-log_success "Systemd-Boot orchestration complete. Your system is ready to boot."
+log_success "Systemd-Boot orchestration complete. Kernels staged for mkinitcpio."
