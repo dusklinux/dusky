@@ -40,7 +40,6 @@ for kdir in /usr/lib/modules/*; do
 # mkinitcpio preset file for the '${pkgbase}' package
 # Generated dynamically by Arch Orchestrator (Script 158)
 
-ALL_config="/etc/mkinitcpio.conf"
 ALL_kver="/boot/vmlinuz-${pkgbase}"
 
 PRESETS=('default' 'fallback')
