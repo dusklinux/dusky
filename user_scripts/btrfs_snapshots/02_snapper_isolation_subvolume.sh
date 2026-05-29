@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Arch Linux (Btrfs root) | Root & Home Snapper isolated snapshots setup
-# Bash 5.3+
+# LIVE SYSTEM DEPLOYMENT EDITION (Bash 5.3+)
 
 set -Eeuo pipefail
 export LC_ALL=C
@@ -28,17 +28,21 @@ cleanup() {
         done
     fi
 
-    for mnt in "${ACTIVE_TEMP_MOUNTS[@]}"; do
-        [[ -n "$mnt" ]] || continue
-        if mountpoint -q "$mnt"; then
-            sudo umount "$mnt" 2>/dev/null || true
-        fi
-        rmdir "$mnt" 2>/dev/null || true
-    done
+    if (( ${#ACTIVE_TEMP_MOUNTS[@]} > 0 )); then
+        for mnt in "${ACTIVE_TEMP_MOUNTS[@]}"; do
+            [[ -n "$mnt" ]] || continue
+            if mountpoint -q "$mnt"; then
+                sudo umount "$mnt" 2>/dev/null || true
+            fi
+            rmdir "$mnt" 2>/dev/null || true
+        done
+    fi
 
-    for f in "${ACTIVE_TEMP_FILES[@]}"; do
-        [[ -n "$f" && -f "$f" ]] && sudo rm -f "$f" 2>/dev/null || true
-    done
+    if (( ${#ACTIVE_TEMP_FILES[@]} > 0 )); then
+        for f in "${ACTIVE_TEMP_FILES[@]}"; do
+            [[ -n "$f" && -f "$f" ]] && sudo rm -f "$f" 2>/dev/null || true
+        done
+    fi
 
     kill "${SUDO_PID:-}" 2>/dev/null || true
 }
@@ -89,11 +93,17 @@ remove_array_value() {
     local -n arr_ref="$array_name"
     local -a new_arr=()
 
-    for item in "${arr_ref[@]}"; do
-        [[ -n "$item" && "$item" != "$value" ]] && new_arr+=("$item")
-    done
+    if (( ${#arr_ref[@]} > 0 )); then
+        for item in "${arr_ref[@]}"; do
+            [[ -n "$item" && "$item" != "$value" ]] && new_arr+=("$item")
+        done
+    fi
 
-    arr_ref=("${new_arr[@]}")
+    if (( ${#new_arr[@]} > 0 )); then
+        arr_ref=("${new_arr[@]}")
+    else
+        arr_ref=()
+    fi
 }
 
 sudo_path_exists() { sudo test -e "$1"; }
@@ -204,8 +214,11 @@ path_is_btrfs_subvolume() {
 
 btrfs_subvolume_is_ro() {
     local out
-    out="$(sudo btrfs property get -ts "$1" ro 2>/dev/null | awk -F= '{gsub(/[[:space:]]/, "", $2); print $2; exit}' || true)"
-    [[ "$out" == "true" ]]
+    out="$(sudo btrfs property get -ts "$1" ro 2>/dev/null || true)"
+    if [[ "$out" == *"ro=true"* ]]; then
+        return 0
+    fi
+    return 1
 }
 
 mount_top_level_for_base() {
@@ -271,8 +284,8 @@ verify_snapshots_mount() {
 }
 
 install_packages() {
-    info "Reinstalling Snapper runtime packages for maximum reliability..."
-    sudo pacman -S --noconfirm snapper boost-libs btrfs-progs
+    info "Verifying Snapper runtime packages for maximum reliability..."
+    sudo pacman -S --needed --noconfirm snapper boost-libs btrfs-progs
     command -v ldconfig >/dev/null 2>&1 && sudo ldconfig
 }
 
@@ -298,12 +311,35 @@ ensure_snapper_config() {
         return 0
     fi
 
+    # Handle corrupted zombie configs left over from aborted/crashed runs
+    if sudo test -f "/etc/snapper/configs/${config_name}"; then
+        warn "Snapper config '${config_name}' is corrupted or invalid. Purging..."
+        sudo rm -f "/etc/snapper/configs/${config_name}"
+        if sudo test -f "/etc/conf.d/snapper"; then
+            sudo sed -i -E "s/[[:space:]]*\b${config_name}\b//g" /etc/conf.d/snapper || true
+        fi
+    fi
+
+    # Check if ANY other config covers the path to prevent "subvolume already covered" error
+    local conf conflicting_name
+    while read -r -d '' conf; do
+        [[ -n "$conf" ]] || continue
+        if sudo grep -q "^SUBVOLUME=\"${config_path}\"$" "$conf" 2>/dev/null; then
+            conflicting_name="$(basename "$conf")"
+            warn "Subvolume ${config_path} is already covered by '${conflicting_name}'. Purging conflict..."
+            sudo rm -f "$conf"
+            if sudo test -f "/etc/conf.d/snapper"; then
+                sudo sed -i -E "s/[[:space:]]*\b${conflicting_name}\b//g" /etc/conf.d/snapper || true
+            fi
+        fi
+    done < <(sudo find /etc/snapper/configs/ -mindepth 1 -maxdepth 1 -type f -print0 2>/dev/null || true)
+
     if mountpoint -q "$snap_dir"; then
         warn "${snap_dir} is already mounted. Temporarily unmounting to allow Snapper to initialize..."
         sudo umount "$snap_dir" || fatal "Failed to unmount ${snap_dir}"
     fi
 
-    if [[ -e "$snap_dir" ]]; then
+    if sudo_path_exists "$snap_dir"; then
         if path_is_btrfs_subvolume "$snap_dir"; then
             dir_is_empty "$snap_dir" || fatal "${snap_dir} is a populated subvolume. Cannot proceed safely."
             sudo btrfs subvolume delete "$snap_dir" >/dev/null || true
@@ -322,7 +358,7 @@ ensure_top_level_snapshots_subvolume() {
     local base_path="$1" subvol_target="$2" tmp_mnt
     tmp_mnt="$(mount_top_level_for_base "$base_path")"
 
-    if [[ -e "${tmp_mnt}/${subvol_target}" ]]; then
+    if sudo_path_exists "${tmp_mnt}/${subvol_target}"; then
         path_is_btrfs_subvolume "${tmp_mnt}/${subvol_target}" || fatal "${subvol_target} exists but is not a subvolume."
         info "Top-level subvolume ${subvol_target} already exists."
     else
@@ -480,7 +516,7 @@ ensure_fstab_entry_for_snapshots() {
     tmp="$(mktemp)"
     ACTIVE_TEMP_FILES+=("$tmp")
 
-    awk -v mp="$canonical_target" -v newline="$newline" '
+    sudo awk -v mp="$canonical_target" -v newline="$newline" '
         BEGIN { done = 0 }
         /^[[:space:]]*#/ || NF < 2 { print $0; next }
         {
@@ -532,15 +568,18 @@ tune_snapper() {
     local cfg="$1"
     local strict_limit=6
 
-    info "Enforcing strict cleanup limits for ${cfg}: NUMBER_LIMIT=${strict_limit}"
+    info "Enforcing strict cleanup limits and zero background bloat for ${cfg}..."
 
+    # CUTTING-EDGE: Explicitly disable BACKGROUND_COMPARISON to guarantee zero background daemon overhead.
+    # Note: QGROUP is intentionally omitted here as Snapper defaults it to empty, natively disabling quota checks.
     sudo snapper -c "$cfg" set-config \
         TIMELINE_CREATE="no" \
         NUMBER_CLEANUP="yes" \
         NUMBER_LIMIT="${strict_limit}" \
         NUMBER_LIMIT_IMPORTANT="${strict_limit}" \
         SPACE_LIMIT="0.0" \
-        FREE_LIMIT="0.0"
+        FREE_LIMIT="0.0" \
+        BACKGROUND_COMPARISON="no"
 }
 
 quiesce_snapper() {
@@ -551,7 +590,7 @@ quiesce_snapper() {
 
 apply_global_btrfs_tuning() {
     sudo btrfs quota disable / 2>/dev/null || true
-    info "Applied global Btrfs tuning parameters."
+    info "Applied global Btrfs tuning parameters (Quotas disabled)."
 }
 
 write_tmpfiles_override() {
@@ -610,6 +649,11 @@ enforce_flat_topology() {
     fi
 }
 
+enable_snapper_timers() {
+    info "Enabling systemd snapper-cleanup.timer to enforce pruning..."
+    sudo systemctl enable --now snapper-cleanup.timer 2>/dev/null || true
+}
+
 preflight_checks() {
     (( EUID != 0 )) || fatal "Run as regular user with sudo."
     require_cmd sudo
@@ -657,3 +701,4 @@ execute "Tune Snapper home" tune_snapper "home"
 
 execute "Apply Global Btrfs Settings" apply_global_btrfs_tuning
 execute "Enforce Flat Topology" enforce_flat_topology
+execute "Enable Snapper Pruning Timers" enable_snapper_timers
