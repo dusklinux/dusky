@@ -392,7 +392,18 @@ _init_isolated_db() {
     log_step "Generating pacman.conf with CachyOS v3 prioritization & UI enhancements..."
     
     find /etc/pacman.d -maxdepth 1 -type f -exec cp {} "${ISOLATED_DB_DIR}/pacman.d/" \;
-    find "${ISOLATED_DB_DIR}/pacman.d" -type f -exec sed -i 's/\$arch/x86_64/g' {} +
+
+    # Precise architecture patching for the isolated sandbox to prevent 404s
+    if [[ -f "${ISOLATED_DB_DIR}/pacman.d/cachyos-v3-mirrorlist" ]]; then
+        sed -i 's/\$arch_v3/x86_64_v3/g' "${ISOLATED_DB_DIR}/pacman.d/cachyos-v3-mirrorlist"
+        sed -i 's/\$arch/x86_64_v3/g'    "${ISOLATED_DB_DIR}/pacman.d/cachyos-v3-mirrorlist"
+    fi
+    if [[ -f "${ISOLATED_DB_DIR}/pacman.d/cachyos-mirrorlist" ]]; then
+        sed -i 's/\$arch/x86_64/g'       "${ISOLATED_DB_DIR}/pacman.d/cachyos-mirrorlist"
+    fi
+    if [[ -f "${ISOLATED_DB_DIR}/pacman.d/mirrorlist" ]]; then
+        sed -i 's/\$arch/x86_64/g'       "${ISOLATED_DB_DIR}/pacman.d/mirrorlist"
+    fi
 
     awk -v sandbox="${ISOLATED_DB_DIR}" '
     /^#?VerbosePkgLists/ { print "VerbosePkgLists"; next }

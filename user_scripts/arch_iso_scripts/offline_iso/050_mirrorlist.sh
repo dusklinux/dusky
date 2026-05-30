@@ -227,21 +227,19 @@ run_pacman() {
 }
 
 # --- OS DETECTION ---
-detect_cachyos() {
-    # 1. Check OS release identity directly
+determine_os_state() {
+    # 1. Pure CachyOS - natively manages its own architecture
     if [[ -r /etc/os-release ]] && grep -iq 'cachyos' /etc/os-release; then
+        echo "pure_cachyos"
         return 0
     fi
-    # 2. Heuristic: Check if pacman is configured with CachyOS repositories
-    if grep -q '\[cachyos-v3\]' /etc/pacman.conf 2>/dev/null; then
+    # 2. Franken-Arch - Standard Arch with CachyOS repos layered on top
+    if grep -q '\[cachyos-v3\]' /etc/pacman.conf 2>/dev/null || pacman -Qq cachyos-mirrorlist &>/dev/null; then
+        echo "franken_arch"
         return 0
     fi
-    # 3. Heuristic: Check if the mirrorlist software payload is installed locally
-    if pacman -Qq cachyos-mirrorlist &>/dev/null; then
-        return 0
-    fi
-    
-    return 1
+    # 3. Pure Standard Arch
+    echo "arch"
 }
 
 # --- CACHYOS KEYRING BOOTSTRAP ---
@@ -299,10 +297,12 @@ EOF
         return 0
     fi
 
-    if systemctl stop --now reflector.timer &>/dev/null; then
-        log_warn "Disabled reflector.timer — the persistent path monitor handles repatching."
+    # Standard Arch SHOULD have the timer enabled. 
+    # It is only disabled in CachyOS/Franken-Arch configurations.
+    if systemctl enable --now reflector.timer &>/dev/null; then
+        log_ok "reflector.timer is now active."
     else
-        log_info "reflector.timer not active, skipping."
+        log_warn "Failed to enable reflector.timer. Check systemctl status."
     fi
 }
 
@@ -371,7 +371,7 @@ patch_mirrorlist_architectures() {
 
 # --- CACHYOS SYNC ---
 sync_cachyos() {
-    log_info "Initializing CachyOS Mirror Sync..."
+    log_info "Initializing Franken-Arch Mirror Sync..."
 
     ensure_cachyos_keyring
 
@@ -402,6 +402,7 @@ sync_cachyos() {
             log_ok "CachyOS mirrors optimized."
         fi
 
+        # Disable all native timers in favor of the persistent path unit patcher
         for bad_timer in cachyos-mirrorlist.timer cachyos-rate-mirrors.timer reflector.timer; do
             if systemctl list-unit-files --type=timer --no-legend --plain 2>/dev/null | awk '{print $1}' | grep -Fxq "$bad_timer"; then
                 systemctl stop --now "$bad_timer" &>/dev/null || true
@@ -480,7 +481,8 @@ sync_arch() {
         log_ok "Global CDN fallback applied."
     fi
 
-    patch_mirrorlist_architectures
+    # Notice: Patchers are NOT applied here because standard Arch utilizes $arch 
+    # natively without conflicts. reflector.timer manages updates organically.
 
     log_info "Synchronizing pacman databases..."
     run_pacman -Syy || log_warn "Pacman database sync returned non-zero, but pipeline will continue."
@@ -492,7 +494,13 @@ main() {
 
     manage_pacman_lock
 
-    if detect_cachyos; then
+    local os_state
+    os_state="$(determine_os_state)"
+
+    if [[ "$os_state" == "pure_cachyos" ]]; then
+        log_info "Pure CachyOS detected. Mirror and timer management is natively handled by the OS. Exiting safely."
+        exit 0
+    elif [[ "$os_state" == "franken_arch" ]]; then
         sync_cachyos
     else
         sync_arch

@@ -299,11 +299,22 @@ _patch_mkarchiso() {
     local build_pacman_d="${PROFILE_DIR}/build_pacman.d"
     mkdir -p "${build_pacman_d}"
     
-    # 2. Copy mirrorlists from host and explicitly hardcode x86_64 to prevent 404s on Arch mirrors
+    # 2. Copy mirrorlists from host to our local build directory
     find /etc/pacman.d -maxdepth 1 -type f -exec cp {} "${build_pacman_d}/" \;
-    find "${build_pacman_d}" -type f -exec sed -i 's/\$arch/x86_64/g' {} +
+
+    # 3. Precise architecture patching for the build sandbox mirrorlists
+    if [[ -f "${build_pacman_d}/cachyos-v3-mirrorlist" ]]; then
+        sed -i 's/\$arch_v3/x86_64_v3/g' "${build_pacman_d}/cachyos-v3-mirrorlist"
+        sed -i 's/\$arch/x86_64_v3/g'    "${build_pacman_d}/cachyos-v3-mirrorlist"
+    fi
+    if [[ -f "${build_pacman_d}/cachyos-mirrorlist" ]]; then
+        sed -i 's/\$arch/x86_64/g'       "${build_pacman_d}/cachyos-mirrorlist"
+    fi
+    if [[ -f "${build_pacman_d}/mirrorlist" ]]; then
+        sed -i 's/\$arch/x86_64/g'       "${build_pacman_d}/mirrorlist"
+    fi
     
-    # 3. Patch pacman.conf to accept v3 architecture, inject UI, and reroute Includes to the sandbox
+    # 4. Patch pacman.conf to accept v3 architecture, inject UI, and reroute Includes to the sandbox
     awk -v off="CacheDir = ${OFFLINE_REPO_OFFICIAL}" \
         -v aur="${aur_cache}" \
         -v sandbox="${build_pacman_d}" '
