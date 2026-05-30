@@ -248,8 +248,8 @@ determine_os_state() {
     print_info "Analyzing system state for keyring requirements..."
     
     if grep -qi "ID=cachyos" /etc/os-release 2>/dev/null; then
-       print_warn "Pure CachyOS detected."
-       TARGET_OS="cachyos"
+       print_info "Pure CachyOS detected."
+       TARGET_OS="cachyos_pure"
     elif pacman -Qq cachyos-mirrorlist &>/dev/null; then
        print_ok "Franken-Arch detected (CachyOS packages found on Standard Arch)."
        TARGET_OS="cachyos"
@@ -409,8 +409,14 @@ main() {
   
   # Inject Auto-Detection Logic before touching pacman-keys
   determine_os_state
-  ensure_keyring
-  refresh_keyring_package
+  
+  if [[ "${TARGET_OS}" != "cachyos_pure" ]]; then
+    ensure_keyring
+    refresh_keyring_package
+  else
+    print_info "Skipping manual keyring configuration (Managed by CachyOS)."
+  fi
+  
  # upgrade_system
 
   for i in "${!GROUP_LABELS[@]}"; do
