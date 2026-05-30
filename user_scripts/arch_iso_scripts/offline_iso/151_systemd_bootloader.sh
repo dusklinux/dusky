@@ -144,20 +144,6 @@ fi
 
 log_success "Topology mapped securely. Base kernel command line established."
 
-# --- ASPM Power Saving Prompt ---
-if [[ -t 0 ]]; then
-    printf "\n${C_YELLOW}--- Power Saving ---${C_RESET}\n"
-    read -r -p "Enable 'pcie_aspm=force'? (Recommended for laptops) [y/N]: " response
-    if [[ "$response" =~ ^[yY] ]]; then
-        CMDLINE_BASE="${CMDLINE_BASE} pcie_aspm=force"
-        log_info "ASPM enabled."
-    else
-        log_info "ASPM disabled."
-    fi
-else
-    log_warn "Non-interactive mode: Skipping ASPM prompt."
-fi
-
 # ==============================================================================
 # 3. Systemd-Boot Installation (v260.1+ Standard)
 # ==============================================================================
