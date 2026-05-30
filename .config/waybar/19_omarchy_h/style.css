@@ -1,4 +1,4 @@
-@import url("~/.config/matugen/generated/waybar-colors.css");
+@import url("../../.config/matugen/generated/waybar-colors.css");
 
 @define-color foreground @on_surface;
 
