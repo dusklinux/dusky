@@ -356,7 +356,7 @@ _build_master_list() {
 
   if (( REPO_MODE == 2 )); then
       log_step "Injecting CachyOS prerequisite packages (cachyos-keyring, mirrorlist, rate-mirrors)..."
-      MASTER_PKGS+=("cachyos-keyring" "cachyos-mirrorlist" "cachyos-rate-mirrors")
+      MASTER_PKGS+=("cachyos-keyring" "cachyos-mirrorlist" "cachyos-v3-mirrorlist" "cachyos-rate-mirrors")
       (( raw_count += 3 )) || true
   fi
 
@@ -411,10 +411,10 @@ _init_isolated_db() {
         print "[cachyos-v3]"
         print "Server = https://mirror.cachyos.org/repo/x86_64_v3/$repo"
         print ""
-        print "[cachyos-extra-v3]"
+        print "[cachyos-core-v3]"
         print "Server = https://mirror.cachyos.org/repo/x86_64_v3/$repo"
         print ""
-        print "[cachyos-core-v3]"
+        print "[cachyos-extra-v3]"
         print "Server = https://mirror.cachyos.org/repo/x86_64_v3/$repo"
         print ""
         print "[cachyos]"

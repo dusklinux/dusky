@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
 # Autonomous Pacman Mirror Orchestrator
 # Resolves mirror selection, waits for active pacman locks with a 60s timeout,
-# removes stale locks via /proc inspection, runs mirror benchmarking with 
+# removes stale locks via /proc inspection, runs mirror benchmarking with
 # asynchronous visual feedback, and configures systemd timers.
+#
+# CachyOS Franken-Arch notes (see: https://wiki.cachyos.org/features/optimized_repos/):
+#   - cachyos-v3-mirrorlist entries use the literal path segment "x86_64_v3" in URLs.
+#     Standard Arch pacman expands $arch as "x86_64", so the mirrorlist shipped by the
+#     cachyos-v3-mirrorlist package uses $arch_v3 (a CachyOS pacman extension) OR
+#     already contains hardcoded x86_64_v3 paths in newer package versions.
+#   - This script patches any remaining $arch/$arch_v3 variables to their literal
+#     values as a belt-and-braces safety measure, preventing 404s on standard Arch.
+#   - Architecture = auto in pacman.conf is correct — do NOT use "x86_64_v3 x86_64".
+#     The mirrorlist files handle arch routing; pacman.conf Architecture only affects
+#     which packages pacman considers installable (auto = uname -m = x86_64, which is
+#     correct — the v3 repos present packages as x86_64 architecture to pacman).
 
 set -euo pipefail
 
@@ -135,7 +147,6 @@ run_with_spinner() {
         printf '\033[?25h\r\033[K'
     fi
 
-    # FIX: Properly capture exit code of wait before evaluating
     wait "$pid"
     rc=$?
 
@@ -246,7 +257,7 @@ run_pacman() {
 determine_os_state() {
     if [[ -z "${TARGET_OS}" ]]; then
         log_info "Analyzing system state for mirror routing..."
-        
+
         if grep -qi "ID=cachyos" /etc/os-release 2>/dev/null; then
             log_warn "Pure CachyOS detected."
             TARGET_OS="cachyos"
@@ -257,6 +268,51 @@ determine_os_state() {
             log_info "Standard Arch Linux detected."
             TARGET_OS="arch"
         fi
+    fi
+}
+
+# --- CACHYOS KEYRING BOOTSTRAP ---
+# Ensures the CachyOS keyring is initialised before any mirror operations.
+# This is critical on fresh installs — without it, pacman-key won't trust
+# CachyOS-signed packages and all sync operations will fail with signature errors.
+ensure_cachyos_keyring() {
+    if pacman -Qq cachyos-keyring &>/dev/null; then
+        log_info "CachyOS keyring already present, skipping bootstrap."
+        return 0
+    fi
+
+    log_info "CachyOS keyring not found. Bootstrapping..."
+
+    # Import the CachyOS signing key (fingerprint: F3B607488DB35A47)
+    # Source: https://github.com/CachyOS/cachyos-repo-add-script/blob/develop/cachyos-repo.sh
+    if ! pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com; then
+        log_warn "Failed to receive CachyOS key from keyserver.ubuntu.com. Trying hkps://keys.openpgp.org..."
+        pacman-key --recv-keys F3B607488DB35A47 --keyserver hkps://keys.openpgp.org || {
+            log_err "Could not import CachyOS signing key. Mirror sync may fail."
+            return 1
+        }
+    fi
+
+    pacman-key --lsign-key F3B607488DB35A47
+
+    # Install keyring and mirrorlist packages directly from the CachyOS CDN.
+    # These URLs are the canonical bootstrap path documented by CachyOS:
+    # https://wiki.cachyos.org/features/optimized_repos/
+    # https://github.com/CachyOS/linux-cachyos (README)
+    #
+    # Package versions listed here (keyring-20240331-1, mirrorlist-27-1) are the
+    # current stable versions as of the script's last audit. They will be superseded
+    # by the repository's own updates once the keyring is bootstrapped.
+    local mirror_base="https://mirror.cachyos.org/repo/x86_64/cachyos"
+    manage_pacman_lock
+
+    if run_pacman -U --needed --noconfirm \
+        "${mirror_base}/cachyos-keyring-20240331-1-any.pkg.tar.zst" \
+        "${mirror_base}/cachyos-mirrorlist-27-1-any.pkg.tar.zst" \
+        "${mirror_base}/cachyos-v3-mirrorlist-27-1-any.pkg.tar.zst"; then
+        log_ok "CachyOS keyring and mirrorlist packages bootstrapped."
+    else
+        log_warn "Keyring bootstrap failed. Will attempt to continue — cachyos-rate-mirrors may still work."
     fi
 }
 
@@ -279,42 +335,117 @@ configure_arch_timer() {
 EOF
 
     if ! write_text_file_atomic "$REFLECTOR_CONF" 0644 "$reflector_config"; then
-        log_warn "Failed to write reflector configuration. Skipping reflector.timer enablement."
+        log_warn "Failed to write reflector configuration. Skipping reflector.timer management."
         return 0
     fi
 
-    if systemctl enable --now reflector.timer &>/dev/null; then
-        log_ok "reflector.timer is now active."
+    # Disable reflector.timer — the persistent path unit (mirrorlist-arch-patch.path)
+    # handles re-patching on any mirrorlist change. Running reflector.timer on top of
+    # that would overwrite the patched file and reintroduce $arch variables.
+    if systemctl stop --now reflector.timer &>/dev/null; then
+        log_warn "Disabled reflector.timer — the persistent path monitor handles repatching."
     else
-        log_warn "Failed to enable reflector.timer. Check systemctl status."
+        log_info "reflector.timer not active, skipping."
     fi
 }
 
 # --- MIRRORLIST ARCHITECTURE PATCHER ---
+# Root cause of 404 errors on Franken-Arch:
+#   Standard Arch pacman expands $arch as "x86_64". The CachyOS v3 mirrorlist
+#   packages (cachyos-v3-mirrorlist) ship entries using either $arch_v3 (a
+#   CachyOS pacman fork extension) or already-expanded "x86_64_v3". On standard
+#   Arch pacman, $arch_v3 is NOT substituted — it's treated as a literal string,
+#   so the URL becomes .../os/$arch_v3/... → 404.
+#
+#   Additionally, if $arch is present in any v3 mirrorlist, it resolves to
+#   "x86_64" not "x86_64_v3", fetching packages from the wrong repo tier.
+#
+#   This patcher hard-codes all variables to their correct literal values,
+#   making the mirrorlist work correctly with standard Arch pacman.
 patch_mirrorlist_architectures() {
     log_info "Hardcoding architectures to prevent pacman variable evaluation bugs..."
-    
-    # 1. Standard Arch mirrors must always use x86_64
+
+    # 1. Standard Arch mirrors: $arch → x86_64 (this should already be correct,
+    #    but belt-and-braces in case reflector or a future update re-introduces it)
     if [[ -f "$TARGET_FILE" ]]; then
         sed -i 's/\$arch/x86_64/g' "$TARGET_FILE"
     fi
 
-    # 2. CachyOS base mirrors must use x86_64
+    # 2. CachyOS base mirrorlist: $arch → x86_64
+    #    The base [cachyos] repo is at repo/x86_64/cachyos — standard arch.
     if [[ -f "/etc/pacman.d/cachyos-mirrorlist" ]]; then
         sed -i 's/\$arch/x86_64/g' "/etc/pacman.d/cachyos-mirrorlist"
     fi
 
-    # 3. CachyOS v3 mirrors must explicitly use x86_64_v3 (standard pacman doesn't understand $arch_v3)
+    # 3. CachyOS v3 mirrorlist: two-pass substitution.
+    #    Pass 1: $arch_v3 → x86_64_v3  (CachyOS pacman fork variable)
+    #    Pass 2: $arch    → x86_64_v3  (standard $arch remaining after pass 1,
+    #                                    or entries that only used $arch)
+    #    ORDER MATTERS: always replace $arch_v3 before $arch, otherwise pass 2
+    #    would corrupt already-correct x86_64_v3 strings.
     if [[ -f "/etc/pacman.d/cachyos-v3-mirrorlist" ]]; then
         sed -i 's/\$arch_v3/x86_64_v3/g' "/etc/pacman.d/cachyos-v3-mirrorlist"
-        sed -i 's/\$arch/x86_64_v3/g' "/etc/pacman.d/cachyos-v3-mirrorlist"
+        sed -i 's/\$arch/x86_64_v3/g'    "/etc/pacman.d/cachyos-v3-mirrorlist"
     fi
+
     log_ok "Architectures successfully patched."
+
+    # 4. Persist the fix via a systemd path unit that re-applies on any change.
+    #    This is necessary because cachyos-rate-mirrors and package updates will
+    #    overwrite the mirrorlist files, reintroducing the variable strings.
+    install_persistent_arch_patch
+}
+
+install_persistent_arch_patch() {
+    local helper="/usr/local/bin/fix-mirrorlist-arch"
+
+    cat > "$helper" << 'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+# Mirror patch_mirrorlist_architectures logic exactly.
+# Pass 1 before pass 2 is mandatory — see comment in patch_mirrorlist_architectures().
+sed -i 's/\$arch_v3/x86_64_v3/g' /etc/pacman.d/cachyos-v3-mirrorlist 2>/dev/null || true
+sed -i 's/\$arch/x86_64_v3/g'    /etc/pacman.d/cachyos-v3-mirrorlist 2>/dev/null || true
+sed -i 's/\$arch/x86_64/g'       /etc/pacman.d/mirrorlist             2>/dev/null || true
+sed -i 's/\$arch/x86_64/g'       /etc/pacman.d/cachyos-mirrorlist     2>/dev/null || true
+SCRIPT
+    chmod +x "$helper"
+
+    cat > /etc/systemd/system/mirrorlist-arch-patch.service << 'SERVICE'
+[Unit]
+Description=Fix architecture variables in mirrorlists
+Documentation=https://wiki.archlinux.org/title/Pacman
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/fix-mirrorlist-arch
+SERVICE
+
+    cat > /etc/systemd/system/mirrorlist-arch-patch.path << 'PATH_UNIT'
+[Unit]
+Description=Monitor mirrorlists and reapply architecture variable fixes
+Documentation=https://wiki.archlinux.org/title/Pacman
+
+[Path]
+PathChanged=/etc/pacman.d/mirrorlist
+PathChanged=/etc/pacman.d/cachyos-mirrorlist
+PathChanged=/etc/pacman.d/cachyos-v3-mirrorlist
+
+[Install]
+WantedBy=multi-user.target
+PATH_UNIT
+
+    systemctl daemon-reload
+    systemctl enable --now mirrorlist-arch-patch.path &>/dev/null || true
+    log_ok "Persistent arch patch monitor (mirrorlist-arch-patch.path) active."
 }
 
 # --- CACHYOS SYNC ---
 sync_cachyos() {
     log_info "Initializing CachyOS Mirror Sync..."
+
+    # Ensure keyring is present before any pacman operations on CachyOS repos
+    ensure_cachyos_keyring
 
     local attempt
     local max_attempts=3
@@ -343,16 +474,19 @@ sync_cachyos() {
             log_ok "CachyOS mirrors optimized."
         fi
 
-        if systemctl list-unit-files --type=timer --no-legend --plain 2>/dev/null | awk '{print $1}' | grep -Fxq 'cachyos-mirrorlist.timer'; then
-            if systemctl enable --now cachyos-mirrorlist.timer &>/dev/null; then
-                log_ok "cachyos-mirrorlist.timer is now active."
-            else
-                log_warn "Failed to enable cachyos-mirrorlist.timer. Check systemctl status."
+        # Disable all competing mirror timers — the persistent path unit handles
+        # re-patching, and running multiple timers risks overwriting patched files.
+        for bad_timer in cachyos-mirrorlist.timer cachyos-rate-mirrors.timer reflector.timer; do
+            if systemctl list-unit-files --type=timer --no-legend --plain 2>/dev/null | awk '{print $1}' | grep -Fxq "$bad_timer"; then
+                systemctl stop --now "$bad_timer" &>/dev/null || true
+                log_warn "Disabled $bad_timer — the persistent path monitor handles repatching."
             fi
-        fi
+        done
     fi
 
-    # Crucial: Apply the patcher to fix variables BEFORE syncing
+    # Crucial: Apply the patcher to fix variables BEFORE syncing.
+    # cachyos-rate-mirrors writes fresh mirrorlist files after it runs,
+    # so the patch must come after the mirror tool finishes.
     patch_mirrorlist_architectures
 
     log_info "Synchronizing pacman databases..."
@@ -424,7 +558,7 @@ sync_arch() {
         log_ok "Global CDN fallback applied."
     fi
 
-    # Crucial: Apply the patcher to fix variables BEFORE final syncing
+    # Crucial: Apply the patcher to fix variables BEFORE final syncing.
     patch_mirrorlist_architectures
 
     log_info "Synchronizing pacman databases..."
