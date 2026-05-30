@@ -466,11 +466,11 @@ pages:
                     type: exec
                     command: kitty --class yazi --title "Backup Viewer" --hold sh -c "yazi $HOME/Documents/dusky_backups/"
                 - icon: system-file-manager-symbolic
-                  button_text: "nemo"
+                  button_text: "thunar"
                   style: suggested
                   on_press:
                     type: exec
-                    command: nemo "$HOME/Documents/dusky_backups/"
+                    command: thunar "$HOME/Documents/dusky_backups/"
           - type: button
             properties:
               title: Send Logs
@@ -646,22 +646,22 @@ pages:
     - type: selection
       properties:
         title: File Manager Switch
-        description: 'Choose Default: Nemo (GUI) vs Yazi (TUI)'
+        description: 'Choose Default: thunar (GUI) vs Yazi (TUI)'
         icon: system-file-manager-symbolic
         key: filemanager_switch
         options:
           - Yazi
-          - Nemo
+          - thunar
         options_map:
-          "false": "Nemo"
+          "false": "thunar"
           "true": "Yazi"
       on_change:
         Yazi:
           type: exec
           command: "$HOME/user_scripts/arch_setup_scripts/scripts/235_file_manager_switch.sh --yazi"
-        Nemo:
+        thunar:
           type: exec
-          command: "$HOME/user_scripts/arch_setup_scripts/scripts/235_file_manager_switch.sh --nemo"
+          command: "$HOME/user_scripts/arch_setup_scripts/scripts/235_file_manager_switch.sh --thunar"
   - type: section
     properties:
       title: File Transfer (FTP)
