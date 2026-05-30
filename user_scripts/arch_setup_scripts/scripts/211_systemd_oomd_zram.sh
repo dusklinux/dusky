@@ -35,7 +35,8 @@ if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
     C_YELLOW=$'\033[1;33m'
     C_BOLD=$'\033[1m'
 else
-    C_RESET='' C_GREEN='' C_BLUE='' C_RED='' C_YELLOW='' C_BOLD=''\nfi
+    C_RESET='' C_GREEN='' C_BLUE='' C_RED='' C_YELLOW='' C_BOLD=''
+fi
 
 log_info()    { printf '%s[INFO]%s %s\n'  "$C_BLUE"   "$C_RESET" "$1"; }
 log_success() { printf '%s[OK]%s %s\n'    "$C_GREEN"  "$C_RESET" "$1"; }
