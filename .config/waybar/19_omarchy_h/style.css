@@ -1,4 +1,4 @@
-@import url("/home/awaissajid/.config/matugen/generated/waybar-colors.css");
+@import url("~/.config/matugen/generated/waybar-colors.css");
 
 @define-color foreground @on_surface;
 
@@ -111,41 +111,95 @@ tooltip label {
   color: #a55555;
 }
 
-.left .modules-left, .right .modules-left { margin: 8px 0 0 0; }
-.left .modules-right, .right .modules-right { margin: 0 0 8px 0; }
+.left .modules-left,
+.right .modules-left {
+  margin: 8px 0 0 0;
+}
 
-.left #workspaces button, .right #workspaces button {
+.left .modules-right,
+.right .modules-right {
+  margin: 0 0 8px 0;
+}
+
+.left #workspaces button,
+.right #workspaces button {
   padding: 4px 0;
   margin: 1px 0;
 }
 
-.left #cpu, .right #cpu,
-.left #battery, .right #battery,
-.left #pulseaudio, .right #pulseaudio,
-.left #custom-omarchy, .right #custom-omarchy,
-.left #custom-update, .right #custom-update {
+.left #cpu,
+.right #cpu,
+.left #battery,
+.right #battery,
+.left #pulseaudio,
+.right #pulseaudio,
+.left #custom-omarchy,
+.right #custom-omarchy,
+.left #custom-update,
+.right #custom-update {
   margin: 1px 0;
   padding: 4px 0;
   min-width: 0;
   min-height: 10px;
 }
 
-.left #tray, .right #tray { margin: 0 0 12px 0; }
-.left #bluetooth, .right #bluetooth { margin: 1px 0; padding: 4px 0; min-height: 10px; }
-.left #network, .right #network { margin: 1px 0; padding: 4px 0; min-height: 10px; }
-.left #custom-expand-icon, .right #custom-expand-icon { margin: 1px 0; padding: 4px 0; min-height: 10px; }
-.left #clock, .right #clock { margin: 6px 0 0 0; }
-.left #custom-weather, .right #custom-weather { margin: 1px 0; padding: 4px 0; min-height: 10px; min-width: 12px; margin-right: 3px; }
+.left #tray,
+.right #tray {
+  margin: 0 0 12px 0;
+}
 
-.left #custom-screenrecording-indicator, .right #custom-screenrecording-indicator,
-.left #custom-idle-indicator, .right #custom-idle-indicator,
-.left #custom-notification-silencing-indicator, .right #custom-notification-silencing-indicator {
+.left #bluetooth,
+.right #bluetooth {
+  margin: 1px 0;
+  padding: 4px 0;
+  min-height: 10px;
+}
+
+.left #network,
+.right #network {
+  margin: 1px 0;
+  padding: 4px 0;
+  min-height: 10px;
+}
+
+.left #custom-expand-icon,
+.right #custom-expand-icon {
+  margin: 1px 0;
+  padding: 4px 0;
+  min-height: 10px;
+}
+
+.left #clock,
+.right #clock {
+  margin: 6px 0 0 0;
+}
+
+.left #custom-weather,
+.right #custom-weather {
+  margin: 1px 0;
+  padding: 4px 0;
+  min-height: 10px;
+  min-width: 12px;
+  margin-right: 3px;
+}
+
+.left #custom-screenrecording-indicator,
+.right #custom-screenrecording-indicator,
+.left #custom-idle-indicator,
+.right #custom-idle-indicator,
+.left #custom-notification-silencing-indicator,
+.right #custom-notification-silencing-indicator {
   margin: 4px 0 0 0;
   min-width: 0;
   min-height: 10px;
 }
 
-.left #custom-voxtype, .right #custom-voxtype { margin: 5px 0 0 0; min-width: 0; min-height: 10px; }
+.left #custom-voxtype,
+.right #custom-voxtype {
+  margin: 5px 0 0 0;
+  min-width: 0;
+  min-height: 10px;
+}
 
 #custom-expand-icon.vertical,
 .left #custom-expand-icon.horizontal,
