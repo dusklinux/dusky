@@ -42,7 +42,7 @@ awk -F'\t' -v type="$target_type" -v h="$host" -v now="$now" '
         else if (age < 604800) { time_str = int(age/86400) "d ago"; score += 1000 }
         else { time_str = int(age/86400) "d ago" }
 
-        # Changed dark gray (90m) to Bright Yellow (1;33m) for maximum visibility
+        # High visibility colors for terminal transparency compatibility
         printf "%f\t%s\t\033[1;36m%s\033[0m \033[1;33m│ %s\033[0m\n", score, $2, $2, time_str
     }
 ' "$hist_file" | sort -k1,1nr | cut -f2-
@@ -81,9 +81,9 @@ if [[ "$target_type" == "REMOTE" ]]; then
             remote_cmd="command ls -dp ${q_target}*"
         fi
         
-        # Pass exact command cleanly through SSH
+        # Pass exact command cleanly through SSH (Outputting Bright Cyan for deep contrast)
         safe_remote_cmd="${remote_cmd//\'/\'\\\'\'}"
-        cmd="ssh -o BatchMode=yes -S \"$socket\" \"$host\" '${safe_remote_cmd}' 2>/dev/null | awk '{print \$0 \"\\t\\033[34m\" \$0 \"\\033[0m\"}' || true"
+        cmd="ssh -o BatchMode=yes -S \"$socket\" \"$host\" '${safe_remote_cmd}' 2>/dev/null | awk '{print \$0 \"\\t\\033[1;36m\" \$0 \"\\033[0m\"}' || true"
     fi
 else
     # LOCAL (PUSH or PULL)
@@ -95,8 +95,9 @@ else
          [[ "$local_target" == "~/"* ]] && local_target="$HOME/${local_target#\~/}"
          [[ "$local_target" == "~" ]] && local_target="$HOME/"
          
+         # Outputting Bright Cyan locally as well
          q_local=$(printf "%q" "$local_target")
-         cmd="eval \"command ls -dp ${q_local}* 2>/dev/null\" | awk '{print \$0 \"\\t\\033[34m\" \$0 \"\\033[0m\"}' || true"
+         cmd="eval \"command ls -dp ${q_local}* 2>/dev/null\" | awk '{print \$0 \"\\t\\033[1;36m\" \$0 \"\\033[0m\"}' || true"
     fi
 fi
 
@@ -191,7 +192,11 @@ _sshfile_pick_path() {
             --color='border:#f38ba8,label:#f9e2af,prompt:#a6e3a1,fg:#cdd6f4,fg+:#ffffff,hl:#f38ba8,hl+:#f38ba8,pointer:#f38ba8' \
             --bind "tab:transform(\"$SSHFILE_CONFIG_DIR/scripts/tab_transform.sh\" \"$target_type\" \"$host\" \"$socket\" {q} {1} \"$SSHFILE_CONFIG_DIR/data/paths.tsv\" \"$EPOCHSECONDS\")" \
             --bind "ctrl-r:reload(\"$SSHFILE_CONFIG_DIR/scripts/render_history.sh\" \"$target_type\" \"$host\" \"$SSHFILE_CONFIG_DIR/data/paths.tsv\" \"$EPOCHSECONDS\")+change-query[]"
-    ) || return 1
+    )
+    # CRITICAL FIX: Only abort on 130 (ESC/CTRL-C) or 2 (Error). 
+    # FZF natively returns 1 if user hits ENTER on 0 matches, which is perfectly valid for us!
+    local fzf_exit=$?
+    [[ $fzf_exit -eq 130 || $fzf_exit -eq 2 ]] && return 1
 
     local query_str=$(echo "$selected_path_raw" | sed -n '1p')
     local key_pressed=$(echo "$selected_path_raw" | sed -n '2p')
@@ -248,7 +253,10 @@ _sshfile_pick_host() {
             --height=50% --layout=reverse \
             --delimiter='\t' --with-nth=2 \
             --color='border:#89b4fa,label:#cba6f7,prompt:#a6e3a1,fg:#cdd6f4,fg+:#ffffff,hl:#f38ba8,hl+:#f38ba8'
-    ) || return 1
+    )
+    # Catch FZF Exit status safely
+    local fzf_exit=$?
+    [[ $fzf_exit -eq 130 || $fzf_exit -eq 2 ]] && return 1
 
     local query_str=$(echo "$selected_host_raw" | sed -n '1p')
     local key_pressed=$(echo "$selected_host_raw" | sed -n '2p')
