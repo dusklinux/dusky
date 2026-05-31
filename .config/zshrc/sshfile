@@ -32,7 +32,7 @@ if [[ "$target_type" == "LOCAL_PULL" ]]; then
     default_dir="${SSHFILE_BASE_DIR:-/mnt/zram1/sshfile}"
     # Normalize trailing slash
     [[ "$default_dir" != */ ]] && default_dir="${default_dir}/"
-    printf "9999999.0\037%s\037  \033[1;34m%s\033[0m \033[38;5;238m• [Default]\033[0m\n" "$default_dir" "$default_dir"
+    printf "9999999.0\037%s\037  \033[1;34m%s\033[0m \033[38;5;248m• [Default]\033[0m\n" "$default_dir" "$default_dir"
 fi
 
 awk -F'\t' -v type="$target_type" -v h="$host" -v now="$now" '
@@ -50,7 +50,7 @@ awk -F'\t' -v type="$target_type" -v h="$host" -v now="$now" '
         icon = ($2 ~ /\/$/) ? " " : " "
         color = ($2 ~ /\/$/) ? "\033[1;34m" : "\033[1;36m"
 
-        printf "%f\037%s\037%s %s%s\033[0m \033[38;5;238m• %s\033[0m\n", score, $2, icon, color, $2, time_str
+        printf "%f\037%s\037%s %s%s\033[0m \033[38;5;248m• %s\033[0m\n", score, $2, icon, color, $2, time_str
     }
 ' "$hist_file" 2>/dev/null
 ) | sort -t $'\037' -k1,1nr | awk -F $'\037' '!seen[$2]++ {print $2 "\t" $3}'
@@ -198,7 +198,7 @@ _sshfile_pick_path() {
             --border=rounded \
             --border-label="$border_label" \
             --border-label-pos=center \
-            --header=" 💡 TAB: Auto-Complete │ ENTER: Select │ ALT+C: Force Exact Typed " \
+            --header=" 💡 TAB: Auto-Complete │ ENTER: Select │ ALT-C: Force Exact Typed " \
             --header-border=line \
             --info=inline-right \
             --height=60% --layout=reverse \
@@ -218,7 +218,7 @@ _sshfile_pick_path() {
     local trimmed_query
     trimmed_query=$(printf "%s" "$query_str" | sed 's/[[:space:]]*$//')
 
-    if [[ "$key_pressed" == "ctrl-y" || "$key_pressed" == "ctrl-space" ]]; then
+    if [[ "$key_pressed" == "ctrl-y" || "$key_pressed" == "alt-c" ]]; then
         echo "$trimmed_query"
     elif [[ "$key_pressed" == "enter" ]]; then
         if [[ "$query_str" != "$trimmed_query" ]]; then
@@ -257,16 +257,16 @@ _sshfile_pick_host() {
                         else if (age < 604800) { time_str = int(age/86400) "d ago"; score += 1000 }
                         else { time_str = int(age/86400) "d ago" }
                     }
-                    printf "%f\037%s\037󰒋 \033[1;32m%s\033[0m \033[38;5;238m• %s (uses: %d)\033[0m\n", score, h, h, time_str, max_count[h]
+                    printf "%f\037%s\037󰒋 \033[1;32m%s\033[0m \033[38;5;248m• %s (uses: %d)\033[0m\n", score, h, h, time_str, max_count[h]
                 }
             }
         ' | sort -t $'\037' -k1,1nr | awk -F $'\037' '!seen[$2]++ {print $2 "\t" $3}' |
-        fzf --ansi --scheme=history --print-query --expect=ctrl-y,ctrl-space,enter \
+        fzf --ansi --scheme=history --print-query --expect=ctrl-y,alt-c,enter \
             --prompt=" 󰒋 Select Host > " \
             --pointer="▶" --marker="✓" \
             --border=rounded --border-label=" 󰒋 SSH Hosts " \
             --border-label-pos=center \
-            --header=" 💡 ENTER: Select │ CTRL-SPACE: Force Typed " \
+            --header=" 💡 ENTER: Select │ ALT-C: Force Typed " \
             --header-border=line \
             --info=inline-right \
             --height=50% --layout=reverse \
@@ -284,7 +284,7 @@ _sshfile_pick_host() {
     local trimmed_query
     trimmed_query=$(printf "%s" "$query_str" | sed 's/[[:space:]]*$//')
 
-    if [[ "$key_pressed" == "ctrl-y" || "$key_pressed" == "ctrl-space" ]]; then
+    if [[ "$key_pressed" == "ctrl-y" || "$key_pressed" == "alt-c" ]]; then
         echo "$trimmed_query"
     elif [[ "$key_pressed" == "enter" ]]; then
         if [[ "$query_str" != "$trimmed_query" ]]; then
