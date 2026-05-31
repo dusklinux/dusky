@@ -28,7 +28,8 @@ now="$4"
 # Seed the default pull destination at the top with an unbeatable score
 if [[ "$target_type" == "LOCAL_PULL" ]]; then
     default_dir="${SSHFILE_BASE_DIR:-/mnt/zram1/sshfile}"
-    printf "9999999.0\t%s/\t\033[1;33m%s/\033[0m \033[1;33m│ %s\033[0m\n" "$default_dir" "$default_dir" "[Default]"
+    # Use strict | delimiting for bulletproof sorting
+    printf "9999999.0|%s/|\033[1;36m%s/\033[0m \033[1;33m│ %s\033[0m\n" "$default_dir" "$default_dir" "[Default]"
 fi
 
 awk -F'\t' -v type="$target_type" -v h="$host" -v now="$now" '
@@ -42,10 +43,10 @@ awk -F'\t' -v type="$target_type" -v h="$host" -v now="$now" '
         else if (age < 604800) { time_str = int(age/86400) "d ago"; score += 1000 }
         else { time_str = int(age/86400) "d ago" }
 
-        # High visibility colors for terminal transparency compatibility
-        printf "%f\t%s\t\033[1;36m%s\033[0m \033[1;33m│ %s\033[0m\n", score, $2, $2, time_str
+        # High visibility colors. Use strict | delimiting to protect paths with spaces from sort corruption.
+        printf "%f|%s|\033[1;36m%s\033[0m \033[1;33m│ %s\033[0m\n", score, $2, $2, time_str
     }
-' "$hist_file" | sort -k1,1nr | cut -f2-
+' "$hist_file" | sort -t'|' -k1,1nr | awk -F'|' '{print $2 "\t" $3}'
 EOF
     chmod +x "$hist_script"
 
@@ -101,9 +102,20 @@ else
     fi
 fi
 
+# Dynamically select an FZF action delimiter to absolutely prevent parser breakage
+# from weird file path characters (like a directory legitimately named 'my!dir')
+local delim=""
+for d in '@' '#' '$' '%' '^' '&' '*' ';' '/' '|' '~' '!'; do
+    if [[ "$target" != *"$d"* && "$cmd" != *"$d"* ]]; then
+        delim="$d"
+        break
+    fi
+done
+# In the astronomically unlikely event all special chars are present, default to '!'
+[[ -z "$delim" ]] && delim="!"
+
 # Instruct FZF to update input line and reload the list seamlessly
-# Using '!' delimiters safely bypasses FZF bracket parsing issues in filenames
-echo "change-query!${target}!+reload!${cmd}!"
+echo "change-query${delim}${target}${delim}+reload${delim}${cmd}${delim}"
 EOF
     chmod +x "$tab_script"
 }
@@ -126,7 +138,8 @@ _sshfile_extract_history_hosts() {
 
 _sshfile_extract_config_hosts() {
     local conf="${HOME}/.ssh/config"
-    [[ -f "$conf" ]] && awk 'tolower($1) == "host" && $2 !~ /[*?]/ {print $2}' "$conf"
+    # Flawlessly iterates over lines like: Host server1 server2
+    [[ -f "$conf" ]] && awk 'tolower($1) == "host" { for(i=2; i<=NF; i++) if ($i !~ /[*?]/) print $i }' "$conf"
 }
 
 _sshfile_update_frecency() {
@@ -241,11 +254,11 @@ _sshfile_pick_host() {
                         else if (age < 604800) { time_str = int(age/86400) "d ago"; score += 1000 }
                         else { time_str = int(age/86400) "d ago" }
                     }
-                    # High Visibility Colors here too
-                    printf "%f\t%s\t\033[1;32m%s\033[0m \033[1;33m│ %s (uses: %d)\033[0m\n", score, h, h, time_str, max_count[h]
+                    # High Visibility Colors here too, isolating sorting string with pipe
+                    printf "%f|%s|\033[1;32m%s\033[0m \033[1;33m│ %s (uses: %d)\033[0m\n", score, h, h, time_str, max_count[h]
                 }
             }
-        ' | sort -k1,1nr | cut -f2- |
+        ' | sort -t'|' -k1,1nr | awk -F'|' '{print $2 "\t" $3}' |
         fzf --ansi --scheme=history --print-query --expect=ctrl-y,enter \
             --prompt=":: Select Host > " \
             --border=rounded --border-label=" SSH Hosts (ENTER: select/use query) " \
@@ -324,7 +337,30 @@ _sshfile_core() {
         remote_dest=$(_sshfile_pick_path "REMOTE" "$host" "$socket" "[▲] Push DESTINATION on $host > " " Remote DEST for '$(basename "$local_push_src")' ")
         [[ -z "$remote_dest" ]] && return 1
 
-        # 5. Execute PUSH
+        # 5. Remote Validation
+        print -P "\n%F{blue}Verifying remote path environment on $host...%f"
+        local b64_path=$(printf "%s" "$remote_dest" | base64 | tr -d '\n')
+        local remote_output abs_remote_path remote_stat
+        
+        remote_output=$(ssh -o BatchMode=yes -S "$socket" -q "$host" "
+            p=\"\$(echo '$b64_path' | base64 -d)\"
+            case \"\$p\" in ~/*) p=\"\$HOME/\${p#~/}\" ;; ~) p=\"\$HOME\" ;; esac
+            echo \"\$p\"
+            if [ ! -e \"\$p\" ]; then echo 'missing'; exit 0; fi
+            if [ ! -r \"\$p\" ]; then echo 'unreadable'; exit 0; fi
+            if [ -d \"\$p\" ]; then echo 'dir'; else echo 'file'; fi
+        " 2>/dev/null)
+
+        abs_remote_path=$(echo "$remote_output" | sed -n '1p')
+        remote_stat=$(echo "$remote_output" | sed -n '2p')
+        
+        # Guard against SSH connection drops during validation
+        if [[ -z "$remote_stat" || -z "$abs_remote_path" ]]; then
+            print -P "%F{red}Error: Failed to validate remote path. Connection lost or invalid.%f"
+            return 1
+        fi
+
+        # 6. Execute PUSH
         print -P "\n%F{green}Pushing to $host:$remote_dest ...%f"
         
         # We rely purely on rsync's native --mkpath for remote parent dir creation
@@ -377,6 +413,9 @@ _sshfile_core() {
             return 1
         elif [[ "$remote_stat" == "unreadable" ]]; then
             print -P "%F{red}Error: Permission denied reading '$remote_src' on $host.%f"
+            return 1
+        elif [[ -z "$remote_stat" ]]; then
+            print -P "%F{red}Error: Failed to validate remote path. Connection lost or invalid.%f"
             return 1
         fi
 
