@@ -20,6 +20,7 @@ SCRIPT_SEARCH_DIRS=(
     "${HOME}/user_scripts/arch_setup_scripts/scripts"
     "${HOME}/user_scripts/arch_setup_scripts"
     "${HOME}/user_scripts/rofi"
+    "${HOME}/user_scripts/images"
     "${HOME}/user_scripts/theme_matugen"
     "${HOME}/user_scripts/theme_matugen/config"
     "${HOME}/user_scripts/theme_matugen/firefox"
@@ -91,7 +92,6 @@ INSTALL_SEQUENCE=(
     "U | 155_blur_shadow_opacity.sh"
     "U | 160_theme_ctl.sh"
     "U | 165_qtct_config.sh"
-    "U | 170_waypaper_config_reset.sh"
     "U | 175_animation_default.sh"
     "S | 180_udev_usb_notify.sh"
     "U | 185_terminal_default.py -t foot"
@@ -102,6 +102,7 @@ INSTALL_SEQUENCE=(
     "S | 210_zram_optimize_swappiness.sh"
     "S | 211_systemd_oomd_zram.sh"
     "S | 212_thp_sysfs_optimizer.sh"
+    "S | 213_systemd_journaling_optimizer.sh"
     "S | 215_powerkey_lid_close_behaviour.sh"
     "S | 220_logrotate_optimization.sh"
     "S | 225_faillock_timeout.sh"
@@ -161,7 +162,7 @@ INSTALL_SEQUENCE=(
 
 # ------ CUSTOM PATH SCRIPTS -------
 
-    "U | rofi_wallpaper_selctor.sh --cache-only --progress"
+    "U | wallpaper_selector.py --build-cache"
     "U | kokoro_installer.sh"
     "U | parakeet_installer.sh"
 
