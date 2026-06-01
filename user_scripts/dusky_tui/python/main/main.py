@@ -400,11 +400,14 @@ EXAMPLES:
         elif e_type == "env":
             from python.engines.environment_variables import ShellEnvEngine
             engine = ShellEnvEngine(config_path=config_path)
+        elif e_type == "waybar":
+            from python.engines.waybar_engine import WaybarEngine
+            engine = WaybarEngine(config_path=config_path)
         else:
             print(f"[-] Fatal: Unknown ENGINE_TYPE '{e_type}' specified in schema '{schema_path.name}'.")
-            print("[i] Supported engines are: 'lua', 'ini', 'bridged_ini', 'systemd', 'hyprlang', 'trackpad', 'monitor', 'cmdline', 'flatdotconfig', 'env'")
+            print("[i] Supported engines are: 'lua', 'ini', 'bridged_ini', 'systemd', 'hyprlang', 'trackpad', 'monitor', 'cmdline', 'flatdotconfig', 'env', 'waybar'")
             sys.exit(1)
-            
+
         engine_pool[key] = engine
         return engine
 
