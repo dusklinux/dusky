@@ -3,7 +3,7 @@
 # Elite Arch Linux systemd-oomd & UWSM Optimizer
 # Target: Arch Linux Cutting-Edge (systemd 255+, Bash 5.3+)
 # Scope: Platinum Grade. Arms oomd with surgical kill policies, shields Hyprland.
-# Priority: Recalibrated for aggressive ZRAM. Prevents premature application kills.
+# Priority: Recalibrated for aggressive ZRAM. 10s kill-switch prevents system hangs.
 # Updates: Added Search & Destroy for competing OOM daemons to prevent policy sabotage.
 # =============================================================================
 
@@ -105,10 +105,10 @@ cat > "$tmp_oomd" <<EOF
 SwapUsedLimit=96%
 
 # Pressure Stall Information (PSI):
-# Increased limit (70%) and duration (20s) to allow CPU time to heavily compress
-# ZRAM memory during load spikes without triggering false-positive OOM kills.
+# Increased limit (70%) and duration (10s) to allow CPU time to heavily compress
+# ZRAM memory during load spikes without triggering false-positive OOM kills or system hangs.
 DefaultMemoryPressureLimit=70%
-DefaultMemoryPressureDurationSec=20s
+DefaultMemoryPressureDurationSec=10s
 EOF
 
 # B. User Service Policy (The Fangs)

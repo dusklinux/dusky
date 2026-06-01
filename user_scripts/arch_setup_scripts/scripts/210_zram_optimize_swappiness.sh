@@ -3,8 +3,8 @@
 # Elite Arch Linux ZRAM & VM Policy Optimizer
 # Target: Arch Linux Cutting-Edge (Kernel 7.0+, Bash 5.3+)
 # Scope: Platinum Grade. Pure performance, robust CLI, strict safety checks.
-# Priority: Absolute Minimum RAM Footprint, BBR Networking, eBPF Hardening.
-# Updates: Synthesized exactly to Kernel 7.0 forensic tuning matrices.
+# Priority: Absolute Minimum RAM Footprint, BBR Networking, Max RAM Recovery.
+# Updates: Synthesized exactly to Kernel 7.0 forensic tuning matrices & user overrides.
 # =============================================================================
 
 set -euo pipefail
@@ -109,30 +109,32 @@ declare -i EXPECTED_VFS_PRESSURE
 declare -i EXPECTED_SCALE_FACTOR
 declare -i EXPECTED_DIRTY_BYTES
 declare -i EXPECTED_DIRTY_BG_BYTES
+declare -i EXPECTED_MGLRU_TTL
 
 # The 30 GB Demarcation Line
 if [[ "$MODE" == "AGGRESSIVE" ]] || [[ "$MODE" == "AUTO" && SYSTEM_RAM_GB -ge 30 ]]; then
     EXPECTED_MODE="PERFORMANCE_LEAN (32GB+)"
     EXPECTED_SWAPPINESS=150
-    EXPECTED_VFS_PRESSURE=100      # Less aggressive dentry claim on huge RAM systems
+    EXPECTED_VFS_PRESSURE=100      
     EXPECTED_SCALE_FACTOR=100
     EXPECTED_DIRTY_BYTES=1073741824
     EXPECTED_DIRTY_BG_BYTES=268435456
+    EXPECTED_MGLRU_TTL=300
 else
     EXPECTED_MODE="STRICT_RAM_SAVINGS (<32GB)"
-    EXPECTED_SWAPPINESS=180        # Force immediate compression of inactive RAM (Verified Optimal)
-    EXPECTED_VFS_PRESSURE=150      # Aggressively reclaim directory/inode slabs (Verified Optimal)
-    EXPECTED_SCALE_FACTOR=50       # Reduce RAM held in reserve for atomic operations
+    EXPECTED_SWAPPINESS=180        # Force immediate compression of inactive RAM (User Override)
+    EXPECTED_VFS_PRESSURE=50       # Hoard metadata to prevent NVMe latency stalls (Forensic AI fix)
+    EXPECTED_SCALE_FACTOR=50       # 0.5% Emergency Buffer (40MB on 8GB RAM). Prevents UI direct reclaim stall.
     EXPECTED_DIRTY_BYTES=268435456 
     EXPECTED_DIRTY_BG_BYTES=67108864
+    EXPECTED_MGLRU_TTL=250         # Perfect CPU/ZRAM thrash shield balance.
 fi
 
-# Static Constants (Strictly Aligned with Forensics Matrix)
+# Static Constants
 readonly EXPECTED_PAGE_CLUSTER=0        # Disables swap readahead (critical for ZRAM latency).
 readonly EXPECTED_BOOST_FACTOR=0        # Disables sudden fragmentation CPU spikes.
 readonly EXPECTED_COMPACTION=0          # Disables idle background CPU memory compaction.
 readonly EXPECTED_MAX_MAP_COUNT=2147483 # Caps vm_area_struct bloat, high enough for gaming compatibility.
-readonly EXPECTED_MGLRU_TTL=300         # Google Standard CPU Shield reduced to 300ms for NVMe/ZRAM thrash prevention.
 
 # --- 5. Generation & Verification ---
 log_info "Initializing Platinum ZRAM & VM Policy Optimizer..."
@@ -194,14 +196,14 @@ net.ipv4.tcp_wmem = 4096 65536 8388608
 
 # --- eBPF SECURITY & MEMORY COMPACTION ---
 net.core.bpf_jit_enable = 1
-net.core.bpf_jit_harden = 2
+net.core.bpf_jit_harden = 0
 EOF
 
 # --- MGLRU Payload ---
 cat > "$tmpfile_mglru" <<EOF
 # Managed by ${SCRIPT_NAME}
 # Scope: MGLRU ZRAM Thrash Protection (CPU Shield)
-# Description: 300ms NVMe/ZRAM threshold. Prevents hot pages from being repeatedly compressed/decompressed.
+# Description: ${EXPECTED_MGLRU_TTL}ms NVMe/ZRAM threshold. Prevents hot pages from being repeatedly compressed/decompressed.
 w /sys/kernel/mm/lru_gen/min_ttl_ms - - - - ${EXPECTED_MGLRU_TTL}
 EOF
 
@@ -246,6 +248,7 @@ actual_swappiness="$(< /proc/sys/vm/swappiness)"
 actual_vfs="$(< /proc/sys/vm/vfs_cache_pressure)"
 actual_scale="$(< /proc/sys/vm/watermark_scale_factor)"
 actual_compaction="$(< /proc/sys/vm/compaction_proactiveness)"
+actual_bpf="$(< /proc/sys/net/core/bpf_jit_harden)"
 
 if [[ "$actual_swappiness" != "$EXPECTED_SWAPPINESS" ]]; then
     die "Verification failed: vm.swappiness is '${actual_swappiness}', expected '${EXPECTED_SWAPPINESS}'."
@@ -263,11 +266,16 @@ if [[ "$actual_compaction" != "$EXPECTED_COMPACTION" ]]; then
     die "Verification failed: vm.compaction_proactiveness is '${actual_compaction}', expected '${EXPECTED_COMPACTION}'."
 fi
 
+if [[ "$actual_bpf" != "0" ]]; then
+    die "Verification failed: net.core.bpf_jit_harden is '${actual_bpf}', expected '0'."
+fi
+
 log_success "Verified live kernel values:"
 log_success "  vm.swappiness = ${actual_swappiness} (Ideal ZRAM Reclaim)"
-log_success "  vm.vfs_cache_pressure = ${actual_vfs} (Slab Shrinkage Active)"
-log_success "  vm.watermark_scale_factor = ${actual_scale}"
+log_success "  vm.vfs_cache_pressure = ${actual_vfs} (Slab Hoarding Active)"
+log_success "  vm.watermark_scale_factor = ${actual_scale} (0.5% Safe Direct Reclaim Buffer)"
 log_success "  vm.compaction_proactiveness = ${actual_compaction}"
+log_success "  net.core.bpf_jit_harden = ${actual_bpf} (Security Disabled / RAM Recovered)"
 
 if [[ -f "/sys/kernel/mm/lru_gen/min_ttl_ms" ]]; then
     actual_ttl="$(< /sys/kernel/mm/lru_gen/min_ttl_ms)"
