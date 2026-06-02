@@ -187,7 +187,7 @@ class NoticeBox(Vertical):
 class ConfirmDialog(ModalScreen[bool]):
     BINDINGS = [
         Binding("escape", "dismiss_false", "Cancel"),
-        Binding("enter", "dismiss_true", "Confirm"),
+        Binding("enter,space", "dismiss_true", "Confirm"),
     ]
 
     def __init__(self, message: str, title: str = "CONFIRM", level: str = "warning") -> None:
@@ -221,7 +221,7 @@ class ConfirmDialog(ModalScreen[bool]):
 class AlertDialog(ModalScreen[None]):
     BINDINGS = [
         Binding("escape", "dismiss_modal", "Dismiss"),
-        Binding("enter", "dismiss_modal", "Dismiss"),
+        Binding("enter,space", "dismiss_modal", "Dismiss"),
     ]
 
     def __init__(self, message: str, title: str = "NOTICE", level: str = "warning", btn_text: str = " OK ") -> None:
@@ -475,6 +475,10 @@ class SearchScreen(ModalScreen[tuple[int, int] | None]):
             self.dismiss(None)
 
 class DiffScreen(ModalScreen[None]):
+    BINDINGS = [
+        Binding("escape,enter,space", "dismiss_modal", "Dismiss"),
+    ]
+
     def compose(self) -> ComposeResult:
         with Vertical(id="diff-dialog"):
             yield Label("MODIFICATIONS (From Launch)", id="modal-title")
@@ -503,6 +507,9 @@ class DiffScreen(ModalScreen[None]):
         if not added_any:
             ol.add_option(Option("No changes detected from initial load state.", disabled=True))
 
+    def action_dismiss_modal(self) -> None:
+        self.dismiss(None)
+
     @on(events.Click, ".modal-close-btn")
     def on_close_click(self) -> None:
         self.dismiss(None)
@@ -513,6 +520,10 @@ class DiffScreen(ModalScreen[None]):
             self.dismiss(None)
 
 class ShortcutsInfoScreen(ModalScreen[None]):
+    BINDINGS = [
+        Binding("escape,enter,space", "dismiss_modal", "Dismiss"),
+    ]
+
     def compose(self) -> ComposeResult:
         with Vertical(id="shortcuts-dialog"):
             yield Label("KEYBOARD SHORTCUTS", id="modal-title")
@@ -536,8 +547,8 @@ class ShortcutsInfoScreen(ModalScreen[None]):
             ("ctrl+r", "Redo last undone change"),
             ("ctrl+t", "Toggle between Auto and Batch save modes"),
             ("ctrl+s", "Commit all pending changes (only available in Batch mode)"),
-            ("enter", "Trigger action / Toggle boolean / Open Picker / Expand Folder"),
-            ("e, space", "Expand / Collapse nested option menus"),
+            ("enter, space", "Trigger action / Toggle boolean / Open Picker / Expand Folder"),
+            ("e", "Expand / Collapse nested option menus"),
             ("j, down", "Move cursor down"),
             ("k, up", "Move cursor up"),
             ("h, left", "Adjust value down / Cycle previous option"),
@@ -557,6 +568,9 @@ class ShortcutsInfoScreen(ModalScreen[None]):
             txt.append(desc, style=self.app.theme_colors["fg"])
             ol.add_option(Option(txt, disabled=True))
 
+    def action_dismiss_modal(self) -> None:
+        self.dismiss(None)
+
     @on(events.Click, ".modal-close-btn")
     def on_close_click(self) -> None:
         self.dismiss(None)
@@ -572,8 +586,8 @@ class ShortcutsInfoScreen(ModalScreen[None]):
 
 class ConfigOptionList(OptionList):
     BINDINGS = [
-        Binding("enter", "app.submit_current", "Action"),
-        Binding("e,space", "app.toggle_expand", "Expand/Collapse"),
+        Binding("enter,space", "app.submit_current", "Action"),
+        Binding("e", "app.toggle_expand", "Expand/Collapse"),
         Binding("j,down", "cursor_down", "Down"),
         Binding("k,up", "cursor_up", "Up"),
         Binding("g", "scroll_top", "Top"),
@@ -1351,7 +1365,6 @@ class DuskyTUI(App):
 
             match item.type_:
                 case "bool":
-                    # NEW FEATURE: Treat specific booleans as stateless UI Push-Buttons
                     is_trigger = item.options and isinstance(item.options, list) and len(item.options) > 0 and str(item.options[0]).lower() == "trigger"
                     if is_trigger:
                         if not exists:
