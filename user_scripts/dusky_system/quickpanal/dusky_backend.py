@@ -2,7 +2,7 @@
 """
 Backend module for Dusky Quick Panal.
 Handles multithreading, process execution, memory reclamation, 
-hardware interfaces, MPRIS media fetching, and notification DBUS states.
+hardware interfaces, and notification DBUS states.
 """
 
 from __future__ import annotations
@@ -66,7 +66,6 @@ HYPRCTL: Final = shutil.which("hyprctl")
 HYPRSUNSET: Final = shutil.which("hyprsunset")
 PGREP: Final = shutil.which("pgrep")
 SYSTEMCTL: Final = shutil.which("systemctl")
-PLAYERCTL: Final = shutil.which("playerctl")
 
 _RE_MAKO_BADGE: Final = re.compile(r'\d+')
 _RE_UPDATES_TOTAL: Final = re.compile(r'Total:\s*(\d+)')
@@ -291,6 +290,83 @@ class LatestValueWorker:
                     self._busy = False
                     self._condition.notify_all()
 
+class DebouncedValueWriter:
+    __slots__ = ("_busy", "_condition", "_deadline", "_delay_seconds", "_latest", "_name", "_pending", "_running", "_thread", "_write_func")
+
+    def __init__(self, name: str, write_func: Callable[[float], None], *, delay_seconds: float) -> None:
+        self._name = name
+        self._write_func = write_func
+        self._delay_seconds = max(0.0, delay_seconds)
+        self._condition = threading.Condition()
+        self._latest = 0.0
+        self._deadline: float | None = None
+        self._pending = False
+        self._busy = False
+        self._running = True
+        self._thread: threading.Thread | None = None
+        with self._condition: self._ensure_thread_locked()
+
+    def schedule(self, value: float) -> None:
+        with self._condition:
+            if not self._running: return
+            self._latest = float(value)
+            self._deadline = time.monotonic() + self._delay_seconds
+            self._pending = True
+            self._ensure_thread_locked()
+            self._condition.notify()
+
+    def flush(self, timeout: float | None = None) -> bool:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._condition:
+            if self._pending:
+                self._deadline = time.monotonic()
+                self._ensure_thread_locked()
+                self._condition.notify()
+            while self._running and (self._pending or self._busy):
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0.0: return False
+                self._condition.wait(remaining)
+        return True
+
+    def stop(self, timeout: float = 2.0) -> None:
+        self.flush(timeout)
+        with self._condition:
+            self._running = False
+            self._condition.notify_all()
+            thread = self._thread
+        if thread is not None:
+            try: thread.join(timeout=timeout)
+            except Exception: pass
+
+    def _ensure_thread_locked(self) -> None:
+        if self._thread is not None and self._thread.is_alive(): return
+        self._thread = start_thread(f"{self._name}-writer", self._worker, daemon=True)
+
+    def _worker(self) -> None:
+        while True:
+            with self._condition:
+                while True:
+                    if not self._running and not self._pending: return
+                    if not self._pending:
+                        self._condition.wait()
+                        continue
+                    deadline = self._deadline
+                    wait_time = 0.0 if deadline is None else deadline - time.monotonic()
+                    if wait_time > 0.0:
+                        self._condition.wait(wait_time)
+                        continue
+                    value = self._latest
+                    self._pending = False
+                    self._deadline = None
+                    self._busy = True
+                    break
+            try: self._write_func(value)
+            except Exception: pass
+            finally:
+                with self._condition:
+                    self._busy = False
+                    self._condition.notify_all()
+
 # ==============================================================================
 # NOTIFICATION SYSTEM (MAKO DBUS BRIDGE)
 # ==============================================================================
@@ -356,68 +432,7 @@ def fetch_notifications() -> list[NotificationData]:
 
 
 # ==============================================================================
-# MPRIS MEDIA STATE 
-# ==============================================================================
-@dataclass
-class MediaState:
-    players: list[str]
-    status: str | None
-    title: str
-    artist: str
-    position: float
-    length: float
-    shuffle: bool
-    loop: str
-
-def fetch_media_state(player: str | None = None) -> MediaState | None:
-    if PLAYERCTL is None: return None
-    
-    r_players = run_command([PLAYERCTL, "-l"], timeout=0.8, capture_stdout=True)
-    current_players = []
-    if r_players and r_players.returncode == 0 and r_players.stdout:
-        current_players = [p.strip() for p in r_players.stdout.splitlines() if p.strip()]
-
-    if not current_players: return None
-
-    fmt = "{{playerName}}\x1f{{status}}\x1f{{title}}\x1f{{artist}}\x1f{{position}}\x1f{{mpris:length}}\x1f{{shuffle}}\x1f{{loop}}"
-    args = [PLAYERCTL, "metadata", "--format", fmt]
-    
-    if player and player != "auto":
-        args = [PLAYERCTL, "-p", player, "metadata", "--format", fmt]
-
-    r_stat = run_command(args, timeout=1.5, capture_stdout=True)
-    
-    if not r_stat or r_stat.returncode != 0 or not r_stat.stdout.strip():
-        fallback_args = [PLAYERCTL, "status"]
-        if player and player != "auto":
-            fallback_args = [PLAYERCTL, "-p", player, "status"]
-            
-        r_fallback = run_command(fallback_args, timeout=0.8, capture_stdout=True)
-        if not r_fallback or r_fallback.returncode != 0 or r_fallback.stdout.strip() not in ("Playing", "Paused"):
-            return None
-            
-        p_name = player if player and player != "auto" else current_players[0]
-        return MediaState(current_players, r_fallback.stdout.strip(), "Unknown", "", -1.0, -1.0, False, "None")
-
-    parts = r_stat.stdout.strip().split("\x1f")
-    if len(parts) < 8:
-        return None
-
-    p_name, status, title, artist = parts[0], parts[1], parts[2] or "Unknown", parts[3]
-    if status not in ("Playing", "Paused"): return None
-    
-    try: pos = float(parts[4]) / 1000000.0 if parts[4] else -1.0
-    except ValueError: pos = -1.0
-    try: length = float(parts[5]) / 1000000.0 if parts[5] else -1.0
-    except ValueError: length = -1.0
-    
-    shuffle = parts[6].lower() in ("on", "true")
-    loop = parts[7] or "None"
-    return MediaState(current_players, status, title, artist, pos, length, shuffle, loop)
-
-
-# ==============================================================================
-# HARDWARE CONTROL STUBS 
+# HARDWARE CONTROL
 # ==============================================================================
 def get_volume() -> float | None:
     if WPCTL is None: return None
@@ -435,37 +450,426 @@ def apply_volume(value: float) -> None:
     if r is not None and r.returncode == 0 and vol > 0:
         run_command([WPCTL, "set-mute", "@DEFAULT_AUDIO_SINK@", "0"], timeout=CONTROL_TIMEOUT)
 
+# --- Sysfs Backlight & Hardware Brightness Controls ---
+@dataclass(frozen=True, slots=True)
+class BacklightDevice:
+    priority: int
+    maximum: int
+    path: Path
+    @property
+    def brightness_path(self) -> Path: return self.path / "brightness"
+    @property
+    def max_brightness_path(self) -> Path: return self.path / "max_brightness"
+    @property
+    def actual_brightness_path(self) -> Path: return self.path / "actual_brightness"
+
+_BACKLIGHT_DISCOVERY_TTL_SECONDS: Final = 5.0
+_backlight_discovery_lock: Final = threading.Lock()
+_backlight_candidates_cache: tuple[float, tuple[BacklightDevice, ...]] | None = None
+
+def _backlight_priority(name: str) -> int:
+    lowered = name.lower()
+    if lowered.startswith("intel_backlight"): return 400
+    if lowered.startswith("amdgpu_bl"): return 350
+    if lowered.startswith("nvidia"): return 300
+    if lowered.startswith("ddcci"): return 250
+    if "backlight" in lowered: return 200
+    if lowered.startswith("acpi_video"): return 100
+    return 0
+
+def _sysfs_backlight_candidates() -> tuple[BacklightDevice, ...]:
+    global _backlight_candidates_cache
+    now = time.monotonic()
+    with _backlight_discovery_lock:
+        cached = _backlight_candidates_cache
+        if cached is not None and now - cached[0] < _BACKLIGHT_DISCOVERY_TTL_SECONDS: return cached[1]
+
+    base = Path("/sys/class/backlight")
+    candidates: list[BacklightDevice] = []
+    if base.is_dir():
+        try: entries = tuple(base.iterdir())
+        except OSError: entries = ()
+        for entry in entries:
+            if not entry.is_dir(): continue
+            brightness_path = entry / "brightness"
+            max_brightness_path = entry / "max_brightness"
+            if not brightness_path.is_file() or not max_brightness_path.is_file(): continue
+            try: maximum = int(max_brightness_path.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError): continue
+            if maximum <= 0: continue
+            candidates.append(BacklightDevice(priority=_backlight_priority(entry.name), maximum=maximum, path=entry))
+            
+    candidates.sort(key=lambda device: (device.priority, device.maximum), reverse=True)
+    result = tuple(candidates)
+    with _backlight_discovery_lock:
+        _backlight_candidates_cache = (time.monotonic(), result)
+    return result
+
+def _best_sysfs_backlight(*, require_writable: bool = False) -> BacklightDevice | None:
+    for device in _sysfs_backlight_candidates():
+        if require_writable and not os.access(device.brightness_path, os.W_OK): continue
+        return device
+    return None
+
+def _preferred_sysfs_backlight() -> BacklightDevice | None:
+    return _best_sysfs_backlight(require_writable=True) or _best_sysfs_backlight()
+
+def _preferred_backlight_name() -> str | None:
+    if (device := _preferred_sysfs_backlight()) is None: return None
+    return device.path.name
+
+def _brightnessctl_command_base() -> list[str] | None:
+    if BRIGHTNESSCTL is None: return None
+    args = [BRIGHTNESSCTL, "--class=backlight"]
+    if (device_name := _preferred_backlight_name()) is not None: args.append(f"--device={device_name}")
+    return args
+
+def _has_writable_sysfs_backlight() -> bool:
+    return _best_sysfs_backlight(require_writable=True) is not None
+
+def _read_sysfs_brightness() -> float | None:
+    if (device := _preferred_sysfs_backlight()) is None: return None
+    read_path = device.actual_brightness_path if device.actual_brightness_path.is_file() else device.brightness_path
+    try:
+        current = parse_float(read_path.read_text(encoding="utf-8"))
+        maximum = parse_float(device.max_brightness_path.read_text(encoding="utf-8"))
+    except OSError: return None
+    if current is None or maximum is None or maximum <= 0.0: return None
+    return clamp((current / maximum) * 100.0, 0.0, 100.0)
+
+def _read_brightnessctl() -> float | None:
+    if (base_cmd := _brightnessctl_command_base()) is None: return None
+    result = run_command([*base_cmd, "--machine-readable"], timeout=QUERY_TIMEOUT, capture_stdout=True)
+    if result is None or result.returncode != 0: return None
+    lines = result.stdout.splitlines()
+    if not lines: return None
+    parts = lines[0].split(",")
+    if len(parts) < 5: return None
+    value = parse_float(parts[4].rstrip("%"))
+    if value is None: return None
+    return clamp(value, 0.0, 100.0)
+
+def _write_sysfs_brightness(value: float) -> bool:
+    if (device := _best_sysfs_backlight(require_writable=True)) is None: return False
+    try: maximum = int(device.max_brightness_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError): return False
+    if maximum <= 0: return False
+    brightness = percent_int(value, lower=1)
+    raw_value = max(1, min(maximum, int(round((brightness / 100.0) * maximum))))
+    try:
+        device.brightness_path.write_text(f"{raw_value}\n", encoding="utf-8")
+    except OSError: return False
+    return True
+
+# --- DDC Display Management ---
+@dataclass(slots=True)
+class DdcDisplay:
+    bus: int
+    max_value: int = 100
+    last_percent: float | None = None
+
+class DdcManager:
+    __slots__ = ("_cache_file", "_detect_thread", "_displays", "_last_requested", "_lock", "_started", "_workers", "_last_rescan_time")
+
+    def __init__(self, cache_file: Path | None) -> None:
+        self._cache_file = cache_file
+        self._lock = threading.Lock()
+        self._displays: dict[int, DdcDisplay] = {}
+        self._workers: dict[int, LatestValueWorker] = {}
+        self._last_requested: float | None = None
+        self._started = False
+        self._detect_thread: threading.Thread | None = None
+        self._last_rescan_time = 0.0
+
+    def start(self) -> None:
+        if DDCUTIL is None: return
+        with self._lock:
+            if self._started: return
+            self._started = True
+            self._load_cache_locked()
+        self.request_rescan()
+
+    def request_rescan(self) -> None:
+        if DDCUTIL is None: return
+        with self._lock:
+            now = time.monotonic()
+            if now - self._last_rescan_time < 60.0: return
+            self._last_rescan_time = now
+            thread = self._detect_thread
+            if thread is not None and thread.is_alive(): return
+            self._detect_thread = start_thread("ddcutil-detect", self._detect_worker, daemon=True)
+
+    def submit(self, value: float) -> None:
+        if DDCUTIL is None: return
+        percent = float(percent_int(value, lower=1))
+        with self._lock:
+            self._last_requested = percent
+            workers = tuple(self._workers.values())
+        for worker in workers: worker.submit(percent)
+
+    def current_percent(self) -> float | None:
+        with self._lock:
+            has_displays = bool(self._displays)
+            last_requested = self._last_requested
+            should_rescan = self._started if not has_displays else False
+            if not has_displays: result = None
+            elif last_requested is not None: result = last_requested
+            else: result = NO_PENDING
+            
+        if should_rescan: self.request_rescan()
+        if result is None: return None
+        if result is not NO_PENDING: return float(result)
+        
+        with self._lock:
+            if not self._displays: return None
+            for bus in sorted(self._displays):
+                if (value := self._displays[bus].last_percent) is not None: return value
+            return 50.0
+
+    def has_displays(self) -> bool:
+        with self._lock: return bool(self._displays)
+
+    def stop(self, timeout: float = 1.5) -> None:
+        with self._lock:
+            self._started = False
+            workers = tuple(self._workers.values())
+            self._workers.clear()
+        for worker in workers: worker.stop(timeout)
+
+    def _load_cache_locked(self) -> None:
+        if self._cache_file is None or not self._cache_file.is_file(): return
+        try: data = json.loads(self._cache_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError): return
+        entries: list[tuple[int, int]] = []
+        if isinstance(data, list):
+            for item in data:
+                try:
+                    if isinstance(item, dict):
+                        bus = int(item.get("bus", -1))
+                        maximum = int(item.get("max", 100))
+                    else:
+                        bus = int(item)
+                        maximum = 100
+                except (TypeError, ValueError): continue
+                if bus >= 0: entries.append((bus, max(1, maximum)))
+        for bus, maximum in entries: self._ensure_display_locked(bus, maximum, None)
+
+    def _save_cache_snapshot(self) -> None:
+        if self._cache_file is None: return
+        with self._lock:
+            records = [{"bus": display.bus, "max": display.max_value} for display in sorted(self._displays.values(), key=lambda item: item.bus)]
+        atomic_write_text(self._cache_file, json.dumps(records, separators=(",", ":")) + "\n", durable=False)
+
+    def _ensure_display_locked(self, bus: int, max_value: int, last_percent: float | None) -> None:
+        max_value = max(1, int(max_value))
+        if (display := self._displays.get(bus)) is None:
+            display = DdcDisplay(bus=bus, max_value=max_value, last_percent=last_percent)
+            self._displays[bus] = display
+        else:
+            display.max_value = max_value
+            if last_percent is not None: display.last_percent = last_percent
+        if bus not in self._workers:
+            self._workers[bus] = LatestValueWorker(f"ddcutil-bus-{bus}", lambda value, target_bus=bus: self._apply_bus(target_bus, value))
+
+    def _detect_worker(self) -> None:
+        try: self._detect_worker_impl()
+        except Exception: pass
+
+    def _detect_worker_impl(self) -> None:
+        if DDCUTIL is None: return
+        result = run_command([DDCUTIL, "detect", "--terse"], timeout=DDC_DETECT_TIMEOUT, capture_stdout=True)
+        if result is None or result.returncode != 0: return
+        buses = self._parse_detect_buses(result.stdout)
+        discovered: dict[int, DdcDisplay] = {}
+        for bus in buses:
+            display = self._query_display(bus)
+            if display is not None: discovered[bus] = display
+        removed_workers: list[LatestValueWorker] = []
+        
+        with self._lock:
+            if not self._started: return
+            old_buses = set(self._displays)
+            new_buses = set(discovered)
+            for bus in old_buses - new_buses:
+                self._displays.pop(bus, None)
+                if (worker := self._workers.pop(bus, None)) is not None: removed_workers.append(worker)
+            for bus, display in discovered.items():
+                self._ensure_display_locked(bus, display.max_value, display.last_percent)
+            last_requested = self._last_requested
+            workers = tuple(self._workers.values())
+            
+        for worker in removed_workers: worker.stop(0.25)
+        if last_requested is not None:
+            for worker in workers: worker.submit(last_requested)
+        self._save_cache_snapshot()
+
+    @staticmethod
+    def _parse_detect_buses(stdout: str) -> tuple[int, ...]:
+        buses: set[int] = set()
+        for line in stdout.splitlines():
+            for token in line.replace(":", " ").replace(",", " ").split():
+                if token.startswith("/dev/i2c-"): suffix = token.rsplit("-", 1)[-1]
+                elif token.startswith("i2c-"): suffix = token.rsplit("-", 1)[-1]
+                else: continue
+                if suffix.isdigit(): buses.add(int(suffix))
+        return tuple(sorted(buses))
+
+    def _query_display(self, bus: int) -> DdcDisplay | None:
+        if DDCUTIL is None: return None
+        result = run_command([DDCUTIL, "getvcp", "10", "--terse", "--bus", str(bus)], timeout=DDC_QUERY_TIMEOUT, capture_stdout=True)
+        if result is None or result.returncode != 0: return None
+        parsed = self._parse_getvcp_brightness(result.stdout)
+        if parsed is None: return None
+        current_raw, max_raw = parsed
+        max_value = max(1, max_raw)
+        current_percent = clamp((current_raw / max_value) * 100.0, 0.0, 100.0)
+        return DdcDisplay(bus=bus, max_value=max_value, last_percent=current_percent)
+
+    @staticmethod
+    def _parse_getvcp_brightness(stdout: str) -> tuple[int, int] | None:
+        for line in stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[0] == "VCP" and parts[2] == "C":
+                try:
+                    current = int(parts[3])
+                    maximum = int(parts[4])
+                except ValueError: return None
+                if maximum > 0: return current, maximum
+        return None
+
+    def _apply_bus(self, bus: int, value: float) -> None:
+        if DDCUTIL is None: return
+        percent = float(percent_int(value, lower=1))
+        with self._lock:
+            display = self._displays.get(bus)
+            max_value = 100 if display is None else max(1, display.max_value)
+        raw_value = max(1, min(max_value, int(round((percent / 100.0) * max_value))))
+        result = run_command([DDCUTIL, "setvcp", "10", str(raw_value), "--bus", str(bus)], timeout=DDC_SET_TIMEOUT)
+        if result is None or result.returncode != 0: return
+        with self._lock:
+            if (display := self._displays.get(bus)) is not None: display.last_percent = percent
+
+
+DDC_MANAGER: Final = DdcManager(DDCUTIL_CACHE_FILE) if DDCUTIL is not None else None
+
+HAS_VOLUME: Final = WPCTL is not None
+HAS_LOCAL_BRIGHTNESS: Final = _preferred_sysfs_backlight() is not None and (BRIGHTNESSCTL is not None or _has_writable_sysfs_backlight())
+HAS_DDC_BRIGHTNESS: Final = DDCUTIL is not None
+HAS_BRIGHTNESS: Final = HAS_LOCAL_BRIGHTNESS or HAS_DDC_BRIGHTNESS
+HAS_SUNSET: Final = HYPRCTL is not None and HYPRSUNSET is not None and bool(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"))
+
 def get_brightness() -> float | None:
-    if BRIGHTNESSCTL is None: return 50.0
-    r = run_command([BRIGHTNESSCTL, "-m"], timeout=QUERY_TIMEOUT, capture_stdout=True)
-    if r and r.returncode == 0:
-        parts = r.stdout.split(",")
-        if len(parts) >= 4:
-            val = parse_float(parts[3].rstrip("%"))
-            if val is not None: return clamp(val, 0.0, 100.0)
-    return 50.0
+    if (value := _read_sysfs_brightness()) is not None: return value
+    if (value := _read_brightnessctl()) is not None: return value
+    if DDC_MANAGER is None: return None
+    return DDC_MANAGER.current_percent()
 
 def apply_local_brightness(value: float) -> None:
-    if BRIGHTNESSCTL:
-        run_command([BRIGHTNESSCTL, "set", f"{percent_int(value, 1)}%"], timeout=CONTROL_TIMEOUT)
+    brightness = percent_int(value, lower=1)
+    if _write_sysfs_brightness(brightness): return
+    if (base_cmd := _brightnessctl_command_base()) is None: return
+    run_command([*base_cmd, "--quiet", "set", f"{brightness}%"], timeout=CONTROL_TIMEOUT)
 
 def get_hyprsunset_state() -> float:
     if STATE_FILE is None: return DEFAULT_SUNSET
-    try: val = parse_float(STATE_FILE.read_text(encoding="utf-8"))
+    try: value = parse_float(STATE_FILE.read_text(encoding="utf-8"))
     except OSError: return DEFAULT_SUNSET
-    return clamp(val, 1000.0, 6000.0) if val is not None else DEFAULT_SUNSET
+    if value is None: return DEFAULT_SUNSET
+    return clamp(value, 1000.0, 6000.0)
+
+def write_hyprsunset_state(value: float) -> None:
+    if STATE_FILE is not None:
+        atomic_write_text(STATE_FILE, f"{kelvin_value(value)}\n", durable=True)
 
 class HyprsunsetController:
-    def __init__(self):
+    __slots__ = ("_fallback_process", "_process_lock", "_ready", "_state_writer", "_worker")
+
+    def __init__(self) -> None:
+        self._state_writer = DebouncedValueWriter("sunset-state", write_hyprsunset_state, delay_seconds=SUNSET_STATE_WRITE_DEBOUNCE_SECONDS)
         self._worker = LatestValueWorker("sunset", self._apply)
-    def submit(self, value: float) -> None: self._worker.submit(value)
-    def start(self) -> None: self._worker.start()
-    def stop(self, timeout: float = 3.0) -> None: self._worker.stop(timeout)
+        self._ready = threading.Event()
+        self._process_lock = threading.Lock()
+        self._fallback_process: subprocess.Popen[bytes] | None = None
+
+    def submit(self, value: float) -> None:
+        self._worker.submit(float(kelvin_value(value)))
+
+    def start(self) -> None:
+        self._worker.start()
+
+    def stop(self, timeout: float = 3.0) -> None:
+        self._worker.stop(timeout)
+        self._state_writer.stop(timeout)
+
     def _apply(self, value: float) -> None:
         target = kelvin_value(value)
-        if HYPRCTL: run_command([HYPRCTL, "hyprsunset", "temperature", str(target)], timeout=CONTROL_TIMEOUT)
-        if STATE_FILE: atomic_write_text(STATE_FILE, f"{target}\n")
+        if self._send_temperature(target):
+            self._mark_applied(target)
+            return
+        self._ready.clear()
+        self._start_backend(target)
+        if self._wait_until_applied(target, SUNSET_READY_TIMEOUT): return
+        self._spawn_fallback_process(target)
+        if self._wait_until_applied(target, SUNSET_FALLBACK_READY_TIMEOUT): return
 
-HAS_VOLUME: Final = WPCTL is not None
-HAS_BRIGHTNESS: Final = BRIGHTNESSCTL is not None
-HAS_SUNSET: Final = HYPRCTL is not None and HYPRSUNSET is not None
+    def _mark_applied(self, target: int) -> None:
+        self._ready.set()
+        self._state_writer.schedule(float(target))
+
+    def _wait_until_applied(self, target: int, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._send_temperature(target):
+                self._mark_applied(target)
+                return True
+            time.sleep(0.08)
+        return False
+
+    def _send_temperature(self, target: int) -> bool:
+        if HYPRCTL is None: return False
+        result = run_command([HYPRCTL, "hyprsunset", "temperature", str(target)], timeout=QUERY_TIMEOUT)
+        return result is not None and result.returncode == 0
+
+    def _start_backend(self, target: int) -> None:
+        if SYSTEMCTL is not None:
+            result = run_command([SYSTEMCTL, "--user", "start", "hyprsunset.service"], timeout=CONTROL_TIMEOUT)
+            if result is not None and result.returncode == 0: return
+        if not self._is_hyprsunset_running():
+            self._spawn_fallback_process(target)
+
+    def _is_hyprsunset_running(self) -> bool:
+        with self._process_lock:
+            proc = self._fallback_process
+            if proc is not None and proc.poll() is None: return True
+        if PGREP is None: return False
+        result = run_command([PGREP, "-u", str(os.getuid()), "-x", "hyprsunset"], timeout=QUERY_TIMEOUT)
+        return result is not None and result.returncode == 0
+
+    def _spawn_fallback_process(self, target: int) -> None:
+        if HYPRSUNSET is None: return
+        with self._process_lock:
+            proc = self._fallback_process
+            if proc is not None:
+                if proc.poll() is None: return
+                self._fallback_process = None
+            try:
+                new_proc = subprocess.Popen(
+                    [HYPRSUNSET, "--temperature", str(target)],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    start_new_session=True, close_fds=True, env=COMMAND_ENV,
+                )
+            except OSError as exc: return
+            self._fallback_process = new_proc
+        start_thread("hyprsunset-reaper", self._reap_fallback_process, new_proc, daemon=True)
+
+    def _reap_fallback_process(self, proc: subprocess.Popen[bytes]) -> None:
+        try: proc.wait()
+        except Exception: pass
+        finally:
+            was_active_backend = False
+            with self._process_lock:
+                if self._fallback_process is proc:
+                    self._fallback_process = None
+                    was_active_backend = True
+            if was_active_backend and not self._is_hyprsunset_running():
+                self._ready.clear()

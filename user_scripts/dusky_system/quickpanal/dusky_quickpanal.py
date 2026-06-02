@@ -30,7 +30,8 @@ try:
     import gi
     gi.require_version("Gtk", "3.0")
     gi.require_version("Gdk", "3.0")
-    from gi.repository import Gdk, Gio, GLib, Gtk
+    gi.require_version("Pango", "1.0")
+    from gi.repository import Gdk, Gio, GLib, Gtk, Pango
 except (ImportError, ValueError) as exc:
     raise SystemExit(f"Failed to load GTK3: {exc}") from exc
 
@@ -38,9 +39,10 @@ except (ImportError, ValueError) as exc:
 from dusky_backend import (
     APP_ID, HOME, execute_cmd, run_command, fetch_json_output, _reclaim_idle_memory,
     LatestValueWorker, RefreshPool, HyprsunsetController, LOG,
-    HAS_VOLUME, HAS_BRIGHTNESS, HAS_SUNSET,
+    HAS_VOLUME, HAS_BRIGHTNESS, HAS_LOCAL_BRIGHTNESS, HAS_SUNSET, DDC_MANAGER,
     get_volume, apply_volume, get_brightness, apply_local_brightness, 
-    get_hyprsunset_state, _RE_MAKO_BADGE, _RE_UPDATES_TOTAL
+    get_hyprsunset_state, _RE_MAKO_BADGE, _RE_UPDATES_TOTAL,
+    BRIGHTNESS_POST_SUBMIT_REFRESH_GRACE_SECONDS, SUNSET_STATE_WRITE_DEBOUNCE_SECONDS
 )
 
 from dusky_ui import (
@@ -148,7 +150,9 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
         self.dynamic_toggles: dict[str, QuickIconToggle] = {}
         self._grab_active = False
 
-        self.set_default_size(380, -1)
+        # CRITICAL UI FIX: Exact 15% physical reduction mapped out flawlessly (380 -> 320)
+        self.set_default_size(320, -1)
+        self.set_size_request(320, -1) 
         self.set_resizable(False)
         self.set_decorated(False)
         _add_css_class(self, "panel-window")
@@ -162,14 +166,17 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
         self._grab_cb = CB_TYPE(self._on_grab_cleared) if LIBGRAB else None
 
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        main_box.set_margin_start(18); main_box.set_margin_end(18)
-        main_box.set_margin_top(18); main_box.set_margin_bottom(18)
+        # Scaled margins by ~15% (18px -> 12px) to preserve internal layout room
+        main_box.set_margin_start(12); main_box.set_margin_end(12)
+        main_box.set_margin_top(12); main_box.set_margin_bottom(12)
 
         # Global scrolling to support endless notifications gracefully
         self.scrolled_main = Gtk.ScrolledWindow()
         self.scrolled_main.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scrolled_main.add(main_box)
-        self.scrolled_main.set_propagate_natural_width(True)
+        
+        # CRITICAL UI FIX: Absolutely DO NOT let natural widths propagate and bloat the parent.
+        self.scrolled_main.set_propagate_natural_width(False)
         self.scrolled_main.set_propagate_natural_height(True)
         max_h = _get_active_monitor_scaled_height() * 0.85 
         self.scrolled_main.set_max_content_height(int(max_h))
@@ -182,8 +189,13 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
         _add_css_class(self.weather_box, "weather-pill")
         self.weather_icon = Gtk.Image.new_from_icon_name("weather-few-clouds-symbolic", Gtk.IconSize.MENU)
         self.weather_icon.set_pixel_size(16)
+        
         self.weather_lbl = Gtk.Label()
+        # CRITICAL UI FIX: Weather text can't physically inflate header
+        self.weather_lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        self.weather_lbl.set_width_chars(1)
         _add_css_class(self.weather_lbl, "weather-text")
+        
         self.weather_box.pack_start(self.weather_icon, False, False, 0)
         self.weather_box.pack_start(self.weather_lbl, False, False, 0)
         self.weather_box.set_no_show_all(True)
@@ -202,8 +214,13 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
         self.clock_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.lbl_time = Gtk.Label()
         _add_css_class(self.lbl_time, "header-time")
+        
         self.lbl_date = Gtk.Label()
+        # CRITICAL UI FIX: Lock down date minimum width
+        self.lbl_date.set_ellipsize(Pango.EllipsizeMode.END)
+        self.lbl_date.set_width_chars(1)
         _add_css_class(self.lbl_date, "header-date")
+        
         self.clock_box.pack_start(self.lbl_time, False, False, 0)
         self.clock_box.pack_start(self.lbl_date, False, False, 0)
         self.clock_event_box.add(self.clock_box)
@@ -233,8 +250,9 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
             self.flow.set_selection_mode(Gtk.SelectionMode.NONE)
             self.flow.set_max_children_per_line(5)
             self.flow.set_min_children_per_line(5)
-            self.flow.set_column_spacing(14)
-            self.flow.set_row_spacing(14)
+            # CRITICAL UI FIX: Shrink spacing to fit 5 items safely below 320px
+            self.flow.set_column_spacing(10)
+            self.flow.set_row_spacing(10)
 
             for t_conf in self.config.get("toggles", []):
                 tg = QuickIconToggle(
@@ -258,6 +276,9 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
             self.power_container.pack_start(power_icon, False, False, 0)
             
             power_label = Gtk.Label(label="Power Profile")
+            # CRITICAL UI FIX: Text width constraint
+            power_label.set_ellipsize(Pango.EllipsizeMode.END)
+            power_label.set_width_chars(1)
             _add_css_class(power_label, "power-label")
             power_label.set_halign(Gtk.Align.START)
             power_label.set_xalign(0.0)
@@ -285,11 +306,11 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
                 self._slider_rows.append(row)
                 self.sliders_box.pack_start(row, False, False, 0)
             if HAS_BRIGHTNESS:
-                row = CompactSliderRow("󰃠", "brightness", 1.0, 100.0, 1.0, get_brightness, brightness_submit, self.pool)
+                row = CompactSliderRow("󰃠", "brightness", 1.0, 100.0, 1.0, get_brightness, brightness_submit, self.pool, post_submit_refresh_grace_seconds=BRIGHTNESS_POST_SUBMIT_REFRESH_GRACE_SECONDS)
                 self._slider_rows.append(row)
                 self.sliders_box.pack_start(row, False, False, 0)
             if HAS_SUNSET:
-                row = CompactSliderRow("󰡬", "sunset", 1000.0, 6000.0, 50.0, get_hyprsunset_state, sunset_submit, self.pool)
+                row = CompactSliderRow("󰡬", "sunset", 1000.0, 6000.0, 50.0, get_hyprsunset_state, sunset_submit, self.pool, post_submit_refresh_grace_seconds=BRIGHTNESS_POST_SUBMIT_REFRESH_GRACE_SECONDS)
                 self._slider_rows.append(row)
                 self.sliders_box.pack_start(row, False, False, 0)
             if self._slider_rows: main_box.pack_start(self.sliders_box, False, False, 0)
@@ -468,6 +489,7 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
         if app and hasattr(app, "suspend_workers"): app.suspend_workers()
         GLib.timeout_add(500, lambda: (self.get_visible() or _reclaim_idle_memory(), GLib.SOURCE_REMOVE)[1])
 
+
 class QuickPanalApp(Gtk.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
@@ -475,8 +497,11 @@ class QuickPanalApp(Gtk.Application):
 
     def submit_volume(self, value: float):
         if self._volume_worker: self._volume_worker.submit(value)
-    def submit_brightness(self, value: float):
+        
+    def _submit_brightness(self, value: float):
         if self._local_brightness_worker: self._local_brightness_worker.submit(value)
+        if DDC_MANAGER: DDC_MANAGER.submit(value)
+        
     def submit_sunset(self, value: float):
         if self._sunset_controller: self._sunset_controller.submit(value)
 
@@ -484,6 +509,7 @@ class QuickPanalApp(Gtk.Application):
         if self.pool: self.pool.shutdown()
         if self._sunset_controller: self._sunset_controller.stop()
         if self._local_brightness_worker: self._local_brightness_worker.stop()
+        if DDC_MANAGER: DDC_MANAGER.stop()
         if self._volume_worker: self._volume_worker.stop()
         _reclaim_idle_memory()
 
@@ -491,6 +517,7 @@ class QuickPanalApp(Gtk.Application):
         gc.unfreeze()
         if self._volume_worker: self._volume_worker.start()
         if self._local_brightness_worker: self._local_brightness_worker.start()
+        if DDC_MANAGER: DDC_MANAGER.start()
         if self._sunset_controller: self._sunset_controller.start()
 
     @override
@@ -500,9 +527,11 @@ class QuickPanalApp(Gtk.Application):
 
         config_data = load_or_create_config()
 
+        if DDC_MANAGER: DDC_MANAGER.start()
+
         self.pool = RefreshPool(max_workers=4)
         self._volume_worker = LatestValueWorker("volume", apply_volume) if HAS_VOLUME else None
-        self._local_brightness_worker = LatestValueWorker("local-brightness", apply_local_brightness) if HAS_BRIGHTNESS else None
+        self._local_brightness_worker = LatestValueWorker("local-brightness", apply_local_brightness) if HAS_LOCAL_BRIGHTNESS else None
         self._sunset_controller = HyprsunsetController() if HAS_SUNSET else None
 
         settings = Gtk.Settings.get_default()
@@ -513,7 +542,7 @@ class QuickPanalApp(Gtk.Application):
 
         self.window = QuickPanalWindow(self, self.pool, config_data,
             volume_submit=self.submit_volume if HAS_VOLUME else None,
-            brightness_submit=self.submit_brightness if HAS_BRIGHTNESS else None,
+            brightness_submit=self._submit_brightness if HAS_BRIGHTNESS else None,
             sunset_submit=self.submit_sunset if HAS_SUNSET else None
         )
         self.suspend_workers()

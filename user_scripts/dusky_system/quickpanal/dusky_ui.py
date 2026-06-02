@@ -20,8 +20,8 @@ gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango
 
 from dusky_backend import (
-    HOME, LOG, execute_cmd, run_command, snap_to_step, PLAYERCTL, 
-    fetch_media_state, MediaState, fetch_notifications, NotificationData, RefreshPool
+    HOME, LOG, execute_cmd, run_command, snap_to_step, 
+    fetch_notifications, NotificationData, RefreshPool
 )
 
 def _add_css_class(widget: Gtk.Widget, cls: str) -> None:
@@ -39,7 +39,7 @@ class QuickIconToggle(Gtk.Overlay):
         self.btn_box.set_tooltip_text(tooltip)
 
         self._icon = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.LARGE_TOOLBAR)
-        self._icon.set_pixel_size(24)
+        self._icon.set_pixel_size(20) # Scaled down properly
         self._icon.set_halign(Gtk.Align.CENTER)
         self._icon.set_valign(Gtk.Align.CENTER)
         self.btn_box.add(self._icon)
@@ -68,7 +68,7 @@ class QuickIconToggle(Gtk.Overlay):
     def update_state(self, icon: str | None = None, css_class: str | None = None, tooltip: str | None = None, badge: str = ""):
         if icon:
             self._icon.set_from_icon_name(icon, Gtk.IconSize.LARGE_TOOLBAR)
-            self._icon.set_pixel_size(24)
+            self._icon.set_pixel_size(20) # Keep synced scaling
         if tooltip: self.btn_box.set_tooltip_text(tooltip)
         if css_class:
             for cls in ["normal", "active", "dnd-active", "power-saver-active"]:
@@ -127,7 +127,7 @@ class MetricPill(Gtk.EventBox):
 
 class CompactSliderRow(Gtk.Box):
     def __init__(self, icon_text: str, css_class: str, min_value: float, max_value: float, step: float, fetch_cb: Any, submit_cb: Any, refresh_pool: RefreshPool, *, post_submit_refresh_grace_seconds: float = 0.0) -> None:
-        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=12) # Reduced spacing
         self._fetch_cb, self._submit_cb, self._refresh_pool = fetch_cb, submit_cb, refresh_pool
         self._refresh_future, self._refresh_token, self._user_revision = None, 0, 0
         self._suppress_apply, self._has_value = False, False
@@ -143,6 +143,8 @@ class CompactSliderRow(Gtk.Box):
         self.adjustment = Gtk.Adjustment(value=min_value, lower=min_value, upper=max_value, step_increment=step, page_increment=step * 10.0)
         self.scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.adjustment)
         self.scale.set_hexpand(True)
+        # CRITICAL UI FIX: Obliterate GTK Theme's minimum scale request footprint (Usually ~150px default limit)
+        self.scale.set_size_request(50, -1)
         self.scale.set_draw_value(False)
         self.scale.set_digits(0)
         self.scale.set_sensitive(False)
@@ -156,7 +158,7 @@ class CompactSliderRow(Gtk.Box):
         self.pack_start(self.scale, True, True, 0)
 
         self.value_label = Gtk.Label(label="…")
-        self.value_label.set_width_chars(4)
+        self.value_label.set_width_chars(3) # Shrink minimum char footprint
         self.value_label.set_xalign(1.0)
         _add_css_class(self.value_label, "value-label")
         self.pack_start(self.value_label, False, False, 0)
@@ -248,6 +250,9 @@ class NotificationRow(Gtk.ListBoxRow):
         if notif.app_name and notif.app_name != "notify-send":
             app_lbl = Gtk.Label(label=notif.app_name.upper())
             app_lbl.set_halign(Gtk.Align.START)
+            # CRITICAL UI FIX: Lock all notification text layout logic to 1 char minimum.
+            app_lbl.set_ellipsize(Pango.EllipsizeMode.END)
+            app_lbl.set_width_chars(1)
             _add_css_class(app_lbl, "notif-app-name")
             text_box.pack_start(app_lbl, False, False, 0)
 
@@ -257,7 +262,8 @@ class NotificationRow(Gtk.ListBoxRow):
         sum_lbl.set_markup(f"<span>{escaped_sum}</span>")
         sum_lbl.set_halign(Gtk.Align.START)
         sum_lbl.set_ellipsize(Pango.EllipsizeMode.END)
-        sum_lbl.set_max_width_chars(35)
+        sum_lbl.set_width_chars(1)
+        sum_lbl.set_max_width_chars(30)
         _add_css_class(sum_lbl, "notif-summary")
         text_box.pack_start(sum_lbl, False, False, 0)
 
@@ -268,7 +274,8 @@ class NotificationRow(Gtk.ListBoxRow):
                 body_lbl = Gtk.Label(label=clean_body)
                 body_lbl.set_halign(Gtk.Align.START)
                 body_lbl.set_ellipsize(Pango.EllipsizeMode.END)
-                body_lbl.set_max_width_chars(42)
+                body_lbl.set_width_chars(1)
+                body_lbl.set_max_width_chars(36)
                 _add_css_class(body_lbl, "notif-body")
                 text_box.pack_start(body_lbl, False, False, 0)
 
@@ -298,6 +305,9 @@ class NotificationsPanel(Gtk.Box):
         title = Gtk.Label(label="Notifications")
         _add_css_class(title, "notif-header-title")
         title.set_halign(Gtk.Align.START)
+        # CRITICAL UI FIX: Lock header text minimum 
+        title.set_ellipsize(Pango.EllipsizeMode.END)
+        title.set_width_chars(1)
         header.pack_start(title, True, True, 0)
 
         self.btn_dnd = Gtk.Button()
@@ -453,7 +463,7 @@ class NotificationsPanel(Gtk.Box):
         self.refresh_async()
 
 # ==============================================================================
-# CSS THEME
+# CSS THEME (~15% Proportional Reduction on everything)
 # ==============================================================================
 CSS = """
 window.panel-window {
@@ -464,19 +474,19 @@ scrolledwindow { background: transparent; }
 * { outline: none; }
 button { transition: background-color 200ms ease, opacity 200ms ease, box-shadow 200ms ease; }
 
-.header-time { font-size: 46px; font-weight: 800; letter-spacing: -2px; color: @theme_fg_color; }
-.header-date { font-size: 14px; font-weight: 600; color: alpha(@theme_fg_color, 0.7); }
+.header-time { font-size: 38px; font-weight: 800; letter-spacing: -2px; color: @theme_fg_color; }
+.header-date { font-size: 12px; font-weight: 600; color: alpha(@theme_fg_color, 0.7); }
 
-box.weather-pill { padding: 6px 4px; }
-.weather-text { font-size: 13px; font-weight: 700; color: alpha(@theme_fg_color, 0.9); }
+box.weather-pill { padding: 4px 4px; }
+.weather-text { font-size: 12px; font-weight: 700; color: alpha(@theme_fg_color, 0.9); }
 
 button.power-header-btn {
-    min-width: 42px; min-height: 42px; border-radius: 21px; background-color: alpha(#ff453a, 0.6); color: #ff453a; border: 1px solid rgba(255, 255, 255, 0.05);
+    min-width: 36px; min-height: 36px; border-radius: 18px; background-color: alpha(#ff453a, 0.6); color: white; border: 1px solid rgba(255, 255, 255, 0.05);
 }
 button.power-header-btn:hover { background-color: #ff453a; color: white; }
 
 button.quick-icon-toggle {
-    min-width: 52px; min-height: 52px; border-radius: 26px;
+    min-width: 44px; min-height: 44px; border-radius: 22px;
     background-color: rgba(255, 255, 255, 0.06); background-image: none; border: 1px solid rgba(255, 255, 255, 0.05); padding: 0; box-shadow: none;
     transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
@@ -490,27 +500,27 @@ button.quick-icon-toggle.dnd-active { background-color: alpha(#ff453a, 0.3); bor
 button.quick-icon-toggle.dnd-active image { color: #ff453a; }
 
 .notification-badge {
-    background-color: @theme_selected_bg_color; color: black; font-size: 11px; font-weight: 900; border-radius: 12px;
-    min-width: 24px; min-height: 24px; padding: 0; margin: 2px; border: 1px solid rgba(255, 255, 255, 0.2); box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+    background-color: @theme_selected_bg_color; color: black; font-size: 10px; font-weight: 900; border-radius: 9px;
+    min-width: 18px; min-height: 18px; padding: 0 4px; margin: 2px; border: 1px solid rgba(255, 255, 255, 0.2); box-shadow: 0 2px 5px rgba(0,0,0,0.5);
 }
 
-box.metric-pill { background-color: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 14px; padding: 10px 12px; transition: all 0.2s; }
+box.metric-pill { background-color: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 14px; padding: 8px 10px; transition: all 0.2s; }
 eventbox.clickable-pill:hover box.metric-pill { background-color: rgba(255, 255, 255, 0.12); }
 .metric-value, .metric-value-small { font-family: "JetBrainsMono Nerd Font", monospace; color: @theme_fg_color; font-weight: 700; }
 .metric-value { font-size: 12px; } .metric-value-small { font-size: 10px; letter-spacing: -0.5px; }
 
-.power-profile-row { background-color: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 14px; padding: 6px 12px; }
+.power-profile-row { background-color: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 14px; padding: 6px 10px; }
 .power-label { font-size: 14px; font-weight: 600; color: @theme_fg_color; }
 .accent-icon { color: @theme_selected_bg_color; }
 
-button.power-ring-btn { border: 2px solid transparent; border-radius: 18px; min-width: 36px; min-height: 36px; padding: 0; margin: 0; background-color: transparent; color: alpha(@theme_fg_color, 0.7); }
+button.power-ring-btn { border: 2px solid transparent; border-radius: 15px; min-width: 30px; min-height: 30px; padding: 0; margin: 0; background-color: transparent; color: alpha(@theme_fg_color, 0.7); }
 button.power-ring-btn:hover { background-color: rgba(255, 255, 255, 0.08); }
 button.power-ring-btn:checked { background-color: alpha(@theme_selected_bg_color, 0.15); border-color: @theme_selected_bg_color; color: @theme_selected_bg_color; }
 
 .sliders-container { background-color: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 16px; padding: 6px; }
-.slider-row { background-color: transparent; padding: 8px 10px; }
+.slider-row { background-color: transparent; padding: 6px 8px; }
 
-scale.pill-scale trough, scale.pill-scale highlight { min-height: 14px; border-radius: 7px; }
+scale.pill-scale trough, scale.pill-scale highlight { min-height: 12px; border-radius: 6px; }
 scale.pill-scale trough { background-color: rgba(255, 255, 255, 0.08); }
 scale.pill-scale slider { min-width: 0px; min-height: 0px; margin: 0px; background: transparent; border: none; box-shadow: none; }
 scale.volume highlight { background-color: #89b4fa; } scale.brightness highlight { background-color: #f9e2af; } scale.sunset highlight { background-color: #fab387; }
@@ -526,11 +536,11 @@ button.flat-icon-btn:hover { background-color: rgba(255, 255, 255, 0.1); }
 button.dnd-active-btn { color: #ff453a; background-color: alpha(#ff453a, 0.15); }
 listbox.notif-list { background: transparent; }
 
-row.notif-row { background-color: rgba(255, 255, 255, 0.03); border-radius: 12px; margin-bottom: 6px; padding: 10px; border: 1px solid rgba(255, 255, 255, 0.02); }
+row.notif-row { background-color: rgba(255, 255, 255, 0.03); border-radius: 12px; margin-bottom: 6px; padding: 8px; border: 1px solid rgba(255, 255, 255, 0.02); }
 row.notif-row:hover { background-color: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.1); }
-.notif-app-name { font-size: 10px; font-weight: bold; color: @theme_selected_bg_color; opacity: 0.9; letter-spacing: 0.5px; }
-.notif-summary { font-size: 13px; font-weight: bold; color: @theme_fg_color; margin-top: 2px;}
-.notif-body { font-size: 12px; color: @theme_fg_color; opacity: 0.7; margin-top: 2px;}
+.notif-app-name { font-size: 9px; font-weight: bold; color: @theme_selected_bg_color; opacity: 0.9; letter-spacing: 0.5px; }
+.notif-summary { font-size: 12px; font-weight: bold; color: @theme_fg_color; margin-top: 2px;}
+.notif-body { font-size: 11px; color: @theme_fg_color; opacity: 0.7; margin-top: 2px;}
 
 button.notif-close-btn { 
     background: transparent; border: none; box-shadow: none; border-radius: 6px; padding: 4px; 
