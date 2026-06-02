@@ -1,0 +1,10 @@
+@-moz-document domain("monkeytype.com") {
+/* Compatible on Serika Dark */
+    :root {
+      --bg-color: var(--surface) !important;
+      --main-color: var(--primary) !important;
+      --caret-color: var(--primary_fixed) !important;
+      --sub-color: var(--primary_container) !important;
+      --sub-alt-color: var(--surface_container_low) !important;
+      --text-color: var(--primary) !important;
+}
