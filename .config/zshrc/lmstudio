@@ -1,8 +1,61 @@
 #-- LM- Studio--
 llm() {
-    /mnt/media/Documents/do_not_delete_linux/appimages/LM-Studio*(om[1]) "$@"
+  local dir="/mnt/media/Documents/do_not_delete_linux/appimages"
+  
+  # 1. Safely evaluate the glob and store the result in an array
+  # (N)  = Null globbing: if no file matches, return empty without errors
+  # (.)  = Match ONLY regular files (safeguards against matching directories)
+  # (om) = Order by modification time (newest first)
+  local matches=("$dir"/LM-Studio*(N.om))
+
+  # 2. Check if any files actually matched
+  if (( ${#matches[@]} == 0 )); then
+    printf "\e[1;31m Error:\e[0m No LM-Studio AppImage found in %s.\n" "$dir" >&2
+    return 1
+  fi
+
+  # 3. Interactive Selection via fzf
+  local app_name
+  # ${matches[@]:t} extracts just the basenames (the 'tail') for a cleaner UI
+  app_name=$(printf "%s\n" "${matches[@]:t}" | fzf -1 \
+    --layout=reverse \
+    --height=~50% \
+    --border=rounded \
+    --border-label=" 󰚩 LM-Studio Versions " \
+    --border-label-pos=center \
+    --info=inline-right \
+    --prompt=" " \
+    --pointer=" " \
+    --color="border:#89b4fa,label:#a6e3a1,prompt:#f9e2af,pointer:#f38ba8")
+
+  # 4. Handle user cancellation (e.g., pressing ESC)
+  if [[ -z "$app_name" ]]; then
+    printf "\e[1;33m Canceled:\e[0m No AppImage selected.\n" >&2
+    return 1
+  fi
+
+  # 5. Reconstruct the absolute path
+  local app="$dir/$app_name"
+
+  # 6. Check if the selected file lacks executable permission
+  if [[ ! -x "$app" ]]; then
+    printf "\e[1;33m Executable permission missing on:\e[0m %s\n" "$app_name"
+    printf "\e[1;34m Fixing permissions...\e[0m\n"
+
+    # Smart Permission Grant
+    if ! chmod +x "$app" 2>/dev/null; then
+        printf "\e[1;33m Sudo required to change permissions for this file.\e[0m\n"
+        sudo chmod +x "$app" || {
+            printf "\e[1;31m Error:\e[0m Failed to grant executable permissions.\n" >&2
+            return 1
+        }
+    fi
+    printf "\e[1;32m Permissions granted!\e[0m\n"
+  fi
+
+  # 7. Execute the AppImage, passing any additional arguments ("$@") safely
+  "$app" "$@"
 }
-# The (om[1]) glob qualifier picks the most recently modified file (newest first)
 
 # --- Functions ---
 # Creates a directory and changes into it.
