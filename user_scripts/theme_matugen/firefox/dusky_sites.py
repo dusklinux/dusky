@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Dusky Dynamic Theme Builder - Ultimate Live Preview Master Edition
-Optimized for: Arch Linux, Python 3.14+, MatugenFox Native Host Integration
+Optimized for: Arch Linux, Python 3.14.5, MatugenFox Native Host Integration
 """
 
 import os
@@ -60,7 +60,6 @@ except ImportError:
             sys.exit(1)
                 
         os.environ["_DUSKY_BOOTSTRAP_ATTEMPTED"] = "1"
-        # Use execve to guarantee environment propagation to the new process
         os.execve(sys.executable, [sys.executable, str(script_path)] + sys.argv[1:], os.environ)
     except subprocess.CalledProcessError:
         print("\n[!] Failed to install dependencies automatically.")
@@ -75,7 +74,12 @@ from rich.table import Table
 from rich.prompt import Prompt
 
 console = Console()
-CONFIG_DIR = Path.home() / ".config" / "dusky_sites"
+
+def get_xdg_config_home() -> Path:
+    """Resolve the XDG base directory for configurations."""
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+
+CONFIG_DIR = get_xdg_config_home() / "dusky_sites"
 
 # =============================================================================
 # ▼ LIVE MATUGEN PARSER (DYNAMIC MTIME POLLING) ▼
@@ -87,7 +91,7 @@ class ColorTracker:
     If the wallpaper changes, it instantly absorbs the new variables for the TUI.
     """
     def __init__(self):
-        self.path = Path.home() / ".config" / "matugen" / "generated" / "firefox_websites.css"
+        self.path = get_xdg_config_home() / "matugen" / "generated" / "firefox_websites.css"
         self.last_mtime = 0.0
         self.colors: dict[str, str] = {}
 
@@ -98,12 +102,11 @@ class ColorTracker:
             current_mtime = self.path.stat().st_mtime
             if current_mtime != self.last_mtime:
                 content = self.path.read_text(encoding="utf-8")
-                # Broadened regex to capture raw _rgb tuples (e.g. "255, 0, 0") alongside hex
                 matches = re.findall(r'(--[a-zA-Z0-9_-]+):\s*([^;{}]+?)\s*;', content)
                 self.colors = {k: v for k, v in matches}
                 self.last_mtime = current_mtime
-        except Exception:
-            pass # Graceful fallback if file is temporarily locked by Matugen daemon
+        except (OSError, UnicodeDecodeError):
+            pass # Graceful fallback for lock/permission/encoding issues, prevents masking logic bugs
         return self.colors
 
 live_color_tracker = ColorTracker()
@@ -202,7 +205,6 @@ def build_menus() -> tuple[dict[str, dict[str, str]], dict[str, Any], dict[str, 
             "name": "Raw Matugen Variables (Dynamically Loaded)",
             "items": {}
         }
-        # Safely filter out the raw RGB tuple variables for UI cleanliness
         clean_vars = {k: v for k, v in current_colors.items() if not k.endswith("_rgb")}
         for idx, (var_name, hex_val) in enumerate(clean_vars.items(), 1):
             prop_guess = "color" if ("on_" in var_name or "text" in var_name or "outline" in var_name) else "background-color"
@@ -219,10 +221,45 @@ def build_menus() -> tuple[dict[str, dict[str, str]], dict[str, Any], dict[str, 
     return menu_structure, sub_menus, all_roles
 
 def safe_write_atomic(filepath: Path, content: str) -> None:
-    """Writes to a file atomically, using PID to prevent cross-process race conditions."""
-    temp_path = filepath.with_name(f"{filepath.name}.{os.getpid()}.tmp")
-    temp_path.write_text(content, encoding='utf-8')
-    temp_path.replace(filepath)
+    """
+    Writes to a file atomically via POSIX bindings.
+    Guarantees hardware sync (fsync) and strict permission preservation.
+    Safely resolves symlinks (like stow dotfiles) and commits the parent 
+    directory entry to the filesystem journal.
+    """
+    target_path = filepath.resolve()
+    temp_path = target_path.with_name(f"{target_path.name}.{os.getpid()}.tmp")
+    
+    try:
+        # Preserve original permissions if available, else default to secure 0o644
+        mode = target_path.stat().st_mode if target_path.exists() else 0o644
+        
+        # O_TRUNC clears the file if it somehow existed; O_CREAT establishes the inode
+        fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        
+        # Wrap raw FD in Python's high-level file object for guaranteed full writes
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(content)
+            f.flush()     # Push application-level buffers into kernel space
+            os.fsync(fd)  # Flush kernel block buffers securely to disk hardware
+            
+        # Atomic rename swap over the resolved original file
+        os.replace(temp_path, target_path)
+        
+        # POSIX directory sync: Enforce filesystem journal commit of the rename operation
+        dir_fd = os.open(target_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+            
+    finally:
+        # Ensure cleanup if operations fail mid-flight
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
 
 # =============================================================================
 # ▼ AST CSS ENGINE (tinycss2) ▼
@@ -305,14 +342,22 @@ class DuskyASTManager:
                 keys_to_update = {k if k.startswith('--') else k.lower() for k, _ in props}
 
                 new_content = []
+                skip_trailing = False
+                
+                # Forward-looking token loop to prune ONLY associated formatting
                 for node in parsed_content:
                     if getattr(node, 'type', '') == 'declaration':
                         target_name = node.name if node.name.startswith('--') else node.lower_name
                         if target_name in keys_to_update:
-                            # Prune *all* trailing whitespace and comments belonging to the removed property
-                            while new_content and getattr(new_content[-1], 'type', '') in ('whitespace', 'comment'):
-                                new_content.pop()
+                            skip_trailing = True
                             continue
+
+                    if skip_trailing and getattr(node, 'type', '') in ('whitespace', 'comment'):
+                        if getattr(node, 'type', '') == 'whitespace' and '\n' in node.value:
+                            skip_trailing = False  # Reset flag once newline clears the declaration block
+                        continue
+
+                    skip_trailing = False
                     new_content.append(node)
 
                 while new_content and getattr(new_content[-1], 'type', '') == 'whitespace':
@@ -455,20 +500,25 @@ def render_menu_item(data_dict: dict[str, str]) -> str:
     swatch = "[dim]  [/dim]"
     var_name = ""
     
-    # Extract the base variable name from standard syntax like "var(--surface)"
     match = re.search(r'var\((--[\w-]+)\)', var_string)
     if match:
         var_name = match.group(1)
-        # Fetching latest state from tracker directly during render ensures accuracy
         hex_val = live_color_tracker.get_colors().get(var_name)
         if hex_val:
-            # Safely check if value is renderable by rich (hex or rgb), else default to plain square
-            if hex_val.startswith('#') or hex_val.startswith('rgb'):
-                swatch = f"[{hex_val}]██[/{hex_val}]"
+            if hex_val.startswith('#') or (hex_val.startswith('rgb') and not hex_val.startswith('rgba')):
+                safe_hex = hex_val.replace(" ", "")
+                swatch = f"[{safe_hex}]██[/]"
+            elif hex_val.startswith('rgba'):
+                # Extract pure RGB from RGBA to safely display in Rich and prevent StyleSyntaxError crashes
+                rgba_match = re.search(r'rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)', hex_val)
+                if rgba_match:
+                    r, g, b = rgba_match.groups()
+                    swatch = f"[rgb({r},{g},{b})]██[/]"
+                else:
+                    swatch = "[dim]██[/dim]"
             else:
                 swatch = "[dim]██[/dim]"
             
-    # Utility/Hide icons override standard swatch mapping
     if data_dict.get('prop') == 'display' and 'none' in data_dict.get('var', ''):
         swatch = "[red]✖✖[/red]"
     elif 'transparent' in data_dict.get('var', '') or 'none' in data_dict.get('var', ''):
@@ -518,7 +568,6 @@ def print_sub_menu(sub_key: str, sub_menus: dict) -> None:
 
 def prompt_for_role(context_msg: str) -> dict[str, str] | None:
     while True:
-        # Re-fetch menus every loop iteration to guarantee instant hot-reload of variables
         menu_structure, sub_menus, all_roles = build_menus()
 
         console.print("\n[dim]" + "━"*50 + "[/]")
@@ -562,8 +611,9 @@ def flow_audit_mode():
     css_files = sorted(CONFIG_DIR.glob("*.css"), key=lambda f: f.name)
     
     if not css_files:
-        console.print("[bold red]No themes found in ~/.config/dusky_sites/[/]")
-        return Prompt.ask("\nPress Enter to return")
+        console.print("[bold red]No themes found in your Dusky Sites config directory.[/]")
+        Prompt.ask("\nPress Enter to return")
+        return
 
     console.print("\n[bold cyan]Select a theme to audit:[/]")
     for idx, f in enumerate(css_files, 1):
@@ -575,7 +625,9 @@ def flow_audit_mode():
         if f_idx < 0: raise ValueError
         selected_file = css_files[f_idx]
     except (IndexError, ValueError):
-        return console.print("[red]Invalid choice.[/]")
+        console.print("[bold red]Invalid choice.[/]")
+        Prompt.ask("\nPress Enter to return")
+        return
 
     domain = selected_file.stem
     manager = DuskyASTManager(domain, selected_file)
@@ -584,13 +636,13 @@ def flow_audit_mode():
         audit_list = manager.get_semantic_audit_list()
         if not audit_list:
             console.print(f"\n[bold yellow]No tracked active rules found in {selected_file.name}.[/]")
-            return Prompt.ask("Press Enter to return")
+            Prompt.ask("\nPress Enter to return")
+            return
 
         console.clear()
         console.print(f"[bold magenta]Auditing:[/] {selected_file.name}\n")
         console.print("[dim]Live modifications will instantly trigger MatugenFox reload.[/dim]")
         
-        # Explicit overflow limits added to prevent terminal tearing on gargantuan auto-generated web selectors
         table = Table(title="Tracked Semantic Elements", show_header=True, header_style="bold cyan")
         table.add_column("ID", justify="center", style="yellow", width=4)
         table.add_column("Semantic Name (Meta)", style="green", width=30)
@@ -612,9 +664,9 @@ def flow_audit_mode():
             console.print(f"\n[bold green]Targeting:[/] {target['meta']}")
             console.print(f"Selector: [dim]{target['selector']}[/]")
             
-            action = Prompt.ask("\n[bold cyan]Action[/]", choices=["1", "2", "3"], 
-                                default="1", show_choices=False,
-                                prompt_suffix="\n  [1] Edit Selector\n  [2] Delete Rule Completely\n  [3] Cancel\nChoice: ")
+            # API safety protocol embedded directly into the prompt message structure
+            action_prompt = "\n[bold cyan]Action[/]\n  [1] Edit Selector\n  [2] Delete Rule Completely\n  [3] Cancel\nChoice"
+            action = Prompt.ask(action_prompt, choices=["1", "2", "3"], default="1", show_choices=False)
 
             match action:
                 case "1":
@@ -631,16 +683,18 @@ def flow_audit_mode():
                         console.print("[bold green]✔ Rule purged & Pushed to Browser! (MatugenFox)[/]")
                         
             if action in ["1", "2"]:
-                time.sleep(1) # Give host daemon 1 second breathing room to push WS (Bug safely fixed via explicit time import)
+                time.sleep(1.0)
                 
         except (IndexError, ValueError):
-            console.print("[red]Invalid ID.[/]")
+            console.print("[bold red]Invalid ID.[/]")
+            time.sleep(1.2) # Hard pause to prevent TUI screen tearing and logic wipe
 
 def flow_create_edit():
     console.clear()
     console.print(Panel.fit("=== Dusky Dynamic Editor (Live Preview Mode) ===", style="bold magenta"))
     
     raw_domain = Prompt.ask("\n[bold cyan]Target Domain URL[/] [dim](e.g., https://github.com/)[/]").strip()
+    if not raw_domain: return
     domain = extract_domain(raw_domain)
     if not domain: return
         
@@ -663,7 +717,6 @@ def flow_create_edit():
             
         pending_rules = []
         
-        # Path C: Prioritize parsing whole CSS Blocks natively (including @rules)
         if "{" in user_input and "}" in user_input:
             parsed_rules = tinycss2.parse_stylesheet(user_input, skip_comments=True)
             for pr in parsed_rules:
@@ -673,8 +726,6 @@ def flow_create_edit():
                     props = []
                     for d in decls:
                         prop_name = d.name if d.name.startswith('--') else d.lower_name
-                        
-                        # Prevent duplication if the user copy-pasted an existing managed block back into the TUI
                         if prop_name == '--dusky-meta':
                             continue
                             
@@ -691,19 +742,18 @@ def flow_create_edit():
                         
                 elif getattr(pr, 'type', '') == 'at-rule':
                     name = getattr(pr, 'at_keyword', 'unknown')
-                    # Directly inject the rule structure; bypassing the irrelevant naming prompt prevents the metadata black hole.
                     pending_rules.append({"type": "at-rule", "ast_node": pr, "meta": None})
                     console.print(f"[dim]Injected @{name} block directly (untracked)[/dim]")
 
-        # Path A: User pasted explicit variables
         elif extract_css_variables(user_input):
             extracted_vars = extract_css_variables(user_input)
             console.print(f"\n[bold green]✔ Extracted {len(extracted_vars)} CSS Variables![/]")
             
+            # Unrestricted assignment mapping: always prompt and allow universal targeting.
             root_selector = ":root, .dark"
-            if len(extracted_vars) > 1:
-                custom_root = Prompt.ask(f"\n[bold cyan]Apply to selector[/] [dim](Default: {root_selector})[/]").strip()
-                if custom_root: root_selector = custom_root
+            custom_root = Prompt.ask(f"\n[bold cyan]Apply to selector[/] [dim](Default: {root_selector})[/]").strip()
+            if custom_root: 
+                root_selector = custom_root
 
             for var in extracted_vars:
                 role_data = prompt_for_role(f"[bold yellow]Map {var} to Role[/]")
@@ -714,7 +764,6 @@ def flow_create_edit():
                         "meta": f"Variable {var}"
                     })
 
-        # Path B: User pasted a standard selector
         else:
             role_data = prompt_for_role("[bold cyan]Select the role for your pasted selector[/]")
             if role_data:
@@ -726,7 +775,6 @@ def flow_create_edit():
                     "meta": meta_name if meta_name else None
                 })
         
-        # Immediate Live Preview Dispatch (Atomic Inject & Save - Highly Resilient)
         if pending_rules:
             try:
                 manager.inject_rules(pending_rules)
@@ -735,10 +783,8 @@ def flow_create_edit():
             except Exception as e:
                 console.print(f"\n[bold red]✖ Critical Error during injection (Malformed Paste?): {e}[/]")
 
-    # Exit summary and legacy options
     console.print("\n[bold green]✔ Live session complete. File is up-to-date.[/]")
     
-    # Offer fallback deployments in case MatugenFox extension isn't running on current browser
     console.print("\n[dim]If MatugenFox is running, your browser is already synced.[/dim]")
     deploy_choice = Prompt.ask("Execute legacy hard-deploy shell scripts? (y/N)", default="n").lower()
     
@@ -778,7 +824,6 @@ def main():
             border_style="magenta"
         ))
         
-        # Live status check for Matugen Source
         if live_color_tracker.get_colors():
             console.print(f" [bold green]✔ Matugen Source Linked[/] [dim](Colors Hot-Reloading Active)[/]\n")
         else:
