@@ -467,7 +467,7 @@ class NotificationsPanel(Gtk.Box):
 CSS = """
 window.panel-window {
     background-color: alpha(@theme_bg_color, 0.95);
-    border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 24px; box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 10px; box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
 }
 
 /* Hides native GTK3 scrollbar visually without breaking wheel scroll functions */
