@@ -4,6 +4,7 @@
 # Target: Arch Linux Cutting-Edge (Kernel 7.0+, Bash 5.3+, systemd 260+)
 # Scope: Platinum Grade. Maximum Memory Efficiency via pure ZRAM & Tmpfs.
 # Updates: Integrated Kernel 7.0 Direct Writeback Pipeline (Pure zstd, 20-min flush)
+#          + Dynamic User Ownership for Tmpfs Mount point.
 # =============================================================================
 
 set -euo pipefail
@@ -180,9 +181,16 @@ if grep -Eq '(^|[[:space:]])systemd\.zram=0([[:space:]]|$)' /proc/cmdline; then
     die "FATAL: Kernel cmdline explicitly disables zram device creation."
 fi
 
+# Determine the real user UID/GID to grant ownership of the mount point.
+# If invoked via sudo, it targets your normal user account instead of root.
+readonly TARGET_UID="${SUDO_UID:-0}"
+readonly TARGET_GID="${SUDO_GID:-0}"
+
 install -d -m 0755 -- "$CONFIG_DIR"
-install -d -m 0755 -- "$MOUNT_POINT"
-log_info "Directories prepared."
+# The -d flag natively creates the directory only if it doesn't already exist.
+# -o and -g securely map ownership of the base folder to your normal user account.
+install -d -m 0755 -o "$TARGET_UID" -g "$TARGET_GID" -- "$MOUNT_POINT"
+log_info "Directories prepared with user ownership mapping."
 
 cat > "$tmp_config" <<EOF
 # Managed by Elite Arch Linux ZRAM Configurator.
@@ -241,7 +249,8 @@ ConditionPathExists=${MOUNT_POINT}
 What=tmpfs
 Where=${MOUNT_POINT}
 Type=tmpfs
-Options=rw,nosuid,nodev,relatime,size=100%,mode=1777
+# mode=0755,uid=,gid= sets the active mounted filesystem strictly to your ownership
+Options=rw,nosuid,nodev,relatime,size=100%,mode=0755,uid=${TARGET_UID},gid=${TARGET_GID}
 
 [Install]
 WantedBy=local-fs.target
