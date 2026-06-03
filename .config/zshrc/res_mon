@@ -34,7 +34,8 @@ res_mon() {
                 print -P "  %F{cyan}ram%f, %F{cyan}mem%f              - Sort by RAM usage"
                 print -P "  %F{cyan}cpu%f                    - Sort by CPU usage percentage\n"
                 
-                print -P "%BDisplay:%b (Default: clean base name)"
+                print -P "%BDisplay:%b (Default: full command & args)"
+                print -P "  %F{cyan}clean%f, %F{cyan}short%f, %F{cyan}simple%f  - Show only the clean base command name"
                 print -P "  %F{cyan}path%f, %F{cyan}full%f, %F{cyan}args%f     - Show full command path and arguments\n"
 
                 print -P "%BFilters:%b (Optional)"
@@ -57,7 +58,7 @@ res_mon() {
             path|full|args)
                 display_mode="full"
                 ;;
-            clean|short)
+            clean|short|simple|base)
                 display_mode="clean"
                 ;;
             -p|--pid)
@@ -208,7 +209,7 @@ res_mon() {
         fi
         local data_cmd='eval "$__RES_MON_PS" 2>/dev/null | awk "$__RES_MON_AWK"'"$limit_cmd"
 
-        # Re-evaluate visual titles
+        # Re-evaluate visual titles dynamically based on hotkeys
         local title_metric=$([[ "$target_sort" == "cpu" ]] && echo "CPU Sort" || echo "RAM Sort")
         if [[ -n "$is_watching" ]]; then
             title_metric="󰈈 WATCHING PID: $target_pids"
@@ -216,9 +217,9 @@ res_mon() {
             title_metric+=" | Filter: $target_pids"
         fi
 
-        # NEW: Mathematical Header Geometry Construction (Perfect FZF Auto-Alignment)
+        # Mathematical Header Geometry Construction (Perfect FZF Auto-Alignment)
         local visual_header=$(printf "\033[1;37mPID     \033[0m \033[38;5;238m│\033[0m \033[38;5;242m  CPU%%\033[0m \033[38;5;238m│\033[0m \033[38;5;242m  MEM%%\033[0m \033[38;5;238m│\033[0m \033[38;5;242m  RAM(MB)\033[0m \033[38;5;238m│\033[0m \033[38;5;242m    TIME\033[0m \033[38;5;238m│\033[0m \033[38;5;242mFREQ \033[0m \033[38;5;238m│\033[0m \033[38;5;242m COMMAND\033[0m")
-        local info_header=" ❯ Live Mode | Refresh: ${interval}s | [CTRL-L] Toggle Watch | [ENTER] Actions | [ESC] Quit/Back "
+        local info_header=" ❯ Refresh: ${interval}s | [ALT-A] Watch | [ALT-Z] Toggle Sort | [ALT-X] Toggle Path | [ALT-C] Copy | [ESC] Quit "
         local full_header="${info_header}"$'\n'"${visual_header}"
 
         # Reset cursor to top-left to seamlessly paint 100% height over previous frames
@@ -234,8 +235,8 @@ res_mon() {
             --bind "start,every(${interval}):reload-sync:${data_cmd}"
             --bind "ctrl-r:reload-sync:${data_cmd}"
             
-            # Key bindings
-            --expect=ctrl-l                 # Bubble CTRL-L out of FZF to act as a pure hotkey
+            # Global Hotkey Interception
+            --expect=alt-a,alt-z,alt-x,alt-c
             
             --style=full
             --border=rounded
@@ -284,23 +285,54 @@ res_mon() {
 
         [[ -z "$fzf_choice" ]] && continue
         
-        # 6. Extraction Router (FZF outputs the raw selected string)
+        # Extraction Router (FZF outputs the raw selected string)
         local target_pid=$(echo "$fzf_choice" | awk '{print $1}')
         local target_comm=$(echo "$fzf_choice" | sed -n 's/.*__COMM__=//p')
         target_pid=${target_pid//$'\e'\[[0-9;]*m/}
 
-        # Intercept Global Hotkeys (CTRL-L Watch Toggle)
-        if [[ "$key" == "ctrl-l" ]]; then
-            if [[ -n "$is_watching" ]]; then
-                target_pids="$original_target_pids"
-                is_watching=""
-            else
-                is_watching="1"
-                original_target_pids="$target_pids"
-                target_pids="$target_pid"
-            fi
-            continue
-        fi
+        # =======================================================
+        # GLOBAL HOTKEY INTERCEPTION ROUTER
+        # =======================================================
+        case "$key" in
+            alt-a)
+                if [[ -n "$is_watching" ]]; then
+                    target_pids="$original_target_pids"
+                    is_watching=""
+                else
+                    is_watching="1"
+                    original_target_pids="$target_pids"
+                    target_pids="$target_pid"
+                fi
+                continue
+                ;;
+            alt-z)
+                if [[ "$target_sort" == "ram" ]]; then
+                    target_sort="cpu"
+                    ps_sort="-pcpu"
+                else
+                    target_sort="ram"
+                    ps_sort="-rss"
+                fi
+                continue
+                ;;
+            alt-x)
+                if [[ "$display_mode" == "full" ]]; then
+                    display_mode="clean"
+                else
+                    display_mode="full"
+                fi
+                export __RES_MON_DISPLAY="$display_mode"
+                continue
+                ;;
+            alt-c)
+                if command -v wl-copy >/dev/null 2>&1; then
+                    print -rn -- "$target_comm" | wl-copy
+                elif command -v xclip >/dev/null 2>&1; then
+                    print -rn -- "$target_comm" | xclip -selection clipboard
+                fi
+                continue
+                ;;
+        esac
 
         # Dynamic Action Menu Formulation (If ENTER was pressed)
         local action_menu=(
@@ -341,7 +373,7 @@ res_mon() {
         # ESC pressed on Action Menu -> Loops directly back into Live Monitor
         [[ -z "$action" ]] && continue
 
-        # 7. Execute Action
+        # Execute Action
         case "$action" in
             1*) kill -15 "$target_pid" 2>/dev/null ;;
             2*) kill -9 "$target_pid" 2>/dev/null ;;
@@ -372,7 +404,7 @@ res_mon() {
                 ;;
         esac
 
-        # 8. State Persistence Updates (Atomically logs frequency metrics)
+        # State Persistence Updates (Atomically logs frequency metrics)
         typeset -A weights
         if [[ -f "$state_file" ]]; then
             while IFS=$'\t' read -r w p || [[ -n "$w" ]]; do
@@ -391,7 +423,7 @@ res_mon() {
         done > "$tmp_state" && command mv -f "$tmp_state" "$state_file"
     done
     
-    # 9. Teardown Sandbox
+    # Teardown Sandbox
     unset __RES_MON_PS
     unset __RES_MON_AWK
     unset __RES_MON_DISPLAY
