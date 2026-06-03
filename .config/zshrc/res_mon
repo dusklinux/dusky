@@ -326,7 +326,8 @@ res_mon() {
                 --info=hidden \
                 --layout=reverse \
                 --height=100% \
-                --margin=15%,20%
+                --margin=15%,20% \
+                --cycle
         )
 
         # ESC pressed on Action Menu -> Loops directly back into Live Monitor
