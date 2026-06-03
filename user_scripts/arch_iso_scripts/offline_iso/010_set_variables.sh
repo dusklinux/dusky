@@ -146,19 +146,19 @@ EOF
         printf "  ${C_WHITE}Would you like to encrypt your root partition (LUKS2)?${RESET}\n"
         printf "  If yes, the password you just entered will be used to unlock the drive.\n\n"
 
-        printf "    ==> Encrypt system? [Y/n]: "
+        printf "    ==> Encrypt system? [y/N]: "
         read -r INGESTED_ENCRYPT_INPUT || { printf "\n\n  ${C_RED}[!] Input aborted. Exiting.${RESET}\n"; exit 1; }
 
-        if [[ -z "$INGESTED_ENCRYPT_INPUT" || "${INGESTED_ENCRYPT_INPUT,,}" == "y" || "${INGESTED_ENCRYPT_INPUT,,}" == "yes" ]]; then
+        if [[ "${INGESTED_ENCRYPT_INPUT,,}" == "y" || "${INGESTED_ENCRYPT_INPUT,,}" == "yes" ]]; then
             INGESTED_ENCRYPT=1
             ENCRYPT_TEXT="Yes (LUKS2)"
             break
-        elif [[ "${INGESTED_ENCRYPT_INPUT,,}" == "n" || "${INGESTED_ENCRYPT_INPUT,,}" == "no" ]]; then
+        elif [[ -z "$INGESTED_ENCRYPT_INPUT" || "${INGESTED_ENCRYPT_INPUT,,}" == "n" || "${INGESTED_ENCRYPT_INPUT,,}" == "no" ]]; then
             INGESTED_ENCRYPT=0
             ENCRYPT_TEXT="No (Plain BTRFS)"
             break
         else
-            printf "\n  ${C_RED}[!] Invalid choice. Please enter Y or n.${RESET}\n"
+            printf "\n  ${C_RED}[!] Invalid choice. Please enter y or N.${RESET}\n"
             sleep 1.5
         fi
     done
