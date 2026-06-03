@@ -219,7 +219,7 @@ res_mon() {
 
         # Mathematical Header Geometry Construction (Perfect FZF Auto-Alignment)
         local visual_header=$(printf "\033[1;37mPID     \033[0m \033[38;5;238m│\033[0m \033[38;5;242m  CPU%%\033[0m \033[38;5;238m│\033[0m \033[38;5;242m  MEM%%\033[0m \033[38;5;238m│\033[0m \033[38;5;242m  RAM(MB)\033[0m \033[38;5;238m│\033[0m \033[38;5;242m    TIME\033[0m \033[38;5;238m│\033[0m \033[38;5;242mFREQ \033[0m \033[38;5;238m│\033[0m \033[38;5;242m COMMAND\033[0m")
-        local info_header=" ❯ Refresh: ${interval}s | [ALT-A] Watch | [ALT-Z] Toggle Sort | [ALT-X] Toggle Path | [ALT-C] Copy | [ESC] Quit "
+        local info_header=" ❯ Refresh: ${interval}s | [ALT-A] Watch | [ALT-Z] Toggle Sort | [ALT-X] Toggle Path | [ALT-C] Copy Info | [ESC] Quit "
         local full_header="${info_header}"$'\n'"${visual_header}"
 
         # Reset cursor to top-left to seamlessly paint 100% height over previous frames
@@ -290,6 +290,16 @@ res_mon() {
         local target_comm=$(echo "$fzf_choice" | sed -n 's/.*__COMM__=//p')
         target_pid=${target_pid//$'\e'\[[0-9;]*m/}
 
+        # Generate Rich Clipboard Payload (Strips ANSI and elegantly parses the exact metrics)
+        local copy_payload=$(echo "$fzf_choice" | sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g" | awk -F' │ ' -v comm="$target_comm" '{
+            pid=$1; gsub(/^[ \t]+|[ \t]+$/, "", pid);
+            cpu=$2; gsub(/^[ \t]+|[ \t]+$/, "", cpu);
+            mem=$3; gsub(/^[ \t]+|[ \t]+$/, "", mem);
+            ram=$4; gsub(/^[ \t]+|[ \t]+$/, "", ram);
+            time=$5; gsub(/^[ \t]+|[ \t]+$/, "", time);
+            printf "PID: %s | CPU: %s | MEM: %s | RAM: %s MB | TIME: %s | CMD: %s", pid, cpu, mem, ram, time, comm
+        }')
+
         # =======================================================
         # GLOBAL HOTKEY INTERCEPTION ROUTER
         # =======================================================
@@ -326,9 +336,9 @@ res_mon() {
                 ;;
             alt-c)
                 if command -v wl-copy >/dev/null 2>&1; then
-                    print -rn -- "$target_comm" | wl-copy
+                    print -rn -- "$copy_payload" | wl-copy
                 elif command -v xclip >/dev/null 2>&1; then
-                    print -rn -- "$target_comm" | xclip -selection clipboard
+                    print -rn -- "$copy_payload" | xclip -selection clipboard
                 fi
                 continue
                 ;;
@@ -339,13 +349,14 @@ res_mon() {
             "1. 󰆧 Terminate Process (SIGTERM)"
             "2. 󰯈 Force Kill Process (SIGKILL)"
             "3.  Copy PID to Clipboard"
-            "4.  Copy Command to Clipboard"
+            "4.  Copy Full Process Info to Clipboard"
+            "5.  Copy Command to Clipboard"
         )
         
         if [[ -n "$is_watching" ]]; then
-            action_menu+=("5. 󰜺 Stop Watching / Return to Full List")
+            action_menu+=("6. 󰜺 Stop Watching / Return to Full List")
         else
-            action_menu+=("5. 󰈈 Watch / Monitor this Process")
+            action_menu+=("6. 󰈈 Watch / Monitor this Process")
         fi
 
         # Over-paint cursor position to launch Modal Popup Menu
@@ -386,12 +397,19 @@ res_mon() {
                 ;;
             4*) 
                 if command -v wl-copy >/dev/null 2>&1; then
+                    print -rn -- "$copy_payload" | wl-copy
+                elif command -v xclip >/dev/null 2>&1; then
+                    print -rn -- "$copy_payload" | xclip -selection clipboard
+                fi
+                ;;
+            5*) 
+                if command -v wl-copy >/dev/null 2>&1; then
                     print -rn -- "$target_comm" | wl-copy
                 elif command -v xclip >/dev/null 2>&1; then
                     print -rn -- "$target_comm" | xclip -selection clipboard
                 fi
                 ;;
-            5*)
+            6*)
                 if [[ -n "$is_watching" ]]; then
                     target_pids="$original_target_pids"
                     is_watching=""
