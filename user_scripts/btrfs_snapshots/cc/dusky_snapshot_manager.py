@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Advanced Btrfs/Snapper Flat Layout Manager (snapctl)
-Engineered for strict safety and coordinated subvolume swapping on Arch Linux.
+Engineered for strict safety, coordinated subvolume swapping, and interactive TUI on Arch Linux.
 """
 
 import argparse
@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,8 +20,20 @@ from datetime import datetime
 from pathlib import Path
 
 
+def ensure_root() -> None:
+    """Seamlessly auto-elevate to root via sudo if run as a normal user."""
+    if os.geteuid() != 0:
+        print("\033[1;38;5;220m[*] Elevating to root privileges via sudo...\033[0m", file=sys.stderr)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        try:
+            os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
+        except OSError as exc:
+            fail(f"[!] Failed to elevate privileges: {exc}")
+
+
 def fail(message: str, exit_code: int = 1) -> None:
-    print(message, file=sys.stderr)
+    print(f"\033[1;38;5;196m{message}\033[0m", file=sys.stderr)
     sys.exit(exit_code)
 
 
@@ -69,6 +82,7 @@ def run_passthrough(cmd: list[str]) -> int:
         return subprocess.run(cmd).returncode
     except OSError as exc:
         fail(f"[!] Command execution failed: {shlex.join(cmd)}\n{exc}")
+        return 1
 
 
 def get_btrfs_device(mountpoint: str) -> str:
@@ -116,7 +130,7 @@ def mount_top_level(device: str) -> Iterator[Path]:
         ignore_cleanup_errors=True,
     ) as tmpdir:
         mnt_point = Path(tmpdir)
-        print(f"[*] Mounting top-level tree (subvolid=5) for {device}...", file=sys.stderr)
+        print(f"\033[1;38;5;81m[*] Mounting top-level tree (subvolid=5) for {device}...\033[0m", file=sys.stderr)
         run_cmd(["mount", "-o", "subvolid=5", device, str(mnt_point)])
 
         active_exception: BaseException | None = None
@@ -126,13 +140,13 @@ def mount_top_level(device: str) -> Iterator[Path]:
             active_exception = exc
             raise
         finally:
-            print("[*] Unmounting top-level tree...", file=sys.stderr)
+            print("\033[1;38;5;81m[*] Unmounting top-level tree...\033[0m", file=sys.stderr)
             result = run_cmd(["umount", str(mnt_point)], check=False)
             if result.returncode != 0:
                 message = error_text(result)
                 if active_exception is None:
                     fail(f"[!] Command failed: umount {mnt_point}\n{message}", result.returncode)
-                print(f"[!] Warning: Failed to unmount top-level tree {mnt_point}: {message}", file=sys.stderr)
+                print(f"\033[1;38;5;220m[!] Warning: Failed to unmount top-level tree {mnt_point}: {message}\033[0m", file=sys.stderr)
 
 
 @dataclass(slots=True)
@@ -289,8 +303,8 @@ def apply_prepared_restores(plans: list[PreparedRestore]) -> None:
     try:
         for plan in plans:
             print(
-                f"[*] Creating staged restore subvolume for '{plan.spec.config}': "
-                f"{plan.staging_path.name}..."
+                f"\033[1;38;5;81m[*] Creating staged restore subvolume for '{plan.spec.config}': "
+                f"{plan.staging_path.name}...\033[0m"
             )
             run_cmd_raise(
                 ["btrfs", "subvolume", "snapshot", str(plan.source_snapshot), str(plan.staging_path)]
@@ -299,16 +313,16 @@ def apply_prepared_restores(plans: list[PreparedRestore]) -> None:
 
         for plan in plans:
             print(
-                f"[*] Moving active subvolume for '{plan.spec.config}' to "
-                f"{plan.backup_path.name}..."
+                f"\033[1;38;5;81m[*] Moving active subvolume for '{plan.spec.config}' to "
+                f"{plan.backup_path.name}...\033[0m"
             )
             plan.target_path.rename(plan.backup_path)
             plan.active_moved = True
 
         for plan in plans:
             print(
-                f"[*] Activating restored snapshot for '{plan.spec.config}' as "
-                f"{plan.target_path.name}..."
+                f"\033[1;38;5;81m[*] Activating restored snapshot for '{plan.spec.config}' as "
+                f"{plan.target_path.name}...\033[0m"
             )
             plan.staging_path.rename(plan.target_path)
             plan.activated = True
@@ -325,12 +339,12 @@ def is_mountpoint(path: str) -> bool:
 def activate_nonroot_restore(target_mnt: str) -> None:
     if not is_mountpoint(target_mnt):
         print(
-            f"[*] {target_mnt} is not currently mounted as its own mountpoint. "
-            f"Restored subvolume will be used on the next mount."
+            f"\033[1;38;5;81m[*] {target_mnt} is not currently mounted as its own mountpoint. "
+            f"Restored subvolume will be used on the next mount.\033[0m"
         )
         return
 
-    print(f"[*] Remounting {target_mnt} to activate restored snapshot...")
+    print(f"\033[1;38;5;81m[*] Remounting {target_mnt} to activate restored snapshot...\033[0m")
 
     umount_result = run_cmd(["umount", target_mnt], check=False)
     if umount_result.returncode != 0:
@@ -348,7 +362,7 @@ def activate_nonroot_restore(target_mnt: str) -> None:
             f"[!] Do not continue until {target_mnt} is mounted again or the restore is corrected."
         )
 
-    print(f"[+] {target_mnt} successfully remounted.")
+    print(f"\033[1;38;5;114m[+] {target_mnt} successfully remounted.\033[0m")
 
 
 def first_present(mapping: dict[str, object], *keys: str) -> object | None:
@@ -472,19 +486,19 @@ def extract_snapshot_records(payload: object) -> list[dict[str, object]] | None:
     return find_tabular_snapshot_records(payload)
 
 
-def format_snapshot_date(raw_value: object) -> str:
+def parse_snapshot_datetime(raw_value: object) -> datetime | None:
     if raw_value is None:
-        return ""
+        return None
 
     if isinstance(raw_value, int | float):
         try:
-            return datetime.fromtimestamp(raw_value).strftime("%m/%d/%y %I:%M %p")
+            return datetime.fromtimestamp(raw_value)
         except (OverflowError, OSError, ValueError):
-            return str(raw_value)
+            return None
 
     raw = str(raw_value).strip()
     if not raw:
-        return raw
+        return None
 
     iso_candidates = [raw]
     if " " in raw:
@@ -492,13 +506,13 @@ def format_snapshot_date(raw_value: object) -> str:
 
     for candidate in iso_candidates:
         try:
-            return datetime.fromisoformat(candidate).strftime("%m/%d/%y %I:%M %p")
+            return datetime.fromisoformat(candidate)
         except ValueError:
             pass
 
     for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
         try:
-            return datetime.strptime(raw, pattern).strftime("%m/%d/%y %I:%M %p")
+            return datetime.strptime(raw, pattern)
         except ValueError:
             continue
 
@@ -506,11 +520,30 @@ def format_snapshot_date(raw_value: object) -> str:
     if len(tokens) >= 7 and tokens[-1].isalpha():
         try:
             clean_date = " ".join(tokens[:-1])
-            return datetime.strptime(clean_date, "%a %d %b %Y %I:%M:%S %p").strftime("%m/%d/%y %I:%M %p")
+            return datetime.strptime(clean_date, "%a %d %b %Y %I:%M:%S %p")
         except ValueError:
             pass
 
-    return raw
+    return None
+
+
+def format_snapshot_date(raw_value: object) -> str:
+    dt = parse_snapshot_datetime(raw_value)
+    if dt is not None:
+        return dt.strftime("%m/%d/%y %I:%M %p")
+    return str(raw_value).strip() if raw_value is not None else ""
+
+
+def time_ago(dt: datetime) -> str:
+    now = datetime.now()
+    diff = now - dt
+    seconds = int(diff.total_seconds())
+    if seconds < 0: return "Just now"
+    if seconds < 60: return f"{seconds}s ago"
+    if seconds < 3600: return f"{seconds // 60}m ago"
+    if seconds < 86400: return f"{seconds // 3600}h ago"
+    if seconds < 2592000: return f"{seconds // 86400}d ago"
+    return f"{seconds // 2592000}mo ago"
 
 
 def snapshot_records_to_gui(records: list[dict[str, object]]) -> list[dict[str, str]]:
@@ -596,20 +629,113 @@ def load_snapshot_list_for_gui(config: str) -> list[dict[str, str]]:
     return snapshot_records_to_gui(records)
 
 
+def find_coordinated_pair(target_date: str, target_desc: str | None = None) -> tuple[str, str]:
+    root_snaps = load_snapshot_list_for_gui("root")
+    if not root_snaps:
+        raise RuntimeError("[!] Fatal: Failed to query Root snapshots or list is empty.")
+
+    home_snaps = load_snapshot_list_for_gui("home")
+    if not home_snaps:
+        raise RuntimeError("[!] Fatal: Failed to query Home snapshots or list is empty.")
+
+    # --- Match Root ID ---
+    exact_root = [s["id"] for s in root_snaps if s.get("raw_date") == target_date]
+    if len(exact_root) == 1:
+        root_id = exact_root[0]
+    elif not exact_root:
+        raise RuntimeError(f"[!] Fatal: Could not find Root snapshot for exact date: {target_date}")
+    else:
+        raise RuntimeError(f"[!] Fatal: Multiple Root snapshots matched exact date: {target_date}")
+
+    # --- Match Home ID (Attempt 1: Exact) ---
+    exact_home = [s["id"] for s in home_snaps if s.get("raw_date") == target_date]
+    if len(exact_home) == 1:
+        return root_id, exact_home[0]
+    if len(exact_home) > 1:
+        raise RuntimeError(f"[!] Fatal: Multiple Home snapshots matched exact date: {target_date}")
+
+    # --- Match Home ID (Attempt 2: Fuzzy Minute Match) ---
+    def minute_prefix(val: str) -> str | None:
+        match = re.search(r"^(.*\d{2}:\d{2})", val)
+        return match.group(1) if match else None
+
+    if target_desc:
+        t_min = minute_prefix(target_date)
+        if t_min:
+            fuzzy = [
+                s["id"] for s in home_snaps 
+                if s.get("description") == target_desc 
+                and minute_prefix(s.get("raw_date", "")) == t_min
+            ]
+            if len(fuzzy) == 1:
+                return root_id, fuzzy[0]
+            if len(fuzzy) > 1:
+                raise RuntimeError("[!] Fatal: Multiple Home snapshots matched fuzzy minute+description.")
+
+    # --- Match Home ID (Attempt 3: Strict 120s Safety Fallback) ---
+    target_dt = parse_snapshot_datetime(target_date)
+    if not target_dt:
+        raise RuntimeError("[!] Fatal: Date parsing failed for target date. Cannot perform 120s safety fallback.")
+
+    best_diff = float('inf')
+    best_id = None
+
+    for s in home_snaps:
+        s_dt = parse_snapshot_datetime(s.get("raw_date", ""))
+        if s_dt:
+            diff = abs((s_dt - target_dt).total_seconds())
+            if diff < best_diff:
+                best_diff = diff
+                best_id = s["id"]
+
+    if best_id is not None and best_diff <= 120:
+        return root_id, best_id
+    
+    if best_id is not None:
+        raise RuntimeError(f"[!] Fatal: Closest Home snapshot (ID {best_id}) is {best_diff:.1f}s away. Exceeds strict 120s safety threshold.")
+
+    raise RuntimeError("[!] Fatal: No safe synchronized match found. Aborting.")
+
+
+def confirm_prompt(prompt: str) -> bool:
+    while True:
+        try:
+            choice = input(f"\n\033[1;38;5;220m{prompt} [y/N]: \033[0m").strip().lower()
+        except KeyboardInterrupt:
+            print("\nAborted.")
+            sys.exit(130)
+        
+        if choice in ('y', 'yes'):
+            return True
+        if choice in ('', 'n', 'no'):
+            return False
+        print("Please answer y or n.")
+
+
+# -----------------------------------------------------------------------------
+# CORE COMMAND HANDLERS
+# -----------------------------------------------------------------------------
+
 def handle_list(config: str, as_json: bool) -> None:
     if not as_json:
         sys.exit(run_passthrough(["snapper", "-c", config, "list"]))
-
     print(json.dumps(load_snapshot_list_for_gui(config), ensure_ascii=False))
 
 
 def handle_create(config: str, description: str) -> None:
-    print(f"[*] Creating snapshot for '{config}': {description}")
+    print(f"\033[1;38;5;81m[*] Creating snapshot for '{config}': {description}\033[0m")
     run_cmd(["snapper", "-c", config, "create", "-d", description])
-    print("[+] Snapshot created successfully.")
+    print(f"\033[1;38;5;114m[+] Snapshot created successfully for '{config}'.\033[0m")
 
 
-def handle_restore(config: str, snap_id: str, no_remount: bool) -> None:
+def handle_create_pair(config1: str, config2: str, description: str) -> None:
+    print(f"\033[1;38;5;81m[*] Creating coordinated snapshots for '{config1}' and '{config2}': {description}\033[0m")
+    run_cmd(["snapper", "-c", config1, "create", "-d", description])
+    run_cmd(["snapper", "-c", config2, "create", "-d", description])
+    print("\033[1;38;5;114m[+] Coordinated snapshots created successfully.\033[0m")
+
+
+def handle_restore(config: str, snap_id: str, no_remount: bool = False) -> None:
     spec = resolve_restore_spec(config, snap_id)
 
     with mount_top_level(spec.device) as top_mnt:
@@ -617,16 +743,13 @@ def handle_restore(config: str, snap_id: str, no_remount: bool) -> None:
         plan = prepare_restore(spec, top_mnt, timestamp)
         apply_prepared_restores([plan])
 
-    print("\n[+] Restoration complete.")
+    print(f"\n\033[1;38;5;114m[+] Restoration of '{config}' complete.\033[0m")
     if spec.target_mnt == "/":
-        print("\n[!] ROOT FILESYSTEM RESTORED. You MUST reboot immediately for changes to take effect.")
+        print("\033[1;38;5;196m[!] ROOT FILESYSTEM RESTORED. You MUST reboot immediately for changes to take effect.\033[0m")
         return
 
     if no_remount:
-        print(
-            f"[!] {spec.target_mnt} was restored on disk without live remount.\n"
-            f"[!] Reboot or manually remount {spec.target_mnt} to activate the restored snapshot."
-        )
+        print(f"\033[1;38;5;220m[!] {spec.target_mnt} was restored on disk without live remount.\n[!] Reboot or manually remount to activate.\033[0m")
         return
 
     activate_nonroot_restore(spec.target_mnt)
@@ -654,14 +777,11 @@ def handle_restore_pair(config1: str, snap_id1: str, config2: str, snap_id2: str
         ]
         apply_prepared_restores(plans)
 
-    print("\n[+] Coordinated restoration complete.")
+    print("\n\033[1;38;5;114m[+] Coordinated restoration complete.\033[0m")
     if spec1.target_mnt == "/" or spec2.target_mnt == "/":
-        print("\n[!] Reboot required before the coordinated restore takes effect.")
+        print("\033[1;38;5;196m[!] ROOT FILESYSTEM MODIFIED. You MUST reboot immediately for changes to take effect.\033[0m")
     else:
-        print(
-            "\n[!] Restored subvolumes were staged on disk without live remount.\n"
-            "[!] Manually remount them or reboot before use."
-        )
+        print("\033[1;38;5;220m[!] Restored subvolumes were staged on disk. Reboot to activate.\033[0m")
 
 
 def handle_delete(config: str, snap_id: str) -> None:
@@ -669,9 +789,9 @@ def handle_delete(config: str, snap_id: str) -> None:
     if snap_id == "0":
         fail(f"[!] Fatal: Cannot delete snapshot ID 0 (the active system state) for config '{config}'.")
     
-    print(f"[*] Deleting snapshot ID {snap_id} for '{config}'...")
+    print(f"\033[1;38;5;81m[*] Deleting snapshot ID {snap_id} for '{config}'...\033[0m")
     run_cmd(["snapper", "-c", config, "delete", snap_id])
-    print(f"[+] Snapshot ID {snap_id} deleted successfully.")
+    print(f"\033[1;38;5;114m[+] Snapshot ID {snap_id} deleted successfully.\033[0m")
 
 
 def handle_delete_pair(config1: str, snap_id1: str, config2: str, snap_id2: str) -> None:
@@ -680,50 +800,225 @@ def handle_delete_pair(config1: str, snap_id1: str, config2: str, snap_id2: str)
         
     handle_delete(config1, snap_id1)
     handle_delete(config2, snap_id2)
-    print("\n[+] Coordinated deletion complete.")
+    print("\n\033[1;38;5;114m[+] Coordinated deletion complete.\033[0m")
+
+
+# -----------------------------------------------------------------------------
+# FZF TUI INTEGRATION
+# -----------------------------------------------------------------------------
+
+def launch_tui() -> None:
+    if not shutil.which("fzf"):
+        fail("[!] Fatal: 'fzf' is required for the interactive menu. Install it using: pacman -S fzf")
+
+    views = ["coordinated", "root", "home"]
+    view_idx = 0
+
+    # Catppuccin Mocha vivid theme styling extracted from pkg reference
+    fzf_colors = (
+        "bg+:#1e1e2e,bg:#11111b,spinner:#f5e0dc,"
+        "fg:#cdd6f4,fg+:#cdd6f4,header:#89b4fa,info:#cba6f7,"
+        "pointer:#a6e3a1,marker:#f5e0dc,prompt:#cba6f7,"
+        "hl:#f38ba8,hl+:#f38ba8,border:#585b70,label:#a6e3a1"
+    )
+
+    while True:
+        current_view = views[view_idx]
+        
+        # Fetch instantaneous Global Btrfs Storage usage natively
+        gb = 1024**3
+        total, used, free = shutil.disk_usage("/")
+        
+        # Vivid Nerd Font System Storage Header
+        storage_hdr = f" \033[1;38;5;81m󰋊 BTRFS STORAGE:\033[0m \033[38;5;253m{total/gb:.1f} GB Total\033[0m \033[38;5;238m|\033[0m \033[38;5;203m{used/gb:.1f} GB Used\033[0m \033[38;5;238m|\033[0m \033[38;5;114m{free/gb:.1f} GB Free\033[0m "
+        
+        config_to_query = "root" if current_view in ("coordinated", "root") else "home"
+        snaps = load_snapshot_list_for_gui(config_to_query)
+        
+        lines_for_fzf = []
+        snap_map = {}
+        c_sep = "\033[38;5;238m│\033[0m"
+        
+        if snaps:
+            snap_map = {s["id"]: s for s in snaps}
+            snaps_sorted = sorted(snaps, key=lambda x: int(x["id"]), reverse=True)
+
+            for s in snaps_sorted:
+                dt = parse_snapshot_datetime(s["raw_date"])
+                age_str = time_ago(dt) if dt else "Unknown"
+                
+                # Highly vivid 256-color column styling matching 'pkg' Atlas logic
+                id_str = f"\033[1;38;5;39m{s['id']:>4}\033[0m"         # Deep Sky Blue
+                type_str = f"\033[38;5;213m{s['type']:<7}\033[0m"       # Pink
+                age_colored = f"\033[38;5;114m{age_str:<10}\033[0m"    # Pale Green
+                date_str = f"\033[38;5;220m{s['date']:<18}\033[0m"     # Gold
+                desc_str = f"\033[38;5;253m{s['description']}\033[0m"  # Crisp White
+                
+                lines_for_fzf.append(f"{id_str} {c_sep} {type_str} {c_sep} {age_colored} {c_sep} {date_str} {c_sep} {desc_str}")
+        else:
+            lines_for_fzf.append(f"\033[1;38;5;196m No snapshots found for '{config_to_query}' configuration.\033[0m")
+
+        # Visual Tab Mode Controls
+        c_key = "\033[1;38;5;220m"
+        c_rst = "\033[0m"
+        
+        if current_view == "coordinated":
+            mode_hdr = f" \033[1;38;5;213m󰑐 VIEW: ROOT+HOME (Coordinated)\033[0m {c_sep} {c_key}[TAB]{c_rst} Switch {c_sep} {c_key}[ENTER]{c_rst} Restore {c_sep} {c_key}[DEL]{c_rst} Delete {c_sep} {c_key}[CTRL-S]{c_rst} Create"
+        elif current_view == "root":
+            mode_hdr = f" \033[1;38;5;39m󰒋 VIEW: ROOT ONLY\033[0m               {c_sep} {c_key}[TAB]{c_rst} Switch {c_sep} {c_key}[ENTER]{c_rst} Restore {c_sep} {c_key}[DEL]{c_rst} Delete {c_sep} {c_key}[CTRL-S]{c_rst} Create"
+        else:
+            mode_hdr = f" \033[1;38;5;114m󰋜 VIEW: HOME ONLY\033[0m               {c_sep} {c_key}[TAB]{c_rst} Switch {c_sep} {c_key}[ENTER]{c_rst} Restore {c_sep} {c_key}[DEL]{c_rst} Delete {c_sep} {c_key}[CTRL-S]{c_rst} Create"
+        
+        # Static Matrix Header Table
+        table_hdr = f"  \033[1;38;5;242mID\033[0m   {c_sep} \033[1;38;5;242mTYPE\033[0m    {c_sep} \033[1;38;5;242mAGE\033[0m        {c_sep} \033[1;38;5;242mDATE\033[0m               {c_sep} \033[1;38;5;242mDESCRIPTION\033[0m"
+        hr = "\033[38;5;238m" + "─" * 80 + "\033[0m"
+        
+        # Compile FZF Header Injection
+        header = f"{storage_hdr}\n {mode_hdr}\n{hr}\n{table_hdr}"
+
+        fzf_cmd = [
+            "fzf",
+            "--ansi",
+            "--reverse",
+            "--header", header,
+            "--header-border=horizontal",
+            "--border=rounded",
+            "--prompt= 󰆑 Snapshots ❯ ",
+            f"--color={fzf_colors}",
+            "--pointer=",
+            "--marker=✓",
+            "--no-hscroll",
+            "--ellipsis=",
+            "--expect=enter,ctrl-d,delete,tab,ctrl-s,alt-s",
+            "--info=hidden"
+        ]
+
+        try:
+            process = subprocess.Popen(fzf_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
+            stdout, _ = process.communicate(input="\n".join(lines_for_fzf))
+        except Exception as exc:
+            fail(f"[!] FZF Execution failed: {exc}")
+
+        if not stdout.strip():
+            break # User pressed ESC or aborted
+
+        output_lines = stdout.strip().split("\n")
+        key_pressed = output_lines[0]
+        
+        if key_pressed == "tab":
+            view_idx = (view_idx + 1) % len(views)
+            continue
+            
+        # Snapshot Creation Logic
+        if key_pressed in ("ctrl-s", "alt-s"):
+            print(f"\n\033[1;38;5;81m[*] Action: CREATE NEW SNAPSHOT ({current_view.upper()})\033[0m")
+            try:
+                desc = input("\033[1;38;5;220m[*] Enter description for the new snapshot:\033[0m ").strip()
+                if desc:
+                    if current_view == "coordinated":
+                        handle_create_pair("root", "home", desc)
+                    elif current_view == "root":
+                        handle_create("root", desc)
+                    elif current_view == "home":
+                        handle_create("home", desc)
+                else:
+                    print("\033[1;38;5;196m[!] Snapshot creation aborted (empty description).\033[0m")
+            except KeyboardInterrupt:
+                pass
+            
+            input("\n\033[1;38;5;114mPress Enter to return to menu...\033[0m")
+            continue
+            
+        if len(output_lines) < 2 or not snaps:
+            continue
+
+        selected_line = output_lines[1]
+        # Strip ANSI escape sequences to reliably get the ID
+        clean_line = re.sub(r'\x1b\[[0-9;]*m', '', selected_line)
+        selected_id = clean_line.split()[0].strip()
+
+        if selected_id not in snap_map:
+            continue
+
+        target_snap = snap_map[selected_id]
+
+        # Handle Coordinated Actions
+        if current_view == "coordinated":
+            print(f"\n\033[1;38;5;81m[*] Synchronizing snapshots for Root ID {selected_id}...\033[0m")
+            try:
+                root_id, home_id = find_coordinated_pair(target_snap["raw_date"], target_snap["description"])
+            except RuntimeError as e:
+                print(f"\n\033[1;38;5;196m{e}\033[0m")
+                input("\033[1;38;5;114mPress Enter to return to menu...\033[0m")
+                continue
+
+            if key_pressed == "enter":
+                print(f"\033[1;38;5;81m[*] Action: COORDINATED RESTORE\033[0m")
+                print(f"[*] Target Pair : Root={root_id} | Home={home_id}")
+                if confirm_prompt("Are you absolutely sure you want to RESTORE your system to this state?"):
+                    handle_restore_pair("root", root_id, "home", home_id)
+                    break
+                    
+            elif key_pressed in ("ctrl-d", "delete"):
+                print(f"\033[1;38;5;196m[*] Action: COORDINATED DELETE\033[0m")
+                print(f"[*] Target Pair : Root={root_id} | Home={home_id}")
+                if confirm_prompt("Are you sure you want to PERMANENTLY DELETE this snapshot pair?"):
+                    handle_delete_pair("root", root_id, "home", home_id)
+                    input("\n\033[1;38;5;114mPress Enter to return to menu...\033[0m")
+                    
+        # Handle Root-Only Actions
+        elif current_view == "root":
+            if key_pressed == "enter":
+                print(f"\n\033[1;38;5;81m[*] Action: RESTORE ROOT ONLY (ID {selected_id})\033[0m")
+                if confirm_prompt("Are you absolutely sure you want to RESTORE ROOT ONLY?"):
+                    handle_restore("root", selected_id, False)
+                    break
+            elif key_pressed in ("ctrl-d", "delete"):
+                print(f"\n\033[1;38;5;196m[*] Action: DELETE ROOT ONLY (ID {selected_id})\033[0m")
+                if confirm_prompt("Are you sure you want to PERMANENTLY DELETE this Root snapshot?"):
+                    handle_delete("root", selected_id)
+                    input("\n\033[1;38;5;114mPress Enter to return to menu...\033[0m")
+
+        # Handle Home-Only Actions
+        elif current_view == "home":
+            if key_pressed == "enter":
+                print(f"\n\033[1;38;5;81m[*] Action: RESTORE HOME ONLY (ID {selected_id})\033[0m")
+                if confirm_prompt("Are you absolutely sure you want to RESTORE HOME ONLY?"):
+                    handle_restore("home", selected_id, False)
+                    break
+            elif key_pressed in ("ctrl-d", "delete"):
+                print(f"\n\033[1;38;5;196m[*] Action: DELETE HOME ONLY (ID {selected_id})\033[0m")
+                if confirm_prompt("Are you sure you want to PERMANENTLY DELETE this Home snapshot?"):
+                    handle_delete("home", selected_id)
+                    input("\n\033[1;38;5;114mPress Enter to return to menu...\033[0m")
 
 
 def main() -> None:
-    if os.geteuid() != 0:
-        fail("[!] This script requires root privileges. Please run with sudo.")
+    ensure_root()
+
+    # If absolutely no arguments were passed, launch the interactive TUI
+    if len(sys.argv) == 1:
+        launch_tui()
+        sys.exit(0)
 
     parser = argparse.ArgumentParser(
-        description="Advanced Snapper Flat-Layout Manager for Arch Linux",
+        description="Advanced Snapper Flat-Layout Manager & TUI for Arch Linux",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument(
-        "-c",
-        "--config",
-        help="Target Snapper configuration (required for list/create/restore/delete)",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Format list output as JSON for GUI ingestion",
-    )
-    parser.add_argument(
-        "--no-remount",
-        action="store_true",
-        help="Do not attempt a live remount after restoring a non-root subvolume",
-    )
-
+    
+    parser.add_argument("-c", "--config", help="Target Snapper configuration (required for list/create/restore/delete)")
+    parser.add_argument("--json", action="store_true", help="Format list output as JSON for GUI ingestion")
+    parser.add_argument("--no-remount", action="store_true", help="Do not attempt a live remount after restoring a non-root subvolume")
+    
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("-l", "--list", action="store_true", help="List snapshots for the configuration")
     group.add_argument("-C", "--create", metavar="DESC", help="Create a new snapshot with a description")
     group.add_argument("-R", "--restore", metavar="ID", help="Restore subvolume to the specified snapshot ID")
     group.add_argument("-D", "--delete", metavar="ID", help="Delete the specified snapshot ID")
-    group.add_argument(
-        "--restore-pair",
-        nargs=4,
-        metavar=("CFG1", "ID1", "CFG2", "ID2"),
-        help="Coordinated restore of two configs on the same Btrfs filesystem",
-    )
-    group.add_argument(
-        "--delete-pair",
-        nargs=4,
-        metavar=("CFG1", "ID1", "CFG2", "ID2"),
-        help="Coordinated deletion of two snapshots",
-    )
+    group.add_argument("--restore-pair", nargs=4, metavar=("CFG1", "ID1", "CFG2", "ID2"), help="Coordinated restore of two configs on the same Btrfs filesystem")
+    group.add_argument("--delete-pair", nargs=4, metavar=("CFG1", "ID1", "CFG2", "ID2"), help="Coordinated deletion of two snapshots")
+    group.add_argument("--sync-restore", nargs="+", metavar="ARGS", help="Automatically match and stage a coordinated restore (Usage: TARGET_DATE [TARGET_DESC])")
+    group.add_argument("--sync-delete", nargs="+", metavar="ARGS", help="Automatically match and perform a coordinated deletion (Usage: TARGET_DATE [TARGET_DESC])")
 
     args = parser.parse_args()
 
@@ -731,6 +1026,7 @@ def main() -> None:
     if (args.list or args.create is not None or args.restore is not None or args.delete is not None) and not args.config:
         parser.error("-c/--config is required with --list, --create, --restore, and --delete")
 
+    # CLI Execution Paths
     if args.list:
         handle_list(args.config, args.json)
     elif args.create is not None:
@@ -741,8 +1037,33 @@ def main() -> None:
         handle_delete(args.config, args.delete)
     elif args.delete_pair is not None:
         handle_delete_pair(*args.delete_pair)
-    else:
+    elif args.restore_pair is not None:
         handle_restore_pair(*args.restore_pair)
+    elif args.sync_restore is not None:
+        if len(args.sync_restore) < 1 or len(args.sync_restore) > 2:
+            parser.error("--sync-restore requires 1 or 2 arguments: TARGET_DATE [TARGET_DESC]")
+        target_date = args.sync_restore[0]
+        target_desc = args.sync_restore[1] if len(args.sync_restore) == 2 else None
+        
+        try:
+            root_id, home_id = find_coordinated_pair(target_date, target_desc)
+            print(f"[*] Found coordinated snapshot pair: Root={root_id} Home={home_id}", file=sys.stderr)
+            handle_restore_pair("root", root_id, "home", home_id)
+        except RuntimeError as e:
+            fail(str(e))
+        
+    elif args.sync_delete is not None:
+        if len(args.sync_delete) < 1 or len(args.sync_delete) > 2:
+            parser.error("--sync-delete requires 1 or 2 arguments: TARGET_DATE [TARGET_DESC]")
+        target_date = args.sync_delete[0]
+        target_desc = args.sync_delete[1] if len(args.sync_delete) == 2 else None
+        
+        try:
+            root_id, home_id = find_coordinated_pair(target_date, target_desc)
+            print(f"[*] Found coordinated snapshot pair: Root={root_id} Home={home_id}", file=sys.stderr)
+            handle_delete_pair("root", root_id, "home", home_id)
+        except RuntimeError as e:
+            fail(str(e))
 
 
 if __name__ == "__main__":

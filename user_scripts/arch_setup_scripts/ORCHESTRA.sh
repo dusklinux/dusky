@@ -24,9 +24,6 @@ SCRIPT_SEARCH_DIRS=(
     "${HOME}/user_scripts/theme_matugen"
     "${HOME}/user_scripts/theme_matugen/config"
     "${HOME}/user_scripts/theme_matugen/firefox"
-    "${HOME}/user_scripts/btrfs_snapshots"
-    "${HOME}/user_scripts/tts_stt/dusky_kokoro"
-    "${HOME}/user_scripts/tts_stt/dusky_parakeet"
     # "${HOME}/my_other_scripts"
     # "/opt/shared_team_scripts"
 )
@@ -56,6 +53,7 @@ INSTALL_SEQUENCE=(
 
     "U | 005_hypr_custom_config_setup.sh --force"
     "U | 010_package_removal.sh --auto"
+    "U | 013_snapper_isolation_subvolume.sh --auto"
     "U | 015_set_thunar_terminal.py -t foot"
     "U | 020_desktop_apps_username_setter.sh"
     "U | 025_configure_keyboard.sh"
@@ -165,14 +163,6 @@ INSTALL_SEQUENCE=(
 # ------ CUSTOM PATH SCRIPTS -------
 
     "U | wallpaper_selector.py --build-cache"
-#    "U | kokoro_installer.sh"
-#    "U | parakeet_installer.sh"
-
-# ------ Btrfs Snapshot configuration -------
-
-#    "U | 01_limine_setup.sh --auto"
-    "U | 02_snapper_isolation_subvolume.sh --auto"
-#    "U | 03_snapper_pacman_hooks_for_limine.sh --auto"
 )
 
 # ==============================================================================

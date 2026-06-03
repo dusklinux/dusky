@@ -161,7 +161,6 @@ declare -a SCRIPT_SEARCH_DIRS=(
     "${WORK_TREE}/user_scripts/theme_matugen/firefox"
     "${WORK_TREE}/user_scripts/theme_matugen"
     "${WORK_TREE}/user_scripts/waybar"
-    "${WORK_TREE}/user_scripts/btrfs_snapshots"
     "${WORK_TREE}/user_scripts/tts_stt/dusky_kokoro"
     "${WORK_TREE}/user_scripts/tts_stt/dusky_parakeet"
 )
@@ -205,7 +204,7 @@ declare -ra UPDATE_SEQUENCE=(
     "U | paru_packages.sh"
 #================= Scripts =====================
 
-
+#    "U | 013_snapper_isolation_subvolume.sh --auto"
     "U | 015_set_thunar_terminal.py -t foot"
     "U | 020_desktop_apps_username_setter.sh --quiet"
     "U | 025_configure_keyboard.sh"
