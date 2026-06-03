@@ -4,38 +4,83 @@
 # ==============================================================================
 
 function scripts() {
-    # 1. Globbing Initialization
+    # 1. State Management & Weight Initialization
+    local state_dir="$HOME/.config/dusky/settings/scripts_fzf"
+    local state_file="$state_dir/state"
+    
+    typeset -A weights
+    if [[ -f "$state_file" ]]; then
+        # Read the state file: expected format is <weight> <tab> <absolute_path>
+        # The '|| [[ -n "$w" ]]' prevents silent failures if the file lacks a trailing newline
+        while IFS=$'\t' read -r w p || [[ -n "$w" ]]; do
+            # Ensure the weight is numeric and the path is not empty for safety
+            if [[ "$w" =~ ^[0-9]+$ && -n "$p" ]]; then
+                weights[$p]=$w
+            fi
+        done < "$state_file"
+    fi
+
+    # 2. Globbing Initialization
     # extendedglob: Advanced pattern matching
     # nullglob: Fail silently if no matches are found, keeping the array empty
     setopt localoptions extendedglob nullglob
-
-    local files=("$HOME"/user_scripts/**/*.(sh|py)(N.))
+    # (N-.): N = Nullglob, - = follow symlinks, . = regular files only
+    local files=("$HOME"/user_scripts/**/*.(sh|py)(N-.))
 
     if (( ${#files[@]} == 0 )); then
         print -P "%F{red}󰚌 No Python (.py) or Bash (.sh) scripts found in ~/user_scripts/%f"
         return 1
     fi
 
-    # Replace the exact $HOME path with '~' and colorize JUST the script name
-    local display_files=()
+    # 3. Frequency-Based Sorting Engine
+    local weighted_files=()
     for f in "${files[@]}"; do
+        local w=${weights[$f]:-0}
+        # Cap weight to prevent negative inverted values (highly unlikely, but safe)
+        (( w > 999999 )) && w=999999
+        # Invert the weight (999999 - w) so ascending Zsh sort places highest scores first
+        local inv_w=$(( 999999 - w ))
+        # Format: "00000X:filepath" -> strict quoting guarantees spaces in paths survive
+        weighted_files+=("$(printf "%06d:%s" "$inv_w" "$f")")
+    done
+
+    # Perform native Zsh ascending string sort ('o' parameter expansion flag)
+    # Extracts everything after the first colon to yield a perfectly ranked array
+    local final_files=()
+    for wf in "${(o)weighted_files[@]}"; do
+        final_files+=("${wf#*:}")
+    done
+
+    # 4. Colorization & Badge Formatting
+    local display_files=()
+    for f in "${final_files[@]}"; do
         local rel_path="${f/#$HOME/\~}"
-        # :h extracts the directory path, :t extracts the base filename.
-        # We inject 24-bit True Color (RGB) Bold Neon Cyan to bypass muted terminal themes.
-        display_files+=("${rel_path:h}/"$'\e[1;38;2;0;255;255m'"${rel_path:t}"$'\e[0m')
+        local w=${weights[$f]:-0}
+        local badge=""
+        
+        # If the script has a history weight, attach a Catppuccin Yellow Star & Points
+        # A hard tab (\t) separates the path from the badge for seamless FZF stripping.
+        if (( w > 0 )); then
+            badge=$'\t\e[3;38;2;249;226;175m'"  ${w} "$'\e[0m'
+        fi
+        
+        # :h extracts directory path, :t extracts base filename.
+        # We inject 24-bit True Color (RGB) Bold Neon Cyan for the filename.
+        display_files+=("${rel_path:h}/"$'\e[1;38;2;0;255;255m'"${rel_path:t}"$'\e[0m'"${badge}")
     done
     
     local script_path
 
-    # 2. Primary FZF Interface
-    # Added --ansi so FZF natively renders the injected color codes
+    # 5. Primary FZF Interface (Bleeding-Edge v0.73.1 Features)
     script_path=$(
         print -N "${display_files[@]}" | fzf \
             --read0 \
             --ansi \
             --exact \
             --layout=reverse \
-            --tiebreak=end,pathname,length \
+            --scheme=history \
+            --highlight-line \
+            --tiebreak=index \
             --style=full \
             --border=rounded \
             --border-label=" 󰟆 dusky scripts " \
@@ -44,11 +89,10 @@ function scripts() {
             --marker="󰐕" \
             --pointer="" \
             --info=inline-right \
-            --scheme=path \
-            --algo=v2 \
+            --tabstop=4 \
             --delimiter="/" \
             --with-nth="3.." \
-            --preview='file={}; file="${file/\~/$HOME}"; bat --color=always --style=numbers --line-range=:500 "$file" 2>/dev/null || cat "$file"' \
+            --preview='file={}; file="${file%%$(printf "\t")*}"; file="${file/\~/$HOME}"; bat --color=always --style=numbers --line-range=:500 "$file" 2>/dev/null || cat "$file"' \
             --preview-window="right,50%,border-rounded,~3" \
             --color='bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8' \
             --color='fg:#cdd6f4,info:#cba6f7,pointer:#f5e0dc' \
@@ -59,9 +103,10 @@ function scripts() {
     # Abort if the user presses Esc or Ctrl-C
     [[ -z "$script_path" ]] && return 0
 
-    # 3. Security Hardening: Strip out residual ANSI colors seamlessly using Zsh internals
-    # This guarantees the path used in execution and the clipboard is perfectly clean.
+    # 6. Security Hardening
+    # Strip out residual ANSI colors and the UI weight badge using Zsh internals.
     script_path=${script_path//$'\e'\[[0-9;]*m/}
+    script_path=${script_path%%$'\t'*}
 
     local action
     local action_menu=(
@@ -71,7 +116,7 @@ function scripts() {
         "4. 󰆧 Copy & Type in terminal"
     )
 
-    # 4. Secondary FZF Action Menu
+    # 7. Secondary FZF Action Menu
     action=$(
         print -N "${action_menu[@]}" | fzf \
             --read0 \
@@ -89,14 +134,42 @@ function scripts() {
 
     [[ -z "$action" ]] && return 0
 
-    # Expand the '~' back to '$HOME' for background execution checks
+    # Expand the '~' back to '$HOME' for background execution checks and state mapping
     local expanded_path="${script_path/#\~/$HOME}"
 
-    # 5. Action Execution Engine
+    # 8. Self-Cleaning State Persistence
+    local current_weight=${weights[$expanded_path]:-0}
+    weights[$expanded_path]=$((current_weight + 1))
+    
+    command mkdir -p "$state_dir"
+    # Using $$ (Process ID) + $RANDOM guarantees atomicity if run in multiple panes at once
+    local tmp_state="${state_file}.tmp.$$.$RANDOM"
+    
+    # (@kv) strictly quotes the keys/values. This guarantees that scripts with spaces in their
+    # names will NEVER break the word-splitting boundaries or corrupt the state file.
+    for k v in "${(@kv)weights}"; do
+        if [[ -f "$k" ]]; then
+            printf "%d\t%s\n" "$v" "$k"
+        fi
+    done > "$tmp_state" && command mv -f "$tmp_state" "$state_file"
+
+    # 9. Action Execution Engine
+    # Create a portable, securely quoted path replacing the absolute home dir with ~/
+    # This prevents your username from leaking and ensures flawless sharing.
+    local portable_path
+    if [[ "$expanded_path" == "$HOME"* ]]; then
+        local rel_base="${expanded_path#$HOME/}"
+        # (q-) minimally escapes spaces with backslashes (e.g., ~/my\ script.sh)
+        portable_path="~/${(q-)rel_base}"
+    else
+        portable_path="${(q-)expanded_path}"
+    fi
+
     case "$action" in
         1*)
             # ACTION 1: Run the script
-            print -P "\n%F{green}󰜎 Running:%f $script_path\n"
+            # Display portable path in the echo, but safely execute the true expanded path
+            print -P "\n%F{green}󰜎 Running:%f $portable_path\n"
             if [[ -x "$expanded_path" ]]; then
                 "$expanded_path"
             elif [[ "$expanded_path" == *.py ]]; then
@@ -107,30 +180,31 @@ function scripts() {
             ;;
         2*)
             # ACTION 2: Type in terminal buffer
-            print -z "$script_path"
+            # Pushes the securely escaped portable path so hitting enter works instantly.
+            print -z "$portable_path"
             ;;
         3*)
-            # ACTION 3: Copy to clipboard
+            # ACTION 3: Copy to clipboard (Portable path for sharing)
             if command -v wl-copy >/dev/null 2>&1; then
-                print -rn -- "$script_path" | wl-copy
+                print -rn -- "$portable_path" | wl-copy
             elif command -v xclip >/dev/null 2>&1; then
-                print -rn -- "$script_path" | xclip -selection clipboard
+                print -rn -- "$portable_path" | xclip -selection clipboard
             else
                 print -P "%F{red}󰚌 No clipboard utility found (wl-clipboard or xclip).%f"
                 return 1
             fi
-            print -P "%F{green} Copied to clipboard:%f $script_path"
+            print -P "%F{green} Copied portable path to clipboard:%f $portable_path"
             ;;
         4*)
             # ACTION 4: Copy to clipboard AND type in buffer
             if command -v wl-copy >/dev/null 2>&1; then
-                print -rn -- "$script_path" | wl-copy
+                print -rn -- "$portable_path" | wl-copy
             elif command -v xclip >/dev/null 2>&1; then
-                print -rn -- "$script_path" | xclip -selection clipboard
+                print -rn -- "$portable_path" | xclip -selection clipboard
             else
                 print -P "%F{red}󰚌 No clipboard utility found. Pushed to buffer only.%f"
             fi
-            print -z "$script_path"
+            print -z "$portable_path"
             ;;
     esac
 }
