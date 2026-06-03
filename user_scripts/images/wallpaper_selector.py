@@ -168,33 +168,78 @@ class CacheManager:
                 return False
 
         thumb_path = CacheManager.get_thumb_path(rel_path)
+        bad_marker_path = thumb_path.with_suffix('.bad')
         tmp_thumb_path = None
 
         try:
+            # Short-circuit empty/0-byte files immediately
+            if full_path.stat().st_size == 0:
+                bad_marker_path.touch(exist_ok=True)
+                return False
+        except OSError:
+            return False
+
+        try:
             if not force:
+                # Fast path out: skip if marked uncacheable and marker is up to date
+                if bad_marker_path.exists() and bad_marker_path.stat().st_mtime >= full_path.stat().st_mtime:
+                    return False
+                # Fast path out: skip if valid cache exists and is up to date
                 if thumb_path.exists() and thumb_path.stat().st_mtime >= full_path.stat().st_mtime:
                     return False
 
             tmp_thumb_path = thumb_path.with_suffix(f'.{uuid.uuid4().hex}.tmp.png')
 
+            # Safely escape characters that trigger Magick's internal parsers
+            escaped_path = str(full_path).replace('[', '\\[').replace(']', '\\]').replace('*', '\\*').replace('?', '\\?')
+            input_arg = f"{escaped_path}[0]"
+
             subprocess.run([
-                "nice", "-n", "19", "magick", "-limit", "thread", "1",
-                f"{full_path}[0]", "-auto-orient", "-strip",  # Ensure [0] extracts first frame for GIF/WebP natively
+                "nice", "-n", "19", "magick", 
+                "-limit", "thread", "1",
+                "-limit", "memory", "256MiB",  # Prevent RAM exhaustion
+                "-limit", "map", "512MiB",     # Prevent map exhaustion
+                "-limit", "width", "16384",    # Prevent decompression dimension bombs
+                "-limit", "height", "16384",
+                "-limit", "time", "14",        # Allow Magick to safely abort right before subprocess SIGKILL
+                input_arg, "-auto-orient", "-strip",  
                 "-thumbnail", f"{THUMB_SIZE}x{THUMB_SIZE}^",
                 "-gravity", "center", "-extent", f"{THUMB_SIZE}x{THUMB_SIZE}",
                 "(", "-size", f"{THUMB_SIZE}x{THUMB_SIZE}", "xc:none", "-fill", "white",
                 "-draw", f"roundrectangle 0,0,{THUMB_SIZE - 1},{THUMB_SIZE - 1},24,24", ")",
                 "-alpha", "set", "-compose", "DstIn", "-composite",
                 str(tmp_thumb_path)
-            ], check=True, capture_output=True, text=True)
+            ], check=True, capture_output=True, text=True, timeout=15)
 
             os.replace(tmp_thumb_path, thumb_path)
+            
+            # Clean up the .bad marker if processing finally succeeded
+            if bad_marker_path.exists():
+                try:
+                    bad_marker_path.unlink()
+                except OSError:
+                    pass
+
             return True
 
+        except subprocess.TimeoutExpired as e:
+            print(f"Magick timed out processing {rel_path} after {e.timeout}s. Marking as bad.")
+            try:
+                bad_marker_path.touch(exist_ok=True)
+            except OSError:
+                pass
         except subprocess.CalledProcessError as e:
-            print(f"Magick failed to process {rel_path}:\n{e.stderr.strip()}")
+            print(f"Magick failed to process {rel_path}:\n{e.stderr.strip()}\nMarking as bad.")
+            try:
+                bad_marker_path.touch(exist_ok=True)
+            except OSError:
+                pass
         except Exception as e:
             print(f"Error processing {rel_path}: {e}")
+            try:
+                bad_marker_path.touch(exist_ok=True)
+            except OSError:
+                pass
         finally:
             if tmp_thumb_path:
                 try:
@@ -215,7 +260,8 @@ class CacheManager:
             try:
                 with os.scandir(THUMB_DIR) as it:
                     for entry in it:
-                        if entry.is_file() and entry.name.endswith('.png'):
+                        # Sweep both standard .png cache and .bad markers
+                        if entry.is_file() and (entry.name.endswith('.png') or entry.name.endswith('.bad')):
                             # Prevent concurrency race: Only sweep stale tmp files older than 1 hour
                             if '.tmp.' in entry.name:
                                 try:
@@ -1043,12 +1089,28 @@ class WallpaperApp:
         thumb_path = CacheManager.get_thumb_path(rel_path)
 
         try:
+            if not thumb_path.exists():
+                # Throw silently so the UI spinner can be cleaned up without terminal spam
+                raise FileNotFoundError("Thumbnail not generated (possibly marked as bad)")
+
             pixbuf = self.GdkPixbuf.Pixbuf.new_from_file_at_scale(
                 str(thumb_path), RENDER_SIZE, RENDER_SIZE, True
             )
             self.GLib.idle_add(self._update_ui_child, rel_path, pixbuf, generation)
         except Exception as e:
-            print(f"Failed loading {rel_path} into Pixbuf: {e}")
+            # Only print the error if it's NOT just an intentionally skipped bad file
+            if not isinstance(e, FileNotFoundError):
+                print(f"Failed loading {rel_path} into Pixbuf: {e}")
+                # If the thumb actually exists but crashed GdkPixbuf, it's corrupt. Destroy and mark bad.
+                if thumb_path.exists():
+                    try:
+                        thumb_path.unlink(missing_ok=True)
+                        CacheManager.get_thumb_path(rel_path).with_suffix('.bad').touch(exist_ok=True)
+                    except OSError:
+                        pass
+                        
+            # Handles exceptions by passing None to the UI so the spinner is cleanly destroyed
+            self.GLib.idle_add(self._update_ui_child, rel_path, None, generation)
 
     def _update_ui_child(self, rel_path: str, pixbuf, generation: int = -1):
         if generation != -1 and generation != self.current_generation:
@@ -1060,11 +1122,13 @@ class WallpaperApp:
         if not child:
             return False
 
+        # Destroy the spinner
         for c in child.get_children():
             child.remove(c)
             c.destroy()
             
         if not pixbuf:
+            # Reached if thumbnail failed or doesn't exist. Leaves the empty placeholder box.
             return False
 
         image = self.Gtk.Image.new_from_pixbuf(pixbuf)
