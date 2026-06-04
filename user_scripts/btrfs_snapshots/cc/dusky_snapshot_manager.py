@@ -862,12 +862,14 @@ def launch_tui() -> None:
         c_key = "\033[1;38;5;220m"
         c_rst = "\033[0m"
         
+        multi_hdr = f" \033[38;5;246m󰒉 MULTI-SELECT:\033[0m {c_key}[CTRL-A]{c_rst} Select All {c_sep} {c_key}[CTRL-X]{c_rst} Deselect All {c_sep} {c_key}[SHIFT-⬇/⬆/Right-Click]{c_rst} Toggle Selection"
+        
         if current_view == "coordinated":
-            mode_hdr = f" \033[1;38;5;213m󰑐 VIEW: ROOT+HOME (Coordinated)\033[0m {c_sep} {c_key}[TAB]{c_rst} Switch {c_sep} {c_key}[ENTER]{c_rst} Restore {c_sep} {c_key}[DEL]{c_rst} Delete {c_sep} {c_key}[CTRL-S]{c_rst} Create"
+            mode_hdr = f" \033[1;38;5;213m󰑐 VIEW: ROOT+HOME (Coordinated)\033[0m {c_sep} {c_key}[TAB]{c_rst} Switch {c_sep} {c_key}[ENTER]{c_rst} Restore {c_sep} {c_key}[DEL]{c_rst} Delete {c_sep} {c_key}[CTRL-S]{c_rst} Create\n{multi_hdr}"
         elif current_view == "root":
-            mode_hdr = f" \033[1;38;5;39m󰒋 VIEW: ROOT ONLY\033[0m               {c_sep} {c_key}[TAB]{c_rst} Switch {c_sep} {c_key}[ENTER]{c_rst} Restore {c_sep} {c_key}[DEL]{c_rst} Delete {c_sep} {c_key}[CTRL-S]{c_rst} Create"
+            mode_hdr = f" \033[1;38;5;39m󰒋 VIEW: ROOT ONLY\033[0m               {c_sep} {c_key}[TAB]{c_rst} Switch {c_sep} {c_key}[ENTER]{c_rst} Restore {c_sep} {c_key}[DEL]{c_rst} Delete {c_sep} {c_key}[CTRL-S]{c_rst} Create\n{multi_hdr}"
         else:
-            mode_hdr = f" \033[1;38;5;114m󰋜 VIEW: HOME ONLY\033[0m               {c_sep} {c_key}[TAB]{c_rst} Switch {c_sep} {c_key}[ENTER]{c_rst} Restore {c_sep} {c_key}[DEL]{c_rst} Delete {c_sep} {c_key}[CTRL-S]{c_rst} Create"
+            mode_hdr = f" \033[1;38;5;114m󰋜 VIEW: HOME ONLY\033[0m               {c_sep} {c_key}[TAB]{c_rst} Switch {c_sep} {c_key}[ENTER]{c_rst} Restore {c_sep} {c_key}[DEL]{c_rst} Delete {c_sep} {c_key}[CTRL-S]{c_rst} Create\n{multi_hdr}"
         
         # Static Matrix Header Table
         table_hdr = f"  \033[1;38;5;242mID\033[0m   {c_sep} \033[1;38;5;242mTYPE\033[0m    {c_sep} \033[1;38;5;242mAGE\033[0m        {c_sep} \033[1;38;5;242mDATE\033[0m               {c_sep} \033[1;38;5;242mDESCRIPTION\033[0m"
@@ -878,6 +880,7 @@ def launch_tui() -> None:
 
         fzf_cmd = [
             "fzf",
+            "--multi",
             "--ansi",
             "--reverse",
             "--header", header,
@@ -890,6 +893,7 @@ def launch_tui() -> None:
             "--no-hscroll",
             "--ellipsis=",
             "--expect=enter,ctrl-d,delete,tab,ctrl-s,alt-s",
+            "--bind=ctrl-a:select-all,ctrl-x:deselect-all,ctrl-space:toggle,shift-down:toggle+down,shift-up:toggle+up",
             "--info=hidden"
         ]
 
@@ -932,64 +936,93 @@ def launch_tui() -> None:
         if len(output_lines) < 2 or not snaps:
             continue
 
-        selected_line = output_lines[1]
-        # Strip ANSI escape sequences to reliably get the ID
-        clean_line = re.sub(r'\x1b\[[0-9;]*m', '', selected_line)
-        selected_id = clean_line.split()[0].strip()
+        selected_ids = []
+        for line in output_lines[1:]:
+            # Strip ANSI escape sequences to reliably get the ID
+            clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+            sid = clean_line.split()[0].strip()
+            if sid in snap_map:
+                selected_ids.append(sid)
 
-        if selected_id not in snap_map:
+        if not selected_ids:
             continue
-
-        target_snap = snap_map[selected_id]
 
         # Handle Coordinated Actions
         if current_view == "coordinated":
-            print(f"\n\033[1;38;5;81m[*] Synchronizing snapshots for Root ID {selected_id}...\033[0m")
-            try:
-                root_id, home_id = find_coordinated_pair(target_snap["raw_date"], target_snap["description"])
-            except RuntimeError as e:
-                print(f"\n\033[1;38;5;196m{e}\033[0m")
-                input("\033[1;38;5;114mPress Enter to return to menu...\033[0m")
+            pairs_to_process = []
+            has_error = False
+            for sid in selected_ids:
+                target_snap = snap_map[sid]
+                print(f"\n\033[1;38;5;81m[*] Synchronizing snapshots for Root ID {sid}...\033[0m")
+                try:
+                    root_id, home_id = find_coordinated_pair(target_snap["raw_date"], target_snap["description"])
+                    pairs_to_process.append((root_id, home_id))
+                except RuntimeError as e:
+                    print(f"\033[1;38;5;196m{e}\033[0m")
+                    has_error = True
+            
+            if has_error:
+                input("\n\033[1;38;5;114mPress Enter to return to menu...\033[0m")
                 continue
 
             if key_pressed == "enter":
-                print(f"\033[1;38;5;81m[*] Action: COORDINATED RESTORE\033[0m")
+                if len(pairs_to_process) > 1:
+                    print("\n\033[1;38;5;196m[!] Error: Cannot restore multiple snapshot pairs at once. Please select only one.\033[0m")
+                    input("\033[1;38;5;114mPress Enter to return to menu...\033[0m")
+                    continue
+                    
+                root_id, home_id = pairs_to_process[0]
+                print(f"\n\033[1;38;5;81m[*] Action: COORDINATED RESTORE\033[0m")
                 print(f"[*] Target Pair : Root={root_id} | Home={home_id}")
                 if confirm_prompt("Are you absolutely sure you want to RESTORE your system to this state?"):
                     handle_restore_pair("root", root_id, "home", home_id)
                     break
                     
             elif key_pressed in ("ctrl-d", "delete"):
-                print(f"\033[1;38;5;196m[*] Action: COORDINATED DELETE\033[0m")
-                print(f"[*] Target Pair : Root={root_id} | Home={home_id}")
-                if confirm_prompt("Are you sure you want to PERMANENTLY DELETE this snapshot pair?"):
-                    handle_delete_pair("root", root_id, "home", home_id)
+                print(f"\n\033[1;38;5;196m[*] Action: COORDINATED DELETE ({len(pairs_to_process)} pairs)\033[0m")
+                for r_id, h_id in pairs_to_process:
+                    print(f"[*] Target Pair : Root={r_id} | Home={h_id}")
+                if confirm_prompt(f"Are you sure you want to PERMANENTLY DELETE these {len(pairs_to_process)} snapshot pair(s)?"):
+                    for r_id, h_id in pairs_to_process:
+                        handle_delete_pair("root", r_id, "home", h_id)
                     input("\n\033[1;38;5;114mPress Enter to return to menu...\033[0m")
                     
         # Handle Root-Only Actions
         elif current_view == "root":
             if key_pressed == "enter":
+                if len(selected_ids) > 1:
+                    print("\n\033[1;38;5;196m[!] Error: Cannot restore multiple snapshots at once. Please select only one.\033[0m")
+                    input("\033[1;38;5;114mPress Enter to return to menu...\033[0m")
+                    continue
+                selected_id = selected_ids[0]
                 print(f"\n\033[1;38;5;81m[*] Action: RESTORE ROOT ONLY (ID {selected_id})\033[0m")
                 if confirm_prompt("Are you absolutely sure you want to RESTORE ROOT ONLY?"):
                     handle_restore("root", selected_id, False)
                     break
             elif key_pressed in ("ctrl-d", "delete"):
-                print(f"\n\033[1;38;5;196m[*] Action: DELETE ROOT ONLY (ID {selected_id})\033[0m")
-                if confirm_prompt("Are you sure you want to PERMANENTLY DELETE this Root snapshot?"):
-                    handle_delete("root", selected_id)
+                print(f"\n\033[1;38;5;196m[*] Action: DELETE ROOT ONLY ({len(selected_ids)} snapshots)\033[0m")
+                if confirm_prompt(f"Are you sure you want to PERMANENTLY DELETE {len(selected_ids)} Root snapshot(s)?"):
+                    for sid in selected_ids:
+                        handle_delete("root", sid)
                     input("\n\033[1;38;5;114mPress Enter to return to menu...\033[0m")
 
         # Handle Home-Only Actions
         elif current_view == "home":
             if key_pressed == "enter":
+                if len(selected_ids) > 1:
+                    print("\n\033[1;38;5;196m[!] Error: Cannot restore multiple snapshots at once. Please select only one.\033[0m")
+                    input("\033[1;38;5;114mPress Enter to return to menu...\033[0m")
+                    continue
+                selected_id = selected_ids[0]
                 print(f"\n\033[1;38;5;81m[*] Action: RESTORE HOME ONLY (ID {selected_id})\033[0m")
                 if confirm_prompt("Are you absolutely sure you want to RESTORE HOME ONLY?"):
                     handle_restore("home", selected_id, False)
                     break
             elif key_pressed in ("ctrl-d", "delete"):
-                print(f"\n\033[1;38;5;196m[*] Action: DELETE HOME ONLY (ID {selected_id})\033[0m")
-                if confirm_prompt("Are you sure you want to PERMANENTLY DELETE this Home snapshot?"):
-                    handle_delete("home", selected_id)
+                print(f"\n\033[1;38;5;196m[*] Action: DELETE HOME ONLY ({len(selected_ids)} snapshots)\033[0m")
+                if confirm_prompt(f"Are you sure you want to PERMANENTLY DELETE {len(selected_ids)} Home snapshot(s)?"):
+                    for sid in selected_ids:
+                        handle_delete("home", sid)
                     input("\n\033[1;38;5;114mPress Enter to return to menu...\033[0m")
 
 
