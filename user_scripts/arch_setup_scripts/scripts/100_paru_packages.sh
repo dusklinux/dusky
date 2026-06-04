@@ -170,16 +170,28 @@ preflight_checks() {
 # ------------------------------------------------------------------------------
 # 6. HELPERS
 # ------------------------------------------------------------------------------
+
+# Progress bar fix: Enforce a TTY using `script` so AUR helpers render properly
+run_aur_cmd() {
+  if ! [[ -t 1 ]] && command -v script >/dev/null 2>&1; then
+    local cmd_str
+    printf -v cmd_str "%q " "$@"
+    script -q -c "${cmd_str}" /dev/null
+  else
+    "$@"
+  fi
+}
+
 aur_full_update() {
-  "${AUR_HELPER}" -Syu --noconfirm
+  run_aur_cmd "${AUR_HELPER}" -Syu --noconfirm
 }
 
 aur_install_auto() {
-  "${AUR_HELPER}" -S --needed --noconfirm -- "$@"
+  run_aur_cmd "${AUR_HELPER}" -S --needed --noconfirm -- "$@"
 }
 
 aur_install_manual() {
-  "${AUR_HELPER}" -S --needed -- "$@"
+  run_aur_cmd "${AUR_HELPER}" -S --needed -- "$@"
 }
 
 is_installed() {
@@ -216,6 +228,7 @@ run_full_update_with_retry() {
     fi
   done
 
+  # REVERTED ERROR: Failing to update the system MUST halt execution to avoid a broken partial upgrade.
   log_err "System update failed after ${MAX_ATTEMPTS} attempts. Aborting to avoid an unsafe install run."
   return 1
 }
@@ -278,12 +291,13 @@ print_summary() {
   log_success "Successful: ${success_count}"
 
   if (( fail_count > 0 )); then
-    log_err "Failed: ${fail_count}"
-    log_err "The following packages failed to install:"
+    # PRESERVED FIX: This ensures random package failures don't crash the overarching orchestrator.
+    log_warn "Failed: ${fail_count} (PROCEEDING ANYWAY)"
+    log_warn "The following packages failed to install:"
     for pkg in "${failed_ref[@]}"; do
       printf '   - %s\n' "${pkg}" >&2
     done
-    return 1
+    return 0
   fi
 
   log_success "All packages processed successfully."
@@ -306,6 +320,7 @@ main() {
   log_task "Synchronizing Repositories & Updating System..."
 
   if ! run_full_update_with_retry; then
+    # REVERTED ERROR: Restore strict failure if system update fails
     return 1
   fi
 
