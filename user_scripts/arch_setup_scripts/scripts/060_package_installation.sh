@@ -473,7 +473,8 @@ print_summary() {
     return 0
   fi
 
-  printf '\n%s%s:: INSTALLATION FINISHED WITH FAILURES ::%s\n' "$BOLD" "$YELLOW" "$RESET"
+  # CHANGED: We warn the user, but we will no longer throw a failure code.
+  printf '\n%s%s:: INSTALLATION FINISHED WITH FAILURES (PROCEEDING ANYWAY) ::%s\n' "$BOLD" "$YELLOW" "$RESET"
   printf 'Failed groups: %d\n' "${#FAILED_GROUPS[@]}"
   printf 'Failed packages: %d\n' "${#FAILED_PACKAGES[@]}"
 
@@ -489,7 +490,8 @@ print_summary() {
     printf '  %s\n' "$item"
   done
 
-  return 1
+  # FIX: Return 0 instead of 1. This prevents 'set -e' from seeing this function as a failure.
+  return 0
 }
 
 main() {
@@ -516,11 +518,9 @@ main() {
     install_group "${GROUP_LABELS[i]}" "${GROUP_ARRAYS[i]}"
   done
 
-  if print_summary; then
-    exit 0
-  else
-    exit 1
-  fi
+  # FIX: Print the summary, but unconditionally exit with 0 so the orchestrator moves on.
+  print_summary
+  exit 0
 }
 
 main "$@"
