@@ -215,6 +215,13 @@ hl.bind(
     { description = "Screen On DPMS", locked = true, submap_universal = true }
 )
 
+-- --- Screen Recorder ---
+hl.bind(
+    "ALT + F9", 
+    hl.dsp.exec_cmd("~/user_scripts/recorder/toggle_record.sh"), 
+    { description = "Screen Recorder", submap_universal = true }
+)
+
 
 -- --- Waybar Toggle ---
 hl.bind(
