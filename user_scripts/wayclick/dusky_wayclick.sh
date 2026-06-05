@@ -48,7 +48,7 @@ esac
 
 # Audio pack: subfolder name inside ~/.config/wayclick/ containing .wav files.
 # Example:  ~/.config/wayclick/audio_pack_1/click.wav
-readonly AUDIO_PACK="nk_cream"
+readonly AUDIO_PACK="audio_pack_1"
 
 # SDL audio buffer size (in samples). Lower = less latency, but may crackle.
 # If you hear pops/crackles, raise this value one step.
@@ -212,9 +212,8 @@ done
 if [[ ! -f "$BASE_DIR/.build_marker_v10" ]]; then
     command -v gcc >/dev/null 2>&1 || NEEDED_DEPS+=("gcc")
 
-    # SDL headers/libs for pygame-ce, portmidi for MIDI, freetype2 for fonts,
-    # pkgconf so Meson finds libraries via .pc files, libuv for uvloop.
-    build_deps=("sdl2" "sdl2_mixer" "sdl2_image" "sdl2_ttf" "portmidi" "freetype2" "pkgconf" "libuv")
+    # libuv for uvloop. PyGame dependencies removed as we now use binary wheels.
+    build_deps=("libuv")
     for dep in "${build_deps[@]}"; do
         pacman -Qq "$dep" >/dev/null 2>&1 || NEEDED_DEPS+=("$dep")
     done
@@ -254,52 +253,7 @@ if $AUDIO_PKGS_INSTALLED || ! systemctl --user is-active pipewire.service >/dev/
     sleep 1
 fi
 
-# --- 6a. CONFIG FILE CHECK ---
-if [[ ! -f "${CONFIG_DIR}/${AUDIO_PACK}/config.json" ]]; then
-    if $INTERACTIVE; then
-        while [[ ! -f "${CONFIG_DIR}/${AUDIO_PACK}/config.json" ]]; do
-            printf "\n%b[ACTION REQUIRED]%b Missing config.json in: %s\n" \
-                "${C_YELLOW}" "${C_RESET}" "${CONFIG_DIR}/${AUDIO_PACK}"
-            mkdir -p "${CONFIG_DIR}/${AUDIO_PACK}" 2>/dev/null || true
-            printf "       Please ensure 'config.json' exists in this folder.\n"
-            printf "       %bPress Enter to re-scan...%b" "${C_DIM}" "${C_RESET}"
-            read -r
-        done
-        printf "%b[CHECK]%b Configuration found.\n" "${C_GREEN}" "${C_RESET}"
-    else
-        notify_user "Missing config.json in ~/.config/wayclick/${AUDIO_PACK}. Run in terminal."
-        exit 1
-    fi
-fi
-
-# --- 6b. AUDIO PACK CHECK ---
-if [[ ! -d "${CONFIG_DIR}/${AUDIO_PACK}" ]]; then
-    if $INTERACTIVE; then
-        printf "\n%b[ERROR]%b Audio pack '%b%s%b' not found in: %s\n" \
-            "${C_RED}" "${C_RESET}" "${C_CYAN}" "$AUDIO_PACK" "${C_RESET}" "${CONFIG_DIR}"
-
-        mapfile -t available < <(find "$CONFIG_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort)
-
-        if (( ${#available[@]} > 0 )); then
-            printf "       Available packs:\n"
-            for pack in "${available[@]}"; do
-                printf "         %b→%b %s\n" "${C_CYAN}" "${C_RESET}" "$pack"
-            done
-            printf "\n       Update %bAUDIO_PACK%b at the top of this script to one of the above.\n" \
-                "${C_GREEN}" "${C_RESET}"
-        else
-            printf "       No audio packs found. Create a subdirectory with .wav files:\n"
-            printf "         %bmkdir -p %s/my_sounds && cp *.wav %s/my_sounds/%b\n" \
-                "${C_DIM}" "${CONFIG_DIR}" "${CONFIG_DIR}" "${C_RESET}"
-        fi
-        exit 1
-    else
-        notify_user "Audio pack '$AUDIO_PACK' not found. Run in terminal."
-        exit 1
-    fi
-fi
-
-# --- ENVIRONMENT SETUP ---
+# --- 6. ENVIRONMENT SETUP ---
 
 mkdir -p "$BASE_DIR" 2>/dev/null || true
 
@@ -341,15 +295,13 @@ if [[ ! -f "$MARKER_FILE" ]]; then
     export LDFLAGS="-Wl,-O2,--sort-common,--as-needed,-z,now,--relax -flto=auto"
 
     uv pip install --python "$PYTHON_BIN" \
-        --no-binary evdev --no-binary pygame-ce \
-        --no-cache \
+        --no-binary evdev \
         --compile-bytecode \
         evdev pygame-ce
 
     printf "%b[BUILD]%b Attempting uvloop (optional, faster event loop)...\n" "${C_BLUE}" "${C_RESET}"
     uv pip install --python "$PYTHON_BIN" \
         --no-binary uvloop \
-        --no-cache \
         --compile-bytecode \
         uvloop 2>/dev/null \
         && printf "%b[SUCCESS]%b uvloop installed.\n" "${C_GREEN}" "${C_RESET}" \
@@ -359,7 +311,7 @@ if [[ ! -f "$MARKER_FILE" ]]; then
     printf "%b[SUCCESS]%b Native build complete.\n" "${C_GREEN}" "${C_RESET}"
 fi
 
-# --- PYTHON RUNNER GENERATION ---
+# --- 7. PYTHON RUNNER GENERATION ---
 cat > "$RUNNER_SCRIPT" << 'PYTHON_EOF'
 import asyncio
 import gc
@@ -626,7 +578,7 @@ if __name__ == "__main__":
         pass
 PYTHON_EOF
 
-# --- SETUP MODE EXIT ---
+# --- 8. SETUP MODE EXIT ---
 if [[ "$RUN_MODE" == "setup" ]]; then
     printf "\n%b[SETUP]%b Setup complete! Run '%b%s%b' to start WayClick.\n" \
         "${C_GREEN}" "${C_RESET}" "${C_CYAN}" "$(basename "$0")" "${C_RESET}"
@@ -641,7 +593,52 @@ if [[ "$RUN_MODE" == "setup" ]]; then
     exit 0
 fi
 
-# --- 7. GROUP PERMISSION CHECK (run mode only — after build so first run completes setup) ---
+# --- 9a. CONFIG FILE CHECK (run mode only) ---
+if [[ ! -f "${CONFIG_DIR}/${AUDIO_PACK}/config.json" ]]; then
+    if $INTERACTIVE; then
+        while [[ ! -f "${CONFIG_DIR}/${AUDIO_PACK}/config.json" ]]; do
+            printf "\n%b[ACTION REQUIRED]%b Missing config.json in: %s\n" \
+                "${C_YELLOW}" "${C_RESET}" "${CONFIG_DIR}/${AUDIO_PACK}"
+            mkdir -p "${CONFIG_DIR}/${AUDIO_PACK}" 2>/dev/null || true
+            printf "       Please ensure 'config.json' exists in this folder.\n"
+            printf "       %bPress Enter to re-scan...%b" "${C_DIM}" "${C_RESET}"
+            read -r
+        done
+        printf "%b[CHECK]%b Configuration found.\n" "${C_GREEN}" "${C_RESET}"
+    else
+        notify_user "Missing config.json in ~/.config/wayclick/${AUDIO_PACK}. Run in terminal."
+        exit 1
+    fi
+fi
+
+# --- 9b. AUDIO PACK CHECK (run mode only) ---
+if [[ ! -d "${CONFIG_DIR}/${AUDIO_PACK}" ]]; then
+    if $INTERACTIVE; then
+        printf "\n%b[ERROR]%b Audio pack '%b%s%b' not found in: %s\n" \
+            "${C_RED}" "${C_RESET}" "${C_CYAN}" "$AUDIO_PACK" "${C_RESET}" "${CONFIG_DIR}"
+
+        mapfile -t available < <(find "$CONFIG_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort)
+
+        if (( ${#available[@]} > 0 )); then
+            printf "       Available packs:\n"
+            for pack in "${available[@]}"; do
+                printf "         %b→%b %s\n" "${C_CYAN}" "${C_RESET}" "$pack"
+            done
+            printf "\n       Update %bAUDIO_PACK%b at the top of this script to one of the above.\n" \
+                "${C_GREEN}" "${C_RESET}"
+        else
+            printf "       No audio packs found. Create a subdirectory with .wav files:\n"
+            printf "         %bmkdir -p %s/my_sounds && cp *.wav %s/my_sounds/%b\n" \
+                "${C_DIM}" "${CONFIG_DIR}" "${CONFIG_DIR}" "${C_RESET}"
+        fi
+        exit 1
+    else
+        notify_user "Audio pack '$AUDIO_PACK' not found. Run in terminal."
+        exit 1
+    fi
+fi
+
+# --- 10. GROUP PERMISSION CHECK (run mode only — after build so first run completes setup) ---
 if ! id -nG "$USER" | grep -qw input; then
     if $INTERACTIVE; then
         printf "%b[PERM]%b User '%s' is not in the 'input' group.\n" \
