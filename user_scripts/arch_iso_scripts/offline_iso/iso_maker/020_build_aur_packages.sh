@@ -28,6 +28,7 @@ declare -a AUR_PACKAGES=(
     'hyprshade'
     'peaclock'
     'tray-tui'
+    'fzf-git'
     'xdg-terminal-exec'
     'paru'
 )

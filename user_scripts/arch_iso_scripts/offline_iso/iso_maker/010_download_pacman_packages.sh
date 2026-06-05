@@ -78,7 +78,7 @@ declare -ar pkgs_multimedia=(
 )
 
 declare -ar pkgs_sysadmin=(
-  "btop" "htop" "dgop" "nvtop" "inxi" "sysstat" "sysbench" "logrotate" "acpid" "tlp" "tlp-pd" "tlp-rdw" "thermald" "powertop" "gdu" "iotop" "iftop" "lshw" "hwinfo" "dmidecode" "wev" "pacman-contrib" "gnome-keyring" "libsecret" "seahorse" "yad" "dysk" "fwupd" "perl" "accountsservice" "smartmontools" "pkgfile" "rebuild-detector" "accountsservice"
+  "btop" "htop" "dgop" "nvtop" "inxi" "sysstat" "sysbench" "logrotate" "acpid" "tlp" "tlp-pd" "tlp-rdw" "thermald" "powertop" "gdu" "iotop" "iftop" "lshw" "hwinfo" "dmidecode" "wev" "pacman-contrib" "gnome-keyring" "libsecret" "seahorse" "greetd-agreety" "greetd" "greetd-tuigreet" "yad" "dysk" "fwupd" "perl" "accountsservice" "smartmontools" "pkgfile" "rebuild-detector" "accountsservice"
 )
 
 declare -ar pkgs_gnome=(
