@@ -15,7 +15,7 @@ IFS=$'\n\t'
 # 2. Configuration
 readonly SERVICES=(
     "NetworkManager.service"
-    "tlp.service"
+#    "tlp.service"
     "udisks2.service"
     "thermald.service"
     "bluetooth.service"
@@ -23,8 +23,8 @@ readonly SERVICES=(
     "fstrim.timer"
     "systemd-timesyncd.service"
     "acpid.service"
-    "vsftpd.service"
-    "reflector.timer"
+#    "vsftpd.service"
+#    "reflector.timer"
     "systemd-resolved.service"
     "snapper-cleanup.timer"
     "snapper-cleanup.service"
