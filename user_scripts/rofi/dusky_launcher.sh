@@ -33,7 +33,8 @@ if [[ "$1" == "--rofi-mode" ]]; then
             exec_cmd=$(grep -m1 -i '^Exec=' "$ROFI_INFO" | cut -d'=' -f2 | sed 's/ %[a-zA-Z]//g')
             
             # Execute cleanly and detach from the script
-            nohup bash -c "$exec_cmd" >/dev/null 2>&1 &
+            bash -c "$exec_cmd" >/dev/null 2>&1 &
+            disown
         fi
     fi
     exit 0
@@ -43,13 +44,8 @@ fi
 # 2. UI LAUNCHER MODE
 # ==============================================================================
 
-# Toggle Logic: Kill Rofi if it's already open
-if pidof rofi >/dev/null; then
-    pkill rofi
-    exit 0
-fi
-
 # Cache Management
+# Ensuring the cache directory exists so Rofi can read/write history files
 CACHE_DIR="$HOME/.config/dusky/settings/rofi/main"
 mkdir -p "$CACHE_DIR"
 
@@ -78,22 +74,26 @@ button selected {
     text-color: @var-text-active; 
 }
 listview { 
-    fixed-height: true; 
+    fixed-height: false; 
 }
 '
 
-# Execute Rofi with strictly scoped configurations
-# Note the -markup-rows flag is required to render the <span alpha> tags
+# Execute Rofi with strictly scoped configurations leveraging the latest architecture
+# -no-sort is explicitly required so Rofi respects History frequency over string length
 rofi -show combi \
-     -modi "combi,drun,Dusky:${SCRIPT_PATH} --rofi-mode" \
-     -combi-modi "drun,Dusky" \
+     -modes "drun,combi,Dusky:${SCRIPT_PATH} --rofi-mode" \
+     -combi-modes "drun,Dusky" \
      -combi-hide-mode-prefix true \
-     -display-combi "󰜉 All" \
      -display-drun "󰀻 Apps" \
+     -display-combi "󰜉 All" \
      -display-Dusky "󰒓 Dusky" \
-     -drun-match-fields "name,generic" \
+     -drun-match-fields "name,generic,exec,categories,keywords" \
+     -matching fuzzy \
+     -no-sort \
+     -sorting-method fzf \
      -cache-dir "$CACHE_DIR" \
-     -disable-history false \
+     -no-disable-history \
      -max-history-size 1000 \
+     -no-fixed-num-lines \
      -markup-rows \
      -theme-str "$THEME_INJECTION"
