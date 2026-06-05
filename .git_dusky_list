@@ -12,6 +12,7 @@
 .config/fontconfig/
 .config/gtk-3.0/settings.ini
 .config/gtk-4.0/settings.ini
+.config/screen_recorder/config.conf
 .config/hypr/hyprlock_themes/
 .config/hypr/shaders/
 .config/hypr/source/

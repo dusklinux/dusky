@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-CFG="$HOME/.config/gsr-tui/config.conf"
+CFG="$HOME/.config/screen_recorder/config.conf"
 [[ -f "$CFG" ]] && source "$CFG"
 
 window="${window:-screen}"
