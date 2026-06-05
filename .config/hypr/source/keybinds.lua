@@ -448,7 +448,7 @@ hl.bind(
 -- --- Screen Recorder ---
 hl.bind(
     "ALT + R",
-    hl.dsp.exec_cmd(dusky_scripts .. "dusky_recorder/dusky_recorder.sh"),
+    hl.dsp.exec_cmd("pkill rofi; " ..dusky_scripts .. "dusky_recorder/dusky_recorder.sh"),
     { description = "Screen Recorder" }
 )
 
