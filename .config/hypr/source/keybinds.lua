@@ -255,7 +255,7 @@ hl.bind(
 )
 
 hl.bind(
-    "ALT + R",
+    "SUPER + SHIFT + R",
     hl.dsp.exec_cmd("hyprctl reload"),
     { description = "Reload Hyprland", locked = true }
 )
@@ -447,7 +447,7 @@ hl.bind(
 
 -- --- Screen Recorder ---
 hl.bind(
-    "SUPER + SHIFT + R",
+    "ALT + R",
     hl.dsp.exec_cmd(dusky_scripts .. "dusky_recorder/dusky_recorder.sh"),
     { description = "Screen Recorder", submap_universal = true }
 )
