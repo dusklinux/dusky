@@ -1134,13 +1134,13 @@ hl.bind(
 -- Audio/Mic Switching
 hl.bind(
     "ALT + O",
-    hl.dsp.exec_cmd(dusky_scripts .. "audio/audio_switch.sh"),
+    hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "audio/dusky_output.sh"),
     { description = "Switch Audio Output", locked = true }
 )
 
 hl.bind(
     "ALT + I",
-    hl.dsp.exec_cmd(dusky_scripts .. "audio/mic_switch.sh"),
+    hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "audio/dusky_input.sh"),
     { description = "Switch Mic Input", locked = true }
 )
 
