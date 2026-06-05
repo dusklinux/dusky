@@ -39,8 +39,7 @@ configuration {
     /* ─────────────────────────────────────────────────────────────────────
        Frecency-aware search
        ───────────────────────────────────────────────────────────────────── */
-    sort:                   true;
-    sorting-method:         "fzf";
+    sort:                   false;
     matching:               "fuzzy";
     drun-match-fields:      "name,generic,exec,keywords";
     /* ─────────────────────────────────────────────────────────────────────

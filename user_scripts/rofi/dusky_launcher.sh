@@ -10,19 +10,35 @@ if [[ "$1" == "--rofi-mode" ]]; then
     # ROFI_RETV state: 0 = Initial load, 1 = User selected an item
     if [[ -z "$ROFI_RETV" || "$ROFI_RETV" -eq 0 ]]; then
         
-        # Pure Bash globbing (Zero-Fork: eliminates the 'find' sub-process)
+        # Tell Rofi this script provides Pango markup so Combi mode does not escape the tags
+        echo -en "\0markup-rows\x1ftrue\n"
+        
+        # Pure Bash globbing
         shopt -s nullglob nocaseglob
         for file in ~/.local/share/applications/*dusky*.desktop /usr/share/applications/*dusky*.desktop; do
+            
             name="" desc="" icon=""
             
-            # Pure Bash file reading (Zero-Fork: eliminates 3x 'grep' and 3x 'cut' per file)
-            while IFS='=' read -r key value; do
-                case "$key" in
-                    Name) [[ -z "$name" ]] && name="$value" ;;
-                    GenericName) [[ -z "$desc" ]] && desc="$value" ;;
-                    Icon) [[ -z "$icon" ]] && icon="$value" ;;
-                esac
+            # Native, zero-fork line-by-line reading. Bypasses ALL regex quirks.
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                # Strip trailing carriage returns natively
+                line="${line%$'\r'}" 
+                
+                # Use native string prefix matching to extract values perfectly
+                if [[ "$line" == Name=* && -z "$name" ]]; then
+                    name="${line#Name=}"
+                elif [[ "$line" == GenericName=* && -z "$desc" ]]; then
+                    desc="${line#GenericName=}"
+                elif [[ "$line" == Icon=* && -z "$icon" ]]; then
+                    icon="${line#Icon=}"
+                fi
             done < "$file"
+            
+            # Escape XML entities natively so the Pango parser does not prematurely terminate strings
+            name="${name//&/&amp;}"
+            name="${name//</&lt;}"
+            desc="${desc//&/&amp;}"
+            desc="${desc//</&lt;}"
             
             # Format text: "Name (Description)" using Pango markup
             if [[ -n "$desc" ]]; then
@@ -31,28 +47,29 @@ if [[ "$1" == "--rofi-mode" ]]; then
                 display_text="${name}"
             fi
             
-            # Send to Rofi: Display Text + Icon payload + Hidden File Path (info)
-            echo -e "${display_text}\0icon\x1f${icon}\x1finfo\x1f${file}"
+            # Use printf instead of echo -e to absolutely prevent unintended escape sequence evaluation
+            printf "%s\0icon\x1f%s\x1finfo\x1f%s\n" "$display_text" "$icon" "$file"
         done
         shopt -u nullglob nocaseglob
 
     elif [[ "$ROFI_RETV" -eq 1 ]]; then
         # The user hit enter. Extract the hidden file path from ROFI_INFO
-        if [[ -n "$ROFI_INFO" ]]; then
+        if [[ -n "$ROFI_INFO" && -f "$ROFI_INFO" ]]; then
             
-            # Pure Bash extraction of Exec command (Zero-Fork: eliminates 'grep' and 'cut')
+            # Read the file line-by-line natively to find the Exec command
             exec_cmd=""
-            while IFS='=' read -r key value; do
-                if [[ "$key" == "Exec" ]]; then
-                    exec_cmd="$value"
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                line="${line%$'\r'}"
+                if [[ "$line" == Exec=* ]]; then
+                    exec_cmd="${line#Exec=}"
                     break
                 fi
             done < "$ROFI_INFO"
             
-            # Clean XDG execution flags using native parameter expansion (Zero-Fork: eliminates 'sed')
-            exec_cmd="${exec_cmd// \%[UuFfcik]/}"
+            # Clean standard XDG execution flags natively using parameter expansion globbing
+            exec_cmd="${exec_cmd// %[a-zA-Z]/}"
             
-            # Execute cleanly and detach from the script
+            # Execute cleanly and detach entirely from the script lifecycle
             bash -c "$exec_cmd" >/dev/null 2>&1 &
             disown
         fi
@@ -64,15 +81,11 @@ fi
 # 2. UI LAUNCHER MODE
 # ==============================================================================
 
-# Cache Management
-# Ensuring the cache directory exists so Rofi can read/write history files
-CACHE_DIR="$HOME/.config/dusky/settings/rofi/main"
-mkdir -p "$CACHE_DIR"
-
 # Get absolute path to this script so Rofi knows exactly what to call back
 SCRIPT_PATH="$(realpath "$0")"
 
 # Dynamic UI Injection (Leaves config.rasi absolutely pristine)
+# entry { max-history: 200; } enforces a strict FIFO rolling buffer for text inputs
 THEME_INJECTION='
 mainbox { 
     children: [ inputbar, mode-switcher, message, listview ]; 
@@ -96,11 +109,16 @@ button selected {
 listview { 
     fixed-height: false; 
 }
+entry {
+    max-history: 200;
+}
+element-text {
+    markup: true;
+}
 '
 
-# Execute Rofi with strictly scoped configurations leveraging the latest architecture
-# -no-sort guarantees History tracking takes priority over the fzf string-length score
-# -drun-use-desktop-cache forces Rofi to use an internal memory cache to speed up launches
+# Execute Rofi entirely natively to allow internal memory to multiply history correctly
+# Removed ALL custom cache overrides so Rofi uses ~/.cache/rofi atomically
 rofi -show combi \
      -modes "drun,combi,Dusky:${SCRIPT_PATH} --rofi-mode" \
      -combi-modes "drun,Dusky" \
@@ -109,13 +127,11 @@ rofi -show combi \
      -display-combi "󰜉 All" \
      -display-Dusky "󰒓 Dusky" \
      -drun-match-fields "name,generic,exec,categories,keywords" \
+     -tokenize \
      -matching fuzzy \
      -no-sort \
-     -sorting-method fzf \
-     -cache-dir "$CACHE_DIR" \
-     -drun-use-desktop-cache \
      -no-disable-history \
-     -max-history-size 1000 \
+     -max-history-size 200 \
      -no-fixed-num-lines \
-     -markup-rows \
+     -markup \
      -theme-str "$THEME_INJECTION"

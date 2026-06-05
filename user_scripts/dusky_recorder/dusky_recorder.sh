@@ -113,7 +113,7 @@ manage_indicator() {
         (
             local notif_id
             # 1. Capture the master ID ONCE for the stop function to use later
-            notif_id=$(notify-send -a "dusky-recorder" -h string:x-canonical-private-synchronous:recorder -p "" "")
+            notif_id=$(notify-send -a "dusky-recorder" -h string:x-canonical-private-synchronous:recorder -p "" "")
             echo "$notif_id" > "$INDICATOR_TMP"
             
             local visible=true
@@ -125,7 +125,7 @@ manage_indicator() {
                     notify-send -a "dusky-recorder" -h string:x-canonical-private-synchronous:recorder " " ""
                     visible=false
                 else
-                    notify-send -a "dusky-recorder" -h string:x-canonical-private-synchronous:recorder "" ""
+                    notify-send -a "dusky-recorder" -h string:x-canonical-private-synchronous:recorder "" ""
                     visible=true
                 fi
             done
