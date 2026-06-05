@@ -12,7 +12,7 @@
 set -Eeuo pipefail
 
 # --- CONFIGURATION ---
-readonly CFG="$HOME/.config/screen_recorder/config.conf"
+readonly CFG="$HOME/.config/dusky_recorder/config.conf"
 readonly ROFI_THEME_STR='window { width: 450px; } listview { lines: 8; }'
 readonly INDICATOR_TMP="/tmp/dusky_recorder_notif_id"
 readonly INDICATOR_PID="/tmp/dusky_recorder_daemon.pid"

@@ -12,7 +12,7 @@ from python.frontend.core_types import ConfigItem
 # 1. CORE APPLICATION ROUTING
 # =============================================================================
 ENGINE_TYPE = "ini"
-TARGET_FILE = "~/.config/screen_recorder/config.conf"
+TARGET_FILE = "~/.config/dusky_recorder/config.conf"
 APP_TITLE   = "GPU Screen Recorder"
 
 # =============================================================================
