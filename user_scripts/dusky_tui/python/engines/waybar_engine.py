@@ -12,10 +12,10 @@ from typing import Any
 from python.frontend.core_types import BaseEngine
 
 # =============================================================================
-# [ WAYBAR ENGINE - v4.8.8 PARITY ]
+# [ WAYBAR ENGINE - v4.8.9 PARITY ]
 # Fully isolated Python process controller with UI-Cache synchronization.
 # Resolves Headless Async Destruction, AST Regex Position Mutators,
-# and Double-Waybar Concurrency Race Conditions.
+# Double-Waybar Concurrency, and Atomic File Operations.
 # =============================================================================
 
 class WaybarEngine(BaseEngine):
@@ -136,18 +136,33 @@ class WaybarEngine(BaseEngine):
         return self.cache
 
     def _apply_symlinks_sync(self, target_dir: Path) -> None:
-        self.config_path.unlink(missing_ok=True)
-        self.style_path.unlink(missing_ok=True)
-        self.config_path.symlink_to(target_dir / "config.jsonc")
-        target_style = target_dir / "style.css"
-        if target_style.exists():
-            self.style_path.symlink_to(target_style)
+        # ATOMIC SYMLINK REPLACEMENT
+        # Prevents FileExistsError race conditions when spammed concurrently
+        target_conf = target_dir / "config.jsonc"
+        tmp_conf = self.config_path.with_suffix('.tmp_link')
+        
+        try:
+            tmp_conf.symlink_to(target_conf)
+            os.replace(tmp_conf, self.config_path)
+            
+            target_style = target_dir / "style.css"
+            if target_style.exists():
+                tmp_style = self.style_path.with_suffix('.tmp_link')
+                tmp_style.symlink_to(target_style)
+                os.replace(tmp_style, self.style_path)
+            else:
+                self.style_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     async def _async_restart_waybar(self, target_dir: Path, set_sid: bool = True):
         self._apply_symlinks_sync(target_dir)
         
         # --- PREVENT DOUBLE WAYBARS CONCURRENCY LOCK ---
-        lock_file = Path(f"/tmp/dusky_waybar_restart_{os.getuid()}.lock")
+        # Cutting edge: Use Systemd's XDG_RUNTIME_DIR to prevent multi-user collision risks
+        runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+        lock_file = runtime_dir / "dusky_waybar_restart.lock"
+        
         fd = open(lock_file, "w")
         
         try:
@@ -157,7 +172,7 @@ class WaybarEngine(BaseEngine):
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
                 except BlockingIOError:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.05)
                     
             # Check if another process (e.g. rapid --next presses) superseded our target symlink
             # while we were waiting for the lock. If so, abort and let the newer process handle 
@@ -339,12 +354,15 @@ class WaybarEngine(BaseEngine):
         selected_name = self.theme_names[target_idx]
 
         if requires_restart:
+            # Atomic State Save to prevent corruption
             try:
                 state_data = {
                     "active_theme_name": selected_name,
                     "active_theme_index": target_idx
                 }
-                self.state_file.write_text(json.dumps(state_data, indent=4), encoding="utf-8")
+                tmp_state = self.state_file.with_suffix('.tmp')
+                tmp_state.write_text(json.dumps(state_data, indent=4), encoding="utf-8")
+                os.replace(tmp_state, self.state_file)
             except OSError:
                 pass
             
