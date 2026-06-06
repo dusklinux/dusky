@@ -1490,7 +1490,7 @@ pages:
         button_text: "Swap"
       on_press:
         type: exec
-        command: foot --app-id=dusky_tui python ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/waybar/tui_waybars.py
+        command: foot --app-id=waybar_tui python ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/waybar/tui_waybars.py
         terminal: false
     - type: button
       properties:

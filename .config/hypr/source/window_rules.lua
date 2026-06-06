@@ -1401,13 +1401,15 @@ hl.window_rule({
     center = true
 })
 
---- dusky waybar manager swap ---
+--- waybar tui ---
 hl.window_rule({
-    name = "dusky_waybars.sh",
-    match = { class = "^(dusky_waybars.sh)$" },
+    name = "waybar_tui",
+    match = {
+        class = "^(waybar_tui)$",
+    },
     float = true,
-    size = {780, 510},
-    center = true
+    size = {709, 760},
+    -- size = {"monitor_w * 0.4616", "monitor_h * 0.8796"},
 })
 
 --- Zathura (PDF Viewer) ---
