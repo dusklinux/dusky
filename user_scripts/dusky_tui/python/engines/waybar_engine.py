@@ -118,9 +118,11 @@ class WaybarEngine(BaseEngine):
             "active_theme_index": active_idx,
             "active_theme_name": active_name,
             "active_theme_number": active_number,
+            "waybar": active_number,
             "DEFAULT/active_theme_index": active_idx,
             "DEFAULT/active_theme_name": active_name,
             "DEFAULT/active_theme_number": active_number,
+            "DEFAULT/waybar": active_number,
             
             "action_invert_pos": False,
             "DEFAULT/action_invert_pos": False,
@@ -212,7 +214,7 @@ class WaybarEngine(BaseEngine):
             str_val = str(val).lower()
             
             match key:
-                case "active_theme_number":
+                case "active_theme_number" | "waybar":
                     try:
                         target_idx = int(val) - 1
                         if 0 <= target_idx < len(self.theme_dirs):
@@ -275,9 +277,23 @@ class WaybarEngine(BaseEngine):
                         return False, "Position key not found in target config.jsonc", ""
                         
                 case "action_heal_state" if str_val == "true":
+                    # Forcefully read the state file to override the symlink
+                    if self.state_file.exists():
+                        try:
+                            state_data = json.loads(self.state_file.read_text(encoding="utf-8"))
+                            saved_name = state_data.get("active_theme_name")
+                            saved_idx = state_data.get("active_theme_index", -1)
+                            
+                            if saved_name and saved_name in self.theme_names:
+                                target_idx = self.theme_names.index(saved_name)
+                            elif 0 <= saved_idx < len(self.theme_dirs):
+                                target_idx = saved_idx
+                        except (OSError, json.JSONDecodeError):
+                            pass
+                            
                     requires_restart = True 
                     requires_detached = True
-                    status_msg = "State restored and symlinks healed."
+                    status_msg = "State restored from file and symlinks healed."
 
         if target_idx < 0 or target_idx >= len(self.theme_dirs):
             return False, f"Index {target_idx} is out of bounds.", ""

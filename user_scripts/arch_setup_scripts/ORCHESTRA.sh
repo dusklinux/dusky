@@ -144,7 +144,7 @@ INSTALL_SEQUENCE=(
     "U | 400_firefox_matugen_pywalfox.sh"
 #    "U | 402_gecko_engine_colors_extention.sh"
 #    "U | 401_gecko_engine_colors.sh"
-    "U | 410_waybar_swap_config.sh --toggle"
+    "U | 410_waybar_swap_config.py --set waybar=6"
     "U | 415_mpv_setup.sh"
 #    "S | 430_btrfs_zstd_compression_stats.sh"
     "U | 434_wayclick_soundpacks_download.sh --auto"

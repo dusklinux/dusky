@@ -12,6 +12,16 @@ import sys
 import os
 import shlex
 from pathlib import Path
+
+# --- RESOLVE PATH BEFORE IMPORTS FOR STANDALONE CLI ---
+_cwd = Path.cwd()
+if (_cwd / "python" / "frontend").exists() and str(_cwd) not in sys.path:
+    sys.path.insert(0, str(_cwd))
+else:
+    _fallback = Path("~/user_scripts/dusky_tui").expanduser().resolve()
+    if str(_fallback) not in sys.path:
+        sys.path.insert(0, str(_fallback))
+
 from python.frontend.core_types import ConfigItem
 
 # =============================================================================
@@ -45,7 +55,7 @@ SCHEMA = {
     0: [
         ConfigItem(
             label="Active Theme Target",
-            key="active_theme_number",
+            key="waybar",
             scope="DEFAULT",
             type_="int",
             default=1,
@@ -82,7 +92,7 @@ for i, name in enumerate(THEMES):
             parent_ref="active_theme_folder",
             group="Themes",
             preset_payload={
-                "active_theme_number": i + 1
+                "waybar": i + 1
             },
             extended_help=f"**Apply {name}**\n\nHit Enter to instantly apply this layout. It will automatically symlink and restart Waybar."
         )
@@ -128,12 +138,12 @@ if __name__ == "__main__":
         add_help=False
     )
     
-    parser.add_argument("--toggle", action="store_true", help="Switch to the next Waybar theme chronologically")
-    parser.add_argument("--back_toggle", action="store_true", help="Switch to the previous Waybar theme chronologically")
+    parser.add_argument("-n", "--next", "--toggle", dest="toggle", action="store_true", help="Switch to the next Waybar theme chronologically")
+    parser.add_argument("-p", "--prev", "--previous", "--back_toggle", dest="back_toggle", action="store_true", help="Switch to the previous Waybar theme chronologically")
     parser.add_argument("--toggle-pos", action="store_true", help="Invert current Waybar position (Top↔Bottom, Left↔Right)")
     parser.add_argument("--heal", action="store_true", help="Force state restore / heal broken symlinks")
     parser.add_argument("--first", action="store_true", help="Apply the first Waybar theme alphabetically")
-    parser.add_argument("--apply", type=str, metavar="THEME", help="Apply a specific Waybar theme by name or chronological number")
+    parser.add_argument("--apply", "--set", "-s", dest="apply", type=str, metavar="THEME", help="Apply a specific Waybar theme by name or chronological number")
     parser.add_argument("-h", "--help", action="help", default=argparse.SUPPRESS, help="Show this help message and exit")
     
     args = parser.parse_args()
@@ -148,14 +158,6 @@ if __name__ == "__main__":
             sys.exit(1)
             
     # Behavior 2: If executed with flags, act as a headless mutator script
-    _cwd = Path.cwd()
-    if (_cwd / "python" / "frontend").exists() and str(_cwd) not in sys.path:
-        sys.path.insert(0, str(_cwd))
-    else:
-        _fallback = Path("~/user_scripts/dusky_tui").expanduser().resolve()
-        if str(_fallback) not in sys.path:
-            sys.path.insert(0, str(_fallback))
-            
     try:
         from python.engines.waybar_engine import WaybarEngine
     except ImportError:
