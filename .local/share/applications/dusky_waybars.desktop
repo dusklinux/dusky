@@ -3,7 +3,7 @@ Type=Application
 Name=Dusky Waybar Swap
 GenericName=Bar Config Switcher
 Comment=Toggle between Waybar configurations
-Exec=uwsm-app -- kitty --class dusky_waybars.sh -e /home/dusk/user_scripts/waybar/dusky_waybars.sh
+Exec=uwsm-app -- foot --app-id=dusky_tui python /home/dusk/user_scripts/dusky_tui/python/main/main.py /home/dusk/user_scripts/waybar/tui_waybars.py
 Terminal=false
 Categories=Settings;DesktopSettings;
 Keywords=dusky;waybar;panel;bar;toggle;switch;

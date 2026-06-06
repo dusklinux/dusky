@@ -19,14 +19,14 @@ from python.frontend.core_types import ConfigItem
 # =============================================================================
 ENGINE_TYPE = "waybar"                     
 TARGET_FILE = "~/.config/waybar" 
-APP_TITLE = "Waybar Master Control"               
+APP_TITLE = "Dusky Waybars"               
 DEFAULT_MODE = "auto"                      
 THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"
 
 ENABLE_USER_PRESETS = False
 USER_PRESETS_TAB = None
 
-TABS = ["Theme Engine"]
+TABS = ["Gallary"]
 
 # =============================================================================
 # DYNAMIC THEME DISCOVERY
