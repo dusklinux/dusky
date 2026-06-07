@@ -93,7 +93,6 @@ fi
 declare -i EXPECTED_MAX_PTES
 declare -i EXPECTED_SCAN_SLEEP
 declare -i EXPECTED_PAGES_TO_SCAN
-declare -i EXPECTED_MGLRU_TTL
 declare EXPECTED_ENABLED
 declare EXPECTED_DEFRAG
 declare EXPECTED_SHMEM
@@ -107,7 +106,6 @@ if [[ "$MODE" == "AGGRESSIVE" ]] || [[ "$MODE" == "AUTO" && SYSTEM_RAM_GB -ge 30
     EXPECTED_ENABLED="madvise"
     EXPECTED_DEFRAG="defer+madvise"
     EXPECTED_SHMEM="within_size"
-    EXPECTED_MGLRU_TTL=1000
 else
     EXPECTED_MODE="STRICT_RAM_SAVINGS (<32GB)"
     EXPECTED_MAX_PTES=180          # Lower value results in better ram savings but at the cost of cpu.
@@ -116,7 +114,6 @@ else
     EXPECTED_ENABLED="madvise"     # Only give THP to apps that explicitly ask.
     EXPECTED_DEFRAG="defer+madvise"
     EXPECTED_SHMEM="within_size"
-    EXPECTED_MGLRU_TTL=250         # Syncs with ZRAM shield logic.
 fi
 
 # --- 6. Generation & Verification ---
@@ -171,9 +168,8 @@ w /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none - - - - ${EXPECTE
 w /sys/kernel/mm/transparent_hugepage/khugepaged/scan_sleep_millisecs - - - - ${EXPECTED_SCAN_SLEEP}
 w /sys/kernel/mm/transparent_hugepage/khugepaged/pages_to_scan - - - - ${EXPECTED_PAGES_TO_SCAN}
 
-# --- MGLRU HARDWARE LOCK & TUNING ---
+# --- MGLRU HARDWARE LOCK (TTL is owned by 210_zram_optimize_swappiness.sh) ---
 w /sys/kernel/mm/lru_gen/enabled - - - - 0x0007
-w /sys/kernel/mm/lru_gen/min_ttl_ms - - - - ${EXPECTED_MGLRU_TTL}
 EOF
 
 # Dry Run Check
@@ -259,18 +255,11 @@ verify_mthp 2048 enabled madvise
 for sz in 16 32 256 512 1024; do verify_mthp "$sz" shmem_enabled never; done
 for sz in 64 128 2048; do verify_mthp "$sz" shmem_enabled inherit; done
 
-# Verify MGLRU Hardware Lock & TTL
+# Verify MGLRU Hardware Lock (TTL is owned by 210_zram_optimize_swappiness.sh)
 if [[ -f "${MGLRU_BASE_DIR}/enabled" ]]; then
     actual_mglru="$(< "${MGLRU_BASE_DIR}/enabled")"
     if [[ "$actual_mglru" != "0x0007" ]]; then
         die "Verification failed: MGLRU 'enabled' is '${actual_mglru}', expected '0x0007'."
-    fi
-fi
-
-if [[ -f "${MGLRU_BASE_DIR}/min_ttl_ms" ]]; then
-    actual_ttl="$(< "${MGLRU_BASE_DIR}/min_ttl_ms")"
-    if [[ "$actual_ttl" != "$EXPECTED_MGLRU_TTL" ]]; then
-        die "Verification failed: MGLRU 'min_ttl_ms' is '${actual_ttl}', expected '${EXPECTED_MGLRU_TTL}'."
     fi
 fi
 
@@ -282,7 +271,7 @@ log_success "  max_ptes_none = ${actual_ptes} (Strict RAM Cap)"
 log_success "  scan_sleep_millisecs = ${actual_scan_sleep} (Deep Sleep CPU Wakeups)"
 log_success "  pages_to_scan = ${actual_pages_to_scan} (Optimized Defag Burst)"
 log_success "  MGLRU enabled = 0x0007 (Hardware Lock Active)"
-log_success "  MGLRU min_ttl_ms = ${EXPECTED_MGLRU_TTL} (ZRAM Thrash Shield)"
+log_success "  MGLRU min_ttl_ms = (owned by 210_zram_optimize_swappiness.sh)"
 log_success "  mTHP Matrix = Exhaustively verified across all 8 supported hardware tiers."
 log_success "  Active Tuning Profile: [${C_BOLD}${EXPECTED_MODE}${C_RESET}]"
 
