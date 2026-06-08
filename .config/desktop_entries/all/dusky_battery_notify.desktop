@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Battery
+GenericName=Battery Notify Configuration
+Comment=Configure Battery Timeout Settings
+Exec=uwsm-app -- kitty --class dusky_battery_notify.sh -e /home/dusk/user_scripts/battery/notify/dusky_battery_notify.sh
+Terminal=false
+Categories=Settings;System;
+Keywords=dusky;notification;battery;timeout;
+Icon=preferences-system-power
+StartupNotify=true

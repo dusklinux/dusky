@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Cache Purge
+GenericName=Pacman & Aur-helper
+Comment=Clear system and application caches
+Exec=uwsm-app -- kitty --hold --class cache_purge.sh -e /home/dusk/user_scripts/arch_setup_scripts/scripts/365_cache_purge.sh
+Terminal=false
+Categories=System;Utility;
+Keywords=cache;clean;purge;trash;clear;
+Icon=user-trash
+StartupNotify=true

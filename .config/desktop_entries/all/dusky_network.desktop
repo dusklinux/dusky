@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Dusky Network
+Comment=Arch Linux / Hyprland WiFi Manager (TUI)
+Exec=uwsm-app -- kitty --class "dusky_network.sh" -e /home/dusk/user_scripts/network_manager/dusky_network.sh
+Icon=network-wireless
+Terminal=false
+Categories=Network;Settings;
+Keywords=dusky;wifi;network;nmcli;manager;hotspot;
+StartupWMClass=dusky-network

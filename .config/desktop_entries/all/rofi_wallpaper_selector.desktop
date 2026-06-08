@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Rofi Wallaper
+GenericName=Wallpaper Selector
+Comment=Switch/Change Wallpapers
+Exec=uwsm-app -- /home/dusk/user_scripts/rofi/rofi_wallpaper_selctor.sh
+Terminal=false
+Categories=Settings;Theme;
+Keywords=wallpaper;theme;picture;color;
+Icon=preferences-desktop-wallpaper
+StartupNotify=true

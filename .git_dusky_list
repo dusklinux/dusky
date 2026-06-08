@@ -2,6 +2,7 @@
 .config/autostart/
 .config/btop/btop.conf
 .config/cava/config
+.config/desktop_entries/
 .config/dusky/version
 .config/dusky_sites/
 .config/dusky_nvim/

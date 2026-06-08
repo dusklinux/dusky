@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Dysk
+GenericName=Disk Usage
+Comment=Display information about mounted filesystems
+Exec=uwsm-app -- kitty --class dysk --hold -e dysk
+Terminal=false
+Categories=System;Monitor;ConsoleOnly;
+Keywords=disk;usage;filesystem;mount;dysk;
+Icon=drive-harddisk
+StartupNotify=true

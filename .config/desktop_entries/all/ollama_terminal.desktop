@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Ollama Chat
+GenericName=AI Terminal Assistant
+Comment=Local LLM Interface (Ollama)
+Exec=uwsm-app -- kitty --class ollama_terminal.sh -e /home/dusk/user_scripts/llm/ollama_terminal.sh
+Icon=utilities-terminal
+Terminal=false
+Categories=Development;Utility;System;
+Keywords=ai;chat;llm;gpt;
+StartupNotify=true

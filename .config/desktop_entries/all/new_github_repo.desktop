@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=New GitHub Repo
+GenericName=Git Backup
+Comment=Initialize and backup a new repository
+Exec=uwsm-app -- kitty --hold --class 305_new_github_repo_to_backup.sh -e /home/dusk/user_scripts/arch_setup_scripts/scripts/305_new_github_repo_to_backup.sh
+Terminal=false
+Categories=Development;RevisionControl;
+Keywords=git;github;backup;repo;new;
+Icon=vcs-normal
+StartupNotify=true

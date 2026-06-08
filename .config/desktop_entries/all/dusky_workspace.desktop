@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Workspace TUI
+GenericName=Layout Configurator
+Comment=Toggle different Layouts
+Exec=uwsm-app -- foot --app-id=dusky_tui python /home/dusk/user_scripts/dusky_tui/python/main/main.py /home/dusk/user_scripts/hypr/workspace/tui_workspace_rules.py
+Terminal=false
+Categories=Settings;DesktopSettings;System;Utility;
+Keywords=dusky;hyprland;layout;workspace;tui;config;settings;scrolling;dwindle;master;
+Icon=preferences-desktop-display
+StartupNotify=true
+# This needs to match your --app-id so the desktop environment knows which window belongs to this launcher
+StartupWMClass=dusky_tui

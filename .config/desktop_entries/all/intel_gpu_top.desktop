@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Intel GPU Top
+GenericName=GPU Monitor
+Comment=Display Intel GPU usage statistics
+Exec=uwsm-app -- kitty --class intel_gpu_top -e sudo intel_gpu_top
+Terminal=false
+Categories=System;Monitor;ConsoleOnly;
+Keywords=intel;gpu;graphics;monitor;usage;
+Icon=video-display
+StartupNotify=true

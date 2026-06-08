@@ -1,0 +1,10 @@
+# --- Hyprland Appearance Toggle ---
+[Desktop Entry]
+Type=Application
+Name=Toggle Appearance
+Comment=Toggle Blur, Opacity, and Shadows
+Exec=uwsm-app -- /home/dusk/user_scripts/hypr/hypr_blur_opacity_shadow_toggle.sh
+Terminal=false
+Categories=Settings;Theme;
+Icon=preferences-desktop-theme
+StartupNotify=true

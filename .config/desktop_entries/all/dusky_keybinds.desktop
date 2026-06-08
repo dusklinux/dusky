@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Keybind Manager
+GenericName=Keybind Editor
+Comment=Advanced TUI for managing Dusky keybinds with conflict resolution
+Exec=uwsm-app -- kitty --hold --class dusky_keybinds.sh -e /home/dusk/user_scripts/hypr/input/dusky_keybinds.py
+Icon=preferences-desktop-keyboard
+Terminal=false
+Categories=System;Settings;Utility;
+Keywords=dusky;keybinds;hyprland;config;tui;bind;shortcut;
+StartupNotify=true

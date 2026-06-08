@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=WiFi Airmon-ng
+Comment=Run Airmon-ng Security Tools
+Exec=uwsm-app -- kitty --hold --class airmon_ng.sh -e sudo /home/dusk/user_scripts/networking/airmon_ng.sh
+Terminal=false
+Categories=Network;System;
+Icon=network-wireless-encrypted
+StartupNotify=true

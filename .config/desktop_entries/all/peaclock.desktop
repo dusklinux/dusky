@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Peaclock
+GenericName=Tui Clock
+Comment=Console-based Clock
+Exec=uwsm-app -- kitty --class peaclock -e peaclock
+Terminal=false
+Categories=Clock;Time;Calander
+Keywords=time;visualizer;tui;
+Icon=utilities-terminal
+StartupNotify=true

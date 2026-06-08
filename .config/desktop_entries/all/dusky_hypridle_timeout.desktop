@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Hypridle Timeout
+GenericName=Idle Configuration
+Comment=Configure Idle Timeout Settings
+Exec=uwsm-app -- kitty --class dusky_hypridle.sh -e /home/dusk/user_scripts/hypridle/dusky_hypridle.sh
+Terminal=false
+Categories=Settings;System;
+Keywords=dusky;idle;lock;sleep;timeout;
+Icon=preferences-system-power
+StartupNotify=true

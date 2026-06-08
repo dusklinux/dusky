@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Toggle Wayclick
+Comment=Key Press Sounds
+Exec=uwsm-app -- /home/dusk/user_scripts/wayclick/dusky_wayclick.sh
+Terminal=false
+Categories=keyboard;sounds;
+Icon=preferences-desktop-theme
+StartupNotify=true

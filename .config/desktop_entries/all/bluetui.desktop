@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Blue TUI
+GenericName=Bluetooth Manager
+Comment=TUI for managing Bluetooth devices
+Exec=uwsm-app -- kitty --class bluetui -e bluetui
+Terminal=false
+Categories=Hardware;Settings;
+Keywords=bluetooth;wireless;devices;
+Icon=bluetooth
+StartupNotify=true

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Rofi Emoji
+GenericName=Emoji
+Comment=Find an Emoji
+Exec=uwsm-app -- /home/dusk/user_scripts/rofi/emoji.sh
+Terminal=false
+Categories=Settings;Theme;
+Keywords=expressive;symbols;icons;emoji;
+Icon=face-smile
+StartupNotify=true

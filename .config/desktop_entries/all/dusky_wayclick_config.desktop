@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky WayClick TUI
+GenericName=WayClick Configurator
+Comment=WayClick configurator TUI
+Exec=uwsm-app -- kitty --class dusky_tui_wayclick.sh -e /home/dusk/user_scripts/wayclick/dusky_tui_wayclick.sh
+Terminal=false
+Categories=Settings;DesktopSettings;System;Utility;
+Keywords=wayclick;keyboard;sounds;type;audio;trackpad;tui;config;settings;
+Icon=preferences-desktop-keyboard
+StartupNotify=true
+StartupWMClass=dusky_tui_wayclick.sh

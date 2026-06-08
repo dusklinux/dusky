@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Control Center
+GenericName=System Settings
+Comment=Centralized configuration for Dusky OS
+Exec=/usr/bin/env python3 /home/dusk/user_scripts/dusky_system/control_center/dusky_control_center.py
+Icon=preferences-system
+Terminal=false
+Categories=System;Settings;GTK;
+Keywords=dusky;settings;control;panel;sound;audio;network;wifi;bluetooth;display;monitor;theme;appearance;update;power;dotfiles;
+StartupWMClass=com.github.dusky.controlcenter
+StartupNotify=true

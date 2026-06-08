@@ -1,0 +1,10 @@
+# --- Rotate Anti-Clockwise (+90) ---
+[Desktop Entry]
+Type=Application
+Name=Rotate Screen Anti-Clockwise
+Comment=Rotate display +90 degrees
+Exec=uwsm-app -- /home/dusk/user_scripts/hypr/screen_rotate.sh +90
+Terminal=false
+Categories=Settings;HardwareSettings;
+Icon=object-rotate-left
+StartupNotify=true

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Fastfetch
+GenericName=System Information
+Comment=Display system information
+Exec=uwsm-app -- kitty --class fastfetch --hold -e fastfetch
+Terminal=false
+Categories=System;Monitor;ConsoleOnly;
+Keywords=system;info;fetch;arch;
+Icon=utilities-terminal
+StartupNotify=true

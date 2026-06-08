@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Appearance TUI
+GenericName=Theme Configurator
+Comment=Real-time Hyprland appearance and opacity configurator
+Exec=uwsm-app -- foot --app-id=dusky_tui python /home/dusk/user_scripts/dusky_tui/python/main/main.py /home/dusk/user_scripts/hypr/visual/tui_appearance.py
+Terminal=false
+Categories=Settings;DesktopSettings;System;Utility;
+Keywords=dusky;hyprland;appearance;theme;tui;config;settings;opacity;blur;shadow;
+Icon=preferences-desktop-display
+StartupNotify=true
+# This needs to match your --app-id so the desktop environment knows which window belongs to this launcher
+StartupWMClass=dusky_tui

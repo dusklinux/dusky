@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Neovim
+GenericName=Text Editor
+Comment=Edit text files
+Exec=uwsm-app -- kitty --class nvim -e nvim
+Terminal=false
+Categories=Utility;TextEditor;Development;
+Keywords=text;editor;code;dev;
+Icon=nvim
+StartupNotify=true

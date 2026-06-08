@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Clipboard Persistence
+GenericName=Clipboard Through Reboots
+Comment=Manage clipboard history and persistence
+Exec=uwsm-app -- kitty --hold --class clipboard_persistance.sh -e /home/dusk/user_scripts/arch_setup_scripts/scripts/390_clipboard_persistance.sh
+Terminal=false
+Categories=System;Utility;
+Keywords=clipboard;copy;paste;history;
+Icon=edit-paste
+StartupNotify=true

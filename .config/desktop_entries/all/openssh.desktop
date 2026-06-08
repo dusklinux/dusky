@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=OpenSSH Setup
+Comment=Configure SSH Server
+Exec=uwsm-app -- kitty --hold --class 02_openssh_setup.py -e sudo /home/dusk/user_scripts/networking/02_openssh_setup.py
+Terminal=false
+Categories=Network;
+Icon=internet-services
+StartupNotify=true

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Toggle Service
+GenericName=User Services
+Comment=Configure Service Settings
+Exec=uwsm-app -- foot --app-id=dusky_tui python /home/dusk/user_scripts/dusky_tui/python/main/main.py /home/dusk/user_scripts/services/tui_service_toggle.py
+Terminal=false
+Categories=Settings;System;
+Keywords=dusky;service;network;nightlight;timeout;battery;toggle;
+Icon=preferences-system-power
+StartupNotify=true

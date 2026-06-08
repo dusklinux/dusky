@@ -1,0 +1,29 @@
+[Desktop Entry]
+Type=Application
+# Title shown in Rofi's main list
+Name=Dusky System Update
+# Subtitle often shown in Rofi sidebar/details
+GenericName=Git Sync & Arch Update
+# Searchable terms in Rofi
+Comment=Syncs local setup with latest git commit and updates system
+# Keywords allow you to find it by typing "upgrade" or "sync" even if not in the name
+Keywords=system;update;upgrade;sync;git;
+# Categories ensure it lands in the right "System" filter in menus
+Categories=System;ConsoleOnly;
+
+# EXECUTION LOGIC
+# 1. uwsm-app handles the Wayland scope registration.
+# 2. kitty is called explicitly to control the class/title.
+# 3. --class and --title allow Hyprland to target this specific window.
+# 4. --hold keeps the window open if the script exits (optional, remove if script handles pauses).
+Exec=uwsm-app -- kitty --class update_dusky.sh --hold /home/dusk/user_scripts/update_dusky/update_dusky.sh
+
+# Terminal is false because we are explicitly invoking Kitty.
+# If set to true, it would spawn the default terminal wrapper which offers less control.
+Terminal=false
+
+# Visuals
+# Standard XDG icon name for updates (usually a rotating arrow or package box)
+Icon=system-software-update
+StartupNotify=true
+StartupWMClass=dusky_update

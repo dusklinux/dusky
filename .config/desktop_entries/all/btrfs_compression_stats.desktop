@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=BTRFS Compression Stats
+GenericName=Compression Size
+Comment=ZSTD Compression Ratio
+Exec=uwsm-app -- kitty --hold --class btrfs_zstd_compression_stats.sh -e /home/dusk/user_scripts/drives/btrfs_zstd_compression_stats.sh
+Terminal=false
+Categories=System;Disk;
+Keywords=disk;size;zstd;compression;
+Icon=utilities-terminal
+StartupNotify=true

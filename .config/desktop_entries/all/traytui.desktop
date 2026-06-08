@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Tray TUI
+GenericName=System Tray
+Comment=TUI System Tray
+Exec=uwsm-app -- kitty --class tray-tui -e tray-tui
+Terminal=false
+Categories=System;Utility;
+Keywords=tray;system;icons;
+Icon=preferences-system-windows
+StartupNotify=true

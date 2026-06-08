@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Power
+GenericName=Power & Session Configurator
+Comment=Systemd Logind Power Management (Lid, Power Button, Idle)
+Exec=uwsm-app -- kitty --class dusky_power.sh -e /home/dusk/user_scripts/power/dusky_power.sh
+Terminal=false
+Categories=Settings;System;Utility;ConsoleOnly;
+Keywords=dusky;power;logind;systemd;suspend;hibernate;lid;config;tui;
+Icon=system-shutdown
+StartupNotify=true
+StartupWMClass=dusky_power_tui

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Window Rule Manager
+GenericName=Hyprland Rule Generator
+Comment=Interactive TUI to generate and append Hyprland window rules
+Exec=uwsm-app -- foot --app-id=dusky_window_rules.sh /home/dusk/user_scripts/hypr/rules/window_rules_generator.py
+Icon=preferences-system-windows
+Terminal=false
+Categories=System;Utility;Development;
+Keywords=hyprland;window;rules;bash;tui;
+StartupNotify=true

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Turn off Power Saver
+GenericName= Turn off Battery Saver
+Comment=Reverses Power Saving Mode
+Exec=uwsm-app -- foot --app-id=dusky_tui /home/dusk/user_scripts/battery/power_saver.sh -d
+Terminal=false
+Categories=System;Settings;
+Keywords=battery;power;save;energy;performance;
+Icon=battery-low
+StartupNotify=true

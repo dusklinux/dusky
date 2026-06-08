@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Monitor Wizard
+GenericName=Display Configuration
+Comment=Configure Hyprland monitors, resolution, and scaling
+Exec=uwsm-app -- foot --app-id=dusky_tui python /home/dusk/user_scripts/dusky_tui/python/main/main.py /home/dusk/user_scripts/hypr/monitor/monitor_wizard.py
+Icon=preferences-desktop-display
+Terminal=false
+Categories=Settings;Hardware;System;
+Keywords=dusky;display;screen;monitor;resolution;scale;

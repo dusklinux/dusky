@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Site Blocker
+GenericName=Hosts File Manager
+Comment=Advanced /etc/hosts manager for deep work and distraction blocking
+Exec=uwsm-app -- kitty --hold --class 325_hosts_files_block.sh -e /home/dusk/user_scripts/arch_setup_scripts/scripts/325_hosts_files_block.sh
+Icon=utilities-terminal
+Terminal=false
+Categories=System;Utility;ConsoleOnly;
+Keywords=dusky;site;websites;hosts;block;focus;distraction;
+StartupNotify=true

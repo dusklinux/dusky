@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=IOS VNC
+GenericName=Screen Share
+Comment=Setup VNC daemon Script
+Exec=uwsm-app -- kitty --hold --class iphone_vnc.sh -e /home/dusk/user_scripts/networking/iphone_vnc.sh
+Terminal=false
+Categories=System;Settings;
+Keywords=screen;share;remote;usb;
+Icon=utilities-terminal
+StartupNotify=true

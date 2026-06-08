@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=kew
+GenericName=Music Player
+Comment=TUI Music Player for Arch
+Exec=uwsm-app -- kitty --class kew -e kew
+Terminal=false
+Categories=Audio;Music;Player;ConsoleOnly;
+Keywords=tui;music;audio;sound;
+Icon=utilities-terminal
+StartupNotify=true

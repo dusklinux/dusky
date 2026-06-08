@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Mouse Button Reverse
+GenericName=Mouse Settings
+Comment=Swap primary mouse buttons
+Exec=uwsm-app -- kitty --hold --class mouse_button_reverse.sh -e /home/dusk/user_scripts/arch_setup_scripts/scripts/265_mouse_button_reverse.sh
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=mouse;left;right;hand;swap;
+Icon=input-mouse
+StartupNotify=true

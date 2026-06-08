@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Input TUI
+GenericName=Input Configurator
+Comment=Real-time Hyprland input, mouse, and gesture configurator
+Exec=uwsm-app -- foot --app-id=dusky_tui /home/dusk/user_scripts/dusky_tui/python/main/main.py /home/dusk/user_scripts/hypr/input/tui_input.py
+Terminal=false
+Categories=Settings;DesktopSettings;System;Utility;
+Keywords=dusky;hyprland;input;mouse;keyboard;touchpad;gestures;tui;config;settings;
+Icon=preferences-desktop-keyboard
+StartupNotify=true
+StartupWMClass=dusky_input.sh
