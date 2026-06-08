@@ -807,6 +807,107 @@ def handle_delete_pair(config1: str, snap_id1: str, config2: str, snap_id2: str)
 # FZF TUI INTEGRATION
 # -----------------------------------------------------------------------------
 
+def handle_tui_preview(view: str, line: str, show_diff: bool = False) -> None:
+    """Invoked asynchronously by FZF to generate the dynamic side-pane preview."""
+    try:
+        # Strip all ANSI escape sequences to process raw FZF line natively
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        clean_line = ansi_escape.sub('', line)
+        parts = [p.strip() for p in clean_line.split("│")]
+        
+        if not parts or not parts[0].isdigit():
+            print("\n\033[3;38;5;246m  No snapshot selected or invalid layout.\033[0m")
+            return
+            
+        snap_id = parts[0]
+        snap_type = parts[1] if len(parts) > 1 else "Unknown"
+        snap_date = parts[3] if len(parts) > 3 else "Unknown"
+        snap_desc = parts[4] if len(parts) > 4 else "No Description"
+        
+        # 1. Cleanly Aligned Shortcuts Panel
+        print("\033[1;38;5;220m╭─ 󰏖 KEYBOARD SHORTCUTS \033[38;5;238m" + "─"*30 + "\033[1;38;5;220m╮\033[0m")
+        print("\033[1;38;5;220m│\033[0m \033[1;38;5;114m[ENTER]\033[0m   \033[38;5;253mRestore Selected\033[0m" + " "*26 + "\033[1;38;5;220m│\033[0m")
+        print("\033[1;38;5;220m│\033[0m \033[1;38;5;196m[DEL]\033[0m     \033[38;5;253mDelete Selected\033[0m" + " "*27 + "\033[1;38;5;220m│\033[0m")
+        print("\033[1;38;5;220m│\033[0m \033[1;38;5;81m[CTRL-S]\033[0m  \033[38;5;253mCreate New Snapshot\033[0m" + " "*23 + "\033[1;38;5;220m│\033[0m")
+        print("\033[1;38;5;220m│\033[0m \033[1;38;5;213m[TAB]\033[0m     \033[38;5;253mSwitch View (Root/Home)\033[0m" + " "*19 + "\033[1;38;5;220m│\033[0m")
+        print("\033[1;38;5;220m│\033[0m \033[1;38;5;246m[CTRL-A]\033[0m  \033[38;5;253mSelect All\033[0m" + " "*32 + "\033[1;38;5;220m│\033[0m")
+        print("\033[1;38;5;220m│\033[0m \033[1;38;5;246m[CTRL-X]\033[0m  \033[38;5;253mDeselect All\033[0m" + " "*30 + "\033[1;38;5;220m│\033[0m")
+        print("\033[1;38;5;220m╰" + "─"*53 + "╯\033[0m\n")
+
+        # 2. Snapshot Meta Data
+        print(f"\033[1;38;5;81m󰆑 SNAPSHOT DETAILS\033[0m")
+        print(f"\033[38;5;238m" + "─" * 55 + "\033[0m")
+        print(f" \033[1;38;5;246mConfig\033[0m │ \033[1;38;5;253m{view.upper()}\033[0m")
+        print(f" \033[1;38;5;246mID    \033[0m │ \033[1;38;5;39m{snap_id}\033[0m")
+        print(f" \033[1;38;5;246mType  \033[0m │ \033[38;5;213m{snap_type}\033[0m")
+        print(f" \033[1;38;5;246mDate  \033[0m │ \033[38;5;220m{snap_date}\033[0m")
+        print(f" \033[1;38;5;246mDesc  \033[0m │ \033[38;5;253m{snap_desc}\033[0m\n")
+
+        # 3. Dynamic Diff generation via snapper status (Snapshot -> Current)
+        # Only runs when explicitly requested via Ctrl+V for instant UI responsiveness
+        if show_diff:
+            print(f"\033[1;38;5;114m󰏫 FILES CHANGED IF RESTORED\033[0m \033[3;38;5;246m(vs Current System)\033[0m")
+            print(f"\033[38;5;238m" + "─" * 55 + "\033[0m")
+
+            def run_diff(config: str, s_id: str):
+                print(f"\033[1;38;5;203m▶ System Profile: {config}\033[0m")
+                try:
+                    # Comparing <id> against 0 shows what happened *since* the snapshot
+                    # i.e., What will happen to current files if we revert.
+                    result = subprocess.run(["snapper", "-c", config, "status", f"{s_id}..0"], capture_output=True, text=True)
+                    if result.returncode != 0:
+                        print(f"  \033[38;5;196mError extracting diff: {result.stderr.strip()}\033[0m")
+                        return
+
+                    lines = result.stdout.splitlines()
+                    if not lines:
+                        print("  \033[3;38;5;246mNo file changes detected since snapshot.\033[0m")
+                        return
+
+                    max_lines = 100
+                    for i, l in enumerate(lines):
+                        if i >= max_lines:
+                            print(f"  \033[3;38;5;246m... and {len(lines) - max_lines} more files ...\033[0m")
+                            break
+
+                        if not l.strip():
+                            continue
+
+                        status = l[0]
+                        filepath = l[6:].strip() if len(l) > 6 else l[1:].strip()
+
+                        # Logic Mapping (What the reversion does to the current system state)
+                        if status == '+': # File was added *after* snapshot -> Reverting will Delete it
+                            print(f"  \033[1;38;5;196m[-]\033[0m \033[38;5;246m{filepath}\033[0m")
+                        elif status == '-': # File was removed *after* snapshot -> Reverting will Restore it
+                            print(f"  \033[1;38;5;114m[+]\033[0m \033[38;5;253m{filepath}\033[0m")
+                        elif status == 'c': # File was modified -> Reverting will modify it back
+                            print(f"  \033[1;38;5;220m[~]\033[0m \033[38;5;253m{filepath}\033[0m")
+                        else:
+                            print(f"  \033[38;5;246m{l}\033[0m")
+                except Exception as e:
+                    print(f"  \033[38;5;196mExecution Failed: {e}\033[0m")
+
+            if view in ("root", "home"):
+                run_diff(view, snap_id)
+            elif view == "coordinated":
+                run_diff("root", snap_id)
+                print()
+                try:
+                    r_id, h_id = find_coordinated_pair(snap_date, snap_desc)
+                    run_diff("home", h_id)
+                except RuntimeError:
+                    print(f"\033[1;38;5;203m▶ System Profile: home\033[0m")
+                    print("  \033[3;38;5;196mFailed to locate paired snapshot.\033[0m")
+        else:
+            print(f"\033[1;38;5;246m[!] File changes hidden for performance.\033[0m")
+            print(f"\033[1;38;5;246mPress \033[1;38;5;220m<Ctrl+V>\033[1;38;5;246m to generate file change list.\033[0m")
+            print(f"\033[1;38;5;246mPress \033[1;38;5;220m<Ctrl+B>\033[1;38;5;246m to hide and restore fast scrolling.\033[0m")
+
+    except Exception as e:
+        print(f"\033[1;38;5;196mError generating TUI Preview Pane:\n{e}\033[0m")
+
+
 def launch_tui() -> None:
     if not shutil.which("fzf"):
         fail("[!] Fatal: 'fzf' is required for the interactive menu. Install it using: pacman -S fzf")
@@ -821,6 +922,9 @@ def launch_tui() -> None:
         "pointer:#a6e3a1,marker:#f5e0dc,prompt:#cba6f7,"
         "hl:#f38ba8,hl+:#f38ba8,border:#585b70,label:#a6e3a1"
     )
+
+    executable = shlex.quote(sys.executable)
+    script_path = shlex.quote(os.path.abspath(sys.argv[0]))
 
     while True:
         current_view = views[view_idx]
@@ -857,26 +961,25 @@ def launch_tui() -> None:
                 lines_for_fzf.append(f"{id_str} {c_sep} {type_str} {c_sep} {age_colored} {c_sep} {date_str} {c_sep} {desc_str}")
         else:
             lines_for_fzf.append(f"\033[1;38;5;196m No snapshots found for '{config_to_query}' configuration.\033[0m")
-
-        # Visual Tab Mode Controls
-        c_key = "\033[1;38;5;220m"
-        c_rst = "\033[0m"
-        
-        multi_hdr = f" \033[38;5;246m󰒉 MULTI-SELECT:\033[0m {c_key}[CTRL-A]{c_rst} Select All {c_sep} {c_key}[CTRL-X]{c_rst} Deselect All {c_sep} {c_key}[SHIFT-⬇/⬆/Right-Click]{c_rst} Toggle Selection"
         
         if current_view == "coordinated":
-            mode_hdr = f" \033[1;38;5;213m󰑐 VIEW: ROOT+HOME (Coordinated)\033[0m {c_sep} {c_key}[TAB]{c_rst} Switch {c_sep} {c_key}[ENTER]{c_rst} Restore {c_sep} {c_key}[DEL]{c_rst} Delete {c_sep} {c_key}[CTRL-S]{c_rst} Create\n{multi_hdr}"
+            mode_hdr = f" \033[1;38;5;213m󰑐 VIEW: ROOT+HOME (Coordinated)\033[0m"
         elif current_view == "root":
-            mode_hdr = f" \033[1;38;5;39m󰒋 VIEW: ROOT ONLY\033[0m               {c_sep} {c_key}[TAB]{c_rst} Switch {c_sep} {c_key}[ENTER]{c_rst} Restore {c_sep} {c_key}[DEL]{c_rst} Delete {c_sep} {c_key}[CTRL-S]{c_rst} Create\n{multi_hdr}"
+            mode_hdr = f" \033[1;38;5;39m󰒋 VIEW: ROOT ONLY\033[0m"
         else:
-            mode_hdr = f" \033[1;38;5;114m󰋜 VIEW: HOME ONLY\033[0m               {c_sep} {c_key}[TAB]{c_rst} Switch {c_sep} {c_key}[ENTER]{c_rst} Restore {c_sep} {c_key}[DEL]{c_rst} Delete {c_sep} {c_key}[CTRL-S]{c_rst} Create\n{multi_hdr}"
+            mode_hdr = f" \033[1;38;5;114m󰋜 VIEW: HOME ONLY\033[0m"
         
         # Static Matrix Header Table
         table_hdr = f"  \033[1;38;5;242mID\033[0m   {c_sep} \033[1;38;5;242mTYPE\033[0m    {c_sep} \033[1;38;5;242mAGE\033[0m        {c_sep} \033[1;38;5;242mDATE\033[0m               {c_sep} \033[1;38;5;242mDESCRIPTION\033[0m"
-        hr = "\033[38;5;238m" + "─" * 80 + "\033[0m"
+        hr_width = min(80, shutil.get_terminal_size().columns - 4)
+        hr = "\033[38;5;238m" + "─" * hr_width + "\033[0m"
         
-        # Compile FZF Header Injection
-        header = f"{storage_hdr}\n {mode_hdr}\n{hr}\n{table_hdr}"
+        # Compile Ultra-Clean FZF Top Header
+        header = f"{storage_hdr}\n{mode_hdr}\n{hr}\n{table_hdr}"
+
+        # Utilizing strict fzf 0.73.1 syntax and layout logic for async previewing
+        preview_cmd = f"{executable} {script_path} --tui-preview {current_view} {{}}"
+        preview_diff_cmd = f"{executable} {script_path} --tui-preview {current_view} --show-diff {{}}"
 
         fzf_cmd = [
             "fzf",
@@ -886,15 +989,17 @@ def launch_tui() -> None:
             "--header", header,
             "--header-border=horizontal",
             "--border=rounded",
-            "--prompt= 󰆑 Snapshots ❯ ",
+            "--prompt= :: Time Machine ❯ ",
             f"--color={fzf_colors}",
-            "--pointer=",
+            "--pointer=",
             "--marker=✓",
             "--no-hscroll",
             "--ellipsis=",
             "--expect=enter,ctrl-d,delete,tab,ctrl-s,alt-s",
-            "--bind=ctrl-a:select-all,ctrl-x:deselect-all,ctrl-space:toggle,shift-down:toggle+down,shift-up:toggle+up",
-            "--info=hidden"
+            f"--bind=ctrl-a:select-all,ctrl-x:deselect-all,ctrl-space:toggle,shift-down:toggle+down,shift-up:toggle+up,ctrl-p:toggle-preview,ctrl-v:change-preview({preview_diff_cmd})+change-prompt( :: Diff Mode ON (Slower) ❯ ),ctrl-b:change-preview({preview_cmd})+change-prompt( :: Time Machine ❯ )",
+            "--info=hidden",
+            "--preview", preview_cmd,
+            "--preview-window", "right,45%,border-left,wrap"
         ]
 
         try:
@@ -1102,4 +1207,15 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # --- Asynchronous TUI Preview Payload Interception ---
+    # Intercepts the FZF subshell request *before* argparse or privileges are evaluated,
+    # ensuring blindingly fast execution for the `snapper status` preview panel.
+    if len(sys.argv) >= 3 and sys.argv[1] == "--tui-preview":
+        _view = sys.argv[2]
+        _show_diff = "--show-diff" in sys.argv
+        _remaining = [a for a in sys.argv[3:] if a != "--show-diff"]
+        _line = " ".join(_remaining)
+        handle_tui_preview(_view, _line, show_diff=_show_diff)
+        sys.exit(0)
+
     main()
