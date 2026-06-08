@@ -121,7 +121,7 @@ _dusky_git_list() {
             if (NF == 1) {
                 # Pure graph connection line handling
                 graph = $1
-                pad_len = 55 - vlen(graph)
+                pad_len = 63 - vlen(graph)
                 if (pad_len < 0) pad_len = 0
                 pad = sprintf("%*s", pad_len, "")
                 
@@ -141,13 +141,13 @@ _dusky_git_list() {
                 gsub(/ ago/, "", time_str)
                 if (length(time_str) > 12) time_str = substr(time_str, 1, 12)
                 
-                if (length(author) > 15) author = substr(author, 1, 15)
+                if (length(author) > 7) author = substr(author, 1, 7)
                 gsub(/\|/, "│", msg)
                 if (length(refs) > 0) refs = refs " "
                 
                 # Math: Calculate available space inside the 55-character boundary
                 base_vlen = vlen(graph) + vlen(refs)
-                max_msg = 55 - base_vlen
+                max_msg = 63 - base_vlen
                 if (max_msg < 1) max_msg = 1 
                 
                 # Truncate message BEFORE applying any color codes to prevent ANSI breaking
@@ -160,12 +160,12 @@ _dusky_git_list() {
                 mid_vlen = base_vlen + length(msg)
                 
                 # Dynamic Padding to hit EXACTLY 55 characters
-                pad_len = 55 - mid_vlen
+                pad_len = 63 - mid_vlen
                 if (pad_len < 0) pad_len = 0
                 pad = sprintf("%*s", pad_len, "")
                 
                 # Final Printout (Green Date | Grey Borders | Coral Author | Cyan Time)
-                printf "%s\x1f \033[1;38;5;114m%-6s\033[0m \033[38;5;238m│\033[0m %s%s \033[38;5;238m│\033[0m \033[1;38;5;203m%-15s\033[0m \033[38;5;238m│\033[0m \033[1;38;5;81m%-12s\033[0m\n", hash, date, mid, pad, author, time_str
+                printf "%s\x1f \033[1;38;5;114m%-6s\033[0m \033[38;5;238m│\033[0m %s%s \033[38;5;238m│\033[0m \033[1;38;5;203m%-7s\033[0m \033[38;5;238m│\033[0m \033[1;38;5;81m%-12s\033[0m\n", hash, date, mid, pad, author, time_str
             }
         }
     '
@@ -279,7 +279,7 @@ main() {
     fi
 
     # Mathematically Aligned Header (6 | 55 | 15 | 12)
-    local -r visual_header=$(printf " \033[1;37m%-6s\033[0m \033[38;5;238m│\033[0m \033[1;37m%-55s\033[0m \033[38;5;238m│\033[0m \033[1;37m%-15s\033[0m \033[38;5;238m│\033[0m \033[1;37m%-12s\033[0m" "DATE" "GRAPH / REFS / MESSAGE" "AUTHOR" "TIME AGO")
+    local -r visual_header=$(printf " \033[1;37m%-6s\033[0m \033[38;5;238m│\033[0m \033[1;37m%-63s\033[0m \033[38;5;238m│\033[0m \033[1;37m%-7s\033[0m \033[38;5;238m│\033[0m \033[1;37m%-12s\033[0m" "DATE" "GRAPH / REFS / MESSAGE" "AUTHOR" "TIME AGO")
 
     # Launch FZF subprocess mapping
     _dusky_git_list | fzf --ansi \
