@@ -590,12 +590,39 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
         if event.keyval == Gdk.KEY_Escape: self.hide(); return True
         return False
 
+    def _reposition_to_corner(self):
+        try:
+            r = run_command(["hyprctl", "-j", "monitors"], timeout=1.0, capture_stdout=True)
+            if r is None or r.returncode != 0 or not r.stdout: return
+            monitors = json.loads(r.stdout)
+            mon = next((m for m in monitors if m.get("focused")), monitors[0])
+            scale = float(mon.get("scale", 1.0))
+            mon_w = float(mon["width"]) / scale
+            mon_h = float(mon["height"]) / scale
+
+            r = run_command(["hyprctl", "-j", "clients"], timeout=1.0, capture_stdout=True)
+            if r is None or r.returncode != 0 or not r.stdout: return
+            clients = json.loads(r.stdout)
+            win = next((c for c in clients if c.get("class") == "dusky_quickpanal.py"), None)
+            if not win: return
+            win_w = float(win["size"][0])
+            win_h = float(win["size"][1])
+
+            target_x = int(mon_w - win_w - 20)
+            target_y = int(mon_h - win_h - 20)
+
+            run_command(["hyprctl", "dispatch", f"hl.dsp.window.move({{ x = {target_x}, y = {target_y} }})"],
+                        timeout=1.0, capture_stdout=True)
+        except Exception:
+            pass
+
     def _on_show(self, *args):
         app = self.get_application()
         if app and hasattr(app, "resume_workers"): app.resume_workers()
         if self._timer_id is None:
             self._update_ui_state()
             self._timer_id = GLib.timeout_add(2000, self._update_ui_state)
+        GLib.timeout_add(150, self._reposition_to_corner)
 
     def _on_hide(self, *args):
         if self._timer_id is not None:
