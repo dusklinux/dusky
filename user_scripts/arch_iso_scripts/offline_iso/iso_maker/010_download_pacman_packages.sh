@@ -421,6 +421,7 @@ _init_isolated_db() {
   log_info "Initialising isolated pacman sandbox (${mode_name})"
   [[ -d "${ISOLATED_DB_DIR}" ]] && rm -rf -- "${ISOLATED_DB_DIR}"
   mkdir -p -- "${ISOLATED_DB_DIR}/local" "${ISOLATED_DB_DIR}/sync" "${ISOLATED_DB_DIR}/pacman.d"
+  chmod -R 777 "${ISOLATED_DB_DIR}"
 
   if (( REPO_MODE == 2 )); then
     log_step "Generating pacman.conf with CachyOS v3 prioritization & UI enhancements..."
@@ -452,6 +453,7 @@ _init_isolated_db() {
         next
     }
     /^\[core\]/ {
+        skip_cachy = 0
         print "# --- INJECTED CACHYOS v3 REPOSITORIES ---"
         print "[cachyos-v3]"
         print "Server = https://mirror.cachyos.org/repo/x86_64_v3/$repo"

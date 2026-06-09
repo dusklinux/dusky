@@ -348,6 +348,7 @@ _patch_mkarchiso() {
         next
     }
     /^\[core\]/ {
+        skip_cachy = 0
         print "# --- INJECTED CACHYOS v3 REPOSITORIES ---"
         print "[cachyos-v3]"
         print "Server = https://mirror.cachyos.org/repo/x86_64_v3/$repo"
