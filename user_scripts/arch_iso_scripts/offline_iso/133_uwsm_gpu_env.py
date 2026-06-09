@@ -290,11 +290,19 @@ def generate_config(primary: GPUCard, all_cards: list[GPUCard], mode: str, args:
             if (dri_dir / "radeonsi_drv_video.so").exists():
                 vaapi_lines.append("export LIBVA_DRIVER_NAME=radeonsi")
         case "0x10de":
-            vaapi_lines.append("# NVIDIA Primary Session")
-            vaapi_lines.append("export GBM_BACKEND=nvidia-drm")
-            vaapi_lines.append("export __GLX_VENDOR_LIBRARY_NAME=nvidia")
-            if (dri_dir / "nvidia_drv_video.so").exists():
-                vaapi_lines.append("export LIBVA_DRIVER_NAME=nvidia")
+            # Chroot execution means we check for installed user-space libraries directly
+            # rather than querying sysfs/lsmod which only map the host's kernel status.
+            if Path("/usr/lib/gbm/nvidia-drm_gbm.so").exists():
+                vaapi_lines.append("# NVIDIA Primary Session (Proprietary)")
+                vaapi_lines.append("export GBM_BACKEND=nvidia-drm")
+                vaapi_lines.append("export __GLX_VENDOR_LIBRARY_NAME=nvidia")
+                if (dri_dir / "nvidia_drv_video.so").exists():
+                    vaapi_lines.append("export LIBVA_DRIVER_NAME=nvidia")
+            else:
+                vaapi_lines.append("# NVIDIA Primary Session (Nouveau)")
+                vaapi_lines.append("export MESA_LOADER_DRIVER_OVERRIDE=nouveau")
+                if (dri_dir / "nouveau_drv_video.so").exists():
+                    vaapi_lines.append("export LIBVA_DRIVER_NAME=nouveau")
 
     config_content = [
         "# -----------------------------------------------------------------",
@@ -363,7 +371,7 @@ def preview_config(output_file: Path):
     print("-------------------------------------")
     if output_file.exists():
         for line in output_file.read_text().splitlines():
-            if any(key in line for key in ["AQ_DRM_DEVICES", "GBM_BACKEND", "__GLX_VENDOR_LIBRARY_NAME", "LIBVA_DRIVER_NAME", "Mode:", "Primary DRM node:", "Primary GPU:"]):
+            if any(key in line for key in ["AQ_DRM_DEVICES", "GBM_BACKEND", "__GLX_VENDOR_LIBRARY_NAME", "MESA_LOADER_DRIVER_OVERRIDE", "LIBVA_DRIVER_NAME", "Mode:", "Primary DRM node:", "Primary GPU:"]):
                 print(line)
     print("-------------------------------------")
 
