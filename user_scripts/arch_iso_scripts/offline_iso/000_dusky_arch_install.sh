@@ -10,6 +10,7 @@
 # even if a non-critical component fails.
 
 declare -ra ISO_SEQUENCE=(
+  "001_uefi_check.sh"
   "010_set_variables.sh --no_encrypt"
   "020_environment_prep.sh --auto --cachy"
   "030_partitioning.sh"
