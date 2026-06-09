@@ -5,6 +5,14 @@
 set -Eeuo pipefail
 export LC_ALL=C
 
+# --- USER CONFIGURATION ---
+# Set how often to take autonomous snapshots (e.g., "3d" for 3 days, "1w" for 1 week, "12h" for 12 hours)
+SNAPSHOT_TIMER_FREQUENCY="3d"
+
+# Set the strict limit on how many automated snapshots to keep per configuration
+SNAPSHOT_RETENTION_LIMIT=6
+# --------------------------
+
 AUTO_MODE=false
 [[ "${1:-}" == "--auto" ]] && AUTO_MODE=true
 
@@ -562,7 +570,7 @@ verify_snapper_works() {
 
 tune_snapper() {
     local cfg="$1"
-    local strict_limit=6
+    local strict_limit="${SNAPSHOT_RETENTION_LIMIT}"
 
     info "Enforcing strict cleanup limits and zero background bloat for ${cfg}..."
 
@@ -655,6 +663,68 @@ enable_snapper_timers() {
     sudo systemctl disable --now snapper-timeline.timer 2>/dev/null || true
 }
 
+deploy_custom_timer() {
+    info "Deploying custom ${SNAPSHOT_TIMER_FREQUENCY} snapshot creation timer..."
+    local service_file="/etc/systemd/system/snapper-auto.service"
+    local timer_file="/etc/systemd/system/snapper-auto.timer"
+
+    local tmp_service tmp_timer
+    tmp_service="$(mktemp)"
+    tmp_timer="$(mktemp)"
+    ACTIVE_TEMP_FILES+=("$tmp_service" "$tmp_timer")
+
+    # Construct the Service Unit
+    cat << EOF > "$tmp_service"
+[Unit]
+Description=Create Automated ${SNAPSHOT_TIMER_FREQUENCY} Snapper Snapshots
+Documentation=man:snapper(8)
+After=local-fs.target nss-user-lookup.target
+Wants=snapper-cleanup.service
+
+[Service]
+Type=oneshot
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_FOWNER CAP_CHOWN CAP_FSETID CAP_SETFCAP CAP_SYS_ADMIN CAP_SYS_MODULE CAP_IPC_LOCK CAP_SYS_NICE
+LockPersonality=true
+NoNewPrivileges=false
+PrivateNetwork=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=true
+Nice=19
+IOSchedulingClass=idle
+CPUSchedulingPolicy=idle
+ExecStart=/usr/bin/bash -c 'for cfg in \$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "\$cfg" create --description "Automated ${SNAPSHOT_TIMER_FREQUENCY} Snapshot" --cleanup-algorithm number; done'
+EOF
+
+    # Construct the Timer Unit
+    cat << EOF > "$tmp_timer"
+[Unit]
+Description=Trigger ${SNAPSHOT_TIMER_FREQUENCY} Snapper Snapshots
+Documentation=man:snapper(8)
+
+[Timer]
+OnBootSec=15m
+OnUnitActiveSec=${SNAPSHOT_TIMER_FREQUENCY}
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    sudo cp "$tmp_service" "$service_file"
+    sudo cp "$tmp_timer" "$timer_file"
+    sudo chmod 0644 "$service_file" "$timer_file"
+
+    rm -f "$tmp_service" "$tmp_timer"
+    remove_array_value ACTIVE_TEMP_FILES "$tmp_service"
+    remove_array_value ACTIVE_TEMP_FILES "$tmp_timer"
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now snapper-auto.timer
+    info "Custom ${SNAPSHOT_TIMER_FREQUENCY} snapshot timer deployed and enabled."
+}
+
 preflight_checks() {
     (( EUID != 0 )) || fatal "Run as regular user with sudo."
     require_cmd sudo
@@ -709,6 +779,8 @@ execute "Mount /home/.snapshots" mount_snapshots "/home/.snapshots" "@home_snaps
 execute "Verify Snapper home" verify_snapper_works "home"
 execute "Tune Snapper home" tune_snapper "home"
 
+# --- SYSTEM WIDE OPTIMIZATIONS ---
 execute "Apply Global Btrfs Settings" apply_global_btrfs_tuning
 execute "Enforce Flat Topology" enforce_flat_topology
 execute "Enable Snapper Pruning Timers" enable_snapper_timers
+execute "Deploy Custom Autonomous Timer" deploy_custom_timer

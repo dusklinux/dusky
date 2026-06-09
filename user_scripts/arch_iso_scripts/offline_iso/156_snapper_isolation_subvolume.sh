@@ -5,6 +5,14 @@
 set -Eeuo pipefail
 export LC_ALL=C
 
+# --- USER CONFIGURATION ---
+# Set how often to take autonomous snapshots (e.g., "3d" for 3 days, "1w" for 1 week, "12h" for 12 hours)
+SNAPSHOT_TIMER_FREQUENCY="3d"
+
+# Set the strict limit on how many automated snapshots to keep per configuration
+SNAPSHOT_RETENTION_LIMIT=6
+# --------------------------
+
 AUTO_MODE=false
 [[ "${1:-}" == "--auto" ]] && AUTO_MODE=true
 
@@ -563,7 +571,7 @@ verify_snapper_works() {
 
 tune_snapper() {
     local cfg="$1"
-    local strict_limit=6
+    local strict_limit="${SNAPSHOT_RETENTION_LIMIT}"
 
     info "Enforcing strict cleanup limits and zero background bloat for ${cfg}..."
 
@@ -659,6 +667,61 @@ enable_snapper_timers() {
     systemctl disable snapper-timeline.timer 2>/dev/null || true
 }
 
+deploy_custom_timer() {
+    info "Deploying custom ${SNAPSHOT_TIMER_FREQUENCY} snapshot creation timer..."
+    local service_file="/etc/systemd/system/snapper-auto.service"
+    local timer_file="/etc/systemd/system/snapper-auto.timer"
+
+    # CRITICAL FIX 1: Snapper manual supports --csvout and --no-headers. We use this instead of `tail|tr` 
+    # so the parser never breaks, even if the user changes their terminal language or UI spacing later.
+    # CRITICAL FIX 2: Removed --no-dbus from the ExecStart. This service runs on the LIVE booted system,
+    # where DBus is active. Snapper warns against bypassing DBus while the live daemon is running.
+    # CRITICAL FIX 3: Ported official kernel capability sandboxing from the snapper-timeline.service.
+    cat << EOF > "$service_file"
+[Unit]
+Description=Create Automated ${SNAPSHOT_TIMER_FREQUENCY} Snapper Snapshots
+Documentation=man:snapper(8)
+After=local-fs.target nss-user-lookup.target
+Wants=snapper-cleanup.service
+
+[Service]
+Type=oneshot
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_FOWNER CAP_CHOWN CAP_FSETID CAP_SETFCAP CAP_SYS_ADMIN CAP_SYS_MODULE CAP_IPC_LOCK CAP_SYS_NICE
+LockPersonality=true
+NoNewPrivileges=false
+PrivateNetwork=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=true
+Nice=19
+IOSchedulingClass=idle
+CPUSchedulingPolicy=idle
+ExecStart=/usr/bin/bash -c 'for cfg in \$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "\$cfg" create --description "Automated ${SNAPSHOT_TIMER_FREQUENCY} Snapshot" --cleanup-algorithm number; done'
+EOF
+
+    cat << EOF > "$timer_file"
+[Unit]
+Description=Trigger ${SNAPSHOT_TIMER_FREQUENCY} Snapper Snapshots
+Documentation=man:snapper(8)
+
+[Timer]
+OnBootSec=15m
+OnUnitActiveSec=${SNAPSHOT_TIMER_FREQUENCY}
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    # CHROOT FALLBACK: Manually wire the timer symlink if systemctl complains in the installation environment
+    if ! systemctl enable snapper-auto.timer 2>/dev/null; then
+        mkdir -p /etc/systemd/system/timers.target.wants
+        ln -sf ../snapper-auto.timer /etc/systemd/system/timers.target.wants/snapper-auto.timer
+    fi
+    info "Custom ${SNAPSHOT_TIMER_FREQUENCY} snapshot timer deployed and enabled."
+}
+
 preflight_checks() {
     require_cmd pacman
     require_cmd findmnt
@@ -697,6 +760,8 @@ execute "Mount /home/.snapshots" mount_snapshots "/home/.snapshots" "@home_snaps
 execute "Verify Snapper home" verify_snapper_works "home"
 execute "Tune Snapper home" tune_snapper "home"
 
+# --- SYSTEM WIDE OPTIMIZATIONS ---
 execute "Apply Global Btrfs Settings" apply_global_btrfs_tuning
 execute "Enforce Flat Topology" enforce_flat_topology
 execute "Enable Snapper Pruning Timers" enable_snapper_timers
+execute "Deploy Custom Autonomous Timer" deploy_custom_timer
