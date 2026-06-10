@@ -15,6 +15,7 @@
   - Arch Linux Auto-Bootstrapper for required UI/Sec dependencies
   - Kernel-level findmnt --evaluate tag resolution
   - Pre-emptive `sudo -v` credential priming to prevent stdin pipe collision
+  - Hybrid Ghost-Mapper resolution (maintains 3rd-party interoperability)
 ==============================================================================
 """
 
@@ -221,13 +222,19 @@ def run_sudo_cmd(cmd: list[str], stdin_data: str | None = None) -> bool:
 # ------------------------------------------------------------------------------
 def load_config(override_path: Path | None = None) -> dict[str, Drive]:
     """Loads and validates drives.toml into native dataclasses."""
-    config_paths = [
-        override_path,
-        Path.home() / ".config" / "drive_manager" / "drives.toml",
-        Path(__file__).parent / "drives.toml"
-    ]
-
-    target_config = next((p for p in config_paths if p and p.exists()), None)
+    
+    # Handle explicit CLI override natively
+    if override_path:
+        if not override_path.exists():
+            err(f"Explicit config file '{override_path}' not found.")
+            sys.exit(1)
+        target_config = override_path
+    else:
+        config_paths = [
+            Path.home() / ".config" / "drive_manager" / "drives.toml",
+            Path(__file__).parent / "drives.toml"
+        ]
+        target_config = next((p for p in config_paths if p.exists()), None)
 
     if not target_config:
         err("Configuration file 'drives.toml' not found.")
@@ -400,19 +407,31 @@ def do_lock(drive: Drive):
 
     # 2. Lock Cryptsetup
     if drive.type == "PROTECTED":
-        if not resolve_device(drive.outer_uuid):
-            if resolve_device(drive.inner_uuid):
-                err("Physical device removed, but decrypted mapper node is ghosting.")
+        mapper_name = None
+        physical_present = resolve_device(drive.outer_uuid)
+        
+        if physical_present:
+            # Drive is physically present. Ask kernel for exact mapper name to ensure interoperability 
+            # (handles drives unlocked by OS/udisks2 instead of our script).
+            mapper_name = get_crypt_mapper_name(drive.outer_uuid)
+        else:
+            # Drive is physically missing (surprise removal). lsblk will fail, so we check for a ghost
+            # node matching our script's deterministic naming scheme.
+            deterministic_name = f"luks-{drive.outer_uuid}"
+            if Path(f"/dev/mapper/{deterministic_name}").exists():
+                hint_msg("Physical drive missing, but ghost mapper detected. Forcing cleanup.")
+                mapper_name = deterministic_name
+            elif resolve_device(drive.inner_uuid):
+                err("Device is active under an unknown mapper name and physical drive is missing. Cannot securely lock.")
                 sys.exit(1)
-            success("Device removed physically, container is no longer active.")
-            return
-
-        time.sleep(1)
-        subprocess.run(["udevadm", "settle", "--timeout=5"], capture_output=True)
-
-        # As per cryptsetup.md: `cryptsetup close <name>` expects just the basename.
-        mapper_name = get_crypt_mapper_name(drive.outer_uuid)
+            else:
+                success("Device removed physically, container is no longer active.")
+                return
+        
         if mapper_name:
+            time.sleep(1)
+            subprocess.run(["udevadm", "settle", "--timeout=5"], capture_output=True)
+
             log(f"Locking crypt node: {mapper_name}...")
             
             for attempt in range(LOCK_MAX_RETRIES):
