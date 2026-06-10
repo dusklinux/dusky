@@ -2,8 +2,9 @@
 # sddm setup
 
 # ==============================================================================
-#  Dusky SDDM Theme Setup Script
+#  Dusky SDDM Theme Setup Script (Platinum SSO Edition)
 #  Repository: github.com/dusklinux/sddm_theme
+#  Target: Arch Linux (Linux 7.0+, Systemd 260+, Bash 5.3+)
 # ==============================================================================
 
 set -euo pipefail
@@ -71,7 +72,8 @@ install_dependencies() {
     log_info "Checking dependencies..."
     require_command pacman || log_error "Pacman not found. This script is designed for Arch Linux."
 
-    local -a pkgs=(sddm qt6-svg qt6-virtualkeyboard qt6-multimedia-ffmpeg imagemagick git)
+    # Added GNOME Keyring dependencies to ensure SSO functionality
+    local -a pkgs=(sddm qt6-svg qt6-virtualkeyboard qt6-multimedia-ffmpeg imagemagick git gnome-keyring libsecret seahorse)
     local -a needed=()
 
     for pkg in "${pkgs[@]}"; do
@@ -88,15 +90,32 @@ install_dependencies() {
 
 check_conflicts() {
     log_info "Checking for conflicting Display Managers..."
-    local -a dms=(gdm lightdm lxdm ly slim wdm)
+
+    # 1. Clean Systemd 260+ Symlink Resolution
+    local current_dm
+    current_dm=$(basename "$(readlink /etc/systemd/system/display-manager.service 2>/dev/null || echo "")" .service || echo "")
+
+    if [[ -n "${current_dm}" && "${current_dm}" != "sddm" ]]; then
+        log_warn "Conflicting DM enabled: ${current_dm}"
+        if [[ "${AUTO_MODE}" == "true" ]] || prompt_yes_no "Disable ${current_dm}?"; then
+            # Systemctl cleanly drops the symlink. No need for manual rm hacks.
+            systemctl disable "${current_dm}.service" 2>/dev/null || true
+            log_success "${current_dm} disabled."
+        else
+            log_warn "Proceeding without disabling ${current_dm}. SDDM enablement will force overwrite."
+        fi
+    fi
+
+    # 2. Resolve running DM conflicts
+    local -a dms=(gdm lightdm lxdm ly slim wdm greetd tdm)
     local conflict="false"
 
     for dm in "${dms[@]}"; do
-        if systemctl is-active --quiet "${dm}.service"; then
+        if systemctl is-active --quiet "${dm}.service" 2>/dev/null; then
             log_warn "Conflicting DM running: ${dm}"
             conflict="true"
             if [[ "${AUTO_MODE}" == "true" ]] || prompt_yes_no "Disable and stop ${dm}?"; then
-                systemctl disable --now "${dm}.service"
+                systemctl disable --now "${dm}.service" 2>/dev/null || true
                 log_success "${dm} disabled."
             else
                 log_warn "Proceeding with ${dm} active. SDDM may fail to start."
@@ -105,22 +124,25 @@ check_conflicts() {
     done
 
     if [[ "${conflict}" == "false" ]]; then
-        log_success "No conflicting DMs found active."
+        log_success "No conflicting active DMs found."
     fi
 }
 
 setup_sddm_service() {
-    if systemctl is-enabled --quiet sddm.service; then
+    if systemctl is-enabled --quiet sddm.service 2>/dev/null; then
         log_success "SDDM service is already enabled."
         return
     fi
 
+    # Force daemon reload to sync internal state before enabling
+    systemctl daemon-reload
+
     if [[ "${AUTO_MODE}" == "true" ]]; then
-        systemctl enable sddm.service
+        systemctl enable --force sddm.service || log_error "Failed to enable SDDM."
     else
         printf '\nSDDM is not enabled. You can log in via TTY without it.\n'
         if prompt_yes_no "Enable SDDM to start at boot?"; then
-            systemctl enable sddm.service
+            systemctl enable --force sddm.service || log_error "Failed to enable SDDM."
             log_success "SDDM service enabled."
         fi
     fi
@@ -163,6 +185,59 @@ GreeterEnvironment=QML2_IMPORT_PATH=${INSTALL_DIR}/components/,QT_IM_MODULE=qtvi
 EOF
 
     log_success "Config saved to ${CONF_FILE}"
+}
+
+setup_keyring() {
+    log_info "Integrating GNOME Keyring with SDDM PAM stack (Systemd 260+ hardened)..."
+    local pam_file="/etc/pam.d/sddm"
+    local timestamp
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    
+    if [[ -f "${pam_file}" ]]; then
+        cp "${pam_file}" "${pam_file}.bak.${timestamp}"
+        log_info "Backed up existing SDDM PAM config."
+    fi
+
+    # Write the Arch Linux standard PAM stack for DMs with Keyring injection
+    cat > "${pam_file}" << 'EOF'
+#%PAM-1.0
+
+# 1. Standard Checks & Keyring Auth
+auth       include      system-login
+auth       optional     pam_gnome_keyring.so
+
+# 2. Account Management
+account    include      system-login
+
+# 3. Password Changes & Keyring Sync
+# use_authtok is required here to prevent duplicate password prompts
+password   include      system-login
+password   optional     pam_gnome_keyring.so use_authtok
+
+# 4. Session Setup & Keyring Unlock
+session    include      system-login
+EOF
+
+    # Smart bridging: If pam-fde-boot-pw from the 127 script is present, integrate it.
+    # This future-proofs SDDM if the user ever enables autologin on a LUKS drive.
+    if [[ -f "/usr/lib/security/pam_fde_boot_pw.so" ]]; then
+        log_info "Detected pam-fde-boot-pw! Injecting LUKS Zero-Touch SSO bridge..."
+        echo "session    optional     pam_fde_boot_pw.so inject_for=gkr" >> "${pam_file}"
+    fi
+
+    cat >> "${pam_file}" << 'EOF'
+session    optional     pam_gnome_keyring.so auto_start
+EOF
+
+    log_info "Applying Systemd overrides for Kernel Keyring inheritance..."
+    mkdir -p /etc/systemd/system/sddm.service.d
+    cat > /etc/systemd/system/sddm.service.d/keyringmode.conf << 'EOF'
+[Service]
+KeyringMode=inherit
+EOF
+    systemctl daemon-reload
+
+    log_success "GNOME Keyring PAM configuration for SDDM applied successfully."
 }
 
 setup_avatar() {
@@ -234,6 +309,7 @@ setup_sddm_service
 get_source_files
 install_theme
 configure_sddm
+setup_keyring
 setup_avatar
 
 printf '\n%bSetup Complete!%b\n' "${GREEN}" "${RESET}"
