@@ -9,9 +9,18 @@
 #   outer_uuid = UUID of the raw physical partition (run `lsblk -f` while LOCKED)
 #   inner_uuid = UUID of the filesystem inside (run `lsblk -f` while UNLOCKED)
 #
-# HINT:
-#   Optional text reminder for the password if you don't use the keyring.
+# fstype:        Overrides the dynamic probe.
+# mount_options: Array of options passed directly to the kernel `mount` syscall.
 # ==============================================================================
+
+# --- SOLID STATE DRIVES (SSD) ---
+
+[drives.windows]
+type = "SIMPLE"
+mountpoint = "/mnt/windows"
+outer_uuid = "848A215E8A214E4C"
+fstype = "ntfs3"
+mount_options = ["noatime", "uid=1000", "gid=1000", "umask=002", "windows_names"]
 
 [drives.browser]
 type = "PROTECTED"
@@ -19,6 +28,9 @@ mountpoint = "/mnt/browser"
 outer_uuid = "0a52e1bb-4fa0-4138-a150-f59467903e22"
 inner_uuid = "1adeb61a-0605-4bbc-8178-bb81fe1fca09"
 hint = "LAP_P"
+fstype = "btrfs"
+# Copy-on-Write disabled (nodatacow), which also turns off compression for max speed.
+mount_options = ["nodatacow", "ssd", "discard=async", "noatime", "space_cache=v2", "subvol=/"]
 
 [drives.media]
 type = "PROTECTED"
@@ -26,6 +38,18 @@ mountpoint = "/mnt/media"
 outer_uuid = "55d50d6d-a1ed-41d9-ba38-a6542eebbcd9"
 inner_uuid = "9C38076638073F30"
 hint = "LAP_P"
+fstype = "ntfs3"
+mount_options = ["noatime", "uid=1000", "gid=1000", "umask=002", "windows_names"]
+
+
+# --- MECHANICAL HARD DISKS (HDD) ---
+
+[drives.fast]
+type = "SIMPLE"
+mountpoint = "/mnt/fast"
+outer_uuid = "70EED6A1EED65F42"
+fstype = "ntfs3"
+mount_options = ["noatime", "uid=1000", "gid=1000", "umask=002", "windows_names"]
 
 [drives.slow]
 type = "PROTECTED"
@@ -33,13 +57,9 @@ mountpoint = "/mnt/slow"
 outer_uuid = "e15929e5-417f-4761-b478-55c9a7c24220"
 inner_uuid = "5A921A119219F26D"
 hint = "game_simple"
-
-[drives.wdslow]
-type = "PROTECTED"
-mountpoint = "/mnt/wdslow"
-outer_uuid = "01f38f5b-86de-4499-b93f-6c982e2067cb"
-inner_uuid = "2765359f-232e-4165-bc69-ef402b50c74c"
-hint = "game_simple"
+# fstab comment noted this was a BTRFS drive with nodatacow
+fstype = "btrfs"
+mount_options = ["nodatacow", "noatime", "space_cache=v2", "subvol=/"]
 
 [drives.wdfast]
 type = "PROTECTED"
@@ -47,6 +67,17 @@ mountpoint = "/mnt/wdfast"
 outer_uuid = "953a147e-a346-4fea-91f4-a81ec97fa56a"
 inner_uuid = "46798d3b-cda7-4031-818f-37a06abbeb37"
 hint = "game_simple"
+fstype = "btrfs"
+mount_options = ["discard=async", "compress=zstd:3", "noatime", "space_cache=v2", "autodefrag", "subvol=/"]
+
+[drives.wdslow]
+type = "PROTECTED"
+mountpoint = "/mnt/wdslow"
+outer_uuid = "01f38f5b-86de-4499-b93f-6c982e2067cb"
+inner_uuid = "2765359f-232e-4165-bc69-ef402b50c74c"
+hint = "game_simple"
+fstype = "btrfs"
+mount_options = ["discard=async", "compress=zstd:3", "noatime", "space_cache=v2", "autodefrag", "subvol=/"]
 
 [drives.enclosure]
 type = "PROTECTED"
@@ -54,8 +85,5 @@ mountpoint = "/mnt/enclosure"
 outer_uuid = "bde4bde0-19f7-4ba9-a0f0-541fec19beb6"
 inner_uuid = "5A428B8A428B6A19"
 hint = "pass_p"
-
-[drives.fast]
-type = "SIMPLE"
-mountpoint = "/mnt/fast"
-outer_uuid = "70EED6A1EED65F42"
+fstype = "ntfs3"
+mount_options = ["noatime", "uid=1000", "gid=1000", "umask=002", "windows_names"]
