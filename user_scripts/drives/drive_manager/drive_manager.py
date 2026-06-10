@@ -14,7 +14,7 @@
   - Intelligent NTFS/FAT32 Auto-Permission Configurator (uid/gid injection)
   - Zero-dependency TOML parsing (Python 3.11+ tomllib)
   - Arch Linux Auto-Bootstrapper for required UI/Sec dependencies
-  - Kernel-level findmnt --evaluate tag resolution
+  - Robust Lockfile Mechanics (Atomic O_CREAT+flock to prevent PID wipes)
   - Pre-emptive `sudo -v` credential priming to prevent stdin pipe collision
   - Interactive Busy Process Resolver (Intelligent PID Tracking + Forensics)
   - Triple-Tier Teardown (udisksctl -> cryptsetup -> deferred async closure)
@@ -122,11 +122,17 @@ def prime_sudo():
         sys.exit(1)
 
 def acquire_lock():
-    """Acquires a kernel-level exclusive file lock."""
+    """Acquires a kernel-level exclusive file lock atomically."""
     global lock_fd
     try:
-        lock_fd = open(LOCK_FILE, "w")
+        # Safely open without truncating to avoid wiping an active instance's lock PID
+        fd = os.open(LOCK_FILE, os.O_CREAT | os.O_RDWR, 0o644)
+        lock_fd = os.fdopen(fd, "r+")
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        
+        # Only truncate after exclusively acquiring the lock
+        lock_fd.seek(0)
+        lock_fd.truncate()
         lock_fd.write(str(os.getpid()))
         lock_fd.flush()
     except BlockingIOError:
@@ -181,7 +187,8 @@ def get_fstype(uuid: str) -> str | None:
 
 def get_mount_info(target_dir: Path) -> dict[str, Any] | None:
     """Uses findmnt JSON output to safely detect if a directory is mounted."""
-    cmd = ["findmnt", "--json", "--evaluate", "--mountpoint", str(target_dir)]
+    # '-v' (--nofsroot) prevents Btrfs subvolumes from corrupting the SOURCE string
+    cmd = ["findmnt", "--json", "-v", "--mountpoint", str(target_dir)]
     res = subprocess.run(cmd, capture_output=True, text=True)
     
     if res.returncode == 0:
@@ -575,9 +582,9 @@ def do_lock(drive: Drive):
             log(f"Locking crypt node: {mapper_name}...")
             
             # --- STRATEGY 1: Interoperable DBus Lock ---
-            outer_dev = f"/dev/disk/by-uuid/{drive.outer_uuid}"
-            if shutil.which("udisksctl") and Path(outer_dev).exists():
-                res = subprocess.run(["udisksctl", "lock", "-b", outer_dev], capture_output=True, text=True)
+            cleartext_dev = f"/dev/mapper/{mapper_name}"
+            if shutil.which("udisksctl") and Path(cleartext_dev).exists():
+                res = subprocess.run(["udisksctl", "lock", "-b", cleartext_dev], capture_output=True, text=True)
                 if res.returncode == 0:
                     success("Encrypted container successfully locked via udisks2 API.")
                     return
