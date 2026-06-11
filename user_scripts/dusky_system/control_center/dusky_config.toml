@@ -2168,7 +2168,7 @@ icon = "view-more-symbolic"
 button_text = "Swap"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "kitty --class dusky_waybars.sh --hold sh -c $HOME/user_scripts/waybar/dusky_waybars.sh"
+command = "foot --app-id=waybar_tui python ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/waybar/tui_waybars.py"
 terminal = false
 
 [[pages.layout.items.layout.items]]
