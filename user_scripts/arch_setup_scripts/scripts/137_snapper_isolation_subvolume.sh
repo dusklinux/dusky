@@ -665,8 +665,8 @@ enable_snapper_timers() {
 
 deploy_custom_timer() {
     info "Deploying custom ${SNAPSHOT_TIMER_FREQUENCY} snapshot creation timer..."
-    local service_file="/etc/systemd/system/dusky_snaapshot.service"
-    local timer_file="/etc/systemd/system/dusky_snaapshot.timer"
+    local service_file="/etc/systemd/system/dusky_snapshot.service"
+    local timer_file="/etc/systemd/system/dusky_snapshot.timer"
 
     local tmp_service tmp_timer
     tmp_service="$(mktemp)"
@@ -703,7 +703,6 @@ Description=Trigger ${SNAPSHOT_TIMER_FREQUENCY} Snapper Snapshots
 Documentation=man:snapper(8)
 
 [Timer]
-OnBootSec=15m
 OnUnitActiveSec=${SNAPSHOT_TIMER_FREQUENCY}
 Persistent=true
 RandomizedDelaySec=5m
@@ -721,7 +720,7 @@ EOF
     remove_array_value ACTIVE_TEMP_FILES "$tmp_timer"
 
     sudo systemctl daemon-reload
-    sudo systemctl enable --now dusky_snaapshot.timer
+    sudo systemctl enable --now dusky_snapshot.timer
     info "Custom ${SNAPSHOT_TIMER_FREQUENCY} snapshot timer deployed and enabled."
 }
 

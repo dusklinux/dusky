@@ -675,8 +675,8 @@ enable_snapper_timers() {
 
 deploy_custom_timer() {
     info "Deploying custom ${SNAPSHOT_TIMER_FREQUENCY} snapshot creation timer..."
-    local service_file="/etc/systemd/system/dusky_snaapshot.service"
-    local timer_file="/etc/systemd/system/dusky_snaapshot.timer"
+    local service_file="/etc/systemd/system/dusky_snapshot.service"
+    local timer_file="/etc/systemd/system/dusky_snapshot.timer"
 
     # CRITICAL FIX 1: Snapper manual supports --csvout and --no-headers. We use this instead of `tail|tr` 
     # so the parser never breaks, even if the user changes their terminal language or UI spacing later.
@@ -711,7 +711,6 @@ Description=Trigger ${SNAPSHOT_TIMER_FREQUENCY} Snapper Snapshots
 Documentation=man:snapper(8)
 
 [Timer]
-OnBootSec=15m
 OnUnitActiveSec=${SNAPSHOT_TIMER_FREQUENCY}
 Persistent=true
 RandomizedDelaySec=5m
@@ -721,9 +720,9 @@ WantedBy=timers.target
 EOF
 
     # CHROOT FALLBACK: Manually wire the timer symlink if systemctl complains in the installation environment
-    if ! systemctl enable dusky_snaapshot.timer 2>/dev/null; then
+    if ! systemctl enable dusky_snapshot.timer 2>/dev/null; then
         mkdir -p /etc/systemd/system/timers.target.wants
-        ln -sf ../dusky_snaapshot.timer /etc/systemd/system/timers.target.wants/dusky_snaapshot.timer
+        ln -sf ../dusky_snapshot.timer /etc/systemd/system/timers.target.wants/dusky_snapshot.timer
     fi
     info "Custom ${SNAPSHOT_TIMER_FREQUENCY} snapshot timer deployed and enabled."
 }
