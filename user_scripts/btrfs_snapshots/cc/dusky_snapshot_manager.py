@@ -966,19 +966,19 @@ def handle_tui_preview(view: str, line: str, show_diff: bool = False) -> None:
         snap_pre_num = extra_data.get("pre_number", "")
         snap_age = extra_data.get("age", "")
         
-        # 1. Cleanly Aligned Shortcuts Panel (Math-Calculated Padding exactly 56 chars wide ensuring right-side borders lock tight)
-        print("\033[1;38;5;220m╭─ 󰏖 KEYBOARD SHORTCUTS " + "─"*31 + "╮\033[0m")
-        print("\033[1;38;5;220m│\033[0m \033[1;38;5;114m[ENTER]\033[0m   \033[38;5;253m󰁯 Restore Selected\033[0m" + " "*25 + "\033[1;38;5;220m│\033[0m")
-        print("\033[1;38;5;220m│\033[0m \033[1;38;5;196m[DEL]\033[0m     \033[38;5;253m󰆴 Delete Selected\033[0m" + " "*26 + "\033[1;38;5;220m│\033[0m")
-        print("\033[1;38;5;220m│\033[0m \033[1;38;5;81m[CTRL-S]\033[0m  \033[38;5;253m󰎈 Create New Snapshot\033[0m" + " "*22 + "\033[1;38;5;220m│\033[0m")
-        print("\033[1;38;5;220m│\033[0m \033[1;38;5;213m[TAB]\033[0m     \033[38;5;253m󰓡 Switch View (Root/Home)\033[0m" + " "*18 + "\033[1;38;5;220m│\033[0m")
-        print("\033[1;38;5;220m│\033[0m \033[1;38;5;246m[CTRL-A]\033[0m  \033[38;5;253m󰒉 Select All\033[0m" + " "*31 + "\033[1;38;5;220m│\033[0m")
-        print("\033[1;38;5;220m│\033[0m \033[1;38;5;246m[CTRL-X]\033[0m  \033[38;5;253m󰒓 Deselect All\033[0m" + " "*29 + "\033[1;38;5;220m│\033[0m")
-        print("\033[1;38;5;220m╰" + "─"*54 + "╯\033[0m\n")
+        # 1. Cleanly Aligned Shortcuts Panel (Math-Calculated Padding exactly 44 chars wide ensuring right-side borders lock tight)
+        print("\033[1;38;5;220m╭─ 󰏖 KEYBOARD SHORTCUTS " + "─"*19 + "╮\033[0m")
+        print("\033[1;38;5;220m│\033[0m \033[1;38;5;114m[ENTER]\033[0m   \033[38;5;253m󰁯 Restore Selected\033[0m" + " "*13 + "\033[1;38;5;220m│\033[0m")
+        print("\033[1;38;5;220m│\033[0m \033[1;38;5;196m[DEL]\033[0m     \033[38;5;253m󰆴 Delete Selected\033[0m" + " "*14 + "\033[1;38;5;220m│\033[0m")
+        print("\033[1;38;5;220m│\033[0m \033[1;38;5;81m[CTRL-S]\033[0m  \033[38;5;253m󰎈 Create New Snapshot\033[0m" + " "*10 + "\033[1;38;5;220m│\033[0m")
+        print("\033[1;38;5;220m│\033[0m \033[1;38;5;213m[TAB]\033[0m     \033[38;5;253m󰓡 Switch View (Root/Home)\033[0m" + " "*6 + "\033[1;38;5;220m│\033[0m")
+        print("\033[1;38;5;220m│\033[0m \033[1;38;5;246m[CTRL-A]\033[0m  \033[38;5;253m󰒉 Select All\033[0m" + " "*19 + "\033[1;38;5;220m│\033[0m")
+        print("\033[1;38;5;220m│\033[0m \033[1;38;5;246m[CTRL-X]\033[0m  \033[38;5;253m󰒓 Deselect All\033[0m" + " "*17 + "\033[1;38;5;220m│\033[0m")
+        print("\033[1;38;5;220m╰" + "─"*42 + "╯\033[0m\n")
 
-        # 2. Expanded Snapshot Meta Data leveraging hidden JSON payloads matching 56-char width design
+        # 2. Expanded Snapshot Meta Data leveraging hidden JSON payloads matching 44-char width design
         print(f"\033[1;38;5;81m󰆑 SNAPSHOT DETAILS\033[0m")
-        print(f"\033[38;5;238m" + "─" * 56 + "\033[0m")
+        print(f"\033[38;5;238m" + "─" * 44 + "\033[0m")
         print(f" \033[1;38;5;246mConfig \033[0m │ \033[1;38;5;253m{view.upper()}\033[0m")
         print(f" \033[1;38;5;246mID     \033[0m │ \033[1;38;5;39m{snap_id}\033[0m")
         print(f" \033[1;38;5;246mType   \033[0m │ \033[38;5;213m{snap_type}\033[0m")
@@ -998,7 +998,7 @@ def handle_tui_preview(view: str, line: str, show_diff: bool = False) -> None:
         # Only runs when explicitly requested via Ctrl+V for instant UI responsiveness
         if show_diff:
             print(f"\033[1;38;5;114m󰏫 FILES CHANGED IF RESTORED\033[0m \033[3;38;5;246m(vs Current System)\033[0m")
-            print(f"\033[38;5;238m" + "─" * 56 + "\033[0m")
+            print(f"\033[38;5;238m" + "─" * 44 + "\033[0m")
 
             def run_diff(config: str, s_id: str):
                 print(f"\033[1;38;5;203m▶ System Profile: {config}\033[0m")

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Snapshot
+GenericName=BTRFS Snapshots
+Comment=Advanced Btrfs/Snapper Flat Layout Manager
+Exec=kitty --class dusky_snapshot_manager.py /home/dusk/user_scripts/btrfs_snapshots/cc/dusky_snapshot_manager.py
+Terminal=false
+Categories=dusky;btrfs;backup;restore;System;Utility;
+Icon=drive-harddisk
