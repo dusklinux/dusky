@@ -276,12 +276,22 @@ class DriveWidget(Static, can_focus=True):
 class IOMonitorApp(App):
     """Dusky Disk I/O Monitor"""
 
+    # Natively disables the ^P palette menu, the left icon, and theming capabilities completely.
+    ENABLE_COMMAND_PALETTE = False
+
     CSS = f"""
     Screen {{
         background: {BG};
         layout: vertical;
     }}
     
+    #custom_header {{
+        height: 1;
+        background: {MUTED};
+        color: {FG};
+        text-align: center;
+    }}
+
     #ram_bar {{
         height: 1;
         background: {MUTED};
@@ -297,11 +307,6 @@ class IOMonitorApp(App):
         scrollbar-background: {BG};
         scrollbar-color: {MUTED};
         scrollbar-color-hover: {ACCENT};
-    }}
-
-    Header {{
-        background: {MUTED};
-        color: {FG};
     }}
 
     Footer {{
@@ -336,8 +341,9 @@ class IOMonitorApp(App):
         except Exception: self.kernel = "Rolling"
 
     def compose(self) -> ComposeResult:
-        self.title = f"Dusky Disk I/O Matrix (Kernel: {self.kernel})"
-        yield Header(show_clock=True)
+        self.title = "Dusky Disk I/O Monitor"
+        # Using a flat static component ensures exactly 1 line of height with zero interactivity
+        yield Static("Dusky Disk I/O Monitor", id="custom_header")
         yield Static(id="ram_bar")
         yield VerticalScroll(id="main_scroll")
         yield Footer()
