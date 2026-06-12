@@ -498,7 +498,7 @@ icon = "utilities-system-monitor-symbolic"
 button_text = "Monitor"
 [pages.layout.items.on_press]
 type = "exec"
-command = "kitty --class io_monitor.sh --hold sh -c \"$HOME/user_scripts/drives/io_monitor.sh\""
+command = "kitty --class dusky_disk_monitor_io.py --hold \"$HOME/user_scripts/drives/dusky_disk_monitor_io.py\""
 terminal = false
 
 [[pages.layout.items]]

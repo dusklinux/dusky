@@ -640,12 +640,12 @@ hl.window_rule({
     center = true
 })
 
---- dysky_disk_monitor_io.py ---
+--- dusky_disk_monitor_io.py ---
 hl.window_rule({
-    name = "dysky_disk_monitor_io.py",
-    match = { class = "^(dysky_disk_monitor_io.py)$" },
+    name = "dusky_disk_monitor_io.py",
+    match = { class = "^(dusky_disk_monitor_io.py)$" },
     float = true,
-    size = {880, 618},
+    size = {980, 620},
     center = true
 })
 
