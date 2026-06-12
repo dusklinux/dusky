@@ -29,7 +29,7 @@ log_success "Hardware virtualization enabled at CPU level."
 
 # 2. Package Installation (Removed deprecated bridge-utils)
 log_info "Installing KVM packages via pacman..."
-sudo pacman -S --needed --noconfirm \
+sudo pacman -Syu --needed --noconfirm \
     qemu-full virt-manager libvirt dnsmasq iptables-nft edk2-ovmf \
     virt-viewer swtpm openbsd-netcat libosinfo
 
