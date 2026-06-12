@@ -229,7 +229,8 @@ class SysStatParser:
     @staticmethod
     def get_device_metadata() -> dict:
         try:
-            res = subprocess.run(["lsblk", "-J", "-d", "-o", "NAME,SIZE,TYPE,MODEL"], capture_output=True, text=True, check=True)
+            # Added ROTA to positively identify rotational hard drives
+            res = subprocess.run(["lsblk", "-J", "-d", "-o", "NAME,SIZE,TYPE,MODEL,ROTA"], capture_output=True, text=True, check=True)
             data = json.loads(res.stdout)
             meta = {}
             for dev in data.get("blockdevices", []):
@@ -240,10 +241,14 @@ class SysStatParser:
                 model = dev.get("model")
                 clean_model = str(model).strip() if model else "N/A"
                 
+                rota_val = dev.get("rota")
+                is_hdd = str(rota_val).strip() in ("1", "true", "True") if rota_val is not None else False
+                
                 meta[name] = {
                     "size": dev.get("size", "?").strip(),
                     "type": dev.get("type", "?").upper().strip(),
                     "model": clean_model,
+                    "rota": is_hdd,
                     "smart": SysStatParser.get_smart_data(name)
                 }
             return meta
@@ -256,11 +261,12 @@ class SysStatParser:
 
 class DriveWidget(Static, can_focus=True):
     
+    # Height set to auto to dynamically collapse for HDDs and ZRAMs
     DEFAULT_CSS = f"""
     DriveWidget {{
         border: solid {MUTED};
         background: {BG};
-        height: 7;
+        height: auto;
         margin: 0 1 1 1;
         padding: 0 1;
         transition: border 150ms;
@@ -303,6 +309,12 @@ class DriveWidget(Static, can_focus=True):
         size = meta_info.get('size', '?')
         dtype = meta_info.get('type', '?')
         model = meta_info.get('model', 'N/A')
+        
+        # Determine if view should be compact (for HDDs or ZRAMs)
+        is_hdd = meta_info.get('rota', False)
+        is_zram = self.dev_name.startswith("zram")
+        is_compact = is_hdd or is_zram
+        
         smart = meta_info.get('smart', SmartInfo())
         
         self.border_title = f"[bold {FG}]/dev/{self.dev_name}[/]  [{MUTED}]│[/]  [{ACCENT}]{size}[/]  [{MUTED}]│[/]  [{SUCCESS}]{dtype}[/]  [{MUTED}]│[/]  [{WARNING}]{model}[/]"
@@ -358,6 +370,9 @@ class DriveWidget(Static, can_focus=True):
         r_iops_str = f"{r_iops:.1f} IOPS"
         w_iops_str = f"{w_iops:.1f} IOPS"
 
+        # Tucked latency specifically for HDDs and ZRAMs to keep UI slim
+        latency_val = f"[bold {ERROR}]{await_ms:>5.2f} ms[/]" if is_compact else ""
+
         # Row 1: Active Read Stats (Speeds shifted left into R2/R3 labels to close gap)
         table.add_row(
             f"[{WARNING}]Read:[/]", f"[bold {SUCCESS}]{read_mb:>8.1f} MB[/]", "",
@@ -371,32 +386,34 @@ class DriveWidget(Static, can_focus=True):
             f"[{WARNING}]Write:[/]", f"[bold {SUCCESS}]{write_mb:>8.1f} MB[/]", "",
             f"[bold {SUCCESS}]WRITE[/]", f"{w_spark}",
             f"[bold {FG}]{w_spd}[/]", "",
-            f"{w_iops_str}", ""
+            f"{w_iops_str}", latency_val
         )
         
-        # Row 3: Latency, Utilization %, Critical, Power Cycles
-        table.add_row(
-            f"[{WARNING}]Latency:[/]", f"[bold {ERROR}]{await_ms:>5.2f} ms[/]", "",
-            f"[{MUTED}]UTIL[/]", f"[{MUTED}]│[/] [bold {ERROR}]{util_pct:.1f}%[/]",
-            f"[{MUTED}]CRITICAL[/]", f"[{MUTED}]│[/] [bold {crit_col}]{smart.critical_warning}[/]",
-            f"[{MUTED}]PWR CYC[/]", f"[{MUTED}]│[/] [{FG}]{smart.power_cycles}[/]"
-        )
+        # Exclude remaining SMART fields for HDDs and ZRAMs entirely
+        if not is_compact:
+            # Row 3: Latency, Utilization %, Critical, Power Cycles
+            table.add_row(
+                f"[{WARNING}]Latency:[/]", f"[bold {ERROR}]{await_ms:>5.2f} ms[/]", "",
+                f"[{MUTED}]UTIL[/]", f"[{MUTED}]│[/] [bold {ERROR}]{util_pct:.1f}%[/]",
+                f"[{MUTED}]CRITICAL[/]", f"[{MUTED}]│[/] [bold {crit_col}]{smart.critical_warning}[/]",
+                f"[{MUTED}]PWR CYC[/]", f"[{MUTED}]│[/] [{FG}]{smart.power_cycles}[/]"
+            )
 
-        # Row 4: Total Read, Health %, Errors, Power Hours
-        table.add_row(
-            f"[{WARNING}]Total Rd:[/]", f"[bold {ACCENT}]{smart.tbr}[/]", "",
-            f"[{MUTED}]HEALTH[/]", f"[{MUTED}]│[/] [bold {SUCCESS}]{smart.health}[/]",
-            f"[{MUTED}]ERRORS[/]", f"[{MUTED}]│[/] [bold {err_col}]{smart.media_errors}[/]",
-            f"[{MUTED}]PWR HRS[/]", f"[{MUTED}]│[/] [{FG}]{smart.power_on_hours}[/]"
-        )
+            # Row 4: Total Read, Health %, Errors, Power Hours
+            table.add_row(
+                f"[{WARNING}]Total Rd:[/]", f"[bold {ACCENT}]{smart.tbr}[/]", "",
+                f"[{MUTED}]HEALTH[/]", f"[{MUTED}]│[/] [bold {SUCCESS}]{smart.health}[/]",
+                f"[{MUTED}]ERRORS[/]", f"[{MUTED}]│[/] [bold {err_col}]{smart.media_errors}[/]",
+                f"[{MUTED}]PWR HRS[/]", f"[{MUTED}]│[/] [{FG}]{smart.power_on_hours}[/]"
+            )
 
-        # Row 5: Total Write, Temp(s), T1 Time, Power Cuts
-        table.add_row(
-            f"[{WARNING}]Total Wr:[/]", f"[bold {ACCENT}]{smart.tbw}[/]", "",
-            f"[{MUTED}]TEMP[/]", f"[{MUTED}]│[/] [{WARNING}]{smart.temp}[/]",
-            f"[{MUTED}]T1 TIME[/]", f"[{MUTED}]│[/] [{WARNING}]{smart.therm_t1}[/]",
-            f"[{MUTED}]PWR CUT[/]", f"[{MUTED}]│[/] [{ERROR}]{smart.unsafe_shutdowns}[/]"
-        )
+            # Row 5: Total Write, Temp(s), T1 Time, Power Cuts
+            table.add_row(
+                f"[{WARNING}]Total Wr:[/]", f"[bold {ACCENT}]{smart.tbw}[/]", "",
+                f"[{MUTED}]TEMP[/]", f"[{MUTED}]│[/] [{WARNING}]{smart.temp}[/]",
+                f"[{MUTED}]T1 TIME[/]", f"[{MUTED}]│[/] [{WARNING}]{smart.therm_t1}[/]",
+                f"[{MUTED}]PWR CUT[/]", f"[{MUTED}]│[/] [{ERROR}]{smart.unsafe_shutdowns}[/]"
+            )
 
         self.update(table)
 
