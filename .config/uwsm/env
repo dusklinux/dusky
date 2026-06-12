@@ -56,6 +56,21 @@ export QT_AUTO_SCREEN_SCALE_FACTOR=1
 export GDK_BACKEND="wayland,x11"
 export QT_QUICK_CONTROLS_STYLE=Fusion
 
+# Force GTK4 to use the OpenGL (ngl) renderer instead of Vulkan.
+# On hybrid GPU laptops (NVIDIA Optimus, AMD switchable graphics), the Vulkan
+# renderer triggers a D3cold -> D0 wake of the discrete GPU on every GTK4 app
+# launch, adding ~1.5 seconds of ACPI latency per window. On AMD systems, the
+# Vulkan backend also has known bugs: black borders (Mesa 25.3), window
+# corruption (amdvlk 2024.Q4.2+), and VK_ERROR_DEVICE_LOST crashes. The GL
+# renderer avoids all of these issues with no perceptible cost for toolkit apps.
+# Users who want Vulkan for specific workloads can unset this per-application.
+export GSK_RENDERER=gl
+
+# Required for systemd user services that check ConditionEnvironment=XDG_SESSION_CLASS.
+# Without this, localsearch-3 (tracker3) fails to activate, causing D-Bus
+# activation timeouts (~3s) when GTK4 apps query the file indexer.
+export XDG_SESSION_CLASS=user
+
 # --- Java Configuration ---
 # Fixes blank screens/rendering issues in tiling WMs (Java AWT).
 export _JAVA_AWT_WM_NONREPARENTING=1

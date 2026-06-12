@@ -61,6 +61,7 @@
 .config/qt6ct/
 .config/rofi/
 .config/systemd/user/swaync.service.d/
+.config/xdg-desktop-portal/hyprland-portals.conf
 .config/xdg-terminals.list
 .config/xsettingsd/
 .config/yazi/
