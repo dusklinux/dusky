@@ -228,9 +228,8 @@ main() {
             COMPLETED_PATCHES["$cmd_hash"]=1
             log "SUCCESS" "Patch applied successfully."
         else
-            log "ERROR" "Patch failed with exit code $result: $cmd"
-            log "WARN" "Halting fleet patcher to prevent cascading failures."
-            exit 1
+            log "WARN" "Patch failed with exit code $result: $cmd"
+            log "WARN" "Continuing orchestration despite failure..."
         fi
     done
 }
