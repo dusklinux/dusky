@@ -308,28 +308,35 @@ case "$choice" in
         ;;
         
     '󰋊  Disk Usage')
-        # Dynamically aggregate available disks
-        d_opts=("󰋊  Root Partition (/)")
-        
-        while read -r line; do
-            name=$(echo "$line" | awk '{print $1}')
-            # Filter out loops and rams exactly as python IO monitor
-            [[ "$name" =~ ^(loop|sr|ram|dm|fd) ]] && continue
-            
-            # Form clean label with device model
-            model=$(echo "$line" | cut -d' ' -f2- | xargs)
-            d_opts+=("󰆼  $name ($model)")
-        done < <(lsblk -d -n -o NAME,MODEL)
-        
-        dchoice=$(printf '%s\n' "${d_opts[@]}" | "${ROFI_SUB[@]}" -p "Select Target") || exit 0
-        
-        # Original fallback fallback / root partition logic
-        if [[ "$dchoice" == *"Root Partition"* ]]; then
+        # Segmented Storage Categories
+        st_opts=(
+            "󰋊  Root Partition (/)"
+            "󰆼  Solid State Drives (SSD)"
+            "󰋊  Hard Disk Drives (HDD)"
+            "󰘚  RAM-based Storage"
+        )
+        stchoice=$(printf '%s\n' "${st_opts[@]}" | "${ROFI_SUB[@]}" -p "Storage Type") || exit 0
+
+        if [[ "$stchoice" == *"Root Partition"* ]]; then
             "$DAEMON_SCRIPT" --disk & disown
-        else
-            # Extract pure device name cleanly
-            dev_name=$(echo "$dchoice" | awk '{print $2}')
             
+        elif [[ "$stchoice" == *"Solid State Drives"* ]]; then
+            declare -a ssd_opts=()
+            
+            # Robust AWK extraction guarantees reliable mapping regardless of spaces in model names
+            while IFS=$'\t' read -r name model rota; do
+                [[ "$name" =~ ^(loop|sr|ram|dm|fd) ]] && continue
+                if [[ "$rota" == "0" ]]; then
+                    ssd_opts+=("󰆼  $name (${model:-Unknown})")
+                fi
+            done < <(lsblk -d -n -o NAME,MODEL,ROTA | awk '{ r=$NF; n=$1; $1=""; $NF=""; sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print n "\t" $0 "\t" r }')
+
+            [[ ${#ssd_opts[@]} -eq 0 ]] && ssd_opts=("󰜺  No SSDs found")
+            
+            dchoice=$(printf '%s\n' "${ssd_opts[@]}" | "${ROFI_SUB[@]}" -p "Select SSD") || exit 0
+            [[ "$dchoice" == *"No SSDs"* ]] && exit 0
+            
+            dev_name=$(echo "$dchoice" | awk '{print $2}')
             rw_opts=("󰑍  Live Read" "󰏫  Live Write" "  Temperature")
             rwchoice=$(printf '%s\n' "${rw_opts[@]}" | "${ROFI_SUB[@]}" -p "/dev/$dev_name") || exit 0
             
@@ -340,6 +347,42 @@ case "$choice" in
             elif [[ "$rwchoice" == *"Temperature"* ]]; then
                 "$DAEMON_SCRIPT" --disk-temp "$dev_name" & disown
             fi
+
+        elif [[ "$stchoice" == *"Hard Disk Drives"* ]]; then
+            declare -a hdd_opts=()
+            
+            while IFS=$'\t' read -r name model rota; do
+                [[ "$name" =~ ^(loop|sr|ram|dm|fd) ]] && continue
+                if [[ "$rota" == "1" ]]; then
+                    hdd_opts+=("󰋊  $name (${model:-Unknown})")
+                fi
+            done < <(lsblk -d -n -o NAME,MODEL,ROTA | awk '{ r=$NF; n=$1; $1=""; $NF=""; sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print n "\t" $0 "\t" r }')
+
+            [[ ${#hdd_opts[@]} -eq 0 ]] && hdd_opts=("󰜺  No HDDs found")
+            
+            dchoice=$(printf '%s\n' "${hdd_opts[@]}" | "${ROFI_SUB[@]}" -p "Select HDD") || exit 0
+            [[ "$dchoice" == *"No HDDs"* ]] && exit 0
+            
+            dev_name=$(echo "$dchoice" | awk '{print $2}')
+            rw_opts=("󰑍  Live Read" "󰏫  Live Write" "  Temperature")
+            rwchoice=$(printf '%s\n' "${rw_opts[@]}" | "${ROFI_SUB[@]}" -p "/dev/$dev_name") || exit 0
+            
+            if [[ "$rwchoice" == *"Read"* ]]; then
+                "$DAEMON_SCRIPT" --disk-read "$dev_name" & disown
+            elif [[ "$rwchoice" == *"Write"* ]]; then
+                "$DAEMON_SCRIPT" --disk-write "$dev_name" & disown
+            elif [[ "$rwchoice" == *"Temperature"* ]]; then
+                "$DAEMON_SCRIPT" --disk-temp "$dev_name" & disown
+            fi
+
+        elif [[ "$stchoice" == *"RAM-based Storage"* ]]; then
+            # Allows future expansion for ZRAM1, ZRAM2, tmpfs, etc.
+            ramst_opts=("󰘚  ZRAM Usage" "󰘚  tmpfs Usage (Placeholder)")
+            rchoice=$(printf '%s\n' "${ramst_opts[@]}" | "${ROFI_SUB[@]}" -p "RAM Storage") || exit 0
+            
+            if [[ "$rchoice" == *"ZRAM"* ]]; then
+                "$DAEMON_SCRIPT" --zram & disown
+            fi
         fi
         ;;
 
@@ -347,22 +390,21 @@ case "$choice" in
     '󰥔  Live Clock')     "$DAEMON_SCRIPT" --clock & disown ;;
     '  CPU Usage')      "$DAEMON_SCRIPT" --cpu & disown ;;
     '󰘚  Memory (RAM)')
-        m_opts=("󰘚  RAM Usage" "󰘚  RAM Temperature" "󰘚  ZRAM Usage")
+        # Streamlined purely for Physical RAM (Moved ZRAM to Storage)
+        m_opts=("󰘚  System RAM Usage" "  RAM Temperature")
         mchoice=$(printf '%s\n' "${m_opts[@]}" | "${ROFI_SUB[@]}" -p "Memory") || exit 0
 
-        if [[ "$mchoice" == *"Usage"* ]] && [[ "$mchoice" != *"ZRAM"* ]]; then
+        if [[ "$mchoice" == *"Usage"* ]]; then
             "$DAEMON_SCRIPT" --ram & disown
         elif [[ "$mchoice" == *"Temperature"* ]]; then
             "$DAEMON_SCRIPT" --ram-temp & disown
-        elif [[ "$mchoice" == *"ZRAM"* ]]; then
-            "$DAEMON_SCRIPT" --zram & disown
         fi
         ;;
     '  CPU Temp')       "$DAEMON_SCRIPT" --temp & disown ;;
     '󰁹  Battery / Power')"$DAEMON_SCRIPT" --battery & disown ;;
     '󰈀  Network Speed')  "$DAEMON_SCRIPT" --network & disown ;;
     '󰔚  System Uptime')  "$DAEMON_SCRIPT" --uptime & disown ;;
-    '󰽽  Active Workspace')"$DAEMON_SCRIPT" --workspace & disown ;;
-    '󰸉  Edit appearances') foot --app-id=dusky_tui python ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/mako_osd/dusky_glance/tui_glance_mako.py & disown ;;
+    '󰽽  Workspace')      "$DAEMON_SCRIPT" --workspace & disown ;;
+    '󰸉  Edit')           foot --app-id=dusky_tui python ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/mako_osd/dusky_glance/tui_glance_mako.py & disown ;;
     '󰜺  Stop / Clear')   "$DAEMON_SCRIPT" --stop & disown ;;
 esac
