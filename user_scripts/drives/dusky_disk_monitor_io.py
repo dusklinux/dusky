@@ -156,6 +156,36 @@ class SysStatParser:
         except (IndexError, ValueError, IOError): return None
 
     @staticmethod
+    def _get_smartctl_data(device: str) -> SmartInfo:
+        info = SmartInfo()
+        try:
+            cmd = ["sudo", "-n", "smartctl", "-A", f"/dev/{device}"]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+            if res.returncode == 0 or res.returncode == 32:
+                for line in res.stdout.splitlines():
+                    if "Temperature_Celsius" in line:
+                        parts = line.split()
+                        if parts:
+                            raw = parts[-1]
+                            if raw.isdigit() and 0 < int(raw) < 200:
+                                info.temp = f"{raw}°"
+                    elif "Reallocated_Sector_Ct" in line:
+                        parts = line.split()
+                        if parts:
+                            info.media_errors = parts[-1]
+
+            cmd_h = ["sudo", "-n", "smartctl", "-H", f"/dev/{device}"]
+            res_h = subprocess.run(cmd_h, capture_output=True, text=True, timeout=3)
+            out_h = res_h.stdout
+            if "PASSED" in out_h:
+                info.health = "PASSED"
+            elif "FAILED" in out_h:
+                info.health = "FAILED"
+        except Exception:
+            pass
+        return info
+
+    @staticmethod
     def get_smart_data(device: str) -> SmartInfo:
         info = SmartInfo()
         # Parse standard NVMe namespace (e.g. nvme0n1) directly to controller (nvme0)
@@ -212,6 +242,8 @@ class SysStatParser:
                     else:
                         info.temp = "N/A"
             except Exception: pass
+        else:
+            info = SysStatParser._get_smartctl_data(device)
             
         return info
 
@@ -373,12 +405,17 @@ class DriveWidget(Static, can_focus=True):
         # Tucked latency specifically for HDDs and ZRAMs to keep UI slim
         latency_val = f"[bold {ERROR}]{await_ms:>5.2f} ms[/]" if is_compact else ""
 
+        # Compact temp: show on Read row (blank space above latency)
+        compact_temp = ""
+        if is_compact and smart.temp != "N/A":
+            compact_temp = f"[{WARNING}]{smart.temp}[/]"
+
         # Row 1: Active Read Stats (Speeds shifted left into R2/R3 labels to close gap)
         table.add_row(
             f"[{WARNING}]Read:[/]", f"[bold {SUCCESS}]{read_mb:>8.1f} MB[/]", "",
             f"[bold {ACCENT}]READ[/]", f"{r_spark}",
             f"[bold {FG}]{r_spd}[/]", "",
-            f"{r_iops_str}", ""
+            f"{r_iops_str}", f"{compact_temp}"
         )
         
         # Row 2: Active Write Stats
