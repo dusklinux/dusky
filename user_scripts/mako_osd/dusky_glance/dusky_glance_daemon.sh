@@ -361,7 +361,7 @@ case "$MODE" in
             exit 1
         fi
 
-        # Discover ALL hwmon temp sensors for this block device
+        # Method 1: Kernel hwmon (fastest, zero subprocess)
         temp_files=()
         for tfile in /sys/block/"$DEV"/device/hwmon*/temp*_input; do
             [[ -f "$tfile" ]] && temp_files+=("$tfile")
@@ -371,6 +371,12 @@ case "$MODE" in
             for tfile in /sys/class/nvme/"$ctrl_dev"/hwmon*/temp*_input; do
                 [[ -f "$tfile" ]] && temp_files+=("$tfile")
             done
+        fi
+
+        # Method 2: smartctl (USB enclosures, external drives without hwmon)
+        use_smartctl=false
+        if [[ ${#temp_files[@]} -eq 0 ]] && command -v smartctl >/dev/null 2>&1; then
+            use_smartctl=true
         fi
 
         while true; do
@@ -383,6 +389,23 @@ case "$MODE" in
                 done
                 if [[ ${#temps[@]} -gt 0 ]]; then
                     send_osd "${temps[*]}"
+                else
+                    send_osd "N/A"
+                fi
+            elif [[ "$use_smartctl" == true ]]; then
+                smart_out=$(smartctl -A "/dev/$DEV" 2>/dev/null || sudo smartctl -A "/dev/$DEV" 2>/dev/null)
+                if [[ -n "$smart_out" ]]; then
+                    # SATA: "194 Temperature_Celsius ... 32" → last field
+                    # NVMe: "Temperature: 34 Celsius" → field after colon
+                    temps=()
+                    while IFS= read -r val; do
+                        [[ "$val" =~ ^[0-9]+$ ]] && (( val > 0 && val < 200 )) && temps+=("${val}°")
+                    done < <(echo "$smart_out" | awk '/Temperature_Celsius/{print $NF} /^Temperature:/{print $2}')
+                    if [[ ${#temps[@]} -gt 0 ]]; then
+                        send_osd "${temps[*]}"
+                    else
+                        send_osd "N/A"
+                    fi
                 else
                     send_osd "N/A"
                 fi
