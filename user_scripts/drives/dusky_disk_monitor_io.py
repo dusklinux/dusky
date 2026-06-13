@@ -494,8 +494,9 @@ class IOMonitorApp(App):
     
     #custom_header {{
         height: 1;
-        background: {MUTED};
-        color: {FG};
+        background: {BG};
+        color: {ACCENT};
+        text-style: bold;
         text-align: center;
     }}
 
