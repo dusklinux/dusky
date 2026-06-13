@@ -18,7 +18,6 @@ import hashlib
 import threading
 import subprocess
 import argparse
-import ctypes
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -50,26 +49,6 @@ RENDER_SIZE = 145
 IMAGE_EXTENSIONS = frozenset({'.jpg', '.jpeg', '.png', '.webp', '.gif'})
 
 _NATURAL_SORT_RE = re.compile(r'(\d+)')
-
-# --- WAYLAND FOCUS GRAB INTEGRATION ---
-WAYLAND_GRAB_LIB = None
-
-def _init_wayland_grab_lib():
-    global WAYLAND_GRAB_LIB
-    
-    # Static path provided for the compiled library
-    lib_path = HOME / "user_scripts/dusky_system/click_away_to_dismiss/libwaylandgrab.so"
-    
-    try:
-        lib = ctypes.CDLL(str(lib_path))
-        lib.init_wayland_grab.argtypes = [ctypes.c_void_p, ctypes.CFUNCTYPE(None)]
-        lib.destroy_wayland_grab.argtypes = []
-        WAYLAND_GRAB_LIB = lib
-        print(f"Wayland focus grab library loaded from: {lib_path}")
-    except OSError as e:
-        print(f"Note: libwaylandgrab.so not found at {lib_path}. Click-away to dismiss will be disabled. Error: {e}")
-
-_init_wayland_grab_lib()
 
 def natural_keys(text: str) -> list:
     """Algorithms for natural/version sorting (matches bash 'sort -V')."""
@@ -397,7 +376,6 @@ class WallpaperApp:
 
         self._loading_progress_bar = None
         self._loading_status_label = None
-        self._grab_callback = None # Hold reference to ctypes callback
 
         self.wallpapers = []
         self.favorites = set()
@@ -613,23 +591,6 @@ class WallpaperApp:
         if self.window:
             self.window.present()
             self.flowbox.grab_focus()
-            
-            # Init the wayland click-away grabber after the window is realized
-            def _init_grab():
-                if WAYLAND_GRAB_LIB and self.window:
-                    self._grab_callback = ctypes.CFUNCTYPE(None)(self.on_click_away)
-                    WAYLAND_GRAB_LIB.init_wayland_grab(
-                        ctypes.c_void_p(hash(self.window)), 
-                        self._grab_callback
-                    )
-                return False
-            self.GLib.idle_add(_init_grab)
-
-    def on_click_away(self):
-        """Called safely from the C-library when focus is lost"""
-        if self.window:
-            print("Click-away detected. Dismissing wallpaper selector...")
-            self.window.close()
 
     def show_settings_popover(self, widget):
         popover = self.Gtk.Popover.new(widget)
@@ -731,8 +692,6 @@ class WallpaperApp:
         popover.popup()
 
     def on_window_destroy(self, widget):
-        if WAYLAND_GRAB_LIB:
-            WAYLAND_GRAB_LIB.destroy_wayland_grab()
         self.window = None
 
     def on_app_shutdown(self, application):
