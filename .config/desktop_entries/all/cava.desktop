@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Cava
+GenericName=Audio Visualizer
+Comment=Console-based Audio Visualizer for ALSA
+Exec=uwsm-app -- kitty --class cava -e cava
+Terminal=false
+Categories=Audio;Video;
+Keywords=audio;visualizer;tui;
+Icon=utilities-terminal
+StartupNotify=true
