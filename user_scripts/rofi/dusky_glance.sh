@@ -313,7 +313,6 @@ case "$choice" in
             "󰋊  Root Partition (/)"
             "󰆼  Solid State Drives (SSD)"
             "󰋊  Hard Disk Drives (HDD)"
-            "󰘚  RAM-based Storage"
         )
         stchoice=$(printf '%s\n' "${st_opts[@]}" | "${ROFI_SUB[@]}" -p "Storage Type") || exit 0
 
@@ -374,15 +373,6 @@ case "$choice" in
             elif [[ "$rwchoice" == *"Temperature"* ]]; then
                 "$DAEMON_SCRIPT" --disk-temp "$dev_name" & disown
             fi
-
-        elif [[ "$stchoice" == *"RAM-based Storage"* ]]; then
-            # Allows future expansion for ZRAM1, ZRAM2, tmpfs, etc.
-            ramst_opts=("󰘚  ZRAM Usage" "󰘚  tmpfs Usage (Placeholder)")
-            rchoice=$(printf '%s\n' "${ramst_opts[@]}" | "${ROFI_SUB[@]}" -p "RAM Storage") || exit 0
-            
-            if [[ "$rchoice" == *"ZRAM"* ]]; then
-                "$DAEMON_SCRIPT" --zram & disown
-            fi
         fi
         ;;
 
@@ -390,14 +380,15 @@ case "$choice" in
     '󰥔  Live Clock')     "$DAEMON_SCRIPT" --clock & disown ;;
     '  CPU Usage')      "$DAEMON_SCRIPT" --cpu & disown ;;
     '󰘚  Memory (RAM)')
-        # Streamlined purely for Physical RAM (Moved ZRAM to Storage)
-        m_opts=("󰘚  System RAM Usage" "  RAM Temperature")
+        m_opts=("󰘚  System RAM Usage" "󰘚  RAM Temperature" "󰘚  ZRAM Usage")
         mchoice=$(printf '%s\n' "${m_opts[@]}" | "${ROFI_SUB[@]}" -p "Memory") || exit 0
 
-        if [[ "$mchoice" == *"Usage"* ]]; then
+        if [[ "$mchoice" == *"System RAM"* ]]; then
             "$DAEMON_SCRIPT" --ram & disown
         elif [[ "$mchoice" == *"Temperature"* ]]; then
             "$DAEMON_SCRIPT" --ram-temp & disown
+        elif [[ "$mchoice" == *"ZRAM"* ]]; then
+            "$DAEMON_SCRIPT" --zram & disown
         fi
         ;;
     '  CPU Temp')       "$DAEMON_SCRIPT" --temp & disown ;;
