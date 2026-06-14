@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# 010_download_pacman_packages.sh  —  v6.13 (Golden Master)
+# 010_download_pacman_packages.sh  —  v6.14 (Golden Master - Patched)
 #
 # Factory script: resolves the FULL transitive dependency closure of all
 # defined package groups, downloads them into a local directory, then builds
@@ -107,7 +107,6 @@ readonly EXTERNAL_PKG_LIST="${REAL_HOME}/user_scripts/arch_iso_scripts/offline_i
 
 readonly REPO_NAME='archrepo'
 readonly ISOLATED_DB_DIR='/tmp/offline_pacman_isolated_db'
-readonly PACCACHE_KEEP=1
 
 declare -g OFFLINE_REPO_DIR=''
 declare -g INTERACTIVE_MODE=1
@@ -275,7 +274,7 @@ _prompt_repo_dir() {
 
 _check_dependencies() {
   log_info "Checking required tools"
-  local -a required=(pacman repo-add paccache bc awk grep curl)
+  local -a required=(pacman repo-add bc awk grep curl)
   local tool missing=0
   for tool in "${required[@]}"; do
     if command -v "$tool" &>/dev/null; then log_step "${tool}: $(command -v "$tool")"
@@ -516,13 +515,13 @@ _setup_repo_dir() {
 }
 
 # ==============================================================================
-# SECTION 11 — WHITELIST GENERATION (BASE PACKAGE NAMES)
+# SECTION 11 — EXACT FILENAME WHITELIST GENERATION
 # ==============================================================================
 
-declare -ga WHITELIST_PKGNAMES=()
+declare -ga WHITELIST_FILENAMES=()
 
-_generate_whitelist_pkgnames() {
-  log_info "Resolving full dependency closure (Whitelist)"
+_generate_whitelist_filenames() {
+  log_info "Resolving full dependency closure (Exact Filenames)"
   
   local empty_cache tmp_out pacman_rc
   empty_cache=$(mktemp -d) || die "Cannot create temp cache."
@@ -532,8 +531,9 @@ _generate_whitelist_pkgnames() {
   _register_temp "$tmp_out"
 
   set +e
+  # We use %f to capture the exact, final filename (e.g. fzf-0.72.0-1.1-x86_64_v3.pkg.tar.zst)
   _pacman_isolated \
-    -Sw --print --print-format '%n' \
+    -Sw --print --print-format '%f' \
     --cachedir "$empty_cache" \
     -- "${MASTER_PKGS[@]}" >"$tmp_out"
   pacman_rc=$?
@@ -550,11 +550,12 @@ _generate_whitelist_pkgnames() {
   for line in "${raw_lines[@]}"; do
     [[ -n "$line" ]] || continue
     [[ "$line" == warning:* ]] && continue
-    WHITELIST_PKGNAMES+=("$line")
+    line="${line##*/}" # Strip URLs if present, isolating just the filename
+    WHITELIST_FILENAMES+=("$line")
   done
 
-  (( ${#WHITELIST_PKGNAMES[@]} > 0 )) || die "Whitelist generation failed."
-  log_ok "Closure resolved: ${#WHITELIST_PKGNAMES[@]} active base packages required."
+  (( ${#WHITELIST_FILENAMES[@]} > 0 )) || die "Whitelist generation failed."
+  log_ok "Closure resolved: ${#WHITELIST_FILENAMES[@]} active files required."
 }
 
 # ==============================================================================
@@ -575,30 +576,27 @@ _download_packages() {
 }
 
 # ==============================================================================
-# SECTION 13 — ORPHAN PRUNING (STRING DECONSTRUCTION)
+# SECTION 13 — STRICT FILENAME CACHE PRUNING
 # ==============================================================================
 
-_prune_orphans() {
-  log_info "Pruning true orphans from: ${OFFLINE_REPO_DIR}"
+_prune_unneeded_packages() {
+  log_info "Pruning orphans and obsolete versions from: ${OFFLINE_REPO_DIR}"
 
   local -A _wl_set=()
-  for pn in "${WHITELIST_PKGNAMES[@]}"; do _wl_set[$pn]=1; done
+  for fn in "${WHITELIST_FILENAMES[@]}"; do _wl_set[$fn]=1; done
 
   local -i del_count=0 del_bytes=0
   local -a pkg_files=()
   mapfile -t pkg_files < <(find "${OFFLINE_REPO_DIR}" -maxdepth 1 -name '*.pkg.tar.*' ! -name '*.sig' -type f)
 
-  local filepath basename pkgname rest fsize
+  local filepath basename fsize
   for filepath in "${pkg_files[@]}"; do
     basename="${filepath##*/}"
-    rest="${basename%%.pkg.tar.*}" 
-    rest="${rest%-*}"              
-    rest="${rest%-*}"              
-    pkgname="${rest%-*}"           
 
-    if [[ -z "${_wl_set[$pkgname]+_}" ]]; then
+    # If the exact filename isn't in the closure, it is an old version, dead architecture, or orphan. Delete it.
+    if [[ -z "${_wl_set[$basename]+_}" ]]; then
       fsize=$(stat -c '%s' -- "$filepath" 2>/dev/null) || fsize=0
-      log_delete "orphan removed: ${pkgname}  (${basename})"
+      log_delete "pruned unneeded package: ${basename}"
       rm -f -- "$filepath" "${filepath}.sig"
       
       (( del_bytes += fsize )) || true
@@ -606,6 +604,7 @@ _prune_orphans() {
     fi
   done
 
+  # Clean up stale signatures
   while IFS= read -r lone_sig; do
     local paired_pkg="${lone_sig%.sig}"
     if [[ ! -f "$paired_pkg" ]]; then
@@ -615,26 +614,14 @@ _prune_orphans() {
   done < <(find "${OFFLINE_REPO_DIR}" -maxdepth 1 -name '*.sig' -type f)
 
   if (( del_count > 0 )); then
-    log_ok "Pruned ${del_count} orphaned file(s). Freed ~$( _human_bytes "$del_bytes" )."
+    log_ok "Pruned ${del_count} unneeded file(s). Freed ~$( _human_bytes "$del_bytes" )."
   else
-    log_ok "No orphans found."
+    log_ok "No unneeded files found."
   fi
 }
 
 # ==============================================================================
-# SECTION 14 — OLD-VERSION CACHE MANAGEMENT (PACCACHE)
-# ==============================================================================
-
-_prune_old_versions() {
-  log_info "Removing old package versions (keeping ${PACCACHE_KEEP})"
-  
-  echo y | paccache -r -k "${PACCACHE_KEEP}" -c "${OFFLINE_REPO_DIR}" || die "paccache failed."
-    
-  log_ok "Cache pruned successfully."
-}
-
-# ==============================================================================
-# SECTION 15 — REPOSITORY DATABASE GENERATION
+# SECTION 14 — REPOSITORY DATABASE GENERATION
 # ==============================================================================
 
 _generate_repo_database() {
@@ -652,12 +639,13 @@ _generate_repo_database() {
   mapfile -t pkg_files < <(find "${OFFLINE_REPO_DIR}" -maxdepth 1 -name '*.pkg.tar.*' ! -name '*.sig' -type f | sort)
   (( ${#pkg_files[@]} > 0 )) || die "No packages to index."
 
-  repo-add "${db_file}" "${pkg_files[@]}" >/dev/null || die "repo-add failed."
+  # Run repo-add strictly on a single thread to bypass any underlying CachyOS Rust rayon race conditions
+  RAYON_NUM_THREADS=1 repo-add "${db_file}" "${pkg_files[@]}" >/dev/null || die "repo-add failed."
   log_ok "Database and symlinks created."
 }
 
 # ==============================================================================
-# SECTION 16 — SMART PERMISSIONS RESTORATION
+# SECTION 15 — SMART PERMISSIONS RESTORATION
 # ==============================================================================
 
 _restore_permissions() {
@@ -673,7 +661,7 @@ _restore_permissions() {
 }
 
 # ==============================================================================
-# SECTION 17 — SUMMARY
+# SECTION 16 — SUMMARY
 # ==============================================================================
 
 _print_summary() {
@@ -690,14 +678,14 @@ _print_summary() {
   printf '  %s%-34s%s %s\n' "${BOLD}" "Target Architecture:"       "${RESET}" "${mode_name}"
   printf '  %s%-34s%s %s\n' "${BOLD}" "Offline repo path:"         "${RESET}" "${OFFLINE_REPO_DIR}"
   printf '  %s%-34s%s %s\n' "${BOLD}" "Repository name:"           "${RESET}" "${REPO_NAME}"
-  printf '  %s%-34s%s %s\n' "${BOLD}" "Active closure requested:"  "${RESET}" "${#WHITELIST_PKGNAMES[@]}"
+  printf '  %s%-34s%s %s\n' "${BOLD}" "Active closure requested:"  "${RESET}" "${#WHITELIST_FILENAMES[@]}"
   printf '  %s%-34s%s %d\n' "${BOLD}" "Final files on disk:"       "${RESET}" "${pkg_count}"
   printf '  %s%-34s%s %s\n' "${BOLD}" "Total repo size:"           "${RESET}" "${repo_sz}"
   printf '\n%s%s[SUCCESS]%s Repository is primed for ISO integration.\n\n' "${BOLD}" "${GREEN}" "${RESET}"
 }
 
 # ==============================================================================
-# SECTION 18 — MAIN
+# SECTION 17 — MAIN
 # ==============================================================================
 
 main() {
@@ -715,10 +703,9 @@ main() {
   _setup_repo_dir
   _build_master_list
   _init_isolated_db
-  _generate_whitelist_pkgnames
+  _generate_whitelist_filenames
   _download_packages
-  _prune_orphans
-  _prune_old_versions
+  _prune_unneeded_packages
   _generate_repo_database
   _restore_permissions
   _print_summary
