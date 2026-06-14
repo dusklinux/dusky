@@ -280,7 +280,9 @@ def get_all_subvolumes() -> list[SubvolMeta]:
         raw_dev = m.get("source")
         if not raw_dev: continue
         
-        dev = os.path.realpath(raw_dev)
+        # findmnt annotates btrfs sources with subvolume info (e.g. /dev/nvme0n1p2[/@]).
+        # Strip the [/subvol] bracket notation so mount(8) receives a valid block device path.
+        dev = os.path.realpath(re.sub(r'\[.*?\]', '', raw_dev))
         if dev in seen_devs: continue
         seen_devs.add(dev)
         
