@@ -50,9 +50,8 @@ mountpoint = "/mnt/fast"
 outer_uuid = "dbbe37b5-af7a-4c80-8991-b12982fd3573"
 inner_uuid = "fec5f227-9935-4a4d-a35f-ff26ead98ff3"
 fstype = "ext4"
-# CRITICAL NOTE ON THESE FLAGS "nobarrier" "journal_async_commit" THESE WILL CAUSE DATA LOSS IF THE EXTERNAL DRIVE IS PRONE TO DISCONNECT BECAUSE OF USB ISSUES, SO REMOVE THEM IF YOU WANT RELIABLILTY
 hint = "game_simple"
-mount_options = ["noatime", "nobarrier", "journal_async_commit", "delalloc", "commit=20"]
+mount_options = ["noatime", "delalloc", "commit=20"]
 
 [drives.slow]
 type = "PROTECTED"
