@@ -179,9 +179,10 @@ determine_root_partition() {
             else
                 local -a btrfs_parts=()
                 local part fstype
+                # [MODIFIED]: Added -l (--list) to force list format parsing
                 while read -r part fstype; do
                     [[ "$fstype" == "btrfs" ]] && btrfs_parts+=("$part")
-                done < <(lsblk -pnro NAME,FSTYPE 2>/dev/null || true)
+                done < <(lsblk -pnlro NAME,FSTYPE 2>/dev/null || true)
 
                 if (( ${#btrfs_parts[@]} == 1 )); then
                     ROOT_PART=$(readlink -f "${btrfs_parts[0]}")
@@ -194,7 +195,8 @@ determine_root_partition() {
             fi
         else
             echo -e "${C_CYAN}Available block devices:${C_RESET}"
-            lsblk -o NAME,SIZE,TYPE,FSTYPE,PARTLABEL
+            # [MODIFIED]: Added -l (--list)
+            lsblk -l -o NAME,SIZE,TYPE,FSTYPE,PARTLABEL
             echo ""
             read -r -p "Enter your BTRFS root partition (e.g., nvme0n1p2): " raw_root
             ROOT_PART=$(readlink -f "/dev/${raw_root#/dev/}")
@@ -208,7 +210,8 @@ determine_root_partition() {
     fi
 
     local root_disk_name=""
-    root_disk_name=$(lsblk -ndo PKNAME "$ROOT_PART" 2>/dev/null | head -n1 || true)
+    # [MODIFIED]: Added -l (--list)
+    root_disk_name=$(lsblk -ndlo PKNAME "$ROOT_PART" 2>/dev/null | head -n1 || true)
 
     if [[ -z "$root_disk_name" ]]; then
         echo -e "${C_RED}Critical: Failed to determine the parent disk for $ROOT_PART.${C_RESET}"
@@ -230,7 +233,8 @@ validate_root_state() {
         exit 1
     fi
 
-    root_fstype=$(lsblk -ndo FSTYPE "$MAPPED_ROOT" 2>/dev/null | head -n1 || true)
+    # [MODIFIED]: Added -l (--list)
+    root_fstype=$(lsblk -ndlo FSTYPE "$MAPPED_ROOT" 2>/dev/null | head -n1 || true)
     if [[ "$root_fstype" != "btrfs" ]]; then
         echo -e "${C_RED}Critical: $MAPPED_ROOT is not a Btrfs filesystem. Aborting.${C_RESET}"
         exit 1
@@ -256,13 +260,15 @@ validate_efi_partition() {
         exit 1
     fi
 
-    part_type=$(lsblk -ndo TYPE "$part" 2>/dev/null | head -n1 || true)
+    # [MODIFIED]: Added -l (--list)
+    part_type=$(lsblk -ndlo TYPE "$part" 2>/dev/null | head -n1 || true)
     if [[ "$part_type" != "part" ]]; then
         echo -e "${C_RED}Critical: EFI target $part is not a partition. Aborting.${C_RESET}"
         exit 1
     fi
 
-    parent_name=$(lsblk -ndo PKNAME "$part" 2>/dev/null | head -n1 || true)
+    # [MODIFIED]: Added -l (--list)
+    parent_name=$(lsblk -ndlo PKNAME "$part" 2>/dev/null | head -n1 || true)
     if [[ -z "$parent_name" ]]; then
         echo -e "${C_RED}Critical: Failed to determine the parent disk for EFI partition $part.${C_RESET}"
         exit 1
@@ -274,8 +280,9 @@ validate_efi_partition() {
         exit 1
     fi
 
-    fstype=$(lsblk -ndo FSTYPE "$part" 2>/dev/null | head -n1 || true)
-    parttype=$(lsblk -ndo PARTTYPE "$part" 2>/dev/null | head -n1 || true)
+    # [MODIFIED]: Added -l (--list)
+    fstype=$(lsblk -ndlo FSTYPE "$part" 2>/dev/null | head -n1 || true)
+    parttype=$(lsblk -ndlo PARTTYPE "$part" 2>/dev/null | head -n1 || true)
 
     if [[ "${parttype,,}" != "$EFI_GPT_TYPE" && "${fstype,,}" != "vfat" && "${fstype,,}" != "fat32" ]]; then
         echo -e "${C_RED}Critical: $part does not look like a valid EFI System Partition.${C_RESET}"
@@ -295,6 +302,7 @@ auto_detect_efi_partition() {
     local parttype=""
     local partlabel=""
 
+    # [MODIFIED]: Added -l (--list) to force list format parsing
     while read -r part type; do
         [[ "$type" == "part" ]] || continue
         part=$(readlink -f "$part")
@@ -302,9 +310,9 @@ auto_detect_efi_partition() {
 
         non_root_parts+=("$part")
 
-        parttype=$(lsblk -ndo PARTTYPE "$part" 2>/dev/null | head -n1 || true)
-        fstype=$(lsblk -ndo FSTYPE "$part" 2>/dev/null | head -n1 || true)
-        partlabel=$(lsblk -ndo PARTLABEL "$part" 2>/dev/null | head -n1 || true)
+        parttype=$(lsblk -ndlo PARTTYPE "$part" 2>/dev/null | head -n1 || true)
+        fstype=$(lsblk -ndlo FSTYPE "$part" 2>/dev/null | head -n1 || true)
+        partlabel=$(lsblk -ndlo PARTLABEL "$part" 2>/dev/null | head -n1 || true)
 
         if [[ "${parttype,,}" == "$EFI_GPT_TYPE" ]]; then
             guid_matches+=("$part")
@@ -317,7 +325,7 @@ auto_detect_efi_partition() {
         if [[ "${fstype,,}" == "vfat" || "${fstype,,}" == "fat32" ]]; then
             vfat_matches+=("$part")
         fi
-    done < <(lsblk -pnro NAME,TYPE "$disk" 2>/dev/null)
+    done < <(lsblk -pnlro NAME,TYPE "$disk" 2>/dev/null)
 
     if (( ${#guid_matches[@]} == 1 )); then
         printf '%s\n' "${guid_matches[0]}"
@@ -355,7 +363,8 @@ prompt_for_efi_partition() {
     local raw_efi=""
 
     echo -e "${C_CYAN}Available partitions on ${ROOT_DISK}:${C_RESET}"
-    lsblk -o NAME,SIZE,TYPE,FSTYPE,PARTTYPE,PARTLABEL "$ROOT_DISK"
+    # [MODIFIED]: Added -l (--list)
+    lsblk -l -o NAME,SIZE,TYPE,FSTYPE,PARTTYPE,PARTLABEL "$ROOT_DISK"
     read -r -p "Enter your EFI partition (e.g., nvme0n1p1): " raw_efi
     EFI_PART=$(readlink -f "/dev/${raw_efi#/dev/}")
 }
@@ -406,8 +415,11 @@ construct_subvolume_matrix() {
         "@var_lib_portables"
     )
 
+    # [MODIFIED]: Added standard NOCOW exclusions for database environments
     declare -a NOCOW_SUBVOLS=(
         "@var_lib_libvirt"
+        "@var_lib_mysql"
+        "@var_lib_postgres"
         "@swap"
     )
 
@@ -432,7 +444,8 @@ assemble_fhs() {
     mkdir -p /mnt
     mount -o "${BTRFS_OPTS},subvol=@" "$MAPPED_ROOT" /mnt
 
-    mkdir -p /mnt/{home,.snapshots,var/log,var/cache,var/tmp,var/lib/machines,var/lib/portables,var/lib/libvirt,swap,boot}
+    # [MODIFIED]: Added directories for new DB subvolumes
+    mkdir -p /mnt/{home,.snapshots,var/log,var/cache,var/tmp,var/lib/machines,var/lib/portables,var/lib/libvirt,var/lib/mysql,var/lib/postgres,swap,boot}
 
     mount -o "${BTRFS_OPTS},subvol=@home"              "$MAPPED_ROOT" /mnt/home
     mount -o "${BTRFS_OPTS},subvol=@snapshots"         "$MAPPED_ROOT" /mnt/.snapshots
@@ -441,7 +454,11 @@ assemble_fhs() {
     mount -o "${BTRFS_OPTS},subvol=@var_tmp"           "$MAPPED_ROOT" /mnt/var/tmp
     mount -o "${BTRFS_OPTS},subvol=@var_lib_machines"  "$MAPPED_ROOT" /mnt/var/lib/machines
     mount -o "${BTRFS_OPTS},subvol=@var_lib_portables" "$MAPPED_ROOT" /mnt/var/lib/portables
+    
+    # NOCOW Mounts
     mount -o "${BTRFS_OPTS},subvol=@var_lib_libvirt"   "$MAPPED_ROOT" /mnt/var/lib/libvirt
+    mount -o "${BTRFS_OPTS},subvol=@var_lib_mysql"     "$MAPPED_ROOT" /mnt/var/lib/mysql
+    mount -o "${BTRFS_OPTS},subvol=@var_lib_postgres"  "$MAPPED_ROOT" /mnt/var/lib/postgres
     mount -o "${BTRFS_OPTS},subvol=@swap"              "$MAPPED_ROOT" /mnt/swap
 
     mkdir -p /mnt/home/.snapshots
@@ -497,7 +514,8 @@ run_common() {
 
     SUCCESS=1
     echo -e "\n${C_GREEN}${C_BOLD}>> Setup Complete. System is primed for 'pacstrap'.${C_RESET}"
-    lsblk -f "$ROOT_DISK" || true
+    # [MODIFIED]: Flat lsblk representation of the final disk tree
+    lsblk -l -f "$ROOT_DISK" || true
 }
 
 run_auto_mode() {

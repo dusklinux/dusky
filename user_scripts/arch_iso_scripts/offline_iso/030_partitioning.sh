@@ -116,7 +116,7 @@ get_immediate_backing_device() {
 
     node=$(readlink -f "$node")
 
-    parent=$(lsblk -ndo PKNAME "$node" 2>/dev/null | head -n1 || true)
+    parent=$(lsblk -ndlo PKNAME "$node" 2>/dev/null | head -n1 || true)
     if [[ -n "$parent" ]]; then
         printf '/dev/%s\n' "$parent"
         return 0
@@ -226,7 +226,7 @@ has_active_crypt_on_device() {
     while read -r node type; do
         [[ -n "$node" && -n "$type" ]] || continue
         [[ "$type" == "crypt" ]] && return 0
-    done < <(lsblk -pnro NAME,TYPE "$dev" 2>/dev/null || true)
+    done < <(lsblk -pnlro NAME,TYPE "$dev" 2>/dev/null || true)
 
     return 1
 }
@@ -243,8 +243,8 @@ validate_target_disk() {
         exit 1
     fi
 
-    dev_type=$(lsblk -ndo TYPE "$dev" 2>/dev/null | head -n1 || true)
-    ro=$(lsblk -ndo RO "$dev" 2>/dev/null | head -n1 || true)
+    dev_type=$(lsblk -ndlo TYPE "$dev" 2>/dev/null | head -n1 || true)
+    ro=$(lsblk -ndlo RO "$dev" 2>/dev/null | head -n1 || true)
 
     if [[ "$dev_type" != "disk" ]]; then
         echo -e "${C_RED}Critical: $dev is not a whole disk. Aborting.${C_RESET}"
@@ -276,7 +276,7 @@ validate_partition_on_target() {
         exit 1
     fi
 
-    part_type=$(lsblk -ndo TYPE "$part" 2>/dev/null | head -n1 || true)
+    part_type=$(lsblk -ndlo TYPE "$part" 2>/dev/null | head -n1 || true)
     if [[ "$part_type" != "part" ]]; then
         echo -e "${C_RED}Critical: ${label} device $part is not a partition. Aborting.${C_RESET}"
         exit 1
@@ -370,7 +370,7 @@ teardown_device() {
         [[ -n "$node" && -n "$type" ]] || continue
         [[ "$type" == "crypt" ]] || continue
         crypts+=("$node")
-    done < <(lsblk -pnro NAME,TYPE "$dev" 2>/dev/null || true)
+    done < <(lsblk -pnlro NAME,TYPE "$dev" 2>/dev/null || true)
 
     if (( ${#crypts[@]} > 0 )); then
         echo -e "${C_YELLOW}>> Closing active LUKS containers on $dev...${C_RESET}"
@@ -389,7 +389,7 @@ teardown_device() {
 
 # --- Helper: Disk List ---
 print_available_disks() {
-    lsblk -d -e 7,11 -o NAME,SIZE,MODEL,TYPE,RO
+    lsblk -d -l -e 7,11 -o NAME,SIZE,MODEL,TYPE,RO
     echo ""
 }
 
@@ -529,11 +529,11 @@ run_provisioning_wizard() {
         udevadm settle
 
         echo -e "\n${C_GREEN}>> Manual partitioning finished. Please specify your target layout.${C_RESET}"
-        lsblk -o NAME,SIZE,TYPE,FSTYPE,PARTLABEL "$target_dev"
+        lsblk -l -o NAME,SIZE,TYPE,FSTYPE,PARTLABEL "$target_dev"
         echo ""
     elif (( wipe_entire_disk == 0 )); then
         echo -e "\n${C_CYAN}Available partitions on $target_dev:${C_RESET}"
-        lsblk -o NAME,SIZE,TYPE,FSTYPE,PARTLABEL "$target_dev"
+        lsblk -l -o NAME,SIZE,TYPE,FSTYPE,PARTLABEL "$target_dev"
         echo ""
     fi
 
@@ -681,7 +681,12 @@ run_provisioning_wizard() {
         fi
     fi
 
-    # Step 8: Shared Architecture Formatting (All provisioning strategies converge here safely)
+    # Step 8: Shared Architecture Formatting
+    if cryptsetup isLuks "$part_root" >/dev/null 2>&1; then
+        echo -e "${C_YELLOW}>> Cryptographically erasing existing LUKS header on $part_root...${C_RESET}"
+        cryptsetup erase "$part_root" 2>/dev/null || true
+    fi
+
     echo -e "${C_YELLOW}>> Clearing residual signatures on Root ($part_root)...${C_RESET}"
     wipefs -af "$part_root"
 
@@ -696,8 +701,8 @@ run_provisioning_wizard() {
         btrfs_target="/dev/mapper/${TARGET_CRYPT_NAME}"
     fi
 
-    echo -e "${C_YELLOW}>> Formatting Root (BTRFS)...${C_RESET}"
-    mkfs.btrfs -f -L "ARCH_ROOT" "$btrfs_target"
+    echo -e "${C_YELLOW}>> Formatting Root (BTRFS with blake2 csum and advanced features)...${C_RESET}"
+    mkfs.btrfs -f --csum blake2 -O no-holes,free-space-tree,block-group-tree -L "ARCH_ROOT" "$btrfs_target"
 
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
         if (( format_efi == 1 )); then
