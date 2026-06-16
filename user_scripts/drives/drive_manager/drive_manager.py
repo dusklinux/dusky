@@ -2,7 +2,7 @@
 
 """
 ==============================================================================
- UNIVERSAL DRIVE MANAGER (PLATINUM EDITION - ARCH OPTIMIZED)
+ UNIVERSAL DRIVE MANAGER (PLATINUM HYBRID EDITION - ARCH OPTIMIZED)
  ------------------------------------------------------------------------------
  Architecture updated to strict, cutting-edge standards based on the latest 
  util-linux (2.42+) and cryptsetup (2.8+) man pages.
@@ -21,6 +21,9 @@
   - Smart Password Retry Loop with Right-Aligned Memory History
   - Secure XDG_RUNTIME_DIR Session Persistence with Atomic Writes
   - Contextual Asynchronous SSD Maintenance (Orphaned fstrim Dispatcher)
+  - HYBRID: Direct mapper fallback to bypass sluggish udev race conditions
+  - MULTI-DRIVE: Native support for sequential multi-drive commands
+  - HARDENED: Strict OS exit code propagation for safe shell chaining (&&)
 ==============================================================================
 """
 
@@ -120,13 +123,11 @@ def prevent_root_execution():
 def get_runtime_dir() -> Path:
     """Returns a rigorously verified user-owned directory for temporary IPC and lockfiles."""
     uid = os.getuid()
-    # Explicitly handle XDG variables that are exported but contain empty strings
     runtime_env = os.environ.get("XDG_RUNTIME_DIR", "").strip()
     
     if runtime_env:
         path = Path(runtime_env) / "drive_manager"
     else:
-        # Fallback if executing outside of systemd-logind context
         path = Path(f"/tmp/.drive_manager_{uid}")
 
     if not path.exists():
@@ -135,7 +136,6 @@ def get_runtime_dir() -> Path:
         except FileExistsError:
             pass
 
-    # Strictly verify ownership and restrictive permissions to prevent CVE-377 hijacks
     st = path.stat()
     if st.st_uid != uid or (st.st_mode & 0o077) != 0:
         err(f"Security hazard: Directory {path} is improperly permissioned or hijacked.")
@@ -342,19 +342,15 @@ def resolve_busy_processes(mountpoint: Path) -> bool:
             default="n"
         )
         if ans == "y":
-            # Step 1: Gentle SIGTERM
             log(f"Sending SIGTERM (15) to {escape(p['cmd'])} (PID: {p['pid']})...")
             term_res = subprocess.run(["sudo", "kill", "-15", p['pid']], capture_output=True, text=True)
             
             if term_res.returncode == 0:
-                # Give application time to run shutdown hooks and save to OS RAM
                 time.sleep(2)
-                
                 if not is_process_alive(p['pid']):
                     success(f"Successfully terminated {escape(p['cmd'])} gracefully.")
                     action_taken = True
                 else:
-                    # Step 2: Forceful SIGKILL if still alive
                     err(f"Process {p['pid']} refused to close gracefully. Engaging SIGKILL (9)...")
                     kill_res = subprocess.run(["sudo", "kill", "-9", p['pid']], capture_output=True, text=True)
                     if kill_res.returncode == 0:
@@ -387,11 +383,9 @@ def run_cryptsetup_forensics(mapper_name: str):
 #  PERSISTENT FAILED PASSWORD STORAGE
 # ------------------------------------------------------------------------------
 def get_temp_attempts_path(drive_name: str) -> Path:
-    """Returns a secure path to the temporary attempts file within the isolated runtime dir."""
     return get_runtime_dir() / f"attempts_{drive_name}.json"
 
 def load_temp_attempts(drive_name: str) -> list[str]:
-    """Loads temporary failed password attempts securely."""
     path = get_temp_attempts_path(drive_name)
     if not path.exists():
         return []
@@ -408,14 +402,12 @@ def load_temp_attempts(drive_name: str) -> list[str]:
         return []
 
 def save_temp_attempts(drive_name: str, attempts: list[str]):
-    """Saves failed password attempts securely, executing writes atomically."""
     path = get_temp_attempts_path(drive_name)
     if len(attempts) > 50:
         attempts = attempts[-50:]
         
     temp_path = path.with_suffix(".tmp")
     try:
-        # Atomic create inside the already isolated directory
         fd = os.open(temp_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             json.dump(attempts, f)
@@ -424,7 +416,6 @@ def save_temp_attempts(drive_name: str, attempts: list[str]):
         pass
 
 def clear_temp_attempts(drive_name: str):
-    """Deletes the temporary failed password attempts file securely."""
     path = get_temp_attempts_path(drive_name)
     try:
         path.unlink(missing_ok=True)
@@ -442,7 +433,6 @@ def load_config(override_path: Path | None = None) -> dict[str, Drive]:
             sys.exit(1)
         target_config = override_path
     else:
-        # Explicitly strip empty strings to respect XDG specifications
         config_env = os.environ.get("XDG_CONFIG_HOME", "").strip()
         xdg_config = Path(config_env) if config_env else Path.home() / ".config"
         
@@ -515,9 +505,20 @@ def show_status(drives: dict[str, Drive]):
                 actual_source = Path(source_str).resolve()
                 expected_dev = resolve_device(target_uuid)
                 
+                # Check 1: Normal udev symlink match
                 if expected_dev and expected_dev == actual_source:
                     is_mounted = True
-                elif target_uuid and target_uuid.lower() in source_str.lower():
+                
+                # Check 2: Direct fallback mapper match (Fixes Fallback Desync Regression)
+                if not is_mounted and drive.type == "PROTECTED":
+                    existing_mapper = get_crypt_mapper_name(drive.outer_uuid)
+                    m_name = existing_mapper if existing_mapper else f"luks-{drive.outer_uuid}"
+                    fallback_mapper = Path(f"/dev/mapper/{m_name}")
+                    if fallback_mapper.exists() and fallback_mapper.resolve() == actual_source:
+                        is_mounted = True
+
+                # Check 3: Raw UUID inclusion
+                if not is_mounted and target_uuid and target_uuid.lower() in source_str.lower():
                      is_mounted = True
 
         if is_mounted:
@@ -529,41 +530,72 @@ def show_status(drives: dict[str, Drive]):
     console.print(table)
     console.print()
 
-def do_unlock(drive: Drive):
+def do_unlock(drive: Drive) -> bool:
     prime_sudo()
     log(f"Starting unlock sequence for '{drive.name}'...")
 
     target_uuid = drive.inner_uuid if drive.type == "PROTECTED" else drive.outer_uuid
     mount_info = get_mount_info(drive.mountpoint)
+    mapper_name = None
 
     if mount_info:
         source_str = mount_info.get("source", "")
         actual_source = Path(source_str).resolve() if source_str else Path()
         expected_dev = resolve_device(target_uuid)
-
+        
+        is_mounted = False
+        
+        # Check 1: Normal udev symlink match
         if expected_dev and expected_dev == actual_source:
+            is_mounted = True
+            
+        # Check 2: Direct fallback mapper match (Fixes Fallback Desync Regression)
+        if not is_mounted and drive.type == "PROTECTED":
+            existing_mapper = get_crypt_mapper_name(drive.outer_uuid)
+            m_name = existing_mapper if existing_mapper else f"luks-{drive.outer_uuid}"
+            fallback_mapper = Path(f"/dev/mapper/{m_name}")
+            if fallback_mapper.exists() and fallback_mapper.resolve() == actual_source:
+                is_mounted = True
+
+        # Check 3: Raw UUID inclusion
+        if not is_mounted and target_uuid and target_uuid.lower() in source_str.lower():
+            is_mounted = True
+
+        if is_mounted:
             success(f"'{drive.name}' is already successfully mounted at {drive.mountpoint}")
-            return
+            return True
         else:
             err(f"Mountpoint {drive.mountpoint} is occupied by another device: {actual_source}")
-            sys.exit(1)
+            return False
 
     if drive.type == "PROTECTED":
         if not resolve_device(drive.outer_uuid):
             err(f"Physical drive not found (Outer UUID: {drive.outer_uuid}). Is it plugged in?")
-            sys.exit(1)
+            return False
 
-        mapper_name = f"luks-{drive.outer_uuid}"
+        existing_mapper = get_crypt_mapper_name(drive.outer_uuid)
+        mapper_name = existing_mapper if existing_mapper else f"luks-{drive.outer_uuid}"
+        mapper_path = Path(f"/dev/mapper/{mapper_name}")
+        
         inner_dev = resolve_device(drive.inner_uuid)
+        
+        # --- BULLETPROOF DEVICE CHECK ---
+        # Checks both the direct mapper AND the udev symlink to prevent "Device already exists" 
+        container_unlocked = False
+        if mapper_path.exists() and is_device_readable(mapper_path):
+            container_unlocked = True
+        elif inner_dev and is_device_readable(inner_dev):
+            container_unlocked = True
 
-        if inner_dev and is_device_readable(inner_dev):
+        if container_unlocked:
             log("Crypt container is already unlocked.")
         else:
-            if inner_dev:
-                err("Crypt device is unresponsive. Closing stale mapping and reopening...")
+            # If the node exists in any form but isn't readable, it's stale
+            if mapper_path.exists() or inner_dev:
+                err("Crypt device is unresponsive. Closing stale mapping...")
                 if not run_sudo_cmd(["sudo", "cryptsetup", "close", mapper_name]):
                     err(f"Failed to close stale mapping for {mapper_name}. Manual intervention required.")
-                    sys.exit(1)
+                    return False
                 time.sleep(1)
 
             log("Unlocking encrypted container...")
@@ -584,7 +616,6 @@ def do_unlock(drive: Drive):
             else:
                 log("Could not auto-detect encryption type. Relying on cryptsetup defaults.")
 
-            # SURGICALLY ADDED --allow-discards HERE
             base_cmd = ["sudo", "cryptsetup", "open", "--allow-discards"] + crypto_type_args + [outer_dev_path, mapper_name]
             pwd = keyring.get_password(KEYRING_SERVICE, drive.name)
             
@@ -593,7 +624,7 @@ def do_unlock(drive: Drive):
                 cmd = base_cmd + ["--key-file", "-"]
                 if not run_sudo_cmd(cmd, stdin_data=pwd):
                     err("Decryption failed. Keyring password might be incorrect.")
-                    sys.exit(1)
+                    return False
             else:
                 log("No password in keyring. Falling back to manual terminal prompt.")
                 if drive.hint:
@@ -629,7 +660,7 @@ def do_unlock(drive: Drive):
                     except (KeyboardInterrupt, EOFError):
                         console.print()
                         err("Cancelled by user.")
-                        sys.exit(1)
+                        sys.exit(130)
                         
                     if not pwd_attempt:
                         continue
@@ -649,12 +680,24 @@ def do_unlock(drive: Drive):
 
             log("Waiting for filesystem block device to populate...")
             if not wait_for_device(drive.inner_uuid, FILESYSTEM_TIMEOUT):
-                err("Timeout waiting for inner filesystem to appear.")
-                sys.exit(1)
+                # Ensure mapper_path actually exists before falling back
+                if mapper_path.exists():
+                    hint_msg("Inner filesystem UUID symlink not created by udev. Proceeding with direct mapper path...")
+                else:
+                    err("Timeout waiting for inner filesystem to appear.")
+                    return False
 
     log(f"Mounting to {drive.mountpoint}...")
     
     detected_fstype = get_fstype(target_uuid)
+    
+    mount_source = f"UUID={target_uuid}"
+    if drive.type == "PROTECTED" and not resolve_device(target_uuid):
+        if mapper_name:
+            fallback_mapper = Path(f"/dev/mapper/{mapper_name}")
+            if fallback_mapper.exists():
+                mount_source = str(fallback_mapper)
+
     mount_args = ["--mkdir"]
     
     if drive.fstype:
@@ -677,20 +720,16 @@ def do_unlock(drive: Drive):
     cmd = [
         "sudo", "mount", 
         *mount_args,
-        "--source", f"UUID={target_uuid}", 
+        "--source", mount_source, 
         "--target", str(drive.mountpoint)
     ]
     
     if run_sudo_cmd(cmd):
         success(f"'{drive.name}' successfully mounted.")
         
-        # --- DYNAMIC ASYNC SSD MAINTENANCE ---
-        # Btrfs/ZFS handle this natively via async mount options.
-        # Ext4/FAT32/NTFS3 lack async discard, so we dynamically trigger it here.
         fstype_to_check = (drive.fstype or detected_fstype or "").lower()
         if fstype_to_check not in ["btrfs", "zfs"]:
             log("Dispatching asynchronous background TRIM operation to SSD firmware...")
-            # Utilizing start_new_session completely detaches the process from the terminal
             subprocess.Popen(
                 ["sudo", "fstrim", str(drive.mountpoint)],
                 stdout=subprocess.DEVNULL,
@@ -698,6 +737,7 @@ def do_unlock(drive: Drive):
                 close_fds=True,
                 start_new_session=True
             )
+        return True
     elif drive.fstype and "ntfs3" in drive.fstype.lower():
         log("Mount with ntfs3 failed. Retrying with ntfs type...")
         mount_args = ["--mkdir", "-t", "ntfs"]
@@ -706,19 +746,20 @@ def do_unlock(drive: Drive):
         cmd = [
             "sudo", "mount",
             *mount_args,
-            "--source", f"UUID={target_uuid}",
+            "--source", mount_source,
             "--target", str(drive.mountpoint)
         ]
         if run_sudo_cmd(cmd):
             success(f"'{drive.name}' successfully mounted (via ntfs fallback).")
+            return True
         else:
-            err(f"Failed to mount UUID={target_uuid} to {drive.mountpoint}.")
-            sys.exit(1)
+            err(f"Failed to mount {mount_source} to {drive.mountpoint}.")
+            return False
     else:
-        err(f"Failed to mount UUID={target_uuid} to {drive.mountpoint}.")
-        sys.exit(1)
+        err(f"Failed to mount {mount_source} to {drive.mountpoint}.")
+        return False
 
-def do_lock(drive: Drive):
+def do_lock(drive: Drive) -> bool:
     prime_sudo()
     log(f"Starting lock sequence for '{drive.name}'...")
 
@@ -746,7 +787,7 @@ def do_lock(drive: Drive):
             log("Unmount successful.")
         else:
             err(f"Failed to unmount {drive.mountpoint}. A process is still locking the filesystem.")
-            sys.exit(1)
+            return False
     else:
         log(f"{drive.mountpoint} is already unmounted.")
 
@@ -763,10 +804,10 @@ def do_lock(drive: Drive):
                 mapper_name = deterministic_name
             elif resolve_device(drive.inner_uuid):
                 err("Device is active under an unknown mapper name and physical drive is missing. Cannot securely lock.")
-                sys.exit(1)
+                return False
             else:
                 success("Device removed physically, container is no longer active.")
-                return
+                return True
         
         if mapper_name:
             time.sleep(1)
@@ -775,44 +816,43 @@ def do_lock(drive: Drive):
 
             log(f"Locking crypt node: {mapper_name}...")
             
-            # --- STRATEGY 1: Interoperable DBus Lock ---
             cleartext_dev = f"/dev/mapper/{mapper_name}"
             if shutil.which("udisksctl") and Path(cleartext_dev).exists():
                 res = subprocess.run(["udisksctl", "lock", "-b", cleartext_dev], capture_output=True, text=True)
                 if res.returncode == 0:
                     success("Encrypted container successfully locked via udisks2 API.")
-                    return
+                    return True
             
-            # --- STRATEGY 2: Standard Cryptsetup Close ---
             for attempt in range(LOCK_MAX_RETRIES):
                 if run_sudo_cmd(["sudo", "cryptsetup", "close", mapper_name]):
                     success("Encrypted container successfully locked.")
-                    return
+                    return True
                 log(f"Lock attempt {attempt+1}/{LOCK_MAX_RETRIES} failed. Retrying...")
                 time.sleep(LOCK_RETRY_DELAY)
             
-            # --- STRATEGY 3: Deferred Kernel Teardown ---
             log("Device is held by a kernel subsystem. Engaging deferred asynchronous lock...")
             if run_sudo_cmd(["sudo", "cryptsetup", "close", "--deferred", mapper_name]):
                 success("Device marked for deferred closure (will lock automatically when kernel I/O finishes).")
-                return
+                return True
 
             err(f"Failed to lock {mapper_name} after all strategies exhausted.")
             run_cryptsetup_forensics(mapper_name)
-            sys.exit(1)
+            return False
         else:
             success("Encrypted container is already locked.")
+            return True
     else:
         success(f"Simple drive '{drive.name}' disconnected cleanly.")
+        return True
 
-def set_keyring_password(drives: dict[str, Drive], target: str):
+def set_keyring_password(drives: dict[str, Drive], target: str) -> bool:
     if target not in drives:
         err(f"Drive '{target}' not recognized in config.")
-        sys.exit(1)
+        return False
     
     if drives[target].type != "PROTECTED":
         err(f"Drive '{target}' is a SIMPLE drive and does not require a password.")
-        sys.exit(1)
+        return False
 
     console.print(Panel(
         f"Setting secure keyring password for drive: [bold cyan]{escape(target)}[/]\n"
@@ -820,16 +860,22 @@ def set_keyring_password(drives: dict[str, Drive], target: str):
         title="Keyring Setup", border_style="cyan"
     ))
 
-    pwd = getpass.getpass(f"Enter LUKS/BitLocker password for '{target}': ")
-    pwd_confirm = getpass.getpass("Confirm password: ")
+    try:
+        pwd = getpass.getpass(f"Enter LUKS/BitLocker password for '{target}': ")
+        pwd_confirm = getpass.getpass("Confirm password: ")
+    except (KeyboardInterrupt, EOFError):
+        console.print()
+        err("Cancelled by user.")
+        sys.exit(130)
 
     if pwd != pwd_confirm:
         err("Passwords do not match.")
-        sys.exit(1)
+        return False
 
     keyring.set_password(KEYRING_SERVICE, target, pwd)
     clear_temp_attempts(target)
     success(f"Password stored securely in the system keyring for '{target}'.")
+    return True
 
 # ------------------------------------------------------------------------------
 #  MAIN ENTRY
@@ -838,7 +884,7 @@ def main():
     prevent_root_execution()
 
     parser = argparse.ArgumentParser(
-        description="Universal Drive Manager (Platinum / TOML Native)",
+        description="Universal Drive Manager (Platinum Hybrid Edition / Multi-Drive Enabled)",
         formatter_class=argparse.RawTextHelpFormatter
     )
     
@@ -847,14 +893,14 @@ def main():
 
     subparsers.add_parser("status", help="Show status of all configured drives")
     
-    unlock_p = subparsers.add_parser("unlock", help="Unlock and mount a specified drive")
-    unlock_p.add_argument("target", help="Drive name to unlock")
+    unlock_p = subparsers.add_parser("unlock", help="Unlock and mount specified drive(s)")
+    unlock_p.add_argument("targets", nargs="+", help="Drive name(s) to unlock (e.g., 'slow fast')")
 
-    lock_p = subparsers.add_parser("lock", help="Unmount and lock a specified drive")
-    lock_p.add_argument("target", help="Drive name to lock")
+    lock_p = subparsers.add_parser("lock", help="Unmount and lock specified drive(s)")
+    lock_p.add_argument("targets", nargs="+", help="Drive name(s) to lock")
 
     setpass_p = subparsers.add_parser("set-password", help="Securely store a drive's password in the system keyring")
-    setpass_p.add_argument("target", help="Drive name")
+    setpass_p.add_argument("targets", nargs="+", help="Drive name(s)")
 
     args = parser.parse_args()
 
@@ -866,20 +912,53 @@ def main():
             show_status(drives)
             
         case "set-password":
-            set_keyring_password(drives, args.target)
+            overall_success = True
+            for idx, target in enumerate(args.targets):
+                if idx > 0:
+                    console.print("\n[dim]" + "-" * 60 + "[/dim]\n")
+                if not set_keyring_password(drives, target):
+                    overall_success = False
+                    if idx < len(args.targets) - 1:
+                        hint_msg(f"Setup for '{target}' failed. Moving to next drive...")
+                    else:
+                        err(f"Setup for '{target}' failed.")
+            
+            # Regression Fix: Hard exit to OS on failure
+            if not overall_success:
+                sys.exit(1)
             
         case "unlock" | "lock":
-            if args.target not in drives:
-                err(f"Drive '{args.target}' not found in configuration.")
-                sys.exit(1)
+            # First pass: Validate all requested targets exist in config to prevent partial executions
+            for target in args.targets:
+                if target not in drives:
+                    err(f"Drive '{target}' not found in configuration.")
+                    sys.exit(1)
 
             acquire_lock()
-            drive = drives[args.target]
-
-            if args.action == "unlock":
-                do_unlock(drive)
-            else:
-                do_lock(drive)
+            
+            overall_success = True
+            
+            # Second pass: Process them sequentially and robustly catch failures
+            for idx, target in enumerate(args.targets):
+                if idx > 0:
+                    console.print("\n[dim]" + "-" * 60 + "[/dim]\n")
+                
+                drive = drives[target]
+                if args.action == "unlock":
+                    success_flag = do_unlock(drive)
+                else:
+                    success_flag = do_lock(drive)
+                    
+                if not success_flag:
+                    overall_success = False
+                    if idx < len(args.targets) - 1:
+                        hint_msg(f"Operation on '{target}' failed. Moving to next drive...")
+                    else:
+                        err(f"Operation on '{target}' failed.")
+            
+            # Regression Fix: Hard exit to OS on failure to protect shell chaining
+            if not overall_success:
+                sys.exit(1)
 
 if __name__ == "__main__":
     try:
