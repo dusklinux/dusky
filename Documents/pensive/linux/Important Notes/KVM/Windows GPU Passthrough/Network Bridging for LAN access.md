@@ -67,7 +67,7 @@ This is the cleanest, most secure, and most common setup.
 
 1. Go to your VM's **NIC** settings.
     
-2. Set **Network source** to: `Macvtap device`.
+2. Set **Network** source to: `Macvtap device`.
     
 3. In **Device name**, type your physical Wi-Fi card name (e.g., `wlan0`).
     
@@ -122,6 +122,33 @@ sudo ufw reload
     
 
 When you start the VM, it will bypass the host's NAT and request a standard home LAN IP (e.g., `192.168.1.50`) directly from your physical router.
+
+### 🌟 Advanced: Add Bridge to Virt-Manager Dropdown
+
+_(Optional: Do this AFTER completing Option 3)_
+
+If you don't want to type `br0` manually every time you make a VM, you can tell libvirt to track the bridge so it appears in your network dropdown list.
+
+```
+# 1. Inject a clean XML wrapper into a temporary file
+cat <<EOF > /tmp/host-bridge.xml
+<network>
+  <name>host-bridge</name>
+  <forward mode='bridge'/>
+  <bridge name='br0'/>
+</network>
+EOF
+
+# 2. Define and start the wrapper in libvirt
+sudo virsh net-define /tmp/host-bridge.xml
+sudo virsh net-start host-bridge
+sudo virsh net-autostart host-bridge
+
+# 3. Clean up
+rm /tmp/host-bridge.xml
+```
+
+If you run `sudo virsh net-list --all`, you will now see `host-bridge`. You can now select this from the "Network source" dropdown in Virt-Manager!
 
 ## 🆘 Disaster Recovery: Reverting Option 3
 
