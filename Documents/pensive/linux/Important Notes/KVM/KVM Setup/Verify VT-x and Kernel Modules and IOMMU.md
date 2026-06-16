@@ -26,11 +26,12 @@ You must enter your UEFI firmware settings. Modern PCIe passthrough requires far
 ```
 flowchart LR
     A[1. CPU Flags] --> B[2. IOMMUFD Modules]
-    B --> C[3. Active IOMMU Groups]
+    B --> C[3. Boot Params]
     C --> D[4. ACS Isolation Map]
+    D --> E[5. Interrupt Remapping]
 ```
 
-Once booted into Arch Linux, open your terminal. We will verify the entire chain: CPU features, kernel modules, and hardware isolation.
+Once booted into Arch Linux, open your terminal. We will verify the entire chain: CPU features, kernel modules, boot parameters, and hardware isolation.
 
 ### 1. Verify CPU Virtualization Support
 
@@ -40,30 +41,40 @@ First, confirm the CPU flags are actively passing to the OS.
 lscpu | grep -i virtualization
 ```
 
-> [!check] Expected Output You should see `VT-x` (for Intel) or `AMD-V` (for AMD). If this returns nothing, check your BIOS settings again.
+> [!check] Expected Output
+> 
+> You should see `VT-x` (for Intel) or `AMD-V` (for AMD).
 
 ### 2. Verify Modern Kernel Modules (KVM & IOMMUFD)
 
-We need to ensure your running Arch Kernel 7.1.0 was compiled with the modern virtualization stack. The old `CONFIG_KVM_VFIO` is dead; we are looking for `CONFIG_IOMMUFD`.
+We need to ensure your running Arch Kernel 7.1 was compiled with the modern virtualization stack.
 
 ```
 zgrep -E "CONFIG_KVM=|CONFIG_VFIO_PCI=|CONFIG_IOMMUFD=" /proc/config.gz
 ```
 
-> [!example] Understanding the Results You should see output similar to this:
-> 
-> `CONFIG_KVM=m` `CONFIG_IOMMUFD=m` `CONFIG_VFIO_PCI=m`
+> [!example] Understanding the Results
 > 
 > - **`=y`**: Built directly into the kernel (Always active).
 >     
 > - **`=m`**: Loadable Module (Arch default, loaded dynamically by QEMU/libvirt).
 >     
-> - **Missing / `=n`**: The feature is not supported. You would need a custom kernel.
->     
 
-### 3. Verify IOMMU Groups & ACS Isolation (The Crucial Test)
+### 3. Verify Boot Parameters
 
-This is the most important step. If your IOMMU is working and ACS is functioning, the kernel will physically separate your PCIe devices into distinct numbered groups in `/sys/kernel/`.
+Ensure your bootloader (GRUB or systemd-boot) has the correct IOMMU parameters injected at boot.
+
+```
+cat /proc/cmdline
+```
+
+> [!tip] Required Flags
+> 
+> Ensure your boot line includes `iommu=pt`. For Intel systems, explicitly adding `intel_iommu=on` is highly recommended even if the kernel defaults it to on.
+
+### 4. Verify IOMMU Groups & ACS Isolation (The Crucial Test)
+
+If your IOMMU is working and ACS is functioning, the kernel will physically separate your PCIe devices into distinct numbered groups.
 
 Run this bash script to map out your hardware:
 
@@ -75,16 +86,22 @@ for d in /sys/kernel/iommu_groups/*/devices/*; do
 done
 ```
 
-> [!info] How to Read Your IOMMU Map Look through the output for the GPU you want to pass through (e.g., your NVIDIA or AMD card).
+> [!info] How to Read Your IOMMU Map
 > 
-> **Success:** Your target GPU and its associated Audio Controller are alone in their own isolated `IOMMU Group` (e.g., both are in `IOMMU Group 15`, and nothing else is). **Failure:** Your GPU is grouped with essential host devices (like your main NVMe drive or USB controller). If this happens, your motherboard's ACS is broken, and you will need an ACS Override Patch.
+> Look through the output for the GPU you want to pass through.
+> 
+> **Success:** Your target GPU and its associated Audio Controller are alone in their own isolated `IOMMU Group`.
+> 
+> **Failure:** Your GPU is grouped with essential host devices (like your main NVMe drive). You would need an ACS Override Patch.
 
-### 4. Verify Boot Parameters (If Groups are Empty)
+### 5. Verify Interrupt Remapping (Advanced Testing)
 
-If the script in step 3 returned _absolutely nothing_, your kernel has not initialized IOMMU mapping. Verify your bootloader (GRUB or systemd-boot) has the correct parameters:
+For modern PCIe passthrough to work cleanly, your hardware must support and enable Interrupt Remapping. If this fails, VMs cannot securely handle device interrupts.
 
 ```
-cat /proc/cmdline
+sudo dmesg | grep 'remapping'
 ```
 
-> [!tip] Required Flags Ensure your boot line includes `iommu=pt` and either `intel_iommu=on` or `amd_iommu=on`.
+> [!check] Expected Output
+> 
+> You are looking for lines stating `DMAR-IR: Enabled IRQ remapping in x2apic mode` (for Intel) or `AMD-Vi: Interrupt remapping enabled` (for AMD).
