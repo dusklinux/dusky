@@ -1,86 +1,94 @@
-# Libvirt Connection & Permissions
+# Libvirt Connection & Permissions (Modern Modular Architecture)
 
-In this step, we will configure how your user connects to the virtualization hypervisor. By default, Linux tries to run VMs as a "Session" (User) process, but for advanced features like **GPU Passthrough**, we need to connect to the "System" (Root) process while maintaining regular user privileges.
+In this step, we will configure how your user connects to the virtualization hypervisor. By default, Linux tries to run VMs as a "Session" (User) process, but for advanced features like **PCI/GPU Passthrough**, we need to connect to the "System" (Root) process while maintaining regular user privileges for daily management.
 
 ## 1. Understanding Connection Modes
 
-Libvirt provides two methods for connecting to the local QEMU/KVM hypervisor. It is important to know the difference.
+Libvirt provides two methods for connecting to the local QEMU/KVM hypervisor. It is critical to know the difference.
 
 ### ❌ The User Session (`qemu:///session`)
 
 This is the default mode when running a virtual machine as a regular user.
 
-- **Pros:** easy to set up.
+- **Pros:** Completely rootless and isolated; zero system-level configuration required.
     
-- **Cons:** Networking is difficult to bridge, and **PCI/GPU Passthrough is not supported.**
+- **Cons:** Networking is restricted (bridging requires complex helpers), and **hardware/GPU** Passthrough is not **supported.**
     
 
 ### ✅ The System Instance (`qemu:///system`)
 
-This connects to the hypervisor as the root user.
+This connects to the hypervisor daemon (`virtqemud`) running as system/root.
 
-- **Pros:** Complete access to host resources, hardware acceleration, and necessary for GPU Passthrough.
+- **Pros:** Complete access to host resources, advanced bridged networking, and mandatory for PCI/VGA/GPU Passthrough.
     
-- **Cons:** Requires group configuration to access as a regular user (which we will do below).
+- **Cons:** Requires Polkit authorization to access the UNIX control socket as a regular user without typing `sudo`.
     
 
 > [!ABSTRACT] Goal
 > 
-> We want to connect to the System Instance (qemu:///system) as a Regular User to get the best of both worlds: security and performance.
+> We want to seamlessly connect to the System Instance (`qemu:///system`) as a Regular User via Polkit authorization to get the best of both worlds: tight security and maximum performance.
 
-## 2. Group Permissions
+## 2. Polkit & Socket Permissions (The 2026 Standard)
 
-To allow your regular user account to control the System Instance without typing `sudo` every time, we need to add your user to specific groups.
+Modern Libvirt operates on a strict client-server architecture using **modular daemons**. Your management tools (`virt-manager`, `virsh`) are the _clients_. They need to talk to the QEMU management daemon (`virtqemud`) via a UNIX socket.
 
-Run the following command in your terminal:
+Because the daemon runs as root—and securely handles all dangerous hardware passthrough, disk access, and KVM acceleration itself—your regular user **only needs Polkit permission to access the control socket.**
+
+Run the following command to add your user to the `libvirt` group, which Polkit natively recognizes for authorization:
 
 ```
-sudo usermod -aG libvirt,kvm,input,disk "$(id -un)"
+sudo usermod -aG libvirt "$(id -un)"
 ```
 
-### What do these groups do?
+> [!WARNING] Security Notice: Legacy Groups
+> 
+> Do **NOT** add your user to the `disk`, `input`, or `kvm` groups as older guides suggest.
+> 
+> - `disk`: Allows your user account to raw-write over the host's root partition.
+>     
+> - `input`: Creates a vulnerability allowing global keylogging bypassing Wayland/X11.
+>     
+> - `kvm`: Access to `/dev/kvm` is automatically granted to the active seated user via modern `systemd` uaccess rules, and the `virtqemud` daemon handles KVM access for system VMs anyway.
+>     
 
-| **Group**     | **Description**                                                            |
-| ------------- | -------------------------------------------------------------------------- |
-| **`libvirt`** | Grants permission to manage system-level VMs.                              |
-| **`kvm`**     | Grants access to the `/dev/kvm` hardware acceleration device.              |
-| **`input`**   | _(Recommended)_ Allows input capture (keyboard/mouse) for advanced setups. |
-| **`disk`**    | _(Optional)_ Helpful if managing raw disk images directly.                 |
-
-> [!IMPORTANT] Reboot Required
+> [!IMPORTANT] Relogin Required
 > 
 > Group changes do not apply to the currently running session.
 > 
-> You must log out and log back in (or restart your computer) for these changes to take effect.
+> You must completely log out and log back in (or restart your computer) for the `libvirt` group to be applied.
 
-## 3. Configuring the Default URI
+## 3. Enable the Modular Daemons
 
-To make life easier, we tell the system that whenever we run a virtualization command, we imply `qemu:///system` by default.
+Arch Linux utilizes modular daemons to keep the virtualization stack lightweight. Ensure the QEMU socket is enabled so your client can connect:
 
-> [!TIP] specific Configuration Note
+```
+sudo systemctl enable --now virtqemud.socket
+```
+
+## 4. Configuring the Default URI
+
+To make life easier, we tell the system that whenever we run a virtualization command in the terminal, we imply `qemu:///system` by default.
+
+> [!TIP] Specific Configuration Note
 > 
-> If you are using the Dusk / UWSM configuration files, this environment variable is already set for you automatically in the UWSM env file.
-> 
-> _You can skip manually editing your `.zshrc` or `.bashrc`._
+> If you are using the Dusk / UWSM configuration files, this environment variable is already set for you automatically in the UWSM env file. You can skip manually editing your RC files.
 
-**For reference only**, the command usually used to set this manually is:
+**For manual setup**, add this to your shell profile (`.zshrc` or `.bashrc`):
 
-```bash
-# ONLY RUN THIS IF NOT USING DUSK CONFIGS
+```
 echo "export LIBVIRT_DEFAULT_URI='qemu:///system'" >> ~/.zshrc
 source ~/.zshrc
 ```
 
-## 4. Verifying the Connection
+## 5. Verifying the Connection
 
-Once you have re-logged or restarted, verify that your user is targeting the correct instance by default.
+Once you have re-logged, verify that your user has Polkit authorization and is targeting the correct instance by default.
 
-Run this command as your **regular user** (do not use sudo):
+Run this command as your **regular user** (do NOT use sudo):
 
 ```
 virsh uri
 ```
-
 
 > [!SUCCESS] Expected Output
 > 
@@ -89,24 +97,20 @@ virsh uri
 > ```
 > qemu:///system
 > ```
-## for reference only 
-this should also show the root session
-```bash
-sudo virsh uri
-```
 
 ### Troubleshooting
 
-If the output says `qemu:///session`, your environment variable is not loaded. You can force the connection manually when opening the manager:
+If the output says `qemu:///session` or you get a "Permission denied" error on the socket:
 
-```bash
-# Connect explicitly to the System instance (Recommended)
+1. Verify you are actually in the group by typing `groups`. You must see `libvirt`.
+    
+2. Ensure the modern modular socket is active: `systemctl status virtqemud.socket`.
+    
+3. Force the connection manually to test socket permissions:
+    
+
+```
 virt-manager --connect qemu:///system
 ```
 
-## For reference only, to connect to the user session. 
-```bash
-virt-manager --connect qemu:///session
-```
-
-_Avoid using `virt-manager --connect qemu:///session` unless you specifically intend to create a restricted, non-passthrough VM._
+_Avoid using `virt-manager --connect qemu:///session` unless you specifically intend to create a restricted, isolated, non-passthrough VM._
