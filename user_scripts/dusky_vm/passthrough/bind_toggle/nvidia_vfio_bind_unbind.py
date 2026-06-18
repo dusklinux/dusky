@@ -18,7 +18,7 @@ import tempfile
 import shlex
 import shutil
 from pathlib import Path
-from typing import List, Set, Tuple, Never
+from typing import Never
 
 # ==============================================================================
 # BOOTSTRAP
@@ -123,7 +123,7 @@ def resolve_boot_path() -> Path:
     except Exception:
         return Path("/boot")
 
-def get_systemd_boot_target() -> Tuple[Path, str, str]:
+def get_systemd_boot_target() -> tuple[Path, str, str]:
     """Uses JSON output to locate the optimal default active entry (Type #1 or Type #2)."""
     try:
         res = subprocess.run(["bootctl", "list", "--json=short"], capture_output=True, text=True, check=True)
@@ -157,10 +157,10 @@ def get_systemd_boot_target() -> Tuple[Path, str, str]:
 # ==============================================================================
 # STATE MANAGEMENT
 # ==============================================================================
-def generate_parameter_string(current_opts: List[str], state: str, vfio_ids: str) -> str:
+def generate_parameter_string(current_opts: list[str], state: str, vfio_ids: str) -> str:
     """Deduplicates and recalculates the kernel parameters based on target state."""
-    new_opts: List[str] = []
-    existing_bl: Set[str] = set()
+    new_opts: list[str] = []
+    existing_bl: set[str] = set()
     cpu_flag = get_cpu_iommu_flag()
     
     strip_keys = {cpu_flag, "iommu", "vfio-pci.ids"}
@@ -194,6 +194,41 @@ def generate_parameter_string(current_opts: List[str], state: str, vfio_ids: str
             new_opts.append(f"module_blacklist={','.join(sorted(merged_bl))}")
 
     return " ".join(new_opts)
+
+def toggle_mkinitcpio(state: str) -> None:
+    """Surgically injects or strips VFIO modules across all mkinitcpio configurations."""
+    conf_paths = [Path("/etc/mkinitcpio.conf")]
+    
+    conf_d = Path("/etc/mkinitcpio.conf.d")
+    if conf_d.exists() and conf_d.is_dir():
+        conf_paths.extend(sorted(conf_d.glob("*.conf")))
+
+    for mk_path in conf_paths:
+        if not mk_path.exists():
+            continue
+            
+        original_content = mk_path.read_text(encoding="utf-8")
+        
+        def patch_modules(match: re.Match) -> str:
+            mods = shlex.split(match.group(1), comments=True, posix=True)
+            vfio_reqs = ['vfio_pci', 'vfio', 'vfio_iommu_type1']
+            
+            if state == "bind":
+                for req in vfio_reqs:
+                    if req not in mods:
+                        mods.append(req)
+            elif state == "unbind":
+                mods = [m for m in mods if m not in vfio_reqs]
+                
+            return f"MODULES=({' '.join(mods)})"
+        
+        content = re.sub(r'^MODULES=\(([^)]*)\)', patch_modules, original_content, flags=re.MULTILINE)
+        
+        if content != original_content:
+            if atomic_write(mk_path, content):
+                console.print(f"[bold green]  ✓ {state.capitalize()}ed VFIO initramfs modules in {mk_path.name}[/bold green]")
+        else:
+            console.print(f"  [dim]Initramfs configuration {mk_path.name} already optimized for {state} state.[/dim]")
 
 def toggle_bootloader(state: str, vfio_ids: str) -> None:
     """Surgically alters kernel command lines in .conf or /etc/kernel/cmdline."""
@@ -301,6 +336,7 @@ def main() -> None:
     if args.bind:
         console.print(Panel(f"[bold green]Engaging VFIO Mode[/bold green]\nTarget IDs: {vfio_ids}", expand=False))
         toggle_modprobe("bind")
+        toggle_mkinitcpio("bind")
         toggle_bootloader("bind", vfio_ids)
         rebuild_initramfs()
         console.print("\n[bold green]=== SYSTEM READY FOR VM ===[/bold green]")
@@ -308,6 +344,7 @@ def main() -> None:
     elif args.unbind:
         console.print(Panel(f"[bold yellow]Engaging Host Mode[/bold yellow]\nReleasing IDs: {vfio_ids}", expand=False))
         toggle_modprobe("unbind")
+        toggle_mkinitcpio("unbind")
         toggle_bootloader("unbind", vfio_ids)
         rebuild_initramfs()
         console.print("\n[bold green]=== SYSTEM READY FOR HOST GRAPHICS ===[/bold green]")

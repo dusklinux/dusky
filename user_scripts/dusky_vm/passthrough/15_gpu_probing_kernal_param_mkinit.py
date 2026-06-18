@@ -16,7 +16,7 @@ import tempfile
 import subprocess
 import dataclasses
 from pathlib import Path
-from typing import Dict, List, Set, Optional, Never, Tuple
+from typing import Never
 
 # ==============================================================================
 # BOOTSTRAP: Strict Privilege & Auto-Elevation
@@ -52,7 +52,7 @@ class VFIODevice:
     pci_bus: str
     video_id: str
     video_desc: str
-    audio_id: Optional[str] = None
+    audio_id: str | None = None
     audio_desc: str = "No companion audio detected"
     iommu_group: str = "Unknown"
 
@@ -113,7 +113,7 @@ def get_cpu_iommu_flag() -> str:
     console.print("[yellow]⚠ Could not strictly determine CPU vendor. Defaulting to Intel VT-d flags.[/yellow]")
     return "intel_iommu"
 
-def probe_gpus() -> List[VFIODevice]:
+def probe_gpus() -> list[VFIODevice]:
     """Dynamically probes PCI tree for GPUs, companion audio, and IOMMU groups."""
     console.print("\n[bold blue]==>[/bold blue] [bold]Probing system PCI & IOMMU topography...[/bold]")
     check_deps()
@@ -124,7 +124,7 @@ def probe_gpus() -> List[VFIODevice]:
     except subprocess.CalledProcessError:
         bail("Failed to execute lspci.")
 
-    gpu_map: Dict[str, VFIODevice] = {}
+    gpu_map: dict[str, VFIODevice] = {}
     
     for line in lspci_out.splitlines():
         if "[0300]" in line or "[0302]" in line:
@@ -160,7 +160,7 @@ def probe_gpus() -> List[VFIODevice]:
 
     return sorted(list(gpu_map.values()), key=lambda x: x.pci_bus)
 
-def select_target_gpu(devices: List[VFIODevice]) -> List[str]:
+def select_target_gpu(devices: list[VFIODevice]) -> list[str]:
     """Provides an interactive UI for the administrator to isolate a specific GPU."""
     if not devices:
         bail("No VGA/3D controllers detected on this system.")
@@ -208,7 +208,7 @@ def resolve_boot_path() -> Path:
         console.print("[yellow]  ⚠ bootctl path resolution failed entirely. Falling back to legacy /boot.[/yellow]")
         return Path("/boot")
 
-def get_systemd_boot_target() -> Tuple[Path, str, str]:
+def get_systemd_boot_target() -> tuple[Path, str, str]:
     """
     Uses JSON output to locate the active entry.
     Returns: (File Path, Boot Loader Specification Type, Baked Options String)
@@ -241,10 +241,10 @@ def get_systemd_boot_target() -> Tuple[Path, str, str]:
 
     bail("Could not dynamically resolve the target boot entry or configuration.")
 
-def generate_parameter_string(current_opts: List[str], targets: Dict[str, str], blacklist_set: Set[str]) -> str:
+def generate_parameter_string(current_opts: list[str], targets: dict[str, str], blacklist_set: set[str]) -> str:
     """Deduplicates and merges kernel parameters cleanly."""
-    new_opts: List[str] = []
-    existing_bl: Set[str] = set()
+    new_opts: list[str] = []
+    existing_bl: set[str] = set()
 
     for opt in current_opts:
         if "=" in opt:
@@ -267,7 +267,7 @@ def generate_parameter_string(current_opts: List[str], targets: Dict[str, str], 
     
     return " ".join(new_opts)
 
-def inject_bootloader_parameters(vfio_ids: List[str]) -> None:
+def inject_bootloader_parameters(vfio_ids: list[str]) -> None:
     """Safely injects kernel parameters, strictly preventing volatile pollution."""
     target_path, entry_type, baked_options = get_systemd_boot_target()
     cpu_flag = get_cpu_iommu_flag()
@@ -337,58 +337,67 @@ def inject_bootloader_parameters(vfio_ids: List[str]) -> None:
 # ==============================================================================
 # INITRAMFS MANIPULATION 
 # ==============================================================================
-def configure_mkinitcpio() -> None:
-    """Enforces VFIO modules and hook ordering securely using AST-like string manipulation."""
-    mk_path = Path("/etc/mkinitcpio.conf")
-    console.print("\n[bold blue]==>[/bold blue] [bold]Hardening initramfs via mkinitcpio.conf...[/bold]")
-    
+def process_mkinitcpio_file(mk_path: Path) -> None:
+    """Parses, normalizes, and injects VFIO requirements into an mkinitcpio config file."""
     if not mk_path.exists():
-        bail(f"{mk_path} does not exist.")
+        return
 
-    new_content = mk_path.read_text(encoding="utf-8")
+    original_content = mk_path.read_text(encoding="utf-8")
     
-    # 1. Inject MODULES
-    mod_match = re.search(r'^MODULES=\((.*?)\)', new_content, re.MULTILINE)
-    if mod_match:
-        raw_mods = mod_match.group(1).replace('"', '').replace("'", "")
-        mods = raw_mods.split()
-        for required in ['vfio_pci', 'vfio', 'vfio_iommu_type1']:
-            if required not in mods:
-                mods.append(required)
-        new_mods_str = " ".join(mods)
-        new_content = new_content[:mod_match.start(1)] + new_mods_str + new_content[mod_match.end(1):]
+    def patch_modules(match: re.Match) -> str:
+        # comments=True safely drops inline bash comments so they don't break the flattened array
+        mods = shlex.split(match.group(1), comments=True, posix=True)
+        for req in ['vfio_pci', 'vfio', 'vfio_iommu_type1']:
+            if req not in mods:
+                mods.append(req)
+        return f"MODULES=({' '.join(mods)})"
 
-    # 2. Enforce HOOKS order (modconf must strictly precede kms)
-    hook_match = re.search(r'^HOOKS=\((.*?)\)', new_content, re.MULTILINE)
-    if hook_match:
-        raw_hooks = hook_match.group(1).replace('"', '').replace("'", "")
-        hooks = raw_hooks.split()
-        
+    def patch_hooks(match: re.Match) -> str:
+        hooks = shlex.split(match.group(1), comments=True, posix=True)
         if 'modconf' not in hooks:
             if 'kms' in hooks:
                 hooks.insert(hooks.index('kms'), 'modconf')
             else:
                 hooks.append('modconf')
         else:
-            modconf_idx = hooks.index('modconf')
-            if 'kms' in hooks:
-                kms_idx = hooks.index('kms')
-                if modconf_idx > kms_idx:
-                    hooks.pop(modconf_idx)
-                    hooks.insert(kms_idx, 'modconf')
-        
-        new_hooks_str = " ".join(hooks)
-        new_content = new_content[:hook_match.start(1)] + new_hooks_str + new_content[hook_match.end(1):]
+            if 'kms' in hooks and hooks.index('modconf') > hooks.index('kms'):
+                hooks.remove('modconf')
+                hooks.insert(hooks.index('kms'), 'modconf')
+        return f"HOOKS=({' '.join(hooks)})"
 
-    if atomic_write(mk_path, new_content):
-        console.print("[bold green]  ✓ Enforced VFIO modules and structural hook priorities.[/bold green]")
+    # [^)]* slurps everything up to the closing parenthesis, catching multi-line arrays cleanly.
+    content = re.sub(r'^MODULES=\(([^)]*)\)', patch_modules, original_content, flags=re.MULTILINE)
+    content = re.sub(r'^HOOKS=\(([^)]*)\)', patch_hooks, content, flags=re.MULTILINE)
+
+    if content != original_content:
+        if atomic_write(mk_path, content):
+            console.print(f"[bold green]  ✓ Enforced VFIO constraints in {mk_path.name}[/bold green]")
     else:
-        console.print("[bold green]  ✓ mkinitcpio.conf already enforces strict VFIO isolation constraints.[/bold green]")
+        console.print(f"[dim green]  ✓ Config {mk_path.name} is already optimal[/dim green]")
+
+
+def configure_mkinitcpio() -> None:
+    """Coordinates initramfs hardening across the primary config and all active drop-ins."""
+    console.print("\n[bold blue]==>[/bold blue] [bold]Hardening initramfs via mkinitcpio.conf & drop-ins...[/bold]")
+    
+    main_conf = Path("/etc/mkinitcpio.conf")
+    if not main_conf.exists():
+        bail(f"{main_conf} does not exist. Ensure mkinitcpio is installed.")
+
+    # 1. Process the primary configuration file
+    process_mkinitcpio_file(main_conf)
+
+    # 2. Dynamically scan and process all drop-in configurations
+    conf_d = Path("/etc/mkinitcpio.conf.d")
+    if conf_d.exists() and conf_d.is_dir():
+        # Process sequentially and alphabetically, exactly mirroring mkinitcpio's parse priority
+        for drop_in in sorted(conf_d.glob("*.conf")):
+            process_mkinitcpio_file(drop_in)
 
 # ==============================================================================
 # MODPROBE KERNEL RULES
 # ==============================================================================
-def write_modprobe_rules(vfio_ids: List[str]) -> None:
+def write_modprobe_rules(vfio_ids: list[str]) -> None:
     """Generates the absolute Ring 0 isolation rules for the VFIO framework."""
     vfio_conf = Path("/etc/modprobe.d/vfio.conf")
     console.print("\n[bold blue]==>[/bold blue] [bold]Generating static kernel driver rules...[/bold]")
