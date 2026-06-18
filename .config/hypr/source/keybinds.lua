@@ -48,7 +48,7 @@
 hl.bind(
     "ALT + SPACE",
     hl.dsp.exec_cmd([[pkill rofi; rofi -show drun -run-command "{cmd}"]]),
-    { description = "Launch Menu for Apps", submap_universal = true }
+    { description = "Launch Menu for Apps" }
 )
 
 hl.bind(
