@@ -6,6 +6,8 @@ This guide dictates how to properly attach your Virtual Machine (VM) to a networ
 > 
 > Before changing any network settings, you must know the true name of your physical network cards.
 > 
+> **Standard Method:**
+> 
 > Open your terminal and run the NetworkManager device check:
 > 
 > ```
@@ -13,6 +15,16 @@ This guide dictates how to properly attach your Virtual Machine (VM) to a networ
 > ```
 > 
 > Look for the device that says **connected**.
+> 
+> **Elite/Deterministic Method:**
+> 
+> If you want the absolute truth directly from the kernel routing table (useful for scripting), run:
+> 
+> ```
+> ip -j route show default
+> ```
+> 
+> Look for the `"dev"` value in the output block.
 > 
 > - **Ethernet** cards usually look like: `enp3s0`, `eno1`, or `enx...`
 >     
@@ -80,7 +92,7 @@ This is the cleanest, most secure, and most common setup.
 
 **Use Case:** Your host computer is connected via **Ethernet**, and you want the VM to get its own IP address directly from your home router. Both the Host and the VM will be able to communicate flawlessly.
 
-This requires creating a **System Bridge** (`br0`). We will use `nmcli` (NetworkManager), which is the standard on modern Arch desktop environments.
+This requires creating a **System Bridge** (`br0`). We will use `nmcli` (NetworkManager), ensuring we spell out the full option names to guarantee long-term compatibility against alias deprecations.
 
 ### Step 1: Create the Bridge (Host Terminal)
 
@@ -88,14 +100,15 @@ Replace `enp3s0` in the commands below with your actual Ethernet interface name 
 
 ```
 # 1. Create a virtual bridge interface named 'br0' (and disable STP for faster handshakes)
-sudo nmcli con add type bridge ifname br0 con-name br0 bridge.stp no
+sudo nmcli connection add type bridge ifname br0 con-name br0 bridge.stp no
 
-# 2. Bind your physical ethernet card to the bridge
+# 2. Bind your physical ethernet card using modern 'controller' syntax
 # ⚠️ REPLACE 'enp3s0' WITH YOUR ACTUAL ETHERNET NAME!
-sudo nmcli con add type ethernet ifname enp3s0 master br0 con-name bridge-slave-enp3s0
+sudo nmcli connection add type ethernet ifname enp3s0 controller br0 con-name br0-port-enp3s0
 
-# 3. Bring up the bridge (Your internet will drop for about 2-5 seconds, then return)
-sudo nmcli con up br0
+# 3. Bring up the bridge with a strict 15-second timeout safeguard
+# (Your internet will drop for about 2-5 seconds, then return)
+sudo nmcli --wait 15 connection up br0
 ```
 
 ### Step 2: Configure UFW for the Bridge
@@ -159,11 +172,11 @@ If you messed up the Ethernet bridge creation and lost internet on your Host PC,
 sudo nmcli connection down br0
 
 # 2. Delete the bridge definition entirely
-sudo nmcli connection del br0
+sudo nmcli connection delete br0
 
-# 3. Delete the slave definition
+# 3. Delete the port definition 
 # (This unbinds your physical ethernet card from the destroyed bridge)
-sudo nmcli connection del bridge-slave-enp3s0 
+sudo nmcli connection delete br0-port-enp3s0 
 
 # 4. Restart NetworkManager to auto-detect your standard wired connection again
 sudo systemctl restart NetworkManager
