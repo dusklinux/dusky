@@ -1,0 +1,899 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# ROFI AI SEARCH - local web-search LLM (attach/detach background session)
+#   query prompt -> detached worker (CRAG pipeline) -> live loader / results menu
+#   SearXNG (localhost JSON) -> w3m/trafilatura fetch -> qwen3:8b (ollama, pinned).
+#
+# TOGGLE MODEL: the keybind re-invokes this script, which acts as a CLIENT that
+# attaches to a PERSISTENT background session living on tmpfs (/run/user/$UID, so
+# it auto-clears on reboot). The actual search runs in a DETACHED --worker-run
+# process that outlives every rofi window. Pressing the keybind:
+#   - no session      -> prompt, spawn worker, attach live progress
+#   - search running  -> re-attach to live progress (Esc hides; search continues)
+#   - search done     -> re-show the results/sources screen
+# Closing rofi (Esc) DETACHES, it does NOT cancel. If a search finishes while
+# detached, a generic "Search complete" notification fires. The session (incl.
+# the follow-up memory chain) persists across toggles until the user explicitly
+# picks "New search" (the only non-reboot wipe). Single-instance via process
+# groups so the newest keybind press replaces any open window (no stacking).
+#
+#   Launch:  rofi_ai_search           (just run it / bind to a key)
+#   Debug:   AISEARCH_DEBUG=1 rofi_ai_search   (logs pipeline to ~/.config debug.log)
+# ==============================================================================
+
+set -uo pipefail
+
+# ==============================================================================
+# BLOCKS LOADER CONTROLLER (re-exec entrypoint)
+# When invoked as `rofi_ai_search --blocks-loader`, this process is the program
+# rofi-blocks drives via -blocks-wrap. It streams ⏳ progress rows into a single
+# live rofi window. It talks JSON-lines: stdout -> rofi (display), stdin <- rofi
+# (events). It exits when the worker is done ($BLK_DONE exists) or when rofi
+# closes (Esc -> our stdin hits EOF). Env in: BLK_PROGRESS, BLK_DONE, BLK_MSG.
+# Kept in THIS file (not a separate script) so the tool stays self-contained.
+# ==============================================================================
+if [[ "${1:-}" == "--blocks-loader" ]]; then
+    pf="${BLK_PROGRESS:?}"; df="${BLK_DONE:?}"; msg="${BLK_MSG:-Searching the web — please wait…}"
+    rows="${BLK_ROWS:-8}"   # show only the last N steps -> scrolling effect
+    # rofi-blocks needs valid JSON; escape the few specials that break a JSON string.
+    json_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/ }"; printf '%s' "$s"; }
+    # Emit one display update: message + the LAST $rows progress lines as a JSON
+    # array. Tailing keeps the newest step visible (old ones scroll off the top)
+    # so progress never gets stuck below the fold when there are more steps than
+    # visible rows.
+    emit_state() {
+        local arr="" line first=1
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            arr+=$([[ $first == 1 ]] && echo "" || echo ",")'"'"$(json_esc "$line")"'"'; first=0
+        done < <(tail -n "$rows" "$pf" 2>/dev/null)
+        [[ -z "$arr" ]] && arr='"⏳ Starting…"'
+        printf '{"prompt":"⣾ Searching","message":"%s","input action":"filter","lines":[%s]}\n' \
+            "$(json_esc "$msg")" "$arr"
+    }
+    # We must end on EITHER of two conditions, without relying on `read -t`'s
+    # ambiguous EOF-vs-timeout exit code (on this system both return 1):
+    #   (a) worker finished  -> $df appears
+    #   (b) user closed rofi -> our stdin reaches real EOF
+    # Structure: a background pusher streams progress AND, when it sees $df,
+    # signals the main pid (USR1) to unblock the foreground's blocking read.
+    # The foreground is a pure blocking event-drain that returns only on real
+    # stdin EOF. Either path leads here; we then exit and let the client decide.
+    main_pid=$$
+    trap 'exit 0' USR1
+    (
+        last=-1
+        while :; do
+            cur=$(wc -c < "$pf" 2>/dev/null); cur=${cur:-0}
+            if [[ "$cur" != "$last" ]]; then emit_state; last="$cur"; fi
+            if [[ -f "$df" ]]; then emit_state; kill -USR1 "$main_pid" 2>/dev/null; break; fi
+            sleep 0.15
+        done
+    ) &
+    pusher=$!
+    # Blocking drain: returns only when rofi closes our stdin (real EOF). If the
+    # worker finishes first, the pusher's USR1 fires the trap and we exit there.
+    while IFS= read -r _ev; do :; done
+    kill "$pusher" 2>/dev/null; wait "$pusher" 2>/dev/null
+    exit 0
+fi
+
+# Absolute path to THIS script — rofi-blocks' -blocks-wrap re-execs it as the
+# loader controller (it g_shell_parse_argv's the value, so no spaces allowed).
+SELF="$(readlink -f -- "${BASH_SOURCE[0]:-$0}")"
+
+# --- APPEARANCE (tweak freely) ---
+WINDOW_WIDTH="50%"       # e.g. "50%", "900px"
+WINDOW_HEIGHT=""         # "" = auto-size to content; or e.g. "60%", "700px"
+NUM_VISIBLE_ROWS=8       # how many list rows are visible before scrolling
+ANSWER_FONT="JetBrainsMono Nerd Font 11"   # font+size of the answer text
+LIST_FONT=""             # "" = use theme default; or e.g. "JetBrainsMono Nerd Font 10"
+
+# --- CONFIG ---
+SEARXNG_URL="http://localhost:8888"
+OLLAMA_URL="http://localhost:11434"
+MODEL="qwen3:8b"
+NUM_RESULTS=5            # how many good sources we want feeding the model
+MAX_FETCH_ATTEMPTS=10    # how many search hits we'll try to reach NUM_RESULTS good ones
+RRF_K=60                 # Reciprocal Rank Fusion smoothing constant (standard default)
+MIN_RELEVANT=3           # CRAG: minimum relevance-graded sources before we'll synthesize
+MAX_RESEARCH_ROUNDS=3    # CRAG: hard cap on reformulate-and-retry rounds (thorough mode)
+REFLECT_MIN_USEFUL=2     # thorough: if fewer sources than this actually SUPPORTED the
+                         # answer, reflect-and-research another round (Self-RAG check)
+FETCH_TIMEOUT=10         # per-page fetch timeout (seconds)
+MAX_CHARS_PER_PAGE=8000  # key facts often sit deep in wiki pages; don't truncate too early
+MIN_GOOD_CHARS=400       # a fetch yielding fewer real chars than this is treated as failed
+UA="Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+CTX_WINDOW_TOKENS=32768  # qwen3:8b context window (see `ollama ps` CONTEXT col)
+CHARS_PER_TOKEN=4        # rough estimate for the context-usage % indicator
+
+# Domains we never bother fetching (no usable article text / hard JS walls).
+BLOCKED_DOMAINS=(
+    youtube.com youtu.be vimeo.com tiktok.com dailymotion.com twitch.tv
+    instagram.com facebook.com x.com twitter.com pinterest.com
+    spotify.com soundcloud.com apple.com/music
+    amazon. ebay. aliexpress.
+)
+
+# --- STATE LAYOUT ---
+# Per-turn pipeline artifacts (.progress/.done/.result/.carry) live in a SESSION
+# dir on tmpfs so the whole conversation auto-clears on reboot and never persists
+# to disk. The session dir is FIXED (not keyed on PID) so every keybind press /
+# re-exec finds the same in-flight session and can attach to it.
+RUNTIME_BASE="${XDG_RUNTIME_DIR:-/tmp}"
+SESSION_DIR="$RUNTIME_BASE/rofi_ai_search"
+STATE_DIR="$SESSION_DIR"          # backend functions still read/write $STATE_DIR
+mkdir -p "$SESSION_DIR"
+SESSION_ENV="$SESSION_DIR/session.env"   # persisted toggle state (key=value)
+WORKER_PID_FILE="$SESSION_DIR/worker.pid"
+UI_PID_FILE="$SESSION_DIR/ui.pid"
+
+# --- DEBUG ---
+# Debug log stays under ~/.config (survives reboot) so it's available after a run.
+DEBUG="${AISEARCH_DEBUG:-0}"
+DEBUG_DIR="$HOME/.config/dusky/settings/rofi_ai_search"
+mkdir -p "$DEBUG_DIR"
+DEBUG_LOG="$DEBUG_DIR/debug.log"
+dbg() { [[ "$DEBUG" == "1" ]] && printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >> "$DEBUG_LOG"; return 0; }
+
+# --- SESSION ENV (toggle state persisted across keybind presses) ---
+# A flat key=value file. Keys: phase (none|searching|results|error), sid,
+# prev_sid, is_followup. Read with sess_get, written with sess_set.
+sess_get() { [[ -f "$SESSION_ENV" ]] || { printf ''; return; }; sed -n "s/^$1=//p" "$SESSION_ENV" | tail -n1; }
+sess_set() {  # sess_set key value  (rewrites the key atomically)
+    local key="$1" val="$2" tmp; tmp="$(mktemp "$SESSION_DIR/.env.XXXXXX")"
+    [[ -f "$SESSION_ENV" ]] && grep -v "^$key=" "$SESSION_ENV" > "$tmp" 2>/dev/null
+    printf '%s=%s\n' "$key" "$val" >> "$tmp"
+    mv "$tmp" "$SESSION_ENV"
+}
+
+# WIPE the entire session: kill the worker, delete all per-turn state + env, and
+# evict the model. This is the ONLY non-reboot reset path; it runs when the user
+# explicitly chooses "New search" (start a fresh conversation).
+wipe_session() {
+    local wp; wp="$(cat "$WORKER_PID_FILE" 2>/dev/null)"
+    [[ -n "$wp" ]] && kill "$wp" 2>/dev/null
+    rm -f "$SESSION_DIR"/*.{carry,result,progress,done,query,question,unused,effort,preblock} "$SESSION_ENV" \
+          "$WORKER_PID_FILE" "$UI_PID_FILE" 2>/dev/null
+    llm_unload
+    return 0
+}
+
+US=$'\x1f'
+
+# Build rofi theme overrides from the APPEARANCE config.
+build_theme() {
+    local t="window { width: ${WINDOW_WIDTH}; "
+    [[ -n "$WINDOW_HEIGHT" ]] && t+="height: ${WINDOW_HEIGHT}; "
+    t+="} listview { lines: ${NUM_VISIBLE_ROWS}; } message { padding: 8px; } "
+    t+="textbox { horizontal-align: 0.0; font: \"${ANSWER_FONT}\"; } "
+    [[ -n "$LIST_FONT" ]] && t+="element-text { font: \"${LIST_FONT}\"; } "
+    printf '%s' "$t"
+}
+THEME="$(build_theme)"
+
+# message textbox has markup:true in this theme -> escape pango specials
+pango_esc() { local s="$1"; s="${s//&/&amp;}"; s="${s//</&lt;}"; s="${s//>/&gt;}"; printf '%s' "$s"; }
+
+# LLM control --------------------------------------------------------------
+# The model auto-loads at the start of each turn (see run_search) and is pinned
+# (keep_alive:-1) for the duration of that turn so it stays warm across the
+# turn's many calls (reformulate + per-source grading + synthesis). The worker
+# ALWAYS EVICTS it (keep_alive:0) the instant the turn finishes — startup is
+# cheap, so VRAM is only held during the active research/answer phase and freed
+# whenever idle (sitting on results, detached, between turns). The NEXT turn
+# re-pins from cold. (No ownership check: on a personal machine we just reclaim
+# our own VRAM aggressively; if something else was using qwen3:8b it gets evicted
+# too, which the user accepted as the right tradeoff.)
+llm_unload() { curl -s "$OLLAMA_URL/api/generate" \
+                   -d "{\"model\":\"$MODEL\",\"prompt\":\"\",\"keep_alive\":0}"  >/dev/null 2>&1; }
+
+# rofi -dmenu helpers ----------------------------------------------------------
+# prompt the user for free text; echoes what they typed (empty if cancelled)
+ask_text() { rofi -dmenu -p "$1" -mesg "$2" -theme-str "$THEME" </dev/null; }
+# show a menu of rows ($2..) with a message ($1); echoes the chosen row
+show_menu() { local mesg="$1"; shift; printf '%s\n' "$@" | rofi -dmenu -i -p "AI Search" -mesg "$mesg" -theme-str "$THEME"; }
+
+# ------------------------------------------------------------------------------
+# BACKEND (unchanged logic): fetch ladder, reformulation, compaction, search.
+# ------------------------------------------------------------------------------
+# Emit a progress line. The worker appends each line to $sid.progress; the
+# loader (see attach_loader) tail-follows that file and pipes it into rofi, so rows
+# appear live. A plain append is race-free and works headless too. $1 = sid.
+set_progress() { printf '⏳ %s\n' "$2" >> "$STATE_DIR/$1.progress" 2>/dev/null || true; }
+
+looks_like_wall() {
+    grep -qiE "enable javascript|javascript is (disabled|required)|solving a captcha|verify (you are|that you'?re) (a )?(not a )?(human|robot)|are you a robot|cf-browser-verification|just a moment\.\.\." <<< "$1"
+}
+
+is_blocked() {
+    local url="${1,,}" d
+    for d in "${BLOCKED_DOMAINS[@]}"; do
+        [[ "$url" == *"${d,,}"* ]] && return 0
+    done
+    return 1
+}
+
+fetch_page() {
+    local url="$1" html="" t_traf="" t_w3m="" best=""
+    url="${url//https:\/\/www.reddit.com\//https://old.reddit.com/}"
+    url="${url//https:\/\/reddit.com\//https://old.reddit.com/}"
+    html=$(timeout "$FETCH_TIMEOUT" curl -sL -A "$UA" "$url" 2>/dev/null)
+    if [[ -n "$html" ]]; then
+        t_traf=$(printf '%s' "$html" | uvx --from trafilatura trafilatura 2>/dev/null)
+        looks_like_wall "$t_traf" && t_traf=""
+    fi
+    t_w3m=$(timeout "$FETCH_TIMEOUT" w3m -dump -cols 100 "$url" 2>/dev/null)
+    looks_like_wall "$t_w3m" && t_w3m=""
+    if [[ ${#t_traf} -ge ${#t_w3m} ]]; then best="$t_traf"; else best="$t_w3m"; fi
+    best=$(printf '%s' "$best" | head -c "$MAX_CHARS_PER_PAGE")
+    [[ ${#best} -ge $MIN_GOOD_CHARS ]] || return 1
+    printf '%s' "$best"
+}
+
+# PARSE QUERY SIGILS: per-query control over the research loop, stripped before
+# the query is searched/answered.
+#   leading '!'   -> strict grading   (else lenient)
+#   trailing '???'-> thorough effort  (else adaptive)
+# Echoes three TAB-separated fields: <effort>\t<strictness>\t<cleaned query>.
+parse_sigils() {
+    local q="$1" effort="adaptive" strict="lenient"
+    q="${q#"${q%%[![:space:]]*}"}"; q="${q%"${q##*[![:space:]]}"}"   # trim outer ws
+    if [[ "$q" == "!"* ]]; then strict="strict"; q="${q#!}"; q="${q#"${q%%[![:space:]]*}"}"; fi
+    if [[ "$q" == *"???" ]]; then effort="thorough"; q="${q%"${q##*[!?]}"}"; q="${q%"${q##*[![:space:]]}"}"; fi
+    printf '%s\t%s\t%s' "$effort" "$strict" "$q"
+}
+
+reformulate_queries() {
+    local raw="$1" carry="${2:-}" avoid="${3:-}" sys ctx="" avoidb="" resp out
+    sys="You convert a user's question into effective web-search queries. Output 1 to 3 short keyword queries, one per line, no numbering, no quotes, no commentary. Strip filler words like 'where can I find', 'how do I', 'what is'. Keep proper nouns and game/product names. If CONTEXT is given, resolve pronouns/references (e.g. 'it', 'its', 'that') to the specific subject from the context so the queries are self-contained."
+    [[ -n "${carry// }" ]] && ctx=$'\n\nCONTEXT:\n'"$carry"
+    # On a retry round, tell the model what we already tried so it picks a fresh
+    # angle (synonyms, narrower/broader phrasing, different facet) instead of
+    # repeating queries that already failed to surface a usable answer.
+    [[ -n "${avoid// }" ]] && avoidb=$'\n\nALREADY TRIED (produce DIFFERENT angles, do not repeat these):\n'"$avoid"
+    resp=$(curl -s "$OLLAMA_URL/api/generate" -d "$(jq -n \
+        --arg m "$MODEL" --arg p "$sys$ctx$avoidb"$'\n\nQUESTION: '"$raw"$'\n\nQUERIES:' \
+        '{model:$m,prompt:$p,stream:false,keep_alive:-1,think:false}')" \
+        | jq -r '.response // empty')
+    out=$(printf '%s' "$resp" | grep -vE '^\s*$' | sed 's/^[0-9.)+-]*\s*//; s/^["'\'']//; s/["'\'']$//' | head -n 3)
+    [[ -z "$out" ]] && out="$raw"
+    printf '%s\n' "$out"
+}
+
+# CRAG RELEVANCE GRADER: does this page actually contain info that helps answer
+# the question? Cheap qwen3 call (think:false). $1=question $2=page $3=strictness.
+# Returns 0 = keep (relevant), 1 = drop. On any model hiccup we FAIL OPEN (keep)
+# so a flaky grader never throws away a page we did manage to fetch.
+# CONTENT SLICE for grading: w3m -dump prepends the full site nav/menu, so a raw
+# `head -c 2000` often shows ONLY chrome (e.g. Bulbapedia's article body starts
+# ~2400 chars in -> the grader judged "Twitch/Facebook/Namespaces" and dropped the
+# right page by luck). Drop obvious nav/list lines (bullets, bracketed/parenthetical
+# menu rows, very short fragments) and keep substantive prose, THEN take the head.
+content_slice() {
+    printf '%s' "$1" \
+        | grep -vE '^\s*([•◦▪*·—-]|\[|\()' \
+        | awk '{ gsub(/^[ \t]+|[ \t]+$/,""); if (length($0) >= 30) print }' \
+        | head -c 2000
+}
+
+grade_relevance() {
+    local question="$1" page="$2" strict="${3:-lenient}" bar p verdict slice
+    if [[ "$strict" == "strict" ]]; then
+        bar="Answer YES only if the page contains information that DIRECTLY answers the question. If it is merely on-topic, tangential, or only partially related, answer NO."
+    else
+        bar="Be generous: answer YES if the page is about the same subject as the question or could provide ANY useful background, context, or partial information toward answering it — even if it doesn't fully or directly answer it. Answer NO ONLY if the page is clearly off-topic (a different subject entirely), content-free (navigation/login/error/paywall stub), or spam. When in doubt, answer YES."
+    fi
+    # Grade on a boilerplate-stripped content slice; fall back to the raw head if
+    # stripping leaves too little (some pages are legitimately short).
+    slice="$(content_slice "$page")"
+    [[ ${#slice} -lt 200 ]] && slice="$(printf '%s' "$page" | head -c 2000)"
+    p="You are a retrieval relevance grader. $bar Output ONLY the single word YES or NO.
+
+QUESTION: $question
+
+PAGE CONTENT:
+$slice
+
+RELEVANT (YES/NO):"
+    verdict=$(curl -s "$OLLAMA_URL/api/generate" -d "$(jq -n --arg m "$MODEL" --arg p "$p" \
+        '{model:$m,prompt:$p,stream:false,keep_alive:-1,think:false}')" \
+        | jq -r '.response // empty' | grep -oiE 'yes|no' | head -n1)
+    [[ "${verdict,,}" == "no" ]] && return 1
+    return 0   # yes, empty, or error -> fail open (keep)
+}
+
+# CITED SOURCES: extract which source numbers the ANSWER actually cites as [N].
+# This is GROUND TRUTH — the model's own citations — so the sources we SHOW always
+# match the [N] markers in the answer text (no phantom citations pointing at hidden
+# sources, which a separate "which were useful" model call used to cause). Handles
+# both [1][2] and [1,2]/[1, 2] forms. $1 = answer  $2 = N (source count).
+# Echoes space-separated unique in-range indices (e.g. "1 2 4"); empty if none.
+cited_sources() {
+    local answer="$1" n="$2"
+    grep -oE '\[[0-9]+([, ]+[0-9]+)*\]' <<< "$answer" \
+        | grep -oE '[0-9]+' | awk -v n="$n" '$1>=1 && $1<=n' | sort -un | tr '\n' ' '
+}
+
+# RESOLVE FOLLOW-UP: rewrite a follow-up into a SELF-CONTAINED question by
+# resolving pronouns/references against the prior conversation. This always
+# preserves the subject (so "does it impact blood" -> "do suicidal thoughts
+# impact blood"), independent of whether prior FACTS are topically relevant.
+#   $1 = prior carry/context   $2 = raw follow-up.  Echoes the rewritten question.
+resolve_followup() {
+    local prior="$1" followup="$2" p out
+    [[ -z "${prior// }" ]] && { printf '%s' "$followup"; return; }
+    p="Rewrite the FOLLOW-UP as a single self-contained question. Replace pronouns and vague references (it, its, that, they, this) with the specific subject from the EARLIER CONVERSATION. Output ONLY the rewritten question, one line, no quotes, no commentary. If the follow-up is already self-contained, output it unchanged.
+
+EARLIER CONVERSATION:
+$prior
+
+FOLLOW-UP: $followup
+
+SELF-CONTAINED QUESTION:"
+    out=$(curl -s "$OLLAMA_URL/api/generate" -d "$(jq -n --arg m "$MODEL" --arg p "$p" \
+        '{model:$m,prompt:$p,stream:false,keep_alive:-1,think:false}')" \
+        | jq -r '.response // empty' | grep -vE '^\s*$' | head -n1 | sed 's/^["'\'']//; s/["'\'']$//')
+    [[ -z "${out// }" ]] && out="$followup"
+    printf '%s' "$out"
+}
+
+# COMPACT CARRY: distill prior context to facts that might help the follow-up,
+# but ALWAYS keep a one-line subject summary so context is never fully lost.
+compact_carry() {
+    local prior="$1" followup="$2" p
+    [[ -z "${prior// }" ]] && return 0
+    p="Below is earlier-conversation context and a new follow-up question. Output: (1) a one-line 'Subject:' summarizing what the conversation has been about, then (2) any facts from the context relevant to the follow-up as terse bullets (omit bullets if none relevant, but ALWAYS keep the Subject line). No preamble.
+
+EARLIER CONTEXT:
+$prior
+
+FOLLOW-UP QUESTION: $followup
+
+OUTPUT:"
+    curl -s "$OLLAMA_URL/api/generate" -d "$(jq -n --arg m "$MODEL" --arg p "$p" \
+        '{model:$m,prompt:$p,stream:false,keep_alive:-1,think:false}')" \
+        | jq -r '.response // empty'
+}
+
+ctx_pct() {
+    local f="$1" chars max tenths
+    [[ -f "$f" ]] || { echo "0.0"; return; }
+    chars=$(wc -c < "$f" 2>/dev/null); chars=${chars:-0}
+    max=$(( CTX_WINDOW_TOKENS * CHARS_PER_TOKEN ))
+    tenths=$(( chars * 1000 / max ))
+    printf '%d.%d' $(( tenths / 10 )) $(( tenths % 10 ))
+}
+
+# ONE RESEARCH ROUND: reformulate (avoiding prior queries) -> multi-query SearXNG
+# -> RRF fuse -> drop blocked/already-tried URLs -> fetch+grade, appending kept
+# pages. Mutates the caller's accumulators by NAMEREF so it can be invoked both by
+# the initial CRAG loop and by the post-synthesis reflect loop.
+#   $1 sid  $2 query  $3 carry  $4 strictness  $5 round#  $6 mode_tag
+#   $7..    namerefs: context good good_urls tried_urls tried_queries
+research_round() {
+    local sid="$1" query="$2" carry="$3" strictness="$4" round="$5" mode_tag="$6"
+    local -n _ctx="$7" _good="$8" _gurls="$9" _turls="${10}" _tqueries="${11}"
+    local avoid=""; [[ $round -gt 1 ]] && avoid="$_tqueries"
+    set_progress "$sid" "Planning search queries… [$mode_tag]$([[ $round -gt 1 ]] && echo "  (round $round)")"
+    local queries; queries=$(reformulate_queries "$query" "$carry" "$avoid")
+    # ROUND 1: always include the user's ACTUAL question (lightly cleaned) as a
+    # search query alongside the reformulated keyword ones. WHY: reformulation is
+    # non-deterministic and can drift to phrasings that surface the wrong subject
+    # (e.g. "bird holding another pokemon" returns Farfetch'd instead of Cramorant
+    # for "bird with a fish in its mouth"). The literal question reliably returns
+    # the right page, and RRF fuses it with the reformulated results. Skipped on
+    # retry rounds, whose whole purpose is to try DIFFERENT angles.
+    if [[ $round -eq 1 ]]; then
+        local litq="${query%\?}"   # drop a trailing '?'; SearXNG likes plain text
+        queries="$litq"$'\n'"$queries"
+    fi
+    dbg "ROUND $round QUERIES:"$'\n'"$(printf '%s' "$queries" | nl -w2 -s'. ')"
+    _tqueries+="$queries"$'\n'
+
+    local ranked="" rj q
+    while IFS= read -r q; do
+        [[ -z "$q" ]] && continue
+        set_progress "$sid" "Searching: $q"
+        rj=$(curl -s --get "$SEARXNG_URL/search" \
+                --data-urlencode "q=$q" --data-urlencode "format=json" 2>/dev/null)
+        ranked+=$'\n'"$(echo "$rj" | jq -r '.results[].url' 2>/dev/null | grep -vE '^\s*$' | nl -ba -w1 -s$'\t')"
+    done <<< "$queries"
+    local candidates; candidates=$(printf '%s\n' "$ranked" | awk -F'\t' -v k="$RRF_K" '
+        NF==2 { if (!($2 in seen)) { order[++n]=$2; seen[$2]=n }
+                score[$2] += 1.0/(k + $1) }
+        END { for (i=1;i<=n;i++) printf "%.6f\t%d\t%s\n", score[order[i]], order[i], order[i] }
+    ' | sort -t$'\t' -k1,1nr -k2,2n | cut -f3-)
+    local filtered="" cu blocked=0 already=0
+    while IFS= read -r cu; do
+        [[ -z "$cu" ]] && continue
+        if is_blocked "$cu"; then blocked=$((blocked+1)); continue; fi
+        [[ "$_turls" == *$'\n'"$cu"$'\n'* ]] && { already=$((already+1)); continue; }
+        filtered+="$cu"$'\n'
+    done <<< "$candidates"
+    candidates=$(printf '%s' "$filtered" | head -n "$MAX_FETCH_ATTEMPTS")
+    dbg "ROUND $round CANDIDATES: $(printf '%s\n' "$candidates" | grep -c .) usable, $blocked blocked-domain, $already already-tried dropped:"$'\n'"$(printf '%s' "$candidates" | nl -w2 -s'. ')"
+
+    [[ -z "$candidates" ]] && return 0
+    local url page
+    while IFS= read -r url; do
+        [[ -z "$url" ]] && continue
+        [[ $_good -ge $NUM_RESULTS ]] && break
+        _turls+="$url"$'\n'
+        set_progress "$sid" "Reading ($_good/$NUM_RESULTS kept): ${url#*://}"
+        if ! page=$(fetch_page "$url"); then
+            dbg "FETCH SKIP (unusable)  <- $url"; continue
+        fi
+        set_progress "$sid" "Checking relevance ($_good/$NUM_RESULTS kept): ${url#*://}"
+        if ! grade_relevance "$query" "$page" "$strictness"; then
+            dbg "GRADE DROP (irrelevant, blocklisted)  <- $url"; continue
+        fi
+        _good=$((_good+1)); _gurls+=("$url")
+        _ctx+=$'\n\n=== SOURCE ['"$_good"'] '"$url"$' ===\n'"$page"
+        dbg "GRADE KEEP [$_good] ${#page} chars  <- $url"
+    done <<< "$candidates"
+    return 0
+}
+
+# SYNTHESIZE: build the cited answer from accumulated sources. Echoes the answer
+# (single line). $1 query  $2 context  $3 carry  $4 good-count.
+synthesize() {
+    local query="$1" context="$2" carry="$3" good="$4"
+    local prompt answer thinking payload resp carry_block="" thin_note=""
+    [[ -n "${carry// }" ]] && carry_block="CARRIED CONTEXT FROM EARLIER IN THIS CONVERSATION (use it, but cite web sources for new factual claims):
+$carry
+
+"
+    (( good < MIN_RELEVANT )) && thin_note=" Note: only $good source(s) passed relevance screening despite multiple search attempts, so coverage is limited — be appropriately tentative and flag gaps."
+    prompt="You are a careful research assistant. Answer the user's question using the web sources below${carry:+ and the carried context}. Cite every claim drawn from the web sources inline with its source [N]. If the sources do not actually answer the question, say so explicitly rather than guessing. Keep it concise.${thin_note}
+
+${carry_block}USER QUESTION: $query
+
+WEB SOURCES:$context
+
+ANSWER (concise, every web-sourced claim cited [N], or say the sources don't answer it):"
+    payload=$(jq -n --arg m "$MODEL" --arg p "$prompt" \
+        '{model:$m,prompt:$p,stream:false,keep_alive:-1,think:true}')
+    resp=$(curl -s "$OLLAMA_URL/api/generate" -d "$payload")
+    answer=$(echo "$resp" | jq -r '.response // empty')
+    thinking=$(echo "$resp" | jq -r '.thinking // empty')
+    [[ -n "$thinking" ]] && dbg "----- MODEL THINKING -----"$'\n'"$thinking"$'\n'"--------------------------"
+    dbg "----- MODEL ANSWER -----"$'\n'"$answer"$'\n'"------------------------"
+    [[ -z "$answer" ]] && answer="(model returned no answer)"
+    printf '%s' "$answer" | tr '\n' ' ' | sed 's/  */ /g'
+}
+
+# run_search: does the full pipeline, writes $sid.result + $sid.done.
+#   $1 = query   $2 = sid   $3 = "1" if follow-up   $4 = carry-source sid ("" if none)
+#   Optional $5 = newline-separated URLs to pre-seed the blocklist (escalation).
+run_search() {
+    local query="$1" sid="$2" is_followup="${3:-0}" carry_src="${4:-}" preblock="${5:-}"
+    local out="$STATE_DIR/$sid.result" done="$STATE_DIR/$sid.done"
+    local carry_file="$STATE_DIR/$sid.carry"
+
+    # inherit carry from the previous turn (chaining)
+    [[ -n "$carry_src" && -f "$STATE_DIR/$carry_src.carry" ]] && cp "$STATE_DIR/$carry_src.carry" "$carry_file"
+
+    if ! ollama ps 2>/dev/null | grep -q "^${MODEL}"; then
+        curl -s "$OLLAMA_URL/api/generate" \
+            -d "{\"model\":\"$MODEL\",\"prompt\":\"\",\"keep_alive\":-1}" >/dev/null 2>&1 || true
+    fi
+
+    dbg "================ NEW SEARCH ================"
+    dbg "QUESTION (raw): $query  [follow-up=$is_followup]"
+
+    # Parse per-query sigils (!=strict, ???=thorough) and strip them BEFORE any
+    # LLM sees the query, so they never leak into reformulation/resolution.
+    local effort strictness
+    IFS=$'\t' read -r effort strictness query < <(parse_sigils "$query")
+    dbg "MODE: effort=$effort strictness=$strictness ; cleaned query: $query"
+    printf '%s' "$effort" > "$STATE_DIR/$sid.effort"   # for bare-??? escalation check
+
+    # raw_query = what the user typed (logged in carry); query = what we actually
+    # search/answer (pronouns resolved to the prior subject on a follow-up).
+    local raw_query="$query" carry=""
+    if [[ "$is_followup" == "1" && -f "$carry_file" ]]; then
+        set_progress "$sid" "Reviewing prior context…"
+        local prior; prior="$(cat "$carry_file")"
+        query="$(resolve_followup "$prior" "$raw_query")"
+        dbg "RESOLVED FOLLOW-UP: $raw_query  ->  $query"
+        carry=$(compact_carry "$prior" "$raw_query")
+        printf '%s' "$carry" > "$carry_file"
+        dbg "COMPACTED CARRY (${#carry} chars):"$'\n'"$carry"
+    fi
+
+    fail_out() { dbg "ABORT: $1"; printf 'ERR\x1f%s\n' "$1" > "$out"; : > "$done"; }
+
+    # Effort -> max research rounds. Adaptive starts at 2 (one initial + one
+    # corrective retry) but bails early if the topic looks genuinely sparse;
+    # thorough escalates up to MAX_RESEARCH_ROUNDS.
+    local max_rounds; [[ "$effort" == "thorough" ]] && max_rounds=$MAX_RESEARCH_ROUNDS || max_rounds=2
+    local mode_tag="$effort · $strictness"
+
+    # CRAG RESEARCH + (thorough) REFLECT loop. Shared accumulators below persist
+    # across BOTH the pre-synthesis research rounds and any post-synthesis reflect
+    # rounds, so each round only adds NEW sources (never re-fetches).
+    local context="" good=0 round=0
+    local -a good_urls=()
+    local tried_urls=$'\n'      # URLs already fetched this turn (any verdict)
+    local tried_queries=""      # queries already issued this turn (for avoid-list)
+    # Pre-seed the blocklist with escalation's known near-misses so they're skipped.
+    if [[ -n "${preblock// }" ]]; then
+        local pb; while IFS= read -r pb; do [[ -n "$pb" ]] && tried_urls+="$pb"$'\n'; done <<< "$preblock"
+        dbg "PRE-BLOCKED $(printf '%s\n' "$preblock" | grep -c .) near-miss URL(s) from prior turn"
+    fi
+
+    # PHASE 1: gather sources (multi-round for thorough; adaptive bails early).
+    while (( round < max_rounds )); do
+        round=$((round+1))
+        research_round "$sid" "$query" "$carry" "$strictness" "$round" "$mode_tag" \
+                       context good good_urls tried_urls tried_queries
+        dbg "ROUND $round END: $good relevant source(s) so far"
+        (( good >= MIN_RELEVANT )) && break
+        if [[ "$effort" == "adaptive" && $good -gt 0 ]]; then
+            dbg "ADAPTIVE STOP: $good relevant found, topic appears sparse — not retrying"; break
+        fi
+        set_progress "$sid" "Only $good relevant so far — trying new search angles…"
+    done
+    dbg "RESEARCH DONE after $round round(s): $good relevant source(s) ; TOTAL CONTEXT: ${#context} chars"
+    [[ $good -eq 0 ]] && { fail_out "Couldn't find sources that answer: $query"; return; }
+
+    # PHASE 2: synthesize + reflect. In thorough mode, if too few sources actually
+    # SUPPORTED the answer, research another round (skipping the unsupported ones)
+    # and re-synthesize — bounded by the shared MAX_RESEARCH_ROUNDS budget.
+    local answer cited_idx
+    local -a show_pairs=() unused_urls=()
+    while :; do
+        set_progress "$sid" "Synthesizing answer…"
+        answer="$(synthesize "$query" "$context" "$carry" "$good")"
+
+        # Show exactly the sources the ANSWER cites as [N] (ground truth). Sources
+        # fetched+graded-relevant but NOT cited are near-misses the model didn't
+        # use -> hidden from view + recorded for escalation blocklisting.
+        cited_idx="$(cited_sources "$answer" "$good")"
+        dbg "CITED SOURCES (of $good): [${cited_idx:-none}]"
+        show_pairs=(); unused_urls=()
+        if [[ -n "${cited_idx// }" ]]; then
+            local j
+            for ((j=1; j<=good; j++)); do
+                if [[ " $cited_idx " == *" $j "* ]]; then show_pairs+=("$j$US${good_urls[j-1]}")
+                else unused_urls+=("${good_urls[j-1]}"); fi
+            done
+        fi
+        if [[ ${#show_pairs[@]} -eq 0 ]]; then  # answer cited nothing -> show all
+            local j; for ((j=1; j<=good; j++)); do show_pairs+=("$j$US${good_urls[j-1]}"); done
+            unused_urls=()
+        fi
+
+        # REFLECT: thorough only, rounds remaining, and too few CITED sources.
+        local n_cited=${#show_pairs[@]}
+        if [[ "$effort" == "thorough" ]] && (( round < max_rounds )) && (( n_cited < REFLECT_MIN_USEFUL )); then
+            round=$((round+1))
+            # Blocklist the sources the answer DIDN'T cite so the extra round
+            # chases genuinely new material instead of the same near-misses.
+            local uu; for uu in "${unused_urls[@]}"; do tried_urls+="$uu"$'\n'; done
+            dbg "REFLECT: only $n_cited cited source(s) (<$REFLECT_MIN_USEFUL) — researching round $round, blocklisting ${#unused_urls[@]} uncited"
+            set_progress "$sid" "Only $n_cited source(s) supported the answer — digging deeper…"
+            research_round "$sid" "$query" "$carry" "$strictness" "$round" "$mode_tag" \
+                           context good good_urls tried_urls tried_queries
+            continue   # re-synthesize with the enlarged source set
+        fi
+        break
+    done
+
+    printf '\nQ: %s\nA: %s\n' "$query" "$answer" >> "$carry_file"
+    local pct; pct=$(ctx_pct "$carry_file")
+    dbg "CARRY now ${pct}% of context window"
+    dbg "SHOWING ${#show_pairs[@]} source(s); ${#unused_urls[@]} not-useful (blocklistable on escalation)"
+
+    # Persist the original question + the not-useful URLs so a bare-'???' escalation
+    # can re-run THIS question in thorough mode while avoiding these near-misses.
+    printf '%s' "$query" > "$STATE_DIR/$sid.question"
+    : > "$STATE_DIR/$sid.unused"
+    local u; for u in "${unused_urls[@]}"; do printf '%s\n' "$u" >> "$STATE_DIR/$sid.unused"; done
+
+    {
+        printf 'ANSWER\x1f%s\n' "$answer"
+        printf 'CTXPCT\x1f%s\n' "$pct"
+        local pair n url
+        for pair in "${show_pairs[@]}"; do
+            n="${pair%%$US*}"; url="${pair#*$US}"
+            printf 'SRC\x1f%s\x1f%s\n' "$n" "$url"
+        done
+    } > "$out"
+    : > "$done"
+}
+
+# ------------------------------------------------------------------------------
+# ATTACH a LIVE loader (rofi-blocks) to an ALREADY-RUNNING worker.
+#
+# Background: this rofi build (2.0.0) does NOT render a -dmenu window until its
+# stdin hits EOF, and stock script mode can't self-refresh without user input
+# (upstream issue #1082). The only way to stream live progress INTO an open rofi
+# window is the rofi-blocks plugin: a -blocks-wrap controller pushes JSON list
+# updates unprompted. We built it to ~/.local/lib/rofi/blocks.so (no sudo).
+#
+# DETACH MODEL: this function NO LONGER spawns or kills the worker. The worker is
+# an independent detached process (see --worker). attach_loader just opens a
+# window onto the in-flight sid's $sid.progress/$sid.done and returns when rofi
+# closes — whether because the search finished ($df appeared -> loader self-exits)
+# or because the user pressed Esc (detach). Closing the window never cancels the
+# search. Returns 0 if the search had FINISHED by the time we returned (df exists),
+# 1 if the user detached while still searching.
+#   $1 = sid
+# ------------------------------------------------------------------------------
+BLOCKS_SO="$HOME/.local/lib/rofi/blocks.so"
+
+attach_loader() {
+    local sid="$1"
+    local pf="$STATE_DIR/$sid.progress" df="$STATE_DIR/$sid.done"
+
+    if [[ -f "$BLOCKS_SO" ]]; then
+        # --- LIVE loader via rofi-blocks ---
+        # The controller (this script, --blocks-loader) reads $pf and pushes
+        # rows live; it exits when $df appears (-> rofi closes) or on Esc.
+        BLK_PROGRESS="$pf" BLK_DONE="$df" BLK_ROWS="$NUM_VISIBLE_ROWS" \
+        BLK_MSG="Searching the web — please wait…  (Esc to hide; search keeps running)" \
+        ROFI_PLUGIN_PATH="$HOME/.local/lib/rofi" \
+            rofi -modi blocks -show blocks \
+                 -blocks-wrap "$SELF --blocks-loader" \
+                 -theme-str "$THEME" >/dev/null 2>&1
+    else
+        # --- FALLBACK: static spinner (stdin closed -> instant paint) ---
+        printf '\n' | rofi -dmenu -p "⣾ Searching" \
+                -mesg "Searching the web — please wait…  (Esc to hide; search keeps running)" \
+                -theme-str "$THEME" -no-custom >/dev/null 2>&1
+    fi
+
+    # Did the search finish while we were attached?
+    [[ -f "$df" ]] && return 0 || return 1
+}
+
+# ------------------------------------------------------------------------------
+# RESULTS MENU: show answer (message) + action rows. Echoes the chosen row on
+# stdout AND propagates rofi's exit code as its own return, so the caller can
+# tell HOW the row was accepted:
+#   0  = plain Enter  (kb-accept-entry)
+#   10 = Shift+Return (rebound to kb-custom-1) -> "open but stay in the menu"
+# Used by source rows: Enter opens + dismisses, Shift+Return opens + re-shows.
+# ------------------------------------------------------------------------------
+#   $1 = sid   $2 = (optional) exact row text to PRE-SELECT on open (used to keep
+#   the cursor on the source you just opened with Shift+Return).
+show_results() {
+    local sid="$1" preselect="${2:-}" out="$STATE_DIR/$sid.result"
+    local kind rest answer="" pct="0.0"
+    IFS=$'\x1f' read -r kind rest < "$out"
+    if [[ "$kind" == "ERR" ]]; then
+        printf '%s\n%s\n' "↻ New search" "✖ Quit" \
+            | rofi -dmenu -i -p "AI Search" -mesg "$(pango_esc "Error: $rest")" -theme-str "$THEME"
+        return $?
+    fi
+    local -a rows=()
+    while IFS=$'\x1f' read -r tag a b; do
+        case "$tag" in
+            ANSWER) answer="$a" ;;
+            CTXPCT) pct="$a" ;;
+            SRC)    rows+=("[$a] $b") ;;
+        esac
+    done < "$out"
+    # Hint only makes sense when there are source rows to open.
+    local mesg="$answer"
+    [[ ${#rows[@]} -gt 0 ]] && mesg+="  (Shift+Enter on a source opens it without closing the menu)"
+    # Land the cursor on a specific row if asked (-select matches the first row
+    # whose text contains the string; we pass the exact row so it's unambiguous).
+    local -a sel=(); [[ -n "$preselect" ]] && sel=(-select "$preselect")
+    printf '%s\n' \
+        "↳ Ask a follow-up question" \
+        "⎘ Copy answer" \
+        "${rows[@]}" \
+        "↻ New search  ·  conversation memory: ${pct}% of context" \
+        | rofi -dmenu -i -p "AI Search" -mesg "$(pango_esc "$mesg")" \
+               -kb-accept-alt "" -kb-custom-1 "Shift+Return" -kb-accept-entry "Return,KP_Enter" \
+               "${sel[@]}" -theme-str "$THEME"
+    return $?
+}
+
+# ==============================================================================
+# DETACHED WORKER (re-exec entrypoint): rofi_ai_search --worker-run <sid> <isfu> <prev>
+# Runs ONE search turn fully decoupled from any launcher/terminal (the spawner
+# uses `setsid -f` so this outlives every rofi window and the keybind process).
+# The query is read from <sid>.query (not argv, so free text never hits the shell
+# word-splitting). On completion it fires a GENERIC "search complete" notification
+# IFF no UI client is attached when it finishes (ui.pid points at a live process).
+# The worker owns the session; it is only killed by wipe_session ("New search")
+# or by reboot (tmpfs clears).
+# ==============================================================================
+if [[ "${1:-}" == "--worker-run" ]]; then
+    w_sid="$2"; w_isfu="${3:-0}"; w_prev="${4:-}"
+    echo $$ > "$WORKER_PID_FILE"
+    w_query="$(cat "$STATE_DIR/$w_sid.query" 2>/dev/null)"
+    w_preblock="$(cat "$STATE_DIR/$w_sid.preblock" 2>/dev/null)"
+    dbg "WORKER start sid=$w_sid isfu=$w_isfu prev=$w_prev query=$w_query"
+    run_search "$w_query" "$w_sid" "$w_isfu" "$w_prev" "$w_preblock"
+    # EVICT the model from VRAM now that this turn is done (research+answer over).
+    # Startup is cheap, so we ALWAYS free VRAM the instant it's not actively
+    # needed; the next turn's run_search re-pins it. Covers ALL run_search exit
+    # paths (success and fail_out) since it runs after the call returns.
+    llm_unload; dbg "WORKER evicted model from VRAM (turn done)"
+    # Determine result phase from what run_search wrote.
+    if head -c 3 "$STATE_DIR/$w_sid.result" 2>/dev/null | grep -q '^ERR'; then
+        sess_set phase error
+    else
+        sess_set phase results
+    fi
+    # Notify ONLY if no UI is attached right now (search completed while detached).
+    # ui.pid holds the client's PROCESS-GROUP id; test the group is still alive.
+    ui_pgid="$(cat "$UI_PID_FILE" 2>/dev/null)"
+    if [[ -z "$ui_pgid" ]] || ! kill -0 "-$ui_pgid" 2>/dev/null; then
+        notify-send -t 4000 "AI Search" "Search complete" 2>/dev/null || true
+        dbg "WORKER done (detached) -> notified"
+    else
+        dbg "WORKER done (UI attached) -> no notification"
+    fi
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# MAIN FLOW (toggle client)
+# ------------------------------------------------------------------------------
+[[ "$DEBUG" == "1" ]] && { echo "AI Search debug ON: tail -f $DEBUG_LOG"; }
+
+# --- SINGLE-INSTANCE UI GUARD (toggle) ---
+# The keybind TOGGLES the window: if a window is already up (a prior client's
+# process group is alive), pressing the keybind just DISMISSES it (same as Esc)
+# and exits — it does NOT reopen. Only when no window is up does a press open one.
+#
+# Each client re-execs itself under setsid so it's a process-group leader
+# (PGID==PID, guarded by AISEARCH_CLIENT_LEADER to avoid an infinite re-exec
+# loop). The active client records its PGID in ui.pid. To dismiss, we
+# `kill -- -PGID` (negative = whole group), which takes down the old bash AND its
+# rofi child together (killing only the bash pid would orphan the rofi window and
+# deadlock — the historical bug). Dismiss-then-exit gives clean toggle behaviour;
+# the next press starts fresh.
+if [[ "${AISEARCH_CLIENT_LEADER:-}" != "1" ]]; then
+    exec env AISEARCH_CLIENT_LEADER=1 setsid "$SELF" "$@"
+fi
+MY_PGID=$$   # setsid made us session+group leader, so PGID == PID
+
+prev_pgid="$(cat "$UI_PID_FILE" 2>/dev/null)"
+if [[ -n "$prev_pgid" && "$prev_pgid" != "$MY_PGID" ]] && kill -0 "-$prev_pgid" 2>/dev/null; then
+    # A window is already up -> this press is a toggle-off. Dismiss it and quit.
+    kill -TERM -- "-$prev_pgid" 2>/dev/null
+    rm -f "$UI_PID_FILE" 2>/dev/null
+    exit 0
+fi
+echo "$MY_PGID" > "$UI_PID_FILE"
+# On exit, drop our UI marker ONLY if it's still ours (a successor may have
+# already overwritten it). NEVER touch the worker/session — detach only.
+trap '[[ "$(cat "$UI_PID_FILE" 2>/dev/null)" == "$MY_PGID" ]] && rm -f "$UI_PID_FILE" 2>/dev/null' EXIT
+
+# spawn_worker QUERY ISFOLLOWUP PREVSID [PREBLOCK] — start a detached search turn.
+# The query is written to <sid>.query (so we never pass free text through argv),
+# then the worker is launched via setsid so it survives this client exiting.
+# PREBLOCK (optional) = newline-separated URLs to pre-blocklist (escalation).
+spawn_worker() {
+    local q="$1" isfu="$2" prev="$3" preblock="${4:-}"
+    local nsid; nsid="s$(date +%s%N)"
+    rm -f "$STATE_DIR/$nsid".{result,done,progress,query,preblock}
+    printf '%s' "$q" > "$STATE_DIR/$nsid.query"
+    [[ -n "$preblock" ]] && printf '%s' "$preblock" > "$STATE_DIR/$nsid.preblock"
+    : > "$STATE_DIR/$nsid.progress"   # exists immediately so a loader has input
+    sess_set sid "$nsid"; sess_set is_followup "$isfu"; sess_set prev_sid "$prev"
+    sess_set phase searching
+    setsid -f "$SELF" --worker-run "$nsid" "$isfu" "$prev" >/dev/null 2>&1
+    printf '%s' "$nsid"
+}
+
+# Attach to the in-flight search (live loader). If it finishes while attached, we
+# fall through to results. If the user detaches (Esc) mid-search, we just exit —
+# the worker keeps running and will notify on completion. Crash guard: if the
+# worker pid is dead and no .done was written, surface an error turn.
+attach_running() {
+    local sid="$1"
+    attach_loader "$sid" && return 0   # finished while attached -> show results
+    # Detached while still searching: verify the worker is actually alive.
+    local wp; wp="$(cat "$WORKER_PID_FILE" 2>/dev/null)"
+    if [[ -f "$STATE_DIR/$sid.done" ]]; then return 0; fi   # raced to done
+    if [[ -z "$wp" ]] || ! kill -0 "$wp" 2>/dev/null; then
+        # worker died without finishing -> synthesize an error result
+        printf 'ERR\x1fThe search worker stopped unexpectedly.\n' > "$STATE_DIR/$sid.result"
+        : > "$STATE_DIR/$sid.done"; sess_set phase error
+        return 0
+    fi
+    return 1   # still searching, user detached -> client should just exit
+}
+
+# The interactive results loop for a completed turn. Returns via $next:
+# "wipe" (New search), "exit" (detach/quit). Follow-ups spawn a new worker and
+# re-attach inline.
+results_loop() {
+    local sid="$1" action ans fq nq nsid rc preselect=""
+    while :; do
+        sess_set phase results
+        action="$(show_results "$sid" "$preselect")"; rc=$?   # rc: 0=Enter, 10=Shift+Return
+        preselect=""   # consumed; only re-set below when we re-show after Shift+Return
+        case "$action" in
+            "↳ Ask a follow-up question")
+                fq="$(ask_text "Follow-up:" "Type your follow-up question, then Enter")"
+                fq="${fq#"${fq%%[![:space:]]*}"}"; fq="${fq%"${fq##*[![:space:]]}"}"   # trim
+                [[ -z "$fq" ]] && continue
+                # BARE '???' = ESCALATE this turn to thorough: re-run the ORIGINAL
+                # question in thorough mode, blocklisting the prior turn's
+                # not-useful (near-miss) sources. No-op if already thorough.
+                if [[ "$fq" == "???" ]]; then
+                    local oq cur_effort pre
+                    oq="$(cat "$STATE_DIR/$sid.question" 2>/dev/null)"
+                    cur_effort="$(cat "$STATE_DIR/$sid.effort" 2>/dev/null)"
+                    if [[ -z "$oq" ]]; then
+                        notify-send -t 2000 "AI Search" "Nothing to escalate" 2>/dev/null || true; continue
+                    fi
+                    if [[ "$cur_effort" == "thorough" ]]; then
+                        notify-send -t 2000 "AI Search" "Already a thorough search" 2>/dev/null || true; continue
+                    fi
+                    pre="$(cat "$STATE_DIR/$sid.unused" 2>/dev/null)"
+                    # Re-run as a FRESH (non-follow-up) thorough turn on the same
+                    # question, carrying the chain, pre-blocklisting near-misses.
+                    nsid="$(spawn_worker "$oq???" 0 "$sid" "$pre")"
+                    if attach_running "$nsid"; then sid="$nsid"; continue; fi
+                    return 0
+                fi
+                nsid="$(spawn_worker "$fq" 1 "$sid")"
+                if attach_running "$nsid"; then sid="$nsid"; continue; fi
+                return 0 ;;   # detached mid-search -> exit client, worker runs on
+            "↻ New search"*)
+                # EXPLICIT WIPE: this is the only non-reboot reset. Clear the whole
+                # session, then prompt fresh.
+                wipe_session
+                nq="$(ask_text "Ask:" "Type a question, then Enter")"
+                [[ -z "${nq// }" ]] && { next="exit"; return 0; }
+                nsid="$(spawn_worker "$nq" 0 "")"
+                if attach_running "$nsid"; then sid="$nsid"; continue; fi
+                return 0 ;;
+            "⎘ Copy answer")
+                ans="$(IFS=$'\x1f'; read -r _ a < "$STATE_DIR/$sid.result"; printf '%s' "$a")"
+                command -v wl-copy >/dev/null 2>&1 && printf '%s' "$ans" | wl-copy
+                notify-send -t 1500 "AI Search" "Answer copied to clipboard" 2>/dev/null || true
+                ;;
+            "["*"] http"*)
+                # Open the source. Enter (rc=0) -> open and DISMISS the menu.
+                # Shift+Return (rc=10) -> open and STAY, re-showing with the cursor
+                # parked on the source we just opened (so opening many in a row is
+                # a sequence of Shift+Enter presses moving down the list).
+                setsid xdg-open "${action#*] }" >/dev/null 2>&1 &
+                [[ "$rc" == "10" ]] && { preselect="$action"; continue; }
+                return 0 ;;
+            *) return 0 ;;   # Escape / Quit / empty -> detach (session persists)
+        esac
+    done
+}
+
+# --- TOGGLE DISPATCH ---------------------------------------------------------
+# Decide what this keybind press does based on the persisted session phase.
+phase="$(sess_get phase)"
+sid="$(sess_get sid)"
+
+case "$phase" in
+    searching)
+        # A search is in flight: attach to its live progress.
+        if attach_running "$sid"; then results_loop "$sid"; fi
+        ;;
+    results|error)
+        # A finished search: re-show its results/error screen.
+        if [[ -f "$STATE_DIR/$sid.result" ]]; then results_loop "$sid"
+        else
+            # state lost (shouldn't happen pre-reboot) -> fresh prompt
+            q="$(ask_text "Ask:" "Type a question, then Enter")"
+            [[ -z "${q// }" ]] && exit 0
+            nsid="$(spawn_worker "$q" 0 "")"
+            attach_running "$nsid" && results_loop "$nsid"
+        fi
+        ;;
+    *)
+        # No session: fresh prompt -> spawn worker -> attach.
+        q="$(ask_text "Ask:" "Type a question, then Enter")"
+        [[ -z "${q// }" ]] && exit 0
+        nsid="$(spawn_worker "$q" 0 "")"
+        attach_running "$nsid" && results_loop "$nsid"
+        ;;
+esac
+exit 0
