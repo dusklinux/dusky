@@ -171,7 +171,8 @@ case "$MODE" in
                 fi
             fi
             
-            [[ "$PHASE" == "WORK" ]] && prefix="W: " || prefix="B: "
+            prefix=""
+            [[ "$PHASE" == "BREAK" ]] && prefix="B "
             send_osd "${prefix}$(format_time "$left")"
             sleep 1
         done
