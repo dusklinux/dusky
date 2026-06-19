@@ -235,13 +235,6 @@ ExecStart=/usr/bin/pacman-key --populate cachyos
 EOF
   fi
 
-  log_step "Appending migrated packages and power management daemons to Live ISO package list..."
-  echo "awww" >> "${PROFILE_DIR}/packages.x86_64"
-  echo "dgop" >> "${PROFILE_DIR}/packages.x86_64"
-  echo "opencode" >> "${PROFILE_DIR}/packages.x86_64"
-  echo "tlp" >> "${PROFILE_DIR}/packages.x86_64"
-  echo "tlp-pd" >> "${PROFILE_DIR}/packages.x86_64"
-
   log_ok "Payloads staged."
 }
 
@@ -260,10 +253,6 @@ if [[ "$(tty)" == "/dev/tty1" ]]; then
 
     chmod -R +x /root/arch_install/
     
-    # Optimize power management for CachyOS schedulers on live boot
-    systemctl mask power-profiles-daemon.service >/dev/null 2>&1 || true
-    systemctl enable tlp.service tlp-pd.service >/dev/null 2>&1 || true
-
     clear
     cd /root/arch_install/
     ./000_dusky_arch_install.sh
