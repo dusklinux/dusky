@@ -116,6 +116,27 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
     menu_key = f"menu_{suffix.replace('-', '_')}" if suffix else "menu_global"
     uid = f"{scope}.{menu_key}"
     
+    # Surgical variants directly compiled from the active Mako specification sheet
+    width_map = {
+        "": 170, "clock": 170, "stopwatch": 170, "timer": 170, "pomodoro": 170,
+        "cpu": 100, "ram": 120, "ram-temp": 160, "zram": 210, "temp": 110, "battery": 190,
+        "disk": 240, "disk-read": 190, "disk-write": 190, "disk-temp": 100,
+        "network": 190, "uptime": 170, "workspace": 140
+    }
+    
+    height_map = {
+        "cpu": 38
+    }
+    
+    border_size_map = {
+        "ram-temp": 0,
+        "network": 1
+    }
+
+    width_val = width_map.get(suffix, 170)
+    height_val = height_map.get(suffix, 40)
+    border_size_val = border_size_map.get(suffix, 2)
+
     return [
         ConfigItem(
             label=label_name,
@@ -154,7 +175,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             key="text-alignment",
             scope=scope,
             type_="cycle",
-            default="right",
+            default="center",
             options=["left", "center", "right"],
             parent_ref=uid,
             extended_help="**Text Justification**\n\nAligns the text to visually anchor against the screen edge (e.g. `right` if the widget is anchored `bottom-right`)."
@@ -164,7 +185,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             key="width",
             scope=scope,
             type_="int",
-            default=240,
+            default=width_val,
             min_val=100,
             max_val=800,
             step=10,
@@ -176,7 +197,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             key="height",
             scope=scope,
             type_="int",
-            default=40,
+            default=height_val,
             min_val=20,
             max_val=200,
             step=2,
@@ -188,7 +209,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             key="margin",
             scope=scope,
             type_="string",
-            default="0,0,0,0",
+            default="0,8,0,0",
             parent_ref=uid,
             extended_help="**Spatiotemporal Margin Offset**\n\nCSS-style margins (Top, Right, Bottom, Left) that push the dashboard away from the edges of the Wayland output screen."
         ),
@@ -206,7 +227,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             key="border-radius",
             scope=scope,
             type_="int",
-            default=20,
+            default=18,
             min_val=0,
             max_val=50,
             step=1,
@@ -218,7 +239,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             key="border-size",
             scope=scope,
             type_="int",
-            default=0,
+            default=border_size_val,
             min_val=0,
             max_val=10,
             step=1,
@@ -230,7 +251,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             key="border-color",
             scope=scope,
             type_="color",
-            default="{{colors.outline.default.hex}}",
+            default="{{colors.on_primary_container.default.hex}}",
             options=COLOR_OPTIONS,
             hints=COLOR_HINTS,
             parent_ref=uid,
@@ -282,9 +303,9 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             key="on-button-left",
             scope=scope,
             type_="cycle",
-            default='exec bash -c "pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dusky_glance.sh"',
+            default='exec notify-send "Toggle FullScreen Temporarily to hide the Overlay"',
             options=[
-                'exec notify-send "Toggle FullScreen Temperarily to hide the Overlay"', 
+                'exec notify-send "Toggle FullScreen Temporarily to hide the Overlay"', 
                 'exec bash -c "pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dusky_glance.sh"'
             ],
             parent_ref=uid,
@@ -297,7 +318,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             key="background-color",
             scope=scope,
             type_="color",
-            default="#00000000",
+            default="{{colors.on_primary.default.hex}}b3",
             options=COLOR_OPTIONS,
             hints=COLOR_HINTS,
             parent_ref=uid,
@@ -308,7 +329,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             key="text-color",
             scope=scope,
             type_="color",
-            default="{{colors.primary.default.hex}}",
+            default="{{colors.on_primary_container.default.hex}}",
             options=COLOR_OPTIONS,
             hints=COLOR_HINTS,
             parent_ref=uid,
@@ -436,7 +457,7 @@ def build_alert_glance():
             key="font",
             scope=scope,
             type_="string",
-            default="monospace 12",
+            default="monospace 10",
             parent_ref=uid,
             extended_help="**Typography & Size**\n\nDefines the font family and size for the System Alert widget (e.g., `monospace 12`)."
         ),
