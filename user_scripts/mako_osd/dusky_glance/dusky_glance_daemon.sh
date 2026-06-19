@@ -208,7 +208,7 @@ case "$MODE" in
             done < /proc/meminfo
             
             ram_mb=$(( (mem_tot - mem_avail) / 1024 ))
-            send_osd "${ram_mb} MB"
+            send_osd "${ram_mb}"
             sleep 1
         done
         ;;
