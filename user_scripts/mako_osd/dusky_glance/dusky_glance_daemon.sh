@@ -5,11 +5,18 @@
 
 set -euo pipefail
 
-CURRENT_APP="dusky-glance"
 SYNC_ID="dusky-glance-sync"
 PID_FILE="${XDG_RUNTIME_DIR:-/run/user/$UID}/dusky_glance.pid"
 
 MODE="${1:-}"
+
+# --- DYNAMIC APP NAME RESOLUTION ---
+# Separate app names based on mode so mako can style them individually
+if [[ -n "$MODE" && "$MODE" != "--stop" ]]; then
+    CURRENT_APP="dusky-glance-${MODE#--}"
+else
+    CURRENT_APP="dusky-glance"
+fi
 
 # --- CORE LIFECYCLE ---
 clear_osd() {
