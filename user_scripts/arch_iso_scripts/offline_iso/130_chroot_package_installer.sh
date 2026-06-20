@@ -9,7 +9,7 @@
 
 # Group 0: Dusky ISO packages
 declare -ar pkgs_offline=(
-  "intel-ucode" "amd-ucode" "mkinitcpio" "glaze" "python-cssselect" "base" "base-devel" "python-lxml" "python-certifi" "python-charset-normalizer" "python-idna" "python-requests" "python-urllib3" "deno" "yt-dlp" "yt-dlp-ejs" "hunspell" "xf86-input-libinput" "xorg-xauth" "boost-libs" "plymouth"
+  "mkinitcpio" "glaze" "python-cssselect" "base" "base-devel" "python-lxml" "python-certifi" "python-charset-normalizer" "python-idna" "python-requests" "python-urllib3" "deno" "yt-dlp" "yt-dlp-ejs" "hunspell" "xf86-input-libinput" "xorg-xauth" "boost-libs" "plymouth"
  )
 
 # Group 1: Graphics & Drivers
