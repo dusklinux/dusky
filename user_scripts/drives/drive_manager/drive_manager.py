@@ -37,6 +37,7 @@ import argparse
 import tomllib
 import subprocess
 import shutil
+import threading
 from pathlib import Path
 from typing import Any
 from dataclasses import dataclass
@@ -261,6 +262,26 @@ def get_crypt_mapper_name(outer_uuid: str) -> str | None:
         except json.JSONDecodeError:
             pass
     return None
+
+def get_keyring_password_with_timeout(service: str, name: str, timeout: int = 10) -> str | None:
+    """Attempts keyring lookup with a daemon thread timeout to prevent hanging on exit."""
+    result = [None]
+    
+    def fetch():
+        try:
+            result[0] = keyring.get_password(service, name)
+        except Exception:
+            pass
+
+    t = threading.Thread(target=fetch, daemon=True)
+    t.start()
+    t.join(timeout)
+
+    if t.is_alive():
+        log("Keyring lookup timed out. Falling through to manual password prompt.")
+        return None
+
+    return result[0]
 
 def run_sudo_cmd(cmd: list[str], stdin_data: str | None = None) -> bool:
     """Helper to run a sudo command securely. Dynamically applies capture_output to prevent hanging on sudo prompts."""
@@ -617,11 +638,11 @@ def do_unlock(drive: Drive) -> bool:
                 log("Could not auto-detect encryption type. Relying on cryptsetup defaults.")
 
             base_cmd = ["sudo", "cryptsetup", "open", "--allow-discards"] + crypto_type_args + [outer_dev_path, mapper_name]
-            pwd = keyring.get_password(KEYRING_SERVICE, drive.name)
+            pwd = get_keyring_password_with_timeout(KEYRING_SERVICE, drive.name, timeout=10)
             
             if pwd:
                 log("Password found in secure keyring. Supplying to cryptsetup...")
-                cmd = base_cmd + ["--key-file", "-"]
+                cmd = base_cmd + ["--tries", "1", "--key-file", "-"]
                 if not run_sudo_cmd(cmd, stdin_data=pwd):
                     err("Decryption failed. Keyring password might be incorrect.")
                     return False
@@ -665,7 +686,7 @@ def do_unlock(drive: Drive) -> bool:
                     if not pwd_attempt:
                         continue
                         
-                    cmd = base_cmd + ["--key-file", "-"]
+                    cmd = base_cmd + ["--tries", "1", "--key-file", "-"]
                     
                     if run_sudo_cmd(cmd, stdin_data=pwd_attempt):
                         clear_temp_attempts(drive.name)
