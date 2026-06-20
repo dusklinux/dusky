@@ -27,7 +27,7 @@
     on-error: #690005;
     error-container: #93000a80;
     on-error-container: #ffdad6;
-    surface: #0a161266;
+    surface: #0a1612ff;
     on-surface: #d8e6df;
     on-surface-variant: #bccac3;
     outline: #86948e;
