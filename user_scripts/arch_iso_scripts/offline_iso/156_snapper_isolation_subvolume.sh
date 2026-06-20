@@ -6,8 +6,9 @@ set -Eeuo pipefail
 export LC_ALL=C
 
 # --- USER CONFIGURATION ---
-# Set how often to take autonomous snapshots (e.g., "3d" for 3 days, "1w" for 1 week, "12h" for 12 hours)
-SNAPSHOT_TIMER_FREQUENCY="3d"
+# Set how often to take autonomous snapshots using systemd Calendar syntax.
+# Examples: "*-*-1/3 00:00:00" (every 3 days), "daily", "weekly"
+SNAPSHOT_CALENDAR="*-*-1/3 00:00:00"
 
 # Set the strict limit on how many automated snapshots to keep per configuration
 SNAPSHOT_RETENTION_LIMIT=6
@@ -674,7 +675,7 @@ enable_snapper_timers() {
 }
 
 deploy_custom_timer() {
-    info "Deploying custom ${SNAPSHOT_TIMER_FREQUENCY} snapshot creation timer..."
+    info "Deploying custom scheduled snapshot creation timer..."
     local service_file="/etc/systemd/system/dusky_snapshot.service"
     local timer_file="/etc/systemd/system/dusky_snapshot.timer"
 
@@ -685,7 +686,7 @@ deploy_custom_timer() {
     # CRITICAL FIX 3: Ported official kernel capability sandboxing from the snapper-timeline.service.
     cat << EOF > "$service_file"
 [Unit]
-Description=Create Automated ${SNAPSHOT_TIMER_FREQUENCY} Snapper Snapshots
+Description=Create Automated Snapper Snapshots
 Documentation=man:snapper(8)
 After=local-fs.target nss-user-lookup.target
 Wants=snapper-cleanup.service
@@ -702,16 +703,16 @@ RestrictRealtime=true
 Nice=19
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
-ExecStart=/usr/bin/bash -c 'for cfg in \$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "\$cfg" create --description "Automated ${SNAPSHOT_TIMER_FREQUENCY} Snapshot" --cleanup-algorithm number; done'
+ExecStart=/usr/bin/bash -c 'for cfg in \$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "\$cfg" create --description "Automated timer snapshot" --cleanup-algorithm number; done'
 EOF
 
     cat << EOF > "$timer_file"
 [Unit]
-Description=Trigger ${SNAPSHOT_TIMER_FREQUENCY} Snapper Snapshots
+Description=Trigger Automated Snapper Snapshots
 Documentation=man:snapper(8)
 
 [Timer]
-OnUnitActiveSec=${SNAPSHOT_TIMER_FREQUENCY}
+OnCalendar=${SNAPSHOT_CALENDAR}
 Persistent=true
 RandomizedDelaySec=5m
 
@@ -724,7 +725,7 @@ EOF
         mkdir -p /etc/systemd/system/timers.target.wants
         ln -sf ../dusky_snapshot.timer /etc/systemd/system/timers.target.wants/dusky_snapshot.timer
     fi
-    info "Custom ${SNAPSHOT_TIMER_FREQUENCY} snapshot timer deployed and enabled."
+    info "Custom scheduled snapshot timer deployed and enabled."
 }
 
 preflight_checks() {

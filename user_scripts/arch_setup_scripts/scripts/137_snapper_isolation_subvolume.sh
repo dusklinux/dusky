@@ -6,8 +6,9 @@ set -Eeuo pipefail
 export LC_ALL=C
 
 # --- USER CONFIGURATION ---
-# Set how often to take autonomous snapshots (e.g., "3d" for 3 days, "1w" for 1 week, "12h" for 12 hours)
-SNAPSHOT_TIMER_FREQUENCY="3d"
+# Set how often to take autonomous snapshots using systemd Calendar syntax.
+# Examples: "*-*-1/3 00:00:00" (every 3 days), "daily", "weekly"
+SNAPSHOT_CALENDAR="*-*-1/3 00:00:00"
 
 # Set the strict limit on how many automated snapshots to keep per configuration
 SNAPSHOT_RETENTION_LIMIT=6
@@ -664,7 +665,7 @@ enable_snapper_timers() {
 }
 
 deploy_custom_timer() {
-    info "Deploying custom ${SNAPSHOT_TIMER_FREQUENCY} snapshot creation timer..."
+    info "Deploying custom scheduled snapshot creation timer..."
     local service_file="/etc/systemd/system/dusky_snapshot.service"
     local timer_file="/etc/systemd/system/dusky_snapshot.timer"
 
@@ -676,7 +677,7 @@ deploy_custom_timer() {
     # Construct the Service Unit
     cat << EOF > "$tmp_service"
 [Unit]
-Description=Create Automated ${SNAPSHOT_TIMER_FREQUENCY} Snapper Snapshots
+Description=Create Automated Snapper Snapshots
 Documentation=man:snapper(8)
 After=local-fs.target nss-user-lookup.target
 Wants=snapper-cleanup.service
@@ -693,17 +694,17 @@ RestrictRealtime=true
 Nice=19
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
-ExecStart=/usr/bin/bash -c 'for cfg in \$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "\$cfg" create --description "${SNAPSHOT_TIMER_FREQUENCY} auto" --cleanup-algorithm number; done'
+ExecStart=/usr/bin/bash -c 'for cfg in \$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "\$cfg" create --description "Automated timer snapshot" --cleanup-algorithm number; done'
 EOF
 
     # Construct the Timer Unit
     cat << EOF > "$tmp_timer"
 [Unit]
-Description=Trigger ${SNAPSHOT_TIMER_FREQUENCY} Snapper Snapshots
+Description=Trigger Automated Snapper Snapshots
 Documentation=man:snapper(8)
 
 [Timer]
-OnUnitActiveSec=${SNAPSHOT_TIMER_FREQUENCY}
+OnCalendar=${SNAPSHOT_CALENDAR}
 Persistent=true
 RandomizedDelaySec=5m
 
@@ -720,10 +721,9 @@ EOF
     remove_array_value ACTIVE_TEMP_FILES "$tmp_timer"
 
     sudo systemctl daemon-reload
+    sudo systemctl enable --now dusky_snapshot.timer
     sudo systemctl start dusky_snapshot.service
-    sudo systemctl enable dusky_snapshot.timer
-    sudo systemctl restart dusky_snapshot.timer
-    info "Custom ${SNAPSHOT_TIMER_FREQUENCY} snapshot timer deployed and enabled."
+    info "Custom scheduled snapshot timer deployed and enabled."
 }
 
 preflight_checks() {
