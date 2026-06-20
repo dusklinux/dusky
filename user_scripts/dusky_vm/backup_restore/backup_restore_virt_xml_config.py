@@ -10,8 +10,35 @@ import os
 import sys
 import pwd
 import subprocess
+import readline
+import glob
 from pathlib import Path
 from typing import Never, List, Dict
+
+# ==============================================================================
+# TTY FIX: Native Path Completion & Buffer Management
+# ==============================================================================
+def path_completer(text, state):
+    """Standard library path auto-completer for readline."""
+    target = os.path.expanduser(text)
+    
+    # If the user typed a directory, list its contents
+    if os.path.isdir(target) and not target.endswith('/'):
+        target += '/'
+        
+    matches = glob.glob(target + '*')
+    
+    # Append slashes to directories so tabbing can continue smoothly
+    matches = [m + '/' if os.path.isdir(m) else m for m in matches]
+    
+    try:
+        return matches[state]
+    except IndexError:
+        return None
+
+readline.set_completer_delims(' \t\n;')
+readline.parse_and_bind("tab: complete")
+readline.set_completer(path_completer)
 
 # ==============================================================================
 # PRE-FLIGHT (Strict Standard Library Only)
@@ -114,7 +141,9 @@ def execute_backup() -> None:
     verify_hypervisor_idle()
     console.print("\n[bold cyan]─── Libvirt Surgical Backup ───[/bold cyan]")
     
-    target_input = Prompt.ask("[bold cyan]Enter absolute path to save backups (e.g., /mnt/Storage/VM_Backup)[/bold cyan]").strip()
+    # Decoupled the input from the styled prompt to fix readline buffer calculation
+    console.print("[bold cyan]Enter absolute path to save backups (e.g., /mnt/Storage/VM_Backup):[/bold cyan]")
+    target_input = input("> ").strip()
     target_dir = resolve_user_path(target_input)
     
     if not target_dir.exists():
@@ -180,7 +209,9 @@ def execute_restore() -> None:
     console.print("\n[bold cyan]─── Libvirt Surgical Restoration ───[/bold cyan]")
     console.print("[dim]Ensure your external drive holding raw .qcow2/.img disks is mounted to its exact historical path.[/dim]\n")
     
-    source_input = Prompt.ask("[bold cyan]Enter absolute path to your backup directory[/bold cyan]").strip()
+    # Decoupled the input from the styled prompt to fix readline buffer calculation
+    console.print("[bold cyan]Enter absolute path to your backup directory:[/bold cyan]")
+    source_input = input("> ").strip()
     source_dir = resolve_user_path(source_input)
     
     if not source_dir.exists():
@@ -220,9 +251,10 @@ def execute_restore() -> None:
             if conf_dir.exists():
                 for xml_file in conf_dir.glob("*.xml"):
                     name = xml_file.stem
-                    run_cmd(["virsh", define_cmd, str(xml_file)])
-                    run_cmd(["virsh", start_cmd, name], check=False) # May already be active
-                    run_cmd(["virsh", auto_cmd, name])
+                    # Setting check=False allows execution to pass through pre-existing libvirt configurations
+                    run_cmd(["virsh", define_cmd, str(xml_file)], check=False)
+                    run_cmd(["virsh", start_cmd, name], check=False) 
+                    run_cmd(["virsh", auto_cmd, name], check=False)
                     table.add_row(name, folder.upper(), "[green]Defined & Autostarted[/green]")
 
     # 3. Re-link Virtual Machines
@@ -230,7 +262,8 @@ def execute_restore() -> None:
     if vms_dir.exists():
         with console.status("[cyan]Registering Virtual Machines...[/cyan]", spinner="dots"):
             for xml_file in vms_dir.glob("*.xml"):
-                run_cmd(["virsh", "define", str(xml_file)])
+                # Setting check=False ensures it doesn't crash if the VM domain is already linked
+                run_cmd(["virsh", "define", str(xml_file)], check=False)
                 table.add_row(xml_file.stem, "VM (XML)", "[green]Successfully Linked[/green]")
 
     console.print("\n")
