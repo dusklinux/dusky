@@ -25,10 +25,10 @@ POST_SCRIPT_DELAY=0
 
 INSTALL_SEQUENCE=(
 
-  "S | 010_kvm_host_setup.sh"
-  "S | 020_kvm_storage_setup.sh"
-  "S | 030_kvm_vfio_isolation.sh"
-  "S | 040_kvm_vm_deploy.sh"
+  "S | 010_kvm_host_setup.py"
+  "S | 020_kvm_storage_setup.py"
+  "S | 030_kvm_vfio_isolation.py"
+  "S | 040_kvm_vm_deploy.py"
 
 )
 
