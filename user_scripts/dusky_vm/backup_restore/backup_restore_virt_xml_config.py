@@ -100,6 +100,10 @@ def resolve_user_path(path_str: str) -> Path:
                 pass
     return Path(path_str).expanduser().resolve()
 
+def sanitize_filename(name: str) -> str:
+    """Sanitize strings to be used safely as filenames by replacing path separators."""
+    return name.replace("/", "_").replace("\\", "_")
+
 def verify_hypervisor_idle() -> None:
     """Absolute requirement: Halt if ANY domains are active (running or paused) to prevent torn states."""
     res = run_cmd(["virsh", "list", "--name"])
@@ -194,6 +198,39 @@ def execute_backup() -> None:
                 xml_data = run_cmd(["virsh", dump_cmd, entity]).stdout
                 (save_path / f"{entity}.xml").write_text(xml_data)
                 table.add_row(entity, sub_dir.upper(), "[green]XML Extracted[/green]")
+                
+    # 3. Extract Snapshots (Surgically Patched for Fault Tolerance & Safe Paths)
+    vms_dir = target_dir / "vms"
+    if vms_dir.exists():
+        with console.status("[cyan]Dumping VM Snapshots...[/cyan]", spinner="dots"):
+            snap_base_dir = target_dir / "snapshots"
+            for xml_file in vms_dir.glob("*.xml"):
+                vm_name = xml_file.stem
+                res = run_cmd(["virsh", "snapshot-list", vm_name, "--name", "--topological"], check=False)
+                if res.returncode == 0 and res.stdout.strip():
+                    vm_snap_dir = snap_base_dir / vm_name
+                    vm_snap_dir.mkdir(parents=True, exist_ok=True)
+                    snapshots = [s.strip() for s in res.stdout.split('\n') if s.strip()]
+                    
+                    # Write the exact original names to order.txt to preserve libvirt continuity
+                    (vm_snap_dir / "order.txt").write_text('\n'.join(snapshots) + '\n')
+                    
+                    success_count = 0
+                    for snap in snapshots:
+                        # check=False prevents script crash on corrupted individual snapshot dumps
+                        snap_res = run_cmd(["virsh", "snapshot-dumpxml", vm_name, snap], check=False)
+                        if snap_res.returncode == 0:
+                            # Sanitize solely for the filesystem write operation
+                            safe_snap_name = sanitize_filename(snap)
+                            (vm_snap_dir / f"{safe_snap_name}.xml").write_text(snap_res.stdout)
+                            success_count += 1
+                    
+                    if success_count == len(snapshots):
+                        table.add_row(vm_name, "SNAPSHOTS", f"[green]{success_count} Extracted[/green]")
+                    elif success_count > 0:
+                        table.add_row(vm_name, "SNAPSHOTS", f"[yellow]{success_count}/{len(snapshots)} Extracted[/yellow]")
+                    else:
+                        table.add_row(vm_name, "SNAPSHOTS", "[red]0 Extracted (Failed)[/red]")
 
     console.print("\n")
     console.print(table)
@@ -265,6 +302,33 @@ def execute_restore() -> None:
                 # Setting check=False ensures it doesn't crash if the VM domain is already linked
                 run_cmd(["virsh", "define", str(xml_file)], check=False)
                 table.add_row(xml_file.stem, "VM (XML)", "[green]Successfully Linked[/green]")
+
+    # 4. Re-inject VM Snapshots (Surgically Patched for Accurate Telemetry & Safe Paths)
+    snap_base_dir = source_dir / "snapshots"
+    if snap_base_dir.exists():
+        with console.status("[cyan]Re-registering VM Snapshots...[/cyan]", spinner="dots"):
+            for vm_snap_dir in snap_base_dir.iterdir():
+                if vm_snap_dir.is_dir():
+                    vm_name = vm_snap_dir.name
+                    order_file = vm_snap_dir / "order.txt"
+                    if order_file.exists():
+                        snapshots = [line.strip() for line in order_file.read_text().split('\n') if line.strip()]
+                        success_count = 0
+                        for snap in snapshots:
+                            # Apply the exact same sanitization to retrieve the safe filename
+                            safe_snap_name = sanitize_filename(snap)
+                            snap_xml_file = vm_snap_dir / f"{safe_snap_name}.xml"
+                            if snap_xml_file.exists():
+                                snap_res = run_cmd(["virsh", "snapshot-create", vm_name, str(snap_xml_file), "--redefine"], check=False)
+                                if snap_res.returncode == 0:
+                                    success_count += 1
+                        
+                        if success_count == len(snapshots) and snapshots:
+                            table.add_row(vm_name, "SNAPSHOTS", f"[green]{success_count} Re-registered[/green]")
+                        elif success_count > 0:
+                            table.add_row(vm_name, "SNAPSHOTS", f"[yellow]{success_count}/{len(snapshots)} Re-registered[/yellow]")
+                        else:
+                            table.add_row(vm_name, "SNAPSHOTS", "[red]0 Re-registered (Failed)[/red]")
 
     console.print("\n")
     console.print(table)
