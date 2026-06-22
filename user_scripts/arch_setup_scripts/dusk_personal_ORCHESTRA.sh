@@ -58,6 +58,7 @@ INSTALL_SEQUENCE=(
     "U | 005_hypr_custom_config_setup.sh"
     "U | 006_animation_default.sh"
     "U | 010_package_removal.sh"
+    "U | 013_matugen_state_file_placment.py"
     "U | 015_set_thunar_terminal.py -t foot"
 #    "U | 020_desktop_apps_username_setter.sh"
     "U | 020_desktop_entries.py"
