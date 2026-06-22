@@ -130,13 +130,13 @@ post_hook   = '''
   touch "$HOME/.config/zellij/config.kdl" || :
 '''
 
-[templates.opencode]
-input_path  = '~/.config/matugen/templates/opencode-colors.json'
-output_path = '~/.config/matugen/generated/opencode.json'
-post_hook   = '''
-  ln -nfs "$HOME/.config/matugen/generated/opencode.json" "$HOME/.config/opencode/themes/matugen.json"
-  pkill -SIGUSR1 -x kitty || :
-'''
+# [templates.opencode]
+# input_path  = '~/.config/matugen/templates/opencode-colors.json'
+# output_path = '~/.config/matugen/generated/opencode.json'
+# post_hook   = '''
+#   ln -nfs "$HOME/.config/matugen/generated/opencode.json" "$HOME/.config/opencode/themes/matugen.json"
+#   pkill -SIGUSR1 -x kitty || :
+# '''
 
 # [templates.vscode]
 # input_path  = '~/.config/matugen/templates/vscode.json'
@@ -175,12 +175,12 @@ post_hook   = '''
   ln -nfs "$HOME/.config/matugen/generated/yazi-theme.toml" "$HOME/.config/yazi/theme.toml"
 '''
 
-# [templates.zathura]
-# input_path  = '~/.config/matugen/templates/zathura-colors'
-# output_path = '~/.config/matugen/generated/zathura-colors'
-# post_hook   = '''
-#   ln -nfs "$HOME/.config/matugen/generated/zathura-colors" "$HOME/.config/zathura/zathurarc"
-# '''
+[templates.zathura]
+input_path  = '~/.config/matugen/templates/zathura-colors'
+output_path = '~/.config/matugen/generated/zathura-colors'
+post_hook   = '''
+  ln -nfs "$HOME/.config/matugen/generated/zathura-colors" "$HOME/.config/zathura/zathurarc"
+'''
 
 # [templates.starship]
 # input_path  = '~/.config/matugen/templates/starship-colors.toml'
@@ -221,14 +221,14 @@ post_hook   = '''
   fi
 '''
 
-# [templates.vesktop]
-# input_path  = '~/.config/matugen/templates/midnight-discord.css'
-# output_path = '~/.config/matugen/generated/midnight-discord.css'
-# post_hook   = '''
-#   if command -v vesktop >/dev/null 2>&1; then
-#     ln -nfs "$HOME/.config/matugen/generated/midnight-discord.css" "$HOME/.config/vesktop/themes/midnight-discord.css"
-#   fi
-# '''
+[templates.vesktop]
+input_path  = '~/.config/matugen/templates/midnight-discord.css'
+output_path = '~/.config/matugen/generated/midnight-discord.css'
+post_hook   = '''
+  if command -v vesktop >/dev/null 2>&1; then
+    ln -nfs "$HOME/.config/matugen/generated/midnight-discord.css" "$HOME/.config/vesktop/themes/midnight-discord.css"
+  fi
+'''
 
 # [templates.beeper]
 # input_path  = '~/.config/matugen/templates/beeper.css'
