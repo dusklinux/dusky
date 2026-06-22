@@ -103,9 +103,8 @@ type = "selection"
 [pages.layout.items.properties]
 title = "Active Profile"
 description = "Select performance mode"
-key = "performance_profile"
+key = "tlp_state"
 icon = "power-profile-balanced-symbolic"
-value_command = "cat ~/.config/dusky/settings/tlp_state"
 interval = 2
 options = ["Balanced", "Performance", "Power Saver"]
 options_map = { "balanced" = "Balanced", "performance" = "Performance", "power-saver" = "Power Saver" }
@@ -894,9 +893,8 @@ type = "selection"
 [pages.layout.items.properties]
 title = "Active Profile"
 description = "Select performance mode"
-key = "performance_profile"
+key = "tlp_state"
 icon = "power-profile-balanced-symbolic"
-value_command = "cat ~/.config/dusky/settings/tlp_state"
 interval = 2
 options = ["Balanced", "Performance", "Power Saver"]
 options_map = { "balanced" = "Balanced", "performance" = "Performance", "power-saver" = "Power Saver" }
