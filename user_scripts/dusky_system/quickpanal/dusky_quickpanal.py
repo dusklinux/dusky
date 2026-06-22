@@ -341,7 +341,7 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
             self.power_container.pack_start(sep, False, False, 0)
 
             # Restored TLP Power Logic Exactly as you had it
-            self.power_cmds = { "Balanced": "tlpctl balanced", "Performance": "tlpctl performance", "Power Saver": "tlpctl power-saver" }
+            self.power_cmds = { "Balanced": "~/user_scripts/battery/tlp/tlp_mode_toggle.sh balanced", "Performance": "~/user_scripts/battery/tlp/tlp_mode_toggle.sh performance", "Power Saver": "~/user_scripts/battery/tlp/tlp_mode_toggle.sh power-saver" }
             self.power_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
             self.btn_save = Gtk.RadioButton(); self.btn_save.set_mode(False); self.btn_save.set_image(Gtk.Image.new_from_icon_name("power-profile-power-saver-symbolic", Gtk.IconSize.BUTTON)); _add_css_class(self.btn_save, "power-ring-btn")
             self.btn_bal = Gtk.RadioButton.new_from_widget(self.btn_save); self.btn_bal.set_mode(False); self.btn_bal.set_image(Gtk.Image.new_from_icon_name("power-profile-balanced-symbolic", Gtk.IconSize.BUTTON)); _add_css_class(self.btn_bal, "power-ring-btn")
@@ -535,7 +535,7 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
     def _fetch_power_profile(self):
         if not hasattr(self, "power_container"): return
         try:
-            r = run_command(["tlpctl", "get"], timeout=1.0, capture_stdout=True)
+            r = run_command(["cat", "/home/dusk/.config/dusky/settings/tlp_state"], timeout=1.0, capture_stdout=True)
             if r is not None and r.returncode == 0 and r.stdout:
                 GLib.idle_add(self._apply_power_profile, r.stdout.strip().lower())
         except Exception: pass

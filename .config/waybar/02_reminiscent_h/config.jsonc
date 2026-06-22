@@ -267,9 +267,9 @@
         "format-plugged": "󰂄  {capacity}%",
         "format-icons": ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
         "tooltip-format": "Time: {timeTo}\nHealth: {health}%\nPower Draw: {power:.2f} W",
-        "on-click": "~/user_scripts/tlpctl/tlpctl.sh set balanced",
-        "on-click-middle": "~/user_scripts/tlpctl/tlpctl.sh set performance",
-        "on-click-right": "~/user_scripts/tlpctl/tlpctl.sh set power-saver"
+        "on-click": "~/user_scripts/battery/tlp/tlp_mode_toggle.sh balanced",
+        "on-click-middle": "~/user_scripts/battery/tlp/tlp_mode_toggle.sh performance",
+        "on-click-right": "~/user_scripts/battery/tlp/tlp_mode_toggle.sh power-saver"
     },
 
     "backlight": {

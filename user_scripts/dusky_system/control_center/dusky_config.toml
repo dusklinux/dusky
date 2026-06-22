@@ -105,19 +105,19 @@ title = "Active Profile"
 description = "Select performance mode"
 key = "performance_profile"
 icon = "power-profile-balanced-symbolic"
-value_command = "tlpctl get"
+value_command = "cat ~/.config/dusky/settings/tlp_state"
 interval = 2
 options = ["Balanced", "Performance", "Power Saver"]
 options_map = { "balanced" = "Balanced", "performance" = "Performance", "power-saver" = "Power Saver" }
 [pages.layout.items.on_change.Balanced]
 type = "exec"
-command = "tlpctl balanced && notify-send 'Power Profile' 'Switched to Balanced'"
+command = "~/user_scripts/battery/tlp/tlp_mode_toggle.sh balanced"
 [pages.layout.items.on_change.Performance]
 type = "exec"
-command = "tlpctl performance && notify-send 'Power Profile' 'Switched to Performance'"
+command = "~/user_scripts/battery/tlp/tlp_mode_toggle.sh performance"
 [pages.layout.items.on_change."Power Saver"]
 type = "exec"
-command = "tlpctl power-saver && notify-send 'Power Profile' 'Switched to Power Saver'"
+command = "~/user_scripts/battery/tlp/tlp_mode_toggle.sh power-saver"
 
 [[pages.layout]]
 type = "section"
@@ -896,19 +896,19 @@ title = "Active Profile"
 description = "Select performance mode"
 key = "performance_profile"
 icon = "power-profile-balanced-symbolic"
-value_command = "tlpctl get"
+value_command = "cat ~/.config/dusky/settings/tlp_state"
 interval = 2
 options = ["Balanced", "Performance", "Power Saver"]
 options_map = { "balanced" = "Balanced", "performance" = "Performance", "power-saver" = "Power Saver" }
 [pages.layout.items.on_change.Balanced]
 type = "exec"
-command = "tlpctl balanced && notify-send 'Power Profile' 'Switched to Balanced'"
+command = "~/user_scripts/battery/tlp/tlp_mode_toggle.sh balanced"
 [pages.layout.items.on_change.Performance]
 type = "exec"
-command = "tlpctl performance && notify-send 'Power Profile' 'Switched to Performance'"
+command = "~/user_scripts/battery/tlp/tlp_mode_toggle.sh performance"
 [pages.layout.items.on_change."Power Saver"]
 type = "exec"
-command = "tlpctl power-saver && notify-send 'Power Profile' 'Switched to Power Saver'"
+command = "~/user_scripts/battery/tlp/tlp_mode_toggle.sh power-saver"
 
 [[pages.layout.items]]
 type = "toggle"
