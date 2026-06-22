@@ -25,6 +25,7 @@ SCRIPT_SEARCH_DIRS=(
     "${HOME}/user_scripts/theme_matugen/config"
     "${HOME}/user_scripts/theme_matugen/firefox"
     "${HOME}/user_scripts/nvim"
+    "${HOME}/user_scripts/mako_osd/dusky_keys"
     # "${HOME}/my_other_scripts"
     # "/opt/shared_team_scripts"
 )
@@ -155,7 +156,10 @@ INSTALL_SEQUENCE=(
     "U | 415_mpv_setup.sh"
 #    "S | 430_btrfs_zstd_compression_stats.sh"
     "U | 434_wayclick_soundpacks_download.sh --auto"
-#    "U | 435_key_sound_wayclick_setup.sh --setup"
+    "U | 435_key_sound_wayclick_setup.sh --setup"
+
+    "U | dusky_keys.sh --setup"
+
     "U | 440_config_bat_notify.sh --default"
     "U | 455_hyprctl_reload.sh"
 #    "U | 460_switch_clipboard.sh --terminal --force" no longer required!
