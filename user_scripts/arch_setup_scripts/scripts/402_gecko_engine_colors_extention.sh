@@ -468,7 +468,7 @@ init_config() {
         log_info "Forensic check: Legacy configuration found. Migrating to XDG directory..."
         if cp "$LEGACY_CONFIG_FILE" "$CONFIG_FILE" 2>/dev/null; then
             log_success "Configuration migrated seamlessly."
-            mv "$LEGACY_CONFIG_FILE" "${LEGACY_CONFIG_FILE}.bak" 2>/dev/null || true
+            rm -f "$LEGACY_CONFIG_FILE" 2>/dev/null || true
         else
             log_warn "Failed to migrate legacy configuration automatically."
         fi
@@ -752,8 +752,8 @@ perform_uninstall() {
         rmdir "$CONFIG_DIR" 2>/dev/null || true
         log_success "Removed XDG config.json"
     fi
-    if [[ -f "$LEGACY_CONFIG_FILE" || -f "${LEGACY_CONFIG_FILE}.bak" ]]; then
-        rm -f "$LEGACY_CONFIG_FILE" "${LEGACY_CONFIG_FILE}.bak" 2>/dev/null || true
+    if [[ -f "$LEGACY_CONFIG_FILE" ]]; then
+        rm -f "$LEGACY_CONFIG_FILE" 2>/dev/null || true
     fi
 
     # 5. Remove Matugen TOML Block
