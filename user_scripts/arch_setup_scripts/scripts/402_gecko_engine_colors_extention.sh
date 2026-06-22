@@ -510,12 +510,12 @@ _replace_toml_block() {
     local toml_file="$1"
     local target_key="$2"
     local new_block="$3"
-    local is_remove="${4:-0}"
+    local is_comment="${4:-0}"
     
     local tmp_toml
     tmp_toml=$(mktemp)
     
-    TARGET_KEY="$target_key" NEW_BLOCK="$new_block" IS_REMOVE="$is_remove" \
+    TARGET_KEY="$target_key" NEW_BLOCK="$new_block" IS_COMMENT="$is_comment" \
     LC_ALL=C awk '
     function is_blank(line) { return line ~ /^[[:space:]]*$/ }
     function is_comment(line) { return line ~ /^[[:space:]]*#/ }
@@ -555,12 +555,10 @@ _replace_toml_block() {
         triple_dq = "\"\"\""
         start = 0; end = line_count
         in_multiline = 0; multiline_token = ""
-        is_commented_block = 0
 
         for (i = 1; i <= line_count; i++) {
             if (template_name(lines[i]) == ENVIRON["TARGET_KEY"]) {
                 start = i
-                if (is_comment(lines[i])) is_commented_block = 1
                 break
             }
         }
@@ -586,20 +584,32 @@ _replace_toml_block() {
         }
 
         if (!start) {
-            if (ENVIRON["IS_REMOVE"] != "1") {
+            if (ENVIRON["IS_COMMENT"] != "1" || ENVIRON["NEW_BLOCK"] != "") {
                 for (i = 1; i <= line_count; i++) print lines[i]
                 print ""
-                print ENVIRON["NEW_BLOCK"]
+                n = split(ENVIRON["NEW_BLOCK"], new_lines, "\n")
+                for (k = 1; k <= n; k++) {
+                    if (ENVIRON["IS_COMMENT"] == "1") {
+                        if (new_lines[k] == "") print "#"
+                        else print "# " new_lines[k]
+                    } else { print new_lines[k] }
+                }
             } else {
                 for (i = 1; i <= line_count; i++) print lines[i]
             }
         } else {
             for (i = 1; i < start; i++) print lines[i]
             
-            if (ENVIRON["IS_REMOVE"] != "1") {
+            if (ENVIRON["IS_COMMENT"] == "1" && ENVIRON["NEW_BLOCK"] == "") {
+                for (i = start; i <= end; i++) {
+                    if (is_comment(lines[i])) print lines[i]
+                    else if (is_blank(lines[i])) print "#"
+                    else print "# " lines[i]
+                }
+            } else if (ENVIRON["NEW_BLOCK"] != "") {
                 n = split(ENVIRON["NEW_BLOCK"], new_lines, "\n")
                 for (k = 1; k <= n; k++) {
-                    if (is_commented_block) {
+                    if (ENVIRON["IS_COMMENT"] == "1") {
                         if (new_lines[k] == "") print "#"
                         else print "# " new_lines[k]
                     } else { print new_lines[k] }
@@ -759,7 +769,7 @@ perform_uninstall() {
     # 5. Remove Matugen TOML Block
     local toml_file="$HOME/.config/matugen/config.toml"
     if [[ -f "$toml_file" ]] && command -v awk &>/dev/null; then
-        log_info "Removing Firefox block from Matugen TOML..."
+        log_info "Commenting out Firefox block from Matugen TOML..."
         _replace_toml_block "$toml_file" "firefox_websites" "" 1
         log_success "Cleaned Matugen TOML."
     fi
