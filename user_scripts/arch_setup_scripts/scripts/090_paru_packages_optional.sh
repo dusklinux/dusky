@@ -673,6 +673,17 @@ detect_aur_helper() {
     return 1
 }
 
+run_pkg_cmd() {
+    # If not connected to a TTY (like when run via orchestrator), use 'script' to trick paru/pacman into showing the progress bar
+    if ! [[ -t 1 ]] && command -v script >/dev/null 2>&1; then
+        local cmd_str
+        printf -v cmd_str '%q ' "$@"
+        script -q -e -c "$cmd_str" /dev/null
+    else
+        "$@"
+    fi
+}
+
 run_installer() {
     local helper="$1"
     local -a targets=()
@@ -705,7 +716,7 @@ run_installer() {
     fi
 
     log_info "Attempting Batch Installation..."
-    if "$helper" -S --needed --noconfirm "${to_install[@]}"; then
+    if run_pkg_cmd "$helper" -S --needed --noconfirm "${to_install[@]}"; then
         log_info "Batch installation successful."
         return 0
     fi
@@ -718,13 +729,13 @@ run_installer() {
     local pkg
     for pkg in "${remaining[@]}"; do
         log_info "Processing: $pkg"
-        if "$helper" -S --needed --noconfirm "$pkg"; then
+        if run_pkg_cmd "$helper" -S --needed --noconfirm "$pkg"; then
             log_info "$pkg installed."
         else
             log_err "Failed to install $pkg automatically."
             read -rp "Retry manually? [y/N]: " choice
             if [[ "${choice,,}" == "y" ]]; then
-                "$helper" -S "$pkg" || log_err "$pkg failed manual install."
+                run_pkg_cmd "$helper" -S "$pkg" || log_err "$pkg failed manual install."
             fi
         fi
     done
