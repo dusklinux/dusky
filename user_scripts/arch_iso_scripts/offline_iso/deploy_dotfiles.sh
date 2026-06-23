@@ -147,7 +147,7 @@ main() {
     local setup_script="${HOME}/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py"
     if [[ -f "$setup_script" ]]; then
         log_info "Running custom config setup script..."
-        if bash "$setup_script"; then
+        if python3 "$setup_script"; then
             log_success "Custom config setup completed successfully."
         else
             log_error "Custom config setup script failed."
