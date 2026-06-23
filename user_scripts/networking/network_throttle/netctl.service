@@ -1,0 +1,19 @@
+[Unit]
+Description=Dusky Network Limiter Background Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/dusk/user_scripts/networking/network_throttle/netctl daemon
+# Process Management
+Restart=always
+RestartSec=3
+
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

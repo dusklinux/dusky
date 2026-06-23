@@ -1,0 +1,30 @@
+#!/usr/bin/python3
+import sys
+import os
+
+# Add project root to sys.path so we can import src modules easily
+project_root = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, project_root)
+
+# Redirect bytecode cache to ~/.cache to avoid cluttering the project directory
+sys.pycache_prefix = os.path.expanduser("~/.cache/dusky_network_limiter/pycache")
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "tui":
+        # Launch Textual TUI Dashboard
+        # Strip "tui" from arguments
+        sys.argv.pop(1)
+        from src.tui import main as tui_main
+        tui_main()
+    elif len(sys.argv) > 1 and sys.argv[1] == "daemon":
+        # Launch Background Daemon Service
+        sys.argv.pop(1)
+        from src.daemon import main as daemon_main
+        daemon_main()
+    else:
+        # Default to CLI
+        from src.cli import main as cli_main
+        cli_main()
+
+if __name__ == "__main__":
+    main()

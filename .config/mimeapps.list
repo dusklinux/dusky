@@ -47,6 +47,7 @@ application/pdf=org.pwmt.zathura.desktop
 inode/directory=thunar.desktop
 application/x-zerosize=nvim.desktop
 x-scheme-handler/discord=vesktop.desktop
+x-scheme-handler/antigravity=antigravity.desktop
 
 [Added Associations]
 video/mp4=mpv.desktop;vlc.desktop;fr.handbrake.ghb.desktop;
