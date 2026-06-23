@@ -58,6 +58,8 @@ Productivity| blanket               | Ambient noise player for focus and product
 Productivity| errands               | Simple to-do list application
 Productivity| obsidian              | Markdown-based knowledge base and note taking
 Productivity| xournalpp             | Handwriting notetaking software with PDF annotation support
+Productivity| opencode              | CLI harness for coding
+Productivity| antigravity           | Google's IDE for coding
 Productivity| speech-dispatcher     | For getting speech to text for firefox to work 1 of 2
 Productivity| espeakup              | For getting speech to text for firefox to work 2 of 2
 Docs        | arch-wiki-lite        | Compressed Wiki reader (Pair with arch-wiki-docs)

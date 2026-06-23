@@ -456,7 +456,7 @@ type = "button"
 [pages.layout.items.layout.items.properties]
 title = "Step 2: Reconnect Repo"
 description = "Reconnect and push to existing remote"
-icon = "network-transmit-receive-symbolic"
+icon = "emblem-synchronizing-symbolic"
 button_text = "Reconnect"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
@@ -1388,7 +1388,7 @@ description = "Manage GNOME/GTK settings via TUI or GUI"
 icon = "input-mouse-symbolic"
 
 [[pages.layout.items.properties.buttons]]
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "Dconf"
 [pages.layout.items.properties.buttons.on_press]
 type = "exec"
@@ -1456,7 +1456,7 @@ type = "button"
 [pages.layout.items.layout.items.properties]
 title = "Optimize Swappiness"
 description = "Uses more RAM"
-icon = "speedometer-symbolic"
+icon = "power-profile-performance-symbolic"
 style = "destructive"
 button_text = "Optimize"
 [pages.layout.items.layout.items.on_press]
@@ -1615,7 +1615,7 @@ icon = "emblem-documents-symbolic"
 type = "section"
 [pages.layout.properties]
 title = "System Defaults"
-icon = "preferences-desktop-peripherals-symbolic"
+icon = "preferences-system-devices-symbolic"
 description = "Manage your global application preferences"
 
 [[pages.layout.items]]
@@ -1879,7 +1879,7 @@ type = "button"
 [pages.layout.items.layout.items.properties]
 title = "Main Config"
 description = "Edit hyprland.lua (User Override)"
-icon = "preferences-desktop-symbolic"
+icon = "preferences-system-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
@@ -1906,7 +1906,7 @@ description = "Edit custom keybindings"
 icon = "input-keyboard-symbolic"
 
 [[pages.layout.items.layout.items.properties.buttons]]
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
@@ -1928,7 +1928,7 @@ description = "Edit input configuration"
 icon = "input-mouse-symbolic"
 
 [[pages.layout.items.layout.items.properties.buttons]]
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
@@ -1976,7 +1976,7 @@ type = "button"
 [pages.layout.items.layout.items.properties]
 title = "User Environment"
 description = "~/.config/hypr/edit_here/source/environment_variables.lua"
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
@@ -1987,7 +1987,7 @@ type = "button"
 [pages.layout.items.layout.items.properties]
 title = "UWSM Global"
 description = "~/.config/uwsm/env"
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
@@ -1998,7 +1998,7 @@ type = "button"
 [pages.layout.items.layout.items.properties]
 title = "UWSM Hyprland"
 description = "~/.config/uwsm/env-hyprland"
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
@@ -2024,7 +2024,7 @@ description = "Edit monitor configuration"
 icon = "video-display-symbolic"
 
 [[pages.layout.items.layout.items.properties.buttons]]
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
@@ -2046,7 +2046,7 @@ description = "Edit window rules"
 icon = "application-x-addon-symbolic"
 
 [[pages.layout.items.layout.items.properties.buttons]]
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
@@ -2080,7 +2080,7 @@ description = "Edit visual settings"
 icon = "applications-graphics-symbolic"
 
 [[pages.layout.items.layout.items.properties.buttons]]
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
@@ -2102,7 +2102,7 @@ description = "Configure Workspace Rules"
 icon = "applications-graphics-symbolic"
 
 [[pages.layout.items.layout.items.properties.buttons]]
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
@@ -2124,7 +2124,7 @@ description = "Edit idle daemon config"
 icon = "preferences-system-time-symbolic"
 
 [[pages.layout.items.layout.items.properties.buttons]]
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
@@ -2218,7 +2218,7 @@ type = "button"
 [pages.layout.items.layout.items.item_template.items.properties]
 title = "Style"
 description = "style.css"
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "Edit"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
@@ -2299,7 +2299,7 @@ type = "button"
 [pages.layout.items.layout.items.item_template.items.properties]
 title = "Style"
 description = "style.css"
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "Edit"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
@@ -2387,7 +2387,7 @@ type = "button"
 [pages.layout.items.layout.items.item_template.items.properties]
 title = "Theme Data"
 description = "theme.json"
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "Edit"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
@@ -2893,7 +2893,7 @@ description = "Manage Wayclick sounds and logic"
 icon = "preferences-desktop-keyboard-shortcuts-symbolic"
 
 [[pages.layout.items.layout.items.properties.buttons]]
-icon = "text-x-script-symbolic"
+icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
@@ -3006,7 +3006,7 @@ description = "Themed installation using Spicetify"
 type = "button"
 [pages.layout.items.layout.items.properties]
 title = "Install Spotify"
-icon = "palette-symbolic"
+icon = "preferences-color-symbolic"
 button_text = "Install"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
