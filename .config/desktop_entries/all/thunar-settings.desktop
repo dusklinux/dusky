@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=Thunar Preferences
+Comment=Configure the Thunar file manager
+Exec=thunar-settings
+Icon=org.xfce.thunar
+Terminal=false
+Type=Application
+Categories=XFCE;GTK;Settings;DesktopSettings;X-XFCE-SettingsDialog;X-XFCE-PersonalSettings;
+StartupNotify=true
+NoDisplay=true
