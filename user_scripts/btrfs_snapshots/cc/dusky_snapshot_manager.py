@@ -307,8 +307,10 @@ def get_all_subvolumes() -> list[SubvolMeta]:
                         sv_id = match.group(1)
                         sv_path = match.group(2).strip()
                         
-                        # UX Optimization: Hide Snapper snapshots from the native Subvolumes tab
+                        # UX Optimization: Hide Snapper snapshots and transient deletion paths from the native Subvolumes tab
                         if "/.snapshots/" in sv_path and sv_path.endswith("/snapshot"):
+                            continue
+                        if "_to_delete_" in sv_path:
                             continue
                         
                         # Existence verification is now deferred precisely until an action is selected.
@@ -578,7 +580,7 @@ After=local-fs.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/bash -c "/usr/bin/mkdir -p /run/dusky_mnt && /usr/bin/mount -t btrfs -o subvolid=5 UUID={uuid} /run/dusky_mnt && {{ /usr/bin/btrfs subvolume delete '/run/dusky_mnt/{subvol_name}'; /usr/bin/umount /run/dusky_mnt; }}"
+ExecStart=/usr/bin/bash -c "/usr/bin/mkdir -p /run/dusky_mnt && /usr/bin/mount -t btrfs -o subvolid=5 UUID={uuid} /run/dusky_mnt && if [ ! -e '/run/dusky_mnt/{subvol_name}' ]; then /usr/bin/umount /run/dusky_mnt; exit 0; elif /usr/bin/btrfs subvolume delete '/run/dusky_mnt/{subvol_name}'; then /usr/bin/umount /run/dusky_mnt; else /usr/bin/umount /run/dusky_mnt; exit 1; fi"
 ExecStartPost=/usr/bin/systemctl disable {service_name}
 ExecStartPost=/usr/bin/rm -f /etc/systemd/system/{service_name}
 
@@ -980,13 +982,7 @@ def handle_tui_preview(view: str, line: str, show_diff: bool = False) -> None:
         except ValueError:
             meta = {}
             
-        if meta.get("empty"):
-            print("\033[1;38;5;196m[!] No items available in this view.\033[0m")
-            return
-
         is_subvol = (view == "subvolumes")
-        snap_id = meta.get("id", "N/A")
-        snap_config = meta.get("config", "root" if view in ("root", "coordinated") else "home")
         
         # 1. Unified Shortcuts Panel
         shortcuts = []
@@ -1012,6 +1008,13 @@ def handle_tui_preview(view: str, line: str, show_diff: bool = False) -> None:
                 "\033[1;38;5;141m[ALT-P]\033[0m   \033[38;5;253m󰈈 Toggle Preview Pane\033[0m"
             ])
             draw_tui_panel("\033[1;38;5;220m󰏖 KEYBOARD SHORTCUTS\033[0m", shortcuts, 48)
+            
+        if meta.get("empty"):
+            print("\033[1;38;5;196m[!] No items available in this view.\033[0m")
+            return
+
+        snap_id = meta.get("id", "N/A")
+        snap_config = meta.get("config", "root" if view in ("root", "coordinated") else "home")
 
         # 2. Expanded Metadata View
         if is_subvol:
