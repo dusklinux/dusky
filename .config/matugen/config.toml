@@ -291,9 +291,9 @@ post_hook   = '''
 #     ln -nfs "$HOME/.config/matugen/generated/firefox_websites.css" "$HOME/.config/mozilla/firefox/ct81hcgy.default/chrome/colors.css" || :
 # '''
 
-# =============================================================================
+#=============================================================================
 # 4. System Services & Daemons (Triggered on theme change)
-# =============================================================================
+#=============================================================================
 
 # [templates.dusky_control_center]
 # input_path  = '/dev/null'
