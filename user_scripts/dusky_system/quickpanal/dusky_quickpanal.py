@@ -535,15 +535,20 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
     def _fetch_power_profile(self):
         if not hasattr(self, "power_container"): return
         try:
-            r = run_command(["cat", "/home/dusk/.config/dusky/settings/tlp_state"], timeout=1.0, capture_stdout=True)
-            if r is not None and r.returncode == 0 and r.stdout:
-                GLib.idle_add(self._apply_power_profile, r.stdout.strip().lower())
-        except Exception: pass
+            path = Path(HOME) / ".config" / "dusky" / "settings" / "tlp_state"
+            if path.exists():
+                state = path.read_text(encoding="utf-8").strip().lower()
+                GLib.idle_add(self._apply_power_profile, state)
+            else:
+                LOG.warning(f"Power profile state file does not exist: {path}")
+        except Exception as e:
+            LOG.exception("Failed to fetch power profile")
 
     def _apply_power_profile(self, profile: str):
         mapping = {"balanced": self.btn_bal, "performance": self.btn_perf, "power-saver": self.btn_save}
         target_btn = mapping.get(profile)
         if target_btn and not target_btn.get_active():
+            LOG.info(f"Applying power profile: {profile}")
             self._updating_power = True
             target_btn.set_active(True)
             self._updating_power = False
