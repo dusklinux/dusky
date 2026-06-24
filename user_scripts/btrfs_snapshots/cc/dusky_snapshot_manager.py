@@ -1393,7 +1393,11 @@ def launch_tui() -> None:
                 case "ctrl-s":
                     print(f"\n\033[1;38;5;81m[*] ACTION: CREATE NATIVE BTRFS SNAPSHOT\033[0m\n[*] Source: {sv_path}")
                     try:
-                        dest_rel = input("\033[1;38;5;220m[*] Destination path (relative to BTRFS root, e.g. @snapshots/new_snap): \033[0m").strip()
+                        default_snap = f"@snapshots/{sv_path.lstrip('/@').replace('/', '_')}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+                        dest_rel = input(f"\033[1;38;5;220m[*] Destination path (Relative to BTRFS root. Enter for default: {default_snap}): \033[0m").strip()
+                        if not dest_rel:
+                            dest_rel = default_snap
+                            
                         if dest_rel:
                             is_ro = confirm_prompt("Make snapshot Read-Only?")
                             with mount_top_level(dev) as top_mnt:
