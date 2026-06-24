@@ -167,16 +167,16 @@ FILE_CACHE=$(( CACHED - SHMEM ))
 (( FILE_CACHE < 0 )) && FILE_CACHE=0
 
 ZRAM_TOTAL_KB=$(
+    zramctl --bytes --noheadings --output TOTAL 2>/dev/null \
+    | awk '{s+=$1} END {printf "%.0f", s/1024}'
+)
+[[ -z "$ZRAM_TOTAL_KB" ]] && ZRAM_TOTAL_KB=0
+
+ZRAM_PEAK_KB=$(
     zramctl --bytes --noheadings --output MEM-USED 2>/dev/null \
     | awk '{s+=$1} END {printf "%.0f", s/1024}'
 )
-[[ -z "$ZRAM_TOTAL_KB" || "$ZRAM_TOTAL_KB" == "0" ]] && {
-    ZRAM_TOTAL_KB=$(
-        zramctl --bytes --noheadings --output TOTAL 2>/dev/null \
-        | awk '{s+=$1} END {printf "%.0f", s/1024}'
-    )
-}
-[[ -z "$ZRAM_TOTAL_KB" ]] && ZRAM_TOTAL_KB=0
+[[ -z "$ZRAM_PEAK_KB" ]] && ZRAM_PEAK_KB=0
 
 KERNEL_CORE_KB=$(( K_RECLAIMABLE + S_UNRECLAIM + K_STACK + PAGE_TABLES + SEC_PAGE_TABLES + PERCPU ))
 KNOWN_KB=$(( MEM_FREE + ANON_PAGES + SHMEM + FILE_CACHE + BUFFERS + KERNEL_CORE_KB + ZRAM_TOTAL_KB ))
@@ -207,7 +207,8 @@ printf "%-45s %8s MB\n" "  Per-CPU Allocations (Percpu):"      "$(to_mb $PERCPU)
 printf "%-45s %8s MB\n" "  vmalloc Used (VmallocUsed):"        "$(to_mb $VMALLOC_USED)"
 echo ""
 echo "[ SUMMARY ]"
-printf "%-45s %8s MB\n" "  ZRAM Physical Pool Estimate:"      "$(to_mb $ZRAM_TOTAL_KB)"
+printf "%-45s %8s MB\n" "  ZRAM Current Physical Pool:"       "$(to_mb $ZRAM_TOTAL_KB)"
+printf "%-45s %8s MB\n" "  ZRAM Peak Physical Pool:"          "$(to_mb $ZRAM_PEAK_KB)"
 printf "%-45s %8s MB\n" "  Known & Tracked (Known_KB):"       "$(to_mb $KNOWN_KB)"
 printf "%-45s %8s MB\n" "  Residual estimate (Residual_KB):"  "$(to_mb $RESIDUAL_KB)"
 echo "\`\`\`"
@@ -264,7 +265,8 @@ echo '> **Understanding this section:** ZRAM/ZSWAP acts as a hyper-fast SSD insi
 echo ""
 if zramctl --raw 2>/dev/null | grep -q '/dev/zram'; then
     echo "\`\`\`text"
-    zramctl --output NAME,ALGORITHM,DISKSIZE,DATA,COMPR,TOTAL,STREAMS 2>/dev/null || \
+    zramctl --output NAME,ALGORITHM,DISKSIZE,DATA,COMPR,TOTAL,MEM-USED,COMP-RATIO,MOUNTPOINT 2>/dev/null || \
+    zramctl --output NAME,ALGORITHM,DISKSIZE,DATA,COMPR,TOTAL,MEM-USED 2>/dev/null || \
     zramctl --output NAME,ALGORITHM,DISKSIZE,DATA,COMPR,TOTAL 2>/dev/null
     echo "\`\`\`"
 
@@ -552,6 +554,40 @@ if [[ "$MOUNTED_DEBUGFS" == true ]]; then
 fi
 echo ""
 
+# Dedicated GPU Memory Diagnostics
+if command -v nvidia-smi >/dev/null 2>&1; then
+    if NVDATA=$(nvidia-smi --query-gpu=memory.total,memory.used,memory.free --format=csv,noheader,nounits 2>/dev/null); then
+        echo "### NVIDIA GPU VRAM Usage"
+        echo "\`\`\`text"
+        echo "  Total VRAM: $(echo "$NVDATA" | cut -d, -f1 | tr -d ' ') MB"
+        echo "  Used VRAM:  $(echo "$NVDATA" | cut -d, -f2 | tr -d ' ') MB"
+        echo "  Free VRAM:  $(echo "$NVDATA" | cut -d, -f3 | tr -d ' ') MB"
+        echo "\`\`\`"
+        echo ""
+    fi
+fi
+
+AMD_FOUND=false
+for card in /sys/class/drm/card[0-9]/device; do
+    if [[ -r "$card/mem_info_vram_used" ]]; then
+        vram_used=$(cat "$card/mem_info_vram_used" 2>/dev/null || echo 0)
+        vram_total=$(cat "$card/mem_info_vram_total" 2>/dev/null || echo 0)
+        gtt_used=$(cat "$card/mem_info_gtt_used" 2>/dev/null || echo 0)
+        gtt_total=$(cat "$card/mem_info_gtt_total" 2>/dev/null || echo 0)
+        
+        if [[ "$AMD_FOUND" == false ]]; then
+            echo "### AMD Radeon GPU Memory Usage"
+            AMD_FOUND=true
+        fi
+        echo "\`\`\`text"
+        printf "  Card:       %s\n" "${card##*/drm/}"
+        printf "  VRAM Used:  %8.1f MB / %8.1f MB\n" "$(awk "BEGIN {print $vram_used/1048576}")" "$(awk "BEGIN {print $vram_total/1048576}")"
+        printf "  GTT Used:   %8.1f MB / %8.1f MB\n" "$(awk "BEGIN {print $gtt_used/1048576}")" "$(awk "BEGIN {print $gtt_total/1048576}")"
+        echo "\`\`\`"
+        echo ""
+    fi
+done
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 9 — TRANSPARENT HUGEPAGES (THP)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -624,14 +660,11 @@ fi
 
 echo ""
 echo "### C. Screencopy / OBS / Portals"
-SC_PIDS=$(pgrep -af 'screencopy|wlr-randr|obs|sunshine|xdg-desktop-portal|hyprshot|grim|slurp|wl-screenrec' 2>/dev/null || true)
-if [[ -n "$SC_PIDS" ]]; then
+SC_PIDS_OUT=$(pgrep -af 'screencopy|wlr-randr|\bobs\b|sunshine|xdg-desktop-portal|hyprshot|grim|slurp|wl-screenrec' 2>/dev/null | grep -v -E "pgrep|ram_usage" || true)
+if [[ -n "$SC_PIDS_OUT" ]]; then
     echo "Active screencasting/portal processes (These pin multiple 4K/1440p DMA-BUFs for sharing):"
     echo "\`\`\`text"
-    for p in $(echo "$SC_PIDS" | awk '{print $1}'); do
-        comm=$(cat /proc/"$p"/comm 2>/dev/null || echo '?')
-        echo "  [PID $p] $comm"
-    done
+    echo "$SC_PIDS_OUT" | sed 's/^/  /'
     echo "\`\`\`"
 else
     echo "✅ No screen capturing software detected."
@@ -641,16 +674,31 @@ echo ""
 echo "### D. Decorations & Shadows (Dynamic IPC)"
 if [[ -n "${HYPR_USER:-}" ]]; then
     # Interrogate the live IPC to bypass commented lines and multi-file configs natively
-    BLUR=$(sudo -u "$HYPR_USER" env $HYPR_ENV hyprctl getoption decoration:blur:enabled -j 2>/dev/null | jq -r '.int // .set // empty' 2>/dev/null || echo 0)
+    # Using a robust jq expression to support both boolean values (true/false) in modern Hyprland and integer values (1/0) in older versions
+    BLUR=$(sudo -u "$HYPR_USER" env $HYPR_ENV hyprctl getoption decoration:blur:enabled -j 2>/dev/null | jq -r 'if .bool != null then .bool else .int end' 2>/dev/null || echo 0)
     
-    SHADOW=$(sudo -u "$HYPR_USER" env $HYPR_ENV hyprctl getoption decoration:shadow:enabled -j 2>/dev/null | jq -r '.int // .set // empty' 2>/dev/null || echo "null")
-    [[ "$SHADOW" == "null" || "$SHADOW" == "" ]] && SHADOW=$(sudo -u "$HYPR_USER" env $HYPR_ENV hyprctl getoption decoration:drop_shadow -j 2>/dev/null | jq -r '.int // .set // empty' 2>/dev/null || echo 0)
+    SHADOW=$(sudo -u "$HYPR_USER" env $HYPR_ENV hyprctl getoption decoration:shadow:enabled -j 2>/dev/null | jq -r 'if .bool != null then .bool else .int end' 2>/dev/null || echo "null")
+    [[ "$SHADOW" == "null" || "$SHADOW" == "" ]] && SHADOW=$(sudo -u "$HYPR_USER" env $HYPR_ENV hyprctl getoption decoration:drop_shadow -j 2>/dev/null | jq -r 'if .bool != null then .bool else .int end' 2>/dev/null || echo 0)
 
-    GLOW=$(sudo -u "$HYPR_USER" env $HYPR_ENV hyprctl getoption decoration:glow:enabled -j 2>/dev/null | jq -r '.int // .set // empty' 2>/dev/null || echo 0)
+    GLOW=$(sudo -u "$HYPR_USER" env $HYPR_ENV hyprctl getoption decoration:glow:enabled -j 2>/dev/null | jq -r 'if .bool != null then .bool else .int end' 2>/dev/null || echo 0)
 
-    [[ "$BLUR" == "1" ]]   && echo "⚠️ **Blur enabled.** (Requires massive GPU/RAM framebuffers for Aquamarine)." || echo "✅ Blur disabled."
-    [[ "$SHADOW" == "1" ]] && echo "⚠️ **Shadows enabled.** (Requires additional surface FBOs per window)." || echo "✅ Shadows disabled."
-    [[ "$GLOW" == "1" ]]   && echo "⚠️ **Glow enabled.** (Additional FBOs per window for Aquamarine)." || echo "✅ Glow disabled."
+    if [[ "$BLUR" == "true" || "$BLUR" == "1" ]]; then
+        echo "⚠️ **Blur enabled.** (Requires massive GPU/RAM framebuffers for Aquamarine)."
+    else
+        echo "✅ Blur disabled."
+    fi
+
+    if [[ "$SHADOW" == "true" || "$SHADOW" == "1" ]]; then
+        echo "⚠️ **Shadows enabled.** (Requires additional surface FBOs per window)."
+    else
+        echo "✅ Shadows disabled."
+    fi
+
+    if [[ "$GLOW" == "true" || "$GLOW" == "1" ]]; then
+        echo "⚠️ **Glow enabled.** (Additional FBOs per window for Aquamarine)."
+    else
+        echo "✅ Glow disabled."
+    fi
 else
     echo "⚠️ Cannot check decorations (Hyprland user context missing)."
 fi
