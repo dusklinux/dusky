@@ -539,6 +539,13 @@ button.power-ring-btn { border: 2px solid transparent; border-radius: 15px; min-
 button.power-ring-btn:hover { background-color: rgba(255, 255, 255, 0.08); }
 button.power-ring-btn:checked { background-color: alpha(@theme_selected_bg_color, 0.15); border-color: @theme_selected_bg_color; color: @theme_selected_bg_color; }
 
+/* The applying sub-state override for when the script is actively running */
+button.power-ring-btn.applying:checked {
+    background-color: alpha(@theme_fg_color, 0.05); 
+    border-color: alpha(@theme_fg_color, 0.3); 
+    color: alpha(@theme_fg_color, 0.5); 
+}
+
 .sliders-container { background-color: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 16px; padding: 6px; }
 .slider-row { background-color: transparent; padding: 6px 8px; }
 
