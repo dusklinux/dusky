@@ -109,6 +109,7 @@ INSTALL_SEQUENCE=(
     "S | 211_systemd_oomd_zram.sh"
     "S | 212_thp_sysfs_optimizer.sh"
     "S | 213_systemd_journaling_optimizer.sh"
+    "S | 214_damon_reclaim_optimizer.py"
     "S | 215_powerkey_lid_close_behaviour.sh"
     "S | 220_logrotate_optimization.sh"
     "S | 225_faillock_timeout.sh"
