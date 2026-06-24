@@ -306,11 +306,11 @@ declare -ra UPDATE_SEQUENCE=(
 
 #================= CUSTOM=====================
 
-    "U | copy_service_files.sh --default"
+#    "U | copy_service_files.sh --default"
     "U | update_checker.sh --num"
 #    "U | cc_restart.sh --quiet"
     "U | wallpaper_selector.py --build-cache"
-    "S | dusky_service_manager.sh"
+#    "S | dusky_service_manager.sh"
 #    "U | append_defaults_keybinds_edit_here.sh"
     "U | ignore-fail | dusky_matugen_config_tui.sh --smart"
 #    "U | ignore-fail | dusky_firefox_tui.sh --sync --all"
