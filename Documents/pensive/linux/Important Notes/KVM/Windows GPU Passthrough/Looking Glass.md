@@ -382,6 +382,14 @@ After editing, manually disable and re-enable the Virtual Display Device in the 
 
 The `looking-glass-client` binary reads its settings from `~/.config/looking-glass/client.ini`. Running Hyprland on an Optimus/NVIDIA host requires a highly specialized configuration to prevent explicit sync failures (EGL flickering) and Wayland fractional scaling distortions.
 
+> [!TIP] Automated Client Configuration
+> If you prefer not to configure this manually, you can run the following helper script to automatically create or merge your `client.ini` with all optimal settings (including `F6` escape key and SPICE clipboard sharing):
+> ```bash
+> /home/new/user_scripts/dusky_vm/passthrough/60_configure_client_ini.py
+> ```
+
+Otherwise, execute the manual setup below:
+
 ```bash
 mkdir -p ~/.config/looking-glass
 nvim ~/.config/looking-glass/client.ini
@@ -429,6 +437,11 @@ escapeKey=64
 ; Use raw mouse input — essential for accurate gaming
 rawMouse=yes
 hideCursor=yes
+
+[spice]
+; Enable host/guest clipboard synchronization via SPICE
+enable=yes
+clipboard=yes
 ```
 
 ### 4.2 Launch the Client
@@ -498,6 +511,22 @@ sudo fallocate -l 64M /dev/shm/looking-glass
 sudo chown new:kvm /dev/shm/looking-glass
 sudo chmod 0660 /dev/shm/looking-glass
 ```
+
+### Shared Clipboard Not Working
+
+**Symptom:** Copying and pasting text between the host and guest does not work, even with `[spice]` configured in `client.ini`.
+
+**Fix:**
+Clipboard sharing relies entirely on the SPICE Guest Agent service (`spice-agent`) running inside Windows.
+1. **Check if the service is running:** Open PowerShell (as Administrator) in the VM and run:
+   ```powershell
+   Get-Service -Name "spice-agent"
+   ```
+2. **If missing or stopped:**
+   * Mount the `virtio-win` ISO (or access it from your VirtIO-FS shared `Z:` drive).
+   * Run the `virtio-win-guest-tools.exe` installer to install/repair the agent.
+   * If you have a custom debloated ISO where it was removed, download and install `spice-guest-tools` manually.
+3. **Relaunch the client:** Once the service is running, close (`F6 + Q`) and restart `looking-glass-client` on the host.
 
 ### xfreerdp3: "Command Not Found"
 
