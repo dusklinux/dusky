@@ -22,6 +22,8 @@ _win_completion() {
         'show:Launch looking-glass-client'
         'launch:Start VM and wait to launch Looking Glass'
         'play:Start VM and wait to launch Looking Glass'
+        'rdp:Connect to the VM via FreeRDP rescue bridge'
+        'connect:Connect to the VM via FreeRDP rescue bridge'
         'edit:Edit the VM XML configuration'
         'select:Change the default preferred VM'
     )

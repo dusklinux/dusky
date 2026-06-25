@@ -364,6 +364,7 @@ Actions:
   {C_GREEN}list{C_RESET}         List all defined virtual machines (alias: --list, -l)
   {C_GREEN}view{C_RESET}         Launch looking-glass-client (alias: show, lg)
   {C_GREEN}launch{C_RESET}       Start VM and automatically wait to launch Looking Glass (alias: play)
+  {C_GREEN}rdp{C_RESET}          Connect to the VM via FreeRDP rescue bridge (alias: connect)
   {C_GREEN}edit{C_RESET}         Edit the VM XML topology configuration
   {C_GREEN}select{C_RESET}       Change the default preferred VM
 
@@ -431,9 +432,19 @@ def main():
         sys.exit(0)
 
     elif action == "start":
-        print_info(f"Starting VM '{vm_name}'...")
-        if run_virsh_cmd(["start", vm_name]):
-            print_success(f"VM '{vm_name}' booted.")
+        state = get_vm_state(vm_name)
+        if state == "paused":
+            print_info(f"Resuming paused VM '{vm_name}'...")
+            if run_virsh_cmd(["resume", vm_name]):
+                print_success(f"VM '{vm_name}' resumed.")
+        elif state == "pmsuspended":
+            print_info(f"Waking up suspended VM '{vm_name}'...")
+            if run_virsh_cmd(["dompmwakeup", vm_name]):
+                print_success(f"VM '{vm_name}' awoken.")
+        else:
+            print_info(f"Starting VM '{vm_name}'...")
+            if run_virsh_cmd(["start", vm_name]):
+                print_success(f"VM '{vm_name}' booted.")
 
     elif action in ("stop", "shutdown"):
         print_info(f"Sending graceful shutdown signal to VM '{vm_name}'...")
@@ -485,8 +496,15 @@ def main():
 
         state = get_vm_state(vm_name)
         if state != "running":
-            print_info(f"Starting VM '{vm_name}'...")
-            run_virsh_cmd(["start", vm_name])
+            if state == "paused":
+                print_info(f"Resuming paused VM '{vm_name}'...")
+                run_virsh_cmd(["resume", vm_name])
+            elif state == "pmsuspended":
+                print_info(f"Waking up suspended VM '{vm_name}'...")
+                run_virsh_cmd(["dompmwakeup", vm_name])
+            else:
+                print_info(f"Starting VM '{vm_name}'...")
+                run_virsh_cmd(["start", vm_name])
         else:
             print_info(f"VM '{vm_name}' is already running.")
 
@@ -502,6 +520,11 @@ def main():
         else:
             print_err(f"Timed out waiting for graphics server. Launching fallback (escape key: {active_key})...")
             subprocess.run(["looking-glass-client", "-m", active_key])
+
+    elif action in ("rdp", "connect"):
+        rdp_script = Path(__file__).parent / "55_rdp.py"
+        cmd = [sys.executable, str(rdp_script)] + sys.argv[2:]
+        subprocess.run(cmd)
 
     else:
         print_err(f"Unknown action: {action}")
