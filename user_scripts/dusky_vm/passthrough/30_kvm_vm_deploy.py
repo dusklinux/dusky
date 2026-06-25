@@ -164,6 +164,10 @@ def main() -> None:
     console.clear()
     console.print(Panel("[bold green]Phase 6: Automated VM Deployment[/bold green]\nTarget: Arch Linux | Kernel 7.1.0+", expand=False))
 
+    if not Confirm.ask("\nDo you want to deploy a new virtual machine?", default=False):
+        console.print("[yellow]Skipping VM deployment phase.[/yellow]")
+        return
+
     target_dir = get_storage_target()
     active_network = discover_active_network()
     

@@ -14,6 +14,7 @@ import stat
 import shutil
 import tempfile
 import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Never, Tuple
 
@@ -124,7 +125,7 @@ def install_looking_glass_packages(user: str) -> None:
         bail("'paru' not found in PATH. Cannot install AUR packages.")
         
     # Drop privileges to standard user to run paru; bypass pagers with --noconfirm
-    cmd = ["sudo", "-u", user, "paru", "-S", "--needed", "--noconfirm"] + packages
+    cmd = ["sudo", "-u", user, "paru", "-S", "--needed", "--noconfirm", "--skipreview"] + packages
     
     try:
         subprocess.run(cmd, check=True)
@@ -280,6 +281,173 @@ def configure_qemu_cgroups() -> None:
 # ==============================================================================
 # MAIN EXECUTION & XML OUTPUT
 # ==============================================================================
+# ==============================================================================
+# VM XML AUTOMATION
+# ==============================================================================
+def get_all_vms() -> list[Tuple[str, str]]:
+    """Query libvirt for all defined virtual machines and their states."""
+    try:
+        res = subprocess.run(
+            ["virsh", "-c", "qemu:///system", "list", "--all"],
+            capture_output=True, text=True, check=True
+        )
+        vms = []
+        for line in res.stdout.strip().splitlines()[2:]:
+            parts = line.split()
+            if len(parts) >= 3:
+                name = parts[1]
+                state = " ".join(parts[2:])
+                vms.append((name, state))
+            elif len(parts) == 2:
+                name = parts[0]
+                state = parts[1]
+                vms.append((name, state))
+        return vms
+    except Exception as e:
+        console.print(f"[yellow]⚠ Failed to query libvirt VMs: {e}[/yellow]")
+        return []
+
+def inject_kvmfr_into_xml(xml_str: str, byte_size: int) -> str:
+    """Safely and programmatically injects Looking Glass KVMFR configuration into VM XML."""
+    qemu_ns = "http://libvirt.org/schemas/domain/qemu/1.0"
+    ET.register_namespace('qemu', qemu_ns)
+    root = ET.fromstring(xml_str)
+    
+    # 1. Nullify memballoon to guarantee zero DMA latency
+    devices = root.find('devices')
+    if devices is not None:
+        balloon = devices.find('memballoon')
+        if balloon is not None:
+            balloon.set('model', 'none')
+            console.print("[bold green]  ✓ Latency-inducing memballoon nullified.[/bold green]")
+        else:
+            balloon = ET.SubElement(devices, 'memballoon', model='none')
+            console.print("[bold green]  ✓ Latency-inducing memballoon nullified (created none).[/bold green]")
+
+    # 2. Add or update <qemu:commandline>
+    qemu_cmd = root.find(f"{{{qemu_ns}}}commandline")
+    target_args = [
+        ("-device", "{'driver':'ivshmem-plain','id':'shmem0','memdev':'looking-glass'}"),
+        ("-object", f"{{'qom-type':'memory-backend-file','id':'looking-glass','mem-path':'/dev/kvmfr0','size':{byte_size},'share':true}}")
+    ]
+    
+    if qemu_cmd is None:
+        qemu_cmd = ET.Element(f"{{{qemu_ns}}}commandline")
+        root.append(qemu_cmd)
+        
+    args = qemu_cmd.findall(f"{{{qemu_ns}}}arg")
+    new_args = []
+    skip_next = False
+    for i, arg in enumerate(args):
+        if skip_next:
+            skip_next = False
+            continue
+        val = arg.get('value', '')
+        if val in ('-device', '-object'):
+            if i + 1 < len(args):
+                next_val = args[i+1].get('value', '')
+                if 'looking-glass' in next_val or 'kvmfr' in next_val:
+                    skip_next = True
+                    continue
+        if 'looking-glass' in val or 'kvmfr' in val:
+            continue
+        new_args.append(arg)
+        
+    # Clear old args
+    for arg in list(qemu_cmd):
+        qemu_cmd.remove(arg)
+        
+    # Put back filtered args
+    for arg in new_args:
+        qemu_cmd.append(arg)
+        
+    # Append the new looking-glass args
+    for arg_type, arg_val in target_args:
+        ET.SubElement(qemu_cmd, f"{{{qemu_ns}}}arg", value=arg_type)
+        ET.SubElement(qemu_cmd, f"{{{qemu_ns}}}arg", value=arg_val)
+        
+    console.print(f"[bold green]  ✓ KVMFR payload injected/updated successfully.[/bold green]")
+    
+    if hasattr(ET, 'indent'):
+        ET.indent(root, space="  ", level=0)
+    return ET.tostring(root, encoding='unicode')
+
+def configure_vm_xml(vm_name: str, byte_size: int) -> bool:
+    """Retrieve VM XML, apply edits, and redefine VM in libvirt."""
+    console.print(f"\n[bold blue]==>[/bold blue] [bold]Configuring VM '{vm_name}' XML...[/bold]")
+    try:
+        res = subprocess.run(
+            ["virsh", "-c", "qemu:///system", "dumpxml", vm_name],
+            capture_output=True, text=True, check=True
+        )
+        xml_old = res.stdout
+        xml_new = inject_kvmfr_into_xml(xml_old, byte_size)
+        
+        fd, tmp_path_str = tempfile.mkstemp(prefix=f"kvm-{vm_name}-", suffix=".xml")
+        tmp_path = Path(tmp_path_str)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(xml_new)
+            
+            subprocess.run(
+                ["virsh", "-c", "qemu:///system", "define", str(tmp_path)],
+                check=True, stdout=subprocess.DEVNULL
+            )
+            console.print(f"[bold green]  ✓ VM '{vm_name}' configuration updated in libvirt.[/bold green]")
+            return True
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
+    except Exception as e:
+        console.print(f"[bold red]  ✖ Failed to edit/redefine VM XML: {e}[/bold red]")
+        return False
+
+def interactively_configure_vm(byte_size: int) -> None:
+    """Detect VMs, prompt user, and apply edits."""
+    vms = get_all_vms()
+    if not vms:
+        console.print("\n[yellow]⚠ No existing KVM VMs detected on the system.[/yellow]")
+        return
+        
+    console.print("\n[bold cyan]Select an existing VM to automatically inject Looking Glass settings:[/bold cyan]")
+    
+    choices = []
+    for idx, (name, state) in enumerate(vms):
+        opt = str(idx + 1)
+        console.print(f"  [{opt}] {name} [dim]({state})[/dim]")
+        choices.append(opt)
+        
+    skip_opt = str(len(vms) + 1)
+    console.print(f"  [{skip_opt}] Skip automatic XML editing (Show manual instructions instead)")
+    choices.append(skip_opt)
+    
+    custom_opt = str(len(vms) + 2)
+    console.print(f"  [{custom_opt}] Enter a custom VM name manually")
+    choices.append(custom_opt)
+    
+    choice = Prompt.ask("\nChoice", choices=choices, default="1")
+    
+    if choice == skip_opt:
+        console.print("[yellow]Skipping automatic VM editing.[/yellow]")
+        return
+    elif choice == custom_opt:
+        vm_name = Prompt.ask("Enter custom VM name").strip()
+        if not vm_name:
+            console.print("[red]Invalid name. Skipping VM editing.[/red]")
+            return
+        state = "unknown"
+    else:
+        idx = int(choice) - 1
+        vm_name, state = vms[idx]
+        
+    success = configure_vm_xml(vm_name, byte_size)
+    if success and state == "running":
+        console.print(Panel(
+            f"[bold yellow]WARNING:[/bold yellow] VM '{vm_name}' is currently running.\n"
+            "You must completely shutdown and power cycle the VM for the new XML settings to take effect.",
+            border_style="yellow"
+        ))
+
 def main() -> None:
     console.clear()
     console.print(Panel("[bold green]Phase 5: KVMFR Host Configuration[/bold green]\nTarget: Arch Linux | Kernel 7.1.0+ | systemd 260", expand=False))
@@ -293,6 +461,9 @@ def main() -> None:
         enforce_device_integrity()
         configure_qemu_cgroups()
         
+        # Interactively configure VM XML
+        interactively_configure_vm(byte_size)
+        
         # Absolute correct QOM JSON formatting for QEMU commandline mapping
         xml_payload = f"""  <qemu:commandline>
     <qemu:arg value="-device"/>
@@ -304,8 +475,8 @@ def main() -> None:
         console.print("\n[bold green]=== PHASE 5 COMPLETE ===[/bold green]")
         console.print("The host kernel environment, udev rules, and QEMU cgroups are fully staged.")
         
-        console.print("\n[bold yellow]CRITICAL ACTION REQUIRED IN XML (sudo virsh edit <vm_name>):[/bold yellow]")
-        console.print("  [cyan]1.[/cyan] Change the first line to: [bold]<domain type='kvm' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>[/bold]")
+        console.print("\n[bold yellow]MANUAL XML FALLBACK REFERENCE (if needed):[/bold yellow]")
+        console.print("  [cyan]1.[/cyan] Change the first line of VM XML (virsh edit <vm>) to: [bold]<domain type='kvm' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>[/bold]")
         console.print("  [cyan]2.[/cyan] Find your memory balloon and disable it to prevent DMA latency: [bold]<memballoon model='none'/>[/bold]")
         console.print("  [cyan]3.[/cyan] Paste the following block at the absolute bottom of the file, just before [bold]</domain>[/bold]:\n")
         

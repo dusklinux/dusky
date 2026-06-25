@@ -1,0 +1,359 @@
+#!/usr/bin/env python3
+"""
+ASUS TUF KVM & Looking Glass Manager
+Author: Antigravity Pair Programmer
+Scope: Automated VM start/stop/kill/reboot/view/launch pipelines.
+Philosophy: Zero hardcoding, dynamic VM selector, self-learning default cache, elite socket-level sync.
+"""
+
+import os
+import sys
+import json
+import time
+import socket
+import shutil
+import subprocess
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+# Configuration paths
+CONFIG_DIR = Path.home() / ".config" / "win_manager"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+
+# ANSI Terminal Colors
+C_BLUE = "\033[34m"
+C_GREEN = "\033[32m"
+C_YELLOW = "\033[33m"
+C_RED = "\033[31m"
+C_BOLD = "\033[1m"
+C_RESET = "\033[0m"
+
+
+def print_info(msg: str):
+    print(f"{C_BLUE}[WIN]{C_RESET} {msg}")
+
+
+def print_success(msg: str):
+    print(f"{C_GREEN}[SUCCESS]{C_RESET} {msg}")
+
+
+def print_warn(msg: str):
+    print(f"{C_YELLOW}[WARN]{C_RESET} {msg}")
+
+
+def print_err(msg: str):
+    print(f"{C_RED}[ERROR]{C_RESET} {msg}")
+
+
+def load_config() -> dict:
+    """Loads configuration details such as preferred/default VM name."""
+    if CONFIG_FILE.exists():
+        try:
+            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def save_config(config: dict):
+    """Saves default settings to user's config directory."""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        CONFIG_FILE.write_text(json.dumps(config, indent=4), encoding="utf-8")
+    except Exception as e:
+        print_warn(f"Failed to write config file: {e}")
+
+
+def get_all_vms() -> list[tuple[str, str]]:
+    """Query libvirt dynamically for all configured VMs and their states."""
+    try:
+        res = subprocess.run(
+            ["virsh", "-c", "qemu:///system", "list", "--all"],
+            capture_output=True, text=True, check=True
+        )
+        vms = []
+        for line in res.stdout.strip().splitlines()[2:]:
+            parts = line.split()
+            if len(parts) >= 3:
+                vms.append((parts[1], " ".join(parts[2:])))
+            elif len(parts) == 2:
+                vms.append((parts[0], parts[1]))
+        return vms
+    except subprocess.CalledProcessError:
+        # Fall back to running with sudo if standard user hasn't refreshed group memberships yet
+        try:
+            res = subprocess.run(
+                ["sudo", "virsh", "-c", "qemu:///system", "list", "--all"],
+                capture_output=True, text=True, check=True
+            )
+            vms = []
+            for line in res.stdout.strip().splitlines()[2:]:
+                parts = line.split()
+                if len(parts) >= 3:
+                    vms.append((parts[1], " ".join(parts[2:])))
+                elif len(parts) == 2:
+                    vms.append((parts[0], parts[1]))
+            return vms
+        except Exception as e:
+            print_err(f"Failed to query libvirt VMs: {e}")
+            sys.exit(1)
+    except Exception as e:
+        print_err(f"Failed to query libvirt VMs: {e}")
+        sys.exit(1)
+
+
+def run_virsh_cmd(cmd_args: list) -> bool:
+    """Runs a virsh command, elevating to sudo if direct access is rejected."""
+    base_cmd = ["virsh", "-c", "qemu:///system"] + cmd_args
+    try:
+        subprocess.run(base_cmd, check=True)
+        return True
+    except subprocess.CalledProcessError:
+        try:
+            sudo_cmd = ["sudo", "virsh", "-c", "qemu:///system"] + cmd_args
+            subprocess.run(sudo_cmd, check=True)
+            return True
+        except subprocess.CalledProcessError as e:
+            print_err(f"Command execution failed with exit code: {e.returncode}")
+            return False
+
+
+def resolve_vm(specified_vm: str = None) -> str:
+    """
+    Returns the target VM name.
+    If specified_vm is passed, validates it and stores it as default.
+    Otherwise, returns the cached default or prompts the user.
+    """
+    config = load_config()
+    vms = get_all_vms()
+    vm_names = [v[0] for v in vms]
+
+    if not vms:
+        print_err("No virtual machines detected in libvirt.")
+        sys.exit(1)
+
+    # 1. Handle command-line override (--vm option)
+    if specified_vm:
+        if specified_vm not in vm_names:
+            print_err(f"The specified VM '{specified_vm}' does not exist in libvirt.")
+            print_info("Available VMs: " + ", ".join(vm_names))
+            sys.exit(1)
+        config["default_vm"] = specified_vm
+        save_config(config)
+        return specified_vm
+
+    # 2. Check and validate cached default VM
+    if "default_vm" in config:
+        cached_vm = config["default_vm"]
+        if cached_vm in vm_names:
+            return cached_vm
+        else:
+            print_warn(f"Cached default VM '{cached_vm}' no longer exists. Resetting default.")
+            del config["default_vm"]
+            save_config(config)
+
+    # 3. Handle single VM scenario
+    if len(vms) == 1:
+        vm_name = vms[0][0]
+        print_info(f"Automatically selected the only configured VM: {C_BOLD}{vm_name}{C_RESET}")
+        config["default_vm"] = vm_name
+        save_config(config)
+        return vm_name
+
+    # 4. Handle multiple VMs (Prompt user)
+    print(f"\n{C_BOLD}Select a Virtual Machine to manage:{C_RESET}")
+    for idx, (name, state) in enumerate(vms):
+        print(f"  [{idx + 1}] {name} ({state})")
+    print(f"  [{len(vms) + 1}] Cancel")
+
+    while True:
+        try:
+            choice = input(f"Choice (1-{len(vms) + 1}): ").strip()
+            val = int(choice)
+            if val == len(vms) + 1:
+                print_info("Operation cancelled.")
+                sys.exit(0)
+            if 1 <= val <= len(vms):
+                vm_name = vms[val - 1][0]
+                config["default_vm"] = vm_name
+                save_config(config)
+                print_info(f"Preferred VM set to: {C_BOLD}{vm_name}{C_RESET}")
+                return vm_name
+        except (ValueError, KeyboardInterrupt, EOFError):
+            if isinstance(sys.exc_info()[0], KeyboardInterrupt):
+                print("\n")
+                sys.exit(1)
+        print(f"Please enter a valid choice between 1 and {len(vms) + 1}")
+
+
+def get_spice_port(vm_name: str) -> int:
+    """Parse the VM XML to extract the active SPICE port (handling autoport)."""
+    try:
+        res = subprocess.run(["virsh", "-c", "qemu:///system", "dumpxml", vm_name], capture_output=True, text=True)
+        if res.returncode != 0:
+            res = subprocess.run(["sudo", "virsh", "-c", "qemu:///system", "dumpxml", vm_name], capture_output=True, text=True)
+        
+        if res.returncode == 0:
+            root = ET.fromstring(res.stdout)
+            graphics = root.find(".//devices/graphics[@type='spice']")
+            if graphics is not None:
+                port_str = graphics.get("port")
+                if port_str and port_str.isdigit():
+                    return int(port_str)
+    except Exception:
+        pass
+    return 5900  # Default fallback port
+
+
+def wait_for_spice_port(port: int, timeout: int = 15) -> bool:
+    """Blocks until the SPICE socket opens, ensuring zero-delay launch alignment."""
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except (socket.timeout, ConnectionRefusedError):
+            time.sleep(0.5)
+    return False
+
+
+def get_vm_state(vm_name: str) -> str:
+    """Returns the precise state of the VM (e.g. running, shut off)."""
+    res = subprocess.run(["virsh", "-c", "qemu:///system", "domstate", vm_name], capture_output=True, text=True)
+    if res.returncode != 0:
+        res = subprocess.run(["sudo", "virsh", "-c", "qemu:///system", "domstate", vm_name], capture_output=True, text=True)
+    return res.stdout.strip() if res.returncode == 0 else "unknown"
+
+
+def print_help():
+    print(f"""{C_BOLD}Windows KVM & Looking Glass Manager{C_RESET}
+
+Usage:
+  {sys.argv[0]} <action> [options]
+
+Actions:
+  {C_GREEN}start{C_RESET}        Start the virtual machine
+  {C_GREEN}stop{C_RESET}         Send a graceful shutdown signal (alias: shutdown)
+  {C_GREEN}kill{C_RESET}         Forcefully power off/destroy the VM (alias: destroy)
+  {C_GREEN}reboot{C_RESET}       Reboot the VM
+  {C_GREEN}status{C_RESET}       Display current running state
+  {C_GREEN}view{C_RESET}         Launch looking-glass-client (alias: show, lg)
+  {C_GREEN}launch{C_RESET}       Start VM and automatically wait to launch Looking Glass (alias: play)
+  {C_GREEN}edit{C_RESET}         Edit the VM XML topology configuration
+  {C_GREEN}select{C_RESET}       Change the default preferred VM
+
+Options:
+  --vm <name>  Override the default VM and run the action on <name>
+  --help, -h   Show this help manual
+""")
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("--help", "-h", "help"):
+        print_help()
+        sys.exit(0)
+
+    action = sys.argv[1].lower()
+    
+    # Parse options
+    specified_vm = None
+    if "--vm" in sys.argv:
+        try:
+            idx = sys.argv.index("--vm")
+            specified_vm = sys.argv[idx + 1]
+        except IndexError:
+            print_err("Missing VM name after --vm option.")
+            sys.exit(1)
+
+    vm_name = resolve_vm(specified_vm)
+
+    if action == "select":
+        # Clear default VM and trigger selection prompt
+        config = load_config()
+        if "default_vm" in config:
+            del config["default_vm"]
+            save_config(config)
+        resolve_vm()
+        sys.exit(0)
+
+    elif action == "start":
+        print_info(f"Starting VM '{vm_name}'...")
+        if run_virsh_cmd(["start", vm_name]):
+            print_success(f"VM '{vm_name}' booted.")
+
+    elif action in ("stop", "shutdown"):
+        print_info(f"Sending graceful shutdown signal to VM '{vm_name}'...")
+        if run_virsh_cmd(["shutdown", vm_name]):
+            print_success("Shutdown signal dispatched.")
+
+    elif action in ("kill", "destroy"):
+        print_info(f"Forcefully shutting down (destroying) VM '{vm_name}'...")
+        if run_virsh_cmd(["destroy", vm_name]):
+            print_success("VM forcefully terminated.")
+
+    elif action == "reboot":
+        print_info(f"Rebooting VM '{vm_name}'...")
+        if run_virsh_cmd(["reboot", vm_name]):
+            print_success("Reboot signal dispatched.")
+
+    elif action == "status":
+        state = get_vm_state(vm_name)
+        color = C_GREEN if state == "running" else C_RED
+        print_info(f"VM '{vm_name}' state: {color}{state}{C_RESET}")
+
+    elif action == "edit":
+        env = os.environ.copy()
+        if "EDITOR" not in env and "VISUAL" not in env:
+            env["EDITOR"] = "nano"
+        
+        print_info(f"Opening XML editor for VM '{vm_name}'...")
+        try:
+            subprocess.run(["virsh", "-c", "qemu:///system", "edit", vm_name], env=env, check=True)
+        except subprocess.CalledProcessError:
+            subprocess.run(["sudo", "virsh", "-c", "qemu:///system", "edit", vm_name], env=env, check=True)
+
+    elif action in ("view", "lg", "show"):
+        if not shutil.which("looking-glass-client"):
+            print_err("looking-glass-client binary not found in PATH.")
+            sys.exit(1)
+        
+        state = get_vm_state(vm_name)
+        if state != "running":
+            print_warn(f"VM '{vm_name}' is currently {state}. Connection might fail.")
+            
+        print_info("Launching Looking Glass Client...")
+        subprocess.run(["looking-glass-client"])
+
+    elif action in ("launch", "play"):
+        if not shutil.which("looking-glass-client"):
+            print_err("looking-glass-client binary not found in PATH.")
+            sys.exit(1)
+
+        state = get_vm_state(vm_name)
+        if state != "running":
+            print_info(f"Starting VM '{vm_name}'...")
+            run_virsh_cmd(["start", vm_name])
+        else:
+            print_info(f"VM '{vm_name}' is already running.")
+
+        spice_port = get_spice_port(vm_name)
+        print_info(f"Waiting for SPICE graphics pipe on port {spice_port}...")
+        
+        if wait_for_spice_port(spice_port, timeout=20):
+            # A tiny sleep gives the virtual display driver (VDD) in the guest 
+            # time to complete its handshakes after SPICE wakes up
+            time.sleep(1.0)
+            print_success("Graphics server online. Launching Looking Glass Client...")
+            subprocess.run(["looking-glass-client"])
+        else:
+            print_err("Timed out waiting for graphics server. Launching fallback...")
+            subprocess.run(["looking-glass-client"])
+
+    else:
+        print_err(f"Unknown action: {action}")
+        print_help()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -123,7 +123,7 @@ def try_aur_virtio(user: str) -> bool:
     
     # paru strictly blocks root execution. Drop privileges via sudo.
     # Added --noconfirm to bypass the PKGBUILD review pager which breaks inside log pipes
-    cmd = ["sudo", "-u", user, "paru", "-S", "--needed", "--noconfirm", "virtio-win"]
+    cmd = ["sudo", "-u", user, "paru", "-S", "--needed", "--noconfirm", "--skipreview", "virtio-win"]
     try:
         subprocess.run(cmd, check=True)
         console.print("[bold green]  ✓ AUR package 'virtio-win' staged.[/bold green]")
@@ -270,10 +270,16 @@ def stage_iso(aur_success: bool) -> None:
             
         match choice:
             case "":
-                url = "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso"
-                console.print(f"  [cyan]Initiating direct stream from {url}...[/cyan]")
-                download_iso_stream(url, target_iso)
-                console.print(f"[bold green]  ✓ ISO provisioned directly to {target_iso}[/bold green]")
+                default_local_path = Path("/mnt/zram1/virtio-win-0.1.285.iso")
+                if default_local_path.exists():
+                    console.print(f"  [cyan]Cloning default local ISO from {default_local_path}...[/cyan]")
+                    shutil.copy2(default_local_path, target_iso)
+                    console.print(f"[bold green]  ✓ Default local ISO safely cloned to libvirt pool.[/bold green]")
+                else:
+                    url = "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso"
+                    console.print(f"  [cyan]Initiating direct stream from {url}...[/cyan]")
+                    download_iso_stream(url, target_iso)
+                    console.print(f"[bold green]  ✓ ISO provisioned directly to {target_iso}[/bold green]")
                 break
             case path_str if Path(path_str).is_file():
                 local_path = Path(path_str)
