@@ -17,8 +17,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 # Configuration paths
-CONFIG_DIR = Path.home() / ".config" / "win_manager"
-CONFIG_FILE = CONFIG_DIR / "config.json"
+STATE_FILE = Path.home() / ".config" / "dusky" / "settings" / "virt" / "win_state"
 
 # ANSI Terminal Colors
 C_BLUE = "\033[34m"
@@ -45,23 +44,34 @@ def print_err(msg: str):
     print(f"{C_RED}[ERROR]{C_RESET} {msg}")
 
 
-def load_config() -> dict:
-    """Loads configuration details such as preferred/default VM name."""
-    if CONFIG_FILE.exists():
+def load_cached_vm() -> str:
+    """Loads the cached VM name from the state file."""
+    if STATE_FILE.exists():
         try:
-            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            name = STATE_FILE.read_text(encoding="utf-8").strip()
+            if name:
+                return name
         except Exception:
             pass
-    return {}
+    return ""
 
 
-def save_config(config: dict):
-    """Saves default settings to user's config directory."""
+def save_cached_vm(vm_name: str):
+    """Saves the VM name to the state file."""
     try:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_FILE.write_text(json.dumps(config, indent=4), encoding="utf-8")
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATE_FILE.write_text(vm_name, encoding="utf-8")
     except Exception as e:
-        print_warn(f"Failed to write config file: {e}")
+        print_warn(f"Failed to write state file: {e}")
+
+
+def clear_cached_vm():
+    """Deletes the state file to clear the cached VM."""
+    try:
+        if STATE_FILE.exists():
+            STATE_FILE.unlink()
+    except Exception as e:
+        print_warn(f"Failed to clear state file: {e}")
 
 
 def get_all_vms() -> list[tuple[str, str]]:
@@ -124,7 +134,6 @@ def resolve_vm(specified_vm: str = None) -> str:
     If specified_vm is passed, validates it and stores it as default.
     Otherwise, returns the cached default or prompts the user.
     """
-    config = load_config()
     vms = get_all_vms()
     vm_names = [v[0] for v in vms]
 
@@ -138,26 +147,23 @@ def resolve_vm(specified_vm: str = None) -> str:
             print_err(f"The specified VM '{specified_vm}' does not exist in libvirt.")
             print_info("Available VMs: " + ", ".join(vm_names))
             sys.exit(1)
-        config["default_vm"] = specified_vm
-        save_config(config)
+        save_cached_vm(specified_vm)
         return specified_vm
 
     # 2. Check and validate cached default VM
-    if "default_vm" in config:
-        cached_vm = config["default_vm"]
+    cached_vm = load_cached_vm()
+    if cached_vm:
         if cached_vm in vm_names:
             return cached_vm
         else:
             print_warn(f"Cached default VM '{cached_vm}' no longer exists. Resetting default.")
-            del config["default_vm"]
-            save_config(config)
+            clear_cached_vm()
 
     # 3. Handle single VM scenario
     if len(vms) == 1:
         vm_name = vms[0][0]
         print_info(f"Automatically selected the only configured VM: {C_BOLD}{vm_name}{C_RESET}")
-        config["default_vm"] = vm_name
-        save_config(config)
+        save_cached_vm(vm_name)
         return vm_name
 
     # 4. Handle multiple VMs (Prompt user)
@@ -175,8 +181,7 @@ def resolve_vm(specified_vm: str = None) -> str:
                 sys.exit(0)
             if 1 <= val <= len(vms):
                 vm_name = vms[val - 1][0]
-                config["default_vm"] = vm_name
-                save_config(config)
+                save_cached_vm(vm_name)
                 print_info(f"Preferred VM set to: {C_BOLD}{vm_name}{C_RESET}")
                 return vm_name
         except (ValueError, KeyboardInterrupt, EOFError):
@@ -282,10 +287,7 @@ def main():
 
     if action == "select":
         # Clear default VM and trigger selection prompt
-        config = load_config()
-        if "default_vm" in config:
-            del config["default_vm"]
-            save_config(config)
+        clear_cached_vm()
         resolve_vm()
         sys.exit(0)
 
