@@ -13,6 +13,7 @@ import stat
 import shutil
 import tempfile
 import grp
+import time
 import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -186,12 +187,16 @@ def enforce_shm_integrity(user: str, byte_size: int) -> None:
     shm_path = Path("/dev/shm/looking-glass")
     console.print("\n[bold blue]==>[/bold blue] [bold]Verifying /dev/shm/looking-glass Integrity...[/bold]")
     
-    if shm_path.exists() and (shm_path.is_dir() or not shm_path.is_file()):
-        console.print("[bold yellow]  ⚠ Invalid file type found at /dev/shm/looking-glass. Purging...[/bold yellow]")
-        if shm_path.is_dir():
-            shutil.rmtree(shm_path)
-        else:
-            shm_path.unlink()
+    # Pre-emptively purge the existing file or directory to bypass fs.protected_regular write blocks
+    if shm_path.exists():
+        console.print("[cyan]  - Recreating shared memory file to ensure correct ownership and size...[/cyan]")
+        try:
+            if shm_path.is_dir():
+                shutil.rmtree(shm_path)
+            else:
+                shm_path.unlink()
+        except Exception as e:
+            bail(f"Failed to remove existing shared memory file: {e}")
 
     try:
         # Create, size, and physically allocate the shared memory file
@@ -383,6 +388,34 @@ def configure_vm_xml(vm_name: str, byte_size: int) -> bool:
         console.print(f"[bold red]  ✖ Failed to edit/redefine VM XML: {e}[/bold red]")
         return False
 
+def wait_for_vm_shutdown(vm_name: str) -> None:
+    """Poll the VM power state until it transitions to 'shut off'."""
+    with console.status(f"[cyan]Monitoring '{vm_name}' power state...", spinner="dots") as status:
+        while True:
+            try:
+                res = subprocess.run(
+                    ["virsh", "-c", "qemu:///system", "domstate", vm_name],
+                    capture_output=True, text=True, check=True
+                )
+                state = res.stdout.strip().lower()
+                if "shut off" in state:
+                    break
+                status.update(f"[cyan]Monitoring '{vm_name}' power state... Current state: [bold yellow]{state}[/bold yellow] (Please turn off VM)")
+            except Exception:
+                break
+            time.sleep(1.5)
+    console.print(f"[bold green]  ✓ VM '{vm_name}' has successfully shutdown.[/bold green]")
+
+def prompt_vm_start(vm_name: str) -> None:
+    """Prompt the user to power the VM back up to apply settings."""
+    choice = Prompt.ask(f"\n[bold cyan]Would you like to start the VM '{vm_name}' back up now?[/bold cyan]", choices=["y", "n"], default="y").strip().lower()
+    if choice == "y":
+        console.print(f"[cyan]Powering on VM '{vm_name}'...[/cyan]")
+        if run_cmd(["virsh", "-c", "qemu:///system", "start", vm_name], check=False) == 0:
+            console.print(f"[bold green]  ✓ VM '{vm_name}' started successfully with new Looking Glass settings.[/bold green]")
+        else:
+            console.print(f"[bold red]  ✖ Failed to start VM '{vm_name}'.[/bold red]")
+
 def interactively_configure_vm(byte_size: int) -> None:
     """Detect VMs, prompt user, and apply XML edits."""
     vms = get_all_vms()
@@ -425,9 +458,27 @@ def interactively_configure_vm(byte_size: int) -> None:
     if success and state == "running":
         console.print(Panel(
             f"[bold yellow]WARNING:[/bold yellow] VM '{vm_name}' is currently running.\n"
-            "You must completely shutdown and power cycle the VM for the new XML settings to take effect.",
+            "The Looking Glass configuration has been successfully saved to the persistent XML,\n"
+            "but changes will NOT take effect in QEMU until the VM is completely powered off and booted again.",
             border_style="yellow"
         ))
+        
+        console.print("\n[bold cyan]How would you like to handle the VM power cycle?[/bold cyan]")
+        console.print("  [[bold green]1[/bold green]] Gracefully shutdown the VM now and wait for it to stop")
+        console.print("  [[bold green]2[/bold green]] Wait and poll for you to manually turn off the VM")
+        console.print("  [[bold green]3[/bold green]] Exit now and I will restart the VM later manually (Default)")
+        
+        cycle_choice = Prompt.ask("Choice", choices=["1", "2", "3"], default="3").strip()
+        
+        if cycle_choice == "1":
+            console.print(f"\n[cyan]Sending graceful shutdown signal to '{vm_name}'...[/cyan]")
+            run_cmd(["virsh", "-c", "qemu:///system", "shutdown", vm_name], check=False)
+            wait_for_vm_shutdown(vm_name)
+            prompt_vm_start(vm_name)
+        elif cycle_choice == "2":
+            console.print(f"\n[cyan]Waiting for you to manually turn off VM '{vm_name}'...[/cyan]")
+            wait_for_vm_shutdown(vm_name)
+            prompt_vm_start(vm_name)
 
 # ==============================================================================
 # MAIN EXECUTION
