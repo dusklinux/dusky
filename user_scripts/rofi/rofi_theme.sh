@@ -556,10 +556,10 @@ submenu_wallpapers() {
 
         case "$choice" in
             "  Back"*) return 1 ;;
-            "  "*) submenu_regen "next" && return 0 || continue ;;
-            "  "*) submenu_regen "prev" && return 0 || continue ;;
-            "  "*) submenu_regen "random" && return 0 || continue ;;
-            "  "*) submenu_solid_color && return 0 || continue ;;
+            "  "*) submenu_regen "next" && return 0; continue ;;
+            "  "*) submenu_regen "prev" && return 0; continue ;;
+            "  "*) submenu_regen "random" && return 0; continue ;;
+            "  "*) submenu_solid_color && return 0; continue ;;
         esac
     done
 }

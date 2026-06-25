@@ -494,6 +494,7 @@ build_cache() {
 }
 
 collect_favorites() {
+  # shellcheck disable=SC2178
   local -n favorites_ref=$1
   local fav
   local -A seen=()
@@ -516,6 +517,7 @@ collect_favorites() {
 }
 
 write_favorites_file() {
+  # shellcheck disable=SC2178
   local -n favorites_ref=$1
   local tmp fav
 

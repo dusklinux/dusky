@@ -164,16 +164,16 @@ def main():
     print(f"\n[*] Setting login password for user '{username}'...")
     p1 = ""
     if not sys.stdin.isatty():
-        print("  - Running non-interactively. Defaulting password to '2345'.")
-        p1 = "2345"
+        print("  - Running non-interactively. Defaulting password to 'ask_the_user'.")
+        p1 = "ask_the_user"
     else:
         while True:
             try:
                 p1 = input("Enter password (used for SSH login): ").strip()
                 p2 = input("Confirm password: ").strip()
             except EOFError:
-                print("  - Standard input closed. Defaulting password to '2345'.")
-                p1 = "2345"
+                print("  - Standard input closed. Defaulting password to 'ask_the_user'.")
+                p1 = "ask_the_user"
                 break
             if not p1:
                 print("[!] Password cannot be empty.")
