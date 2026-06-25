@@ -151,6 +151,47 @@ is_valid_base16_backend() {
     [[ "$1" == "disable" || "$1" == "wal" ]]
 }
 
+is_valid_bezier() {
+    local val="$1"
+    [[ "$val" == "disable" ]] && return 0
+    [[ "$val" =~ ^[+-]?[0-9]*\.?[0-9]+,[+-]?[0-9]*\.?[0-9]+,[+-]?[0-9]*\.?[0-9]+,[+-]?[0-9]*\.?[0-9]+$ ]] && return 0
+    return 1
+}
+
+is_valid_angle() {
+    local val="$1"
+    [[ "$val" == "disable" ]] && return 0
+    [[ "$val" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]] && return 0
+    return 1
+}
+
+is_valid_pos() {
+    local val="$1"
+    [[ "$val" == "disable" ]] && return 0
+    case "$val" in
+        center|top|left|right|bottom|top-left|top-right|bottom-left|bottom-right) return 0 ;;
+    esac
+    [[ "$val" =~ ^[+-]?[0-9]*\.?[0-9]+,[+-]?[0-9]*\.?[0-9]+$ ]] && return 0
+    return 1
+}
+
+resolve_wallpaper_id() {
+    local full_path="$1"
+    local abs_path
+    abs_path=$(realpath -s "$full_path" 2>/dev/null || readlink -f "$full_path" || echo "$full_path")
+
+    local active_dir_clean="${ACTIVE_THEME_DIR%/}"
+    local root_dir_clean="${WALLPAPER_ROOT%/}"
+
+    if [[ "$abs_path" == "$active_dir_clean"/* ]]; then
+        printf '%s\n' "${abs_path#"$active_dir_clean"/}"
+    elif [[ "$abs_path" == "$root_dir_clean"/* ]]; then
+        printf '%s\n' "${abs_path#"$root_dir_clean"/}"
+    else
+        basename "$abs_path"
+    fi
+}
+
 tracker_file_for_mode() {
     local mode="$1"
     if [[ "$mode" == "light" ]]; then
@@ -284,6 +325,24 @@ read_state() {
     if [[ "$AWWW_TRANS_FPS" != "disable" && ! "$AWWW_TRANS_FPS" =~ ^[0-9]+$ ]]; then
         warn "Invalid AWWW_TRANS_FPS. Resetting."
         AWWW_TRANS_FPS="$DEFAULT_TRANS_FPS"
+        STATE_NEEDS_REWRITE=1
+    fi
+
+    if ! is_valid_bezier "$AWWW_TRANS_BEZIER"; then
+        warn "Invalid AWWW_TRANS_BEZIER. Resetting."
+        AWWW_TRANS_BEZIER="$DEFAULT_TRANS_BEZIER"
+        STATE_NEEDS_REWRITE=1
+    fi
+
+    if ! is_valid_angle "$AWWW_TRANS_ANGLE"; then
+        warn "Invalid AWWW_TRANS_ANGLE. Resetting."
+        AWWW_TRANS_ANGLE="$DEFAULT_TRANS_ANGLE"
+        STATE_NEEDS_REWRITE=1
+    fi
+
+    if ! is_valid_pos "$AWWW_TRANS_POS"; then
+        warn "Invalid AWWW_TRANS_POS. Resetting."
+        AWWW_TRANS_POS="$DEFAULT_TRANS_POS"
         STATE_NEEDS_REWRITE=1
     fi
 
@@ -460,9 +519,11 @@ ensure_awww_running() {
 # --- WALLPAPER SELECTION ---
 
 load_wallpapers() {
-    local root="$1"
+    local root="${1%/}"
     local recursive="$2"
+    # shellcheck disable=SC2034
     local -n out_paths_ref=$3
+    # shellcheck disable=SC2034
     local -n out_ids_ref=$4
     local -a found=()
     local path
@@ -496,7 +557,9 @@ load_wallpapers() {
 
 select_wallpaper() {
     local strategy="$1"
+    # shellcheck disable=SC2034
     local -n out_path_ref=$2
+    # shellcheck disable=SC2034
     local -n out_id_ref=$3
 
     local track_file last_id=""
@@ -550,7 +613,9 @@ select_wallpaper() {
             ;;
     esac
 
+    # shellcheck disable=SC2034
     out_path_ref="${wallpapers[$selected_index]}"
+    # shellcheck disable=SC2034
     out_id_ref="${wallpaper_ids[$selected_index]}"
 }
 
@@ -594,7 +659,7 @@ generate_colors() {
 
             for i in "${!cmd[@]}"; do
                 if [[ "${cmd[$i]}" == "--source-color-index" ]]; then
-                    cmd[$((i + 1))]="0"
+                    cmd[i + 1]="0"
                     break
                 fi
             done
@@ -642,6 +707,40 @@ apply_solid_color() {
     fi
 }
 
+apply_wallpaper_direct() {
+    local img_path="$1"
+    local -i do_regen=1
+    local wallpaper_id
+
+    (( $# > 1 )) && do_regen=$2
+
+    [[ -f "$img_path" ]] || die "Wallpaper file does not exist: $img_path"
+
+    wallpaper_id=$(resolve_wallpaper_id "$img_path")
+
+    log "Applying selected wallpaper: ${img_path##*/} [Trans: ${AWWW_TRANS_TYPE}]"
+
+    ensure_awww_running
+
+    local -a awww_cmd=(awww img)
+    [[ -n "$AWWW_TRANS_TYPE" && "$AWWW_TRANS_TYPE" != "disable" ]] && awww_cmd+=(--transition-type "$AWWW_TRANS_TYPE")
+    [[ -n "$AWWW_TRANS_DURATION" && "$AWWW_TRANS_DURATION" != "disable" ]] && awww_cmd+=(--transition-duration "$AWWW_TRANS_DURATION")
+    [[ -n "$AWWW_TRANS_FPS" && "$AWWW_TRANS_FPS" != "disable" ]] && awww_cmd+=(--transition-fps "$AWWW_TRANS_FPS")
+    [[ -n "$AWWW_TRANS_ANGLE" && "$AWWW_TRANS_ANGLE" != "disable" ]] && awww_cmd+=(--transition-angle "$AWWW_TRANS_ANGLE")
+    [[ -n "$AWWW_TRANS_POS" && "$AWWW_TRANS_POS" != "disable" ]] && awww_cmd+=(--transition-pos "$AWWW_TRANS_POS")
+    [[ -n "$AWWW_TRANS_BEZIER" && "$AWWW_TRANS_BEZIER" != "disable" ]] && awww_cmd+=(--transition-bezier "$AWWW_TRANS_BEZIER")
+
+    awww_cmd+=("$img_path")
+
+    "${awww_cmd[@]}" 99>&- || die "Failed to apply wallpaper with awww"
+
+    update_wallpaper_tracker "$wallpaper_id"
+
+    if (( do_regen )); then
+        generate_colors "$img_path"
+    fi
+}
+
 apply_wallpaper_selection() {
     local strategy="$1"
     local -i do_regen=1
@@ -675,6 +774,7 @@ apply_wallpaper_selection() {
     fi
 }
 
+# shellcheck disable=SC2120
 regenerate_current() {
     local query_output line current_wallpaper="" resolved_wallpaper rel_path
     local primary_store secondary_store
@@ -689,7 +789,7 @@ regenerate_current() {
             break
         elif [[ "$line" == *"currently displaying: color: "* ]]; then
             log "awww is displaying a solid color. Automatically falling back to a random wallpaper."
-            random_command
+            random_command "$@"
             return 0
         fi
     done <<< "$query_output"
@@ -717,7 +817,11 @@ regenerate_current() {
         fi
     fi
 
-    [[ -f "$resolved_wallpaper" ]] || die "Image file does not exist: ${current_wallpaper}"
+    if [[ ! -f "$resolved_wallpaper" ]]; then
+        warn "Current wallpaper '${current_wallpaper}' not found. Selecting a random wallpaper."
+        random_command "$@"
+        return 0
+    fi
 
     if [[ "$resolved_wallpaper" != "$current_wallpaper" ]]; then
         log "Wallpaper moved; resolved to: ${resolved_wallpaper}"
@@ -787,6 +891,7 @@ cmd_set() {
     local mode_request_kind=""
     local -i skip_wall=0
     local -i skip_regen=0
+    local WALLPAPER_PATH=""
 
     while (( $# > 0 )); do
         case "$1" in
@@ -844,16 +949,19 @@ cmd_set() {
                 ;;
             --trans-bezier)
                 [[ -n "${2:-}" ]] || die "--trans-bezier requires a value"
+                is_valid_bezier "$2" || die "--trans-bezier must be a valid cubic-bezier (e.g. .54,0,.34,.99)"
                 AWWW_TRANS_BEZIER="$2"
                 shift 2
                 ;;
             --trans-angle)
                 [[ -n "${2:-}" ]] || die "--trans-angle requires a value"
+                is_valid_angle "$2" || die "--trans-angle must be a valid number or 'disable'"
                 AWWW_TRANS_ANGLE="$2"
                 shift 2
                 ;;
             --trans-pos)
                 [[ -n "${2:-}" ]] || die "--trans-pos requires a value"
+                is_valid_pos "$2" || die "--trans-pos must be a valid position alias or coordinates"
                 AWWW_TRANS_POS="$2"
                 shift 2
                 ;;
@@ -875,7 +983,15 @@ cmd_set() {
             --no-wall) skip_wall=1; shift ;;
             --no-regen) skip_regen=1; shift ;;
             --help) usage; exit 0 ;;
-            *) die "Unknown option: $1" ;;
+            -*) die "Unknown option: $1" ;;
+            *)
+                if [[ -z "$WALLPAPER_PATH" ]]; then
+                    WALLPAPER_PATH="$1"
+                    shift
+                else
+                    die "Unknown argument: $1"
+                fi
+                ;;
         esac
     done
 
@@ -902,7 +1018,9 @@ cmd_set() {
     write_state
 
     # Execute
-    if (( ! skip_wall )) && (( mode_changed || same_mode_requested )); then
+    if [[ -n "$WALLPAPER_PATH" ]]; then
+        apply_wallpaper_direct "$WALLPAPER_PATH" "$(( ! skip_regen ))"
+    elif (( ! skip_wall )) && (( mode_changed || same_mode_requested )); then
         apply_wallpaper_selection next "$(( ! skip_regen ))"
     elif (( ! skip_regen )) && (( matugen_settings_changed || same_mode_requested || mode_changed )); then
         regenerate_current
