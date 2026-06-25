@@ -154,14 +154,14 @@ is_valid_base16_backend() {
 is_valid_bezier() {
     local val="$1"
     [[ "$val" == "disable" ]] && return 0
-    [[ "$val" =~ ^[+-]?[0-9]*\.?[0-9]+,[+-]?[0-9]*\.?[0-9]+,[+-]?[0-9]*\.?[0-9]+,[+-]?[0-9]*\.?[0-9]+$ ]] && return 0
+    [[ "$val" =~ ^[+-]?[0-9]*\.?[0-9]+,[[:space:]]*[+-]?[0-9]*\.?[0-9]+,[[:space:]]*[+-]?[0-9]*\.?[0-9]+,[[:space:]]*[+-]?[0-9]*\.?[0-9]+$ ]] && return 0
     return 1
 }
 
 is_valid_angle() {
     local val="$1"
     [[ "$val" == "disable" ]] && return 0
-    [[ "$val" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]] && return 0
+    [[ "$val" =~ ^[+-]?([0-9]+(\.[0-9]+)?|\.[0-9]+)$ ]] && return 0
     return 1
 }
 
@@ -171,7 +171,7 @@ is_valid_pos() {
     case "$val" in
         center|top|left|right|bottom|top-left|top-right|bottom-left|bottom-right) return 0 ;;
     esac
-    [[ "$val" =~ ^[+-]?[0-9]*\.?[0-9]+,[+-]?[0-9]*\.?[0-9]+$ ]] && return 0
+    [[ "$val" =~ ^[+-]?[0-9]*\.?[0-9]+,[[:space:]]*[+-]?[0-9]*\.?[0-9]+$ ]] && return 0
     return 1
 }
 
@@ -839,7 +839,7 @@ usage() {
 Usage: theme_ctl [COMMAND] [OPTIONS]
 
 Commands:
-  set       Update settings and apply changes.
+  set       [image_path] Update settings and apply changes (optionally setting specific wallpaper).
               --mode <light|dark>
               --type <scheme-*|disable>
               --contrast <num[-1..1]|disable>
@@ -864,6 +864,7 @@ Commands:
 
 Examples:
   theme_ctl set --mode dark --trans-type wave --trans-duration 2.5
+  theme_ctl set /path/to/wallpaper.jpg --mode dark
   theme_ctl next --no-regen
   theme_ctl random
   theme_ctl color FF0000
