@@ -171,7 +171,15 @@ replace the entire xml file with this.
 
 #### 1. CPU & Pinning (The Performance Foundation)
 
-_Paste this below the `<vcpu>` tag._ This pins your 4 vCPUs to your **P-Cores only** and forces the emulator "overhead" tasks to the **E-Cores**.
+> [!TIP] Automated Pinning Configuration Script
+> You can automatically generate and apply these pinning settings for your specific host CPU topology (P-cores, E-cores, AMD SMT, etc.) by running:
+> ```bash
+> /home/new/user_scripts/dusky_vm/passthrough/35_cpu_pinning_generator.py
+> ```
+
+Otherwise, paste the following blocks below the `<vcpu>` tag manually:
+
+##### Option A: 4-vCPU Configuration (Uses 2 P-Cores, 4 Threads)
 ```xml
 <vcpu placement='static'>4</vcpu>
 <cputune>
@@ -179,8 +187,23 @@ _Paste this below the `<vcpu>` tag._ This pins your 4 vCPUs to your **P-Cores on
   <vcpupin vcpu='1' cpuset='1'/>
   <vcpupin vcpu='2' cpuset='2'/>
   <vcpupin vcpu='3' cpuset='3'/>
-  
-  <emulatorpin cpuset='12-19'/> 
+  <emulatorpin cpuset='12-19'/>
+</cputune>
+```
+
+##### Option B: 8-vCPU Configuration (Uses 4 P-Cores, 8 Threads — Recommended for 8-Core/8-thread VMs)
+```xml
+<vcpu placement='static'>8</vcpu>
+<cputune>
+  <vcpupin vcpu='0' cpuset='0'/>
+  <vcpupin vcpu='1' cpuset='1'/>
+  <vcpupin vcpu='2' cpuset='2'/>
+  <vcpupin vcpu='3' cpuset='3'/>
+  <vcpupin vcpu='4' cpuset='4'/>
+  <vcpupin vcpu='5' cpuset='5'/>
+  <vcpupin vcpu='6' cpuset='6'/>
+  <vcpupin vcpu='7' cpuset='7'/>
+  <emulatorpin cpuset='12-19'/>
 </cputune>
 ```
 
