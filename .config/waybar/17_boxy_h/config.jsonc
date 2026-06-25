@@ -130,7 +130,7 @@
     "tooltip-format-disconnected": "Disconnected",
     "interval": 3,
     "spacing": 1,
-    "on-click": "foot --app-id=tui_dusky_network.py $HOME/user_scripts/network_manager/tui_dusky_network.py"
+    "on-click": "foot --app-id=dusky_tui python $HOME/user_scripts/dusky_tui/python/main/main.py $HOME/user_scripts/network_manager/tui_dusky_network.py"
   },
   "battery": {
     "format": "{icon} {capacity}%",

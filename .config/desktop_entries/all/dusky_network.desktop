@@ -3,8 +3,7 @@ Version=1.0
 Type=Application
 Name=Dusky Network
 Comment=Arch Linux / Hyprland WiFi Manager (TUI)
-Exec=uwsm-app -- kitty --class "tui_dusky_network.py" -e /home/dusk/user_scripts/network_manager/tui_dusky_network.py
-Exec=uwsm-app -- foot --app-id=dusky_tui python /home/dusk/user_scripts/dusky_tui/python/main/main.py /home/dusk/user_scripts/network_manager/tui_dusky_network.py
+Exec=uwsm-app -- foot --app-id=dusky_tui python /home/new/user_scripts/dusky_tui/python/main/main.py /home/new/user_scripts/network_manager/tui_dusky_network.py
 Icon=network-wireless
 Terminal=false
 Categories=Network;Settings;

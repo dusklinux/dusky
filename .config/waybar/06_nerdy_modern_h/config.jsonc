@@ -342,11 +342,11 @@
         "format-disconnected": "󰤭 Off",
         "format-disabled": "󰀝",
         "format-icons": ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"],
-        "tooltip-format-wifi": " {essid}\n\nSignal: {signalStrength}% ({signaldBm} dBm)\nFrequency: {frequency} MHz\nInterface: {ifname}\nIP: {ipaddr}/{cidr}\n\n󰕒 {bandwidthUpBytes}  󰇚 {bandwidthDownBytes}\n\nLMB: tui_dusky_network.py\nRMB: WiFi ON\nMMB: WiFi OFF",
+        "tooltip-format-wifi": " {essid}\n\nSignal: {signalStrength}% ({signaldBm} dBm)\nFrequency: {frequency} MHz\nInterface: {ifname}\nIP: {ipaddr}/{cidr}\n\n󰕒 {bandwidthUpBytes}  󰇚 {bandwidthDownBytes}\n\nLMB: Dusky Network\nRMB: WiFi ON\nMMB: WiFi OFF",
         "tooltip-format-ethernet": "󰈀 {ifname}\n\nIP: {ipaddr}/{cidr}\nGateway: {gwaddr}\n\n󰕒 {bandwidthUpBytes}  󰇚 {bandwidthDownBytes}",
         "tooltip-format-disconnected": "No connection\n\nRMB: Turn WiFi ON",
         "interval": 2,
-        "on-click": "foot --app-id=tui_dusky_network.py $HOME/user_scripts/network_manager/tui_dusky_network.py",
+        "on-click": "foot --app-id=dusky_tui python $HOME/user_scripts/dusky_tui/python/main/main.py $HOME/user_scripts/network_manager/tui_dusky_network.py",
         "on-click-right": "nmcli radio wifi on && notify-send 'WiFi' 'Turned ON'",
         "on-click-middle": "nmcli radio wifi off && notify-send 'WiFi' 'Turned OFF'"
     },

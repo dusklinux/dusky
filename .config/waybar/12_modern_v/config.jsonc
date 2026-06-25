@@ -211,7 +211,7 @@
         "return-type": "json",
         "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh vertical",
         "interval": 1, 
-        "on-click": "foot --app-id=tui_dusky_network.py $HOME/user_scripts/network_manager/tui_dusky_network.py",
+        "on-click": "foot --app-id=dusky_tui python $HOME/user_scripts/dusky_tui/python/main/main.py $HOME/user_scripts/network_manager/tui_dusky_network.py",
         "on-click-right": "nmcli radio wifi on",
         "on-click-middle": "nmcli radio wifi off"
     },
