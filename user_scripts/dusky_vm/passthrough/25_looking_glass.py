@@ -356,6 +356,19 @@ def inject_kvmfr_into_xml(xml_str: str, byte_size: int) -> str:
             balloon = ET.SubElement(devices, 'memballoon', model='none')
             console.print("[bold green]  ✓ Latency-inducing memballoon nullified (created none).[/bold green]")
 
+        # Check and inject SPICE agent channel for clipboard sharing
+        has_spice_channel = False
+        for channel in devices.findall('channel'):
+            if channel.get('type') == 'spicevmc':
+                target = channel.find('target')
+                if target is not None and target.get('name') == 'com.redhat.spice.0':
+                    has_spice_channel = True
+                    break
+        if not has_spice_channel:
+            spice_channel = ET.SubElement(devices, 'channel', type='spicevmc')
+            ET.SubElement(spice_channel, 'target', type='virtio', name='com.redhat.spice.0')
+            console.print("[bold green]  ✓ SPICE guest agent channel injected for clipboard synchronization.[/bold green]")
+
     # 3. Add or update <qemu:commandline>
     qemu_cmd = root.find(f"{{{qemu_ns}}}commandline")
     target_args = [

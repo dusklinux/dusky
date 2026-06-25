@@ -95,6 +95,7 @@ def build_baseline_xml(vm_name: str, os_choice: str, gpu_choice: str, ram_mib: i
         "--disk", f"path={disk_path},format=qcow2,bus=virtio,cache=none,discard=unmap",
         "--disk", "device=cdrom,bus=sata",
         "--network", f"network={network},model=virtio",
+        "--channel", "spicevmc,target.type=virtio,target.name=com.redhat.spice.0",
         "--print-xml"
     ]
     
