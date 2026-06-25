@@ -359,9 +359,63 @@ def run_virsh_cmd(cmd_args: list) -> bool:
             return False
 
 
+def check_warp_status() -> str:
+    """Check if Cloudflare WARP is active and connected."""
+    if shutil.which("warp-cli"):
+        try:
+            res = subprocess.run(["warp-cli", "status"], capture_output=True, text=True, timeout=2)
+            if "Status update: Connected" in res.stdout:
+                return "Connected"
+        except Exception:
+            pass
+    return "Disconnected"
+
+
+def get_active_vpns() -> list[str]:
+    """Check for active VPN interfaces in /sys/class/net/."""
+    vpns = []
+    vpn_prefixes = ("tun", "tap", "wg", "tailscale", "proton", "warp")
+    try:
+        for net_dir in Path("/sys/class/net").iterdir():
+            name = net_dir.name
+            if any(name.startswith(p) for p in vpn_prefixes):
+                operstate_file = net_dir / "operstate"
+                if operstate_file.exists() and operstate_file.read_text().strip() == "up":
+                    vpns.append(name)
+    except Exception:
+        pass
+    return vpns
+
+
+def is_ufw_active() -> bool:
+    """Check if UFW systemd service is active."""
+    try:
+        res = subprocess.run(["systemctl", "is-active", "ufw"], capture_output=True, text=True)
+        return res.stdout.strip() == "active"
+    except Exception:
+        return False
+
+
 def print_rdp_troubleshooting(ip_addr: str):
-    trouble_text = (
-        f"The RDP connection to [bold cyan]{ip_addr}[/bold cyan] failed.\n\n"
+    warp_connected = check_warp_status() == "Connected"
+    active_vpns = get_active_vpns()
+    ufw_active = is_ufw_active()
+
+    env_warnings = []
+    if warp_connected:
+        env_warnings.append("  [bold red]• Cloudflare WARP is active.[/bold red] Run [bold cyan]warp-cli disconnect[/bold cyan] to disable it.")
+    if active_vpns:
+        env_warnings.append(f"  [bold red]• Active VPN interface(s) detected: {', '.join(active_vpns)}.[/bold red] Disconnect your VPN client.")
+    if ufw_active:
+        env_warnings.append("  [bold yellow]• Host Firewall (UFW) is active.[/bold yellow] If routing is blocked, run:\n"
+                            "    [bold cyan]sudo ufw allow in on virbr0 && sudo ufw route allow in on virbr0[/bold cyan]")
+
+    trouble_text = f"The RDP connection to [bold cyan]{ip_addr}[/bold cyan] failed.\n\n"
+    if env_warnings:
+        trouble_text += "[bold yellow]Host Environment Warnings (Potential Blocks):[/bold yellow]\n"
+        trouble_text += "\n".join(env_warnings) + "\n\n"
+
+    trouble_text += (
         "[bold yellow]Option A: Quick Automatic Configuration (Recommended)[/bold yellow]\n"
         "To configure your Windows VM automatically, run this command [bold yellow]inside your Windows VM[/bold yellow]:\n"
         "  1. If not already viewing the VM, open Looking Glass on Linux: [bold cyan]win view[/bold cyan]\n"
