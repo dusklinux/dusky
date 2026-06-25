@@ -307,10 +307,10 @@
             "align": 0.5,
             "format": "",
             "tooltip": true,
-            "tooltip-format": "Switch wallpapers\nLMB: Dark Mode\nRMB: Light Mode\nMMB: Waypaper",
+            "tooltip-format": "Switch wallpapers\nLMB: Dark Mode\nRMB: Light Mode\nMMB: Wallpaper Selector",
             "on-click": "uwsm-app -- \"$HOME/user_scripts/theme_matugen/theme_ctl.sh\" set --mode dark",
             "on-click-right": "uwsm-app -- \"$HOME/user_scripts/theme_matugen/theme_ctl.sh\" set --mode light",
-            "on-click-middle": "uwsm-app -- waypaper"
+            "on-click-middle": "uwsm-app -- ~/user_scripts/images/wallpaper_selector.py"
         },
 
         "custom/app-tray": {

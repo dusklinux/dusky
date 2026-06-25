@@ -356,10 +356,10 @@
     // ===================================================================
     "custom/theme": {
         "format": "",
-        "tooltip-format": "Theme Switcher\n\nSwitch wallpapers with waypaper\nor Super + ' after toggling\nfor theme uniformity.\n\nLMB: Dark Mode\nRMB: Light Mode\nMMB: Waypaper",
+        "tooltip-format": "Theme Switcher\n\nSwitch wallpapers with Wallpaper Selector\nor Super + ' after toggling\nfor theme uniformity.\n\nLMB: Dark Mode\nRMB: Light Mode\nMMB: Wallpaper Selector",
         "on-click": "uwsm-app -- ~/user_scripts/theme_matugen/theme_ctl.sh set --mode dark",
         "on-click-right": "uwsm-app -- ~/user_scripts/theme_matugen/theme_ctl.sh set --mode light",
-        "on-click-middle": "uwsm-app -- waypaper"
+        "on-click-middle": "uwsm-app -- ~/user_scripts/images/wallpaper_selector.py"
     },
 
     "custom/inhibit-suspend": {

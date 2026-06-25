@@ -193,7 +193,7 @@
     "tooltip-format": "Theme Controls\n\n LMB  Dark Mode\n RMB  Light Mode\n MMB  Wallpaper",
     "on-click": "uwsm-app -- ~/user_scripts/theme_matugen/theme_ctl.sh set --mode dark",
     "on-click-right": "uwsm-app -- ~/user_scripts/theme_matugen/theme_ctl.sh set --mode light",
-    "on-click-middle": "uwsm-app -- waypaper"
+    "on-click-middle": "uwsm-app -- ~/user_scripts/images/wallpaper_selector.py"
   },
 
   "tray": {
