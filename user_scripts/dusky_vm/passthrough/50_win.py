@@ -16,8 +16,64 @@ import subprocess
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-# Configuration paths
-STATE_FILE = Path.home() / ".config" / "dusky" / "settings" / "virt" / "win_state"
+def get_caller_identity():
+    """
+    Returns (home_path, uid, gid) for the actual caller.
+    If run under sudo, resolves the invoking user's home directory and IDs.
+    """
+    uid = os.getuid()
+    gid = os.getgid()
+    
+    # If we are root (euid == 0), check if we were called via sudo
+    if os.geteuid() == 0:
+        sudo_uid = os.environ.get("SUDO_UID")
+        sudo_gid = os.environ.get("SUDO_GID")
+        if sudo_uid and sudo_gid:
+            try:
+                uid = int(sudo_uid)
+                gid = int(sudo_gid)
+            except ValueError:
+                pass
+                
+    try:
+        import pwd
+        pw = pwd.getpwuid(uid)
+        home_dir = Path(pw.pw_dir)
+    except Exception:
+        # Fallback to standard Path.home()
+        home_dir = Path.home()
+        
+    return home_dir, uid, gid
+
+
+def get_state_file_info():
+    """Returns (state_file_path, uid, gid) for state operations."""
+    home_dir, uid, gid = get_caller_identity()
+    state_file = home_dir / ".config" / "dusky" / "settings" / "virt" / "win_state"
+    return state_file, uid, gid
+
+
+def safe_mkdir_and_chown(path: Path, uid: int, gid: int):
+    """
+    Recursively creates directories and ensures they are owned by the specified uid/gid
+    if running as root.
+    """
+    parts_to_create = []
+    curr = path
+    while curr != curr.parent:
+        if curr.exists():
+            break
+        parts_to_create.append(curr)
+        curr = curr.parent
+    
+    for p in reversed(parts_to_create):
+        p.mkdir(exist_ok=True)
+        if os.geteuid() == 0:
+            try:
+                os.chown(p, uid, gid)
+            except Exception as e:
+                print_warn(f"Failed to chown directory {p}: {e}")
+
 
 # ANSI Terminal Colors
 C_BLUE = "\033[34m"
@@ -46,9 +102,10 @@ def print_err(msg: str):
 
 def load_cached_vm() -> str:
     """Loads the cached VM name from the state file."""
-    if STATE_FILE.exists():
+    state_file, _, _ = get_state_file_info()
+    if state_file.exists():
         try:
-            name = STATE_FILE.read_text(encoding="utf-8").strip()
+            name = state_file.read_text(encoding="utf-8").strip()
             if name:
                 return name
         except Exception:
@@ -59,8 +116,14 @@ def load_cached_vm() -> str:
 def save_cached_vm(vm_name: str):
     """Saves the VM name to the state file."""
     try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(vm_name, encoding="utf-8")
+        state_file, uid, gid = get_state_file_info()
+        safe_mkdir_and_chown(state_file.parent, uid, gid)
+        state_file.write_text(vm_name, encoding="utf-8")
+        if os.geteuid() == 0:
+            try:
+                os.chown(state_file, uid, gid)
+            except Exception as e:
+                print_warn(f"Failed to chown file {state_file}: {e}")
     except Exception as e:
         print_warn(f"Failed to write state file: {e}")
 
@@ -68,8 +131,9 @@ def save_cached_vm(vm_name: str):
 def clear_cached_vm():
     """Deletes the state file to clear the cached VM."""
     try:
-        if STATE_FILE.exists():
-            STATE_FILE.unlink()
+        state_file, _, _ = get_state_file_info()
+        if state_file.exists():
+            state_file.unlink()
     except Exception as e:
         print_warn(f"Failed to clear state file: {e}")
 
