@@ -107,7 +107,7 @@ class MetricPill(Gtk.EventBox):
         self._val_lbl = Gtk.Label(label="--")
         _add_css_class(self._val_lbl, "metric-value-small" if small_text else "metric-value")
         self._val_lbl.set_ellipsize(Pango.EllipsizeMode.END)
-        self._val_lbl.set_max_width_chars(10)
+        self._val_lbl.set_max_width_chars(16)
         self._val_lbl.set_width_chars(1)
 
         self._inner.pack_start(self._val_lbl, False, False, 0)
