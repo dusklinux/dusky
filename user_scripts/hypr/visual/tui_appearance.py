@@ -1064,6 +1064,15 @@ SCHEMA = {
             group="Pipeline",
             extended_help="**Screen Shader**\n\nPath to a custom fragment shader file applied at the very end of the rendering pipeline."
         ),
+        ConfigItem(
+            label="XWayland Force Zero Scaling",
+            key="force_zero_scaling",
+            scope="xwayland",
+            type_="bool",
+            default=True,
+            group="Pipeline",
+            extended_help="**XWayland Scaling**\n\nForces zero scaling for XWayland applications. This global tweak prevents older X11 apps from becoming blurry on fractional scaled Wayland monitors."
+        ),
 
         ConfigItem(
             label="Dim Inactive",

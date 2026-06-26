@@ -38,15 +38,6 @@ SCHEMA = {
     # -------------------------------------------------------------------------
     0: [
         ConfigItem(
-            label="XWayland Force Zero Scaling",
-            key="force_zero_scaling",
-            scope="xwayland",         # UID = "xwayland.force_zero_scaling"
-            type_="bool",
-            default=True,
-            group="Global Display Settings",
-            extended_help="**XWayland Scaling**\n\nForces zero scaling for XWayland applications. This global tweak prevents older X11 apps from becoming blurry on fractional scaled Wayland monitors."
-        ),
-        ConfigItem(
             label="Magic Workspace Primary Color",
             key="primary_color",
             scope="DEFAULT",          # UID = "primary_color" (Root level local variable)
