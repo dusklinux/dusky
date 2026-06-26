@@ -68,7 +68,8 @@ escalate_privileges()
 MOUNT_POINT = "/mnt/zram1"
 ZRAM_SIZE_EXPR = "ram"
 ZRAM_RESIDENT_LIMIT_EXPR = "ram * 4 / 5"
-COMPRESSION_ALGORITHM = "zstd(level=3)"
+COMPRESSION_ALGORITHM = "zstd(level=1)"
+
 FS_OPTIONS = "rw,nosuid,nodev,discard,noatime,lazytime,X-mount.mode=1777"
 CMD_TIMEOUT = 15
 
@@ -234,7 +235,7 @@ options = {FS_OPTIONS}
     override_dir.mkdir(parents=True, exist_ok=True)
     override_conf = override_dir / "override.conf"
     override_content = """[Service]
-ExecStartPre=-/bin/sh -c 'echo "algo=zstd priority=1" > /sys/block/%i/recomp_algorithm && echo "algo=zstd priority=1 level=12" > /sys/block/%i/algorithm_params'
+ExecStartPre=-/bin/sh -c 'echo "algo=zstd priority=1" > /sys/block/%i/recomp_algorithm && echo "algo=zstd priority=1 level=3" > /sys/block/%i/algorithm_params'
 ExecStartPost=/usr/sbin/tune2fs -O ^has_journal /dev/%i
 """
     write_file_atomic(override_conf, override_content)

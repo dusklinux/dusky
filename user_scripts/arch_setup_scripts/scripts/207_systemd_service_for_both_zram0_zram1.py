@@ -86,7 +86,8 @@ Description=Global Timer for ZRAM idle page recompression
 
 [Timer]
 OnBootSec=15min
-OnUnitActiveSec=1h
+OnUnitActiveSec=15min
+
 
 [Install]
 WantedBy=timers.target
