@@ -164,10 +164,10 @@
     "custom/reboot": { "format": "󰜉", "on-click": "systemctl reboot" },
     "custom/quit": { "format": "󰗼", "on-click": "hyprctl dispatch exit" },
 
-    "custom/firefox": { "format": "", "tooltip": true, "tooltip-format": "Browser", "on-click": "firefox" },
-    "custom/terminal": { "format": "", "tooltip": true, "tooltip-format": "Terminal", "on-click": "kitty" },
-    "custom/text-editor": { "format": "󰏫", "tooltip": true, "tooltip-format": "GNOME Text Editor", "on-click": "uwsm-app -- gnome-text-editor" },
-    "custom/files": { "format": "", "tooltip": true, "tooltip-format": "File Manager", "on-click": "nemo" },
+    "custom/firefox": { "format": "", "tooltip": true, "tooltip-format": "Browser", "on-click": "~/user_scripts/waybar/launch_app.sh browser" },
+    "custom/terminal": { "format": "", "tooltip": true, "tooltip-format": "Terminal", "on-click": "~/user_scripts/waybar/launch_app.sh terminal" },
+    "custom/text-editor": { "format": "󰏫", "tooltip": true, "tooltip-format": "Text Editor", "on-click": "~/user_scripts/waybar/launch_app.sh text-editor" },
+    "custom/files": { "format": "", "tooltip": true, "tooltip-format": "File Manager", "on-click": "~/user_scripts/waybar/launch_app.sh file-manager" },
 
     "custom/updates-trigger": {
         "format": "",

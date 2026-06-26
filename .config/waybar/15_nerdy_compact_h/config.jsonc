@@ -245,7 +245,7 @@
             "warning": 75,
             "critical": 90
         },
-        "on-click-right": "uwsm-app -- thunar"
+        "on-click-right": "~/user_scripts/waybar/launch_app.sh file-manager"
     },
 
     "temperature": {
