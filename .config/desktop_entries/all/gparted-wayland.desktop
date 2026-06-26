@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=GParted (Wayland)
+GenericName=Partition Editor
+Comment=Create, reorganize, and delete partitions natively on Wayland
+Exec=uwsm-app -- /home/new/.local/bin/gparted-wayland %f
+Icon=gparted
+Terminal=false
+Categories=GNOME;GTK;System;Filesystem;
+StartupNotify=true
