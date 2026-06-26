@@ -20,7 +20,7 @@ trap 'exit_code=$?; log_err "Unexpected failure at line $LINENO (code $exit_code
 # =============================================================================
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly HOST_DIR="$HOME/user_scripts/theme_matugen/firefox"
+readonly HOST_DIR="$HOME/user_scripts/firefox/theme_matugen"
 readonly HOST_SCRIPT="$HOST_DIR/matugenfox_host.py"
 readonly REFRESH_SCRIPT="$HOME/user_scripts/theme_matugen/theme_ctl.sh"
 readonly MANIFEST_NAME="matugenfox.json"

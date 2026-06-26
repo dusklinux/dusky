@@ -789,7 +789,7 @@ def flow_create_edit():
     deploy_choice = Prompt.ask("Execute legacy hard-deploy shell scripts? (y/N)", default="n").lower()
     
     if deploy_choice == "y":
-        scripts_dir = Path.home() / "user_scripts" / "theme_matugen" / "firefox"
+        scripts_dir = Path.home() / "user_scripts" / "firefox" / "theme_matugen"
         tui_script = scripts_dir / "dusky_firefox_tui.sh"
         if tui_script.exists():
             console.print("[dim]Executing Hard AST Deployment...[/]")

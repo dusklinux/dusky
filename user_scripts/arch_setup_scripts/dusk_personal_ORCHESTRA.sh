@@ -23,7 +23,7 @@ SCRIPT_SEARCH_DIRS=(
     "${HOME}/user_scripts/images"
     "${HOME}/user_scripts/theme_matugen"
     "${HOME}/user_scripts/theme_matugen/config"
-    "${HOME}/user_scripts/theme_matugen/firefox"
+    "${HOME}/user_scripts/firefox/theme_matugen"
     "${HOME}/user_scripts/firefox"
     "${HOME}/user_scripts/tts_stt/dusky_kokoro"
     "${HOME}/user_scripts/tts_stt/dusky_parakeet"
