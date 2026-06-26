@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """
 ==============================================================================
- GPARTED WAYLAND AUTO-CONFIGURATOR (Enterprise Arch 7.0+ Edition)
- Description: Idempotent, zero-trust, zero-hardcoding system configurator.
-              Installs gparted, configures native Wayland execution via
-              wrapper scripts, and registers XDG desktop entries.
+ GPARTED WAYLAND AUTO-CONFIGURATOR
+ Description: Fully idempotent, zero-hardcoding configurator that installs
+              GParted, creates a native Wayland launcher wrapper, and deploys
+              a desktop entry directly to XDG applications for menu visibility.
+
+              The desktop entry is NOT placed in ~/.config/desktop_entries/all/
+              because that directory is reserved for static, git-tracked entries
+              managed by the Dusky Desktop Entry Synchronizer. This script's
+              output is dynamically generated and deployed directly to its
+              final XDG destination.
+
  Target:      Arch Linux (Kernel 7.0+ / Python 3.14+)
+ Usage:       python3 gparted_wayland_setup.py [--uninstall]
 ==============================================================================
 """
 
@@ -16,165 +24,217 @@ import getpass
 import subprocess
 from pathlib import Path
 
-# ANSI color codes for premium terminal output
-C_RESET = "\033[0m"
-C_BOLD = "\033[1m"
-C_GREEN = "\033[32m"
-C_BLUE = "\033[34m"
+# ── ANSI Colors ──────────────────────────────────────────────────────────────
+C_RESET  = "\033[0m"
+C_BOLD   = "\033[1m"
+C_GREEN  = "\033[32m"
+C_BLUE   = "\033[34m"
 C_YELLOW = "\033[33m"
-C_RED = "\033[31m"
-C_CYAN = "\033[36m"
+C_RED    = "\033[31m"
+C_CYAN   = "\033[36m"
 
-def is_package_installed(package_name: str) -> bool:
-    """Checks if a pacman package is already installed on the system."""
-    result = subprocess.run(["pacman", "-Qq", package_name], capture_output=True, text=True)
-    return result.returncode == 0
+# ── Required Packages ────────────────────────────────────────────────────────
+REQUIRED_PACKAGES = ["gparted", "xorg-xhost"]
 
-def install_package(package_name: str) -> None:
-    """Idempotently installs a pacman package using sudo if not already root."""
-    if is_package_installed(package_name):
-        print(f"  {C_GREEN}✔{C_RESET} Package '{package_name}' is already installed (idempotent skip).")
+# ── File Names (no hardcoded paths, composed dynamically from user home) ─────
+WRAPPER_NAME  = "gparted-wayland"
+DESKTOP_NAME  = "gparted-wayland.desktop"
+
+
+# ── Helper Functions ─────────────────────────────────────────────────────────
+
+def resolve_user() -> tuple[str, Path]:
+    """Resolves the real unprivileged user and home directory, even under sudo."""
+    user = os.environ.get("SUDO_USER") or os.environ.get("USER") or getpass.getuser()
+    home = Path(f"/home/{user}")
+    if not home.is_dir():
+        home = Path.home()
+    return user, home
+
+
+def is_package_installed(name: str) -> bool:
+    """Checks if a pacman package is installed."""
+    return subprocess.run(
+        ["pacman", "-Qq", name], capture_output=True
+    ).returncode == 0
+
+
+def run_privileged(cmd: list[str]) -> None:
+    """Runs a command with privilege escalation if not already root."""
+    if os.getuid() == 0:
+        subprocess.run(cmd, check=True)
+    elif shutil.which("sudo"):
+        subprocess.run(["sudo"] + cmd, check=True)
+    elif shutil.which("pkexec"):
+        subprocess.run(["pkexec"] + cmd, check=True)
+    else:
+        print(f"  {C_RED}✖ No privilege escalation tool found (sudo/pkexec).{C_RESET}", file=sys.stderr)
+        sys.exit(1)
+
+
+def install_packages(packages: list[str]) -> None:
+    """Idempotently installs packages via pacman --needed."""
+    missing = [p for p in packages if not is_package_installed(p)]
+
+    if not missing:
+        print(f"  {C_GREEN}✔{C_RESET} All required packages already installed: {', '.join(packages)}")
         return
 
-    print(f"  {C_YELLOW}•{C_RESET} Package '{package_name}' not found. Installing...")
-    
-    # Determine privilege escalation tool
-    cmd = []
-    if os.getuid() != 0:
-        if shutil.which("sudo"):
-            cmd = ["sudo", "pacman", "-S", "--needed", "--noconfirm", package_name]
-        elif shutil.which("pkexec"):
-            cmd = ["pkexec", "pacman", "-S", "--needed", "--noconfirm", package_name]
-        else:
-            print(f"  {C_RED}✖ Error: Privilege escalation tool (sudo/pkexec) not found.{C_RESET}", file=sys.stderr)
-            sys.exit(1)
-    else:
-        cmd = ["pacman", "-S", "--needed", "--noconfirm", package_name]
-
+    print(f"  {C_YELLOW}•{C_RESET} Installing missing packages: {', '.join(missing)}")
     try:
-        subprocess.run(cmd, check=True)
-        print(f"  {C_GREEN}✔{C_RESET} Successfully installed '{package_name}'.")
+        run_privileged(["pacman", "-S", "--needed", "--noconfirm"] + missing)
+        print(f"  {C_GREEN}✔{C_RESET} Package installation complete.")
     except subprocess.CalledProcessError as e:
-        print(f"  {C_RED}✖ Error installing package '{package_name}': {e}{C_RESET}", file=sys.stderr)
+        print(f"  {C_RED}✖ pacman failed: {e}{C_RESET}", file=sys.stderr)
         sys.exit(1)
+
+
+def write_file_safe(path: Path, content: str, mode: int = 0o644) -> None:
+    """Writes a file atomically via temp-then-rename, creating parent dirs."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        tmp.chmod(mode)
+        tmp.replace(path)
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        print(f"  {C_RED}✖ Failed to write {path}: {e}{C_RESET}", file=sys.stderr)
+        sys.exit(1)
+
+
+def invalidate_rofi_cache(home: Path) -> None:
+    """Clears rofi's drun cache so new entries appear immediately."""
+    cache = home / ".cache" / "rofi3.druncache"
+    if cache.is_file():
+        cache.unlink(missing_ok=True)
+        print(f"  {C_GREEN}✔{C_RESET} Cleared Rofi drun cache.")
+
+
+# ── Core Logic ───────────────────────────────────────────────────────────────
+
+def do_install(user: str, home: Path) -> None:
+    """Full install: packages, wrapper, desktop entry, cache invalidation."""
+
+    wrapper_path  = home / ".local" / "bin" / WRAPPER_NAME
+    desktop_path  = home / ".local" / "share" / "applications" / DESKTOP_NAME
+
+    # ── Phase 1: Packages ────────────────────────────────────────────────
+    print(f"\n{C_BOLD}{C_CYAN}[Phase 1] Package Verification{C_RESET}")
+    install_packages(REQUIRED_PACKAGES)
+
+    # Verify gparted binary actually exists after install
+    gparted_bin = shutil.which("gparted") or Path("/usr/bin/gparted")
+    if not Path(gparted_bin).is_file():
+        print(f"  {C_RED}✖ gparted binary not found after install.{C_RESET}", file=sys.stderr)
+        sys.exit(1)
+    print(f"  {C_GREEN}✔{C_RESET} gparted binary confirmed at: {gparted_bin}")
+
+    # ── Phase 2: Wrapper Script ──────────────────────────────────────────
+    print(f"\n{C_BOLD}{C_CYAN}[Phase 2] Wrapper Script{C_RESET}")
+
+    wrapper_content = (
+        '#!/bin/sh\n'
+        '# Native Wayland wrapper for GParted (auto-generated)\n'
+        '# Passes the active Wayland socket and runtime dir to the root process\n'
+        'exec pkexec env \\\n'
+        '    WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \\\n'
+        '    XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \\\n'
+        '    /usr/bin/gparted "$@"\n'
+    )
+
+    write_file_safe(wrapper_path, wrapper_content, mode=0o755)
+    print(f"  {C_GREEN}✔{C_RESET} Wrapper written: {wrapper_path}")
+
+    # ── Phase 3: Desktop Entry ───────────────────────────────────────────
+    print(f"\n{C_BOLD}{C_CYAN}[Phase 3] Desktop Entry{C_RESET}")
+
+    desktop_content = (
+        '[Desktop Entry]\n'
+        'Version=1.0\n'
+        'Type=Application\n'
+        'Name=GParted (Wayland)\n'
+        'GenericName=Partition Editor\n'
+        'Comment=Create, reorganize, and delete partitions natively on Wayland\n'
+        f'Exec=uwsm-app -- {wrapper_path} %f\n'
+        'Icon=gparted\n'
+        'Terminal=false\n'
+        'Categories=GNOME;GTK;System;Filesystem;\n'
+        'StartupNotify=true\n'
+    )
+
+    write_file_safe(desktop_path, desktop_content, mode=0o644)
+    print(f"  {C_GREEN}✔{C_RESET} Desktop entry written: {desktop_path}")
+
+    # Validate
+    if shutil.which("desktop-file-validate"):
+        result = subprocess.run(
+            ["desktop-file-validate", str(desktop_path)],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0 and not result.stdout.strip():
+            print(f"  {C_GREEN}✔{C_RESET} Desktop entry passes XDG validation.")
+        else:
+            output = (result.stdout + result.stderr).strip()
+            print(f"  {C_YELLOW}⚠ Validation output: {output}{C_RESET}")
+
+    # Update desktop database
+    if shutil.which("update-desktop-database"):
+        subprocess.run(
+            ["update-desktop-database", str(desktop_path.parent)],
+            capture_output=True,
+        )
+        print(f"  {C_GREEN}✔{C_RESET} Desktop database updated.")
+
+    # ── Phase 4: Cache Cleanup ───────────────────────────────────────────
+    print(f"\n{C_BOLD}{C_CYAN}[Phase 4] Cache Cleanup{C_RESET}")
+    invalidate_rofi_cache(home)
+
+    print(f"\n  {C_GREEN}{C_BOLD}✔ GParted Wayland setup complete.{C_RESET}")
+    print(f"  Launch from Rofi as: {C_BOLD}GParted (Wayland){C_RESET}\n")
+
+
+def do_uninstall(user: str, home: Path) -> None:
+    """Removes wrapper script and desktop entry (does not uninstall packages)."""
+    wrapper_path  = home / ".local" / "bin" / WRAPPER_NAME
+    desktop_path  = home / ".local" / "share" / "applications" / DESKTOP_NAME
+
+    removed = False
+    for path in (wrapper_path, desktop_path):
+        if path.is_file():
+            path.unlink()
+            print(f"  {C_GREEN}✔{C_RESET} Removed: {path}")
+            removed = True
+
+    if removed:
+        if shutil.which("update-desktop-database"):
+            subprocess.run(
+                ["update-desktop-database", str(desktop_path.parent)],
+                capture_output=True,
+            )
+        invalidate_rofi_cache(home)
+        print(f"\n  {C_GREEN}{C_BOLD}✔ Uninstall complete.{C_RESET}\n")
+    else:
+        print(f"  {C_YELLOW}• Nothing to remove (already clean).{C_RESET}\n")
+
+
+# ── Entry Point ──────────────────────────────────────────────────────────────
 
 def main() -> None:
     print(f"{C_BOLD}{C_BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{C_RESET}")
-    print(f"{C_BOLD}{C_BLUE}       GPARTED WAYLAND AUTO-CONFIGURATOR (Arch 7.0+){C_RESET}")
+    print(f"{C_BOLD}{C_BLUE}       GPARTED WAYLAND AUTO-CONFIGURATOR{C_RESET}")
     print(f"{C_BOLD}{C_BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{C_RESET}")
 
-    # 1. Package Installation Phase
-    print(f"{C_BOLD}{C_CYAN}[Phase 1: Package Verification]{C_RESET}")
-    install_package("gparted")
-    print()
+    user, home = resolve_user()
+    print(f"  {C_CYAN}User:{C_RESET} {C_BOLD}{user}{C_RESET}  |  {C_CYAN}Home:{C_RESET} {home}")
 
-    # 2. Path & User Discovery
-    print(f"{C_BOLD}{C_CYAN}[Phase 2: Environment Discovery]{C_RESET}")
-    user = os.environ.get('USER') or os.environ.get('SUDO_USER') or getpass.getuser()
-    if user == 'root' and os.environ.get('SUDO_USER'):
-        user = os.environ.get('SUDO_USER')
-        
-    home = Path(f"/home/{user}") if user != 'root' else Path.home()
-    
-    print(f"  • Target User: {C_BOLD}{user}{C_RESET}")
-    print(f"  • User Home:   {home}")
-    
-    # Path configuration
-    bin_dir = home / ".local" / "bin"
-    wrapper_path = bin_dir / "gparted-wayland"
-    desktop_dir = home / ".config" / "desktop_entries" / "all"
-    desktop_path = desktop_dir / "gparted-wayland.desktop"
-    
-    # Verify environment matches user PATH expectations
-    user_path = os.environ.get("PATH", "")
-    if str(bin_dir) not in user_path.split(":"):
-        print(f"  {C_YELLOW}⚠ Warning: {bin_dir} is not currently in your PATH environment variable.{C_RESET}")
-        
-    print()
-
-    # 3. Code & Config Generation
-    print(f"{C_BOLD}{C_CYAN}[Phase 3: File Deployment]{C_RESET}")
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    desktop_dir.mkdir(parents=True, exist_ok=True)
-
-    # 3.1 Write the native Wayland wrapper script
-    wrapper_content = f"""#!/bin/sh
-# Native Wayland wrapper for GParted under UWSM/Wayland
-# Generated dynamically by gparted_wayland_setup.py
-exec pkexec env WAYLAND_DISPLAY="$WAYLAND_DISPLAY" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" /usr/bin/gparted "$@"
-"""
-    try:
-        wrapper_path.write_text(wrapper_content, encoding='utf-8')
-        wrapper_path.chmod(0o755)
-        print(f"  {C_GREEN}✔{C_RESET} Native wrapper written to: {wrapper_path}")
-    except OSError as e:
-        print(f"  {C_RED}✖ Error writing wrapper script: {e}{C_RESET}", file=sys.stderr)
-        sys.exit(1)
-
-    # 3.2 Write the desktop entry dynamically
-    desktop_content = f"""[Desktop Entry]
-Version=1.0
-Type=Application
-Name=GParted (Wayland)
-GenericName=Partition Editor
-Comment=Create, reorganize, and delete partitions natively on Wayland
-Exec=uwsm-app -- {wrapper_path} %f
-Icon=gparted
-Terminal=false
-Categories=GNOME;GTK;System;Filesystem;
-StartupNotify=true
-"""
-    try:
-        desktop_path.write_text(desktop_content, encoding='utf-8')
-        print(f"  {C_GREEN}✔{C_RESET} Desktop entry template written to: {desktop_path}")
-    except OSError as e:
-        print(f"  {C_RED}✖ Error writing desktop entry: {e}{C_RESET}", file=sys.stderr)
-        sys.exit(1)
-        
-    print()
-
-    # 4. Synchronize and Clean Caches
-    print(f"{C_BOLD}{C_CYAN}[Phase 4: System Integration & Sync]{C_RESET}")
-    sync_script = home / "user_scripts" / "arch_setup_scripts" / "scripts" / "020_desktop_entries.py"
-    if sync_script.is_file():
-        try:
-            # Run the synchronizer script
-            result = subprocess.run([sys.executable, str(sync_script)], capture_output=True, text=True)
-            if result.returncode == 0:
-                print(f"  {C_GREEN}✔{C_RESET} Synchronization completed successfully.")
-                print(result.stdout.strip())
-            else:
-                print(f"  {C_RED}✖ Synchronizer exited with status {result.returncode}{C_RESET}", file=sys.stderr)
-                print(result.stderr, file=sys.stderr)
-        except Exception as e:
-            print(f"  {C_RED}✖ Failed to run synchronizer: {e}{C_RESET}", file=sys.stderr)
+    if "--uninstall" in sys.argv:
+        do_uninstall(user, home)
     else:
-        print(f"  {C_YELLOW}⚠ Synchronizer script not found at {sync_script}.{C_RESET}")
+        do_install(user, home)
 
-    # Validate deployed desktop file
-    deployed_desktop = home / ".local" / "share" / "applications" / "gparted-wayland.desktop"
-    if deployed_desktop.is_file():
-        if shutil.which("desktop-file-validate"):
-            val_res = subprocess.run(["desktop-file-validate", str(deployed_desktop)], capture_output=True, text=True)
-            if val_res.returncode == 0:
-                print(f"  {C_GREEN}✔{C_RESET} Desktop entry validated successfully.")
-            else:
-                print(f"  {C_YELLOW}⚠ Desktop entry validation warning/error:{C_RESET}\n{val_res.stderr}")
-        
-        # Update desktop database
-        if shutil.which("update-desktop-database"):
-            subprocess.run(["update-desktop-database", str(deployed_desktop.parent)], capture_output=True)
+    print(f"{C_BOLD}{C_BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{C_RESET}")
 
-    # Invalidate Rofi Cache
-    rofi_cache = home / ".cache" / "rofi3.druncache"
-    if rofi_cache.is_file():
-        try:
-            rofi_cache.unlink()
-            print(f"  {C_GREEN}✔{C_RESET} Cleared stale Rofi cache for instant menu indexing.")
-        except OSError:
-            pass
-
-    print(f"{C_BOLD}{C_BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{C_RESET}\n")
 
 if __name__ == "__main__":
     main()
