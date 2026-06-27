@@ -187,6 +187,16 @@ def build_vm_panel() -> Panel:
     table.add_row("vm.vfs_cache_pressure", get_sysctl("/proc/sys/vm/vfs_cache_pressure"))
     table.add_row("vm.page-cluster", get_sysctl("/proc/sys/vm/page-cluster"))
     
+    # Live DAMON Reclaim Polling (Perfectly aligns panel to 5 rows)
+    w_high = get_sysctl("/sys/module/damon_reclaim/parameters/wmarks_high")
+    w_mid = get_sysctl("/sys/module/damon_reclaim/parameters/wmarks_mid")
+    w_low = get_sysctl("/sys/module/damon_reclaim/parameters/wmarks_low")
+    
+    if w_high != "N/A":
+        table.add_row("damon.wmarks (H/M/L)", f"{w_high} / {w_mid} / {w_low}")
+    else:
+        table.add_row("damon.wmarks", "N/A")
+    
     return Panel(table, title="[bold green]Live Kernel VM Policies", border_style="green")
 
 
