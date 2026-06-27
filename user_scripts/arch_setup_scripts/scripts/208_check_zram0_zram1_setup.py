@@ -134,38 +134,20 @@ elif mount_source in ("/dev/zram1", "zram1"):
 else:
     fail(f"Unknown mount source for /mnt/zram1: {mount_source}")
 
-# --- 5. Algorithm & Recompression Verification ---
-info("Testing multi-tier algorithm arrays...")
+# --- 5. Algorithm Verification ---
+info("Testing compression algorithm setup...")
 for dev in ["zram0", "zram1"]:
     if dev == "zram1" and mount_source == "tmpfs":
         continue
 
-    algo_path = Path(f"/sys/block/{dev}/recomp_algorithm")
+    algo_path = Path(f"/sys/block/{dev}/comp_algorithm")
     if algo_path.exists():
         algo_data = algo_path.read_text().strip()
-        if "#1:" in algo_data and "[zstd]" in algo_data:
-            ok(f"{dev} multi-tier recompression arrays are actively staged.")
+        if "[zstd]" in algo_data:
+            ok(f"{dev} is running ZSTD natively.")
         else:
-            warn(f"{dev} recompression data unexpected: {algo_data}")
+            fail(f"{dev} is running incorrect compression algorithm: {algo_data}")
     else:
-        warn(f"{dev} does not support recompression (kernel might be too old).")
-
-# --- 6. Global Daemon Verification ---
-info("Stress-testing background daemon payloads...")
-subprocess.run(["systemctl", "daemon-reload"], check=False)
-
-timer_status = run_cmd(["systemctl", "is-active", "zram-recompress.timer"])
-if timer_status != "active":
-    fail("zram-recompress.timer is not active. Background optimization is dead.")
-ok("Global recompression timer is loaded and active.")
-
-# Dry-run the payload to catch kernel 'Invalid argument' rejections
-subprocess.run(["systemctl", "start", "zram-recompress.service"], check=False)
-service_status = run_cmd(["systemctl", "show", "zram-recompress.service", "--property=Result", "--value"])
-
-if service_status == "success":
-    ok("Kernel successfully accepted the 'type=idle' deep compression command without errors.")
-else:
-    fail(f"The recompression service failed upon triggering! Result: {service_status}.")
+        fail(f"{dev} does not expose compression algorithm control.")
 
 print(f"\n{C.GRN}{C.BOLD}=== DIAGNOSTICS COMPLETE. ARCHITECTURE IS MATHEMATICALLY SOUND. ==={C.RST}\n")

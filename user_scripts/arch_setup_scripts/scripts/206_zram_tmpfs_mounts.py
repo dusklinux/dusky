@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import NoReturn
 
 # --- Presentation (Zero-Dependency ANSI) ---
 class C:
@@ -38,7 +39,7 @@ def info(msg: str) -> None: print(f"{C.BLU}[INFO]{C.RST} {msg}")
 def ok(msg: str) -> None: print(f"{C.GRN}[ OK ]{C.RST} {msg}")
 def warn(msg: str) -> None: print(f"{C.YLW}[WARN]{C.RST} {msg}")
 def err(msg: str) -> None: print(f"{C.RED}[FAIL]{C.RST} {msg}", file=sys.stderr)
-def die(msg: str, code: int = 1) -> "typing.NoReturn": # noqa: F821
+def die(msg: str, code: int = 1) -> NoReturn:
     err(msg)
     sys.exit(code)
 
@@ -68,7 +69,7 @@ escalate_privileges()
 MOUNT_POINT = "/mnt/zram1"
 ZRAM_SIZE_EXPR = "ram"
 ZRAM_RESIDENT_LIMIT_EXPR = "ram * 4 / 5"
-COMPRESSION_ALGORITHM = "zstd(level=1)"
+COMPRESSION_ALGORITHM = "zstd(level=2)"
 
 FS_OPTIONS = "rw,nosuid,nodev,discard,noatime,lazytime,X-mount.mode=1777"
 CMD_TIMEOUT = 15
@@ -208,17 +209,6 @@ def configure_zram(mount_unit_name: str, mount_unit_path: Path) -> None:
     config_dir = Path("/etc/systemd/zram-generator.conf.d")
     zram_conf = config_dir / "99-elite-zram1.conf"
 
-    if get_mount_source() in ("/dev/zram1", "zram1") and zram_conf.exists():
-        ok(f"Ext4 ZRAM architecture is already active and perfectly configured at {MOUNT_POINT}. No action required.")
-        return
-
-    info(f"Initializing Ext4 ZRAM Block Mount for: {C.BOLD}{MOUNT_POINT}{C.RST}")
-    resolve_live_conflicts("zram", mount_unit_name)
-
-    if mount_unit_path.exists():
-        mount_unit_path.unlink()
-        run_cmd(["systemctl", "daemon-reload"])
-        
     zram_content = f"""# Managed by Elite Arch Linux Configurator.
 [zram1]
 zram-size = {ZRAM_SIZE_EXPR}
@@ -228,14 +218,26 @@ mount-point = {MOUNT_POINT}
 compression-algorithm = {COMPRESSION_ALGORITHM}
 options = {FS_OPTIONS}
 """
+
+    if get_mount_source() in ("/dev/zram1", "zram1") and zram_conf.exists() and zram_conf.read_text() == zram_content:
+        ok(f"Ext4 ZRAM architecture is already active and perfectly configured at {MOUNT_POINT}. No action required.")
+        return
+
+    info(f"Initializing Ext4 ZRAM Block Mount for: {C.BOLD}{MOUNT_POINT}{C.RST}")
+    resolve_live_conflicts("zram", mount_unit_name)
+
+    if mount_unit_path.exists():
+        mount_unit_path.unlink()
+        run_cmd(["systemctl", "daemon-reload"])
     write_file_atomic(zram_conf, zram_content)
     ok(f"ZRAM pool configuration written atomically to {zram_conf}")
 
     override_dir = Path("/etc/systemd/system/systemd-zram-setup@zram1.service.d")
     override_dir.mkdir(parents=True, exist_ok=True)
     override_conf = override_dir / "override.conf"
+    
+    # Strip the failed ExecStartPre hook but retain the essential tune2fs hook
     override_content = """[Service]
-ExecStartPre=-/bin/sh -c 'echo "algo=zstd priority=1" > /sys/block/%i/recomp_algorithm && echo "algo=zstd priority=1 level=3" > /sys/block/%i/algorithm_params'
 ExecStartPost=/usr/sbin/tune2fs -O ^has_journal /dev/%i
 """
     write_file_atomic(override_conf, override_content)

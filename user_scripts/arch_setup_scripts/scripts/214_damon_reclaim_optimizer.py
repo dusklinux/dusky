@@ -8,6 +8,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 # Config targets
 TMPFILES_FILE = Path("/etc/tmpfiles.d/99-damon-reclaim.conf")
@@ -77,7 +78,7 @@ def err(msg: str) -> None:
     print(f"{C.RED}[FAIL]{C.RST} {msg}", file=sys.stderr)
 
 
-def die(msg: str, code: int = 1) -> typing.NoReturn:  # type: ignore
+def die(msg: str, code: int = 1) -> NoReturn:
     err(msg)
     sys.exit(code)
 

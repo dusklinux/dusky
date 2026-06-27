@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 # Config targets
 SYSTEMD_CONF_DIR = Path("/etc/systemd/system.conf.d")
@@ -50,7 +51,7 @@ def err(msg: str) -> None:
     print(f"{C.RED}[FAIL]{C.RST} {msg}", file=sys.stderr)
 
 
-def die(msg: str, code: int = 1) -> typing.NoReturn:  # type: ignore
+def die(msg: str, code: int = 1) -> NoReturn:
     err(msg)
     sys.exit(code)
 

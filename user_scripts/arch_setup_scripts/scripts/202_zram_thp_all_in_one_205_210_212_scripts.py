@@ -14,6 +14,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NoReturn
 
 REQUIRED_PY = (3, 14)
 RAM_DEMARCATION_GB = 30.0
@@ -77,7 +78,7 @@ def err(msg: str) -> None:
     print(f"{C.RED}[FAIL]{C.RST} {msg}", file=sys.stderr)
 
 
-def die(msg: str, code: int = 1) -> "typing.NoReturn":  # noqa: F821
+def die(msg: str, code: int = 1) -> NoReturn:
     err(msg)
     sys.exit(code)
 
