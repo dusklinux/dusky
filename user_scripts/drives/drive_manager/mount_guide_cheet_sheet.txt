@@ -1,11 +1,11 @@
-﻿Filesystem and Storage Architecture Report for Arch Linux (2026)
+Filesystem and Storage Architecture Report for Arch Linux (2026)
 Executive Summary for Arch Linux in 2026
-The landscape of Linux storage and filesystem architecture has undergone a paradigm shift leading into June 2026, driven by the maturation of the 7.x kernel series, the ubiquitous adoption of PCIe 5.0 Non-Volatile Memory Express (NVMe) solid-state drives, and the deprecation of legacy user-space storage drivers. For modern Arch Linux deployments, the reliance on Filesystem in Userspace (FUSE) modules—historically utilized to bridge cross-platform interoperability gaps—is officially obsolete.1 Modern infrastructure exclusively leverages in-kernel drivers, notably ntfs3 and native exfat, which eliminate the severe context-switching latency and CPU overhead previously associated with interoperability layers while providing robust, POSIX-compliant translation matrices.3
+The landscape of Linux storage and filesystem architecture has undergone a paradigm shift leading into June 2026, driven by the maturation of the 7.x kernel series, the ubiquitous adoption of PCIe 5.0 Non-Volatile Memory Express (NVMe) solid-state drives, and the deprecation of legacy user-space storage drivers. For modern Arch Linux deployments, the reliance on Filesystem in Userspace (FUSE) modules—historically utilized to bridge cross-platform interoperability gaps—is officially obsolete.1 Modern infrastructure exclusively leverages in-kernel drivers, notably native ntfs (introduced in 7.1) and native exfat, which eliminate the severe context-switching latency and CPU overhead previously associated with interoperability layers while providing robust, POSIX-compliant translation matrices.3
 Simultaneously, the mechanical realities of storage mediums have bifurcated filesystem optimization strategies. The internal logic of modern flash memory controllers, specifically their sophisticated Flash Translation Layers (FTLs), has rendered many historical Linux filesystem optimizations actively detrimental.5 As storage bottlenecks have migrated from the physical NAND flash or magnetic platters to the kernel's block layer and cryptographic workqueues, legacy recommendations regarding complex block alignment flags, synchronous discard operations, and manual garbage collection must be meticulously audited and, in many cases, purged from automation scripts.6
-This exhaustive report provides a definitive, source-grounded decision matrix for filesystem deployment, cryptographic volume management, and mount automation on the current Arch Linux stack. It delineates the strict boundaries between format-time (mkfs) parameters, decryption-time (cryptsetup) configurations, background daemon (systemd) operations, and runtime (mount) flags. By systematically analyzing Btrfs, ext4, NTFS3, exFAT, VFAT, and F2FS, this document establishes a highly technical framework for safe defaults, conditional performance enhancements, and deprecated practices, ensuring automated drive management scripts are highly optimized, secure, and fully aligned with current upstream kernel behaviors.
+This exhaustive report provides a definitive, source-grounded decision matrix for filesystem deployment, cryptographic volume management, and mount automation on the current Arch Linux stack. It delineates the strict boundaries between format-time (mkfs) parameters, decryption-time (cryptsetup) configurations, background daemon (systemd) operations, and runtime (mount) flags. By systematically analyzing Btrfs, ext4, NTFS (kernel module), exFAT, VFAT, and F2FS, this document establishes a highly technical framework for safe defaults, conditional performance enhancements, and deprecated practices, ensuring automated drive management scripts are highly optimized, secure, and fully aligned with current upstream kernel behaviors.
 Recent Changes Invalidating Legacy Documentation
 The rapid evolution of the Linux Virtual File System (VFS) layer and block device management frequently outpaces community documentation. Implementing stale advice from older forum posts or outdated wiki revisions can precipitate severe performance degradation, premature hardware wear, or catastrophic kernel panics. The following architectural shifts fundamentally invalidate historical storage management paradigms.
-The deprecation of FUSE for cross-platform filesystems marks a critical performance milestone. Historically, the ntfs-3g and exfat-fuse packages were mandatory for managing Microsoft-formatted drives. These have been superseded by the ntfs3 and exfat kernel modules.1 Automation scripts invoking mount.ntfs-3g or utilizing FUSE-specific flags will now experience mounting errors or silent fallback failures, particularly in headless daemon environments.8 The native kernel drivers execute operations directly in ring zero, providing near-native Ext4 throughput speeds on NTFS volumes, but they require a distinct set of permission-synthesizing mount flags to function securely.3
+The deprecation of FUSE for cross-platform filesystems marks a critical performance milestone. Historically, the ntfs-3g and exfat-fuse packages were mandatory for managing Microsoft-formatted drives. These have been superseded by the ntfs and exfat kernel modules.1 Automation scripts invoking mount.ntfs-3g or utilizing FUSE-specific flags will now experience mounting errors or silent fallback failures, particularly in headless daemon environments.8 The native kernel drivers execute operations directly in ring zero, providing near-native Ext4 throughput speeds on NTFS volumes, but they require a distinct set of permission-synthesizing mount flags to function securely, and the mount command must bypass userspace helpers (via the -i flag) to avoid falling back to FUSE ntfs-3g if it is installed on the system.3
 Within the Btrfs ecosystem, the handling of discarded blocks has been entirely overhauled. The discard=async mount option is now the default kernel behavior for Btrfs on solid-state drives.6 Older documentation universally suggested disabling mount-time discard due to I/O stalling, recommending instead the use of a periodic fstrim.timer via systemd. This advice is no longer applicable to Btrfs; the asynchronous implementation intelligently batches freed extents in memory and issues non-blocking TRIM commands exclusively during device idle periods.6 Furthermore, legacy Btrfs SSD layout optimizations, such as ssd_spread, were engineered for first-generation FTLs that struggled with block wear-leveling. Modern SSD controllers manage wear-leveling internally and opaquely. Forcing legacy layout optimizations on modern NVMe drives actively interferes with the hardware controller, increasing logical fragmentation without providing physical endurance benefits.6
 Cryptographic overhead has also shifted. For high-throughput NVMe drives, the default dm-crypt subsystem behavior introduces measurable latency by offloading cryptographic operations to kernel workqueues. The introduction of the no-read-workqueue and no-write-workqueue flags in /etc/crypttab acknowledges that modern multi-core processors can decrypt data inline faster than the kernel can manage the context switch to a background worker thread. Bypassing these queues massively reduces latency for random I/O operations at the cost of a nominal increase in immediate CPU utilization.7
 Finally, legacy safety mechanisms for removable media have been proven harmful. Older guides recommended the flush mount option for VFAT and exFAT USB flash drives to force immediate synchronous writes, ostensibly preventing data corruption if a user abruptly removed the drive. On modern kernels, this flag forces the flash memory controller to write tiny, highly inefficient blocks continuously, halving write throughput and rapidly exhausting the drive's limited write-erase cycle endurance.11 Modern deployments must rely on the standard kernel page cache and enforce software unmounting, utilizing options like errors=remount-ro rather than synchronous flushing.
@@ -32,7 +32,7 @@ Drive Class
 	Synthesize permissions (uid=1000, gid=1000), enforce Windows compliance (windows_names), use errors=remount-ro.
 	The flush option (destroys throughput and hardware endurance). Synchronous journaling.
 	Shared Windows Interop
-	Utilize kernel-native translation modules (ntfs3, exfat) to map POSIX standards to Windows metadata logic.
+	Utilize kernel-native translation modules (ntfs, exfat) to map POSIX standards to Windows metadata logic.
 	umask=022, iocharset=utf8, prealloc (for large media transfers).
 	The force flag (corrupts Windows hibernation and fast-startup dirty bits).
 	File-System-by-File-System Implementation Matrix
@@ -138,10 +138,10 @@ Option Name
 * 4. Shared Windows Interop: Incompatible without third-party Windows software.
 * 5. Encrypted Drives: Standard baselines apply. Ext4's lack of CoW makes it the highest-performing filesystem inside a LUKS container for heavy database workloads.12
 * 6. Options to Avoid: discard (causes synchronous I/O stalling), data=journal (forces all file data through the journal, halving write speed).23
-NTFS3 (Native NTFS Kernel Module)
-Introduced in kernel 5.15 and heavily optimized through the 7.x series, ntfs3 completely replaces the user-space ntfs-3g driver.3 NTFS is the proprietary filesystem of Microsoft Windows. Because the NTFS metadata structure possesses no concept of Linux user IDs, group IDs, or POSIX execution bits, the Linux VFS must synthesize these permissions mathematically at the exact moment the drive is mounted. Failure to explicitly define these translation parameters results in the entire drive defaulting to root ownership, rendering it completely read-only for standard users.25
-Furthermore, Windows enforces strict file naming conventions that Linux does not share. Linux allows almost any character except a forward slash and a null byte in a filename. If a Linux user creates a file named report?.txt on an NTFS drive, Windows will view the NTFS Master File Table (MFT) as corrupted and demand a disk check upon reboot. Modern ntfs3 parameters must safeguard against this.1
-NTFS3 Configuration Parameters
+NTFS (Native NTFS Kernel Module in Linux 7.1+)
+Introduced in kernel 7.1, the rewritten native kernel ntfs module completely replaces the older ntfs3 Paragon driver and the legacy userspace ntfs-3g driver.3 NTFS is the proprietary filesystem of Microsoft Windows. Because the NTFS metadata structure possesses no concept of Linux user IDs, group IDs, or POSIX execution bits, the Linux VFS must synthesize these permissions mathematically at the exact moment the drive is mounted. Failure to explicitly define these translation parameters results in the entire drive defaulting to root ownership, rendering it completely read-only for standard users.25
+Furthermore, Windows enforces strict file naming conventions that Linux does not share. Linux allows almost any character except a forward slash and a null byte in a filename. If a Linux user creates a file named report?.txt on an NTFS drive, Windows will view the NTFS Master File Table (MFT) as corrupted and demand a disk check upon reboot. Modern ntfs parameters must safeguard against this, and the mount command must bypass userspace helpers (using the -i flag) to prevent calling legacy ntfs-3g helpers.1
+NTFS Configuration Parameters
 
 
 Option Name
@@ -179,13 +179,13 @@ Option Name
 	Highly Toxic
 	Overrides the kernel's safety lock and mounts the volume read-write even if the NTFS "dirty bit" is flagged.3
 	Never use. Bypassing the dirty bit on a hibernated Windows drive guarantees catastrophic filesystem corruption.24
-	NTFS3 Baseline Recommendations
-* 1. SSD/NVMe Baseline: Native Linux filesystems are vastly superior. If forced to use NTFS internally, use: uid=1000,gid=1000,umask=022,noatime,prealloc.
+	NTFS Baseline Recommendations
+* 1. SSD/NVMe Baseline: Native Linux filesystems are vastly superior. If forced to use NTFS internally, use: uid=1000,gid=1000,umask=022,noatime,prealloc (making sure to mount with -i to bypass userspace helpers).
 * 2. Rotational HDD Baseline: uid=1000,gid=1000,umask=022,noatime,prealloc. (Preallocation is vital to prevent physical fragmentation).
-* 3. Removable USB Media: exFAT is preferred for flash media, but NTFS3 works with standard parameters.
+* 3. Removable USB Media: exFAT is preferred for flash media, but NTFS works with standard parameters.
 * 4. Shared Windows Interop Baseline: uid=1000,gid=1000,umask=022,windows_names,iocharset=utf8,prealloc. (Ensures perfect cross-platform read/write compliance without corrupting the MFT).12
 * 5. Encrypted Drives: NTFS inside LUKS is possible but highly niche. Parameters remain identical.
-* 6. Options to Avoid: force (corrupts hibernated drives), ntfs-3g (legacy FUSE driver, high CPU overhead).
+* 6. Options to Avoid: force (corrupts hibernated drives), ntfs-3g (legacy FUSE driver, high CPU overhead), ntfs3 (legacy Paragon driver).
 exFAT (Extensible File Allocation Table)
 exFAT is the modern industry standard for high-capacity external USB drives and SDXC cards, designed explicitly by Microsoft to replace FAT32 without inheriting the immense metadata overhead of NTFS. Supported natively in the Linux kernel, it is the optimal choice for cross-platform flash storage.4 Like NTFS, exFAT lacks native POSIX ownership concepts and requires mathematical permission synthesis at mount time.
 Because exFAT is heavily utilized on external, removable flash drives—which are physically prone to being unexpectedly unplugged or suffering from cheap, degrading flash memory—the kernel must be instructed on how to handle sudden physical layer corruption gracefully.
@@ -200,7 +200,7 @@ Option Name
 	uid=, gid=, umask=
 	Mount
 	Mandatory
-	Performs the identical permission synthesis operations as the NTFS3 module, ensuring the mounted volume is accessible to the current Linux user.29
+	Performs the identical permission synthesis operations as the NTFS module, ensuring the mounted volume is accessible to the current Linux user.29
 	Use uid=1000,gid=1000,dmask=022,fmask=133 to grant full directory traversal without making files executable.
 	errors=remount-ro
 	Mount
@@ -337,7 +337,7 @@ Option Name
 The following VFS flags and operational strategies persist in outdated wikis, automated scripts, and community lore. They pose active, quantifiable threats to system performance, hardware longevity, or data integrity on the current Arch Linux stack.
 1. discard=sync (or bare discard on ext4): Forces the kernel to block the entire I/O queue while waiting for the SSD controller to physically erase a flash block. This results in severe system stalling during large file deletions. Rely exclusively on Btrfs's discard=async or systemd's scheduled fstrim.timer.6
 2. flush on VFAT/FAT32: Ostensibly a safety feature for USB drives, this flag forces every tiny metadata update (such as updating an access time) to immediately commit to the physical flash cells. It destroys USB drive throughput, cutting speeds by 50% or more, and rapidly burns through the drive's limited write-erase endurance.11
-3. force on NTFS3: Ignores the NTFS volume's internal dirty bit. If a Windows partition is placed into hibernation or utilizes "Fast Startup," its metadata is locked. Forcing a read-write mount from Linux will brutally corrupt the Windows Master File Table (MFT).24
+3. force on NTFS: Ignores the NTFS volume's internal dirty bit. If a Windows partition is placed into hibernation or utilizes "Fast Startup," its metadata is locked. Forcing a read-write mount from Linux will brutally corrupt the Windows Master File Table (MFT).24
 4. space_cache=v1 on Btrfs: An obsolete, highly fragmented caching mechanism. Ensure all automation scripts specify space_cache=v2.16
 5. autodefrag on SSDs/NVMes: Forces the Btrfs filesystem to continuously rewrite data blocks into contiguous alignments. Because solid-state drives possess zero mechanical read heads, contiguous logical alignment provides zero physical read-speed benefit. This flag only serves to continuously burn through the limited write-lifespan of the NAND flash gates.6
 6. Mixing nodatacow and compress: On Btrfs architectures, transparent compression strictly requires Copy-on-Write logic to function. Passing nodatacow implicitly and silently disables all compression and checksumming algorithms.6 Attempting to mix these flags in a script indicates a fundamental misunderstanding of the filesystem's topology.
@@ -400,7 +400,7 @@ hint = "archive_key"
 fstype = "btrfs"
 mount_options =
 
-4. Shared Windows / Interoperability Drive (NTFS3)
+4. Shared Windows / Interoperability Drive (NTFS)
 Cross-platform safety, synthesized POSIX compliance, utilizing kernel-native rendering.
 
 
@@ -413,7 +413,7 @@ Ini, TOML
 type = "SIMPLE"
 mountpoint = "/mnt/windows"
 outer_uuid = "848A215E8A214E4C"
-fstype = "ntfs3"         # Modern in-kernel module; explicitly rejects FUSE ntfs-3g
+fstype = "ntfs"          # Modern in-kernel module; bypassed FUSE via -i mount flag
 mount_options =
 
 5. Flash-Native Removable Storage (F2FS)
@@ -437,13 +437,13 @@ mount_options =
 Works cited
 1. [HowTo] Mount NTFS correctly under Linux - Tutorials, accessed June 15, 2026, https://forum.manjaro.org/t/howto-mount-ntfs-correctly-under-linux/177221
 2. Kernel-mounted vs FUSE-mounted exfat filesystem - Unix & Linux Stack Exchange, accessed June 15, 2026, https://unix.stackexchange.com/questions/761324/kernel-mounted-vs-fuse-mounted-exfat-filesystem
-3. NTFS3 — The Linux Kernel documentation, accessed June 15, 2026, https://www.kernel.org/doc/html/v6.1/filesystems/ntfs3.html
+3. NTFS — The Linux Kernel documentation, accessed June 15, 2026, https://www.kernel.org/doc/html/v6.1/filesystems/ntfs3.html
 4. How to enable exFAT for Ubuntu 20.04, accessed June 15, 2026, https://askubuntu.com/questions/1234755/how-to-enable-exfat-for-ubuntu-20-04
 5. F2FS - ArchWiki, accessed June 15, 2026, https://wiki.archlinux.org/title/F2FS
 6. BTRFS SPECIFIC MOUNT OPTIONS — BTRFS documentation, accessed June 15, 2026, https://btrfs.readthedocs.io/en/latest/ch-mount-options.html
 7. dm-crypt/Specialties - ArchWiki, accessed June 15, 2026, https://wiki.archlinux.org/title/Dm-crypt/Specialties
 8. udisks - ArchWiki, accessed June 15, 2026, https://wiki.archlinux.org/title/Udisks
-9. NTFS3 — The Linux Kernel documentation, accessed June 15, 2026, https://www.kernel.org/doc/html/v6.2/filesystems/ntfs3.html
+9. NTFS — The Linux Kernel documentation, accessed June 15, 2026, https://www.kernel.org/doc/html/v6.2/filesystems/ntfs3.html
 10. Disable read/write workqueue for Ubuntu Full-Disk-Encryption, accessed June 15, 2026, https://unix.stackexchange.com/questions/724104/disable-read-write-workqueue-for-ubuntu-full-disk-encryption
 11. 198605 – Mounting vfat fs from usb flash drives with "flush" option causes slow write performance - Kernel Bugzilla, accessed June 15, 2026, https://bugzilla.kernel.org/show_bug.cgi?id=198605
 12. drives.toml
@@ -458,8 +458,8 @@ Works cited
 21. accessed June 15, 2026, https://www.kernel.org/pub/linux/kernel/v5.x/ChangeLog-5.8.6
 22. ChangeLog-4.19.172 - The Linux Kernel Archives, accessed June 15, 2026, https://www.kernel.org/pub/linux/kernel/v4.x/ChangeLog-4.19.172
 23. 3.6. Journal (jbd2) — The Linux Kernel documentation, accessed June 15, 2026, https://www.kernel.org/doc/html/latest/filesystems/ext4/journal.html
-24. NTFS3 — The Linux Kernel documentation, accessed June 15, 2026, https://docs.kernel.org/filesystems/ntfs3.html
-25. What is the correct equivalent to defaults mount option in the new ntfs3? : r/archlinux - Reddit, accessed June 15, 2026, https://www.reddit.com/r/archlinux/comments/1e4m9zd/what_is_the_correct_equivalent_to_defaults_mount/
+24. NTFS — The Linux Kernel documentation, accessed June 15, 2026, https://docs.kernel.org/filesystems/ntfs3.html
+25. What is the correct equivalent to defaults mount option in the new ntfs? : r/archlinux - Reddit, accessed June 15, 2026, https://www.reddit.com/r/archlinux/comments/1e4m9zd/what_is_the_correct_equivalent_to_defaults_mount/
 26. "dmask" and "fmask" mount options - Ask Ubuntu, accessed June 15, 2026, https://askubuntu.com/questions/429848/dmask-and-fmask-mount-options
 27. mount(8) - Linux manual page - man7.org, accessed June 15, 2026, https://man7.org/linux/man-pages/man8/mount.8.html
 28. How to Mount exFAT Drives on Ubuntu 24.04 and 22.04 | Linuxize, accessed June 15, 2026, https://linuxize.com/post/how-to-mount-an-exfat-drive-on-ubuntu/

@@ -772,17 +772,22 @@ def do_unlock(drive: Drive) -> bool:
             if fallback_mapper.exists():
                 mount_source = str(fallback_mapper)
 
+    fstype_to_check = (drive.fstype or detected_fstype or "").lower()
+
     mount_args = ["--mkdir"]
     
-    if drive.fstype:
+    # Under kernel 7.1+, we force the use of the new kernel 'ntfs' driver by bypassing
+    # mount helpers (-i) and explicitly passing the filesystem type 'ntfs' if it is NTFS.
+    if "ntfs" in fstype_to_check:
+        mount_args.extend(["-i", "-t", "ntfs"])
+    elif drive.fstype:
         mount_args.extend(["-t", drive.fstype])
         
     options = []
     if drive.mount_options:
         options.extend(drive.mount_options)
     else:
-        fstype_to_check = (drive.fstype or detected_fstype or "").lower()
-        if fstype_to_check in ["ntfs", "ntfs3", "vfat", "fat32", "exfat", "msdos"]:
+        if fstype_to_check in ["ntfs", "vfat", "fat32", "exfat", "msdos"]:
             uid = os.getuid()
             gid = os.getgid()
             options.append(f"uid={uid},gid={gid},dmask=022,fmask=133")
@@ -801,7 +806,6 @@ def do_unlock(drive: Drive) -> bool:
     if run_sudo_cmd(cmd):
         success(f"'{drive.name}' successfully mounted.")
         
-        fstype_to_check = (drive.fstype or detected_fstype or "").lower()
         if fstype_to_check not in ["btrfs", "zfs"]:
             log("Dispatching asynchronous background TRIM operation to SSD firmware...")
             subprocess.Popen(
@@ -812,23 +816,6 @@ def do_unlock(drive: Drive) -> bool:
                 start_new_session=True
             )
         return True
-    elif "ntfs3" in fstype_to_check:
-        log("Mount with ntfs3 failed. Retrying with ntfs type...")
-        mount_args = ["--mkdir", "-t", "ntfs"]
-        if options:
-            mount_args.extend(["-o", ",".join(options)])
-        cmd = [
-            "sudo", "mount",
-            *mount_args,
-            "--source", mount_source,
-            "--target", str(drive.mountpoint)
-        ]
-        if run_sudo_cmd(cmd):
-            success(f"'{drive.name}' successfully mounted (via ntfs fallback).")
-            return True
-        else:
-            err(f"Failed to mount {mount_source} to {drive.mountpoint}.")
-            return False
     else:
         err(f"Failed to mount {mount_source} to {drive.mountpoint}.")
         return False
