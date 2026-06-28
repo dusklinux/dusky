@@ -3,8 +3,9 @@ batstat() {
     emulate -L zsh
     
     local bat="" target="" mode="static" output_format="human"
-    local arg d dev_type cap stat curr volt power
-    float watts=0.0
+    local arg d dev_type cap stat curr volt power energy_now energy_full charge_now charge_full time_str="N/A"
+    float watts=0.0 hours=0.0
+    integer hrs=0 mins=0
 
     # The Architect-Grade Help Page
     _show_help() {
@@ -18,7 +19,7 @@ batstat() {
         printf "\e[1mFORMATS (Static mode only):\e[0m\n"
         printf "  \e[32mhuman\e[0m   Standard readable output (default)\n"
         printf "  \e[32mjson\e[0m    Output as a JSON object (for Waybar/Eww integration)\n"
-        printf "  \e[32mterse\e[0m   Raw values only: <capacity> <watts> <status>\n\n"
+        printf "  \e[32mterse\e[0m   Raw values only: <capacity> <watts> <status> <remaining>\n\n"
         printf "\e[1mTARGET:\e[0m\n"
         printf "  Optional battery name (e.g., BAT1, macsmc-battery).\n"
         printf "  If omitted, auto-detects the first available battery natively.\n\n"
@@ -76,23 +77,80 @@ batstat() {
         cap=${cap:-"N/A"}
         stat=${stat:-"Unknown"}
 
-        # Native Zsh floating-point arithmetic
+        # Native Zsh floating-point arithmetic and remaining time calculation
+        time_str="N/A"
+        hours=0.0
+
         if [[ -f "$bat/power_now" ]]; then
             read -r power < "$bat/power_now" 2>/dev/null
-            (( watts = ${power:-0} / 1000000.0 ))
+            power=${power:-0}
+            (( watts = power / 1000000.0 ))
+
+            if [[ "$stat" == "Discharging" ]]; then
+                if [[ -f "$bat/energy_now" ]]; then
+                    read -r energy_now < "$bat/energy_now" 2>/dev/null
+                    energy_now=${energy_now:-0}
+                    if (( power > 0 )); then
+                        (( hours = (energy_now * 1.0) / power ))
+                    fi
+                fi
+            elif [[ "$stat" == "Charging" ]]; then
+                if [[ -f "$bat/energy_now" && -f "$bat/energy_full" ]]; then
+                    read -r energy_now < "$bat/energy_now" 2>/dev/null
+                    read -r energy_full < "$bat/energy_full" 2>/dev/null
+                    energy_now=${energy_now:-0}
+                    energy_full=${energy_full:-0}
+                    if (( power > 0 && energy_full > energy_now )); then
+                        (( hours = ((energy_full - energy_now) * 1.0) / power ))
+                    fi
+                fi
+            fi
+
         elif [[ -f "$bat/current_now" && -f "$bat/voltage_now" ]]; then
             read -r curr < "$bat/current_now" 2>/dev/null
             read -r volt < "$bat/voltage_now" 2>/dev/null
-            (( watts = (${curr:-0} * ${volt:-0}) / 1000000000000.0 ))
+            curr=${curr:-0}
+            volt=${volt:-0}
+            (( watts = (curr * volt) / 1000000000000.0 ))
+
+            if [[ "$stat" == "Discharging" ]]; then
+                if [[ -f "$bat/charge_now" ]]; then
+                    read -r charge_now < "$bat/charge_now" 2>/dev/null
+                    charge_now=${charge_now:-0}
+                    if (( curr > 0 )); then
+                        (( hours = (charge_now * 1.0) / curr ))
+                    fi
+                fi
+            elif [[ "$stat" == "Charging" ]]; then
+                if [[ -f "$bat/charge_now" && -f "$bat/charge_full" ]]; then
+                    read -r charge_now < "$bat/charge_now" 2>/dev/null
+                    read -r charge_full < "$bat/charge_full" 2>/dev/null
+                    charge_now=${charge_now:-0}
+                    charge_full=${charge_full:-0}
+                    if (( curr > 0 && charge_full > charge_now )); then
+                        (( hours = ((charge_full - charge_now) * 1.0) / curr ))
+                    fi
+                fi
+            fi
+        fi
+
+        if (( hours > 0.0 )); then
+            (( hrs = hours ))
+            (( mins = (hours - hrs) * 60 + 0.5 ))
+            if (( mins >= 60 )); then
+                (( hrs++ ))
+                (( mins = mins - 60 ))
+            fi
+            time_str="${hrs}h${mins}m"
         fi
         
         # Route the output format
         if [[ "$output_format" == "json" ]]; then
-            printf '{"capacity": "%s", "power_w": %.2f, "status": "%s"}' "$cap" "$watts" "$stat"
+            printf '{"capacity": "%s", "power_w": %.2f, "status": "%s", "remaining": "%s"}' "$cap" "$watts" "$stat" "$time_str"
         elif [[ "$output_format" == "terse" ]]; then
-            printf "%s %.2f %s" "$cap" "$watts" "$stat"
+            printf "%s %.2f %s %s" "$cap" "$watts" "$stat" "$time_str"
         else
-            printf "Capacity: %s%% | Power Draw: %.2f W (%s)" "$cap" "$watts" "$stat"
+            printf "Capacity: %s%% | Power Draw: %.2f W (%s) | Remaining: %s" "$cap" "$watts" "$stat" "$time_str"
         fi
     }
 
