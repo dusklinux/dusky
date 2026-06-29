@@ -8,19 +8,19 @@
 
 # Critical physical RAM threshold (% used).
 # Triggers warning unconditionally if RAM goes above this limit, even if ZRAM is empty.
-THRESHOLD_RAM_CRITICAL=90
+THRESHOLD_RAM_CRITICAL=95
 
 # High physical RAM threshold (% used).
 # Combined with THRESHOLD_ZRAM_HIGH; both must be met to trigger the warning.
-THRESHOLD_RAM_HIGH=80
+THRESHOLD_RAM_HIGH=90
 
 # High ZRAM Swap occupancy threshold (% used).
 # Combined with THRESHOLD_RAM_HIGH; both must be met to trigger the warning.
-THRESHOLD_ZRAM_HIGH=80
+THRESHOLD_ZRAM_HIGH=90
 
 # RAM Recovery Hysteresis Threshold (% used).
 # The HUD dissolves and cooldown starts ONLY if physical RAM drops below this percentage.
-THRESHOLD_RAM_RECOVERY=75
+THRESHOLD_RAM_RECOVERY=80
 
 # Polling Interval (seconds)
 # The wait time between memory scans (supports floating-point sub-second values).
