@@ -201,7 +201,7 @@ trap 'rm -f "$tmp_earlyoom" "$tmp_shield_bin" "$tmp_shield_svc"' EXIT
 # --avoid: Protect compositor (Hyprland, Sway, KWin, Gnome), init, and audio services
 cat > "$tmp_earlyoom" <<'EOF'
 # Sourced by earlyoom.service
-EARLYOOM_ARGS="-m 10 -s 10 -r 3600 --avoid '(^|/)(init|systemd.*|Xorg|sshd|Hyprland|sway|kwin_wayland|gnome-shell|wayfire|river|niri|dbus-broker.*|dbus-daemon|pipewire|wireplumber|gnome-keyring.*|xdg-.*|mako|uwsm|start-hyprland|startwayland|hyprland-session|wl-clip-persist|dconf-service|at-spi.*|waitpid|sd-pam|polkitd)$' --prefer '(^|/)(kitty|chrome|firefox|alacritty|discord|slack|electron|obsidian|thunar|gnome-clocks|spotify|code|mpv|vlc|foot|dolphin|gnome-text-editor|nvim|neovim)$'"
+EARLYOOM_ARGS="-m 10 -s 100,100 -r 3600 --avoid '(^|/)(init|systemd.*|Xorg|sshd|Hyprland|sway|kwin_wayland|gnome-shell|wayfire|river|niri|dbus-broker.*|dbus-daemon|pipewire|wireplumber|gnome-keyring.*|xdg-.*|mako|uwsm|start-hyprland|startwayland|hyprland-session|wl-clip-persist|dconf-service|at-spi.*|waitpid|sd-pam|polkitd)$' --prefer '(^|/)(kitty|chrome|firefox|alacritty|discord|slack|electron|obsidian|thunar|gnome-clocks|spotify|code|mpv|vlc|foot|dolphin|gnome-text-editor|nvim|neovim)$'"
 EOF
 
 # Generate lightweight compositor shield script
