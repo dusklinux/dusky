@@ -128,12 +128,12 @@ else
     EXPECTED_MODE="STRICT_RAM_SAVINGS (<32GB)"
     EXPECTED_SWAPPINESS=190        # Force immediate compression of inactive RAM (User Override)
     EXPECTED_VFS_PRESSURE=200      # Aggressively reclaim inode/dentry VFS caches to lower idle RAM
-    EXPECTED_SCALE_FACTOR=50       # 0.5% Emergency Buffer (40MB on 8GB RAM). Prevents UI direct reclaim stall.
+    EXPECTED_SCALE_FACTOR=150      # 1.5% Emergency Buffer (120MB on 8GB RAM). Prevents UI direct reclaim stall.
     EXPECTED_DIRTY_BYTES=134217728 # 128MB max. Prevents massive file transfers from bloating RAM.
     EXPECTED_DIRTY_BG_BYTES=33554432 # 32MB bg threshold. Flushes data to disk sooner to free memory.
     EXPECTED_DIRTY_WRITEBACK=100    # 1s dirty background page writeback interval
     EXPECTED_DIRTY_EXPIRE=500       # 5s dirty page expiry limit (flushes cache aggressively)
-    EXPECTED_MGLRU_TTL=1000         # Perfect CPU/ZRAM thrash shield balance.
+    EXPECTED_MGLRU_TTL=1000         # Set to 1000 to prevent compositor/UI swap thrashing.
 fi
 
 # Static Constants
