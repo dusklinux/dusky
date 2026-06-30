@@ -73,6 +73,12 @@ main() {
         exit 0
     fi
 
+    user_home=$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6) || true
+    if [[ -n "$user_home" && ! -f "${user_home}/.config/dusky/settings/usb_udev_toggle" ]]; then
+        log_info "USB sounds toggled off for $target_user, exiting."
+        exit 0
+    fi
+
     if ! command -v pw-play >/dev/null 2>&1; then
         log_error "pw-play is not installed."
         exit 1

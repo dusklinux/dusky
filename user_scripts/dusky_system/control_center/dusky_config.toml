@@ -1112,6 +1112,22 @@ type = "exec"
 command = "$HOME/user_scripts/wayclick/dusky_wayclick.sh"
 terminal = false
 
+[[pages.layout.items]]
+type = "toggle_card"
+[pages.layout.items.properties]
+title = "USB Sound"
+icon = "drive-removable-media-usb-symbolic"
+state_command = "test -f \"$HOME/.config/dusky/settings/usb_udev_toggle\" && echo yes || echo no"
+interval = 5
+[pages.layout.items.on_toggle.enabled]
+type = "exec"
+command = "$HOME/user_scripts/external/usb_sound_toggle.py --on"
+terminal = false
+[pages.layout.items.on_toggle.disabled]
+type = "exec"
+command = "$HOME/user_scripts/external/usb_sound_toggle.py --off"
+terminal = false
+
 [[pages.layout]]
 type = "section"
 [pages.layout.properties]
