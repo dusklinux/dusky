@@ -144,6 +144,7 @@ USERSERVICE
 cat > "$tmp_user_conf" <<'USERCONF'
 [Manager]
 DefaultOOMScoreAdjust=200
+DefaultEnvironment="UWSM_APP_UNIT_TYPE=service"
 USERCONF
 
 # Failsafe: Protect critical session components from kernel OOM killer
@@ -247,6 +248,9 @@ systemctl restart systemd-oomd.service systemd-oomd.socket >/dev/null 2>&1 || lo
 log_info "Reloading systemd daemon to ingest OOM policies..."
 systemctl daemon-reload >/dev/null 2>&1 || true
 
+log_info "Disabling UWSM unit failure monitor (fumon.service) globally..."
+systemctl --global disable fumon.service >/dev/null 2>&1 || true
+
 log_info "Reloading active user managers..."
 declare -a uids=()
 while read -r line; do
@@ -258,6 +262,8 @@ done < <(systemctl list-units --type=service --state=active --plain 'user@*.serv
 for uid in "${uids[@]:-}"; do
     user="$(id -un "$uid" 2>/dev/null || true)"
     [[ -z "$user" ]] && continue
+    # Disable active fumon service for current user sessions to apply changes immediately
+    systemctl --user -M "${user}@" disable --now fumon.service >/dev/null 2>&1 || true
     if systemctl --user -M "${user}@" daemon-reload >/dev/null 2>&1; then
         log_success "Reloaded user manager for ${user}."
     fi

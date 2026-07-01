@@ -126,11 +126,11 @@ cat > "$tmp_svc" <<EOF
 # Prevents mmap cache bloat regardless of journal file size.
 
 [Service]
-# Aggressively throttle the daemon if its RSS exceeds 16MB
-MemoryHigh=16M
+# Aggressively throttle the daemon if its RSS exceeds 64MB
+MemoryHigh=64M
 
-# Absolute hard-kill boundary. If the daemon leaks >32MB, execute OOM kill.
-MemoryMax=32M
+# Absolute hard-kill boundary. If the daemon leaks >128MB, execute OOM kill.
+MemoryMax=128M
 
 # systemd.service(5): Ensures clean termination and flush on OOM pressure.
 # Daemon will automatically respawn via Restart=always and empty its RAM buffers.
