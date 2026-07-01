@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Calendar
-GenericName=Calendar
+GenericName=khal
 Comment=Terminal CLI calendar application
 Exec=uwsm-app -- kitty --class ikhal -e ikhal
 Terminal=false
