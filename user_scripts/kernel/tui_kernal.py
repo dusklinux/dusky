@@ -174,15 +174,6 @@ SCHEMA = {
             extended_help="**AMD Frequency Scaling**\n\nConfigures the precision boost state scaling driver for modern AMD Ryzen processors.\n\n- `active`: Fully hardware-controlled autonomous scaling (Recommended for Zen 2+).\n- `guided`: OS hints mixed with hardware control."
         ),
         ConfigItem(
-            label="CPU0 Hotplug",
-            key="cpu0_hotplug",
-            scope="DEFAULT",
-            type_="bool",
-            default=False,
-            group="CPU",
-            extended_help="**CPU0 Hotplug**\n\nAllows offlining (shutting down) CPU0 on x86 systems. Requires `CONFIG_HOTPLUG_CPU` to be enabled in the kernel.\n\n**Caveats:**\n- Resume from hibernate/suspend will fail if CPU0 is offline.\n- PIC interrupts depend on CPU0 and may prevent removal.\n\nTo offline CPU0 after boot: `echo 0 > /sys/devices/system/cpu/cpu0/online`\nTo bring it back: `echo 1 > /sys/devices/system/cpu/cpu0/online`"
-        ),
-        ConfigItem(
             label="ZSwap Enabled",
             key="zswap.enabled",
             scope="DEFAULT",
