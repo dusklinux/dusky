@@ -1261,8 +1261,8 @@ hl.window_rule({
 
 --- System benchmarking script ---
 hl.window_rule({
-    name = "sysbench_benchmark.sh",
-    match = { class = "^(sysbench_benchmark.sh)$" },
+    name = "sysbench_benchmark.py",
+    match = { class = "^(sysbench_benchmark.py)$" },
     float = true,
     size = {567, 658},
     center = true

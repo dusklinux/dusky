@@ -215,7 +215,7 @@
         "format": " {usage}%",
         "interval": 2,
         "on-click": "uwsm-app -- kitty --class htop -e htop",
-        "on-click-right": "uwsm-app -- kitty --class sysbench_benchmark.sh -e $HOME/user_scripts/performance/sysbench_benchmark.sh",
+        "on-click-right": "uwsm-app -- kitty --class sysbench_benchmark.py -e $HOME/user_scripts/performance/sysbench_benchmark.py",
         "tooltip-format": "CPU Usage: {usage}%\nAvg Frequency: {avg_frequency} GHz\n\nLMB: htop\nRMB: sysbench",
         "states": {
             "warning": 60,

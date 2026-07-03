@@ -480,7 +480,7 @@ show_performance_menu() {
 
         case "$choice" in
             '󰓅  Sysbench Benchmark')
-                run_term_hold "sysbench_benchmark.sh" "$SCRIPTS_DIR/performance/sysbench_benchmark.sh"
+                run_term_hold "sysbench_benchmark.py" "$SCRIPTS_DIR/performance/sysbench_benchmark.py"
                 ;;
             '󰃢  Cache Purge')
                 run_term_hold "cache_purge.sh" "$SCRIPTS_DIR/desktop_apps/cache_purge.sh"

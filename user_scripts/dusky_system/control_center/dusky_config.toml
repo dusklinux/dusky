@@ -208,7 +208,7 @@ title = "Benchmark"
 icon = "utilities-system-monitor-symbolic"
 [pages.layout.items.on_press]
 type = "exec"
-command = "kitty --class sysbench_benchmark.sh --title \"System Benchmark\" --hold sh -c \"$HOME/user_scripts/performance/sysbench_benchmark.sh\""
+command = "kitty --class sysbench_benchmark.py --title \"System Benchmark\" --hold sh -c \"$HOME/user_scripts/performance/sysbench_benchmark.py\""
 terminal = false
 
 [[pages.layout.items]]
