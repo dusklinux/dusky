@@ -15,6 +15,7 @@ import contextlib
 import glob
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -69,17 +70,12 @@ def get_online_cpus() -> list[int]:
 
 
 def check_deps() -> None:
-    if shutil := shutil_which("sysbench"):
+    if shutil.which("sysbench"):
         return
     eprint(f"{RED}Error: Required command 'sysbench' is missing.{NC}")
     eprint(f"\n{YELLOW}Install missing dependencies:{NC}")
     eprint(f"  Arch/Manjaro:  {CYAN}sudo pacman -S sysbench{NC}")
     sys.exit(1)
-
-
-def shutil_which(name: str) -> str | None:
-    import shutil
-    return shutil.which(name)
 
 
 def print_header(cpu_model: str, online_cores: list[int]) -> None:
@@ -191,12 +187,21 @@ def optimize_cpu_performance():
                 eprint(f"Warning: Failed to restore CPU settings: {exc}")
 
 
-def parse_latency_block(stdout: str) -> dict[str, str]:
+def parse_latency_block(stdout: str) -> tuple[dict[str, str], str]:
     metrics = {"min": "N/A", "avg": "N/A", "max": "N/A", "95th": "N/A"}
     latency_sec = False
+    unit = "ms"
     for line in stdout.splitlines():
-        if "latency (ms):" in line.lower() or "latency (us):" in line.lower():
+        if "latency (ms):" in line.lower():
             latency_sec = True
+            unit = "ms"
+        elif "latency (us):" in line.lower():
+            latency_sec = True
+            unit = "us"
+        elif "latency (sec):" in line.lower():
+            latency_sec = True
+            unit = "sec"
+            
         if latency_sec:
             line_strip = line.strip().lower()
             if line_strip.startswith("min:"):
@@ -209,7 +214,7 @@ def parse_latency_block(stdout: str) -> dict[str, str]:
                 metrics["95th"] = line.split(":", 1)[1].strip()
             elif line_strip == "" and metrics["min"] != "N/A":
                 break
-    return metrics
+    return metrics, unit
 
 
 def run_sysbench_cmd(test_type: str, args_list: list[str], thread_count: int, run_time: int, cores: str | None = None) -> str:
@@ -254,12 +259,12 @@ def run_cpu_test(thread_count: int, run_time: int, cores: str | None = None) -> 
         elif "total number of events:" in line:
             total_events = line.split(":", 1)[1].strip()
             
-    lat = parse_latency_block(stdout)
+    lat, unit = parse_latency_block(stdout)
     
     print(f"\n{GREEN}--- CPU Benchmark Results ---{NC}")
     print(f"  CPU Speed (events/sec):  {BOLD}{events_per_sec}{NC}")
     print(f"  Total Events processed:   {total_events}")
-    print(f"  Latency (ms):")
+    print(f"  Latency ({unit}):")
     print(f"    Min:                   {lat['min']}")
     print(f"    Avg:                   {lat['avg']}")
     print(f"    Max:                   {lat['max']}")
@@ -311,23 +316,22 @@ def run_memory_test(thread_count: int, run_time: int, cores: str | None = None, 
         cores
     )
     
-    # Parse throughput
+    # Parse throughput using generic parser
     transferred = "N/A"
     throughput = "N/A"
     for line in stdout.splitlines():
-        # Match e.g. "10240.00 MiB transferred (12157.95 MiB/sec)"
-        match = re.search(r"([\d\.]+)\s+(MiB|MB)\s+transferred\s+\(([\d\.]+)\s+(MiB/sec|MB/sec|MiB|MB/s|MiB/s)\)", line)
+        match = re.search(r"([\d\.]+)\s+(\w+)\s+transferred\s+\(([\d\.]+)\s+([\w/]+)\)", line)
         if match:
             transferred = f"{match.group(1)} {match.group(2)}"
             throughput = f"{match.group(3)} {match.group(4)}"
             break
             
-    lat = parse_latency_block(stdout)
+    lat, unit = parse_latency_block(stdout)
     
     print(f"\n{GREEN}--- Memory Benchmark Results ---{NC}")
     print(f"  Transfer Throughput:     {BOLD}{throughput}{NC}")
     print(f"  Total Memory Copied:     {transferred}")
-    print(f"  Latency (ms):")
+    print(f"  Latency ({unit}):")
     print(f"    Min:                   {lat['min']}")
     print(f"    Avg:                   {lat['avg']}")
     print(f"    Max:                   {lat['max']}")
@@ -352,11 +356,11 @@ def run_threads_test(thread_count: int, run_time: int, cores: str | None = None)
         if "total number of events:" in line:
             total_events = line.split(":", 1)[1].strip()
             
-    lat = parse_latency_block(stdout)
+    lat, unit = parse_latency_block(stdout)
     
     print(f"\n{GREEN}--- Threads Benchmark Results ---{NC}")
     print(f"  Total Events processed:   {BOLD}{total_events}{NC}")
-    print(f"  Latency (ms):")
+    print(f"  Latency ({unit}):")
     print(f"    Min:                   {lat['min']}")
     print(f"    Avg:                   {lat['avg']}")
     print(f"    Max:                   {lat['max']}")
@@ -376,7 +380,6 @@ def prompt_cores(online_cores: list[int]) -> tuple[str | None, int]:
         
         choice = input("Select option [1]: ").strip()
         if choice == "" or choice == "1":
-            # Map all online cores to a list
             cores_str = ",".join(map(str, online_cores))
             return cores_str, len(online_cores)
         elif choice == "2":
@@ -442,7 +445,6 @@ def interactive_menu(cpu_model: str, online_cores: list[int]) -> None:
         elif choice == "":
             continue
         elif choice in {"1", "2", "3"}:
-            # Core and time prompts
             cores, thread_count = prompt_cores(online_cores)
             if cores is None:
                 continue
@@ -450,7 +452,6 @@ def interactive_menu(cpu_model: str, online_cores: list[int]) -> None:
             if run_time is None:
                 continue
                 
-            # Perform optimization check
             opt_inp = input("Temporarily optimize CPU for performance? [y/N]: ").strip().lower()
             cpu_opt = optimize_cpu_performance() if opt_inp == "y" else contextlib.nullcontext()
             
@@ -458,7 +459,6 @@ def interactive_menu(cpu_model: str, online_cores: list[int]) -> None:
                 if choice == "1":
                     run_cpu_test(thread_count, run_time, cores)
                 elif choice == "2":
-                    # Memory test mode prompt
                     print(f"\n{YELLOW}--- Memory Test Mode ---{NC}")
                     print("1) Sequential Read (64M blocks, Local scope - Max Bandwidth)")
                     print("2) Random Read (4K blocks, Global scope - Latency/IOPS)")
@@ -534,7 +534,6 @@ def main() -> int:
                 return 2
             thread_count = calc_threads(cores)
         else:
-            # Pin to all online cores by default
             cores = ",".join(map(str, online_cores))
             thread_count = len(online_cores)
             
@@ -562,4 +561,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

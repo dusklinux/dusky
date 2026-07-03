@@ -300,6 +300,23 @@ def human_bytes(n: int) -> str:
     return f"{n} B"
 
 
+def get_online_cpus() -> list[int]:
+    try:
+        with open("/sys/devices/system/cpu/online", "r") as fh:
+            content = fh.read().strip()
+            cpus = []
+            for part in content.split(","):
+                if "-" in part:
+                    start, end = part.split("-")
+                    cpus.extend(range(int(start), int(end) + 1))
+                else:
+                    cpus.append(int(part))
+            return sorted(cpus)
+    except Exception:
+        pass
+    return list(range(os.cpu_count() or 1))
+
+
 def compile_benchmark(tmpdir: Path) -> Path:
     c_path = tmpdir / "ram_latency.c"
     bin_path = tmpdir / "ram_latency"
@@ -404,6 +421,8 @@ def optimize_cpu_performance():
                 f"    try: open('{no_turbo_path}', 'w').write('{turbo_val}')\n"
                 f"    except Exception: pass"
             )
+        if not py_cmds:
+            return
         script = "\n".join(py_cmds)
         cmd = ["sudo", "-S", "python3", "-c", script]
         try:
@@ -484,6 +503,13 @@ def main() -> int:
     except ValueError as exc:
         eprint(exc)
         return 2
+
+    # Validate targeted CPU core if specified
+    if args.cpu >= 0:
+        online = get_online_cpus()
+        if args.cpu not in online:
+            eprint(f"Error: CPU core {args.cpu} is currently offline or invalid. Online cores are: {online}")
+            return 2
 
     # Context manager setup
     cpu_opt = optimize_cpu_performance() if args.performance else contextlib.nullcontext()
