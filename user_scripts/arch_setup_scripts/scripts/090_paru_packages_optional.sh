@@ -98,6 +98,7 @@ Games       | vitetris              | Classic Tetris clone for the terminal
 Games       | ttyper                | Terminal-based typing test and practice
 Security    | wdpass                | Unlock Western Digital MyPassport drives
 Security    | dislocker             | FUSE driver to read BitLocker partitions
+Security    | clamav                | Open source antivirus engine for detecting malware
 Drivers     | b43-firmware          | Legacy Broadcom B43 wireless firmware
 Drivers     | usbmuxd               | Socket daemon to multiplex connections to iOS devices
 Drivers     | cuda                  | NVIDIA's parallel computing architecture toolkit
