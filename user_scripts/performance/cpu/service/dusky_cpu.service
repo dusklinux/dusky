@@ -1,0 +1,11 @@
+[Unit]
+Description=Dusky CPU Core and Power Limiter Restorer
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/bash -c 'REAL_USER=$(find /home -maxdepth 1 -mindepth 1 -not -name "lost+found" -not -name "shared" -printf "%%P\\n" | head -n 1); /usr/bin/python3 /home/$REAL_USER/user_scripts/performance/cpu/tui_dusky_power_throttle.py --restore; /usr/bin/python3 /home/$REAL_USER/user_scripts/performance/cpu/tui_dusky_core_manager.py --restore'
+
+[Install]
+WantedBy=multi-user.target

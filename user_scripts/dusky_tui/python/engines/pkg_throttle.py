@@ -10,6 +10,19 @@ from python.frontend.core_types import BaseEngine
 RAPL_BASE = Path("/sys/class/powercap")
 STATE_FILE = Path("/dev/shm/dusky_rapl_state.json")
 
+def get_user_home() -> Path:
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        user_home = Path(f"/home/{sudo_user}")
+        if user_home.exists():
+            return user_home
+    home_dir = Path("/home")
+    if home_dir.exists():
+        users = [p for p in home_dir.iterdir() if p.is_dir() and not p.name.startswith(".") and p.name not in ("lost+found", "shared")]
+        if len(users) == 1:
+            return users[0]
+    return Path("~").expanduser()
+
 def safe_read_int(p: Path) -> int | None:
     try:
         return int(p.read_text().strip())
@@ -206,12 +219,14 @@ class PkgThrottleEngine(BaseEngine):
         self._atomic_state_update(flag_modified)
 
         if actual == val:
+            self.save_persistent_state()
             return True, f"Successfully set {target_key} to {new_value}", ""
         elif val != 0 and (abs(actual - val) / val) <= 0.05:
             if target_key in ("pl1_time", "pl2_time"):
                 actual_display = f"{actual / 1_000_000:.2f}s"
             else:
                 actual_display = f"{actual // 1_000_000} W"
+            self.save_persistent_state()
             return True, f"Successfully set {target_key} to {new_value} (quantized to {actual_display})", ""
         else:
             if target_key in ("pl1_time", "pl2_time"):
@@ -219,6 +234,61 @@ class PkgThrottleEngine(BaseEngine):
             else:
                 actual_display = f"{actual // 1_000_000} W"
             return False, f"Rejected by hardware! Locked at: {actual_display}", ""
+
+    def save_persistent_state(self):
+        try:
+            home = get_user_home()
+            config_dir = home / ".config" / "dusky" / "settings"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            state_file = config_dir / "dusky_pkg_power"
+            
+            # Read current active sysfs limits to save
+            pl1 = safe_read_int(self.domain / "constraint_0_power_limit_uw")
+            pl2 = safe_read_int(self.domain / "constraint_1_power_limit_uw")
+            pl4 = safe_read_int(self.domain / "constraint_2_power_limit_uw")
+            pl1_time = safe_read_int(self.domain / "constraint_0_time_window_us")
+            pl2_time = safe_read_int(self.domain / "constraint_1_time_window_us")
+            
+            limits = {}
+            if pl1 is not None: limits["pl1"] = pl1 // 1_000_000
+            if pl2 is not None: limits["pl2"] = pl2 // 1_000_000
+            if pl4 is not None: limits["pl4"] = pl4 // 1_000_000
+            if pl1_time is not None: limits["pl1_time"] = round(pl1_time / 1_000_000, 2)
+            if pl2_time is not None: limits["pl2_time"] = round(pl2_time / 1_000_000, 4)
+            
+            state_file.write_text(json.dumps(limits, indent=2))
+        except Exception:
+            pass
+
+    def restore_state(self) -> bool:
+        if not self.domain:
+            return False
+        try:
+            home = get_user_home()
+            state_file = home / ".config" / "dusky" / "settings" / "dusky_pkg_power"
+            if not state_file.exists():
+                return False
+            limits = json.loads(state_file.read_text())
+            
+            mapping = {
+                "pl1": "constraint_0_power_limit_uw",
+                "pl2": "constraint_1_power_limit_uw",
+                "pl4": "constraint_2_power_limit_uw",
+                "pl1_time": "constraint_0_time_window_us",
+                "pl2_time": "constraint_1_time_window_us",
+            }
+            
+            for k, v in limits.items():
+                sysfs_file = mapping.get(k)
+                if sysfs_file:
+                    if k in ("pl1", "pl2", "pl4"):
+                        val = int(v * 1_000_000)
+                    else:
+                        val = int(v * 1_000_000)
+                    safe_write(self.domain / sysfs_file, val)
+            return True
+        except Exception:
+            return False
 
     def get_telemetry(self) -> str:
         if not self.reader:

@@ -113,6 +113,16 @@ if __name__ == "__main__":
     import subprocess
     from pathlib import Path
 
+    if len(sys.argv) > 1 and sys.argv[1] == "--restore":
+        from python.engines.pkg_throttle import PkgThrottleEngine
+        engine = PkgThrottleEngine()
+        if engine.restore_state():
+            print("[OK] Successfully restored persistent CPU power limits.")
+            sys.exit(0)
+        else:
+            print("[*] No persistent power limits state found to restore (or failed to restore).")
+            sys.exit(0)
+
     main_py = Path(__file__).resolve().parents[2] / "dusky_tui" / "python" / "main" / "main.py"
 
     cmd = [sys.executable, str(main_py), str(Path(__file__).resolve()), *sys.argv[1:]]

@@ -183,6 +183,17 @@ if __name__ == "__main__":
     import subprocess
     import argparse
     from pathlib import Path
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--restore":
+        from python.engines.cpu_core import CpuCoreEngine
+        engine = CpuCoreEngine()
+        if engine.restore_state():
+            print("[OK] Successfully restored persistent CPU core states.")
+            sys.exit(0)
+        else:
+            print("[*] No persistent CPU core states found to restore (or failed to restore).")
+            sys.exit(0)
+
     from python.engines.cpu_core import get_core_status, get_core_freq, set_core_status
 
     # 1. Parse core arguments helper
@@ -282,36 +293,37 @@ if __name__ == "__main__":
 
     if args.command == "status":
         display_status_table()
-    elif args.command == "ecores-only":
-        if not e_cores:
-            print("[-] Error: ecores-only requires a hybrid topology.")
-            sys.exit(1)
-        batch_process_cores(e_cores, enable=True, action_name="E-Core Wakeup")
-        batch_process_cores(p_cores, enable=False, action_name="P-Core Shutdown")
-        display_status_table()
-    elif args.command == "pcores-only":
-        if not e_cores:
-            print("[-] Error: pcores-only requires a hybrid topology.")
-            sys.exit(1)
-        batch_process_cores(p_cores, enable=True, action_name="P-Core Wakeup")
-        batch_process_cores(e_cores, enable=False, action_name="E-Core Shutdown")
-        display_status_table()
-    elif args.command == "all-cores":
-        batch_process_cores(all_known_cores, enable=True, action_name="Global Wakeup")
-        display_status_table()
-    elif args.command == "enable":
-        target_cores = parse_core_args(args.cores, all_known_cores)
-        batch_process_cores(target_cores, enable=True, action_name="Targeted Wakeup")
-        display_status_table()
-    elif args.command == "disable":
-        target_cores = parse_core_args(args.cores, all_known_cores)
-        batch_process_cores(target_cores, enable=False, action_name="Targeted Shutdown")
-        display_status_table()
-    elif args.command == "toggle":
-        target_cores = parse_core_args(args.cores, all_known_cores)
-        for core in target_cores:
-            if core in locked_cores:
-                continue
-            current_state = get_core_status(core)
-            set_core_status(core, enable=not current_state)
+    else:
+        if args.command == "ecores-only":
+            if not e_cores:
+                print("[-] Error: ecores-only requires a hybrid topology.")
+                sys.exit(1)
+            batch_process_cores(e_cores, enable=True, action_name="E-Core Wakeup")
+            batch_process_cores(p_cores, enable=False, action_name="P-Core Shutdown")
+        elif args.command == "pcores-only":
+            if not e_cores:
+                print("[-] Error: pcores-only requires a hybrid topology.")
+                sys.exit(1)
+            batch_process_cores(p_cores, enable=True, action_name="P-Core Wakeup")
+            batch_process_cores(e_cores, enable=False, action_name="E-Core Shutdown")
+        elif args.command == "all-cores":
+            batch_process_cores(all_known_cores, enable=True, action_name="Global Wakeup")
+        elif args.command == "enable":
+            target_cores = parse_core_args(args.cores, all_known_cores)
+            batch_process_cores(target_cores, enable=True, action_name="Targeted Wakeup")
+        elif args.command == "disable":
+            target_cores = parse_core_args(args.cores, all_known_cores)
+            batch_process_cores(target_cores, enable=False, action_name="Targeted Shutdown")
+        elif args.command == "toggle":
+            target_cores = parse_core_args(args.cores, all_known_cores)
+            for core in target_cores:
+                if core in locked_cores:
+                    continue
+                current_state = get_core_status(core)
+                set_core_status(core, enable=not current_state)
+        
+        # Save updated core states persistently
+        from python.engines.cpu_core import CpuCoreEngine
+        engine = CpuCoreEngine()
+        engine.save_persistent_state()
         display_status_table()

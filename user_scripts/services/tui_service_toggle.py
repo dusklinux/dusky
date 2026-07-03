@@ -73,6 +73,10 @@ CORE_SYSTEM_DEFS = {
         "TLP Power Management",
         "Advanced power management for Linux. Applies various battery-saving tweaks to the kernel, PCI, and USB devices."
     ),
+    "dusky_cpu.service": (
+        "Dusky CPU Cores & Power Restorer",
+        "Restores your custom CPU core states and package power limit adjustments dynamically on system boot."
+    ),
 
     "swayosd-libinput-backend.service": (
         "SwayOSD Input Backend",

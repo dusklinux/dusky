@@ -7,6 +7,19 @@ from python.frontend.core_types import BaseEngine
 
 RAPL_BASE = Path("/sys/class/powercap")
 
+def get_user_home() -> Path:
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        user_home = Path(f"/home/{sudo_user}")
+        if user_home.exists():
+            return user_home
+    home_dir = Path("/home")
+    if home_dir.exists():
+        users = [p for p in home_dir.iterdir() if p.is_dir() and not p.name.startswith(".") and p.name not in ("lost+found", "shared")]
+        if len(users) == 1:
+            return users[0]
+    return Path("~").expanduser()
+
 def safe_read(path: Path, default: str = "") -> str:
     try:
         if path.is_file():
@@ -228,9 +241,44 @@ class CpuCoreEngine(BaseEngine):
         enable = new_value.lower() in ("true", "1", "yes")
         success, msg = set_core_status(core_id, enable)
         if success:
+            self.save_persistent_state()
             return True, f"Successfully set CPU {core_id} {'online' if enable else 'offline'}", ""
         else:
             return False, f"Failed to toggle CPU {core_id}: {msg}", ""
+
+    def save_persistent_state(self):
+        try:
+            home = get_user_home()
+            config_dir = home / ".config" / "dusky" / "settings"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            state_file = config_dir / "dusky_cores"
+            
+            # Read current active states of all toggleable cores to save
+            cores_state = {}
+            for core in self.p_cores + self.e_cores:
+                cores_state[f"cpu{core}"] = get_core_status(core)
+                
+            import json
+            state_file.write_text(json.dumps(cores_state, indent=2))
+        except Exception:
+            pass
+
+    def restore_state(self) -> bool:
+        try:
+            home = get_user_home()
+            state_file = home / ".config" / "dusky" / "settings" / "dusky_cores"
+            if not state_file.exists():
+                return False
+            import json
+            cores_state = json.loads(state_file.read_text())
+            for k, v in cores_state.items():
+                if k.startswith("cpu") and k[3:].isdigit():
+                    core_id = int(k[3:])
+                    if core_id not in self.locked_cores:
+                        set_core_status(core_id, v)
+            return True
+        except Exception:
+            return False
 
     def get_telemetry(self) -> str:
         all_cores = self.p_cores + self.e_cores
