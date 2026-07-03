@@ -51,6 +51,13 @@ TABS = [
 
 USER_PRESETS_TAB = "Presets"
 
+TAB_NOTICES = {
+    0: {
+        "level": "warning",
+        "message": "Setting PL4 too low can trigger a failsafe hardware lock (minimum clock throttle) to protect voltage regulators. Keep PL4 at its BIOS default unless you explicitly need to clamp peak currents."
+    }
+}
+
 SCHEMA = {
     0: [
         ConfigItem(
@@ -58,7 +65,7 @@ SCHEMA = {
             key="pl1",
             type_="int",
             default=bios_defaults["pl1"],
-            min_val=0,
+            min_val=3,
             max_val=1000,
             step=1,
             extended_help="Sustained long-term CPU package power limit envelope (in Watts). Applies under continuous high workloads."
@@ -68,7 +75,7 @@ SCHEMA = {
             key="pl2",
             type_="int",
             default=bios_defaults["pl2"],
-            min_val=0,
+            min_val=3,
             max_val=1000,
             step=1,
             extended_help="Maximum transient boost power envelope (in Watts). Only sustained for the duration of the PL2 time window."
@@ -78,7 +85,7 @@ SCHEMA = {
             key="pl4",
             type_="int",
             default=bios_defaults["pl4"],
-            min_val=0,
+            min_val=3,
             max_val=1000,
             step=5,
             extended_help="Absolute physical hardware power spike clamp (in Watts). Prevents PSU protection triggers on rapid power transitions."
