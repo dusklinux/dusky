@@ -221,11 +221,12 @@ class PkgThrottleEngine(BaseEngine):
         if actual == val:
             self.save_persistent_state()
             return True, f"Successfully set {target_key} to {new_value}", ""
+        elif target_key in ("pl1_time", "pl2_time"):
+            actual_display = f"{actual / 1_000_000:.2f}s"
+            self.save_persistent_state()
+            return True, f"Successfully set {target_key} to {new_value} (quantized to {actual_display})", ""
         elif val != 0 and (abs(actual - val) / val) <= 0.05:
-            if target_key in ("pl1_time", "pl2_time"):
-                actual_display = f"{actual / 1_000_000:.2f}s"
-            else:
-                actual_display = f"{actual // 1_000_000} W"
+            actual_display = f"{actual // 1_000_000} W"
             self.save_persistent_state()
             return True, f"Successfully set {target_key} to {new_value} (quantized to {actual_display})", ""
         else:
