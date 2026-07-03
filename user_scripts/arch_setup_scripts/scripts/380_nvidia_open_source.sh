@@ -244,15 +244,56 @@ get_kernel_headers() {
     local headers=()
     log_info "Scanning installed kernels..." >&2 
     
-    # Regex scan for standard headers, explicitly excluding API headers
+    # 1. Detect all installed kernel packages by scanning standard vmlinuz paths
+    local kernel_files=()
+    local f
+    for f in /usr/lib/modules/*/vmlinuz /boot/vmlinuz-*; do
+        if [[ -f "$f" ]]; then
+            kernel_files+=("$f")
+        fi
+    done
+
+    local kernels=()
+    if [[ ${#kernel_files[@]} -gt 0 ]]; then
+        while read -r pkg; do
+            if [[ -n "$pkg" ]]; then
+                kernels+=("$pkg")
+            fi
+        done < <(pacman -Qo "${kernel_files[@]}" 2>/dev/null | awk '{print $(NF-1)}' | sort -u)
+    fi
+
+    # 2. For each installed kernel, check if its matching headers package is installed.
+    #    If it is not installed, add it to the targeting list so it gets installed.
+    for k in "${kernels[@]}"; do
+        local h="${k}-headers"
+        if ! pacman -Qq "$h" &>/dev/null; then
+            # Verify if the headers package exists in sync databases (to prevent installing non-existent dummy packages)
+            if pacman -Si "$h" &>/dev/null; then
+                headers+=("$h")
+            else
+                log_warn "Matching headers package '$h' not found in pacman repositories." >&2
+            fi
+        fi
+    done
+
+    # 3. Also include any already-installed headers (except api-headers) to show in status
+    local installed_headers=()
     while read -r pkg; do
-        headers+=("$pkg")
+        installed_headers+=("$pkg")
     done < <(pacman -Qq | grep -E '^linux.*-headers$' | grep -v 'api')
 
+    if [[ ${#installed_headers[@]} -gt 0 ]]; then
+        log_ok "Already installed headers: ${installed_headers[*]}" >&2
+    fi
+
     if [[ ${#headers[@]} -eq 0 ]]; then
-        log_warn "No kernel header packages found. DKMS will fail!" >&2
+        if [[ ${#installed_headers[@]} -eq 0 ]]; then
+            log_warn "No kernel header packages found or targeted. DKMS will fail!" >&2
+        else
+            log_ok "All required kernel headers are already installed." >&2
+        fi
     else
-        log_ok "Targeting headers: ${headers[*]}" >&2
+        log_ok "Targeting headers for installation: ${headers[*]}" >&2
     fi
     echo "${headers[*]}"
 }
