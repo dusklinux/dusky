@@ -12,7 +12,7 @@ local function is_target_app_active()
     local w = hl.get_active_window()
     if not w then return false end
     local class = w.class or ""
-    return class == "dusky_tui" or class == "wallpaper_selector.py" or class == "terminal_clipboard.sh"
+    return class == "dusky_tui" or class == "wallpaper_selector.py" or class == "factorio" or class == "terminal_clipboard.sh"
 end
 
 local function cond_bind(key, default_dsp, flags)
