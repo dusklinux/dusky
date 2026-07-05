@@ -2,26 +2,34 @@
 set -eo pipefail
 
 # ── Config ────────────────────────────────────────────────
-GAME_DIR="/mnt/zram1/game/Factorio-jc141"
-NVIDIA_WRAPPER="/mnt/zram1/nvidia-glx-workaround.sh"
+GAME_DIR="$HOME/Downloads/Factorio-jc141"
+NVIDIA_WRAPPER="$HOME/user_scripts/gaming/nvidia-glx-workaround/use_intel_not_nvidia.sh"
 # ──────────────────────────────────────────────────────────
 
-DWARFS_IMG="$GAME_DIR/files/game-root.dwarfs"
-DWARFS_MNT="$GAME_DIR/files/.game-root-mnt"
-OVERLAY_DIR="$GAME_DIR/files/game-root"
-OVERLAY_STORAGE="$GAME_DIR/files/overlay-storage"
-OVERLAY_WORK="$GAME_DIR/files/.game-root-work"
-DWARFS_BIN="$GAME_DIR/files/dwarfs-binary"
+# Resolve to absolute path if relative (and not a default path)
+resolve_path() {
+    local p="$1"
+    # Already absolute
+    if [[ "$p" == /* ]]; then
+        echo "$p"
+    # ~/... prefix
+    elif [[ "$p" == \~/* ]]; then
+        echo "$HOME/${p:2}"
+    else
+        readlink -f "$p"
+    fi
+}
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--help|-h] [--unmount|-u] [--clean|-c]
+Usage: $(basename "$0") [game-dir] [--help|-h] [--unmount|-u] [--clean|-c]
 
-  No flags     Mount (if needed) and launch game
-  --unmount -u Unmount DwarFS/overlay, keep files
-  --clean   -c Unmount and delete the entire \$GAME_DIR
+  game-dir       Path to game directory (default: $GAME_DIR)
+  No flags       Mount (if needed) and launch game
+  --unmount -u   Unmount DwarFS/overlay, keep files
+  --clean   -c   Unmount and delete the entire game dir
 
-Edit GAME_DIR at the top of the script to change the game path.
+Edit GAME_DIR at the top of the script to change the default.
 EOF
     exit 0
 }
@@ -41,6 +49,31 @@ clean_game() {
     rm -rf "$GAME_DIR"
     echo "Deleted $GAME_DIR"
 }
+
+# Parse path argument (first non-flag positional arg)
+args=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --help|-h|--unmount|-u|--clean|-c)
+            args+=("$1"); shift ;;
+        --*|-*)
+            echo "Unknown option: $1" >&2; exit 1 ;;
+        *)
+            GAME_DIR=$(resolve_path "$1")
+            shift ;;
+    esac
+done
+set -- "${args[@]}"
+
+# Also resolve the wrapper path (needed when script is invoked from elsewhere)
+NVIDIA_WRAPPER=$(resolve_path "$NVIDIA_WRAPPER")
+
+DWARFS_IMG="$GAME_DIR/files/game-root.dwarfs"
+DWARFS_MNT="$GAME_DIR/files/.game-root-mnt"
+OVERLAY_DIR="$GAME_DIR/files/game-root"
+OVERLAY_STORAGE="$GAME_DIR/files/overlay-storage"
+OVERLAY_WORK="$GAME_DIR/files/.game-root-work"
+DWARFS_BIN="$GAME_DIR/files/dwarfs-binary"
 
 case "${1:-}" in
     --help|-h) usage ;;
