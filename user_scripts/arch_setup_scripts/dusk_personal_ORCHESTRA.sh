@@ -58,6 +58,7 @@ INSTALL_SEQUENCE=(
 # ------ Setup SCRIPTS -------
 
     "U | 005_hypr_custom_config_setup.py"
+    "U | 007_main_hyprland_lua.py"
     "U | 006_animation_default.sh"
     "U | 010_package_removal.sh"
     "U | 013_matugen_state_file_placment.py"
