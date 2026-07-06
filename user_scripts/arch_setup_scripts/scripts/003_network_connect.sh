@@ -38,8 +38,13 @@ fail_and_exit() {
 
 wait_for_nm() {
     if ! systemctl is-active --quiet NetworkManager; then
-        log_error "NetworkManager service is not running."
-        exit 1
+        log_warn "NetworkManager service is not active. Attempting to start it..."
+        sudo systemctl start NetworkManager 2>/dev/null || true
+        sleep 2
+        if ! systemctl is-active --quiet NetworkManager; then
+            log_error "NetworkManager service is not running and could not be started."
+            exit 1
+        fi
     fi
 
     # Wait up to 10 seconds for DBus and NM to fully initialize interfaces
@@ -59,12 +64,12 @@ flush_dns_caches() {
     
     # Per dnsmasq(8) manual: SIGHUP clears the cache and re-loads hosts
     if systemctl is-active --quiet dnsmasq; then
-        systemctl kill -s HUP dnsmasq 2>/dev/null || pkill -HUP dnsmasq 2>/dev/null || true
+        sudo systemctl kill -s HUP dnsmasq 2>/dev/null || sudo pkill -HUP dnsmasq 2>/dev/null || true
         log_info " -> Flushed dnsmasq cache."
     fi
     
     if systemctl is-active --quiet systemd-resolved; then
-        resolvectl flush-caches 2>/dev/null || systemd-resolve --flush-caches 2>/dev/null || true
+        sudo resolvectl flush-caches 2>/dev/null || sudo systemd-resolve --flush-caches 2>/dev/null || true
         log_info " -> Flushed systemd-resolved cache."
     fi
     
@@ -84,8 +89,8 @@ check_connectivity() {
 
     # 2. Kernel-level Routing Check via HTTP (Strict Portal Avoidance)
     if command -v curl >/dev/null 2>&1; then
-        # Test A: Arch Linux official check (Requires exact string match, defeats 302 redirects)
-        if curl -s --connect-timeout 5 --max-time 5 http://ping.archlinux.org/ 2>/dev/null | grep -q "NetworkManager is online"; then
+        # Test A: Arch Linux official check (Defeats redirects, supports both old and new check strings)
+        if curl -s --connect-timeout 5 --max-time 5 http://ping.archlinux.org/ 2>/dev/null | grep -E -q "NetworkManager is online|captive portal detection"; then
             return 0
         fi
         
@@ -102,11 +107,13 @@ check_connectivity() {
     if ping -c 2 -W 2 1.1.1.1 >/dev/null 2>&1 || \
        ping -c 2 -W 2 8.8.8.8 >/dev/null 2>&1; then
         
-        # If ICMP works, we MUST verify DNS resolution to avoid false positives 
-        # (Some captive portals allow ICMP but hijack DNS)
-        if ping -c 1 -W 2 archlinux.org >/dev/null 2>&1 || \
-           ping -c 1 -W 2 google.com >/dev/null 2>&1; then
-            return 0
+        # Ensure DNS is not hijacked by verifying a non-existent domain fails to resolve.
+        # (Some captive portals allow ICMP/ping but hijack DNS queries to resolve everything)
+        if ! getent ahosts nonexistent-dns-test-12345.org >/dev/null 2>&1; then
+            if ping -c 1 -W 2 archlinux.org >/dev/null 2>&1 || \
+               ping -c 1 -W 2 google.com >/dev/null 2>&1; then
+                return 0
+            fi
         fi
     fi
 
@@ -136,10 +143,10 @@ ensure_wifi_radio() {
         
         # Soft-unblock in case the kernel is holding it down
         if command -v rfkill >/dev/null 2>&1; then
-            rfkill unblock wifi wlan >/dev/null 2>&1 || true
+            sudo rfkill unblock wifi wlan >/dev/null 2>&1 || true
         fi
         
-        nmcli radio wifi on
+        sudo nmcli radio wifi on
         sleep 3 # Allow hardware PHY to initialize
 
         if ! nmcli -g WIFI radio | grep -q "enabled"; then
@@ -170,6 +177,17 @@ log_warn "No internet routing detected."
 if [[ ! -t 0 ]]; then
     log_warn "Non-interactive environment detected (No TTY). Switching to autonomous mode."
     
+    # Ensure Wi-Fi radio is powered on so any saved auto-connect profiles can initialize
+    wifi_dev_auto=$(get_wifi_dev)
+    if [[ -n "$wifi_dev_auto" ]]; then
+        log_info "Wi-Fi interface detected ($wifi_dev_auto) in autonomous mode. Ensuring radio is enabled..."
+        if command -v rfkill >/dev/null 2>&1; then
+            sudo rfkill unblock wifi wlan >/dev/null 2>&1 || true
+        fi
+        sudo nmcli radio wifi on >/dev/null 2>&1 || true
+        sleep 2
+    fi
+
     log_info "Waiting up to 10s for potential NM auto-connect profiles to trigger..."
     for _ in {1..10}; do
         if check_connectivity; then
@@ -185,11 +203,11 @@ if [[ ! -t 0 ]]; then
     if [[ -n "$eth_dev" ]]; then
         log_info "Primary Ethernet device detected: $eth_dev"
         # Force NM management in case it was flagged as unmanaged (e.g. by systemd-networkd)
-        nmcli device set "$eth_dev" managed yes >/dev/null 2>&1 || true
+        sudo nmcli device set "$eth_dev" managed yes >/dev/null 2>&1 || true
 
         if check_eth_carrier "$eth_dev"; then
             log_info "Carrier signal detected. Requesting DHCP lease..."
-            timeout 15 nmcli dev up "$eth_dev" >/dev/null 2>&1 || true
+            timeout 15 sudo nmcli dev up "$eth_dev" >/dev/null 2>&1 || true
             
             flush_dns_caches
             
@@ -227,7 +245,7 @@ select conn_method in "LAN (Wired)" "Wi-Fi"; do
 
             log_info "Primary Ethernet device detected: $eth_dev"
             # Force NM management in case it was flagged as unmanaged
-            nmcli device set "$eth_dev" managed yes >/dev/null 2>&1 || true
+            sudo nmcli device set "$eth_dev" managed yes >/dev/null 2>&1 || true
 
             echo -e "${C_YELLOW}[+] Please ensure your Ethernet cable is physically plugged in.${C_RESET}"
             read -r -p "Press Enter to verify carrier state..."
@@ -238,7 +256,7 @@ select conn_method in "LAN (Wired)" "Wi-Fi"; do
             fi
 
             log_info "Carrier detected. Requesting DHCP lease..."
-            if timeout 15 nmcli dev up "$eth_dev" >/dev/null 2>&1; then
+            if timeout 15 sudo nmcli dev up "$eth_dev" >/dev/null 2>&1; then
                 
                 flush_dns_caches
                 
@@ -256,27 +274,35 @@ select conn_method in "LAN (Wired)" "Wi-Fi"; do
             ;;
 
         "Wi-Fi")
-            ensure_wifi_radio
             wifi_dev=$(get_wifi_dev)
 
             if [[ -z "$wifi_dev" ]]; then
                 log_error "No Wi-Fi interface detected on this system."
                 fail_and_exit
             fi
+
+            ensure_wifi_radio
             
             # Force NM management in case it was flagged as unmanaged
-            nmcli device set "$wifi_dev" managed yes >/dev/null 2>&1 || true
+            sudo nmcli device set "$wifi_dev" managed yes >/dev/null 2>&1 || true
 
             log_info "Triggering active 802.11 rescan on $wifi_dev..."
-            timeout 10 nmcli dev wifi rescan ifname "$wifi_dev" >/dev/null 2>&1 || true
+            timeout 10 sudo nmcli dev wifi rescan ifname "$wifi_dev" >/dev/null 2>&1 || true
             sleep 4 
 
             # Mapfile safely handles SSIDs with spaces. sort -u drops duplicated BSSIDs.
             mapfile -t networks < <(nmcli -g SSID dev wifi list ifname "$wifi_dev" 2>/dev/null | grep -v '^$' | sort -u || true)
 
             if [[ ${#networks[@]} -eq 0 ]]; then
-                log_error "No broadcasting 802.11 networks found in range."
-                fail_and_exit
+                log_warn "No networks found on initial scan. Retrying scan..."
+                timeout 10 sudo nmcli dev wifi rescan ifname "$wifi_dev" >/dev/null 2>&1 || true
+                sleep 4
+                mapfile -t networks < <(nmcli -g SSID dev wifi list ifname "$wifi_dev" 2>/dev/null | grep -v '^$' | sort -u || true)
+                
+                if [[ ${#networks[@]} -eq 0 ]]; then
+                    log_error "No broadcasting 802.11 networks found in range."
+                    fail_and_exit
+                fi
             fi
 
             log_info "Discovered ${#networks[@]} available networks."
@@ -289,7 +315,7 @@ select conn_method in "LAN (Wired)" "Wi-Fi"; do
                     echo -e "\n"
                     log_info "Negotiating handshake with '$ssid'..."
 
-                    nm_cmd=(nmcli -w 15 dev wifi connect "$ssid" ifname "$wifi_dev")
+                    nm_cmd=(sudo nmcli -w 15 dev wifi connect "$ssid" ifname "$wifi_dev")
                     [[ -n "$pass" ]] && nm_cmd+=(password "$pass")
 
                     if timeout 30 "${nm_cmd[@]}" >/dev/null 2>&1; then
@@ -298,7 +324,7 @@ select conn_method in "LAN (Wired)" "Wi-Fi"; do
                         active_con=$(nmcli -g GENERAL.CONNECTION dev show "$wifi_dev" 2>/dev/null | awk 'NR==1' || true)
 
                         if [[ -n "$active_con" ]]; then
-                            nmcli con modify "$active_con" \
+                            sudo nmcli con modify "$active_con" \
                                 connection.autoconnect yes \
                                 connection.autoconnect-priority 99 >/dev/null 2>&1 || true
                             log_info "Profile '$active_con' hardened for future high-priority autoconnect."
