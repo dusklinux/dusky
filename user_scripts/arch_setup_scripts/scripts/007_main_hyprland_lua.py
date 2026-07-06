@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# replaces the temp lua config with the defualt config
 """
 Initializes or validates the core 'hyprland.lua' configuration file.
 Ensures the template in defaults/main/hyprland.lua is deployed to ~/.config/hypr/hyprland.lua.
