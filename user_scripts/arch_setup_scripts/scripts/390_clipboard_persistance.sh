@@ -143,45 +143,61 @@ fi
 # =============================================================================
 # Post-Process (Live Daemon Reload)
 # =============================================================================
-if command -v uwsm >/dev/null 2>&1; then
+if command -v uwsm >/dev/null 2>&1 && uwsm check is-active >/dev/null 2>&1; then
     printf '\n'
-    log_info "Changes saved. Live-reloading clipboard daemons..."
+    log_info "Changes saved. Live-reloading clipboard daemons under UWSM session..."
 
-    # 1. Source the new state to dictate daemon paths
+    # 1. Source and propagate the new state to all layers
     if [[ -f "$DB_ENV_FILE" ]]; then
         source "$DB_ENV_FILE"
+        export CLIPHIST_DB_PATH
+        systemctl --user import-environment CLIPHIST_DB_PATH
+        dbus-update-activation-environment --systemd CLIPHIST_DB_PATH
+        if command -v hyprctl >/dev/null 2>&1; then
+            hyprctl setenv CLIPHIST_DB_PATH "$CLIPHIST_DB_PATH" 2>/dev/null || :
+        fi
     else
         unset CLIPHIST_DB_PATH
+        systemctl --user unset-environment CLIPHIST_DB_PATH
+        dbus-update-activation-environment --systemd --remove CLIPHIST_DB_PATH
+        if command -v hyprctl >/dev/null 2>&1; then
+            hyprctl setenv CLIPHIST_DB_PATH "" 2>/dev/null || :
+        fi
     fi
 
     # 2. Terminate existing watchers securely
     pkill -f "wl-paste.*cliphist" 2>/dev/null || :
 
-    # 3. Respawn the daemons detached from the script's lifecycle
-    uwsm app -- wl-paste --type text --watch cliphist store >/dev/null 2>&1 &
-    uwsm app -- wl-paste --type image --watch cliphist store >/dev/null 2>&1 &
+    # 3. Respawn the daemons synchronously (they return immediately once registered with systemd)
+    uwsm app -- sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store' >/dev/null 2>&1
+    uwsm app -- sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store' >/dev/null 2>&1
+
+    log_success "Daemons reloaded. New persistence mode is now active globally without requiring a reboot!"
+else
+    printf '\n'
+    log_info "UWSM session not active. Live-reloading clipboard daemons in background..."
+
+    # 1. Source local shell environment
+    if [[ -f "$DB_ENV_FILE" ]]; then
+        source "$DB_ENV_FILE"
+        export CLIPHIST_DB_PATH
+        if command -v hyprctl >/dev/null 2>&1; then
+            hyprctl setenv CLIPHIST_DB_PATH "$CLIPHIST_DB_PATH" 2>/dev/null || :
+        fi
+    else
+        unset CLIPHIST_DB_PATH
+        if command -v hyprctl >/dev/null 2>&1; then
+            hyprctl setenv CLIPHIST_DB_PATH "" 2>/dev/null || :
+        fi
+    fi
+
+    # 2. Terminate existing watchers securely
+    pkill -f "wl-paste.*cliphist" 2>/dev/null || :
+
+    # 3. Respawn the daemons directly in the background
+    sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store' >/dev/null 2>&1 &
+    sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store' >/dev/null 2>&1 &
     disown -a
 
-    log_success "Daemons reloaded. New persistence mode is now active."
-else
-    log_warn "uwsm command not found in PATH. Ensure you are in a UWSM session."
-    log_info "You will need to log out and back in for changes to take effect."
-fi
-
-# =============================================================================
-# CRITICAL REBOOT WARNING
-# =============================================================================
-if [[ "$_QUIET_MODE" != "true" ]]; then
-    printf '\n'
-    printf '\033[1;37;41m%s\033[0m\n' "================================================================================"
-    printf '\033[1;37;41m%s\033[0m\n' "||                                                                            ||"
-    printf '\033[1;37;41m%s\033[0m\n' "||                      !!! SYSTEM REBOOT REQUIRED !!!                        ||"
-    printf '\033[1;37;41m%s\033[0m\n' "||                                                                            ||"
-    printf '\033[1;37;41m%s\033[0m\n' "||  THE CLIPBOARD IS NOW IN A TRANSITIONAL STATE AND WILL NOT                 ||"
-    printf '\033[1;37;41m%s\033[0m\n' "||  FUNCTION CORRECTLY UNTIL A FULL SYSTEM REBOOT IS PERFORMED.               ||"
-    printf '\033[1;37;41m%s\033[0m\n' "||                                                                            ||"
-    printf '\033[1;37;41m%s\033[0m\n' "||  PLEASE SAVE ALL YOUR WORK AND REBOOT YOUR COMPUTER AT THE EARLIEST.       ||"
-    printf '\033[1;37;41m%s\033[0m\n' "||                                                                            ||"
-    printf '\033[1;37;41m%s\033[0m\n' "================================================================================"
-    printf '\n'
+    log_success "Daemons reloaded in background. New persistence mode is now active!"
 fi

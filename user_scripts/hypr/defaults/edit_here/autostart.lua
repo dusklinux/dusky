@@ -61,9 +61,6 @@ hl.on("hyprland.start", function()
     -- hl.exec_cmd("uwsm-app -- nm-applet")
 
     -- --- Slow app launch fix -- set systemd vars
-    -- The subshell evaluating $(env | cut -d'=' -f 1) is passed directly as a string 
-    -- to be evaluated by the shell instance spawned by hl.exec_cmd
-    hl.exec_cmd("systemctl --user import-environment $(env | cut -d'=' -f 1)")
     hl.exec_cmd("dbus-update-activation-environment --systemd --all")
 
     -- EG: dusky glance (uncomment only one at a time)
