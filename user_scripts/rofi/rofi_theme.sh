@@ -15,6 +15,14 @@
 set -Eeuo pipefail
 shopt -s inherit_errexit
 
+# --- LOCKING TO PREVENT CONCURRENT INSTANCES ---
+readonly LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/rofi_theme.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+    # Another instance is already running, exit silently to prevent CPU spikes/loops
+    exit 0
+fi
+
 # --- CONFIGURATION ---
 readonly THEME_CTL="${HOME}/user_scripts/theme_matugen/theme_ctl.sh"
 readonly PRESETS_FILE="${HOME}/.config/dusky/settings/dusky_theme/rofi_theme_presets"
@@ -135,7 +143,7 @@ run_menu() {
     local options=("$@")
     local selected exit_code=0
     
-    local -a rofi_cmd=(uwsm-app -- rofi -dmenu -i -p "$prompt" -theme-str "$ROFI_THEME_STR" -format s)
+    local -a rofi_cmd=(rofi -dmenu -i -p "$prompt" -theme-str "$ROFI_THEME_STR" -format s)
     [[ "$allow_custom" == "false" ]] && rofi_cmd+=("-no-custom")
 
     if (( ${#options[@]} > 0 )); then
