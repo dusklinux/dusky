@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Dusky Dotfiles Manager - Zenith Edition (Synchronous)
+Dusky Dotfiles Manager - Obsidian Edition (Absolute Synchronous)
 Architecture: Arch Linux / Hyprland / Wayland Context
 Execution: Python 3.14 Strict Synchronous I/O
 """
@@ -34,7 +34,8 @@ os.environ["GIT_WORK_TREE"] = str(WORK_TREE)
 console = Console()
 
 type GitResult = tuple[int, str, str]
-type PathMap = dict[str, str]
+# Dictionary mapping the UI display string to a tuple of (new_path, old_path)
+type PathMap = dict[str, tuple[str, str | None]]
 
 # --- 2. SYNCHRONOUS GIT ENGINE ---
 def run_git(
@@ -180,14 +181,21 @@ def sync_all() -> None:
     changed_paths = []
     entries = status_out.split('\0')[:-1]
     it = iter(entries)
+    
     for entry in it:
         if len(entry) < 3:
             continue
         status_code = entry[:2]
         path = entry[3:]
+        
+        orig_path = None
         if "R" in status_code or "C" in status_code:
-            next(it, None)
+            orig_path = next(it, None)
+            
+        # Ensure both sides of a rename are captured if they fall within tracking bounds
         changed_paths.append(path)
+        if orig_path:
+            changed_paths.append(orig_path)
 
     paths_to_stage = []
     for cp in changed_paths:
@@ -213,10 +221,7 @@ def sync_all() -> None:
             literal_pathspecs=True
         )
         
-        console.print("[bold green]✔[/bold green] Payload staged successfully:")
-        for path in paths_to_stage:
-            console.print(f"  - [dim]{path}[/dim]")
-            
+        console.print("[bold green]✔[/bold green] Payload staged successfully.")
         commit_and_push(paths_to_stage)
     except subprocess.CalledProcessError:
         console.print("[bold red]✖ Stage operation aborted due to Git bounds error.[/bold red]")
@@ -251,11 +256,20 @@ def sync_single() -> None:
                 
         if valid_paths is not None:
             matched = False
-            for vp in valid_paths:
-                vp_clean = vp.rstrip("/")
-                if path == vp_clean or path.startswith(vp_clean + "/"):
-                    matched = True
+            # We must verify if EITHER side of a rename matches the tracking list
+            paths_to_check = [path]
+            if orig_path:
+                paths_to_check.append(orig_path)
+                
+            for ptc in paths_to_check:
+                for vp in valid_paths:
+                    vp_clean = vp.rstrip("/")
+                    if ptc == vp_clean or ptc.startswith(vp_clean + "/"):
+                        matched = True
+                        break
+                if matched:
                     break
+                    
             if not matched:
                 continue
 
@@ -263,7 +277,8 @@ def sync_single() -> None:
             display = f"{status_code} {path} (from {orig_path})"
         else:
             display = f"{status_code} {path}"
-        path_map[display] = path
+            
+        path_map[display] = (path, orig_path)
 
     if not path_map:
         console.print("[bold yellow]⚠[/bold yellow] No changed files match .git_dusky_list.")
@@ -273,7 +288,15 @@ def sync_single() -> None:
     if not selected_lines:
         return
     
-    paths_to_stage = [path_map[line] for line in selected_lines if line in path_map]
+    # Flatten both new and old paths to ensure Git correctly registers atomic renames
+    paths_to_stage = []
+    for line in selected_lines:
+        if line in path_map:
+            p, op = path_map[line]
+            paths_to_stage.append(p)
+            if op:
+                paths_to_stage.append(op)
+                
     payload = "\0".join(paths_to_stage) + "\0"
     
     try:
@@ -285,17 +308,15 @@ def sync_single() -> None:
             check=True,
             literal_pathspecs=True
         )
-        console.print(f"[bold green]✔[/bold green] Staged {len(paths_to_stage)} file(s).")
+        console.print(f"[bold green]✔[/bold green] Staged files successfully.")
         commit_and_push(paths_to_stage)
     except subprocess.CalledProcessError:
         console.print("[bold red]✖ Individual stage aborted due to Git error.[/bold red]")
 
 def commit_and_push(files: list[str] | None = None) -> None:
-    """Atomic commit and push transaction logic."""
-    # If files is provided, filter them against actual staged files
-    # to avoid passing empty directories or untracked non-existent pathspecs
-    # that would cause git commit to fail with a pathspec error.
+    """Atomic commit and push transaction logic enforcing strict ARG_MAX safety."""
     commit_files: list[str] | None = None
+    
     if files:
         _, staged_out, _ = run_git("diff", "--cached", "--name-only", "-z")
         staged_list = [f for f in staged_out.split("\0") if f]
@@ -325,13 +346,17 @@ def commit_and_push(files: list[str] | None = None) -> None:
 
     try:
         commit_args = ["commit"]
+        payload = None
+        
+        # Flawlessly routes `--only` via stdin payloads to prevent ARG_MAX kernel crashes
         if commit_files:
             commit_args.append("--only")
-        commit_args.extend(["-m", msg])
-        if commit_files:
-            commit_args.extend(["--", *commit_files])
+            commit_args.extend(["--pathspec-from-file=-", "--pathspec-file-nul"])
+            payload = ("\0".join(commit_files) + "\0").encode('utf-8')
             
-        run_git(*commit_args, check=True)
+        commit_args.extend(["-m", msg])
+            
+        run_git(*commit_args, input_data=payload, check=True, literal_pathspecs=True)
     except subprocess.CalledProcessError:
         console.print("[bold red]✖ Commit failed (Hooks/Formatting block).[/bold red]")
         return
