@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup sudoers scripts and binaries for password less exicution
+# setup sudoers scripts and binaries for password less execution
 # ==============================================================================
 #  SUDOERS NOPASSWD AUTOMATOR
 #  Target: Arch Linux / Bash 5.3.9+
