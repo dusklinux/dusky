@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# copies dbus/system servcies to required locations
 # -----------------------------------------------------------------------------
 # Script: link_service_files.sh
 # Description: Robustly manages symbolic links for system services (DBus/Systemd).

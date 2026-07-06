@@ -61,13 +61,15 @@ def run_git(
         *args
     ]
     
-    proc = subprocess.run(
-        cmd,
-        input=input_data,
-        stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.PIPE if capture else None,
-        env=git_env
-    )
+    kwargs = {
+        "stdout": subprocess.PIPE if capture else None,
+        "stderr": subprocess.PIPE if capture else None,
+        "env": git_env
+    }
+    if input_data is not None:
+        kwargs["input"] = input_data
+
+    proc = subprocess.run(cmd, **kwargs)
     
     if check and proc.returncode != 0:
         if capture and proc.stderr:
