@@ -50,15 +50,22 @@ setopt HIST_VERIFY             # Expand history (!!) into the buffer, don't run 
 setopt EXTENDED_GLOB # Enable extended globbing features (e.g., `^` for negation)
 
 # 1. zstyle configurations MUST be declared before compinit
+if [[ -z "$LS_COLORS" ]] && command -v dircolors >/dev/null; then
+  eval "$(dircolors -b)"
+fi
+
 zstyle ':completion:*' menu select                 # Enable visual menu selection
 zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}" # Match LS_COLORS
 zstyle ':completion:*:descriptions' format '%B%F{yellow}%d%f%b' # Colored category headers
 zstyle ':completion:*' group-name ''               # Group completions by type
 # Fuzzy matching: Case-insensitive, partial-word, and substring completion
 zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|=*' 'l:|=* r:|=*'
+
 # Cache heavy completions (like pacman/yay) for instant loading
+local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
+[[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
 zstyle ':completion:*' use-cache on
-zstyle ':completion:*' cache-path "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompcache"
+zstyle ':completion:*' cache-path "$cache_dir/zcompcache"
 
 # 2. Optimized initialization: Only regenerate compdump cache once every 24 hours.
 autoload -Uz compinit
@@ -71,6 +78,7 @@ else
   compinit     # Cache is old or missing, regenerate it (Slow, happens once a day)
   touch "$zcompdump"
 fi
+unset cache_dir zcompdump dump_cache
 
 # -----------------------------------------------------------------------------
 # [4] KEYBINDINGS & SHELL OPTIONS
@@ -84,7 +92,7 @@ setopt PUSHD_IGNORE_DUPS    # Don't push duplicate directories onto the stack.
 
 # --- Vi Mode Keybindings ---
 bindkey -v
-export KEYTIMEOUT=1 # 10ms transition delay (instant mode switching)
+KEYTIMEOUT=1 # 10ms transition delay (instant mode switching)
 
 # --- Neovim Integration ---
 # Press 'v' in normal mode to edit the current command string in Neovim
@@ -96,8 +104,15 @@ bindkey -M vicmd v edit-command-line
 autoload -U history-search-end
 zle -N history-beginning-search-backward-end history-search-end
 zle -N history-beginning-search-forward-end history-search-end
-bindkey "${terminfo[kcuu1]:-^[[A}" history-beginning-search-backward-end
-bindkey "${terminfo[kcud1]:-^[[B}" history-beginning-search-forward-end
+
+# Bind Arrow Keys for history search across both vi insert (viins) and normal/command (vicmd) modes.
+# We explicitly bind both application mode (terminfo) and normal mode (standard ESC) sequences.
+for keymap in viins vicmd; do
+  bindkey -M "$keymap" "${terminfo[kcuu1]:-^[[A}" history-beginning-search-backward-end
+  bindkey -M "$keymap" "^[[A" history-beginning-search-backward-end
+  bindkey -M "$keymap" "${terminfo[kcud1]:-^[[B}" history-beginning-search-forward-end
+  bindkey -M "$keymap" "^[[B" history-beginning-search-forward-end
+done
 
 # -----------------------------------------------------------------------------
 # [5] ALIASES & FUNCTIONS (Main Core)
@@ -114,7 +129,7 @@ alias disk_usage='sudo btrfs filesystem usage /'
 alias ncdu='gdu'
 alias unlock='$HOME/user_scripts/drives/drive_manager/drive_manager.py unlock'
 alias lock='$HOME/user_scripts/drives/drive_manager/drive_manager.py lock'
-alias io_drives='~/user_scripts/drives/io_monitor.sh'
+alias io_drives='~/user_scripts/drives/dusky_disk_monitor_io.py'
 
 # Searching & Differencing
 alias diff='delta --side-by-side'
@@ -127,16 +142,16 @@ alias tui='python ~/user_scripts/dusky_tui/python/main/main.py'
 alias sendlogs='~/user_scripts/arch_setup_scripts/send_logs.sh --auto'
 alias update_dusky='~/user_scripts/update_dusky/update_dusky.sh'
 alias dusky_force_sync_github='~/user_scripts/update_dusky/dusky_force_sync_github.sh'
-alias darkmode='~/user_scripts/theme_matugen/matugen_config.sh --mode dark'
-alias lightmode='~/user_scripts/theme_matugen/matugen_config.sh --mode light'
-alias run_sysbench='~/user_scripts/performance/sysbench_benchmark.sh'
+alias darkmode='~/user_scripts/theme_matugen/theme_ctl.sh set --mode dark'
+alias lightmode='~/user_scripts/theme_matugen/theme_ctl.sh set --mode light'
+alias run_sysbench='~/user_scripts/performance/sysbench_benchmark.py'
 
 # Memory Optimization
 alias mem_optimize='sudo systemctl start dusky_boot_mem_reclaim.service'
 
 # Networking
 alias iphone_vnc='~/user_scripts/networking/iphone_vnc.sh'
-alias wifi_security='~/user_scripts/networking/ax201_wifi_testing.sh'
+alias wifi_security='~/user_scripts/networking/airmon_ng.sh'
 
 # Eza Integration (Replaces standard ls)
 if command -v eza >/dev/null; then
