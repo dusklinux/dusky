@@ -1064,6 +1064,7 @@ main() {
 
     EXECUTION_PHASE=1
     export PYTHONUNBUFFERED=1 # Unbuffer Python outputs explicitly ensuring real-time log piping.
+    trap 'true' INT
 
     for entry in "${INSTALL_SEQUENCE[@]}"; do
         [[ -n "${entry//[[:space:]]/}" ]] || continue
