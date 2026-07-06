@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# configures ufw firewall rules
 # ==============================================================================
 # Script:  060_ufw_setup.sh
 # Purpose: Installs and configures UFW for an Arch Linux workstation.

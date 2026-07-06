@@ -65,7 +65,8 @@ def run_git(
     kwargs = {
         "stdout": subprocess.PIPE if capture else None,
         "stderr": subprocess.PIPE if capture else None,
-        "env": git_env
+        "env": git_env,
+        "cwd": str(WORK_TREE)
     }
     if input_data is not None:
         kwargs["input"] = input_data
@@ -122,7 +123,8 @@ def fzf_select(choices: list[str], prompt: str = "Select", multi: bool = False, 
         fzf_cmd,
         input=payload.encode('utf-8'),
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL
+        stderr=subprocess.DEVNULL,
+        cwd=str(WORK_TREE)
     )
     
     # 130 is the standard SIGINT/ESC exit code for fzf.
