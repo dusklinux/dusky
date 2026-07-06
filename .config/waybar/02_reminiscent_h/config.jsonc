@@ -197,7 +197,7 @@
         "format": "",
         "tooltip": true,
         "tooltip-format": "Clipboard",
-        "on-click": "uwsm-app -- pkill rofi; rofi -modi 'clipboard:~/user_scripts/rofi/rofi_cliphist.sh' -show clipboard"
+        "on-click": "uwsm-app -- pkill rofi; rofi -modi 'clipboard:~/user_scripts/rofi/rofi_clipboard.sh' -show clipboard"
     },
 
     "custom/calculator": {

@@ -438,7 +438,7 @@ hl.bind(
 -- --- Clipboard & Screenshot ---
 -- hl.bind(
 --     "SUPER + V",
---     hl.dsp.exec_cmd("pkill rofi; rofi -modi \"clipboard:" .. dusky_scripts .. "rofi/rofi_cliphist.sh\" -show clipboard"),
+--     hl.dsp.exec_cmd("pkill rofi; rofi -modi \"clipboard:" .. dusky_scripts .. "rofi/rofi_clipboard.sh\" -show clipboard"),
 --     { description = "Clipboard History" }
 -- )
 
