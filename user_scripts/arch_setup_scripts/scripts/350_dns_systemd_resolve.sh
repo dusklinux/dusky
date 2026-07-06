@@ -280,12 +280,17 @@ ensure_resolv_conf_symlink() {
     local current=''
 
     if [[ -L "$ETC_RESOLV" ]]; then
-        current="$(readlink -- "$ETC_RESOLV" || true)"
+        current="$(readlink -f -- "$ETC_RESOLV" || true)"
     fi
 
     if [[ "$current" == "$target" ]]; then
         log_info "$ETC_RESOLV already points to $target"
         return 0
+    fi
+
+    # Clear immutable attribute in case file is write-protected
+    if command -v chattr >/dev/null 2>&1; then
+        chattr -i "$ETC_RESOLV" 2>/dev/null || true
     fi
 
     if [[ -e "$ETC_RESOLV" || -L "$ETC_RESOLV" ]]; then
