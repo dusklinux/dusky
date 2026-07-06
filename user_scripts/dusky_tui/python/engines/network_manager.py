@@ -755,10 +755,16 @@ class NetworkManagerEngine(BaseEngine):
         if not wifi_dev:
             return 0
         try:
+            # Try using sudo -n if credentials are cached, fallback to raw iw
             res = subprocess.run(
-                ["iw", "dev", wifi_dev, "station", "dump"],
+                ["sudo", "-n", "iw", "dev", wifi_dev, "station", "dump"],
                 capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=5
             )
+            if res.returncode != 0:
+                res = subprocess.run(
+                    ["iw", "dev", wifi_dev, "station", "dump"],
+                    capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=5
+                )
             return len(re.findall(r"^Station", res.stdout, re.MULTILINE))
         except Exception:
             return 0
