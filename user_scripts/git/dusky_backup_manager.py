@@ -158,7 +158,7 @@ def generate_ssh_key(email: str) -> None:
 
     if SSH_KEY_PATH.is_file():
         console.print(f"[warning]⚠ Warn: SSH key already exists at {SSH_KEY_PATH}[/warning]")
-        console.print("[bold cyan]Do you want to overwrite it? [y/N][/bold cyan]")
+        console.print("[bold cyan]Do you want to overwrite it? (y/N)[/bold cyan]")
         ans = input(" ❯ ").strip().lower()
         if ans not in ("y", "yes"):
             console.print("[info]➔ Using existing SSH key.[/info]")
@@ -494,7 +494,7 @@ def main() -> Never:
         border_style="cyan",
         box=box.ROUNDED
     ))
-    console.print("\n[bold cyan]Execute architecture deployment? [Y/n][/bold cyan]")
+    console.print("\n[bold cyan]Execute architecture deployment? (Y/n)[/bold cyan]")
     ans = input(" ❯ ").strip().lower()
     if ans and ans not in ("y", "yes"):
         console.print("[error]✖ Deployment sequence completely aborted by operator.[/error]")

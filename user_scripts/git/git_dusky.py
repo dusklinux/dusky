@@ -405,7 +405,7 @@ def commit_and_push(files: list[str] | None = None, local_only: bool = False) ->
         console.print("[bold green]✔[/bold green] Committed changes locally.")
         return
         
-    console.print("[bold cyan]Execute push to remote origin? [Y/n][/bold cyan]")
+    console.print("[bold cyan]Execute push to remote origin? (Y/n)[/bold cyan]")
     ans = input(" ❯ ").strip().lower()
     if not ans or ans in ("y", "yes"):
         console.print("[bold blue]Establishing connection...[/bold blue]")
@@ -422,7 +422,7 @@ def discard_local_changes() -> None:
         "This will permanently erase all uncommitted modifications (both staged and unstaged) in the tracked files.",
         border_style="red"
     ))
-    console.print("[bold red]Are you absolutely sure you want to discard all uncommitted changes? [y/N][/bold red]")
+    console.print("[bold red]Are you absolutely sure you want to discard all uncommitted changes? (y/N)[/bold red]")
     ans = input(" ❯ ").strip().lower()
     if ans in ("y", "yes"):
         try:
@@ -445,7 +445,7 @@ def quick_step_back() -> None:
         console.print("[bold red]✖ Error:[/bold red] Cannot step back. Must have at least two commits in history.")
         return
         
-    console.print("[bold red]Step back 1 commit on both local and remote? [y/N][/bold red]")
+    console.print("[bold red]Step back 1 commit on both local and remote? (y/N)[/bold red]")
     ans = input(" ❯ ").strip().lower()
     if ans in ("y", "yes"):
         try:
@@ -479,14 +479,14 @@ def safe_revert_last_commit() -> None:
         console.print("[bold red]✖ Error:[/bold red] No history found to revert.")
         return
         
-    console.print("[bold cyan]Execute safe revert of the last commit? [Y/n][/bold cyan]")
+    console.print("[bold cyan]Execute safe revert of the last commit? (Y/n)[/bold cyan]")
     ans = input(" ❯ ").strip().lower()
     if not ans or ans in ("y", "yes"):
         try:
             run_git("revert", "--no-edit", "HEAD", capture=False, check=True)
             console.print("[bold green]✔[/bold green] Safe revert commit created locally.")
             
-            console.print("[bold cyan]Push the revert commit to remote? [Y/n][/bold cyan]")
+            console.print("[bold cyan]Push the revert commit to remote? (Y/n)[/bold cyan]")
             ans_push = input(" ❯ ").strip().lower()
             if not ans_push or ans_push in ("y", "yes"):
                 console.print("[bold blue]Pushing changes...[/bold blue]")
@@ -523,14 +523,14 @@ def nuclear_revert() -> None:
     commit_hash = target[0].split()[0]
     console.print(f"\n[bold yellow]Target Anchor:[/bold yellow] {target[0]}")
     
-    console.print(f"[bold red]Execute HARD RESET to {commit_hash}? (Wipes local tracked changes) [y/N][/bold red]")
+    console.print(f"[bold red]Execute HARD RESET to {commit_hash}? (Wipes local tracked changes) (y/N)[/bold red]")
     ans = input(" ❯ ").strip().lower()
     if ans in ("y", "yes"):
         try:
             run_git("reset", "--hard", commit_hash, capture=False, check=True)
             console.print(f"[bold green]✔[/bold green] Local state mathematically identical to {commit_hash}.")
             
-            console.print("[bold red]FORCE PUSH to overwrite remote timeline? [y/N][/bold red]")
+            console.print("[bold red]FORCE PUSH to overwrite remote timeline? (y/N)[/bold red]")
             ans_push = input(" ❯ ").strip().lower()
             if ans_push in ("y", "yes"):
                 _, branch_out, _ = run_git("branch", "--show-current")
