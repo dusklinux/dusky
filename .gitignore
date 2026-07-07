@@ -9,3 +9,10 @@ user_scripts/theme_matugen/firefox/config.json
 .config/uwsm/env.d/
 .config/zellij/themes/matugen.kdl
 .config/foot/foot-colors.ini
+
+# Python compilation cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/

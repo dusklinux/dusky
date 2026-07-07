@@ -105,6 +105,10 @@ def matches_pathspec(path: str | None, valid_paths: list[str]) -> bool:
     if not path:
         return False
         
+    # Explicitly ignore compiler cache folders/files
+    if "__pycache__" in path or path.endswith((".pyc", ".pyo", ".pyd")):
+        return False
+        
     for vp in valid_paths:
         vp_clean = vp.rstrip("/")
         # Exact match or Directory prefix match
@@ -244,16 +248,13 @@ def sync_all() -> None:
                 check=True,
                 literal_pathspecs=True
             )
-            console.print("[bold green]✔[/bold green] Payload staged successfully:")
-            for p in sorted(paths_to_add):
-                console.print(f"  [dim]➔ {p}[/dim]")
         except subprocess.CalledProcessError:
             console.print("[bold red]✖ Stage operation aborted due to Git bounds error.[/bold red]")
             return
-    else:
-        console.print("[bold green]✔[/bold green] Payload already staged (no unstaged changes):")
-        for p in sorted(paths_to_stage):
-            console.print(f"  [dim]➔ {p}[/dim]")
+
+    console.print("[bold green]✔[/bold green] Payload staged successfully:")
+    for p in sorted(paths_to_stage):
+        console.print(f"  [dim]➔ {p}[/dim]")
         
     commit_and_push(paths_to_stage)
 
