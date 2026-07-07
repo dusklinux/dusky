@@ -503,11 +503,46 @@ def commit_and_push(files: list[str] | None = None, local_only: bool = False) ->
 
 def discard_local_changes() -> None:
     """Discards all uncommitted changes (both staged and unstaged) in the working tree."""
+    code, status_out, _ = run_git("status", "--porcelain=v1", "-z")
+    if code != 0:
+        console.print("[bold red]✖ Error: Failed to retrieve repository status.[/bold red]")
+        return
+        
+    entries = status_out.split('\0')[:-1]
+    changed_tracked: list[str] = []
+    it = iter(entries)
+    for entry in it:
+        if len(entry) < 3:
+            continue
+        status_code = entry[:2]
+        path = entry[3:]
+        
+        orig_path = next(it, None) if "R" in status_code or "C" in status_code else None
+        
+        # Untracked files are untouched by git reset --hard HEAD
+        if status_code == "??" or status_code == "??":
+            continue
+            
+        display = f"➔ {path}"
+        if orig_path:
+            display += f" (from {orig_path})"
+        changed_tracked.append(display)
+
+    if not changed_tracked:
+        console.print("[bold green]✔[/bold green] Working tree already clean. No changes to discard.")
+        return
+
     console.print(Panel(
         "[bold red]!!! DISCARD LOCAL CHANGES !!![/bold red]\n"
         "This will permanently erase all uncommitted modifications (both staged and unstaged) in the tracked files.",
         border_style="red"
     ))
+    
+    console.print("\n[bold yellow]The following modified/deleted files will be PERMANENTLY lost:[/bold yellow]")
+    for item in sorted(changed_tracked):
+        console.print(f"  [red]{item}[/red]")
+    console.print()
+
     console.print("[bold red]Are you absolutely sure you want to discard all uncommitted changes? (y/N)[/bold red]")
     ans = input(" ❯ ").strip().lower()
     if ans in ("y", "yes"):
