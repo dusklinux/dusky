@@ -238,12 +238,18 @@ def stage_and_commit_dotfiles(commit_msg: str) -> None:
                 console.print(f"[muted]  ➔ Skipping missing untracked path: {clean}[/muted]")
 
         if valid_paths:
-            console.print(f"[info]Staging {len(valid_paths)} files...[/info]")
+            console.print(f"[info]Processing staging payload ({len(valid_paths)} paths)...[/info]")
             payload = "\0".join(valid_paths) + "\0"
             code, _, stderr = dotgit("add", "--pathspec-from-file=-", "--pathspec-file-nul", input_data=payload.encode("utf-8"))
             if code != 0:
                 console.print(f"[error]✖ Error staging files:[/error] {stderr.strip()}")
                 sys.exit(1)
+            
+            # Count actual changed files that got staged
+            _, diff_out, _ = dotgit("diff", "--cached", "--name-only", "-z")
+            staged_count = len(list(filter(None, diff_out.split('\0'))))
+            if staged_count > 0:
+                console.print(f"[success]✔ Staged {staged_count} changed files.[/success]")
         else:
             console.print("[warning]⚠ Warn: No valid files found in .git_dusky_list. Staging tracked changes only.[/warning]")
             dotgit("add", "-u")
