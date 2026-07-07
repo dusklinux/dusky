@@ -11,6 +11,7 @@ import shutil
 import shlex
 import fnmatch
 import subprocess
+import readline
 from pathlib import Path
 from typing import Never
 
@@ -377,7 +378,8 @@ def commit_and_push(files: list[str] | None = None, local_only: bool = False) ->
             console.print("[bold yellow]⚠[/bold yellow] Index empty. Nothing to commit.")
             return
 
-    msg = Prompt.ask("\n[bold cyan]Commit Message[/bold cyan]").strip()
+    console.print("\n[bold cyan]Commit Message[/bold cyan]")
+    msg = input(" ❯ ").strip()
     if not msg:
         console.print("[bold red]✖ Aborted:[/bold red] Commit message cannot be empty or whitespace.")
         return
@@ -403,7 +405,9 @@ def commit_and_push(files: list[str] | None = None, local_only: bool = False) ->
         console.print("[bold green]✔[/bold green] Committed changes locally.")
         return
         
-    if Confirm.ask("[bold cyan]Execute push to remote origin?[/bold cyan]", default=True):
+    console.print("[bold cyan]Execute push to remote origin? [Y/n][/bold cyan]")
+    ans = input(" ❯ ").strip().lower()
+    if not ans or ans in ("y", "yes"):
         console.print("[bold blue]Establishing connection...[/bold blue]")
         try:
             run_git("push", capture=False, check=True)
@@ -418,7 +422,9 @@ def discard_local_changes() -> None:
         "This will permanently erase all uncommitted modifications (both staged and unstaged) in the tracked files.",
         border_style="red"
     ))
-    if Confirm.ask("[bold red]Are you absolutely sure you want to discard all uncommitted changes?[/bold red]", default=False):
+    console.print("[bold red]Are you absolutely sure you want to discard all uncommitted changes? [y/N][/bold red]")
+    ans = input(" ❯ ").strip().lower()
+    if ans in ("y", "yes"):
         try:
             run_git("reset", "--hard", "HEAD", capture=False, check=True)
             console.print("[bold green]✔[/bold green] Successfully discarded all local changes (hard reset to HEAD).")
@@ -428,7 +434,7 @@ def discard_local_changes() -> None:
 def quick_step_back() -> None:
     """Rolls back the repository by exactly 1 commit on both local and remote."""
     console.print(Panel(
-        "[bold yellow]⚠ QUICK STEP BACK 1 COMMIT (Local & Remote) ⚠[/bold yellow]\n"
+        "[bold yellow]⚠ DELETE LAST COMMIT COMPLETELY (Local & Remote Reset) ⚠[/bold yellow]\n"
         "This will hard-reset the local repository to HEAD~1 and force-push to origin,\n"
         "permanently deleting the last commit from both local and remote history.",
         border_style="yellow"
@@ -439,7 +445,9 @@ def quick_step_back() -> None:
         console.print("[bold red]✖ Error:[/bold red] Cannot step back. Must have at least two commits in history.")
         return
         
-    if Confirm.ask("[bold red]Step back 1 commit on both local and remote?[/bold red]", default=False):
+    console.print("[bold red]Step back 1 commit on both local and remote? [y/N][/bold red]")
+    ans = input(" ❯ ").strip().lower()
+    if ans in ("y", "yes"):
         try:
             run_git("reset", "--hard", "HEAD~1", capture=False, check=True)
             console.print("[bold green]✔[/bold green] Local repository reset to HEAD~1.")
@@ -460,7 +468,7 @@ def quick_step_back() -> None:
 def safe_revert_last_commit() -> None:
     """Safe non-destructive revert that appends a new commit undoing the last commit."""
     console.print(Panel(
-        "[bold green]✔ SAFE REVERT LAST COMMIT (Local & Remote) ✔[/bold green]\n"
+        "[bold green]✔ UNDO LAST COMMIT SAFELY (Create Revert Commit) ✔[/bold green]\n"
         "This will create a new commit that undoes the changes of the last commit,\n"
         "preserving the commit history without rewriting it.",
         border_style="green"
@@ -471,12 +479,16 @@ def safe_revert_last_commit() -> None:
         console.print("[bold red]✖ Error:[/bold red] No history found to revert.")
         return
         
-    if Confirm.ask("[bold cyan]Execute safe revert of the last commit?[/bold cyan]", default=True):
+    console.print("[bold cyan]Execute safe revert of the last commit? [Y/n][/bold cyan]")
+    ans = input(" ❯ ").strip().lower()
+    if not ans or ans in ("y", "yes"):
         try:
             run_git("revert", "--no-edit", "HEAD", capture=False, check=True)
             console.print("[bold green]✔[/bold green] Safe revert commit created locally.")
             
-            if Confirm.ask("[bold cyan]Push the revert commit to remote?[/bold cyan]", default=True):
+            console.print("[bold cyan]Push the revert commit to remote? [Y/n][/bold cyan]")
+            ans_push = input(" ❯ ").strip().lower()
+            if not ans_push or ans_push in ("y", "yes"):
                 console.print("[bold blue]Pushing changes...[/bold blue]")
                 run_git("push", capture=False, check=True)
                 console.print("[bold green]✔[/bold green] Revert commit pushed successfully.")
@@ -511,12 +523,16 @@ def nuclear_revert() -> None:
     commit_hash = target[0].split()[0]
     console.print(f"\n[bold yellow]Target Anchor:[/bold yellow] {target[0]}")
     
-    if Confirm.ask(f"[bold red]Execute HARD RESET to {commit_hash}? (Wipes local tracked changes)[/bold red]", default=False):
+    console.print(f"[bold red]Execute HARD RESET to {commit_hash}? (Wipes local tracked changes) [y/N][/bold red]")
+    ans = input(" ❯ ").strip().lower()
+    if ans in ("y", "yes"):
         try:
             run_git("reset", "--hard", commit_hash, capture=False, check=True)
             console.print(f"[bold green]✔[/bold green] Local state mathematically identical to {commit_hash}.")
             
-            if Confirm.ask("[bold red]FORCE PUSH to overwrite remote timeline?[/bold red]", default=False):
+            console.print("[bold red]FORCE PUSH to overwrite remote timeline? [y/N][/bold red]")
+            ans_push = input(" ❯ ").strip().lower()
+            if ans_push in ("y", "yes"):
                 _, branch_out, _ = run_git("branch", "--show-current")
                 branch_out = branch_out.strip()
                 
@@ -552,8 +568,8 @@ def main() -> Never:
         table.add_row("3", "Commit Staged Changes (Local Only)")
         table.add_row("4", "Push Existing Local Commits")
         table.add_row("5", "View Delta Differential")
-        table.add_row("6", "Safe Revert Last Commit (Appends Undo Commit)")
-        table.add_row("7", "Quick Step Back 1 Commit (Local & Remote Reset)")
+        table.add_row("6", "Undo Last Commit Safely (Creates new revert commit)")
+        table.add_row("7", "Delete Last Commit Completely (Rewrites local & remote history)")
         table.add_row("8", "Discard All Uncommitted Local Changes")
         table.add_row("9", "Nuclear Revert (Local & Remote Sync)")
         table.add_row("10", "Engage Ephemeral Time Machine (TUI)")
@@ -561,12 +577,11 @@ def main() -> Never:
 
         console.print(table)
         
-        choice = Prompt.ask(
-            "\n[bold blue]Awaiting Directive[/bold blue]", 
-            choices=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "q"], 
-            default="1", 
-            show_default=False
-        )
+        console.print("\n[bold blue]Awaiting Directive [1-10/q] [default: 1][/bold blue]")
+        choice = input(" ❯ ").strip() or "1"
+        while choice not in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "q"):
+            console.print("[bold red]✖ Invalid choice. Please select a valid key.[/bold red]")
+            choice = input(" ❯ ").strip() or "1"
         
         match choice:
             case "1": sync_all()
@@ -586,7 +601,8 @@ def main() -> Never:
             case "10": run_time_machine()
             case "q": raise SystemExit(0)
             
-        Prompt.ask("\n[dim]Press [Enter] to return to dashboard...[/dim]", default="")
+        console.print("\n[dim]Press [Enter] to return to dashboard...[/dim]")
+        input(" ❯ ")
 
 if __name__ == "__main__":
     try:

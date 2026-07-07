@@ -10,6 +10,7 @@ import sys
 import shutil
 import argparse
 import subprocess
+import readline
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Never
@@ -157,7 +158,9 @@ def generate_ssh_key(email: str) -> None:
 
     if SSH_KEY_PATH.is_file():
         console.print(f"[warning]⚠ Warn: SSH key already exists at {SSH_KEY_PATH}[/warning]")
-        if not Confirm.ask("Do you want to overwrite it?", default=False):
+        console.print("[bold cyan]Do you want to overwrite it? [y/N][/bold cyan]")
+        ans = input(" ❯ ").strip().lower()
+        if ans not in ("y", "yes"):
             console.print("[info]➔ Using existing SSH key.[/info]")
             return
         SSH_KEY_PATH.unlink(missing_ok=True)
@@ -196,7 +199,8 @@ def setup_github_ssh_linking(email: str) -> None:
         border_style="yellow",
         box=box.ROUNDED
     ))
-    Prompt.ask("Press [highlight][Enter][/highlight] once you have added the key to GitHub")
+    console.print("Press [highlight][Enter][/highlight] once you have added the key to GitHub")
+    input(" ❯ ")
 
     console.print("[info]Verifying GitHub connection via SSH...[/info]")
     # ssh -T returns 1 on success for GitHub auth checks
@@ -387,21 +391,29 @@ def prompt_configuration() -> AppConfig:
     """Prompts the user for config details interactively using clean fallbacks."""
     console.print("\n[highlight]=== Absolute Engine Parameters ===[/highlight]")
     
+    console.print("[bold white]Git User Identity (Name for Git commits, e.g., 'dusk')[/bold white]")
     username = ""
     while not username.strip():
-        username = Prompt.ask("Git User Identity (Name for Git commits, e.g., 'dusk')")
-        if not username.strip():
+        username = input(" ❯ ").strip()
+        if not username:
             console.print("[error]✖ Git User Identity (Name for Git commits) is required and cannot be empty.[/error]")
             
+    console.print("[bold white]GitHub Username (Your GitHub account username, e.g., 'yourusername')[/bold white]")
     gh_user = ""
     while not gh_user.strip():
-        gh_user = Prompt.ask("GitHub Username (Your GitHub account username, e.g., 'yourusername')")
-        if not gh_user.strip():
+        gh_user = input(" ❯ ").strip()
+        if not gh_user:
             console.print("[error]✖ GitHub Username (Your GitHub account username) is required and cannot be empty.[/error]")
 
-    email = Prompt.ask("Git Email Address (Optional, used for commit history)", default=f"{gh_user.strip()}@users.noreply.github.com").strip()
-    repo = Prompt.ask("Target Repository Architecture (The GitHub repository name)", default="dusky").strip()
-    commit_msg = Prompt.ask("Initial/Sync Commit Payload (Commit message for syncing changes)", default="Dusky backup sync").strip()
+    default_email = f"{gh_user.strip()}@users.noreply.github.com"
+    console.print(f"[bold white]Git Email Address (Optional, used for commit history) [default: {default_email}][/bold white]")
+    email = input(" ❯ ").strip() or default_email
+
+    console.print("[bold white]Target Repository Architecture (The GitHub repository name) [default: dusky][/bold white]")
+    repo = input(" ❯ ").strip() or "dusky"
+
+    console.print("[bold white]Initial/Sync Commit Payload (Commit message for syncing changes) [default: Dusky backup sync][/bold white]")
+    commit_msg = input(" ❯ ").strip() or "Dusky backup sync"
 
     return AppConfig(
         username=username.strip(),
@@ -446,7 +458,12 @@ def main() -> Never:
         console.print()
         console.print(cmd_table)
         
-        choice = Prompt.ask("\n[highlight]Choose Action[/highlight]", choices=["1", "2", "q"], default="1")
+        console.print("\n[highlight]Choose Action [1/2/q] [default: 1][/highlight]")
+        choice = input(" ❯ ").strip() or "1"
+        while choice not in ("1", "2", "q"):
+            console.print("[error]✖ Invalid choice. Please choose '1', '2', or 'q'.[/error]")
+            choice = input(" ❯ ").strip() or "1"
+            
         if choice == "1":
             mode = "NEW"
         elif choice == "2":
@@ -477,7 +494,9 @@ def main() -> Never:
         border_style="cyan",
         box=box.ROUNDED
     ))
-    if not Confirm.ask("Execute architecture deployment?", default=True):
+    console.print("\n[bold cyan]Execute architecture deployment? [Y/n][/bold cyan]")
+    ans = input(" ❯ ").strip().lower()
+    if ans and ans not in ("y", "yes"):
         console.print("[error]✖ Deployment sequence completely aborted by operator.[/error]")
         sys.exit(1)
 
