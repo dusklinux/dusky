@@ -184,7 +184,7 @@ def get_list_pathspecs() -> list[str] | None:
     return valid_paths
 
 # --- 4. EXECUTION PAYLOADS ---
-def sync_all() -> None:
+def sync_all(local_only: bool = False) -> None:
     """Smart-stages paths mathematically cross-referenced with fnmatch globs."""
     valid_paths = get_list_pathspecs()
     
@@ -193,7 +193,7 @@ def sync_all() -> None:
         try:
             run_git("add", "-u", check=True)
             console.print("[bold green]✔[/bold green] Blanket update successful.")
-            commit_and_push()
+            commit_and_push(local_only=local_only)
         except subprocess.CalledProcessError:
             console.print("[bold red]✖ Blanket stage aborted due to Git error.[/bold red]")
         return
@@ -292,7 +292,7 @@ def sync_all() -> None:
     for p in sorted(paths_to_stage):
         console.print(f"  [dim]➔ {p}[/dim]")
         
-    commit_and_push(paths_to_stage)
+    commit_and_push(paths_to_stage, local_only=local_only)
 
 def sync_single() -> None:
     """Interactive staging utilizing robust pattern mapping."""
@@ -756,7 +756,7 @@ def main() -> Never:
         
         # 2. Commits & Sync (Green)
         console.print(Panel(
-            "[bold green]3[/bold green] │ Commit Staged Changes (Local Only)\n"
+            "[bold green]3[/bold green] │ Sync All (Local Only)\n"
             "[bold green]4[/bold green] │ Push Existing Local Commits to Remote",
             title="[bold green]  COMMITS & SYNC (Save to Local / Remote)[/bold green]",
             border_style="green",
@@ -806,7 +806,7 @@ def main() -> Never:
         match choice:
             case "1": sync_all()
             case "2": sync_single()
-            case "3": commit_and_push(local_only=True)
+            case "3": sync_all(local_only=True)
             case "4": 
                 console.print("[bold blue]Establishing connection...[/bold blue]")
                 try:

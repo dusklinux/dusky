@@ -235,8 +235,8 @@ def stage_and_commit_dotfiles(commit_msg: str) -> None:
             if not full_path.is_absolute():
                 full_path = HOME / clean
 
-            # Check if file exists on disk OR is tracked by git (for deletions)
-            if full_path.exists() or clean in tracked_files:
+            # Check if file exists on disk OR is a symlink (even broken) OR is tracked by git (for deletions)
+            if full_path.exists() or full_path.is_symlink() or clean in tracked_files:
                 valid_paths.append(clean)
             else:
                 console.print(f"[muted]  ➔ Skipping missing untracked path: {clean}[/muted]")
