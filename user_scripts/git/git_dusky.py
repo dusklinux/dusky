@@ -814,13 +814,63 @@ def run_time_machine() -> None:
         console.print(f"[bold red]✖ Error:[/bold red] Time machine binary not found or not executable at {TIME_MACHINE_BIN}")
 
 # --- 5. MAIN ROUTING ENGINE ---
+def print_help() -> None:
+    """Prints a categorized, color-coded usage manual of CLI quick flags."""
+    console.print("\n[bold blue]󰏖 Dusky CLI Quick Help[/bold blue]")
+    console.print("Usage: [bold green]dusky [option][/bold green]")
+    console.print("If no option is provided, the interactive dashboard is opened.\n")
+    
+    table = Table(box=box.ROUNDED, show_header=True, header_style="bold white")
+    table.add_column("Option", style="bold", width=8, justify="center")
+    table.add_column("Action", style="white")
+    table.add_column("Destructive", justify="center")
+    
+    # 1. Working Tree & Status (Cyan)
+    table.add_row("[bold cyan]Category[/bold cyan]", "[bold cyan]  WORKING TREE & STATUS[/bold cyan]", "")
+    table.add_row("1", "[cyan]Commit All (Local & Remote)[/cyan]", "[green]No[/green]")
+    table.add_row("2", "[cyan]Commit Specific File(s) (Local & Remote)[/cyan]", "[green]No[/green]")
+    table.add_row("5", "[cyan]View Delta Differential[/cyan]", "[green]No[/green]")
+    table.add_section()
+    
+    # 2. Commits & Sync (Green)
+    table.add_row("[bold green]Category[/bold green]", "[bold green]  COMMITS & SYNC[/bold green]", "")
+    table.add_row("3", "[green]Commit All (Local Only)[/green]", "[green]No[/green]")
+    table.add_row("4", "[green]Push Existing Local Commits to Remote[/green]", "[green]No[/green]")
+    table.add_section()
+    
+    # 3. Local History Rollback (Yellow)
+    table.add_row("[bold yellow]Category[/bold yellow]", "[bold yellow]  LOCAL HISTORY ROLLBACK[/bold yellow]", "")
+    table.add_row("7", "[yellow]Undo Local Commits to a Specific Commit[/yellow]", "[green]No[/green]")
+    table.add_row("8", "[yellow]Delete Local Commits since a Specific Commit[/yellow]", "[bold red]YES[/bold red]")
+    table.add_row("10", "[yellow]Discard All Uncommitted Local Changes[/yellow]", "[bold red]YES[/bold red]")
+    table.add_row("11", "[yellow]Reset Local State to Match GitHub[/yellow]", "[bold red]YES[/bold red]")
+    table.add_section()
+    
+    # 4. Force Rewriting (Red)
+    table.add_row("[bold red]Category[/bold red]", "[bold red]  FORCE REWRITING[/bold red]", "")
+    table.add_row("6", "[red]Undo Last Commit Safely (Create Revert Commit)[/red]", "[green]No[/green]")
+    table.add_row("9", "[red]Delete Last Commit from Remote[/red]", "[bold red]YES[/bold red]")
+    table.add_row("12", "[red]Delete Commits since a Specific Commit from Remote[/red]", "[bold red]YES[/bold red]")
+    table.add_section()
+    
+    # 5. Advanced Toolbox (Magenta)
+    table.add_row("[bold magenta]Category[/bold magenta]", "[bold magenta]  ADVANCED TOOLBOX[/bold magenta]", "")
+    table.add_row("13", "[magenta]Engage Ephemeral Time Machine (TUI)[/magenta]", "[green]No[/green]")
+    table.add_row("q", "[magenta]Quit Dashboard[/magenta]", "[green]No[/green]")
+    table.add_row("h", "[magenta]Show this CLI help menu[/magenta]", "[green]No[/green]")
+    
+    console.print(table)
+
 def main() -> Never:
     check_dependencies()
     
     # CLI Quick Routing
     if len(sys.argv) > 1:
         choice = sys.argv[1].strip()
-        if choice in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "q"):
+        if choice in ("-h", "--help", "help", "h"):
+            print_help()
+            sys.exit(0)
+        elif choice in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "q"):
             match choice:
                 case "1": sync_all()
                 case "2": sync_single()
@@ -844,6 +894,7 @@ def main() -> Never:
             sys.exit(0)
         else:
             console.print(f"[bold red]✖ Invalid choice argument '{choice}'.[/bold red]")
+            print_help()
             sys.exit(1)
             
     while True:
