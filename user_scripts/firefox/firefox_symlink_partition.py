@@ -5,7 +5,7 @@ Firefox Symlink Partition Utility
 Manages ownership, permissions, and directory layout for the Firefox data partition
 mounted directly at ~/.config/mozilla.
 
-Written in Python 3.14.6.
+Written in Python 3.14.6 with Rich UI & Auto-Elevation.
 """
 
 import argparse
@@ -16,60 +16,51 @@ import shutil
 import sys
 from pathlib import Path
 
-# Setup beautiful console formatting constants
-GREEN = "\033[0;32m"
-YELLOW = "\033[1;33m"
-RED = "\033[0;31m"
-BLUE = "\033[0;34m"
-NC = "\033[0m"
+# Try importing rich, if missing, print instructions
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.prompt import Confirm
+    from rich.table import Table
+except ImportError:
+    print("[INFO] Missing 'rich' library. Auto-installing via pacman...")
+    try:
+        import subprocess
+        subprocess.run(["sudo", "pacman", "-S", "--needed", "--noconfirm", "python-rich"], check=True)
+        # Restart the script
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    except Exception as e:
+        print(f"[ERROR] Failed to auto-install dependencies: {e}")
+        sys.exit(1)
+
+# Initialize Rich Console
+console = Console()
 
 
 def log_info(msg: str) -> None:
-    print(f"{BLUE}:: {msg}{NC}")
+    console.print(f"[bold blue]::[/] {msg}")
 
 
 def log_success(msg: str) -> None:
-    print(f"{GREEN}:: {msg}{NC}")
+    console.print(f"[bold green]::[/] {msg}")
 
 
 def log_warn(msg: str) -> None:
-    print(f"{YELLOW}:: WARNING: {msg}{NC}")
+    console.print(f"[bold yellow]:: WARNING:[/] {msg}")
 
 
 def log_error(msg: str) -> None:
-    print(f"{RED}ERROR: {msg}{NC}", file=sys.stderr)
-
-
-def prompt_confirm(prompt_msg: str, default: bool = False) -> bool:
-    """Prompts the user directly via /dev/tty to bypass pipeline stdin redirection."""
-    if not sys.stdin.isatty():
-        return default
-    try:
-        with open("/dev/tty", "r") as tty_in, open("/dev/tty", "w") as tty_out:
-            default_str = " (y/N): " if not default else " (Y/n): "
-            tty_out.write(f"{YELLOW}:: {prompt_msg}{default_str}{NC}")
-            tty_out.flush()
-            line = tty_in.readline().strip().lower()
-            if not line:
-                return default
-            return line.startswith("y")
-    except Exception as e:
-        # Fallback to standard input/output
-        try:
-            res = input(f"{YELLOW}:: {prompt_msg} (y/N): {NC}")
-            return res.strip().lower().startswith("y")
-        except Exception:
-            return default
+    console.print(f"[bold red]ERROR:[/] {msg}", style="red")
 
 
 def setup_permissions[T: (str, Path)](path: T, uid: int, gid: int, dry_run: bool) -> None:
     """Sets ownership and permissions (755 directories, 644/755 files) recursively."""
     p = Path(path)
     if dry_run:
-        log_info(f"[Dry Run] Would chown {p} to {uid}:{gid} and chmod 755")
+        log_info(f"[dim][[Dry Run] Would chown {p} to {uid}:{gid} and chmod 755[/]")
         if p.is_dir():
             for item in p.rglob("*"):
-                log_info(f"[Dry Run] Would chown {item} to {uid}:{gid} and set permissions")
+                log_info(f"[dim][[Dry Run] Would chown {item} to {uid}:{gid}[/]")
         return
 
     try:
@@ -82,7 +73,6 @@ def setup_permissions[T: (str, Path)](path: T, uid: int, gid: int, dry_run: bool
         log_warn(f"Failed to set permissions/ownership on root path {p}: {e}")
 
     if p.is_dir():
-        # Using a list copy of rglob to prevent issues if files are modified during iteration
         for item in list(p.rglob("*")):
             try:
                 if not item.is_symlink():
@@ -95,7 +85,6 @@ def setup_permissions[T: (str, Path)](path: T, uid: int, gid: int, dry_run: bool
                 else:
                     os.lchown(item, uid, gid)
             except FileNotFoundError:
-                # File might have been a temporary file deleted during traversal
                 continue
             except Exception as e:
                 log_warn(f"Failed to set permissions/ownership on {item}: {e}")
@@ -107,11 +96,10 @@ def merge_directories(src: Path, dst: Path, uid: int, gid: int, dry_run: bool) -
         return
 
     if dry_run:
-        log_info(f"[Dry Run] Would recursively merge contents of {src} into {dst}")
+        log_info(f"[dim][[Dry Run] Would recursively merge contents of {src} into {dst}[/]")
         return
 
     for item in list(src.rglob("*")):
-        # Get relative path from src to construct dst target path
         rel_path = item.relative_to(src)
         target = dst / rel_path
 
@@ -121,9 +109,7 @@ def merge_directories(src: Path, dst: Path, uid: int, gid: int, dry_run: bool) -
                 os.chown(target, uid, gid)
                 target.chmod(0o755)
             elif item.is_file() or item.is_symlink():
-                # Ensure parent directory exists before copying
                 target.parent.mkdir(parents=True, exist_ok=True)
-                
                 if target.exists():
                     if target.is_dir():
                         shutil.rmtree(target)
@@ -155,14 +141,20 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # 1. Pre-flight Checks
+    # 1. Auto-Elevation check
     if os.geteuid() != 0:
-        log_error("Please run this script with sudo.")
-        sys.exit(1)
+        log_info("Script requires elevated privileges. Auto-elevating via sudo...")
+        try:
+            # Re-execute using sudo
+            os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
+        except Exception as e:
+            log_error(f"Failed to elevate privileges: {e}")
+            sys.exit(1)
 
+    # 2. Pre-flight Checks (Root and User detection)
     sudo_user = os.environ.get("SUDO_USER")
     if not sudo_user:
-        log_error("Could not detect the actual user. Do not run as root directly.")
+        log_error("Could not detect the actual user (SUDO_USER environment variable missing).")
         sys.exit(1)
 
     try:
@@ -172,44 +164,69 @@ def main() -> None:
         real_home = Path(pw_info.pw_dir)
         real_group = grp.getgrgid(real_gid).gr_name
     except KeyError:
-        log_error(f"Could not resolve password database info for user: {sudo_user}")
+        log_error(f"Could not resolve user details for: {sudo_user}")
         sys.exit(1)
 
-    log_info(f"Target User: {sudo_user}")
-    log_info(f"Target Home: {real_home}")
+    # Render a premium title panel
+    title_text = (
+        f"[bold white]Firefox Partition Migration Utility[/bold white]\n"
+        f"[dim]Relocates browser files to a dedicated encrypted partition[/dim]\n\n"
+        f"[bold cyan]User Details:[/bold cyan]\n"
+        f"  • User:       [green]{sudo_user}[/green] (UID: {real_uid})\n"
+        f"  • Group:      [green]{real_group}[/green] (GID: {real_gid})\n"
+        f"  • Home Path:  [green]{real_home}[/green]"
+    )
+    console.print(Panel(title_text, title="[bold red]System Topology[/bold red]", border_style="blue"))
+
+    # Render descriptive overview of drive management
+    overview_text = (
+        "[bold cyan]=== Purpose & Drive Management ===[/bold cyan]\n"
+        "This utility configures your system to store your Firefox data on an encrypted\n"
+        "dedicated volume directly mounted at [bold yellow]~/.config/mozilla[/bold yellow].\n\n"
+        "1. [bold green]Unlocking/Mounting:[/] The volume is managed by your Universal Drive Manager.\n"
+        "   You can unlock and mount the partition on-demand using the alias:\n"
+        "   [bold yellow]unlock browser[/bold yellow]\n"
+        "2. [bold green]Integration:[/] The script creates a symbolic link from [bold yellow]~/.mozilla[/bold yellow]\n"
+        "   pointing to [bold yellow]~/.config/mozilla[/bold yellow], so both legacy and modern paths point\n"
+        "   to the encrypted container. Permissions are recursively set to [bold yellow]755[/bold yellow].\n"
+    )
+    console.print(overview_text)
 
     target_dir = real_home / ".config" / "mozilla"
 
-    # 2. Verify Mount Point
+    # 3. Verify Target directory and mountpoint
     if not target_dir.exists():
-        log_error(f"Directory {target_dir} does not exist.")
+        log_error(f"Target directory {target_dir} does not exist.")
         sys.exit(1)
 
     if not target_dir.is_mount():
         log_error(f"{target_dir} is NOT a mounted partition.")
-        log_warn("Please unlock and mount your partition first using the drive manager.")
+        log_warn("Please unlock and mount your partition first using the drive manager ([bold]unlock browser[/bold]).")
         sys.exit(1)
 
-    # 3. Confirmation Prompts
+    # 4. Confirmation Prompts
     if not args.yes:
-        if not prompt_confirm(f"Do you want to configure permissions on {target_dir}?"):
+        confirm = Confirm.ask(
+            f"[bold yellow]Configure symlink and permissions for [cyan]{target_dir}[/cyan]?[/bold yellow]",
+            default=False
+        )
+        if not confirm:
             log_info("Execution cancelled by user.")
             sys.exit(0)
 
-    # 4. Handle Symlink from ~/.mozilla to ~/.config/mozilla
+    # 5. Handle Symlink from ~/.mozilla to ~/.config/mozilla
     symlink_path = real_home / ".mozilla"
     
     if symlink_path.exists():
         if symlink_path.is_symlink():
             target_link = os.readlink(symlink_path)
-            # Clean up if it points to a different location (like /mnt/browser/.mozilla)
             if target_link != str(target_dir):
                 log_info(f"Removing outdated symlink {symlink_path} -> {target_link}")
                 if not args.dry_run:
                     symlink_path.unlink()
         else:
             # It's a real directory, merge its contents into the mount point
-            log_info(f"Merging existing {symlink_path} directory into mount point {target_dir}...")
+            log_info(f"Merging existing local directory {symlink_path} into mount point {target_dir}...")
             merge_directories(symlink_path, target_dir, real_uid, real_gid, args.dry_run)
             log_info(f"Removing local directory {symlink_path}...")
             if not args.dry_run:
@@ -222,8 +239,8 @@ def main() -> None:
             symlink_path.symlink_to(target_dir)
             os.lchown(symlink_path, real_uid, real_gid)
 
-    # 5. Perform Ownership & Permission Changes (do it at the end to cover all merged files)
-    log_info(f"Setting ownership permissions (755) recursively on {target_dir}...")
+    # 6. Perform Ownership & Permission Changes (sweep at the end to cover all merged files)
+    log_info(f"Setting ownership and permissions recursively on {target_dir}...")
     setup_permissions(target_dir, real_uid, real_gid, args.dry_run)
 
     log_success("Firefox partition configuration complete.")
