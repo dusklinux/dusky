@@ -101,6 +101,13 @@ main() {
     log_info "Cloning bare repository..."
     if "$GIT_EXEC" clone --bare --depth 1 "$REPO_URL" "$DOTFILES_DIR"; then
         log_success "Repository cloned successfully."
+        log_info "Configuring fetch refspec for origin remote..."
+        if "$GIT_EXEC" --git-dir="$DOTFILES_DIR/" config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"; then
+            log_success "Fetch refspec configured successfully."
+        else
+            log_error "Failed to configure fetch refspec."
+            exit 1
+        fi
     else
         log_error "Failed to clone repository."
         exit 1

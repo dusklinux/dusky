@@ -616,6 +616,8 @@ def reset_local_to_remote() -> None:
     if ans in ("y", "yes"):
         try:
             console.print("[bold blue]Fetching latest state from GitHub...[/bold blue]")
+            # Ensure remote origin has the correct fetch refspec
+            run_git("config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
             run_git("fetch", "origin", capture=False, check=True)
             
             console.print(f"[bold blue]Hard resetting to origin/{branch_out}...[/bold blue]")

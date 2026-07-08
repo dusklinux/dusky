@@ -1930,6 +1930,8 @@ clone_with_retry() {
         if timeout "${CLONE_TIMEOUT}s" \
             "$GIT_BIN" clone --bare --branch "$BRANCH" "$REPO_URL" "$DOTFILES_GIT_DIR" \
             >> "$LOG_FILE" 2>&1; then
+            # Ensure the cloned repository has the standard remote-tracking refspec configured
+            "$GIT_BIN" --git-dir="$DOTFILES_GIT_DIR" config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" >> "$LOG_FILE" 2>&1 || true
             return 0
         fi
 
