@@ -281,8 +281,22 @@ main() {
     # Mathematically Aligned Header (6 | 55 | 15 | 12)
     local -r visual_header=$(printf " \033[1;37m%-6s\033[0m \033[38;5;238m│\033[0m \033[1;37m%-63s\033[0m \033[38;5;238m│\033[0m \033[1;37m%-7s\033[0m \033[38;5;238m│\033[0m \033[1;37m%-12s\033[0m" "DATE" "GRAPH / REFS / MESSAGE" "AUTHOR" "TIME AGO")
 
+    # Determine current HEAD and find its line number in the git log list
+    local -a fzf_args=()
+    local current_head
+    current_head=$(git rev-parse --short HEAD 2>/dev/null || true)
+    if [[ -n "$current_head" ]]; then
+        local line_num
+        line_num=$(_dusky_git_list | grep -n "^${current_head}" | head -n 1 | cut -d: -f1)
+        if [[ -n "$line_num" ]]; then
+            fzf_args+=("--bind=start:pos(${line_num})")
+        fi
+    fi
+
     # Launch FZF subprocess mapping
     _dusky_git_list | fzf --ansi \
+        --sync \
+        "${fzf_args[@]}" \
         --with-shell="bash -c" \
         --delimiter=$'\x1f' \
         --with-nth=2 \
