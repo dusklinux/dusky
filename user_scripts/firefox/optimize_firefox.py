@@ -36,6 +36,124 @@ UWSM_ENV_END: Final[str] = "# === END FIREFOX WAYLAND EXPORTS ==="
 type CacheMode = Literal["tmpfs", "memory", "default"]
 
 
+def get_clean_device_path(device_source: str) -> str:
+    """Strips the subvolume brackets from btrfs mount sources (e.g. /dev/nvme0n1p3[/@home] -> /dev/nvme0n1p3)."""
+    if "[" in device_source:
+        return device_source.split("[")[0].strip()
+    return device_source.strip()
+
+
+def is_luks_or_crypt_device(path: Path) -> bool:
+    """Checks if the path is located on a LUKS or dm-crypt device using findmnt and lsblk."""
+    try:
+        # Find the source block device for the path (using -T/--target to handle child paths)
+        res = subprocess.run(
+            ["findmnt", "-n", "-o", "SOURCE", "-T", str(path)],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if res.returncode != 0 or not res.stdout.strip():
+            return False
+            
+        source_dev = get_clean_device_path(res.stdout.strip())
+        if not source_dev:
+            return False
+            
+        if "/dev/mapper/" in source_dev or "/dev/dm-" in source_dev:
+            # Check type with lsblk
+            lsblk_res = subprocess.run(
+                ["lsblk", "-d", "-o", "TYPE", source_dev],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if lsblk_res.returncode == 0 and "crypt" in lsblk_res.stdout.lower():
+                return True
+    except Exception as e:
+        logger.warning(f"Error checking if {path} is on crypt device: {e}")
+    return False
+
+
+def has_overlayfs_support() -> bool:
+    """Checks if the kernel currently supports overlayfs by scanning /proc/filesystems."""
+    try:
+        proc_filesystems = Path("/proc/filesystems")
+        if proc_filesystems.exists():
+            if "overlay" in proc_filesystems.read_text():
+                return True
+    except Exception as e:
+        logger.warning(f"Error reading /proc/filesystems: {e}")
+        
+    try:
+        res = subprocess.run(["modprobe", "overlay"], capture_output=True, text=True)
+        if res.returncode == 0:
+            return True
+    except Exception:
+        pass
+        
+    return False
+
+
+def backup_profile(
+    profile_dir: Path,
+    dry_run: bool,
+    backup_dir_override: Path | None = None,
+    force_backup_outside_luks: bool = False
+) -> None:
+    """Creates a tarball backup of the profile directory stored on the same partition (or override) for safety."""
+    import tarfile
+    from datetime import datetime
+    
+    if not profile_dir.exists():
+        return
+        
+    # By default, save backup in the mozilla folder to inherit LUKS encryption if mounted
+    default_backup_dir = profile_dir.parent.parent
+    backup_dir = backup_dir_override if backup_dir_override else default_backup_dir
+    
+    profile_on_luks = is_luks_or_crypt_device(profile_dir)
+    backup_on_luks = is_luks_or_crypt_device(backup_dir)
+    
+    if profile_on_luks and not backup_on_luks:
+        logger.warning(
+            f"SECURITY WARNING: You are backing up an encrypted profile to a non-encrypted location: {backup_dir}. "
+            "This will expose passwords, cookies, and history when the LUKS drive is locked."
+        )
+        if not force_backup_outside_luks:
+            logger.error("Aborting backup for security reasons. Use --force-backup-outside-luks to override.")
+            sys.exit(1)
+            
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_filename = f"firefox-backup-{profile_dir.name}-{timestamp}.tar.gz"
+    backup_path = backup_dir / backup_filename
+    
+    if dry_run:
+        logger.info(f"[Dry Run] Would create profile backup at {backup_path}")
+        return
+        
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Creating profile backup: {backup_path}...")
+        with tarfile.open(backup_path, "w:gz") as tar:
+            tar.add(profile_dir, arcname=profile_dir.name)
+        logger.info("Backup created successfully.")
+    except Exception as e:
+        logger.error(f"Failed to create profile backup: {e}")
+        logger.error("Aborting optimization because backup failed.")
+        sys.exit(1)
+
+
+def disable_psd_service(dry_run: bool) -> None:
+    """Stops and disables psd.service cleanly if it is active or enabled."""
+    if dry_run:
+        logger.info("[Dry Run] Would stop and disable psd.service")
+        return
+
+    logger.info("Stopping and disabling profile-sync-daemon service (LUKS device conflict)...")
+    subprocess.run(["systemctl", "--user", "disable", "--now", "psd.service"], capture_output=True)
+
+
 def get_total_ram_gb() -> float:
     """Dynamically detects total physical RAM in Gigabytes using os.sysconf."""
     try:
@@ -587,9 +705,15 @@ def configure_psd_service(dry_run: bool) -> None:
             logger.error(f"Failed to read {psd_conf_path}: {e}")
             return
 
+        # Check overlayfs support dynamically
+        use_overlayfs = "yes"
+        if not has_overlayfs_support():
+            logger.warning("overlayfs kernel support is not available. Configuring PSD with USE_OVERLAYFS='no'.")
+            use_overlayfs = "no"
+
         # Directives to ensure are correct
         directives = {
-            "USE_OVERLAYFS": '"yes"',
+            "USE_OVERLAYFS": f'"{use_overlayfs}"',
             "BROWSERS": '"firefox"',
             "USE_BACKUPS": '"yes"',
             "BACKUP_LIMIT": '"5"',
@@ -779,6 +903,16 @@ def main() -> None:
         action="store_true",
         help="Print verbose execution details.",
     )
+    parser.add_argument(
+        "--backup-dir",
+        type=str,
+        help="Custom backup directory path. Default is the mozilla base folder (e.g. ~/.config/mozilla).",
+    )
+    parser.add_argument(
+        "--force-backup-outside-luks",
+        action="store_true",
+        help="Force backing up profiles to a non-encrypted location even if profiles are on LUKS.",
+    )
 
     args = parser.parse_args()
 
@@ -856,18 +990,38 @@ def main() -> None:
         sys.exit(1)
     logger.info(f"Located Firefox profiles: {[p.name for p in profiles]}")
 
-    # 5. Build and inject preferences map
+    # 5. Backup Profiles before modifying them
+    backup_dir_override = Path(args.backup_dir) if args.backup_dir else None
+    for profile in profiles:
+        backup_profile(
+            profile,
+            args.dry_run,
+            backup_dir_override,
+            args.force_backup_outside_luks
+        )
+
+    # 6. Build and inject preferences map
     prefs = get_optimization_prefs(ram_gb, args.cache_mode)
     for profile in profiles:
         update_user_js(profile, prefs, args.dry_run)
 
-    # 6. Setup Wayland Environment Variables in UWSM env.d drop-in
+    # 7. Setup Wayland Environment Variables in UWSM env.d drop-in
     configure_uwsm_env(args.dry_run)
 
-    # 7. Configure Profile Sync Daemon (PSD)
-    configure_psd_service(args.dry_run)
+    # 8. Configure Profile Sync Daemon (PSD) (skip/disable if LUKS/dm-crypt detected)
+    is_luks = False
+    for profile in profiles:
+        if is_luks_or_crypt_device(profile):
+            is_luks = True
+            break
 
-    # 8. Configure weekly profile cleaner database optimizer
+    if is_luks:
+        logger.info("LUKS/dm-crypt device detected for Firefox profiles. Skipping Profile Sync Daemon (PSD) setup to prevent profile corruption when locked.")
+        disable_psd_service(args.dry_run)
+    else:
+        configure_psd_service(args.dry_run)
+
+    # 9. Configure weekly profile cleaner database optimizer
     configure_profile_cleaner_weekly_timer(args.dry_run)
 
     logger.info("Firefox Optimization Suite applied successfully!")

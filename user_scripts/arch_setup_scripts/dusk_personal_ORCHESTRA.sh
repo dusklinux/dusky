@@ -103,7 +103,7 @@ INSTALL_SEQUENCE=(
     "S | 180_udev_usb_notify.sh"
     "U | 185_terminal_default.py -t foot"
     "S | 190_dusk_fstab.py"
-    "S | 195_firefox_symlink_parition.sh"
+    "S | 195_firefox_symlink_partition.py"
     "S | 200_tlp_config.py"
     "S | 205_zram_configuration.sh"
     "S | 206_zram_tmpfs_mounts.py --zram"
