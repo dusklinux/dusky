@@ -69,7 +69,7 @@ outer_uuid = "953a147e-a346-4fea-91f4-a81ec97fa56a"
 inner_uuid = "46798d3b-cda7-4031-818f-37a06abbeb37"
 hint = "game_simple"
 fstype = "btrfs"
-mount_options = ["discard=async", "compress=zstd:3", "noatime", "space_cache=v2", "autodefrag", "subvol=/"]
+mount_options = ["compress=zstd:3", "noatime", "space_cache=v2", "autodefrag", "subvol=/"]
 
 [drives.wdslow]
 type = "PROTECTED"
@@ -78,7 +78,7 @@ outer_uuid = "01f38f5b-86de-4499-b93f-6c982e2067cb"
 inner_uuid = "2765359f-232e-4165-bc69-ef402b50c74c"
 hint = "game_simple"
 fstype = "btrfs"
-mount_options = ["discard=async", "compress=zstd:3", "noatime", "space_cache=v2", "autodefrag", "subvol=/"]
+mount_options = ["compress=zstd:3", "noatime", "space_cache=v2", "autodefrag", "subvol=/"]
 
 [drives.enclosure]
 type = "PROTECTED"
