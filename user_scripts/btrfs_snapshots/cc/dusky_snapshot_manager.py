@@ -82,6 +82,11 @@ def ensure_root() -> None:
 def fail(message: str, exit_code: int = 1) -> None:
     print(f"\033[1;38;5;196m{message}\033[0m", file=sys.stderr)
     LOG.critical(message)
+    if sys.stderr.isatty() and len(sys.argv) == 1:
+        try:
+            input("\n\033[1;38;5;114mPress Enter to exit...\033[0m")
+        except (KeyboardInterrupt, EOFError):
+            pass
     sys.exit(exit_code)
 
 def error_text(result: subprocess.CompletedProcess[str]) -> str:
@@ -143,13 +148,15 @@ def get_btrfs_device(mountpoint: str) -> str:
 def get_active_subvol(mountpoint: str) -> str:
     result = run_cmd(["findmnt", "--fstab", "-n", "-o", "OPTIONS", "-M", mountpoint], check=False)
     if result.returncode == 0:
-        match = re.search(r"(?:^|,)subvol=([^,]+)(?:,|$)", result.stdout.strip())
-        if match: return match.group(1).lstrip("/")
+        for line in result.stdout.splitlines():
+            match = re.search(r"(?:^|,)subvol=([^,]+)(?:,|$)", line.strip())
+            if match: return match.group(1).lstrip("/")
 
     result = run_cmd(["findmnt", "-n", "-o", "OPTIONS", "-M", mountpoint], check=False)
     if result.returncode == 0:
-        match = re.search(r"(?:^|,)subvol=([^,]+)(?:,|$)", result.stdout.strip())
-        if match: return match.group(1).lstrip("/")
+        for line in result.stdout.splitlines():
+            match = re.search(r"(?:^|,)subvol=([^,]+)(?:,|$)", line.strip())
+            if match: return match.group(1).lstrip("/")
 
     result = run_cmd(["btrfs", "subvolume", "show", mountpoint], check=False)
     if result.returncode == 0:
@@ -1551,3 +1558,12 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n\033[1;38;5;196m[!] Terminated by user.\033[0m", file=sys.stderr)
         sys.exit(130)
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        if sys.stderr.isatty() and len(sys.argv) == 1:
+            try:
+                input("\n\033[1;38;5;114mPress Enter to exit...\033[0m")
+            except (KeyboardInterrupt, EOFError):
+                pass
+        sys.exit(1)

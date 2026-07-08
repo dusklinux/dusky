@@ -146,7 +146,14 @@ load_mount_info() {
     source="${source%%\[*}"
 
     fstab_opts="$(findmnt -s -n -e -o OPTIONS -M "$target" 2>/dev/null || true)"
-    [[ -n "$fstab_opts" ]] && opts="$fstab_opts"
+    if [[ -n "$fstab_opts" ]]; then
+        while IFS= read -r line; do
+            if [[ "$line" == *subvol=* ]]; then
+                opts="$line"
+                break
+            fi
+        done <<< "$fstab_opts"
+    fi
 
     if [[ -z "$uuid" || "$uuid" == "-" ]]; then
         uuid="$(sudo blkid -s UUID -o value "$source" 2>/dev/null || true)"
@@ -159,7 +166,7 @@ load_mount_info() {
 }
 
 extract_subvol() {
-    if [[ "$1" =~ subvol=([^,]+) ]]; then
+    if [[ "$1" =~ subvol=([^,[:space:]]+) ]]; then
         printf '%s\n' "${BASH_REMATCH[1]#/}"
         return 0
     fi
