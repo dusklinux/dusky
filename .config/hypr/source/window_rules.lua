@@ -102,8 +102,8 @@ hl.window_rule({
     float = true,
     opaque = true,
     size = {640, 360},      -- Sets a small initial size (approx 360p)
-    center = true           -- Opens in the middle of the screen
-    -- keep_aspect_ratio = true  -- Locks the window frame to the video's aspect ratio
+    center = true,           -- Opens in the middle of the screen
+    keep_aspect_ratio = true  -- Locks the window frame to the video's aspect ratio
 })
 
 -- wine/proton without plasma-workspace for tray icon
@@ -1584,8 +1584,11 @@ hl.window_rule({
 
     -- 3. Move to Bottom-Right
     -- standard syntax: (screen_width - window_width - margin)
-    move = {"(monitor_w-window_w-20)", "(monitor_h-window_h-20)"},
+    size = {"monitor_w * 0.1617", "monitor_h * 0.1611"},
+    --move = {"monitor_w - window_w - 20", "monitor_h - window_h - 20"},
+    move = {"monitor_w * 0.8258", "monitor_h * 0.8125"},
 
+    no_initial_focus = true,            -- do not focus when first opened
     -- Visuals
     no_dim = true,
     opaque = true
