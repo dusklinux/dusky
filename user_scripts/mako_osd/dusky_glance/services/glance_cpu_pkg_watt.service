@@ -1,5 +1,6 @@
 [Unit]
 Description=Set RAPL energy_uj read permissions for Dusky Glance
+ConditionPathExists=/sys/class/powercap/intel-rapl/
 After=systemd-modules-load.service
 
 [Service]
