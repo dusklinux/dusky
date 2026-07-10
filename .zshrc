@@ -251,6 +251,11 @@ if [[ -n "$_zoxide_bin" ]]; then
   source "$_zoxide_cache"
 fi
 
+# --- Setup zoxide to replace cd ---
+if command -v zoxide >/dev/null; then
+	alias cd='z'
+fi
+
 # Cleanup
 unset _starship_cache _starship_bin _fzf_cache _fzf_bin _zoxide_cache _zoxide_bin
 
