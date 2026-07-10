@@ -116,6 +116,10 @@ DUSKY_RUN_WRAPPER: Final[str] = """#!/bin/bash
 # by systemd-oomd with ManagedOOMMemoryPressure=kill). The new scope also resets
 # oom_score_adj to 0, so the kernel OOM killer will always prefer apps (0) over
 # the compositor (-250).
+#
+# Pre-adjust OOM score to 200 so the kernel OOM killer prefers this app over the compositor.
+# (An unprivileged process is allowed to raise its own OOM score).
+echo 200 > /proc/self/oom_score_adj 2>/dev/null || true
 exec systemd-run --user --scope --slice=app.slice --collect --quiet -- "$@"
 """
 

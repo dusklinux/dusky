@@ -73,7 +73,7 @@ end
 
 hl.bind(
     "ALT + SPACE",
-    hl.dsp.exec_cmd([[pkill rofi; rofi -show drun -run-command "{cmd}"]]),
+    hl.dsp.exec_cmd([[pkill rofi; dusky-run rofi -show drun]]),
     { description = "Launch Menu for Apps" }
 )
 

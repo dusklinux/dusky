@@ -64,6 +64,9 @@ configuration {
        ───────────────────────────────────────────────────────────────────── */
     scroll-method:          0;
     click-to-exit:          true;
+    run-command:            "dusky-run {cmd}";
+    run-shell-command:      "dusky-run {terminal} -e {cmd}";
+    drun-use-gio:           false;
 }
 
 /* --- Import Colors --- */

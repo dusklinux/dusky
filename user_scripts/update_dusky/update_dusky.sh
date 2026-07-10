@@ -210,7 +210,7 @@ declare -ra UPDATE_SEQUENCE=(
 #    "U | 020_desktop_apps_username_setter.sh"
     "U | 020_desktop_entries.py"
     "U | 025_configure_keyboard.sh"
-#    "U | 035_configure_hyprland_gpu.py --auto"
+    "U | 035_configure_hyprland_gpu.py --auto"
 #    "U | 040_long_sleep_timeout.sh"
 #    "S | 045_battery_limiter.sh"
 #    "S | 050_pacman_config.sh --auto"
