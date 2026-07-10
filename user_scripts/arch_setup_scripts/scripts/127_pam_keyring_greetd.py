@@ -64,6 +64,13 @@ def _bootstrap() -> None:
             missing.append(pkg)
     if not missing:
         return
+    if os.geteuid() != 0:
+        print("[bootstrap] Root required to install missing Python dependencies. Escalating via sudo...")
+        try:
+            os.execvp("sudo", ["sudo", "-p", "[sudo] password for %u: ", sys.executable] + sys.argv)
+        except FileNotFoundError:
+            print("[bootstrap] ERROR: sudo not found. Please run as root.")
+            sys.exit(1)
     print(f"[bootstrap] Installing missing Python deps via pacman: {' '.join(missing)}")
     try:
         subprocess.check_call(["pacman", "-S", "--needed", "--noconfirm"] + missing)

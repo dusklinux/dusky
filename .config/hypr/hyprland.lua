@@ -100,6 +100,9 @@ require("source.environment_variables")
 -- 10. WORKSPACE RULES
 require("source.workspace_rules")
 
+-- 11. GPU env
+pcall(require, "gpu")
+
 -- -----------------------------------------------------
 -- LOCAL OVERRIDES  (git-ignored)
 -- -----------------------------------------------------
