@@ -104,27 +104,19 @@ CRITICAL_USER: Final[tuple[str,...]] = (
 )
 
 DUSKY_RUN_WRAPPER: Final[str] = """#!/bin/bash
-# dusky-run - native replacement for `uwsm app` without UWSM
-# Launches apps in app.slice so systemd-oomd can see them, not in session-*.scope
-# NOTE: OOMScoreAdjust is NOT valid for scope units in systemd 261,
-#       so we use choom post-launch to raise the OOM score of spawned apps.
-set -euo pipefail
-if [ $# -eq 0 ]; then echo "usage: dusky-run <cmd> [args...]" >&2; exit 1; fi
-# Ensure env is imported (idempotent)
-systemctl --user import-environment WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP 2>/dev/null || true
-systemd-run --user --scope \\
-  --slice=app.slice \\
-  -p MemoryHigh=85% \\
-  -p MemoryMax=95% \\
-  --collect --same-dir --quiet \\
-  -E WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}" \\
-  -E DISPLAY="${DISPLAY:-:0}" \\
-  -E XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-Hyprland}" \\
-  -- "$@" &
-SCOPE_PID=$!
-# Raise OOM score so oomd kills apps before the compositor
-sudo -n /usr/bin/choom -n 200 -p "$SCOPE_PID" 2>/dev/null || true
-wait "$SCOPE_PID"
+# dusky-run — launches apps in app.slice so systemd-oomd kills them, not the compositor
+#
+# WHY THIS EXISTS:
+# Without this wrapper, apps launched by Hyprland are direct children in session-*.scope.
+# They inherit Hyprland's oom_score_adj (-250) and share its ManagedOOMPreference=avoid
+# cgroup. This means systemd-oomd ignores them, and under memory pressure the kernel
+# OOM killer has no reason to prefer killing apps over the compositor.
+#
+# This wrapper uses systemd-run to place apps in app.slice (a separate cgroup monitored
+# by systemd-oomd with ManagedOOMMemoryPressure=kill). The new scope also resets
+# oom_score_adj to 0, so the kernel OOM killer will always prefer apps (0) over
+# the compositor (-250).
+exec systemd-run --user --scope --slice=app.slice --collect --quiet -- "$@"
 """
 
 @dataclass(frozen=True, slots=True, kw_only=True)
