@@ -21,6 +21,7 @@ declare -ar DEFAULT_BINARIES=(
     "/usr/bin/rfkill"
     "/usr/bin/smartctl"
     "/usr/bin/tlp"
+    "/usr/bin/choom"              # OOM score adjustment for hypr-app + compositor protection (211_systemd_oomd_zram.py)
 #    "~/user_scripts/btrfs_snapshots/cc/04_dusky_snapshot_manager.py"
 #    "~/user_scripts/btrfs_snapshots/cc/bash_wrapper_for_cc.sh"
 )

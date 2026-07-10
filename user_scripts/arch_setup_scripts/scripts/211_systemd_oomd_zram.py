@@ -151,8 +151,7 @@ def specs() -> list[FileSpec]:
         FileSpec(dest=Path("/etc/systemd/user.conf.d/10-oom-default.conf"), content=USER_CONF, desc="DefaultOOMScoreAdjust=100"),
         # wrapper
         FileSpec(dest=Path("/usr/local/bin/hypr-app"), content=HYPR_APP_WRAPPER, mode=0o755, desc="hypr-app launcher"),
-        # sudoers rules for choom
-        FileSpec(dest=Path("/etc/sudoers.d/zzzz-nopasswd-dusk-choom"), content="dusk ALL=(ALL) NOPASSWD: /usr/bin/choom\n", mode=0o440, desc="allow dusk to run choom without password"),
+        # NOTE: choom NOPASSWD sudoers rule is managed by 485_sudoers_nopassword.sh
     ]
     for svc in CRITICAL_USER:
         s.append(FileSpec(dest=Path(f"/etc/systemd/user/{svc}.d/10-oom-shield.conf"), content=OOM_SHIELD, desc=f"shield {svc}"))
