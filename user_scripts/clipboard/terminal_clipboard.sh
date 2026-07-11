@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #==============================================================================
-# FZF CLIPBOARD MANAGER (v2.5 - Unified Wayland/UWSM Edition)
-# Arch Linux / Hyprland / UWSM clipboard utility
+# FZF CLIPBOARD MANAGER (v2.5 - Wayland Edition)
+# Arch Linux / Hyprland clipboard utility
 # Optimized for: Bash 5.3+, FZF 0.73.1+ (Strict 0.73 Syntax & Background Transformations)
 #==============================================================================
 # NOTE: `set -o errexit` is intentionally omitted. Several functions use

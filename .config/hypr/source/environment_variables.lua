@@ -88,3 +88,16 @@ hl_env("TERMINAL", "xdg-terminal-exec")
 hl_env("EDITOR", "nvim")
 hl_env("VISUAL", "nvim")
 hl_env("LIBVIRT_DEFAULT_URI", "qemu:///system")
+
+-- 9. Clipboard persistence - dynamic path from toggler
+do
+  local f = io.open(home.. "/.config/dusky/settings/cliphist_db_env", "r")
+  if f then
+    local content = f:read("*a")
+    f:close()
+    local path = content:match('CLIPHIST_DB_PATH%s*=%s*"([^"]+)"')
+    if path and path ~= "" then
+      hl_env("CLIPHIST_DB_PATH", path)
+    end
+  end
+end

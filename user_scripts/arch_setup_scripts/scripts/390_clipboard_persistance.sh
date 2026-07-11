@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Clipboard Persistnace Ram/disk
 # -----------------------------------------------------------------------------
-# UWSM Clipboard Persistence Manager - v1.3.0 (Static State Architecture)
+# Clipboard Persistence Manager - v1.3.0 (Static State Architecture)
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -119,7 +119,7 @@ else
     # to bypass the pipe buffering and display the menu directly to the user.
     {
         clear
-        printf '%sUWSM Clipboard Persistence Manager%s\n' "$C_BOLD" "$C_RESET"
+        printf '%sClipboard Persistence Manager%s\n' "$C_BOLD" "$C_RESET"
         printf 'Target: %s\n\n' "$DB_ENV_FILE"
 
         printf '%sWhich mode do you prefer?%s\n\n' "$C_BOLD" "$C_RESET"
@@ -148,53 +148,28 @@ fi
 # =============================================================================
 # Post-Process (Live Daemon Reload)
 # =============================================================================
-if command -v uwsm >/dev/null 2>&1 && timeout 2 uwsm check is-active >/dev/null 2>&1; then
-    printf '\n'
-    log_info "Changes saved. Live-reloading clipboard daemons under UWSM session..."
+printf '\n'
+log_info "Live-reloading clipboard daemons in background..."
 
-    # 1. Source and propagate the new state to all layers
-    if [[ -f "$DB_ENV_FILE" ]]; then
-        source "$DB_ENV_FILE"
-        export CLIPHIST_DB_PATH
-        timeout 5 systemctl --user import-environment CLIPHIST_DB_PATH || true
-        timeout 5 dbus-update-activation-environment --systemd CLIPHIST_DB_PATH || true
-
-    else
-        unset CLIPHIST_DB_PATH
-        timeout 5 systemctl --user unset-environment CLIPHIST_DB_PATH || true
-        timeout 5 dbus-update-activation-environment --systemd --remove CLIPHIST_DB_PATH || true
-
-    fi
-
-    # 2. Terminate existing watchers securely
-    pkill -f "wl-paste.*cliphist" 2>/dev/null || :
-
-    # 3. Respawn the daemons in the background (prevent blocking if systemd/dbus is busy)
-    uwsm app -- sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store' >/dev/null 2>&1 &
-    uwsm app -- sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store' >/dev/null 2>&1 &
-
-    log_success "Daemons reloaded. New persistence mode is now active globally without requiring a reboot!"
+# 1. Source local shell environment & import to systemd/dbus to keep env consistent
+if [[ -f "$DB_ENV_FILE" ]]; then
+    source "$DB_ENV_FILE"
+    export CLIPHIST_DB_PATH
+    timeout 5 systemctl --user import-environment CLIPHIST_DB_PATH || true
+    timeout 5 dbus-update-activation-environment --systemd CLIPHIST_DB_PATH || true
 else
-    printf '\n'
-    log_info "UWSM session not active. Live-reloading clipboard daemons in background..."
-
-    # 1. Source local shell environment
-    if [[ -f "$DB_ENV_FILE" ]]; then
-        source "$DB_ENV_FILE"
-        export CLIPHIST_DB_PATH
-
-    else
-        unset CLIPHIST_DB_PATH
-
-    fi
-
-    # 2. Terminate existing watchers securely
-    pkill -f "wl-paste.*cliphist" 2>/dev/null || :
-
-    # 3. Respawn the daemons directly in the background
-    sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store' >/dev/null 2>&1 &
-    sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store' >/dev/null 2>&1 &
-    disown -a
-
-    log_success "Daemons reloaded in background. New persistence mode is now active!"
+    unset CLIPHIST_DB_PATH
+    timeout 5 systemctl --user unset-environment CLIPHIST_DB_PATH || true
+    timeout 5 dbus-update-activation-environment --systemd --remove CLIPHIST_DB_PATH || true
 fi
+
+# 2. Terminate existing watchers securely
+pkill -f "wl-paste.*cliphist" 2>/dev/null || :
+
+# 3. Respawn the daemons directly in the background
+sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store' >/dev/null 2>&1 &
+sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store' >/dev/null 2>&1 &
+disown -a
+
+log_success "Daemons reloaded in background. New persistence mode is now active!"
+
