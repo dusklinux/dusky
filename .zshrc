@@ -26,6 +26,9 @@ export VISUAL='nvim'
 # Compilation Optimization: Use ALL available processing units
 export MAKEFLAGS="-j$(nproc)"
 
+# Clipboard DB path - dynamic, set by 390_clipboard_persistance.sh toggle
+[ -f "$HOME/.config/dusky/settings/cliphist_db_env" ] && source "$HOME/.config/dusky/settings/cliphist_db_env"
+
 # Configure PATH (Uncomment to enable local binaries)
 # export PATH="$HOME/.local/bin:$PATH"
 
