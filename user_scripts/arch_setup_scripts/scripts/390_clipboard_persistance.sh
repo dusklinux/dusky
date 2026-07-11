@@ -88,14 +88,15 @@ update_config() {
     mkdir -p "$STATE_DIR"
 
     if [[ "$mode" == "ephemeral" ]]; then
-        printf 'export CLIPHIST_DB_PATH="%s/cliphist.db"\n' "${XDG_RUNTIME_DIR}" > "$DB_ENV_FILE"
+        local runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+        printf 'export CLIPHIST_DB_PATH="%s/cliphist.db"\n' "$runtime_dir" > "$DB_ENV_FILE"
         echo "false" > "$STATE_FILE"
         log_success "Set to Ephemeral (RAM). State file updated."
     elif [[ "$mode" == "persistent" ]]; then
         # EXPLICITLY set the disk path to violently override any global pollution
         local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}"
         mkdir -p "${cache_dir}/cliphist"
-        printf 'export CLIPHIST_DB_PATH="%s/cliphist/db"\n' "${cache_dir}" > "$DB_ENV_FILE"
+        printf 'export CLIPHIST_DB_PATH="%s/cliphist/db"\n' "$cache_dir" > "$DB_ENV_FILE"
         echo "true" > "$STATE_FILE"
         log_success "Set to Persistent (Disk). State file updated."
     fi
@@ -114,9 +115,6 @@ if [[ -n "$_TARGET_MODE" ]]; then
         update_config "persistent"
     fi
 else
-    # Since standard output/error are redirected to a pipe by the orchestrator,
-    # we redirect the interactive menu prompt and user input to/from /dev/tty
-    # to bypass the pipe buffering and display the menu directly to the user.
     {
         clear
         printf '%sClipboard Persistence Manager%s\n' "$C_BOLD" "$C_RESET"
@@ -153,6 +151,7 @@ log_info "Live-reloading clipboard daemons in background..."
 
 # 1. Source local shell environment & import to systemd/dbus to keep env consistent
 if [[ -f "$DB_ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
     source "$DB_ENV_FILE"
     export CLIPHIST_DB_PATH
     timeout 5 systemctl --user import-environment CLIPHIST_DB_PATH || true
@@ -163,13 +162,16 @@ else
     timeout 5 dbus-update-activation-environment --systemd --remove CLIPHIST_DB_PATH || true
 fi
 
-# 2. Terminate existing watchers securely
-pkill -f "wl-paste.*cliphist" 2>/dev/null || :
+# 2. Terminate existing watchers securely - hard kill and wait for Wayland to release the watch
+pkill -9 -f "wl-paste.*cliphist" 2>/dev/null || true
+pkill -9 -f "cliphist_db_env.*wl-paste" 2>/dev/null || true
+sleep 0.35
 
-# 3. Respawn the daemons directly in the background
-sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store' >/dev/null 2>&1 &
-sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store' >/dev/null 2>&1 &
-disown -a
+# 3. Respawn the daemons directly in the background - use absolute expanded path
+# shellcheck disable=SC1090
+nohup sh -c ". \"$DB_ENV_FILE\" && exec wl-paste --type text --watch cliphist store" >/dev/null 2>&1 &
+# shellcheck disable=SC1090
+nohup sh -c ". \"$DB_ENV_FILE\" && exec wl-paste --type image --watch cliphist store" >/dev/null 2>&1 &
+disown -a 2>/dev/null || true
 
 log_success "Daemons reloaded in background. New persistence mode is now active!"
-
