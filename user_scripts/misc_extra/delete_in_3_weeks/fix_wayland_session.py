@@ -1,19 +1,11 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-fix_wayland_session.py — wayland-session deployer (Python 3.14.6)
+fix_wayland_session.py — wayland-session deployer
 
+Modernized for Python 3.14 / Arch Linux (Kernel 7+).
 Repairs /usr/local/bin/wayland-session by replacing stale uwsm invocations
 with the native Hyprland 0.53+ launcher (start-hyprland).
-
-Features:
-  - Atomic writes with fsync + parent dir sync (power-loss safe)
-  - Idempotent: no-ops if already correct
-  - Pre-flight validation: checks start-hyprland exists, file is writable
-  - SHA-256 change detection to skip unnecessary writes
 """
-
-from __future__ import annotations
 
 import hashlib
 import os
@@ -25,125 +17,142 @@ from pathlib import Path
 # ── Constants ────────────────────────────────────────────────────────────────
 WAYLAND_SESSION: Path = Path("/usr/local/bin/wayland-session")
 
-EXPECTED_CONTENT: str = """\
-#!/usr/bin/env bash
-exec start-hyprland
-"""
+# Defined with explicit '\n' to ensure deterministic SHA-256 hashes 
+# regardless of environment line-ending configurations.
+EXPECTED_CONTENT: str = "#!/usr/bin/env bash\nexec start-hyprland\n"
+EXPECTED_HASH: str = hashlib.sha256(EXPECTED_CONTENT.encode("utf-8")).hexdigest()
 
-# ── TTY Colors (respect NO_COLOR / non-TTY) ─────────────────────────────────
-if sys.stdout.isatty() and not os.environ.get("NO_COLOR"):
-    _R = "\033[0m"
-    _B = "\033[1m"
-    _G = "\033[32m"
-    _Y = "\033[33m"
-    _R_ = "\033[31m"
-    _C = "\033[36m"
-else:
-    _R = _B = _G = _Y = _R_ = _C = ""
+# ── UI / TTY Colors ──────────────────────────────────────────────────────────
+# Dynamically evaluate ANSI support for modern terminals
+_USE_COLOR = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+_C_RESET = "\033[0m" if _USE_COLOR else ""
+_C_BOLD = "\033[1m" if _USE_COLOR else ""
+_C_GREEN = "\033[32m" if _USE_COLOR else ""
+_C_YELLOW = "\033[33m" if _USE_COLOR else ""
+_C_RED = "\033[31m" if _USE_COLOR else ""
+_C_CYAN = "\033[36m" if _USE_COLOR else ""
 
 
 def info(msg: str) -> None:
-    print(f"{_G}✔{_R} {msg}")
+    print(f"{_C_GREEN}✔{_C_RESET} {msg}")
 
 
 def warn(msg: str) -> None:
-    print(f"{_Y}⚠{_R} {msg}", file=sys.stderr)
+    print(f"{_C_YELLOW}⚠{_C_RESET} {msg}", file=sys.stderr)
 
 
 def fail(msg: str) -> None:
-    print(f"{_R_}✖{_R} {msg}", file=sys.stderr)
+    print(f"{_C_RED}✖{_C_RESET} {msg}", file=sys.stderr)
     sys.exit(1)
 
 
-# ── Root escalation ──────────────────────────────────────────────────────────
+# ── Root Escalation ──────────────────────────────────────────────────────────
 def ensure_root() -> None:
     if os.geteuid() == 0:
         return
     warn("Root required — re-launching via sudo")
     try:
-        os.execvp("sudo", ["sudo", "-p", "[sudo] password for %u: ", sys.executable] + sys.argv)
+        # Modern argument unpacking
+        os.execvp("sudo", ["sudo", "-p", "[sudo] password for %u: ", sys.executable, *sys.argv])
     except FileNotFoundError:
         fail("sudo not found. Run as root.")
 
 
 # ── Core ─────────────────────────────────────────────────────────────────────
-def sha256(data: str | bytes) -> str:
-    return hashlib.sha256(data if isinstance(data, bytes) else data.encode()).hexdigest()
-
-
-def write_atomic(target: Path, content: str, mode: int = 0o755) -> bool:
-    """Write to target atomically: tmp → fsync → rename → fsync parent dir."""
+def write_atomic(target: Path, content: str, mode: int = 0o755) -> None:
+    """
+    Zero-trust atomic write leveraging Python 3.12+ NamedTemporaryFile, 
+    descriptor-level fchmod (TOCTOU prevention), and strict O_CLOEXEC fsync.
+    """
     parent = target.parent
-    fd, tmp = tempfile.mkstemp(dir=str(parent), prefix=f".{target.name}.tmp.")
+    parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
+        # delete=False explicitly hands over control of the file's lifecycle to us.
+        with tempfile.NamedTemporaryFile(
+            dir=parent,
+            prefix=f".{target.name}.tmp.",
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            delete=False
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            tmp.write(content)
+            tmp.flush()
+            
+            # Use fchmod on the file descriptor directly. This closes the TOCTOU 
+            # vulnerability gap present when running chmod on file paths.
+            os.fchmod(tmp.fileno(), mode)
+            os.fsync(tmp.fileno())
 
-        os.chmod(tmp, mode)
-        os.replace(tmp, target)
+        # POSIX atomic rename. Guarantees no partial file states exist on disk.
+        os.replace(tmp_path, target)
 
-        # fsync parent directory to guarantee linkage on power loss
-        dir_fd = os.open(str(parent), os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as e:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        fail(f"Atomic write failed: {e}")
+
+    # Parent directory sync guarantees the directory entry is durable on power loss.
+    try:
+        # O_CLOEXEC prevents fd leakage on modern kernels.
+        dir_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
-
-        return True
-    except OSError as e:
-        warn(f"write failed: {e}")
-        return False
-    finally:
-        Path(tmp).unlink(missing_ok=True)
+    except OSError:
+        pass  # Best-effort durability. Failure here does not invalidate the file write.
 
 
 def main() -> None:
     ensure_root()
-    print(f"{_B}{_C}wayland-session repair — Hyprland native launcher{_R}\n")
+    print(f"{_C_BOLD}{_C_CYAN}wayland-session repair — Hyprland native launcher{_C_RESET}\n")
 
-    # Pre-flight: start-hyprland must exist
-    if not shutil.which("start-hyprland"):
+    hyprland_path = shutil.which("start-hyprland")
+    if not hyprland_path:
         fail("start-hyprland not found in PATH. Is hyprland 0.53+ installed?")
 
-    info(f"start-hyprland found: {shutil.which('start-hyprland')}")
+    info(f"start-hyprland found: {hyprland_path}")
 
-    # Read current content
+    current_content = ""
     if WAYLAND_SESSION.exists():
-        current = WAYLAND_SESSION.read_text(encoding="utf-8", errors="replace")
+        try:
+            current_content = WAYLAND_SESSION.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            fail(f"Could not read {WAYLAND_SESSION}: {e}")
     else:
         warn(f"{WAYLAND_SESSION} does not exist — will create it")
-        current = ""
 
-    # Idempotent check
-    expected_hash = sha256(EXPECTED_CONTENT)
-    current_hash = sha256(current)
-
-    if current_hash == expected_hash:
+    if hashlib.sha256(current_content.encode("utf-8")).hexdigest() == EXPECTED_HASH:
         info(f"{WAYLAND_SESSION} already correct — nothing to do")
         sys.exit(0)
 
-    # Diagnose what's wrong
-    if "uwsm" in current:
+    if "uwsm" in current_content:
         warn(f"Detected stale uwsm invocation in {WAYLAND_SESSION}")
-    elif current.strip():
+    elif current_content.strip():
         warn(f"{WAYLAND_SESSION} has unexpected content:")
-        print(current, file=sys.stderr)
+        print(current_content, file=sys.stderr)
 
-    # Atomic write
     info(f"Writing {WAYLAND_SESSION} → exec start-hyprland ({oct(0o755)})")
-    if not write_atomic(WAYLAND_SESSION, EXPECTED_CONTENT, mode=0o755):
-        fail("Write failed — check permissions (try running with sudo)")
+    write_atomic(WAYLAND_SESSION, EXPECTED_CONTENT, mode=0o755)
 
-    # Verify
-    verify = WAYLAND_SESSION.read_text(encoding="utf-8")
-    if sha256(verify) == expected_hash:
-        info(f"Verified: {WAYLAND_SESSION} is correct")
+    # Post-write byte verification using Python 3.11+ hashlib.file_digest
+    # This avoids reading the file back into memory, hashing the bytes straight from the disk.
+    try:
+        with open(WAYLAND_SESSION, "rb") as f:
+            verify_hash = hashlib.file_digest(f, "sha256").hexdigest()
+    except OSError as e:
+        fail(f"Post-write verification failed to read file: {e}")
+
+    if verify_hash == EXPECTED_HASH:
+        info(f"Verified: {WAYLAND_SESSION} is strictly correct")
     else:
-        fail("Post-write verification failed")
+        fail("Post-write verification failed — byte mismatch detected")
 
-    print(f"\n{_B}{_G}Done{_R} — restart greetd to test: {_C}sudo systemctl restart greetd{_R}")
+    print(f"\n{_C_BOLD}{_C_GREEN}Done{_C_RESET} — restart greetd to test: {_C_CYAN}sudo systemctl restart greetd{_C_RESET}")
 
 
 if __name__ == "__main__":
