@@ -155,6 +155,7 @@ alias diff='delta --side-by-side'
 alias grep='grep --color=auto'
 alias egrep='egrep --color=auto'
 alias fgrep='fgrep --color=auto'
+alias dusky_replace='python3 ~/user_scripts/tools/sed/dusky_replace.py'
 
 # System & Development Scripts
 alias tui='python ~/user_scripts/dusky_tui/python/main/main.py'
