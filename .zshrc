@@ -296,7 +296,7 @@ if [[ -f /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.
 fi
 
 # -----------------------------------------------------------------------------
-# [9] TTY AUTO-LOGIN (Hyprland via UWSM)
+# [9] TTY AUTO-LOGIN (Hyprland)
 # -----------------------------------------------------------------------------
 # Native variable check avoids expensive $(tty) subshells
 if [[ -z "$DISPLAY" && -z "$WAYLAND_DISPLAY" && "$TTY" == "/dev/tty1" ]]; then

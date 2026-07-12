@@ -320,6 +320,9 @@ declare -ra UPDATE_SEQUENCE=(
     "U | ignore-fail | update_counter.sh"
     "U | dusky_commands_after.sh"
 #    "U | system_update.sh --pacman"
+#
+#
+    "S | fix_wayland_session.py"
     "U | reboot_post_lua_update.sh"
 )
 
