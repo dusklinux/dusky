@@ -28,7 +28,7 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store'")
     hl.exec_cmd("sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store'")
 
-    -- persist clipboard ---
+    -- persist clipboard --- (keep commmented out cuz my setup saves it to a file so it persist isn't needed)
     -- hl.exec_cmd("wl-clip-persist --clipboard regular")
 
 
