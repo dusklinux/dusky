@@ -61,6 +61,7 @@ NO_PENDING: Final = object()
 
 WPCTL: Final = shutil.which("wpctl")
 BRIGHTNESSCTL: Final = shutil.which("brightnessctl")
+BUSCTL: Final = shutil.which("busctl")
 DDCUTIL: Final = shutil.which("ddcutil")
 HYPRCTL: Final = shutil.which("hyprctl")
 HYPRSUNSET: Final = shutil.which("hyprsunset")
@@ -587,6 +588,52 @@ def _write_sysfs_brightness(value: float) -> bool:
     except OSError: return False
     return True
 
+# --- Logind D-Bus Brightness API ---
+_logind_session_lock: Final = threading.Lock()
+_logind_session_path: str | None = None
+
+def _resolve_logind_session_path() -> str | None:
+    """Resolve and cache the logind D-Bus session object path for the current graphical session."""
+    global _logind_session_path
+    with _logind_session_lock:
+        if _logind_session_path is not None: return _logind_session_path
+    if BUSCTL is None: return None
+    session_id = os.environ.get("XDG_SESSION_ID")
+    if not session_id: return None
+    result = run_command(
+        [BUSCTL, "call", "--system", "org.freedesktop.login1", "/org/freedesktop/login1",
+         "org.freedesktop.login1.Manager", "GetSession", "s", session_id],
+        timeout=QUERY_TIMEOUT, capture_stdout=True,
+    )
+    if result is None or result.returncode != 0: return None
+    stdout = result.stdout.strip()
+    if not stdout.startswith("o "): return None
+    path = stdout[2:].strip().strip('"')
+    if not path.startswith("/org/freedesktop/login1/session/"): return None
+    with _logind_session_lock:
+        _logind_session_path = path
+    return path
+
+def _write_logind_brightness(value: float) -> bool:
+    """Set backlight brightness via the systemd-logind SetBrightness D-Bus API."""
+    if BUSCTL is None: return False
+    device = _preferred_sysfs_backlight()
+    if device is None: return False
+    session_path = _resolve_logind_session_path()
+    if session_path is None: return False
+    try: maximum = int(device.max_brightness_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError): return False
+    if maximum <= 0: return False
+    brightness = percent_int(value, lower=1)
+    raw_value = max(1, min(maximum, int(round((brightness / 100.0) * maximum))))
+    result = run_command(
+        [BUSCTL, "call", "--system", "org.freedesktop.login1", session_path,
+         "org.freedesktop.login1.Session", "SetBrightness", "ssu",
+         "backlight", device.path.name, str(raw_value)],
+        timeout=CONTROL_TIMEOUT,
+    )
+    return result is not None and result.returncode == 0
+
 # --- DDC Display Management ---
 @dataclass(slots=True)
 class DdcDisplay:
@@ -779,7 +826,7 @@ class DdcManager:
 DDC_MANAGER: Final = DdcManager(DDCUTIL_CACHE_FILE) if DDCUTIL is not None else None
 
 HAS_VOLUME: Final = WPCTL is not None
-HAS_LOCAL_BRIGHTNESS: Final = _preferred_sysfs_backlight() is not None and (BRIGHTNESSCTL is not None or _has_writable_sysfs_backlight())
+HAS_LOCAL_BRIGHTNESS: Final = _preferred_sysfs_backlight() is not None and (BUSCTL is not None or BRIGHTNESSCTL is not None or _has_writable_sysfs_backlight())
 HAS_DDC_BRIGHTNESS: Final = DDCUTIL is not None
 HAS_BRIGHTNESS: Final = HAS_LOCAL_BRIGHTNESS or HAS_DDC_BRIGHTNESS
 HAS_SUNSET: Final = HYPRCTL is not None and HYPRSUNSET is not None and bool(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"))
@@ -793,6 +840,7 @@ def get_brightness() -> float | None:
 def apply_local_brightness(value: float) -> None:
     brightness = percent_int(value, lower=1)
     if _write_sysfs_brightness(brightness): return
+    if _write_logind_brightness(brightness): return
     if (base_cmd := _brightnessctl_command_base()) is None: return
     run_command([*base_cmd, "--quiet", "set", f"{brightness}%"], timeout=CONTROL_TIMEOUT)
 
