@@ -30,7 +30,7 @@ readonly MEMORY_FILE="${HOME}/.config/dusky/settings/dusky_theme/rofi_theme_memo
 readonly APP_NAME="theme-ui"
 readonly ROFI_THEME_STR='window { width: 500px; } listview { lines: 12; }'
 
-readonly -a REQUIRED_CMDS=(uwsm-app rofi)
+readonly -a REQUIRED_CMDS=(dusky-run rofi)
 
 # --- MENU DATA ARRAYS ---
 readonly -a OPTS_MODE=(dark light)

@@ -106,7 +106,7 @@ If you wanted to go beyond the scripts and attack the OS itself:
 
 Delete the Polkit Agent: Uninstall hyprpolkitagent (Saves ~27 MB). You will no longer be able to run GUI apps as root or format drives via the GUI.
 
-Nuke Python Daemons: Disable uwsm and osd_lock.py (Saves ~36 MB). Your app launcher might break, and your Caps Lock notification will disappear.
+Nuke Python Daemons: Disable osd_lock.py (Saves ~36 MB). Your Caps Lock notification will disappear.
 
 Black Screen: Kill awww-daemon (Saves ~15 MB). You will stare at a pure black void instead of a wallpaper.
 

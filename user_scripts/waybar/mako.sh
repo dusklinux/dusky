@@ -15,7 +15,7 @@ for arg in "$@"; do
             if systemctl --user is-active --quiet mako.service; then
                 systemctl --user restart mako.service
             else
-                pkill -x mako && uwsm app -- mako &
+                pkill -x mako && dusky-run -- mako &
             fi
             exit 0
             ;;

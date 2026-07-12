@@ -4,7 +4,7 @@
 # =============================================================================
 #
 # BASED ON: Dusky TUI Engine v5.9 (Fully Armored)
-# TARGET:   Arch Linux / Hyprland / UWSM / Wayland
+# TARGET:   Arch Linux / Hyprland / Wayland
 
 set -Eeuo pipefail
 shopt -s extglob
@@ -14,8 +14,8 @@ shopt -s extglob
 # =============================================================================
 
 # Catalog Format: "Key|Type|DesktopFile|DisplayName"
-# Type 0 = GUI (exec, uwsm-app $textEditor)
-# Type 1 = Terminal (exec, uwsm-app -- $terminal $textEditor)
+# Type 0 = GUI (exec, dusky-run $textEditor)
+# Type 1 = Terminal (exec, dusky-run -- $terminal $textEditor)
 declare -ra EDITOR_CATALOG=(
     "gnome-text-editor|0|org.gnome.TextEditor.desktop|GNOME Text Editor (GUI)"
     "nvim|1|nvim.desktop|Neovim (Terminal)"

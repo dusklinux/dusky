@@ -2026,24 +2026,24 @@ command = "gnome-text-editor \"$HOME/.config/hypr/edit_here/source/environment_v
 [[pages.layout.items.layout.items]]
 type = "button"
 [pages.layout.items.layout.items.properties]
-title = "UWSM Global"
-description = "~/.config/uwsm/env"
+title = "Environment Global"
+description = "~/.config/hypr/conf/environment.conf"
 icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/uwsm/env\""
+command = "gnome-text-editor \"$HOME/.config/hypr/conf/environment.conf\""
 
 [[pages.layout.items.layout.items]]
 type = "button"
 [pages.layout.items.layout.items.properties]
-title = "UWSM Hyprland"
-description = "~/.config/uwsm/env-hyprland"
+title = "Environment Hyprland"
+description = "~/.config/hypr/conf/environment-hyprland.conf"
 icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/uwsm/env-hyprland\""
+command = "gnome-text-editor \"$HOME/.config/hypr/conf/environment-hyprland.conf\""
 
 [[pages.layout.items]]
 type = "navigation"

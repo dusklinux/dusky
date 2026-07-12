@@ -5,9 +5,8 @@
 -- These will override or add to the defaults found in:
 --   ~/.config/hypr/source/environment_variables.lua
 --
--- NOTE: It is strongly recommended to place environment variables in the
--- UWSM files at ~/.config/uwsm/{env,env-hyprland} instead, as those are
--- sourced before Hyprland starts and apply to the full session.
+-- NOTE: Environment variables are set directly in this file, which is
+-- sourced before Hyprland starts and applies to the full session.
 --
 -- Syntax:
 --   hl.env("XCURSOR_SIZE",    "24")

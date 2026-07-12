@@ -357,7 +357,7 @@ echo ""
 echo "### Wayland Compositor & Daemon RSS Summary"
 echo "| Process | PID | RSS (MB) |"
 echo "|---|---|---|"
-PROCS=(Hyprland uwsm waybar xdg-desktop-portal xdg-desktop-portal-hyprland pipewire wireplumber hypridle hyprlock swaybg swww-daemon mako dunst fnott eww ags)
+PROCS=(Hyprland waybar xdg-desktop-portal xdg-desktop-portal-hyprland pipewire wireplumber hypridle hyprlock swaybg swww-daemon mako dunst fnott eww ags)
 for proc in "${PROCS[@]}"; do
     pid=$(pgrep -x "$proc" 2>/dev/null | head -1 || true)
     if [[ -n "$pid" ]]; then

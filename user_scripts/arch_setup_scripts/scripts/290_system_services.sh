@@ -84,7 +84,7 @@ main() {
 
     # UWSM/Hyprland Note: 
     # System services handle hardware/network. 
-    # User-session services should be handled by 'uwsm app' or systemd --user.
+    # User-session services should be handled by 'dusky-run' or systemd --user.
     
     printf "\n--- Operation Complete ---\n"
 }

@@ -552,27 +552,15 @@ manage_services() {
                     done < "$cmd_state_file"
                     
                     if ((${#cmd_array[@]} > 0)); then
-                        if has_cmd uwsm; then
-                            nohup uwsm app -- "${cmd_array[@]}" </dev/null >/dev/null 2>&1 &
-                        else
-                            nohup "${cmd_array[@]}" </dev/null >/dev/null 2>&1 &
-                        fi
+                        nohup dusky-run -- "${cmd_array[@]}" </dev/null >/dev/null 2>&1 &
                     else
                         # Fallback if array was empty
-                        if has_cmd uwsm; then
-                            nohup uwsm app -- "$proc" </dev/null >/dev/null 2>&1 &
-                        else
-                            nohup "$proc" </dev/null >/dev/null 2>&1 &
-                        fi
+                        nohup dusky-run -- "$proc" </dev/null >/dev/null 2>&1 &
                     fi
                     rm -f "$cmd_state_file"
                 else
                     # Fallback if no command context was caught
-                    if has_cmd uwsm; then
-                        nohup uwsm app -- "$proc" </dev/null >/dev/null 2>&1 &
-                    else
-                        nohup "$proc" </dev/null >/dev/null 2>&1 &
-                    fi
+                    nohup dusky-run -- "$proc" </dev/null >/dev/null 2>&1 &
                 fi
                 disown "$!" 2>/dev/null || true
                 clear_state "proc_active_${proc}"
@@ -591,25 +579,13 @@ manage_services() {
                     done < "$cmd_state_file"
                     
                     if ((${#cmd_array[@]} > 0)); then
-                        if has_cmd uwsm; then
-                            nohup uwsm app -- "${cmd_array[@]}" </dev/null >/dev/null 2>&1 &
-                        else
-                            nohup "${cmd_array[@]}" </dev/null >/dev/null 2>&1 &
-                        fi
+                        nohup dusky-run -- "${cmd_array[@]}" </dev/null >/dev/null 2>&1 &
                     else
-                        if has_cmd uwsm; then
-                            nohup uwsm app -- "$script" </dev/null >/dev/null 2>&1 &
-                        else
-                            nohup "$script" </dev/null >/dev/null 2>&1 &
-                        fi
+                        nohup dusky-run -- "$script" </dev/null >/dev/null 2>&1 &
                     fi
                     rm -f "$cmd_state_file"
                 else
-                    if has_cmd uwsm; then
-                        nohup uwsm app -- "$script" </dev/null >/dev/null 2>&1 &
-                    else
-                        nohup "$script" </dev/null >/dev/null 2>&1 &
-                    fi
+                    nohup dusky-run -- "$script" </dev/null >/dev/null 2>&1 &
                 fi
                 disown "$!" 2>/dev/null || true
                 clear_state "script_active_${script}"
@@ -656,16 +632,16 @@ manage_animations() {
     if has_cmd hyprshade; then
         if [[ "$mode" == "enable" ]]; then
             local current_shader
-            current_shader=$(uwsm app -- hyprshade current 2>/dev/null || true)
+            current_shader=$(dusky-run -- hyprshade current 2>/dev/null || true)
             if [[ -n "$current_shader" ]]; then
                 save_state "active_hyprshade" "$current_shader"
-                uwsm app -- hyprshade off || true
+                dusky-run -- hyprshade off || true
             fi
         elif [[ "$mode" == "disable" ]]; then
             local prev_shader
             prev_shader=$(get_state "active_hyprshade")
             if [[ -n "$prev_shader" ]]; then
-                uwsm app -- hyprshade on "$prev_shader" || true
+                dusky-run -- hyprshade on "$prev_shader" || true
                 clear_state "active_hyprshade"
             fi
         fi
@@ -673,27 +649,14 @@ manage_animations() {
 
     # 3. Core Animations (IPC / Rofi Delegation)
     if [[ "$mode" == "enable" ]]; then
-        # Use zero-fork IPC to freeze animations instantly during power save
-        if has_cmd uwsm && has_cmd hyprctl; then
-            uwsm app -- hyprctl keyword animations:enabled 0 </dev/null >/dev/null 2>&1 || log_warn "IPC signal dropped: animations"
-        elif has_cmd hyprctl && [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
-            hyprctl keyword animations:enabled 0 </dev/null >/dev/null 2>&1 || log_warn "IPC signal dropped: animations"
+        if has_cmd hyprctl; then
+            dusky-run -- hyprctl keyword animations:enabled 0 </dev/null >/dev/null 2>&1 || log_warn "IPC signal dropped: animations"
         fi
     elif [[ "$mode" == "disable" ]]; then
-        # Delegate restoration to the user's Rofi script to ensure custom curves are loaded
         if [[ -x "${ANIM_SCRIPT}" ]]; then
-            if has_cmd uwsm; then
-                uwsm app -- "${ANIM_SCRIPT}" --current </dev/null >/dev/null 2>&1 || true
-            else
-                "${ANIM_SCRIPT}" --current </dev/null >/dev/null 2>&1 || true
-            fi
-        else
-            # Fallback if Rofi script is missing
-            if has_cmd uwsm && has_cmd hyprctl; then
-                uwsm app -- hyprctl keyword animations:enabled 1 </dev/null >/dev/null 2>&1 || log_warn "IPC signal dropped: animations"
-            elif has_cmd hyprctl && [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
-                hyprctl keyword animations:enabled 1 </dev/null >/dev/null 2>&1 || log_warn "IPC signal dropped: animations"
-            fi
+            dusky-run -- "${ANIM_SCRIPT}" --current </dev/null >/dev/null 2>&1 || true
+        elif has_cmd hyprctl; then
+            dusky-run -- hyprctl keyword animations:enabled 1 </dev/null >/dev/null 2>&1 || log_warn "IPC signal dropped: animations"
         fi
     fi
 }
@@ -713,9 +676,9 @@ enable_power_saver() {
     set_hardware_profiles "enable"
     set_network_radios "enable" "$wifi"
 
-    if [[ "$theme" == "true" ]] && has_cmd uwsm; then
+    if [[ "$theme" == "true" ]]; then
         log_info "Applying Light Theme for backlight optimization..."
-        uwsm app -- "${THEME_SCRIPT}" set --mode light </dev/null >/dev/null 2>&1 || true
+        dusky-run -- "${THEME_SCRIPT}" set --mode light </dev/null >/dev/null 2>&1 || true
     fi
 
     # Update global GUI state
@@ -742,9 +705,9 @@ disable_power_saver() {
     set_network_radios "disable" "false"
     manage_services "disable"
 
-    if [[ "$theme" == "true" ]] && has_cmd uwsm; then
+    if [[ "$theme" == "true" ]]; then
         log_info "Restoring Dark Theme..."
-        uwsm app -- "${THEME_SCRIPT}" set --mode dark </dev/null >/dev/null 2>&1 || true
+        dusky-run -- "${THEME_SCRIPT}" set --mode dark </dev/null >/dev/null 2>&1 || true
     fi
 
     clear_state "power_saver_active"

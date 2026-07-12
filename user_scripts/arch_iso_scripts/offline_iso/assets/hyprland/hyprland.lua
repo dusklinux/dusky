@@ -147,10 +147,10 @@ hl.bind(
 hl.on("hyprland.start", function()
 
 
-    hl.exec_cmd("uwsm-app -- sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store'")
-    hl.exec_cmd("uwsm-app -- sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store'")
+    hl.exec_cmd("dusky-run -- sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store'")
+    hl.exec_cmd("dusky-run -- sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store'")
 
-    hl.exec_cmd("uwsm-app -- wl-clip-persist --clipboard regular")
+    hl.exec_cmd("dusky-run -- wl-clip-persist --clipboard regular")
 
     -- --- OPTIONAL / USER INTERFACE ---
     hl.exec_cmd("systemctl --user import-environment $(env | cut -d'=' -f 1)")

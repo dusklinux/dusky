@@ -202,7 +202,7 @@ check_dependencies() {
   local -a missing=()
   local cmd
 
-  for cmd in rofi awww magick matugen uwsm-app setsid flock sha256sum find sort xargs cmp stat nproc gawk mktemp jq; do
+  for cmd in rofi awww magick matugen dusky-run setsid flock sha256sum find sort xargs cmp stat nproc gawk mktemp jq; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
 
@@ -666,7 +666,7 @@ get_active_wallpaper_filename() {
       return 0
     fi
   # Fallback to direct awww call just in case UWSM parsing fails
-  done < <(uwsm-app -- awww query 2>/dev/null || awww query 2>/dev/null)
+  done < <(dusky-run -- awww query 2>/dev/null || awww query 2>/dev/null)
 
   return 1
 }
@@ -836,7 +836,7 @@ show_menu() {
     # FIX: -no-fixed-num-lines acts as the primary shrink-wrap enforcer forcing Rofi
     # to perfectly hug the items instead of drawing 100 empty placeholder lines!
     rofi_cmd=(
-      uwsm-app -- rofi
+      dusky-run -- rofi
       -dmenu
       -no-custom
       -i
@@ -968,7 +968,7 @@ apply_selection() {
   get_animation_state
 
   # Construct the precise awww command matching the wizard settings
-  local -a awww_cmd=(uwsm-app -- awww img)
+  local -a awww_cmd=(dusky-run -- awww img)
   [[ -n "$CUR_T_TYPE" && "$CUR_T_TYPE" != "disable" ]] && awww_cmd+=(--transition-type "$CUR_T_TYPE")
   [[ -n "$CUR_T_DUR"  && "$CUR_T_DUR"  != "disable" ]] && awww_cmd+=(--transition-duration "$CUR_T_DUR")
   [[ -n "$CUR_T_FPS"  && "$CUR_T_FPS"  != "disable" ]] && awww_cmd+=(--transition-fps "$CUR_T_FPS")

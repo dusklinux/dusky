@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
 # ARCH / HYPRLAND ROFI MENU SYSTEM
-# Dependencies: rofi-wayland, uwsm, kitty, fd, file, xdg-utils
+# Dependencies: rofi-wayland, kitty, fd, file, xdg-utils
 # -----------------------------------------------------------------------------
 
 set -uo pipefail
@@ -197,7 +197,7 @@ path_is_within() {
 
 run_app() {
     validate_launch_target "$1" || return 0
-    spawn uwsm-app -- "$@"
+    spawn dusky-run -- "$@"
     exit 0
 }
 
@@ -206,7 +206,7 @@ run_term() {
     shift
 
     validate_launch_target "$1" || return 0
-    spawn uwsm-app -- "$TERMINAL" --class "$class" -e "$@"
+    spawn dusky-run -- "$TERMINAL" --class "$class" -e "$@"
     exit 0
 }
 
@@ -215,7 +215,7 @@ run_term_hold() {
     shift
 
     validate_launch_target "$1" || return 0
-    spawn uwsm-app -- "$TERMINAL" --hold --class "$class" -e "$@"
+    spawn dusky-run -- "$TERMINAL" --hold --class "$class" -e "$@"
     exit 0
 }
 
@@ -231,7 +231,7 @@ open_editor() {
     local file="$1"
 
     validate_launch_target "${EDITOR_CMD[0]}" || return 0
-    spawn uwsm-app -- "$TERMINAL" --class "nvim_config" -e "${EDITOR_CMD[@]}" "$file"
+    spawn dusky-run -- "$TERMINAL" --class "nvim_config" -e "${EDITOR_CMD[@]}" "$file"
     exit 0
 }
 
@@ -371,7 +371,7 @@ show_utils_menu() {
                 ;;
             '  Screenshot (Swappy)')
                 require_commands slurp grim swappy || continue
-                spawn "$BASH" -lc 'region=$(slurp) || exit 0; grim -g "$region" - | uwsm-app -- swappy -f -'
+                spawn "$BASH" -lc 'region=$(slurp) || exit 0; grim -g "$region" - | dusky-run -- swappy -f -'
                 exit 0
                 ;;
             '󰅇  Clipboard Persistence')
@@ -592,7 +592,7 @@ route_selection() {
             perform_global_search
             ;;
         '󰀻  Apps')
-            run_app rofi -show drun -run-command 'uwsm app -- {cmd}'
+            run_app rofi -show drun -run-command 'dusky-run -- {cmd}'
             ;;
         '󰧑  Learn/Help')
             show_learn_menu
@@ -630,7 +630,7 @@ route_selection() {
                     perform_global_search
                     ;;
                 apps|app)
-                    run_app rofi -show drun -run-command 'uwsm app -- {cmd}'
+                    run_app rofi -show drun -run-command 'dusky-run -- {cmd}'
                     ;;
                 learn|help|learn/help)
                     show_learn_menu
@@ -680,7 +680,7 @@ show_main_menu() {
 }
 
 validate_startup() {
-    require_commands rofi uwsm-app uwsm fd file realpath xdg-open "$TERMINAL" "${EDITOR_CMD[0]}" || exit 1
+    require_commands rofi dusky-run fd file realpath xdg-open "$TERMINAL" "${EDITOR_CMD[0]}" || exit 1
 
     [[ -d "$SCRIPTS_DIR" ]] || {
         error_dialog "Scripts directory not found: $SCRIPTS_DIR"

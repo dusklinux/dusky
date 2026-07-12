@@ -47,24 +47,24 @@ APP_TYPE="${1:-}"
 
 case "$APP_TYPE" in
     terminal)
-        exec uwsm-app -- "$TERMINAL"
+        exec dusky-run -- "$TERMINAL"
         ;;
     browser)
         BROWSER=$(get_setting "browser" "firefox")
         IS_TERM=$(get_is_terminal "browser" "false")
         if [[ "$IS_TERM" == "true" ]]; then
-            exec uwsm-app -- "$TERMINAL" "$BROWSER"
+            exec dusky-run -- "$TERMINAL" "$BROWSER"
         else
-            exec uwsm-app -- "$BROWSER"
+            exec dusky-run -- "$BROWSER"
         fi
         ;;
     file-manager)
         FM=$(get_setting "filemanager" "thunar")
         IS_TERM=$(get_is_terminal "filemanager" "false")
         if [[ "$IS_TERM" == "true" ]]; then
-            exec uwsm-app -- "$TERMINAL" "$FM"
+            exec dusky-run -- "$TERMINAL" "$FM"
         else
-            exec uwsm-app -- "$FM"
+            exec dusky-run -- "$FM"
         fi
         ;;
     text-editor)
@@ -73,18 +73,18 @@ case "$APP_TYPE" in
         if [[ "$IS_TERM" == "true" ]]; then
             TERM_LOWER="${TERMINAL,,}"
             if [[ "$TERM_LOWER" == *"kitty"* ]]; then
-                exec uwsm-app -- kitty --class "$EDITOR" "$EDITOR"
+                exec dusky-run -- kitty --class "$EDITOR" "$EDITOR"
             elif [[ "$TERM_LOWER" == *"foot"* ]]; then
-                exec uwsm-app -- foot --app-id="$EDITOR" "$EDITOR"
+                exec dusky-run -- foot --app-id="$EDITOR" "$EDITOR"
             elif [[ "$TERM_LOWER" == *"alacritty"* ]]; then
-                exec uwsm-app -- alacritty --class "$EDITOR" -e "$EDITOR"
+                exec dusky-run -- alacritty --class "$EDITOR" -e "$EDITOR"
             elif [[ "$TERM_LOWER" == *"wezterm"* ]]; then
-                exec uwsm-app -- wezterm start --class "$EDITOR" -- "$EDITOR"
+                exec dusky-run -- wezterm start --class "$EDITOR" -- "$EDITOR"
             else
-                exec uwsm-app -- "$TERMINAL" "$EDITOR"
+                exec dusky-run -- "$TERMINAL" "$EDITOR"
             fi
         else
-            exec uwsm-app -- "$EDITOR"
+            exec dusky-run -- "$EDITOR"
         fi
         ;;
     *)

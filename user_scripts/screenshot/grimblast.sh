@@ -29,7 +29,7 @@ if [ "$1" == "swappy" ]; then
 
     # Open Swappy (Background)
     if [ -s "$TEMP_FILE" ]; then
-        uwsm-app -- swappy -f "$TEMP_FILE" &
+        dusky-run -- swappy -f "$TEMP_FILE" &
     fi
 
 else

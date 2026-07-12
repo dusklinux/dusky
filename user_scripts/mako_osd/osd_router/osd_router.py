@@ -7,7 +7,7 @@ import pyudev
 from typing import Set, Optional, Dict
 from evdev import InputDevice, ecodes
 
-# Configure logging to route to stderr for proper journald/uwsm capture
+# Configure logging to route to stderr for proper journald capture
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 SYNC_ID = "sys-osd"

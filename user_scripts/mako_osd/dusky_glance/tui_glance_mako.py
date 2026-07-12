@@ -312,7 +312,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             default="exec sh -c 'makoctl mode -a do-not-disturb && sleep 5 && makoctl mode -r do-not-disturb'",
             options=[
                 "exec sh -c 'makoctl mode -a do-not-disturb && sleep 5 && makoctl mode -r do-not-disturb'", 
-                'exec bash -c "pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dusky_glance.sh"'
+                'exec bash -c "pkill rofi; dusky-run -- $HOME/user_scripts/rofi/dusky_glance.sh"'
             ],
             parent_ref=uid,
             extended_help="**Interactive Shell Hook**\n\nThe shell command executed when physically clicking the widget. By default, it temporarily enables Do Not Disturb to hide the overlay for 5 seconds, allowing clicks to pass through to applications underneath."

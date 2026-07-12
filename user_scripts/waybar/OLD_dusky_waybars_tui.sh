@@ -33,7 +33,7 @@ readonly CONFIG_ROOT="${HOME}/.config/waybar"
 readonly APP_TITLE="Dusky Waybar Manager"
 readonly APP_VERSION="v4.8.1"
 
-readonly -a UWSM_CMD=(uwsm-app -- waybar)
+readonly -a DUSKY_CMD=(dusky-run -- waybar)
 
 declare -ri MAX_DISPLAY_ROWS=14
 declare -ri BOX_WIDTH=76
@@ -125,14 +125,14 @@ kill_waybar() {
 }
 
 force_clean_locks() {
-    rm -f "/run/user/${UID}/uwsm-app.lock" 2>/dev/null || :
+    rm -f "/run/user/${UID}/dusky-run.lock" 2>/dev/null || :
     return 0
 }
 
 # Launch waybar fully detached. setsid = new session, survives terminal closure.
 launch_waybar_detached() {
     force_clean_locks
-    setsid "${UWSM_CMD[@]}" &>/dev/null &
+    setsid "${DUSKY_CMD[@]}" &>/dev/null &
     disown 2>/dev/null || :
     sleep 0.4
     return 0
@@ -141,7 +141,7 @@ launch_waybar_detached() {
 # Launch waybar for live preview (child of this shell, pkill can find it).
 launch_waybar_preview() {
     force_clean_locks
-    "${UWSM_CMD[@]}" &>/dev/null &
+    "${DUSKY_CMD[@]}" &>/dev/null &
     disown 2>/dev/null || :
     return 0
 }
@@ -784,7 +784,7 @@ main() {
 
     # Dependencies Check
     local dep
-    for dep in waybar uwsm-app stty sed setsid; do
+    for dep in waybar dusky-run stty sed setsid; do
         if ! command -v "$dep" &>/dev/null; then
             log_err "Required dependency not found: ${dep}"
             exit 1

@@ -52,7 +52,7 @@ notify() {
 }
 
 open_url() {
-    uwsm-app -- xdg-open "$1" &
+    dusky-run -- xdg-open "$1" &
     disown
 }
 

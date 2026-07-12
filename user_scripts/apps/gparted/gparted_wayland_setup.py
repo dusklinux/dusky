@@ -156,7 +156,7 @@ def do_install(user: str, home: Path) -> None:
         'Name=GParted (Wayland)\n'
         'GenericName=Partition Editor\n'
         'Comment=Create, reorganize, and delete partitions natively on Wayland\n'
-        f'Exec=uwsm-app -- {wrapper_path} %f\n'
+        f'Exec=dusky-run -- {wrapper_path} %f\n'
         'Icon=gparted\n'
         'Terminal=false\n'
         'Categories=GNOME;GTK;System;Filesystem;\n'

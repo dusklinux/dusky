@@ -52,8 +52,6 @@ console = Console()
 USER_JS_BEGIN: Final[str] = "// === BEGIN FIREFOX OPTIMIZATION SUITE ==="
 USER_JS_END: Final[str] = "// === END FIREFOX OPTIMIZATION SUITE ==="
 
-UWSM_ENV_BEGIN: Final[str] = "# === BEGIN FIREFOX WAYLAND EXPORTS ==="
-UWSM_ENV_END: Final[str] = "# === END FIREFOX WAYLAND EXPORTS ==="
 
 MAX_BACKUPS_PER_PROFILE: Final[int] = 3
 
@@ -585,49 +583,39 @@ def remove_user_js_optimizations(profile_dir: Path, dry_run: bool) -> None:
 
 
 def configure_uwsm_env(dry_run: bool, remove: bool = False) -> None:
-    main_env_file = Path.home() / ".config" / "uwsm" / "env"
-    if main_env_file.exists():
-        try:
-            content = main_env_file.read_text()
-            pattern = re.compile(r"\n?" + re.escape(UWSM_ENV_BEGIN) + ".*?" + re.escape(UWSM_ENV_END) + r"\n?", re.DOTALL)
-            if pattern.search(content):
-                new_content = pattern.sub("\n", content).strip() + "\n"
-                if not dry_run:
-                    main_env_file.write_text(new_content)
-                    logger.info(f"Cleaned legacy environment configuration from main file: {main_env_file}")
-        except Exception as e:
-            logger.warning(f"Could not clean legacy main environment file: {e}")
-
-    dropin_dir = Path.home() / ".config" / "uwsm" / "env.d"
-    dropin_file = dropin_dir / "firefox"
-
-    if remove:
-        if dropin_file.exists():
-            if dry_run:
-                logger.info(f"[dim][Dry Run] Would delete drop-in environment file: {dropin_file}[/]")
-            else:
-                try:
-                    dropin_file.unlink()
-                    logger.info(f"Successfully removed drop-in environment file: [yellow]{dropin_file}[/]")
-                except Exception as e:
-                    logger.error(f"Failed to delete {dropin_file}: {e}")
+    legacy_env = Path.home() / ".config" / "uwsm" / "env.d" / "firefox"
+    if legacy_env.exists():
+        if dry_run:
+            logger.info(f"[dim][Dry Run] Would remove legacy env file: {legacy_env}[/]")
+        else:
+            try:
+                legacy_env.unlink()
+                logger.info(f"Removed legacy env file: {legacy_env}")
+            except Exception as e:
+                logger.warning(f"Could not remove legacy env file {legacy_env}: {e}")
+    elif remove:
         return
 
-    env_content = """# Enable native Wayland in Firefox
-export MOZ_ENABLE_WAYLAND=1
-# Enable GTK Kinetic scrolling support
-export MOZ_USE_XINPUT2=1
+    env_file = Path.home() / ".config" / "hypr" / "source" / "environment_variables.lua"
+    env_content = f"""-- Firefox environment variables
+hl.env("MOZ_ENABLE_WAYLAND", "1")
+hl.env("MOZ_USE_XINPUT2", "1")
 """
 
     if dry_run:
-        logger.info(f"[dim][Dry Run] Would create/overwrite drop-in environment file at {dropin_file}[/]")
+        logger.info(f"[dim][Dry Run] Would ensure Firefox env vars in {env_file}[/]")
     else:
         try:
-            dropin_dir.mkdir(parents=True, exist_ok=True)
-            dropin_file.write_text(env_content)
-            logger.info(f"Successfully wrote drop-in environment variables to [cyan]{dropin_file}[/]")
+            env_file.parent.mkdir(parents=True, exist_ok=True)
+            current = env_file.read_text() if env_file.exists() else ""
+            if "Firefox environment variables" not in current:
+                with open(env_file, "a") as f:
+                    f.write(env_content)
+                logger.info(f"Appended Firefox environment variables to [cyan]{env_file}[/]")
+            else:
+                logger.info(f"Firefox environment variables already present in {env_file}")
         except Exception as e:
-            logger.error(f"Failed to write drop-in environment variables: {e}")
+            logger.error(f"Failed to write Firefox environment variables: {e}")
 
 
 def configure_psd_service(dry_run: bool) -> None:

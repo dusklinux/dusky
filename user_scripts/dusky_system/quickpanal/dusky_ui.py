@@ -624,7 +624,7 @@ class NotificationsPanel(Gtk.Box):
         except OSError: pass
         
         # Mirrors bash script exactly
-        cmd = "if systemctl --user is-active --quiet mako.service; then systemctl --user restart mako.service; else pkill -x mako && uwsm app -- mako & fi"
+        cmd = "if systemctl --user is-active --quiet mako.service; then systemctl --user restart mako.service; else pkill -x mako && dusky-run -- mako & fi"
         execute_cmd(cmd)
         
         for child in self.listbox.get_children(): self.listbox.remove(child)

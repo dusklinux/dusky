@@ -249,10 +249,10 @@ list)
   ;;
 esac
 
-# bindd = $mainMod, H, Add Favorite, exec, uwsm-app -- $user_scripts/theme_matugen/theme_favorites_ctl.sh toggle
+# bindd = $mainMod, H, Add Favorite, exec, dusky-run -- $user_scripts/theme_matugen/theme_favorites_ctl.sh toggle
 #
-# bindd = $mainMod SHIFT, apostrophe, Cycle Favorite, exec, uwsm-app -- $user_scripts/theme_matugen/theme_favorites_ctl.sh cycle
+# bindd = $mainMod SHIFT, apostrophe, Cycle Favorite, exec, dusky-run -- $user_scripts/theme_matugen/theme_favorites_ctl.sh cycle
 #
-# bindd = $mainMod SHIFT, D, Remove Favorite, exec, uwsm-app -- $user_scripts/theme_matugen/theme_favorites_ctl.sh remove
+# bindd = $mainMod SHIFT, D, Remove Favorite, exec, dusky-run -- $user_scripts/theme_matugen/theme_favorites_ctl.sh remove
 #
 # bind = SUPER SHIFT, W, exec, $user_scripts/rofi/rofi_wallpaper_selctor.sh fav

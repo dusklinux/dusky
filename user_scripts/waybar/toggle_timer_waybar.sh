@@ -103,7 +103,7 @@ validate_environment() {
     # Check required commands
     local missing=()
     local cmd
-    for cmd in pgrep uwsm-app timeout tail flock; do
+    for cmd in pgrep dusky-run timeout tail flock; do
         if ! command -v "$cmd" &>/dev/null; then
             missing+=("$cmd")
         fi
@@ -169,12 +169,12 @@ check_existing_waybar() {
 }
 
 start_waybar() {
-    log_info "Launching Waybar via uwsm-app..."
+    log_info "Launching Waybar via dusky-run..."
 
-    # Start uwsm-app with waybar
-    # Note: If uwsm-app execs waybar, $! will be waybar's PID
-    #       If uwsm-app forks, we track uwsm-app (still useful for cleanup)
-    uwsm-app -- waybar &
+    # Start dusky-run with waybar
+    # Note: If dusky-run execs waybar, $! will be waybar's PID
+    #       If dusky-run forks, we track dusky-run (still useful for cleanup)
+    dusky-run -- waybar &
     WAYBAR_PID=$!
 
     log_info "Started process with PID: $WAYBAR_PID"
@@ -191,7 +191,7 @@ start_waybar() {
 
     # Additional verification: is waybar actually running?
     if ! pgrep -x "waybar" >/dev/null 2>&1; then
-        log_error "uwsm-app started but waybar process not detected."
+        log_error "dusky-run started but waybar process not detected."
         log_error "The launcher may have failed silently."
         return 1
     fi
