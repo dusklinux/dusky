@@ -108,8 +108,8 @@ INSTALL_SEQUENCE=(
     "S | 211_systemd_oomd_zram.py"
     "S | 212_thp_sysfs_optimizer.sh"
     "S | 213_systemd_journaling_optimizer.sh"
-    "S | 214_damon_reclaim_optimizer.py --yes"
-    "S | 216_systemd_accounting_optimizer.py"
+    "S | 214_damon_reclaim_optimizer.py"
+    "S | 216_systemd_accounting_optimizer.py --yes"
     "S | 217_boot_memory_reclaimer.py"
 #    "S | 215_powerkey_lid_close_behaviour.sh"
 
