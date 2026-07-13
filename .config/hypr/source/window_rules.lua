@@ -355,13 +355,14 @@ hl.window_rule({
     center = true
 })
 
---- Blueman Manager ---
+--- Blueman Dialogs ---
 hl.window_rule({
     name = "float-blueman",
-    match = { class = "^(blueman-manager)$" },
+    match = { class = "^(blueman-.*)$" },
     float = true,
     size = {530, 313}, -- Medium size for device lists
-    center = true
+    center = true,
+    pin = true
 })
 
 --- handbrake ---
@@ -1164,7 +1165,8 @@ hl.window_rule({
     },
     float = true,
     size = {"monitor_w * 0.3958", "monitor_h * 0.9093"},
-    animation = "slide up"
+    animation = "slide up",
+    pin = true
 })
 
 --- Dusky_QuickPanal Script ---
@@ -1172,14 +1174,14 @@ hl.window_rule({
     name = "dusky_quickpanalpy",
     match = {
         class = "^(dusky_quickpanal\\.py)$",
-        -- title = "^(dusky_quickpanal\\.py)$",
     },
     float = true,
     animation = "slide right",
     no_dim = true,
     rounding = 20,
     move = {"(monitor_w-window_w-20)", "(monitor_h-window_h-20)"},
-    border_size = 0
+    border_size = 0,
+    pin = true
 })
 
 --- Audio Router Popup ---
@@ -1485,7 +1487,42 @@ hl.window_rule({
     match = { class = "^(hyprland-share-picker)$" },
     float = true,
     size = {500, 300},  -- Small dialog box
-    center = true
+    center = true,
+    pin = true
+})
+
+--- GTK File Dialog Portal ---
+hl.window_rule({
+    name = "pin-gtk-portal",
+    match = { class = "^(xdg-desktop-portal-gtk)$" },
+    pin = true
+})
+
+--- Hyprland Polkit Agent ---
+hl.window_rule({
+    name = "pin-polkit-agent",
+    match = { class = "^(hyprpolkitagent)$" },
+    float = true,
+    center = true,
+    pin = true
+})
+
+--- GCR / Gnome Keyring Prompter ---
+hl.window_rule({
+    name = "pin-keyring-prompter",
+    match = { class = "^(gcr-prompter|gnome-keyring-prompt)$" },
+    float = true,
+    center = true,
+    pin = true
+})
+
+--- Pinentry Dialogs (GnuPG Passphrase Prompts) ---
+hl.window_rule({
+    name = "pin-pinentry",
+    match = { class = "^([Pp]inentry.*)$" },
+    float = true,
+    center = true,
+    pin = true
 })
 
 --- NWG Look (GTK Theming) ---
@@ -1539,7 +1576,8 @@ hl.window_rule({
     match = { class = "^(pavucontrol|org.pulseaudio.pavucontrol)$" },
     float = true,
     size = {643, 422},
-    center = true
+    center = true,
+    pin = true
 })
 
 --- Network Connection Editor ---
@@ -1548,7 +1586,8 @@ hl.window_rule({
     match = { class = "^(nm-connection-editor)$" },
     float = true,
     size = {432, 423},
-    center = true
+    center = true,
+    pin = true
 })
 
 --- Virt-Manager vm window ---
