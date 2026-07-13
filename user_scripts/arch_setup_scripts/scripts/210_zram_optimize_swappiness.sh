@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Elite Arch Linux ZRAM & VM Policy Optimizer
-# Target: Arch Linux Cutting-Edge (Kernel 7.0+, Bash 5.3+)
+# Target: Arch Linux Cutting-Edge (Kernel 7.1.x, systemd 261+, Bash 5.3+)
 # Scope: Platinum Grade. Pure performance, robust CLI, strict safety checks.
 # Priority: Absolute Minimum RAM Footprint, BBR Networking, Max RAM Recovery.
-# Updates: Synthesized exactly to Kernel 7.0 forensic tuning matrices & user overrides.
 # =============================================================================
 
 set -euo pipefail
@@ -13,7 +12,10 @@ readonly CONFIG_FILE="/etc/sysctl.d/99-vm-zram-parameters.conf"
 readonly MGLRU_CONFIG="/etc/tmpfiles.d/99-mglru-optimize.conf"
 readonly SCRIPT_NAME="${0##*/}"
 
-# --- Strict Path Resolution (Coreutils required) ---
+# --- Save original args before shift destroys them ---
+ORIG_ARGS=("$@")
+
+# --- Strict Path Resolution ---
 readonly SELF_PATH="$(realpath -e -- "${BASH_SOURCE[0]}")"
 
 # --- Formatting ---
@@ -67,10 +69,10 @@ done
 if [[ $EUID -ne 0 && $DRY_RUN -eq 0 ]]; then
     command -v sudo >/dev/null 2>&1 || die "'sudo' is not available."
     log_info "Root privileges required. Escalating..."
-    exec sudo -- /usr/bin/bash "$SELF_PATH" "$@"
+    exec sudo -- /usr/bin/bash "$SELF_PATH" "${ORIG_ARGS[@]}"
 fi
 
-# --- 3. System State Detection (Pure Bash 5.3 Regex) ---
+# --- 3. System State Detection ---
 declare -i SYSTEM_RAM_GB=0
 declare -i ACTIVE_ZRAM_COUNT=0
 declare -i ACTIVE_OTHER_COUNT=0
@@ -113,7 +115,7 @@ declare -i EXPECTED_DIRTY_WRITEBACK
 declare -i EXPECTED_DIRTY_EXPIRE
 declare -i EXPECTED_MGLRU_TTL
 
-# The 30 GB Demarcation Line
+# 30 GiB demarcation (GiB)
 if [[ "$MODE" == "AGGRESSIVE" ]] || [[ "$MODE" == "AUTO" && SYSTEM_RAM_GB -ge 30 ]]; then
     EXPECTED_MODE="PERFORMANCE_LEAN (32GB+)"
     EXPECTED_SWAPPINESS=150
@@ -131,7 +133,7 @@ else
     EXPECTED_SCALE_FACTOR=15       # 0.15% Emergency Buffer (12MB on 8GB RAM). Prevents UI direct reclaim stall.
     EXPECTED_DIRTY_BYTES=134217728 # 128MB max. Prevents massive file transfers from bloating RAM.
     EXPECTED_DIRTY_BG_BYTES=33554432 # 32MB bg threshold. Flushes data to disk sooner to free memory.
-    EXPECTED_DIRTY_WRITEBACK=1000   # 10s dirty background page writeback interval
+    EXPECTED_DIRTY_WRITEBACK=100    # 1s dirty background page writeback interval
     EXPECTED_DIRTY_EXPIRE=500       # 5s dirty page expiry limit (flushes cache aggressively)
     EXPECTED_MGLRU_TTL=100          # Set to 100 to align with CachyOS. Speeds up idle page reclamation.
 fi
@@ -140,11 +142,11 @@ fi
 readonly EXPECTED_PAGE_CLUSTER=0        # Disables swap readahead (critical for ZRAM latency).
 readonly EXPECTED_BOOST_FACTOR=0        # Disables sudden fragmentation CPU spikes.
 readonly EXPECTED_COMPACTION=0          # Disables idle background CPU memory compaction.
-readonly EXPECTED_MAX_MAP_COUNT=2147483 # Caps vm_area_struct bloat, high enough for gaming compatibility.
+readonly EXPECTED_MAX_MAP_COUNT=1048576 # Arch default since 2024-04-07, was 65530. SteamOS uses 2147483642
 
 # --- 5. Generation & Verification ---
 log_info "Initializing Platinum ZRAM & VM Policy Optimizer..."
-log_info "Detected System RAM: ${C_BOLD}${SYSTEM_RAM_GB} GB${C_RESET}"
+log_info "Detected System RAM: ${C_BOLD}${SYSTEM_RAM_GB} GiB${C_RESET}"
 log_info "Detected Swap Layout: ${C_BOLD}${SWAP_LAYOUT}${C_RESET} (${ACTIVE_ZRAM_COUNT} ZRAM / ${ACTIVE_OTHER_COUNT} Disk)"
 
 if [[ "$SWAP_LAYOUT" == "DISK_ONLY" || "$SWAP_LAYOUT" == "NONE" ]]; then
@@ -169,13 +171,15 @@ fi
 # Secure temp file generation
 tmpfile="$(umask 077 && mktemp)"
 tmpfile_mglru="$(umask 077 && mktemp)"
-trap 'rm -f "$tmpfile" "$tmpfile_mglru"' EXIT
+tmpfile_limits="$(umask 077 && mktemp)"
+tmpfile_sysd="$(umask 077 && mktemp)"
+trap 'rm -f "$tmpfile" "$tmpfile_mglru" "$tmpfile_limits" "$tmpfile_sysd"' EXIT
 
 # --- SYSCTL Payload ---
 cat > "$tmpfile" <<EOF
 # Managed by ${SCRIPT_NAME}
 # Scope: Comprehensive ZRAM, Desktop Performance, & Network Matrix
-# Detected State: Layout=${SWAP_LAYOUT}, Desktop Mode=${EXPECTED_MODE}, RAM=${SYSTEM_RAM_GB}GB
+# Detected State: Layout=${SWAP_LAYOUT}, Desktop Mode=${EXPECTED_MODE}, RAM=${SYSTEM_RAM_GB}GiB
 
 # --- SWAP CONFIGURATION ---
 vm.swappiness = ${EXPECTED_SWAPPINESS}
@@ -201,7 +205,6 @@ net.ipv4.tcp_congestion_control = bbr
 net.core.default_qdisc = cake
 net.ipv4.tcp_rmem = 4096 65536 4194304
 net.ipv4.tcp_wmem = 4096 65536 4194304
-net.core.netdev_max_backlog = 1000
 
 # --- eBPF SECURITY & MEMORY COMPACTION ---
 net.core.bpf_jit_enable = 1
@@ -235,7 +238,13 @@ else
 fi
 
 log_info "Applying sysctl parameters to live kernel..."
-sysctl --load "$CONFIG_FILE" >/dev/null || die "Failed to apply sysctl settings."
+# Ensure BBR module is loaded if available
+if ! sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
+    modprobe tcp_bbr 2>/dev/null || log_warn "tcp_bbr module not available, BBR may fail."
+fi
+modprobe sch_cake 2>/dev/null || true
+
+sysctl -e --load "$CONFIG_FILE" >/dev/null || die "Failed to apply sysctl settings."
 
 # --- Apply MGLRU Tmpfiles ---
 if [[ -d "/sys/kernel/mm/lru_gen" ]]; then
@@ -254,10 +263,6 @@ fi
 
 # --- Configure Security & Systemd NOFILE limits ---
 log_info "Optimizing open file limits (LimitNOFILE) for systemd and PAM..."
-
-tmpfile_limits="$(umask 077 && mktemp)"
-tmpfile_sysd="$(umask 077 && mktemp)"
-trap 'rm -f "$tmpfile" "$tmpfile_mglru" "$tmpfile_limits" "$tmpfile_sysd"' EXIT
 
 # PAM limits
 cat > "$tmpfile_limits" <<EOF
@@ -281,13 +286,16 @@ cat > "$tmpfile_sysd" <<EOF
 DefaultLimitNOFILE=65536:524288
 EOF
 
+needs_reexec=0
+user_needs_reexec=0
+
 # Write to system.conf.d
 if [[ -f "/etc/systemd/system.conf.d/99-nofile-limits.conf" ]] && cmp -s "$tmpfile_sysd" "/etc/systemd/system.conf.d/99-nofile-limits.conf"; then
     log_info "Systemd system limits configuration already matches desired state."
 else
     install -Dm0644 "$tmpfile_sysd" "/etc/systemd/system.conf.d/99-nofile-limits.conf"
     log_success "Systemd system limits written to /etc/systemd/system.conf.d/99-nofile-limits.conf"
-    systemctl daemon-reexec || true
+    needs_reexec=1
 fi
 
 # Write to user.conf.d
@@ -296,16 +304,34 @@ if [[ -f "/etc/systemd/user.conf.d/99-nofile-limits.conf" ]] && cmp -s "$tmpfile
 else
     install -Dm0644 "$tmpfile_sysd" "/etc/systemd/user.conf.d/99-nofile-limits.conf"
     log_success "Systemd user limits written to /etc/systemd/user.conf.d/99-nofile-limits.conf"
+    needs_reexec=1
+    user_needs_reexec=1
+fi
+
+if (( needs_reexec )); then
     systemctl daemon-reexec || true
-    # Re-exec user manager instance for active desktop sessions
-    while read -r uid; do
-        if [[ "$uid" =~ ^[0-9]+$ ]]; then
-            user="$(id -un "$uid" 2>/dev/null || true)"
-            if [[ -n "$user" ]]; then
-                systemctl --user -M "${user}@" daemon-reexec >/dev/null 2>&1 || true
+fi
+
+if (( user_needs_reexec )); then
+    log_info "Re-executing systemd user manager instances..."
+    if command -v loginctl >/dev/null 2>&1; then
+        while read -r uid _; do
+            [[ "$uid" =~ ^[0-9]+$ ]] || continue
+            if user="$(id -un "$uid" 2>/dev/null)"; then
+                if [[ -d "/run/user/$uid" ]]; then
+                    sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user daemon-reexec >/dev/null 2>&1 || true
+                fi
             fi
-        fi
-    done < <(pgrep -u root -f "systemd --user" | xargs -r -I {} sh -c 'cat /proc/{}/loginuid' 2>/dev/null || true)
+        done < <(loginctl --no-legend list-users 2>/dev/null || true)
+    else
+        for d in /run/user/[0-9]*; do
+            [[ -d "$d" ]] || continue
+            uid="${d##*/}"
+            if user="$(id -un "$uid" 2>/dev/null)"; then
+                sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user daemon-reexec >/dev/null 2>&1 || true
+            fi
+        done
+    fi
 fi
 
 # --- Hardened Live Verification ---
@@ -315,25 +341,11 @@ actual_scale="$(< /proc/sys/vm/watermark_scale_factor)"
 actual_compaction="$(< /proc/sys/vm/compaction_proactiveness)"
 actual_bpf="$(< /proc/sys/net/core/bpf_jit_harden)"
 
-if [[ "$actual_swappiness" != "$EXPECTED_SWAPPINESS" ]]; then
-    die "Verification failed: vm.swappiness is '${actual_swappiness}', expected '${EXPECTED_SWAPPINESS}'."
-fi
-
-if [[ "$actual_vfs" != "$EXPECTED_VFS_PRESSURE" ]]; then
-    die "Verification failed: vm.vfs_cache_pressure is '${actual_vfs}', expected '${EXPECTED_VFS_PRESSURE}'."
-fi
-
-if [[ "$actual_scale" != "$EXPECTED_SCALE_FACTOR" ]]; then
-    die "Verification failed: vm.watermark_scale_factor is '${actual_scale}', expected '${EXPECTED_SCALE_FACTOR}'."
-fi
-
-if [[ "$actual_compaction" != "$EXPECTED_COMPACTION" ]]; then
-    die "Verification failed: vm.compaction_proactiveness is '${actual_compaction}', expected '${EXPECTED_COMPACTION}'."
-fi
-
-if [[ "$actual_bpf" != "0" ]]; then
-    die "Verification failed: net.core.bpf_jit_harden is '${actual_bpf}', expected '0'."
-fi
+[[ "$actual_swappiness" == "$EXPECTED_SWAPPINESS" ]] || die "Verification failed: vm.swappiness is '${actual_swappiness}', expected '${EXPECTED_SWAPPINESS}'."
+[[ "$actual_vfs" == "$EXPECTED_VFS_PRESSURE" ]] || die "Verification failed: vm.vfs_cache_pressure is '${actual_vfs}', expected '${EXPECTED_VFS_PRESSURE}'."
+[[ "$actual_scale" == "$EXPECTED_SCALE_FACTOR" ]] || die "Verification failed: vm.watermark_scale_factor is '${actual_scale}', expected '${EXPECTED_SCALE_FACTOR}'."
+[[ "$actual_compaction" == "$EXPECTED_COMPACTION" ]] || die "Verification failed: vm.compaction_proactiveness is '${actual_compaction}', expected '${EXPECTED_COMPACTION}'."
+[[ "$actual_bpf" == "0" ]] || die "Verification failed: net.core.bpf_jit_harden is '${actual_bpf}', expected '0'."
 
 log_success "Verified live kernel values:"
 log_success "  vm.swappiness = ${actual_swappiness} (Ideal ZRAM Reclaim)"
