@@ -37,7 +37,7 @@ return {
     -- 2. SETUP LUALINE
     local custom_theme = {
       normal = {
-        a = { fg = vim.g.base16_gui01, bg = vim.g.base16_gui0D, gui = "bold" },
+        a = { fg = vim.g.base16_gui05, bg = vim.g.base16_gui0D, gui = "bold" },
         b = { fg = vim.g.base16_gui05, bg = vim.g.base16_gui0E },
         c = { fg = vim.g.base16_gui05, bg = vim.g.base16_gui02 },
       },
