@@ -33,7 +33,6 @@ readonly -a REPO_TARGETS=(
   fcitx5-qt
   network-manager-applet
   firewalld
-  uwsm
 )
 
 # AUR Packages
