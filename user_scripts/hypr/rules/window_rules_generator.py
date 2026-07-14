@@ -210,7 +210,8 @@ hl.window_rule({{
     -- group = "deny",                   -- deny grouping entirely
 
     -- --- Focus & Raise ---
-    -- no_initial_focus = true,            -- do not focus when first opened
+    -- no_initial_focus = true,            -- Do not focus when first opened
+    -- focus_on_activate = false,          -- Do not focus even if application requests focus (prevents focus stealing, e.g. for PiP)
 
     -- --- Suppress / Lifecycle ---
     -- suppress_event = "maximize",      -- eat maximize requests from the app
