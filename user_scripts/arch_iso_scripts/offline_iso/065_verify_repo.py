@@ -13,6 +13,7 @@
 
 import os
 import sys
+import shutil
 import tarfile
 import hashlib
 import urllib.request
@@ -184,7 +185,7 @@ def download_file(url, dest_path):
         log_err(f"Download failed for {url}: {e}")
         return False
 
-def self_heal_repo(corrupted_pkgs, db_metadata):
+def self_heal_repo(corrupted_pkgs, db_metadata, repo_dir):
     """Download verified, uncorrupted versions of corrupted packages to cache."""
     if not corrupted_pkgs:
         return True
@@ -200,6 +201,12 @@ def self_heal_repo(corrupted_pkgs, db_metadata):
         
     log_info(f"Target cache directory: {cache_dir}")
     cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Check if repo is writable (ISO filesystems are read-only)
+    repo_writable = os.access(str(repo_dir), os.W_OK)
+    if not repo_writable:
+        log_warn(f"Repository '{repo_dir}' is read-only. Healed packages will be placed in cache only.")
+        log_info("Verification will use cache as overlay on subsequent runs.")
     
     if not check_internet_connection():
         log_err("Self-healing failed: No internet connection detected.")
@@ -250,6 +257,11 @@ def self_heal_repo(corrupted_pkgs, db_metadata):
             
             # Verify downloaded file integrity
             if verify_zstd_archive(dest_pkg):
+                # If repo is writable, copy back so re-verification passes at source
+                if repo_writable:
+                    repo_pkg = repo_dir / expected_filename
+                    if repo_pkg != dest_pkg:
+                        shutil.copy2(dest_pkg, repo_pkg)
                 log_ok(f"Successfully healed: {expected_filename}")
                 healed_count += 1
             else:
@@ -289,6 +301,12 @@ def main():
 
     log_info(f"Using repository source: {repo_dir}")
     
+    # Determine cache directory (used as writable overlay for read-only repos like ISO)
+    cache_dir = Path("/mnt/var/cache/pacman/pkg")
+    if not cache_dir.exists():
+        cache_dir = Path("./healed_packages")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    
     db_path = repo_dir / "archrepo.db"
     log_info("Parsing database metadata...")
     db_packages = parse_db_metadata(db_path)
@@ -301,6 +319,7 @@ def main():
     
     corrupted = []
     missing = []
+    cache_verified = []
     verified_count = 0
     
     log_info("Starting packages verification (Structure & SHA256)...")
@@ -319,6 +338,12 @@ def main():
         
         # 1. Structural Verification
         if not verify_zstd_archive(pkg_path):
+            # Check cache as overlay before declaring corrupted
+            cached = cache_dir / filename
+            if cached.exists() and verify_zstd_archive(cached) and get_sha256(cached) == expected_hash:
+                cache_verified.append(filename)
+                verified_count += 1
+                continue
             log_err(f"Corrupted (Zstandard Decoding Failure): {pkg_path.name}")
             corrupted.append(filename)
             continue
@@ -330,6 +355,12 @@ def main():
             continue
             
         if calculated_hash != expected_hash:
+            # Check cache as overlay before declaring corrupted
+            cached = cache_dir / filename
+            if cached.exists() and verify_zstd_archive(cached) and get_sha256(cached) == expected_hash:
+                cache_verified.append(filename)
+                verified_count += 1
+                continue
             log_err(f"Mismatched SHA256 Checksum: {pkg_path.name}")
             corrupted.append(filename)
         else:
@@ -341,6 +372,9 @@ def main():
     print(f"  Total DB packages : {len(db_packages)}")
     print(f"  Verified (OK)     : {C_GREEN}{verified_count}{C_RESET}")
     
+    if cache_verified:
+        print(f"  Cache overlay     : {C_YELLOW}{len(cache_verified)}{C_RESET} packages verified via target cache")
+    
     if missing:
         print(f"  Missing packages  : {C_YELLOW}{len(missing)}{C_RESET}")
         
@@ -350,8 +384,24 @@ def main():
             print(f"    - {c}")
             
         # Trigger self-healing
-        self_heal_repo(corrupted, db_packages)
-        sys.exit(1)
+        self_heal_repo(corrupted, db_packages, repo_dir)
+
+        # Re-verify with cache overlay: check if all now satisfied via cache
+        still_broken = []
+        for filename in corrupted:
+            expected_hash = db_packages[filename]["sha256"]
+            cached = cache_dir / filename
+            if cached.exists() and verify_zstd_archive(cached) and get_sha256(cached) == expected_hash:
+                log_ok(f"Now valid via cache: {filename}")
+            else:
+                still_broken.append(filename)
+
+        if not still_broken:
+            log_ok("All packages verified successfully (via cache overlay).")
+            sys.exit(0)
+        else:
+            log_err(f"Still {len(still_broken)} packages could not be healed: {still_broken}")
+            sys.exit(1)
     else:
         log_ok("All packages matched database checksums and verified successfully.")
         sys.exit(0)
