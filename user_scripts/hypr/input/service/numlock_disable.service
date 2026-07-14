@@ -1,0 +1,13 @@
+[Unit]
+Description=Disable NumLock on Virtual Consoles (TTYs)
+Documentation=man:setleds(1)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/sh -c 'for tty in /dev/tty[1-6]; do setleds -D -num < "$tty" 2>/dev/null; done 2>/dev/null || true'
+StandardInput=tty
+
+[Install]
+WantedBy=multi-user.target

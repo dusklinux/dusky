@@ -34,6 +34,9 @@ readonly SERVICES_CONFIG=(
 
     # Dusky CPU Core and Power Limiter Restorer (Default: Enable)
     "$HOME/user_scripts/performance/cpu/service/dusky_cpu.service | enable"
+
+    # Disable NumLock on TTYs on Boot (Default: Disable)
+    "$HOME/user_scripts/hypr/input/service/numlock_disable.service | disable"
 )
 
 readonly SYSTEMD_SYSTEM_DIR="/etc/systemd/system"

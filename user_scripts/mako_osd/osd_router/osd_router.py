@@ -4,7 +4,6 @@ import time
 import asyncio
 import logging
 import pyudev
-from typing import Set, Optional, Dict
 from evdev import InputDevice, ecodes
 
 # Configure logging to route to stderr for proper journald capture
@@ -16,12 +15,12 @@ ROUTER_SCRIPT = os.path.expanduser("~/user_scripts/mako_osd/osd_router/osd_route
 # Set to True if you remap CapsLock to Escape/Ctrl in Hyprland config
 IGNORE_RAW_CAPSLOCK = False 
 
-_active_tasks: Set[asyncio.Task] = set()
-_monitored_devices: Set[str] = set()
-_active_actions: Set[str] = set()
+_active_tasks: set[asyncio.Task] = set()
+_monitored_devices: set[str] = set()
+_active_actions: set[str] = set()
 
 # Global tracker for physical keystrokes to validate EV_LED events
-_last_physical_keypress: Dict[int, float] = {
+_last_physical_keypress: dict[int, float] = {
     ecodes.KEY_CAPSLOCK: 0.0,
     ecodes.KEY_NUMLOCK: 0.0
 }
@@ -33,7 +32,7 @@ class DebouncedNotifier:
     Cancels pending notifications if a newer state arrives within the 50ms window.
     """
     def __init__(self):
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
 
     def dispatch(self, icon: str, title: str) -> None:
         if self._task and not self._task.done():
@@ -171,8 +170,7 @@ async def main() -> None:
     upower_task.add_done_callback(_active_tasks.discard)
 
     for device in context.list_devices(subsystem='input'):
-        # Utilize properties mapping to bypass pyudev __getattr__ deprecation
-        dev_node = device.properties.get('DEVNAME')
+        dev_node = device.device_node
         if dev_node:
             task = asyncio.create_task(monitor_device(dev_node))
             _active_tasks.add(task)
@@ -180,9 +178,9 @@ async def main() -> None:
 
     while True:
         device = await queue.get()
-        if device:
-            dev_node = device.properties.get('DEVNAME')
-            action = device.properties.get('ACTION') or getattr(device, 'action', None)
+        if device is not None:
+            dev_node = device.device_node
+            action = device.properties.get('ACTION')
             
             if action == 'add' and dev_node:
                 task = asyncio.create_task(monitor_device(dev_node))
