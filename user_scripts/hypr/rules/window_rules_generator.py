@@ -121,106 +121,116 @@ def generate_lua_rule(client: ClientData, monitor: MonitorData) -> GeneratedRule
 
 hl.window_rule({{
     name = "{safe_name}",
+    -- enabled = true,                   -- toggle rule activation (true/false)
+
+    -- 1. IDENTITY & MATCHING (Conditions)
     match = {{
         class = "^({safe_class})$",
         -- title = "^({safe_title})$",
-        -- xwayland = true,          -- match only XWayland windows
-        -- float = true,          -- match only floating windows
-        -- fullscreen = false,       -- match only non-fullscreen windows
-        -- pin = false,           -- match only non-pinned windows
+        -- xwayland = true,               -- match only XWayland windows (boolean)
+        -- float = true,                  -- match only floating windows (boolean)
+        -- fullscreen = false,            -- match only non-fullscreen windows (boolean)
+        -- pin = false,                   -- match only non-pinned windows (boolean)
+        -- tag = "gaming",                -- match window with specific dynamic tag
     }},
+
+    -- 2. PLACEMENT & WORKSPACE (Where it goes)
+    -- workspace = "{client.workspace_name}",    -- force window to open on this specific workspace
+    -- workspace = "special:magic",              -- open window on the special scratchpad workspace
+    -- workspace = "name:gaming",                -- force window to open on a named workspace
+    -- monitor = "{monitor.name}",               -- force window to open on this specific monitor
+
+    -- 3. LAYOUT STATE (What mode)
     float = true,                     -- float window (floating state, bypasses tiling)
+    -- tile = true,                      -- force tiled layout (overrides floating state)
+    -- fullscreen = true,                -- open window in fullscreen mode on launch
 
+    -- [BEHAVIORAL MODES (Choose Option A or Option B)]
+    --
     -- [OPTION A: STICKY/PINNED DIALOG]
-    -- pin = true,                   -- locks window to show on ALL workspaces
-
+    -- pin = true,                       -- locks window to show on ALL workspaces
+    --
     -- [OR]
-
+    --
     -- [OPTION B: NATIVE ACTIVE-WORKSPACE ONLY DIALOG] (Requires initial_workspace_tracking = 2 in workspace_rules.lua)
-    -- workspace = "unset",          -- Spawns dynamically on the ACTIVE workspace only (won't follow you when switching)
-    -- focus_on_activate = true,     -- Automatically steal focus on spawn
-    -- stay_focused = true,          -- Keep focus locked on this window as long as it remains visible
+    -- workspace = "unset",              -- Spawns dynamically on the ACTIVE workspace only (won't follow you when switching)
+    -- focus_on_activate = true,         -- Automatically steal focus on spawn
+    -- stay_focused = true,              -- Keep focus locked on this window as long as it remains visible
 
-    -- tile = true,                  -- force tiled layout (overrides floating state)
-
+    -- 4. GEOMETRY (Window Bounds)
     size = {{{client.w}, {client.h}}}, -- set absolute window size in pixels
     -- size = {{"monitor_w * {r_w_str}", "monitor_h * {r_h_str}"}}, -- set relative size based on monitor dimensions
-    -- min_size = {{200, 100}},       -- clamp window size: minimum width and height in pixels
-    -- max_size = {{1920, 1080}},     -- clamp window size: maximum width and height in pixels
-    -- keep_aspect_ratio = true,     -- preserve aspect ratio when resizing window
-
+    -- min_size = {{200, 100}},           -- clamp window size: minimum width and height in pixels
+    -- max_size = {{1920, 1080}},         -- clamp window size: maximum width and height in pixels
+    -- keep_aspect_ratio = true,         -- preserve aspect ratio when resizing window
+    --
     move = {{{local_x}, {local_y}}}, -- move window to local coordinates relative to monitor origin
     -- move = {{"monitor_w * {r_x_str}", "monitor_h * {r_y_str}"}}, -- move window to relative position on monitor
     -- move = {{"monitor_w - window_w - 20", "monitor_h - window_h - 20"}}, -- anchor window (e.g. bottom-right with 20px gap)
-    -- center = true,                -- center window on monitor (ignores size-based moves)
-    -- center = {1},               -- center window taking into account reserved monitor spaces (e.g., waybar)
+    -- move = {{"cursor_x - (window_w * 0.5)", "cursor_y - (window_h * 0.5)"}}, -- center window on active cursor position
+    -- center = true,                    -- center window on monitor (ignores size-based moves)
+    -- center = {1},                     -- center window taking into account reserved monitor spaces (e.g., waybar)
 
-    -- --- Animation ---
+    -- 5. FOCUS, GROUPS & LIFECYCLE
+    -- no_initial_focus = true,          -- Do not focus when first opened
+    -- focus_on_activate = false,        -- Do not focus even if application requests focus (prevents focus stealing, e.g. for PiP)
+    -- stay_focused = true,              -- force focus on the window as long as visible
+    -- group = "set",                    -- insert window into a window group
+    -- group = "lock",                   -- lock group membership to prevent automatic grouping actions
+    -- group = "barred",                 -- hide window's tab label in the group title bar
+    -- group = "deny",                   -- prevent grouping actions for this window entirely
+    -- tag = "+gaming",                  -- add dynamic tag to matched window (e.g., "+name" to add, "-name" to remove)
+
+    -- 6. ANIMATION (Transitions)
     -- Pick ONE style. Remove the "--" from the line you want.
     --
-    -- animation = "popin",          -- scale zoom transition from center (auto start threshold)
-    -- animation = "popin 60%",      -- scale zoom transition starting from 60% size
-    -- animation = "popin 70%",      -- scale zoom transition starting from 70% size
-    -- animation = "popin 80%",      -- scale zoom transition starting from 80% size
-    -- animation = "popin 87%",      -- subtle zoom transition (Hyprland official default threshold)
-    -- animation = "popin 90%",      -- tight zoom transition, starting close to full size
-    -- animation = "popin 95%",      -- minimal zoom transition, almost unnoticeable
+    -- animation = "popin",              -- scale zoom transition from center (auto start threshold)
+    -- animation = "popin 60%",          -- scale zoom transition starting from 60% size
+    -- animation = "popin 70%",          -- scale zoom transition starting from 70% size
+    -- animation = "popin 80%",          -- scale zoom transition starting from 80% size
+    -- animation = "popin 87%",          -- subtle zoom transition (Hyprland official default threshold)
+    -- animation = "popin 90%",          -- tight zoom transition, starting close to full size
+    -- animation = "popin 95%",          -- minimal zoom transition, almost unnoticeable
     --
-    -- animation = "slide",          -- slide transition from the nearest monitor edge (auto-detected)
-    -- animation = "slide top",      -- slide transition: enter/exit from/to top edge
-    -- animation = "slide bottom",   -- slide transition: enter/exit from/to bottom edge
-    -- animation = "slide left",     -- slide transition: enter/exit from/to left edge
-    -- animation = "slide right",    -- slide transition: enter/exit from/to right edge
+    -- animation = "slide",              -- slide transition from the nearest monitor edge (auto-detected)
+    -- animation = "slide top",          -- slide transition: enter/exit from/to top edge
+    -- animation = "slide bottom",       -- slide transition: enter/exit from/to bottom edge
+    -- animation = "slide left",         -- slide transition: enter/exit from/to left edge
+    -- animation = "slide right",        -- slide transition: enter/exit from/to right edge
     --
-    -- animation = "gnomed",         -- GNOME-style transition (combines scale zoom and opacity fade)
-    -- animation = "fade",           -- opacity fade transition only (no window movement)
+    -- animation = "gnomed",             -- GNOME-style transition (combines scale zoom and opacity fade)
+    -- animation = "fade",               -- opacity fade transition only (no window movement)
     --
-    -- no_anim = true,               -- disable all transitions for this window entirely
+    -- no_anim = true,                   -- disable all transitions for this window entirely
 
-    -- --- Visuals & Effects ---
+    -- 7. VISUALS & DECORATION
     -- opacity = "0.9 override 0.9 override",    -- set opacity: active window, inactive window (overrides global opacity)
     -- opacity = "1.0 override 0.85 override",   -- set opacity: fully opaque active, dimmed inactive
     -- opacity = "0.95",                          -- set constant opacity for both active and inactive states
     -- opaque = true,                             -- force window to remain fully opaque (ignores opacity rules)
     --
-    -- rounding = 10,                -- set corner radius in pixels (overrides global rounding)
-    -- rounding = 0,                 -- force sharp corners (0px radius) for this window only
-    -- rounding_power = 2,           -- corner rounding curve power (2 = circular, higher = squircle)
+    -- rounding = 10,                    -- set corner radius in pixels (overrides global rounding)
+    -- rounding = 0,                     -- force sharp corners (0px radius) for this window only
+    -- rounding_power = 2,               -- corner rounding curve power (2 = circular, higher = squircle)
     --
-    -- border_size = 2,              -- set border thickness in pixels (overrides global border size)
-    -- border_size = 0,              -- disable border for this window entirely
-    -- border_color = "rgb(ff0000)",             -- set solid color hex border (RGB)
-    -- border_color = "rgba(33ccffee)",          -- set solid color hex border with alpha (RGBA)
-    -- border_color = {{colors = {{"rgba(33ccffee)", "rgba(00ff99ee)"}}, angle = 45}},  -- set multi-color gradient border
-    --
-    -- no_blur = true,               -- disable background blur behind this window
-    -- xray = true,                  -- allow background blur to see through directly to wallpaper (ignores windows underneath)
-    -- no_shadow = true,             -- disable drop shadow under this window
-    -- no_dim = true,                -- disable window dimming when inactive
-    -- dim_around = true,            -- dim all other windows when this window is focused
-    -- no_focus = true,              -- prevent this window from ever receiving focus (unfocusable)
+    -- border_size = 2,                  -- set border thickness in pixels (overrides global border size)
+    -- border_size = 0,                  -- disable border for this window entirely
+    -- border_color = "rgb(ff0000)",                 -- set solid color hex border (RGB)
+    -- border_color = "rgba(33ccffee)",              -- set solid color hex border with alpha (RGBA)
+    -- border_color = "rgba(33ccffee) rgba(00ff99ee) 45deg", -- set multi-color gradient border
 
-    -- --- Fullscreen / Layout ---
-    -- fullscreen = true,                -- open window in fullscreen mode on launch
+    -- 8. COMPOSITING & EFFECTS
+    -- no_blur = true,                   -- disable background blur behind this window
+    -- xray = true,                      -- allow background blur to see through directly to wallpaper (ignores windows underneath)
+    -- no_shadow = true,                 -- disable drop shadow under this window
+    -- no_dim = true,                    -- disable window dimming when inactive
+    -- dim_around = true,                -- dim all other windows when this window is focused
+    -- no_focus = true,                  -- prevent this window from ever receiving focus (unfocusable)
+
+    -- 9. PERFORMANCE & SUPPRESSION
     -- immediate = true,                 -- force immediate page-flip presentation (bypasses Wayland VSync, useful for gaming)
-    -- group = "set",                    -- insert window into a window group
-    -- group = "lock",                   -- lock group membership to prevent automatic grouping actions
-    -- group = "barred",                 -- hide window's tab label in the group title bar
-    -- group = "deny",                   -- prevent grouping actions for this window entirely
-
-    -- --- Focus & Raise ---
-    -- no_initial_focus = true,            -- Do not focus when first opened
-    -- focus_on_activate = false,          -- Do not focus even if application requests focus (prevents focus stealing, e.g. for PiP)
-
-    -- --- Suppress / Lifecycle ---
     -- suppress_event = "maximize",      -- block maximize window requests from the application
     -- suppress_event = "fullscreen",    -- block fullscreen window requests from the application
-
-    -- --- Placement ---
-    -- workspace = "{client.workspace_name}",    -- force window to open on this specific workspace
-    -- workspace = "special:magic",              -- open window on the special scratchpad workspace
-    -- workspace = "name:gaming",                -- force window to open on a named workspace
-    -- monitor = "{monitor.name}",               -- force window to open on this specific monitor
 }})"""
 
     return GeneratedRule(
