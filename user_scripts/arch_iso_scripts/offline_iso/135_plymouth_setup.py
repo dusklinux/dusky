@@ -76,7 +76,7 @@ def _strip_inline_comment(s: str) -> str:
     return s
 
 def _parse_last_array(text: str, var: str):
-    """
+    r"""
     Find last occurrence of ^\s*VAR=(...) ignoring commented lines.
     Arch Wiki grep ^HOOKS practice - anchored to prevent # HOOKS= poisoning.
     Returns (start, end, inner, tokens, match) or None.
