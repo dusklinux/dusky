@@ -11,7 +11,7 @@
 #
 # Security guarantees:
 # - No world-writable dirs, no PID-only /tmp names, secure_mkdtemp 0o700
-# - No self-elevation via exec sudo, runuser -u for makepkg/git (CVE-2025-32463)
+# - Auto-elevation via exec sudo (updated per user request), runuser -u for makepkg/git (CVE-2025-32463)
 # - SUDO_USER regex + pwd validation, SUDO_UID/GID numeric + existence check
 # - chown -R -h --no-dereference to avoid symlink TOCTOU
 # - IsolatedDB: 0750 root:alpm, sync 0775, DownloadUser stripped, allowlist mirrorlist (no .pacnew)
@@ -157,7 +157,13 @@ def ensure_sudo_cached():
         r = subprocess.run(["sudo","-v"], shell=False)
         if r.returncode != 0: die("sudo auth failed")
 
-def run_cmd(cmd: List[str], *, sudo=False, as_user: Optional[str]=None, env: Optional[Dict]=None, cwd: Optional[Path]=None, capture=False, check=True):
+def restore_ownership(path: Path):
+    if not path.exists(): return
+    uid, gid = validate_sudo_ids()
+    if uid is not None and gid is not None:
+        subprocess.run(["chown", "-R", "-h", "--no-dereference", f"{uid}:{gid}", str(path)], shell=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def run_cmd(cmd: List[str], *, sudo=False, as_user: Optional[str]=None, env: Optional[Dict]=None, cwd: Optional[Path]=None, capture=False, check=True, merge_stderr=False, timeout: Optional[int]=None):
     full: List[str] = []
     if sudo and os.geteuid() != 0:
         full = ["sudo","-n"]
@@ -170,9 +176,11 @@ def run_cmd(cmd: List[str], *, sudo=False, as_user: Optional[str]=None, env: Opt
             if as_user != pwd.getpwuid(os.getuid()).pw_name:
                 full = ["sudo","-n","-u",as_user,"--"]
     full += cmd
-    res = subprocess.run(full, cwd=str(cwd) if cwd else None, env=env, stdout=subprocess.PIPE if capture else None, stderr=subprocess.PIPE if capture else None, text=True, shell=False)
+    res = subprocess.run(full, cwd=str(cwd) if cwd else None, env=env, stdout=subprocess.PIPE if capture else None, stderr=subprocess.STDOUT if (capture and merge_stderr) else (subprocess.PIPE if capture else None), text=True, timeout=timeout, shell=False)
     if check and res.returncode != 0:
-        if capture: console.print(f"[red]Failed: {shlex.join(full)}\n{res.stderr[:1000]}[/]")
+        if capture:
+            err_out = res.stdout if merge_stderr else res.stderr
+            console.print(f"[red]Failed: {shlex.join(full)}\n{(err_out or '')[:1000]}[/]")
         raise subprocess.CalledProcessError(res.returncode, full, res.stdout, res.stderr)
     return res
 
@@ -276,11 +284,11 @@ class IsolatedDB:
     def sync(self)->bool:
         for attempt in range(1,6):
             step(f"Syncing DB attempt {attempt}/5")
-            r=self.pacman("-Sy", capture=True, sudo=os.geteuid()==0)
+            r=self.pacman("-Sy", capture=True, sudo=True)
             if r.returncode==0: ok("Sync ok"); return True
             warn(f"Sync failed: {(r.stderr or '')[:500]}")
             if attempt==3:
-                r2=run_cmd(["pacman","--dbpath",str(self.db_path),"--gpgdir","/etc/pacman.d/gnupg","--config",str(self.conf_path),"--disable-sandbox-filesystem","--disable-download-timeout","--noconfirm","-Sy"], capture=True, sudo=os.geteuid()==0, check=False)
+                r2=run_cmd(["pacman","--dbpath",str(self.db_path),"--gpgdir","/etc/pacman.d/gnupg","--config",str(self.conf_path),"--disable-sandbox-filesystem","--disable-download-timeout","--noconfirm","-Sy"], capture=True, sudo=True, check=False)
                 if r2.returncode==0: ok("Sync ok fallback"); return True
             time.sleep(2+random.uniform(0,1))
         return False
@@ -347,7 +355,7 @@ def download_packages(isolated: IsolatedDB, master: List[str], repo_dir: Path):
         for attempt in range(1,13):
             prog.update(task, description=f"Download attempt {attempt}/12")
             for part in repo_dir.glob("*.part"): part.unlink(missing_ok=True)
-            r=isolated.pacman("-Sw","--cachedir",str(repo_dir),"--color","never","--noprogressbar","--",*master, capture=True, sudo=os.geteuid()==0)
+            r=isolated.pacman("-Sw","--cachedir",str(repo_dir),"--color","never","--noprogressbar","--",*master, capture=True, sudo=True)
             if r.returncode==0:
                 corrupt=0
                 for pkg in repo_dir.glob("*.pkg.tar.*"):
@@ -397,19 +405,30 @@ def generate_repo_db(repo_dir: Path, repo_mode: int):
     except: pass
     impl=detect_repo_add_impl(); env=os.environ.copy(); env["LC_ALL"]="C.UTF-8"
     if impl=="rust" and repo_mode==2: env["RAYON_NUM_THREADS"]="1"
-    db_tmp=repo_dir/f"{REPO_NAME}.db.tar.zst.tmp.{random.randint(100000,999999)}"
+    tmp_suffix = f"-tmp-{random.randint(100000,999999)}.db.tar.zst"
+    db_tmp=repo_dir/f"{REPO_NAME}{tmp_suffix}"
     cmd=["repo-add","--remove","--nocolor",str(db_tmp)]+pkg_files
     res=subprocess.run(cmd, env=env, shell=False)
-    if res.returncode!=0: db_tmp.unlink(missing_ok=True); die("repo-add failed")
+    if res.returncode!=0:
+        for f in repo_dir.glob(f"{REPO_NAME}-tmp-*"): f.unlink(missing_ok=True)
+        die("repo-add failed")
     final_db=repo_dir/f"{REPO_NAME}.db.tar.zst"
-    try: os.replace(db_tmp, final_db)
-    except FileNotFoundError:
-        alt=repo_dir/f"{REPO_NAME}.db.tar.gz"
-        if alt.exists(): final_db=alt
-    link=repo_dir/f"{REPO_NAME}.db"
-    if link.exists() or link.is_symlink(): link.unlink()
-    try: link.symlink_to(final_db.name)
-    except: pass
+    final_files=repo_dir/f"{REPO_NAME}.files.tar.zst"
+    db_tmp_actual = db_tmp
+    files_tmp_actual = repo_dir / db_tmp.name.replace(".db.", ".files.")
+    if db_tmp_actual.exists():
+        try: os.replace(db_tmp_actual, final_db)
+        except Exception as e: warn(f"Failed to rename db: {e}")
+    if files_tmp_actual.exists():
+        try: os.replace(files_tmp_actual, final_files)
+        except Exception as e: warn(f"Failed to rename files: {e}")
+    for f in repo_dir.glob(f"{REPO_NAME}-tmp-*"):
+        f.unlink(missing_ok=True)
+    for name, target in [("db", final_db), ("files", final_files)]:
+        link=repo_dir/f"{REPO_NAME}.{name}"
+        if link.exists() or link.is_symlink(): link.unlink()
+        try: link.symlink_to(target.name)
+        except: pass
     ok("Database created")
 
 # ------------------------------------------------------------------------------
@@ -449,6 +468,10 @@ def extract_runtime_deps(pkgfile: Path)->List[str]:
 
 def download_official_deps(isolated: IsolatedDB, official: Optional[Path], aur_repo: Path, deps: List[str])->List[str]:
     if not deps: return []
+    gid=get_alpm_gid()
+    if gid is not None:
+        try: os.chown(aur_repo, 0, gid); aur_repo.chmod(0o775)
+        except PermissionError: pass
     official_list=[]; aur_needed=[]
     for dep in deps:
         r=isolated.pacman("-Si","--",dep, capture=True)
@@ -477,7 +500,7 @@ def build_aur_package(pkg: str, aur_repo: Path, official_repo: Optional[Path], i
     clone_root.mkdir(parents=True)
     cloned=False
     for _ in range(6):
-        r=subprocess.run(["runuser","-u",real_user,"--","git","clone","--depth","1",f"https://aur.archlinux.org/{pkg}.git",str(clone_root/pkg)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
+        r=run_cmd(["git","clone","--depth","1",f"https://aur.archlinux.org/{pkg}.git",str(clone_root/pkg)], as_user=real_user, capture=True, check=False)
         if r.returncode==0: cloned=True; break
         time.sleep(2)
     if not cloned: err(f"Clone failed {pkg}"); return False,False
@@ -485,15 +508,16 @@ def build_aur_package(pkg: str, aur_repo: Path, official_repo: Optional[Path], i
     if not (pkgbuild_dir/"PKGBUILD").exists(): err(f"PKGBUILD missing {pkg}"); return False,False
     build_work=clone_base/f"work_{pkg}"; src_dest=build_work/"src"; pkgdest=build_work/"pkgdest"
     for d in [build_work,src_dest,pkgdest]: d.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["chown","-R","-h","--no-dereference",f"{real_user}:",str(build_work)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
-    subprocess.run(["chown","-R","-h","--no-dereference",f"{real_user}:",str(clone_root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
+    if os.geteuid() == 0:
+        subprocess.run(["chown","-R","-h","--no-dereference",f"{real_user}:",str(build_work)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
+        subprocess.run(["chown","-R","-h","--no-dereference",f"{real_user}:",str(clone_root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
     env=os.environ.copy(); env.update({"PKGDEST":str(pkgdest),"BUILDDIR":str(build_work),"SRCDEST":str(src_dest),"GRADLE_OPTS":"-Dorg.gradle.daemon=false -Dorg.gradle.console=plain","GRADLE_USER_HOME":str(build_work/".gradle"),"CI":"1"})
     success=False
     for attempt in range(1,7):
         subprocess.run(["sudo","-v"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
-        cmd=["runuser","-u",real_user,"--","makepkg","-s","--noconfirm","--cleanbuild","--cleanafter"]
+        cmd=["makepkg","-s","--noconfirm","--cleanbuild","--cleanafter"]
         try:
-            r=subprocess.run(cmd, cwd=str(pkgbuild_dir), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=3600, shell=False)
+            r=run_cmd(cmd, as_user=real_user, env=env, cwd=pkgbuild_dir, capture=True, merge_stderr=True, check=False, timeout=3600)
             if r.returncode==0: success=True; break
             if attempt==6: console.print(f"[red]Build log {pkg}:\n{r.stdout[-3000:]}[/]")
         except subprocess.TimeoutExpired: err(f"Timeout {pkg}"); return False,False
@@ -518,7 +542,7 @@ def build_aur_package(pkg: str, aur_repo: Path, official_repo: Optional[Path], i
 def aur_prune_and_db(aur_repo: Path, isolated: IsolatedDB):
     info("Pruning old versions (keep 1)")
     if check_tool("paccache"):
-        subprocess.run(["paccache","-r","-k","1","--noconfirm","-c",str(aur_repo)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
+        run_cmd(["paccache","-r","-k","1","-c",str(aur_repo)], sudo=True, check=False)
     generate_repo_db(aur_repo, 2 if "cachy" in isolated.conf_path.read_text().lower() else 1)
     conf=isolated.conf_path.read_text()
     if f"[{REPO_NAME}]" not in conf:
@@ -538,6 +562,7 @@ def aur_prune_and_db(aur_repo: Path, isolated: IsolatedDB):
             if pkgname not in wl and pkgname not in AUR_PACKAGES:
                 step(f"orphan removed: {pkgname} ({f.name})"); f.unlink(missing_ok=True); Path(str(f)+".sig").unlink(missing_ok=True); dc+=1
         if dc: generate_repo_db(aur_repo, 2)
+    restore_ownership(aur_repo)
 
 # ------------------------------------------------------------------------------
 # ISO
@@ -604,8 +629,12 @@ def inject_dotfiles(cfg: ISOConfig):
     if profiledef.exists():
         txt=profiledef.read_text()
         txt=re.sub(r"# --- DUSKY PERMISSIONS START ---.*?# --- DUSKY PERMISSIONS END ---\n","",txt,flags=re.DOTALL)
-        txt=txt.replace("grml-zsh-config\n","")
         profiledef.write_text(txt)
+    pkg_file=cfg.profile_dir/"packages.x86_64"
+    if pkg_file.exists():
+        ptxt=pkg_file.read_text()
+        ptxt=re.sub(r"^\s*grml-zsh-config\s*$", "", ptxt, flags=re.MULTILINE)
+        pkg_file.write_text(ptxt)
     tmp_dot=secure_mkdtemp("dusky-dots-")
     try:
         pin=os.environ.get("DUSKY_DOTFILES_PIN","")
@@ -779,6 +808,13 @@ def main():
     parser.add_argument("--source-dir", type=Path, help="Source payload dir")
     parser.add_argument("--auto", action="store_true", help="Non-interactive defaults")
     args=parser.parse_args()
+    if os.geteuid() != 0:
+        console.print("[yellow]Elevating privileges to root (may prompt for sudo password)...[/]")
+        sudo_args = ["sudo"]
+        if not sys.stdin.isatty():
+            sudo_args.append("-S")
+        args_exec = sudo_args + [sys.executable] + sys.argv
+        os.execvp("sudo", args_exec)
     console.print(Panel(f"Dusky Factory v{VERSION} — Python 3.14.6 / Pacman 7.1 / Systemd 261 / Archiso 88", style="bold cyan", box=box.DOUBLE))
     check_is_arch()
     repo_mode=1 if args.arch else 2
@@ -803,7 +839,7 @@ def main():
     if not args.auto and sys.stdin.isatty():
         if action in ("official","both","full"): official_repo=prompt_path("Official repo path", official_repo)
         if action in ("aur","both","full"): aur_repo=prompt_path("AUR repo path", aur_repo)
-    if action in ("official","both","iso","full"): ensure_sudo_cached()
+    ensure_sudo_cached()
     if action in ("official","both","full"):
         info("=== OFFICIAL REPO BUILD ===")
         for t in ["pacman","repo-add","bsdtar","zstd","xz"]:
@@ -817,10 +853,7 @@ def main():
             download_packages(isolated, master, official_repo)
             prune_unneeded(official_repo, whitelist)
             generate_repo_db(official_repo, repo_mode)
-            uid,gid=validate_sudo_ids()
-            if uid is not None:
-                try: subprocess.run(["chown","-R","-h","--no-dereference",f"{uid}:{gid}",str(official_repo)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
-                except: pass
+            restore_ownership(official_repo)
         finally: isolated.cleanup()
     if action in ("aur","both","full"):
         info("=== AUR REPO BUILD ===")
@@ -857,11 +890,9 @@ def main():
             from pathlib import Path as P
             # prune and db
             if check_tool("paccache"):
-                subprocess.run(["paccache","-r","-k","1","--noconfirm","-c",str(aur_repo)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
+                run_cmd(["paccache","-r","-k","1","-c",str(aur_repo)], sudo=True, check=False)
             generate_repo_db(aur_repo, 2 if "cachy" in isolated_aur.conf_path.read_text().lower() else 1)
-            if os.geteuid()==0:
-                uid,gid=validate_sudo_ids()
-                if uid is not None: subprocess.run(["chown","-R","-h","--no-dereference",f"{uid}:{gid}",str(aur_repo)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
+            restore_ownership(aur_repo)
             table=Table(title="AUR Summary", box=box.ROUNDED); table.add_column("Metric", style="cyan"); table.add_column("Value", style="green")
             table.add_row("Built", str(built)); table.add_row("Skipped", str(skipped)); table.add_row("Failed", str(len(failed))); console.print(table)
             if failed: console.print(f"[red]Failed: {', '.join(failed)}[/]")
