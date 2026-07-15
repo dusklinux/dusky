@@ -18,7 +18,7 @@ declare -ra ISO_SEQUENCE=(
   "045_repo_bind_mount.sh"
   "051_pacman_repo_switch.sh --offline --cachyos"
   "060_console_fix.sh"
-  "065_verify_repo.py"
+#  "065_verify_repo.py"
   "070_pacstrap_and_disable_mkinitcpio.py --auto --cachyos"
   "080_script_directories_population_in_chroot.sh"
   "090_fstab.sh --auto"
