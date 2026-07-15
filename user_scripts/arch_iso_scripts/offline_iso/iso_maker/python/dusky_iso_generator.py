@@ -500,7 +500,10 @@ def build_aur_package(pkg: str, aur_repo: Path, official_repo: Optional[Path], i
     clone_root.mkdir(parents=True)
     cloned=False
     for _ in range(6):
-        r=run_cmd(["git","clone","--depth","1",f"https://aur.archlinux.org/{pkg}.git",str(clone_root/pkg)], as_user=real_user, capture=True, check=False)
+        target_dir = clone_root/pkg
+        if target_dir.exists():
+            shutil.rmtree(target_dir, ignore_errors=True)
+        r=run_cmd(["git","clone","--depth","1",f"https://aur.archlinux.org/{pkg}.git",str(target_dir)], as_user=real_user, capture=True, check=False)
         if r.returncode==0: cloned=True; break
         time.sleep(2)
     if not cloned: err(f"Clone failed {pkg}"); return False,False
@@ -882,8 +885,10 @@ def main():
                         if ok_flag:
                             if was_skip: skipped+=1
                             else: built+=1
-                        else: failed.append(pkg)
                     except Exception as e: err(f"Exception {pkg}: {e}"); failed.append(pkg)
+                    if len(AUR_PACKAGES) > len(queue):
+                        for extra in AUR_PACKAGES[len(queue):]:
+                            queue.append(extra)
                     i+=1; prog.update(t, completed=i)
                     if len(queue)!=prog.tasks[0].total: prog.update(t, total=len(queue))
             shutil.rmtree(clone_base, ignore_errors=True)
