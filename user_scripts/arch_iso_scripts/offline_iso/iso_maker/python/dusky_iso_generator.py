@@ -585,6 +585,7 @@ def setup_clean_room(cfg: ISOConfig):
         except: pass
         shutil.rmtree(cfg.workspace)
     cfg.workspace.mkdir(parents=True)
+    cfg.workspace.chmod(0o700)
     src_candidates=[Path("/usr/share/archiso/configs/releng"), Path("/usr/share/archiso/configs/baseline")]
     src=next((p for p in src_candidates if p.exists()), None)
     if not src: die("releng not found - install archiso")
@@ -724,6 +725,15 @@ def configure_iso_pacman_conf(cfg: ISOConfig):
 
 def build_iso_image(cfg: ISOConfig)->Path:
     info("Building ISO - safe injection")
+    final_name=f"dusky_{datetime.now().strftime('%m_%d')}.iso"
+    final_path=cfg.final_dest/final_name
+    final_sha=cfg.final_dest/f"{final_path.stem}_iso.sha256"
+    for f in [final_path, final_sha]:
+        if f.exists():
+            step(f"Forcefully removing existing: {f.name}")
+            try: f.unlink()
+            except Exception:
+                subprocess.run(["rm", "-f", str(f)], shell=False)
     mk_src=Path("/usr/bin/mkarchiso")
     mk_custom=cfg.workspace/f"mkarchiso_dusky_{random.randint(100000,999999)}"
     shutil.copy2(mk_src, mk_custom); mk_custom.chmod(0o755)
@@ -763,18 +773,18 @@ def build_iso_image(cfg: ISOConfig)->Path:
     if r.returncode!=0: die("mkarchiso failed")
     iso_files=list(out.glob("*.iso"))
     if not iso_files: die("No ISO produced")
-    final_name=f"dusky_{datetime.now(timezone.utc).strftime('%Y_%m_%d_%H%M')}.iso"
-    final_path=cfg.final_dest/final_name
     cfg.final_dest.mkdir(parents=True, exist_ok=True)
     shutil.move(str(iso_files[0]), str(final_path))
     sha=hashlib.sha256()
     with open(final_path,"rb") as f:
         for chunk in iter(lambda: f.read(1<<20), b""): sha.update(chunk)
-    (final_path.with_suffix(".iso.sha256")).write_text(f"{sha.hexdigest()}  {final_path.name}\n")
+    final_sha.write_text(f"{sha.hexdigest()}  {final_path.name}\n")
     uid,gid=validate_sudo_ids()
     if uid is not None and gid is not None:
-        try: os.chown(final_path, uid, gid)
-        except: pass
+        for f in [final_path, final_sha]:
+            if f.exists():
+                try: os.chown(f, uid, gid)
+                except: pass
     ok(f"ISO built: {final_path} ({human_bytes(final_path.stat().st_size)})")
     return final_path
 
@@ -915,7 +925,7 @@ def main():
                     else: workspace_base=Path("/tmp")
                 else: workspace_base=ZRAM_CANDIDATE
             else: workspace_base=Path("/tmp")
-        workspace=secure_mkdtemp("dusky_iso_", base=Path(workspace_base))
+        workspace=Path(workspace_base)/"dusky_iso"
         profile_dir=workspace/"profile"; work_dir=workspace/"work"; out_dir=workspace/"out"
         final_dest=ZRAM_CANDIDATE if ZRAM_CANDIDATE.exists() and is_mountpoint(ZRAM_CANDIDATE) else Path.home()/"dusky_isos"
         cfg=ISOConfig(workspace=workspace, profile_dir=profile_dir, work_dir=work_dir, out_dir=out_dir, source_dir=source_dir, official_repo=official_repo, aur_repo=aur_repo if aur_repo.exists() else None, repo_mode=repo_mode, final_dest=final_dest)
