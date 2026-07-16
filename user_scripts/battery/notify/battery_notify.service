@@ -1,36 +1,27 @@
 [Unit]
-Description=Battery Status Notification Service (Event-Driven)
+Description=Battery Status Notification Service (Hyprland Event-Driven)
 Documentation=man:upower(1)
-After=graphical-session.target
-PartOf=graphical-session.target
-
-# Require upower to be available
-Wants=upower.service
-After=upower.service
+After=hyprland-session.target dbus.socket
+PartOf=hyprland-session.target
 
 [Service]
 Type=simple
 ExecStart=%h/user_scripts/battery/notify/battery_notify.sh
-
-# Restart policy
 Restart=on-failure
 RestartSec=5
 RestartPreventExitStatus=0
-
-# Resource limits (this script is lightweight)
-MemoryMax=50M
-CPUQuota=5%
-
-# Logging
+TimeoutStopSec=5
+MemoryMax=80M
+CPUQuota=20%
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=battery-notify
-
-# Security hardening (optional, comment out if issues arise)
-NoNewPrivileges=true
-ProtectSystem=strict
+NoNewPrivileges=false
+ProtectSystem=true
 ProtectHome=read-only
+ReadWritePaths=%t %h/.cache
 PrivateTmp=true
+Environment=PATH=/usr/bin:/bin
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=hyprland-session.target
