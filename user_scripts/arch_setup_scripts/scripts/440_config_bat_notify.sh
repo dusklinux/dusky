@@ -11,7 +11,7 @@ set -euo pipefail
 # CONFIGURATION
 #===============================================================================
 readonly NOTIFY_SCRIPT="${HOME}/user_scripts/battery/notify/battery_notify.sh"
-readonly SERVICE_NAME="battery_notify.service"
+readonly SERVICE_NAME="dusky_battery.service"
 readonly SCRIPT_NAME="${0##*/}"
 
 # Sensible defaults for most users

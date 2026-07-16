@@ -26,7 +26,7 @@ CORE_USER_DEFS = {
         "Night Light (Blue Light Filter)",
         "Manages hyprsunset, a Wayland-native blue light filter. Turning this on will adjust the color temperature of your display to reduce eye strain at night."
     ),
-    "battery_notify.service": (
+    "dusky_battery.service": (
         "Battery Level Notifications",
         "Background daemon that monitors your battery level and sends desktop notifications using libnotify when power is running low."
     ),

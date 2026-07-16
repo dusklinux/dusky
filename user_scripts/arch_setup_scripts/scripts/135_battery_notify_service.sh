@@ -21,7 +21,7 @@ readonly BOLD=$'\033[1m'
 readonly NC=$'\033[0m' # No Color
 
 # --- Configuration ---
-readonly SERVICE_NAME="battery_notify.service"
+readonly SERVICE_NAME="dusky_battery.service"
 readonly CONFIG_DIR="${XDG_CONFIG_HOME:-"${HOME}/.config"}"
 readonly SYSTEMD_USER_DIR="${CONFIG_DIR}/systemd/user"
 readonly SOURCE_FILE="${HOME}/user_scripts/battery/notify/${SERVICE_NAME}"
