@@ -1145,6 +1145,13 @@ hl.bind(
 )
 
 -- Player Controls (Routed through script for OSD feedback)
+
+hl.bind(
+  "SUPER + SHIFT + B",
+  hl.dsp.exec_cmd("~/.config/dusky/scripts/dusky-radio-menu.sh", "dusky-run"),
+  { description = "Live Radio Menu" }
+)
+
 hl.bind(
     "XF86AudioNext",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --next"),

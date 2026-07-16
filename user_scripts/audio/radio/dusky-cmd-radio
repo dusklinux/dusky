@@ -1,0 +1,235 @@
+#!/bin/bash
+
+# Live lofi radio for the launcher's "@" prefix. Primary station is the Lofi
+# Girl 24/7 stream: pinned video ids rot every time the stream restarts, so the
+# channel's /live page is resolved with yt-dlp at play time; when YouTube (or
+# yt-dlp) is having a day, the fallback station is a plain Icecast MP3 that
+# needs neither. Playback is mpv --no-video under a detached supervisor that
+# re-resolves and reconnects when a stream drops (googlevideo URLs expire after
+# a few hours), so the radio survives everything except an explicit stop. The
+# system mpv-mpris script makes the player controllable over MPRIS; the forced
+# "LIVE · " title prefix is how the shell tells the radio from any other mpv.
+
+set -euo pipefail
+
+runtime_dir="${XDG_RUNTIME_DIR:-/tmp}"
+state_file="${RYOKU_RADIO_STATE_FILE:-$runtime_dir/ryoku-radio.json}"
+aside_file="${RYOKU_RADIO_ASIDE_FILE:-$runtime_dir/ryoku-radio-aside.json}"
+lock_file="${RYOKU_RADIO_LOCK_FILE:-$runtime_dir/ryoku-radio.lock}"
+mpv_bin="${RYOKU_RADIO_MPV:-mpv}"
+ytdlp_bin="${RYOKU_RADIO_YTDLP:-yt-dlp}"
+resolve_timeout="${RYOKU_RADIO_RESOLVE_TIMEOUT:-25}"
+
+# id|label|kind|source|fallback-id|art — kind is youtube (resolve at play
+# time; art is the stream's own thumbnail, fetched alongside the URL) or
+# direct (the URL is the stream; art is the station's published cover).
+# Fallback names the station tried when this one's resolve comes up empty:
+# youtube stations fall back to a direct one, so a broken yt-dlp or a YouTube
+# outage degrades to plain Icecast instead of silence.
+stations() {
+	cat <<'EOF'
+lofi|Lofi Girl|youtube|https://www.youtube.com/@LofiGirl/live|groove|
+chillhop|Chillhop Radio|youtube|https://www.youtube.com/@ChillhopMusic/live|fluid|
+groove|SomaFM Groove Salad|direct|https://ice1.somafm.com/groovesalad-256-mp3||https://somafm.com/img3/groovesalad-400.jpg
+fluid|SomaFM Fluid|direct|https://ice1.somafm.com/fluid-128-mp3||https://somafm.com/img3/fluid-400.jpg
+EOF
+}
+
+station_field() { # $1 id, $2 field no
+	stations | awk -F'|' -v id="$1" -v f="$2" '$1 == id { print $f }'
+}
+
+usage() {
+	cat <<'EOF'
+Usage:
+  ryoku-cmd-radio stations          # known stations, one JSON row each
+  ryoku-cmd-radio status            # {"on":…,"station":…,"label":…,"live":…,"fellBack":…,"aside":…}
+  ryoku-cmd-radio start [id]        # tune in (default: lofi); replaces any current station
+  ryoku-cmd-radio stop [--aside]    # tune out; --aside remembers the station for resume
+  ryoku-cmd-radio resume            # restart the station stop --aside remembered
+  ryoku-cmd-radio toggle [id]
+EOF
+}
+
+with_lock() {
+	mkdir -p "$(dirname "$lock_file")"
+	(
+		flock -x 9
+		"$@"
+	) 9>"$lock_file"
+}
+
+state_get() { jq -r ".$1 // empty" "$state_file" 2>/dev/null || true; }
+# never test (or signal) group 0: "-0" means the CALLER'S own process group.
+group_alive() { [ -n "${1:-}" ] && [ "${1:-0}" != "0" ] && kill -0 -- "-$1" 2>/dev/null; }
+# a state whose pgid is still 0 is a radio mid-start: the supervisor registers
+# its group first thing, so give it a beat before calling it dead.
+state_fresh() { [ -f "$state_file" ] && [ "$(( $(date +%s) - $(stat -c %Y "$state_file" 2>/dev/null || echo 0) ))" -lt 15 ]; }
+
+write_state() { # station label live fellBack pgid art token
+	jq -cn --arg station "$1" --arg label "$2" --argjson live "$3" \
+		--argjson fellBack "$4" --argjson pgid "${5:-0}" --arg art "${6:-}" --arg token "${7:-}" \
+		'{station:$station,label:$label,live:$live,fellBack:$fellBack,pgid:$pgid,art:$art,token:$token}' >"$state_file"
+}
+
+# resolve a station to a playable URL and its artwork, one per line (either may
+# be empty; an empty URL means the station has no answer today). A youtube
+# station's art is the live stream's own thumbnail — fetched in the same
+# yt-dlp call as the URL, so art costs no extra round trip.
+resolve_stream() { # $1 id
+	local kind src
+	kind="$(station_field "$1" 3)"
+	src="$(station_field "$1" 4)"
+	[ -n "$kind" ] || return 0
+	if [ "$kind" = direct ]; then
+		printf '%s\n%s\n' "$src" "$(station_field "$1" 6)"
+		return 0
+	fi
+	# --foreground keeps timeout in OUR process group, so a stop's group kill
+	# takes the in-flight resolver down with everything else.
+	timeout --foreground "$resolve_timeout" "$ytdlp_bin" -q -f 'bestaudio/best' --print urls --print thumbnail "$src" 2>/dev/null || true
+}
+
+cmd_stations() {
+	stations | while IFS='|' read -r id label kind src fb art; do
+		jq -cn --arg id "$id" --arg label "$label" --arg kind "$kind" --arg fallback "$fb" --arg art "$art" \
+			'{id:$id,label:$label,kind:$kind,fallback:$fallback,art:$art}'
+	done
+}
+
+cmd_status() {
+	local on=false station="" label="" live=false fellback=false art="" pgid aside=null
+	if [ -f "$state_file" ]; then
+		pgid="$(state_get pgid)"
+		if group_alive "$pgid" || { [ "${pgid:-0}" = "0" ] && state_fresh; }; then
+			on=true
+			station="$(state_get station)"; label="$(state_get label)"
+			art="$(state_get art)"
+			[ "$(state_get live)" = "true" ] && live=true
+			[ "$(state_get fellBack)" = "true" ] && fellback=true
+		else
+			rm -f "$state_file"   # a crashed radio must not read as playing
+		fi
+	fi
+	[ -s "$aside_file" ] && aside="$(cat "$aside_file")"
+	jq -cn --argjson on "$on" --arg station "$station" --arg label "$label" \
+		--argjson live "$live" --argjson fellBack "$fellback" --arg art "$art" --argjson aside "$aside" \
+		'{on:$on,station:$station,label:$label,live:$live,fellBack:$fellBack,art:$art,aside:$aside}'
+}
+
+do_stop() { # [--aside]
+	local pgid station label
+	pgid="$(state_get pgid)"
+	station="$(state_get station)"; label="$(state_get label)"
+	if [ "${1:-}" = "--aside" ] && [ -n "$station" ] && group_alive "$pgid"; then
+		jq -cn --arg station "$station" --arg label "$label" \
+			'{station:$station,label:$label}' >"$aside_file"
+	elif [ "${1:-}" != "--aside" ]; then
+		rm -f "$aside_file"
+	fi
+	rm -f "$state_file"          # the supervisor reads this as "tune out"
+	group_alive "$pgid" && kill -TERM -- "-$pgid" 2>/dev/null || true
+}
+
+do_start() { # [id]
+	local id="${1:-lofi}" label token
+	label="$(station_field "$id" 2)"
+	[ -n "$label" ] || { echo "ryoku-cmd-radio: unknown station: $id" >&2; exit 2; }
+	do_stop >/dev/null 2>&1 || true
+	rm -f "$aside_file"
+	local live=false
+	[ "$(station_field "$id" 3)" = "youtube" ] && live=true
+	# every broadcast gets its own token: a supervisor only serves the state
+	# that bears its token, so a replacement broadcast can never be adopted —
+	# or clobbered — by a predecessor that was mid-lap when it landed.
+	token="$$.$(date +%s%N)"
+	write_state "$id" "$label" "$live" false 0 "" "$token"
+	# 9>&-: the supervisor must not inherit the with_lock fd, or the flock
+	# stays held for the whole broadcast and every later verb deadlocks.
+	setsid -f "$0" _supervise "$id" "$token" >/dev/null 2>&1 </dev/null 9>&-
+	# hold the lock until the supervisor has stamped its process group: the
+	# pgid-0 window is the one moment a stop (or a second start) has nothing
+	# to kill — reproduced double-radio orphans ride exactly that gap.
+	local i
+	for i in $(seq 1 40); do
+		[ "$(state_get pgid)" != "0" ] && [ -n "$(state_get pgid)" ] && break
+		[ -f "$state_file" ] || break
+		sleep 0.05
+	done
+}
+
+do_resume() {
+	local id
+	id="$(jq -r '.station // empty' "$aside_file" 2>/dev/null || true)"
+	[ -n "$id" ] || id=lofi
+	do_start "$id"
+}
+
+do_toggle() {
+	if [ -f "$state_file" ] && group_alive "$(state_get pgid)"; then
+		do_stop
+	else
+		do_start "${1:-lofi}"
+	fi
+}
+
+# the detached player: resolve, play, and when the stream drops (network blip,
+# expired googlevideo URL) resolve again — until the state file disappears,
+# which is the one and only stop signal. Falls back to the station's fallback
+# when the primary resolve is empty, saying so in the state for the UI.
+cmd_supervise() {
+	local id="$1" token="$2" tries=0 out url art play_id label live fellback pgid
+	pgid="$(ps -o pgid= -p $$ | tr -d ' ')"
+	# mine: this broadcast still owns the state. A newer start rewrites the
+	# token, and from that instant every check and every write here must stand
+	# down — serving (or clobbering) someone else's broadcast is the orphan bug.
+	mine() { [ -f "$state_file" ] && [ "$(state_get token)" = "$token" ]; }
+	while mine; do
+		# register the kill target before anything slow (a resolve can take
+		# 25s): from here, a stop always has a real group to signal.
+		label="$(station_field "$id" 2)"
+		live=false; [ "$(station_field "$id" 3)" = "youtube" ] && live=true
+		write_state "$id" "$label" "$live" false "$pgid" "" "$token"
+		play_id="$id"; fellback=false
+		out="$(resolve_stream "$id")"
+		url="$(printf '%s\n' "$out" | sed -n 1p)"
+		if [ -z "$url" ]; then
+			local fb; fb="$(station_field "$id" 5)"
+			if [ -n "$fb" ]; then
+				play_id="$fb"; fellback=true
+				out="$(resolve_stream "$fb")"
+				url="$(printf '%s\n' "$out" | sed -n 1p)"
+			fi
+		fi
+		if [ -z "$url" ]; then
+			tries=$((tries + 1))
+			[ "$tries" -ge 3 ] && { mine && rm -f "$state_file"; break; }
+			sleep 5
+			continue
+		fi
+		tries=0
+		art="$(printf '%s\n' "$out" | sed -n 2p)"
+		# refresh for the honest on-air facts: the label, live flag and art of
+		# the station actually playing when the primary fell back.
+		label="$(station_field "$play_id" 2)"
+		live=false; [ "$(station_field "$play_id" 3)" = "youtube" ] && live=true
+		mine || break
+		write_state "$id" "$label" "$live" "$fellback" "$pgid" "$art" "$token"
+		"$mpv_bin" --no-video --no-terminal --really-quiet \
+			--force-media-title="LIVE · $label" "$url" >/dev/null 2>&1 || true
+		mine || break
+		sleep 2
+	done
+}
+
+case "${1:-}" in
+	stations)   cmd_stations ;;
+	status)     cmd_status ;;
+	start)      with_lock do_start "${2:-}" ;;
+	stop)       with_lock do_stop "${2:-}" ;;
+	resume)     with_lock do_resume ;;
+	toggle)     with_lock do_toggle "${2:-}" ;;
+	_supervise) cmd_supervise "${2:?station required}" "${3:?token required}" ;;
+	--help | -h | "") usage ;;
+	*) echo "ryoku-cmd-radio: unknown action: $1" >&2; usage >&2; exit 2 ;;
+esac
