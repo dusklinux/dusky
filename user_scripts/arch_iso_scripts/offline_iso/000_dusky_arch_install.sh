@@ -28,7 +28,7 @@ declare -ra CHROOT_SEQUENCE=(
   "051_pacman_repo_switch.sh --offline --cachyos"
   "100_etc_skel.sh --auto"
   "101_skel_files_precision_edit.sh --inject"
-  "103_configure_hyprland_gpu_skel.py --auto"
+  "103_configure_hyprland_gpu.py --auto"
   "110_post_chroot.sh --auto"
   "115_tty_autologin.sh --auto"
   "120_mkinitcpio_optimizer.sh | IGNORE"
