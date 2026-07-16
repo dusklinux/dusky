@@ -48,6 +48,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
+def wait_for_pacman_lock():
+    lock_file = Path("/var/lib/pacman/db.lck")
+    if lock_file.exists():
+        print("\n[!!] Pacman database lock detected. Waiting for the other package manager to finish...")
+        while lock_file.exists():
+            time.sleep(2)
+        print("[OK] Pacman lock released. Proceeding...")
+
 def check_startup_elevation_and_deps():
     if not os.path.exists("/etc/arch-release"):
         return
@@ -81,6 +89,7 @@ def check_startup_elevation_and_deps():
         
     if missing_packages:
         print(f"Installing missing system dependencies: {', '.join(missing_packages)}...")
+        wait_for_pacman_lock()
         r = subprocess.run(["pacman", "-S", "--needed", "--noconfirm"] + missing_packages, shell=False)
         if r.returncode != 0:
             print("Error: pacman failed to install dependencies. Exiting.")
@@ -616,6 +625,12 @@ class ISOConfig:
 
 def setup_clean_room(cfg: ISOConfig):
     info("Clean room")
+    
+    # Surgical Fix: Sweep the destination drive (ZRAM) for any older ISO builds to prevent OOM
+    for old_iso in cfg.final_dest.glob("dusky_*.iso"):
+        step(f"Removing old ISO to free space: {old_iso.name}")
+        old_iso.unlink(missing_ok=True)
+        
     if cfg.workspace.exists():
         try:
             out=subprocess.run(["findmnt","-R",str(cfg.workspace)], capture_output=True, text=True, shell=False)
@@ -661,8 +676,20 @@ def stage_payloads(cfg: ISOConfig):
 def configure_live_hooks(cfg: ISOConfig):
     info("Live hooks")
     script=cfg.profile_dir/"airootfs"/"root"/".automated_script.sh"
-    script.write_text("#!/usr/bin/env bash\nif [[ \"$(tty)\" == \"/dev/tty1\" ]]; then\n  if [[ ! -f /root/.password_set ]]; then\n    echo \"root:$(openssl rand -base64 12)\" | chpasswd || true\n    touch /root/.password_set\n  fi\n  echo -e \"\\e[1;32m[INFO]\\e[0m Bootstrapping...\"\n  chmod -R +x /root/arch_install/ 2>/dev/null || true\n  clear\n  cd /root/arch_install/ 2>/dev/null && ./000_dusky_arch_install.sh || true\nfi\n")
-    script.chmod(0o755); ok("Live hooks")
+    
+    # Surgical Fix: Revert to predictable '0000' root password and systemd sanity check[cite: 3]
+    script.write_text("#!/usr/bin/env bash\n"
+                      "if [[ \"$(tty)\" == \"/dev/tty1\" ]]; then\n"
+                      "  echo \"root:0000\" | chpasswd\n"
+                      "  echo -e \"\\e[1;32m[INFO]\\e[0m Root password set to 0000. SSH is available.\"\n"
+                      "  echo -e \"\\e[1;34m[INFO]\\e[0m Bootstrapping environment...\"\n"
+                      "  systemctl is-system-running >/dev/null 2>&1 || true\n"
+                      "  chmod -R +x /root/arch_install/ 2>/dev/null || true\n"
+                      "  clear\n"
+                      "  cd /root/arch_install/ 2>/dev/null && ./000_dusky_arch_install.sh || true\n"
+                      "fi\n")
+    script.chmod(0o755)
+    ok("Live hooks")
 
 def inject_dotfiles(cfg: ISOConfig):
     info("Injecting dotfiles")
@@ -682,15 +709,21 @@ def inject_dotfiles(cfg: ISOConfig):
     tmp_dot=secure_mkdtemp("dusky-dots-")
     try:
         pin=os.environ.get("DUSKY_DOTFILES_PIN","")
-        for attempt in range(1,4):
-            r=subprocess.run(["git","clone","--depth","1","--filter=blob:none","https://github.com/dusklinux/dusky",str(tmp_dot/"dusky")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
-            if r.returncode==0: break
-            if attempt==3: die("Git clone dusky failed")
+        target_repo = tmp_dot / "dusky"
+        for attempt in range(1, 4):
+            # Surgical Fix: Thoroughly wipe partial git directory prior to retrying[cite: 3]
+            if target_repo.exists():
+                shutil.rmtree(target_repo, ignore_errors=True)
+                
+            r = subprocess.run(["git", "clone", "--depth", "1", "--filter=blob:none", "https://github.com/dusklinux/dusky", str(target_repo)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
+            if r.returncode == 0: break
+            if attempt == 3: die("Git clone dusky failed")
             time.sleep(2)
+            
         if pin:
-            subprocess.run(["git","-C",str(tmp_dot/"dusky"),"fetch","--depth","1","origin",pin], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
-            subprocess.run(["git","-C",str(tmp_dot/"dusky"),"checkout",pin], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
-        src_dots=tmp_dot/"dusky"
+            subprocess.run(["git","-C",str(target_repo),"fetch","--depth","1","origin",pin], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
+            subprocess.run(["git","-C",str(target_repo),"checkout",pin], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
+        src_dots=target_repo
         for item in src_dots.iterdir():
             if item.name==".git": continue
             if item.is_symlink():
@@ -777,6 +810,7 @@ def build_iso_image(cfg: ISOConfig)->Path:
     mk_src=Path("/usr/bin/mkarchiso")
     mk_custom=cfg.workspace/f"mkarchiso_dusky_{random.randint(100000,999999)}"
     shutil.copy2(mk_src, mk_custom); mk_custom.chmod(0o755)
+    
     # Build injection safely without triple-quote hell
     inj_lines=[]
     inj_lines.append('    _msg_info ">>> INJECTING OFFLINE REPOS INTO ISO <<<"')
@@ -861,11 +895,43 @@ def main():
     parser.add_argument("--source-dir", type=Path, help="Source payload dir")
     parser.add_argument("--auto", action="store_true", help="Non-interactive defaults")
     args=parser.parse_args()
+    
     console.print(Panel(f"Dusky Factory v{VERSION} — Python 3.14.6 / Pacman 7.1 / Systemd 261 / Archiso 88", style="bold cyan", box=box.DOUBLE))
     check_is_arch()
+    
     repo_mode=1 if args.arch else 2
     if not args.arch and not args.cachyos and not args.auto and sys.stdin.isatty():
         repo_mode=prompt_repo_mode()
+        
+    # Surgical Fix: Host CachyOS Keyring Bootstrapping[cite: 3]
+    if repo_mode == 2:
+        r_cachy = subprocess.run(["pacman", "-Q", "cachyos-keyring"], capture_output=True, text=True)
+        if r_cachy.returncode != 0:
+            warn("CachyOS mode requires 'cachyos-keyring' installed on the HOST build system.")
+            if not args.auto and sys.stdin.isatty():
+                ans = Prompt.ask("Would you like to automatically install the CachyOS keyring now?", choices=["y", "n"], default="y")
+                if ans.lower() == "y":
+                    info("Fetching and installing CachyOS keyring...")
+                    subprocess.run(["pacman-key", "--recv-keys", "F3B607488DB35A47", "--keyserver", "keyserver.ubuntu.com"], check=True)
+                    subprocess.run(["pacman-key", "--lsign-key", "F3B607488DB35A47"], check=True)
+                    
+                    try:
+                        html = urllib.request.urlopen("https://mirror.cachyos.org/repo/x86_64/cachyos/").read().decode()
+                        m = re.search(r'href="(cachyos-keyring-[0-9]+[^"]*\.pkg\.tar\.zst)"', html)
+                        pkg_name = m.group(1) if m else "cachyos-keyring-20240331-1-any.pkg.tar.zst"
+                    except Exception:
+                        pkg_name = "cachyos-keyring-20240331-1-any.pkg.tar.zst"
+                    
+                    wait_for_pacman_lock()
+                    res_inst = subprocess.run(["pacman", "-U", "--noconfirm", f"https://mirror.cachyos.org/repo/x86_64/cachyos/{pkg_name}"])
+                    if res_inst.returncode != 0:
+                        die("Failed to install cachyos-keyring.")
+                    ok("CachyOS keyring successfully installed.")
+                else:
+                    die("Cannot proceed without cachyos-keyring.")
+            else:
+                die("Missing cachyos-keyring on host (running non-interactively).")
+                
     mode_name="Standard Arch" if repo_mode==1 else "CachyOS x86-64-v3"
     info(f"Mode: {mode_name}")
     action=args.action
@@ -886,6 +952,7 @@ def main():
         if action in ("official","both","full"): official_repo=prompt_path("Official repo path", official_repo)
         if action in ("aur","both","full"): aur_repo=prompt_path("AUR repo path", aur_repo)
     ensure_sudo_cached()
+    
     if action in ("official","both","full"):
         info("=== OFFICIAL REPO BUILD ===")
         for t in ["pacman","repo-add","bsdtar","zstd","xz"]:
@@ -901,6 +968,7 @@ def main():
             generate_repo_db(official_repo, repo_mode)
             restore_ownership(official_repo)
         finally: isolated.cleanup()
+        
     if action in ("aur","both","full"):
         info("=== AUR REPO BUILD ===")
         if os.geteuid()==0: warn("AUR build as root - will drop privileges via runuser for makepkg")
@@ -945,6 +1013,7 @@ def main():
             table.add_row("Built", str(built)); table.add_row("Skipped", str(skipped)); table.add_row("Failed", str(len(failed))); console.print(table)
             if failed: console.print(f"[red]Failed: {', '.join(failed)}[/]")
         finally: isolated_aur.cleanup()
+        
     if action in ("iso","full"):
         info("=== ISO BUILD ===")
         if os.geteuid()!=0: die("ISO build requires root - run with sudo")
