@@ -55,9 +55,19 @@ get_mono_now() { local up; if up=$(awk '{print int($1)}' /proc/uptime 2>/dev/nul
 get_icon() {
     local perc="${1:-0}" state="${2:-Discharging}"; perc="${perc%%.*}"; is_integer "$perc" || perc=0
     (( perc < 0 )) && perc=0; (( perc > 100 )) && perc=100
-    local rounded=$(( (10#$perc + 5) / 10 * 10 )); (( rounded > 100 )) && rounded=100
-    if [[ "$state" == "Charging" ]]; then printf 'battery-level-%s-charging-symbolic' "$rounded"
-    else printf 'battery-level-%s-symbolic' "$rounded"; fi
+    if [[ "$state" == "Charging" ]]; then
+        if (( perc <= 10 )); then printf 'battery-empty-charging'
+        elif (( perc <= 20 )); then printf 'battery-caution-charging'
+        elif (( perc <= 40 )); then printf 'battery-low-charging'
+        elif (( perc <= 80 )); then printf 'battery-good-charging'
+        else printf 'battery-full-charging'; fi
+    else
+        if (( perc <= 10 )); then printf 'battery-empty'
+        elif (( perc <= 20 )); then printf 'battery-caution'
+        elif (( perc <= 40 )); then printf 'battery-low'
+        elif (( perc <= 80 )); then printf 'battery-good'
+        else printf 'battery-full'; fi
+    fi
 }
 play_sound() {
     local sound="${1:-}"; [[ -z "$sound" || "$sound" == "disabled" ]] && return 0; [[ -r "$sound" ]] || return 0
@@ -82,7 +92,7 @@ parse_upower_block() {
     energy=$(grep -i -m1 '^[[:space:]]*energy:[[:space:]]' <<< "$info" | grep -oE '[0-9]+(\.[0-9]+)?' | head -n1)
     energy_full=$(grep -i -m1 '^[[:space:]]*energy-full:' <<< "$info" | grep -oE '[0-9]+(\.[0-9]+)?' | head -n1)
     [[ -z "$state" ]] && return 1
-    printf '%s|%s|%s|%s' "$state" "${perc:-}" "${energy_full:-}"
+    printf '%s|%s|%s|%s' "$state" "${perc:-}" "${energy:-}" "${energy_full:-}"
 }
 normalize_state() {
     local s="${1,,}"; s=$(echo "$s" | xargs)
@@ -112,7 +122,7 @@ read_battery_aggregated() {
             IFS='|' read -r state perc energy e_full <<< "$parsed"
             if [[ -n "$perc" ]]; then
                 state=$(normalize_state "$state")
-                if [[ "$state"!= "Unknown" ]]; then
+                if [[ "$state" != "Unknown" ]]; then
                     perc="${perc%%.*}"; is_integer "$perc" || perc=0
                     printf '%s;%s;%s' "$state" "$perc" "DisplayDevice"; return 0
                 fi
@@ -168,15 +178,15 @@ process_battery_event() {
     percentage="${percentage%%.*}"; is_integer "$percentage" || return 0
     [[ "$state" == "Charging" || "$state" == "Full" ]] && STATE_LAST_SUSPEND_MONO=0
     if [[ "$STATE_LAST" == "Charging" || "$STATE_LAST" == "Full" ]] && [[ "$state" == "Discharging" || "$state" == "Empty" ]]; then
-        (( 10#$percentage <= 10#$BATTERY_UNPLUG_THRESHOLD )) && fn_notify "normal" "🔌 Unplugged" "$percentage% — on battery" "$(get_icon "$percentage" "$state")" "$SOUND_UNPLUG"
+        (( 10#$percentage <= 10#$BATTERY_UNPLUG_THRESHOLD )) && fn_notify "normal" "Power Disconnected" "$percentage% — running on battery" "battery-ac-adapter" "$SOUND_UNPLUG"
     fi
     if [[ "$STATE_LAST" == "Discharging" || "$STATE_LAST" == "Empty" ]] && [[ "$state" == "Charging" ]]; then
-        fn_notify "normal" "🔋 Charging" "$percentage% — plugged in" "$(get_icon "$percentage" "$state")" "$SOUND_PLUG"
+        fn_notify "normal" "Power Connected" "$percentage% — charging" "$(get_icon "$percentage" "$state")" "$SOUND_PLUG"
     fi
-    if [[ "$STATE_LAST"!= "Full" && "$state" == "Full" ]] || { [[ "$state" == "Charging" ]] && (( 10#$percentage >= 10#$BATTERY_FULL_THRESHOLD )) && (( 10#$STATE_LAST_PERCENTAGE < 10#$BATTERY_FULL_THRESHOLD )); }; then
+    if [[ "$STATE_LAST" != "Full" && "$state" == "Full" ]] || { [[ "$state" == "Charging" ]] && (( 10#$percentage >= 10#$BATTERY_FULL_THRESHOLD )) && (( 10#$STATE_LAST_PERCENTAGE < 10#$BATTERY_FULL_THRESHOLD )); }; then
         local now_diff=$(( 10#$mono_now - 10#$STATE_LAST_FULL_NOTIFY ))
         if (( 10#$STATE_LAST_FULL_NOTIFY == 0 || now_diff >= 10#$REPEAT_FULL_MIN * 60 )); then
-            fn_notify "normal" "✅ Battery Full" "$percentage%" "battery-full-charged-symbolic" "$SOUND_PLUG"; STATE_LAST_FULL_NOTIFY=$mono_now
+            fn_notify "normal" "Battery Fully Charged" "$percentage% capacity" "battery-full-charged" "$SOUND_PLUG"; STATE_LAST_FULL_NOTIFY=$mono_now
         fi
     fi
     if [[ "$state" == "Discharging" || "$state" == "Empty" ]]; then
@@ -184,7 +194,7 @@ process_battery_event() {
             local crossed=false; (( 10#$STATE_LAST_PERCENTAGE > 10#$BATTERY_LOW_THRESHOLD )) && crossed=true
             local elapsed=$(( 10#$mono_now - 10#$STATE_LAST_LOW_NOTIFY ))
             if [[ "$crossed" == "true" ]] || (( 10#$STATE_LAST_LOW_NOTIFY == 0 || elapsed >= 10#$REPEAT_LOW_MIN * 60 )); then
-                fn_notify "normal" "⚠️ Battery Low" "$percentage% remaining" "$(get_icon "$percentage" "$state")" "$SOUND_LOW"; STATE_LAST_LOW_NOTIFY=$mono_now
+                fn_notify "normal" "Battery Level Low" "$percentage% capacity remaining" "battery-caution" "$SOUND_LOW"; STATE_LAST_LOW_NOTIFY=$mono_now
             fi
         fi
     fi
@@ -195,7 +205,7 @@ process_battery_event() {
         local elapsed_c=$(( 10#$mono_now - 10#$STATE_LAST_CRITICAL_NOTIFY ))
         if [[ "$crossed_crit" == "true" ]] || (( 10#$STATE_LAST_CRITICAL_NOTIFY == 0 || elapsed_c >= 10#$REPEAT_CRITICAL_MIN * 60 )); then
             local msg; if [[ "$in_grace" == "true" ]]; then msg="$percentage% — suspend in ${grace_rem}s! Save work!"; else msg="$percentage% — $MSG_CRITICAL"; fi
-            fn_notify "critical" "🚨 CRITICAL BATTERY" "$msg" "battery-level-0-symbolic" "$SOUND_CRITICAL"; STATE_LAST_CRITICAL_NOTIFY=$mono_now
+            fn_notify "critical" "Battery Status Critical" "$msg" "battery-empty" "$SOUND_CRITICAL"; STATE_LAST_CRITICAL_NOTIFY=$mono_now
         fi
         if [[ "$DO_SUSPEND" == "true" && "$in_grace" == "false" ]]; then
             log "Critical $percentage% — will suspend in 2s (re-checking)"; sleep 2
@@ -226,7 +236,7 @@ cleanup() { [[ "$RUNNING" == "true" ]] && log "Shutting down"; RUNNING=false; st
 trap cleanup EXIT TERM INT HUP
 main_loop() {
     reset_state; local retry=0 reading
-    while! reading=$(read_battery_aggregated); do
+    while ! reading=$(read_battery_aggregated); do
         ((retry++)); (( retry >= MAX_RETRIES )) && die "No battery after $MAX_RETRIES"
         log "No battery yet (attempt $retry/$MAX_RETRIES), retrying 2s..."; sleep 2
     done
@@ -246,7 +256,7 @@ main_loop() {
                 if reading=$(read_battery_aggregated); then IFS=';' read -r state perc mode <<< "$reading"; CURRENT_MODE="$mode"; mono_now=$(get_mono_now); process_battery_event "$state" "$perc" "$mono_now"; fi
             else log "Monitor died rc=$rc, restarting"; stop_monitor; sleep 0.5; start_monitor; fi
         fi
-        if [[ -n "$UPMON_PID" ]] &&! kill -0 "$UPMON_PID" 2>/dev/null; then log "Monitor PID vanished, restarting"; stop_monitor; start_monitor; fi
+        if [[ -n "$UPMON_PID" ]] && ! kill -0 "$UPMON_PID" 2>/dev/null; then log "Monitor PID vanished, restarting"; stop_monitor; start_monitor; fi
     done
 }
 main() {
