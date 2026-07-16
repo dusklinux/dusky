@@ -1148,7 +1148,7 @@ hl.bind(
 
 hl.bind(
   "SUPER + SHIFT + B",
-  hl.dsp.exec_cmd("~/.config/dusky/scripts/dusky-radio-menu.sh", "dusky-run"),
+  hl.dsp.exec_cmd("dusky-run " .. dusky_scripts .."audio/radio/dusky_radio_menu.sh"),
   { description = "Live Radio Menu" }
 )
 

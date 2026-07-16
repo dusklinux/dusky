@@ -1,6 +1,6 @@
 #!/bin/bash
 
-RADIO_CMD="$HOME/user_scripts/audio/radio/dusky-cmd-radio"
+RADIO_CMD="$HOME/user_scripts/audio/radio/dusky_cmd_radio"
 
 # Fetch stations
 STATIONS=$("$RADIO_CMD" stations)
