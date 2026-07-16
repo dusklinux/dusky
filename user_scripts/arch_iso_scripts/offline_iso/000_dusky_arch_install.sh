@@ -39,6 +39,7 @@ declare -ra CHROOT_SEQUENCE=(
   "156_snapper_isolation_subvolume.sh --auto"
   "158_mkinitcpio_restore_and_generate.sh"
   "160_zram_config.sh"
+  "165_deploy_dusky_run.py"
   "170_services.sh"
   "051_pacman_repo_switch.sh --online --cachyos"
 )
