@@ -178,15 +178,15 @@ process_battery_event() {
     percentage="${percentage%%.*}"; is_integer "$percentage" || return 0
     [[ "$state" == "Charging" || "$state" == "Full" ]] && STATE_LAST_SUSPEND_MONO=0
     if [[ "$STATE_LAST" == "Charging" || "$STATE_LAST" == "Full" ]] && [[ "$state" == "Discharging" || "$state" == "Empty" ]]; then
-        (( 10#$percentage <= 10#$BATTERY_UNPLUG_THRESHOLD )) && fn_notify "normal" "Power Disconnected" "$percentage% — running on battery" "battery-ac-adapter" "$SOUND_UNPLUG"
+        (( 10#$percentage <= 10#$BATTERY_UNPLUG_THRESHOLD )) && fn_notify "normal" "Power Disconnected" "$percentage% — On Battery" "battery-ac-adapter" "$SOUND_UNPLUG"
     fi
     if [[ "$STATE_LAST" == "Discharging" || "$STATE_LAST" == "Empty" ]] && [[ "$state" == "Charging" ]]; then
-        fn_notify "normal" "Power Connected" "$percentage% — charging" "$(get_icon "$percentage" "$state")" "$SOUND_PLUG"
+        fn_notify "normal" "Power Connected" "$percentage% — Charging" "$(get_icon "$percentage" "$state")" "$SOUND_PLUG"
     fi
     if [[ "$STATE_LAST" != "Full" && "$state" == "Full" ]] || { [[ "$state" == "Charging" ]] && (( 10#$percentage >= 10#$BATTERY_FULL_THRESHOLD )) && (( 10#$STATE_LAST_PERCENTAGE < 10#$BATTERY_FULL_THRESHOLD )); }; then
         local now_diff=$(( 10#$mono_now - 10#$STATE_LAST_FULL_NOTIFY ))
         if (( 10#$STATE_LAST_FULL_NOTIFY == 0 || now_diff >= 10#$REPEAT_FULL_MIN * 60 )); then
-            fn_notify "normal" "Battery Fully Charged" "$percentage% capacity" "battery-full-charged" "$SOUND_PLUG"; STATE_LAST_FULL_NOTIFY=$mono_now
+            fn_notify "normal" "Battery Charged" "$percentage% — Charged" "battery-full-charged" "$SOUND_PLUG"; STATE_LAST_FULL_NOTIFY=$mono_now
         fi
     fi
     if [[ "$state" == "Discharging" || "$state" == "Empty" ]]; then
@@ -194,7 +194,7 @@ process_battery_event() {
             local crossed=false; (( 10#$STATE_LAST_PERCENTAGE > 10#$BATTERY_LOW_THRESHOLD )) && crossed=true
             local elapsed=$(( 10#$mono_now - 10#$STATE_LAST_LOW_NOTIFY ))
             if [[ "$crossed" == "true" ]] || (( 10#$STATE_LAST_LOW_NOTIFY == 0 || elapsed >= 10#$REPEAT_LOW_MIN * 60 )); then
-                fn_notify "normal" "Battery Level Low" "$percentage% capacity remaining" "battery-caution" "$SOUND_LOW"; STATE_LAST_LOW_NOTIFY=$mono_now
+                fn_notify "normal" "Battery Low" "$percentage% — Low Battery" "battery-caution" "$SOUND_LOW"; STATE_LAST_LOW_NOTIFY=$mono_now
             fi
         fi
     fi
@@ -204,8 +204,8 @@ process_battery_event() {
         local crossed_crit=false; (( 10#$STATE_LAST_PERCENTAGE > 10#$BATTERY_CRITICAL_THRESHOLD )) && crossed_crit=true
         local elapsed_c=$(( 10#$mono_now - 10#$STATE_LAST_CRITICAL_NOTIFY ))
         if [[ "$crossed_crit" == "true" ]] || (( 10#$STATE_LAST_CRITICAL_NOTIFY == 0 || elapsed_c >= 10#$REPEAT_CRITICAL_MIN * 60 )); then
-            local msg; if [[ "$in_grace" == "true" ]]; then msg="$percentage% — suspend in ${grace_rem}s! Save work!"; else msg="$percentage% — $MSG_CRITICAL"; fi
-            fn_notify "critical" "Battery Status Critical" "$msg" "battery-empty" "$SOUND_CRITICAL"; STATE_LAST_CRITICAL_NOTIFY=$mono_now
+            local msg; if [[ "$in_grace" == "true" ]]; then msg="$percentage% — Grace: ${grace_rem}s"; else msg="$percentage% — Suspending"; fi
+            fn_notify "critical" "Battery Critical" "$msg" "battery-empty" "$SOUND_CRITICAL"; STATE_LAST_CRITICAL_NOTIFY=$mono_now
         fi
         if [[ "$DO_SUSPEND" == "true" && "$in_grace" == "false" ]]; then
             log "Critical $percentage% — will suspend in 2s (re-checking)"; sleep 2
