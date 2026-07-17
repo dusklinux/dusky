@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import re
+import copy
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from abc import ABC, abstractmethod
@@ -23,6 +24,12 @@ KNOWN_COLORS = {
 
 _LOWER_KNOWN_COLORS = {k.lower() for k in KNOWN_COLORS}
 
+try:
+    import webcolors
+    _CSS_NAMED = frozenset(name.lower() for name in webcolors.names("css4"))
+except Exception:
+    _CSS_NAMED = _LOWER_KNOWN_COLORS  # degraded fallback
+
 def is_theme_variable(val: str) -> bool:
     """Validates if a string is a custom theme variable rather than a standard color/hex."""
     val = str(val).strip()
@@ -38,7 +45,7 @@ def is_theme_variable(val: str) -> bool:
         return True
     
     # Fast fail for obvious explicit standard color name declarations
-    if val_lower in _LOWER_KNOWN_COLORS: return False
+    if val_lower in _CSS_NAMED: return False
     
     # Filter out standard Hex structures (with or without #)
     if re.match(r"^#?([a-fA-F0-9]{3}|[a-fA-F0-9]{4}|[a-fA-F0-9]{6}|[a-fA-F0-9]{8})$", val): return False
@@ -46,10 +53,11 @@ def is_theme_variable(val: str) -> bool:
     # Filter out 0x prefixed hex
     if re.match(r"^0x[a-fA-F0-9]{6,8}$", val_lower): return False
     
-    # Filter out functional color blocks (now safe because variables inside them were caught above)
-    if val_lower.startswith(("rgb", "rgba", "hsl", "hsla", "oklch")): return False
+    # Filter out functional color blocks. Requires opening parenthesis to prevent misidentifying 
+    # variables literally named like "rgb-primary".
+    if re.match(r"^(rgba?|hsla?|oklch)\s*\(", val_lower): return False
     
-    # Everything remaining (Template {{tags}}, Bash $vars, CSS var(--xyz)) is a theme variable
+    # Everything remaining (Template {{tags}}, Bash $vars, CSS var(--xyz), lexical aliases) is a theme variable
     return True
 
 # Preserving your exact Python 3.12+ type alias syntax from the original ui.py
@@ -100,7 +108,7 @@ class ConfigItem:
 
     def __post_init__(self) -> None:
         if self.value is None:
-            self.value = self.default
+            self.value = copy.deepcopy(self.default)
 
     def serialize(self, val: Any) -> str:
         """Centralized serializer to safely prepare values for the backend engines."""
@@ -140,7 +148,17 @@ class ConfigItem:
         return raw_val
 
 class BaseEngine(ABC):
-    """Abstract Base Class enforcing the strict mutator contract for the IoC architecture."""
+    """
+    Abstract Base Class enforcing the strict mutator contract for the IoC architecture.
+    
+    Engine Contract Expectations:
+    - Magic Strings: Return "AUTH_REQUIRED" in the error message if sudo is needed.
+    - Null Values: The UI serializes None as the literal string "nil".
+    - Optional Methods: Engines can optionally implement `load_state_for_units(user_units, sys_units)`.
+    - Batch Writes: `write_batch` should ideally be overridden to be atomic. The base 
+      implementation is NOT atomic and falls back to iterative `write_value` calls, 
+      which is only safe for idempotent operations.
+    """
     
     @property
     @abstractmethod
@@ -188,17 +206,18 @@ class BaseEngine(ABC):
             tuple[bool, str, str]: (Success boolean, Status/Error message, Debug/Telemetry output)
         """
         success_count = 0
-        last_msg = ""
+        failed_keys: list[str] = []
         last_debug = ""
+        
         for key, scope, val, itype in changes:
             ok, msg, debug = self.write_value(key, scope, val, item_type=itype)
-            if ok: success_count += 1
-            last_msg = msg
+            if ok:
+                success_count += 1
+            else:
+                failed_keys.append(key)
             last_debug = debug
             
         if success_count == len(changes):
             return True, f"Successfully batched {success_count} writes.", last_debug
-        elif success_count > 0:
-            return False, f"Partial failure: only wrote {success_count}/{len(changes)}.", last_debug
-        else:
-            return False, f"Batch write failed: {last_msg}", last_debug
+            
+        return False, f"Batch wrote {success_count}/{len(changes)}. Failed keys: {', '.join(failed_keys)}", last_debug
