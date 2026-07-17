@@ -2,6 +2,7 @@
 # Dusky STT Installer v6.1 FIXED - Unified #1 default, Realtime typing, auto pacman+uv
 # Python 3.14.6 only, bleeding edge Arch
 # FIXED: No uv add (needs pyproject.toml), uses uv pip install --python <venv_python> + creates pyproject.toml
+# RELIABILITY: Added autonomous retries, unhid output, removed arbitrary timeouts.
 
 import sys
 import sysconfig
@@ -9,6 +10,7 @@ import os
 import subprocess
 import shutil
 import json
+import time
 from pathlib import Path
 import platform
 
@@ -44,8 +46,31 @@ TRANSCRIPT_DIR = Path.home() / "Transcripts" / "DuskySTT"
 for p in [APP_DIR, BIN_DIR, SYSTEMD_DIR, TRANSCRIPT_DIR]:
     p.mkdir(parents=True, exist_ok=True)
 
-def run(cmd: list[str], timeout: int = 20, **kwargs):
-    return subprocess.run(cmd, text=True, capture_output=True, timeout=timeout, **kwargs)
+def run(cmd: list[str], timeout=None, capture_output=True, **kwargs):
+    """Base runner safely handles output capturing to prevent NoneType crashes."""
+    try:
+        res = subprocess.run(cmd, text=True, capture_output=capture_output, timeout=timeout, **kwargs)
+        if not capture_output:
+            res.stdout = res.stdout or ""
+            res.stderr = res.stderr or ""
+        return res
+    except Exception as e:
+        class FailedRes:
+            returncode = 1
+            stdout = ""
+            stderr = str(e)
+        return FailedRes()
+
+def run_with_retry(cmd: list[str], max_retries=3, delay=3, **kwargs):
+    """Autonomous retry wrapper for network/download operations."""
+    for attempt in range(1, max_retries + 1):
+        if attempt > 1:
+            console.print(f"[yellow]Attempt {attempt - 1} failed. Retrying in {delay}s ({attempt}/{max_retries})...[/]")
+            time.sleep(delay)
+        res = run(cmd, **kwargs)
+        if res.returncode == 0:
+            return res
+    return res
 
 def check_pacman_deps():
     needed = {
@@ -192,29 +217,28 @@ if not venv_python.exists():
 
 base_deps = ["onnx-asr", "soundfile", "numpy", "sounddevice", "rich", "huggingface_hub", "hf-transfer", "silero-vad"]
 console.print(f"[cyan]Installing base via uv pip install --python {venv_python} (cached at ~/.cache/uv): {' '.join(base_deps)}[/]")
-result = run(["uv", "pip", "install", "--python", str(venv_python)] + base_deps, cwd=str(APP_DIR), timeout=300)
-console.print(result.stdout[-2000:])
+result = run_with_retry(["uv", "pip", "install", "--python", str(venv_python)] + base_deps, cwd=str(APP_DIR), timeout=None, capture_output=False, max_retries=3)
 if result.returncode != 0:
     console.print(f"[yellow]uv pip warning: {result.stderr[-2000:]}[/]")
     console.print("[cyan]Fallback: .venv/bin/pip install[/]")
-    run([str(venv_pip), "install"] + base_deps, cwd=str(APP_DIR), timeout=300)
+    run_with_retry([str(venv_pip), "install"] + base_deps, cwd=str(APP_DIR), timeout=None, capture_output=False, max_retries=3)
 
 if hardware == "nvidia-cuda12":
     deps = ["onnxruntime-gpu==1.26.0", "nvidia-cuda-runtime-cu12", "nvidia-cudnn-cu12", "nvidia-cufft-cu12"]
     console.print(f"[cyan]Installing CUDA12 deps via uv pip: {' '.join(deps)}[/]")
-    result = run(["uv", "pip", "install", "--python", str(venv_python)] + deps, cwd=str(APP_DIR), timeout=300)
+    result = run_with_retry(["uv", "pip", "install", "--python", str(venv_python)] + deps, cwd=str(APP_DIR), timeout=None, capture_output=False, max_retries=3)
     console.print(result.stdout[-1000:])
 elif hardware == "nvidia-cuda13":
     console.print("[yellow]CUDA13 system: installing nightly ORT via uv pip, uses pacman /opt/cuda[/]")
     cmd = ["uv", "pip", "install", "--python", str(venv_python), "--pre", "--index-url", "https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/ort-cuda-13-nightly/pypi/simple/", "onnxruntime-gpu", "--force-reinstall", "--no-deps"]
-    result = run(cmd, cwd=str(APP_DIR), timeout=180)
+    result = run_with_retry(cmd, cwd=str(APP_DIR), timeout=None, capture_output=False, max_retries=3)
     console.print(result.stdout[-1000:])
-    run(["uv", "pip", "install", "--python", str(venv_python), "onnxruntime"], cwd=str(APP_DIR), timeout=120)
+    run_with_retry(["uv", "pip", "install", "--python", str(venv_python), "onnxruntime"], cwd=str(APP_DIR), timeout=None, capture_output=False, max_retries=3)
 elif hardware == "amd-rocm":
-    run(["uv", "pip", "install", "--python", str(venv_python), "onnxruntime-rocm", "--force-reinstall"], cwd=str(APP_DIR), timeout=180)
-    run(["uv", "pip", "install", "--python", str(venv_python), "onnxruntime"], cwd=str(APP_DIR), timeout=120)
+    run_with_retry(["uv", "pip", "install", "--python", str(venv_python), "onnxruntime-rocm", "--force-reinstall"], cwd=str(APP_DIR), timeout=None, capture_output=False, max_retries=3)
+    run_with_retry(["uv", "pip", "install", "--python", str(venv_python), "onnxruntime"], cwd=str(APP_DIR), timeout=None, capture_output=False, max_retries=3)
 else:
-    run(["uv", "pip", "install", "--python", str(venv_python), "onnxruntime"], cwd=str(APP_DIR), timeout=120)
+    run_with_retry(["uv", "pip", "install", "--python", str(venv_python), "onnxruntime"], cwd=str(APP_DIR), timeout=None, capture_output=False, max_retries=3)
 
 console.print("[cyan]Verifying imports with venv python...[/]")
 verify_code = "import onnx_asr, soundfile, numpy, sounddevice, silero_vad; print('ALL IMPORTS OK')"
@@ -257,8 +281,7 @@ tmp_py.write_text(prefetch_code)
 env = os.environ.copy()
 env["CUDA_VISIBLE_DEVICES"] = "-1"
 env["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-result = run([str(venv_python), str(tmp_py)], cwd=str(APP_DIR), timeout=300, env=env)
-console.print(result.stdout[-2000:])
+result = run_with_retry([str(venv_python), str(tmp_py)], cwd=str(APP_DIR), timeout=None, env=env, capture_output=False, max_retries=3, delay=5)
 if result.returncode != 0:
     console.print(f"[yellow]Prefetch warning (will try at runtime): {result.stderr[-1000:]}[/]")
 try:
@@ -304,4 +327,4 @@ console.print(f"[green]Service at {dest_service}[/]")
 
 (APP_DIR / "install_config.json").write_text(json.dumps(config, indent=2))
 
-console.print(Panel(f"[bold green]Setup Complete v6.1 FIXED![/]\nFix integrated: uv pip install --python not uv add, pyproject.toml created, imports verified\nUnified #1 default (5.91% WER) + Realtime typing\nTrigger: {TRIGGER_PATH}\nTranscripts: {TRANSCRIPT_DIR}\nEnable: systemctl --user daemon-reload && loginctl enable-linger $USER && systemctl --user enable --now dusky-stt.service\nRealtime: Focus neovim/notepad then dusky-trigger, it types live!\nPodcast: dusky-trigger --file ~/podcast.mp3\nAll deps auto-installed via pacman+uv, cached at ~/.cache/uv", title="Done", border_style="green"))
+console.print(Panel(f"[bold green]Setup Complete v6.1 FIXED![/]\nFix integrated: Autonomous retries, unhid output, timeout barriers removed.\nUnified #1 default (5.91% WER) + Realtime typing\nTrigger: {TRIGGER_PATH}\nTranscripts: {TRANSCRIPT_DIR}\nEnable: systemctl --user daemon-reload && loginctl enable-linger $USER && systemctl --user enable --now dusky-stt.service\nRealtime: Focus neovim/notepad then dusky-trigger, it types live!\nPodcast: dusky-trigger --file ~/podcast.mp3\nAll deps auto-installed via pacman+uv, cached at ~/.cache/uv", title="Done", border_style="green"))
