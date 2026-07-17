@@ -5,7 +5,7 @@ Dusky Main v8.1 BLEEDING - D3-cold safe, torch-free, secure FIFO, fixed realtime
 - ONNX-only Silero VAD with RMS fallback, robust download URLs
 - Secure XDG_RUNTIME_DIR 0700, FIFO 0600, O_RDWR|O_NONBLOCK, TOCTOU protected
 - Worker spawn context, daemon=False, proper D3-cold cleanup
-- Realtime typing: LCP suffix window, hallucination blocklist, VAD gate
+- Realtime typing: Word-level LCP suffix window, hallucination blocklist, VAD gate
 - ffmpeg soxr high quality resampling
 """
 import os
@@ -24,7 +24,7 @@ import stat
 import select
 
 if sys.version_info < (3, 14, 6):
-    print(f"Need 3.14.6+, got {sys.version}", file=sys.stderr)
+    print(f"Need 3.14.6+", file=sys.stderr)
     sys.exit(1)
 if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
     print("Need GIL build", file=sys.stderr)
@@ -505,13 +505,22 @@ class DuskyDaemon:
                         
                     idx = res.get("index", 0)
                     if self.realtime:
-                        # Suffix Typing via Longest Common Prefix (LCP) computation
-                        common = os.path.commonprefix([self.typed_text.lower(), text.lower()])
-                        suffix = text[len(common):].strip()
+                        # Suffix Typing via Word-Level Longest Common Prefix (LCP) computation
+                        typed_words = self.typed_text.strip().split()
+                        new_words = text.strip().split()
+                        
+                        match_count = 0
+                        for t_word, n_word in zip(typed_words, new_words):
+                            if t_word.lower() == n_word.lower():
+                                match_count += 1
+                            else:
+                                break
+                        
+                        suffix = " ".join(new_words[match_count:])
                         
                         if suffix:
-                            # Account for missing space tracking
-                            if self.typed_text and not self.typed_text.endswith(" ") and not suffix.startswith(" "):
+                            # Add spacing if appending to existing text
+                            if self.typed_text and not self.typed_text.endswith(" "):
                                 suffix = " " + suffix
                             type_into_focused(suffix)
                             self.typed_text = text
@@ -546,7 +555,7 @@ class DuskyDaemon:
         unique_parts = []
         for c in self.acc_chunks:
             txt = c["text"].strip()
-            if txt and txt to lower() not in seen_texts:
+            if txt and txt.lower() not in seen_texts:
                 unique_parts.append(txt)
                 seen_texts.add(txt.lower())
                 
