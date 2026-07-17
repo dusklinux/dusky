@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 DAEMON_SCRIPT="$HOME/user_scripts/way_layers/visualizer/visualizer_daemon.py"
-CTL_FILE="$HOME/.cache/dusky/visualizer.ctl"
+CTL_FILE="$HOME/.config/dusky/settings/way_layers/visualizer/visualizer.ctl"
 
 mkdir -p "$(dirname "$CTL_FILE")"
 

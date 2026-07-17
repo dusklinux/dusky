@@ -15,9 +15,9 @@ gi.require_version("GtkLayerShell", "0.1")
 from gi.repository import Gtk, Gdk, GLib, GtkLayerShell, Pango
 import cairo
 
-CONFIG_FILE = os.path.expanduser("~/.config/dusky/visualizer.json")
+CONFIG_FILE = os.path.expanduser("~/.config/dusky/settings/way_layers/visualizer/visualizer.json")
 COLORS_FILE = os.path.expanduser("~/.config/matugen/generated/dusky_visualizer_colors.json")
-CTL_FILE = os.path.expanduser("~/.cache/dusky/visualizer.ctl")
+CTL_FILE = os.path.expanduser("~/.config/dusky/settings/way_layers/visualizer/visualizer.ctl")
 
 # Default config
 config = {

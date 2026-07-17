@@ -3,7 +3,7 @@
 ===============================================================================
 DUSKY TUI: VISUALIZER CONFIGURATION SCHEMA
 ===============================================================================
-Target: ~/.config/dusky/visualizer.json
+Target: ~/.config/dusky/settings/way_layers/visualizer/visualizer.json
 Engine: json_engine
 """
 
@@ -12,8 +12,8 @@ from python.frontend.core_types import ConfigItem
 # =============================================================================
 # 1. CORE APPLICATION ROUTING
 # =============================================================================
-ENGINE_TYPE = "json_engine"
-TARGET_FILE = "~/.config/dusky/visualizer.json"
+ENGINE_TYPE = "json"
+TARGET_FILE = "~/.config/dusky/settings/way_layers/visualizer/visualizer.json"
 APP_TITLE = "Audio Visualizer Settings"
 
 # =============================================================================
