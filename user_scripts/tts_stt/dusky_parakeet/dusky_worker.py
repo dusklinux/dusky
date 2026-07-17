@@ -62,7 +62,7 @@ def detect_vram():
     return None
 
 class PatchedSession(rt.InferenceSession):
-    def __init__(self, path_or_bytes, sess_options=None, providers=None, **kwargs):
+    def __init__(self, path_or_bytes, sess_options=None, providers=None, provider_options=None, **kwargs):
         if sess_options is None:
             sess_options = rt.SessionOptions()
         available = set(rt.get_available_providers())

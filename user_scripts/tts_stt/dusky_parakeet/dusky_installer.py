@@ -351,7 +351,7 @@ def main():
 
     env_lines=[
         f"LD_LIBRARY_PATH={ld_library_path}",
-        f"HF_HUB_CACHE={Path.home()}/.cache/huggingface",
+        f"HF_HUB_CACHE={Path.home()}/.cache/huggingface/hub",
         f"PYTHONUNBUFFERED=1",
         f"PYTORCH_NVML_BASED_CUDA_CHECK=1",
         f"CUDA_MODULE_LOADING=LAZY",
@@ -372,7 +372,7 @@ StartLimitIntervalSec=90
 Type=exec
 ExecStart={APP_DIR}/.venv/bin/python {APP_DIR}/dusky_main.py --daemon
 WorkingDirectory={APP_DIR}
-Environment=HF_HUB_CACHE=%h/.cache/huggingface
+Environment=HF_HUB_CACHE=%h/.cache/huggingface/hub
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTORCH_NVML_BASED_CUDA_CHECK=1
 Environment=CUDA_MODULE_LOADING=LAZY

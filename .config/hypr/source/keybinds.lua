@@ -562,7 +562,7 @@ hl.bind(
 -- NVIDIA Parakeet
 hl.bind(
     "SUPER + I",
-    hl.dsp.exec_cmd(dusky_scripts .. "tts_stt/dusky_parakeet/trigger.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "tts_stt/dusky_parakeet/dusky_trigger.py"),
     { description = "STT Parakeet GPU" }
 )
 
