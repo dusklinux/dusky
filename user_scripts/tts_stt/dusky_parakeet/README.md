@@ -1,34 +1,36 @@
 ```markdown
-# Dusky STT v7.0 FIXED - Unified Default, Realtime Typing, & D3-cold Safe
+# Dusky STT v8.1 BLEEDING EDGE - Unified Default, Realtime Typing, & D3-cold Safe
 
-**Stack July 2026:** Python 3.14.6 only, Arch bleeding, systemd 261, Pure pip CUDA 12.6 (STABLE), 3050 Ti 4GB, 12700H 64GB RAM, PipeWire, Wayland, uv, Parakeet Unified 5.91% WER, wtype, ffmpeg (soxr)
+**Stack July 2026:** Python 3.14.6 only, Arch bleeding, systemd 261, Native CUDA 13.0 / Driver 610.43.03, 3050 Ti 4GB, 12700H 64GB RAM, PipeWire, Wayland, uv, Parakeet Unified 5.91% WER, wtype, ffmpeg (soxr)
 
-### What's New in v7.0 FIXED
+### What's New in v8.1 BLEEDING EDGE
 
-- **Pure pip CUDA 12.6 Isolation:** Completely mitigates the `libcublas.so.12` corruption caused by mixed `cu12`/`cu13` system dependencies.
-- **`hf_xet` Integration:** Replaces the deprecated `hf_transfer` with `HF_XET_HIGH_PERFORMANCE=1` for rapid model prefetching.
-- **Strict D3-Cold Safety:** The main daemon is now 100% torch-free and uses an ONNX-only Silero VAD CPU inference. The GPU worker strictly limits VRAM headroom (`0.7` clamp for 4GB cards) and aggressively forces garbage collection and `empty_cache()` to guarantee 0.5W D3-cold suspension when idle.
-- **Secure FIFO IPC:** Re-engineered the trigger pipe to use `O_RDWR | O_NONBLOCK` descriptors, enforcing `0600` permissions with TOCTOU symlink protection so the daemon writers never block.
-- **PipeWire Audio Fix:** Implements C-level blocking reads via a dedicated audio thread, requesting stereo and downmixing to mono via numpy to bypass PipeWire front-left channel linking bugs.
+- **Native CUDA 13.0 Support:** Fully embraces CUDA 13 as the recommended default for NVIDIA drivers >=580 (like 610.43.03).
+- **Python 3.14 & Torch 2.11.0 Sync:** Explicitly matches `torch==2.11.0` and `torchaudio==2.11.0` to ensure stable compatibility with Python 3.14.6, avoiding version skew crashes.
+- **Word-Level Suffix Engine:** Realtime typing now utilizes a Word-Level Longest Common Prefix (LCP) algorithm. This fixes character-slicing glitches (e.g., typing "r" instead of "car") when the rolling ASR context updates previous words.
+- **Hallucination & VAD Gates:** Introduces a strict blocklist for common ASR hallucinations (e.g., "Thank you for watching") and gates the realtime evaluation window so it doesn't process ambient noise floors.
+- **Atomic File Protections & IPC:** Re-engineered the trigger pipe and PID management to use strict `O_EXCL` and `O_NOFOLLOW` file handles, permanently closing TOCTOU symlink vulnerabilities.
+- **Systemd Exponential Backoff:** Implements native systemd 260+ throttling (`RestartSteps=5`, `RestartMaxDelaySec=30`) to prevent silent resource spinning on backend failures.
+- **Worker Environment Unmasking:** Safely purges `CUDA_VISIBLE_DEVICES` in the child process so the worker can bind to the GPU, while keeping the main daemon strictly CPU-isolated for D3-cold compliance.
 
 ### Files (this is all you need)
 
 ```text
-dusky_installer.py - Rich installer, auto pacman+uv, pure pip CUDA 12.6 resolution
-dusky_main.py      - CPU-only main, realtime typing via wtype, blocking audio thread
+dusky_installer.py - Rich installer, auto pacman+uv, pure pip CUDA 13/12 resolution
+dusky_main.py      - CPU-only main, word-level realtime typing, blocking audio thread
 dusky_worker.py    - GPU worker, dynamic LD_LIBRARY_PATH discovery, D3-cold cleanup
-dusky-trigger      - Toggle, secure FIFO trigger, systemd-enforced env tracking
-dusky-stt.service  - systemd user service (Type=exec), memory clamps
+dusky-trigger      - Toggle, secure atomic FIFO trigger, systemd-enforced env tracking
+dusky-stt.service  - systemd user service (Type=exec), exponential backoff, memory clamps
 README.md          - This file
 
 ```
 
 ### Install
 
-Place all 6 files into a single directory (e.g., `~/Downloads/dusky-v7`), then run:
+Place all 6 files into a single directory (e.g., `~/Downloads/dusky-v8.1`), then run:
 
 ```bash
-cd ~/Downloads/dusky-v7
+cd ~/Downloads/dusky-v8.1
 chmod +x dusky-trigger
 
 uv python install 3.14.6
@@ -36,11 +38,11 @@ uv run --python 3.14.6 dusky_installer.py
 
 # Installer will:
 # - Check pacman deps and auto install missing: pipewire wl-clipboard wtype ffmpeg libnotify yad uv base-devel
-# - Ask hardware: 1=CUDA12 pip STABLE (RECOMMENDED for 4GB), 2=CUDA13 system, 3=AMD, 4=CPU
+# - Ask hardware: 1=CUDA13 pip STABLE (RECOMMENDED for driver 610+), 2=CUDA12 pip LEGACY, 3=AMD, 4=CPU
 # - Ask model: [1] unified-en-0.6b DEFAULT 5.91% WER, [2] v2 EN 6.05% WER, [3] v3 25 langs 6.34%
 # - Setup isolated venv at ~/contained_apps/uv/dusky_stt_v2/.venv via `uv pip` (no seed pollution)
 # - Discover pip CUDA paths and generate `.env` for systemd LD_LIBRARY_PATH injection
-# - Prefetch models via `hf_xet`
+# - Prefetch models via `hf_xet` (auto-disabled if RAM < 64GB)
 # - Copy files, install trigger to ~/.local/bin/dusky-trigger, and service to ~/.config/systemd/user/
 
 # Enable service
@@ -59,7 +61,7 @@ journalctl --user -u dusky-stt -f
 
 ```bash
 # Focus neovim / text editor, then press hotkey
-dusky-trigger  # shows "REALTIME typing - focus editor and speak"
+dusky-trigger  # shows "Streaming Suffix Engine - Focus target input element."
 # Speak. It types live into the focused window via wtype.
 # "hello world this is realtime"
 dusky-trigger  # stop
@@ -74,10 +76,10 @@ dusky-trigger --realtime
 
 How realtime works:
 
-* Main daemon (CPU-only) captures mic via sounddevice on a dedicated thread, chunking every 1.2s.
-* Submits chunk to GPU worker (spawned on demand).
-* Worker transcribes 1.2s chunk with the unified model.
-* Main diffs new text vs already typed, and executes `wtype "new words "` to type suffix-only into the focused window.
+* Main daemon (CPU-only) captures mic via sounddevice on a dedicated thread, chunking every 1.2s into a rolling context window.
+* Evaluates the audio segment against a Silero VAD gate; if speech is present, submits to the GPU worker.
+* Worker transcribes the phrase with the Parakeet unified model.
+* Main diffs the newly returned phrase against the already typed text using a word-level array, isolates the new suffix, blocks hallucinations, and executes `wtype` to type directly into the focused application.
 
 **Podcast / Long File (High Quality / No OOM):**
 
@@ -100,7 +102,7 @@ dusky-trigger --kill
 
 ### D3-Cold / Battery Verification
 
-Main daemon never imports CUDA (<50MB RAM). Worker is spawned on demand and exits after 30s idle -> Memory collected -> CUDA context destroyed -> GPU enters `D3cold` at 0.5W.
+Main daemon never imports CUDA (<50MB RAM). Worker is spawned on demand and explicitly unmasks its GPU view. It exits after 30s idle -> Garbage collection runs -> Torch cache empties -> CUDA context is destroyed -> GPU enters `D3cold` at 0.5W.
 
 Check state:
 
@@ -114,8 +116,8 @@ cat /sys/bus/pci/devices/0000:01:00.0/power_state           # D3cold
 
 * **No wtype / Virtual Keyboard blocked:** `sudo pacman -S wtype` (Wayland). Ensure your Wayland compositor allows virtual keyboard protocols.
 * **Audio failing (xrun/PipeWire):** Ensure `pipewire-pulse` is running. Check `pavucontrol`.
-* **Worker fails to load ONNX / CUDA:** Run `dusky-trigger --logs`. Ensure you aren't mixing pacman `cuda` with pip `nvidia-*-cu12`. The v7.0 installer isolates this via the `.env` file it generates.
-* **Service fails to start:** `systemctl --user status dusky-stt -l`. The service uses `Type=exec` to accurately report crash loops.
+* **Worker fails to load ONNX / CUDA:** Run `dusky-trigger --logs`. The new installer ensures pure pip isolation via the `.env` file, but if `onnxruntime` crashes, verify that PyTorch `2.11.0` was successfully installed during the setup phase.
+* **Service fails to start:** `systemctl --user status dusky-stt -l`. The service uses `Type=exec` to accurately report crash loops and will exponential-backoff after 5 failures.
 
 ### Uninstall
 
