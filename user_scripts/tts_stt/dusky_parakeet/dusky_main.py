@@ -392,6 +392,29 @@ class WorkerManager:
                     pass
             self.proc = None
 
+def get_overlap_suffix(typed_text: str, new_text: str) -> str:
+    def clean_word(w: str) -> str:
+        return w.lower().strip(".,?!:;\"'")
+    
+    typed_words = typed_text.strip().split()
+    new_words = new_text.strip().split()
+    if not typed_words:
+        return new_text
+        
+    max_overlap = 0
+    for i in range(len(typed_words)):
+        suffix_len = len(typed_words) - i
+        if suffix_len <= len(new_words):
+            match = True
+            for j in range(suffix_len):
+                if clean_word(typed_words[i+j]) != clean_word(new_words[j]):
+                    match = False
+                    break
+            if match:
+                max_overlap = suffix_len
+                break
+    return " ".join(new_words[max_overlap:])
+
 class DuskyDaemon:
     def __init__(self, config: dict):
         self.config = config
@@ -419,6 +442,8 @@ class DuskyDaemon:
             self.acc_chunks = []
             self.typed_text = ""
             self.stop_event.clear()
+            self.submitted_count = 0
+            self.processed_count = 0
             import queue
             self.audio_q = queue.Queue()
 
@@ -456,7 +481,7 @@ class DuskyDaemon:
         last_process_time = time.time()
         chunk_sec = self.realtime_chunk if self.realtime else self.chunk_seconds
 
-        while self.running and (self.recording or not self.audio_q.empty()):
+        while self.running and (self.recording or not self.audio_q.empty() or (self.processed_count < self.submitted_count and self.worker.proc and self.worker.proc.is_alive())):
             try:
                 import queue
                 try:
@@ -475,14 +500,26 @@ class DuskyDaemon:
 
                 # Check if it's time to process the window
                 current_time = time.time()
-                if rolling_buffer.size > 0 and (current_time - last_process_time >= chunk_sec or not self.recording):
+                should_process = False
+                if self.realtime:
+                    should_process = (current_time - last_process_time >= chunk_sec or not self.recording)
+                else:
+                    should_process = not self.recording
+
+                if rolling_buffer.size > 0 and should_process:
                     last_process_time = current_time
                     
                     # Realtime uses rolling window; Offline shifts forward
                     if self.realtime:
+                        # Truncate rolling buffer to prevent VRAM ballooning and OOM
+                        max_buf_samples = int(15 * sr)
+                        if rolling_buffer.size > max_buf_samples:
+                            rolling_buffer = rolling_buffer[-max_buf_samples:]
+                            
                         # VAD Gate check: only evaluate if speech was observed in this phrase window
                         if silence_samples < len(rolling_buffer):
                             self.worker.submit(rolling_buffer.copy(), chunk_idx, chunk_idx * chunk_sec)
+                            self.submitted_count += 1
                         
                         # Flush rolling window on explicit long silence boundaries to avoid phrase limits
                         if silence_samples >= max_silence and self.recording:
@@ -491,33 +528,22 @@ class DuskyDaemon:
                             chunk_idx += 1
                             silence_samples = 0
                     else:
-                        # Offline simple window chunking
-                        to_send = rolling_buffer.copy()
-                        rolling_buffer = rolling_buffer[int(chunk_sec * sr * 0.5):] if self.recording else np.array([], dtype=np.float32)
-                        self.worker.submit(to_send, chunk_idx, chunk_idx * chunk_sec)
+                        # Offline mode: transcribe the entire accumulated buffer as a single block at the end
+                        self.worker.submit(rolling_buffer.copy(), chunk_idx, 0.0)
+                        self.submitted_count += 1
+                        rolling_buffer = np.array([], dtype=np.float32)
                         chunk_idx += 1
 
                 # Evaluate internal queue responses from our worker context
                 for res in self.worker.get_all():
+                    self.processed_count += 1
                     text = res.get("text", "").strip()
                     if not text or is_hallucination(text):
                         continue
                         
                     idx = res.get("index", 0)
                     if self.realtime:
-                        # Suffix Typing via Word-Level Longest Common Prefix (LCP) computation
-                        typed_words = self.typed_text.strip().split()
-                        new_words = text.strip().split()
-                        
-                        match_count = 0
-                        for t_word, n_word in zip(typed_words, new_words):
-                            if t_word.lower() == n_word.lower():
-                                match_count += 1
-                            else:
-                                break
-                        
-                        suffix = " ".join(new_words[match_count:])
-                        
+                        suffix = get_overlap_suffix(self.typed_text, text)
                         if suffix:
                             # Add spacing if appending to existing text
                             if self.typed_text and not self.typed_text.endswith(" "):
@@ -541,7 +567,7 @@ class DuskyDaemon:
         if self.record_thread:
             self.record_thread.join(timeout=2)
         if self.transcribe_thread:
-            self.transcribe_thread.join(timeout=5)
+            self.transcribe_thread.join(timeout=120)
 
         # Catch trailing fragments
         for res in self.worker.get_all():
@@ -574,7 +600,7 @@ class DuskyDaemon:
             pass
 
         out_choice = self.config.get("transcript_output", "both")
-        if out_choice in ("clipboard", "both") and not self.realtime:
+        if out_choice in ("clipboard", "both", "realtime-both"):
             if shutil.which("wl-copy"):
                 try:
                     subprocess.run(["wl-copy"], input=full_text.encode(), check=True, timeout=5)
