@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# Dusky STT Installer v6 - Unified #1 default, Realtime typing, auto pacman+uv
+# Dusky STT Installer v6.1 FIXED - Unified #1 default, Realtime typing, auto pacman+uv
 # Python 3.14.6 only, bleeding edge Arch
+# FIXED: No uv add (needs pyproject.toml), uses uv pip install --python <venv_python> + creates pyproject.toml
 
 import sys
 import sysconfig
@@ -25,7 +26,7 @@ try:
     from rich.prompt import Prompt, Confirm, IntPrompt
     from rich import box
 except ImportError:
-    print("Installing rich via uv...")
+    print("Installing rich via pip...")
     subprocess.run([sys.executable, "-m", "pip", "install", "rich", "-q"])
     from rich.console import Console
     from rich.panel import Panel
@@ -47,7 +48,6 @@ def run(cmd: list[str], timeout: int = 20, **kwargs):
     return subprocess.run(cmd, text=True, capture_output=True, timeout=timeout, **kwargs)
 
 def check_pacman_deps():
-    """Auto-check and install pacman deps if missing, using pacman where needed"""
     needed = {
         "pipewire": "pipewire",
         "pipewire-pulse": "pipewire-pulse",
@@ -58,26 +58,22 @@ def check_pacman_deps():
         "yad": "yad",
         "uv": "uv",
     }
-    missing_pacman = []
+    missing = []
     for binary, pkg in needed.items():
         if not shutil.which(binary):
-            missing_pacman.append(pkg)
-
-    # Always needed for build
+            missing.append(pkg)
     if not shutil.which("gcc"):
-        missing_pacman.append("base-devel")
-
-    if missing_pacman:
-        console.print(f"[yellow]Missing pacman packages: {', '.join(set(missing_pacman))}[/]")
+        missing.append("base-devel")
+    if missing:
+        console.print(f"[yellow]Missing pacman packages: {', '.join(set(missing))}[/]")
         if Confirm.ask("Auto-install via sudo pacman -S ?", default=True):
-            # Remove duplicates
-            pkgs = sorted(set(missing_pacman))
+            pkgs = sorted(set(missing))
             console.print(f"[cyan]Running: sudo pacman -S --noconfirm {' '.join(pkgs)}[/]")
             result = subprocess.run(["sudo", "pacman", "-S", "--noconfirm"] + pkgs)
             if result.returncode != 0:
-                console.print("[red]pacman install failed, please install manually[/]")
+                console.print("[red]pacman install failed, install manually[/]")
         else:
-            console.print("[yellow]Skipping pacman install, may fail later[/]")
+            console.print("[yellow]Skipping pacman install[/]")
 
 def detect_hardware():
     info: dict = {"nvidia": False, "amd": False, "cuda_pacman": None, "cudnn_pacman": None, "driver": None, "vram_mb": None, "cpu": platform.processor()}
@@ -110,10 +106,9 @@ def detect_hardware():
         info["amd"] = True
     return info
 
-# --- Start ---
 check_pacman_deps()
 
-console.print(Panel.fit("[bold cyan]Dusky STT v6 Installer[/]\n[dim]Unified #1 default (5.91% WER) | Realtime typing into neovim/notepad | Python 3.14.6 | Arch bleeding | D3-cold safe[/]\nAuto pacman+uv deps, 64GB RAM optimized", box=box.DOUBLE, border_style="cyan"))
+console.print(Panel.fit("[bold cyan]Dusky STT v6.1 FIXED Installer[/]\n[dim]Unified #1 default (5.91% WER) | Realtime typing | Python 3.14.6 | Arch bleeding | D3-cold safe[/]\nFix: uses uv pip install --python, creates pyproject.toml, no uv add", box=box.DOUBLE, border_style="cyan"))
 
 hw = detect_hardware()
 table = Table(title="Detected Hardware", box=box.ROUNDED)
@@ -123,7 +118,6 @@ for k, v in hw.items():
     table.add_row(k, str(v))
 console.print(table)
 
-# Default hardware
 default_hw = "1"
 if hw.get("cuda_pacman") and "13." in str(hw["cuda_pacman"]):
     default_hw = "2"
@@ -143,7 +137,7 @@ hardware = {"1": "nvidia-cuda12", "2": "nvidia-cuda13", "3": "amd-rocm", "4": "c
 console.print("\n[bold]Model (unified #1 is best WER, realtime capable):[/]")
 console.print(" [1] [bold green]nemo-parakeet-unified-en-0.6b NEW Apr 2026 DEFAULT[/] - 5.91% WER offline (best), unified offline+streaming, 160ms-2s latency, EN only, realtime typing")
 console.print(" [2] nemo-parakeet-tdt-0.6b-v2 EN only - 6.05% WER, punctuation, timestamps")
-console.print(" [3] nemo-parakeet-tdt-0.6b-v3 25 langs - auto-detect, 6.34% WER, 640MB int8 - bg,hr,cs,da,nl,en,et,fi,fr,de,el,hu,it,lv,lt,mt,pl,pt,ro,sk,sl,es,sv,ru,uk")
+console.print(" [3] nemo-parakeet-tdt-0.6b-v3 25 langs - auto-detect, 6.34% WER, 640MB int8")
 model_choice = Prompt.ask("Model", choices=["1","2","3"], default="1")
 model = {"1": "nemo-parakeet-unified-en-0.6b", "2": "nemo-parakeet-tdt-0.6b-v2", "3": "nemo-parakeet-tdt-0.6b-v3"}[model_choice]
 
@@ -155,7 +149,7 @@ q_choice = Prompt.ask("Quant", choices=["1","2","3"], default="1")
 quant = {"1": "int8", "2": "fp16", "3": "fp32"}[q_choice]
 
 enable_vad = Confirm.ask("Enable Silero VAD auto-chunking? (no data loss)", default=True)
-chunk_sec = IntPrompt.ask("Max chunk seconds (20-30 for 4GB, 64GB allows 60)", default=25)
+chunk_sec = IntPrompt.ask("Max chunk seconds (20-30 for 4GB, 64GB allows 60)", default=30)
 chunk_sec = max(10, min(60, chunk_sec))
 
 realtime = Confirm.ask("Enable REALTIME typing into focused window (neovim/notepad) as you speak? (uses wtype, types live)", default=True)
@@ -182,34 +176,56 @@ console.print(Panel(json.dumps(config, indent=2), title="Config", border_style="
 if not Confirm.ask("Proceed?", default=True):
     sys.exit(0)
 
-# --- Venv ---
+# --- FIXED VENV + DEPS LOGIC ---
+if not (APP_DIR / "pyproject.toml").exists():
+    console.print("[cyan]Creating pyproject.toml (needed for uv)[/]")
+    (APP_DIR / "pyproject.toml").write_text('[project]\nname="dusky-stt"\nversion="6.1"\nrequires-python=">=3.14.6"\ndependencies=[]\n')
+
 console.print(f"\n[cyan]Creating venv at {APP_DIR} Python 3.14.6[/]")
-run(["uv", "venv", "--python", "3.14.6", "--seed", "--force"], cwd=str(APP_DIR), timeout=30)
+run(["uv", "venv", "--python", "3.14.6", "--seed", "--force"], cwd=str(APP_DIR), timeout=60)
 
-# --- Base deps via uv (auto downloads) ---
+venv_python = APP_DIR / ".venv" / "bin" / "python"
+venv_pip = APP_DIR / ".venv" / "bin" / "pip"
+if not venv_python.exists():
+    console.print("[red]Failed to create venv python![/]")
+    sys.exit(1)
+
 base_deps = ["onnx-asr", "soundfile", "numpy", "sounddevice", "rich", "huggingface_hub", "hf-transfer", "silero-vad"]
-console.print(f"[cyan]Installing base via uv (cached at ~/.cache/uv shared): {' '.join(base_deps)}[/]")
-result = run(["uv", "add"] + base_deps, cwd=str(APP_DIR), timeout=180)
+console.print(f"[cyan]Installing base via uv pip install --python {venv_python} (cached at ~/.cache/uv): {' '.join(base_deps)}[/]")
+result = run(["uv", "pip", "install", "--python", str(venv_python)] + base_deps, cwd=str(APP_DIR), timeout=300)
+console.print(result.stdout[-2000:])
 if result.returncode != 0:
-    console.print(f"[yellow]uv add warning: {result.stderr[-800:]}[/]")
+    console.print(f"[yellow]uv pip warning: {result.stderr[-2000:]}[/]")
+    console.print("[cyan]Fallback: .venv/bin/pip install[/]")
+    run([str(venv_pip), "install"] + base_deps, cwd=str(APP_DIR), timeout=300)
 
-# --- Hardware deps via uv ---
 if hardware == "nvidia-cuda12":
     deps = ["onnxruntime-gpu==1.26.0", "nvidia-cuda-runtime-cu12", "nvidia-cudnn-cu12", "nvidia-cufft-cu12"]
-    console.print(f"[cyan]Installing {deps} via uv (auto cached)[/]")
-    run(["uv", "add"] + deps, cwd=str(APP_DIR), timeout=180)
+    console.print(f"[cyan]Installing CUDA12 deps via uv pip: {' '.join(deps)}[/]")
+    result = run(["uv", "pip", "install", "--python", str(venv_python)] + deps, cwd=str(APP_DIR), timeout=300)
+    console.print(result.stdout[-1000:])
 elif hardware == "nvidia-cuda13":
     console.print("[yellow]CUDA13 system: installing nightly ORT via uv pip, uses pacman /opt/cuda[/]")
-    cmd = ["uv", "pip", "install", "--pre", "--index-url", "https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/ort-cuda-13-nightly/pypi/simple/", "onnxruntime-gpu", "--force-reinstall", "--no-deps"]
-    run(cmd, cwd=str(APP_DIR), timeout=180)
-    run(["uv", "add", "onnxruntime"], cwd=str(APP_DIR), timeout=60)
+    cmd = ["uv", "pip", "install", "--python", str(venv_python), "--pre", "--index-url", "https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/ort-cuda-13-nightly/pypi/simple/", "onnxruntime-gpu", "--force-reinstall", "--no-deps"]
+    result = run(cmd, cwd=str(APP_DIR), timeout=180)
+    console.print(result.stdout[-1000:])
+    run(["uv", "pip", "install", "--python", str(venv_python), "onnxruntime"], cwd=str(APP_DIR), timeout=120)
 elif hardware == "amd-rocm":
-    run(["uv", "pip", "install", "onnxruntime-rocm", "--force-reinstall"], cwd=str(APP_DIR), timeout=180)
-    run(["uv", "add", "onnxruntime"], cwd=str(APP_DIR), timeout=60)
+    run(["uv", "pip", "install", "--python", str(venv_python), "onnxruntime-rocm", "--force-reinstall"], cwd=str(APP_DIR), timeout=180)
+    run(["uv", "pip", "install", "--python", str(venv_python), "onnxruntime"], cwd=str(APP_DIR), timeout=120)
 else:
-    run(["uv", "add", "onnxruntime"], cwd=str(APP_DIR), timeout=60)
+    run(["uv", "pip", "install", "--python", str(venv_python), "onnxruntime"], cwd=str(APP_DIR), timeout=120)
 
-# --- Copy files ---
+console.print("[cyan]Verifying imports with venv python...[/]")
+verify_code = "import onnx_asr, soundfile, numpy, sounddevice, silero_vad; print('ALL IMPORTS OK')"
+res = run([str(venv_python), "-c", verify_code], timeout=10)
+console.print(res.stdout[-1000:])
+if res.returncode != 0:
+    console.print(f"[red]Import still failing: {res.stderr[-1000:]}[/]")
+    sys.exit(1)
+else:
+    console.print("[green]Imports OK![/]")
+
 src_dir = Path(__file__).parent
 for fname in ["dusky_main.py", "dusky_worker.py", "dusky-trigger", "dusky-stt.service", "README.md"]:
     for cand in [src_dir / fname, Path("/mnt/data/final_v6") / fname, Path("/mnt/data/final") / fname, Path("/mnt/data") / fname]:
@@ -224,7 +240,6 @@ for fname in ["dusky_main.py", "dusky_worker.py", "dusky-trigger", "dusky-stt.se
             console.print(f"[green]Copied {fname} -> {dest}[/]")
             break
 
-# --- Prefetch model via hf_transfer CPU ---
 console.print(f"\n[cyan]Pre-fetching {model} ({quant}) via hf_transfer (auto download)[/]")
 prefetch_code = f"""
 import onnx_asr
@@ -242,7 +257,7 @@ tmp_py.write_text(prefetch_code)
 env = os.environ.copy()
 env["CUDA_VISIBLE_DEVICES"] = "-1"
 env["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-result = run(["uv", "run", "--no-sync", "python", "_prefetch.py"], cwd=str(APP_DIR), timeout=300)
+result = run([str(venv_python), str(tmp_py)], cwd=str(APP_DIR), timeout=300, env=env)
 console.print(result.stdout[-2000:])
 if result.returncode != 0:
     console.print(f"[yellow]Prefetch warning (will try at runtime): {result.stderr[-1000:]}[/]")
@@ -251,10 +266,9 @@ try:
 except Exception:
     pass
 
-# --- Service ---
 service_src = APP_DIR / "dusky-stt.service"
 service_content = f"""[Unit]
-Description=Dusky STT v6 - Parakeet Unified (Realtime typing, D3-cold safe)
+Description=Dusky STT v6.1 FIXED - Parakeet Unified (Realtime typing, D3-cold safe)
 After=pipewire.service pipewire-pulse.service graphical-session.target xdg-desktop-portal.service
 Wants=pipewire.service
 PartOf=graphical-session.target
@@ -290,4 +304,4 @@ console.print(f"[green]Service at {dest_service}[/]")
 
 (APP_DIR / "install_config.json").write_text(json.dumps(config, indent=2))
 
-console.print(Panel(f"[bold green]Setup Complete v6![/]\nUnified #1 default (5.91% WER) + Realtime typing\nTrigger: {TRIGGER_PATH}\nTranscripts: {TRANSCRIPT_DIR}\nEnable: systemctl --user daemon-reload && loginctl enable-linger $USER && systemctl --user enable --now dusky-stt.service\nRealtime: Focus neovim/notepad then dusky-trigger, it types live as you speak!\nPodcast: dusky-trigger --file ~/podcast.mp3\nAll deps auto-installed via pacman+uv, cached at ~/.cache/uv", title="Done", border_style="green"))
+console.print(Panel(f"[bold green]Setup Complete v6.1 FIXED![/]\nFix integrated: uv pip install --python not uv add, pyproject.toml created, imports verified\nUnified #1 default (5.91% WER) + Realtime typing\nTrigger: {TRIGGER_PATH}\nTranscripts: {TRANSCRIPT_DIR}\nEnable: systemctl --user daemon-reload && loginctl enable-linger $USER && systemctl --user enable --now dusky-stt.service\nRealtime: Focus neovim/notepad then dusky-trigger, it types live!\nPodcast: dusky-trigger --file ~/podcast.mp3\nAll deps auto-installed via pacman+uv, cached at ~/.cache/uv", title="Done", border_style="green"))
