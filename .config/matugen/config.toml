@@ -98,6 +98,10 @@ post_hook   = '''
 input_path  = '~/.config/matugen/templates/rofi-colors.rasi'
 output_path = '~/.config/matugen/generated/rofi-colors.rasi'
 
+[templates.dusky_visualizer_colors]
+input_path  = '~/.config/matugen/templates/dusky_visualizer_colors.json'
+output_path = '~/.config/matugen/generated/dusky_visualizer_colors.json'
+
 
 # =============================================================================
 # 3. Applications (Terminals, Editors, Browsers)

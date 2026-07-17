@@ -1,0 +1,9 @@
+{
+  "c1": "{{ colors.primary.default.hex }}",
+  "c2": "{{ colors.secondary.default.hex }}",
+  "c3": "{{ colors.tertiary.default.hex }}",
+  "c4": "{{ colors.primary_container.default.hex }}",
+  "c5": "{{ colors.secondary_container.default.hex }}",
+  "c6": "{{ colors.tertiary_container.default.hex }}",
+  "accent": "{{ colors.primary.default.hex }}"
+}

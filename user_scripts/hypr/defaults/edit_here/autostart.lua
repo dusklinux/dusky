@@ -34,6 +34,7 @@ hl.on("hyprland.start", function()
 
     -- --- BACKGROUND SERVICES ---
     hl.exec_cmd("awww-daemon")           -- Wallpaper engine
+    hl.exec_cmd("$HOME/user_scripts/way_layers/visualizer/visualizer_toggle.sh") -- Audio Visualizer
 
     -- --- OPTIONAL / USER INTERFACE ---
     hl.exec_cmd("$HOME/user_scripts/waybar/waybar_toggle.sh")

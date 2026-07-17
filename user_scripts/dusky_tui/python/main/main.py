@@ -447,9 +447,12 @@ EXAMPLES:
         elif e_type == "fstab":
             from python.engines.fstab import FstabEngine
             engine = FstabEngine(config_path=config_path)
+        elif e_type == "json":
+            from python.engines.json_engine import JsonEngine
+            engine = JsonEngine(config_path=config_path)
         else:
             print(f"[-] Fatal: Unknown ENGINE_TYPE '{e_type}' specified in schema '{schema_path.name}'.")
-            print("[i] Supported engines are: 'lua', 'ini', 'bridged_ini', 'systemd', 'hyprlang', 'trackpad', 'monitor', 'cmdline', 'systemd_boot', 'flatdotconfig', 'env', 'waybar', 'network', 'pkg_throttle', 'cpu_core', 'fstab', 'shell_fallback'")
+            print("[i] Supported engines are: 'lua', 'ini', 'bridged_ini', 'systemd', 'hyprlang', 'trackpad', 'monitor', 'cmdline', 'systemd_boot', 'flatdotconfig', 'env', 'waybar', 'network', 'pkg_throttle', 'cpu_core', 'fstab', 'shell_fallback', 'json'")
             sys.exit(1)
 
         engine_pool[key] = engine
