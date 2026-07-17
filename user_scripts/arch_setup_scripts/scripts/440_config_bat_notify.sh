@@ -78,7 +78,7 @@ warn() {
 }
 
 is_valid_percent() {
-    [[ -n "${1:-}" && "$1" =~ ^[0-9]+$ && "$1" -ge 1 && "$1" -le 100 ]]
+    [[ -n "${1:-}" && "${1:-}" =~ ^[0-9]+$ && "${1:-}" -ge 1 && "${1:-}" -le 100 ]]
 }
 
 #===============================================================================
@@ -92,7 +92,19 @@ check_battery() {
         fi
     fi
 
-    # Method 2: sysfs fallback
+    # Method 2: sysfs check of type
+    local type_file
+    for type_file in /sys/class/power_supply/*/type; do
+        if [[ -f "${type_file}" ]]; then
+            local type_val
+            type_val=$(tr '[:upper:]' '[:lower:]' < "${type_file}" 2>/dev/null | tr -d '[:space:]') || true
+            if [[ "${type_val}" == "battery" ]]; then
+                return 0
+            fi
+        fi
+    done
+
+    # Method 3: sysfs fallback glob
     local bat_path
     for bat_path in /sys/class/power_supply/BAT*; do
         [[ -d "$bat_path" ]] && return 0

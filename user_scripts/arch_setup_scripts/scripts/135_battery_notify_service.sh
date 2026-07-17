@@ -26,6 +26,7 @@ readonly CONFIG_DIR="${XDG_CONFIG_HOME:-"${HOME}/.config"}"
 readonly SYSTEMD_USER_DIR="${CONFIG_DIR}/systemd/user"
 readonly SOURCE_FILE="${HOME}/user_scripts/battery/notify/${SERVICE_NAME}"
 readonly TARGET_FILE="${SYSTEMD_USER_DIR}/${SERVICE_NAME}"
+readonly SCRIPT_FILE="${HOME}/user_scripts/battery/notify/battery_notify.sh"
 
 # --- Helper Functions ---
 log_info() {
@@ -57,7 +58,31 @@ trap cleanup EXIT
 # --- State Detection Functions ---
 
 has_battery() {
-    compgen -G "/sys/class/power_supply/BAT*" > /dev/null 2>&1
+    # 1. Try upower if available (preferred)
+    if command -v upower &>/dev/null; then
+        if upower -e 2>/dev/null | grep -qiE 'BAT|battery'; then
+            return 0
+        fi
+    fi
+
+    # 2. Fallback to sysfs check of type
+    local type_file
+    for type_file in /sys/class/power_supply/*/type; do
+        if [[ -f "${type_file}" ]]; then
+            local type_val
+            type_val=$(tr '[:upper:]' '[:lower:]' < "${type_file}" 2>/dev/null | tr -d '[:space:]') || true
+            if [[ "${type_val}" == "battery" ]]; then
+                return 0
+            fi
+        fi
+    done
+
+    # 3. Fallback to simple glob
+    if compgen -G "/sys/class/power_supply/BAT*" > /dev/null 2>&1; then
+        return 0
+    fi
+
+    return 1
 }
 
 is_service_installed() {
@@ -94,6 +119,7 @@ do_install() {
     log_info "Installing service file (copying)..."
     rm -f "${TARGET_FILE}"
     cp -f "${SOURCE_FILE}" "${TARGET_FILE}"
+    chmod +x "${SCRIPT_FILE}"
 
     # 4. Systemd registration
     log_info "Reloading systemd user daemon..."

@@ -76,7 +76,8 @@ play_sound() {
 }
 fn_notify() {
     local urgency="$1" title="$2" body="$3" icon="$4" sound="$5"
-    local runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$UID}" bus_path="$runtime_dir/bus"
+    local runtime_dir="${XDG_RUNTIME_DIR:-/run/user/${UID:-}}"
+    local bus_path="$runtime_dir/bus"
     if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" && -S "$bus_path" ]]; then export DBUS_SESSION_BUS_ADDRESS="unix:path=$bus_path"; fi
     if [[ "$HAS_NOTIFY" == "true" ]]; then
         local err
@@ -237,7 +238,11 @@ trap cleanup EXIT TERM INT HUP
 main_loop() {
     reset_state; local retry=0 reading
     while ! reading=$(read_battery_aggregated); do
-        ((retry++)); (( retry >= MAX_RETRIES )) && die "No battery after $MAX_RETRIES"
+        ((retry++))
+        if (( retry >= MAX_RETRIES )); then
+            log "No battery detected after $MAX_RETRIES attempts. Exiting cleanly (likely a desktop system)."
+            exit 0
+        fi
         log "No battery yet (attempt $retry/$MAX_RETRIES), retrying 2s..."; sleep 2
     done
     local state perc mode; IFS=';' read -r state perc mode <<< "$reading"; CURRENT_MODE="$mode"
