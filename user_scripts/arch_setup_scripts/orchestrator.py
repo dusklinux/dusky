@@ -62,6 +62,7 @@ class OrchestratorTask:
     script_name: str
     args: List[str]
     ignore_fail: bool
+    interactive: bool = False  # Added
     
     # Resolved at runtime
     resolved_path: Optional[Path] = None
@@ -227,10 +228,13 @@ def parse_task_entry(raw_entry: str) -> OrchestratorTask:
         raise ValueError(f"Malformed entry: {raw_entry}")
 
     ignore_fail = False
+    interactive = False
     for flag in flags.split(","):
         flag = flag.strip().lower()
         if flag in ["true", "ignore", "ignore-fail"]:
             ignore_fail = True
+        elif flag in ["interactive", "tui", "prompt"]:
+            interactive = True
 
     cmd_tokens = shlex.split(cmd)
     if not cmd_tokens:
@@ -245,7 +249,8 @@ def parse_task_entry(raw_entry: str) -> OrchestratorTask:
         mode=mode,
         script_name=cmd_tokens[0],
         args=cmd_tokens[1:],
-        ignore_fail=ignore_fail
+        ignore_fail=ignore_fail,
+        interactive=interactive
     )
 
 def load_profile(filepath: Path) -> ProfileConfig:
@@ -290,6 +295,22 @@ def discover_profiles() -> List[ProfileConfig]:
         profiles.append(load_profile(f))
     return profiles
 
+def is_script_interactive(script_path: Path) -> bool:
+    if not script_path.exists() or not script_path.is_file():
+        return False
+    try:
+        with open(script_path, 'r', errors='ignore') as f:
+            for _ in range(20):
+                line = f.readline()
+                if not line:
+                    break
+                line_clean = line.strip().replace(" ", "").lower()
+                if "#dusky_interactive=true" in line_clean or "#dusky_interactive=1" in line_clean:
+                    return True
+    except Exception:
+        pass
+    return False
+
 # ==============================================================================
 #  PRE-FLIGHT RESOLUTION
 # ==============================================================================
@@ -332,6 +353,10 @@ def resolve_and_validate_manifest(profile: ProfileConfig) -> bool:
             sys.stderr.write(f"\033[1;31m[MISSING]\033[0m Could not find {task.script_name} in search dirs.\n")
             success = False
             continue
+
+        # Auto-detect interactive comment header
+        if is_script_interactive(task.resolved_path):
+            task.interactive = True
 
         # 3. Interpreter mapping
         with open(task.resolved_path, 'r', errors='ignore') as f:
@@ -675,6 +700,23 @@ class DuskyOrchestratorApp(App):
         cmd = [task.interpreter, str(task.resolved_path)] + args
         if task.mode == "S":
             cmd = ["sudo"] + cmd
+
+        if task.interactive:
+            self.app.call_from_thread(self.log_system, "Suspending UI for interactive script...")
+            time.sleep(0.5)
+            with self.suspend():
+                rc = subprocess.run(cmd).returncode
+            self.app.call_from_thread(self.log_system, f"UI Resumed. Script exited with: {rc}")
+            
+            if rc == 0:
+                self.app.call_from_thread(self.task_success, task)
+            else:
+                if task.ignore_fail:
+                    self.app.call_from_thread(self.log_system, f"Task failed with {rc} but marked ignore-fail. Continuing.")
+                    self.app.call_from_thread(self.task_success, task)
+                else:
+                    self.app.call_from_thread(self.task_failure, task, rc)
+            return
             
         try:
             # We use a PTY so the underlying scripts think they are interactive

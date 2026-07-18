@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DUSKY_INTERACTIVE=true
 """
 030_partitioning.py - DUSKY Final Fixed - Python 3.14.6 + Rich 15.0.0 + systemd 261 + util-linux 2.42.1
 All fixes integrated July 2026:
@@ -186,7 +187,7 @@ def arrow_menu(title: str, options: List[Tuple[str,str]], default_idx: int = 0) 
         return None
 
     try:
-        tty.setraw(fd)
+        tty.setcbreak(fd)
         render_menu()
         while True:
             ch = os.read(fd, 1)

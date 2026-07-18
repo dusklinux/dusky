@@ -88,3 +88,5 @@ zsh
 gum
 git
 python
+python-textual
+python-rich

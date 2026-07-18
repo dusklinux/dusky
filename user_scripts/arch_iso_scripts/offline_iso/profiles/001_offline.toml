@@ -1,0 +1,39 @@
+[profile]
+name = "Offline"
+description = "Default offline installation sequence"
+
+[phase1]
+scripts = [
+    "U | 001_uefi_check.sh",
+    "U | interactive | 010_set_variables.sh --no_encrypt",
+    "U | 020_environment_prep.sh --auto --cachy",
+    "U | interactive | 030_partitioning.py --no-encrypt",
+    "U | 040_disk_mount.py --auto",
+    "U | 045_repo_bind_mount.sh",
+    "U | 051_pacman_repo_switch.sh --offline --cachyos",
+    "U | 060_console_fix.sh",
+    "U | 070_pacstrap_and_disable_mkinitcpio.py --auto --cachyos",
+    "U | 080_script_directories_population_in_chroot.sh",
+    "U | 090_fstab.sh --auto"
+]
+
+[phase2]
+scripts = [
+    "U | 051_pacman_repo_switch.sh --offline --cachyos",
+    "U | 100_etc_skel.sh --auto",
+    "U | 101_skel_files_precision_edit.sh --inject",
+    "U | 103_configure_hyprland_gpu.py --auto",
+    "U | 110_post_chroot.sh --auto",
+    "U | 115_tty_autologin.sh --auto",
+    "U | ignore-fail | 120_mkinitcpio_optimizer.sh",
+    "U | 135_plymouth_setup.py",
+    "U | 130_chroot_package_installer.sh --auto --cachyos",
+    "U | 131_chroot_aur_packages.sh --auto --cachyos",
+    "U | 151_systemd_bootloader.py",
+    "U | 156_snapper_isolation_subvolume.sh --auto",
+    "U | 158_mkinitcpio_restore_and_generate.sh",
+    "U | 160_zram_config.sh",
+    "U | 165_deploy_dusky_run.py",
+    "U | 170_services.sh",
+    "U | 051_pacman_repo_switch.sh --online --cachyos"
+]

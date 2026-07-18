@@ -768,6 +768,22 @@ def parse_manifest(sequence: list[str]) -> list[DuskyTask]:
         ))
     return tasks
 
+def is_script_interactive(script_path: Path) -> bool:
+    if not script_path.exists() or not script_path.is_file():
+        return False
+    try:
+        with open(script_path, 'r', errors='ignore') as f:
+            for _ in range(20):
+                line = f.readline()
+                if not line:
+                    break
+                line_clean = line.strip().replace(" ", "").lower()
+                if "#dusky_interactive=true" in line_clean or "#dusky_interactive=1" in line_clean:
+                    return True
+    except Exception:
+        pass
+    return False
+
 def resolve_and_validate_manifest(tasks: list[DuskyTask]) -> bool:
     log("INFO", "Performing pre-flight validation and conflict resolution...")
     
@@ -851,6 +867,10 @@ def resolve_and_validate_manifest(tasks: list[DuskyTask]) -> bool:
                     
         task.resolved_path = script_path
         task.path_state = "ok"
+        
+        # Auto-detect interactive comment header
+        if is_script_interactive(script_path):
+            task.interactive = True
         
         # Step 3: Precise Interpreter Detection
         first_line = ""

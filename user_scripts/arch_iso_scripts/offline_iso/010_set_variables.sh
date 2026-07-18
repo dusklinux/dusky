@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 #  ARCH ORCHESTRATOR - INLINE CREDENTIAL INGESTION (010)
+#  DUSKY_INTERACTIVE=true
 #  Context: Collects credentials and stages them for Phase 2 chroot extraction.
 # ==============================================================================
 set -Eeuo pipefail
