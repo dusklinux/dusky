@@ -2,7 +2,7 @@
 #
 # battery_notify.sh — Hyprland-only Event-Driven Battery Monitor (Fixed)
 # Arch bleeding-edge, Hyprland 0.55.4+ (July 2026), systemd 261+, bash 5.2+, upower 1.90+
-# No backwards compat, no UWSM. Part of hyprland-session.target
+# No backwards compat, Part of hyprland-session.target
 #
 set -uo pipefail
 export LC_NUMERIC=C
