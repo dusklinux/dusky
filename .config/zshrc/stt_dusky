@@ -1,0 +1,69 @@
+# =============================================================================
+# Dusky STT Zsh Wrapper (stt_dusky)
+# Provides clean toggle interface, file transcription, status checks and logs.
+# =============================================================================
+
+stt_dusky() {
+  local trigger_path="$HOME/.local/bin/dusky_trigger"
+  
+  if [[ ! -x "$trigger_path" ]]; then
+    trigger_path="$HOME/user_scripts/tts_stt/dusky_parakeet/dusky_trigger.py"
+  fi
+  
+  if [[ ! -f "$trigger_path" ]]; then
+    echo "Error: dusky_trigger not found." >&2
+    return 1
+  fi
+
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    echo -e "\e[1;36mDusky STT (Speech-to-Text) CLI Wrapper\e[0m"
+    echo -e "An interactive interface for controlling the background STT engine."
+    echo ""
+    echo -e "\e[1;33mUsage:\e[0m"
+    echo -e "  \e[32mstt_dusky\e[0m                 Toggle voice capture (starts/stops recording)"
+    echo -e "  \e[32mstt_dusky\e[0m \e[35m--file\e[0m \e[4m<file>\e[0m     Transcribe local media file (audio/video, e.g. mp3, ogg, mp4)"
+    echo -e "  \e[32mstt_dusky\e[0m \e[35m--status\e[0m           Show backend service status and recent transcripts"
+    echo -e "  \e[32mstt_dusky\e[0m \e[35m--logs\e[0m             Tail live systemd service logs"
+    echo -e "  \e[32mstt_dusky\e[0m \e[35m--restart\e[0m          Cycle the systemd daemon (applies changes)"
+    echo -e "  \e[32mstt_dusky\e[0m \e[35m--kill\e[0m             Stop and clean up all daemon processes"
+    echo ""
+    echo -e "\e[1;33mModes (applied when toggling voice):\e[0m"
+    echo -e "  \e[32mstt_dusky\e[0m \e[35m--realtime\e[0m         Toggle with Realtime Streaming output (types suffix)"
+    echo -e "  \e[32mstt_dusky\e[0m \e[35m--push\e[0m             Toggle with Push-to-Talk (types full block on stop)"
+    echo ""
+    echo -e "\e[1;33mExamples:\e[0m"
+    echo -e "  stt_dusky --file ~/Downloads/meeting.mp3"
+    echo -e "  stt_dusky --status"
+    return 0
+  fi
+
+  # Execute trigger
+  "$trigger_path" "$@"
+}
+
+# Dynamic tab-completion for stt_dusky
+_stt_dusky_completions() {
+  local -a subcommands
+  subcommands=(
+    '--file:Transcribe local target media file (audio/video)'
+    '--status:Show daemon status and recent transcripts'
+    '--logs:Tail live systemd service logs'
+    '--restart:Cycle the systemd daemon'
+    '--kill:Stop and clean up all daemon processes'
+    '--realtime:Enforce realtime streaming output'
+    '--push:Enforce push-to-talk block typing'
+    '-h:Show help menu'
+    '--help:Show help menu'
+  )
+  
+  if (( CURRENT == 2 )); then
+    _describe -t commands "stt_dusky subcommands" subcommands
+  elif [[ "$words[2]" == "--file" ]]; then
+    _files
+  fi
+}
+
+# Register completion if completion system is active
+if (( $+functions[compdef] )); then
+  compdef _stt_dusky_completions stt_dusky
+fi
