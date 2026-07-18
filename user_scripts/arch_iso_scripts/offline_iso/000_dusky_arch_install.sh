@@ -95,6 +95,25 @@ log() {
 }
 
 # ==============================================================================
+#  4b. STATE RESET INTERCEPTOR
+# ==============================================================================
+declare -a clean_args=()
+declare -i reset_requested=0
+for arg in "$@"; do
+    if [[ "$arg" == "--reset" ]]; then
+        reset_requested=1
+    else
+        clean_args+=("$arg")
+    fi
+done
+
+if (( reset_requested )); then
+    log "INFO" "Reset flag detected. Clearing previous installation state files..."
+    rm -f "/tmp/.arch_install_phase1.state" "/mnt/root/.arch_install_phase2.state" 2>/dev/null || true
+    set -- "${clean_args[@]}"
+fi
+
+# ==============================================================================
 #  5. INTERNET CONNECTIVITY CHECK
 # ==============================================================================
 check_internet() {

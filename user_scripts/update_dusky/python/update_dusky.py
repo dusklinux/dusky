@@ -2157,9 +2157,20 @@ class DuskyApp(App):
                         *exec_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=str(WORK_TREE)
                     )
                     if proc.stdout:
-                        async for line in proc.stdout: 
-                            decoded = line.decode('utf-8', errors='replace').rstrip()
-                            self.log_task(Text.from_ansi(decoded), index)
+                        buffer = ""
+                        while True:
+                            chunk = await proc.stdout.read(4096)
+                            if not chunk:
+                                break
+                            buffer += chunk.decode('utf-8', errors='replace')
+                            normalized = buffer.replace("\r\n", "\n").replace("\r", "\n")
+                            if "\n" in normalized:
+                                lines = normalized.split("\n")
+                                for line in lines[:-1]:
+                                    self.log_task(Text.from_ansi(line.rstrip()), index)
+                                buffer = lines[-1]
+                        if buffer:
+                            self.log_task(Text.from_ansi(buffer.rstrip()), index)
 
                     await proc.wait()
                     rc = proc.returncode

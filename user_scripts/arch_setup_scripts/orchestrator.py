@@ -813,7 +813,9 @@ class DuskyOrchestratorApp(App):
     def action_retry_task(self):
         if self.waiting_for_input and self.input_action == 'retry_skip':
             self.waiting_for_input = False
-            self.log_system("Retrying task...")
+            self.log_system("Retrying task in full screen...")
+            task = self.tasks[self.current_idx]
+            task.interactive = True
             self.run_execution_loop() # Retries current_idx
             
     def action_yes(self):
@@ -892,9 +894,11 @@ if __name__ == "__main__":
     if args.reset:
         sf = STATE_BASE_DIR / f".install_state_{selected_profile.name.replace(' ', '_')}"
         if sf.exists():
-            sf.unlink()
-            print(f"Reset state for {selected_profile.name}")
-        sys.exit(0)
+            try:
+                sf.unlink()
+                print(f"Reset state for {selected_profile.name}")
+            except Exception as e:
+                sys.stderr.write(f"Failed to reset state: {e}\n")
         
     if args.list_scripts:
         print(f"Sequence for {selected_profile.name}:")

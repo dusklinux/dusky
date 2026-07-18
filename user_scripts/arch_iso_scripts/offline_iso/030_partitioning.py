@@ -676,7 +676,7 @@ def choose_disk(disks):
     return selected
 
 def show_partitions_table(disk):
-    r = run("lsblk","-l","-o","NAME,SIZE,TYPE,FSTYPE,PARTTYPE,PARTLABEL,LABEL,MOUNTPOINTS",disk, check=False, capture=True)
+    r = run("lsblk","-l","-o","NAME,SIZE,TYPE,FSTYPE,PARTLABEL,LABEL",disk, check=False, capture=True)
     panel = Panel.fit(r.stdout, title=f"Partitions on {disk}", box=box.ROUNDED, border_style="yellow")
     console.print(Align.center(panel))
 

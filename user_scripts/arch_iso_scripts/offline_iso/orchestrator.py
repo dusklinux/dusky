@@ -532,12 +532,17 @@ class DuskyOrchestratorApp(App):
                 )
                 
                 if proc.stdout:
+                    buffer = ""
                     while True:
-                        line = await proc.stdout.readline()
-                        if not line:
+                        chunk = await proc.stdout.read(4096)
+                        if not chunk:
                             break
-                        decoded = line.decode('utf-8', errors='replace')
-                        self.log_task(decoded)
+                        buffer += chunk.decode('utf-8', errors='replace')
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            self.log_task(line + "\n")
+                    if buffer:
+                        self.log_task(buffer)
                         
                 rc = await proc.wait()
                 
@@ -591,7 +596,9 @@ class DuskyOrchestratorApp(App):
     def action_retry_task(self):
         if self.waiting_for_input and self.input_action == 'retry_skip':
             self.waiting_for_input = False
-            self.log_system("Retrying task...")
+            self.log_system("Retrying task in full screen...")
+            task = self.tasks[self.current_idx]
+            task.interactive = True
             self.run_worker(self.run_execution_loop())
             
     def action_yes(self):
@@ -774,7 +781,6 @@ if __name__ == "__main__":
                 sys.stderr.write(f"Failed to reset state: {e}\n")
         else:
             print(f"No state file found for {phase_title}")
-        sys.exit(0)
         
     if not acquire_lock(lock_file):
         sys.exit(1)
