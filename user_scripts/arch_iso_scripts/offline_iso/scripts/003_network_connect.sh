@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# DUSKY_INTERACTIVE=true
 # Requires: bash 5.0+, iwd (iwctl), systemd, coreutils, iproute2
 # Target: Arch Linux Live ISO environment
 
