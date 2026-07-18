@@ -311,7 +311,7 @@ class DuskyOrchestratorApp(App):
         layout: vertical;
     }
     #header {
-        height: 3;
+        height: 1;
         dock: top;
         content-align: center middle;
         background: $primary-darken-2;
