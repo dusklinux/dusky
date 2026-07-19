@@ -1,5 +1,13 @@
-# Default AUR Packages
+# Default AUR Packages (Extracted from 100_paru_packages.sh)
+# installing manually with script because this is a massive package that includes every cursor theme
+# bibata-cursor-theme-bin
 wlogout
+adwaita-qt6
+adwaita-qt5
+adwsteamgtk
+otf-atkinson-hyperlegible-next
+python-pywalfox
 hyprshade
 peaclock
 tray-tui
+xdg-terminal-exec

@@ -1,6 +1,327 @@
-# Default Official Arch Packages
+# Default Official Arch Packages (Extracted from 060_package_installation.sh)
+# Group 1: Graphics & Drivers
+intel-media-driver
+vpl-gpu-rt
+mesa
+vulkan-intel
+mesa-utils
+intel-gpu-tools
+libva
+libva-utils
+vulkan-icd-loader
+vulkan-tools
+sof-firmware
+linux-firmware
+acpi_call
+base
+base-devel
+kernel-modules-hook
+# Group 2: Hyprland Core
+hyprland
+xorg-xwayland
+xdg-desktop-portal-hyprland
+xdg-desktop-portal-gtk
+localsearch
+polkit
+hyprpolkitagent
+xdg-utils
+socat
+inotify-tools
+libnotify
+mako
+file
+# Group 3: GUI, Toolkits & Fonts
+qt5-wayland
+qt6-wayland
+gtk3
+gtk4
+nwg-look
+qt5ct
+qt6ct
+qt6-svg
+qt6-multimedia-ffmpeg
+adw-gtk-theme
+upower
+plocate
+matugen
+ttf-font-awesome
+ttf-jetbrains-mono-nerd
+otf-atkinsonhyperlegiblemono-nerd
+noto-fonts-emoji
+sassc
+python-packaging
+python
+python-evdev
+python-pyudev
+fontconfig
+papirus-icon-theme
+python-pyquery
+python-textual
+python-rich
+# Group 4: Desktop Experience
+waybar
+awww
+hyprlock
+hypridle
+hyprsunset
+hyprpicker
+rofi
+libdbusmenu-qt5
+libdbusmenu-glib
+brightnessctl
+hyprshutdown
+# Group 5: Audio & Bluetooth
+pipewire
+pipewire-alsa
+alsa-utils
+wireplumber
+pipewire-pulse
+playerctl
+bluez
+bluez-utils
+bluez-hid2hci
+bluez-libs
+bluez-obex
+blueman
+bluetui
+pavucontrol
+gst-plugins-base
+gst-libav
+gst-plugins-bad
+gst-plugins-good
+gst-plugins-ugly
+gst-plugin-pipewire
+libcanberra
+songrec
+sox
+# Group 6: Filesystem & Archives
+btrfs-progs
+compsize
+zram-generator
+udisks2
+udiskie
+dosfstools
+ntfs-3g
+xdg-user-dirs
+usbutils
+gnome-disk-utility
+unzip
+zip
+unrar
+7zip
+cpio
+file-roller
+rsync
+nfs-utils
+nilfs-utils
+smartmontools
+dmraid
+hdparm
+hwdetect
+lsscsi
+sg3_utils
+cpupower
+dust
+dkms
+# thunar
+thunar
+thunar-archive-plugin
+file-roller
+thunar-volman
+thunar-media-tags-plugin
+thunar-shares-plugin
+thunar-vcs-plugin
+tumbler
+ffmpegthumbnailer
+webp-pixbuf-loader
+poppler-glib
+libgsf
+libgepub
+libopenraw
+resvg
+gvfs
+gvfs-mtp
+gvfs-nfs
+gvfs-smb
+gvfs-gphoto2
+gvfs-afc
+gvfs-dnssd
+catfish
+gnome-keyring
+meld
+xreader
+imagemagick
+# nemo
+# nemo
+# nemo-fileroller
+# file-roller
+# gvfs
+# gvfs-smb
+# gvfs-mtp
+# gvfs-gphoto2
+# gvfs-nfs
+# gvfs-afc
+# gvfs-dnssd
+# ffmpegthumbnailer
+# webp-pixbuf-loader
+# poppler-glib
+# libgsf
+# gnome-epub-thumbnailer
+# resvg
+# nemo-terminal
+# nemo-python
+# nemo-compare
+# meld
+# nemo-media-columns
+# nemo-audio-tab
+# nemo-image-converter
+# nemo-emblems
+# nemo-repairer
+# nemo-share
+# python-gobject
+# dconf-editor
+# xreader
+# nemo-pastebin
+# Group 7: Network & Internet
+networkmanager
+wireless-regdb
+iwd
+nm-connection-editor
+inetutils
+wget
+curl
+openssh
+ufw
+vsftpd
+reflector
+bmon
+ethtool
+httrack
+wavemon
+firefox
+nss-mdns
+dnsmasq
+modemmanager
+usb_modeswitch
+# Group 8: Terminal & Shell
+kitty
+foot
+zsh
+zsh-syntax-highlighting
+starship
 fastfetch
-btop
-git
-neovim
+bat
+eza
+fd
+yazi
+gum
+tree
+fzf
+less
 ripgrep
+expac
+zsh-autosuggestions
+iperf3
+pkgstats
+libqalculate
+moreutils
+zoxide
+man-db
+lsof
+khal
+# Group 9: Development
+neovim
+git
+git-delta
+lazygit
+meson
+cmake
+clang
+uv
+rq
+jq
+pv
+bc
+viu
+chafa
+ueberzugpp
+ccache
+mold
+shellcheck
+fd
+ripgrep
+fzf
+shfmt
+stylua
+prettier
+tree-sitter-cli
+nano
+luarocks
+# Group 10: Multimedia
+ffmpeg
+mpv
+mpv-mpris
+satty
+swayimg
+resvg
+imagemagick
+libheif
+ffmpegthumbnailer
+grim
+slurp
+wl-clipboard
+wl-clip-persist
+cliphist
+tesseract-data-eng
+gpu-screen-recorder-ui
+ddcutil
+# Group 11: Sys Admin
+btop
+htop
+dgop
+nvtop
+inxi
+sysstat
+sysbench
+logrotate
+acpid
+tlp
+tlp-rdw
+thermald
+powertop
+gdu
+iotop
+iftop
+lshw
+hwinfo
+dmidecode
+wev
+pacman-contrib
+gnome-keyring
+libsecret
+seahorse
+greetd-agreety
+greetd
+greetd-tuigreet
+yad
+dysk
+fwupd
+perl
+accountsservice
+smartmontools
+pkgfile
+rebuild-detector
+accountsservice
+# Group 12: Gnome Utilities
+snapshot
+cameractrls
+loupe
+mousepad
+gnome-calculator
+gnome-clocks
+# Group 13: Productivity
+zathura
+zathura-pdf-mupdf
+cava
+# Group 14: Limine and snapshot
+snapper
