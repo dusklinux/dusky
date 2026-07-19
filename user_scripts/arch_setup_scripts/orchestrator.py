@@ -289,6 +289,11 @@ def acquire_lock() -> bool:
 class SudoEngine:
     """Manages non-blocking sudo timestamp maintenance during lengthy workflows."""
 
+    # Sudo password held only in memory — never written to disk.
+    # Set during pre-flight when the real terminal is still available.
+    # None means the user has NOPASSWD configured (sudo -n works).
+    _sudo_password: str | None = None
+
     @staticmethod
     def verify_sudo() -> bool:
         if not shutil.which("sudo"):
@@ -296,17 +301,31 @@ class SudoEngine:
             return False
 
         sys.stdout.write("\033[1;36m[DUSKY PRE-FLIGHT]\033[0m Securing administrative privileges...\n")
+
+        # Fast path: user already has NOPASSWD configured
         try:
             if subprocess.run(['sudo', '-n', 'true'], capture_output=True).returncode == 0:
+                SudoEngine._sudo_password = None
                 return True
         except Exception:
             pass
 
+        # Interactive path: capture password via getpass, validate with sudo -S
         if sys.stdin.isatty():
+            import getpass
             try:
-                subprocess.run(['sudo', '-v'], check=True)
-                return True
-            except subprocess.CalledProcessError:
+                password = getpass.getpass(
+                    f"\033[1;36m[sudo]\033[0m password for {getpass.getuser()}: "
+                )
+                result = subprocess.run(
+                    ['sudo', '-S', '-v'],
+                    input=password + '\n',
+                    capture_output=True, text=True,
+                )
+                if result.returncode == 0:
+                    SudoEngine._sudo_password = password
+                    return True
+            except (EOFError, KeyboardInterrupt):
                 pass
 
         sys.stdout.write("\033[1;31m[FATAL]\033[0m Sudo authentication failed. Aborting.\n")
@@ -1279,7 +1298,7 @@ class DuskyOrchestratorApp(App):
             except OSError:
                 pass
 
-    async def execute_pty_command(self, cmd: list[str]) -> bool:
+    async def execute_pty_command(self, cmd: list[str], sudo_password: str | None = None) -> bool:
         master_fd, slave_fd = pty.openpty()
         self.current_pty_master = master_fd
         self._set_pty_size(slave_fd)
@@ -1296,6 +1315,27 @@ class DuskyOrchestratorApp(App):
                 close_fds=True,
                 start_new_session=True,
             )
+            # If a sudo password needs piping, disable terminal echo on the
+            # slave side BEFORE writing so the password never appears in output,
+            # then re-enable echo for normal command I/O.
+            if sudo_password is not None:
+                try:
+                    saved_attrs = termios.tcgetattr(slave_fd)
+                    noecho = list(saved_attrs)
+                    noecho[3] &= ~termios.ECHO  # lflags
+                    termios.tcsetattr(slave_fd, termios.TCSANOW, noecho)
+                except termios.error:
+                    saved_attrs = None
+
+                os.write(master_fd, (sudo_password + "\n").encode())
+
+                # Re-enable echo for the rest of the session
+                if saved_attrs is not None:
+                    try:
+                        termios.tcsetattr(slave_fd, termios.TCSANOW, saved_attrs)
+                    except termios.error:
+                        pass
+
             try: os.close(slave_fd)
             except OSError: pass
             slave_fd = -1
@@ -1388,7 +1428,8 @@ class DuskyOrchestratorApp(App):
                         except termios.error: pass
             await asyncio.sleep(0.5)
             return success
-        return await self.execute_pty_command(cmd)
+        sudo_pw = SudoEngine._sudo_password if task.mode == "S" else None
+        return await self.execute_pty_command(cmd, sudo_password=sudo_pw)
 
     def _commit_task_state(self, task: OrchestratorTask) -> None:
         self.completed_keys.add(task.state_key)
@@ -1460,7 +1501,11 @@ class DuskyOrchestratorApp(App):
                     
                 cmd = [task.interpreter, str(task.resolved_path)] + args
                 if task.mode == "S":
-                    cmd = ["sudo"] + cmd
+                    if SudoEngine._sudo_password is not None:
+                        # Use -S (read password from stdin) and -p "" (suppress prompt)
+                        cmd = ["sudo", "-S", "-p", ""] + cmd
+                    else:
+                        cmd = ["sudo"] + cmd
 
                 success = await self._execute_task_cmd(task, cmd)
                 task_resolved = False
@@ -1640,6 +1685,8 @@ def main() -> None:
     except KeyboardInterrupt:
         Console(stderr=True).print("\n[bold red]:: Interrupted by user.[/]")
         sys.exit(130)
+    finally:
+        pass  # No cleanup needed — sudo password was only held in memory
 
 if __name__ == "__main__":
     main()
