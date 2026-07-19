@@ -1051,6 +1051,11 @@ class EliteInstallerApp(App):
                 return
 
             if not self.ctx.no_upgrade:
+                if not await self.refresh_pacman_keyrings():
+                    self.log_system("Keyring refresh failed. Aborting suite.", is_err=True)
+                    self.exit(1)
+                    return
+
                 self.status_label.update("Synchronizing databases & performing full system upgrade...")
                 self.log_system("Executing full system upgrade (-Syu)...")
                 upgrade_cmd = (
@@ -1182,6 +1187,62 @@ class EliteInstallerApp(App):
                             self.log_system("User aborted installation sequence.", is_err=True)
                             self.exit(1)
                             return
+
+    async def refresh_pacman_keyrings(self) -> bool:
+        """Ensures the local pacman keyrings are initialized, populated, and up to date."""
+        self.status_label.update("Validating and refreshing pacman keyrings...")
+        self.log_system("Verifying pacman keyring state...")
+
+        has_cachy = False
+        try:
+            res = subprocess.run(
+                ["pacman", "-Qq", "cachyos-keyring"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False
+            )
+            has_cachy = (res.returncode == 0)
+        except Exception:
+            pass
+
+        keyring_dir = Path("/etc/pacman.d/gnupg")
+        has_keyring = keyring_dir.joinpath("trustdb.gpg").exists() and (
+            keyring_dir.joinpath("pubring.kbx").exists() or keyring_dir.joinpath("pubring.gpg").exists()
+        )
+
+        if not has_keyring:
+            self.log_system("Pacman keyring not initialized. Initializing now...", is_err=True)
+            init_cmd = ["pacman-key", "--init"]
+            if not self.ctx.is_root:
+                init_cmd = ["sudo"] + init_cmd
+            if not await self.execute_pty_command(init_cmd):
+                self.log_system("Failed to initialize keyring.", is_err=True)
+                return False
+
+            populate_cmd = ["pacman-key", "--populate", "archlinux"]
+            if has_cachy:
+                populate_cmd.append("cachyos")
+            if not self.ctx.is_root:
+                populate_cmd = ["sudo"] + populate_cmd
+            if not await self.execute_pty_command(populate_cmd):
+                self.log_system("Failed to populate keyring.", is_err=True)
+                return False
+
+        keyring_pkgs = ["archlinux-keyring"]
+        if has_cachy:
+            keyring_pkgs.append("cachyos-keyring")
+
+        self.log_system(f"Refreshing keyring packages: {', '.join(keyring_pkgs)}...")
+        sync_cmd = ["pacman", "-Sy", "--needed", "--noconfirm"] + keyring_pkgs
+        if not self.ctx.is_root:
+            sync_cmd = ["sudo"] + sync_cmd
+
+        if not await self.execute_pty_command(sync_cmd):
+            self.log_system("Failed to refresh keyring packages.", is_err=True)
+            return False
+
+        self.log_system("Pacman keyrings are up to date.")
+        return True
 
     @staticmethod
     def _set_pty_size(fd: int, rows: int = 40, cols: int = 120) -> None:
