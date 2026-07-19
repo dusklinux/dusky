@@ -46,7 +46,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Static, RichLog, ProgressBar, Button, Label, Tree, Input, OptionList
+    Static, RichLog, ProgressBar, Button, Label, Tree, Input, OptionList, ContentSwitcher
 )
 from textual.widgets.option_list import Option
 from textual.widgets.tree import TreeNode
@@ -348,21 +348,28 @@ class SudoEngine:
 # ==============================================================================
 def get_theme_path() -> Path:
     target_user = os.environ.get("TARGET_USER") or os.environ.get("SUDO_USER")
+    base_dir = Path.home()
     if target_user:
         try:
             pw = pwd.getpwnam(target_user.strip())
-            return Path(pw.pw_dir) / ".config/matugen/generated/dusky_tui.json"
+            base_dir = Path(pw.pw_dir)
         except KeyError:
             pass
-    return Path.home() / ".config/matugen/generated/dusky_tui.json"
+    generated = base_dir / ".config/matugen/generated/dusky_tui.json"
+    if generated.exists():
+        return generated
+    generated_fresh = base_dir / ".config/matugen/generated_fresh/dusky_tui.json"
+    if generated_fresh.exists():
+        return generated_fresh
+    return generated
 
 def _build_css_from_palette(palette: dict[str, str]) -> str:
     bg, fg, accent = palette["bg"], palette["fg"], palette["accent"]
     warning, success, muted, error_c = palette["warning"], palette["success"], palette["muted"], palette["error"]
     return f"""
         Screen {{ background: {bg}; color: {fg}; layout: vertical; }}
-        #top_header {{ height: 1; dock: top; background: {muted}; color: {accent}; text-style: bold; content-align: center middle; }}
-        #top_header .title {{ width: 100%; content-align: center middle; }}
+        #top_header {{ height: 1; dock: top; background: {muted}; color: {accent}; text-style: bold; }}
+        #top_header .title {{ width: 100%; text-align: center; }}
         #main_dashboard {{ layout: horizontal; height: 1fr; }}
         #left_pane {{ width: 35%; border-right: solid {muted}; background: {bg}; padding: 0 1; height: 100%; }}
         #right_pane {{ width: 65%; height: 100%; layout: vertical; background: {bg}; }}
@@ -386,7 +393,7 @@ def _build_css_from_palette(palette: dict[str, str]) -> str:
         #manual_title {{ text-align: center; text-style: bold; color: {accent}; margin-bottom: 1; }}
         #error_details {{ color: {warning}; margin-bottom: 1; max-height: 10; overflow-y: auto; }}
         #button_bar {{ layout: horizontal; align: center middle; height: 3; }}
-        Button {{ margin: 0 1; }}
+        Button {{ height: 1; min-width: 16; border: none; margin: 0 1; padding: 0; }}
         Input {{ background: {bg}; border: tall {accent}; color: {fg}; }}
         """
 
@@ -1020,6 +1027,7 @@ class AppFooter(Horizontal):
 # ==============================================================================
 class ProfileSelectorApp(App):
     """Interactive startup modal for discovering and choosing target manifests."""
+    ENABLE_COMMAND_PALETTE = False
     CSS = """
     Screen { align: center middle; background: #0a1612; color: #d8e6df; }
     #selector_container { width: 80; height: auto; border: heavy #00e0b8; background: #0f221d; padding: 1 2; }
@@ -1053,6 +1061,7 @@ class ProfileSelectorApp(App):
 
 class DuskyOrchestratorApp(App):
     """The unified Textual TUI managing async PTY streams, sudo heartbeats, and telemetry."""
+    ENABLE_COMMAND_PALETTE = False
 
     BINDINGS = [
         Binding("ctrl+f", "open_search", "Search Tasks", priority=True),
@@ -1066,9 +1075,10 @@ class DuskyOrchestratorApp(App):
         self.manual = manual
         self.stop_on_fail = stop_on_fail
         self.force_flag = force
-        self.sudo_task: asyncio.Task | None = None
-        self.active_child_pid: int | None = None
-        self.current_pty_master: int | None = None
+        self.active_child_pid = None
+        self.current_pty_master = None
+        self.active_task = None
+        self.sudo_task = None
         self.CSS = load_dusky_theme()
 
         # Reverted: Files isolated strictly to ~/Documents using backwards compatible string replacement
@@ -1101,10 +1111,17 @@ class DuskyOrchestratorApp(App):
                     yield self.status_label
                     yield self.speed_label
                     yield self.progress_bar
-                yield self.log_widget
+                with ContentSwitcher(id="log_switcher"):
+                    yield self.log_widget
+                    for task in self.tasks:
+                        yield RichLog(id=f"log_{task.state_key}", highlight=True, markup=True, wrap=True)
         yield AppFooter(id="footer")
 
     def on_mount(self) -> None:
+        try:
+            self.query_one("#log_switcher", ContentSwitcher).current = "pty_log"
+        except Exception:
+            pass
         self.progress_bar.total = max(1, len(self.tasks))
         self.build_task_tree()
         self.log_system("Environment pre-flight validated. Asynchronous PTY engine online.")
@@ -1113,8 +1130,22 @@ class DuskyOrchestratorApp(App):
             if t.state_key in self.completed_keys:
                 self.update_task_node_by_key(t.state_key, TaskStatus.COMPLETED)
                 self.progress_bar.advance(1)
+                try:
+                    task_log = self.query_one(f"#log_{t.state_key}", RichLog)
+                    task_log.write(Text("Task completed in a previous run. Live logs not available in this session.", style="italic dim"))
+                except Exception:
+                    pass
                 
         self.run_execution_pipeline()
+
+    @on(Tree.NodeSelected)
+    def on_node_selected(self, event: Tree.NodeSelected) -> None:
+        node = event.node
+        switcher = self.query_one("#log_switcher", ContentSwitcher)
+        if node == self.tree_widget.root:
+            switcher.current = "pty_log"
+        elif node.data and isinstance(node.data, OrchestratorTask):
+            switcher.current = f"log_{node.data.state_key}"
 
     def action_open_search(self) -> None:
         if isinstance(self.screen, ModalScreen): return
@@ -1165,6 +1196,7 @@ class DuskyOrchestratorApp(App):
             self.task_index.setdefault(task.script_name, []).append(task)
             badge = _get_status_badge_static(task.status)
             node = self.tree_widget.root.add_leaf(f"{badge} [{task.mode}] {task.script_name}")
+            node.data = task
             self.tree_nodes_map[task.state_key] = node
 
     def update_task_node_by_key(self, state_key: str, status: TaskStatus) -> None:
@@ -1174,11 +1206,25 @@ class DuskyOrchestratorApp(App):
                     t.status = status
                     badge = _get_status_badge_static(status)
                     node.label = Text.from_markup(f"{badge} [{t.mode}] {t.script_name}")
+                    if status == TaskStatus.RUNNING:
+                        try:
+                            self.tree_widget.select_node(node)
+                            self.tree_widget.scroll_to_node(node)
+                            self.query_one("#log_switcher", ContentSwitcher).current = f"log_{state_key}"
+                        except Exception:
+                            pass
                     break
 
     def log_system(self, msg: str, is_err: bool = False) -> None:
         prefix = "[bold red][SYSTEM][/]" if is_err else "[bold cyan][SYSTEM][/]"
-        self.log_widget.write(f"{prefix} {msg}")
+        text = Text.from_markup(f"{prefix} {msg}")
+        self.log_widget.write(text)
+        if self.active_task:
+            try:
+                task_log = self.query_one(f"#log_{self.active_task.state_key}", RichLog)
+                task_log.write(text)
+            except Exception:
+                pass
 
     def handle_pty_line(self, line: str) -> None:
         # Reverted: We keep lines mostly intact for logging, but extract clean versions for telemetry processing
@@ -1202,16 +1248,23 @@ class DuskyOrchestratorApp(App):
         if extracted_pct: self.status_label.update(f"⚡ Processing Task Sub-step... ({extracted_pct})")
         if extracted_speed and extracted_eta: self.speed_label.update(f"Throughput: {extracted_speed} | ETA: {extracted_eta}")
 
-        # Standard log output (Reverting to Old Script's minimal stripping)
-        display_line = clean.replace('\x1b[0m', '')
+        # Standard log output (using Rich's native Ansi parser to render colors and strip raw ESC chars)
+        display_line = clean
         if not display_line.strip(): return
         
         lower = display_line.lower()
-        if any(k in lower for k in ("error", "failed", "warning", "conflict", "exists in filesystem")):
-            self.log_widget.write(f"[bold red]{display_line}[/]")
-            return
+        if "\x1b" not in display_line and any(k in lower for k in ("error", "failed", "warning", "conflict", "exists in filesystem")):
+            text = Text(display_line, style="bold red")
+        else:
+            text = Text.from_ansi(display_line)
 
-        self.log_widget.write(display_line)
+        self.log_widget.write(text)
+        if self.active_task:
+            try:
+                task_log = self.query_one(f"#log_{self.active_task.state_key}", RichLog)
+                task_log.write(text)
+            except Exception:
+                pass
 
     @staticmethod
     def _set_pty_size(fd: int) -> None:
@@ -1396,6 +1449,7 @@ class DuskyOrchestratorApp(App):
                         self.exit(1)
                         return
 
+                self.active_task = task
                 self.update_task_node_by_key(task.state_key, TaskStatus.RUNNING)
                 self.status_label.update(f"Executing: {task.script_name} [{task.mode}]")
                 self.log_system(f"\n>>> PROCESS INITIATED: {task.script_name}")
@@ -1477,6 +1531,7 @@ class DuskyOrchestratorApp(App):
                     self.log_system(f"Successfully completed: {task.script_name}")
                     if self.profile.post_script_delay > 0:
                         await asyncio.sleep(self.profile.post_script_delay)
+                self.active_task = None
 
             self.status_label.update("✨ All orchestrator sequences completed successfully!")
             self.speed_label.update("Status: Idle | ETA: 00:00")
@@ -1486,6 +1541,7 @@ class DuskyOrchestratorApp(App):
             AudioNotifier.play("complete")
 
         finally:
+            self.active_task = None
             if self.sudo_task:
                 self.sudo_task.cancel()
                 try: await self.sudo_task
