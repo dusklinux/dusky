@@ -104,14 +104,41 @@ check_connectivity() {
 
     # 3. Kernel-level Routing Check via ICMP (Fallback if HTTP is blocked)
     # Ping Cloudflare/Google directly to verify Layer 3 ICMP routing
-    if ping -c 2 -W 2 1.1.1.1 >/dev/null 2>&1 || \
-       ping -c 2 -W 2 8.8.8.8 >/dev/null 2>&1; then
+    if ping -n -c 2 -W 2 1.1.1.1 >/dev/null 2>&1 || \
+       ping -n -c 2 -W 2 8.8.8.8 >/dev/null 2>&1; then
         
         # Ensure DNS is not hijacked by verifying a non-existent domain fails to resolve.
         # (Some captive portals allow ICMP/ping but hijack DNS queries to resolve everything)
         if ! getent ahosts nonexistent-dns-test-12345.org >/dev/null 2>&1; then
-            if ping -c 1 -W 2 archlinux.org >/dev/null 2>&1 || \
-               ping -c 1 -W 2 google.com >/dev/null 2>&1; then
+            # Concurrent parallel checks for DNS routing reliability
+            ping -n -c 1 -W 2 google.com >/dev/null 2>&1 &
+            local p1=$!
+            ping -n -c 1 -W 2 cloudflare.com >/dev/null 2>&1 &
+            local p2=$!
+            
+            local has_internet=1
+            for ((i=0; i<20; i++)); do
+                if ! kill -0 "$p1" 2>/dev/null; then
+                    if wait "$p1"; then
+                        has_internet=0
+                        break
+                    fi
+                fi
+                if ! kill -0 "$p2" 2>/dev/null; then
+                    if wait "$p2"; then
+                        has_internet=0
+                        break
+                    fi
+                fi
+                if ! kill -0 "$p1" 2>/dev/null && ! kill -0 "$p2" 2>/dev/null; then
+                    break
+                fi
+                sleep 0.1
+            done
+            kill "$p1" "$p2" 2>/dev/null || true
+            wait "$p1" "$p2" 2>/dev/null || true
+            
+            if (( has_internet == 0 )); then
                 return 0
             fi
         fi

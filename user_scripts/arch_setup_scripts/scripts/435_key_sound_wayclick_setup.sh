@@ -221,7 +221,7 @@ fi
 
 if (( ${#NEEDED_DEPS[@]} > 0 )); then
     if $INTERACTIVE; then
-        clear
+        clear || true
         printf "%b
 ╔════════════════════════════════════════════════════════════════╗
 ║  %bWAYCLICK ELITE%b                                                ║

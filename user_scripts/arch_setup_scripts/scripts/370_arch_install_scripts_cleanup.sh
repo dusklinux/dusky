@@ -24,7 +24,7 @@ set -o nounset   # Error on undefined vars
 set -o pipefail  # Error if pipe fails
 
 # 2. Colors (Matches Orchestra style)
-if [[ -t 1 ]] && command -v tput &>/dev/null; then
+if [[ -z ${NO_COLOR-} ]] && [[ -n ${TERM-} ]] && [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && [[ $(tput colors 2>/dev/null || echo -1) -ge 8 ]]; then
     RED=$(tput setaf 1)
     GREEN=$(tput setaf 2)
     YELLOW=$(tput setaf 3)

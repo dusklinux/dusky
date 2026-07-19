@@ -52,9 +52,10 @@ declare -ra FLEET_COMMANDS=(
 # ==============================================================================
 
 # 2. Paths & Constants
-readonly STATE_DIR="${HOME}/.local/state/dusky"
+readonly USER_HOME="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6 || echo ~)}"
+readonly STATE_DIR="${USER_HOME}/.local/state/dusky"
 readonly STATE_FILE="${STATE_DIR}/patch_history.state"
-readonly LOG_FILE="${HOME}/Documents/logs/dusky_patcher_$(date +%Y%m%d_%H%M%S).log"
+readonly LOG_FILE="${USER_HOME}/Documents/logs/dusky_patcher_$(date +%Y%m%d_%H%M%S).log"
 readonly LOCK_FILE="${XDG_RUNTIME_DIR:-/run/user/$UID}/dusky_fleet_patcher.lock"
 readonly SUDO_REFRESH_INTERVAL=50
 

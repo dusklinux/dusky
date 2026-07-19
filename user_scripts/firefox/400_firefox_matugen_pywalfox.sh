@@ -149,7 +149,7 @@ EOF
 
 finish_setup() {
     hash -r 2>/dev/null || true
-    if [[ -t 1 ]]; then clear; fi
+    if [[ -t 1 ]] && command -v clear >/dev/null 2>&1; then clear || true; fi
 
     printf '%b%b' "${C_BOLD}" "${C_BLUE}"
     cat <<'BANNER'

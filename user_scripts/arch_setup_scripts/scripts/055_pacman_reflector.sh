@@ -429,6 +429,27 @@ fi
 CURL_MOCK
 chmod +x "${tmp_bin_dir}/curl"
 
+cat > "${tmp_bin_dir}/rate-mirrors" << 'RATE_MIRRORS_MOCK'
+#!/usr/bin/env bash
+/usr/bin/rate-mirrors "$@"
+rc=$?
+if [[ "$*" == *"--save"* ]]; then
+    save_file=""
+    args=("$@")
+    for ((i=0; i<${#args[@]}; i++)); do
+        if [[ "${args[i]}" == "--save" ]]; then
+            save_file="${args[i+1]}"
+            break
+        fi
+    done
+    if [[ -f "$save_file" ]]; then
+        sed -i '/krfoss\.org/d' "$save_file"
+    fi
+fi
+exit $rc
+RATE_MIRRORS_MOCK
+chmod +x "${tmp_bin_dir}/rate-mirrors"
+
 rc=0
 PATH="${tmp_bin_dir}:$PATH" cachyos-rate-mirrors || rc=$?
 

@@ -171,7 +171,7 @@ RED=''
 CYAN=''
 RESET=''
 
-if [[ -z ${NO_COLOR-} ]] && [[ -n ${TERM-} ]] && [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && tput colors >/dev/null 2>&1; then
+if [[ -z ${NO_COLOR-} ]] && [[ -n ${TERM-} ]] && [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && [[ $(tput colors 2>/dev/null || echo -1) -ge 8 ]]; then
   BOLD=$(tput bold)
   GREEN=$(tput setaf 2)
   YELLOW=$(tput setaf 3)

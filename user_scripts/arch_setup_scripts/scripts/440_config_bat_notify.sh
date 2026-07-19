@@ -293,7 +293,7 @@ run_tui() {
     local choice
 
     while true; do
-        clear
+        clear || true
         show_header
 
         choice=$(gum choose \

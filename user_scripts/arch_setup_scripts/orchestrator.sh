@@ -43,7 +43,7 @@ log() {
 # --- 1. Internet Connectivity Check ---
 check_internet() {
     # Try reaching Arch Linux servers or Cloudflare DNS
-    if ping -q -c 1 -W 2 archlinux.org >/dev/null 2>&1 || ping -q -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
+    if ping -n -q -c 1 -W 2 google.com >/dev/null 2>&1 || ping -n -q -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
         return 0
     fi
     return 1
