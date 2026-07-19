@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # dusky_interactive=true
 # ==============================================================================
-# DUSKY PACKAGE INSTALLER (v10.9 - Pristine Logs & Empty Profiles)
+# DUSKY PACKAGE INSTALLER (v11.1 - Master-Suite Edition)
 # ==============================================================================
 # Architecture: Asynchronous Buffered PTY Streams | Textual Split-Screen TUI
+# Added Subsystems: Fuzzy Package Finder | Freedesktop Audio Cues | Footer Telemetry
 # Compatibility: Python 3.14+ | Pacman v7.1.0+ | Paru / Yay | ISO & Chroot Root
 # ==============================================================================
 
@@ -29,13 +30,15 @@ from typing import Optional, Any
 
 from rich.console import Console
 from rich.text import Text
-from textual import work
+from textual import work, on, events
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Static, RichLog, ProgressBar, Button, Label, Tree
+    Static, RichLog, ProgressBar, Button, Label, Tree, Input, OptionList
 )
+from textual.widgets.option_list import Option
 from textual.widgets.tree import TreeNode
 
 # ==============================================================================
@@ -75,6 +78,52 @@ class InstallationManifest:
     aur_packages: list[PackageItem] = field(default_factory=list)
     total_requested: int = 0
     already_installed: int = 0
+
+# ==============================================================================
+# FREEDESKTOP ASYNCHRONOUS AUDIO NOTIFIER (Borrowed Subsystem)
+# ==============================================================================
+class AudioNotifier:
+    """Non-blocking audio engine utilizing native system players for completion/fault alerts."""
+    _player_cache: Optional[str] = None
+
+    @classmethod
+    def _get_player(cls) -> Optional[str]:
+        if cls._player_cache is None:
+            cls._player_cache = shutil.which("pw-play") or shutil.which("paplay") or shutil.which("mpv") or ""
+        return cls._player_cache if cls._player_cache else None
+
+    @classmethod
+    def play(cls, sound_type: str = "alert") -> None:
+        player = cls._get_player()
+        if not player:
+            return
+
+        sound_map = {
+            "alert": "/usr/share/sounds/freedesktop/stereo/dialog-warning.oga",
+            "info": "/usr/share/sounds/freedesktop/stereo/dialog-information.oga",
+            "complete": "/usr/share/sounds/freedesktop/stereo/complete.oga"
+        }
+        target = sound_map.get(sound_type, sound_map["alert"])
+        
+        if not Path(target).exists():
+            fallback = "/usr/share/sounds/freedesktop/stereo/bell.oga"
+            target = fallback if Path(fallback).exists() else target
+
+        if Path(target).exists():
+            cmd = [player, target]
+            if player.endswith("mpv"):
+                cmd.extend(["--no-video", "--really-quiet"])
+            try:
+                subprocess_env = os.environ.copy()
+                subprocess.Popen(
+                    cmd,
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=subprocess_env
+                )
+            except OSError:
+                pass
 
 # ==============================================================================
 # CORE ENVIRONMENT & DUAL-CONTEXT PRIVILEGE RESOLUTION
@@ -150,6 +199,19 @@ def load_dusky_theme() -> str:
     #progress_bar { width: 100%; margin-top: 1; }
     RichLog { height: 1fr; border: none; scrollbar-size: 1 1; }
     Tree { background: $surface-darken-1; border: none; padding: 0; }
+    
+    /* Footer Telemetry Styling */
+    #footer { height: 1; dock: bottom; background: $primary-darken-2; layout: horizontal; padding: 0 1; }
+    .footer-shortcut { padding: 0 1; color: $text; }
+    .footer-shortcut.-active { background: $accent; color: $surface; text-style: bold; }
+    .footer_sep { color: $text-muted; }
+    #footer_status { color: $success; text-style: italic; }
+    
+    /* Search & Conflict Modals */
+    PackageSearchScreen, ConflictModalScreen { align: center middle; background: rgba(0, 0, 0, 0.85); }
+    #search_dialog { width: 60; height: 75%; background: $surface; border: solid $accent; padding: 1 2; }
+    #search_list { height: 1fr; border: none; }
+    #search_list > .option-list--option-highlighted { background: $accent 25%; text-style: bold; }
     """
     if not DUSKY_THEME_JSON.exists():
         return fallback_css
@@ -183,6 +245,20 @@ def load_dusky_theme() -> str:
         RichLog {{ height: 1fr; border: none; scrollbar-size: 1 1; background: {bg}; color: {fg}; }}
         Tree {{ background: {bg}; border: none; padding: 0; color: {fg}; }}
         Tree > TreeNode {{ color: {fg}; }}
+        
+        /* Footer Telemetry Styling */
+        #footer {{ height: 1; dock: bottom; background: {muted}; layout: horizontal; padding: 0 1; }}
+        .footer-shortcut {{ padding: 0 1; color: {fg}; }}
+        .footer-shortcut.-active {{ background: {accent}; color: {bg}; text-style: bold; }}
+        .footer_sep {{ color: {warning}; }}
+        #footer_status {{ color: {success}; text-style: italic; }}
+        
+        /* Search & Conflict Modals */
+        PackageSearchScreen, ConflictModalScreen {{ align: center middle; background: rgba(0, 0, 0, 0.85); }}
+        #search_dialog {{ width: 60; height: 75%; background: {bg}; border: solid {accent}; padding: 1 2; }}
+        #search_list {{ height: 1fr; border: none; background: {bg}; color: {fg}; }}
+        #search_list > .option-list--option-highlighted {{ background: {accent} 25%; color: {fg}; text-style: bold; }}
+        Input {{ border: none; border-bottom: solid {accent}; background: transparent; color: {fg}; }}
         """
         return custom_css
     except Exception:
@@ -308,16 +384,115 @@ class AsyncPackageManager:
             pass
 
 # ==============================================================================
-# TEXTUAL INTERACTIVE MODALS FOR ERROR / CONFLICT RECOVERY
+# INTERACTIVE MODALS & SUBSEQUENCE FUZZY FINDER (Borrowed Subsystems)
 # ==============================================================================
+class PackageSearchScreen(ModalScreen[Optional[str]]):
+    """Subsequence fuzzy finder modal adapted directly from DuskyTUI SearchScreen."""
+    BINDINGS = [
+        Binding("escape", "dismiss_modal", "Cancel"),
+        Binding("down,j", "cursor_down", "Down"),
+        Binding("up,k", "cursor_up", "Up"),
+    ]
+
+    def __init__(self, manifest: InstallationManifest):
+        super().__init__()
+        self.manifest = manifest
+        self.results: list[str] = []
+        self._search_cache: list[tuple[PackageItem, str]] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="search_dialog"):
+            yield Static("◈ FUZZY PACKAGE FINDER (Ctrl+F / /)", id="modal_title")
+            yield Input(placeholder="Type to filter target packages...", id="search_input")
+            yield OptionList(id="search_list")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+        for item in self.manifest.official_packages + self.manifest.aur_packages:
+            haystack = f"{item.profile} {item.name} {'aur' if item.is_aur else 'official'}".lower()
+            self._search_cache.append((item, haystack))
+        self._populate_list("")
+
+    @on(Input.Changed)
+    def handle_input(self, event: Input.Changed) -> None:
+        self._populate_list(event.value)
+
+    def _populate_list(self, query: str) -> None:
+        ol = self.query_one(OptionList)
+        ol.clear_options()
+        self.results = []
+        
+        query_lower = query.lower().strip()
+        query_no_space = query_lower.replace(" ", "")
+        scored_results: list[tuple[int, PackageItem]] = []
+
+        for item, haystack in self._search_cache:
+            if not query_no_space:
+                scored_results.append((100, item))
+                continue
+
+            score = 0
+            lbl = item.name.lower()
+            
+            if query_lower == lbl: score += 100
+            elif lbl.startswith(query_lower): score += 50
+            elif query_lower in lbl: score += 20
+            
+            q_idx, s_idx = 0, 0
+            match_positions: list[int] = []
+            while q_idx < len(query_no_space) and s_idx < len(haystack):
+                if query_no_space[q_idx] == haystack[s_idx]:
+                    match_positions.append(s_idx)
+                    q_idx += 1
+                s_idx += 1
+            
+            if q_idx == len(query_no_space):
+                if len(match_positions) > 1:
+                    spread = (match_positions[-1] - match_positions[0]) - (len(match_positions) - 1)
+                    score += max(0, 15 - spread)
+                else:
+                    score += 15
+                score += 5 
+                
+            if score > 0:
+                scored_results.append((score, item))
+
+        scored_results.sort(key=lambda x: (-x[0], x[1].profile, x[1].name))
+
+        options_to_add = []
+        for _, item in scored_results:
+            txt = Text()
+            badge = EliteInstallerApp._get_status_badge(item.status)
+            txt.append_text(Text.from_markup(f"{badge} "))
+            txt.append(f"[{item.profile}] ", style="cyan bold")
+            txt.append(item.name, style="bold white" if item.status != PackageStatus.INSTALLED else "green")
+            options_to_add.append(Option(txt))
+            self.results.append(item.name)
+
+        ol.add_options(options_to_add)
+
+    @on(OptionList.OptionSelected)
+    def on_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_index is not None and event.option_index < len(self.results):
+            self.dismiss(self.results[event.option_index])
+
+    @on(Input.Submitted)
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        ol = self.query_one(OptionList)
+        if ol.highlighted is not None and ol.highlighted < len(self.results):
+            self.dismiss(self.results[ol.highlighted])
+        elif self.results:
+            self.dismiss(self.results[0])
+
+    def action_cursor_down(self) -> None: self.query_one(OptionList).action_cursor_down()
+    def action_cursor_up(self) -> None: self.query_one(OptionList).action_cursor_up()
+    def action_dismiss_modal(self) -> None: self.dismiss(None)
+
+
 class ConflictModalScreen(ModalScreen[str]):
     """Modal screen displayed when package installation encounters a failure or conflict."""
-    
     CSS = """
-    ConflictModalScreen {
-        align: center middle;
-        background: rgba(0, 0, 0, 0.85);
-    }
     #modal_dialog {
         width: 70;
         height: auto;
@@ -358,6 +533,9 @@ class ConflictModalScreen(ModalScreen[str]):
                 yield Button("Skip Package [S]", variant="error", id="btn_skip")
                 yield Button("Abort Suite [A]", variant="default", id="btn_abort")
 
+    def on_mount(self) -> None:
+        AudioNotifier.play("alert")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         match event.button.id:
             case "btn_retry": self.dismiss("retry")
@@ -373,12 +551,54 @@ class ConflictModalScreen(ModalScreen[str]):
             case "a": self.dismiss("abort")
 
 # ==============================================================================
+# FOOTER TELEMETRY & SHORTCUT COMPONENT (Borrowed Subsystem)
+# ==============================================================================
+class Shortcut(Label):
+    """Interactive footer badge with neon pulse visual telemetry."""
+    def __init__(self, key_text: str, label: str, **kwargs) -> None:
+        super().__init__(classes="footer-shortcut", **kwargs)
+        self.key_text = key_text
+        self.label_text = label
+
+    def render(self) -> Text:
+        txt = Text()
+        if self.has_class("-active"):
+            txt.append(f"[{self.key_text}] ", style="bold #0a1612")
+            txt.append(self.label_text, style="bold #0a1612")
+        else:
+            txt.append(f"[{self.key_text}] ", style="bold #00e0b8")
+            txt.append(self.label_text, style="#d8e6df")
+        return txt
+
+    def blink(self) -> None:
+        self.add_class("-active")
+        self.refresh()
+        def _unblink():
+            self.remove_class("-active")
+            self.refresh()
+        self.set_timer(0.2, _unblink)
+
+class AppFooter(Horizontal):
+    """Bottom telemetry bar displaying hotkeys and real-time execution mode."""
+    def compose(self) -> ComposeResult:
+        yield Shortcut("Ctrl+F / /", "Fuzzy Search", id="sc_search")
+        yield Shortcut("M", "Manual TTY", id="sc_manual")
+        yield Shortcut("S", "Skip Package", id="sc_skip")
+        yield Shortcut("Q / Ctrl+C", "Abort Pipeline", id="sc_quit")
+        yield Label(" │ ", classes="footer_sep")
+        yield Label("ALPM Engine: Active", id="footer_status")
+
+# ==============================================================================
 # TEXTUAL TUI FRONT-END & ARCHITECTURAL ORCHESTRATOR
 # ==============================================================================
 class EliteInstallerApp(App):
     """The unified Textual TUI managing async PTY streams and visual telemetry."""
     
     CSS = load_dusky_theme()
+    BINDINGS = [
+        Binding("ctrl+f,/", "open_search", "Search Packages", priority=True),
+        Binding("q,ctrl+c", "quit_installer", "Quit", priority=True),
+    ]
 
     def __init__(self, manifest: InstallationManifest, context: RuntimeContext):
         super().__init__()
@@ -418,6 +638,7 @@ class EliteInstallerApp(App):
                     yield self.speed_label
                     yield self.progress_bar
                 yield self.log_widget
+        yield AppFooter(id="footer")
 
     def on_mount(self) -> None:
         self.build_profile_tree()
@@ -429,6 +650,31 @@ class EliteInstallerApp(App):
             f"({self.manifest.already_installed} already installed)."
         )
         self.run_installation_pipeline()
+
+    def action_open_search(self) -> None:
+        """Triggers the Subsequence Fuzzy Finder modal and highlights selected node in Left Pane tree."""
+        if isinstance(self.screen, ModalScreen):
+            return
+        try: self.query_one("#sc_search", Shortcut).blink()
+        except Exception: pass
+        
+        def on_search_selected(pkg_name: Optional[str]) -> None:
+            if pkg_name and (node := self.tree_nodes_map.get(pkg_name)):
+                parent = node.parent
+                while parent:
+                    parent.expand()
+                    parent = parent.parent
+                self.tree_widget.select_node(node)
+                self.tree_widget.scroll_to_node(node)
+                self.log_system(f"Fuzzy Finder navigated to target: {pkg_name}")
+
+        self.push_screen(PackageSearchScreen(self.manifest), on_search_selected)
+
+    def action_quit_installer(self) -> None:
+        try: self.query_one("#sc_quit", Shortcut).blink()
+        except Exception: pass
+        self.log_system("Abort signal received. Terminating ALPM pipeline...", is_err=True)
+        self.exit(1)
 
     def build_profile_tree(self) -> None:
         """Populates Left Pane hierarchy with profile folders and live status counters."""
@@ -492,7 +738,6 @@ class EliteInstallerApp(App):
         if not clean:
             return
 
-        # Strip all ANSI escape sequences to perform accurate logic & telemetry extraction
         stripped = ANSI_STRIP_REGEX.sub("", clean).strip()
         if not stripped:
             return
@@ -524,7 +769,6 @@ class EliteInstallerApp(App):
         if extracted_speed and extracted_eta:
             self.speed_label.update(f"Bandwidth: {extracted_speed} | ETA: {extracted_eta}")
 
-        # Comprehensive filter: suppress ALL ephemeral progress bars, counters, and prompt echoes
         has_speed = bool(re.search(r"\d+(?:\.\d+)?\s+[A-Za-z]?i?B/s", stripped))
         has_bar = bool(re.search(r"\[[-#=coC\s]+\]", stripped)) or bool(re.search(r"\[[0-9;]*[mK]?[-#=coC\s]+", clean))
         is_fragment = bool(re.search(r"^[\[\]\-#=coC\s\d%:\.\w]+$", stripped)) and len(stripped) < 25
@@ -533,7 +777,6 @@ class EliteInstallerApp(App):
         if has_speed or has_bar or is_fragment or is_prompt:
             return
 
-        # Write clean, permanent system logs to the UI
         self.log_widget.write(Text.from_ansi(clean))
 
     @staticmethod
@@ -648,7 +891,10 @@ class EliteInstallerApp(App):
 
             self.status_label.update("✨ All installation pipelines completed successfully!")
             self.speed_label.update("Bandwidth: Idle | ETA: 00:00")
+            try: self.query_one("#footer_status", Label).update("ALPM Engine: Complete")
+            except Exception: pass
             self.log_system("Installation sequence finished. All targets resolved.")
+            AudioNotifier.play("complete")
             
         finally:
             if self.sudo_task: self.sudo_task.cancel()
@@ -706,6 +952,8 @@ class EliteInstallerApp(App):
                             self.update_package_node(p.name, PackageStatus.INSTALLING)
                             continue
                         case "manual":
+                            try: self.query_one("#sc_manual", Shortcut).blink()
+                            except Exception: pass
                             self.log_system(f"Suspending TTY for manual intervention on {p.name}...")
                             with self.suspend():
                                 sys.stdout.flush()
@@ -730,6 +978,8 @@ class EliteInstallerApp(App):
                                 break
                             continue
                         case "skip":
+                            try: self.query_one("#sc_skip", Shortcut).blink()
+                            except Exception: pass
                             self.update_package_node(p.name, PackageStatus.SKIPPED)
                             self.progress_bar.advance(1)
                             self.log_system(f"Skipped package: {p.name}", is_err=True)
@@ -821,7 +1071,7 @@ class EliteInstallerApp(App):
 # ==============================================================================
 def parse_command_line() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Dusky Package Installer (Python 3.14 / Textual)"
+        description="Dusky Package Installer (Python 3.14 / Textual v11.1)"
     )
     parser.add_argument(
         "-p", "--profiles",
