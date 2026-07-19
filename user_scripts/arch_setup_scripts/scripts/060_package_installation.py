@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
 # dusky_interactive=true
 # ==============================================================================
-# ELITE ARCH LINUX & AUR PACKAGE INSTALLER (v8.0 - Absolute Leading-Edge)
+# DUSKY PACKAGE INSTALLER (v10.8 - Enterprise PTY & Telemetry Engine)
 # ==============================================================================
-# Architecture: Asynchronous Chunk PTY Streams | Textual Split-Screen TUI
-# Compatibility: Python 3.14+ | Pacman v7.1.0+ | Paru / Yay | UWSM / Hyprland
+# Architecture: Asynchronous Buffered PTY Streams | Textual Split-Screen TUI
+# Compatibility: Python 3.14+ | Pacman v7.1.0+ | Paru / Yay | ISO & Chroot Root
 # ==============================================================================
 
 import asyncio
 import argparse
 import codecs
+import json
 import fcntl
 import os
 import pty
+import pwd
 import re
 import shutil
 import signal
 import struct
 import sys
 import termios
+import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
@@ -31,12 +34,12 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Footer, Static, RichLog, ProgressBar, Button, Label, Tree
+    Static, RichLog, ProgressBar, Button, Label, Tree
 )
 from textual.widgets.tree import TreeNode
 
 # ==============================================================================
-# TYPE DEFINITIONS & CONSTANTS (Python 3.14 Strict PEP 695 Syntax)
+# TYPE DEFINITIONS & HIGH-PERFORMANCE COMPILED REGEXES (PEP 695 Syntax)
 # ==============================================================================
 type PackageList = list[str]
 type ProfileMap = dict[str, PackageList]
@@ -45,6 +48,11 @@ SCRIPT_DIR: Path = Path(__file__).resolve().parent
 PROFILES_DIR: Path = SCRIPT_DIR / "package_profiles"
 AUR_PROFILES_DIR: Path = PROFILES_DIR / "aur"
 PACMAN_DB_LOCK: Path = Path("/var/lib/pacman/db.lck")
+TEMP_SUDOERS_FILE: Path = Path("/etc/sudoers.d/99_dusky_temp_aur")
+DUSKY_THEME_JSON: Path = Path.home() / ".config/matugen/generated/dusky_tui.json"
+
+# Pre-compiled regex to strip all ANSI escape sequences and terminal control codes
+ANSI_STRIP_REGEX = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0?]*[ -/]*[@-~])')
 
 class PackageStatus(Enum):
     PENDING = auto()
@@ -69,20 +77,19 @@ class InstallationManifest:
     already_installed: int = 0
 
 # ==============================================================================
-# CORE ENVIRONMENT & PRE-FLIGHT VERIFICATION
+# CORE ENVIRONMENT & DUAL-CONTEXT PRIVILEGE RESOLUTION
 # ==============================================================================
 class PreflightError(Exception):
     """Raised when strict Arch Linux runtime conditions are unmet."""
 
-def verify_runtime_environment() -> str:
-    """Verifies non-root execution, detects Arch release, and finds AUR helper."""
-    if os.geteuid() == 0:
-        raise PreflightError(
-            "CRITICAL: Do not run this script as root! makepkg and AUR helpers "
-            "forbid root execution for security. Official pacman transactions "
-            "will be securely elevated via sudo automatically."
-        )
+@dataclass
+class RuntimeContext:
+    is_root: bool
+    aur_helper: Optional[str] = None
+    aur_user: Optional[str] = None
 
+def verify_runtime_environment(has_aur_targets: bool) -> RuntimeContext:
+    """Detects execution environment (Chroot Root vs User Desktop) and validates tools."""
     if not Path("/etc/arch-release").exists():
         raise PreflightError("CRITICAL: This installer is strictly for Arch Linux systems.")
 
@@ -90,26 +97,105 @@ def verify_runtime_environment() -> str:
         if not shutil.which(cmd):
             raise PreflightError(f"CRITICAL: Required system binary not found: {cmd}.")
 
-    aur_helper = ""
-    for helper in ("paru", "yay"):
-        if shutil.which(helper):
-            aur_helper = helper
-            break
-            
-    if not aur_helper:
-        raise PreflightError("CRITICAL: No AUR helper detected! Please install paru or yay first.")
+    is_root = os.geteuid() == 0
+    aur_helper = None
+    aur_user = None
 
-    return aur_helper
+    if has_aur_targets:
+        for helper in ("paru", "yay"):
+            if shutil.which(helper):
+                aur_helper = helper
+                break
+                
+        if not aur_helper:
+            raise PreflightError("CRITICAL: AUR packages requested but no helper (paru/yay) found.")
+
+        if is_root:
+            target_user = os.environ.get("TARGET_USER", "").strip()
+            if target_user:
+                try:
+                    pwd.getpwnam(target_user)
+                    aur_user = target_user
+                except KeyError:
+                    pass
+            
+            if not aur_user:
+                for p in pwd.getpwall():
+                    if (
+                        p.pw_uid >= 1000 
+                        and p.pw_name != "nobody" 
+                        and not p.pw_name.startswith("systemd-")
+                        and "/bin" in p.pw_shell
+                    ):
+                        aur_user = p.pw_name
+                        break
+
+    return RuntimeContext(is_root=is_root, aur_helper=aur_helper, aur_user=aur_user)
+
+# ==============================================================================
+# THEME PARSING & GENERATION ENGINE
+# ==============================================================================
+def load_dusky_theme() -> str:
+    """Parses generated matugen colors, generating an elegant neon slider TCSS layout."""
+    fallback_css = """
+    Screen { background: $surface; layout: vertical; }
+    #top_header { height: 1; dock: top; content-align: center middle; background: $primary-darken-2; color: $text; text-style: bold; }
+    #top_header .title { width: 100%; text-align: center; }
+    #main_dashboard { layout: horizontal; height: 1fr; }
+    #left_pane { width: 28%; border-right: vkey $primary-darken-1; background: $surface-darken-1; padding: 0 1; height: 100%; }
+    #right_pane { width: 72%; height: 100%; layout: vertical; background: $surface; }
+    #telemetry_box { height: 5; border-bottom: hkey $primary-darken-1; padding: 0 1; layout: vertical; align: left middle; }
+    #status_label { text-style: bold; color: $accent; }
+    #speed_label { color: $text-muted; text-style: italic; }
+    #progress_bar { width: 100%; margin-top: 1; }
+    RichLog { height: 1fr; border: none; scrollbar-size: 1 1; }
+    Tree { background: $surface-darken-1; border: none; padding: 0; }
+    """
+    if not DUSKY_THEME_JSON.exists():
+        return fallback_css
+    try:
+        data = json.loads(DUSKY_THEME_JSON.read_text(encoding="utf-8"))
+        bg = data.get("bg", "#0a1612")
+        fg = data.get("fg", "#d8e6df")
+        accent = data.get("accent", "#00e0b8")
+        error = data.get("error", "#ffb4ab")
+        warning = data.get("warning", "#a0d0cb")
+        success = data.get("success", "#8dd2da")
+        muted = data.get("muted", "#3d4945")
+        
+        custom_css = f"""
+        Screen {{ background: {bg}; layout: vertical; color: {fg}; }}
+        #top_header {{ height: 1; dock: top; content-align: center middle; background: {muted}; color: {accent}; text-style: bold; }}
+        #top_header .title {{ width: 100%; text-align: center; }}
+        #main_dashboard {{ layout: horizontal; height: 1fr; }}
+        #left_pane {{ width: 28%; border-right: vkey {muted}; background: {bg}; padding: 0 1; height: 100%; }}
+        #right_pane {{ width: 72%; height: 100%; layout: vertical; background: {bg}; }}
+        #telemetry_box {{ height: 5; border-bottom: hkey {muted}; padding: 0 2; layout: vertical; align: left middle; }}
+        #status_label {{ text-style: bold; color: {accent}; }}
+        #speed_label {{ color: {warning}; text-style: italic; }}
+        
+        /* Corrected DOM Selectors for Textual Progress Bar */
+        #progress_bar {{ width: 100%; margin-top: 1; height: 1; }}
+        #progress_bar .bar--bar {{ color: {accent}; }}
+        #progress_bar .bar--complete {{ color: {success}; }}
+        #progress_bar .bar--track {{ background: {muted}; }}
+        
+        RichLog {{ height: 1fr; border: none; scrollbar-size: 1 1; background: {bg}; color: {fg}; }}
+        Tree {{ background: {bg}; border: none; padding: 0; color: {fg}; }}
+        Tree > TreeNode {{ color: {fg}; }}
+        """
+        return custom_css
+    except Exception:
+        return fallback_css
 
 # ==============================================================================
 # PROFILE & MANIFEST RESOLUTION ENGINE
 # ==============================================================================
 class ProfileParser:
-    """Scans, parses, and deduplicates package profiles from directory manifests[cite: 3]."""
+    """Scans, parses, and deduplicates package profiles from directory manifests."""
     
     @staticmethod
     def ensure_default_profiles() -> None:
-        """Creates sample profile structures if directory does not exist[cite: 3]."""
         if not PROFILES_DIR.exists():
             PROFILES_DIR.mkdir(parents=True, exist_ok=True)
             AUR_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
@@ -139,7 +225,6 @@ class ProfileParser:
     @classmethod
     def resolve_manifests(cls, selected_profiles: list[str]) -> InstallationManifest:
         cls.ensure_default_profiles()
-        
         target_names = selected_profiles if selected_profiles else ["01_all", "01_"]
         
         official_files = list(PROFILES_DIR.glob("*"))
@@ -150,11 +235,9 @@ class ProfileParser:
         seen_aur: set[str] = set()
 
         for p_file in sorted(official_files):
-            if p_file.is_dir():
-                continue
+            if p_file.is_dir(): continue
             if any(p_file.name == t or p_file.stem == t or p_file.name.startswith(t) for t in target_names):
-                pkgs = cls._read_manifest_file(p_file)
-                for pkg_name in pkgs:
+                for pkg_name in cls._read_manifest_file(p_file):
                     if pkg_name not in seen_official:
                         seen_official.add(pkg_name)
                         manifest.official_packages.append(
@@ -162,11 +245,9 @@ class ProfileParser:
                         )
 
         for p_file in sorted(aur_files):
-            if p_file.is_dir():
-                continue
+            if p_file.is_dir(): continue
             if any(p_file.name == t or p_file.stem == t or p_file.name.startswith(t) for t in target_names):
-                pkgs = cls._read_manifest_file(p_file)
-                for pkg_name in pkgs:
+                for pkg_name in cls._read_manifest_file(p_file):
                     if pkg_name not in seen_aur:
                         seen_aur.add(pkg_name)
                         manifest.aur_packages.append(
@@ -180,24 +261,22 @@ class ProfileParser:
 # ASYNCHRONOUS PACMAN & ALPM INTERACTION ENGINE
 # ==============================================================================
 class AsyncPackageManager:
-    """Manages non-blocking ALPM database checks and PTY sub-process execution[cite: 1, 2]."""
+    """Manages non-blocking ALPM database checks and PTY sub-process execution."""
     
     @staticmethod
     async def filter_installed_packages(manifest: InstallationManifest) -> None:
-        """Queries local ALPM database via pacman -T in batch asynchronously[cite: 2]."""
+        """Queries local ALPM database via pacman -T in batch asynchronously."""
         all_items = manifest.official_packages + manifest.aur_packages
         if not all_items:
             return
 
         all_names = [item.name for item in all_items]
-        
         proc = await asyncio.create_subprocess_exec(
             "pacman", "-T", *all_names,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL
         )
         stdout, _ = await proc.communicate()
-        
         uninstalled_names = set(stdout.decode("utf-8", errors="replace").splitlines())
         
         for item in all_items:
@@ -212,7 +291,7 @@ class AsyncPackageManager:
 
     @staticmethod
     async def maintain_sudo_heartbeat() -> None:
-        """Keeps sudo timestamp alive in the background without leaking sub-processes[cite: 2]."""
+        """Keeps sudo timestamp alive in the background without leaking sub-processes."""
         try:
             while True:
                 proc = await asyncio.create_subprocess_exec(
@@ -229,7 +308,7 @@ class AsyncPackageManager:
 # TEXTUAL INTERACTIVE MODALS FOR ERROR / CONFLICT RECOVERY
 # ==============================================================================
 class ConflictModalScreen(ModalScreen[str]):
-    """Modal screen displayed when package installation encounters a failure or conflict[cite: 2]."""
+    """Modal screen displayed when package installation encounters a failure or conflict."""
     
     CSS = """
     ConflictModalScreen {
@@ -258,9 +337,7 @@ class ConflictModalScreen(ModalScreen[str]):
         align: center middle;
         height: 3;
     }
-    Button {
-        margin: 0 1;
-    }
+    Button { margin: 0 1; }
     """
 
     def __init__(self, package_name: str, error_msg: str):
@@ -296,88 +373,24 @@ class ConflictModalScreen(ModalScreen[str]):
 # TEXTUAL TUI FRONT-END & ARCHITECTURAL ORCHESTRATOR
 # ==============================================================================
 class EliteInstallerApp(App):
-    """The unified Textual TUI managing async PTY streams and visual telemetry[cite: 3]."""
+    """The unified Textual TUI managing async PTY streams and visual telemetry."""
     
-    CSS = """
-    Screen {
-        background: $surface;
-        layout: vertical;
-    }
-    #top_header {
-        height: 1;
-        dock: top;
-        content-align: center middle;
-        background: $primary-darken-2;
-        color: $text;
-        text-style: bold;
-    }
-    #main_dashboard {
-        layout: horizontal;
-        height: 1fr;
-    }
-    #left_pane {
-        width: 38%;
-        border-right: vkey $primary-darken-1;
-        background: $surface-darken-1;
-        padding: 0 1;
-        height: 100%;
-    }
-    #right_pane {
-        width: 62%;
-        height: 100%;
-        layout: vertical;
-        background: $surface;
-    }
-    #telemetry_box {
-        height: 5;
-        border-bottom: hkey $primary-darken-1;
-        padding: 0 1;
-        layout: vertical;
-        justify: center;
-    }
-    #status_label {
-        text-style: bold;
-        color: $accent;
-    }
-    #speed_label {
-        color: $text-muted;
-        text-style: italic;
-    }
-    #progress_bar {
-        width: 100%;
-        margin-top: 1;
-    }
-    RichLog {
-        height: 1fr;
-        border: none;
-        scrollbar-size: 1 1;
-    }
-    #bottom_footer {
-        dock: bottom;
-        height: 1;
-        background: $primary-darken-3;
-        color: $text-muted;
-    }
-    Tree {
-        background: $surface-darken-1;
-        border: none;
-        padding: 0;
-    }
-    """
+    CSS = load_dusky_theme()
 
-    def __init__(self, manifest: InstallationManifest, aur_helper: str):
+    def __init__(self, manifest: InstallationManifest, context: RuntimeContext):
         super().__init__()
         self.manifest = manifest
-        self.aur_helper = aur_helper
+        self.ctx = context
         self.sudo_task: Optional[asyncio.Task] = None
         self.active_child_pid: Optional[int] = None
         
         self.tree_widget = Tree("◈ Target Profiles & Packages")
-        self.log_widget = RichLog(id="pty_log", highlight=True, markup=True, wrap=True)
+        self.log_widget = RichLog(id="pty_log", highlight=True, markup=False, wrap=True)
+        
         self.progress_bar = ProgressBar(
-            total=self.manifest.total_requested,
-            show_eta=True,
-            show_percentage=True,
+            total=100,
+            show_eta=False,
+            show_percentage=False,
             id="progress_bar"
         )
         self.status_label = Label("Initializing installation sequence...", id="status_label")
@@ -386,12 +399,13 @@ class EliteInstallerApp(App):
         self.profile_counts: dict[str, dict[str, int]] = {}
 
     def compose(self) -> ComposeResult:
+        env_mode = "CHROOT ROOT" if self.ctx.is_root else "USER DESKTOP"
+        helper_mode = f" | Helper: {self.ctx.aur_helper}" if self.ctx.aur_helper else " | Pacman Core Only"
         with Horizontal(id="top_header"):
             yield Static(
-                f"◈ ARCH LINUX & AUR ELITE INSTALLER  [Helper: {self.aur_helper}]",
+                f"◈ DUSKY PACKAGE INSTALLER  [{env_mode}{helper_mode}]",
                 classes="title"
             )
-            
         with Horizontal(id="main_dashboard"):
             with Vertical(id="left_pane"):
                 yield self.tree_widget
@@ -401,13 +415,12 @@ class EliteInstallerApp(App):
                     yield self.speed_label
                     yield self.progress_bar
                 yield self.log_widget
-                
-        yield Footer()
 
     def on_mount(self) -> None:
         self.build_profile_tree()
-        self.progress_bar.advance(self.manifest.already_installed)
         self.log_system("Environment pre-flight validated. Keyring & ALPM engine online.")
+        if self.ctx.is_root and self.ctx.aur_user:
+            self.log_system(f"Chroot Root Mode detected. Delegating AUR builds to: {self.ctx.aur_user}")
         self.log_system(
             f"Profiles loaded: {len(self.tree_nodes_map)} packages "
             f"({self.manifest.already_installed} already installed)."
@@ -415,9 +428,8 @@ class EliteInstallerApp(App):
         self.run_installation_pipeline()
 
     def build_profile_tree(self) -> None:
-        """Populates Left Pane hierarchy with profile folders and live status counters[cite: 3]."""
+        """Populates Left Pane hierarchy with profile folders and live status counters."""
         self.tree_widget.root.expand()
-        
         profiles_dict: dict[str, list[PackageItem]] = {}
         for item in self.manifest.official_packages + self.manifest.aur_packages:
             profiles_dict.setdefault(item.profile, []).append(item)
@@ -432,8 +444,7 @@ class EliteInstallerApp(App):
             )
             for item in items:
                 badge = self._get_status_badge(item.status)
-                n_label = f"{badge} {item.name}"
-                node = p_node.add_leaf(n_label)
+                node = p_node.add_leaf(f"{badge} {item.name}")
                 self.tree_nodes_map[item.name] = node
 
     @staticmethod
@@ -446,7 +457,7 @@ class EliteInstallerApp(App):
             case PackageStatus.SKIPPED: return "[yellow]─[/yellow]"
 
     def update_package_node(self, pkg_name: str, status: PackageStatus) -> None:
-        """Updates individual package icon and recalculates parent folder ratios[cite: 3]."""
+        """Updates individual package icon and recalculates parent folder ratios."""
         if node := self.tree_nodes_map.get(pkg_name):
             badge = self._get_status_badge(status)
             node.label = Text.from_markup(f"{badge} {pkg_name}")
@@ -470,110 +481,196 @@ class EliteInstallerApp(App):
 
     def log_system(self, msg: str, is_err: bool = False) -> None:
         color = "red" if is_err else "cyan"
-        self.log_widget.write(f"[{color}][SYSTEM][/{color}] {msg}")
+        self.log_widget.write(Text.from_ansi(f"\033[1;{31 if is_err else 36}m[SYSTEM]\033[0m {msg}"))
 
-    def handle_pty_chunk(self, raw_text: str) -> None:
-        """Processes PTY streams, extracting percentage, speed, and ETA metrics[cite: 1]."""
-        if match := re.search(r"(\d+)%.*?([\d\.]+\s+[KM]iB/s|--:--|[\d:]+)", raw_text):
-            pct = match.group(1)
-            metric = match.group(2)
-            self.status_label.update(f"⚡ Processing ALPM Transaction... ({pct}%)")
-            if "iB/s" in metric:
-                self.speed_label.update(f"Bandwidth: {metric} | ETA: Calculating...")
-            elif ":" in metric:
-                self.speed_label.update(f"Bandwidth: Active | ETA: {metric}")
-            
-        lines = re.split(r'[\r\n]+', raw_text)
-        for line in lines:
-            clean = line.strip()
-            if clean and not clean.startswith(":: Proceed with installation?"):
-                self.log_widget.write(clean)
+    def handle_pty_line(self, line: str) -> None:
+        """Processes an intact PTY line. Strips ANSI codes to extract telemetry and discard visual noise."""
+        clean = line.strip()
+        if not clean:
+            return
 
-    async def wait_for_pacman_lock(self) -> bool:
-        """Monitors /var/lib/pacman/db.lck asynchronously with a visual countdown[cite: 1]."""
+        # Strip all ANSI escape sequences to perform accurate logic & telemetry extraction
+        stripped = ANSI_STRIP_REGEX.sub("", clean).strip()
+        if not stripped:
+            return
+
+        extracted_pct = None
+        extracted_speed = None
+        extracted_eta = None
+        found_total = False
+
+        if pct_match := re.search(r"(\d+)%", stripped):
+            extracted_pct = pct_match.group(1)
+
+        if total_match := re.search(r"Total\s+\(\d+/\d+\).*?(\d+(?:\.\d+)?\s+[A-Za-z]?i?B/s)\s+([\d:]+)", stripped):
+            extracted_speed = total_match.group(1)
+            extracted_eta = total_match.group(2)
+            found_total = True
+        elif not found_total:
+            if dl_match := re.search(r"(\d+(?:\.\d+)?\s+[A-Za-z]?i?B/s)\s+([\d:]+)", stripped):
+                extracted_speed = dl_match.group(1)
+                extracted_eta = dl_match.group(2)
+
+        if extracted_pct:
+            self.status_label.update(f"⚡ Processing ALPM Transaction... ({extracted_pct}%)")
+            try:
+                self.progress_bar.progress = float(extracted_pct)
+            except ValueError:
+                pass
+
+        if extracted_speed and extracted_eta:
+            self.speed_label.update(f"Bandwidth: {extracted_speed} | ETA: {extracted_eta}")
+
+        # Comprehensive filter: suppress ALL ephemeral progress bars, counters, and prompt echoes
+        has_speed = bool(re.search(r"\d+(?:\.\d+)?\s+[A-Za-z]?i?B/s", stripped))
+        has_bar = bool(re.search(r"\[[-#=coC\s]+\]", stripped)) or bool(re.search(r"\[[0-9;]*[mK]?[-#=coC\s]+", clean))
+        is_fragment = bool(re.search(r"^[\[\]\-#=coC\s\d%:\.\w]+$", stripped)) and len(stripped) < 25
+        is_prompt = stripped.startswith(":: Proceed with installation?") or "checking keyring" in stripped.lower()
+
+        if has_speed or has_bar or is_fragment or is_prompt:
+            return
+
+        # Write clean, permanent system logs to the UI
+        self.log_widget.write(Text.from_ansi(clean))
+
+    @staticmethod
+    def _is_package_manager_active() -> bool:
+        """Scans /proc natively to check if any package management binaries are actively running."""
+        target_procs = {"pacman", "paru", "yay", "makepkg", "fakeroot"}
+        try:
+            for entry in Path("/proc").iterdir():
+                if entry.name.isdigit():
+                    try:
+                        comm = (entry / "comm").read_text().strip()
+                        if comm in target_procs:
+                            return True
+                    except (OSError, FileNotFoundError):
+                        continue
+        except OSError:
+            pass
+        return False
+
+    async def resolve_pacman_lock(self) -> bool:
+        """Monitors db.lck; automatically removes stale locks if no package managers are running."""
         if not PACMAN_DB_LOCK.exists():
             return True
             
-        self.log_system("Pacman database is currently locked by another process! Waiting...", is_err=True)
+        self.log_system("Pacman database lock (/var/lib/pacman/db.lck) detected...", is_err=True)
         elapsed = 0
+        
         while PACMAN_DB_LOCK.exists():
+            if not self._is_package_manager_active():
+                self.log_system("No active package managers detected in /proc. Lock is stale!", is_err=True)
+                self.status_label.update("🧹 Removing stale pacman database lock...")
+                self.log_system("Auto-removing stale /var/lib/pacman/db.lck...")
+                
+                if self.ctx.is_root:
+                    try:
+                        PACMAN_DB_LOCK.unlink(missing_ok=True)
+                    except OSError as e:
+                        self.log_system(f"Failed to remove lock: {e}", is_err=True)
+                        return False
+                else:
+                    rm_proc = await asyncio.create_subprocess_exec(
+                        "sudo", "rm", "-f", str(PACMAN_DB_LOCK),
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL
+                    )
+                    await rm_proc.wait()
+                    if rm_proc.returncode != 0:
+                        self.log_system("Failed to remove lock file via sudo.", is_err=True)
+                        return False
+                        
+                self.log_system("Stale lock scrubbed successfully. Resuming pipeline.")
+                return True
+
             if elapsed >= 300:
-                self.log_system(f"Timed out after 300s waiting for {PACMAN_DB_LOCK} to release[cite: 1].", is_err=True)
+                self.log_system(f"Timed out after 300s waiting for {PACMAN_DB_LOCK} to release.", is_err=True)
                 return False
-            self.status_label.update(f"⚠️ PACMAN DB LOCKED: Waiting for release ({elapsed}s elapsed)...[cite: 1]")
+                
+            self.status_label.update(f"⚠️ PACMAN DB LOCKED: Active process running ({elapsed}s elapsed)...")
             await asyncio.sleep(1)
             elapsed += 1
             
-        self.log_system("Pacman database lock released. Resuming pipeline[cite: 1].")
+        self.log_system("Pacman database lock released. Resuming pipeline.")
         return True
+
+    def build_command(self, targets: list[str], is_aur: bool) -> list[str]:
+        """Constructs privilege-aware execution commands for Chroot Root vs User Desktop."""
+        if not is_aur:
+            if self.ctx.is_root:
+                return ["pacman", "-S", "--needed", "--noconfirm"] + targets
+            return ["sudo", "pacman", "-S", "--needed", "--noconfirm"] + targets
+        
+        helper = self.ctx.aur_helper if self.ctx.aur_helper else "paru"
+        base_aur = [helper, "-S", "--needed", "--noconfirm"] + targets
+        if self.ctx.is_root and self.ctx.aur_user:
+            return ["sudo", "-u", self.ctx.aur_user, "--preserve-env"] + base_aur
+        return base_aur
+
+    def build_manual_command(self, target: str, is_aur: bool) -> str:
+        if not is_aur:
+            return f"pacman -S {target}" if self.ctx.is_root else f"sudo pacman -S {target}"
+        helper = self.ctx.aur_helper if self.ctx.aur_helper else "paru"
+        if self.ctx.is_root and self.ctx.aur_user:
+            return f"sudo -u {self.ctx.aur_user} {helper} -S {target}"
+        return f"{helper} -S {target}"
 
     @work(thread=False)
     async def run_installation_pipeline(self) -> None:
-        """Main async loop executing batch and granular package installations[cite: 1, 2]."""
-        self.sudo_task = asyncio.create_task(AsyncPackageManager.maintain_sudo_heartbeat())
+        """Main async loop executing batch and granular package installations."""
+        if not self.ctx.is_root and self.manifest.aur_packages:
+            self.sudo_task = asyncio.create_task(AsyncPackageManager.maintain_sudo_heartbeat())
         
         try:
-            if not await self.wait_for_pacman_lock():
+            if not await self.resolve_pacman_lock():
                 self.exit(1)
                 return
 
-            self.status_label.update("Synchronizing databases & performing full system upgrade...[cite: 1, 2]")
-            self.log_system("Executing full system upgrade (-Syu)...[cite: 1, 2]")
-            upgrade_cmd = ["sudo", "pacman", "-Syu", "--noconfirm"]
+            self.status_label.update("Synchronizing databases & performing full system upgrade...")
+            self.log_system("Executing full system upgrade (-Syu)...")
+            
+            upgrade_cmd = ["pacman", "-Syu", "--noconfirm"] if self.ctx.is_root else ["sudo", "pacman", "-Syu", "--noconfirm"]
             if not await self.execute_pty_command(upgrade_cmd):
-                self.log_system("System upgrade failed or interrupted. Aborting suite[cite: 1, 2].", is_err=True)
+                self.log_system("System upgrade failed or interrupted. Aborting suite.", is_err=True)
                 return
 
-            pending_official = [
-                p for p in self.manifest.official_packages
-                if p.status == PackageStatus.PENDING
-            ]
+            pending_official = [p for p in self.manifest.official_packages if p.status == PackageStatus.PENDING]
             if pending_official:
                 await self.process_package_set(pending_official, is_aur=False)
 
-            pending_aur = [
-                p for p in self.manifest.aur_packages
-                if p.status == PackageStatus.PENDING
-            ]
-            if pending_aur:
+            pending_aur = [p for p in self.manifest.aur_packages if p.status == PackageStatus.PENDING]
+            if pending_aur and self.ctx.aur_helper:
                 await self.process_package_set(pending_aur, is_aur=True)
 
             self.status_label.update("✨ All installation pipelines completed successfully!")
             self.speed_label.update("Bandwidth: Idle | ETA: 00:00")
-            self.log_system("Installation sequence finished. All targets resolved[cite: 1, 2].")
+            self.log_system("Installation sequence finished. All targets resolved.")
             
         finally:
-            if self.sudo_task:
-                self.sudo_task.cancel()
+            if self.sudo_task: self.sudo_task.cancel()
 
     async def process_package_set(self, packages: list[PackageItem], is_aur: bool) -> None:
-        """Attempts batch installation first; degrades seamlessly to granular recovery[cite: 1, 2]."""
+        """Attempts batch installation first; degrades seamlessly to granular recovery."""
         target_type = "AUR" if is_aur else "Official Repo"
         pkg_names = [p.name for p in packages]
         
-        self.log_system(f"Attempting batch installation for {len(packages)} {target_type} package(s)...[cite: 1, 2]")
+        self.log_system(f"Attempting batch installation for {len(packages)} {target_type} package(s)...")
         for p in packages:
             self.update_package_node(p.name, PackageStatus.INSTALLING)
 
-        if not await self.wait_for_pacman_lock():
-            return
+        if not await self.resolve_pacman_lock(): return
 
-        batch_cmd = (
-            [self.aur_helper, "-S", "--needed", "--noconfirm"] + pkg_names if is_aur
-            else ["sudo", "pacman", "-S", "--needed", "--noconfirm"] + pkg_names
-        )
-
-        success = await self.execute_pty_command(batch_cmd)
-        
-        if success:
+        batch_cmd = self.build_command(pkg_names, is_aur)
+        if await self.execute_pty_command(batch_cmd):
             for p in packages:
                 self.update_package_node(p.name, PackageStatus.INSTALLED)
                 self.progress_bar.advance(1)
-            self.log_system(f"Batch transaction for {target_type} completed successfully[cite: 1, 2].")
+            self.log_system(f"Batch transaction for {target_type} completed successfully.")
             return
 
         self.log_system(
-            f"Batch transaction failed for {target_type}. Initiating granular fallback mode...[cite: 1, 2]",
+            f"Batch transaction failed for {target_type}. Initiating granular fallback mode...",
             is_err=True
         )
         
@@ -585,60 +682,44 @@ class EliteInstallerApp(App):
                 continue
 
             self.update_package_node(p.name, PackageStatus.INSTALLING)
-            self.status_label.update(f"Granular Target: {p.name} ({target_type})[cite: 2]")
-            
-            if not await self.wait_for_pacman_lock():
-                return
+            self.status_label.update(f"Granular Target: {p.name} ({target_type})")
+            if not await self.resolve_pacman_lock(): return
 
-            cmd = (
-                [self.aur_helper, "-S", "--needed", "--noconfirm", p.name] if is_aur
-                else ["sudo", "pacman", "-S", "--needed", "--noconfirm", p.name]
-            )
-
+            cmd = self.build_command([p.name], is_aur)
             while True:
-                pkg_success = await self.execute_pty_command(cmd)
-                if pkg_success:
+                if await self.execute_pty_command(cmd):
                     self.update_package_node(p.name, PackageStatus.INSTALLED)
                     self.progress_bar.advance(1)
-                    self.log_system(f"Successfully installed: {p.name}[cite: 2]")
+                    self.log_system(f"Successfully installed: {p.name}")
                     break
                 else:
                     self.update_package_node(p.name, PackageStatus.FAILED)
-                    
                     action = await self.push_screen_wait(
-                        ConflictModalScreen(p.name, "Sub-process exited with non-zero status code[cite: 2].")
+                        ConflictModalScreen(p.name, "Sub-process exited with non-zero status code.")
                     )
-                    
                     match action:
                         case "retry":
-                            self.log_system(f"Retrying package: {p.name}...[cite: 2]")
+                            self.log_system(f"Retrying package: {p.name}...")
                             self.update_package_node(p.name, PackageStatus.INSTALLING)
                             continue
                         case "manual":
-                            self.log_system(f"Suspending TTY for manual intervention on {p.name}...[cite: 2]")
+                            self.log_system(f"Suspending TTY for manual intervention on {p.name}...")
                             with self.suspend():
                                 sys.stdout.flush()
                                 old_attr = None
-                                try:
-                                    old_attr = termios.tcgetattr(sys.stdin.fileno())
-                                except termios.error:
-                                    pass
+                                try: old_attr = termios.tcgetattr(sys.stdin.fileno())
+                                except termios.error: pass
                                     
                                 os.system("clear")
-                                print(f"\n--- MANUAL INTERVENTION TTY: {p.name} ---[cite: 2]")
-                                manual_cmd = (
-                                    f"{self.aur_helper} -S {p.name}" if is_aur
-                                    else f"sudo pacman -S {p.name}"
-                                )
-                                os.system(manual_cmd)
+                                print(f"\n--- MANUAL INTERVENTION TTY: {p.name} ---")
+                                os.system(self.build_manual_command(p.name, is_aur))
                                 print("\n--- Returning to Textual UI in 2 seconds ---")
-                                asyncio.run(asyncio.sleep(2))
+                                # FIXED: Using synchronous time.sleep inside suspend block
+                                time.sleep(2)
                                 
                                 if old_attr:
-                                    try:
-                                        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_attr)
-                                    except termios.error:
-                                        pass
+                                    try: termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_attr)
+                                    except termios.error: pass
                             
                             await AsyncPackageManager.filter_installed_packages(self.manifest)
                             if p.status == PackageStatus.INSTALLED:
@@ -649,16 +730,16 @@ class EliteInstallerApp(App):
                         case "skip":
                             self.update_package_node(p.name, PackageStatus.SKIPPED)
                             self.progress_bar.advance(1)
-                            self.log_system(f"Skipped package: {p.name}[cite: 2]", is_err=True)
+                            self.log_system(f"Skipped package: {p.name}", is_err=True)
                             break
                         case "abort":
-                            self.log_system("User aborted installation sequence[cite: 2].", is_err=True)
+                            self.log_system("User aborted installation sequence.", is_err=True)
                             self.exit(1)
                             return
 
     @staticmethod
     def _set_pty_size(fd: int, rows: int = 40, cols: int = 120) -> None:
-        """Forces PTY dimensions to 120 columns to prevent pacman progress bar wrapping[cite: 1]."""
+        """Forces PTY dimensions to 120 columns to prevent pacman progress bar wrapping."""
         try:
             winsize = struct.pack("HHHH", rows, cols, 0, 0)
             fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
@@ -666,16 +747,14 @@ class EliteInstallerApp(App):
             pass
 
     async def execute_pty_command(self, cmd: list[str]) -> bool:
-        """Spawns asynchronous subprocess inside a PTY using incremental UTF-8 decoding[cite: 1, 2]."""
+        """Spawns asynchronous subprocess inside a PTY using an internal stateful line buffer."""
         master_fd, slave_fd = pty.openpty()
         self._set_pty_size(master_fd, rows=40, cols=120)
         
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdin=slave_fd,
-                stdout=slave_fd,
-                stderr=slave_fd,
+                stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
                 close_fds=True
             )
             os.close(slave_fd)
@@ -684,22 +763,35 @@ class EliteInstallerApp(App):
             
             loop = asyncio.get_running_loop()
             reader = asyncio.StreamReader()
-            
             protocol = asyncio.StreamReaderProtocol(reader)
             await loop.connect_read_pipe(lambda: protocol, os.fdopen(master_fd, "rb"))
             master_fd = -1
 
             decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            line_buffer = ""
+
             while True:
                 chunk = await reader.read(1024)
                 if not chunk:
-                    text = decoder.decode(b"", final=True)
-                    if text:
-                        self.handle_pty_chunk(text)
+                    if text := decoder.decode(b"", final=True):
+                        line_buffer += text
+                    if line_buffer:
+                        for line in re.split(r'[\r\n]+', line_buffer):
+                            if line: self.handle_pty_line(line)
                     break
-                text = decoder.decode(chunk)
-                if text:
-                    self.handle_pty_chunk(text)
+                
+                if text := decoder.decode(chunk):
+                    line_buffer += text
+                    # Process lines whenever carriage returns or newlines arrive
+                    while True:
+                        match = re.search(r'[\r\n]', line_buffer)
+                        if not match:
+                            break
+                        idx = match.start()
+                        line = line_buffer[:idx]
+                        line_buffer = line_buffer[idx+1:]
+                        if line:
+                            self.handle_pty_line(line)
 
             rc = await proc.wait()
             self.active_child_pid = None
@@ -728,42 +820,60 @@ class EliteInstallerApp(App):
 # ==============================================================================
 def parse_command_line() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Elite Arch Linux & AUR Package Installer (Python 3.14 / Textual)[cite: 1, 2]"
+        description="Dusky Package Installer (Python 3.14 / Textual)"
     )
     parser.add_argument(
         "-p", "--profiles",
-        nargs="+",
-        default=[],
-        help="Specify profile names or prefixes to install (e.g., -p 01_all 03_more). "
-             "Defaults to '01_' if omitted[cite: 3]."
+        nargs="+", default=[],
+        help="Specify profile names or prefixes to install (e.g., -p 01_all 03_more)."
     )
     return parser.parse_args()
 
 def main() -> None:
+    args = parse_command_line()
+    manifest = ProfileParser.resolve_manifests(args.profiles)
+    
+    if not manifest.official_packages and not manifest.aur_packages:
+        Console().print("[bold yellow]:: No packages resolved from profiles! Check package_profiles/ directory.[/bold yellow]")
+        sys.exit(0)
+
     try:
-        aur_helper = verify_runtime_environment()
+        has_aur_targets = len(manifest.aur_packages) > 0
+        ctx = verify_runtime_environment(has_aur_targets)
     except PreflightError as err:
         Console().print(f"[bold red]{err}[/bold red]")
         sys.exit(1)
 
-    args = parse_command_line()
-    
-    Console().print("[bold cyan]:: Resolving package manifests and querying ALPM database...[/bold cyan][cite: 1, 2]")
-    manifest = ProfileParser.resolve_manifests(args.profiles)
-    
-    if not manifest.official_packages and not manifest.aur_packages:
-        Console().print("[bold yellow]:: No packages resolved from profiles! Check package_profiles/ directory.[/bold yellow][cite: 3]")
-        sys.exit(0)
-
     asyncio.run(AsyncPackageManager.filter_installed_packages(manifest))
 
-    Console().print("[bold cyan]:: Authenticating sudo privileges for official repository installations...[/bold cyan][cite: 2]")
-    if os.system("sudo -v") != 0:
-        Console().print("[bold red]:: Sudo authentication failed. Aborting.[/bold red][cite: 2]")
-        sys.exit(1)
+    if manifest.aur_packages and ctx.is_root:
+        if not ctx.aur_user:
+            Console().print(
+                "[bold red]CRITICAL: AUR packages requested while running as root in Chroot, "
+                "but no unprivileged user exists to run makepkg![/bold red]"
+            )
+            sys.exit(1)
+        try:
+            TEMP_SUDOERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            TEMP_SUDOERS_FILE.write_text(f"{ctx.aur_user} ALL=(ALL) NOPASSWD: ALL\n", encoding="utf-8")
+            TEMP_SUDOERS_FILE.chmod(0o440)
+        except OSError as e:
+            Console().print(f"[bold red]CRITICAL: Failed to configure temporary chroot sudoers: {e}[/bold red]")
+            sys.exit(1)
 
-    app = EliteInstallerApp(manifest, aur_helper)
-    app.run()
+    if not ctx.is_root:
+        Console().print("[bold cyan]:: Authenticating sudo privileges for official repository installations...[/bold cyan]")
+        if os.system("sudo -v") != 0:
+            Console().print("[bold red]:: Sudo authentication failed. Aborting.[/bold red]")
+            sys.exit(1)
+
+    try:
+        app = EliteInstallerApp(manifest, ctx)
+        app.run()
+    finally:
+        if TEMP_SUDOERS_FILE.exists():
+            try: TEMP_SUDOERS_FILE.unlink()
+            except OSError: pass
 
 if __name__ == "__main__":
     main()
