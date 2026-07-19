@@ -1084,6 +1084,7 @@ class EliteInstallerApp(App):
             except Exception: pass
             self.log_system("Installation sequence finished. All targets resolved.")
             AudioNotifier.play("complete")
+            self.exit(0)
 
         finally:
             if self.sudo_task:
