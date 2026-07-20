@@ -52,6 +52,9 @@ readonly SERVICES_CONFIG=(
 
     # dusky audio visualizer
     "$HOME/user_scripts/way_layers/visualizer/dusky_visualizer.service | disable"
+
+    # dusky screentime tracker
+    "$HOME/user_scripts/screentime/dusky_screentime.service | disable"
 )
 
 # XDG Standard: ~/.config/systemd/user
@@ -59,10 +62,10 @@ readonly SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
 # --- Helper Functions ---
 
-log_info()    { printf "${BLUE}[INFO]${NC} %s\n" "$1"; }
+log_info() { printf "${BLUE}[INFO]${NC} %s\n" "$1"; }
 log_success() { printf "${GREEN}[OK]${NC} %s\n" "$1"; }
-log_warn()    { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
-log_error()   { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; }
+log_warn() { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
+log_error() { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; }
 
 # Pure Bash whitespace trimmer (High Performance)
 trim() {
@@ -140,17 +143,17 @@ install_and_manage() {
 
     # 5. Execute Action
     case "$user_choice" in
-        y|yes)
-            log_info "Enabling and Starting..."
-            systemctl --user enable --now "$service_name"
-            log_success "$service_name is active."
-            ;;
-        *)
-            log_info "Disabling/Stopping..."
-            # 2>/dev/null hides error if service wasn't running anyway
-            systemctl --user disable --now "$service_name" 2>/dev/null || true
-            log_success "$service_name is inactive."
-            ;;
+    y | yes)
+        log_info "Enabling and Starting..."
+        systemctl --user enable --now "$service_name"
+        log_success "$service_name is active."
+        ;;
+    *)
+        log_info "Disabling/Stopping..."
+        # 2>/dev/null hides error if service wasn't running anyway
+        systemctl --user disable --now "$service_name" 2>/dev/null || true
+        log_success "$service_name is inactive."
+        ;;
     esac
 }
 
@@ -175,7 +178,7 @@ main() {
     fi
 
     log_info "Starting Service Manager..."
-    
+
     local entry
     local src_path
     local action
@@ -183,8 +186,8 @@ main() {
     # Iterate over the configuration array
     for entry in "${SERVICES_CONFIG[@]}"; do
         # Split string by delimiter '|'
-        IFS='|' read -r src_path action <<< "$entry"
-        
+        IFS='|' read -r src_path action <<<"$entry"
+
         # Trim whitespace using pure bash function
         src_path=$(trim "$src_path")
         action=$(trim "$action")
@@ -194,8 +197,8 @@ main() {
 
         # Validate action config
         if [[ "$action" != "enable" && "$action" != "disable" ]]; then
-             log_warn "Invalid default action '$action' for $src_path. Defaulting to 'disable'."
-             action="disable"
+            log_warn "Invalid default action '$action' for $src_path. Defaulting to 'disable'."
+            action="disable"
         fi
 
         install_and_manage "$src_path" "$action"
@@ -213,6 +216,6 @@ cleanup() {
     fi
 }
 trap cleanup EXIT
-trap 'exit 130' INT  # Handle Ctrl+C gracefully
+trap 'exit 130' INT # Handle Ctrl+C gracefully
 
 main "$@"

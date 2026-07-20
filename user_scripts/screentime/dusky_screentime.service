@@ -1,0 +1,20 @@
+[Unit]
+Description=Dusky Screentime Tracking Daemon
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1 PYTHONOPTIMIZE=2 MALLOC_ARENA_MAX=1
+ExecStart=/usr/bin/python3 %h/user_scripts/screentime/screentime_daemon.py
+Slice=app-graphical.slice
+OOMPolicy=kill
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=2s
+TimeoutStopFailureMode=kill
+MemoryAccounting=yes
+MemoryMax=100M
+
+[Install]
+WantedBy=graphical-session.target
