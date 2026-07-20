@@ -340,7 +340,7 @@ class Config:
     smoothing: float = 0.50
     gain: float = 1.00
     mirror: bool = False
-    shape_rounded: bool = True
+    shape_rounded: bool = False
     thickness: float = 0.80
     bloom: float = 1.00
     inner_glow: float = 0.70

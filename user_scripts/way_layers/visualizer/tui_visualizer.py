@@ -74,7 +74,7 @@ SCHEMA = {
             key="shape_rounded",
             scope="DEFAULT",
             type_="bool",
-            default=True,
+            default=False,
             group="Appearance",
             extended_help="Rounds the edges of the bars and lines.",
         ),
