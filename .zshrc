@@ -16,44 +16,39 @@
 # Exit early if not interactive (prevents breaking SCP/SFTP/rsync)
 [[ -o interactive ]] || return
 
-# --- Autocomplete & Vi Mode (Must precede plugins and compdef) ---
+# -----------------------------------------------------------------------------
+# [3] COMPLETION SYSTEM
+# -----------------------------------------------------------------------------
 setopt EXTENDED_GLOB
-bindkey -v
-KEYTIMEOUT=5
 
-if [[ -f /usr/share/zsh/plugins/zsh-autocomplete/zsh-autocomplete.plugin.zsh ]]; then
-    source /usr/share/zsh/plugins/zsh-autocomplete/zsh-autocomplete.plugin.zsh
-fi
-
-# Fallback/Safety: Ensure compdef is available for external modules
-# If zsh-autocomplete is not installed, we still need compdef for your modular scripts.
-if ! type compdef >/dev/null 2>&1; then
-    autoload -Uz compinit
-    local zcompdump="${ZDOTDIR:-$HOME}/.zcompdump"
-    local dump_cache=($zcompdump(#qN.mh-24))
-    if (( ${#dump_cache} )); then
-        compinit -C
-    else
-        compinit
-        touch "$zcompdump"
-    fi
-    unset zcompdump dump_cache
-fi
-
-# Populate LS_COLORS before any completion styling references it
+# 1. zstyle configurations MUST be declared before compinit
 if [[ -z "$LS_COLORS" ]] && command -v dircolors >/dev/null; then
   eval "$(dircolors -b)"
 fi
 
-# Restore user's preferred completion styling (cache, colors, fuzzy matching)
-local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
-[[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
+zstyle ':completion:*' menu select
 zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
 zstyle ':completion:*:descriptions' format '%B%F{yellow}%d%f%b'
+zstyle ':completion:*' group-name ''
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|=*' 'l:|=* r:|=*'
+
+local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
+[[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
 zstyle ':completion:*' use-cache on
 zstyle ':completion:*' cache-path "$cache_dir/zcompcache"
-zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|=*' 'l:|=* r:|=*'
-unset cache_dir
+
+# 2. Optimized initialization: Regenerate compdump cache once every 24 hours
+autoload -Uz compinit
+local zcompdump="${ZDOTDIR:-$HOME}/.zcompdump"
+local dump_cache=($zcompdump(#qN.mh-24))
+
+if (( ${#dump_cache} )); then
+  compinit -C
+else
+  compinit
+  touch "$zcompdump"
+fi
+unset cache_dir zcompdump dump_cache
 
 # -----------------------------------------------------------------------------
 # [1] ENVIRONMENT VARIABLES & PATH
@@ -102,7 +97,7 @@ setopt HIST_VERIFY             # Expand history (!!) into the buffer, don't run 
 setopt HIST_FCNTL_LOCK         # Better locking for concurrent shells sharing history
 
 # -----------------------------------------------------------------------------
-# [3] KEYBINDINGS & SHELL OPTIONS
+# [4] KEYBINDINGS & SHELL OPTIONS
 # -----------------------------------------------------------------------------
 
 # --- General Options ---
@@ -112,11 +107,28 @@ setopt NO_CASE_GLOB         # Perform case-insensitive globbing.
 setopt AUTO_PUSHD           # Automatically push directories onto the directory stack.
 setopt PUSHD_IGNORE_DUPS    # Don't push duplicate directories onto the stack.
 
+# --- Vi Mode Keybindings ---
+bindkey -v
+KEYTIMEOUT=1 # 10ms transition delay (instant mode switching)
+
 # --- Neovim Integration ---
 # Press 'v' in normal mode to edit the current command string in Neovim
 autoload -Uz edit-command-line
 zle -N edit-command-line
 bindkey -M vicmd v edit-command-line
+
+# --- History Search with Up/Down Arrows ---
+autoload -U history-search-end
+zle -N history-beginning-search-backward-end history-search-end
+zle -N history-beginning-search-forward-end history-search-end
+
+# Bind Arrow Keys across both vi insert and command modes
+for keymap in viins vicmd; do
+  bindkey -M "$keymap" "${terminfo[kcuu1]:-^[[A}" history-beginning-search-backward-end
+  bindkey -M "$keymap" "^[[A" history-beginning-search-backward-end
+  bindkey -M "$keymap" "${terminfo[kcud1]:-^[[B}" history-beginning-search-forward-end
+  bindkey -M "$keymap" "^[[B" history-beginning-search-forward-end
+done
 
 # -----------------------------------------------------------------------------
 # [5] ALIASES & FUNCTIONS (Main Core)
