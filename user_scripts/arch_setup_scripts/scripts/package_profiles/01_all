@@ -221,6 +221,7 @@ less
 ripgrep
 expac
 zsh-autosuggestions
+zsh-autocomplete
 iperf3
 pkgstats
 libqalculate

@@ -66,7 +66,7 @@ declare -ar pkgs_network=(
 )
 
 declare -ar pkgs_terminal=(
-  "kitty" "foot" "zsh" "zsh-syntax-highlighting" "starship" "fastfetch" "bat" "eza" "fd" "yazi" "gum" "tree" "fzf" "less" "ripgrep" "expac" "zsh-autosuggestions" "iperf3" "pkgstats" "libqalculate" "moreutils" "zoxide" "man-db" "lsof" "khal"
+  "kitty" "foot" "zsh" "zsh-syntax-highlighting" "starship" "fastfetch" "bat" "eza" "fd" "yazi" "gum" "tree" "fzf" "less" "ripgrep" "expac" "zsh-autosuggestions" "zsh-autocomplete" "iperf3" "pkgstats" "libqalculate" "moreutils" "zoxide" "man-db" "lsof" "khal"
 )
 
 declare -ar pkgs_dev=(
