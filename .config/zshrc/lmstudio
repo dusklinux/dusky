@@ -1,6 +1,6 @@
 #-- LM- Studio--
 llm() {
-  local dir="/mnt/media/Documents/do_not_delete_linux/appimages"
+  local dir="/mnt/media/downloads/llm/lmstudio/"
   
   # 1. Safely evaluate the glob and store the result in an array
   # (N)  = Null globbing: if no file matches, return empty without errors
