@@ -14,6 +14,7 @@ RestartSec=2
 TimeoutStopSec=2s
 TimeoutStopFailureMode=kill
 MemoryAccounting=yes
+MemoryHigh=100M
 MemoryMax=150M
 
 [Install]
