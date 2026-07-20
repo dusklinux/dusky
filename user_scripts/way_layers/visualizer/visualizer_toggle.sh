@@ -8,5 +8,5 @@ mkdir -p "$(dirname "$CTL_FILE")"
 if ! systemctl --user is-active --quiet dusky_visualizer.service; then
     systemctl --user start dusky_visualizer.service
 else
-    echo "toggle" > "$CTL_FILE"
+    echo "toggle" >"$CTL_FILE"
 fi

@@ -48,7 +48,7 @@ SCHEMA = {
             options=["bars", "dots", "line", "wave", "segments", "radial", "circle"],
             default="bars",
             group="Appearance",
-            extended_help="Choose the geometric rendering style for the visualizer."
+            extended_help="Choose the geometric rendering style for the visualizer.",
         ),
         ConfigItem(
             label="Position",
@@ -58,7 +58,7 @@ SCHEMA = {
             options=["top", "bottom", "center"],
             default="top",
             group="Appearance",
-            extended_help="Where the visualizer should be anchored on the screen."
+            extended_help="Where the visualizer should be anchored on the screen.",
         ),
         ConfigItem(
             label="Mirror Output",
@@ -67,7 +67,7 @@ SCHEMA = {
             type_="bool",
             default=False,
             group="Appearance",
-            extended_help="Mirrors the visualizer from the center outwards."
+            extended_help="Mirrors the visualizer from the center outwards.",
         ),
         ConfigItem(
             label="Rounded Shape",
@@ -76,7 +76,7 @@ SCHEMA = {
             type_="bool",
             default=False,
             group="Appearance",
-            extended_help="Rounds the edges of the bars and lines."
+            extended_help="Rounds the edges of the bars and lines.",
         ),
         ConfigItem(
             label="Bars Count",
@@ -88,7 +88,7 @@ SCHEMA = {
             step=8,
             default=48,
             group="Appearance",
-            extended_help="Number of frequency bands. Higher values use more CPU."
+            extended_help="Number of frequency bands. Higher values use more CPU.",
         ),
         ConfigItem(
             label="Segments Count",
@@ -100,7 +100,7 @@ SCHEMA = {
             step=2,
             default=16,
             group="Appearance",
-            extended_help="How many blocks to split each bar into (only applies to Segments style)."
+            extended_help="How many blocks to split each bar into (only applies to Segments style).",
         ),
         ConfigItem(
             label="Visualizer Height (%)",
@@ -112,7 +112,7 @@ SCHEMA = {
             step=0.05,
             default=0.50,
             group="Geometry",
-            extended_help="The percentage of the screen height the visualizer can span."
+            extended_help="The percentage of the screen height the visualizer can span.",
         ),
         ConfigItem(
             label="Thickness (%)",
@@ -124,10 +124,9 @@ SCHEMA = {
             step=0.1,
             default=0.5,
             group="Geometry",
-            extended_help="The width of each bar or line relative to its allocated space."
-        )
+            extended_help="The width of each bar or line relative to its allocated space.",
+        ),
     ],
-
     # -------------------------------------------------------------------------
     # TAB 1: MOTION
     # -------------------------------------------------------------------------
@@ -142,7 +141,7 @@ SCHEMA = {
             step=15,
             default=60,
             group="Performance",
-            extended_help="The rendering framerate of the Cairo surface."
+            extended_help="The rendering framerate of the visualizer surface (Cairo/OpenGL).",
         ),
         ConfigItem(
             label="Smoothing Alpha",
@@ -154,7 +153,7 @@ SCHEMA = {
             step=0.05,
             default=0.50,
             group="Dynamics",
-            extended_help="Controls how fast the bars fall down. Higher values are slower."
+            extended_help="Controls how fast the bars fall down. Higher values are slower.",
         ),
         ConfigItem(
             label="Visual Gain",
@@ -166,10 +165,9 @@ SCHEMA = {
             step=0.1,
             default=1.5,
             group="Dynamics",
-            extended_help="Multiplier for the audio values. If it's too quiet, increase this."
-        )
+            extended_help="Multiplier for the audio values. If it's too quiet, increase this.",
+        ),
     ],
-
     # -------------------------------------------------------------------------
     # TAB 2: EFFECTS
     # -------------------------------------------------------------------------
@@ -181,7 +179,7 @@ SCHEMA = {
             type_="bool",
             default=True,
             group="Idle State",
-            extended_help="Plays a gentle sine wave animation when no audio is playing."
+            extended_help="Plays a gentle sine wave animation when no audio is playing.",
         ),
         ConfigItem(
             label="Fade Direction",
@@ -191,7 +189,7 @@ SCHEMA = {
             options=["solid", "fade_to_base", "fade_to_tip"],
             default="fade_to_base",
             group="Visual Effects",
-            extended_help="Controls transparency fading of shapes. 'fade_to_base' leaves bright tips."
+            extended_help="Controls transparency fading of shapes. 'fade_to_base' leaves bright tips.",
         ),
         ConfigItem(
             label="Fade Amount",
@@ -203,7 +201,7 @@ SCHEMA = {
             step=0.1,
             default=0.7,
             group="Visual Effects",
-            extended_help="How transparent the faded end becomes. 1.0 is fully transparent, 0.0 is solid."
+            extended_help="How transparent the faded end becomes. 1.0 is fully transparent, 0.0 is solid.",
         ),
         ConfigItem(
             label="Frosted Glass (Hyprland Blur)",
@@ -212,10 +210,9 @@ SCHEMA = {
             type_="bool",
             default=True,
             group="Visual Effects",
-            extended_help="Applies a background blur to the visualizer (requires Hyprland)."
-        )
+            extended_help="Applies a background blur to the visualizer (requires Hyprland).",
+        ),
     ],
-
     # -------------------------------------------------------------------------
     # TAB 3: ADVANCED
     # -------------------------------------------------------------------------
@@ -227,7 +224,16 @@ SCHEMA = {
             type_="bool",
             default=True,
             group="System",
-            extended_help="Enable or disable the visualizer completely."
+            extended_help="Enable or disable the visualizer completely.",
+        ),
+        ConfigItem(
+            label="GPU Acceleration (OpenGL)",
+            key="gpu_acceleration",
+            scope="DEFAULT",
+            type_="bool",
+            default=True,
+            group="System",
+            extended_help="Use hardware GPU acceleration (Gtk.GLArea/OpenGL) instead of CPU software rendering (Cairo).",
         ),
         ConfigItem(
             label="Noise Reduction",
@@ -239,7 +245,7 @@ SCHEMA = {
             step=0.01,
             default=0.77,
             group="Cava Settings",
-            extended_help="Cava internal noise reduction algorithm. Default is 0.77."
+            extended_help="Cava internal noise reduction algorithm. Default is 0.77.",
         ),
         ConfigItem(
             label="Lower Freq Cutoff",
@@ -251,7 +257,7 @@ SCHEMA = {
             step=10,
             default=50,
             group="Cava Settings",
-            extended_help="Lower frequency limit passed to Cava (Hz)."
+            extended_help="Lower frequency limit passed to Cava (Hz).",
         ),
         ConfigItem(
             label="Upper Freq Cutoff",
@@ -263,7 +269,7 @@ SCHEMA = {
             step=500,
             default=10000,
             group="Cava Settings",
-            extended_help="Upper frequency limit passed to Cava (Hz)."
-        )
-    ]
+            extended_help="Upper frequency limit passed to Cava (Hz).",
+        ),
+    ],
 }

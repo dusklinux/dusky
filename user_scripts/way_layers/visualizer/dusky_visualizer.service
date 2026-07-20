@@ -14,8 +14,8 @@ RestartSec=2
 TimeoutStopSec=2s
 TimeoutStopFailureMode=kill
 MemoryAccounting=yes
-MemoryHigh=40M
-MemoryMax=200M
+MemoryHigh=100M
+MemoryMax=150M
 
 [Install]
 WantedBy=graphical-session.target
