@@ -812,9 +812,9 @@ def print_usage() -> None:
     print("  dusky_ssh_filesystem.py -s | --status    Show mount status")
     print("  dusky_ssh_filesystem.py -h | --help      Show this help message")
     print("\nExamples:")
-    print("  dusky_ssh_filesystem.py new@192.168.122.128")
-    print("  dusky_ssh_filesystem.py user@192.168.1.50:/home/user")
-    print("  dusky_ssh_filesystem.py user@192.168.1.50:2222")
+    print("  dusky_ssh_filesystem.py user@host")
+    print("  dusky_ssh_filesystem.py user@host:/path")
+    print("  dusky_ssh_filesystem.py user@host:2222")
 
 
 def main() -> int:
@@ -883,15 +883,15 @@ def main() -> int:
 
         match choice:
             case "1":
+                prompt_default = f" [{history[0]}]" if history else ""
                 target_raw = read_input(
-                    "Enter SSH target (e.g., user@192.168.1.50 or user@192.168.1.50:/home/user or user@host:2222) [new@192.168.122.128]: "
+                    f"Enter SSH target (e.g., user@host, host:/path, or user@host:port){prompt_default}: "
                 )
                 if target_raw is None:
                     print("\n[*] Exiting...")
                     break
 
                 if not target_raw:
-                    # Provide default if history or fallback default is present
                     if history:
                         target_raw = history[0]
                         print(f"[*] Defaulting to most recent: {target_raw}")
