@@ -3376,8 +3376,66 @@ def run_git_self_update(
         return False
 
     if repo_state == "absent":
-        sys.stdout.write(f"[WARN] Git dir not found ({git_dir}). Skipping self-update.\n")
-        return False
+        sys.stdout.write(f"[GIT] Bare repository not found at: {git_dir}\n")
+        repo_url = getattr(profile, "git_repo_url", "https://github.com/dusklinux/dusky")
+        if not repo_url:
+            repo_url = "https://github.com/dusklinux/dusky"
+
+        sys.stdout.write(f"[GIT] Cloning bare repository from {repo_url}...\n")
+        try:
+            ensure_dir(git_dir.parent, 0o700)
+            clone_cmd = ["git", "clone", "--bare", "--branch", GIT_UPSTREAM_BRANCH, repo_url, str(git_dir)]
+            clone_proc = subprocess.run(clone_cmd, capture_output=True, text=True, timeout=180)
+            if clone_proc.returncode != 0:
+                sys.stderr.write(f"[ERROR] Bare clone failed: {clone_proc.stderr}\n")
+                return False
+
+            fetch_cfg = ["git", f"--git-dir={git_dir}", "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]
+            subprocess.run(fetch_cfg, check=False)
+
+            sys.stdout.write("[GIT] Checking out repository to work tree...\n")
+            collision_roots = _collect_incoming_collisions(base_cmd, f"refs/heads/{GIT_UPSTREAM_BRANCH}", work_tree)
+            if collision_roots:
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_root = backups_dir() / f"dusky_backup_{timestamp}_initial"
+                collision_dir = backup_root / "untracked_collisions"
+                _backup_collision_roots(work_tree, collision_roots, collision_dir)
+
+            checkout_proc = subprocess.run(base_cmd + ["checkout", "-f", GIT_UPSTREAM_BRANCH], capture_output=True, text=True, timeout=120)
+            if checkout_proc.returncode != 0:
+                sys.stderr.write(f"[ERROR] Checkout failed: {checkout_proc.stderr}\n")
+                return False
+
+            sys.stdout.write("[GIT] First-time setup complete! Restarting orchestrator with updated code from GitHub...\n")
+            sys.stdout.flush()
+            sys.stderr.flush()
+
+            SudoEngine.cleanup()
+
+            my_path = Path(__file__).resolve()
+            wrapper_path = my_path.with_suffix(".sh")
+            if not wrapper_path.is_file():
+                wrapper_path = my_path.with_name("orchestrator.sh")
+
+            args = [a for a in sys.argv[1:] if a != "--git-update-only"]
+            if "--no-git-update" not in args:
+                args.append("--no-git-update")
+
+            try:
+                if wrapper_path.is_file():
+                    with suppress(OSError):
+                        os.chmod(wrapper_path, 0o755)
+                    os.execv(str(wrapper_path), [str(wrapper_path)] + args)
+
+                os.execv(sys.executable, [sys.executable] + args)
+            except OSError as e:
+                sys.stderr.write(f"[FATAL] Failed to restart orchestrator: {e}\n")
+                sys.exit(1)
+
+            return True
+        except Exception as e:
+            sys.stderr.write(f"[ERROR] Initial clone failed: {e}\n")
+            return False
 
     if repo_state != "valid":
         sys.stderr.write("[WARN] Git repository is not healthy. Skipping self-update.\n")
