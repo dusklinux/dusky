@@ -366,6 +366,7 @@ class OrchestratorTask:
     args: list[str] = field(default_factory=list)
     ignore_fail: bool = False
     interactive: bool = False
+    interactive_override: bool | None = None
     force_flag: bool = False
     condition: str | None = None
     timeout: float | None = None
@@ -382,6 +383,9 @@ class OrchestratorTask:
     retry: int = 0
     retry_delay: float = 1.0
     on_failure: str = "ask"
+    once: bool = False
+    once_mode: str = "content"
+    once_scope: str = "profile"
 
 
 @dataclass(slots=True, kw_only=True)
@@ -450,6 +454,9 @@ def make_state_key(task: OrchestratorTask, occurrence: int) -> str:
             str(int(task.force_flag)),
             timeout_repr,
             str(int(task.always)),
+            str(int(task.once)),
+            task.once_mode,
+            task.once_scope,
         ]
     ).encode("utf-8")
     return hashlib.blake2b(material, digest_size=16).hexdigest()
@@ -464,6 +471,7 @@ class StateStore:
         "skipped",
         "ignored",
         "manual",
+        "completed_once",
     }
 
     def __init__(self, profile: ProfileConfig):
@@ -536,6 +544,223 @@ def reset_state_for_profile(profile: ProfileConfig) -> None:
     print(f"Reset state for {profile.name} at {path}")
 
 
+class OnceStore:
+    def __init__(self) -> None:
+        try:
+            base = ensure_dir(xdg_state_home() / "dusky" / "state", 0o700)
+            self.path = base / "once.db"
+        except OSError:
+            self.path = state_dir() / "once.db"
+
+        self.conn = sqlite3.connect(self.path)
+        self.conn.execute("PRAGMA journal_mode=WAL;")
+        self.conn.execute("PRAGMA synchronous=NORMAL;")
+        self.conn.execute("PRAGMA busy_timeout=5000;")
+        self.conn.execute(
+            """
+CREATE TABLE IF NOT EXISTS once_markers (
+    marker_key TEXT PRIMARY KEY,
+    profile TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    script_name TEXT NOT NULL,
+    args_key TEXT NOT NULL,
+    resolved_path TEXT,
+    checksum TEXT,
+    once_mode TEXT NOT NULL,
+    exit_code INTEGER,
+    run_id TEXT,
+    version TEXT,
+    created TEXT,
+    updated TEXT
+)
+"""
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_once_script ON once_markers(script_name);"
+        )
+        self.conn.commit()
+
+    @staticmethod
+    def make_key(task: OrchestratorTask, profile_name: str) -> str:
+        scope = task.once_scope if task.once_scope in ("profile", "global") else "profile"
+        profile_part = "__global__" if scope == "global" else profile_name
+        material = "|".join(
+            [
+                "once",
+                scope,
+                profile_part,
+                task.mode,
+                task.script_name,
+                shlex.join(task.args),
+            ]
+        ).encode("utf-8")
+        return hashlib.blake2b(material, digest_size=16).hexdigest()
+
+    def marker_valid(self, task: OrchestratorTask, profile_name: str) -> bool:
+        if not task.once:
+            return False
+
+        key = self.make_key(task, profile_name)
+        cur = self.conn.execute(
+            "SELECT checksum, once_mode FROM once_markers WHERE marker_key = ?",
+            (key,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return False
+
+        stored_checksum, stored_mode = row
+        if task.once_mode == "forever" or stored_mode == "forever":
+            return True
+
+        return bool(task.checksum) and stored_checksum == task.checksum
+
+    def mark_success(
+        self,
+        task: OrchestratorTask,
+        profile_name: str,
+        exit_code: int | None = None,
+        run_id: str = "",
+    ) -> None:
+        if not task.once:
+            return
+
+        key = self.make_key(task, profile_name)
+        args_key = shlex.join(task.args)
+
+        self.conn.execute(
+            """
+INSERT INTO once_markers (
+    marker_key,
+    profile,
+    scope,
+    mode,
+    script_name,
+    args_key,
+    resolved_path,
+    checksum,
+    once_mode,
+    exit_code,
+    run_id,
+    version,
+    created,
+    updated
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(marker_key) DO UPDATE SET
+    profile=excluded.profile,
+    scope=excluded.scope,
+    mode=excluded.mode,
+    script_name=excluded.script_name,
+    args_key=excluded.args_key,
+    resolved_path=excluded.resolved_path,
+    checksum=excluded.checksum,
+    once_mode=excluded.once_mode,
+    exit_code=excluded.exit_code,
+    run_id=excluded.run_id,
+    version=excluded.version,
+    updated=excluded.updated
+""",
+            (
+                key,
+                profile_name,
+                task.once_scope,
+                task.mode,
+                task.script_name,
+                args_key,
+                str(task.resolved_path),
+                task.checksum,
+                task.once_mode,
+                exit_code,
+                run_id,
+                VERSION,
+                now_iso(),
+                now_iso(),
+            ),
+        )
+        self.conn.commit()
+
+    def forget(self, script: str) -> int:
+        script = script.strip()
+        if not script:
+            return 0
+
+        cur = self.conn.execute(
+            """
+DELETE FROM once_markers
+WHERE script_name = ?
+   OR resolved_path = ?
+   OR script_name LIKE ?
+""",
+            (script, script, f"%/{script}"),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def list_markers(self) -> list[dict[str, object]]:
+        cur = self.conn.execute(
+            """
+SELECT
+    profile,
+    scope,
+    mode,
+    script_name,
+    args_key,
+    resolved_path,
+    checksum,
+    once_mode,
+    exit_code,
+    run_id,
+    updated
+FROM once_markers
+ORDER BY profile, script_name, args_key
+"""
+        )
+
+        rows: list[dict[str, object]] = []
+        for row in cur.fetchall():
+            rows.append(
+                {
+                    "profile": row[0],
+                    "scope": row[1],
+                    "mode": row[2],
+                    "script_name": row[3],
+                    "args_key": row[4],
+                    "resolved_path": row[5],
+                    "checksum": row[6],
+                    "once_mode": row[7],
+                    "exit_code": row[8],
+                    "run_id": row[9],
+                    "updated": row[10],
+                }
+            )
+        return rows
+
+    def print_list(self) -> None:
+        rows = self.list_markers()
+        if not rows:
+            print("No persistent once markers found.")
+            return
+
+        print(f"Persistent once markers ({len(rows)}):")
+        for i, row in enumerate(rows, start=1):
+            print(f"{i:3d}. [{row['mode']}] {row['script_name']}")
+            print(f"     profile:   {row['profile']}")
+            print(f"     scope:     {row['scope']}")
+            print(f"     args:      {row['args_key']}")
+            print(f"     path:      {row['resolved_path']}")
+            print(f"     mode:      {row['once_mode']}")
+            print(f"     checksum:  {row['checksum']}")
+            print(f"     exit_code: {row['exit_code']}")
+            print(f"     run_id:    {row['run_id']}")
+            print(f"     updated:   {row['updated']}")
+            print()
+
+    def close(self) -> None:
+        with suppress(Exception):
+            self.conn.close()
+
+
 # ==============================================================================
 # LOGGER
 # ==============================================================================
@@ -591,6 +816,9 @@ class RunLogger:
             f.write(f"[{now_ts()}] COMMAND: {shlex.join(cmd)}\n")
             f.write(f"[{now_ts()}] CONDITION: {task.condition or 'always'}\n")
             f.write(f"[{now_ts()}] ALWAYS: {task.always}\n")
+            f.write(f"[{now_ts()}] ONCE: {task.once}\n")
+            f.write(f"[{now_ts()}] ONCE_MODE: {task.once_mode}\n")
+            f.write(f"[{now_ts()}] ONCE_SCOPE: {task.once_scope}\n")
             f.write(f"[{now_ts()}] RETRY: {task.retry}\n")
             f.write(f"[{now_ts()}] ON_FAILURE: {task.on_failure}\n")
             f.flush()
@@ -684,6 +912,11 @@ class RunLogger:
                 "duration": task.duration,
                 "checksum": task.checksum,
                 "always": task.always,
+                "interactive": task.interactive,
+                "interactive_override": task.interactive_override,
+                "once": task.once,
+                "once_mode": task.once_mode,
+                "once_scope": task.once_scope,
                 "retry": task.retry,
                 "on_failure": task.on_failure,
             }
@@ -1653,6 +1886,7 @@ def parse_task_entry(raw_entry: str, index: int) -> OrchestratorTask:
 
     ignore_fail = False
     interactive = False
+    interactive_override: bool | None = None
     force_flag = False
     always = False
     condition: str | None = None
@@ -1660,6 +1894,9 @@ def parse_task_entry(raw_entry: str, index: int) -> OrchestratorTask:
     retry = 0
     retry_delay = 1.0
     on_failure = "ask"
+    once = False
+    once_mode = "content"
+    once_scope = "profile"
 
     for flag in flags.split(","):
         f = flag.strip().lower()
@@ -1668,12 +1905,30 @@ def parse_task_entry(raw_entry: str, index: int) -> OrchestratorTask:
 
         if f in ("true", "ignore", "ignore-fail"):
             ignore_fail = True
-        elif f in ("interactive", "tui", "prompt"):
+        elif f in ("interactive", "tui", "prompt", "fullscreen", "tty", "suspend"):
             interactive = True
+            interactive_override = True
+        elif f in ("no-interactive", "noninteractive", "inline", "embedded"):
+            interactive = False
+            interactive_override = False
         elif f in ("force", "--force"):
             force_flag = True
         elif f in ("always", "always_run"):
             always = True
+        elif f in ("once", "run_once", "sticky"):
+            once = True
+        elif f in ("once:content", "once:hash"):
+            once = True
+            once_mode = "content"
+        elif f in ("once:forever", "once:exact", "once:permanent"):
+            once = True
+            once_mode = "forever"
+        elif f in ("once:profile", "once:local"):
+            once = True
+            once_scope = "profile"
+        elif f in ("once:global", "once:machine"):
+            once = True
+            once_scope = "global"
         elif f.startswith("if:"):
             condition = flag.strip()[3:]
         elif f.startswith("timeout:"):
@@ -1708,6 +1963,7 @@ def parse_task_entry(raw_entry: str, index: int) -> OrchestratorTask:
         args=cmd_tokens[1:],
         ignore_fail=ignore_fail,
         interactive=interactive,
+        interactive_override=interactive_override,
         force_flag=force_flag,
         condition=condition,
         timeout=timeout,
@@ -1716,6 +1972,9 @@ def parse_task_entry(raw_entry: str, index: int) -> OrchestratorTask:
         retry=retry,
         retry_delay=retry_delay,
         on_failure=on_failure,
+        once=once,
+        once_mode=once_mode,
+        once_scope=once_scope,
     )
 
 
@@ -1734,7 +1993,14 @@ def parse_task_table(table: dict, index: int) -> OrchestratorTask:
 
     flags = str(table.get("flags", ""))
     ignore_fail = bool(table.get("ignore_fail", False))
-    interactive = bool(table.get("interactive", False))
+
+    interactive_override: bool | None = None
+    if "interactive" in table:
+        interactive = bool(table.get("interactive"))
+        interactive_override = interactive
+    else:
+        interactive = False
+
     force_flag = bool(table.get("force", False))
     always = bool(table.get("always", False))
     condition = table.get("condition")
@@ -1754,6 +2020,15 @@ def parse_task_table(table: dict, index: int) -> OrchestratorTask:
     if on_failure not in ("ask", "abort", "continue", "skip", "manual"):
         on_failure = "ask"
 
+    once = bool(table.get("once", False))
+    once_mode = str(table.get("once_mode", "content")).lower()
+    if once_mode not in ("content", "forever"):
+        once_mode = "content"
+
+    once_scope = str(table.get("once_scope", "profile")).lower()
+    if once_scope not in ("profile", "global"):
+        once_scope = "profile"
+
     for flag in flags.split(","):
         f = flag.strip().lower()
         if not f:
@@ -1761,12 +2036,30 @@ def parse_task_table(table: dict, index: int) -> OrchestratorTask:
 
         if f in ("true", "ignore", "ignore-fail"):
             ignore_fail = True
-        elif f in ("interactive", "tui", "prompt"):
+        elif f in ("interactive", "tui", "prompt", "fullscreen", "tty", "suspend"):
             interactive = True
+            interactive_override = True
+        elif f in ("no-interactive", "noninteractive", "inline", "embedded"):
+            interactive = False
+            interactive_override = False
         elif f in ("force", "--force"):
             force_flag = True
         elif f in ("always", "always_run"):
             always = True
+        elif f in ("once", "run_once", "sticky"):
+            once = True
+        elif f in ("once:content", "once:hash"):
+            once = True
+            once_mode = "content"
+        elif f in ("once:forever", "once:exact", "once:permanent"):
+            once = True
+            once_mode = "forever"
+        elif f in ("once:profile", "once:local"):
+            once = True
+            once_scope = "profile"
+        elif f in ("once:global", "once:machine"):
+            once = True
+            once_scope = "global"
         elif f.startswith("if:"):
             condition = flag.strip()[3:]
         elif f.startswith("timeout:"):
@@ -1798,6 +2091,7 @@ def parse_task_table(table: dict, index: int) -> OrchestratorTask:
         args=args,
         ignore_fail=ignore_fail,
         interactive=interactive,
+        interactive_override=interactive_override,
         force_flag=force_flag,
         condition=str(condition).strip() if condition else None,
         timeout=timeout_value,
@@ -1806,6 +2100,9 @@ def parse_task_table(table: dict, index: int) -> OrchestratorTask:
         retry=retry,
         retry_delay=retry_delay,
         on_failure=on_failure,
+        once=once,
+        once_mode=once_mode,
+        once_scope=once_scope,
     )
 
 
@@ -1993,13 +2290,18 @@ def resolve_and_validate_manifest(profile: ProfileConfig) -> bool:
             continue
 
         task.checksum = file_checksum(task.resolved_path)
-
         is_elf, first_line, full_head = _script_metadata(task.resolved_path)
 
+        metadata_interactive = False
         for line in full_head.splitlines()[:20]:
             if _INTERACTIVE_RE.search(line):
-                task.interactive = True
+                metadata_interactive = True
                 break
+
+        if task.interactive_override is not None:
+            task.interactive = task.interactive_override
+        else:
+            task.interactive = metadata_interactive
 
         shebang_interp = _interpreter_from_shebang(first_line)
         executable = os.access(task.resolved_path, os.X_OK)
@@ -2715,6 +3017,8 @@ def _task_label(task: OrchestratorTask) -> Text:
     txt.append(f" [{task.mode}] {task.script_name}")
     if task.always:
         txt.append(" ⟳", style="bold magenta")
+    if task.once:
+        txt.append(" [once]", style="bold blue")
     return txt
 
 
@@ -3259,6 +3563,7 @@ class DuskyOrchestratorApp(App):
 
         self.run_id = uuid.uuid4().hex[:8]
         self.state = StateStore(profile)
+        self.once_store = OnceStore()
         self.statuses = self.state.statuses()
         self.progressed: set[str] = set()
         self.conditions = ConditionEvaluator()
@@ -3361,6 +3666,7 @@ class DuskyOrchestratorApp(App):
         self._kill_active_child_sync()
         self.logger.close_all()
         self.state.close()
+        self.once_store.close()
         SudoEngine.cleanup()
 
     def on_resize(self, event: events.Resize) -> None:
@@ -3714,6 +4020,26 @@ class DuskyOrchestratorApp(App):
         txt.append(str(task.timeout if task.timeout is not None else self.task_timeout))
         txt.append("  Always: ", style="bold")
         txt.append(str(task.always).lower() + "\n")
+
+        txt.append("Interactive: ", style="bold")
+        txt.append(str(task.interactive).lower())
+        if task.interactive_override is not None:
+            txt.append(" (profile override)", style="dim")
+        txt.append("\n")
+
+        txt.append("Once: ", style="bold")
+        if task.once:
+            once_valid = self.once_store.marker_valid(task, self.profile.name)
+            txt.append(f"true ({task.once_mode}/{task.once_scope})", style="bold")
+            txt.append("  Once marker: ", style="bold")
+            if once_valid:
+                txt.append("valid", style="green")
+            else:
+                txt.append("absent/mismatch", style="yellow")
+            txt.append("\n")
+        else:
+            txt.append("false\n")
+
         txt.append("Retry: ", style="bold")
         txt.append(str(task.retry))
         txt.append("  On failure: ", style="bold")
@@ -4308,10 +4634,21 @@ class DuskyOrchestratorApp(App):
         exit_code: int | None = None,
         note: str = "",
     ) -> None:
+        if task.once and status in ("completed", "manual"):
+            try:
+                self.once_store.mark_success(
+                    task,
+                    self.profile.name,
+                    exit_code,
+                    self.run_id,
+                )
+            except Exception as e:
+                self.log_system(f"Failed to write persistent once marker: {e}", is_err=True)
+
         self.state.mark(task, status, exit_code, note)
         self.statuses[task.state_key] = status
 
-        if status in ("completed", "ignored", "manual"):
+        if status in ("completed", "ignored", "manual", "completed_once"):
             self.update_task_node_by_key(task.state_key, TaskStatus.COMPLETED)
         elif status in ("skipped", "skipped_condition"):
             self.update_task_node_by_key(task.state_key, TaskStatus.SKIPPED)
@@ -4584,6 +4921,14 @@ class DuskyOrchestratorApp(App):
                         if key in handled:
                             continue
 
+                        if task.once and self.once_store.marker_valid(task, self.profile.name):
+                            self.log_system(
+                                f"Already completed once; skipping: {task.script_name}"
+                            )
+                            self.finish_task(task, "completed_once", None, "once marker")
+                            handled.add(key)
+                            continue
+
                         if task.always and key in self._always_handled:
                             handled.add(key)
                             continue
@@ -4705,6 +5050,14 @@ def parse_command_line() -> argparse.Namespace:
     parser.add_argument("--list-scripts", action="store_true", help="List sequence of selected profile and exit")
     parser.add_argument("--reset", action="store_true", help="Reset state for selected profile and exit")
     parser.add_argument("--reset-and-run", action="store_true", help="Reset state for selected profile, then run")
+    parser.add_argument("--list-once", action="store_true", help="List persistent once markers and exit")
+    parser.add_argument(
+        "--forget-once",
+        action="append",
+        default=[],
+        metavar="SCRIPT",
+        help="Forget persistent once marker(s) for a script name or path. Can be repeated.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Validate everything but do not execute scripts")
     parser.add_argument("--explain", action="store_true", help="Explain run decisions and exit")
     parser.add_argument("--force", action="store_true", help="Export DUSKY_FORCE=1 and pass --force to scripts")
@@ -4788,6 +5141,7 @@ def print_explain(profile: ProfileConfig) -> None:
     statuses = temp_state.statuses()
     temp_state.close()
 
+    once_store = OnceStore()
     cond = ConditionEvaluator()
 
     print(f"Execution plan for {profile.name}:\n")
@@ -4796,8 +5150,11 @@ def print_explain(profile: ProfileConfig) -> None:
         status = statuses.get(t.state_key, "pending")
         condition_result = True if not t.condition else cond.check(t.condition)
         volatile = cond._volatile(t.condition)
+        once_marker = once_store.marker_valid(t, profile.name) if t.once else False
 
-        if StateStore.is_done(status) and not t.always:
+        if t.once and once_marker:
+            action = "skip(once)"
+        elif StateStore.is_done(status) and not t.always:
             action = "skip(done)"
         elif t.condition and not condition_result:
             action = "defer-or-skip"
@@ -4808,16 +5165,26 @@ def print_explain(profile: ProfileConfig) -> None:
         print(f"    path:        {t.resolved_path}")
         print(f"    interpreter: {t.interpreter or 'direct'}")
         print(f"    args:        {shlex.join(t.args)}")
+        print(f"    interactive: {t.interactive}")
         print(f"    condition:   {t.condition or 'always'}")
         print(f"    cond_result: {condition_result}")
         print(f"    volatile:    {volatile}")
         print(f"    always:      {t.always}")
+        print(f"    once:        {t.once}")
+
+        if t.once:
+            print(f"    once_mode:   {t.once_mode}")
+            print(f"    once_scope:  {t.once_scope}")
+            print(f"    once_marker: {once_marker}")
+
         print(f"    retry:       {t.retry}")
         print(f"    on_failure:  {t.on_failure}")
         print(f"    timeout:     {t.timeout if t.timeout is not None else 'global'}")
         print(f"    state:       {status}")
         print(f"    action:      {action}")
         print()
+
+    once_store.close()
 
 
 def main() -> None:
@@ -4845,6 +5212,23 @@ def main() -> None:
     if args.list:
         for i, p in enumerate(profiles, start=1):
             print(f"{i:2d}. {p.filepath.stem}: {p.name} ({p.description})")
+        sys.exit(0)
+
+    if args.list_once:
+        store = OnceStore()
+        store.print_list()
+        store.close()
+        sys.exit(0)
+
+    if args.forget_once:
+        if not acquire_lock():
+            sys.exit(1)
+
+        store = OnceStore()
+        for script in args.forget_once:
+            count = store.forget(script)
+            print(f"Forgot {count} once marker(s) for: {script}")
+        store.close()
         sys.exit(0)
 
     selected_profile: ProfileConfig | None = None
@@ -4923,34 +5307,53 @@ def main() -> None:
         statuses = temp_state.statuses()
         temp_state.close()
 
-        print("Dry-run validation complete.\n")
+        once_store = OnceStore()
 
+        print("Dry-run validation complete.\n")
         for t in selected_profile.tasks:
             state = statuses.get(t.state_key, "pending")
+            once_marker = once_store.marker_valid(t, selected_profile.name) if t.once else False
+
             print(f"{t.index:03d}. [{t.mode}] {t.script_name}")
             print(f"    path:        {t.resolved_path}")
             print(f"    interpreter: {t.interpreter or 'direct'}")
             print(f"    args:        {shlex.join(t.args)}")
             print(f"    interactive: {t.interactive}")
+
+            if t.interactive_override is not None:
+                print(f"    interactive_override: {t.interactive_override}")
+
             print(f"    condition:   {t.condition or 'always'}")
             print(f"    timeout:     {t.timeout if t.timeout is not None else args.task_timeout}")
             print(f"    checksum:    {t.checksum}")
             print(f"    always:      {t.always}")
+            print(f"    once:        {t.once}")
+
+            if t.once:
+                print(f"    once_mode:   {t.once_mode}")
+                print(f"    once_scope:  {t.once_scope}")
+                print(f"    once_marker: {once_marker}")
+
             print(f"    retry:       {t.retry}")
             print(f"    on_failure:  {t.on_failure}")
             print(f"    state:       {state}")
             print()
 
+        once_store.close()
         sys.exit(0)
 
     temp_state = StateStore(selected_profile)
     statuses = temp_state.statuses()
     temp_state.close()
 
+    once_store = OnceStore()
     has_sudo = any(
-        t.mode == "S" and not StateStore.is_done(statuses.get(t.state_key))
+        t.mode == "S"
+        and not StateStore.is_done(statuses.get(t.state_key))
+        and not (t.once and once_store.marker_valid(t, selected_profile.name))
         for t in selected_profile.tasks
     )
+    once_store.close()
 
     if has_sudo:
         password_file = Path(args.sudo_password_file).expanduser() if args.sudo_password_file else None
