@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Arch Linux (Btrfs root) | Root & Home Snapper isolated snapshots setup
 # LIVE SYSTEM DEPLOYMENT EDITION (Bash 5.3+)
+# Patched: coordinated snapshot userdata + safer unit generation.
 
 set -Eeuo pipefail
 export LC_ALL=C
@@ -25,13 +26,13 @@ declare -A CACHE_MNT_OPTS=()
 declare -a ACTIVE_TEMP_MOUNTS=()
 declare -a ACTIVE_TEMP_FILES=()
 declare -a ROLLBACK_CMDS=()
+
 SUDO_PID=""
 ROLLBACK_ON_EXIT=false
 
 cleanup() {
     local cmd mnt f i
-    
-    # Execute rollbacks in LIFO (Last-In-First-Out) order to safely unwind dependencies
+
     if [[ "$ROLLBACK_ON_EXIT" == true ]] && (( ${#ROLLBACK_CMDS[@]} > 0 )); then
         warn "Executing transactional rollbacks..."
         for (( i=${#ROLLBACK_CMDS[@]}-1; i>=0; i-- )); do
@@ -59,37 +60,60 @@ cleanup() {
 }
 
 trap_exit() { cleanup; }
-trap_interrupt() { ROLLBACK_ON_EXIT=true; cleanup; printf '\n\033[1;31m[FATAL]\033[0m Script interrupted.\n' >&2; exit 130; }
+
+trap_interrupt() {
+    ROLLBACK_ON_EXIT=true
+    cleanup
+    printf '\n\033[1;31m[FATAL]\033[0m Script interrupted.\n' >&2
+    exit 130
+}
+
 trap 'ROLLBACK_ON_EXIT=true; printf "\n\033[1;31m[FATAL]\033[0m Script failed at line %d. Command: %s\n" "$LINENO" "$BASH_COMMAND" >&2; cleanup' ERR
 trap trap_exit EXIT
 trap trap_interrupt INT TERM HUP
 
-fatal() { ROLLBACK_ON_EXIT=true; printf '\033[1;31m[FATAL]\033[0m %s\n' "$1" >&2; exit 1; }
-info() { printf '\033[1;32m[INFO]\033[0m %s\n' "$1"; }
-warn() { printf '\033[1;33m[WARN]\033[0m %s\n' "$1" >&2; }
+fatal() {
+    ROLLBACK_ON_EXIT=true
+    printf '\033[1;31m[FATAL]\033[0m %s\n' "$1" >&2
+    exit 1
+}
+
+info() {
+    printf '\033[1;32m[INFO]\033[0m %s\n' "$1"
+}
+
+warn() {
+    printf '\033[1;33m[WARN]\033[0m %s\n' "$1" >&2
+}
 
 execute() {
     local desc="$1"; shift
+
     if [[ "$AUTO_MODE" == true ]]; then
         "$@"
         return 0
     fi
+
     printf '\n\033[1;34m[ACTION]\033[0m %s\n' "$desc"
     read -r -p "Execute this step? [Y/n] " response || fatal "Input closed; aborting."
+
     if [[ "${response,,}" =~ ^(n|no)$ ]]; then
         info "Skipped."
         return 0
     fi
+
     "$@"
 }
 
 backup_file() {
     local file="$1"
+
     [[ -e "$file" ]] || return 0
     [[ -v BACKED_UP["$file"] ]] && return 0
 
     local stamp
     printf -v stamp '%(%Y%m%d-%H%M%S)T' -1
+
     sudo cp -a -- "$file" "${file}.bak.${stamp}"
     BACKED_UP["$file"]=1
     info "Backup created: ${file}.bak.${stamp}"
@@ -122,6 +146,7 @@ sudo_path_is_dir() { sudo test -d "$1"; }
 
 atomic_write() {
     local target="$1" src="$2" target_dir tmp_target
+
     target_dir="$(dirname "$target")"
     tmp_target="$(sudo mktemp "${target_dir}/.tmp.XXXXXX")"
     ACTIVE_TEMP_FILES+=("$tmp_target")
@@ -136,9 +161,11 @@ atomic_write() {
 
 load_mount_info() {
     local target="$1"
+
     [[ -v CACHE_MNT_SOURCE["$target"] ]] && return 0
 
     local findmnt_out source uuid opts fstab_opts
+
     findmnt_out="$(findmnt -n -e -o SOURCE,UUID,OPTIONS -M "$target" 2>/dev/null || true)"
     [[ -n "$findmnt_out" ]] || fatal "Could not determine mount info for $target"
 
@@ -158,6 +185,7 @@ load_mount_info() {
     if [[ -z "$uuid" || "$uuid" == "-" ]]; then
         uuid="$(sudo blkid -s UUID -o value "$source" 2>/dev/null || true)"
     fi
+
     [[ -n "$uuid" ]] || fatal "Could not determine UUID for $target"
 
     CACHE_MNT_SOURCE["$target"]="$source"
@@ -175,6 +203,7 @@ extract_subvol() {
 
 get_mount_subvolume_path() {
     local target="$1" path
+
     load_mount_info "$target"
 
     path="$(extract_subvol "${CACHE_MNT_OPTS["$target"]}" || true)"
@@ -186,9 +215,11 @@ get_mount_subvolume_path() {
     require_cmd btrfs
     path="$(sudo btrfs subvolume show "$target" 2>/dev/null | sed -n 's/^[[:space:]]*Path:[[:space:]]*//p' || true)"
     path="${path#/}"
+
     case "$path" in
         ""|"<FS_TREE>"|"/") return 1 ;;
     esac
+
     printf '%s\n' "$path"
 }
 
@@ -197,6 +228,7 @@ clean_mount_opts() {
     local -a parts kept=()
 
     IFS=',' read -r -a parts <<< "$opts"
+
     for opt in "${parts[@]}"; do
         case "$opt" in
             subvol=*|subvolid=*|ro) continue ;;
@@ -212,6 +244,7 @@ clean_mount_opts() {
 
 dir_is_empty() {
     sudo test -d "$1" || return 0
+
     local entries
     entries="$(sudo find "$1" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)"
     [[ -z "$entries" ]]
@@ -223,17 +256,20 @@ path_is_btrfs_subvolume() {
 
 btrfs_subvolume_is_ro() {
     local out
-    # Modern btrfs-progs v7.0: Use explicit '-t subvol' instead of deprecated '-ts' alias
     out="$(sudo btrfs property get -t subvol "$1" ro 2>/dev/null || true)"
+
     if [[ "$out" == *"ro=true"* ]]; then
         return 0
     fi
+
     return 1
 }
 
 mount_top_level_for_base() {
     local base_path="$1" root_source root_opts tmp_mnt extra_opts="subvolid=5"
+
     load_mount_info "$base_path"
+
     root_source="${CACHE_MNT_SOURCE["$base_path"]}"
     root_opts="${CACHE_MNT_OPTS["$base_path"]}"
 
@@ -241,6 +277,7 @@ mount_top_level_for_base() {
 
     tmp_mnt="$(mktemp -d)"
     ACTIVE_TEMP_MOUNTS+=("$tmp_mnt")
+
     sudo mount -o "$extra_opts" "$root_source" "$tmp_mnt" || fatal "Mount failed."
 
     printf '%s\n' "$tmp_mnt"
@@ -248,11 +285,13 @@ mount_top_level_for_base() {
 
 release_temp_mount() {
     local tmp_mnt="$1"
+
     [[ -n "$tmp_mnt" ]] || return 0
 
     if mountpoint -q "$tmp_mnt"; then
         sudo umount "$tmp_mnt" 2>/dev/null || true
     fi
+
     rmdir "$tmp_mnt" 2>/dev/null || true
     remove_array_value ACTIVE_TEMP_MOUNTS "$tmp_mnt"
 }
@@ -270,22 +309,25 @@ current_snapshots_mount_matches_expected() {
     read -r snap_uuid mounted_opts <<< "$snap_info"
 
     [[ "$snap_uuid" == "$target_uuid" ]] || return 1
+
     mounted_subvol="$(extract_subvol "$mounted_opts" || true)"
     [[ "${mounted_subvol#/}" == "${expected_subvol#/}" ]]
 }
 
 verify_snapshots_mount() {
     local mount_target="$1" expected_subvol="$2" base_target="$3" target_uuid
+    local snap_info snap_uuid mounted_opts mounted_subvol
+
     load_mount_info "$base_target"
     target_uuid="${CACHE_MNT_UUID["$base_target"]}"
 
     findmnt -M "$mount_target" >/dev/null 2>&1 || fatal "${mount_target} is not mounted."
 
-    local snap_info snap_uuid mounted_opts mounted_subvol
     snap_info="$(findmnt -n -e -o UUID,OPTIONS -M "$mount_target" 2>/dev/null || true)"
     read -r snap_uuid mounted_opts <<< "$snap_info"
 
     [[ "$snap_uuid" == "$target_uuid" ]] || fatal "${mount_target} filesystem UUID mismatch."
+
     mounted_subvol="$(extract_subvol "$mounted_opts" || true)"
     [[ "${mounted_subvol#/}" == "${expected_subvol#/}" ]] || fatal "${mount_target} subvol mismatch."
 
@@ -295,7 +337,11 @@ verify_snapshots_mount() {
 
 install_packages() {
     info "Verifying Snapper runtime packages for maximum reliability..."
-    sudo pacman -S --needed --noconfirm snapper boost-libs btrfs-progs
+    if pacman -Q snapper boost-libs btrfs-progs >/dev/null 2>&1; then
+        info "All required packages (snapper, boost-libs, btrfs-progs) are already installed."
+    else
+        sudo pacman -Sy --needed --noconfirm snapper boost-libs btrfs-progs
+    fi
     command -v ldconfig >/dev/null 2>&1 && sudo ldconfig
 }
 
@@ -307,7 +353,9 @@ post_install_checks() {
     require_cmd btrfs
     require_cmd snapper
     require_cmd systemctl
+
     verify_snapper_runtime
+
     path_is_btrfs_subvolume "/home" || fatal "/home is not a Btrfs subvolume."
 }
 
@@ -321,24 +369,27 @@ ensure_snapper_config() {
         return 0
     fi
 
-    # Handle corrupted zombie configs left over from aborted/crashed runs
     if sudo test -f "/etc/snapper/configs/${config_name}"; then
         warn "Snapper config '${config_name}' is corrupted or invalid. Purging..."
         sudo rm -f "/etc/snapper/configs/${config_name}"
+
         if sudo test -f "/etc/conf.d/snapper"; then
             sudo sed -i -E "s/[[:space:]]*\b${config_name}\b//g" /etc/conf.d/snapper || true
         fi
     fi
 
-    # Check if ANY other config covers the path to prevent "subvolume already covered" error
     if sudo test -d /etc/snapper/configs; then
         local conf conflicting_name
+
         while read -r -d '' conf; do
             [[ -n "$conf" ]] || continue
-            if sudo grep -q "^SUBVOLUME=\"${config_path}\"$" "$conf" 2>/dev/null; then
+
+            if sudo grep -qxF "SUBVOLUME=\"${config_path}\"" "$conf" 2>/dev/null; then
                 conflicting_name="$(basename "$conf")"
                 warn "Subvolume ${config_path} is already covered by '${conflicting_name}'. Purging conflict..."
+
                 sudo rm -f "$conf"
+
                 if sudo test -f "/etc/conf.d/snapper"; then
                     sudo sed -i -E "s/[[:space:]]*\b${conflicting_name}\b//g" /etc/conf.d/snapper || true
                 fi
@@ -363,11 +414,13 @@ ensure_snapper_config() {
 
     sudo snapper -c "$config_name" create-config "$config_path"
     ROLLBACK_CMDS+=("sudo snapper -c ${config_name} delete-config")
+
     info "Created Snapper ${config_name} config."
 }
 
 ensure_top_level_snapshots_subvolume() {
     local base_path="$1" subvol_target="$2" tmp_mnt
+
     tmp_mnt="$(mount_top_level_for_base "$base_path")"
 
     if sudo_path_exists "${tmp_mnt}/${subvol_target}"; then
@@ -383,6 +436,7 @@ ensure_top_level_snapshots_subvolume() {
 
 migrate_regular_item_into_dir() {
     local src_item="$1" dst_dir="$2" base dst_item
+
     base="$(basename "$src_item")"
     dst_item="${dst_dir}/${base}"
 
@@ -391,6 +445,7 @@ migrate_regular_item_into_dir() {
             sudo rm -f -- "$src_item"
             return 0
         fi
+
         fatal "Metadata conflict while migrating ${src_item}; destination ${dst_item} already exists."
     fi
 
@@ -482,6 +537,7 @@ prepare_snapshots_mountpoint() {
     local base_path="$1" mount_target="$2" subvol_target="$3"
 
     [[ -L "$mount_target" ]] && fatal "Symlink detected at ${mount_target}."
+
     sudo mkdir -p "$mount_target"
 
     if mountpoint -q "$mount_target"; then
@@ -515,6 +571,7 @@ ensure_fstab_entry_for_snapshots() {
     local fs_uuid base_opts mount_opts newline tmp canonical_target
 
     load_mount_info "$base_path"
+
     fs_uuid="${CACHE_MNT_UUID["$base_path"]}"
     base_opts="${CACHE_MNT_OPTS["$base_path"]}"
 
@@ -530,18 +587,30 @@ ensure_fstab_entry_for_snapshots() {
 
     sudo awk -v mp="$canonical_target" -v newline="$newline" '
         BEGIN { done = 0 }
-        /^[[:space:]]*#/ || NF < 2 { print $0; next }
+
+        /^[[:space:]]*#/ || NF < 2 {
+            print $0
+            next
+        }
+
         {
             curr_mp = $2
             if (curr_mp != "/") sub(/\/+$/, "", curr_mp)
 
             if (curr_mp == mp) {
-                if (!done) { print newline; done = 1 }
+                if (!done) {
+                    print newline
+                    done = 1
+                }
                 next
             }
+
             print $0
         }
-        END { if (!done) print newline }
+
+        END {
+            if (!done) print newline
+        }
     ' /etc/fstab > "$tmp"
 
     if ! findmnt --verify --tab-file "$tmp" >/dev/null 2>&1; then
@@ -557,6 +626,7 @@ ensure_fstab_entry_for_snapshots() {
 
     backup_file /etc/fstab
     atomic_write /etc/fstab "$tmp"
+
     rm -f "$tmp"
     remove_array_value ACTIVE_TEMP_FILES "$tmp"
 
@@ -566,9 +636,12 @@ ensure_fstab_entry_for_snapshots() {
 
 mount_snapshots() {
     local mount_target="$1" expected_subvol="$2" base_target="$3"
+
     sudo mkdir -p "$mount_target"
     mountpoint -q "$mount_target" || sudo mount "$mount_target"
+
     verify_snapshots_mount "$mount_target" "$expected_subvol" "$base_target"
+
     ROLLBACK_CMDS=()
 }
 
@@ -582,8 +655,6 @@ tune_snapper() {
 
     info "Enforcing strict cleanup limits and zero background bloat for ${cfg}..."
 
-    # CUTTING-EDGE: Explicitly disable BACKGROUND_COMPARISON to guarantee zero background daemon overhead.
-    # Explicitly clear QGROUP to override any rogue system templates, enforcing zero Btrfs quota overhead.
     sudo snapper -c "$cfg" set-config \
         TIMELINE_CREATE="no" \
         NUMBER_CLEANUP="yes" \
@@ -608,8 +679,10 @@ apply_global_btrfs_tuning() {
 
 write_tmpfiles_override() {
     local target="$1" content="$2" tmp
+
     tmp="$(mktemp)"
     ACTIVE_TEMP_FILES+=("$tmp")
+
     printf '%s\n' "$content" > "$tmp"
 
     if sudo test -f "$target" && sudo cmp -s "$tmp" "$target"; then
@@ -620,8 +693,10 @@ write_tmpfiles_override() {
 
     backup_file "$target"
     atomic_write "$target" "$tmp"
+
     rm -f "$tmp"
     remove_array_value ACTIVE_TEMP_FILES "$tmp"
+
     return 0
 }
 
@@ -665,25 +740,25 @@ enforce_flat_topology() {
 enable_snapper_timers() {
     info "Enabling systemd snapper-cleanup.timer to enforce pruning..."
     sudo systemctl enable --now snapper-cleanup.timer 2>/dev/null || true
-    
-    # Actively prevent systemd from firing timeline interrupts since we enforce TIMELINE_CREATE="no"
+
     info "Disabling systemd snapper-timeline.timer to eliminate background wakeups..."
     sudo systemctl disable --now snapper-timeline.timer 2>/dev/null || true
 }
 
 deploy_custom_timer() {
     info "Deploying custom scheduled snapshot creation timer with gatekeeper..."
+
     local service_file="/etc/systemd/system/dusky_snapshot.service"
     local timer_file="/etc/systemd/system/dusky_snapshot.timer"
-
     local tmp_service tmp_timer
+
     tmp_service="$(mktemp)"
     tmp_timer="$(mktemp)"
     ACTIVE_TEMP_FILES+=("$tmp_service" "$tmp_timer")
 
-    # Construct the Service Unit
-    # CRITICAL ADDITION: The 20-hour (72000 seconds) Gatekeeper ExecCondition.
-    cat << EOF > "$tmp_service"
+    # Service unit is generated with a quoted heredoc so escaping is explicit.
+    # Systemd converts $$ -> $ and %% -> %.
+    cat <<'EOF' > "$tmp_service"
 [Unit]
 Description=Create Automated Snapper Snapshots
 Documentation=man:snapper(8)
@@ -702,12 +777,11 @@ RestrictRealtime=true
 Nice=19
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
-ExecCondition=/usr/bin/bash -c 'if [ -f /var/lib/dusky_snapshot_time ]; then elapsed=\$\$((\$\$(date +%%s) - \$\$(stat -c %%Y /var/lib/dusky_snapshot_time))); if [ \$\$elapsed -lt 72000 ]; then exit 1; fi; fi; exit 0'
-ExecStart=/usr/bin/bash -c 'for cfg in \$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "\$cfg" create --description "auto 8pm" --cleanup-algorithm number; done'
+ExecCondition=/usr/bin/bash -c 'if [ -f /var/lib/dusky_snapshot_time ]; then elapsed=$$(( $$(date +%%s) - $$(stat -c %%Y /var/lib/dusky_snapshot_time) )); if [ $$elapsed -lt 72000 ]; then exit 1; fi; fi; exit 0'
+ExecStart=/usr/bin/bash -c 'pair=$$(cat /proc/sys/kernel/random/uuid); for cfg in $$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "$$cfg" create --description "auto 8pm" --cleanup-algorithm number --userdata "dusky_pair=$${pair},dusky_role=$${cfg}"; done'
 ExecStartPost=/usr/bin/touch /var/lib/dusky_snapshot_time
 EOF
 
-    # Construct the Timer Unit
     cat << EOF > "$tmp_timer"
 [Unit]
 Description=Trigger Automated Snapper Snapshots
@@ -727,16 +801,17 @@ EOF
     sudo chmod 0644 "$service_file" "$timer_file"
 
     rm -f "$tmp_service" "$tmp_timer"
-    remove_array_value ACTIVE_TEMP_FILES "$tmp_service"
-    remove_array_value ACTIVE_TEMP_FILES "$tmp_timer"
+    remove_array_value ACTIVE_TEMP_FILES "$tmp_service" "$tmp_timer"
 
     sudo systemctl daemon-reload
     sudo systemctl enable --now dusky_snapshot.timer
+
     info "Custom scheduled snapshot timer deployed for ${SNAPSHOT_TIME}."
 }
 
 preflight_checks() {
     (( EUID != 0 )) || fatal "Run as regular user with sudo."
+
     require_cmd sudo
     require_cmd pacman
     require_cmd findmnt
@@ -750,16 +825,30 @@ preflight_checks() {
     require_cmd mktemp
     require_cmd mountpoint
     require_cmd btrfs
+    require_cmd blkid
+    require_cmd cut
+    require_cmd mount
+    require_cmd umount
+    require_cmd systemctl
+
+    if ! [[ "$SNAPSHOT_TIME" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+        fatal "SNAPSHOT_TIME must be in 24-hour HH:MM format."
+    fi
+
+    if ! [[ "$SNAPSHOT_RETENTION_LIMIT" =~ ^[0-9]+$ ]] || (( SNAPSHOT_RETENTION_LIMIT < 1 )); then
+        fatal "SNAPSHOT_RETENTION_LIMIT must be a positive integer."
+    fi
+
     [[ "$(stat -f -c %T /)" == "btrfs" ]] || fatal "Root is not Btrfs."
     [[ "$(stat -f -c %T /home)" == "btrfs" ]] || fatal "/home is not Btrfs."
-    
+
     info "Requesting administrative privileges..."
-    sudo -v || fatal "Cannot obtain sudo privileges."
-    
+    sudo -n true 2>/dev/null || sudo true || fatal "Cannot obtain sudo privileges."
+
     local parent_pid=$$
     (
         while kill -0 "$parent_pid" 2>/dev/null; do
-            sudo -n -v 2>/dev/null || exit 0
+            sudo -n true 2>/dev/null || exit 0
             sleep 60
         done
     ) &
@@ -768,6 +857,7 @@ preflight_checks() {
 
 preflight_checks
 quiesce_snapper
+
 execute "Reinstall Snapper runtime packages" install_packages
 post_install_checks
 

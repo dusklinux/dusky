@@ -292,8 +292,11 @@ verify_snapshots_mount() {
 
 install_packages() {
     info "Verifying Snapper runtime packages for maximum reliability..."
-    # --needed prevents redundant reinstalls, silencing pacman output if already up to date
-    pacman -S --needed --noconfirm snapper boost-libs btrfs-progs
+    if pacman -Q snapper boost-libs btrfs-progs >/dev/null 2>&1; then
+        info "All required packages (snapper, boost-libs, btrfs-progs) are already installed."
+    else
+        pacman -Sy --needed --noconfirm snapper boost-libs btrfs-progs
+    fi
     command -v ldconfig >/dev/null 2>&1 && ldconfig
 }
 
@@ -698,7 +701,7 @@ deploy_custom_timer() {
     # where DBus is active. Snapper warns against bypassing DBus while the live daemon is running.
     # CRITICAL FIX 3: Ported official kernel capability sandboxing from the snapper-timeline.service.
     # CRITICAL ADDITION: The 20-hour (72000 seconds) Gatekeeper ExecCondition.
-    cat << EOF > "$tmp_service"
+    cat <<'EOF' > "$tmp_service"
 [Unit]
 Description=Create Automated Snapper Snapshots
 Documentation=man:snapper(8)
@@ -717,8 +720,8 @@ RestrictRealtime=true
 Nice=19
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
-ExecCondition=/usr/bin/bash -c 'if [ -f /var/lib/dusky_snapshot_time ]; then elapsed=\$\$((\$\$(date +%%s) - \$\$(stat -c %%Y /var/lib/dusky_snapshot_time))); if [ \$\$elapsed -lt 72000 ]; then exit 1; fi; fi; exit 0'
-ExecStart=/usr/bin/bash -c 'for cfg in \$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "\$cfg" create --description "auto 8pm" --cleanup-algorithm number; done'
+ExecCondition=/usr/bin/bash -c 'if [ -f /var/lib/dusky_snapshot_time ]; then elapsed=$$(( $$(date +%%s) - $$(stat -c %%Y /var/lib/dusky_snapshot_time) )); if [ $$elapsed -lt 72000 ]; then exit 1; fi; fi; exit 0'
+ExecStart=/usr/bin/bash -c 'pair=$$(cat /proc/sys/kernel/random/uuid); for cfg in $$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "$$cfg" create --description "auto 8pm" --cleanup-algorithm number --userdata "dusky_pair=$${pair},dusky_role=$${cfg}"; done'
 ExecStartPost=/usr/bin/touch /var/lib/dusky_snapshot_time
 EOF
 
@@ -757,7 +760,20 @@ preflight_checks() {
     require_cmd mktemp
     require_cmd mountpoint
     require_cmd btrfs
-    
+    require_cmd blkid
+    require_cmd cut
+    require_cmd mount
+    require_cmd umount
+    require_cmd systemctl
+
+    if ! [[ "$SNAPSHOT_TIME" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+        fatal "SNAPSHOT_TIME must be in 24-hour HH:MM format."
+    fi
+
+    if ! [[ "$SNAPSHOT_RETENTION_LIMIT" =~ ^[0-9]+$ ]] || (( SNAPSHOT_RETENTION_LIMIT < 1 )); then
+        fatal "SNAPSHOT_RETENTION_LIMIT must be a positive integer."
+    fi
+
     # PORTED FROM LIVE: Prevent executing on incorrect filesystems right away
     [[ "$(stat -f -c %T /)" == "btrfs" ]] || fatal "Root is not Btrfs."
     [[ "$(stat -f -c %T /home)" == "btrfs" ]] || fatal "/home is not Btrfs."
