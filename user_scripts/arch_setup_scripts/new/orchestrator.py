@@ -1937,7 +1937,11 @@ def parse_task_entry(raw_entry: str, index: int) -> OrchestratorTask:
             once = True
             once_scope = "global"
         elif f.startswith("if:"):
-            condition = flag.strip()[3:]
+            cond_val = flag.strip()[3:]
+            if condition is None:
+                condition = cond_val
+            else:
+                condition = f"{condition},{cond_val}"
         elif f.startswith("timeout:"):
             with suppress(ValueError):
                 timeout = float(flag.strip()[8:])
@@ -2413,6 +2417,9 @@ class ConditionEvaluator:
         return result
 
     def _eval(self, cond: str) -> bool:
+        if "," in cond and not any(cond.startswith(p) for p in ("path:", "file:", "dir:", "missing:")):
+            return all(self.check(part) for part in cond.split(","))
+
         kind, _, value = cond.partition(":")
         kind = kind.strip().lower()
         value = value.strip()
@@ -2553,7 +2560,13 @@ class ConditionEvaluator:
                 or self._lspci_contains("intel")
             )
         if kind == "amd":
-            return Path("/sys/module/amdgpu").exists() or self._lspci_contains("amd")
+            return (
+                Path("/sys/module/amdgpu").exists()
+                or self._lspci_contains("amd")
+                or self._lspci_contains("ati")
+                or self._lspci_contains("radeon")
+                or self._lspci_contains("advanced micro devices")
+            )
         return False
 
     def _lspci_contains(self, needle: str) -> bool:
@@ -5805,7 +5818,11 @@ def run_doctor() -> None:
     try:
         import rich
 
-        print(f"Rich:           {getattr(rich, '__version__', 'unknown')}")
+        rich_ver = getattr(rich, "__version__", None)
+        if not rich_ver:
+            with suppress(Exception):
+                rich_ver = importlib_metadata.version("rich")
+        print(f"Rich:           {rich_ver or 'unknown'}")
     except Exception as e:
         print(f"Rich:           unavailable ({e})")
 

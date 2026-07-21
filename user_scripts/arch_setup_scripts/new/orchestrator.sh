@@ -116,7 +116,7 @@ python_ok() {
 choose_python() {
     local candidate
     if [[ -x /usr/bin/python ]] && python_ok /usr/bin/python; then
-        printf "/usr/bin/python"
+        printf "/usr/bin/python\n"
         return 0
     fi
 
@@ -220,7 +220,16 @@ main() {
         LD_PROFILE LD_SHOW_AUXV LD_USE_LOAD_BIAS PYTHONSTARTUP PYTHONHOME \
         PYTHONPATH PERL5LIB RUBYLIB NODE_OPTIONS 2>/dev/null || true
 
-    if (( EUID == 0 )) && [[ -n "${SUDO_USER:-}" ]] && [[ " $* " != *" --allow-root "* ]]; then
+    local has_allow_root=0
+    local arg
+    for arg in "$@"; do
+        if [[ "$arg" == "--allow-root" ]]; then
+            has_allow_root=1
+            break
+        fi
+    done
+
+    if (( EUID == 0 )) && [[ -n "${SUDO_USER:-}" ]] && (( has_allow_root == 0 )); then
         log INFO "Dropping privileges to ${SUDO_USER}..."
 
         local target_home target_shell
