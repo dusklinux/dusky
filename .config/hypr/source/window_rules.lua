@@ -522,8 +522,8 @@ hl.window_rule({
 
 --- Dusky system locale ---
 hl.window_rule({
-    name = "locale_tui.sh",
-    match = { class = "^(locale_tui.sh)$" },
+    name = "tui_system_region",
+    match = { class = "^(tui_system_region|locale_tui.sh)$" },
     float = true,
     size = {780, 548},
     center = true

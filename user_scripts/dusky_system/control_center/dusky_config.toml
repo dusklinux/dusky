@@ -373,7 +373,7 @@ icon = "preferences-system-time-symbolic"
 button_text = "Configure"
 [pages.layout.items.on_press]
 type = "exec"
-command = "kitty --class locale_tui.sh --title \"System Region Manager\" --hold sh -c \"$HOME/user_scripts/locale/locale_tui.sh\""
+command = "kitty --class dusky_tui --title \"System Region Manager\" --hold python3 $HOME/user_scripts/dusky_tui/python/main/main.py $HOME/user_scripts/locale/tui_system_region.py"
 terminal = false
 
 [[pages.layout]]
