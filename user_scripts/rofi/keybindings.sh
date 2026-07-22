@@ -333,6 +333,11 @@ main() {
 
     mapfile -t records <<< "$data"
 
+    local script_path="${HOME}/user_scripts/hypr/input/keybinds_cheatsheet.py"
+    local cheatsheet_cmd="kitty --class DuskyKeybindsCheatsheet --title \"Dusky Keybinds Cheatsheet\" -e python3.14 ${script_path}"
+    local cheatsheet_row="󰌌  <span weight=\"bold\" foreground=\"#a6e3a1\">[CHEATSHEET]</span> <span weight=\"bold\">Dusky Keybinds Cheatsheet</span>${DELIM}exec${DELIM}${cheatsheet_cmd}"
+    records=("$cheatsheet_row" "${records[@]}")
+
     for record in "${records[@]}"; do
         menu_rows+=("${record%%$DELIM*}")
     done
@@ -354,7 +359,9 @@ main() {
         argument=""
     fi
 
-    if [[ -n $argument ]]; then
+    if [[ $dispatcher == "exec" || $dispatcher == "exec_cmd" ]]; then
+        eval "$argument" >/dev/null 2>&1 &
+    elif [[ -n $argument ]]; then
         hyprctl dispatch "$dispatcher" "$argument" || die "Failed to dispatch: $dispatcher $argument"
     else
         hyprctl dispatch "$dispatcher" || die "Failed to dispatch: $dispatcher"

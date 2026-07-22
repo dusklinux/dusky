@@ -799,6 +799,15 @@ hl.window_rule({
     move = {"(monitor_w*0.05)", "(monitor_h*0.05)"}
 })
 
+--- Dusky Keybinds Cheatsheet ---
+hl.window_rule({
+    name = "dusky_keybinds_cheatsheet",
+    match = { class = "^(DuskyKeybindsCheatsheet)$" },
+    float = true,
+    size = {"(monitor_w*0.95)", "(monitor_h*0.95)"},
+    center = true
+})
+
 
 
 --- dusky_packages.sh script ---
