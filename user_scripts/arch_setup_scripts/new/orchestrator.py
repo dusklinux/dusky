@@ -5473,9 +5473,10 @@ class DuskyOrchestratorApp(App):
     def _suspend_ui(self):
         suspend = getattr(self, "suspend", None)
         if callable(suspend):
-            with suspend():
-                yield
-            return
+            with suppress(Exception):
+                with suspend():
+                    yield
+                return
 
         driver = getattr(self, "driver", None)
         if driver is not None and hasattr(driver, "stop_application_mode"):
@@ -5522,7 +5523,7 @@ class DuskyOrchestratorApp(App):
                 print(f"Executing: {clean_cmd}\n")
                 sys.stdout.flush()
 
-                res = await asyncio.to_thread(subprocess.run, cmd, env=env)
+                res = subprocess.run(cmd, env=env)
                 code = res.returncode
                 return code == 0, code, "interactive session"
 
