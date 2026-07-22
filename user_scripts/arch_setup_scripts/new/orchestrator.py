@@ -500,15 +500,24 @@ class StateStore:
                 checksum TEXT,
                 exit_code INTEGER,
                 note TEXT,
-                updated TEXT
+                updated TEXT,
+                duration REAL DEFAULT 0.0
             )
             """
         )
+        with suppress(sqlite3.OperationalError):
+            self.conn.execute("ALTER TABLE state ADD COLUMN duration REAL DEFAULT 0.0;")
         self.conn.commit()
 
     def statuses(self) -> dict[str, str]:
         cur = self.conn.execute("SELECT state_key, status FROM state")
         return {str(k): str(v) for k, v in cur.fetchall()}
+
+    def durations(self) -> dict[str, float]:
+        with suppress(sqlite3.OperationalError):
+            cur = self.conn.execute("SELECT state_key, duration FROM state")
+            return {str(k): float(v or 0.0) for k, v in cur.fetchall()}
+        return {}
 
     @classmethod
     def is_done(cls, status: str | None) -> bool:
@@ -524,8 +533,8 @@ class StateStore:
         self.conn.execute(
             """
             INSERT OR REPLACE INTO state
-                (state_key, status, script, checksum, exit_code, note, updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (state_key, status, script, checksum, exit_code, note, updated, duration)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task.state_key,
@@ -535,6 +544,7 @@ class StateStore:
                 exit_code,
                 note,
                 now_iso(),
+                float(task.duration),
             ),
         )
         self.conn.commit()
@@ -1715,28 +1725,6 @@ RichLog {{
 Tree {{
     background: {p['bg']};
     color: {p['fg']};
-}}
-
-#footer {{
-    height: 1;
-    dock: bottom;
-    background: {p['bg']};
-    layout: horizontal;
-    padding: 0 1;
-}}
-
-.footer-shortcut {{
-    padding: 0 1;
-    color: {p['accent']};
-}}
-
-.footer-sep {{
-    color: {p['muted']};
-}}
-
-#footer_status {{
-    color: {p['success']};
-    text-style: italic;
 }}
 
 TaskSearchScreen, ConflictModalScreen, ManualModalScreen, SudoPasswordScreen, ConfirmQuitScreen, HelpScreen, LogSearchScreen, FailureSummaryScreen {{
@@ -4292,7 +4280,14 @@ class DuskyOrchestratorApp(App):
     BINDINGS = [
         Binding("ctrl+f", "open_search", "Search Tasks", priority=True),
         Binding("ctrl+l", "search_log", "Search Log", priority=True),
-        Binding("ctrl+q", "quit_app", "Quit", priority=True),
+        Binding("ctrl+q", "request_quit", "Quit", priority=True),
+        Binding("q", "request_quit", "Quit", priority=True),
+        Binding("escape", "request_quit", "Quit", priority=True),
+        Binding("ctrl+z", "request_quit", "Quit", priority=True),
+        Binding("ctrl+left", "shrink_left_pane", "Shrink Sidebar", priority=True),
+        Binding("ctrl+right", "expand_left_pane", "Expand Sidebar", priority=True),
+        Binding("bracketleft", "shrink_left_pane", "Shrink Sidebar"),
+        Binding("bracketright", "expand_left_pane", "Expand Sidebar"),
         Binding("f", "cycle_filter", "Filter"),
         Binding("question_mark", "help", "Help"),
     ]
@@ -4347,6 +4342,7 @@ class DuskyOrchestratorApp(App):
         self._total_paused_time: float = 0.0
         self._pause_start: float | None = None
         self._prompt_pause_level: int = 0
+        self.left_pane_width: int = 38
 
         self.tree_nodes_map: dict[str, TreeNode] = {}
         self.logger = RunLogger(profile, self.run_id)
@@ -4396,22 +4392,17 @@ class DuskyOrchestratorApp(App):
                             max_lines=6000,
                         )
 
-        yield AppFooter(id="footer")
-
     def on_mount(self) -> None:
         with suppress(Exception):
             self.query_one("#log_switcher", ContentSwitcher).current = "pty_log"
 
+        stored_durations = self.state.durations()
+        for t in self.tasks:
+            if t.state_key in stored_durations and stored_durations[t.state_key] > 0:
+                t.duration = stored_durations[t.state_key]
+
         self.progress_bar.total = max(1, len(self.tasks))
         self._rebuild_tree()
-
-        sudo_mode = SudoEngine.mode_name() if self.has_sudo else "none"
-        log_root = str(self.logger.root) if self.logger.root else "disabled"
-
-        with suppress(Exception):
-            self.query_one("#footer_status", Label).update(
-                f"Engine: active | sudo: {sudo_mode} | logs: {log_root} | filter: {self.filter_mode}"
-            )
 
         self.log_system("Environment pre-flight validated. PTY engine online.")
 
@@ -4536,16 +4527,41 @@ class DuskyOrchestratorApp(App):
                 f"Engine: active | filter: {self.filter_mode}"
             )
 
-    async def action_quit_app(self) -> None:
-        if self.active_task:
-            resp = await self.push_screen_wait(ConfirmQuitScreen())
-            if resp != "abort":
-                return
-            self.log_system("Quit requested. Terminating pipeline...", is_err=True)
-            self.exit(1)
+    def _set_pane_widths(self, width_pct: int) -> None:
+        self.left_pane_width = max(15, min(80, width_pct))
+        with suppress(Exception):
+            self.query_one("#left_pane").styles.width = f"{self.left_pane_width}%"
+            self.query_one("#right_pane").styles.width = f"{100 - self.left_pane_width}%"
+
+    def action_shrink_left_pane(self) -> None:
+        self._set_pane_widths(self.left_pane_width - 4)
+
+    def action_expand_left_pane(self) -> None:
+        self._set_pane_widths(self.left_pane_width + 4)
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        width = self.size.width
+        if width > 0:
+            click_pct = int(event.x * 100 / width)
+            if abs(click_pct - self.left_pane_width) <= 5:
+                self._set_pane_widths(click_pct)
+
+    def action_request_quit(self) -> None:
+        if isinstance(self.screen, ConfirmQuitScreen):
             return
 
-        self.exit(0)
+        def on_quit_decision(result: str | None) -> None:
+            if result == "abort":
+                self.log_system("User requested sequence termination.", is_err=True)
+                self._kill_active_child_sync()
+                self.exit(0)
+
+        self.push_screen(ConfirmQuitScreen(), on_quit_decision)
+
+    def action_quit_app(self) -> None:
+        self.action_request_quit()
 
     def action_help(self) -> None:
         if isinstance(self.screen, ModalScreen):
