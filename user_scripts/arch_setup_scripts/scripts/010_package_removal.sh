@@ -221,13 +221,30 @@ resolve_safe_removals() {
         for pkg in "${current_check[@]}"; do
             local req_str
             # Force C locale to guarantee standard English output for reliable parsing
-            req_str=$(LC_ALL=C pacman -Qi -- "$pkg" 2>/dev/null | grep '^Required By' | cut -d':' -f2- || true)
+            req_str=$(LC_ALL=C pacman -Qi -- "$pkg" 2>/dev/null | awk '
+/^Required By/ {
+    sub(/^[^:]*: */, "")
+    if ($0 == "None") {
+        in_req = 0
+        next
+    }
+    print $0
+    in_req = 1
+    next
+}
+in_req && /^ +/ {
+    print $0
+    next
+}
+/^[A-Za-z]/ {
+    in_req = 0
+}
+' || true)
 
-            local -a req_pkgs
-            read -ra req_pkgs <<< "$req_str"
+            local -a req_pkgs=($req_str)
 
-            # If required by something other than "None"
-            if (( ${#req_pkgs[@]} > 0 )) && [[ "${req_pkgs[0]}" != "None" ]]; then
+            # If required by something (i.e. array is not empty)
+            if (( ${#req_pkgs[@]} > 0 )); then
                 local req_pkg is_safe=1
 
                 for req_pkg in "${req_pkgs[@]}"; do
