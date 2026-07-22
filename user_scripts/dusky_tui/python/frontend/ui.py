@@ -310,7 +310,7 @@ class NoticeBox(Vertical):
 class ConfirmDialog(ModalScreen[bool]):
     BINDINGS = [
         Binding("escape", "dismiss_false", "Cancel"),
-        Binding("enter,space", "dismiss_default", "Confirm"),
+        Binding("enter,space", "dismiss_true", "Confirm"),
     ]
 
     def __init__(self, message: str, title: str = "CONFIRM", level: str = "warning") -> None:
@@ -331,9 +331,8 @@ class ConfirmDialog(ModalScreen[bool]):
     def action_dismiss_false(self) -> None:
         self.dismiss(False)
 
-    def action_dismiss_default(self) -> None:
-        # Danger dialogs default to Cancel on Enter.
-        self.dismiss(self.level != "danger")
+    def action_dismiss_true(self) -> None:
+        self.dismiss(True)
 
     @on(events.Click, "#btn-cancel")
     def on_cancel_click(self) -> None:
@@ -1476,6 +1475,8 @@ Tooltip {
         Binding("D", "delete_user_preset", "Delete Preset", priority=False),
         Binding("u", "undo", "Undo", priority=False),
         Binding("ctrl+r", "redo", "Redo", priority=True),
+        Binding("r", "reset_item", "Reset Item", priority=False),
+        Binding("R", "reset_all", "Reset Page", priority=True),
         Binding("?", "toggle_help", "Help", priority=False),
         Binding("/", "focus_local_search", "Search Inline", priority=False),
 
@@ -4070,42 +4071,57 @@ Tooltip {
         self.trigger_shortcut_blink("R")
 
         try:
-            switcher = self.query_one(ContentSwitcher)
-            if not switcher.current:
+            tab_idx = 0
+            try:
+                switcher = self.query_one(ContentSwitcher)
+                if switcher.current:
+                    tab_idx = int(switcher.current.split("-")[1])
+            except Exception:
+                tab_idx = 0
+
+            items = self.schema.get(tab_idx, [])
+            configurable_items = [
+                (idx, item) for idx, item in enumerate(items)
+                if item.type_ not in ("action", "menu", "preset")
+            ]
+
+            has_changes = any(
+                str(item.value) != str(item.default) or str(item.value) != str(item.initial_value)
+                for _, item in configurable_items
+            )
+
+            tab_name = self.tabs.get(tab_idx, f"Tab {tab_idx}")
+
+            if not has_changes:
+                self.notify_status(f"All items in {tab_name} are already at default values.", level="info")
                 return
 
-            tab_idx = int(switcher.current.split("-")[1])
-            items = self.schema.get(tab_idx, [])
+            def on_confirm(confirmed: bool) -> None:
+                if confirmed:
+                    transaction = []
+                    for item_idx, item in configurable_items:
+                        if str(item.value) != str(item.default):
+                            transaction.append((tab_idx, item_idx, item.value, item.default))
 
-            has_changes = any(str(item.value) != str(item.default) for item in items)
+                    if transaction:
+                        verb = "Reset" if self.auto_save else "Queued reset of"
+                        msg = f"{verb} {len(transaction)} items in {tab_name}"
+                        self._apply_transaction(transaction, action_type="new", success_msg=msg)
+                        self._populate_option_list(tab_idx)
+                    else:
+                        self.notify_status(f"No items to reset in {tab_name}", level="info")
 
-            if has_changes:
-                def on_confirm(confirmed: bool) -> None:
-                    if confirmed:
-                        transaction = []
+            self.push_screen(
+                ConfirmDialog(
+                    f"Are you sure you want to reset all items in **{tab_name}** to their factory defaults?",
+                    title="Reset Page",
+                    level="warning"
+                ),
+                on_confirm
+            )
 
-                        for item_idx, item in enumerate(items):
-                            if str(item.value) != str(item.default):
-                                transaction.append((tab_idx, item_idx, item.value, item.default))
-
-                        if transaction:
-                            verb = "Reset" if self.auto_save else "Queued reset of"
-                            msg = f"{verb} {len(transaction)} items in {self.tabs.get(tab_idx, f"Tab {tab_idx}")}"
-                            self._apply_transaction(transaction, action_type="new", success_msg=msg)
-
-                self.push_screen(
-                    ConfirmDialog(
-                        "Are you sure you want to reset all modified items on this page to their factory defaults?",
-                        title="Reset Page",
-                        level="danger"
-                    ),
-                    on_confirm
-                )
-            else:
-                self.notify_status(f"No changes to reset in {self.tabs.get(tab_idx, f"Tab {tab_idx}")}", level="info")
-
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[DuskyTUI] Reset page error: {e}", file=sys.stderr)
 
     # =========================================================================
     # PRESET ACTIONS
