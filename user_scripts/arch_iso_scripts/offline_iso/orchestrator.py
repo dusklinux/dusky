@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
+# DUSKY_BOOTSTRAP_PACKAGES: python python-textual python-rich git
 # dusky_interactive=true
 # ==============================================================================
-#  ARCH LINUX ISO TEXTUAL ORCHESTRATOR (v16.5 - Async PTY Engine + Dynamic Telemetry)
+#  ARCH LINUX ISO TEXTUAL ORCHESTRATOR (v19.0 - Async PTY Engine + Auto-Prompt)
 # ==============================================================================
 # Architecture: Asynchronous Non-Blocking PTY Stream Engine | Textual Split TUI
-# Features: Progress Bar/Speed Extraction | Native Terminal Suspension | State Persistence
+# Features: Progress Bar/Speed Extraction | Auto-Prompt Responder | State Persistence
 # Compatibility: Python 3.14+ | Textual 8.2+ | Arch Linux ISO (2026+)
 # ==============================================================================
 
@@ -87,6 +88,14 @@ PCT_REGEX = re.compile(r'(?<![0-9])(?>\d{1,2}|100)%')
 SPEED_ETA_REGEX = re.compile(r'(\d+(?:\.\d+)?\s+[KMG]?i?B/s)\s+([\d:]+)', re.IGNORECASE)
 PROGRESS_BAR_REGEX = re.compile(r'\[[#=\- oO@%:.0123456789━─░▒▓█▏▎▍▌▋▊▉●○◉◌]{3,}\]|\b\d{1,3}%\b')
 INTERACTIVE_RE = re.compile(r'^\s*#\s*dusky_interactive\s*=\s*(?:true|1)\b', re.IGNORECASE)
+
+PROMPT_RULES: List[Tuple[str, re.Pattern, str]] = [
+    ("pgp_import", re.compile(r"(?i)(::\s*Import PGP key.*\?\s*\[Y/n\]|::\s*Append key\?.*\[Y/n\]|Import PGP key.*\?\s*\[Y/n\])"), "y\n"),
+    ("pacman_proceed", re.compile(r"(?i)::\s*(Proceed with (?:installation|download|upgrade)|Continue (?:installation|download|upgrade)).*\?\s*\[Y/n\]"), "y\n"),
+    ("pacman_replace", re.compile(r"(?i)::\s*Replace\s+.*\?\s*\[Y/n\]"), "y\n"),
+    ("pacman_remove_conflict", re.compile(r"(?i)::\s*Remove conflicting file.*\?\s*\[Y/n\]"), "y\n"),
+    ("generic_yes", re.compile(r"(?i)\[Y/n\]|\(Y/n\)"), "y\n"),
+]
 
 _LOCK_FD: Optional[int] = None
 
@@ -657,6 +666,15 @@ class DuskyOrchestratorApp(App):
                             break
                         text = data.decode('utf-8', errors='replace')
                         buffer += text
+
+                        for p_name, rule_re, p_resp in PROMPT_RULES:
+                            if rule_re.search(text):
+                                try:
+                                    os.write(master_fd, p_resp.encode('utf-8'))
+                                    self.log_system(f"Auto-responded to prompt ({p_name})")
+                                except OSError:
+                                    pass
+                                break
 
                         speed_match = SPEED_ETA_REGEX.search(buffer)
                         pct_match = PCT_REGEX.search(buffer)

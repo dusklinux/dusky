@@ -157,18 +157,36 @@ fi
 # ==============================================================================
 log "INFO" "Verifying Python core and orchestrator UI dependencies..."
 
-if ! command -v python3 >/dev/null 2>&1; then
-    log "WARN" "Python interpreter not found."
-    if (( OFFLINE_MODE == 0 )); then
-        log "INFO" "Attempting pacman installation of Python..."
-        pacman -Sy --noconfirm --needed python || { log "ERR" "Failed to install Python."; exit 1; }
-    else
-        log "INFO" "Attempting offline pacman installation of Python..."
-        pacman -S --noconfirm --needed python || { log "ERR" "Failed to install Python offline."; exit 1; }
+# Clear stale pacman database lock if pacman process is not active
+if [[ -f /var/lib/pacman/db.lck ]]; then
+    if command -v pgrep >/dev/null 2>&1 && pgrep -x pacman >/dev/null 2>&1; then
+        log "ERR" "Another pacman process is currently running."
+        exit 1
     fi
+    log "WARN" "Removing stale pacman lock file: /var/lib/pacman/db.lck"
+    rm -f /var/lib/pacman/db.lck
 fi
 
-# Check textual and rich modules
+install_pkgs_with_retry() {
+    local -a pkgs=("$@")
+    if (( OFFLINE_MODE == 0 )); then
+        if ! pacman -Sy --noconfirm --needed "${pkgs[@]}"; then
+            log "WARN" "Pacman transaction failed. Attempting keyring recovery and retry..."
+            pacman -Sy --noconfirm --needed archlinux-keyring || true
+            pacman-key --init || true
+            pacman-key --populate archlinux || true
+            pacman -Syu --noconfirm --needed "${pkgs[@]}"
+        fi
+    else
+        pacman -S --noconfirm --needed "${pkgs[@]}"
+    fi
+}
+
+if ! command -v python3 >/dev/null 2>&1; then
+    log "WARN" "Python interpreter not found. Installing python..."
+    install_pkgs_with_retry python || { log "ERR" "Failed to install Python."; exit 1; }
+fi
+
 has_python_module() {
     python3 -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('${1}') else 1)" 2>/dev/null
 }
@@ -183,13 +201,7 @@ fi
 
 if (( ${#missing_pkgs[@]} > 0 )); then
     log "WARN" "Missing Python UI dependencies: ${missing_pkgs[*]}"
-    if (( OFFLINE_MODE == 0 )); then
-        log "INFO" "Attempting online pacman installation of UI dependencies..."
-        pacman -Sy --noconfirm --needed "${missing_pkgs[@]}" || { log "ERR" "Failed to install UI dependencies."; exit 1; }
-    else
-        log "INFO" "Attempting offline pacman installation of UI dependencies..."
-        pacman -S --noconfirm --needed "${missing_pkgs[@]}" || { log "ERR" "Failed to install UI dependencies offline."; exit 1; }
-    fi
+    install_pkgs_with_retry "${missing_pkgs[@]}" || { log "ERR" "Failed to install UI dependencies."; exit 1; }
 fi
 
 log "OK" "Python and UI dependencies verified."
@@ -202,8 +214,10 @@ if [[ ! -f "$ORCHESTRATOR_PY" ]]; then
     exit 1
 fi
 
-# Run the python orchestrator. Pass arguments down.
-# We do not use exec here because if Phase 1 completes, we need to cross the chroot boundary.
+export PYTHONUNBUFFERED=1
+export PYTHONUTF8=1
+export PYTHONDONTWRITEBYTECODE=1
+
 log "INFO" "Handing execution control over to Python Textual UI..."
 python3 "$ORCHESTRATOR_PY" "$PHASE_FLAG" "$@"
 orchestrator_exit=$?

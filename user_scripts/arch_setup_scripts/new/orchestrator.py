@@ -1649,6 +1649,11 @@ Screen {{
     padding: 0 1;
 }}
 
+#header_title {{
+    width: 100%;
+    text-align: center;
+}}
+
 #main_dashboard {{
     layout: horizontal;
     height: 1fr;
