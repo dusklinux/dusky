@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+# dusky_interactive=true
 # ==============================================================================
-#  ARCH LINUX ISO TEXTUAL ORCHESTRATOR (Asynchronous Engine + Profile Support)
+#  ARCH LINUX ISO TEXTUAL ORCHESTRATOR (v16.5 - Async PTY Engine + Dynamic Telemetry)
 # ==============================================================================
-# A Textual-based UI for executing the sequenced series of installation scripts.
-# Supports loading custom installation profile TOML configurations dynamically.
+# Architecture: Asynchronous Non-Blocking PTY Stream Engine | Textual Split TUI
+# Features: Progress Bar/Speed Extraction | Native Terminal Suspension | State Persistence
+# Compatibility: Python 3.14+ | Textual 8.2+ | Arch Linux ISO (2026+)
 # ==============================================================================
 
 import os
@@ -16,9 +18,15 @@ import shlex
 import argparse
 import shutil
 import asyncio
+import pty
+import termios
+import struct
+import re
 import tomllib
+import atexit
 from pathlib import Path
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import List, Dict, Optional, Tuple
 
 from rich.console import Console
@@ -26,22 +34,22 @@ from rich.text import Text
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Header, Footer, Static, RichLog, ProgressBar
-from textual import work
+from textual.widgets import Header, Footer, Static, RichLog, ProgressBar, Button, Label, Input, OptionList
+from textual.widgets.option_list import Option
+from textual.screen import ModalScreen
+from textual import work, on
 
 # ==============================================================================
-#  CONSTANTS & FALLBACK SEQUENCES
+# CONSTANTS & PATHS
 # ==============================================================================
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROFILES_DIR = SCRIPT_DIR / "profiles"
 
-# Hardcoded sequences corresponding to Phase 1 (ISO) and Phase 2 (Chroot)
-# Used as robust fallbacks if no TOML profiles are discovered.
 FALLBACK_ISO_SEQUENCE = [
     ("001_uefi_check.sh", [], False, False),
-    ("010_set_variables.sh", ["--no_encrypt"], False, True),  # Wizard: interactive
+    ("010_set_variables.sh", ["--no_encrypt"], False, True),
     ("020_environment_prep.sh", ["--auto", "--cachy"], False, False),
-    ("030_partitioning.py", ["--no-encrypt"], False, True),   # Arrow menu: interactive
+    ("030_partitioning.py", ["--no-encrypt"], False, True),
     ("040_disk_mount.py", ["--auto"], False, False),
     ("045_repo_bind_mount.sh", [], False, False),
     ("051_pacman_repo_switch.sh", ["--offline", "--cachyos"], False, False),
@@ -71,29 +79,37 @@ FALLBACK_CHROOT_SEQUENCE = [
     ("051_pacman_repo_switch.sh", ["--online", "--cachyos"], False, False),
 ]
 
-THEME = {
-    "info": "cyan",
-    "success": "green",
-    "warning": "yellow",
-    "error": "red",
-    "run": "bold white",
-    "done": "green",
-    "missing": "red",
-    "pending": "blue"
-}
+# High-Performance Regexes
+ANSI_STRIP_REGEX = re.compile(
+    r'\x1B(?:[@-Z\\-_]|\[(?>(?:[0-?]*+)[ -/]*+[@-~])|\](?>\d*;.*?)(?:\x07|\x1B\\)|\]8;;.*?(?:\x07|\x1B\\)|\x1B\(B)'
+)
+PCT_REGEX = re.compile(r'(?<![0-9])(?>\d{1,2}|100)%')
+SPEED_ETA_REGEX = re.compile(r'(\d+(?:\.\d+)?\s+[KMG]?i?B/s)\s+([\d:]+)', re.IGNORECASE)
+PROGRESS_BAR_REGEX = re.compile(r'\[[#=\- oO@%:.0123456789━─░▒▓█▏▎▍▌▋▊▉●○◉◌]{3,}\]|\b\d{1,3}%\b')
+INTERACTIVE_RE = re.compile(r'^\s*#\s*dusky_interactive\s*=\s*(?:true|1)\b', re.IGNORECASE)
+
+_LOCK_FD: Optional[int] = None
 
 # ==============================================================================
-#  DATA CLASSES
+# DATA CLASSES
 # ==============================================================================
+class TaskStatus(Enum):
+    PENDING = auto()
+    RUNNING = auto()
+    COMPLETED = auto()
+    FAILED = auto()
+    SKIPPED = auto()
+
 @dataclass
 class OrchestratorTask:
     script_name: str
     args: List[str]
     ignore_fail: bool
-    interactive: bool
+    interactive: bool = False
     interpreter: str = "bash"
     state_key: str = ""
     resolved_path: Optional[Path] = None
+    status: TaskStatus = TaskStatus.PENDING
 
 @dataclass
 class ProfileConfig:
@@ -104,7 +120,7 @@ class ProfileConfig:
     phase2_tasks: List[OrchestratorTask]
 
 # ==============================================================================
-#  TOML PARSER & PROFILE ENGINE
+# PROFILE PARSER & ENGINE
 # ==============================================================================
 def parse_task_entry(raw_entry: str) -> OrchestratorTask:
     parts = [p.strip() for p in raw_entry.split("|")]
@@ -120,9 +136,9 @@ def parse_task_entry(raw_entry: str) -> OrchestratorTask:
     interactive = False
     for flag in flags.split(","):
         flag = flag.strip().lower()
-        if flag in ["true", "ignore", "ignore-fail"]:
+        if flag in ("true", "ignore", "ignore-fail"):
             ignore_fail = True
-        elif flag in ["interactive", "tui", "prompt"]:
+        elif flag in ("interactive", "tui", "prompt"):
             interactive = True
 
     cmd_tokens = shlex.split(cmd)
@@ -184,7 +200,7 @@ def discover_profiles() -> List[ProfileConfig]:
     return profiles
 
 # ==============================================================================
-#  CLI ARGUMENTS & LOCKING
+# LOCKING & INTERPRETER RESOLUTION
 # ==============================================================================
 def parse_args():
     parser = argparse.ArgumentParser(description="Dusky Arch ISO Textual Orchestrator")
@@ -194,171 +210,254 @@ def parse_args():
     parser.add_argument("--dry-run", action="store_true", help="Dry run: validate scripts presence and exit")
     parser.add_argument("--force", action="store_true", help="Pass --force flag to subscripts")
     parser.add_argument("--manual", "-m", action="store_true", help="Manual mode: prompt before each script")
-    parser.add_argument("--stop-on-fail", action="store_true", help="Halt execution if any script fails (Auto mode)")
-    parser.add_argument("--profile", type=str, help="Specify profile TOML to execute (name or filename stem)")
+    parser.add_argument("--stop-on-fail", action="store_true", help="Halt execution if any script fails")
+    parser.add_argument("--profile", type=str, help="Specify profile TOML to execute")
     parser.add_argument("--list-profiles", action="store_true", help="List all available installer profiles and exit")
     return parser.parse_args()
 
-def get_lock_holders(lock_file: Path) -> str:
-    if not lock_file.exists():
-        return ""
-    try:
-        real_lock = lock_file.resolve()
-    except Exception:
-        return ""
-
-    holders = []
-    seen = set()
-    proc_dir = Path("/proc")
-    if not proc_dir.exists():
-        return ""
-
-    for pid_dir in proc_dir.iterdir():
-        if not pid_dir.name.isdigit(): continue
-        pid = pid_dir.name
-        if pid == str(os.getpid()): continue
-        if pid in seen: continue
-
-        fd_dir = pid_dir / "fd"
-        if not fd_dir.exists() or not os.access(fd_dir, os.R_OK): continue
-
-        try:
-            for fd_link in fd_dir.iterdir():
-                try:
-                    target = fd_link.resolve()
-                    if target == real_lock:
-                        seen.add(pid)
-                        cmdline_path = pid_dir / "cmdline"
-                        cmd = ""
-                        if cmdline_path.exists():
-                            cmd = cmdline_path.read_text(errors='replace').replace('\x00', ' ').strip()
-                        if not cmd:
-                            cmd = f"[pid {pid}]"
-                        holders.append(f"  - PID {pid}: {cmd}")
-                        break
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-    return "\n".join(holders)
+def _cleanup_lock(lock_file: Path):
+    global _LOCK_FD
+    if _LOCK_FD is not None:
+        try: fcntl.flock(_LOCK_FD, fcntl.LOCK_UN)
+        except OSError: pass
+        try: os.close(_LOCK_FD)
+        except OSError: pass
+        _LOCK_FD = None
+    try: lock_file.unlink(missing_ok=True)
+    except OSError: pass
 
 def acquire_lock(lock_file: Path) -> bool:
+    global _LOCK_FD
     lock_file.parent.mkdir(parents=True, exist_ok=True)
     try:
-        fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
     except Exception as e:
         sys.stderr.write(f"\033[1;31m[ERROR]\033[0m Could not open lock file {lock_file}: {e}\n")
         return False
 
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _LOCK_FD = fd
+        atexit.register(lambda: _cleanup_lock(lock_file))
         return True
     except BlockingIOError:
-        sys.stdout.write(f"\033[1;31m[ERROR]\033[0m Another instance is already running.\n")
-        holders = get_lock_holders(lock_file)
-        if holders:
-            sys.stdout.write(f"{holders}\n")
-        else:
-            sys.stdout.write("\033[1;33m[WARN]\033[0m No live lock holder identified. Stale lock?\n")
-            try:
-                sys.stdout.write("Attempting to acquire stale lock...\n")
-                fcntl.flock(fd, fcntl.LOCK_EX)
-                return True
-            except Exception:
-                sys.stdout.write("\033[1;31m[ERROR]\033[0m Failed to acquire lock.\n")
-                return False
+        sys.stderr.write(f"\033[1;31m[ERROR]\033[0m Another instance is already running on {lock_file}.\n")
+        try: os.close(fd)
+        except OSError: pass
         return False
 
-def resolve_interpreter(script_path: Path) -> str:
+def resolve_interpreter(script_path: Path) -> Tuple[str, bool]:
+    is_interactive = False
+    first_line = ""
     try:
-        with open(script_path, 'r', errors='ignore') as f:
-            first_line = f.readline().strip()
-        if "python" in first_line:
-            return "python"
-        elif any(x in first_line for x in ["bash", "sh", "zsh"]):
-            return "bash"
-    except Exception:
-        pass
-    
-    if script_path.suffix == '.py':
-        return "python"
-    return "bash"
-
-def is_script_interactive(script_path: Path) -> bool:
-    if not script_path.exists() or not script_path.is_file():
-        return False
-    try:
-        with open(script_path, 'r', errors='ignore') as f:
-            for _ in range(20):
+        with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
+            for line_num in range(20):
                 line = f.readline()
-                if not line:
-                    break
-                line_clean = line.strip().replace(" ", "").lower()
-                if "#dusky_interactive=true" in line_clean or "#dusky_interactive=1" in line_clean:
-                    return True
+                if not line: break
+                if line_num == 0: first_line = line.strip()
+                if INTERACTIVE_RE.search(line): is_interactive = True
     except Exception:
         pass
-    return False
+
+    if "python" in first_line or script_path.suffix == '.py':
+        return "python3", is_interactive
+    return "bash", is_interactive
 
 # ==============================================================================
-#  TEXTUAL APP
+# MODAL SCREENS
+# ==============================================================================
+class FailureModalScreen(ModalScreen):
+    def __init__(self, task_name: str, error_msg: str):
+        super().__init__()
+        self.task_name = task_name
+        self.error_msg = error_msg
+
+    def compose(self) -> ComposeResult:
+        with Container(id="modal_dialog"):
+            yield Label(f"⚠ TASK FAILED: {self.task_name}", id="modal_title")
+            yield Static(self.error_msg, id="error_details")
+            with Horizontal(id="button_bar"):
+                yield Button("Retry [R]", variant="primary", id="btn_retry")
+                yield Button("Skip [S]", variant="warning", id="btn_skip")
+                yield Button("Quit [Q]", variant="error", id="btn_quit")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_retry":
+            self.dismiss("retry")
+        elif event.button.id == "btn_skip":
+            self.dismiss("skip")
+        elif event.button.id == "btn_quit":
+            self.dismiss("quit")
+
+    def on_key(self, event) -> None:
+        key = event.key.lower()
+        if key == "r":
+            self.dismiss("retry")
+        elif key == "s":
+            self.dismiss("skip")
+        elif key == "q":
+            self.dismiss("quit")
+
+class ManualModalScreen(ModalScreen):
+    def __init__(self, task_name: str):
+        super().__init__()
+        self.task_name = task_name
+
+    def compose(self) -> ComposeResult:
+        with Container(id="manual_dialog"):
+            yield Label(f"◈ MANUAL STEP REQUIRED", id="manual_title")
+            yield Static(f"About to execute: [bold white]{self.task_name}[/bold white]\nProceed with execution?", id="manual_details")
+            with Horizontal(id="button_bar"):
+                yield Button("Proceed [Y]", variant="success", id="btn_yes")
+                yield Button("Skip [S]", variant="warning", id="btn_skip")
+                yield Button("Quit [Q]", variant="error", id="btn_quit")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_yes":
+            self.dismiss("yes")
+        elif event.button.id == "btn_skip":
+            self.dismiss("skip")
+        elif event.button.id == "btn_quit":
+            self.dismiss("quit")
+
+    def on_key(self, event) -> None:
+        key = event.key.lower()
+        if key in ("y", "enter", "space"):
+            self.dismiss("yes")
+        elif key == "s":
+            self.dismiss("skip")
+        elif key == "q":
+            self.dismiss("quit")
+
+# ==============================================================================
+# MAIN TEXTUAL APP
 # ==============================================================================
 class DuskyOrchestratorApp(App):
+    ENABLE_COMMAND_PALETTE = False
+
     CSS = """
     Screen {
-        background: $surface;
+        background: #0d1117;
+        color: #c9d1d9;
         layout: vertical;
     }
-    #header {
-        height: 1;
+    #top_header {
+        height: 3;
         dock: top;
-        content-align: center middle;
-        background: $primary-darken-2;
-        color: $text;
+        background: #161b22;
+        color: #58a6ff;
+        padding: 0 1;
+        layout: vertical;
+        border-bottom: solid #30363d;
+    }
+    #header_title {
         text-style: bold;
+        color: #58a6ff;
+        width: 100%;
+        text-align: center;
+    }
+    #header_telemetry {
+        color: #e3b341;
+        text-style: italic;
     }
     #progress_bar {
-        margin: 0 2;
+        margin: 0 1;
+        width: 100%;
     }
     #main_content {
         layout: horizontal;
         height: 1fr;
     }
     #left_pane {
-        width: 35%;
-        border-right: vkey $primary-darken-1;
+        width: 38%;
+        border-right: solid #30363d;
         padding: 0 1;
         height: 100%;
         overflow-y: auto;
+        background: #0d1117;
     }
     #right_pane {
-        width: 65%;
+        width: 62%;
         height: 100%;
         padding: 0 1;
-        background: $surface-darken-1;
+        background: #161b22;
     }
     .task_row {
         layout: horizontal;
         height: 1;
-        margin-bottom: 0;
     }
     .task_icon { width: 3; text-align: center; }
-    .task_mode { width: 5; text-align: center; color: $warning; }
-    .task_name { width: 1fr; }
+    .task_mode { width: 5; text-align: center; color: #d29922; }
+    .task_name { width: 1fr; color: #c9d1d9; }
     
     RichLog {
         height: 100%;
         border: none;
-        scrollbar-size: 1 1;
+        background: #161b22;
+        color: #c9d1d9;
+        scrollbar-gutter: stable;
     }
     #footer {
         dock: bottom;
         height: 1;
-        background: $primary-darken-3;
-        color: $text-muted;
+        background: #090d16;
+        color: #8b949e;
+    }
+
+    FailureModalScreen, ManualModalScreen {
+        align: center middle;
+        background: rgba(0,0,0,0.85);
+    }
+    #modal_dialog {
+        width: 75;
+        height: auto;
+        border: heavy #f85149;
+        background: #161b22;
+        padding: 1 2;
+    }
+    #manual_dialog {
+        width: 75;
+        height: auto;
+        border: heavy #58a6ff;
+        background: #161b22;
+        padding: 1 2;
+    }
+    #modal_title {
+        text-align: center;
+        text-style: bold;
+        color: #f85149;
+        margin-bottom: 1;
+    }
+    #manual_title {
+        text-align: center;
+        text-style: bold;
+        color: #58a6ff;
+        margin-bottom: 1;
+    }
+    #error_details {
+        color: #d29922;
+        margin-bottom: 1;
+        max-height: 10;
+        overflow-y: auto;
+    }
+    #button_bar {
+        layout: horizontal;
+        align: center middle;
+        height: 3;
+    }
+    Button {
+        height: 1;
+        min-width: 14;
+        border: none;
+        margin: 0 1;
     }
     """
+
+    BINDINGS = [
+        ("q", "quit_app", "Quit"),
+        ("m", "toggle_manual", "Manual Mode"),
+        ("r", "reset_state", "Reset State"),
+    ]
 
     def __init__(self, tasks: List[OrchestratorTask], phase_title: str, profile_name: str, state_file: Path, manual: bool, stop_on_fail: bool, force: bool):
         super().__init__()
@@ -382,14 +481,15 @@ class DuskyOrchestratorApp(App):
         self.log_widget = RichLog(id="syslog", highlight=True, markup=False)
         self.left_pane = Vertical(id="left_pane")
         self.progress_bar = ProgressBar(total=len(self.tasks), show_eta=False, id="progress_bar")
-
-        self.waiting_for_input = False
-        self.input_action = None
+        self.header_title = Static(f"◈ DUSKY ARCH INSTALLER  [{self.phase_title}]  (Profile: {self.profile_name})", id="header_title")
+        self.header_telemetry = Static("Status: Ready | Telemetry: Idle", id="header_telemetry")
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="header"):
-            yield Static(f"◈ DUSKY ARCH INSTALLER  [{self.phase_title}]  (Profile: {self.profile_name})", classes="title")
-            yield self.progress_bar
+        with Vertical(id="top_header"):
+            yield self.header_title
+            with Horizontal():
+                yield self.header_telemetry
+                yield self.progress_bar
             
         with Horizontal(id="main_content"):
             yield self.left_pane
@@ -403,30 +503,32 @@ class DuskyOrchestratorApp(App):
         
         for t in self.tasks:
             if t.state_key in self.completed_keys:
+                t.status = TaskStatus.COMPLETED
                 self.progress_bar.advance(1)
                 
-        self.log_system(f"Started Installation Phase: {self.phase_title}")
+        self.log_system(f"Started Phase: {self.phase_title}")
         self.log_system(f"Active Profile: {self.profile_name}")
-        self.log_system(f"Loaded Phase State: {len(self.completed_keys)} completed tasks cached")
+        self.log_system(f"Loaded Cached State: {len(self.completed_keys)} tasks completed")
         
-        # Start execution loop as an async worker
         self.run_worker(self.run_execution_loop())
 
     def render_task_list(self):
         self.left_pane.remove_children()
         for i, t in enumerate(self.tasks):
-            if t.state_key in self.completed_keys:
-                icon = f"[{THEME['done']}]✓[/]"
+            if t.status == TaskStatus.COMPLETED or t.state_key in self.completed_keys:
+                icon = "[bold #3fb950]✓[/]"
             elif not t.resolved_path:
-                icon = f"[{THEME['missing']}]![/]"
-            elif i == self.current_idx:
-                icon = f"[{THEME['info']}]◉[/]"
-            elif i < self.current_idx:
-                icon = f"[{THEME['error']}]x[/]"
+                icon = "[bold #f85149]![/]"
+            elif t.status == TaskStatus.RUNNING:
+                icon = "[bold #58a6ff]◉[/]"
+            elif t.status == TaskStatus.FAILED:
+                icon = "[bold #f85149]x[/]"
+            elif t.status == TaskStatus.SKIPPED:
+                icon = "[bold #d29922]⊘[/]"
             else:
-                icon = f"[{THEME['pending']}]·[/]"
+                icon = "[#8b949e]·[/]"
                 
-            name = t.script_name[:25]
+            name = t.script_name[:28]
             row = Horizontal(
                 Static(icon, classes="task_icon"),
                 Static("ROOT", classes="task_mode"),
@@ -436,16 +538,19 @@ class DuskyOrchestratorApp(App):
             )
             self.left_pane.mount(row)
 
-    def update_task_icon(self, idx: int, status: str):
+    def update_task_status(self, idx: int, status: TaskStatus):
+        self.tasks[idx].status = status
         try:
             row = self.query_one(f"#row_{idx}")
             icon_w = row.children[0]
-            if status == "running":
-                icon_w.update(f"[{THEME['info']}]◉[/]")
-            elif status == "done":
-                icon_w.update(f"[{THEME['done']}]✓[/]")
-            elif status == "failed":
-                icon_w.update(f"[{THEME['error']}]x[/]")
+            if status == TaskStatus.RUNNING:
+                icon_w.update("[bold #58a6ff]◉[/]")
+            elif status == TaskStatus.COMPLETED:
+                icon_w.update("[bold #3fb950]✓[/]")
+            elif status == TaskStatus.FAILED:
+                icon_w.update("[bold #f85149]x[/]")
+            elif status == TaskStatus.SKIPPED:
+                icon_w.update("[bold #d29922]⊘[/]")
         except Exception:
             pass
 
@@ -455,8 +560,11 @@ class DuskyOrchestratorApp(App):
     def log_task(self, msg: str):
         self.log_widget.write(Text.from_ansi(msg))
 
-    def log_header(self, task: OrchestratorTask):
-        self.log_widget.write(Text.from_ansi(f"\n\033[1;36m>>> PROCESS INITIATED: {task.script_name}\033[0m"))
+    def update_telemetry(self, status_str: str, speed_str: str = ""):
+        if speed_str:
+            self.header_telemetry.update(f"Status: {status_str} | Speed/ETA: {speed_str}")
+        else:
+            self.header_telemetry.update(f"Status: {status_str}")
 
     async def run_execution_loop(self):
         while self.current_idx < len(self.tasks):
@@ -467,41 +575,43 @@ class DuskyOrchestratorApp(App):
                 continue
                 
             if not task.resolved_path:
-                self.handle_missing_task(task)
+                await self.handle_missing_task(task)
                 return
                 
             if self.manual:
-                self.prompt_manual_continue(task)
-                return
+                res = await self.push_screen_wait(ManualModalScreen(task.script_name))
+                if res == "yes":
+                    pass
+                elif res == "skip":
+                    self.task_skipped(task)
+                    continue
+                else:
+                    self.exit(1)
+                    return
                 
-            await self.execute_current_task()
+            await self.execute_task(task)
             return
 
-        self.log_system("All phase tasks completed successfully!")
-        await asyncio.sleep(2)
+        self.log_system("All tasks in this phase completed successfully!")
+        self.update_telemetry("Finished Phase")
+        await asyncio.sleep(1.5)
         self.exit(0)
 
-    def handle_missing_task(self, task: OrchestratorTask):
-        self.update_task_icon(self.current_idx, "failed")
+    async def handle_missing_task(self, task: OrchestratorTask):
+        self.update_task_status(self.current_idx, TaskStatus.FAILED)
         self.log_task(f"\033[1;31m[ERROR] Missing script: {task.script_name}\033[0m")
-        self.prompt_retry_skip("Script missing. Skip [s] or Quit [q]?")
+        res = await self.push_screen_wait(FailureModalScreen(task.script_name, "Script file not found on disk."))
+        if res == "retry":
+            self.run_worker(self.run_execution_loop())
+        elif res == "skip":
+            self.task_skipped(task)
+        else:
+            self.exit(1)
 
-    def prompt_manual_continue(self, task: OrchestratorTask):
-        self.update_task_icon(self.current_idx, "running")
-        self.log_header(task)
-        self.log_system("Manual confirmation required: Proceed [y] / Skip [s] / Quit [q]?")
-        self.waiting_for_input = True
-        self.input_action = 'manual'
-
-    def prompt_retry_skip(self, msg: str):
-        self.log_system(msg)
-        self.waiting_for_input = True
-        self.input_action = 'retry_skip'
-
-    async def execute_current_task(self):
-        task = self.tasks[self.current_idx]
-        self.update_task_icon(self.current_idx, "running")
-        self.log_header(task)
+    async def execute_task(self, task: OrchestratorTask):
+        self.update_task_status(self.current_idx, TaskStatus.RUNNING)
+        self.log_widget.write(Text.from_ansi(f"\n\033[1;36m>>> PROCESS INITIATED: {task.script_name}\033[0m"))
+        self.update_telemetry(f"Running {task.script_name}")
         
         args = list(task.args)
         if self.force_flag and "--force" not in args:
@@ -510,55 +620,94 @@ class DuskyOrchestratorApp(App):
         cmd = [task.interpreter, str(task.resolved_path)] + args
         
         if task.interactive:
-            # INTERACTIVE MODE: Suspend UI so the terminal takes over control natively
-            self.log_system("Suspending TUI... delegating terminal to interactive wizard.")
-            await asyncio.sleep(0.5)  # Let logs flush
+            # INTERACTIVE SUSPENSION: Delegate terminal directly to command
+            self.log_system(f"Delegating terminal to interactive process: {task.script_name}")
+            await asyncio.sleep(0.3)
             with self.suspend():
-                # Run subprocess directly sharing stdout/stdin/stderr
                 rc = subprocess.run(cmd).returncode
             self.log_system(f"TUI Resumed. Script exited with code: {rc}")
             
             if rc == 0:
-                self.task_success(task)
+                await self.task_success(task)
             else:
-                self.task_failure(task, rc)
+                await self.task_failure(task, f"Exit code {rc}")
         else:
-            # NON-INTERACTIVE MODE: Run as async process, piping output to Textual RichLog
+            # NON-INTERACTIVE PTY EXECUTION
+            master_fd, slave_fd = pty.openpty()
             try:
+                fl = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+                fcntl.fcntl(master_fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT
+                    stdin=slave_fd,
+                    stdout=slave_fd,
+                    stderr=slave_fd,
+                    close_fds=True
                 )
-                
-                if proc.stdout:
-                    buffer = ""
-                    while True:
-                        chunk = await proc.stdout.read(4096)
-                        if not chunk:
+                os.close(slave_fd)
+
+                loop = asyncio.get_running_loop()
+                buffer = ""
+
+                while True:
+                    try:
+                        data = await loop.run_in_executor(None, os.read, master_fd, 4096)
+                        if not data:
                             break
-                        buffer += chunk.decode('utf-8', errors='replace')
-                        while "\n" in buffer:
-                            line, buffer = buffer.split("\n", 1)
+                        text = data.decode('utf-8', errors='replace')
+                        buffer += text
+
+                        speed_match = SPEED_ETA_REGEX.search(buffer)
+                        pct_match = PCT_REGEX.search(buffer)
+                        if speed_match:
+                            self.update_telemetry(f"Running {task.script_name}", f"{speed_match.group(1)} (ETA {speed_match.group(2)})")
+                        elif pct_match:
+                            self.update_telemetry(f"Running {task.script_name} ({pct_match.group(0)})")
+
+                        while "\r" in buffer or "\n" in buffer:
+                            r_idx = buffer.find("\r")
+                            n_idx = buffer.find("\n")
+                            if r_idx != -1 and (n_idx == -1 or r_idx < n_idx):
+                                line, buffer = buffer[:r_idx], buffer[r_idx+1:]
+                            else:
+                                line, buffer = buffer[:n_idx], buffer[n_idx+1:]
+
+                            stripped = ANSI_STRIP_REGEX.sub('', line).strip()
+                            if not stripped:
+                                continue
+                            if PROGRESS_BAR_REGEX.search(line) and len(line) < 80 and not ("Error" in line or "ERR" in line):
+                                continue
+
                             self.log_task(line + "\n")
-                    if buffer:
-                        self.log_task(buffer)
-                        
+
+                    except (OSError, BlockingIOError):
+                        if proc.returncode is not None:
+                            break
+                        await asyncio.sleep(0.05)
+
                 rc = await proc.wait()
-                
+                if buffer:
+                    stripped = ANSI_STRIP_REGEX.sub('', buffer).strip()
+                    if stripped and not PROGRESS_BAR_REGEX.search(buffer):
+                        self.log_task(stripped + "\n")
+
                 if rc == 0:
-                    self.task_success(task)
+                    await self.task_success(task)
                 else:
                     if task.ignore_fail:
-                        self.log_system(f"Task exited with status {rc} but is marked to ignore failure. Continuing.")
-                        self.task_success(task)
+                        self.log_system(f"Task exited with status {rc} but ignore_fail is active. Proceeding.")
+                        await self.task_success(task)
                     else:
-                        self.task_failure(task, rc)
+                        await self.task_failure(task, f"Process exited with status code {rc}")
             except Exception as e:
-                self.task_failure(task, str(e))
+                await self.task_failure(task, str(e))
+            finally:
+                try: os.close(master_fd)
+                except OSError: pass
 
-    def task_success(self, task: OrchestratorTask):
-        self.update_task_icon(self.current_idx, "done")
+    async def task_success(self, task: OrchestratorTask):
+        self.update_task_status(self.current_idx, TaskStatus.COMPLETED)
         self.log_task("\n\033[1;32m>>> EXECUTION SUCCESSFUL\033[0m")
         self.completed_keys.add(task.state_key)
         
@@ -572,62 +721,48 @@ class DuskyOrchestratorApp(App):
         self.current_idx += 1
         self.run_worker(self.run_execution_loop())
 
-    def task_failure(self, task: OrchestratorTask, reason):
-        self.update_task_icon(self.current_idx, "failed")
+    def task_skipped(self, task: OrchestratorTask):
+        self.update_task_status(self.current_idx, TaskStatus.SKIPPED)
+        self.log_system(f"Skipped task: {task.script_name}")
+        self.progress_bar.advance(1)
+        self.current_idx += 1
+        self.run_worker(self.run_execution_loop())
+
+    async def task_failure(self, task: OrchestratorTask, reason: str):
+        self.update_task_status(self.current_idx, TaskStatus.FAILED)
         self.log_task(f"\n\033[1;31m>>> EXECUTION FAILED: {reason}\033[0m")
         if self.stop_on_fail:
-            self.log_system("stop-on-fail active. Aborting phase.")
-            self.set_timer(2.0, self.action_quit_app)
+            self.log_system("stop-on-fail active. Terminating installer phase.")
+            await asyncio.sleep(1.5)
+            self.exit(1)
         else:
-            self.prompt_retry_skip("Task Failed. Retry [r] / Skip [s] / Quit [q]?")
+            res = await self.push_screen_wait(FailureModalScreen(task.script_name, reason))
+            if res == "retry":
+                self.run_worker(self.run_execution_loop())
+            elif res == "skip":
+                self.task_skipped(task)
+            else:
+                self.exit(1)
 
     def action_quit_app(self):
         self.exit(1)
-        
-    def action_skip_task(self):
-        if self.waiting_for_input and self.input_action in ('manual', 'retry_skip'):
-            self.waiting_for_input = False
-            self.log_system("Skipping task.")
-            self.update_task_icon(self.current_idx, "failed")
-            self.current_idx += 1
-            self.progress_bar.advance(1)
-            self.run_worker(self.run_execution_loop())
 
-    def action_retry_task(self):
-        if self.waiting_for_input and self.input_action == 'retry_skip':
-            self.waiting_for_input = False
-            self.log_system("Retrying task in full screen...")
-            task = self.tasks[self.current_idx]
-            task.interactive = True
-            self.run_worker(self.run_execution_loop())
-            
-    def action_yes(self):
-        if self.waiting_for_input and self.input_action == 'manual':
-            self.waiting_for_input = False
-            self.run_worker(self.execute_current_task())
+    def action_toggle_manual(self):
+        self.manual = not self.manual
+        mode = "ENABLED" if self.manual else "DISABLED"
+        self.log_system(f"Manual step confirmation mode {mode}")
 
-    def action_no(self):
-        if self.waiting_for_input and self.input_action in ('manual', 'retry_skip'):
-            self.waiting_for_input = False
-            self.log_system("Aborting installation.")
-            self.exit(1)
-
-    def on_key(self, event) -> None:
-        if self.waiting_for_input:
-            key = event.key.lower()
-            if key == "q":
-                self.action_quit_app()
-            elif key == "s":
-                self.action_skip_task()
-            elif key == "r":
-                self.action_retry_task()
-            elif key == "y":
-                self.action_yes()
-            elif key == "n":
-                self.action_no()
+    def action_reset_state(self):
+        if self.state_file.exists():
+            try:
+                self.state_file.unlink()
+                self.completed_keys.clear()
+                self.log_system("Phase completion state reset.")
+            except Exception as e:
+                self.log_system(f"Failed to reset state: {e}")
 
 # ==============================================================================
-#  MAIN ENTRY
+# MAIN ENTRYPOINT
 # ==============================================================================
 if __name__ == "__main__":
     args = parse_args()
@@ -646,7 +781,6 @@ if __name__ == "__main__":
         except Exception:
             phase1 = True
 
-    # 1. Discover Profiles
     profiles = discover_profiles()
     
     if args.list_profiles:
@@ -661,9 +795,7 @@ if __name__ == "__main__":
 
     selected_profile: Optional[ProfileConfig] = None
     
-    # 2. Match Profile
     if args.profile:
-        # Check direct path first
         custom_path = Path(args.profile)
         if custom_path.exists() and custom_path.is_file():
             try:
@@ -672,7 +804,6 @@ if __name__ == "__main__":
                 sys.stderr.write(f"Error loading custom profile from {custom_path}: {e}\n")
                 sys.exit(1)
         else:
-            # Search discovered profiles
             for p in profiles:
                 if p.name == args.profile or (p.filepath and p.filepath.stem == args.profile):
                     selected_profile = p
@@ -681,22 +812,17 @@ if __name__ == "__main__":
                 sys.stderr.write(f"Error: Installer profile '{args.profile}' not found.\n")
                 sys.exit(1)
     else:
-        # Fall back to first profile matching 001_*.toml if it exists
         for p in profiles:
             if p.filepath and p.filepath.name.startswith("001_") and p.filepath.name.endswith(".toml"):
                 selected_profile = p
                 break
-        
-        # If no default.toml but profiles exist, select the first one
         if not selected_profile and profiles:
             selected_profile = profiles[0]
 
-    # 3. Instantiate Tasks (Using profile config or hardcoded fallback)
     if selected_profile:
         profile_name = selected_profile.name
         raw_sequence = selected_profile.phase1_tasks if phase1 else selected_profile.phase2_tasks
         
-        # Convert parsed tasks to OrchestratorTask instances with correct path resolution
         tasks: List[OrchestratorTask] = []
         for i, t in enumerate(raw_sequence):
             resolved_path = SCRIPT_DIR / t.script_name
@@ -704,14 +830,13 @@ if __name__ == "__main__":
                 resolved_path = None
                 
             interpreter = t.interpreter
+            is_interactive = t.interactive
             if resolved_path:
-                interpreter = resolve_interpreter(resolved_path)
+                interpreter, file_interactive = resolve_interpreter(resolved_path)
+                if file_interactive:
+                    is_interactive = True
                 
             state_key = hashlib.md5(f"{i}:{t.script_name}:{'-'.join(t.args)}".encode()).hexdigest()
-            
-            is_interactive = t.interactive
-            if resolved_path and is_script_interactive(resolved_path):
-                is_interactive = True
 
             tasks.append(OrchestratorTask(
                 script_name=t.script_name,
@@ -723,7 +848,6 @@ if __name__ == "__main__":
                 resolved_path=resolved_path
             ))
     else:
-        # Hardcoded fallback sequence
         profile_name = "Hardcoded Default"
         sequence = FALLBACK_ISO_SEQUENCE if phase1 else FALLBACK_CHROOT_SEQUENCE
         tasks: List[OrchestratorTask] = []
@@ -733,14 +857,13 @@ if __name__ == "__main__":
                 resolved_path = None
                 
             interpreter = "bash"
+            is_interactive = interactive
             if resolved_path:
-                interpreter = resolve_interpreter(resolved_path)
+                interpreter, file_interactive = resolve_interpreter(resolved_path)
+                if file_interactive:
+                    is_interactive = True
                 
             state_key = hashlib.md5(f"{i}:{name}:{'-'.join(s_args)}".encode()).hexdigest()
-            
-            is_interactive = interactive
-            if resolved_path and is_script_interactive(resolved_path):
-                is_interactive = True
 
             tasks.append(OrchestratorTask(
                 script_name=name,
