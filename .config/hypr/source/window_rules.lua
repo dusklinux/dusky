@@ -45,36 +45,15 @@ hl.window_rule({
     float = true
 })
 
---- Firefox: YouTube Full Opacity ---
--- Forces 100% opacity (no transparency/dimming) specifically for YouTube
+--- Firefox: Opaque Web Apps (Streaming & Design) ---
+-- Forces 100% full opacity & disables blur for video streaming, media players & design web apps
 hl.window_rule({
-    name = "opaque-firefox-youtube",
+    name = "opaque-firefox-webapps",
     match = {
         class = "^(firefox)$",
-        title = ".*YouTube.*"
+        title = ".*(YouTube|Figma|Pixabay|Netflix|Twitch|Rumble|Apple TV|Hulu|HBO|Max|Disney|Prime Video|Spotify|SoundCloud|Canva|Photopea|Unsplash|Pexels|Jellyfin|Plex|Stremio|Kick).*"
     },
-    opaque = true
-})
-
---- Firefox: Figma Full Opacity ---
--- Forces 100% opacity (no transparency/dimming) specifically for Figma (A web based UI Design tool)
-hl.window_rule({
-    name = "opaque-firefox-figma",
-    match = {
-        class = "^(firefox)$",
-        title = ".*Figma.*"
-    },
-    opaque = true
-})
-
---- Firefox: Pixabay Full Opacity ---
--- Forces 100% opacity (no transparency/dimming) specifically for Pixabay
-hl.window_rule({
-    name = "opaque-firefox-pixabay",
-    match = {
-        class = "^(firefox)$",
-        title = ".*Pixabay.*"
-    },
+    opacity = "1.0 override 1.0 override",
     opaque = true
 })
 
