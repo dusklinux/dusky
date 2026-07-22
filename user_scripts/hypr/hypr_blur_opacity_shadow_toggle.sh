@@ -61,7 +61,7 @@ readonly MAKO_OSD_BG_ALPHA_ON="0d"
 readonly MAKO_OSD_BG_ALPHA_OFF="ff"
 
 # Foot Alpha & Blur Values
-readonly FOOT_ALPHA_ON="0.85"
+readonly FOOT_ALPHA_ON="0.99"
 readonly FOOT_BLUR_ON="yes"
 
 readonly FOOT_ALPHA_OFF="1.0"
