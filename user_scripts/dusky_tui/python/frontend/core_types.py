@@ -22,6 +22,7 @@ KNOWN_COLORS = {
     "Chocolate": (210, 105, 30), "Tomato": (255, 99, 71), "Lavender": (230, 230, 250)
 }
 
+KNOWN_COLORS_LOWER = {k.lower(): v for k, v in KNOWN_COLORS.items()}
 _LOWER_KNOWN_COLORS = {k.lower() for k in KNOWN_COLORS}
 
 try:
@@ -60,10 +61,20 @@ def is_theme_variable(val: str) -> bool:
     # Everything remaining (Template {{tags}}, Bash $vars, CSS var(--xyz), lexical aliases) is a theme variable
     return True
 
+def is_trigger_item(item: Any) -> bool:
+    """Checks if a ConfigItem acts as an action trigger rather than a standard boolean toggle."""
+    if getattr(item, "type_", None) != "bool":
+        return False
+    opts = getattr(item, "options", None)
+    if not opts or not isinstance(opts, (list, tuple)):
+        return False
+    opt0 = str(opts[0]).lower()
+    return opt0 in ("trigger", "copy") or opt0.startswith("trigger:") or opt0.startswith("copy:")
+
 # Preserving your exact Python 3.12+ type alias syntax from the original ui.py
 type ConfigType = Literal["bool", "int", "float", "string", "cycle", "action", "menu", "picker", "color", "preset"]
 
-@dataclass(kw_only=True)
+@dataclass(kw_only=True, slots=True)
 class ConfigItem:
     label: str
     key: str
@@ -98,6 +109,9 @@ class ConfigItem:
     confirm_message: str | None = None  # Requires explicit dialog confirmation before mutation
     target_file_override: str | None = None
     engine_type_override: str | None = None
+
+    # Caching & Optimization Fields
+    _ratio_cache: float | None = field(default=None, repr=False, compare=False)
 
     @property
     def uid(self) -> str:
