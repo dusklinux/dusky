@@ -3,7 +3,7 @@
 ==============================================================================
 Description: Dusky Keybinds Cheatsheet
 Language:    Python 3.14.6+ (Native Generics, Type Aliases, Match Statements)
-Design:      Dynamic Matugen Palette, Accurate Color Legend Matching
+Design:      Dynamic Matugen Palette, Pure Minimalist Layout
 ==============================================================================
 """
 
@@ -22,7 +22,6 @@ from rich import box
 from rich.align import Align
 from rich.console import Console, Group
 from rich.panel import Panel
-from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
@@ -239,53 +238,8 @@ def build_card(cat: Category, index: int) -> Panel:
     )
 
 
-def build_header() -> Group:
-    """Clean centered title header."""
-    brand = Text()
-    brand.append(" 󰌌  DUSKY CHEATSHEET ", style=f"bold {C.BG} on {C.ACCENT}")
-
-    return Group(
-        Align.center(brand),
-        Text(""),
-        Rule(style=C.FG, characters="─"),
-    )
-
-
-def build_legend() -> Text:
-    """Matugen color language key matching active roles."""
-    items: tuple[tuple[str, Tag], ...] = (
-        ("accent",  Tag.ACCENT),
-        ("success", Tag.SUCCESS),
-        ("warning", Tag.WARNING),
-        ("danger",  Tag.DANGER),
-        ("muted",   Tag.MUTED),
-    )
-    leg = Text()
-    for i, (label, tag) in enumerate(items):
-        if i:
-            leg.append("   ", style="")
-        fg = tag_fg(tag)
-        leg.append("●", style=fg)
-        leg.append(f" {label}", style=fg)
-    return leg
-
-
-def build_footer() -> Text:
-    foot = Text()
-    foot.append(" press ", style=C.FG)
-    foot.append(" any key ", style=f"bold {C.BG} on {C.ACCENT}")
-    foot.append(" to dismiss ", style=C.FG)
-    foot.append(" · ", style=C.FG)
-    foot.append("q", style=f"bold {C.ACCENT}")
-    foot.append(" / ", style=C.FG)
-    foot.append("Esc", style=f"bold {C.ACCENT}")
-    foot.append(" / ", style=C.FG)
-    foot.append("Ctrl+C", style=f"bold {C.ACCENT}")
-    return foot
-
-
-def render(console: Console) -> Panel:
-    """Full dashboard — responsive 2×2 or stacked."""
+def render(console: Console) -> Group:
+    """Pure minimal dashboard — centered header title + 2x2 category grid."""
     cards = [build_card(cat, i) for i, cat in enumerate(CATALOGUE, 1)]
 
     if console.width >= 110:
@@ -303,30 +257,14 @@ def render(console: Console) -> Panel:
             if i < len(cards) - 1:
                 grid.add_row(Text(""))
 
-    body = Group(
-        build_header(),
+    brand = Text()
+    brand.append(" 󰌌  DUSKY CHEATSHEET ", style=f"bold {C.BG} on {C.ACCENT}")
+
+    return Group(
+        Text(""),
+        Align.center(brand),
         Text(""),
         grid,
-        Text(""),
-        Rule(style=C.FG, characters="─"),
-        Text(""),
-        Align.center(build_legend()),
-        Text(""),
-        Align.center(build_footer()),
-    )
-
-    py = (
-        f"{sys.version_info.major}."
-        f"{sys.version_info.minor}."
-        f"{sys.version_info.micro}"
-    )
-    return Panel(
-        body,
-        border_style=f"bold {C.ACCENT}",
-        box=box.DOUBLE_EDGE,
-        padding=(1, 2),
-        subtitle=f"[{C.FG}]matugen dusky_tui  ·  python {py}[/]",
-        subtitle_align="right",
     )
 
 
