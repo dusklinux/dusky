@@ -3,7 +3,7 @@
 ==============================================================================
 Description: Dusky Keybinds Cheatsheet
 Language:    Python 3.14.6+ (Native Generics, Type Aliases, Match Statements)
-Design:      Catppuccin Palette, Keycap Pill Formatting, 100% Equal Heights
+Design:      Catppuccin Palette, Keycap Pill Formatting, Inline Context Badges
 ==============================================================================
 """
 
@@ -132,7 +132,7 @@ def get_tag_style(tag: KeyTag) -> str:
 
 
 def create_category_table(title: str, border_color: str, entries: list[KeyEntry]) -> Table:
-    """Create a balanced table with fitted shortcut column to avoid whitespace gaps."""
+    """Create a balanced 2-column table with inline context badges for maximum space efficiency."""
     tbl = Table(
         show_header=True,
         header_style="bold underline #cdd6f4",
@@ -142,17 +142,17 @@ def create_category_table(title: str, border_color: str, entries: list[KeyEntry]
         border_style=border_color,
     )
     
-    tbl.add_column("Shortcut Keycap", justify="left", width=26, no_wrap=True)
+    tbl.add_column("Shortcut Keycap", justify="left", width=25, no_wrap=True)
     tbl.add_column("Action & Description", justify="left")
-    tbl.add_column("Context", justify="right", style="italic #7f849c")
 
     for entry in entries:
         k_formatted = format_keycaps(entry.keys)
         desc_style = get_tag_style(entry.tag)
         d_text = Text(entry.description, style=desc_style)
-        n_text = Text(entry.note, style="italic #7f849c") if entry.note else Text("")
+        if entry.note:
+            d_text.append(f"  ({entry.note})", style="italic #7f849c")
         
-        tbl.add_row(k_formatted, d_text, n_text)
+        tbl.add_row(k_formatted, d_text)
 
     return tbl
 
@@ -166,7 +166,8 @@ def render_cheatsheet_dashboard() -> Panel:
         tbl = create_category_table(title, color, entries)
         tables.append(tbl)
 
-    if console.width >= 120:
+    # Responsive Grid Layout: 2 columns if width >= 115, else stack in 1 column
+    if console.width >= 115:
         grid = Table.grid(expand=True, padding=(1, 2))
         grid.add_column(ratio=1)
         grid.add_column(ratio=1)
