@@ -957,6 +957,16 @@ def main():
     if not args.auto and sys.stdin.isatty():
         if action in ("official","both","full","official_iso"): official_repo=prompt_path("Official repo path", official_repo)
         if action in ("aur","both","full"): aur_repo=prompt_path("AUR repo path", aur_repo)
+
+    workspace_base=args.workspace
+    if action in ("iso","full","official_iso") and not workspace_base:
+        if ZRAM_CANDIDATE.exists() and is_mountpoint(ZRAM_CANDIDATE):
+            if not args.auto and sys.stdin.isatty():
+                if Confirm.ask(f"Detected {ZRAM_CANDIDATE} mounted - use for speed?", default=True): workspace_base=ZRAM_CANDIDATE
+                else: workspace_base=Path("/tmp")
+            else: workspace_base=ZRAM_CANDIDATE
+        else: workspace_base=Path("/tmp")
+
     ensure_sudo_cached()
     
     if action in ("official","both","full","official_iso"):
@@ -1025,14 +1035,6 @@ def main():
         if os.geteuid()!=0: die("ISO build requires root - run with sudo")
         for t in ["mkarchiso","git"]:
             if not check_tool(t): die(f"Missing: {t}")
-        workspace_base=args.workspace
-        if not workspace_base:
-            if ZRAM_CANDIDATE.exists() and is_mountpoint(ZRAM_CANDIDATE):
-                if sys.stdin.isatty():
-                    if Confirm.ask(f"Detected {ZRAM_CANDIDATE} mounted - use for speed?", default=True): workspace_base=ZRAM_CANDIDATE
-                    else: workspace_base=Path("/tmp")
-                else: workspace_base=ZRAM_CANDIDATE
-            else: workspace_base=Path("/tmp")
         workspace=Path(workspace_base)/"dusky_iso"
         profile_dir=workspace/"profile"; work_dir=workspace/"work"; out_dir=workspace/"out"
         final_dest=ZRAM_CANDIDATE if ZRAM_CANDIDATE.exists() and is_mountpoint(ZRAM_CANDIDATE) else Path.home()/"dusky_isos"
