@@ -15,8 +15,8 @@ hl.config({
     -- ==========================================
     general = {
         border_size = 2, -- Size of the border around windows
-        gaps_in = 3, -- Gaps between windows
-        gaps_out = 8, -- Gaps between windows and monitor edges
+        gaps_in = 2, -- Gaps between windows
+        gaps_out = 5, -- Gaps between windows and monitor edges
         float_gaps = 2, -- Gaps for floating windows (-1 means default)
         gaps_workspaces = 50, -- Gaps between workspaces (stacks with gaps_out)
 
@@ -36,7 +36,7 @@ hl.config({
     -- DECORATION (Rounding, Blur, Shadows)
     -- ==========================================
     decoration = {
-        rounding = 6, -- Rounded corners' radius (in layout px)
+        rounding = 2, -- Rounded corners' radius (in layout px)
         rounding_power = 2.0, -- Curve used for rounding (2.0 is circle, 4.0 squircle, 1.0 triangular)
         active_opacity = 0.85, -- Opacity of active windows [0.0 - 1.0]
         inactive_opacity = 0.85, -- Opacity of inactive windows [0.0 - 1.0]
@@ -52,13 +52,13 @@ hl.config({
         blur = {
             enabled = true, -- Enable kawase window background blur
             size = 6, -- Blur size (distance)
-            passes = 3, -- Amount of passes to perform
+            passes = 2, -- Amount of passes to perform
             ignore_opacity = true, -- Make the blur layer ignore the opacity of the window
             new_optimizations = true, -- Enable further optimizations (massively improves performance)
             xray = false, -- Floating windows ignore tiled windows in blur (reduces overhead)
             noise = 0.0117, -- How much noise to apply [0.0 - 1.0]
             contrast = 0.8916, -- Contrast modulation for blur [0.0 - 2.0]
-            brightness = 0.8172, -- Brightness modulation for blur [0.0 - 2.0]
+            brightness = 1.0172, -- Brightness modulation for blur [0.0 - 2.0]
             vibrancy = 0.1696, -- Increase saturation of blurred colors [0.0 - 1.0]
             vibrancy_darkness = 0.0, -- How strong vibrancy effect is on dark areas [0.0 - 1.0]
             special = false, -- Whether to blur behind special workspace (expensive)
