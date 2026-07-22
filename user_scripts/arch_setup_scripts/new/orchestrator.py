@@ -3772,6 +3772,14 @@ def _task_label(task: OrchestratorTask) -> Text:
         txt.append(" ⟳", style="bold magenta")
     if task.once:
         txt.append(" [once]", style="bold blue")
+    if task.duration > 0:
+        secs = task.duration
+        if secs < 60:
+            txt.append(f" ({secs:.1f}s)", style="dim cyan")
+        else:
+            m = int(secs) // 60
+            s = int(secs) % 60
+            txt.append(f" ({m}m{s:02d}s)", style="dim cyan")
     return txt
 
 
@@ -4331,8 +4339,14 @@ class DuskyOrchestratorApp(App):
         )
         self.progress_bar = ProgressBar(show_eta=False, show_percentage=False, id="progress_bar")
         self.status_label = Label("Initializing orchestrator sequence...", id="status_label")
-        self.speed_label = Label("Status: pre-flight | ETA: --:--", id="speed_label")
+        self.speed_label = Label("Status: pre-flight | Elapsed: 00:00", id="speed_label")
         self.details_label = Static("No task selected.", id="details_label")
+
+        self.start_time: float = time.monotonic()
+        self.finished_time: float | None = None
+        self._total_paused_time: float = 0.0
+        self._pause_start: float | None = None
+        self._prompt_pause_level: int = 0
 
         self.tree_nodes_map: dict[str, TreeNode] = {}
         self.logger = RunLogger(profile, self.run_id)
@@ -4412,8 +4426,43 @@ class DuskyOrchestratorApp(App):
             elif status == "skipped_condition":
                 self.update_task_node_by_key(t.state_key, TaskStatus.SKIPPED)
 
+        self.set_interval(1.0, self._update_overall_status)
         self._update_overall_status()
         self.run_execution_pipeline()
+
+    def _pause_stopwatch(self) -> None:
+        if self._prompt_pause_level == 0:
+            self._pause_start = time.monotonic()
+        self._prompt_pause_level += 1
+
+    def _resume_stopwatch(self) -> None:
+        if self._prompt_pause_level > 0:
+            self._prompt_pause_level -= 1
+            if self._prompt_pause_level == 0 and self._pause_start is not None:
+                self._total_paused_time += (time.monotonic() - self._pause_start)
+                self._pause_start = None
+
+    def get_elapsed_seconds(self) -> float:
+        end_t = self.finished_time if self.finished_time is not None else time.monotonic()
+        current_pause = (end_t - self._pause_start) if self._pause_start is not None else 0.0
+        return max(0.0, end_t - self.start_time - self._total_paused_time - current_pause)
+
+    @staticmethod
+    def _format_elapsed(secs: float) -> str:
+        total_seconds = int(secs)
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        if hours > 0:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    async def push_screen_wait(self, screen: Any) -> Any:
+        self._pause_stopwatch()
+        try:
+            return await super().push_screen_wait(screen)
+        finally:
+            self._resume_stopwatch()
 
     def on_unmount(self) -> None:
         self._kill_active_child_sync()
@@ -4706,9 +4755,6 @@ class DuskyOrchestratorApp(App):
     ) -> None:
         if pct:
             self._telemetry["pct"] = pct
-        if speed and eta:
-            self._telemetry["speed"] = speed
-            self._telemetry["eta"] = eta
 
         if self._telemetry_timer is None:
             self._telemetry_timer = self.set_timer(0.2, self._flush_telemetry)
@@ -4720,29 +4766,17 @@ class DuskyOrchestratorApp(App):
             self._telemetry_timer = None
 
         pct = self._telemetry.get("pct")
-        speed = self._telemetry.get("speed")
-        eta = self._telemetry.get("eta")
 
         if pct and self.active_task:
             self.status_label.update(f"{S('running')} {self.active_task.script_name} ({pct})")
-
-        if speed and eta:
-            self.speed_label.update(f"Throughput: {speed} | ETA: {eta}")
 
     def _update_overall_status(self) -> None:
         total = max(1, len(self.tasks))
         done = len(self.progressed)
         pct = int(done * 100 / total)
+        elapsed_str = self._format_elapsed(self.get_elapsed_seconds())
 
-        remaining = max(0, total - done)
-        eta = "--:--"
-
-        if self._durations and remaining:
-            avg = sum(self._durations) / len(self._durations)
-            secs = int(avg * remaining)
-            eta = str(datetime.timedelta(seconds=secs))
-
-        self.speed_label.update(f"Completed {done}/{total} ({pct}%) | ETA: {eta}")
+        self.speed_label.update(f"Completed {done}/{total} ({pct}%) | Elapsed: {elapsed_str}")
 
     def _task_details(self, task: OrchestratorTask | None) -> Text:
         if task is None:
@@ -4779,6 +4813,17 @@ class DuskyOrchestratorApp(App):
         if task.interactive_override is not None:
             txt.append(" (profile override)", style="dim")
         txt.append("\n")
+
+        if task.duration > 0:
+            secs = task.duration
+            if secs < 60:
+                dur_str = f"{secs:.2f}s"
+            else:
+                m = int(secs) // 60
+                s = int(secs) % 60
+                dur_str = f"{m}m {s:02d}s ({secs:.2f}s)"
+            txt.append("Duration: ", style="bold")
+            txt.append(dur_str + "\n", style="cyan")
 
         txt.append("Once: ", style="bold")
         if task.once:
@@ -5703,8 +5748,10 @@ class DuskyOrchestratorApp(App):
 
                         break
 
+                self.finished_time = time.monotonic()
                 self.status_label.update(f"{S('completed')} Orchestrator sequence finished.")
-                self.speed_label.update("Status: idle | ETA: 00:00")
+                elapsed_str = self._format_elapsed(self.get_elapsed_seconds())
+                self.speed_label.update(f"Status: complete | Total Elapsed: {elapsed_str}")
 
                 with suppress(Exception):
                     self.query_one("#footer_status", Label).update("Engine: complete")
