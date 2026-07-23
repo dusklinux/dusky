@@ -20,17 +20,6 @@ config_lock = threading.Lock()
 stdout_lock = threading.Lock()  # Protection against concurrent protocol corruption
 running = True
 
-# --- Safe Path ---
-def safe_path(base_dir, filename):
-    """Resolve the path safely, permitting symlinks but preventing directory traversal."""
-    if not filename or not base_dir:
-        return None
-    if os.path.basename(filename) != filename:
-        return None
-    if filename.startswith('.'):
-        return None
-    return os.path.join(base_dir, filename)
-
 # --- XDG Config Path ---
 def get_config_path():
     """Get a safe, user-writable path for the config file respecting XDG standard."""
@@ -410,46 +399,6 @@ def message_handler():
                 if colors_file:
                     data = get_theme_data(colors_file, websites_dir)
                     send_message({"type": "MATUGEN_UPDATE", "data": data})
-
-            elif msg_type == "LIST_WEBSITES":
-                try:
-                    with config_lock:
-                        wdir = config["websites_dir"]
-                    if wdir and os.path.isdir(wdir):
-                        files = [f for f in os.listdir(wdir) if f.endswith(".css")]
-                        send_message({"type": "WEBSITE_LIST", "files": sorted(files)})
-                    else:
-                        send_message({"type": "WEBSITE_LIST", "files": []})
-                except Exception:
-                    send_message({"type": "WEBSITE_LIST", "files": []})
-
-            elif msg_type == "READ_WEBSITE_CSS":
-                filename = msg.get("filename")
-                try:
-                    with config_lock:
-                        wdir = config["websites_dir"]
-                    path = safe_path(wdir, filename)
-                    if path and os.path.isfile(path):
-                        with open(path, 'r', encoding='utf-8') as f:
-                            send_message({"type": "WEBSITE_CSS", "filename": filename, "content": f.read()})
-                    else:
-                        send_message({"type": "WEBSITE_CSS", "filename": filename, "content": ""})
-                except Exception as e:
-                    print(f"MatugenFox host error (READ_WEBSITE_CSS): {e}", file=sys.stderr)
-                    send_message({"type": "WEBSITE_CSS", "filename": filename, "content": ""})
-
-            elif msg_type == "SAVE_WEBSITE_CSS":
-                filename = msg.get("filename")
-                content = msg.get("content")
-                try:
-                    with config_lock:
-                        wdir = config["websites_dir"]
-                    path = safe_path(wdir, filename)
-                    if path and content is not None:
-                        atomic_write(path, content)
-                        send_message({"type": "SAVE_SUCCESS", "filename": filename})
-                except Exception as e:
-                    print(f"MatugenFox host error (SAVE_WEBSITE_CSS): {e}", file=sys.stderr)
 
             elif msg_type == "SAVE_CONFIG":
                 config_data = msg.get("config", {})
