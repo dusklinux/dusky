@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <title>MatugenFox Settings</title>
     <link rel="stylesheet" href="design.css">
     <link rel="stylesheet" href="options.css">
 </head>
+
 <body>
     <div class="options-shell">
         <!-- Sidebar -->
@@ -25,7 +27,6 @@
 
         <!-- Content -->
         <main class="options-content">
-
             <!-- ═══ General ═══ -->
             <section id="panel-general" class="options-panel active">
                 <h1 class="panel-header">General</h1>
@@ -33,7 +34,8 @@
 
                 <div class="settings-group" id="paths-warning-group" hidden>
                     <div class="mg-alert-error">
-                        <strong>⚠ Paths Not Found:</strong> Matugen files are missing at the configured paths. Please update them below to enable theming.
+                        <strong>⚠ Paths Not Found:</strong> Matugen files are missing at the configured paths. Please
+                        update them below to enable theming.
                     </div>
                 </div>
 
@@ -44,7 +46,8 @@
                             <div class="setting-label">Eco Mode</div>
                             <div class="setting-hint">Only update the active tab to save resources</div>
                         </div>
-                        <label class="mg-toggle"><input type="checkbox" id="opt-eco"><span class="mg-toggle-track"></span></label>
+                        <label class="mg-toggle"><input type="checkbox" id="opt-eco"><span
+                                class="mg-toggle-track"></span></label>
                     </div>
                 </div>
 
@@ -55,14 +58,17 @@
                             <div class="setting-label">Browser Theming</div>
                             <div class="setting-hint">Apply Matugen colors to Firefox tabs, toolbar, and menus</div>
                         </div>
-                        <label class="mg-toggle"><input type="checkbox" id="opt-browser-theme-general" checked><span class="mg-toggle-track"></span></label>
+                        <label class="mg-toggle"><input type="checkbox" id="opt-browser-theme-general" checked><span
+                                class="mg-toggle-track"></span></label>
                     </div>
                     <div class="setting-row">
                         <div class="setting-info">
                             <div class="setting-label">Web Theming</div>
-                            <div class="setting-hint">Inject CSS into websites — <strong>only</strong> sites with a template in your sites directory will be themed</div>
+                            <div class="setting-hint">Inject CSS into websites — <strong>only</strong> sites with a
+                                template in your sites directory will be themed</div>
                         </div>
-                        <label class="mg-toggle"><input type="checkbox" id="opt-web-theme"><span class="mg-toggle-track"></span></label>
+                        <label class="mg-toggle"><input type="checkbox" id="opt-web-theme"><span
+                                class="mg-toggle-track"></span></label>
                     </div>
                 </div>
 
@@ -71,7 +77,8 @@
                     <div class="settings-group-title">Paths</div>
                     <div class="input-group">
                         <label for="opt-colors-path">Colors CSS Path</label>
-                        <input type="text" id="opt-colors-path" class="mg-input" placeholder="~/.config/matugen/generated/firefox_websites.css">
+                        <input type="text" id="opt-colors-path" class="mg-input"
+                            placeholder="~/.config/matugen/generated/firefox_websites.css">
                         <div class="input-hint">The file where Matugen outputs your CSS variables.</div>
                     </div>
                     <div class="input-group">
@@ -90,7 +97,8 @@
 
                 <div class="settings-group">
                     <div class="settings-group-title">Palette Template</div>
-                    <p class="panel-desc" style="font-size:12px;margin-bottom:var(--mg-s4)">Map Matugen CSS variables to logical palette roles.</p>
+                    <p class="panel-desc" style="font-size:12px;margin-bottom:var(--mg-s4)">Map Matugen CSS variables to
+                        logical palette roles.</p>
                     <div id="palette-template-form" style="display:flex;flex-direction:column;gap:var(--mg-s2);">
                         <!-- Injected via JS -->
                     </div>
@@ -98,7 +106,8 @@
 
                 <div class="settings-group">
                     <div class="settings-group-title">Browser Template</div>
-                    <p class="panel-desc" style="font-size:12px;margin-bottom:var(--mg-s4)">Map palette roles to specific Firefox chrome elements.</p>
+                    <p class="panel-desc" style="font-size:12px;margin-bottom:var(--mg-s4)">Map palette roles to
+                        specific Firefox chrome elements.</p>
                     <div id="browser-template-form" style="display:flex;flex-direction:column;gap:var(--mg-s2);">
                         <!-- Injected via JS -->
                     </div>
@@ -115,7 +124,8 @@
                             <div class="setting-label">Enable DDG Theming</div>
                             <div class="setting-hint">Applies theme via content script.</div>
                         </div>
-                        <label class="mg-toggle"><input type="checkbox" id="opt-duckduckgo"><span class="mg-toggle-track"></span></label>
+                        <label class="mg-toggle"><input type="checkbox" id="opt-duckduckgo"><span
+                                class="mg-toggle-track"></span></label>
                     </div>
                 </div>
             </section>
@@ -123,14 +133,17 @@
             <!-- ═══ userChrome ═══ -->
             <section id="panel-userchrome" class="options-panel">
                 <h1 class="panel-header">userChrome.css / userContent.css</h1>
-                <p class="panel-desc">Modify Firefox's internal styling. Requires native host connection and <code>toolkit.legacyUserProfileCustomizations.stylesheets = true</code> in about:config.</p>
+                <p class="panel-desc">Modify Firefox's internal styling. Requires native host connection and
+                    <code>toolkit.legacyUserProfileCustomizations.stylesheets = true</code> in about:config.
+                </p>
 
                 <div class="settings-group">
                     <div class="settings-group-title">Status</div>
                     <div class="setting-row" style="background:var(--mg-bg-2);">
                         <div class="setting-info">
                             <div class="setting-label">Firefox Profile Path</div>
-                            <div id="profile-path-info" class="setting-hint" style="font-family:monospace;margin-top:4px;">Checking...</div>
+                            <div id="profile-path-info" class="setting-hint"
+                                style="font-family:monospace;margin-top:4px;">Checking...</div>
                         </div>
                     </div>
                 </div>
@@ -141,14 +154,16 @@
                             <div class="setting-label">Enable userChrome.css</div>
                             <div class="setting-hint">Compacts toolbar and context menus.</div>
                         </div>
-                        <label class="mg-toggle"><input type="checkbox" id="opt-userchrome"><span class="mg-toggle-track"></span></label>
+                        <label class="mg-toggle"><input type="checkbox" id="opt-userchrome"><span
+                                class="mg-toggle-track"></span></label>
                     </div>
                     <div class="setting-row">
                         <div class="setting-info">
                             <div class="setting-label">Enable userContent.css</div>
                             <div class="setting-hint">Hides global scrollbars in web pages.</div>
                         </div>
-                        <label class="mg-toggle"><input type="checkbox" id="opt-usercontent"><span class="mg-toggle-track"></span></label>
+                        <label class="mg-toggle"><input type="checkbox" id="opt-usercontent"><span
+                                class="mg-toggle-track"></span></label>
                     </div>
                     <div class="setting-row">
                         <div class="setting-info">
@@ -156,7 +171,8 @@
                             <div class="setting-hint">Used for UI elements in userChrome.css</div>
                         </div>
                         <div style="display:flex;align-items:center;gap:var(--mg-s2);">
-                            <input type="number" id="opt-font-size" class="mg-input mg-input-sm" min="9" max="24" value="13" style="width:60px;text-align:center;">
+                            <input type="number" id="opt-font-size" class="mg-input mg-input-sm" min="9" max="24"
+                                value="13" style="width:60px;text-align:center;">
                             <span style="font-size:12px;color:var(--mg-text-2);">px</span>
                         </div>
                     </div>
@@ -168,4 +184,5 @@
     <script src="defaults.js"></script>
     <script src="options.js"></script>
 </body>
+
 </html>

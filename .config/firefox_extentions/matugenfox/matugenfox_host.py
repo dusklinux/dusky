@@ -16,7 +16,7 @@ config = {
     "websites_dir": None
 }
 config_lock = threading.Lock()
-stdout_lock = threading.Lock()  # Protection against concurrent protocol corruption
+stdout_lock = threading.Lock()
 running = True
 force_update = False
 poll_event = threading.Event()
@@ -65,7 +65,6 @@ def find_firefox_profiles():
     for browser_name, profiles_dir in browser_configs:
         if not os.path.isdir(profiles_dir):
             continue
-        # Try to read profiles.ini to find the default profile
         profiles_ini = os.path.join(profiles_dir, 'profiles.ini')
         if os.path.isfile(profiles_ini):
             try:
@@ -93,7 +92,6 @@ def find_firefox_profiles():
             except Exception:
                 pass
         else:
-            # Fallback: just list directories that look like profile dirs
             try:
                 for entry in os.listdir(profiles_dir):
                     profile_path = os.path.join(profiles_dir, entry)
@@ -129,9 +127,7 @@ def resolve_chrome_dir(stored_config=None):
     # 2. Auto-detect: find default profile
     profiles = find_firefox_profiles()
     if profiles:
-        # Prefer the first profile found (usually the default)
         return profiles[0]["chrome_path"]
-
     return None
 
 # --- userChrome/userContent CSS ---
@@ -250,7 +246,7 @@ def get_message():
     if len(raw_length) < 4:
         return None
     message_length = struct.unpack('=I', raw_length)[0]
-    if message_length > 10 * 1024 * 1024:  # 10MB sanity limit
+    if message_length > 10 * 1024 * 1024:  # 10MB
         return None
     msg_bytes = b''
     while len(msg_bytes) < message_length:
@@ -408,7 +404,6 @@ def message_handler():
                 poll_event.set()
 
             elif msg_type == "GET_PROFILE_PATHS":
-                # Return all discovered Firefox profiles + auto-detected chrome dir
                 try:
                     profiles = find_firefox_profiles()
                     auto_chrome = resolve_chrome_dir(_stored_config_cache)

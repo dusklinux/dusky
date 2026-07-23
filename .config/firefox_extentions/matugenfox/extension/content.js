@@ -9,7 +9,6 @@ let styleEl = null;
 let lastHash = null;
 let observer = null;
 
-// Reject CSS values that could trigger network requests or code execution
 const UNSAFE_CSS_VALUE = /url\s*\(|expression\s*\(|@import|-moz-binding/i;
 
 // ─── Theme Application ───
@@ -58,7 +57,6 @@ function removeTheme() {
 }
 
 // ─── Persistence Observer ───
-// Only active when a theme is applied; watches head only (not full subtree)
 function startObserver() {
     if (observer) return;
     observer = new MutationObserver(() => {

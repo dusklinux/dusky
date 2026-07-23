@@ -221,7 +221,7 @@ function sendToTab(tabId, data, url, force = false) {
     // Only theme sites that have a matching CSS template
     if (!state.config.webThemeEnabled) return;
     const siteCss = filterWebsiteCss(url, data.websites);
-    if (!siteCss) return; // strict: no template = no theming
+    if (!siteCss) return;
 
     if (broadcastQueue.has(tabId)) clearTimeout(broadcastQueue.get(tabId));
     broadcastQueue.set(tabId, setTimeout(() => {
@@ -345,7 +345,7 @@ browser.runtime.onMessage.addListener((req, sender) => {
                 return browser.storage.local.get('themeData').then(res => {
                     if (!res.themeData) return null;
                     const siteCss = filterWebsiteCss(url, res.themeData.websites);
-                    if (!siteCss) return null; // no template for this site
+                    if (!siteCss) return null;
                     return {
                         colors: res.themeData.colors,
                         websiteCss: siteCss,
@@ -355,7 +355,7 @@ browser.runtime.onMessage.addListener((req, sender) => {
                 });
             }
             const siteCss = filterWebsiteCss(url, data.websites);
-            if (!siteCss) return Promise.resolve(null); // no template for this site
+            if (!siteCss) return Promise.resolve(null);
             return Promise.resolve({
                 colors: data.colors,
                 websiteCss: siteCss,
