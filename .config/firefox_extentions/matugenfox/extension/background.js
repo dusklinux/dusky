@@ -247,14 +247,6 @@ function handleHostMessage(msg) {
             state.lastThemeData = msg.data;
             browser.storage.local.set({ themeData: msg.data }).catch(e => console.warn('MatugenFox: storage error:', e));
 
-            const hasErrors = msg.data.status?.some(s => s.includes('not found'));
-            if (hasErrors && !state.hasPromptedPaths) {
-                state.hasPromptedPaths = true;
-                browser.runtime.openOptionsPage();
-            } else if (!hasErrors) {
-                state.hasPromptedPaths = false;
-            }
-
             broadcastToTabs();
             if (state.config.browserThemeEnabled) applyBrowserTheme(msg.data.colors);
             notifyUI({ type: 'THEME_APPLIED', colors: msg.data.colors });
@@ -373,10 +365,7 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     }
 });
 
-// ─── Actions ───
-browser.action.onClicked.addListener(() => {
-    browser.runtime.openOptionsPage();
-});
+
 
 // ─── Tab Cleanup ───
 browser.tabs.onRemoved.addListener(tabId => {

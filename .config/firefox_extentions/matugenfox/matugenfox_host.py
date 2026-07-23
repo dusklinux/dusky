@@ -11,9 +11,26 @@ import traceback
 import configparser
 
 # --- Global State ---
+def load_external_config():
+    config_file = os.path.expanduser('~/.config/matugenfox/config.json')
+    colors_file = os.path.expanduser('~/.config/matugen/generated/firefox_websites.css')
+    websites_dir = os.path.expanduser('~/.config/dusky_sites')
+    if os.path.isfile(config_file):
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if data.get('colorsPath'):
+                    colors_file = os.path.expanduser(data['colorsPath'])
+                if data.get('websitesDir'):
+                    websites_dir = os.path.expanduser(data['websitesDir'])
+        except Exception:
+            pass
+    return colors_file, websites_dir
+
+_default_colors, _default_websites = load_external_config()
 config = {
-    "colors_file": None,
-    "websites_dir": None
+    "colors_file": _default_colors,
+    "websites_dir": _default_websites
 }
 config_lock = threading.Lock()
 stdout_lock = threading.Lock()
@@ -476,14 +493,10 @@ def main():
 
     while running:
         try:
+            ext_colors, ext_websites = load_external_config()
             with config_lock:
-                colors_file = config["colors_file"]
-                websites_dir = config["websites_dir"]
-
-            if not colors_file:
-                poll_event.wait(2)
-                poll_event.clear()
-                continue
+                colors_file = config["colors_file"] or ext_colors
+                websites_dir = config["websites_dir"] or ext_websites
 
             should_update = False
 
