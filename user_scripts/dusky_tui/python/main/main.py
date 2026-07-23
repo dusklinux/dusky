@@ -18,6 +18,8 @@ import shlex
 import atexit
 import tempfile
 import re
+import socket
+import struct
 from datetime import datetime
 from pathlib import Path
 
@@ -292,6 +294,57 @@ class LazyEnginePool(dict):
 
 
 # =============================================================================
+# DAEMON IPC CLIENT & AUTO-SPAWN HELPER
+# =============================================================================
+def try_connect_daemon(command: str, target: str = "") -> dict[str, Any] | None:
+    uid = os.getuid()
+    sock_path = f"/run/user/{uid}/dusky.sock"
+    if not os.path.exists(sock_path):
+        sock_path = f"/tmp/dusky_{uid}.sock"
+
+    if not os.path.exists(sock_path):
+        return None
+
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        client.settimeout(0.002)  # 2ms ultra-strict connect timeout
+        client.connect(sock_path)
+        client.settimeout(None)
+
+        payload = {"command": command, "target": target}
+        req_bytes = json.dumps(payload).encode("utf-8")
+        client.sendall(struct.pack(">I", len(req_bytes)) + req_bytes)
+
+        raw_len = client.recv(4, socket.MSG_WAITALL)
+        if not raw_len or len(raw_len) < 4:
+            return None
+
+        msg_len = struct.unpack(">I", raw_len)[0]
+        resp_bytes = client.recv(msg_len, socket.MSG_WAITALL)
+        return json.loads(resp_bytes.decode("utf-8"))
+    except (socket.error, socket.timeout, ConnectionRefusedError, struct.error, json.JSONDecodeError):
+        return None
+    finally:
+        client.close()
+
+def auto_spawn_daemon() -> None:
+    try:
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + str(PROJECT_ROOT / "python") + os.pathsep + env.get("PYTHONPATH", "")
+        subprocess.Popen(
+            [sys.executable, "-m", "main.daemon"],
+            cwd=str(PROJECT_ROOT / "python"),
+            env=env,
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL
+        )
+    except Exception as e:
+        logging.error(f"Failed to auto-spawn daemon: {e}")
+
+
+# =============================================================================
 # MAIN CLI ROUTER
 # =============================================================================
 if __name__ == "__main__":
@@ -371,7 +424,37 @@ EXAMPLES:
         help="Enable file logging to ~/Documents/logs/tui/"
     )
 
+    daemon_group = parser.add_argument_group("Daemon & Pre-Warming")
+    daemon_group.add_argument(
+        "--auto-daemon",
+        action="store_true",
+        help="Transparently spawn detached background daemon if offline."
+    )
+    daemon_group.add_argument(
+        "--daemon-status",
+        action="store_true",
+        help="Check status of background pre-warming daemon."
+    )
+    daemon_group.add_argument(
+        "--stop-daemon",
+        action="store_true",
+        help="Stop running background pre-warming daemon."
+    )
+
     args = parser.parse_args()
+
+    if args.stop_daemon:
+        res = try_connect_daemon("stop")
+        print("[+] Daemon stop signal sent." if res else "[-] Daemon is not responding (already offline).")
+        sys.exit(0)
+
+    if args.daemon_status:
+        res = try_connect_daemon("status")
+        if res:
+            print(f"[+] Daemon ACTIVE: {json.dumps(res, indent=2)}")
+        else:
+            print("[-] Daemon OFFLINE.")
+        sys.exit(0)
 
     # --- 1. SMART SCHEMA PATH RESOLUTION ---
     target_arg = args.module
@@ -449,6 +532,11 @@ EXAMPLES:
         sys.exit(1)
 
     logger.info(f"Loaded schema: {schema_path} | Target: {TARGET_FILE} | Engine: {ENGINE_TYPE}")
+
+    should_auto_daemon = args.auto_daemon or getattr(schema_module, "AUTO_DAEMON", False)
+    if should_auto_daemon:
+        if not try_connect_daemon("status"):
+            auto_spawn_daemon()
 
     # =========================================================================
     # --- 1.5 DYNAMIC PRIVILEGE ESCALATION BLOCK ---

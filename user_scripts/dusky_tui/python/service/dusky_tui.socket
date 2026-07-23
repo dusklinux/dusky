@@ -1,0 +1,13 @@
+[Unit]
+Description=Dusky TUI IPC Socket Architecture
+Documentation=man:dusky(1)
+
+[Socket]
+ListenStream=%t/dusky.sock
+SocketMode=0600
+PassCredentials=yes
+ReceiveBuffer=1048576
+SendBuffer=1048576
+
+[Install]
+WantedBy=sockets.target
