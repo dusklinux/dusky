@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 import os
 from faster_whisper import WhisperModel
