@@ -98,16 +98,11 @@ CONFIG_FILE="$SCRIPT_DIR/config.json"
 if [ ! -f "$CONFIG_FILE" ]; then
     cat <<EOF > "$CONFIG_FILE"
 {
-  "smoothTransitions": true,
-  "ecoMode": false,
-  "showSyncIndicator": true,
+  "ecoMode": true,
   "colorsPath": "~/.config/matugen/generated/firefox_websites.css",
   "websitesDir": "~/.config/dusky_sites",
-  "transitionMs": 300,
-  "autoDisableDarkSites": false,
-  "nakedMode": false,
-  "paletteShortcut": "ctrl+alt+c",
-  "blocklist": []
+  "browserThemeEnabled": true,
+  "webThemeEnabled": false
 }
 EOF
     print_success "Generated default config.json"

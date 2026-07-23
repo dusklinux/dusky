@@ -20,7 +20,7 @@
                 <button class="sidebar-link" data-panel="duckduckgo"><span class="sidebar-link-icon">🦆</span>DuckDuckGo</button>
                 <button class="sidebar-link" data-panel="userchrome"><span class="sidebar-link-icon">🦊</span>userChrome</button>
             </nav>
-            <div class="sidebar-footer">v2.0 · MatugenFox</div>
+            <div class="sidebar-footer">v2.0 · <span id="host-status">Connecting...</span></div>
         </aside>
 
         <!-- Content -->
@@ -32,8 +32,8 @@
                 <p class="panel-desc">Core settings for MatugenFox theming engine.</p>
 
                 <div class="settings-group" id="paths-warning-group" hidden>
-                    <div style="background: rgba(224, 108, 117, 0.15); border: 1px solid var(--mg-error); color: var(--mg-text-0); padding: var(--mg-s3) var(--mg-s4); border-radius: var(--mg-r-sm); font-size: 13px;">
-                        <strong style="color: var(--mg-error)">⚠ Paths Not Found:</strong> Matugen files are missing at the configured paths. Please update them below to enable theming.
+                    <div class="mg-alert-error">
+                        <strong>⚠ Paths Not Found:</strong> Matugen files are missing at the configured paths. Please update them below to enable theming.
                     </div>
                 </div>
 
@@ -79,10 +79,7 @@
                         <input type="text" id="opt-websites-dir" class="mg-input" placeholder="~/.config/dusky_sites">
                         <div class="input-hint">Directory containing site-specific CSS overrides.</div>
                     </div>
-                    <div class="actions-row">
-                        <button id="save-paths-btn" class="mg-btn">Save Paths</button>
-                        <span id="paths-status" class="action-status">Saved ✓</span>
-                    </div>
+
                 </div>
             </section>
 

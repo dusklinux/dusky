@@ -16,12 +16,16 @@ function applyTheme(data, force = false) {
         return;
     }
 
-    const hash = data.timestamp + (data.websiteCss || '');
+    const hash = data.timestamp + '|' + (data.websiteCss ? data.websiteCss.length : 0);
     if (!force && hash === lastHash) return;
     lastHash = hash;
 
     let css = ':root {\n';
-    for (const [k, v] of Object.entries(data.colors)) css += `  ${k}: ${v} !important;\n`;
+    for (const [k, v] of Object.entries(data.colors)) {
+        if (/^--[\w-]+$/.test(k) && typeof v === 'string' && !/[;{}]/.test(v)) {
+            css += `  ${k}: ${v} !important;\n`;
+        }
+    }
     css += '}\n';
     if (data.websiteCss) css += data.websiteCss;
 
@@ -80,4 +84,4 @@ const observer = new MutationObserver(() => {
         else document.documentElement.appendChild(styleEl);
     }
 });
-if (document.documentElement) observer.observe(document.documentElement, { childList: true });
+if (document.documentElement) observer.observe(document.documentElement, { childList: true, subtree: true });

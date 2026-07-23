@@ -79,46 +79,6 @@ body::before {
     outline-offset: 2px;
 }
 
-/* ── Badge ── */
-.mg-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-    background: var(--mg-bg-2);
-    border: 1px solid var(--mg-border);
-    white-space: nowrap;
-    /* State transitions — badge morphs smoothly between Connected/Paused/Stopped */
-    transition: background-color var(--mg-duration) var(--mg-ease),
-                border-color var(--mg-duration) var(--mg-ease),
-                box-shadow var(--mg-duration) var(--mg-ease);
-}
-.mg-badge-dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: var(--mg-text-2);
-    flex-shrink: 0;
-    transition: background var(--mg-duration) var(--mg-ease),
-                box-shadow var(--mg-duration) var(--mg-ease);
-}
-.mg-badge-success { border-color: rgba(139,213,181,0.2); }
-.mg-badge-success .mg-badge-dot { background: var(--mg-success); box-shadow: 0 0 6px var(--mg-accent-glow); }
-.mg-badge-warning { border-color: rgba(229,192,123,0.2); }
-.mg-badge-warning .mg-badge-dot { background: var(--mg-warning); }
-.mg-badge-error { border-color: rgba(224,108,117,0.2); }
-.mg-badge-error .mg-badge-dot { background: var(--mg-error); }
-.mg-badge-muted .mg-badge-dot { background: var(--mg-text-2); }
-.mg-badge-sm { padding: 2px 8px; font-size: 10px; }
-
-@keyframes mg-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-}
-.mg-pulse { animation: mg-pulse 2s ease-in-out infinite; }
-
 /* ── Toggle Switch ── */
 .mg-toggle {
     position: relative;
@@ -244,20 +204,6 @@ body::before {
     padding: var(--mg-s4);
 }
 
-/* ── Kbd ── */
-.mg-kbd {
-    display: inline-block;
-    padding: 1px 6px;
-    background: var(--mg-bg-2);
-    border: 1px solid var(--mg-border-active);
-    border-radius: 4px;
-    font-family: var(--mg-font);
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--mg-text-1);
-    line-height: 1.6;
-}
-
 /* ── Section Label ── */
 .mg-label {
     font-size: 10px;
@@ -268,59 +214,18 @@ body::before {
     margin-bottom: var(--mg-s2);
 }
 
-/* ── Command Palette ── */
-.mg-cmd-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.5);
-    z-index: 1000;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding-top: 20%;
-}
-.mg-cmd-modal {
-    width: 100%;
-    max-width: 320px;
-    background: var(--mg-bg-1);
-    border: 1px solid var(--mg-border-active);
-    border-radius: var(--mg-r-lg);
-    overflow: hidden;
-    box-shadow: 0 16px 48px rgba(0,0,0,0.6);
-}
-.mg-cmd-input {
-    width: 100%;
-    padding: 14px 16px;
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--mg-border);
+/* ── Alert ── */
+.mg-alert-error {
+    background: rgba(224, 108, 117, 0.15);
+    border: 1px solid var(--mg-error);
     color: var(--mg-text-0);
-    font-size: 14px;
-    font-family: var(--mg-font);
-}
-.mg-cmd-input:focus { outline: none; }
-.mg-cmd-input::placeholder { color: var(--mg-text-2); }
-
-.mg-cmd-results { max-height: 240px; overflow-y: auto; padding: var(--mg-s1); }
-.mg-cmd-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    padding: 10px 14px;
-    background: transparent;
-    border: none;
+    padding: var(--mg-s3) var(--mg-s4);
     border-radius: var(--mg-r-sm);
-    color: var(--mg-text-1);
     font-size: 13px;
-    font-family: var(--mg-font);
-    cursor: pointer;
-    text-align: left;
-    transition: background var(--mg-duration) var(--mg-ease), color var(--mg-duration) var(--mg-ease);
 }
-.mg-cmd-item:hover, .mg-cmd-item:focus { background: var(--mg-bg-3); color: var(--mg-text-0); outline: none; }
-.mg-cmd-icon { font-size: 15px; width: 20px; text-align: center; }
-.mg-cmd-separator { height: 1px; background: var(--mg-border); margin: var(--mg-s1) var(--mg-s3); opacity: 0.5; }
+.mg-alert-error strong {
+    color: var(--mg-error);
+}
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; }

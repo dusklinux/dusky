@@ -17,8 +17,6 @@
     "permissions": [
         "nativeMessaging",
         "storage",
-        "tabs",
-        "scripting",
         "theme"
     ],
     "host_permissions": [

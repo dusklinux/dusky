@@ -6,6 +6,69 @@
 
 let config = {};
 
+const DEFAULT_CONFIG = {
+    colorsPath: '~/.config/matugen/generated/firefox_websites.css',
+    websitesDir: '~/.config/dusky_sites',
+    ecoMode: true,
+    browserThemeEnabled: true,
+    webThemeEnabled: false,
+    duckduckgoEnabled: false,
+    userChromeEnabled: false,
+    userContentEnabled: false,
+    fontSize: 13,
+    paletteTemplate: {
+        background: '--background',
+        backgroundLight: '--surface',
+        backgroundExtra: '--surface_container',
+        accentPrimary: '--primary',
+        accentSecondary: '--secondary',
+        text: '--on_background',
+        textFocus: '--on_surface',
+    },
+    browserTemplate: {
+        frame: 'background',
+        frame_inactive: 'background',
+        tab_text: 'textFocus',
+        tab_background_text: 'text',
+        tab_selected: 'backgroundLight',
+        tab_line: 'accentPrimary',
+        tab_loading: 'accentPrimary',
+        toolbar: 'backgroundLight',
+        toolbar_text: 'textFocus',
+        toolbar_field: 'backgroundExtra',
+        toolbar_field_text: 'textFocus',
+        toolbar_field_border: 'backgroundExtra',
+        toolbar_field_focus: 'backgroundLight',
+        toolbar_field_text_focus: 'textFocus',
+        toolbar_field_border_focus: 'accentPrimary',
+        toolbar_field_highlight: 'accentPrimary',
+        toolbar_field_highlight_text: 'background',
+        icons: 'text',
+        icons_attention: 'accentPrimary',
+        sidebar: 'backgroundLight',
+        sidebar_text: 'textFocus',
+        sidebar_border: 'backgroundExtra',
+        sidebar_highlight: 'accentPrimary',
+        sidebar_highlight_text: 'background',
+        popup: 'backgroundLight',
+        popup_text: 'textFocus',
+        popup_border: 'backgroundExtra',
+        popup_highlight: 'accentPrimary',
+        popup_highlight_text: 'background',
+        ntp_background: 'background',
+        ntp_text: 'text',
+        button_background_hover: 'backgroundExtra',
+        button_background_active: 'backgroundExtra',
+    }
+};
+
+function mergeConfig(updates) {
+    const m = { ...DEFAULT_CONFIG, ...(updates || {}) };
+    if (updates && updates.paletteTemplate) m.paletteTemplate = { ...DEFAULT_CONFIG.paletteTemplate, ...updates.paletteTemplate };
+    if (updates && updates.browserTemplate) m.browserTemplate = { ...DEFAULT_CONFIG.browserTemplate, ...updates.browserTemplate };
+    return m;
+}
+
 // ─── Navigation ───
 document.querySelectorAll('.sidebar-link').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -52,6 +115,14 @@ function applySelfTheme(colors) {
             }
         }
     }
+    const accent = root.style.getPropertyValue('--mg-accent');
+    if (accent && accent.startsWith('#')) {
+        let c = accent.replace('#', '');
+        if (c.length === 3) c = c.split('').map(x => x + x).join('');
+        const rgb = parseInt(c.slice(0, 2), 16) + ',' + parseInt(c.slice(2, 4), 16) + ',' + parseInt(c.slice(4, 6), 16);
+        root.style.setProperty('--mg-accent-dim', `rgba(${rgb}, 0.15)`);
+        root.style.setProperty('--mg-accent-glow', `rgba(${rgb}, 0.4)`);
+    }
 }
 
 // ─── Init ───
@@ -61,7 +132,7 @@ async function init() {
         browser.runtime.sendMessage({ type: 'GET_THEME_DATA' }).catch(() => null),
     ]);
 
-    config = stored.config || {};
+    config = mergeConfig(stored.config);
     if (themeData?.colors) applySelfTheme(themeData.colors);
 
     // General
@@ -90,6 +161,19 @@ async function init() {
     document.getElementById('opt-usercontent').checked = config.userContentEnabled || false;
     document.getElementById('opt-font-size').value = config.fontSize || 13;
     loadProfilePaths();
+
+    browser.runtime.sendMessage({ type: 'GET_STATUS' }).then(status => {
+        const el = document.getElementById('host-status');
+        if (el && status) {
+            if (status.connected) {
+                el.textContent = 'Connected';
+                el.style.color = 'var(--mg-success)';
+            } else {
+                el.textContent = 'Disconnected';
+                el.style.color = 'var(--mg-error)';
+            }
+        }
+    }).catch(() => {});
 }
 init();
 
@@ -109,13 +193,15 @@ document.getElementById('opt-web-theme').addEventListener('change', e => {
     sendUpdate({ webThemeEnabled: e.target.checked });
 });
 
-document.getElementById('save-paths-btn').addEventListener('click', () => {
+function savePaths() {
     const update = {
         colorsPath: document.getElementById('opt-colors-path').value.trim() || '~/.config/matugen/generated/firefox_websites.css',
         websitesDir: document.getElementById('opt-websites-dir').value.trim() || '~/.config/dusky_sites',
     };
-    sendUpdate(update).then(() => flashStatus('paths-status'));
-});
+    sendUpdate(update);
+}
+document.getElementById('opt-colors-path').addEventListener('blur', savePaths);
+document.getElementById('opt-websites-dir').addEventListener('blur', savePaths);
 
 // ─── Browser Theme ───
 const ROLES = [
@@ -240,24 +326,33 @@ document.getElementById('opt-duckduckgo').addEventListener('change', e => {
 
 // ─── userChrome ───
 function loadProfilePaths() {
-    browser.runtime.sendMessage({ type: 'HOST_COMMAND', command: { type: 'GET_PROFILE_PATHS' } });
+    setTimeout(() => {
+        const el = document.getElementById('profile-path-info');
+        if (el && el.textContent.includes('Detecting')) {
+            el.textContent = 'Could not reach native host. Paths not loaded.';
+        }
+    }, 5000);
+    browser.runtime.sendMessage({ type: 'GET_PROFILE_PATHS' });
 }
 
 document.getElementById('opt-userchrome').addEventListener('change', e => {
     sendUpdate({ userChromeEnabled: e.target.checked });
-    browser.runtime.sendMessage({ type: 'HOST_COMMAND', command: { type: 'WRITE_USER_CHROME', enabled: e.target.checked, fontSize: config.fontSize || 13 } });
+    browser.runtime.sendMessage({ type: 'WRITE_USER_CHROME', enabled: e.target.checked, fontSize: config.fontSize || 13 });
 });
 
 document.getElementById('opt-usercontent').addEventListener('change', e => {
     sendUpdate({ userContentEnabled: e.target.checked });
-    browser.runtime.sendMessage({ type: 'HOST_COMMAND', command: { type: 'WRITE_USER_CONTENT', enabled: e.target.checked, fontSize: config.fontSize || 13 } });
+    browser.runtime.sendMessage({ type: 'WRITE_USER_CONTENT', enabled: e.target.checked, fontSize: config.fontSize || 13 });
 });
 
 document.getElementById('opt-font-size').addEventListener('change', e => {
-    const size = parseInt(e.target.value) || 13;
+    let size = parseInt(e.target.value);
+    if (isNaN(size)) size = 13;
+    size = Math.max(9, Math.min(24, size));
+    e.target.value = size;
     sendUpdate({ fontSize: size });
     if (config.userChromeEnabled) {
-        browser.runtime.sendMessage({ type: 'HOST_COMMAND', command: { type: 'SET_FONT_SIZE', fontSize: size } });
+        browser.runtime.sendMessage({ type: 'SET_FONT_SIZE', fontSize: size });
     }
 });
 
@@ -271,6 +366,17 @@ browser.runtime.onMessage.addListener(msg => {
     } else if (msg.type === 'CONFIG_RECOVERED') {
         config = msg.config;
         init();
+    } else if (msg.type === 'HOST_STATUS') {
+        const el = document.getElementById('host-status');
+        if (el) {
+            if (msg.connected) {
+                el.textContent = 'Connected';
+                el.style.color = 'var(--mg-success)';
+            } else {
+                el.textContent = 'Disconnected';
+                el.style.color = 'var(--mg-error)';
+            }
+        }
     } else if (msg.type === 'HOST_RESPONSE') {
         const data = msg.data;
         if (data.type === 'PROFILE_PATHS') {
@@ -286,13 +392,7 @@ browser.runtime.onMessage.addListener(msg => {
 
 // ─── Helpers ───
 function sendUpdate(partialUpdate) {
-    Object.assign(config, partialUpdate);
-    return browser.runtime.sendMessage({ type: 'UPDATE_CONFIG', partialUpdate });
-}
-
-function flashStatus(id) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.classList.add('show');
-    setTimeout(() => el.classList.remove('show'), 2000);
+    return browser.runtime.sendMessage({ type: 'UPDATE_CONFIG', partialUpdate }).then(() => {
+        Object.assign(config, partialUpdate);
+    });
 }

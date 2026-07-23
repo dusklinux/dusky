@@ -173,20 +173,7 @@
     margin-top: var(--mg-s1);
 }
 
-/* ── Actions Row ── */
-.actions-row {
-    display: flex;
-    align-items: center;
-    gap: var(--mg-s3);
-    margin-top: var(--mg-s5);
-}
-.action-status {
-    font-size: 13px;
-    color: var(--mg-success);
-    opacity: 0;
-    transition: opacity 0.3s;
-}
-.action-status.show { opacity: 1; }
+
 
 /* ── Responsive ── */
 @media (max-width: 640px) {

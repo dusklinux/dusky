@@ -30,29 +30,13 @@ function applyTheme(theme) {
     style.textContent = css;
     document.head.appendChild(style);
 
-    try {
-        if (window.wrappedJSObject?.DDG?.settings) {
-            const s = window.wrappedJSObject.DDG.settings;
-            s.set('kae', 'matugenfox');
-            if (theme.k7) s.set('k7', theme.k7);
-            if (theme.kj) s.set('kj', theme.kj);
-            if (theme.k9) s.set('k9', theme.k9);
-            if (theme.k8) s.set('k8', theme.k8);
-            if (theme.kx) s.set('kx', theme.kx);
-            if (theme.kaa) s.set('kaa', theme.kaa);
-            if (theme.k21) s.set('k21', theme.k21);
-        }
-    } catch { }
+
 }
 
 function resetTheme() {
     const el = document.getElementById('mf-ddg-theme');
     if (el) el.remove();
-    try {
-        if (window.wrappedJSObject?.DDG?.settings) {
-            window.wrappedJSObject.DDG.settings.set('kae', 'default');
-        }
-    } catch { }
+
 }
 
 browser.runtime.onMessage.addListener(msg => {

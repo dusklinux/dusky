@@ -84,7 +84,7 @@ const broadcastQueue = new Map();
 
 // ─── Utilities ───
 function notifyUI(msg) {
-    browser.runtime.sendMessage(msg).catch(() => { });
+    browser.runtime.sendMessage(msg).catch(e => console.warn('MatugenFox:', e));
 }
 
 function mergeConfig(updates) {
@@ -106,7 +106,6 @@ function connectNative() {
         port.onMessage.addListener(handleHostMessage);
         port.onDisconnect.addListener(handleHostDisconnect);
 
-        safePostMessage({ type: 'GET_CONFIG' });
         safePostMessage({ type: 'SET_CONFIG', config: state.config });
         safePostMessage({ type: 'FETCH_NOW' });
 
@@ -197,12 +196,12 @@ function applyBrowserTheme(colors) {
     browser.theme.update({
         colors: themeColors,
         properties: { color_scheme: 'dark', content_color_scheme: 'dark' },
-    }).catch(() => { });
+    }).catch(e => console.warn('MatugenFox:', e));
     state.isApplied = true;
 }
 
 function resetBrowserTheme() {
-    browser.theme.reset().catch(() => { });
+    browser.theme.reset().catch(e => console.warn('MatugenFox:', e));
     state.isApplied = false;
 }
 
@@ -222,17 +221,17 @@ function applyDDGTheme(colors) {
     };
     browser.tabs.query({ url: '*://*.duckduckgo.com/*' }).then(tabs => {
         for (const t of tabs) {
-            browser.tabs.sendMessage(t.id, { type: 'MATUGEN_DDG_THEME', theme }).catch(() => { });
+            browser.tabs.sendMessage(t.id, { type: 'MATUGEN_DDG_THEME', theme }).catch(e => console.warn('MatugenFox:', e));
         }
-    }).catch(() => { });
+    }).catch(e => console.warn('MatugenFox:', e));
 }
 
 function resetDDGTheme() {
     browser.tabs.query({ url: '*://*.duckduckgo.com/*' }).then(tabs => {
         for (const t of tabs) {
-            browser.tabs.sendMessage(t.id, { type: 'MATUGEN_DDG_RESET' }).catch(() => { });
+            browser.tabs.sendMessage(t.id, { type: 'MATUGEN_DDG_RESET' }).catch(e => console.warn('MatugenFox:', e));
         }
-    }).catch(() => { });
+    }).catch(e => console.warn('MatugenFox:', e));
 }
 
 // ─── Tab Broadcasting ───
@@ -258,8 +257,13 @@ function broadcastToTabs(force = false) {
 
     browser.tabs.query({}).then(tabs => {
         if (isEco) {
-            const active = tabs.find(t => t.active && !t.discarded);
-            if (active) sendToTab(active.id, data, active.url, force);
+            const activeByWindow = {};
+            for (const t of tabs) {
+                if (t.active && !t.discarded) activeByWindow[t.windowId] = t;
+            }
+            for (const t of Object.values(activeByWindow)) {
+                sendToTab(t.id, data, t.url, force);
+            }
         } else {
             const targets = tabs.filter(t => t.status === 'complete' && !t.discarded);
             targets.forEach((tab, i) => {
@@ -268,7 +272,7 @@ function broadcastToTabs(force = false) {
                 }, i * 40);
             });
         }
-    }).catch(() => { });
+    }).catch(e => console.warn('MatugenFox:', e));
 }
 
 function sendToTab(tabId, data, url, force = false) {
@@ -289,16 +293,16 @@ function sendToTab(tabId, data, url, force = false) {
                 timestamp: data.timestamp,
                 force,
             },
-        }).catch(() => { });
+        }).catch(e => console.warn('MatugenFox:', e));
     }, 16));
 }
 
 function broadcastRollback() {
     browser.tabs.query({}).then(tabs => {
         for (const t of tabs) {
-            browser.tabs.sendMessage(t.id, { type: 'MATUGEN_ROLLBACK' }).catch(() => { });
+            browser.tabs.sendMessage(t.id, { type: 'MATUGEN_ROLLBACK' }).catch(e => console.warn('MatugenFox:', e));
         }
-    }).catch(() => { });
+    }).catch(e => console.warn('MatugenFox:', e));
 }
 
 // ─── Config Management ───
@@ -315,7 +319,7 @@ function saveConfig(partial = null) {
     state.configWritePromise = state.configWritePromise
         .then(() => browser.storage.local.set({ config: state.config }))
         .then(() => {
-            safePostMessage({ type: 'SAVE_CONFIG', config: state.config });
+            safePostMessage({ type: 'SET_CONFIG', config: state.config });
         })
         .catch(err => console.error('MatugenFox: saveConfig error:', err));
     return state.configWritePromise;
@@ -327,7 +331,7 @@ function handleHostMessage(msg) {
         case 'MATUGEN_UPDATE': {
             if (!msg.data?.colors) return;
             state.lastThemeData = msg.data;
-            browser.storage.local.set({ themeData: msg.data });
+            browser.storage.local.set({ themeData: msg.data }).catch(e => console.warn('MatugenFox: storage error:', e));
 
             const hasErrors = msg.data.status?.some(s => s.includes('not found'));
             if (hasErrors && !state.hasPromptedPaths) {
@@ -338,8 +342,9 @@ function handleHostMessage(msg) {
             }
 
             broadcastToTabs();
-            if (state.config.browserThemeEnabled) applyBrowserTheme(resolveThemeData()?.colors);
-            if (state.config.duckduckgoEnabled) applyDDGTheme(resolveThemeData()?.colors);
+            const data = resolveThemeData();
+            if (state.config.browserThemeEnabled) applyBrowserTheme(data?.colors);
+            if (state.config.duckduckgoEnabled) applyDDGTheme(data?.colors);
             notifyUI({ type: 'THEME_APPLIED', colors: msg.data.colors });
             break;
         }
@@ -390,7 +395,7 @@ browser.runtime.onMessage.addListener((req, sender) => {
         case 'GET_THEME_DATA': {
             // Strict: only return data if web theming is on AND site has a template
             if (!state.config.webThemeEnabled) return Promise.resolve(null);
-            const url = sender.tab?.url;
+            const url = sender.tab?.url || sender.url;
             const data = resolveThemeData();
             if (!data) {
                 return browser.storage.local.get('themeData').then(res => {
@@ -421,11 +426,24 @@ browser.runtime.onMessage.addListener((req, sender) => {
                 lastSyncTime: state.lastThemeData?.timestamp || null,
                 isApplied: state.isApplied,
             });
-        case 'GET_PALETTE':
-            return Promise.resolve({ palette: buildPalette(resolveThemeData()?.colors), colors: resolveThemeData()?.colors });
-        case 'HOST_COMMAND':
-            safePostMessage(req.command);
+        case 'GET_PALETTE': {
+            const colors = resolveThemeData()?.colors;
+            return Promise.resolve({ palette: buildPalette(colors), colors });
+        }
+        case 'APPLY_DDG_THEME':
+            if (state.config.duckduckgoEnabled) applyDDGTheme(resolveThemeData()?.colors);
+            return Promise.resolve({ ok: true });
+        case 'GET_PROFILE_PATHS':
+        case 'WRITE_USER_CHROME':
+        case 'WRITE_USER_CONTENT':
+        case 'SET_FONT_SIZE': {
+            if (!sender.url || !sender.url.includes(browser.runtime.id)) {
+                console.warn('MatugenFox: Rejected native host command from untrusted sender:', sender);
+                return Promise.resolve({ ok: false, error: 'Unauthorized' });
+            }
+            safePostMessage(req);
             return Promise.resolve({ ok: !!state.port });
+        }
         default:
             return false;
     }
@@ -436,7 +454,7 @@ browser.tabs.onActivated.addListener((activeInfo) => {
     if (state.config.ecoMode && state.lastThemeData) {
         browser.tabs.get(activeInfo.tabId).then(tab => {
             sendToTab(tab.id, resolveThemeData(), tab.url);
-        }).catch(() => { });
+        }).catch(e => console.warn('MatugenFox:', e));
     }
 });
 

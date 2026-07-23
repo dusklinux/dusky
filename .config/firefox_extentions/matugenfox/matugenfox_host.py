@@ -5,7 +5,6 @@ import struct
 import os
 import time
 import re
-import glob
 import hashlib
 import threading
 import traceback
@@ -33,16 +32,27 @@ def atomic_write(filepath, content):
     """Atomically write string content to prevent TOC/TOU race conditions."""
     temp_path = f"{filepath}.tmp.{os.getpid()}"
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    with open(temp_path, 'w', encoding='utf-8') as f:
-        f.write(content)
-    os.replace(temp_path, filepath)
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        os.replace(temp_path, filepath)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
 
 def atomic_write_json(filepath, data):
     """Atomically write JSON content."""
     temp_path = f"{filepath}.tmp.{os.getpid()}"
-    with open(temp_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2)
-    os.replace(temp_path, filepath)
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        os.replace(temp_path, filepath)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
 
 # --- Firefox Profile Detection ---
 def find_firefox_profiles():
@@ -66,6 +76,9 @@ def find_firefox_profiles():
             os.path.join(home, '.var', 'app', 'org.mozilla.firefox', '.mozilla', 'firefox')),
         ("LibreWolf (Flatpak)",
             os.path.join(home, '.var', 'app', 'io.gitlab.librewolf-community', '.librewolf')),
+        # macOS variants
+        ("Firefox (macOS)", os.path.join(home, 'Library', 'Application Support', 'Firefox', 'Profiles')),
+        ("LibreWolf (macOS)", os.path.join(home, 'Library', 'Application Support', 'LibreWolf', 'Profiles')),
     ]
 
     for browser_name, profiles_dir in browser_configs:
@@ -322,14 +335,25 @@ def parse_websites(websites_dir):
                     brace_count = 0
                     in_string = False
                     string_char = ''
+                    in_comment = False
                     end_idx = -1
-                    for i in range(start_idx, len(content)):
+                    i = start_idx
+                    while i < len(content):
                         char = content[i]
-                        if in_string:
-                            if char == string_char and content[i-1] != '\\':
+                        if in_comment:
+                            if char == '*' and i + 1 < len(content) and content[i+1] == '/':
+                                in_comment = False
+                                i += 1
+                        elif in_string:
+                            if char == '\\':
+                                i += 1
+                            elif char == string_char:
                                 in_string = False
                         else:
-                            if char in ("'", '"'):
+                            if char == '/' and i + 1 < len(content) and content[i+1] == '*':
+                                in_comment = True
+                                i += 1
+                            elif char in ("'", '"'):
                                 in_string = True
                                 string_char = char
                             elif char == '{':
@@ -339,6 +363,7 @@ def parse_websites(websites_dir):
                                 if brace_count == 0:
                                     end_idx = i
                                     break
+                        i += 1
                     if end_idx != -1:
                         websites[domain] = content[start_idx+1:end_idx].strip()
                     else:
@@ -378,7 +403,10 @@ def message_handler():
             if msg == "EOF":
                 running = False
                 break
-            elif msg in ("DECODE_ERROR", None):
+            elif msg == "DECODE_ERROR":
+                print("MatugenFox host error: DECODE_ERROR (stream corrupted)", file=sys.stderr)
+                continue
+            elif msg is None:
                 continue
 
             msg_type = msg.get("type")
@@ -388,7 +416,7 @@ def message_handler():
                 with config_lock:
                     config["colors_file"] = os.path.expanduser(new_config.get("colorsPath", "") or "")
                     config["websites_dir"] = os.path.expanduser(new_config.get("websitesDir", "") or "")
-                _stored_config_cache = new_config
+                    _stored_config_cache = new_config
 
             elif msg_type == "FETCH_NOW":
                 # Force a re-read on next poll cycle by resetting hash
@@ -399,29 +427,6 @@ def message_handler():
                 if colors_file:
                     data = get_theme_data(colors_file, websites_dir)
                     send_message({"type": "MATUGEN_UPDATE", "data": data})
-
-            elif msg_type == "SAVE_CONFIG":
-                config_data = msg.get("config", {})
-                try:
-                    config_path = get_config_path()
-                    atomic_write_json(config_path, config_data)
-                    send_message({"type": "SAVE_CONFIG_SUCCESS"})
-                    _stored_config_cache = config_data
-                except Exception as e:
-                    print(f"MatugenFox host error (SAVE_CONFIG): {e}", file=sys.stderr)
-
-            elif msg_type == "GET_CONFIG":
-                try:
-                    config_path = get_config_path()
-                    if os.path.exists(config_path):
-                        with open(config_path, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                        send_message({"type": "STORED_CONFIG", "config": data})
-                        _stored_config_cache = data
-                    else:
-                        send_message({"type": "STORED_CONFIG", "config": None})
-                except Exception as e:
-                    send_message({"type": "STORED_CONFIG", "config": None})
 
             elif msg_type == "GET_PROFILE_PATHS":
                 # Return all discovered Firefox profiles + auto-detected chrome dir
@@ -439,7 +444,11 @@ def message_handler():
             elif msg_type in ("WRITE_USER_CHROME", "WRITE_USER_CONTENT"):
                 target = "userChrome" if msg_type == "WRITE_USER_CHROME" else "userContent"
                 enabled = msg.get("enabled", False)
-                font_size = msg.get("fontSize", 13)
+                try:
+                    font_size = int(msg.get("fontSize", 13))
+                except (ValueError, TypeError):
+                    font_size = 13
+                font_size = max(8, min(48, font_size))
                 try:
                     chrome_dir = resolve_chrome_dir(_stored_config_cache)
                     ok, error = write_user_css(target, enabled, chrome_dir, font_size)
@@ -461,7 +470,11 @@ def message_handler():
                     })
 
             elif msg_type == "SET_FONT_SIZE":
-                font_size = msg.get("fontSize", 13)
+                try:
+                    font_size = int(msg.get("fontSize", 13))
+                except (ValueError, TypeError):
+                    font_size = 13
+                font_size = max(8, min(48, font_size))
                 try:
                     chrome_dir = resolve_chrome_dir(_stored_config_cache)
                     ok, error = update_font_size(chrome_dir, font_size)
@@ -481,7 +494,7 @@ def message_handler():
 
 def main():
     global running
-    threading.Thread(target=message_handler, daemon=True).start()
+    threading.Thread(target=message_handler, daemon=False).start()
 
     last_hash = ""
     last_colors_mtime = -1
