@@ -147,93 +147,7 @@ def resolve_chrome_dir(stored_config=None):
         return profiles[0]["chrome_path"]
     return None
 
-# --- userChrome/userContent CSS ---
-USER_CHROME_HEADER = "/* MatugenFox userChrome.css - Auto-generated, do not edit manually */\n"
-USER_CONTENT_HEADER = "/* MatugenFox userContent.css - Auto-generated, do not edit manually */\n"
 
-def write_user_css(target, enabled, chrome_dir, font_size=13):
-    """Write or remove userChrome.css or userContent.css in the Firefox profile chrome/ dir."""
-    if not chrome_dir:
-        return False, "No Firefox profile directory found. Please set it manually in Options > System."
-
-    filename = 'userChrome.css' if target == 'userChrome' else 'userContent.css'
-    filepath = os.path.join(chrome_dir, filename)
-
-    if not enabled:
-        # Disable: remove the file (or comment out its content)
-        if os.path.exists(filepath):
-            try:
-                os.remove(filepath)
-            except Exception as e:
-                return False, f"Failed to remove {filename}: {e}"
-        return True, None
-
-    # Enable: write the file
-    os.makedirs(chrome_dir, exist_ok=True)
-
-    if target == 'userChrome':
-        content = f"{USER_CHROME_HEADER}/* Font size: {font_size}px */\n"
-        content += f"""
-/* ── Scrollbar ── */
-:root {{
-  --uc-base-font-size: {font_size}px;
-  scrollbar-width: thin;
-}}
-
-/* ── Toolbar compact ── */
-#nav-bar {{
-  height: calc(var(--uc-base-font-size) * 2.8) !important;
-}}
-
-/* ── Context menu ── */
-menupopup > menuitem,
-menupopup > menu {{
-  font-size: var(--uc-base-font-size) !important;
-  min-height: calc(var(--uc-base-font-size) * 1.8) !important;
-}}
-"""
-    else:
-        content = f"{USER_CONTENT_HEADER}\n"
-        content += """
-/* ── Hide global scrollbar ── */
-*:not(select):not(#scrollbar-container):not(.scrollbar-container) {{
-  scrollbar-width: none !important;
-}}
-::-webkit-scrollbar {{
-  display: none !important;
-}}
-"""
-
-    try:
-        atomic_write(filepath, content)
-        return True, None
-    except Exception as e:
-        return False, f"Failed to write {filename}: {e}"
-
-def update_font_size(chrome_dir, font_size):
-    """Update the font size in userChrome.css."""
-    if not chrome_dir:
-        return False, "No chrome directory configured."
-    filepath = os.path.join(chrome_dir, 'userChrome.css')
-    if not os.path.exists(filepath):
-        return False, "userChrome.css does not exist. Enable it first."
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            content = f.read()
-        content = re.sub(
-            r'--uc-base-font-size: \d+px',
-            f'--uc-base-font-size: {font_size}px',
-            content
-        )
-        content = re.sub(
-            r'/\* Font size: \d+px \*/',
-            f'/* Font size: {font_size}px */',
-            content
-        )
-        atomic_write(filepath, content)
-        return True, None
-    except Exception as e:
-        return False, str(e)
 
 # --- Directory State ---
 def get_dir_state(dirpath):
@@ -420,63 +334,7 @@ def message_handler():
                 force_update = True
                 poll_event.set()
 
-            elif msg_type == "GET_PROFILE_PATHS":
-                try:
-                    profiles = find_firefox_profiles()
-                    auto_chrome = resolve_chrome_dir(_stored_config_cache)
-                    send_message({
-                        "type": "PROFILE_PATHS",
-                        "profiles": profiles,
-                        "autoChrome": auto_chrome,
-                    })
-                except Exception as e:
-                    send_message({"type": "PROFILE_PATHS", "profiles": [], "autoChrome": None, "error": str(e)})
 
-            elif msg_type in ("WRITE_USER_CHROME", "WRITE_USER_CONTENT"):
-                target = "userChrome" if msg_type == "WRITE_USER_CHROME" else "userContent"
-                enabled = msg.get("enabled", False)
-                try:
-                    font_size = int(msg.get("fontSize", 13))
-                except (ValueError, TypeError):
-                    font_size = 13
-                font_size = max(9, min(24, font_size))
-                try:
-                    chrome_dir = resolve_chrome_dir(_stored_config_cache)
-                    ok, error = write_user_css(target, enabled, chrome_dir, font_size)
-                    send_message({
-                        "type": "CSS_TOGGLE_RESULT",
-                        "target": target,
-                        "enabled": enabled,
-                        "success": ok,
-                        "error": error,
-                        "chromeDir": chrome_dir,
-                    })
-                except Exception as e:
-                    send_message({
-                        "type": "CSS_TOGGLE_RESULT",
-                        "target": target,
-                        "enabled": enabled,
-                        "success": False,
-                        "error": str(e),
-                    })
-
-            elif msg_type == "SET_FONT_SIZE":
-                try:
-                    font_size = int(msg.get("fontSize", 13))
-                except (ValueError, TypeError):
-                    font_size = 13
-                font_size = max(9, min(24, font_size))
-                try:
-                    chrome_dir = resolve_chrome_dir(_stored_config_cache)
-                    ok, error = update_font_size(chrome_dir, font_size)
-                    send_message({
-                        "type": "FONT_SIZE_RESULT",
-                        "success": ok,
-                        "fontSize": font_size,
-                        "error": error,
-                    })
-                except Exception as e:
-                    send_message({"type": "FONT_SIZE_RESULT", "success": False, "error": str(e)})
 
         except Exception as e:
             print(f"MatugenFox host error (handler): {e}", file=sys.stderr)

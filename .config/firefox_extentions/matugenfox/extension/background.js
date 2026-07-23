@@ -9,6 +9,74 @@ const NATIVE_NAME = 'matugenfox';
 const RECONNECT_BASE = 2000;
 const RECONNECT_MAX = 300000;
 
+// ─── Default Config ───
+const BUILTIN_DEFAULT_CONFIG = {
+    colorsPath: '~/.config/matugen/generated/firefox_websites.css',
+    websitesDir: '~/.config/dusky_sites',
+    ecoMode: true,
+    browserThemeEnabled: true,
+    webThemeEnabled: false,
+    userChromeEnabled: false,
+    userContentEnabled: false,
+    fontSize: 13,
+    paletteTemplate: {
+        background: '--background',
+        backgroundLight: '--surface',
+        backgroundExtra: '--surface_container',
+        accentPrimary: '--primary',
+        accentSecondary: '--secondary',
+        text: '--on_background',
+        textFocus: '--on_surface',
+    },
+    browserTemplate: {
+        frame: 'background',
+        frame_inactive: 'background',
+        tab_text: 'textFocus',
+        tab_background_text: 'text',
+        tab_selected: 'backgroundLight',
+        tab_line: 'accentPrimary',
+        tab_loading: 'accentPrimary',
+        toolbar: 'backgroundLight',
+        toolbar_text: 'textFocus',
+        toolbar_field: 'backgroundExtra',
+        toolbar_field_text: 'textFocus',
+        toolbar_field_border: 'backgroundExtra',
+        toolbar_field_focus: 'backgroundLight',
+        toolbar_field_text_focus: 'textFocus',
+        toolbar_field_border_focus: 'accentPrimary',
+        toolbar_field_highlight: 'accentPrimary',
+        toolbar_field_highlight_text: 'background',
+        icons: 'text',
+        icons_attention: 'accentPrimary',
+        sidebar: 'backgroundLight',
+        sidebar_text: 'textFocus',
+        sidebar_border: 'backgroundExtra',
+        sidebar_highlight: 'accentPrimary',
+        sidebar_highlight_text: 'background',
+        popup: 'backgroundLight',
+        popup_text: 'textFocus',
+        popup_border: 'backgroundExtra',
+        popup_highlight: 'accentPrimary',
+        popup_highlight_text: 'background',
+        ntp_background: 'background',
+        ntp_text: 'text',
+        button_background_hover: 'backgroundExtra',
+        button_background_active: 'backgroundExtra',
+    }
+};
+
+function mergeConfig(updates) {
+    const base = (typeof USER_CONFIG !== 'undefined') 
+        ? { ...BUILTIN_DEFAULT_CONFIG, ...USER_CONFIG } 
+        : BUILTIN_DEFAULT_CONFIG;
+    const m = { ...base, ...(updates || {}) };
+    if (updates && updates.paletteTemplate) m.paletteTemplate = { ...base.paletteTemplate, ...updates.paletteTemplate };
+    if (updates && updates.browserTemplate) m.browserTemplate = { ...base.browserTemplate, ...updates.browserTemplate };
+    return m;
+}
+
+const DEFAULT_CONFIG = mergeConfig();
+
 // ─── State ───
 const state = {
     port: null,
