@@ -258,10 +258,8 @@ function broadcastToTabs(force = false) {
 
 function sendToTab(tabId, data, url, force = false) {
     if (!url) return;
-    // Only theme sites that have a matching CSS template
     if (!state.config.webThemeEnabled) return;
     const siteCss = filterWebsiteCss(url, data.websites);
-    if (!siteCss) return;
 
     if (broadcastQueue.has(tabId)) clearTimeout(broadcastQueue.get(tabId));
     broadcastQueue.set(tabId, setTimeout(() => {
@@ -312,6 +310,9 @@ function handleHostMessage(msg) {
     switch (msg.type) {
         case 'MATUGEN_UPDATE': {
             if (!msg.data?.colors) return;
+            if (typeof msg.data.webThemeEnabled === 'boolean') {
+                state.config.webThemeEnabled = msg.data.webThemeEnabled;
+            }
             state.lastThemeData = msg.data;
             browser.storage.local.set({ themeData: msg.data }).catch(e => console.warn('MatugenFox: storage error:', e));
 
@@ -364,28 +365,25 @@ browser.runtime.onMessage.addListener((req, sender) => {
             });
         }
         case 'GET_THEME_DATA': {
-            // Strict: only return data if web theming is on AND site has a template
             if (!state.config.webThemeEnabled) return Promise.resolve(null);
             const url = sender.tab?.url || sender.url;
             const data = resolveThemeData();
             if (!data) {
                 return browser.storage.local.get('themeData').then(res => {
-                    if (!res.themeData) return null;
+                    if (!res.themeData || !res.themeData.colors) return null;
                     const siteCss = filterWebsiteCss(url, res.themeData.websites);
-                    if (!siteCss) return null;
                     return {
                         colors: res.themeData.colors,
-                        websiteCss: siteCss,
+                        websiteCss: siteCss || '',
                         timestamp: res.themeData.timestamp,
                         status: res.themeData.status,
                     };
                 });
             }
             const siteCss = filterWebsiteCss(url, data.websites);
-            if (!siteCss) return Promise.resolve(null);
             return Promise.resolve({
                 colors: data.colors,
-                websiteCss: siteCss,
+                websiteCss: siteCss || '',
                 timestamp: data.timestamp,
                 status: data.status,
             });

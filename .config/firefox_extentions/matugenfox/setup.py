@@ -60,7 +60,8 @@ def main():
     if not config_file.is_file():
         config_data = {
             "colorsPath": "~/.config/matugen/generated/firefox_websites.css",
-            "websitesDir": "~/.config/dusky_sites"
+            "websitesDir": "~/.config/dusky_sites",
+            "webThemeEnabled": False
         }
         config_file.write_text(json.dumps(config_data, indent=2), encoding='utf-8')
         print_success(f"Created primary config file at {config_file}")
@@ -124,6 +125,25 @@ def main():
             installed_count += 1
         except Exception as e:
             print_warn(f"Failed to install manifest in {target_dir}: {e}")
+
+    # 6. Flatpak Sandbox Overrides (if applicable)
+    import shutil
+    import subprocess
+    if shutil.which("flatpak"):
+        print_step("Checking for Flatpak browser sandboxes...")
+        flatpak_apps = ["org.mozilla.firefox", "io.gitlab.librewolf-community", "io.github.zen_browser.zen", "one.ablaze.floorp"]
+        for app in flatpak_apps:
+            res = subprocess.run(["flatpak", "info", app], capture_output=True)
+            if res.returncode == 0:
+                subprocess.run([
+                    "flatpak", "override", "--user",
+                    f"--filesystem={script_dir}:ro",
+                    f"--filesystem={config_dir}:rw",
+                    f"--filesystem={matugen_gen_dir}:ro",
+                    f"--filesystem={dusky_sites_dir}:ro",
+                    app
+                ], capture_output=True)
+                print_success(f"Applied Flatpak filesystem permissions for {app}")
 
     # 6. Completion Report
     print(f"\n{C_GREEN}✅ Setup Complete! MatugenFox was installed into {installed_count} browser target(s).{C_RESET}")

@@ -92,10 +92,11 @@ class InotifyWatcher:
             self.fd = -1
 
 # --- Global State ---
-def load_external_config() -> tuple[str, str]:
+def load_external_config() -> tuple[str, str, bool | None]:
     config_file = Path.home() / ".config/dusky/settings/matugenfox/config.json"
     colors_file = str(Path.home() / ".config/matugen/generated/firefox_websites.css")
     websites_dir = str(Path.home() / ".config/dusky_sites")
+    web_theme_enabled = None
 
     if config_file.is_file():
         try:
@@ -105,11 +106,13 @@ def load_external_config() -> tuple[str, str]:
                     colors_file = str(Path(data['colorsPath']).expanduser())
                 if data.get('websitesDir'):
                     websites_dir = str(Path(data['websitesDir']).expanduser())
+                if 'webThemeEnabled' in data:
+                    web_theme_enabled = bool(data['webThemeEnabled'])
         except Exception:
             pass
-    return colors_file, websites_dir
+    return colors_file, websites_dir, web_theme_enabled
 
-_default_colors, _default_websites = load_external_config()
+_default_colors, _default_websites, _default_web_enabled = load_external_config()
 config = {
     "colors_file": _default_colors,
     "websites_dir": _default_websites
@@ -235,7 +238,7 @@ def parse_websites(websites_dir: str) -> dict[str, str]:
         pass
     return websites
 
-def get_theme_data(colors_file: str, websites_dir: str) -> dict:
+def get_theme_data(colors_file: str, websites_dir: str, web_theme_enabled: bool | None = None) -> dict:
     status = []
     p_colors = Path(colors_file).expanduser() if colors_file else None
     p_sites = Path(websites_dir).expanduser() if websites_dir else None
@@ -245,11 +248,14 @@ def get_theme_data(colors_file: str, websites_dir: str) -> dict:
     if p_sites and not p_sites.is_dir():
         status.append(f"Websites dir not found: {websites_dir}")
 
-    return {
+    data = {
         "colors": parse_colors(colors_file),
         "websites": parse_websites(websites_dir),
         "status": status if status else ["OK"]
     }
+    if web_theme_enabled is not None:
+        data["webThemeEnabled"] = web_theme_enabled
+    return data
 
 def get_data_hash(data: dict) -> str:
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode('utf-8')).hexdigest()
@@ -305,7 +311,7 @@ def main():
 
     while running:
         try:
-            ext_colors, ext_websites = load_external_config()
+            ext_colors, ext_websites, ext_web_enabled = load_external_config()
             with config_lock:
                 colors_file = config["colors_file"] or ext_colors
                 websites_dir = config["websites_dir"] or ext_websites
@@ -337,7 +343,7 @@ def main():
                 should_update = True
 
             if should_update or not last_hash or force_update:
-                data = get_theme_data(colors_file, websites_dir)
+                data = get_theme_data(colors_file, websites_dir, ext_web_enabled)
                 current_hash = get_data_hash(data)
 
                 if current_hash != last_hash or force_update:

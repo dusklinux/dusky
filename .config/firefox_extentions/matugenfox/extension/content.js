@@ -13,8 +13,7 @@ const UNSAFE_CSS_VALUE = /url\s*\(|expression\s*\(|@import|-moz-binding/i;
 
 // ─── Theme Application ───
 function applyTheme(data, force = false) {
-    // Strict: never theme a site without a matching template
-    if (!data?.colors || !data?.websiteCss) {
+    if (!data?.colors || !Object.keys(data.colors).length) {
         removeTheme();
         return;
     }

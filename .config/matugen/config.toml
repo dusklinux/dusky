@@ -292,13 +292,9 @@ post_hook   = '''
   fi
 '''
 
-# [templates.firefox_websites]
-# input_path = '~/.config/matugen/templates/firefox_websites.css'
-# output_path = '~/.config/matugen/generated/firefox_websites.css'
-# post_hook = '''
-#     ln -nfs "$HOME/.config/matugen/generated/firefox_websites.css" "$HOME/.config/mozilla/firefox/sw8xyz71.default/chrome/colors.css" || :
-#     ln -nfs "$HOME/.config/matugen/generated/firefox_websites.css" "$HOME/.config/mozilla/firefox/fq2df6j4.default-release/chrome/colors.css" || :
-# '''
+[templates.firefox_websites]
+input_path = '~/.config/matugen/templates/firefox_websites.css'
+output_path = '~/.config/matugen/generated/firefox_websites.css'
 
 #=============================================================================
 # 4. System Services & Daemons (Triggered on theme change )
