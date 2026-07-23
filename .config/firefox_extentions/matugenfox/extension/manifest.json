@@ -52,15 +52,6 @@
                 "content.js"
             ],
             "run_at": "document_start"
-        },
-        {
-            "matches": [
-                "*://*.duckduckgo.com/*"
-            ],
-            "js": [
-                "duckduckgo.js"
-            ],
-            "run_at": "document_end"
         }
     ]
 }

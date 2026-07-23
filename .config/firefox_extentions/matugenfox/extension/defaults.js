@@ -10,7 +10,6 @@ const DEFAULT_CONFIG = {
     ecoMode: true,
     browserThemeEnabled: true,
     webThemeEnabled: false,
-    duckduckgoEnabled: false,
     userChromeEnabled: false,
     userContentEnabled: false,
     fontSize: 13,

@@ -95,8 +95,7 @@ async function init() {
     renderPaletteTemplateForm(themeData?.colors);
     renderBrowserTemplateForm();
 
-    // DuckDuckGo
-    document.getElementById('opt-duckduckgo').checked = config.duckduckgoEnabled || false;
+
 
     // userChrome
     document.getElementById('opt-userchrome').checked = config.userChromeEnabled || false;
@@ -267,10 +266,7 @@ function renderBrowserTemplateForm() {
 
 
 
-// ─── DuckDuckGo ───
-document.getElementById('opt-duckduckgo').addEventListener('change', e => {
-    sendUpdate({ duckduckgoEnabled: e.target.checked });
-});
+
 
 // ─── userChrome ───
 let pathTimeout = null;

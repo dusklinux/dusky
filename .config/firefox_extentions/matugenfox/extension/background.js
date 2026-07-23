@@ -89,7 +89,6 @@ function disconnectNative() {
     if (state.port) { try { state.port.disconnect(); } catch { } state.port = null; }
     broadcastRollback();
     resetBrowserTheme();
-    resetDDGTheme();
     state.isApplied = false;
 }
 
@@ -151,34 +150,7 @@ function resetBrowserTheme() {
     state.isApplied = false;
 }
 
-// ─── DuckDuckGo ───
-function applyDDGTheme(colors) {
-    if (!state.config.duckduckgoEnabled || !colors) return;
-    const palette = buildPalette(colors);
-    const strip = c => (c ? c.replace('#', '') : '');
-    const theme = {
-        k7: strip(palette.background),
-        kj: strip(palette.backgroundLight),
-        k9: strip(palette.accentPrimary),
-        k8: strip(palette.text),
-        kx: strip(palette.accentSecondary),
-        kaa: strip(palette.accentPrimary),
-        k21: strip(palette.backgroundExtra),
-    };
-    browser.tabs.query({ url: '*://*.duckduckgo.com/*' }).then(tabs => {
-        for (const t of tabs) {
-            browser.tabs.sendMessage(t.id, { type: 'MATUGEN_DDG_THEME', theme }).catch(e => console.warn('MatugenFox:', e));
-        }
-    }).catch(e => console.warn('MatugenFox:', e));
-}
 
-function resetDDGTheme() {
-    browser.tabs.query({ url: '*://*.duckduckgo.com/*' }).then(tabs => {
-        for (const t of tabs) {
-            browser.tabs.sendMessage(t.id, { type: 'MATUGEN_DDG_RESET' }).catch(e => console.warn('MatugenFox:', e));
-        }
-    }).catch(e => console.warn('MatugenFox:', e));
-}
 
 // ─── Tab Broadcasting ───
 function filterWebsiteCss(url, websites) {
@@ -285,7 +257,6 @@ function handleHostMessage(msg) {
 
             broadcastToTabs();
             if (state.config.browserThemeEnabled) applyBrowserTheme(msg.data.colors);
-            if (state.config.duckduckgoEnabled) applyDDGTheme(msg.data.colors);
             notifyUI({ type: 'THEME_APPLIED', colors: msg.data.colors });
             break;
         }
@@ -312,16 +283,12 @@ browser.runtime.onMessage.addListener((req, sender) => {
     switch (req.type) {
         case 'UPDATE_CONFIG': {
             const oldBrowser = state.config.browserThemeEnabled;
-            const oldDDG = state.config.duckduckgoEnabled;
             const oldWeb = state.config.webThemeEnabled;
             state.config = mergeConfig({ ...state.config, ...req.partialUpdate });
             return saveConfig().then(() => {
                 const data = resolveThemeData();
                 if ('browserThemeEnabled' in req.partialUpdate && oldBrowser !== state.config.browserThemeEnabled) {
                     state.config.browserThemeEnabled ? applyBrowserTheme(data?.colors) : resetBrowserTheme();
-                }
-                if ('duckduckgoEnabled' in req.partialUpdate && oldDDG !== state.config.duckduckgoEnabled) {
-                    state.config.duckduckgoEnabled ? applyDDGTheme(data?.colors) : resetDDGTheme();
                 }
                 if ('webThemeEnabled' in req.partialUpdate && oldWeb !== state.config.webThemeEnabled) {
                     if (state.config.webThemeEnabled) {
@@ -374,9 +341,7 @@ browser.runtime.onMessage.addListener((req, sender) => {
             const colors = resolveThemeData()?.colors;
             return Promise.resolve({ palette: buildPalette(colors), colors });
         }
-        case 'APPLY_DDG_THEME':
-            if (state.config.duckduckgoEnabled) applyDDGTheme(resolveThemeData()?.colors);
-            return Promise.resolve({ ok: true });
+
         case 'GET_PROFILE_PATHS':
         case 'WRITE_USER_CHROME':
         case 'WRITE_USER_CONTENT':
