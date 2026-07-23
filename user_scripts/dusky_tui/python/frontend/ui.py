@@ -2761,6 +2761,9 @@ Tooltip {
             self.query_one("#telemetry-banner").display = True
             self.set_interval(1.0, self.update_telemetry)
 
+        if self.theme_path:
+            self.set_interval(1.0, self.watch_theme_file)
+
         self.call_after_refresh(self.check_tab_overflow)
         self.call_after_refresh(self._update_scroll_indicators)
         self._update_footer_legend()
