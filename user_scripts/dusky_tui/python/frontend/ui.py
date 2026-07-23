@@ -61,6 +61,223 @@ def _md_escape(text: str) -> str:
 
 
 # =============================================================================
+# RENDERABLE CACHE & PRESET MATRIX
+# =============================================================================
+class OptionTextCache:
+    __slots__ = ("_maxsize", "_data", "hits", "misses")
+
+    def __init__(self, maxsize: int = 2048) -> None:
+        self._maxsize = max(64, maxsize)
+        self._data: dict[tuple, Text] = {}
+        self.hits = 0
+        self.misses = 0
+
+    def get(self, key: tuple) -> Text | None:
+        txt = self._data.pop(key, None)
+        if txt is None:
+            self.misses += 1
+            return None
+        self._data[key] = txt
+        self.hits += 1
+        return txt.copy()
+
+    def put(self, key: tuple, txt: Text) -> Text:
+        if key in self._data:
+            del self._data[key]
+        elif len(self._data) >= self._maxsize:
+            del self._data[next(iter(self._data))]
+        self._data[key] = txt.copy()
+        return txt
+
+    def invalidate_uid(self, uid: str) -> None:
+        kill = [k for k in self._data if k[0] == uid]
+        for k in kill:
+            del self._data[k]
+
+    def invalidate_presets(self) -> None:
+        kill = [k for k in self._data if len(k) > 1 and k[1] == "preset"]
+        for k in kill:
+            del self._data[k]
+
+    def clear(self) -> None:
+        self._data.clear()
+
+
+class PresetMatchMatrix:
+    """
+    Structural index built once; current serialized values updated incrementally.
+    ratio() is O(1). on_item_changed is O(P).
+    """
+    __slots__ = (
+        "_app", "_current", "_exists", "_defaults", "_expected",
+        "_all_defaults", "_matches", "_totals", "_preset_uids",
+        "_configurable_uids", "_uid_set"
+    )
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+        self._current: dict[str, str] = {}
+        self._exists: dict[str, bool] = {}
+        self._defaults: dict[str, str] = {}
+        self._expected: dict[str, dict[str, str]] = {}
+        self._all_defaults: dict[str, bool] = {}
+        self._matches: dict[str, int] = {}
+        self._totals: dict[str, int] = {}
+        self._preset_uids: list[str] = []
+        self._configurable_uids: list[str] = []
+        self._uid_set: set[str] = set()
+
+    def rebuild(self, configurable_items: Any) -> None:
+        self._current.clear()
+        self._exists.clear()
+        self._defaults.clear()
+        self._expected.clear()
+        self._all_defaults.clear()
+        self._matches.clear()
+        self._totals.clear()
+        self._preset_uids.clear()
+        self._configurable_uids.clear()
+        self._uid_set.clear()
+
+        items: list[Any] = []
+        presets: list[Any] = []
+        for _t, _i, item in configurable_items:
+            match item.type_:
+                case "preset":
+                    presets.append(item)
+                case "action" | "menu":
+                    continue
+                case _:
+                    items.append(item)
+
+        for item in items:
+            uid = item.uid
+            self._configurable_uids.append(uid)
+            self._uid_set.add(uid)
+            self._current[uid] = item.serialize(item.value)
+            self._defaults[uid] = item.serialize(item.default)
+            self._exists[uid] = bool(item.exists_in_target)
+
+        for p in presets:
+            puid = p.uid
+            self._preset_uids.append(puid)
+            payload = p.preset_payload or {}
+            self._all_defaults[puid] = bool(payload.get("__ALL_DEFAULTS__", False))
+            exp: dict[str, str] = {}
+            for key_path, raw in payload.items():
+                if key_path == "__ALL_DEFAULTS__":
+                    continue
+                exp[key_path] = self._serialize_payload(key_path, raw)
+            self._expected[puid] = exp
+            self._recompute_preset(puid)
+
+    def ingest_items(self, items: Any) -> None:
+        touched = False
+        for it in items:
+            if it.type_ in ("preset", "action", "menu"):
+                continue
+            uid = it.uid
+            self._current[uid] = it.serialize(it.value)
+            self._defaults[uid] = it.serialize(it.default)
+            self._exists[uid] = bool(it.exists_in_target)
+            if uid not in self._uid_set:
+                self._configurable_uids.append(uid)
+                self._uid_set.add(uid)
+            touched = True
+        if touched:
+            for puid in self._preset_uids:
+                self._recompute_preset(puid)
+
+    def on_item_changed(self, item: Any) -> None:
+        if item.type_ in ("preset", "action", "menu"):
+            return
+
+        uid = item.uid
+        new_ser = item.serialize(item.value)
+        new_exists = bool(item.exists_in_target)
+        old_ser = self._current.get(uid)
+        old_exists = self._exists.get(uid, False)
+
+        if old_ser == new_ser and old_exists == new_exists:
+            return
+
+        if uid not in self._uid_set:
+            self._configurable_uids.append(uid)
+            self._uid_set.add(uid)
+            self._defaults[uid] = item.serialize(item.default)
+            self._current[uid] = new_ser
+            self._exists[uid] = new_exists
+            for puid in self._preset_uids:
+                self._recompute_preset(puid)
+            return
+
+        self._current[uid] = new_ser
+        self._exists[uid] = new_exists
+
+        for puid in self._preset_uids:
+            exp = self._expected_for(puid, uid)
+            if old_exists and not new_exists:
+                self._totals[puid] = max(0, self._totals.get(puid, 0) - 1)
+                if old_ser == exp:
+                    self._matches[puid] = max(0, self._matches.get(puid, 0) - 1)
+                continue
+
+            if not old_exists and new_exists:
+                self._totals[puid] = self._totals.get(puid, 0) + 1
+                if new_ser == exp:
+                    self._matches[puid] = self._matches.get(puid, 0) + 1
+                continue
+
+            old_match = old_ser == exp
+            new_match = new_ser == exp
+            if old_match is new_match:
+                continue
+            if old_match and not new_match:
+                self._matches[puid] = max(0, self._matches.get(puid, 0) - 1)
+            else:
+                self._matches[puid] = self._matches.get(puid, 0) + 1
+
+    def ratio(self, preset_item: Any) -> float:
+        puid = preset_item.uid
+        total = self._totals.get(puid, 0)
+        if total <= 0:
+            return 0.0
+        return self._matches.get(puid, 0) / total
+
+    def _serialize_payload(self, uid: str, raw: Any) -> str:
+        item = getattr(self._app, "_item_by_uid", {}).get(uid)
+        if item is not None:
+            return item.serialize(raw)
+        match raw:
+            case None:
+                return "nil"
+            case bool() as b:
+                return "true" if b else "false"
+            case _:
+                return str(raw)
+
+    def _expected_for(self, puid: str, uid: str) -> str:
+        if self._all_defaults.get(puid, False):
+            return self._defaults.get(uid, "nil")
+        exp_map = self._expected.get(puid, {})
+        if uid in exp_map:
+            return exp_map[uid]
+        return self._defaults.get(uid, "nil")
+
+    def _recompute_preset(self, puid: str) -> None:
+        matches = 0
+        total = 0
+        for uid in self._configurable_uids:
+            if not self._exists.get(uid, False):
+                continue
+            total += 1
+            if self._current.get(uid) == self._expected_for(puid, uid):
+                matches += 1
+        self._matches[puid] = matches
+        self._totals[puid] = total
+
+
+# =============================================================================
 # COLOR UTILITIES
 # =============================================================================
 CYCLE_COLORS = [
@@ -1657,6 +1874,9 @@ Tooltip {
         self.undo_stack: deque[list[tuple[int, int, Any, Any]]] = deque(maxlen=50)
         self.redo_stack: deque[list[tuple[int, int, Any, Any]]] = deque(maxlen=50)
 
+        self._option_cache = OptionTextCache(maxsize=2048)
+        self._preset_matrix = PresetMatchMatrix(app=self)
+
         self._committed: dict[tuple[int, int], Any] = {}
         for t_idx, items in self.schema.items():
             for i_idx, item in enumerate(items):
@@ -1879,6 +2099,19 @@ Tooltip {
         else:
             self.pending_commits.add(key)
 
+    def _on_item_value_changed(self, item: ConfigItem) -> None:
+        if hasattr(self, "_option_cache"):
+            self._option_cache.invalidate_uid(item.uid)
+        if item.type_ not in ("preset", "action", "menu"):
+            if hasattr(self, "_preset_matrix"):
+                self._preset_matrix.on_item_changed(item)
+            if hasattr(self, "_option_cache"):
+                self._option_cache.invalidate_presets()
+        self._schema_dirty_counter += 1
+        cur = self._current_tab_index()
+        if cur is not None:
+            self._tab_dirty.add(cur)
+
     def _get_item_engine_info(self, item: ConfigItem) -> tuple[str, str]:
         """
         Resolves target engine and file config dynamically via overrides.
@@ -1976,6 +2209,9 @@ Tooltip {
                 if item.type_ == "preset":
                     self._preset_items.append((t_idx, i_idx, item))
 
+        if hasattr(self, "_preset_matrix"):
+            self._preset_matrix.rebuild(self._configurable_items)
+
     def _rebuild_key_map(self) -> None:
         # Compatibility wrapper for older call sites.
         self._rebuild_indexes()
@@ -1985,49 +2221,11 @@ Tooltip {
     # =========================================================================
     def _get_preset_match_ratio(self, preset_item: ConfigItem) -> float:
         """
-        Calculates how much of a preset's payload currently matches reality.
+        Calculates how much of a preset's payload currently matches reality in O(1) time.
         """
-        if preset_item.preset_payload is None:
-            return 0.0
-
-        payload = preset_item.preset_payload
-        if not isinstance(payload, dict):
-            return 0.0
-
-        if payload.get("__INVALID__", False):
-            return 0.0
-
-        cache = preset_item._ratio_cache
-        if cache is not None and cache[0] == self._schema_dirty_counter:
-            return cache[1]
-
-        total, matches = 0, 0
-        is_all_defaults = payload.get("__ALL_DEFAULTS__", False)
-
-        for t_idx, i_idx, target_item in self._configurable_items:
-            if not target_item.exists_in_target:
-                continue
-
-            total += 1
-            key_path = self._get_item_uid(target_item)
-
-            if is_all_defaults:
-                expected_val = target_item.default
-            elif key_path in payload:
-                expected_val = payload[key_path]
-            else:
-                expected_val = target_item.default
-
-            val1 = target_item.serialize(target_item.value)
-            val2 = target_item.serialize(expected_val)
-
-            if val1 == val2:
-                matches += 1
-
-        ratio = matches / total if total > 0 else 0.0
-        preset_item._ratio_cache = (self._schema_dirty_counter, ratio)
-
-        return ratio
+        if hasattr(self, "_preset_matrix"):
+            return self._preset_matrix.ratio(preset_item)
+        return 0.0
 
     def _is_preset_active(self, preset_item: ConfigItem) -> bool:
         return self._get_preset_match_ratio(preset_item) == 1.0
@@ -2048,11 +2246,37 @@ Tooltip {
         is_highlighted: bool = False,
         indent_prefix: str = ""
     ) -> Text:
+        val_ser = item.serialize(item.value)
+        init_ser = item.serialize(item.initial_value)
+        def_ser = item.serialize(item.default)
+        ratio_bucket = int(self._get_preset_match_ratio(item) * 10) if item.type_ == "preset" else -1
+
+        cache_key = (
+            item.uid,
+            item.type_,
+            val_ser,
+            item.exists_in_target,
+            val_ser != init_ser,
+            val_ser != def_ser,
+            is_highlighted,
+            indent_prefix,
+            item.expanded,
+            bool(item.warning_msg),
+            item.is_parent,
+            ratio_bucket,
+            getattr(self, "_theme_version", 0)
+        )
+
+        if hasattr(self, "_option_cache"):
+            hit = self._option_cache.get(cache_key)
+            if hit is not None:
+                return hit
+
         txt = Text()
 
         exists = item.exists_in_target
-        is_pending = (str(item.value) != str(item.initial_value))
-        is_modified = (str(item.value) != str(item.default))
+        is_pending = (val_ser != init_ser)
+        is_modified = (val_ser != def_ser)
 
         CURSOR_CHAR = "▶"
         cursor = f"{CURSOR_CHAR} " if is_highlighted else "  "
@@ -2293,6 +2517,8 @@ Tooltip {
         if is_modified and is_highlighted and exists:
             txt.append("   ↩ Reset", style=f"italic {self.theme_colors['error']}")
 
+        if hasattr(self, "_option_cache"):
+            return self._option_cache.put(cache_key, txt)
         return txt
 
     # =========================================================================
