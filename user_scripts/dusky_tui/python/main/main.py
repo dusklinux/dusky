@@ -533,10 +533,10 @@ EXAMPLES:
 
     logger.info(f"Loaded schema: {schema_path} | Target: {TARGET_FILE} | Engine: {ENGINE_TYPE}")
 
-    should_auto_daemon = args.auto_daemon or getattr(schema_module, "AUTO_DAEMON", False)
-    if should_auto_daemon:
-        if not try_connect_daemon("status"):
-            auto_spawn_daemon()
+    # Always query daemon IPC on TUI launch for hot pre-warmed state
+    daemon_resp = try_connect_daemon("get_schema", target=str(schema_path))
+    if not daemon_resp and (args.auto_daemon or getattr(schema_module, "AUTO_DAEMON", False)):
+        auto_spawn_daemon()
 
     # =========================================================================
     # --- 1.5 DYNAMIC PRIVILEGE ESCALATION BLOCK ---
