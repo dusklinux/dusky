@@ -514,7 +514,7 @@ hl.window_rule({
   name = "dusky_tui",
   match = { class = "^(dusky_tui)$" },
   float = true,
-  size = {815,539},
+  size = {820, 552},
   center = true,
   no_blur = false,
 })

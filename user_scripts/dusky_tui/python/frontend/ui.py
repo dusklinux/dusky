@@ -1456,6 +1456,7 @@ class AppFooter(Vertical):
             yield FileLink(id="file-link")
             yield Label(" │ ", classes="footer-sep")
             yield ModeButton(id="footer-legend", classes="mode-btn")
+            yield Label("", id="pos-counter", classes="pos-counter-btn")
             yield Label("", id="status-bar")
 
     def on_resize(self, event: events.Resize) -> None:
@@ -1628,11 +1629,8 @@ Screen { background: $background; }
     border-title-color: $primary;
     border-title-style: bold;
     border-title-align: center;
-    border-subtitle-color: $primary;
-    border-subtitle-style: bold;
-    border-subtitle-align: right;
     background: transparent;
-    padding: 0 1 1 1;
+    padding: 0 1 0 1;
 }
 
 #tab-bar { width: 100%; height: 1; margin-bottom: 1; background: transparent; }
@@ -1713,6 +1711,8 @@ ScrollIndicator:hover { color: $foreground; }
 
 .mode-btn { padding: 0 1; background: transparent; }
 .mode-btn:hover { text-style: bold; color: $foreground; background: $primary 25%; }
+
+.pos-counter-btn { padding: 0 1; background: transparent; }
 
 #file-link { padding: 0 1; background: transparent; }
 #file-link:hover { text-style: bold; color: $foreground; background: $primary 25%; }
@@ -2738,14 +2738,8 @@ Tooltip {
         self._cached_tab_right = self.query_one("#tab-right", Label)
 
         try:
-            batch_shortcut = self.query_one("#shortcut-ctrl-s")
-            batch_shortcut.display = not self.auto_save
-        except Exception:
-            pass
-
-        try:
-            batch_shortcut = self.query_one("#shortcut-ctrl-s")
-            batch_shortcut.display = not self.auto_save
+            self.query_one("#shortcut-ctrl-s").display = not self.auto_save
+            self.query_one("#shortcut-R").display = self.auto_save
         except Exception:
             pass
 
@@ -3201,8 +3195,8 @@ Tooltip {
         self._update_footer_legend()
 
         try:
-            batch_shortcut = self.query_one("#shortcut-ctrl-s")
-            batch_shortcut.display = not new
+            self.query_one("#shortcut-ctrl-s").display = not new
+            self.query_one("#shortcut-R").display = new
             self.call_after_refresh(self.query_one("#footer-shortcuts-container", FlowContainer).reflow)
         except Exception:
             pass
@@ -3639,9 +3633,20 @@ Tooltip {
         self._update_pagination(ol)
 
     def _update_pagination(self, ol: ConfigOptionList) -> None:
-        idx = ol.highlighted if ol.highlighted is not None else 0
-        total = ol.option_count
-        self.query_one("#main-box").border_subtitle = f" {idx + 1}/{total} " if total else " 0/0 "
+        try:
+            counter = self.query_one("#pos-counter", Label)
+            if ol and ol.option_count > 0:
+                idx = ol.highlighted if ol.highlighted is not None else 0
+                total = ol.option_count
+                txt = Text()
+                txt.append(" │ ", style=self.theme_colors.get("fg", ""))
+                txt.append(f"{idx + 1}/{total}", style=self.theme_colors.get("accent", "") + " bold")
+                counter.update(txt)
+                counter.display = True
+            else:
+                counter.display = False
+        except Exception:
+            pass
 
     def _update_scroll_indicators(self) -> None:
         try:
