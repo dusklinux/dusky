@@ -1,0 +1,150 @@
+[profile]
+name = "Dusk Personal Setup"
+description = "Setup environment for personal Dusk machines"
+schema_version = 2
+post_script_delay = 0
+
+[policy]
+audio = true
+notify = true
+inhibit_sleep = true
+task_timeout = 0
+stop_on_fail = false
+manual = false
+force = false
+
+[git]
+enabled = true
+git_dir = "~/dusky"
+work_tree = "~/"
+remote = "origin"
+
+[search_dirs]
+dirs = [
+    "~/user_scripts/arch_setup_scripts/scripts",
+    "~/user_scripts/arch_setup_scripts",
+    "~/user_scripts/rofi",
+    "~/user_scripts/images",
+    "~/user_scripts/theme_matugen",
+    "~/user_scripts/theme_matugen/config",
+    "~/user_scripts/firefox/theme_matugen",
+    "~/user_scripts/firefox",
+    "~/user_scripts/tts_stt/dusky_kokoro",
+    "~/user_scripts/tts_stt/dusky_parakeet",
+    "~/user_scripts/nvim",
+    "~/user_scripts/mako_osd/dusky_keys",
+]
+
+[conflict_resolutions]
+
+[sequence]
+scripts = [
+    "U | 002_pre_generated_colors.sh",
+    "U | 003_network_connect.sh",
+    "U | deploy_dotfiles.sh",
+    "U | 005_hypr_custom_config_setup.py",
+    "U | 007_main_hyprland_lua.py",
+    "U | 006_animation_default.sh",
+    "U | 010_package_removal.sh",
+    "U | 013_matugen_state_file_placment.py",
+    "U | if:command:thunar | 015_set_thunar_terminal.py -t foot",
+    "U | 020_desktop_entries.py",
+    "U | 025_configure_keyboard.sh",
+    "U | 040_long_sleep_timeout.sh",
+    "S | if:battery | 045_battery_limiter.sh",
+    "S | 050_pacman_config.sh",
+    "S | 051_pacman_hooks.sh --auto",
+    "S | 055_pacman_reflector.sh",
+    "S | 060_package_installation.py",
+    "U | 065_enabling_user_services.sh",
+    "S | 068_ufw_firewall.sh",
+    "S | 070_openssh_setup.sh",
+    "U | if:command:zsh | 075_changing_shell_zsh.sh",
+    "S | 080_aur_paru_fallback_yay.sh",
+    "S | 085_warp.py",
+    "U | 090_paru_packages_optional.sh",
+    "S | if:battery | 095_battery_limiter_again_dusk.sh",
+    "U | 100_paru_packages.sh",
+    "S | 110_aur_packages_sudo_services.sh",
+    "U | 115_aur_packages_user_services.sh",
+    "S | 120_create_mount_directories.sh",
+    "S | 127_pam_keyring_greetd.py --mode auto",
+    "U | 130_copy_service_files.sh",
+    "U | 131_dbus_copy_service_files.sh",
+    "U | 132_copy_system_services.sh",
+    "U | if:battery | 135_battery_notify_service.sh",
+    "U | if:btrfs | 137_snapper_isolation_subvolume.sh --auto",
+    "U | if:command:matugen | dusky_matugen_config_tui.sh --smart",
+    "U | 140_fc_cache_fv.sh",
+    "U | if:command:matugen | 145_matugen_directories.py",
+    "U | 150_wallpapers_download.sh",
+    "U | 155_blur_shadow_opacity.sh",
+    "U | 160_theme_ctl.py",
+    "U | 165_qtct_config.sh",
+    "S | 180_udev_usb_notify.sh",
+    "U | 185_terminal_default.py -t foot",
+    "S | 190_dusk_fstab.py",
+    "S | firefox_symlink_partition.py",
+    "S | 200_tlp_config.py",
+    "S | 205_zram_configuration.sh",
+    "S | 206_zram_tmpfs_mounts.py --zram",
+    "S | 210_zram_optimize_swappiness.sh",
+    "S | 211_systemd_oomd_zram.py",
+    "S | 212_thp_sysfs_optimizer.sh",
+    "S | 213_systemd_journaling_optimizer.sh",
+    "S | 214_damon_reclaim_optimizer.py",
+    "S | 216_systemd_accounting_optimizer.py",
+    "S | 217_boot_memory_reclaimer.py",
+    "S | if:laptop | 215_powerkey_lid_close_behaviour.sh",
+    "S | 220_logrotate_optimization.sh",
+    "S | 225_faillock_timeout.sh",
+    "U | 235_file_manager_switch.sh",
+    "U | 236_browser_switcher.sh",
+    "U | 237_text_editer_switcher.sh",
+    "U | 238_terminal_switcher.sh",
+    "U | if:command:thunar | 241_thunar_defaults.py",
+    "U | if:command:thunar | 242_file_manager_bookmarks_sidepane.py",
+    "U | if:command:mousepad | 243_mousepad_defaults.py",
+    "S | 245_asusd_service_fix.sh",
+    "S | 250_ftp_arch.sh",
+    "U | 260_spotify.sh",
+    "U | 265_mouse_button_reverse.sh",
+    "S | 290_system_services.sh",
+    "U | 300_git_config.sh",
+    "U | user_scripts/git/dusky_backup_manager.py --new",
+    "U | user_scripts/git/dusky_backup_manager.py --relink",
+    "S | 320_systemdboot_optimization.py",
+    "S | 325_hosts_files_block.sh",
+    "S | 330_gtk_root_symlink.sh",
+    "S | 350_dns_systemd_resolve.sh",
+    "U | if:command:obsidian | 360_obsidian_pensive_vault_configure.sh",
+    "U | 365_cache_purge.sh",
+    "S | 370_arch_install_scripts_cleanup.sh",
+    "U | 375_cursor_theme_bibata_classic_modern.sh",
+    "U | if:dir:~/user_scripts/images | 376_generate_colorfiles_for_current_wallpaer.sh",
+    "U | if:gpu:nvidia | 380_nvidia_open_source.sh",
+    "S | if:gpu:nvidia | 381_nvidia_services.sh",
+    "U | if:gpu:nvidia | 383_configure_hyprland_gpu.py",
+    "S | 385_waydroid_setup.sh",
+    "U | if:wayland | 390_clipboard_persistance.py",
+    "S | if:gpu:intel | 395_intel_media_sdk_check.sh",
+    "U | if:command:firefox | 400_firefox_matugen_pywalfox.sh",
+    "U | if:command:firefox | optimize_firefox.py",
+    "U | if:command:waybar | 410_waybar_swap_config.py --set waybar=15",
+    "U | if:command:mpv | 415_mpv_setup.sh",
+    "S | if:btrfs | 430_btrfs_zstd_compression_stats.sh",
+    "U | if:command:wayclick | 434_wayclick_soundpacks_download.sh --auto",
+    "U | if:command:wayclick | 435_key_sound_wayclick_setup.sh --setup",
+    "U | if:command:dusky_keys | dusky_keys.sh --setup",
+    "U | if:battery | 440_config_bat_notify.sh --default",
+    "U | if:wayland | 455_hyprctl_reload.sh",
+    "U | 470_vesktop_matugen.sh",
+    "S | 473_add_user_to_group.sh",
+    "U | 475_reverting_sleep_timeout.sh",
+    "U | 480_dusky_commands.sh",
+    "S | 485_sudoers_nopassword.sh",
+    "U | if:dir:~/user_scripts/images | wallpaper_selector.py --build-cache",
+    "U | kokoro_installer.sh",
+    "U | parakeet_installer.sh",
+    "U | dusky_neovim_manager.sh -a -t dusky",
+]
