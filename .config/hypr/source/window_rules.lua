@@ -45,12 +45,12 @@ hl.window_rule({
     float = true
 })
 
---- Firefox: Opaque Web Apps (Streaming & Design) ---
+--- Browsers: Opaque Web Apps (Streaming & Design) ---
 -- Forces 100% full opacity & disables blur for video streaming, media players & design web apps
 hl.window_rule({
-    name = "opaque-firefox-webapps",
+    name = "opaque-browser-webapps",
     match = {
-        class = "^(firefox)$",
+        class = "^(firefox.*|org\\.mozilla\\.firefox|chromium.*|Chromium.*|zen.*|Zen.*|google-chrome.*|Google-chrome.*|brave.*|Brave.*|helium.*|Helium.*|librewolf.*|LibreWolf.*|org\\.mozilla\\.librewolf|microsoft-edge.*|msedge.*|vivaldi.*|qutebrowser.*|org\\.qutebrowser\\.qutebrowser)$",
         title = ".*(YouTube|Figma|Pixabay|Netflix|Twitch|Rumble|Apple TV|Hulu|HBO|Max|Disney|Prime Video|Spotify|SoundCloud|Canva|Photopea|Unsplash|Pexels|Jellyfin|Plex|Stremio|Kick).*"
     },
     opacity = "1.0 override 1.0 override",
