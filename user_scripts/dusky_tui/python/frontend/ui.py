@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any
 from collections import deque
 
-from textual import on, events
+from textual import on, events, work
+from textual.message import Message
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, Horizontal
@@ -58,6 +59,21 @@ def _md_escape(text: str) -> str:
     Minimal Markdown escaping for dynamic strings inserted into dialogs.
     """
     return re.sub(r"([*_`#\[\]])", r"\\\1", str(text))
+
+
+class EnginesLoaded(Message):
+    """UI-thread delivery of a finished background load batch."""
+    def __init__(
+        self,
+        *,
+        states: dict[tuple[str, str], Any],
+        attempted: set[tuple[str, str]],
+        errors: dict[tuple[str, str], str],
+    ) -> None:
+        super().__init__()
+        self.states = states
+        self.attempted = attempted
+        self.errors = errors
 
 
 # =============================================================================
@@ -2099,6 +2115,15 @@ Tooltip {
         else:
             self.pending_commits.add(key)
 
+    def _current_tab_index(self) -> int | None:
+        try:
+            switcher = self.query_one(ContentSwitcher)
+            if switcher.current and isinstance(switcher.current, str) and switcher.current.startswith("tab-"):
+                return int(switcher.current.split("-")[1])
+        except Exception:
+            return None
+        return None
+
     def _on_item_value_changed(self, item: ConfigItem) -> None:
         if hasattr(self, "_option_cache"):
             self._option_cache.invalidate_uid(item.uid)
@@ -2521,6 +2546,23 @@ Tooltip {
             return self._option_cache.put(cache_key, txt)
         return txt
 
+    def _intern_styles(self) -> None:
+        c = getattr(self, "theme_colors", {})
+        self._style = {
+            "cursor_hl": f"{c.get('accent', '#a8c8ff')} bold",
+            "cursor": "",
+            "muted": c.get("muted", "#43474e"),
+            "accent_bold": f"{c.get('accent', '#a8c8ff')} bold",
+            "fg": c.get("fg", "#e1e2e9"),
+            "fg_bold": f"{c.get('fg', '#e1e2e9')} bold",
+            "success": c.get("success", "#dbbce1"),
+            "warning": c.get("warning", "#bdc7dc"),
+            "error": c.get("error", "#ffb4ab"),
+        }
+        self._theme_version = getattr(self, "_theme_version", 0) + 1
+        if hasattr(self, "_option_cache"):
+            self._option_cache.clear()
+
     # =========================================================================
     # USER PRESETS
     # =========================================================================
@@ -2683,66 +2725,18 @@ Tooltip {
         except Exception:
             pass
 
-        # Load states securely across all registered backend target configurations.
-        if self.deferred_load:
-            user_units = []
-            sys_units = []
+        try:
+            batch_shortcut = self.query_one("#shortcut-ctrl-s")
+            batch_shortcut.display = not self.auto_save
+        except Exception:
+            pass
 
-            for tab_items in self.schema.values():
-                for item in tab_items:
-                    if item.type_ in ("action", "preset", "menu"):
-                        continue
-
-                    if item.scope == "user":
-                        user_units.append(item.key)
-                    elif item.scope == "system":
-                        sys_units.append(item.key)
-
-            states = {}
-            for ekey, eng in self.engine_pool.items():
-                if hasattr(eng, "load_state_for_units"):
-                    states[ekey] = eng.load_state_for_units(user_units, sys_units)
-                else:
-                    states[ekey] = eng.load_state()
-        else:
-            states = {ekey: eng.load_state() for ekey, eng in self.engine_pool.items()}
-
-        self._load_user_presets()
-        self._rebuild_indexes()
-
-        # PASS 1: Set initial values and existence before rendering UI.
-        for i in range(len(self.tabs)):
-            for idx, item in enumerate(self.schema.get(i, [])):
-                engine_key = self._get_item_engine_info(item)
-                state = states.get(engine_key, {})
-                raw = self._lookup_state(state, item)
-
-                if item.type_ in ("action", "preset", "menu"):
-                    item.exists_in_target = True
-                elif raw is not None:
-                    item.exists_in_target = True
-                    item.value = item.deserialize(raw)
-                else:
-                    item.exists_in_target = (item.default == "nil")
-
-                if not item._initial_loaded:
-                    item.initial_value = copy.deepcopy(item.value)
-                    item._initial_loaded = True
-
-        # PASS 2: Lazy DOM construction. Populate only initial tab.
-        if self.tabs:
-            self._populate_option_list(0)
+        self._intern_styles()
+        self.run_deferred_boot(initial_tab=0)
 
         if first_ol := self.current_option_list:
             first_ol.focus()
             self._update_pagination(first_ol)
-
-        # File change watchers.
-        if self.theme_path:
-            self.set_interval(0.5, self.watch_theme_file)
-
-        self.set_interval(1.0, self.watch_target_file)
-        self.set_interval(2.0, self.watch_presets_dir)
 
         # Telemetry.
         self.telemetry_engine = None
@@ -2800,6 +2794,180 @@ Tooltip {
                     self.push_screen(AlertDialog(str(self.global_popup), title="System Notice", level="warning"))
 
             self.call_after_refresh(show_popup)
+
+    def _init_boot_state(self) -> None:
+        self._states: dict[tuple[str, str], Any] = {}
+        self._loaded_engines: set[tuple[str, str]] = set()
+        self._pending_engine_loads: set[tuple[str, str]] = set()
+        self._failed_engines: dict[tuple[str, str], str] = {}
+        self._mounted_tabs: set[int] = set()
+        self._populated_tabs: set[int] = set()
+        self._tab_data_ready: set[int] = set()
+        self._boot_complete: bool = False
+
+        self._all_user_units: list[str] = []
+        self._all_sys_units: list[str] = []
+        for tab_items in self.schema.values():
+            for item in tab_items:
+                if item.type_ in ("action", "preset", "menu"):
+                    continue
+                match item.scope:
+                    case "user":
+                        self._all_user_units.append(item.key)
+                    case "system":
+                        self._all_sys_units.append(item.key)
+
+    def _engines_for_tab(self, tab_idx: int) -> set[tuple[str, str]]:
+        keys: set[tuple[str, str]] = set()
+        for item in self.schema.get(tab_idx, []):
+            if item.type_ in ("action", "preset", "menu"):
+                continue
+            keys.add(self._get_item_engine_info(item))
+        return keys
+
+    def _load_one_engine_sync(self, ekey: tuple[str, str]) -> Any:
+        eng = self.engine_pool[ekey]
+        if self.deferred_load and hasattr(eng, "load_state_for_units"):
+            return eng.load_state_for_units(self._all_user_units, self._all_sys_units)
+        return eng.load_state()
+
+    def _load_engines_batch_sync(
+        self, keys: set[tuple[str, str]]
+    ) -> tuple[dict[tuple[str, str], Any], dict[tuple[str, str], str]]:
+        states: dict[tuple[str, str], Any] = {}
+        errors: dict[tuple[str, str], str] = {}
+        for ekey in keys:
+            try:
+                states[ekey] = self._load_one_engine_sync(ekey)
+            except Exception as exc:
+                errors[ekey] = f"{type(exc).__name__}: {exc}"
+        return states, errors
+
+    def _apply_states_to_tab(self, tab_idx: int, states: dict[tuple[str, str], Any]) -> None:
+        items = self.schema.get(tab_idx, [])
+        freshly: list[ConfigItem] = []
+
+        for i_idx, item in enumerate(items):
+            if item.type_ in ("action", "preset", "menu"):
+                item.exists_in_target = True
+                if not item._initial_loaded:
+                    item.initial_value = clone_value(item.value)
+                    item._initial_loaded = True
+                    self._committed[(tab_idx, i_idx)] = clone_value(item.value)
+                continue
+
+            engine_key = self._get_item_engine_info(item)
+            if engine_key not in states and not item._initial_loaded:
+                continue
+
+            state = states.get(engine_key, self._states.get(engine_key, {}))
+            raw = self._lookup_state(state, item)
+
+            if raw is not None:
+                item.exists_in_target = True
+                new_val = item.deserialize(raw)
+            else:
+                item.exists_in_target = (item.default != "nil")
+                new_val = item.value
+
+            if not item._initial_loaded:
+                item.value = new_val
+                item.initial_value = clone_value(item.value)
+                item._initial_loaded = True
+                self._committed[(tab_idx, i_idx)] = clone_value(item.value)
+                freshly.append(item)
+
+        self._tab_data_ready.add(tab_idx)
+        if freshly and hasattr(self, "_preset_matrix"):
+            self._preset_matrix.ingest_items(freshly)
+
+    def _mark_boot_complete_if_done(self) -> None:
+        self._boot_complete = (
+            not self._pending_engine_loads
+            and set(self.engine_pool).issubset(
+                self._loaded_engines | set(self._failed_engines)
+            )
+        )
+        if self._boot_complete and hasattr(self, "_preset_matrix"):
+            self._preset_matrix.rebuild(self._configurable_items)
+            if hasattr(self, "_option_cache"):
+                self._option_cache.invalidate_presets()
+            self._schema_dirty_counter += 1
+
+    def run_deferred_boot(self, *, initial_tab: int = 0) -> None:
+        self._init_boot_state()
+        self._load_user_presets()
+        self._rebuild_indexes()
+
+        need_now = self._engines_for_tab(initial_tab) if self.tabs else set()
+        deferred = set(self.engine_pool) - need_now
+
+        for ekey in need_now:
+            try:
+                self._states[ekey] = self._load_one_engine_sync(ekey)
+                self._loaded_engines.add(ekey)
+            except Exception as exc:
+                self._failed_engines[ekey] = f"{type(exc).__name__}: {exc}"
+                self.notify_status(f"Failed to load {ekey}: {exc}", level="error")
+
+        for t_idx in self.tabs:
+            if self._engines_for_tab(t_idx).issubset(self._loaded_engines):
+                self._apply_states_to_tab(t_idx, self._states)
+
+        if self.tabs:
+            self._populate_option_list(initial_tab)
+            self._populated_tabs.add(initial_tab)
+
+        if deferred:
+            self._pending_engine_loads |= set(deferred)
+            self._load_engines_async(deferred)
+        else:
+            self._mark_boot_complete_if_done()
+
+    @work(exclusive=True, group="engine-boot", exit_on_error=False)
+    async def _load_engines_async(self, engine_keys: set[tuple[str, str]]) -> None:
+        if not engine_keys:
+            return
+        states, errors = await asyncio.to_thread(self._load_engines_batch_sync, engine_keys)
+        self.post_message(
+            EnginesLoaded(states=states, attempted=engine_keys, errors=errors)
+        )
+
+    def on_engines_loaded(self, event: EnginesLoaded) -> None:
+        self._pending_engine_loads -= set(event.attempted)
+
+        for ekey, err in event.errors.items():
+            self._failed_engines[ekey] = err
+            self.notify_status(f"Failed to load {ekey}: {err}", level="error")
+
+        if event.states:
+            self._states.update(event.states)
+            self._loaded_engines |= set(event.states)
+
+        for t_idx in self.tabs:
+            if t_idx in self._tab_data_ready:
+                continue
+            if self._engines_for_tab(t_idx).issubset(self._loaded_engines):
+                self._apply_states_to_tab(t_idx, self._states)
+                self._tab_dirty.add(t_idx)
+
+        cur = self._current_tab_index()
+        if cur is not None and cur in self._tab_data_ready:
+            if cur not in self._populated_tabs or cur in self._tab_dirty:
+                self._populate_option_list(cur)
+                self._populated_tabs.add(cur)
+                self._tab_dirty.discard(cur)
+
+        self._mark_boot_complete_if_done()
+
+    def require_boot_complete(self) -> bool:
+        if getattr(self, "_boot_complete", True):
+            return True
+        self.notify_status(
+            "Still loading configuration backends — try again in a moment.",
+            level="warning",
+        )
+        return False
 
     # =========================================================================
     # TAB POPULATION / LAZY UI
@@ -2945,14 +3113,19 @@ Tooltip {
                     item.exists_in_target = True
                     item.value = item.deserialize(raw)
                 else:
-                    item.exists_in_target = (item.default == "nil")
+                    item.exists_in_target = (item.default != "nil")
 
                 if not item._initial_loaded:
-                    item.initial_value = copy.deepcopy(item.value)
+                    item.initial_value = clone_value(item.value)
                     item._initial_loaded = True
+                self._committed[(tab_idx, idx)] = clone_value(item.value)
 
-            if tab_idx in self._tab_populated or tab_idx == current_idx:
+            self._tab_data_ready.add(tab_idx)
+
+            if tab_idx in self._populated_tabs or tab_idx in self._tab_populated or tab_idx == current_idx:
                 self._populate_option_list(tab_idx)
+                self._populated_tabs.add(tab_idx)
+                self._tab_dirty.discard(tab_idx)
             else:
                 self._tab_dirty.add(tab_idx)
 
@@ -3146,7 +3319,7 @@ Tooltip {
                                 changed_any = True
 
                         else:
-                            expected_exists = (item.default == "nil")
+                            expected_exists = (item.default != "nil")
                             expected_val = item.default if expected_exists else item.value
 
                             if item.exists_in_target != expected_exists or str(item.value) != str(expected_val):
@@ -3298,8 +3471,13 @@ Tooltip {
             self.query_one(ContentSwitcher).current = f"tab-{idx}"
             event.tab.scroll_visible(animate=True, top=False)
 
-            if idx not in self._tab_populated or idx in self._tab_dirty:
+            if idx not in self._tab_data_ready and self._engines_for_tab(idx).issubset(self._loaded_engines):
+                self._apply_states_to_tab(idx, self._states)
+
+            if idx not in self._populated_tabs or idx in self._tab_dirty:
                 self._populate_option_list(idx)
+                self._populated_tabs.add(idx)
+                self._tab_dirty.discard(idx)
 
             if ol := self.current_option_list:
                 ol.focus()
