@@ -1688,17 +1688,58 @@ ConfigOptionList > .option-list--option-disabled { background: transparent; colo
 ScrollIndicator { width: 1; height: 1fr; color: $primary; }
 ScrollIndicator:hover { color: $foreground; }
 
-#local-search {
-    dock: bottom; border: none; border-top: solid $primary 50%;
-    background: $primary 10%; color: $foreground;
-    display: none; height: 3;
+#bottom-dock {
+    dock: bottom;
+    width: 100%;
+    height: auto;
+    layout: vertical;
+    layer: overlay;
 }
-#local-search.-active { display: block; }
+
+#local-search {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    display: none;
+    border: none;
+    background: $primary 20%;
+    color: $accent;
+}
+
+#local-search:focus {
+    border: none;
+    background: $primary 30%;
+    color: $accent;
+    padding: 0 1;
+}
+
+#local-search > .input--value {
+    color: $accent;
+    text-style: bold;
+}
+
+#local-search > .input--placeholder {
+    color: $foreground 50%;
+    text-style: italic;
+}
+
+#local-search > .input--cursor {
+    background: $accent;
+    color: $background;
+    text-style: bold;
+}
 
 #footer {
-    height: auto; min-height: 2; dock: bottom;
-    border-top: solid $secondary; padding: 0 2; background: transparent;
+    width: 100%;
+    height: auto;
+    min-height: 2;
+    border-top: solid $secondary;
+    padding: 0 2;
+    background: transparent;
 }
+
 #footer-bottom-row { width: 100%; height: 1; margin-top: 0; }
 
 .footer-sep { color: $secondary; }
@@ -2118,8 +2159,9 @@ Tooltip {
                 with Vertical(id="help-panel"):
                     yield Markdown("Select an item to view documentation.", id="help-markdown")
 
-            yield Input(id="local-search", placeholder="Type to jump... (Enter to close)")
-            yield AppFooter(id="footer")
+            with Vertical(id="bottom-dock"):
+                yield Input(id="local-search", placeholder=" Jump to option... (Enter/Esc to close)")
+                yield AppFooter(id="footer")
 
     # =========================================================================
     # ENGINE / STATE HELPERS
@@ -4427,38 +4469,66 @@ Tooltip {
                 if parsed:
                     self._update_help_panel(parsed[2])
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "clear_local_search":
+            return self._local_search_is_open()
+        return True
+
+    def _local_search_is_open(self) -> bool:
+        try:
+            return bool(self.query_one("#local-search", Input).display)
+        except Exception:
+            return False
+
+    def _local_search_input(self) -> Input:
+        return self.query_one("#local-search", Input)
+
     def action_focus_local_search(self) -> None:
+        if isinstance(self.screen, SearchScreen):
+            return
         if self._modal_active():
             return
 
-        if isinstance(self.focused, Input):
-            return
+        inp = self._local_search_input()
 
-        inp = self.query_one("#local-search", Input)
-        inp.add_class("-active")
-        inp.value = ""
+        with inp.prevent(Input.Changed):
+            inp.value = ""
 
+        inp.display = True
         self.toggle_shortcut_active("slash", True)
-        self.call_after_refresh(inp.focus)
+        self.call_after_refresh(self._focus_local_search)
+
+    def _focus_local_search(self) -> None:
+        inp = self._local_search_input()
+        if not inp.display:
+            return
+        inp.focus(scroll_visible=True)
 
     def action_clear_local_search(self) -> None:
-        inp = self.query_one("#local-search", Input)
+        inp = self._local_search_input()
+        if not inp.display:
+            return
 
-        if inp.has_class("-active"):
-            inp.remove_class("-active")
-            self.toggle_shortcut_active("slash", False)
+        with inp.prevent(Input.Changed):
+            inp.value = ""
 
-            if ol := self.current_option_list:
-                self.call_after_refresh(ol.focus)
+        inp.display = False
+        self.toggle_shortcut_active("slash", False)
+
+        if ol := self.current_option_list:
+            self.call_after_refresh(ol.focus)
 
     @on(Input.Changed, "#local-search")
     def handle_local_search(self, event: Input.Changed) -> None:
+        if not event.input.display:
+            return
+
         query = event.value.lower().replace(" ", "")
         if not query:
             return
 
         ol = self.current_option_list
-        if not ol:
+        if ol is None:
             return
 
         try:
@@ -4466,49 +4536,47 @@ Tooltip {
             items = self.schema.get(tab_idx, [])
 
             for item_idx, item in enumerate(items):
-                if query in item.label.lower().replace(" ", ""):
-                    opt_id = f"item_{tab_idx}_{item_idx}"
+                label = item.label.lower().replace(" ", "")
+                if query not in label:
+                    continue
 
-                    pref = item.parent_ref
-                    if pref:
-                        current_pref = pref
-                        expanded_any = False
-                        seen_prefs = set()
+                opt_id = f"item_{tab_idx}_{item_idx}"
 
-                        while current_pref and current_pref not in seen_prefs:
-                            seen_prefs.add(current_pref)
+                pref = item.parent_ref
+                if pref:
+                    current_pref = pref
+                    expanded_any = False
+                    seen_prefs = set()
 
-                            for p_item in items:
-                                if self._get_item_uid(p_item) == current_pref and p_item.is_parent:
-                                    if not p_item.expanded:
-                                        p_item.expanded = True
-                                        expanded_any = True
+                    while current_pref and current_pref not in seen_prefs:
+                        seen_prefs.add(current_pref)
 
-                                    current_pref = p_item.parent_ref
-                                    break
-                            else:
-                                current_pref = None
+                        for p_item in items:
+                            if self._get_item_uid(p_item) == current_pref and p_item.is_parent:
+                                if not p_item.expanded:
+                                    p_item.expanded = True
+                                    expanded_any = True
 
-                        if expanded_any:
-                            self._populate_option_list(tab_idx, maintain_highlight_id=opt_id)
+                                current_pref = p_item.parent_ref
+                                break
+                        else:
+                            current_pref = None
 
-                    try:
-                        idx = ol.get_option_index(opt_id)
-                        ol.highlighted = idx
+                    if expanded_any:
+                        self._populate_option_list(tab_idx, maintain_highlight_id=opt_id)
 
-                        if hasattr(ol, "scroll_to_highlight"):
-                            ol.scroll_to_highlight()
-
-                        break
-
-                    except OptionDoesNotExist:
-                        pass
-
+                idx = ol.get_option_index(opt_id)
+                ol.highlighted = idx
+                scroll = getattr(ol, "scroll_to_highlight", None)
+                if callable(scroll):
+                    scroll()
+                break
         except Exception:
             pass
 
     @on(Input.Submitted, "#local-search")
     def submit_local_search(self, event: Input.Submitted) -> None:
+        event.stop()
         self.action_clear_local_search()
 
     def action_search(self) -> None:
