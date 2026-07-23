@@ -16,8 +16,8 @@ const BUILTIN_DEFAULT_CONFIG = {
     ecoMode: true,
     browserThemeEnabled: true,
     webThemeEnabled: false,
-    userChromeEnabled: false,
-    userContentEnabled: false,
+    userChromeEnabled: true,
+    userContentEnabled: true,
     fontSize: 13,
     paletteTemplate: {
         background: '--background',

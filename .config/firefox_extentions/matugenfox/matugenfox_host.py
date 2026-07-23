@@ -92,11 +92,11 @@ class InotifyWatcher:
             self.fd = -1
 
 # --- Global State ---
-def load_external_config() -> tuple[str, str, bool | None, list[str]]:
+def load_external_config() -> tuple[str, str, bool, list[str]]:
     config_file = Path.home() / ".config/dusky/settings/matugenfox/config.json"
     colors_file = str(Path.home() / ".config/matugen/generated/firefox_websites.css")
     websites_dir = str(Path.home() / ".config/dusky_sites")
-    web_theme_enabled = None
+    web_theme_enabled = False
     disabled_sites = []
 
     if config_file.is_file():
@@ -195,6 +195,7 @@ def parse_websites(websites_dir: str, disabled_sites: list[str] = None) -> dict[
                 content = filepath.read_text(encoding='utf-8')
                 match = re.search(r'@-moz-document\s+domain\("([^"]+)"\)\s*\{', content)
                 if match:
+                    domain = match.group(1).lower()
                     stem = filepath.stem.lower()
                     if stem in disabled_set or domain in disabled_set:
                         continue
@@ -259,10 +260,9 @@ def get_theme_data(colors_file: str, websites_dir: str, web_theme_enabled: bool 
         "colors": parse_colors(colors_file),
         "websites": parse_websites(websites_dir, disabled_sites),
         "disabledSites": disabled_sites if disabled_sites else [],
+        "webThemeEnabled": bool(web_theme_enabled),
         "status": status if status else ["OK"]
     }
-    if web_theme_enabled is not None:
-        data["webThemeEnabled"] = web_theme_enabled
     return data
 
 def get_data_hash(data: dict) -> str:

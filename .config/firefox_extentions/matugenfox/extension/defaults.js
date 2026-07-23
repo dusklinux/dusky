@@ -6,7 +6,7 @@
 
 // Optionally define USER_CONFIG here to override built-in defaults:
 // const USER_CONFIG = {
-//     webThemeEnabled: true,
+//     webThemeEnabled: false,
 //     colorsPath: '~/.config/matugen/generated/firefox_websites.css'
 // };
 
