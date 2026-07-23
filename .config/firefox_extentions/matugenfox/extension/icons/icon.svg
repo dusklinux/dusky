@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="duskyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="var(--primary, #ffb694)"/>
+      <stop offset="100%" stop-color="var(--primary_container, #7b2f00)"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="var(--surface, #1d100a)" filter="url(#glow)"/>
+  <path d="M 38,28 H 68 C 88,28 100,40 100,64 C 100,88 88,100 68,100 H 38 Z M 54,42 V 86 H 66 C 78,86 84,78 84,64 C 84,50 78,42 66,42 Z" fill="url(#duskyGrad)"/>
+</svg>
