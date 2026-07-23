@@ -48,6 +48,7 @@ PROFILES_DIR = SCRIPT_DIR / "profiles"
 
 FALLBACK_ISO_SEQUENCE = [
     ("001_uefi_check.sh", [], False, False),
+    ("002_storage_mode_check.py", ["--auto"], False, False),
     ("010_set_variables.sh", ["--no_encrypt"], False, True),
     ("020_environment_prep.sh", ["--auto", "--cachy"], False, False),
     ("030_partitioning.py", ["--no-encrypt"], False, True),

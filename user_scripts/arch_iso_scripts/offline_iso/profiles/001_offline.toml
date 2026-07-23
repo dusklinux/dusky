@@ -5,6 +5,7 @@ description = "Default offline installation sequence"
 [phase1]
 scripts = [
     "U | 001_uefi_check.sh",
+    "U | 002_storage_mode_check.py --auto",
     "U | interactive | 010_set_variables.sh --no_encrypt",
     "U | 020_environment_prep.sh --auto --cachy",
     "U | interactive | 030_partitioning.py --no-encrypt",
