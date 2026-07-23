@@ -50,6 +50,10 @@ readonly SERVICES_CONFIG=(
     
     # dusky audio visualizer
     "$HOME/user_scripts/way_layers/visualizer/dusky_visualizer.service | disable"
+
+
+    # dusky TUI pre-warming daemon
+    "$HOME/user_scripts/dusky_tui/python/service/dusky_tui.service | enabled"
 )
 
 # XDG Standard: ~/.config/systemd/user

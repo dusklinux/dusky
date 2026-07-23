@@ -57,7 +57,7 @@ readonly SERVICES_CONFIG=(
     "$HOME/user_scripts/screentime/dusky_screentime.service | disable"
 
     # dusky TUI pre-warming daemon
-    "$HOME/user_scripts/dusky_tui/python/service/dusky_tui.service | disable"
+    "$HOME/user_scripts/dusky_tui/python/service/dusky_tui.service | enabled"
 )
 
 # XDG Standard: ~/.config/systemd/user
