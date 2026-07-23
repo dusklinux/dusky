@@ -3501,6 +3501,8 @@ Tooltip {
                         if not getattr(opt, "disabled", False):
                             ol.highlighted = i
                             break
+
+                self._update_pagination(ol)
             else:
                 try:
                     for cw in self.query(CustomRichTabWidget):
@@ -3510,9 +3512,10 @@ Tooltip {
                 except Exception:
                     pass
 
-                self._update_pagination(ol)
-                self._update_scroll_indicators()
-                self.check_tab_overflow()
+                self._update_pagination(None)
+
+            self._update_scroll_indicators()
+            self.check_tab_overflow()
 
         except Exception:
             pass
