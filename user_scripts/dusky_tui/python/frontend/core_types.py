@@ -23,64 +23,83 @@ KNOWN_COLORS = {
 }
 
 KNOWN_COLORS_LOWER = {k.lower(): v for k, v in KNOWN_COLORS.items()}
-_LOWER_KNOWN_COLORS = {k.lower() for k in KNOWN_COLORS}
+_LOWER_KNOWN_COLORS = frozenset(k.lower() for k in KNOWN_COLORS)
 
-try:
-    import webcolors
-    _CSS_NAMED = frozenset(name.lower() for name in webcolors.names("css4"))
-except Exception:
-    _CSS_NAMED = _LOWER_KNOWN_COLORS  # degraded fallback
+# Lazy-loaded CSS cache to eliminate import-time module freezing
+_css_named_cache: frozenset[str] | None = None
+
+def _get_css_named() -> frozenset[str]:
+    global _css_named_cache
+    if _css_named_cache is None:
+        try:
+            import webcolors
+            _css_named_cache = frozenset(name.lower() for name in webcolors.names("css4"))
+        except (ImportError, Exception):
+            _css_named_cache = _LOWER_KNOWN_COLORS
+    return _css_named_cache
+
+# Pre-compiled, strictly lower-cased regexes for zero-overhead validation loops
+_RE_THEME_VAR = re.compile(r"(\$|@|var\(|\{\{)")
+_RE_HEX = re.compile(r"^#?(?:[a-f0-9]{3}|[a-f0-9]{4}|[a-f0-9]{6}|[a-f0-9]{8})$")
+_RE_HEX_LOWER = re.compile(r"^0x[a-f0-9]{6,8}$")
+_RE_CSS_FUNC = re.compile(r"^(?:rgba?|hsla?|oklch)\s*\(")
 
 def is_theme_variable(val: str) -> bool:
-    """Validates if a string is a custom theme variable rather than a standard color/hex."""
+    """Validates if a string is a custom theme variable in O(1) checks."""
     val = str(val).strip()
-    if not val: return False
+    if not val:
+        return False
     
     val_lower = val.lower()
-
-    # --- NATIVE VARIABLE DETECTION SAFEGUARD ---
-    # If the string contains explicit structural variable syntax, it is guaranteed
-    # to be a theme variable. This prevents values like `rgba($color, 0.5)` or 
-    # `rgb(var(--bg))` from incorrectly getting marked as standard functional colors.
-    if re.search(r"(\$|@|var\(|\{\{)", val_lower): 
+    
+    if _RE_THEME_VAR.search(val_lower):
         return True
-    
-    # Fast fail for obvious explicit standard color name declarations
-    if val_lower in _CSS_NAMED: return False
-    
-    # Filter out standard Hex structures (with or without #)
-    if re.match(r"^#?([a-fA-F0-9]{3}|[a-fA-F0-9]{4}|[a-fA-F0-9]{6}|[a-fA-F0-9]{8})$", val): return False
-    
-    # Filter out 0x prefixed hex
-    if re.match(r"^0x[a-fA-F0-9]{6,8}$", val_lower): return False
-    
-    # Filter out functional color blocks. Requires opening parenthesis to prevent misidentifying 
-    # variables literally named like "rgb-primary".
-    if re.match(r"^(rgba?|hsla?|oklch)\s*\(", val_lower): return False
-    
-    # Everything remaining (Template {{tags}}, Bash $vars, CSS var(--xyz), lexical aliases) is a theme variable
+    if val_lower in _get_css_named():
+        return False
+    if _RE_HEX.match(val_lower) or _RE_HEX_LOWER.match(val_lower):
+        return False
+    if _RE_CSS_FUNC.match(val_lower):
+        return False
+        
     return True
 
 def is_trigger_item(item: Any) -> bool:
-    """Checks if a ConfigItem acts as an action trigger rather than a standard boolean toggle."""
+    """Checks if a ConfigItem acts as an action trigger via pattern matching."""
     if getattr(item, "type_", None) != "bool":
         return False
-    opts = getattr(item, "options", None)
-    if not opts or not isinstance(opts, (list, tuple)):
-        return False
-    opt0 = str(opts[0]).lower()
-    return opt0 in ("trigger", "copy") or opt0.startswith("trigger:") or opt0.startswith("copy:")
+    
+    match getattr(item, "options", None):
+        case [opt0, *_] if isinstance(opt0, str):
+            opt0_lower = opt0.lower()
+            return (opt0_lower in {"trigger", "copy"} or 
+                    opt0_lower.startswith(("trigger:", "copy:")))
+        case _:
+            return False
 
-# Preserving your exact Python 3.12+ type alias syntax from the original ui.py
+# PEP 695 Strict Type Alias
 type ConfigType = Literal["bool", "int", "float", "string", "cycle", "action", "menu", "picker", "color", "preset"]
+
+def clone_value(v: Any) -> Any:
+    """Structural clone; avoids deepcopy overhead on scalars and standard structures."""
+    match v:
+        case None | bool() | int() | float() | str():
+            return v
+        case list():
+            return [clone_value(x) for x in v]
+        case dict():
+            return {k: clone_value(x) for k, x in v.items()}
+        case tuple():
+            return tuple(clone_value(x) for x in v)
+        case _:
+            return copy.deepcopy(v)
 
 @dataclass(kw_only=True, slots=True)
 class ConfigItem:
     label: str
     key: str
-    scope: str = "DEFAULT"
     type_: ConfigType
     default: Any
+    scope: str = "DEFAULT"
     options: list[str] = field(default_factory=list)
     hints: list[str] = field(default_factory=list)
     min_val: float | None = None
@@ -89,136 +108,84 @@ class ConfigItem:
     value: Any = None
     exists_in_target: bool = False
     
-    # Architectural Enhancements
     group: str | None = None
     extended_help: str | None = None
     initial_value: Any = None 
     _initial_loaded: bool = False
     
-    # Batch Operations 
     preset_payload: dict[str, Any] | None = None
     
-    # Nested Hierarchies (Drop-downs)
     is_parent: bool = False
-    parent_ref: str | None = None  # Use the uid of the parent item to nest under
+    parent_ref: str | None = None
     expanded: bool = False
 
-    # Validation, Prompts, & Multi-Engine Targeting Overrides
     warning_msg: str | None = None
     popup_message: str | None = None
-    confirm_message: str | None = None  # Requires explicit dialog confirmation before mutation
+    confirm_message: str | None = None
     target_file_override: str | None = None
     engine_type_override: str | None = None
+    force_interactive: bool | None = None
 
-    # Caching & Optimization Fields
     _ratio_cache: float | None = field(default=None, repr=False, compare=False)
 
     @property
     def uid(self) -> str:
-        """Returns a globally unique identifier based on scope and key."""
-        if self.scope and self.scope != "DEFAULT":
-            return f"{self.scope}.{self.key}"
-        return self.key
+        return f"{self.scope}.{self.key}" if self.scope and self.scope != "DEFAULT" else self.key
 
     def __post_init__(self) -> None:
         if self.value is None:
-            self.value = copy.deepcopy(self.default)
+            self.value = clone_value(self.default)
 
     def serialize(self, val: Any) -> str:
-        """Centralized serializer to safely prepare values for the backend engines."""
-        if val is None: return "nil"
-        
-        # 1. Type-Aware Coercion (Fixes CLI string injection & robust boolean handling)
-        if self.type_ == "bool":
-            if isinstance(val, str):
-                return "true" if val.strip().lower() in ("true", "1", "yes", "on", "t", "y") else "false"
-            return "true" if val else "false"
-
-        val_str = str(val)
-        
-        # 2. Apply the __VAR__ wrapper for theme variables exclusively at serialization
-        if self.type_ == "color" and is_theme_variable(val_str):
-            return f"__VAR__{val_str}"
-            
-        return val_str
+        match val:
+            case None:
+                return "nil"
+            case _ if self.type_ == "bool":
+                if isinstance(val, str):
+                    return "true" if val.strip().lower() in {"true", "1", "yes", "on", "t", "y"} else "false"
+                return "true" if val else "false"
+            case str(val_str) if self.type_ == "color" and is_theme_variable(val_str):
+                return f"__VAR__{val_str}"
+            case _:
+                return str(val)
 
     def deserialize(self, raw_val: Any) -> Any:
-        """Centralized deserializer to parse raw backend engine strings into clean UI memory state."""
-        if self.type_ == "bool":
-            if isinstance(raw_val, bool): return raw_val
-            return str(raw_val).lower() in ("true", "1", "yes", "on")
-        elif self.type_ in ("int", "float"):
-            try:
-                return float(raw_val) if self.type_ == "float" else int(float(raw_val))
-            except (ValueError, TypeError): 
-                return self.default
-        elif self.type_ in ("string", "picker", "cycle", "color"):
-            if isinstance(raw_val, str):
+        match self.type_:
+            case "bool":
+                if isinstance(raw_val, bool): 
+                    return raw_val
+                return str(raw_val).lower() in {"true", "1", "yes", "on"}
+            case "int" | "float":
+                try:
+                    return float(raw_val) if self.type_ == "float" else int(float(raw_val))
+                except (ValueError, TypeError): 
+                    return self.default
+            case "string" | "picker" | "cycle" | "color" if isinstance(raw_val, str):
                 if raw_val.startswith("__VAR__"):
                     return raw_val[7:]
                 if raw_val.startswith('"') and raw_val.endswith('"'):
                     return raw_val[1:-1]
-            return raw_val
         return raw_val
 
 class BaseEngine(ABC):
     """
     Abstract Base Class enforcing the strict mutator contract for the IoC architecture.
-    
-    Engine Contract Expectations:
-    - Magic Strings: Return "AUTH_REQUIRED" in the error message if sudo is needed.
-    - Null Values: The UI serializes None as the literal string "nil".
-    - Optional Methods: Engines can optionally implement `load_state_for_units(user_units, sys_units)`.
-    - Batch Writes: `write_batch` should ideally be overridden to be atomic. The base 
-      implementation is NOT atomic and falls back to iterative `write_value` calls, 
-      which is only safe for idempotent operations.
     """
     
     @property
     @abstractmethod
     def target_path(self) -> str:
-        """
-        Returns the primary target file path (e.g., ~/.config/hypr/hyprland.conf).
-        Used by the UI to render the FileLink component and manage edit events.
-        """
         pass
 
     @abstractmethod
     def load_state(self) -> dict[str, Any]:
-        """
-        Loads and returns a flattened dictionary of the current parsed state.
-        Keys should follow the 'scope/key' or 'key' convention to map to ConfigItems.
-        """
         pass
 
     @abstractmethod
     def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
-        """
-        Commits a value change to the configuration backend.
-        
-        Args:
-            target_key: The configuration key to mutate.
-            target_scope: The structural scope/category of the key.
-            new_value: The stringified new value to inject.
-            item_type: The explicitly declared type to guarantee formatting correctly.
-            
-        Returns:
-            tuple[bool, str, str]: (Success boolean, Status/Error message, Debug/Telemetry output)
-        """
         pass
 
     def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
-        """
-        Commits multiple value changes to the configuration backend.
-        Base implementation loops through write_value. Engine subclasses should override 
-        this for atomic AST batch writes to prevent I/O bottlenecks.
-        
-        Args:
-            changes: A list of tuples containing (target_key, target_scope, new_value, item_type)
-            
-        Returns:
-            tuple[bool, str, str]: (Success boolean, Status/Error message, Debug/Telemetry output)
-        """
         success_count = 0
         failed_keys: list[str] = []
         last_debug = ""

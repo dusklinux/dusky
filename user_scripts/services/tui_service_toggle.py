@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import subprocess
 
 import sys
@@ -84,6 +85,10 @@ CORE_USER_DEFS = {
     "dusky_screentime.service": (
         "Dusky Screentime Tracking Daemon",
         "Wayland screentime tracking daemon. Connects to Hyprland UNIX socket to monitor active window durations and persist daily usage metrics.",
+    ),
+    "dusky_tui.service": (
+        "Dusky TUI Pre-Warming Daemon",
+        "Background daemon that pre-loads Python modules, watches configuration files, and keeps schema AST states warm in memory for instant TUI launches.",
     ),
 }
 

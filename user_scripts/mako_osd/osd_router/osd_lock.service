@@ -9,6 +9,8 @@ Type=simple
 ExecStart=/usr/bin/python3 %h/user_scripts/mako_osd/osd_router/osd_router.py
 Restart=on-failure
 RestartSec=2
+OOMPolicy=kill
+OOMScoreAdjust=400
 
 [Install]
 WantedBy=graphical-session.target

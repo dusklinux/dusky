@@ -143,7 +143,7 @@ The steepest learning curve will be the keybinds. I have designed them to be int
 
 > 💡 Pro Tip:
 >
-> Press `CTRL + SHIFT + ?` to open the Keybinds Cheatsheet. You can click commands in this menu to run them directly!
+> Press `CTRL + SHIFT + SPACE` to open the Keybinds Cheatsheet. You can click commands in this menu to run them directly!
 
 
 It's been tested to work on other arch based distros with hyprland installed (fresh installed) like catchyOS

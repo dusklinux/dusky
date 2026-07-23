@@ -12,14 +12,16 @@ import copy
 import sys
 import threading
 from pathlib import Path
-from typing import Any
-from collections import deque
+from typing import Any, override
+from collections import deque, defaultdict
+from functools import lru_cache
 
-from textual import on, events
+from textual import on, events, work
+from textual.message import Message
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, Horizontal
-from textual.widgets import Label, Input, Tabs, Tab, ContentSwitcher, OptionList, Markdown
+from textual.widgets import Label, Input, Tabs, Tab, ContentSwitcher, OptionList, Markdown, Static
 from textual.widgets.option_list import Option, OptionDoesNotExist
 from textual.screen import ModalScreen
 from textual.reactive import reactive
@@ -37,6 +39,7 @@ from python.frontend.core_types import (
     KNOWN_COLORS_LOWER,
     is_theme_variable,
     is_trigger_item,
+    clone_value,
 )
 
 
@@ -57,6 +60,247 @@ def _md_escape(text: str) -> str:
     Minimal Markdown escaping for dynamic strings inserted into dialogs.
     """
     return re.sub(r"([*_`#\[\]])", r"\\\1", str(text))
+
+
+class EnginesLoaded(Message):
+    """UI-thread delivery of a finished background load batch."""
+    def __init__(
+        self,
+        *,
+        states: dict[tuple[str, str], Any],
+        attempted: set[tuple[str, str]],
+        errors: dict[tuple[str, str], str],
+    ) -> None:
+        super().__init__()
+        self.states = states
+        self.attempted = attempted
+        self.errors = errors
+
+
+# =============================================================================
+# RENDERABLE CACHE & PRESET MATRIX
+# =============================================================================
+class OptionTextCache:
+    __slots__ = ("_maxsize", "_data", "hits", "misses")
+
+    def __init__(self, maxsize: int = 2048) -> None:
+        self._maxsize = max(64, maxsize)
+        self._data: dict[tuple, Text] = {}
+        self.hits = 0
+        self.misses = 0
+
+    def get(self, key: tuple) -> Text | None:
+        txt = self._data.pop(key, None)
+        if txt is None:
+            self.misses += 1
+            return None
+        self._data[key] = txt
+        self.hits += 1
+        return txt.copy()
+
+    def put(self, key: tuple, txt: Text) -> Text:
+        if key in self._data:
+            del self._data[key]
+        elif len(self._data) >= self._maxsize:
+            del self._data[next(iter(self._data))]
+        self._data[key] = txt.copy()
+        return txt
+
+    def invalidate_uid(self, uid: str) -> None:
+        kill = [k for k in self._data if k[0] == uid]
+        for k in kill:
+            del self._data[k]
+
+    def invalidate_presets(self) -> None:
+        kill = [k for k in self._data if len(k) > 1 and k[1] == "preset"]
+        for k in kill:
+            del self._data[k]
+
+    def clear(self) -> None:
+        self._data.clear()
+
+
+class PresetMatchMatrix:
+    """
+    Structural index built once; current serialized values updated incrementally.
+    ratio() is O(1). on_item_changed is O(affected) via inverted dependency index.
+    """
+    __slots__ = (
+        "_app", "_current", "_exists", "_defaults", "_expected",
+        "_all_defaults", "_matches", "_totals", "_preset_uids",
+        "_configurable_uids", "_uid_set", "_item_to_presets"
+    )
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+        self._current: dict[str, str] = {}
+        self._exists: dict[str, bool] = {}
+        self._defaults: dict[str, str] = {}
+        self._expected: dict[str, dict[str, str]] = {}
+        self._all_defaults: dict[str, bool] = {}
+        self._matches: dict[str, int] = {}
+        self._totals: dict[str, int] = {}
+        self._preset_uids: list[str] = []
+        self._configurable_uids: list[str] = []
+        self._uid_set: set[str] = set()
+        self._item_to_presets: defaultdict[str, set[str]] = defaultdict(set)
+
+    def rebuild(self, configurable_items: Any) -> None:
+        self._current.clear()
+        self._exists.clear()
+        self._defaults.clear()
+        self._expected.clear()
+        self._all_defaults.clear()
+        self._matches.clear()
+        self._totals.clear()
+        self._preset_uids.clear()
+        self._configurable_uids.clear()
+        self._uid_set.clear()
+        self._item_to_presets.clear()
+
+        items: list[Any] = []
+        presets: list[Any] = []
+        for _t, _i, item in configurable_items:
+            match item.type_:
+                case "preset":
+                    presets.append(item)
+                case "action" | "menu":
+                    continue
+                case _:
+                    items.append(item)
+
+        for item in items:
+            uid = item.uid
+            self._configurable_uids.append(uid)
+            self._uid_set.add(uid)
+            self._current[uid] = item.serialize(item.value)
+            self._defaults[uid] = item.serialize(item.default)
+            self._exists[uid] = bool(item.exists_in_target)
+
+        for p in presets:
+            puid = p.uid
+            self._preset_uids.append(puid)
+            payload = p.preset_payload or {}
+            all_def = bool(payload.get("__ALL_DEFAULTS__", False))
+            self._all_defaults[puid] = all_def
+            exp: dict[str, str] = {}
+            for key_path, raw in payload.items():
+                if key_path == "__ALL_DEFAULTS__":
+                    continue
+                exp[key_path] = self._serialize_payload(key_path, raw)
+                self._item_to_presets[key_path].add(puid)
+            self._expected[puid] = exp
+            if all_def:
+                for uid in self._configurable_uids:
+                    self._item_to_presets[uid].add(puid)
+            self._recompute_preset(puid)
+
+    def ingest_items(self, items: Any) -> None:
+        touched = False
+        for it in items:
+            if it.type_ in ("preset", "action", "menu"):
+                continue
+            uid = it.uid
+            self._current[uid] = it.serialize(it.value)
+            self._defaults[uid] = it.serialize(it.default)
+            self._exists[uid] = bool(it.exists_in_target)
+            if uid not in self._uid_set:
+                self._configurable_uids.append(uid)
+                self._uid_set.add(uid)
+            touched = True
+        if touched:
+            for puid in self._preset_uids:
+                self._recompute_preset(puid)
+
+    def on_item_changed(self, item: Any) -> None:
+        match item.type_:
+            case "preset" | "action" | "menu":
+                return
+
+        uid = item.uid
+        new_ser = item.serialize(item.value)
+        new_exists = bool(item.exists_in_target)
+        old_ser = self._current.get(uid)
+        old_exists = self._exists.get(uid, False)
+
+        if old_ser == new_ser and old_exists == new_exists:
+            return
+
+        if uid not in self._uid_set:
+            self._configurable_uids.append(uid)
+            self._uid_set.add(uid)
+            self._defaults[uid] = item.serialize(item.default)
+            self._current[uid] = new_ser
+            self._exists[uid] = new_exists
+            for puid in self._preset_uids:
+                self._recompute_preset(puid)
+            return
+
+        self._current[uid] = new_ser
+        self._exists[uid] = new_exists
+
+        affected_presets = self._item_to_presets.get(uid) or self._preset_uids
+        for puid in affected_presets:
+            exp = self._expected_for(puid, uid)
+            if old_exists and not new_exists:
+                self._totals[puid] = max(0, self._totals.get(puid, 0) - 1)
+                if old_ser == exp:
+                    self._matches[puid] = max(0, self._matches.get(puid, 0) - 1)
+                continue
+
+            if not old_exists and new_exists:
+                self._totals[puid] = self._totals.get(puid, 0) + 1
+                if new_ser == exp:
+                    self._matches[puid] = self._matches.get(puid, 0) + 1
+                continue
+
+            old_match = old_ser == exp
+            new_match = new_ser == exp
+            if old_match is new_match:
+                continue
+            if old_match and not new_match:
+                self._matches[puid] = max(0, self._matches.get(puid, 0) - 1)
+            else:
+                self._matches[puid] = self._matches.get(puid, 0) + 1
+
+    def ratio(self, preset_item: Any) -> float:
+        puid = preset_item.uid
+        total = self._totals.get(puid, 0)
+        if total <= 0:
+            return 0.0
+        return self._matches.get(puid, 0) / total
+
+    def _serialize_payload(self, uid: str, raw: Any) -> str:
+        item = getattr(self._app, "_item_by_uid", {}).get(uid)
+        if item is not None:
+            return item.serialize(raw)
+        match raw:
+            case None:
+                return "nil"
+            case bool() as b:
+                return "true" if b else "false"
+            case _:
+                return str(raw)
+
+    def _expected_for(self, puid: str, uid: str) -> str:
+        if self._all_defaults.get(puid, False):
+            return self._defaults.get(uid, "nil")
+        exp_map = self._expected.get(puid, {})
+        if uid in exp_map:
+            return exp_map[uid]
+        return self._defaults.get(uid, "nil")
+
+    def _recompute_preset(self, puid: str) -> None:
+        matches = 0
+        total = 0
+        for uid in self._configurable_uids:
+            if not self._exists.get(uid, False):
+                continue
+            total += 1
+            if self._current.get(uid) == self._expected_for(puid, uid):
+                matches += 1
+        self._matches[puid] = matches
+        self._totals[puid] = total
 
 
 # =============================================================================
@@ -89,6 +333,12 @@ def _oklch_to_rgb(L: float, C: float, H: float) -> tuple[int, int, int]:
     return (gam(r), gam(g), gam(b2))
 
 
+_RE_HYPR_HEX = re.compile(r"^rgba?\(([0-9a-fA-F]+)\)$")
+_RE_VAR_CSS = re.compile(r"^var\(--([^)]+)\)$")
+_RE_VAR_MAT = re.compile(r"^\{\{([^}]+)\}\}$")
+
+
+@lru_cache(maxsize=1024)
 def parse_color_format(val: str) -> str:
     val = str(val).strip().lower()
 
@@ -98,7 +348,7 @@ def parse_color_format(val: str) -> str:
     if val.startswith("#"):
         return "hex"
 
-    if re.match(r"rgba?\([0-9a-f]+\)", val):
+    if _RE_HYPR_HEX.match(val):
         return "hypr_hex"
 
     if val.startswith("rgba"):
@@ -119,6 +369,7 @@ def parse_color_format(val: str) -> str:
     return "hex"
 
 
+@lru_cache(maxsize=1024)
 def color_to_rgb(val: str) -> tuple[int, int, int]:
     val = str(val).strip().lower()
 
@@ -134,7 +385,7 @@ def color_to_rgb(val: str) -> tuple[int, int, int]:
                 pass
 
     # Standard hex.
-    if val.startswith("#"):
+    elif val.startswith("#"):
         v = val[1:]
         if len(v) in (3, 4):
             try:
@@ -148,8 +399,7 @@ def color_to_rgb(val: str) -> tuple[int, int, int]:
                 pass
 
     # Hyprland-style rgb/rgba hex.
-    hypr_m = re.match(r"rgba?\(([0-9a-f]+)\)", val)
-    if hypr_m:
+    if hypr_m := _RE_HYPR_HEX.match(val):
         v = hypr_m.group(1)
         if len(v) >= 6:
             try:
@@ -158,13 +408,11 @@ def color_to_rgb(val: str) -> tuple[int, int, int]:
                 pass
 
     # Functional rgb/rgba.
-    m_rgb = _RE_RGB.match(val)
-    if m_rgb:
+    if m_rgb := _RE_RGB.match(val):
         return (int(m_rgb.group(1)), int(m_rgb.group(2)), int(m_rgb.group(3)))
 
     # Functional hsl/hsla.
-    m_hsl = _RE_HSL.match(val)
-    if m_hsl:
+    if m_hsl := _RE_HSL.match(val):
         h = float(m_hsl.group(1)) / 360.0
         s = float(m_hsl.group(2)) / 100.0
         l_ = float(m_hsl.group(3)) / 100.0
@@ -172,24 +420,15 @@ def color_to_rgb(val: str) -> tuple[int, int, int]:
         return (int(r * 255), int(g * 255), int(b * 255))
 
     # OKLCH.
-    m_oklch = _RE_OKLCH.match(val)
-    if m_oklch:
-        l_val = float(m_oklch.group(1))
-        c_val = float(m_oklch.group(2))
-        h_val = float(m_oklch.group(3))
-        r, g, b = _oklch_to_rgb(l_val, c_val, h_val)
+    if m_oklch := _RE_OKLCH.match(val):
+        r, g, b = _oklch_to_rgb(float(m_oklch.group(1)), float(m_oklch.group(2)), float(m_oklch.group(3)))
         return (
             max(0, min(255, int(r))),
             max(0, min(255, int(g))),
             max(0, min(255, int(b)))
         )
 
-    # Named color fallback.
-    named = KNOWN_COLORS_LOWER.get(val)
-    if named is not None:
-        return named
-
-    return (128, 128, 128)
+    return KNOWN_COLORS_LOWER.get(val, (128, 128, 128))
 
 
 def get_color_name(r: int, g: int, b: int) -> str:
@@ -1217,6 +1456,7 @@ class AppFooter(Vertical):
             yield FileLink(id="file-link")
             yield Label(" │ ", classes="footer-sep")
             yield ModeButton(id="footer-legend", classes="mode-btn")
+            yield Label("", id="pos-counter", classes="pos-counter-btn")
             yield Label("", id="status-bar")
 
     def on_resize(self, event: events.Resize) -> None:
@@ -1258,6 +1498,114 @@ class TabContainer(Horizontal):
             self.app.check_tab_overflow()
 
 
+class CustomRichTabWidget(Static):
+    """
+    A widget slot for rendering custom Python Rich renderables or custom UI components
+    within a DuskyTUI tab.
+    """
+
+    can_focus = True
+
+    BINDINGS = [
+        Binding("j,down", "scroll_down", "Scroll Down", show=False),
+        Binding("k,up", "scroll_up", "Scroll Up", show=False),
+        Binding("page_down,ctrl+d", "page_down", "Page Down", show=False),
+        Binding("page_up,ctrl+u", "page_up", "Page Up", show=False),
+        Binding("g", "scroll_home", "Top", show=False),
+        Binding("G", "scroll_end", "Bottom", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    CustomRichTabWidget {
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        padding: 0 1;
+        overflow-x: auto;
+        overflow-y: auto;
+        scrollbar-size: 1 1;
+    }
+    """
+
+    def __init__(
+        self,
+        renderable_or_factory: Any,
+        app_ref: Any = None,
+        refresh_interval: float | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.renderable_or_factory = renderable_or_factory
+        self.app_ref = app_ref
+        self.refresh_interval = refresh_interval
+        self._refresh_timer: Timer | None = None
+        self._refresh_inflight = False
+
+    def on_mount(self) -> None:
+        self.update_content()
+        if self.display:
+            self._start_timer()
+
+    def on_unmount(self) -> None:
+        self._stop_timer()
+
+    def on_show(self) -> None:
+        self.update_content()
+        self._start_timer()
+
+    def on_hide(self) -> None:
+        self._stop_timer()
+
+    def _start_timer(self) -> None:
+        if self._refresh_timer is not None:
+            return
+        interval = self.refresh_interval
+        if interval is not None and interval > 0:
+            self._refresh_timer = self.set_interval(interval, self.update_content)
+
+    def _stop_timer(self) -> None:
+        if self._refresh_timer is not None:
+            self._refresh_timer.stop()
+            self._refresh_timer = None
+
+    def _invoke_factory(self) -> Any:
+        factory = self.renderable_or_factory
+        if not callable(factory):
+            return factory
+
+        import inspect
+        try:
+            sig = inspect.signature(factory)
+        except (TypeError, ValueError):
+            try:
+                return factory(self.app_ref)
+            except TypeError:
+                return factory()
+
+        required_positional = [
+            p for p in sig.parameters.values()
+            if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            and p.default is inspect.Parameter.empty
+        ]
+
+        if not required_positional:
+            return factory()
+        return factory(self.app_ref)
+
+    def update_content(self) -> None:
+        if self._refresh_inflight:
+            return
+        self._refresh_inflight = True
+        try:
+            res = self._invoke_factory()
+            if res is not None:
+                self.update(res)
+        except Exception as e:
+            self.update(Text(f"Error rendering custom view: {e}", style="bold red"))
+        finally:
+            self._refresh_inflight = False
+
+
 class DuskyTUI(App):
     CSS = """
 Screen { background: $background; }
@@ -1281,11 +1629,8 @@ Screen { background: $background; }
     border-title-color: $primary;
     border-title-style: bold;
     border-title-align: center;
-    border-subtitle-color: $primary;
-    border-subtitle-style: bold;
-    border-subtitle-align: right;
     background: transparent;
-    padding: 0 1 1 1;
+    padding: 0 1 0 1;
 }
 
 #tab-bar { width: 100%; height: 1; margin-bottom: 1; background: transparent; }
@@ -1366,6 +1711,8 @@ ScrollIndicator:hover { color: $foreground; }
 
 .mode-btn { padding: 0 1; background: transparent; }
 .mode-btn:hover { text-style: bold; color: $foreground; background: $primary 25%; }
+
+.pos-counter-btn { padding: 0 1; background: transparent; }
 
 #file-link { padding: 0 1; background: transparent; }
 #file-link:hover { text-style: bold; color: $foreground; background: $primary 25%; }
@@ -1510,11 +1857,13 @@ Tooltip {
         global_popup: Any | None = None,
         tab_notices: dict[int, dict | list[dict]] | None = None,
         deferred_load=None,
+        custom_views: dict[int | str, Any] | None = None,
         **kwargs
     ):
         super().__init__(**kwargs)
 
         self.deferred_load = deferred_load
+        self.custom_views = custom_views or {}
         self.engine_pool = engine_pool
         self.default_engine_key = default_engine_key
         self.global_popup = global_popup
@@ -1557,6 +1906,18 @@ Tooltip {
         self.pending_commits: set[tuple[int, int]] = set()
         self.undo_stack: deque[list[tuple[int, int, Any, Any]]] = deque(maxlen=50)
         self.redo_stack: deque[list[tuple[int, int, Any, Any]]] = deque(maxlen=50)
+
+        self._option_cache = OptionTextCache(maxsize=2048)
+        self._preset_matrix = PresetMatchMatrix(app=self)
+
+        self._committed: dict[tuple[int, int], Any] = {}
+        for t_idx, items in self.schema.items():
+            for i_idx, item in enumerate(items):
+                self._committed[(t_idx, i_idx)] = clone_value(item.value)
+
+        self._save_lock: asyncio.Lock | None = None
+        self._global_save_timer: Timer | None = None
+        self._save_queued_during_run = False
 
         self._key_map: dict[str, tuple[int, int]] = {}
         self._save_timers: dict[tuple[int, int], Timer] = {}
@@ -1719,11 +2080,33 @@ Tooltip {
                                         message = tab_notice.get("message", "")
                                         yield NoticeBox(message, level=level, id=f"notice-{i}-{n_idx}")
 
-                            with Horizontal(classes="list-wrapper"):
-                                yield ConfigOptionList(id=f"list-{i}")
+                            custom_view = self.custom_views.get(i)
+                            if custom_view is None:
+                                custom_view = self.custom_views.get(name)
 
-                                with Vertical(classes="indicator-column"):
-                                    yield ScrollIndicator("", id=f"indicator-{i}")
+                            if custom_view is not None:
+                                refresh_interval = None
+                                if isinstance(custom_view, dict) and "view" in custom_view:
+                                    refresh_interval = custom_view.get("interval")
+                                    custom_view = custom_view["view"]
+
+                                if isinstance(custom_view, type) and issubclass(custom_view, Widget):
+                                    yield custom_view()
+                                elif isinstance(custom_view, Widget):
+                                    yield custom_view
+                                else:
+                                    yield CustomRichTabWidget(
+                                        renderable_or_factory=custom_view,
+                                        app_ref=self,
+                                        refresh_interval=refresh_interval,
+                                        id=f"custom-view-{i}"
+                                    )
+                            else:
+                                with Horizontal(classes="list-wrapper"):
+                                    yield ConfigOptionList(id=f"list-{i}")
+
+                                    with Vertical(classes="indicator-column"):
+                                        yield ScrollIndicator("", id=f"indicator-{i}")
 
                             if tab_notices:
                                 for n_idx, tab_notice in enumerate(tab_notices):
@@ -1741,6 +2124,36 @@ Tooltip {
     # =========================================================================
     # ENGINE / STATE HELPERS
     # =========================================================================
+    def _sync_pending(self, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
+        key = (tab_idx, item_idx)
+        baseline = self._committed.get(key, item.default)
+        if item.value == baseline:
+            self.pending_commits.discard(key)
+        else:
+            self.pending_commits.add(key)
+
+    def _current_tab_index(self) -> int | None:
+        try:
+            switcher = self.query_one(ContentSwitcher)
+            if switcher.current and isinstance(switcher.current, str) and switcher.current.startswith("tab-"):
+                return int(switcher.current.split("-")[1])
+        except Exception:
+            return None
+        return None
+
+    def _on_item_value_changed(self, item: ConfigItem) -> None:
+        if hasattr(self, "_option_cache"):
+            self._option_cache.invalidate_uid(item.uid)
+        if item.type_ not in ("preset", "action", "menu"):
+            if hasattr(self, "_preset_matrix"):
+                self._preset_matrix.on_item_changed(item)
+            if hasattr(self, "_option_cache"):
+                self._option_cache.invalidate_presets()
+        self._schema_dirty_counter += 1
+        cur = self._current_tab_index()
+        if cur is not None:
+            self._tab_dirty.add(cur)
+
     def _get_item_engine_info(self, item: ConfigItem) -> tuple[str, str]:
         """
         Resolves target engine and file config dynamically via overrides.
@@ -1838,6 +2251,9 @@ Tooltip {
                 if item.type_ == "preset":
                     self._preset_items.append((t_idx, i_idx, item))
 
+        if hasattr(self, "_preset_matrix"):
+            self._preset_matrix.rebuild(self._configurable_items)
+
     def _rebuild_key_map(self) -> None:
         # Compatibility wrapper for older call sites.
         self._rebuild_indexes()
@@ -1847,49 +2263,11 @@ Tooltip {
     # =========================================================================
     def _get_preset_match_ratio(self, preset_item: ConfigItem) -> float:
         """
-        Calculates how much of a preset's payload currently matches reality.
+        Calculates how much of a preset's payload currently matches reality in O(1) time.
         """
-        if preset_item.preset_payload is None:
-            return 0.0
-
-        payload = preset_item.preset_payload
-        if not isinstance(payload, dict):
-            return 0.0
-
-        if payload.get("__INVALID__", False):
-            return 0.0
-
-        cache = preset_item._ratio_cache
-        if cache is not None and cache[0] == self._schema_dirty_counter:
-            return cache[1]
-
-        total, matches = 0, 0
-        is_all_defaults = payload.get("__ALL_DEFAULTS__", False)
-
-        for t_idx, i_idx, target_item in self._configurable_items:
-            if not target_item.exists_in_target:
-                continue
-
-            total += 1
-            key_path = self._get_item_uid(target_item)
-
-            if is_all_defaults:
-                expected_val = target_item.default
-            elif key_path in payload:
-                expected_val = payload[key_path]
-            else:
-                expected_val = target_item.default
-
-            val1 = target_item.serialize(target_item.value)
-            val2 = target_item.serialize(expected_val)
-
-            if val1 == val2:
-                matches += 1
-
-        ratio = matches / total if total > 0 else 0.0
-        preset_item._ratio_cache = (self._schema_dirty_counter, ratio)
-
-        return ratio
+        if hasattr(self, "_preset_matrix"):
+            return self._preset_matrix.ratio(preset_item)
+        return 0.0
 
     def _is_preset_active(self, preset_item: ConfigItem) -> bool:
         return self._get_preset_match_ratio(preset_item) == 1.0
@@ -1910,11 +2288,37 @@ Tooltip {
         is_highlighted: bool = False,
         indent_prefix: str = ""
     ) -> Text:
+        val_ser = item.serialize(item.value)
+        init_ser = item.serialize(item.initial_value)
+        def_ser = item.serialize(item.default)
+        ratio_bucket = int(self._get_preset_match_ratio(item) * 10) if item.type_ == "preset" else -1
+
+        cache_key = (
+            item.uid,
+            item.type_,
+            val_ser,
+            item.exists_in_target,
+            val_ser != init_ser,
+            val_ser != def_ser,
+            is_highlighted,
+            indent_prefix,
+            item.expanded,
+            bool(item.warning_msg),
+            item.is_parent,
+            ratio_bucket,
+            getattr(self, "_theme_version", 0)
+        )
+
+        if hasattr(self, "_option_cache"):
+            hit = self._option_cache.get(cache_key)
+            if hit is not None:
+                return hit
+
         txt = Text()
 
         exists = item.exists_in_target
-        is_pending = (str(item.value) != str(item.initial_value))
-        is_modified = (str(item.value) != str(item.default))
+        is_pending = (val_ser != init_ser)
+        is_modified = (val_ser != def_ser)
 
         CURSOR_CHAR = "▶"
         cursor = f"{CURSOR_CHAR} " if is_highlighted else "  "
@@ -2155,7 +2559,26 @@ Tooltip {
         if is_modified and is_highlighted and exists:
             txt.append("   ↩ Reset", style=f"italic {self.theme_colors['error']}")
 
+        if hasattr(self, "_option_cache"):
+            return self._option_cache.put(cache_key, txt)
         return txt
+
+    def _intern_styles(self) -> None:
+        c = getattr(self, "theme_colors", {})
+        self._style = {
+            "cursor_hl": f"{c.get('accent', '#a8c8ff')} bold",
+            "cursor": "",
+            "muted": c.get("muted", "#43474e"),
+            "accent_bold": f"{c.get('accent', '#a8c8ff')} bold",
+            "fg": c.get("fg", "#e1e2e9"),
+            "fg_bold": f"{c.get('fg', '#e1e2e9')} bold",
+            "success": c.get("success", "#dbbce1"),
+            "warning": c.get("warning", "#bdc7dc"),
+            "error": c.get("error", "#ffb4ab"),
+        }
+        self._theme_version = getattr(self, "_theme_version", 0) + 1
+        if hasattr(self, "_option_cache"):
+            self._option_cache.clear()
 
     # =========================================================================
     # USER PRESETS
@@ -2300,6 +2723,7 @@ Tooltip {
     # =========================================================================
     # MOUNT
     # =========================================================================
+    @override
     async def on_mount(self) -> None:
         self._save_lock = asyncio.Lock()
 
@@ -2314,71 +2738,17 @@ Tooltip {
         self._cached_tab_right = self.query_one("#tab-right", Label)
 
         try:
-            batch_shortcut = self.query_one("#shortcut-ctrl-s")
-            batch_shortcut.display = not self.auto_save
+            self.query_one("#shortcut-ctrl-s").display = not self.auto_save
+            self.query_one("#shortcut-R").display = self.auto_save
         except Exception:
             pass
 
-        # Load states securely across all registered backend target configurations.
-        if self.deferred_load:
-            user_units = []
-            sys_units = []
-
-            for tab_items in self.schema.values():
-                for item in tab_items:
-                    if item.type_ in ("action", "preset", "menu"):
-                        continue
-
-                    if item.scope == "user":
-                        user_units.append(item.key)
-                    elif item.scope == "system":
-                        sys_units.append(item.key)
-
-            states = {}
-            for ekey, eng in self.engine_pool.items():
-                if hasattr(eng, "load_state_for_units"):
-                    states[ekey] = eng.load_state_for_units(user_units, sys_units)
-                else:
-                    states[ekey] = eng.load_state()
-        else:
-            states = {ekey: eng.load_state() for ekey, eng in self.engine_pool.items()}
-
-        self._load_user_presets()
-        self._rebuild_indexes()
-
-        # PASS 1: Set initial values and existence before rendering UI.
-        for i in range(len(self.tabs)):
-            for idx, item in enumerate(self.schema.get(i, [])):
-                engine_key = self._get_item_engine_info(item)
-                state = states.get(engine_key, {})
-                raw = self._lookup_state(state, item)
-
-                if item.type_ in ("action", "preset", "menu"):
-                    item.exists_in_target = True
-                elif raw is not None:
-                    item.exists_in_target = True
-                    item.value = item.deserialize(raw)
-                else:
-                    item.exists_in_target = (item.default == "nil")
-
-                if not item._initial_loaded:
-                    item.initial_value = copy.deepcopy(item.value)
-                    item._initial_loaded = True
-
-        # PASS 2: Lazy DOM construction. Populate only initial tab.
-        if self.tabs:
-            self._populate_option_list(0)
+        self._intern_styles()
+        self.run_deferred_boot(initial_tab=0)
 
         if first_ol := self.current_option_list:
             first_ol.focus()
             self._update_pagination(first_ol)
-
-        # File change watchers.
-        if self.theme_path:
-            self.set_interval(0.5, self.watch_theme_file)
-
-        self.set_interval(1.0, self.watch_target_file)
-        self.set_interval(2.0, self.watch_presets_dir)
 
         # Telemetry.
         self.telemetry_engine = None
@@ -2436,6 +2806,181 @@ Tooltip {
                     self.push_screen(AlertDialog(str(self.global_popup), title="System Notice", level="warning"))
 
             self.call_after_refresh(show_popup)
+
+    def _init_boot_state(self) -> None:
+        self._states: dict[tuple[str, str], Any] = {}
+        self._loaded_engines: set[tuple[str, str]] = set()
+        self._pending_engine_loads: set[tuple[str, str]] = set()
+        self._failed_engines: dict[tuple[str, str], str] = {}
+        self._mounted_tabs: set[int] = set()
+        self._populated_tabs: set[int] = set()
+        self._tab_data_ready: set[int] = set()
+        self._boot_complete: bool = False
+
+        self._all_user_units: list[str] = []
+        self._all_sys_units: list[str] = []
+        for tab_items in self.schema.values():
+            for item in tab_items:
+                if item.type_ in ("action", "preset", "menu"):
+                    continue
+                match item.scope:
+                    case "user":
+                        self._all_user_units.append(item.key)
+                    case "system":
+                        self._all_sys_units.append(item.key)
+
+    def _engines_for_tab(self, tab_idx: int) -> set[tuple[str, str]]:
+        keys: set[tuple[str, str]] = set()
+        for item in self.schema.get(tab_idx, []):
+            if item.type_ in ("action", "preset", "menu"):
+                continue
+            keys.add(self._get_item_engine_info(item))
+        return keys
+
+    def _load_one_engine_sync(self, ekey: tuple[str, str]) -> Any:
+        eng = self.engine_pool[ekey]
+        if self.deferred_load and hasattr(eng, "load_state_for_units"):
+            return eng.load_state_for_units(self._all_user_units, self._all_sys_units)
+        return eng.load_state()
+
+    def _load_engines_batch_sync(
+        self, keys: set[tuple[str, str]]
+    ) -> tuple[dict[tuple[str, str], Any], dict[tuple[str, str], str]]:
+        states: dict[tuple[str, str], Any] = {}
+        errors: dict[tuple[str, str], str] = {}
+        for ekey in keys:
+            try:
+                states[ekey] = self._load_one_engine_sync(ekey)
+            except Exception as exc:
+                errors[ekey] = f"{type(exc).__name__}: {exc}"
+        return states, errors
+
+    def _apply_states_to_tab(self, tab_idx: int, states: dict[tuple[str, str], Any]) -> None:
+        items = self.schema.get(tab_idx, [])
+        freshly: list[ConfigItem] = []
+
+        for i_idx, item in enumerate(items):
+            if item.type_ in ("action", "preset", "menu"):
+                item.exists_in_target = True
+                if not item._initial_loaded:
+                    item.initial_value = clone_value(item.value)
+                    item._initial_loaded = True
+                    self._committed[(tab_idx, i_idx)] = clone_value(item.value)
+                continue
+
+            engine_key = self._get_item_engine_info(item)
+            if engine_key not in states and not item._initial_loaded:
+                continue
+
+            state = states.get(engine_key, self._states.get(engine_key, {}))
+            raw = self._lookup_state(state, item)
+
+            if raw is not None:
+                item.exists_in_target = True
+                new_val = item.deserialize(raw)
+            else:
+                item.exists_in_target = (item.default != "nil")
+                new_val = item.value
+
+            if not item._initial_loaded:
+                item.value = new_val
+                item.initial_value = clone_value(item.value)
+                item._initial_loaded = True
+                self._committed[(tab_idx, i_idx)] = clone_value(item.value)
+                freshly.append(item)
+
+        self._tab_data_ready.add(tab_idx)
+        if freshly and hasattr(self, "_preset_matrix"):
+            self._preset_matrix.ingest_items(freshly)
+
+    def _mark_boot_complete_if_done(self) -> None:
+        self._boot_complete = (
+            not self._pending_engine_loads
+            and set(self.engine_pool).issubset(
+                self._loaded_engines | set(self._failed_engines)
+            )
+        )
+        if self._boot_complete and hasattr(self, "_preset_matrix"):
+            self._preset_matrix.rebuild(self._configurable_items)
+            if hasattr(self, "_option_cache"):
+                self._option_cache.invalidate_presets()
+            self._schema_dirty_counter += 1
+
+    @work(exclusive=True, group="engine-boot", exit_on_error=False)
+    async def run_deferred_boot(self, *, initial_tab: int = 0) -> None:
+        self._init_boot_state()
+        await asyncio.to_thread(self._load_user_presets)
+
+        need_now = self._engines_for_tab(initial_tab) if self.tabs else set()
+        deferred = set(self.engine_pool) - need_now
+
+        for ekey in need_now:
+            try:
+                self._states[ekey] = await asyncio.to_thread(self._load_one_engine_sync, ekey)
+                self._loaded_engines.add(ekey)
+            except Exception as exc:
+                self._failed_engines[ekey] = f"{type(exc).__name__}: {exc}"
+                self.notify_status(f"Failed to load {ekey}: {exc}", level="error")
+
+        for t_idx in self.tabs:
+            if self._engines_for_tab(t_idx).issubset(self._loaded_engines):
+                self._apply_states_to_tab(t_idx, self._states)
+
+        if self.tabs:
+            await asyncio.sleep(0)
+            self._populate_option_list(initial_tab)
+            self._populated_tabs.add(initial_tab)
+
+        if deferred:
+            self._pending_engine_loads |= set(deferred)
+            await self._load_engines_async(deferred)
+        else:
+            self._mark_boot_complete_if_done()
+
+    @work(exclusive=True, group="engine-boot", exit_on_error=False)
+    async def _load_engines_async(self, engine_keys: set[tuple[str, str]]) -> None:
+        if not engine_keys:
+            return
+        states, errors = await asyncio.to_thread(self._load_engines_batch_sync, engine_keys)
+        self.post_message(
+            EnginesLoaded(states=states, attempted=engine_keys, errors=errors)
+        )
+
+    def on_engines_loaded(self, event: EnginesLoaded) -> None:
+        self._pending_engine_loads -= set(event.attempted)
+
+        for ekey, err in event.errors.items():
+            self._failed_engines[ekey] = err
+            self.notify_status(f"Failed to load {ekey}: {err}", level="error")
+
+        if event.states:
+            self._states.update(event.states)
+            self._loaded_engines |= set(event.states)
+
+        for t_idx in self.tabs:
+            if t_idx in self._tab_data_ready:
+                continue
+            if self._engines_for_tab(t_idx).issubset(self._loaded_engines):
+                self._apply_states_to_tab(t_idx, self._states)
+                self._tab_dirty.add(t_idx)
+
+        cur = self._current_tab_index()
+        if cur is not None and cur in self._tab_data_ready:
+            if cur not in self._populated_tabs or cur in self._tab_dirty:
+                self._populate_option_list(cur)
+                self._populated_tabs.add(cur)
+                self._tab_dirty.discard(cur)
+
+        self._mark_boot_complete_if_done()
+
+    def require_boot_complete(self) -> bool:
+        if getattr(self, "_boot_complete", True):
+            return True
+        self.notify_status(
+            "Still loading configuration backends — try again in a moment.",
+            level="warning",
+        )
+        return False
 
     # =========================================================================
     # TAB POPULATION / LAZY UI
@@ -2581,14 +3126,19 @@ Tooltip {
                     item.exists_in_target = True
                     item.value = item.deserialize(raw)
                 else:
-                    item.exists_in_target = (item.default == "nil")
+                    item.exists_in_target = (item.default != "nil")
 
                 if not item._initial_loaded:
-                    item.initial_value = copy.deepcopy(item.value)
+                    item.initial_value = clone_value(item.value)
                     item._initial_loaded = True
+                self._committed[(tab_idx, idx)] = clone_value(item.value)
 
-            if tab_idx in self._tab_populated or tab_idx == current_idx:
+            self._tab_data_ready.add(tab_idx)
+
+            if tab_idx in self._populated_tabs or tab_idx in self._tab_populated or tab_idx == current_idx:
                 self._populate_option_list(tab_idx)
+                self._populated_tabs.add(tab_idx)
+                self._tab_dirty.discard(tab_idx)
             else:
                 self._tab_dirty.add(tab_idx)
 
@@ -2645,8 +3195,8 @@ Tooltip {
         self._update_footer_legend()
 
         try:
-            batch_shortcut = self.query_one("#shortcut-ctrl-s")
-            batch_shortcut.display = not new
+            self.query_one("#shortcut-ctrl-s").display = not new
+            self.query_one("#shortcut-R").display = new
             self.call_after_refresh(self.query_one("#footer-shortcuts-container", FlowContainer).reflow)
         except Exception:
             pass
@@ -2782,7 +3332,7 @@ Tooltip {
                                 changed_any = True
 
                         else:
-                            expected_exists = (item.default == "nil")
+                            expected_exists = (item.default != "nil")
                             expected_val = item.default if expected_exists else item.value
 
                             if item.exists_in_target != expected_exists or str(item.value) != str(expected_val):
@@ -2934,8 +3484,13 @@ Tooltip {
             self.query_one(ContentSwitcher).current = f"tab-{idx}"
             event.tab.scroll_visible(animate=True, top=False)
 
-            if idx not in self._tab_populated or idx in self._tab_dirty:
+            if idx not in self._tab_data_ready and self._engines_for_tab(idx).issubset(self._loaded_engines):
+                self._apply_states_to_tab(idx, self._states)
+
+            if idx not in self._populated_tabs or idx in self._tab_dirty:
                 self._populate_option_list(idx)
+                self._populated_tabs.add(idx)
+                self._tab_dirty.discard(idx)
 
             if ol := self.current_option_list:
                 ol.focus()
@@ -2946,6 +3501,14 @@ Tooltip {
                         if not getattr(opt, "disabled", False):
                             ol.highlighted = i
                             break
+            else:
+                try:
+                    for cw in self.query(CustomRichTabWidget):
+                        if cw.display:
+                            cw.focus()
+                            break
+                except Exception:
+                    pass
 
                 self._update_pagination(ol)
                 self._update_scroll_indicators()
@@ -3070,9 +3633,32 @@ Tooltip {
         self._update_pagination(ol)
 
     def _update_pagination(self, ol: ConfigOptionList) -> None:
-        idx = ol.highlighted if ol.highlighted is not None else 0
-        total = ol.option_count
-        self.query_one("#main-box").border_subtitle = f" {idx + 1}/{total} " if total else " 0/0 "
+        try:
+            counter = self.query_one("#pos-counter", Label)
+            if ol and ol.option_count > 0:
+                curr_idx = ol.highlighted if ol.highlighted is not None else 0
+                total_selectable = 0
+                selectable_idx = 0
+
+                for i in range(ol.option_count):
+                    opt = ol.get_option_at_index(i)
+                    if not getattr(opt, "disabled", False):
+                        total_selectable += 1
+                        if i <= curr_idx:
+                            selectable_idx += 1
+
+                if total_selectable > 0 and selectable_idx > 0:
+                    txt = Text()
+                    txt.append(" │ ", style=self.theme_colors.get("fg", ""))
+                    txt.append(f"{selectable_idx}/{total_selectable}", style=self.theme_colors.get("accent", "") + " bold")
+                    counter.update(txt)
+                    counter.display = True
+                else:
+                    counter.display = False
+            else:
+                counter.display = False
+        except Exception:
+            pass
 
     def _update_scroll_indicators(self) -> None:
         try:
@@ -3571,8 +4157,6 @@ Tooltip {
         if self._save_lock is None:
             self._save_lock = asyncio.Lock()
 
-        auth_required = False
-
         async with self._save_lock:
             if self._modal_active():
                 if on_complete:
@@ -3585,20 +4169,32 @@ Tooltip {
                     on_complete(True)
                 return
 
-            batches = {}
+            # Frozen snapshot: (change_tuple, commit_key, val_str, frozen_val, ConfigItem)
+            type FrozenItem = tuple[tuple[str, str, str, str], tuple[int, int], str, Any, ConfigItem]
+            batches: dict[tuple[str, str], list[FrozenItem]] = {}
 
-            for tab_idx, item_idx in list(self.pending_commits):
+            for tab_idx, item_idx in tuple(self.pending_commits):
                 item = self.schema[tab_idx][item_idx]
-                val_str = item.serialize(item.value)
+                key = (tab_idx, item_idx)
+                frozen_val = clone_value(item.value)
+                val_str = item.serialize(frozen_val)
                 ekey = self._get_item_engine_info(item)
-
-                batches.setdefault(ekey, []).append(
-                    ((item.key, item.scope, val_str, item.type_), (tab_idx, item_idx), item)
-                )
+                change = (item.key, item.scope, val_str, str(item.type_))
+                batches.setdefault(ekey, []).append((change, key, val_str, frozen_val, item))
 
             final_success = True
             success_count = 0
             error_msgs = []
+            auth_required = False
+
+            def mark_success(key: tuple[int, int], frozen_val_str: str, frozen_val: Any, itm: ConfigItem) -> bool:
+                current_str = itm.serialize(itm.value)
+                if current_str != frozen_val_str:
+                    self._save_queued_during_run = True
+                    return False
+                self.pending_commits.discard(key)
+                self._committed[key] = clone_value(frozen_val)
+                return True
 
             for ekey, batch in batches.items():
                 engine = self.engine_pool[ekey]
@@ -3610,19 +4206,16 @@ Tooltip {
                     success, msg = False, f"Engine Error: {e}"
 
                 if success:
-                    success_count += len(changes)
-
-                    for _, commit, itm in batch:
-                        self.pending_commits.discard(commit)
-
-                        if is_trigger_item(itm):
-                            self._reset_trigger_ui(itm)
+                    for _change, key, frozen_str, frozen_val, itm in batch:
+                        if mark_success(key, frozen_str, frozen_val, itm):
+                            success_count += 1
+                            if is_trigger_item(itm):
+                                self._reset_trigger_ui(itm)
 
                     try:
                         self.last_target_mtimes[ekey] = Path(engine.target_path).expanduser().resolve().stat().st_mtime
                     except OSError:
                         pass
-
                 else:
                     if "AUTH_REQUIRED" in msg:
                         auth_required = True
@@ -3630,13 +4223,13 @@ Tooltip {
 
                     engine_success_count = 0
 
-                    for change, commit, itm in batch:
-                        key, scope, val_str, itype = change
+                    for change, key, frozen_str, frozen_val, itm in batch:
+                        key_s, scope, val_str, itype = change
 
                         try:
                             ok, item_msg, _ = await asyncio.to_thread(
                                 engine.write_value,
-                                key,
+                                key_s,
                                 scope,
                                 val_str,
                                 item_type=itype
@@ -3645,35 +4238,36 @@ Tooltip {
                             ok, item_msg = False, f"Engine Error: {e}"
 
                         if ok:
-                            success_count += 1
-                            engine_success_count += 1
-                            self.pending_commits.discard(commit)
-
-                            if is_trigger_item(itm):
-                                self._reset_trigger_ui(itm)
+                            if mark_success(key, frozen_str, frozen_val, itm):
+                                success_count += 1
+                                engine_success_count += 1
+                                if is_trigger_item(itm):
+                                    self._reset_trigger_ui(itm)
 
                             try:
                                 self.last_target_mtimes[ekey] = Path(engine.target_path).expanduser().resolve().stat().st_mtime
                             except OSError:
                                 pass
-
                         else:
                             if "AUTH_REQUIRED" in item_msg:
                                 auth_required = True
                                 break
-
                             error_msgs.append(item_msg)
-
-                            # Failed trigger buttons should not remain armed.
                             if is_trigger_item(itm):
-                                self.pending_commits.discard(commit)
+                                self.pending_commits.discard(key)
                                 self._reset_trigger_ui(itm)
 
                     if auth_required:
                         break
 
-                    if engine_success_count != len(changes):
+                    if engine_success_count != len(batch):
                         final_success = False
+
+        if self._save_queued_during_run:
+            self._save_queued_during_run = False
+            if self.pending_commits:
+                asyncio.create_task(self._save_batch_async(on_complete))
+                return
 
         if auth_required:
             if isinstance(self.screen, PasswordScreen):
@@ -3708,12 +4302,23 @@ Tooltip {
 
     async def _on_batch_password(self, pwd: str | None, on_complete=None) -> None:
         if pwd:
-            auth_res = await asyncio.to_thread(
-                subprocess.run,
-                ["sudo", "-S", "-v"],
-                input=(pwd + "\n").encode(),
-                capture_output=True
-            )
+            try:
+                auth_res = await asyncio.to_thread(
+                    subprocess.run,
+                    ["sudo", "-S", "-v"],
+                    input=(pwd + "\n").encode(),
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                    env={**os.environ, "LC_ALL": "C"}
+                )
+            except subprocess.TimeoutExpired:
+                self.notify_status("Sudo authentication timed out.", level="error")
+                if on_complete:
+                    on_complete(False)
+                return
+            finally:
+                pwd = None
 
             if auth_res.returncode == 0:
                 self.notify_status("Sudo authenticated. Retrying batch...", level="info")
@@ -4384,6 +4989,203 @@ Tooltip {
     # =========================================================================
     # ACTION EXECUTION / PRESET APPLICATION / PROMPTS
     # =========================================================================
+    def _check_interactive(self, cmd_str: str) -> bool:
+        if not cmd_str or not cmd_str.strip():
+            return False
+
+        interactive_apps = {
+            "fzf", "nmtui",
+            "vi", "vim", "nvim", "neovim", "nano", "micro", "helix", "hx", "emacs",
+            "less", "more", "man",
+            "top", "htop", "btop",
+            "yazi", "ranger", "lf",
+            "watch", "screen", "tmux",
+            "tig", "gitui", "lazygit",
+            "ipython", "bpython",
+            "psql", "mysql",
+        }
+        wrappers = {
+            "sudo", "doas", "pkexec",
+            "env", "time", "nice", "nohup", "exec", "stdbuf", "xargs",
+            "command", "builtin", "proxychains", "proxychains4",
+        }
+        shells = {"bash", "sh", "zsh", "fish", "dash", "ksh"}
+        interpreters = {
+            "python", "python2", "python3",
+            "node", "ruby", "perl",
+            "docker", "podman", "kubectl",
+            "ssh", "script",
+        }
+        control_operators = {"|", "||", "&&", ";", "&"}
+        wrapper_value_flags = {"-u", "--user", "-g", "--group", "-C"}
+
+        def extract_subs(token: str) -> list[str]:
+            out: list[str] = []
+            i, n = 0, len(token)
+            while i < n:
+                if token.startswith("$(", i):
+                    depth = 1
+                    j = i + 2
+                    while j < n and depth:
+                        if token.startswith("$(", j):
+                            depth += 1
+                            j += 2
+                            continue
+                        if token[j] == ")":
+                            depth -= 1
+                            if depth == 0:
+                                out.append(token[i + 2 : j])
+                                i = j + 1
+                                break
+                        j += 1
+                    else:
+                        break
+                    continue
+
+                if token[i] == "`":
+                    j = token.find("`", i + 1)
+                    if j == -1:
+                        break
+                    out.append(token[i + 1 : j])
+                    i = j + 1
+                    continue
+
+                if token.startswith("<(", i) or token.startswith(">(", i):
+                    j = i + 2
+                    depth = 1
+                    while j < n and depth:
+                        if token[j] == "(":
+                            depth += 1
+                        elif token[j] == ")":
+                            depth -= 1
+                            if depth == 0:
+                                out.append(token[i + 2 : j])
+                                i = j + 1
+                                break
+                        j += 1
+                    else:
+                        break
+                    continue
+
+                i += 1
+            return out
+
+        try:
+            tokens = shlex.split(cmd_str)
+        except Exception:
+            tokens = re.findall(r"[A-Za-z0-9_./+-]+", cmd_str)
+
+        expecting_executable = True
+        skip_next = False
+
+        for i, token in enumerate(tokens):
+            if skip_next:
+                skip_next = False
+                continue
+
+            for sub in extract_subs(token):
+                if self._check_interactive(sub):
+                    return True
+
+            clean = token.strip("()$`\"'\t\n{}[]")
+
+            if not expecting_executable:
+                if token in control_operators or clean in control_operators:
+                    expecting_executable = True
+                continue
+
+            if not clean.startswith("-") and "=" in clean:
+                name, _, _ = clean.partition("=")
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+                    continue
+
+            if clean.startswith("-"):
+                if clean in wrapper_value_flags:
+                    skip_next = True
+                continue
+
+            base = clean.split("/")[-1].lower()
+            if not base:
+                continue
+
+            if base in wrappers:
+                continue
+
+            if base in shells:
+                j = i + 1
+                while j < len(tokens):
+                    t = tokens[j]
+                    c = t.strip()
+                    if c in control_operators:
+                        break
+                    if c == "-c":
+                        if j + 1 < len(tokens) and self._check_interactive(tokens[j + 1]):
+                            return True
+                        skip_next = True
+                        break
+                    if c.startswith("-") and not c.startswith("--"):
+                        body = c[1:]
+                        if "i" in body and "c" not in body:
+                            return True
+                        if "c" in body:
+                            if "i" in body:
+                                return True
+                            if j + 1 < len(tokens) and self._check_interactive(tokens[j + 1]):
+                                return True
+                            skip_next = True
+                            break
+                        j += 1
+                        continue
+                    if c.startswith("--"):
+                        j += 1
+                        continue
+                    break
+
+            if base in interactive_apps:
+                return True
+
+            if base in shells or base in interpreters:
+                require_t_with_i = base in {"docker", "podman", "kubectl"}
+                scan_nested_argv0 = base in {"docker", "podman", "kubectl", "ssh", "script"}
+
+                for j in range(i + 1, len(tokens)):
+                    sub_tok = tokens[j]
+                    c_sub = sub_tok.strip()
+
+                    if c_sub in control_operators or sub_tok in control_operators:
+                        break
+
+                    if c_sub in {"-i", "--interactive", "-t", "-tt", "--tty"}:
+                        return True
+
+                    if c_sub.startswith("-") and not c_sub.startswith("--"):
+                        flags = c_sub[1:]
+                        has_i = "i" in flags
+                        has_t = "t" in flags
+                        if require_t_with_i:
+                            if has_i and has_t:
+                                return True
+                        elif has_i:
+                            return True
+                        if has_t and base in {"ssh", "script"}:
+                            return True
+
+                    if base.startswith("python") and c_sub in {"-c", "--command", "-m", "--module"}:
+                        if j + 1 < len(tokens) and self._check_interactive(tokens[j + 1]):
+                            return True
+
+                    if scan_nested_argv0 and not c_sub.startswith("-"):
+                        nested = c_sub.strip("()$`\"'\t\n{}[]").split("/")[-1].lower()
+                        if nested in interactive_apps or nested in shells:
+                            return True
+
+                expecting_executable = False
+                continue
+
+            expecting_executable = False
+
+        return False
+
     def execute_action(self, item: ConfigItem) -> None:
         if item.key == "__save_new_preset":
             self.action_save_preset()
@@ -4402,7 +5204,33 @@ Tooltip {
         def do_execute():
             self.notify_status(f"Executing: {item.label}...", level="info")
 
-            async def run_task():
+            forced = getattr(item, "force_interactive", None)
+            is_interactive = (
+                forced if isinstance(forced, bool) else self._check_interactive(command)
+            )
+
+            if is_interactive:
+                if getattr(self, "_tty_action_busy", False):
+                    self.notify_status("Another TTY action is already running.", level="warning")
+                    return
+
+                self._tty_action_busy = True
+                try:
+                    with self.suspend():
+                        completed = subprocess.run(command, shell=True)
+                    rc = completed.returncode
+                    if rc == 0:
+                        self.notify_status(f"Action '{item.label}' completed.", level="success")
+                    else:
+                        self.notify_status(f"Action '{item.label}' returned code {rc}.", level="warning")
+                except Exception as e:
+                    self.notify_status(f"Execution error: {str(e)[:60]}", level="error")
+                finally:
+                    self._tty_action_busy = False
+                return
+
+            async def run_noninteractive():
+                proc: asyncio.subprocess.Process | None = None
                 try:
                     proc = await asyncio.create_subprocess_shell(
                         command,
@@ -4411,10 +5239,12 @@ Tooltip {
                     )
 
                     try:
-                        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
-                    except asyncio.TimeoutError:
-                        proc.kill()
-                        self.notify_status("Action timed out after 10 seconds.", level="error")
+                        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+                    except TimeoutError:
+                        if proc is not None:
+                            proc.kill()
+                            await proc.wait()
+                        self.notify_status("Action timed out after 15 seconds.", level="error")
                         return
 
                     if proc.returncode == 0:
@@ -4425,19 +5255,20 @@ Tooltip {
                             self.notify_status(f"Success: {out_single[:60]}", level="success")
                         else:
                             self.notify_status(f"Action '{item.label}' completed.", level="success")
-
                     else:
                         err = stderr.decode("utf-8", errors="replace").strip().split("\n")[0]
-
                         if not err:
                             err = "Unknown execution error"
-
                         self.notify_status(f"Action failed: {err[:60]}", level="error")
 
                 except Exception as e:
                     self.notify_status(f"Execution error: {str(e)[:60]}", level="error")
+                finally:
+                    if proc is not None and proc.returncode is None:
+                        proc.kill()
+                        await proc.wait()
 
-            asyncio.create_task(run_task())
+            asyncio.create_task(run_noninteractive())
 
         if item.confirm_message:
             self.push_screen(

@@ -13,6 +13,8 @@ Type=simple
 ExecStart=%h/user_scripts/waybar/network/network_meter_daemon.sh
 Restart=always
 RestartSec=1s
+OOMPolicy=kill
+OOMScoreAdjust=400
 
 # Hardening (Keep your system safe)
 ProtectSystem=strict

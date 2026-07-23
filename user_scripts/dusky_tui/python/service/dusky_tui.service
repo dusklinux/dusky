@@ -1,0 +1,21 @@
+[Unit]
+Description=Dusky TUI Pre-Warming Daemon
+Documentation=man:dusky(1)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/user_scripts/dusky_tui
+ExecStart=/usr/bin/python3 -m python.main.daemon
+Restart=on-failure
+RestartSec=3s
+Slice=app.slice
+OOMPolicy=kill
+OOMScoreAdjust=400
+StandardOutput=journal
+StandardError=journal
+TimeoutStopSec=5
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target

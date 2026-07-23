@@ -104,17 +104,47 @@ class LocaleGenEngine(BaseEngine):
                         except Exception as e:
                             action_messages.append(f"Failed to set NTP: {e}")
 
-                    elif key == "rtc_local":
-                        is_en = str(val).lower() in ("true", "1", "yes", "on", "t")
-                        cmd = ["timedatectl", "set-local-rtc", "1" if is_en else "0"]
-                        try:
-                            res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-                            if res.returncode == 0:
-                                action_messages.append(f"RTC Local Timezone set to {is_en}.")
-                            else:
-                                action_messages.append(f"timedatectl rtc failed: {res.stderr.strip()}")
-                        except Exception as e:
-                            action_messages.append(f"Failed to set RTC: {e}")
+                    elif key in ("action_set_timezone", "set_timezone"):
+                        if val and str(val) != "nil":
+                            cmd = ["timedatectl", "set-timezone", str(val)]
+                            try:
+                                res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                                if res.returncode == 0:
+                                    action_messages.append(f"Timezone set to {val}.")
+                                else:
+                                    action_messages.append(f"timedatectl set-timezone failed: {res.stderr.strip()}")
+                            except Exception as e:
+                                action_messages.append(f"Failed to set timezone: {e}")
+                        else:
+                            action_messages.append("Select system timezone from menu.")
+
+                    elif key in ("action_set_lang", "set_lang"):
+                        if val and str(val) != "nil":
+                            cmd = ["localectl", "set-locale", f"LANG={val}"]
+                            try:
+                                res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                                if res.returncode == 0:
+                                    action_messages.append(f"System LANG set to {val}.")
+                                else:
+                                    action_messages.append(f"localectl set-locale failed: {res.stderr.strip()}")
+                            except Exception as e:
+                                action_messages.append(f"Failed to set LANG: {e}")
+                        else:
+                            action_messages.append("Select LANG locale from menu.")
+
+                    elif key in ("action_set_keymap", "set_keymap"):
+                        if val and str(val) != "nil":
+                            cmd = ["localectl", "set-keymap", str(val)]
+                            try:
+                                res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                                if res.returncode == 0:
+                                    action_messages.append(f"TTY keymap set to {val}.")
+                                else:
+                                    action_messages.append(f"localectl set-keymap failed: {res.stderr.strip()}")
+                            except Exception as e:
+                                action_messages.append(f"Failed to set keymap: {e}")
+                        else:
+                            action_messages.append("Select TTY keymap from menu.")
                 else:
                     locale_changes.append((key, scope, val, itype))
 

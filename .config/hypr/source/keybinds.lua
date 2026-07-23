@@ -21,7 +21,11 @@ local function cond_bind(key, default_dsp, flags)
             hl.dispatch(hl.dsp.pass({ window = "activewindow" }))
         else
             if default_dsp then
-                hl.dispatch(default_dsp)
+                if type(default_dsp) == "function" then
+                    default_dsp()
+                else
+                    hl.dispatch(default_dsp)
+                end
             else
                 hl.dispatch(hl.dsp.pass({ window = "activewindow" }))
             end
@@ -78,7 +82,7 @@ hl.bind(
 )
 
 hl.bind(
-    "CTRL + SHIFT + code:61",
+    "CTRL + SHIFT + SPACE",
     hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/keybindings.sh"),
     { description = "Show Keybinds" }
 )
@@ -138,25 +142,25 @@ hl.bind(
 -- 3. SYSTEM UTILITIES & TOGGLES
 -- -------------------------------------------------------------------------------------------------
 
-hl.bind(
+cond_bind(
     "ALT + 1",
     hl.dsp.exec_cmd("foot --app-id=dusky_tui python $HOME/user_scripts/dusky_tui/python/main/main.py $HOME/user_scripts/network_manager/tui_dusky_network.py"),
     { description = "Wi-Fi Manager" }
 )
 
-hl.bind(
+cond_bind(
     "ALT + 2",
     hl.dsp.exec_cmd("blueman-manager"),
     { description = "Bluetooth Manager" }
 )
 
-hl.bind(
+cond_bind(
     "ALT + 3",
     hl.dsp.exec_cmd("pavucontrol"),
     { description = "Audio Mixer" }
 )
 
-hl.bind(
+cond_bind(
     "ALT + 4",
     hl.dsp.exec_cmd(dusky_scripts .. "images/wallpaper_selector.py"),
     { description = "Dusky Wallpaper Selector" }
@@ -174,13 +178,13 @@ hl.bind(
     { description = "Cycle Fav Wallpaper" }
 )
 
-hl.bind(
+cond_bind(
     "ALT + 5",
     hl.dsp.exec_cmd(terminal .. " -e " .. dusky_scripts .. "drives/drive_manager.sh unlock browser"),
     { description = "Unlock Browser" }
 )
 
-hl.bind(
+cond_bind(
     "ALT + SHIFT + 5",
     hl.dsp.exec_cmd(terminal .. " -e " .. dusky_scripts .. "drives/drive_manager.sh lock browser"),
     { description = "Lock Browser", locked = true }
@@ -217,7 +221,7 @@ hl.bind(
 
  local SUBMAP_MANUAL_PT = "keybinds_disabled"  -- NOT "passthrough" (reserved dispatcher name)
 
- hl.bind(
+ cond_bind(
      "ALT + 6",
      function()
          hl.notification.create({ text = "Passthrough Enabled - Press ALT+6 to exit", timeout = 3000 })
@@ -273,13 +277,13 @@ hl.bind(
 
 
 -- --- Waybar Toggle ---
-hl.bind(
+cond_bind(
     "ALT + 9",
     hl.dsp.exec_cmd(dusky_scripts .. "waybar/waybar_toggle.sh"),
     { description = "Start Waybar for 1 Min" }
 )
 
-hl.bind(
+cond_bind(
     "ALT + 0",
     hl.dsp.exec_cmd("pkill tray-tui; foot --app-id=dusky_tui tray-tui"),
     { description = "system Tray TUI" }

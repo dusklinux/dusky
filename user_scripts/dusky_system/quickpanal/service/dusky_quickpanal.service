@@ -44,6 +44,7 @@ TimeoutStopFailureMode=kill
 MemoryAccounting=yes
 # (Systemd 243+) Cleanly kills the whole cgroup if the system runs completely out of memory.
 OOMPolicy=kill
+OOMScoreAdjust=400
 
 # [ZSTD COMPRESSION TRIGGER] 
 # GTK3 utilizes Cairo drawing surfaces which can bloat the heap over time.

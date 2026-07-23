@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import asyncio
 from typing import Dict, Any, List
 from textual.app import App, ComposeResult

@@ -1,9 +1,13 @@
-import subprocess
-import threading
+import os
+import sys
 import time
+import math
 import json
 import re
+import shutil
 import logging
+import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +17,6 @@ logger = logging.getLogger("dusky_network_engine")
 
 # =============================================================================
 #  NMCLI OUTPUT PARSER
-#  nmcli -t uses '\:' to escape literal colons in field values.
-#  A naive str.split(':') breaks on connection names containing colons.
 # =============================================================================
 _NMCLI_FIELD_SPLIT = re.compile(r'(?<!\\):')
 
@@ -23,20 +25,332 @@ def _split_nmcli_line(line: str) -> list[str]:
     return [f.replace("\\:", ":") for f in _NMCLI_FIELD_SPLIT.split(line)]
 
 # =============================================================================
-#  ENGINE
+#  PURE MODEL FUNCTIONS (Ported directly from Model.js)
+# =============================================================================
+
+def parse_network_status(raw: str) -> dict[str, Any]:
+    parts = (raw or "disconnected\t\t\t").rstrip("\r\n").split("\t")
+    kind = parts[0] if len(parts) > 0 and parts[0] else "disconnected"
+    label = parts[1] if len(parts) > 1 else ""
+    try:
+        signal_strength = int(parts[2]) if len(parts) > 2 and parts[2] != "" else -1
+    except ValueError:
+        signal_strength = -1
+    frequency = parts[3] if len(parts) > 3 else ""
+    return {
+        "kind": kind,
+        "label": label,
+        "signal_strength": signal_strength,
+        "frequency": frequency,
+    }
+
+def wifi_icon_for(strength: int) -> str:
+    icons = ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"]
+    idx = max(0, min(4, math.ceil(strength / 20) - 1))
+    return icons[idx]
+
+def connection_icon(kind: str, signal_strength: int) -> str:
+    if kind == "wifi":
+        return wifi_icon_for(signal_strength)
+    if kind == "ethernet":
+        return "󰈀"
+    return "󰤮"
+
+def format_header_speed(mbps: str | int | float) -> str:
+    try:
+        v = int(float(mbps))
+    except (ValueError, TypeError):
+        return ""
+    if v <= 0:
+        return ""
+    if v >= 1000:
+        val = v / 1000.0
+        return f"{val:.0f}gbit" if v % 1000 == 0 else f"{val:.1f}gbit"
+    return f"{v}mbit"
+
+def format_header_freq(mhz: str | int | float) -> str:
+    try:
+        v = float(mhz)
+    except (ValueError, TypeError):
+        return ""
+    if not v or v <= 0:
+        return ""
+    if 2400 <= v < 2500:
+        return "2.4ghz"
+    if 4900 <= v < 5925:
+        return "5ghz"
+    if 5925 <= v < 7125:
+        return "6ghz"
+    if 57000 <= v < 71000:
+        return "60ghz"
+    ghz = v / 1000.0
+    return f"{ghz:.0f}ghz" if ghz % 1 == 0 else f"{ghz:.1f}ghz"
+
+def header_detail(info: dict[str, Any]) -> str:
+    val = info or {}
+    t = val.get("type", "")
+    if t == "ethernet":
+        return format_header_speed(val.get("speed", ""))
+    if t == "wifi":
+        return format_header_freq(val.get("freq", ""))
+    return ""
+
+def parse_key_value(raw: str) -> dict[str, str]:
+    next_dict: dict[str, str] = {}
+    lines = (raw or "").splitlines()
+    for line in lines:
+        if not line:
+            continue
+        idx = line.find("\t")
+        if idx == -1:
+            continue
+        key = line[:idx]
+        val = line[idx + 1:].strip()
+        next_dict[key] = val
+    return next_dict
+
+def throughput_state(previous: dict[str, Any] | None, next_sample: dict[str, Any] | None, now: float) -> dict[str, Any]:
+    prev = previous or {}
+    sample = next_sample or {}
+    iface = sample.get("iface", "")
+    try:
+        rx = float(sample.get("rx_bytes", "0"))
+    except ValueError:
+        rx = 0.0
+    try:
+        tx = float(sample.get("tx_bytes", "0"))
+    except ValueError:
+        tx = 0.0
+
+    prev_time = float(prev.get("prev_sample_time", 0))
+
+    if iface != prev.get("prev_iface", "") or prev_time == 0:
+        return {
+            "prev_iface": iface,
+            "prev_rx_bytes": rx,
+            "prev_tx_bytes": tx,
+            "prev_sample_time": now,
+            "download_rate": 0.0,
+            "upload_rate": 0.0,
+            "total_rx": rx,
+            "total_tx": tx,
+        }
+
+    dl_rate = float(prev.get("download_rate", 0.0))
+    ul_rate = float(prev.get("upload_rate", 0.0))
+    dt = now - prev_time
+
+    if dt > 0:
+        dl_rate = max(0.0, (rx - float(prev.get("prev_rx_bytes", 0))) / dt)
+        ul_rate = max(0.0, (tx - float(prev.get("prev_tx_bytes", 0))) / dt)
+
+    return {
+        "prev_iface": iface,
+        "prev_rx_bytes": rx,
+        "prev_tx_bytes": tx,
+        "prev_sample_time": now,
+        "download_rate": dl_rate,
+        "upload_rate": ul_rate,
+        "total_rx": rx,
+        "total_tx": tx,
+    }
+
+def ping_sample_value(raw: Any) -> float | None:
+    try:
+        v = float(raw)
+        if math.isnan(v) or math.isinf(v) or v < 0:
+            return None
+        return v
+    except (ValueError, TypeError):
+        return None
+
+def append_ping_sample(samples: list[float | None] | None, raw: Any, limit: int) -> list[float | None]:
+    values = list(samples) if isinstance(samples, list) else []
+    values.append(ping_sample_value(raw))
+    while len(values) > limit:
+        values.pop(0)
+    return values
+
+def average_ping_latency(samples: list[float | None] | None, limit: int) -> float:
+    values = list(samples) if isinstance(samples, list) else []
+    sample_limit = max(1, int(limit) if limit else len(values) or 1)
+    total = 0.0
+    count = 0
+    start = max(0, len(values) - sample_limit)
+    for i in range(start, len(values)):
+        v = values[i]
+        if v is not None and isinstance(v, (int, float)) and not math.isnan(v) and v >= 0:
+            total += v
+            count += 1
+    return total / count if count > 0 else -1.0
+
+def ping_packet_loss_percent(samples: list[float | None] | None) -> int:
+    values = list(samples) if isinstance(samples, list) else []
+    if not values:
+        return 0
+    lost = sum(1 for v in values if v is None)
+    return round((lost / len(values)) * 100)
+
+def format_packet_loss(percent: int | str | float) -> str:
+    try:
+        val = int(percent)
+    except (ValueError, TypeError):
+        val = 0
+    return f"{max(0, val)}%"
+
+def ping_latency_state(previous: dict[str, Any] | None, next_sample: dict[str, Any] | None, limit: int = 24, average_limit: int = 5) -> dict[str, Any]:
+    prev = previous or {}
+    sample = next_sample or {}
+    iface = sample.get("iface", "")
+    window = max(1, int(limit) if limit else 24)
+    avg_window = max(1, int(average_limit) if average_limit else 5)
+
+    reset = not iface or iface != prev.get("ping_iface", "")
+    router_samples = [] if reset else prev.get("router_ping_samples", [])
+    internet_samples = [] if reset else prev.get("internet_ping_samples", [])
+
+    if "router_ping_ms" in sample:
+        router_samples = append_ping_sample(router_samples, sample["router_ping_ms"], window)
+    elif reset:
+        router_samples = []
+
+    if "internet_ping_ms" in sample:
+        internet_samples = append_ping_sample(internet_samples, sample["internet_ping_ms"], window)
+    elif reset:
+        internet_samples = []
+
+    return {
+        "ping_iface": iface,
+        "router_ping_samples": router_samples,
+        "internet_ping_samples": internet_samples,
+        "router_ping_latency": average_ping_latency(router_samples, avg_window),
+        "internet_ping_latency": average_ping_latency(internet_samples, avg_window),
+        "internet_ping_packet_loss": ping_packet_loss_percent(internet_samples),
+    }
+
+def format_bytes(bytes_val: float | int | str) -> str:
+    try:
+        n = float(bytes_val)
+    except (ValueError, TypeError):
+        n = 0.0
+    if math.isnan(n) or n < 0:
+        n = 0.0
+    if n < 1024:
+        return f"{round(n)} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    if n < 1024 * 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MB"
+    return f"{n / (1024 * 1024 * 1024):.2f} GB"
+
+def format_rate(bytes_per_sec: float | int | str) -> str:
+    return f"{format_bytes(bytes_per_sec)}/s"
+
+def format_speed_mbps(mbps: float | int | str) -> str:
+    try:
+        v = float(mbps)
+    except (ValueError, TypeError):
+        return "--"
+    if math.isnan(v) or math.isinf(v) or v <= 0:
+        return "--"
+    if 0 < v < 10:
+        return f"{v:.1f} Mbps"
+    return f"{round(v + 1e-9)} Mbps"
+
+def format_ping_latency(ms: float | int | str | None) -> str:
+    if ms is None:
+        return "Timeout"
+    try:
+        v = float(ms)
+    except (ValueError, TypeError):
+        return "Timeout"
+    if math.isnan(v) or v < 0:
+        return "Timeout"
+    return f"{v:.1f} ms" if 0 < v < 10 else f"{v:.1f} ms"
+
+def wifi_row(network: dict[str, Any]) -> dict[str, Any] | None:
+    if not network:
+        return None
+    return {
+        "network": network,
+        "connected": bool(network.get("connected") or network.get("in_use")),
+        "known": bool(network.get("known", False)),
+        "ssid": network.get("ssid") or network.get("name") or "",
+        "signal": round(network.get("signal", network.get("signalStrength", 0))),
+        "security": network.get("security", "Open"),
+    }
+
+def sort_wifi_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    nets = list(rows) if isinstance(rows, list) else []
+    nets.sort(key=lambda x: (not x.get("connected", False), not x.get("known", False), -x.get("signal", 0)))
+    return nets
+
+def wifi_section_title(wifi_networks: list[dict[str, Any]], index: int) -> str:
+    networks = list(wifi_networks) if isinstance(wifi_networks, list) else []
+    if index < 0 or index >= len(networks):
+        return ""
+    net = networks[index]
+    if not net:
+        return ""
+    if net.get("known") and index == 0:
+        return "KNOWN NETWORKS"
+    if not net.get("known") and (index == 0 or (index > 0 and networks[index - 1].get("known"))):
+        return "OTHER NETWORKS"
+    return ""
+
+def is_protected(security: str, open_security: str = "Open") -> bool:
+    return security != open_security and security not in ("--", "", "None")
+
+def network_failure_reason(reason: str, reasons: dict[str, str] | None = None) -> str:
+    r = reasons or {}
+    if reason == r.get("NoSecrets"):
+        return "Passphrase required"
+    if reason == r.get("WifiAuthTimeout"):
+        return "Wrong password"
+    if reason == r.get("WifiNetworkLost"):
+        return "Network lost"
+    if reason == r.get("WifiClientDisconnected"):
+        return "Disconnected"
+    if reason == r.get("WifiClientFailed"):
+        return "Connection failed"
+    return "Failed to connect"
+
+# CamelCase aliases for pure JavaScript Model.js functions
+parseNetworkStatus = parse_network_status
+wifiIconFor = wifi_icon_for
+connectionIcon = connection_icon
+formatHeaderSpeed = format_header_speed
+formatHeaderFreq = format_header_freq
+headerDetail = header_detail
+parseKeyValue = parse_key_value
+throughputState = throughput_state
+pingLatencyState = ping_latency_state
+appendPingSample = append_ping_sample
+averagePingLatency = average_ping_latency
+pingPacketLossPercent = ping_packet_loss_percent
+formatPacketLoss = format_packet_loss
+formatBytes = format_bytes
+formatRate = format_rate
+formatSpeedMbps = format_speed_mbps
+formatPingLatency = format_ping_latency
+wifiRow = wifi_row
+sortWifiRows = sort_wifi_rows
+wifiSectionTitle = wifi_section_title
+isProtected = is_protected
+networkFailureReason = network_failure_reason
+
+
+# =============================================================================
+#  ENGINE IMPLEMENTATION
 # =============================================================================
 class NetworkManagerEngine(BaseEngine):
     """
-    Async-first NetworkManager engine for the Dusky TUI ecosystem.
-    
-    Features:
-    - Instant startup from cached scan results (~/.cache/dusky_tui/wifi_cache.json)
-    - Background polling thread for state changes + periodic rescans
-    - Dynamic schema rebuilding (tabs 0 & 1 are rebuilt on every state change)
-    - Thread-safe Textual integration via call_from_thread
+    Full NetworkManager & Dusky Network logic engine for Dusky TUI.
     """
+    _instance: "NetworkManagerEngine | None" = None
 
     def __init__(self, config_path: str = ""):
+        NetworkManagerEngine._instance = self
         self.cache_dir = Path.home() / ".cache" / "dusky_tui"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._target_path = str(self.cache_dir / "wifi_cache.json")
@@ -49,8 +363,21 @@ class NetworkManagerEngine(BaseEngine):
         self._hotspot_ssid = "MyHotspot"
         self._hotspot_password = ""
 
+        # Live state tracking
+        self._tp_state: dict[str, Any] = {}
+        self._ping_state: dict[str, Any] = {}
+        self._verbose_info: dict[str, str] = {}
+        self._dns_provider: str = "DHCP"
+        self._dns_servers_str: str = ""
+
+        # Speed test state
+        self._speedtest_running: bool = False
+        self._speedtest_status: str = "Ready"
+        self._speedtest_down_val: str = "--"
+        self._speedtest_up_val: str = "--"
+
         # Load cached scan results for instant startup
-        self._cached_scans: list[dict] = []
+        self._cached_scans: list[dict[str, Any]] = []
         cache_path = Path(self._target_path)
         if cache_path.exists():
             try:
@@ -64,11 +391,7 @@ class NetworkManagerEngine(BaseEngine):
         self._bg_thread.start()
 
     def set_app(self, app) -> None:
-        """Called by main.py before app.run(). Only stores reference.
-        The background loop handles first _rebuild_schema via call_from_thread
-        once the Textual event loop is running."""
         self.app = app
-        # Force immediate state change detection on next background loop iteration
         self.rescan_event.set()
 
     @property
@@ -80,9 +403,6 @@ class NetworkManagerEngine(BaseEngine):
     # =========================================================================
 
     def load_state(self) -> dict[str, Any]:
-        """Returns current NM state. Called by the TUI's watch_target_file timer.
-        Must include ALL schema keys so on_mount and watch_target_file
-        set exists_in_target = True rather than marking items [Missing]."""
         state: dict[str, Any] = {}
 
         radio = self._run_cmd(["nmcli", "radio", "wifi"]).strip()
@@ -98,7 +418,7 @@ class NetworkManagerEngine(BaseEngine):
         active = self._get_active_wifi_connection()
         state["hotspot/hotspot_status_info"] = "Active" if active and active.get("mode") == "ap" else "Inactive"
 
-        # Trigger bools must appear in state so on_mount sets exists_in_target = True
+        # Trigger bools
         state["network/rescan"] = "false"
         state["hotspot/start_hotspot_24"] = "false"
         state["hotspot/start_hotspot_5"] = "false"
@@ -106,19 +426,32 @@ class NetworkManagerEngine(BaseEngine):
         state["status_action/disconnect"] = "false"
         state["status_action/restart_nm"] = "false"
         state["status_action/rescan"] = "false"
-        state["clipboard/status_ssid"] = "false"
-        state["clipboard/status_ip"] = "false"
-        state["clipboard/status_gateway"] = "false"
-        state["clipboard/status_dns"] = "false"
-        state["clipboard/status_device"] = "false"
 
-        # Include ALL current dynamic items so watch_target_file doesn't
-        # reset exists_in_target=False on items it can't find in state
+        # DNS actions
+        state["dns_action/dns_dhcp"] = "false"
+        state["dns_action/dns_cloudflare"] = "false"
+        state["dns_action/dns_google"] = "false"
+        state["dns_action/dns_custom"] = self._dns_servers_str
+
+        # Speed test actions
+        state["speedtest_action/speedtest_full"] = "false"
+        state["speedtest_action/speedtest_down"] = "false"
+        state["speedtest_action/speedtest_up"] = "false"
+
+        # Clipboard copy items
+        for clip_key in (
+            "status_type", "status_ssid", "status_ip", "status_gateway", "status_detail", "status_device",
+            "throughput_down", "throughput_up", "throughput_rx_total", "throughput_tx_total",
+            "ping_router", "ping_internet", "ping_packet_loss",
+            "speedtest_down_result", "speedtest_up_result"
+        ):
+            state[f"clipboard/{clip_key}"] = "false"
+
         if self.app and hasattr(self.app, 'schema'):
-            for tab_idx in (0, 1):
+            for tab_idx in range(len(self.app.schema)):
                 for item in self.app.schema.get(tab_idx, []):
                     if item.type_ in ("action", "menu"):
-                        continue  # Already skipped by watch_target_file
+                        continue
                     cache_key = f"{item.scope}/{item.key}" if item.scope else item.key
                     if cache_key not in state:
                         state[cache_key] = item.serialize(item.value)
@@ -126,7 +459,6 @@ class NetworkManagerEngine(BaseEngine):
         return state
 
     def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
-        """Routes all mutations through a unified command dispatcher."""
         logger.info(f"write_value: key={target_key}, scope={target_scope}, val={new_value}")
 
         # ---- Rescan button ----
@@ -146,7 +478,7 @@ class NetworkManagerEngine(BaseEngine):
                 return True, f"WiFi radio turned {action}.", ""
             return False, f"Failed to set radio: {res.stderr.strip()}", res.stderr
 
-        # ---- Autoconnect toggle (uuid as key, scope=saved) ----
+        # ---- Autoconnect toggle ----
         if target_scope == "saved" and self._is_uuid(target_key):
             yn = "yes" if new_value == "true" else "no"
             res = subprocess.run(
@@ -161,7 +493,7 @@ class NetworkManagerEngine(BaseEngine):
         if target_scope == "hotspot":
             return self._handle_hotspot(target_key, new_value)
 
-        # ---- Network actions (connect, disconnect, forget, password connect) ----
+        # ---- Network actions ----
         if target_scope == "network":
             return self._handle_network_action(target_key, new_value)
 
@@ -173,7 +505,15 @@ class NetworkManagerEngine(BaseEngine):
         if target_scope == "status_action":
             return self._handle_status_action(target_key)
 
-        # ---- Clipboard copy (Connection Info items) ----
+        # ---- DNS tab actions ----
+        if target_scope == "dns_action":
+            return self._handle_dns_action(target_key, new_value)
+
+        # ---- Speed Test tab actions ----
+        if target_scope == "speedtest_action":
+            return self._handle_speedtest_action(target_key)
+
+        # ---- Clipboard copy ----
         if target_scope == "clipboard":
             return self._handle_clipboard(target_key)
 
@@ -227,16 +567,13 @@ class NetworkManagerEngine(BaseEngine):
         return True, "OK", ""
 
     def _handle_network_action(self, key: str, value: str) -> tuple[bool, str, str]:
-        """Handles connect/disconnect/forget from Tab 0 (Networks)."""
-        # Password connect (string input submitted)
         if key.startswith("pw__"):
-            ssid = key[4:]  # strip pw__ prefix
+            ssid = key[4:]
             if not value:
                 return False, "Password cannot be empty.", ""
             threading.Thread(target=self._async_connect, args=(ssid, value), daemon=True).start()
             return True, f"Connecting to {ssid}...", ""
 
-        # Direct connect (saved or open)
         if key.startswith("cn__"):
             ssid = key[4:]
             saved = self._get_saved_wifi()
@@ -247,7 +584,6 @@ class NetworkManagerEngine(BaseEngine):
                 threading.Thread(target=self._async_connect, args=(ssid, None), daemon=True).start()
             return True, f"Connecting to {ssid}...", ""
 
-        # Disconnect
         if key.startswith("dc__"):
             ssid = key[4:]
             active = self._get_active_wifi_connection()
@@ -256,7 +592,6 @@ class NetworkManagerEngine(BaseEngine):
                 return True, f"Disconnecting from {ssid}...", ""
             return False, "Not connected to this network.", ""
 
-        # Forget
         if key.startswith("fg__"):
             ssid = key[4:]
             saved = self._get_saved_wifi()
@@ -275,7 +610,6 @@ class NetworkManagerEngine(BaseEngine):
         return True, "OK", ""
 
     def _handle_saved_action(self, key: str) -> tuple[bool, str, str]:
-        """Handles connect/disconnect/forget from Tab 1 (Saved)."""
         if key.startswith("cn__"):
             uuid = key[4:]
             threading.Thread(target=self._async_connect_saved, args=(uuid, uuid), daemon=True).start()
@@ -300,7 +634,6 @@ class NetworkManagerEngine(BaseEngine):
         return True, "OK", ""
 
     def _handle_status_action(self, key: str) -> tuple[bool, str, str]:
-        """Handles actions from Tab 3 (Status)."""
         if key == "disconnect":
             active = self._get_active_wifi_connection()
             if active:
@@ -327,99 +660,337 @@ class NetworkManagerEngine(BaseEngine):
 
         return True, "OK", ""
 
+    def _handle_dns_action(self, key: str, value: str) -> tuple[bool, str, str]:
+        dns_script = self._find_script("omarchy-dns")
+        env = self._get_exec_env()
+
+        if key == "dns_dhcp":
+            cmd = [dns_script, "DHCP"]
+        elif key == "dns_cloudflare":
+            cmd = [dns_script, "Cloudflare"]
+        elif key == "dns_google":
+            cmd = [dns_script, "Google"]
+        elif key == "dns_custom":
+            if not value:
+                return False, "Custom DNS servers string cannot be empty.", ""
+            self._dns_servers_str = value
+            cmd = [dns_script, "Custom"]
+        else:
+            return True, "OK", ""
+
+        try:
+            res = subprocess.run(
+                cmd,
+                input=(value + "\n") if key == "dns_custom" else None,
+                capture_output=True, text=True, env=env, timeout=20
+            )
+            if res.returncode == 0:
+                self.rescan_event.set()
+                return True, f"DNS updated to {key.replace('dns_', '').upper()}.", res.stdout
+            else:
+                err = res.stderr.strip()
+                if "sudo" in err.lower() or "root" in err.lower() or "password" in err.lower():
+                    return False, "AUTH_REQUIRED", res.stderr
+                return False, f"Failed: {err}", res.stderr
+        except Exception as e:
+            return False, f"Error setting DNS: {e}", str(e)
+
+    def _handle_speedtest_action(self, key: str) -> tuple[bool, str, str]:
+        if self._speedtest_running:
+            return False, "Speed test is already running.", ""
+
+        mode = "full"
+        if key == "speedtest_down":
+            mode = "down"
+        elif key == "speedtest_up":
+            mode = "up"
+
+        if self.app:
+            def run_interactive_speedtest():
+                self._speedtest_running = True
+                self._speedtest_status = f"Running interactive {mode} test..."
+                if hasattr(self.app, "_option_cache"):
+                    self.app._option_cache.clear()
+                self.app._rebuild_indexes()
+                self.app._refresh_all_ui()
+
+                try:
+                    rich_script = str(Path(__file__).parent / "rich_speedtest.py")
+                    with self.app.suspend():
+                        subprocess.run([sys.executable, rich_script, mode])
+
+                    # Read results after interactive run
+                    res_file = Path.home() / ".cache" / "dusky_tui" / "speedtest_last.json"
+                    if res_file.exists():
+                        try:
+                            with open(res_file, "r") as f:
+                                data = json.load(f)
+                                if data.get("down") is not None:
+                                    self._speedtest_down_val = f"{data['down']:.1f} Mbps"
+                                if data.get("up") is not None:
+                                    self._speedtest_up_val = f"{data['up']:.1f} Mbps"
+                                self._speedtest_status = "Complete"
+                        except Exception:
+                            pass
+                finally:
+                    self._speedtest_running = False
+                    self._rebuild_schema()
+
+            self.app.call_from_thread(run_interactive_speedtest)
+            return True, f"Started interactive {mode} speed test...", ""
+
+        threading.Thread(target=self._async_run_speedtest, args=(mode,), daemon=True).start()
+        return True, f"Started {mode} speed test...", ""
+
     def _handle_clipboard(self, key: str) -> tuple[bool, str, str]:
-        """Copies the value portion of a Connection Info label to clipboard."""
         if not self.app:
             return False, "App not ready.", ""
 
-        # Find the item and extract value from its label (text after the colon)
-        for item in self.app.schema.get(3, []):
-            if item.key == key and item.scope == "clipboard":
-                label = item.label
-                if ":" in label:
-                    value = label.split(":", 1)[1].strip()
-                else:
-                    value = label.strip()
+        target_item = None
+        for tab_idx in range(len(self.app.schema)):
+            for item in self.app.schema.get(tab_idx, []):
+                if item.key == key and item.scope == "clipboard":
+                    target_item = item
+                    break
+            if target_item:
+                break
 
-                if not value or value == "N/A" or value == "None":
-                    return False, "Nothing to copy.", ""
+        if not target_item:
+            return False, "Item not found.", ""
 
+        label = target_item.label
+        if ":" in label:
+            val = label.split(":", 1)[1].strip()
+        else:
+            val = label.strip()
+
+        if not val or val in ("N/A", "None", "--"):
+            return False, "Nothing to copy.", ""
+
+        try:
+            subprocess.run(["wl-copy", val], stdin=subprocess.DEVNULL, capture_output=True, timeout=3)
+            return True, f"Copied: {val}", ""
+        except FileNotFoundError:
+            try:
+                subprocess.run(["xclip", "-selection", "clipboard"], input=val.encode(), capture_output=True, timeout=3)
+                return True, f"Copied: {val}", ""
+            except FileNotFoundError:
+                return False, "No clipboard tool found (wl-copy/xclip).", ""
+
+    def _safe_call_from_thread(self, func, *args) -> None:
+        if not self.app:
+            return
+        try:
+            call_fn = getattr(self.app, "call_from_thread", None)
+            if call_fn and callable(call_fn):
+                call_fn(func, *args)
+        except Exception as e:
+            logger.debug(f"call_from_thread error: {e}")
+
+    def _async_rescan_wifi(self) -> None:
+        try:
+            if hasattr(self.app, "notify_status"):
+                self._safe_call_from_thread(self.app.notify_status, "Scanning WiFi networks...")
+            subprocess.run(
+                ["nmcli", "device", "wifi", "list", "--rescan", "yes"],
+                capture_output=True, stdin=subprocess.DEVNULL, timeout=15
+            )
+            self._cached_scans = self._get_scanned_wifi()
+            try:
+                with open(self._target_path, "w", encoding="utf-8") as f:
+                    json.dump(self._cached_scans, f)
+            except Exception as e:
+                logger.error(f"Cache write error: {e}")
+            self._safe_call_from_thread(self._rebuild_schema)
+        except Exception as e:
+            logger.error(f"Async Wi-Fi scan error: {e}")
+
+    def _enrich_network_status(self, verb: dict[str, str], active_wifi: dict[str, Any] | None) -> dict[str, Any]:
+        enriched = dict(verb)
+
+        # 1. Physical connection type & SSID resolution
+        if active_wifi:
+            enriched["type"] = "wifi"
+            enriched["ssid"] = active_wifi.get("ssid", "")
+            if not enriched.get("iface") or not Path(f"/sys/class/net/{enriched['iface']}/wireless").exists():
+                enriched["phy_iface"] = active_wifi.get("device", "wlan0")
+            else:
+                enriched["phy_iface"] = enriched["iface"]
+        elif Path(f"/sys/class/net/{enriched.get('iface', '')}/wireless").exists():
+            enriched["type"] = "wifi"
+            enriched["phy_iface"] = enriched["iface"]
+        elif enriched.get("iface") and not enriched.get("type"):
+            enriched["type"] = "ethernet"
+
+        phy_iface = enriched.get("phy_iface", enriched.get("iface", ""))
+
+        # 2. Wi-Fi details fallback if missing
+        if enriched.get("type") == "wifi" and phy_iface:
+            if not enriched.get("freq") or not enriched.get("ssid"):
                 try:
-                    subprocess.run(
-                        ["wl-copy", value],
-                        stdin=subprocess.DEVNULL, capture_output=True, timeout=3
-                    )
-                    return True, f"Copied: {value}", ""
-                except FileNotFoundError:
-                    # Fallback to xclip if wl-copy not available
-                    try:
-                        subprocess.run(
-                            ["xclip", "-selection", "clipboard"],
-                            input=value.encode(), capture_output=True, timeout=3
-                        )
-                        return True, f"Copied: {value}", ""
-                    except FileNotFoundError:
-                        return False, "No clipboard tool found (wl-copy/xclip).", ""
+                    iw_out = self._run_cmd(["iw", "dev", phy_iface, "link"])
+                    if iw_out:
+                        for line in iw_out.splitlines():
+                            line_str = line.strip()
+                            if line_str.startswith("SSID:"):
+                                enriched["ssid"] = line_str.split("SSID:", 1)[1].strip()
+                            elif line_str.startswith("freq:"):
+                                enriched["freq"] = line_str.split("freq:", 1)[1].strip()
+                            elif "tx bitrate:" in line_str:
+                                parts = line_str.split("tx bitrate:", 1)[1].strip().split()
+                                if len(parts) >= 2:
+                                    enriched["bitrate"] = f"{parts[0]} {parts[1]}"
+                except Exception:
+                    pass
 
-        return False, "Item not found.", ""
+        # 3. Default Gateway fallback if missing or empty
+        if not enriched.get("gateway"):
+            try:
+                route_out = self._run_cmd(["ip", "route", "show", "default"])
+                match = re.search(r"default via ([\d.]+)", route_out)
+                if match:
+                    enriched["gateway"] = match.group(1)
+            except Exception:
+                pass
+
+        # 4. Router ping fallback if missing
+        gw = enriched.get("gateway")
+        if gw and "router_ping_ms" not in enriched:
+            try:
+                ping_out = self._run_cmd(["ping", "-n", "-c", "1", "-W", "1", gw])
+                m = re.search(r"time[=<]([\d.]+)", ping_out)
+                if m:
+                    enriched["router_ping_ms"] = m.group(1)
+            except Exception:
+                pass
+
+        return enriched
 
     # =========================================================================
     #  BACKGROUND POLLING WORKER
     # =========================================================================
 
     def _background_loop(self) -> None:
-        """Daemon thread: polls radio/active state every 2s, rescans every 25s."""
+        """Daemon thread: polls radio, active state, live throughput, ping stats every 1.5s."""
         last_radio: str | None = None
         last_active_uuid: str | None = None
-        last_scan_time: float = 0.0
+        last_scan_time: float = time.time()
 
         while not self.shutdown_event.is_set():
             try:
+                now = time.time()
                 radio = self._run_cmd(["nmcli", "radio", "wifi"]).strip()
                 active = self._get_active_wifi_connection()
                 active_uuid = active["uuid"] if active else None
 
-                state_changed = (radio != last_radio) or (active_uuid != last_active_uuid)
+                # Poll verbose status using omarchy-network-status --verbose
+                status_script = self._find_script("omarchy-network-status")
+                raw_verbose = self._run_cmd([status_script, "--verbose"], timeout=5)
+                verbose_info = parse_key_value(raw_verbose)
 
-                now = time.time()
+                # Enrich status with physical interface & real gateway detection
+                enriched_info = self._enrich_network_status(verbose_info, active)
+                self._verbose_info = enriched_info
+
+                # Update live throughput state
+                self._tp_state = throughput_state(self._tp_state, enriched_info, now)
+
+                # Update live ping latency state
+                self._ping_state = ping_latency_state(self._ping_state, enriched_info, limit=24, average_limit=5)
+
+                # Poll DNS provider
+                dns_script = self._find_script("omarchy-dns")
+                self._dns_provider = self._run_cmd([dns_script], timeout=3).strip() or "DHCP"
+
                 should_scan = self.rescan_event.is_set() or (now - last_scan_time > 25.0)
 
                 if should_scan and radio == "enabled":
                     self.rescan_event.clear()
                     last_scan_time = now
+                    threading.Thread(target=self._async_rescan_wifi, daemon=True).start()
 
-                    if self.app:
-                        self.app.call_from_thread(self.app.notify_status, "Scanning WiFi networks...")
+                last_radio = radio
+                last_active_uuid = active_uuid
 
-                    # Trigger NM rescan then read results
-                    subprocess.run(
-                        ["nmcli", "device", "wifi", "list", "--rescan", "yes"],
-                        capture_output=True, stdin=subprocess.DEVNULL, timeout=15
-                    )
-                    self._cached_scans = self._get_scanned_wifi()
-
-                    # Persist to disk cache
-                    try:
-                        with open(self._target_path, "w", encoding="utf-8") as f:
-                            json.dump(self._cached_scans, f)
-                    except Exception as e:
-                        logger.error(f"Cache write error: {e}")
-
-                    state_changed = True
-
-                if state_changed:
-                    last_radio = radio
-                    last_active_uuid = active_uuid
-                    if self.app:
-                        self.app.call_from_thread(self._rebuild_schema)
+                # Always refresh UI labels for live traffic / pings every iteration
+                self._safe_call_from_thread(self._rebuild_schema)
 
             except Exception as e:
                 logger.error(f"Background loop error: {e}")
 
-            time.sleep(2.0)
+            time.sleep(1.5)
 
     # =========================================================================
-    #  ASYNC CONNECTION HELPERS (run in dedicated threads)
+    #  SPEED TEST ASYNC WORKER
+    # =========================================================================
+
+    def _async_run_speedtest(self, mode: str) -> None:
+        self._speedtest_running = True
+        env = self._get_exec_env()
+        speedtest_script = self._find_script("omarchy-network-speedtest")
+
+        if mode in ("full", "down"):
+            self._speedtest_status = "Testing Download..."
+            self._speedtest_down_val = "Testing..."
+            if self.app:
+                self.app.call_from_thread(self._rebuild_schema)
+
+            try:
+                proc = subprocess.Popen(
+                    [speedtest_script, "down"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, env=env, bufsize=1
+                )
+                last_val = "0.0"
+                if proc.stdout:
+                    for line in proc.stdout:
+                        val = line.strip()
+                        if val:
+                            last_val = val
+                            self._speedtest_down_val = format_speed_mbps(val)
+                            if self.app:
+                                self.app.call_from_thread(self._rebuild_schema)
+                proc.wait()
+                self._speedtest_down_val = format_speed_mbps(last_val)
+            except Exception as e:
+                self._speedtest_down_val = "Failed"
+                logger.error(f"Download speed test error: {e}")
+
+        if mode in ("full", "up"):
+            self._speedtest_status = "Testing Upload..."
+            self._speedtest_up_val = "Testing..."
+            if self.app:
+                self.app.call_from_thread(self._rebuild_schema)
+
+            try:
+                proc = subprocess.Popen(
+                    [speedtest_script, "up"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, env=env, bufsize=1
+                )
+                last_val = "0.0"
+                if proc.stdout:
+                    for line in proc.stdout:
+                        val = line.strip()
+                        if val:
+                            last_val = val
+                            self._speedtest_up_val = format_speed_mbps(val)
+                            if self.app:
+                                self.app.call_from_thread(self._rebuild_schema)
+                proc.wait()
+                self._speedtest_up_val = format_speed_mbps(last_val)
+            except Exception as e:
+                self._speedtest_up_val = "Failed"
+                logger.error(f"Upload speed test error: {e}")
+
+        self._speedtest_status = "Test Completed"
+        self._speedtest_running = False
+        if self.app:
+            self.app.call_from_thread(self._rebuild_schema)
+            self.app.call_from_thread(self.app.notify_status, "Speed test completed!")
+
+    # =========================================================================
+    #  ASYNC CONNECTION HELPERS
     # =========================================================================
 
     def _async_connect(self, ssid: str, password: str | None) -> None:
@@ -469,8 +1040,7 @@ class NetworkManagerEngine(BaseEngine):
     # =========================================================================
 
     def _rebuild_schema(self) -> None:
-        """Rebuilds tabs 0 & 1 in-place. Updates labels on tabs 2 & 3.
-        Always runs on Textual's event loop (dispatched via call_from_thread)."""
+        """Rebuilds tabs 0 & 1 in-place. Updates live traffic, ping, DNS & speed test labels."""
         if not self.app or not self.app.schema:
             return
 
@@ -478,7 +1048,6 @@ class NetworkManagerEngine(BaseEngine):
         active = self._get_active_wifi_connection()
         saved = self._get_saved_wifi()
 
-        # Preserve expanded menu states using full UIDs (scope.key)
         expanded = set()
         for tab_idx in (0, 1):
             for item in self.app.schema.get(tab_idx, []):
@@ -497,15 +1066,36 @@ class NetworkManagerEngine(BaseEngine):
 
         if not radio:
             t0.append(self._make_item(
-                label="睊 Wi-Fi Radio is OFF — Enable in Status tab",
+                label="󰤮 Wi-Fi Radio is OFF — Enable in Status tab",
                 key="radio_off_notice", scope="network", type_="action", default=":",
                 group="Status"
             ))
         else:
+            # Sort scanned wifi using pure sort_wifi_rows logic
+            wifi_rows_data = []
             for net in self._cached_scans:
-                ssid, signal, security, in_use = net["ssid"], net["signal"], net["security"], net["in_use"]
-                match = [c for c in saved if c["name"] == ssid]
-                is_saved = len(match) > 0
+                match = [c for c in saved if c["name"] == net["ssid"]]
+                row = wifi_row({
+                    "ssid": net["ssid"],
+                    "connected": net.get("in_use", False),
+                    "known": len(match) > 0,
+                    "signal": net.get("signal", 0),
+                    "security": net.get("security", "Open"),
+                })
+                if row:
+                    row["raw_net"] = net
+                    row["match"] = match
+                    wifi_rows_data.append(row)
+
+            sorted_rows = sort_wifi_rows(wifi_rows_data)
+
+            for idx, r in enumerate(sorted_rows):
+                ssid = r["ssid"]
+                signal = r["signal"]
+                security = r["security"]
+                in_use = r["connected"]
+                is_saved = r["known"]
+                match = r["match"]
                 bar = self._signal_bar(signal)
 
                 if in_use:
@@ -515,17 +1105,18 @@ class NetworkManagerEngine(BaseEngine):
                 else:
                     icon, status_lbl = "○", "New"
 
+                sec_title = wifi_section_title(sorted_rows, idx)
+                group_name = sec_title if sec_title else "Available Networks"
+
                 label = f"{icon} {status_lbl:<6} {ssid:<24} {security:<10} {signal}% {bar}"
                 pkey = f"net__{ssid}"
-                # parent_ref must match _get_item_uid: "scope.key"
                 parent_uid = f"network.{pkey}"
 
                 t0.append(self._make_item(
                     label=label, key=pkey, scope="network", type_="menu", default=None,
-                    is_parent=True, expanded=(parent_uid in expanded), group="Available Networks"
+                    is_parent=True, expanded=(parent_uid in expanded), group=group_name
                 ))
 
-                # Child actions — parent_ref must be the parent's UID
                 if in_use:
                     t0.append(self._make_item(
                         label="✕ Disconnect", key=f"dc__{ssid}", scope="network",
@@ -552,7 +1143,7 @@ class NetworkManagerEngine(BaseEngine):
                         type_="bool", default=match[0]["autoconnect"], parent_ref=parent_uid
                     ))
                 else:
-                    if security and security not in ("Open", "--", ""):
+                    if is_protected(security):
                         t0.append(self._make_item(
                             label="▶ Connect (Enter Password)", key=f"pw__{ssid}",
                             scope="network", type_="string", default="", parent_ref=parent_uid
@@ -603,77 +1194,154 @@ class NetworkManagerEngine(BaseEngine):
 
         self.app.schema[1] = t1
 
-        # ----- Tab 2: Hotspot (update labels) -----
-        if active and active.get("mode") == "ap":
-            status_text = "Active"
-            clients = self._get_hotspot_clients(active.get("device"))
-            clients_text = f"{clients} connected"
-        else:
-            status_text = "Inactive"
-            clients_text = "N/A"
+        # ----- Tab 2: Status & Live Traffic (update labels) -----
+        verb = self._verbose_info
+        iface_name = verb.get("iface", "")
+        conn_type = verb.get("type", "disconnected" if not iface_name else "ethernet")
+        ssid_label = verb.get("ssid", active["ssid"] if active else "None")
+        ip_label = verb.get("ip", "N/A")
+        prefix_label = verb.get("prefix", "")
+        if ip_label != "N/A" and prefix_label:
+            ip_label = f"{ip_label}/{prefix_label}"
+        gateway_label = verb.get("gateway", "N/A") or "N/A"
 
-        for item in self.app.schema.get(2, []):
-            if item.key == "hotspot_status_info":
-                item.label = f"Status: {status_text}"
-            elif item.key == "hotspot_clients_info":
-                item.label = f"Connected Clients: {clients_text}"
-            elif item.key == "hotspot_ssid":
-                item.value = self._hotspot_ssid
-            elif item.key == "hotspot_password":
-                item.value = self._hotspot_password
+        # Detail string using header_detail pure logic
+        link_detail_str = header_detail(verb) or verb.get("bitrate", "N/A")
 
-        # ----- Tab 3: Status (update labels) -----
-        ssid_label = "None"
-        ip_label = gateway_label = dns_label = "N/A"
-        wifi_dev = ""
+        # Connection status string using connection_icon pure logic
+        sig_dbm = verb.get("signal_dbm", "")
+        sig_pct = 70 if sig_dbm else 0
+        icon_str = connection_icon(conn_type, sig_pct)
+        conn_status_label = f"{icon_str} {conn_type.upper()} ({ssid_label})"
 
-        if active and active.get("mode") != "ap":
-            ssid_label = active["ssid"]
-            wifi_dev = active["device"]
-            info = self._get_device_ip_info(wifi_dev)
-            ip_label, gateway_label, dns_label = info["ip"], info["gateway"], info["dns"]
-        elif not active:
-            wifi_dev = self._get_wifi_device()
+        # Throughput & Ping values
+        dl_rate_str = format_rate(self._tp_state.get("download_rate", 0))
+        ul_rate_str = format_rate(self._tp_state.get("upload_rate", 0))
+        rx_total_str = format_bytes(self._tp_state.get("total_rx", verb.get("rx_bytes", 0)))
+        tx_total_str = format_bytes(self._tp_state.get("total_tx", verb.get("tx_bytes", 0)))
 
-        for item in self.app.schema.get(3, []):
-            if item.key == "wifi_radio":
-                item.value = radio
-            elif item.key == "status_ssid":
-                item.label = f"Connected WiFi: {ssid_label}"
-            elif item.key == "status_ip":
-                item.label = f"IP Address:     {ip_label}"
-            elif item.key == "status_gateway":
-                item.label = f"Gateway:        {gateway_label}"
-            elif item.key == "status_dns":
-                item.label = f"DNS Server:     {dns_label}"
-            elif item.key == "status_device":
-                item.label = f"WiFi Device:    {wifi_dev or 'N/A'}"
+        router_ping_str = format_ping_latency(self._ping_state.get("router_ping_latency"))
+        internet_ping_str = format_ping_latency(self._ping_state.get("internet_ping_latency"))
+        packet_loss_str = format_packet_loss(self._ping_state.get("internet_ping_packet_loss", 0))
 
-        # Rebuild key map and refresh UI
-        self.app._rebuild_key_map()
+        if len(self.app.schema) > 2:
+            for item in self.app.schema[2]:
+                if item.key == "wifi_radio":
+                    item.value = radio
+                elif item.key == "status_type":
+                    item.label = f"Connection:   {conn_status_label}"
+                elif item.key == "status_ssid":
+                    item.label = f"SSID / Name:  {ssid_label}"
+                elif item.key == "status_ip":
+                    item.label = f"IP Address:   {ip_label}"
+                elif item.key == "status_gateway":
+                    item.label = f"Gateway:      {gateway_label}"
+                elif item.key == "status_detail":
+                    item.label = f"Link Detail:  {link_detail_str}"
+                elif item.key == "status_device":
+                    item.label = f"Interface:    {iface_name or 'N/A'}"
+                elif item.key == "throughput_down":
+                    item.label = f"Download Rate: ↓ {dl_rate_str}"
+                elif item.key == "throughput_up":
+                    item.label = f"Upload Rate:   ↑ {ul_rate_str}"
+                elif item.key == "throughput_rx_total":
+                    item.label = f"Total Received:{rx_total_str}"
+                elif item.key == "throughput_tx_total":
+                    item.label = f"Total Sent:    {tx_total_str}"
+                elif item.key == "ping_router":
+                    item.label = f"Router Gateway Ping: {router_ping_str}"
+                elif item.key == "ping_internet":
+                    item.label = f"Internet Ping (1.1.1.1): {internet_ping_str}"
+                elif item.key == "ping_packet_loss":
+                    item.label = f"Packet Loss:         {packet_loss_str}"
+
+        # ----- Tab 3: DNS (update labels) -----
+        if len(self.app.schema) > 3:
+            for item in self.app.schema[3]:
+                if item.key == "dns_current":
+                    item.label = f"Current DNS Provider: {self._dns_provider}"
+
+        # ----- Tab 4: Speed Test (update labels) -----
+        if len(self.app.schema) > 4:
+            for item in self.app.schema[4]:
+                if item.key == "speedtest_status":
+                    item.label = f"Status: {self._speedtest_status}"
+                elif item.key == "speedtest_down_result":
+                    item.label = f"Download Speed: {self._speedtest_down_val}"
+                elif item.key == "speedtest_up_result":
+                    item.label = f"Upload Speed:   {self._speedtest_up_val}"
+
+        # ----- Tab 5: Hotspot (update labels) -----
+        if len(self.app.schema) > 5:
+            if active and active.get("mode") == "ap":
+                status_text = "Active"
+                clients = self._get_hotspot_clients(active.get("device"))
+                clients_text = f"{clients} connected"
+            else:
+                status_text = "Inactive"
+                clients_text = "N/A"
+
+            for item in self.app.schema[5]:
+                if item.key == "hotspot_status_info":
+                    item.label = f"Status: {status_text}"
+                elif item.key == "hotspot_clients_info":
+                    item.label = f"Connected Clients: {clients_text}"
+                elif item.key == "hotspot_ssid":
+                    item.value = self._hotspot_ssid
+                elif item.key == "hotspot_password":
+                    item.value = self._hotspot_password
+
+        # Clear option text render cache so dynamic labels re-render instantly
+        if hasattr(self.app, "_option_cache"):
+            self.app._option_cache.clear()
+
+        # Rebuild indexes and refresh UI
+        self.app._rebuild_indexes()
         self.app._refresh_all_ui()
 
     # =========================================================================
-    #  ITEM FACTORY
+    #  ITEM FACTORY & HELPER METHODS
     # =========================================================================
 
     @staticmethod
     def _make_item(**kwargs) -> ConfigItem:
-        """Creates a ConfigItem with exists_in_target and _initial_loaded pre-set."""
         item = ConfigItem(**kwargs)
         item.exists_in_target = True
         item.initial_value = item.value
         item._initial_loaded = True
         return item
 
-    # =========================================================================
-    #  NMCLI WRAPPERS
-    # =========================================================================
+    def _find_script(self, name: str) -> str:
+        p = shutil.which(name)
+        if p:
+            return p
+        candidates = [
+            Path("/mnt/zram1/network") / name,
+            Path("/mnt/zram1/omarchy-quattro/shell/plugins/panels/network") / name,
+            Path("/mnt/zram1/omarchy-quattro/bin") / name,
+        ]
+        for c in candidates:
+            if c.exists():
+                return str(c)
+        return name
 
     @staticmethod
-    def _run_cmd(args: list[str], timeout: int = 5) -> str:
+    def _get_exec_env() -> dict[str, str]:
+        env = os.environ.copy()
+        extra_paths = ["/mnt/zram1/omarchy-quattro/bin", "/mnt/zram1/network"]
+        current_path = env.get("PATH", "")
+        for p in extra_paths:
+            if os.path.exists(p) and p not in current_path:
+                current_path = f"{p}:{current_path}"
+        env["PATH"] = current_path
+        return env
+
+    def _run_cmd(self, args: list[str], timeout: int = 5) -> str:
         try:
-            res = subprocess.run(args, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout)
+            res = subprocess.run(
+                args, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                env=self._get_exec_env(), timeout=timeout
+            )
             return res.stdout
         except (subprocess.TimeoutExpired, Exception):
             return ""
@@ -685,8 +1353,7 @@ class NetworkManagerEngine(BaseEngine):
                 return parts[0]
         return ""
 
-    def _get_active_wifi_connection(self) -> dict | None:
-        """Returns active WiFi connection info or None."""
+    def _get_active_wifi_connection(self) -> dict[str, Any] | None:
         for line in self._run_cmd(["nmcli", "-t", "-f", "NAME,UUID,TYPE,DEVICE", "connection", "show", "--active"]).splitlines():
             if not line:
                 continue
@@ -698,7 +1365,7 @@ class NetworkManagerEngine(BaseEngine):
                 return {"ssid": parts[0], "uuid": uuid, "device": parts[3], "mode": mode}
         return None
 
-    def _get_saved_wifi(self) -> list[dict]:
+    def _get_saved_wifi(self) -> list[dict[str, Any]]:
         conns = []
         for line in self._run_cmd(["nmcli", "-t", "-f", "NAME,UUID,TYPE,AUTOCONNECT", "connection", "show"]).splitlines():
             if not line:
@@ -708,8 +1375,7 @@ class NetworkManagerEngine(BaseEngine):
                 conns.append({"name": parts[0], "uuid": parts[1], "autoconnect": parts[3] == "yes"})
         return conns
 
-    def _get_scanned_wifi(self) -> list[dict]:
-        """Reads the last scan results (no --rescan flag)."""
+    def _get_scanned_wifi(self) -> list[dict[str, Any]]:
         scans = []
         seen: set[str] = set()
         for line in self._run_cmd(["nmcli", "-t", "-f", "IN-USE,SSID,SECURITY,SIGNAL", "device", "wifi", "list"]).splitlines():
@@ -733,29 +1399,10 @@ class NetworkManagerEngine(BaseEngine):
             scans.append({"in_use": in_use, "ssid": ssid, "security": security, "signal": signal})
         return scans
 
-    def _get_device_ip_info(self, device: str) -> dict:
-        info = {"ip": "N/A", "gateway": "N/A", "dns": "N/A"}
-        for line in self._run_cmd(["nmcli", "-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS", "device", "show", device]).splitlines():
-            if not line:
-                continue
-            # Split on first colon only — values may contain colons
-            idx = line.find(":")
-            if idx < 0:
-                continue
-            key, val = line[:idx], line[idx + 1:]
-            if "IP4.ADDRESS" in key:
-                info["ip"] = val
-            elif "IP4.GATEWAY" in key:
-                info["gateway"] = val
-            elif "IP4.DNS" in key:
-                info["dns"] = val
-        return info
-
     def _get_hotspot_clients(self, wifi_dev: str | None) -> int:
         if not wifi_dev:
             return 0
         try:
-            # Try using sudo -n if credentials are cached, fallback to raw iw
             res = subprocess.run(
                 ["sudo", "-n", "iw", "dev", wifi_dev, "station", "dump"],
                 capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=5

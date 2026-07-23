@@ -35,6 +35,8 @@ UMask=077
 # If you want maximum reliability and do not care about limiting memory,
 # remove MemoryHigh and MemoryMax entirely.
 MemoryAccounting=yes
+OOMPolicy=kill
+OOMScoreAdjust=400
 MemoryHigh=256M
 MemoryMax=512M
 

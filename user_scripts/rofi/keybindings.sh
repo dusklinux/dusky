@@ -6,7 +6,7 @@ shopt -s inherit_errexit
 # CONFIGURATION
 # ==============================================================================
 
-readonly DELIM=$'\x1f'
+readonly DELIM=':::'
 
 readonly -a MENU_COMMAND=(
     rofi
@@ -101,18 +101,20 @@ parse_keymap() {
             next
         }
 
-        in_codes && /<[A-Z0-9]+>[[:space:]]*=[[:space:]]*[0-9]+/ {
+        in_codes && /<[A-Za-z0-9_]+>[[:space:]]*=[[:space:]]*[0-9]+/ {
             line = $0
             gsub(/[<>;]/, "", line)
             split(line, parts, /[[:space:]]*=[[:space:]]*/)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", parts[1])
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", parts[2])
             if (parts[1] != "" && parts[2] ~ /^[0-9]+$/) {
                 code[parts[1]] = parts[2]
             }
             next
         }
 
-        in_syms && /key[[:space:]]+<[A-Z0-9]+>/ {
-            if (!match($0, /<[A-Z0-9]+>/)) {
+        in_syms && /key[[:space:]]+<[A-Za-z0-9_]+>/ {
+            if (!match($0, /<[A-Za-z0-9_]+>/)) {
                 next
             }
 
@@ -159,25 +161,56 @@ EOF
 
 get_binds() {
     local delim=$1
+    local json_out
 
-    hyprctl -j binds 2>/dev/null | jq -r --arg d "$delim" '
-        def clean:
-            tostring
-            | gsub("\r\n?|\n"; " ");
+    if json_out=$(hyprctl -j binds 2>/dev/null) && jq -e . >/dev/null 2>&1 <<< "$json_out"; then
+        jq -r --arg d "$delim" '
+            def clean:
+                tostring
+                | gsub("\r\n?|\n"; " ");
 
-        .[]
-        | select((.dispatcher // "") != "")
-        | select(((.key // "") != "") or (((.keycode // 0) | tonumber) > 0))
-        | [
-            (.submap // "" | clean),
-            (.key // "" | clean),
-            ((.keycode // 0) | tostring),
-            ((.modmask // 0) | tostring),
-            (.description // "" | clean),
-            (.dispatcher // "" | clean),
-            (.arg // "" | clean)
-          ]
-        | join($d)
+            .[]
+            | select((.dispatcher // "") != "")
+            | select(((.key // "") != "") or (((.keycode // 0) | tonumber) > 0))
+            | [
+                (.submap // "" | clean),
+                (.key // "" | clean),
+                ((.keycode // 0) | tostring),
+                ((.modmask // 0) | tostring),
+                (.description // "" | clean),
+                (.dispatcher // "" | clean),
+                (.arg // "" | clean)
+              ]
+            | join($d)
+        ' <<< "$json_out"
+        return 0
+    fi
+
+    hyprctl binds 2>/dev/null | gawk -v delim="$delim" '
+        function clean(str) {
+            sub(/^[[:space:]]+/, "", str)
+            sub(/[[:space:]]+$/, "", str)
+            gsub(/[\r\n]+/, " ", str)
+            return str
+        }
+        function emit() {
+            if (dispatcher != "" && (key != "" || keycode > 0)) {
+                printf "%s%s%s%s%d%s%d%s%s%s%s%s%s\n", clean(submap), delim, clean(key), delim, keycode, delim, modmask, delim, clean(description), delim, clean(dispatcher), delim, clean(arg)
+            }
+        }
+        /^[^\t]/ {
+            emit()
+            submap = ""; key = ""; keycode = 0; modmask = 0; description = ""; dispatcher = ""; arg = ""
+            next
+        }
+        /^\tmodmask:/ { modmask = int(substr($0, index($0, ":") + 1)) }
+        /^\tsubmap:/ { submap = substr($0, index($0, ":") + 1) }
+        /^\tkey:/ { key = substr($0, index($0, ":") + 1) }
+        /^\tkeycode:/ { keycode = int(substr($0, index($0, ":") + 1)) }
+        /^\tdescription:/ { description = substr($0, index($0, ":") + 1) }
+        /^\tdispatcher:/ { dispatcher = substr($0, index($0, ":") + 1) }
+        /^\targ:/ { arg = substr($0, index($0, ":") + 1) }
+        END { emit() }
     '
 }
 
@@ -275,6 +308,7 @@ main() {
     local selected_line
     local dispatcher
     local argument
+    local rest
     local record
     local -a records=()
     local -a menu_rows=()
@@ -290,7 +324,7 @@ main() {
 
     if ! data=$(
         build_rows "$KEYMAP_CACHE" "$DELIM" |
-        LC_ALL=C sort -t"$DELIM" -k1,1 -k2,2 -k3,3 -u
+        LC_ALL=C sort -u
     ); then
         die "Failed to query Hyprland binds."
     fi
@@ -298,6 +332,11 @@ main() {
     [[ -n $data ]] || exit 0
 
     mapfile -t records <<< "$data"
+
+    local script_path="${HOME}/user_scripts/hypr/input/keybinds_cheatsheet.py"
+    local cheatsheet_cmd="kitty --class DuskyKeybindsCheatsheet --title \"Dusky Keybinds Cheatsheet\" -e python3.14 ${script_path}"
+    local cheatsheet_row="󰌌  <span weight=\"bold\" foreground=\"#a6e3a1\">[CHEATSHEET]</span> <span weight=\"bold\">Dusky Keybinds Cheatsheet</span>${DELIM}exec${DELIM}${cheatsheet_cmd}"
+    records=("$cheatsheet_row" "${records[@]}")
 
     for record in "${records[@]}"; do
         menu_rows+=("${record%%$DELIM*}")
@@ -311,9 +350,18 @@ main() {
     (( selected_index >= 0 && selected_index < ${#records[@]} )) || exit 0
 
     selected_line=${records[selected_index]}
-    IFS=$DELIM read -r _ dispatcher argument <<< "$selected_line"
+    argument=${selected_line##*$DELIM}
+    rest=${selected_line%$DELIM*}
+    if [[ $rest == *"$DELIM"* ]]; then
+        dispatcher=${rest##*$DELIM}
+    else
+        dispatcher=$rest
+        argument=""
+    fi
 
-    if [[ -n $argument ]]; then
+    if [[ $dispatcher == "exec" || $dispatcher == "exec_cmd" ]]; then
+        eval "$argument" >/dev/null 2>&1 &
+    elif [[ -n $argument ]]; then
         hyprctl dispatch "$dispatcher" "$argument" || die "Failed to dispatch: $dispatcher $argument"
     else
         hyprctl dispatch "$dispatcher" || die "Failed to dispatch: $dispatcher"

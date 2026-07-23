@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Keybinds Cheatsheet
+GenericName=Keybinds Cheatsheet
+Comment=World-Class Hyprland keybindings dashboard & cheatsheet glance window
+Exec=kitty --class DuskyKeybindsCheatsheet --title "Dusky Keybinds Cheatsheet" -e python3.14 /home/dusk/user_scripts/hypr/input/keybinds_cheatsheet.py
+Icon=preferences-desktop-keyboard
+Terminal=false
+Categories=System;Settings;Utility;
+Keywords=dusky;keybinds;cheatsheet;hyprland;config;tui;bind;shortcut;dashboard;
+StartupNotify=true

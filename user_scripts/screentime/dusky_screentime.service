@@ -9,6 +9,7 @@ Environment=PYTHONUNBUFFERED=1 PYTHONOPTIMIZE=2 MALLOC_ARENA_MAX=1
 ExecStart=/usr/bin/python3 %h/user_scripts/screentime/screentime_daemon.py
 Slice=app-graphical.slice
 OOMPolicy=kill
+OOMScoreAdjust=400
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=2s

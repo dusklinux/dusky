@@ -46,6 +46,7 @@ TimeoutStopFailureMode=kill
 MemoryAccounting=yes
 # If the cgroup gets targeted by systemd-oomd, kill the entire group cleanly instead of leaving zombie processes.
 OOMPolicy=kill
+OOMScoreAdjust=400
 
 # A Control Center parses CSS, grids, and directory paths, requiring more overhead than a simple panel.
 # We set a soft limit of 250MB. If it crosses this, the Arch kernel aggressively pushes idle pages to ZRAM (ZSTD).

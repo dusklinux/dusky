@@ -16,17 +16,17 @@ import pwd
 import subprocess
 import shlex
 import atexit
-import pathlib
+import tempfile
+import re
+import socket
+import struct
 from datetime import datetime
 from pathlib import Path
 
 
 # =============================================================================
-# REAL-USER ENVIRONMENT RECONSTRUCTION (SUDO/PKEXEC SAFETY)
+# REAL-USER ENVIRONMENT RECONSTRUCTION & FAST PERMISSIONS (SUDO/PKEXEC SAFETY)
 # =============================================================================
-# If a user launches the app natively using `sudo main.py`, Path.home() resolves to /root.
-# We must intercept this before ANY path resolution happens to restore their genuine $HOME
-# so that the schemas, backups, and presets always point to the actual user's files.
 if os.geteuid() == 0:
     _real_uid = None
     _real_gid = None
@@ -57,7 +57,7 @@ if os.geteuid() == 0:
             os.environ["HOME"] = _pw.pw_dir
             os.environ["USER"] = _pw.pw_name
 
-            # Extreme Bulletproofing: Guarantee XDG base directories point to the real user.
+            # Guarantee XDG base directories point to the real user.
             for xdg_var, default_suffix in [
                 ("XDG_CONFIG_HOME", ".config"),
                 ("XDG_CACHE_HOME", ".cache"),
@@ -67,99 +67,51 @@ if os.geteuid() == 0:
                 if xdg_var not in os.environ or os.environ[xdg_var].startswith("/root"):
                     os.environ[xdg_var] = os.path.join(_pw.pw_dir, default_suffix)
 
-            def _safe_chown(path: Path, uid: int, gid: int) -> None:
+            def _fast_chown_tree(dir_path: str) -> None:
+                """Zero-allocation tree traversal using raw os.scandir string paths."""
                 try:
-                    os.chown(path, uid, gid, follow_symlinks=False)
-                except (NotImplementedError, OSError):
+                    stat_res = os.lstat(dir_path)
+                    if stat_res.st_uid == 0:
+                        os.chown(dir_path, _real_uid, _real_gid, follow_symlinks=False)
+
+                    with os.scandir(dir_path) as it:
+                        for entry in it:
+                            try:
+                                if entry.stat(follow_symlinks=False).st_uid == 0:
+                                    os.chown(entry.path, _real_uid, _real_gid, follow_symlinks=False)
+                                if entry.is_dir(follow_symlinks=False):
+                                    _fast_chown_tree(entry.path)
+                            except OSError:
+                                pass
+                except OSError:
                     pass
 
             def _fix_permissions():
                 try:
-                    home = Path(_pw.pw_dir)
+                    home = _pw.pw_dir
 
-                    def _xdg_path(var: str, suffix: str) -> Path:
+                    def _xdg_path(var: str, suffix: str) -> str:
                         val = os.environ.get(var, "").strip()
-                        return Path(val).expanduser() if val else home / suffix
-
-                    xdg_config = _xdg_path("XDG_CONFIG_HOME", ".config")
-                    xdg_cache = _xdg_path("XDG_CACHE_HOME", ".cache")
-                    xdg_state = _xdg_path("XDG_STATE_HOME", ".local/state")
-                    xdg_data = _xdg_path("XDG_DATA_HOME", ".local/share")
+                        return os.path.expanduser(val) if val else os.path.join(home, suffix)
 
                     targets = [
-                        xdg_config / "dusky",
-                        xdg_cache / "dusky_tui",
-                        xdg_state / "dusky" / "logs",
-                        xdg_data / "dusky_backups",
-                        home / "Documents" / "logs" / "tui",
-                        home / "Documents" / "dusky_backups" / "tui_reset",
+                        os.path.join(_xdg_path("XDG_CONFIG_HOME", ".config"), "dusky"),
+                        os.path.join(_xdg_path("XDG_CACHE_HOME", ".cache"), "dusky_tui"),
+                        os.path.join(_xdg_path("XDG_STATE_HOME", ".local/state"), "dusky", "logs"),
+                        os.path.join(_xdg_path("XDG_DATA_HOME", ".local/share"), "dusky_backups"),
+                        os.path.join(home, "Documents", "logs", "tui"),
+                        os.path.join(home, "Documents", "dusky_backups", "tui_reset"),
                     ]
 
-                    for target_p in targets:
-                        if not target_p.exists():
-                            continue
-
-                        for root_dir, dirs, files in os.walk(target_p):
-                            for d in dirs:
-                                p = Path(root_dir) / d
-                                try:
-                                    if p.lstat().st_uid == 0:
-                                        _safe_chown(p, _real_uid, _real_gid)
-                                except OSError:
-                                    pass
-
-                            for f in files:
-                                p = Path(root_dir) / f
-                                try:
-                                    if p.lstat().st_uid == 0:
-                                        _safe_chown(p, _real_uid, _real_gid)
-                                except OSError:
-                                    pass
-
-                        try:
-                            if target_p.lstat().st_uid == 0:
-                                _safe_chown(target_p, _real_uid, _real_gid)
-                        except OSError:
-                            pass
+                    for target in targets:
+                        if os.path.exists(target):
+                            _fast_chown_tree(target)
 
                 except Exception:
                     pass
 
             _fix_permissions()
             atexit.register(_fix_permissions)
-
-            _orig_mkdir = pathlib.Path.mkdir
-
-            def _safe_mkdir(self, *args, **kwargs):
-                _orig_mkdir(self, *args, **kwargs)
-
-                try:
-                    resolved_p = self.resolve()
-                    home_p = Path(_pw.pw_dir).resolve()
-
-                    if resolved_p.is_relative_to(home_p):
-                        _safe_chown(resolved_p, _real_uid, _real_gid)
-
-                        if kwargs.get("parents", False):
-                            curr = resolved_p.parent
-
-                            while curr != curr.parent and curr.is_relative_to(home_p):
-                                try:
-                                    curr_stat = curr.lstat()
-                                    if curr_stat.st_uid == _real_uid:
-                                        break
-
-                                    _safe_chown(curr, _real_uid, _real_gid)
-
-                                except Exception:
-                                    break
-
-                                curr = curr.parent
-
-                except Exception:
-                    pass
-
-            pathlib.Path.mkdir = _safe_mkdir
 
         except KeyError:
             pass
@@ -228,57 +180,185 @@ def setup_logging(module_name: str, enable_logging: bool) -> logging.Logger:
 
 
 def manage_backup(target_file: Path, action: str, logger: logging.Logger) -> bool:
-    """Handles creating and restoring backups across multi-file ecosystems."""
+    """Handles creating and restoring backups across multi-file ecosystems with atomic replace & fsync."""
     backup_dir = Path("~/Documents/dusky_backups/tui_reset/").expanduser()
     backup_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        backup_dir.chmod(0o700)
+    except OSError:
+        pass
+
+    resolved = target_file.expanduser().resolve()
+    path_hash = hashlib.blake2b(str(resolved).encode(), digest_size=10).hexdigest()
+    parent_bits = "_".join(resolved.parent.parts[-2:]) if resolved.parent.parts else "root"
+    parent_bits = re.sub(r"[^\w.-]+", "_", parent_bits)[:64]
+    stem = f"{parent_bits}_{path_hash}_{resolved.name}"
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = backup_dir / f"{stem}.{timestamp}.bak"
+    latest_link = backup_dir / f"{stem}.latest.bak"
 
-    path_hash = hashlib.blake2b(str(target_file.resolve()).encode(), digest_size=3).hexdigest()
-    safe_prefix = (
-        f"{target_file.parent.name}_{path_hash}_"
-        if target_file.parent.name
-        else f"{path_hash}_"
-    )
+    def atomic_copy(src: Path, dest: Path) -> None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(dir=str(dest.parent), prefix=f".{dest.name}.", suffix=".tmp")
+        tmp_path = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as out_f, src.open("rb") as in_f:
+                while chunk := in_f.read(1024 * 1024):
+                    out_f.write(chunk)
+                out_f.flush()
+                os.fsync(out_f.fileno())
+            os.replace(tmp_path, dest)
+            dir_fd = os.open(str(dest.parent), os.O_DIRECTORY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
-    backup_path = backup_dir / f"{safe_prefix}{target_file.name}.{timestamp}.bak"
-    latest_link = backup_dir / f"{safe_prefix}{target_file.name}.latest.bak"
+    match action:
+        case "check_restore":
+            if not latest_link.exists():
+                print(f"[-] Missing backup for: {resolved.name}")
+                return False
+            return True
 
-    if action == "check_restore":
-        if not latest_link.exists():
-            print(f"[-] Missing backup for: {target_file.name} (Cannot perform atomic restore)")
+        case "restore":
+            if not latest_link.exists():
+                return False
+            actual = latest_link.resolve(strict=True)
+            atomic_copy(actual, resolved)
+            print(f"[+] Restored: {resolved} from {actual.name}")
+            logger.info("Restored %s from %s", resolved, actual)
+            return True
+
+        case "create":
+            if not resolved.exists():
+                return False
+            atomic_copy(resolved, backup_path)
+            tmp_link = backup_dir / f".{stem}.latest.bak.tmp-{os.getpid()}"
+            if tmp_link.exists() or tmp_link.is_symlink():
+                tmp_link.unlink()
+            tmp_link.symlink_to(backup_path.resolve())
+            os.replace(tmp_link, latest_link)
+            print(f"[+] Backup created: {backup_path.name}")
+            logger.info("Created backup for %s at %s", resolved, backup_path)
+            return True
+
+        case _:
             return False
 
-        return True
 
-    if action == "create":
-        if not target_file.exists():
-            logger.warning(f"Cannot backup, target does not exist: {target_file}")
-            return False
+# =============================================================================
+# LAZY ENGINE POOL FACTORY
+# =============================================================================
+class LazyEnginePool(dict):
+    """
+    Lazy initialization factory dict. Engines are instantiated ONLY on active lookup.
+    """
+    def __init__(self, factory_func):
+        super().__init__()
+        self._factory = factory_func
+        self._registered_keys: set[tuple[str, str]] = set()
 
-        shutil.copy2(target_file, backup_path)
+    def register(self, e_type: str, config_path: str) -> tuple[str, str]:
+        key = (e_type, config_path)
+        self._registered_keys.add(key)
+        return key
 
-        latest_link.unlink(missing_ok=True)
-        latest_link.symlink_to(backup_path.name)
+    def __getitem__(self, key: tuple[str, str]):
+        if not super().__contains__(key):
+            self[key] = self._factory(key[0], key[1])
+        return super().__getitem__(key)
 
-        logger.info(f"Backup created at: {backup_path}")
-        print(f"[+] Backup created: {backup_path}")
+    def get(self, key: tuple[str, str], default=None):
+        if super().__contains__(key):
+            return super().__getitem__(key)
+        if key in self._registered_keys:
+            try:
+                return self[key]
+            except Exception:
+                return default
+        return default
 
-        return True
+    def __contains__(self, key: object) -> bool:
+        return super().__contains__(key) or key in self._registered_keys
 
-    elif action == "restore":
-        if not latest_link.exists():
-            print(f"[-] No backup found to restore for: {target_file.name}")
-            return False
+    def values(self):
+        for key in list(self._registered_keys):
+            self[key]
+        return super().values()
 
-        shutil.copy2(latest_link, target_file)
+    def items(self):
+        for key in list(self._registered_keys):
+            self[key]
+        return super().items()
 
-        logger.info(f"Restored from backup: {latest_link}")
-        print(f"[+] Successfully restored configuration: {target_file.name}")
+    def keys(self):
+        for key in list(self._registered_keys):
+            self[key]
+        return super().keys()
 
-        return True
+    def __iter__(self):
+        for key in list(self._registered_keys):
+            self[key]
+        return super().__iter__()
 
-    return False
+    def __len__(self):
+        return len(self._registered_keys | set(super().keys()))
+
+
+# =============================================================================
+# DAEMON IPC CLIENT & AUTO-SPAWN HELPER
+# =============================================================================
+def try_connect_daemon(command: str, target: str = "") -> dict[str, Any] | None:
+    uid = os.getuid()
+    sock_path = f"/run/user/{uid}/dusky.sock"
+    if not os.path.exists(sock_path):
+        sock_path = f"/tmp/dusky_{uid}.sock"
+
+    if not os.path.exists(sock_path):
+        return None
+
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        client.settimeout(0.002)  # 2ms ultra-strict connect timeout
+        client.connect(sock_path)
+        client.settimeout(None)
+
+        payload = {"command": command, "target": target}
+        req_bytes = json.dumps(payload).encode("utf-8")
+        client.sendall(struct.pack(">I", len(req_bytes)) + req_bytes)
+
+        raw_len = client.recv(4, socket.MSG_WAITALL)
+        if not raw_len or len(raw_len) < 4:
+            return None
+
+        msg_len = struct.unpack(">I", raw_len)[0]
+        resp_bytes = client.recv(msg_len, socket.MSG_WAITALL)
+        return json.loads(resp_bytes.decode("utf-8"))
+    except (socket.error, socket.timeout, ConnectionRefusedError, struct.error, json.JSONDecodeError):
+        return None
+    finally:
+        client.close()
+
+def auto_spawn_daemon() -> None:
+    try:
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + str(PROJECT_ROOT / "python") + os.pathsep + env.get("PYTHONPATH", "")
+        subprocess.Popen(
+            [sys.executable, "-m", "main.daemon"],
+            cwd=str(PROJECT_ROOT / "python"),
+            env=env,
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL
+        )
+    except Exception as e:
+        logging.error(f"Failed to auto-spawn daemon: {e}")
 
 
 # =============================================================================
@@ -361,7 +441,37 @@ EXAMPLES:
         help="Enable file logging to ~/Documents/logs/tui/"
     )
 
+    daemon_group = parser.add_argument_group("Daemon & Pre-Warming")
+    daemon_group.add_argument(
+        "--auto-daemon",
+        action="store_true",
+        help="Transparently spawn detached background daemon if offline."
+    )
+    daemon_group.add_argument(
+        "--daemon-status",
+        action="store_true",
+        help="Check status of background pre-warming daemon."
+    )
+    daemon_group.add_argument(
+        "--stop-daemon",
+        action="store_true",
+        help="Stop running background pre-warming daemon."
+    )
+
     args = parser.parse_args()
+
+    if args.stop_daemon:
+        res = try_connect_daemon("stop")
+        print("[+] Daemon stop signal sent." if res else "[-] Daemon is not responding (already offline).")
+        sys.exit(0)
+
+    if args.daemon_status:
+        res = try_connect_daemon("status")
+        if res:
+            print(f"[+] Daemon ACTIVE: {json.dumps(res, indent=2)}")
+        else:
+            print("[-] Daemon OFFLINE.")
+        sys.exit(0)
 
     # --- 1. SMART SCHEMA PATH RESOLUTION ---
     target_arg = args.module
@@ -422,6 +532,7 @@ EXAMPLES:
         TAB_NOTICES = getattr(schema_module, "TAB_NOTICES", None)
         DEFERRED_LOAD = getattr(schema_module, "DEFERRED_LOAD", None)
         REQUIRE_ROOT = getattr(schema_module, "REQUIRE_ROOT", False)
+        CUSTOM_VIEWS = getattr(schema_module, "CUSTOM_VIEWS", None)
 
         ENGINE_TYPE = schema_module.ENGINE_TYPE.lower()
 
@@ -438,6 +549,11 @@ EXAMPLES:
         sys.exit(1)
 
     logger.info(f"Loaded schema: {schema_path} | Target: {TARGET_FILE} | Engine: {ENGINE_TYPE}")
+
+    # Always query daemon IPC on TUI launch for hot pre-warmed state
+    daemon_resp = try_connect_daemon("get_schema", target=str(schema_path))
+    if not daemon_resp and (args.auto_daemon or getattr(schema_module, "AUTO_DAEMON", False)):
+        auto_spawn_daemon()
 
     # =========================================================================
     # --- 1.5 DYNAMIC PRIVILEGE ESCALATION BLOCK ---
@@ -492,91 +608,84 @@ EXAMPLES:
             sys.exit(1)
 
     # =========================================================================
-    # --- 2. MULTI-ENGINE ARCHITECTURE & ROUTER BLOCK ---
+    # --- 2. MULTI-ENGINE LAZY POOL & ROUTER BLOCK ---
     # =========================================================================
-    engine_pool = {}
-
-    def get_engine_instance(e_type: str, config_path: str):
-        key = (e_type, config_path)
-
-        if key in engine_pool:
-            return engine_pool[key]
-
+    def _create_engine_instance(e_type: str, config_path: str):
         if e_type == "lua":
             from python.engines.lua import HyprlandLuaEngine
-            engine = HyprlandLuaEngine(config_path=config_path)
+            return HyprlandLuaEngine(config_path=config_path)
 
         elif e_type == "trackpad":
             from python.engines.trackpad import TrackpadLuaEngine
-            engine = TrackpadLuaEngine(config_path=config_path)
+            return TrackpadLuaEngine(config_path=config_path)
 
         elif e_type == "monitor":
             from python.engines.monitor_engine import MonitorLuaEngine
-            engine = MonitorLuaEngine(config_path=config_path)
+            return MonitorLuaEngine(config_path=config_path)
 
         elif e_type == "ini":
             from python.engines.ini import IniConfigEngine
-            engine = IniConfigEngine(config_path=config_path)
+            return IniConfigEngine(config_path=config_path)
 
         elif e_type == "bridged_ini":
             from python.engines.bridged_ini import BridgedIniEngine
-            engine = BridgedIniEngine(config_path=config_path)
+            return BridgedIniEngine(config_path=config_path)
 
         elif e_type == "systemd":
             from python.engines.systemd import SystemdEngine
-            engine = SystemdEngine()
+            return SystemdEngine()
 
         elif e_type == "hyprlang":
             from python.engines.hyprlang import HyprlangEngine
-            engine = HyprlangEngine(config_path=config_path)
+            return HyprlangEngine(config_path=config_path)
 
         elif e_type == "cmdline":
             from python.engines.cmdline import CmdlineEngine
-            engine = CmdlineEngine(config_path=config_path)
+            return CmdlineEngine(config_path=config_path)
 
         elif e_type == "systemd_boot":
             from python.engines.systemd_boot import SystemdBootEngine
-            engine = SystemdBootEngine(config_path=config_path)
+            return SystemdBootEngine(config_path=config_path)
 
         elif e_type == "flatdotconfig":
             from python.engines.flatdotconfig import FlatDotConfigEngine
-            engine = FlatDotConfigEngine(config_path=config_path)
+            return FlatDotConfigEngine(config_path=config_path)
 
         elif e_type == "env":
             from python.engines.environment_variables import ShellEnvEngine
-            engine = ShellEnvEngine(config_path=config_path)
+            return ShellEnvEngine(config_path=config_path)
 
         elif e_type == "shell_fallback":
             from python.engines.shell_fallback import ShellFallbackEngine
-            engine = ShellFallbackEngine(config_path=config_path)
+            return ShellFallbackEngine(config_path=config_path)
 
         elif e_type == "waybar":
             from python.engines.waybar_engine import WaybarEngine
-            engine = WaybarEngine(config_path=config_path)
+            return WaybarEngine(config_path=config_path)
 
         elif e_type == "network":
             from python.engines.network_manager import NetworkManagerEngine
-            engine = NetworkManagerEngine(config_path=config_path)
+            return NetworkManagerEngine(config_path=config_path)
 
         elif e_type == "pkg_throttle":
             from python.engines.pkg_throttle import PkgThrottleEngine
-            engine = PkgThrottleEngine(config_path=config_path)
+            return PkgThrottleEngine(config_path=config_path)
 
         elif e_type == "cpu_core":
             from python.engines.cpu_core import CpuCoreEngine
-            engine = CpuCoreEngine(config_path=config_path)
+            return CpuCoreEngine(config_path=config_path)
 
         elif e_type == "fstab":
             from python.engines.fstab import FstabEngine
-            engine = FstabEngine(config_path=config_path)
+            return FstabEngine(config_path=config_path)
 
         elif e_type == "json":
             from python.engines.json_engine import JsonEngine
-            engine = JsonEngine(config_path=config_path)
+            return JsonEngine(config_path=config_path)
 
         elif e_type == "locale_gen":
             from python.engines.locale_gen import LocaleGenEngine
-            engine = LocaleGenEngine(config_path=config_path)
+            return LocaleGenEngine(config_path=config_path)
 
         else:
             print(f"[-] Fatal: Unknown ENGINE_TYPE '{e_type}' specified in schema '{schema_path.name}'.")
@@ -587,11 +696,9 @@ EXAMPLES:
             )
             sys.exit(1)
 
-        engine_pool[key] = engine
-        return engine
+    engine_pool = LazyEnginePool(_create_engine_instance)
 
-    default_engine_key = (ENGINE_TYPE, str(TARGET_FILE))
-    get_engine_instance(*default_engine_key)
+    default_engine_key = engine_pool.register(ENGINE_TYPE, str(TARGET_FILE))
 
     for tab_idx, items in SCHEMA.items():
         for item in items:
@@ -602,8 +709,7 @@ EXAMPLES:
                     if item.target_file_override
                     else str(TARGET_FILE)
                 )
-
-                get_engine_instance(override_etype, override_tfile)
+                engine_pool.register(override_etype, override_tfile)
 
     # --- 3. PRE-FLIGHT CHECKS (Backups / Restores) ---
     is_headless = any([args.default, args.reset_key, args.set, args.export_state, args.export_docs])
@@ -644,13 +750,14 @@ EXAMPLES:
         if DEFERRED_LOAD:
             DEFERRED_LOAD()
 
-        for eng in engine_pool.values():
-            eng.load_state()
+        for ekey in list(engine_pool):
+            engine_pool[ekey].load_state()
 
         if args.export_state:
             merged_state = {}
 
-            for ekey, eng in engine_pool.items():
+            for ekey in list(engine_pool):
+                eng = engine_pool[ekey]
                 st = eng.cache if hasattr(eng, "cache") else eng.load_state()
 
                 if ekey == default_engine_key:
@@ -838,10 +945,11 @@ EXAMPLES:
         user_presets_tab=USER_PRESETS_TAB,
         global_popup=GLOBAL_POPUP,
         tab_notices=TAB_NOTICES,
-        deferred_load=DEFERRED_LOAD
+        deferred_load=DEFERRED_LOAD,
+        custom_views=CUSTOM_VIEWS
     )
 
-    for engine in engine_pool.values():
+    for engine in list(engine_pool.values()):
         if hasattr(engine, "set_app"):
             engine.set_app(app)
 
