@@ -46,41 +46,6 @@ from textual import work, on
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROFILES_DIR = SCRIPT_DIR / "profiles"
 
-FALLBACK_ISO_SEQUENCE = [
-    ("001_uefi_check.sh", [], False, False),
-    ("002_storage_mode_check.py", ["--auto"], False, False),
-    ("010_set_variables.sh", ["--no_encrypt"], False, True),
-    ("020_environment_prep.sh", ["--auto", "--cachy"], False, False),
-    ("030_partitioning.py", ["--no-encrypt"], False, True),
-    ("040_disk_mount.py", ["--auto"], False, False),
-    ("045_repo_bind_mount.sh", [], False, False),
-    ("051_pacman_repo_switch.sh", ["--offline", "--cachyos"], False, False),
-    ("060_console_fix.sh", [], False, False),
-    ("070_pacstrap_and_disable_mkinitcpio.py", ["--auto", "--cachyos"], False, False),
-    ("080_script_directories_population_in_chroot.sh", [], False, False),
-    ("090_fstab.sh", ["--auto"], False, False),
-]
-
-FALLBACK_CHROOT_SEQUENCE = [
-    ("051_pacman_repo_switch.sh", ["--offline", "--cachyos"], False, False),
-    ("100_etc_skel.sh", ["--auto"], False, False),
-    ("101_skel_files_precision_edit.sh", ["--inject"], False, False),
-    ("103_configure_hyprland_gpu.py", ["--auto"], False, False),
-    ("110_post_chroot.sh", ["--auto"], False, False),
-    ("115_tty_autologin.sh", ["--auto"], False, False),
-    ("120_mkinitcpio_optimizer.sh", [], True, False),
-    ("135_plymouth_setup.py", [], False, False),
-    ("130_chroot_package_installer.sh", ["--auto", "--cachyos"], False, False),
-    ("131_chroot_aur_packages.sh", ["--auto", "--cachyos"], False, False),
-    ("151_systemd_bootloader.py", [], False, False),
-    ("156_snapper_isolation_subvolume.sh", ["--auto"], False, False),
-    ("158_mkinitcpio_restore_and_generate.sh", [], False, False),
-    ("160_zram_config.sh", [], False, False),
-    ("165_deploy_dusky_run.py", [], False, False),
-    ("170_services.sh", [], False, False),
-    ("051_pacman_repo_switch.sh", ["--online", "--cachyos"], False, False),
-]
-
 # High-Performance Regexes
 ANSI_STRIP_REGEX = re.compile(
     r'\x1B(?:[@-Z\\-_]|\[(?>(?:[0-?]*+)[ -/]*+[@-~])|\](?>\d*;.*?)(?:\x07|\x1B\\)|\]8;;.*?(?:\x07|\x1B\\)|\x1B\(B)'
@@ -838,61 +803,37 @@ if __name__ == "__main__":
         if not selected_profile and profiles:
             selected_profile = profiles[0]
 
-    if selected_profile:
-        profile_name = selected_profile.name
-        raw_sequence = selected_profile.phase1_tasks if phase1 else selected_profile.phase2_tasks
-        
-        tasks: List[OrchestratorTask] = []
-        for i, t in enumerate(raw_sequence):
-            resolved_path = SCRIPT_DIR / t.script_name
-            if not resolved_path.exists():
-                resolved_path = None
-                
-            interpreter = t.interpreter
-            is_interactive = t.interactive
-            if resolved_path:
-                interpreter, file_interactive = resolve_interpreter(resolved_path)
-                if file_interactive:
-                    is_interactive = True
-                
-            state_key = hashlib.md5(f"{i}:{t.script_name}:{'-'.join(t.args)}".encode()).hexdigest()
+    if not selected_profile:
+        sys.stderr.write(f"Error: No valid installer profile found in '{PROFILES_DIR}'. Installation aborted.\n")
+        sys.exit(1)
 
-            tasks.append(OrchestratorTask(
-                script_name=t.script_name,
-                args=t.args,
-                ignore_fail=t.ignore_fail,
-                interactive=is_interactive,
-                interpreter=interpreter,
-                state_key=state_key,
-                resolved_path=resolved_path
-            ))
-    else:
-        profile_name = "Hardcoded Default"
-        sequence = FALLBACK_ISO_SEQUENCE if phase1 else FALLBACK_CHROOT_SEQUENCE
-        tasks: List[OrchestratorTask] = []
-        for i, (name, s_args, ignore, interactive) in enumerate(sequence):
-            resolved_path = SCRIPT_DIR / name
-            if not resolved_path.exists():
-                resolved_path = None
-                
-            interpreter = "bash"
-            is_interactive = interactive
-            if resolved_path:
-                interpreter, file_interactive = resolve_interpreter(resolved_path)
-                if file_interactive:
-                    is_interactive = True
-                
-            state_key = hashlib.md5(f"{i}:{name}:{'-'.join(s_args)}".encode()).hexdigest()
+    profile_name = selected_profile.name
+    raw_sequence = selected_profile.phase1_tasks if phase1 else selected_profile.phase2_tasks
+    
+    tasks: List[OrchestratorTask] = []
+    for i, t in enumerate(raw_sequence):
+        resolved_path = SCRIPT_DIR / t.script_name
+        if not resolved_path.exists():
+            resolved_path = None
+            
+        interpreter = t.interpreter
+        is_interactive = t.interactive
+        if resolved_path:
+            interpreter, file_interactive = resolve_interpreter(resolved_path)
+            if file_interactive:
+                is_interactive = True
+            
+        state_key = hashlib.md5(f"{i}:{t.script_name}:{'-'.join(t.args)}".encode()).hexdigest()
 
-            tasks.append(OrchestratorTask(
-                script_name=name,
-                args=s_args,
-                ignore_fail=ignore,
-                interactive=is_interactive,
-                interpreter=interpreter,
-                state_key=state_key,
-                resolved_path=resolved_path
-            ))
+        tasks.append(OrchestratorTask(
+            script_name=t.script_name,
+            args=t.args,
+            ignore_fail=t.ignore_fail,
+            interactive=is_interactive,
+            interpreter=interpreter,
+            state_key=state_key,
+            resolved_path=resolved_path
+        ))
             
     if phase2:
         phase_title = "PHASE 2: CHROOT"
