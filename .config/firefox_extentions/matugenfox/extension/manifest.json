@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
     "name": "MatugenFox",
-    "version": "1.2.1",
-    "description": "Dynamic webpage theming using Matugen colors",
+    "version": "2.0.2",
+    "description": "Dynamic webpage and browser theming using Matugen colors",
     "homepage_url": "https://github.com/Ubaidullah-Web-Dev/MatugenFox",
     "browser_specific_settings": {
         "gecko": {
@@ -17,15 +17,14 @@
     "permissions": [
         "nativeMessaging",
         "storage",
-        "tabs",
-        "scripting",
-        "menus"
+        "theme"
     ],
     "host_permissions": [
         "<all_urls>"
     ],
     "background": {
         "scripts": [
+            "defaults.js",
             "background.js"
         ]
     },
@@ -35,7 +34,6 @@
         "128": "icons/icon-128.png"
     },
     "action": {
-        "default_popup": "popup.html",
         "default_title": "MatugenFox",
         "default_icon": "icons/icon-48.png",
         "browser_style": false
@@ -44,20 +42,6 @@
         "page": "options.html",
         "open_in_tab": true,
         "browser_style": false
-    },
-    "commands": {
-        "toggle-theming": {
-            "suggested_key": {
-                "default": "Ctrl+Shift+M"
-            },
-            "description": "Toggle MatugenFox theming on/off"
-        },
-        "toggle-pause": {
-            "description": "Pause/resume MatugenFox for 10 minutes"
-        },
-        "reapply-theme": {
-            "description": "Reapply theme to active tab"
-        }
     },
     "content_scripts": [
         {
@@ -68,6 +52,15 @@
                 "content.js"
             ],
             "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "*://*.duckduckgo.com/*"
+            ],
+            "js": [
+                "duckduckgo.js"
+            ],
+            "run_at": "document_end"
         }
     ]
 }

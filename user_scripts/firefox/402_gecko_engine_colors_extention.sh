@@ -454,54 +454,6 @@ bootstrap_profiles() {
     log_info "Bootstrapped $total_profiles profile(s)."
 }
 
-# =============================================================================
-# ▼ PHASE 6: CONFIG ▼
-# =============================================================================
-
-init_config() {
-    local force_run=$1
-    
-    mkdir -p "$CONFIG_DIR" || true
-
-    # [UPDATED]: Critical State Migration Block. Ensures configurations aren't lost 
-    # during the shift from inline paths to the XDG standard.
-    if [[ -f "$LEGACY_CONFIG_FILE" ]] && [[ ! -f "$CONFIG_FILE" ]]; then
-        log_info "Forensic check: Legacy configuration found. Migrating to XDG directory..."
-        if cp "$LEGACY_CONFIG_FILE" "$CONFIG_FILE" 2>/dev/null; then
-            log_success "Configuration migrated seamlessly."
-            rm -f "$LEGACY_CONFIG_FILE" 2>/dev/null || true
-        else
-            log_warn "Failed to migrate legacy configuration automatically."
-        fi
-    fi
-
-    if [[ -f "$CONFIG_FILE" ]] && [[ -s "$CONFIG_FILE" ]] && python3 -c "import json; json.load(open('$CONFIG_FILE'))" 2>/dev/null; then
-        if (( ! force_run )); then
-            log_info "config.json already exists. Skipping."
-            return 0
-        else
-            log_info "config.json already exists, but --force passed. Overwriting."
-        fi
-    fi
-    log_info "Initializing default config.json..."
-    
-    cat > "$CONFIG_FILE" <<'CONFIG'
-{
-  "smoothTransitions": false,
-  "ecoMode": true,
-  "showSyncIndicator": true,
-  "transitionMs": 300,
-  "autoDisableDarkSites": false,
-  "nakedMode": false,
-  "paletteShortcut": "ctrl+alt+c",
-  "colorsPath": "~/.config/matugen/generated/firefox_websites.css",
-  "websitesDir": "~/.config/dusky_sites",
-  "presets": [],
-  "blocklist": []
-}
-CONFIG
-    log_success "Default config.json created."
-}
 
 # =============================================================================
 # ▼ PHASE 7: MATUGEN TOML INTEGRATION ▼
@@ -843,7 +795,6 @@ ${C_BOLD}Options:${C_RESET}
   --skip-dependencies  Skip automatic package manager dependency installation.
   --skip-extension     Skip deploying the enterprise policy for auto-install.
   --skip-bootstrap     Skip profile bootstrapping (chrome/ dir, user.js injection).
-  --skip-config        Skip config.json initialization.
 EOF
 }
 
@@ -856,7 +807,6 @@ main() {
     local skip_deps=0
     local skip_ext=0
     local skip_bootstrap=0
-    local skip_config=0
     local force_run=0
     local uninstall=0
 
@@ -869,7 +819,6 @@ main() {
             --skip-dependencies) skip_deps=1 ;;
             --skip-extension)    skip_ext=1 ;;
             --skip-bootstrap)    skip_bootstrap=1 ;;
-            --skip-config)       skip_config=1 ;;
             *) log_warn "Unknown option: $1"; show_help; exit 0 ;;
         esac
         shift
@@ -905,7 +854,6 @@ main() {
     install_native_host
     if (( ! skip_ext )); then deploy_extension_policy; fi
     if (( ! skip_bootstrap )); then bootstrap_profiles; fi
-    if (( ! skip_config )); then init_config "$force_run"; fi
     
     update_matugen_toml
     run_theme_refresh
