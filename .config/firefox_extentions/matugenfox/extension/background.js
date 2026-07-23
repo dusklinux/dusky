@@ -256,9 +256,24 @@ function broadcastToTabs(force = false) {
     }).catch(e => console.warn('MatugenFox:', e));
 }
 
+function isSiteDisabled(url, disabledSites) {
+    if (!url || !disabledSites || !disabledSites.length) return false;
+    try {
+        const hostname = new URL(url).hostname.toLowerCase();
+        return disabledSites.some(d => {
+            const domain = d.toLowerCase();
+            return hostname === domain || hostname.endsWith('.' + domain);
+        });
+    } catch { return false; }
+}
+
 function sendToTab(tabId, data, url, force = false) {
     if (!url) return;
     if (!state.config.webThemeEnabled) return;
+    if (isSiteDisabled(url, data.disabledSites)) {
+        browser.tabs.sendMessage(tabId, { type: 'MATUGEN_ROLLBACK' }).catch(() => {});
+        return;
+    }
     const siteCss = filterWebsiteCss(url, data.websites);
 
     if (broadcastQueue.has(tabId)) clearTimeout(broadcastQueue.get(tabId));
@@ -368,6 +383,7 @@ browser.runtime.onMessage.addListener((req, sender) => {
             if (!state.config.webThemeEnabled) return Promise.resolve(null);
             const url = sender.tab?.url || sender.url;
             const data = resolveThemeData();
+            if (data && isSiteDisabled(url, data.disabledSites)) return Promise.resolve(null);
             if (!data) {
                 return browser.storage.local.get('themeData').then(res => {
                     if (!res.themeData || !res.themeData.colors) return null;

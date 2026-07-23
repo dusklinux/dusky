@@ -92,11 +92,12 @@ class InotifyWatcher:
             self.fd = -1
 
 # --- Global State ---
-def load_external_config() -> tuple[str, str, bool | None]:
+def load_external_config() -> tuple[str, str, bool | None, list[str]]:
     config_file = Path.home() / ".config/dusky/settings/matugenfox/config.json"
     colors_file = str(Path.home() / ".config/matugen/generated/firefox_websites.css")
     websites_dir = str(Path.home() / ".config/dusky_sites")
     web_theme_enabled = None
+    disabled_sites = []
 
     if config_file.is_file():
         try:
@@ -108,11 +109,13 @@ def load_external_config() -> tuple[str, str, bool | None]:
                     websites_dir = str(Path(data['websitesDir']).expanduser())
                 if 'webThemeEnabled' in data:
                     web_theme_enabled = bool(data['webThemeEnabled'])
+                if isinstance(data.get('disabledSites'), list):
+                    disabled_sites = [str(s).strip().lower() for s in data['disabledSites'] if s]
         except Exception:
             pass
-    return colors_file, websites_dir, web_theme_enabled
+    return colors_file, websites_dir, web_theme_enabled, disabled_sites
 
-_default_colors, _default_websites, _default_web_enabled = load_external_config()
+_default_colors, _default_websites, _default_web_enabled, _default_disabled_sites = load_external_config()
 config = {
     "colors_file": _default_colors,
     "websites_dir": _default_websites
@@ -180,10 +183,11 @@ def parse_colors(colors_file: str) -> dict[str, str]:
     except Exception:
         return {}
 
-def parse_websites(websites_dir: str) -> dict[str, str]:
+def parse_websites(websites_dir: str, disabled_sites: list[str] = None) -> dict[str, str]:
     p = Path(websites_dir).expanduser() if websites_dir else None
     if not p or not p.is_dir():
         return {}
+    disabled_set = set(disabled_sites) if disabled_sites else set()
     websites = {}
     try:
         for filepath in p.glob("*.css"):
@@ -191,7 +195,9 @@ def parse_websites(websites_dir: str) -> dict[str, str]:
                 content = filepath.read_text(encoding='utf-8')
                 match = re.search(r'@-moz-document\s+domain\("([^"]+)"\)\s*\{', content)
                 if match:
-                    domain = match.group(1)
+                    domain = match.group(1).lower()
+                    if domain in disabled_set:
+                        continue
                     start_idx = match.end() - 1
                     brace_count = 0
                     in_string = False
@@ -230,7 +236,9 @@ def parse_websites(websites_dir: str) -> dict[str, str]:
                     else:
                         websites[domain] = content[start_idx+1:].strip()
                 else:
-                    domain = filepath.stem
+                    domain = filepath.stem.lower()
+                    if domain in disabled_set:
+                        continue
                     websites[domain] = content.strip()
             except Exception:
                 continue
@@ -238,7 +246,7 @@ def parse_websites(websites_dir: str) -> dict[str, str]:
         pass
     return websites
 
-def get_theme_data(colors_file: str, websites_dir: str, web_theme_enabled: bool | None = None) -> dict:
+def get_theme_data(colors_file: str, websites_dir: str, web_theme_enabled: bool | None = None, disabled_sites: list[str] = None) -> dict:
     status = []
     p_colors = Path(colors_file).expanduser() if colors_file else None
     p_sites = Path(websites_dir).expanduser() if websites_dir else None
@@ -250,7 +258,8 @@ def get_theme_data(colors_file: str, websites_dir: str, web_theme_enabled: bool 
 
     data = {
         "colors": parse_colors(colors_file),
-        "websites": parse_websites(websites_dir),
+        "websites": parse_websites(websites_dir, disabled_sites),
+        "disabledSites": disabled_sites if disabled_sites else [],
         "status": status if status else ["OK"]
     }
     if web_theme_enabled is not None:
@@ -308,10 +317,15 @@ def main():
     last_hash = ""
     last_colors_mtime = -1.0
     last_websites_state = None
+    last_config_mtime = -1.0
+
+    config_file_path = Path.home() / ".config/dusky/settings/matugenfox/config.json"
+    if config_file_path.parent.exists():
+        watcher.add_watch(str(config_file_path.parent))
 
     while running:
         try:
-            ext_colors, ext_websites, ext_web_enabled = load_external_config()
+            ext_colors, ext_websites, ext_web_enabled, ext_disabled_sites = load_external_config()
             with config_lock:
                 colors_file = config["colors_file"] or ext_colors
                 websites_dir = config["websites_dir"] or ext_websites
@@ -322,6 +336,18 @@ def main():
                 watcher.add_watch(websites_dir)
 
             should_update = False
+
+            # Check config file mtime
+            current_config_mtime = -1.0
+            if config_file_path.is_file():
+                try:
+                    current_config_mtime = config_file_path.stat().st_mtime
+                except OSError:
+                    pass
+
+            if current_config_mtime != last_config_mtime:
+                last_config_mtime = current_config_mtime
+                should_update = True
 
             # Check colors file mtime
             current_colors_mtime = -1.0
@@ -343,7 +369,7 @@ def main():
                 should_update = True
 
             if should_update or not last_hash or force_update:
-                data = get_theme_data(colors_file, websites_dir, ext_web_enabled)
+                data = get_theme_data(colors_file, websites_dir, ext_web_enabled, ext_disabled_sites)
                 current_hash = get_data_hash(data)
 
                 if current_hash != last_hash or force_update:
