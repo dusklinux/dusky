@@ -224,10 +224,17 @@ function resetBrowserTheme() {
 function filterWebsiteCss(url, websites) {
     if (!url || !websites) return '';
     try {
-        const hostname = new URL(url).hostname;
+        const hostname = new URL(url).hostname.toLowerCase();
         let css = '';
-        for (const [domain, siteCss] of Object.entries(websites)) {
-            if (hostname === domain || hostname.endsWith('.' + domain)) {
+        for (const [key, siteCss] of Object.entries(websites)) {
+            const domain = key.toLowerCase();
+            if (
+                hostname === domain ||
+                hostname.endsWith('.' + domain) ||
+                domain.includes(hostname) ||
+                hostname.includes(domain) ||
+                (domain.includes('.') && hostname.split('.')[0] === domain.split('.')[0])
+            ) {
                 css += `/* ${domain} */\n${siteCss}\n`;
             }
         }
@@ -262,7 +269,7 @@ function isSiteDisabled(url, disabledSites) {
         const hostname = new URL(url).hostname.toLowerCase();
         return disabledSites.some(d => {
             const domain = d.toLowerCase();
-            return hostname === domain || hostname.endsWith('.' + domain);
+            return hostname === domain || hostname.endsWith('.' + domain) || hostname.includes(domain);
         });
     } catch { return false; }
 }
@@ -387,6 +394,7 @@ browser.runtime.onMessage.addListener((req, sender) => {
             if (!data) {
                 return browser.storage.local.get('themeData').then(res => {
                     if (!res.themeData || !res.themeData.colors) return null;
+                    if (isSiteDisabled(url, res.themeData.disabledSites)) return null;
                     const siteCss = filterWebsiteCss(url, res.themeData.websites);
                     return {
                         colors: res.themeData.colors,
@@ -442,8 +450,8 @@ browser.tabs.onActivated.addListener((activeInfo) => {
 });
 
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.status === 'complete' && tab.active && state.config.ecoMode && state.lastThemeData) {
-        sendToTab(tabId, resolveThemeData(), tab.url);
+    if ((changeInfo.status === 'complete' || changeInfo.url) && tab.url && state.lastThemeData) {
+        sendToTab(tabId, resolveThemeData(), tab.url, true);
     }
 });
 

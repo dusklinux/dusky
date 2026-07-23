@@ -683,6 +683,10 @@ EXAMPLES:
             from python.engines.json_engine import JsonEngine
             return JsonEngine(config_path=config_path)
 
+        elif e_type == "dusky_sites":
+            from python.engines.dusky_sites import DuskySitesEngine
+            return DuskySitesEngine(config_path=config_path)
+
         elif e_type == "locale_gen":
             from python.engines.locale_gen import LocaleGenEngine
             return LocaleGenEngine(config_path=config_path)
@@ -692,7 +696,7 @@ EXAMPLES:
             print(
                 "[i] Supported engines are: 'lua', 'ini', 'bridged_ini', 'systemd', 'hyprlang', "
                 "'trackpad', 'monitor', 'cmdline', 'systemd_boot', 'flatdotconfig', 'env', "
-                "'waybar', 'network', 'pkg_throttle', 'cpu_core', 'fstab', 'shell_fallback', 'json', 'locale_gen'"
+                "'waybar', 'network', 'pkg_throttle', 'cpu_core', 'fstab', 'shell_fallback', 'json', 'dusky_sites', 'locale_gen'"
             )
             sys.exit(1)
 

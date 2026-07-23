@@ -195,8 +195,8 @@ def parse_websites(websites_dir: str, disabled_sites: list[str] = None) -> dict[
                 content = filepath.read_text(encoding='utf-8')
                 match = re.search(r'@-moz-document\s+domain\("([^"]+)"\)\s*\{', content)
                 if match:
-                    domain = match.group(1).lower()
-                    if domain in disabled_set:
+                    stem = filepath.stem.lower()
+                    if stem in disabled_set or domain in disabled_set:
                         continue
                     start_idx = match.end() - 1
                     brace_count = 0
@@ -231,10 +231,9 @@ def parse_websites(websites_dir: str, disabled_sites: list[str] = None) -> dict[
                                     end_idx = i
                                     break
                         i += 1
-                    if end_idx != -1:
-                        websites[domain] = content[start_idx+1:end_idx].strip()
-                    else:
-                        websites[domain] = content[start_idx+1:].strip()
+                    css_body = content[start_idx+1:end_idx].strip() if end_idx != -1 else content[start_idx+1:].strip()
+                    websites[domain] = css_body
+                    websites[stem] = css_body
                 else:
                     domain = filepath.stem.lower()
                     if domain in disabled_set:
@@ -332,6 +331,9 @@ def main():
 
             if colors_file:
                 watcher.add_watch(colors_file)
+                p_c = Path(colors_file).expanduser()
+                if p_c.parent.exists():
+                    watcher.add_watch(str(p_c.parent))
             if websites_dir:
                 watcher.add_watch(websites_dir)
 

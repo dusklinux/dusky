@@ -51,7 +51,12 @@ function applyTheme(data, force = false) {
 
 function removeTheme() {
     stopObserver();
-    if (styleEl) { styleEl.remove(); styleEl = null; }
+    const elements = document.querySelectorAll('#mf-theme');
+    elements.forEach(el => el.remove());
+    if (styleEl) {
+        styleEl.remove();
+        styleEl = null;
+    }
     lastHash = null;
 }
 
