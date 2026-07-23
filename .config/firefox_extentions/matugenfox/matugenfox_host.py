@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""
+🦊 MatugenFox Native Messaging Host (Modern Arch Linux / Python 3.12+)
+======================================================================
+Event-driven, zero-wakeup Native Messaging Host for Firefox.
+Watches Matugen generated color palettes using Linux C-library inotify.
+"""
+
 import sys
 import json
 import struct
@@ -8,21 +15,96 @@ import re
 import hashlib
 import threading
 import traceback
-import configparser
+import ctypes
+import select
+from pathlib import Path
+
+# --- Inotify Event-Driven File Watcher ---
+class InotifyWatcher:
+    """Zero-wakeup event-driven Linux inotify file watcher using standard C libraries (libc)."""
+    def __init__(self):
+        self.fd = -1
+        self.watches = {}
+        try:
+            self.libc = ctypes.CDLL(None)
+            self.libc.inotify_init1.argtypes = [ctypes.c_int]
+            self.libc.inotify_init1.restype = ctypes.c_int
+            self.libc.inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+            self.libc.inotify_add_watch.restype = ctypes.c_int
+            self.libc.close.argtypes = [ctypes.c_int]
+            self.libc.close.restype = ctypes.c_int
+            # IN_CLOEXEC (0x80000) | IN_NONBLOCK (0x800)
+            self.fd = self.libc.inotify_init1(0x80000 | 0x800)
+        except Exception:
+            self.fd = -1
+
+    def is_available(self) -> bool:
+        return self.fd >= 0
+
+    def add_watch(self, path_str: str):
+        if not self.is_available() or not path_str:
+            return
+        path = Path(path_str).expanduser()
+        watch_dir = path if path.is_dir() else path.parent
+        watch_str = str(watch_dir)
+
+        if watch_str in self.watches:
+            return
+
+        if not watch_dir.exists():
+            try:
+                watch_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                return
+
+        # IN_MODIFY (0x2) | IN_CLOSE_WRITE (0x8) | IN_MOVED_TO (0x80) | IN_CREATE (0x100) | IN_DELETE (0x200)
+        mask = 0x02 | 0x08 | 0x80 | 0x100 | 0x200
+        try:
+            wd = self.libc.inotify_add_watch(self.fd, watch_str.encode('utf-8'), mask)
+            if wd >= 0:
+                self.watches[watch_str] = wd
+        except Exception:
+            pass
+
+    def wait_for_events(self, timeout: float = 60.0):
+        """Block until a file event occurs or timeout expires."""
+        if not self.is_available() or not self.watches:
+            poll_event.wait(2.0)
+            poll_event.clear()
+            return
+        try:
+            r, _, _ = select.select([self.fd], [], [], timeout)
+            if r:
+                try:
+                    os.read(self.fd, 4096)
+                except Exception:
+                    pass
+        except Exception:
+            poll_event.wait(2.0)
+            poll_event.clear()
+
+    def close(self):
+        if self.fd >= 0:
+            try:
+                self.libc.close(self.fd)
+            except Exception:
+                pass
+            self.fd = -1
 
 # --- Global State ---
-def load_external_config():
-    config_file = os.path.expanduser('~/.config/matugenfox/config.json')
-    colors_file = os.path.expanduser('~/.config/matugen/generated/firefox_websites.css')
-    websites_dir = os.path.expanduser('~/.config/dusky_sites')
-    if os.path.isfile(config_file):
+def load_external_config() -> tuple[str, str]:
+    config_file = Path.home() / ".config/dusky/settings/matugenfox/config.json"
+    colors_file = str(Path.home() / ".config/matugen/generated/firefox_websites.css")
+    websites_dir = str(Path.home() / ".config/dusky_sites")
+
+    if config_file.is_file():
         try:
             with open(config_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 if data.get('colorsPath'):
-                    colors_file = os.path.expanduser(data['colorsPath'])
+                    colors_file = str(Path(data['colorsPath']).expanduser())
                 if data.get('websitesDir'):
-                    websites_dir = os.path.expanduser(data['websitesDir'])
+                    websites_dir = str(Path(data['websitesDir']).expanduser())
         except Exception:
             pass
     return colors_file, websites_dir
@@ -38,160 +120,41 @@ running = True
 force_update = False
 poll_event = threading.Event()
 
-# --- Atomic Write ---
-def atomic_write(filepath, content):
-    """Atomically write string content to prevent TOC/TOU race conditions."""
-    temp_path = f"{filepath}.tmp.{os.getpid()}"
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    try:
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        os.replace(temp_path, filepath)
-    except Exception:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        raise
-
-# --- Firefox Profile Detection ---
-def find_firefox_profiles():
-    """
-    Auto-detect Firefox profile directories across all supported browsers.
-    Returns a list of dicts: { browser, profile_name, profile_path, chrome_path }
-    """
-    profiles = []
-    home = os.path.expanduser('~')
-
-    # Browser profile directories to search
-    browser_configs = [
-        ("Firefox",   os.path.join(home, '.mozilla', 'firefox')),
-        ("LibreWolf", os.path.join(home, '.librewolf')),
-        ("Zen",       os.path.join(home, '.zen')),
-        ("Waterfox",  os.path.join(home, '.waterfox')),
-        ("Floorp",    os.path.join(home, '.floorp')),
-        ("FireDragon",os.path.join(home, '.firedragon')),
-        # Flatpak variants
-        ("Firefox (Flatpak)",
-            os.path.join(home, '.var', 'app', 'org.mozilla.firefox', '.mozilla', 'firefox')),
-        ("LibreWolf (Flatpak)",
-            os.path.join(home, '.var', 'app', 'io.gitlab.librewolf-community', '.librewolf')),
-        # macOS variants
-        ("Firefox (macOS)", os.path.join(home, 'Library', 'Application Support', 'Firefox', 'Profiles')),
-        ("LibreWolf (macOS)", os.path.join(home, 'Library', 'Application Support', 'LibreWolf', 'Profiles')),
-    ]
-
-    for browser_name, profiles_dir in browser_configs:
-        if not os.path.isdir(profiles_dir):
-            continue
-        profiles_ini = os.path.join(profiles_dir, 'profiles.ini')
-        if os.path.isfile(profiles_ini):
-            try:
-                cp = configparser.ConfigParser()
-                cp.read(profiles_ini, encoding='utf-8')
-                for section in cp.sections():
-                    if not section.startswith('Profile'):
-                        continue
-                    if not cp.has_option(section, 'Path'):
-                        continue
-                    rel_path = cp.get(section, 'Path')
-                    is_relative = cp.getboolean(section, 'IsRelative', fallback=True)
-                    if is_relative:
-                        profile_path = os.path.join(profiles_dir, rel_path)
-                    else:
-                        profile_path = rel_path
-                    if os.path.isdir(profile_path):
-                        chrome_dir = os.path.join(profile_path, 'chrome')
-                        profiles.append({
-                            "browser": browser_name,
-                            "profile_name": rel_path.split('/')[-1] if '/' in rel_path else rel_path,
-                            "profile_path": profile_path,
-                            "chrome_path": chrome_dir,
-                        })
-            except Exception:
-                pass
-        else:
-            try:
-                for entry in os.listdir(profiles_dir):
-                    profile_path = os.path.join(profiles_dir, entry)
-                    if os.path.isdir(profile_path) and ('.' in entry or 'default' in entry.lower()):
-                        chrome_dir = os.path.join(profile_path, 'chrome')
-                        profiles.append({
-                            "browser": browser_name,
-                            "profile_name": entry,
-                            "profile_path": profile_path,
-                            "chrome_path": chrome_dir,
-                        })
-            except Exception:
-                pass
-
-    return profiles
-
-
-
-def resolve_chrome_dir(stored_config=None):
-    """
-    Resolve the Firefox chrome/ directory.
-    Priority: manual config path > auto-detected default profile.
-    """
-    # 1. Check manual config
-    if stored_config:
-        chrome_dir = stored_config.get('chromeDir') or stored_config.get('firefoxProfilePath')
-        if chrome_dir:
-            chrome_dir = os.path.expanduser(chrome_dir)
-            if not chrome_dir.endswith('/chrome'):
-                chrome_dir = os.path.join(chrome_dir, 'chrome')
-            return chrome_dir
-
-    # 2. Auto-detect: find default profile
-    profiles = find_firefox_profiles()
-    if profiles:
-        return profiles[0]["chrome_path"]
-    return None
-
-
-
 # --- Directory State ---
-def get_dir_state(dirpath):
-    """Generate a composite state dictionary of all relevant CSS files to track deletions."""
-    if not dirpath or not os.path.isdir(dirpath):
+def get_dir_state(dirpath: str) -> dict[str, float]:
+    p = Path(dirpath).expanduser() if dirpath else None
+    if not p or not p.is_dir():
         return {}
     state = {}
     try:
-        for f in os.listdir(dirpath):
-            if f.endswith(".css"):
-                fpath = os.path.join(dirpath, f)
-                try:
-                    if os.path.isfile(fpath):
-                        state[f] = os.path.getmtime(fpath)
-                except OSError:
-                    continue
+        for f in p.glob("*.css"):
+            try:
+                state[f.name] = f.stat().st_mtime
+            except OSError:
+                continue
     except OSError:
         pass
     return state
 
 # --- Native Messaging Protocol ---
-def get_message():
-    """Read a message precisely adhering to the Native Messaging protocol."""
+def get_message() -> dict | str | None:
     raw_length = sys.stdin.buffer.read(4)
     if len(raw_length) == 0:
         return "EOF"
     if len(raw_length) < 4:
         return None
     message_length = struct.unpack('=I', raw_length)[0]
-    if message_length > 10 * 1024 * 1024:  # 10MB
+    if message_length > 10 * 1024 * 1024:  # 10MB safety cap
         return None
-    msg_bytes = b''
-    while len(msg_bytes) < message_length:
-        chunk = sys.stdin.buffer.read(message_length - len(msg_bytes))
-        if not chunk:
-            return "EOF"
-        msg_bytes += chunk
+    msg_bytes = sys.stdin.buffer.read(message_length)
+    if len(msg_bytes) < message_length:
+        return "EOF"
     try:
         return json.loads(msg_bytes.decode('utf-8'))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return "DECODE_ERROR"
 
-def send_message(message_content):
-    """Safely encode and dispatch message over stdout with concurrency protection."""
+def send_message(message_content: dict):
     try:
         encoded_content = json.dumps(message_content).encode('utf-8')
         encoded_length = struct.pack('=I', len(encoded_content))
@@ -202,30 +165,27 @@ def send_message(message_content):
     except Exception as e:
         print(f"MatugenFox host error (send_message): {e}", file=sys.stderr)
 
-# --- Color Parsing ---
-def parse_colors(colors_file):
-    if not colors_file or not os.path.exists(colors_file):
+# --- Color & Template Parsing ---
+def parse_colors(colors_file: str) -> dict[str, str]:
+    p = Path(colors_file).expanduser() if colors_file else None
+    if not p or not p.is_file():
         return {}
     try:
-        with open(colors_file, 'r', encoding='utf-8') as f:
-            content = f.read()
+        content = p.read_text(encoding='utf-8')
         matches = re.findall(r'(--[\w-]+):\s*([^;]+);', content)
         return {name.strip(): value.strip() for name, value in matches}
     except Exception:
         return {}
 
-def parse_websites(websites_dir):
-    if not websites_dir or not os.path.isdir(websites_dir):
+def parse_websites(websites_dir: str) -> dict[str, str]:
+    p = Path(websites_dir).expanduser() if websites_dir else None
+    if not p or not p.is_dir():
         return {}
     websites = {}
     try:
-        for filename in os.listdir(websites_dir):
-            if not filename.endswith(".css"):
-                continue
-            path = os.path.join(websites_dir, filename)
+        for filepath in p.glob("*.css"):
             try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    content = f.read()
+                content = filepath.read_text(encoding='utf-8')
                 match = re.search(r'@-moz-document\s+domain\("([^"]+)"\)\s*\{', content)
                 if match:
                     domain = match.group(1)
@@ -265,10 +225,9 @@ def parse_websites(websites_dir):
                     if end_idx != -1:
                         websites[domain] = content[start_idx+1:end_idx].strip()
                     else:
-                        print(f"MatugenFox: unmatched braces in {filename}", file=sys.stderr)
                         websites[domain] = content[start_idx+1:].strip()
                 else:
-                    domain = filename[:-4]
+                    domain = filepath.stem
                     websites[domain] = content.strip()
             except Exception:
                 continue
@@ -276,22 +235,25 @@ def parse_websites(websites_dir):
         pass
     return websites
 
-def get_theme_data(colors_file, websites_dir):
+def get_theme_data(colors_file: str, websites_dir: str) -> dict:
     status = []
-    if not colors_file or not os.path.exists(colors_file):
+    p_colors = Path(colors_file).expanduser() if colors_file else None
+    p_sites = Path(websites_dir).expanduser() if websites_dir else None
+
+    if not p_colors or not p_colors.is_file():
         status.append(f"Colors file not found: {colors_file}")
-    if websites_dir and not os.path.isdir(websites_dir):
+    if p_sites and not p_sites.is_dir():
         status.append(f"Websites dir not found: {websites_dir}")
+
     return {
         "colors": parse_colors(colors_file),
         "websites": parse_websites(websites_dir),
         "status": status if status else ["OK"]
     }
 
-def get_data_hash(data):
+def get_data_hash(data: dict) -> str:
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode('utf-8')).hexdigest()
 
-# ─── Stored config cache (for chrome dir resolution) ───
 _stored_config_cache = {}
 
 def message_handler():
@@ -303,15 +265,7 @@ def message_handler():
             if msg == "EOF":
                 running = False
                 break
-            elif msg == "DECODE_ERROR":
-                print("MatugenFox host error: DECODE_ERROR (stream corrupted)", file=sys.stderr)
-                error_count += 1
-                if error_count > 10:
-                    running = False
-                    break
-                time.sleep(0.5)
-                continue
-            elif msg is None:
+            elif msg in ("DECODE_ERROR", None):
                 error_count += 1
                 if error_count > 10:
                     running = False
@@ -325,8 +279,10 @@ def message_handler():
             if msg_type == "SET_CONFIG":
                 new_config = msg.get("config", {})
                 with config_lock:
-                    config["colors_file"] = os.path.expanduser(new_config.get("colorsPath", "") or "")
-                    config["websites_dir"] = os.path.expanduser(new_config.get("websitesDir", "") or "")
+                    if new_config.get("colorsPath"):
+                        config["colors_file"] = str(Path(new_config["colorsPath"]).expanduser())
+                    if new_config.get("websitesDir"):
+                        config["websites_dir"] = str(Path(new_config["websitesDir"]).expanduser())
                     _stored_config_cache = new_config
 
             elif msg_type == "FETCH_NOW":
@@ -334,19 +290,17 @@ def message_handler():
                 force_update = True
                 poll_event.set()
 
-
-
         except Exception as e:
             print(f"MatugenFox host error (handler): {e}", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
-
 
 def main():
     global running, force_update
     threading.Thread(target=message_handler, daemon=True).start()
 
+    watcher = InotifyWatcher()
     last_hash = ""
-    last_colors_mtime = -1
+    last_colors_mtime = -1.0
     last_websites_state = None
 
     while running:
@@ -356,13 +310,19 @@ def main():
                 colors_file = config["colors_file"] or ext_colors
                 websites_dir = config["websites_dir"] or ext_websites
 
+            if colors_file:
+                watcher.add_watch(colors_file)
+            if websites_dir:
+                watcher.add_watch(websites_dir)
+
             should_update = False
 
-            # Check colors file mtime (hot-reload trigger)
-            current_colors_mtime = -1
-            if os.path.exists(colors_file):
+            # Check colors file mtime
+            current_colors_mtime = -1.0
+            p_colors = Path(colors_file).expanduser() if colors_file else None
+            if p_colors and p_colors.is_file():
                 try:
-                    current_colors_mtime = os.path.getmtime(colors_file)
+                    current_colors_mtime = p_colors.stat().st_mtime
                 except OSError:
                     pass
 
@@ -370,7 +330,7 @@ def main():
                 last_colors_mtime = current_colors_mtime
                 should_update = True
 
-            # Check websites directory
+            # Check websites directory state
             current_websites_state = get_dir_state(websites_dir)
             if current_websites_state != last_websites_state:
                 last_websites_state = current_websites_state
@@ -386,14 +346,16 @@ def main():
                     data["timestamp"] = time.time()
                     send_message({"type": "MATUGEN_UPDATE", "data": data})
 
-            poll_event.wait(2)
-            poll_event.clear()
+            if poll_event.is_set():
+                poll_event.clear()
+            else:
+                watcher.wait_for_events(timeout=60.0)
         except Exception as e:
             print(f"MatugenFox host error (main): {e}", file=sys.stderr)
-            time.sleep(5)
+            time.sleep(5.0)
 
+    watcher.close()
     sys.exit(0)
-
 
 if __name__ == "__main__":
     main()
