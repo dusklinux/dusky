@@ -3636,13 +3636,25 @@ Tooltip {
         try:
             counter = self.query_one("#pos-counter", Label)
             if ol and ol.option_count > 0:
-                idx = ol.highlighted if ol.highlighted is not None else 0
-                total = ol.option_count
-                txt = Text()
-                txt.append(" │ ", style=self.theme_colors.get("fg", ""))
-                txt.append(f"{idx + 1}/{total}", style=self.theme_colors.get("accent", "") + " bold")
-                counter.update(txt)
-                counter.display = True
+                curr_idx = ol.highlighted if ol.highlighted is not None else 0
+                total_selectable = 0
+                selectable_idx = 0
+
+                for i in range(ol.option_count):
+                    opt = ol.get_option_at_index(i)
+                    if not getattr(opt, "disabled", False):
+                        total_selectable += 1
+                        if i <= curr_idx:
+                            selectable_idx += 1
+
+                if total_selectable > 0 and selectable_idx > 0:
+                    txt = Text()
+                    txt.append(" │ ", style=self.theme_colors.get("fg", ""))
+                    txt.append(f"{selectable_idx}/{total_selectable}", style=self.theme_colors.get("accent", "") + " bold")
+                    counter.update(txt)
+                    counter.display = True
+                else:
+                    counter.display = False
             else:
                 counter.display = False
         except Exception:
