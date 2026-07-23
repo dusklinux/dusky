@@ -7,6 +7,10 @@
 // ─── State ───
 let styleEl = null;
 let lastHash = null;
+let observer = null;
+
+// Reject CSS values that could trigger network requests or code execution
+const UNSAFE_CSS_VALUE = /url\s*\(|expression\s*\(|@import|-moz-binding/i;
 
 // ─── Theme Application ───
 function applyTheme(data, force = false) {
@@ -16,13 +20,14 @@ function applyTheme(data, force = false) {
         return;
     }
 
-    const hash = data.timestamp + '|' + (data.websiteCss ? data.websiteCss.length : 0);
+    const cssContent = data.websiteCss || '';
+    const hash = data.timestamp + '|' + cssContent.length + '|' + cssContent.slice(-32);
     if (!force && hash === lastHash) return;
     lastHash = hash;
 
     let css = ':root {\n';
     for (const [k, v] of Object.entries(data.colors)) {
-        if (/^--[\w-]+$/.test(k) && typeof v === 'string' && !/[;{}]/.test(v)) {
+        if (/^--[\w-]+$/.test(k) && typeof v === 'string' && !/[;{}]/.test(v) && !UNSAFE_CSS_VALUE.test(v)) {
             css += `  ${k}: ${v} !important;\n`;
         }
     }
@@ -44,11 +49,35 @@ function applyTheme(data, force = false) {
 
     if (document.documentElement) apply();
     else requestAnimationFrame(apply);
+
+    startObserver();
 }
 
 function removeTheme() {
+    stopObserver();
     if (styleEl) { styleEl.remove(); styleEl = null; }
     lastHash = null;
+}
+
+// ─── Persistence Observer ───
+// Only active when a theme is applied; watches head only (not full subtree)
+function startObserver() {
+    if (observer) return;
+    observer = new MutationObserver(() => {
+        if (styleEl && !styleEl.parentNode) {
+            const target = document.head || document.documentElement;
+            if (target) target.appendChild(styleEl);
+        }
+    });
+    const target = document.head || document.documentElement;
+    if (target) observer.observe(target, { childList: true });
+}
+
+function stopObserver() {
+    if (observer) {
+        observer.disconnect();
+        observer = null;
+    }
 }
 
 // ─── Init ───
@@ -76,12 +105,3 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         removeTheme();
     }
 });
-
-// ─── Persistence Observer ───
-const observer = new MutationObserver(() => {
-    if (styleEl && !document.getElementById('mf-theme')) {
-        if (document.head) document.head.appendChild(styleEl);
-        else document.documentElement.appendChild(styleEl);
-    }
-});
-if (document.documentElement) observer.observe(document.documentElement, { childList: true, subtree: true });

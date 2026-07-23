@@ -93,7 +93,9 @@ done
 
 # 5. Initialize config
 print_step "Initializing default configuration..."
-CONFIG_FILE="$SCRIPT_DIR/config.json"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/matugenfox"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+mkdir -p "$CONFIG_DIR"
 
 if [ ! -f "$CONFIG_FILE" ]; then
     cat <<EOF > "$CONFIG_FILE"
@@ -105,9 +107,9 @@ if [ ! -f "$CONFIG_FILE" ]; then
   "webThemeEnabled": false
 }
 EOF
-    print_success "Generated default config.json"
+    print_success "Generated default config.json at $CONFIG_FILE"
 else
-    print_warning "config.json already exists. Keeping existing configuration."
+    print_warning "config.json already exists at $CONFIG_FILE. Keeping existing configuration."
 fi
 
 echo -e "\n${GREEN}✅ Setup Complete! MatugenFox was installed into $INSTALLED browser(s).${NC}"

@@ -9,62 +9,6 @@ const NATIVE_NAME = 'matugenfox';
 const RECONNECT_BASE = 2000;
 const RECONNECT_MAX = 300000;
 
-const DEFAULT_CONFIG = {
-    colorsPath: '~/.config/matugen/generated/firefox_websites.css',
-    websitesDir: '~/.config/dusky_sites',
-    ecoMode: true,
-    browserThemeEnabled: true,
-    webThemeEnabled: false,
-    duckduckgoEnabled: false,
-    userChromeEnabled: false,
-    userContentEnabled: false,
-    fontSize: 13,
-    paletteTemplate: {
-        background: '--background',
-        backgroundLight: '--surface',
-        backgroundExtra: '--surface_container',
-        accentPrimary: '--primary',
-        accentSecondary: '--secondary',
-        text: '--on_background',
-        textFocus: '--on_surface',
-    },
-    browserTemplate: {
-        frame: 'background',
-        frame_inactive: 'background',
-        tab_text: 'textFocus',
-        tab_background_text: 'text',
-        tab_selected: 'backgroundLight',
-        tab_line: 'accentPrimary',
-        tab_loading: 'accentPrimary',
-        toolbar: 'backgroundLight',
-        toolbar_text: 'textFocus',
-        toolbar_field: 'backgroundExtra',
-        toolbar_field_text: 'textFocus',
-        toolbar_field_border: 'backgroundExtra',
-        toolbar_field_focus: 'backgroundLight',
-        toolbar_field_text_focus: 'textFocus',
-        toolbar_field_border_focus: 'accentPrimary',
-        toolbar_field_highlight: 'accentPrimary',
-        toolbar_field_highlight_text: 'background',
-        icons: 'text',
-        icons_attention: 'accentPrimary',
-        sidebar: 'backgroundLight',
-        sidebar_text: 'textFocus',
-        sidebar_border: 'backgroundExtra',
-        sidebar_highlight: 'accentPrimary',
-        sidebar_highlight_text: 'background',
-        popup: 'backgroundLight',
-        popup_text: 'textFocus',
-        popup_border: 'backgroundExtra',
-        popup_highlight: 'accentPrimary',
-        popup_highlight_text: 'background',
-        ntp_background: 'background',
-        ntp_text: 'text',
-        button_background_hover: 'backgroundExtra',
-        button_background_active: 'backgroundExtra',
-    }
-};
-
 // ─── State ───
 const state = {
     port: null,
@@ -79,19 +23,11 @@ const state = {
     configWritePromise: Promise.resolve(),
 };
 
-let broadcastToken = 0;
 const broadcastQueue = new Map();
 
 // ─── Utilities ───
 function notifyUI(msg) {
     browser.runtime.sendMessage(msg).catch(e => console.warn('MatugenFox:', e));
-}
-
-function mergeConfig(updates) {
-    const m = { ...DEFAULT_CONFIG, ...updates };
-    if (updates.paletteTemplate) m.paletteTemplate = { ...DEFAULT_CONFIG.paletteTemplate, ...updates.paletteTemplate };
-    if (updates.browserTemplate) m.browserTemplate = { ...DEFAULT_CONFIG.browserTemplate, ...updates.browserTemplate };
-    return m;
 }
 
 // ─── Native Host ───
@@ -189,13 +125,25 @@ function buildBrowserThemeColors(colors) {
     return out;
 }
 
+function isColorLight(hex) {
+    if (!hex) return false;
+    let c = hex.replace('#', '');
+    if (c.length === 3) c = c.split('').map(x => x + x).join('');
+    if (c.length !== 6 && c.length !== 8) return false;
+    const r = parseInt(c.slice(0, 2), 16);
+    const g = parseInt(c.slice(2, 4), 16);
+    const b = parseInt(c.slice(4, 6), 16);
+    return ((0.299 * r + 0.587 * g + 0.114 * b) / 255) > 0.5;
+}
+
 function applyBrowserTheme(colors) {
     if (!colors || !state.config.browserThemeEnabled) return;
     const themeColors = buildBrowserThemeColors(colors);
     if (!Object.keys(themeColors).length) return;
+    const scheme = isColorLight(themeColors.frame) ? 'light' : 'dark';
     browser.theme.update({
         colors: themeColors,
-        properties: { color_scheme: 'dark', content_color_scheme: 'dark' },
+        properties: { color_scheme: scheme, content_color_scheme: scheme },
     }).catch(e => console.warn('MatugenFox:', e));
     state.isApplied = true;
 }
@@ -253,7 +201,6 @@ function broadcastToTabs(force = false) {
     const data = resolveThemeData();
     if (!data?.colors || !Object.keys(data.colors).length) return;
     const isEco = state.config.ecoMode;
-    const token = ++broadcastToken;
 
     browser.tabs.query({}).then(tabs => {
         if (isEco) {
@@ -266,11 +213,7 @@ function broadcastToTabs(force = false) {
             }
         } else {
             const targets = tabs.filter(t => t.status === 'complete' && !t.discarded);
-            targets.forEach((tab, i) => {
-                setTimeout(() => {
-                    if (token === broadcastToken) sendToTab(tab.id, data, tab.url, force);
-                }, i * 40);
-            });
+            targets.forEach(tab => sendToTab(tab.id, data, tab.url, force));
         }
     }).catch(e => console.warn('MatugenFox:', e));
 }
@@ -350,9 +293,12 @@ function handleHostMessage(msg) {
         }
         case 'STORED_CONFIG': {
             if (msg.config) {
+                const prev = JSON.stringify(state.config);
                 state.config = mergeConfig({ ...state.config, ...msg.config });
-                browser.storage.local.set({ config: state.config });
-                notifyUI({ type: 'CONFIG_RECOVERED', config: state.config });
+                if (prev !== JSON.stringify(state.config)) {
+                    browser.storage.local.set({ config: state.config });
+                    notifyUI({ type: 'CONFIG_RECOVERED', config: state.config });
+                }
             }
             break;
         }
@@ -370,7 +316,7 @@ browser.runtime.onMessage.addListener((req, sender) => {
             const oldBrowser = state.config.browserThemeEnabled;
             const oldDDG = state.config.duckduckgoEnabled;
             const oldWeb = state.config.webThemeEnabled;
-            Object.assign(state.config, req.partialUpdate);
+            state.config = mergeConfig({ ...state.config, ...req.partialUpdate });
             return saveConfig().then(() => {
                 const data = resolveThemeData();
                 if ('browserThemeEnabled' in req.partialUpdate && oldBrowser !== state.config.browserThemeEnabled) {
@@ -467,6 +413,14 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // ─── Actions ───
 browser.action.onClicked.addListener(() => {
     browser.runtime.openOptionsPage();
+});
+
+// ─── Tab Cleanup ───
+browser.tabs.onRemoved.addListener(tabId => {
+    if (broadcastQueue.has(tabId)) {
+        clearTimeout(broadcastQueue.get(tabId));
+        broadcastQueue.delete(tabId);
+    }
 });
 
 // ─── Init ───

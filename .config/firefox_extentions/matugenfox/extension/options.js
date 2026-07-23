@@ -6,69 +6,6 @@
 
 let config = {};
 
-const DEFAULT_CONFIG = {
-    colorsPath: '~/.config/matugen/generated/firefox_websites.css',
-    websitesDir: '~/.config/dusky_sites',
-    ecoMode: true,
-    browserThemeEnabled: true,
-    webThemeEnabled: false,
-    duckduckgoEnabled: false,
-    userChromeEnabled: false,
-    userContentEnabled: false,
-    fontSize: 13,
-    paletteTemplate: {
-        background: '--background',
-        backgroundLight: '--surface',
-        backgroundExtra: '--surface_container',
-        accentPrimary: '--primary',
-        accentSecondary: '--secondary',
-        text: '--on_background',
-        textFocus: '--on_surface',
-    },
-    browserTemplate: {
-        frame: 'background',
-        frame_inactive: 'background',
-        tab_text: 'textFocus',
-        tab_background_text: 'text',
-        tab_selected: 'backgroundLight',
-        tab_line: 'accentPrimary',
-        tab_loading: 'accentPrimary',
-        toolbar: 'backgroundLight',
-        toolbar_text: 'textFocus',
-        toolbar_field: 'backgroundExtra',
-        toolbar_field_text: 'textFocus',
-        toolbar_field_border: 'backgroundExtra',
-        toolbar_field_focus: 'backgroundLight',
-        toolbar_field_text_focus: 'textFocus',
-        toolbar_field_border_focus: 'accentPrimary',
-        toolbar_field_highlight: 'accentPrimary',
-        toolbar_field_highlight_text: 'background',
-        icons: 'text',
-        icons_attention: 'accentPrimary',
-        sidebar: 'backgroundLight',
-        sidebar_text: 'textFocus',
-        sidebar_border: 'backgroundExtra',
-        sidebar_highlight: 'accentPrimary',
-        sidebar_highlight_text: 'background',
-        popup: 'backgroundLight',
-        popup_text: 'textFocus',
-        popup_border: 'backgroundExtra',
-        popup_highlight: 'accentPrimary',
-        popup_highlight_text: 'background',
-        ntp_background: 'background',
-        ntp_text: 'text',
-        button_background_hover: 'backgroundExtra',
-        button_background_active: 'backgroundExtra',
-    }
-};
-
-function mergeConfig(updates) {
-    const m = { ...DEFAULT_CONFIG, ...(updates || {}) };
-    if (updates && updates.paletteTemplate) m.paletteTemplate = { ...DEFAULT_CONFIG.paletteTemplate, ...updates.paletteTemplate };
-    if (updates && updates.browserTemplate) m.browserTemplate = { ...DEFAULT_CONFIG.browserTemplate, ...updates.browserTemplate };
-    return m;
-}
-
 // ─── Navigation ───
 document.querySelectorAll('.sidebar-link').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -127,11 +64,12 @@ function applySelfTheme(colors) {
 
 // ─── Init ───
 async function init() {
-    const [stored, themeData] = await Promise.all([
+    const [stored, themeDataRes] = await Promise.all([
         browser.storage.local.get('config'),
-        browser.runtime.sendMessage({ type: 'GET_THEME_DATA' }).catch(() => null),
+        browser.storage.local.get('themeData'),
     ]);
 
+    const themeData = themeDataRes.themeData;
     config = mergeConfig(stored.config);
     if (themeData?.colors) applySelfTheme(themeData.colors);
 
@@ -328,7 +266,7 @@ document.getElementById('opt-duckduckgo').addEventListener('change', e => {
 function loadProfilePaths() {
     setTimeout(() => {
         const el = document.getElementById('profile-path-info');
-        if (el && el.textContent.includes('Detecting')) {
+        if (el && el.textContent.includes('Checking')) {
             el.textContent = 'Could not reach native host. Paths not loaded.';
         }
     }, 5000);

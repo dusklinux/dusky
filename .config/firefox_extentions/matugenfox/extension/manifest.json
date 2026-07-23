@@ -24,6 +24,7 @@
     ],
     "background": {
         "scripts": [
+            "defaults.js",
             "background.js"
         ]
     },

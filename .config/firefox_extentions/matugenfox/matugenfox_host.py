@@ -19,14 +19,6 @@ config_lock = threading.Lock()
 stdout_lock = threading.Lock()  # Protection against concurrent protocol corruption
 running = True
 
-# --- XDG Config Path ---
-def get_config_path():
-    """Get a safe, user-writable path for the config file respecting XDG standard."""
-    config_dir = os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config')
-    app_dir = os.path.join(config_dir, 'matugenfox')
-    os.makedirs(app_dir, exist_ok=True)
-    return os.path.join(app_dir, 'config.json')
-
 # --- Atomic Write ---
 def atomic_write(filepath, content):
     """Atomically write string content to prevent TOC/TOU race conditions."""
@@ -35,19 +27,6 @@ def atomic_write(filepath, content):
     try:
         with open(temp_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        os.replace(temp_path, filepath)
-    except Exception:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        raise
-
-def atomic_write_json(filepath, data):
-    """Atomically write JSON content."""
-    temp_path = f"{filepath}.tmp.{os.getpid()}"
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    try:
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2)
         os.replace(temp_path, filepath)
     except Exception:
         if os.path.exists(temp_path):
@@ -129,17 +108,7 @@ def find_firefox_profiles():
 
     return profiles
 
-def get_manual_profile_path():
-    """Get the manually configured profile path from the stored config."""
-    try:
-        config_path = get_config_path()
-        if os.path.exists(config_path):
-            with open(config_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            return data.get('firefoxProfilePath'), data.get('chromeDir')
-    except Exception:
-        pass
-    return None, None
+
 
 def resolve_chrome_dir(stored_config=None):
     """
@@ -369,7 +338,7 @@ def parse_websites(websites_dir):
                     else:
                         websites[domain] = content[start_idx+1:].strip()
                 else:
-                    domain = filename.removesuffix(".css")
+                    domain = filename[:-4]
                     websites[domain] = content.strip()
             except Exception:
                 continue
@@ -397,6 +366,7 @@ _stored_config_cache = {}
 
 def message_handler():
     global config, running, _stored_config_cache
+    error_count = 0
     while running:
         try:
             msg = get_message()
@@ -405,10 +375,21 @@ def message_handler():
                 break
             elif msg == "DECODE_ERROR":
                 print("MatugenFox host error: DECODE_ERROR (stream corrupted)", file=sys.stderr)
+                error_count += 1
+                if error_count > 10:
+                    running = False
+                    break
+                time.sleep(0.5)
                 continue
             elif msg is None:
+                error_count += 1
+                if error_count > 10:
+                    running = False
+                    break
+                time.sleep(0.5)
                 continue
 
+            error_count = 0
             msg_type = msg.get("type")
 
             if msg_type == "SET_CONFIG":
@@ -448,7 +429,7 @@ def message_handler():
                     font_size = int(msg.get("fontSize", 13))
                 except (ValueError, TypeError):
                     font_size = 13
-                font_size = max(8, min(48, font_size))
+                font_size = max(9, min(24, font_size))
                 try:
                     chrome_dir = resolve_chrome_dir(_stored_config_cache)
                     ok, error = write_user_css(target, enabled, chrome_dir, font_size)
@@ -474,7 +455,7 @@ def message_handler():
                     font_size = int(msg.get("fontSize", 13))
                 except (ValueError, TypeError):
                     font_size = 13
-                font_size = max(8, min(48, font_size))
+                font_size = max(9, min(24, font_size))
                 try:
                     chrome_dir = resolve_chrome_dir(_stored_config_cache)
                     ok, error = update_font_size(chrome_dir, font_size)
@@ -494,7 +475,7 @@ def message_handler():
 
 def main():
     global running
-    threading.Thread(target=message_handler, daemon=False).start()
+    threading.Thread(target=message_handler, daemon=True).start()
 
     last_hash = ""
     last_colors_mtime = -1

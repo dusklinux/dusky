@@ -64,7 +64,7 @@
     color: var(--mg-accent);
     font-weight: 600;
 }
-.sidebar-link-icon { font-size: 16px; width: 22px; text-align: center; }
+
 
 .sidebar-footer {
     padding: var(--mg-s4) var(--mg-s5);
