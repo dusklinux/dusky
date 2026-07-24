@@ -4,6 +4,7 @@
 =======================================================================
 Extensive, zero-hypothesis stress test for Matugen CSS variables,
 WebExtension theme mappings, Native Host manifests, and profile stylesheets.
+Supports live runtime querying of Firefox C++ engine theme properties.
 Optimized for: Arch Linux / Python 3.12+ / Bleeding Edge Runtimes.
 """
 
@@ -56,10 +57,11 @@ def audit() -> int:
     sys.stdout.flush()
 
     # -------------------------------------------------------------------------
-    # 2. WebExtension Engine (background.js) Mappings Audit
+    # 2. WebExtension Engine (background.js) & Live Theme Engine Audit
     # -------------------------------------------------------------------------
     total_checks += 1
     bg_js: Path = home / ".config" / "firefox_extentions" / "matugenfox" / "extension" / "background.js"
+    live_cache: Path = home / ".config" / "dusky" / "settings" / "matugenfox" / "live_theme_cache.json"
     print(f"\n{C_CYAN}[2/6] Auditing Extension Engine (background.js)...{C_RESET}")
     
     if bg_js.is_file():
@@ -82,6 +84,14 @@ def audit() -> int:
             if browser_match:
                 browser_elements: dict[str, str] = dict(re.findall(r"(\w+):\s*[\x27\"](\w+)[\x27\"]", browser_match.group(1)))
                 print(f"   {C_GREEN}✓{C_RESET} Browser Theme Elements ({len(browser_elements)} elements mapped)")
+
+            if live_cache.is_file():
+                try:
+                    live_data = json.loads(live_cache.read_text(encoding='utf-8'))
+                    live_colors = live_data.get("colors", {})
+                    print(f"   {C_GREEN}✓{C_RESET} Live Firefox C++ Engine Cached Theme: {len(live_colors)} active properties returned by browser.theme.getCurrent()")
+                except Exception:
+                    pass
 
             if all_roles_valid and palette_match and browser_match:
                 passed_checks += 1
@@ -127,7 +137,9 @@ def audit() -> int:
     print(f"\n{C_CYAN}[4/6] Auditing Native Messaging Host Manifests...{C_RESET}")
     
     for d in nmh_dirs:
-        m_file: Path = d / "matugenfox.json"
+        m_file: Path = d / "dusky_sites.json"
+        if not m_file.is_file():
+            m_file = d / "matugenfox.json"
         if m_file.is_file():
             try:
                 data: dict[str, Any] = json.loads(m_file.read_text(encoding='utf-8'))

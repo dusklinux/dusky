@@ -238,7 +238,7 @@ def main():
         script_dir = Path(__file__).parent.resolve()
 
     host_path = script_dir / "matugenfox_host.py"
-    manifest_name = "matugenfox.json"
+    manifest_name = "dusky_sites.json"
 
     print_step("Performing pre-flight checks...")
     if not host_path.is_file():
@@ -315,12 +315,12 @@ def main():
     # 4. Install Manifests
     print_step("Installing native messaging manifests...")
     manifest_payload = {
-        "name": "matugenfox",
+        "name": "dusky_sites",
         "description": "MatugenFox Native Messaging Host",
         "path": str(host_path),
         "type": "stdio",
         "allowed_extensions": [
-            "matugenfox@ubaid.com"
+            "dusky_sites@dusk.com"
         ]
     }
 

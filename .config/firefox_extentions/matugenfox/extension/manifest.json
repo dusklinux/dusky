@@ -1,12 +1,12 @@
 {
     "manifest_version": 3,
-    "name": "MatugenFox",
+    "name": "Dusky Sites",
     "version": "2.0.2",
     "description": "Dynamic webpage and browser theming using Matugen colors",
     "homepage_url": "https://github.com/Ubaidullah-Web-Dev/MatugenFox",
     "browser_specific_settings": {
         "gecko": {
-            "id": "matugenfox@ubaid.com",
+            "id": "dusky_sites@dusk.com",
             "data_collection_permissions": {
                 "required": [
                     "none"
@@ -35,7 +35,7 @@
     },
     "action": {
         "default_icon": "icons/icon.svg",
-        "default_title": "MatugenFox (Dusky)"
+        "default_title": "Dusky Sites"
     },
     "content_scripts": [
         {

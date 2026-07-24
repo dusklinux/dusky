@@ -304,6 +304,15 @@ def message_handler():
                 force_update = True
                 poll_event.set()
 
+            elif msg_type == "LIVE_THEME_RESPONSE":
+                theme_data = msg.get("theme", {})
+                cache_file = Path.home() / ".config/dusky/settings/matugenfox/live_theme_cache.json"
+                try:
+                    cache_file.parent.mkdir(parents=True, exist_ok=True)
+                    cache_file.write_text(json.dumps(theme_data, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+
         except Exception as e:
             print(f"MatugenFox host error (handler): {e}", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)

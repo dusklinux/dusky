@@ -236,7 +236,7 @@ def main():
     # 1. Paths Setup
     script_dir = Path(__file__).parent.resolve()
     host_path = script_dir / "matugenfox_host.py"
-    manifest_name = "matugenfox.json"
+    manifest_name = "dusky_sites.json"
 
     print_step("Performing pre-flight checks...")
     if not host_path.is_file():
@@ -309,12 +309,12 @@ def main():
     # 5. Install Manifests
     print_step("Installing native messaging manifests...")
     manifest_payload = {
-        "name": "matugenfox",
-        "description": "MatugenFox Native Messaging Host",
+        "name": "dusky_sites",
+        "description": "Dusky Sites Native Messaging Host",
         "path": str(host_path),
         "type": "stdio",
         "allowed_extensions": [
-            "matugenfox@ubaid.com"
+            "dusky_sites@dusk.com"
         ]
     }
 
@@ -322,6 +322,10 @@ def main():
     for name, target_dir in targets:
         try:
             target_dir.mkdir(parents=True, exist_ok=True)
+            # Remove legacy manifest if present
+            old_manifest = target_dir / "matugenfox.json"
+            if old_manifest.exists():
+                old_manifest.unlink()
             manifest_file = target_dir / manifest_name
             manifest_file.write_text(json.dumps(manifest_payload, indent=2), encoding='utf-8')
             print_success(f"Manifest installed for {name} → {target_dir}")

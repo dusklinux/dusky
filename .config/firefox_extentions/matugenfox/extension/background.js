@@ -1,11 +1,11 @@
 /* ═══════════════════════════════════════════
-   MatugenFox Background — Central State v2.0
+   Dusky Sites Background — Central State v2.0
    ═══════════════════════════════════════════ */
 
 'use strict';
 
 // ─── Constants ───
-const NATIVE_NAME = 'matugenfox';
+const NATIVE_NAME = 'dusky_sites';
 const RECONNECT_BASE = 2000;
 const RECONNECT_MAX = 300000;
 
@@ -99,7 +99,7 @@ const broadcastQueue = new Map();
 
 // ─── Utilities ───
 function notifyUI(msg) {
-    browser.runtime.sendMessage(msg).catch(e => console.warn('MatugenFox:', e));
+    browser.runtime.sendMessage(msg).catch(e => console.warn('Dusky Sites:', e));
 }
 
 // ─── Native Host ───
@@ -213,12 +213,16 @@ function applyBrowserTheme(colors) {
     browser.theme.update({
         colors: themeColors,
         properties: { color_scheme: scheme, content_color_scheme: scheme },
-    }).catch(e => console.warn('MatugenFox:', e));
+    }).then(() => {
+        browser.theme.getCurrent().then(cur => {
+            safePostMessage({ type: 'LIVE_THEME_RESPONSE', theme: cur });
+        }).catch(() => {});
+    }).catch(e => console.warn('Dusky Sites:', e));
     state.isApplied = true;
 }
 
 function resetBrowserTheme() {
-    browser.theme.reset().catch(e => console.warn('MatugenFox:', e));
+    browser.theme.reset().catch(e => console.warn('Dusky Sites:', e));
     state.isApplied = false;
 }
 
@@ -264,7 +268,7 @@ function broadcastToTabs(force = false) {
             const targets = tabs.filter(t => t.status === 'complete' && !t.discarded);
             targets.forEach(tab => sendToTab(tab.id, data, tab.url, force));
         }
-    }).catch(e => console.warn('MatugenFox:', e));
+    }).catch(e => console.warn('Dusky Sites:', e));
 }
 
 function isSiteDisabled(url, disabledSites) {
@@ -298,16 +302,16 @@ function sendToTab(tabId, data, url, force = false) {
                 timestamp: data.timestamp,
                 force,
             },
-        }).catch(e => console.warn('MatugenFox:', e));
+        }).catch(e => console.warn('Dusky Sites:', e));
     }, 16));
 }
 
 function broadcastRollback() {
     browser.tabs.query({}).then(tabs => {
         for (const t of tabs) {
-            browser.tabs.sendMessage(t.id, { type: 'MATUGEN_ROLLBACK' }).catch(e => console.warn('MatugenFox:', e));
+            browser.tabs.sendMessage(t.id, { type: 'MATUGEN_ROLLBACK' }).catch(e => console.warn('Dusky Sites:', e));
         }
-    }).catch(e => console.warn('MatugenFox:', e));
+    }).catch(e => console.warn('Dusky Sites:', e));
 }
 
 // ─── Config Management ───
@@ -356,6 +360,12 @@ function handleHostMessage(msg) {
                     notifyUI({ type: 'CONFIG_RECOVERED', config: state.config });
                 }
             }
+            break;
+        }
+        case 'QUERY_LIVE_THEME': {
+            browser.theme.getCurrent().then(cur => {
+                safePostMessage({ type: 'LIVE_THEME_RESPONSE', theme: cur });
+            }).catch(e => console.warn('MatugenFox theme query error:', e));
             break;
         }
         case 'SAVE_CONFIG_SUCCESS':
@@ -449,7 +459,7 @@ browser.tabs.onActivated.addListener((activeInfo) => {
     if (state.config.ecoMode && state.lastThemeData) {
         browser.tabs.get(activeInfo.tabId).then(tab => {
             sendToTab(tab.id, resolveThemeData(), tab.url);
-        }).catch(e => console.warn('MatugenFox:', e));
+        }).catch(e => console.warn('Dusky Sites:', e));
     }
 });
 
