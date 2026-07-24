@@ -161,7 +161,11 @@ sidebarheader {
 }
 
 menupopup,
-panel {
+panel,
+panelview,
+panelmultiview,
+.panel-subview-body,
+.popup-notification-body {
     appearance: none !important;
     -moz-default-appearance: none !important;
     --panel-background-color: var(--lwt-popup-background-color, var(--lwt-accent-color)) !important;
@@ -208,8 +212,11 @@ findbar {
     color: var(--lwt-text-color) !important;
 }
 
-notification-bar,
+/* Popup Notifications & Message Bars */
+moz-message-bar,
+notification-message,
 notification,
+notification-bar,
 message-bar,
 notification-message-bar,
 .notificationbox-stack,
@@ -219,9 +226,24 @@ infobar,
 .notification-box,
 [value="popup-blocked"],
 .notificationbox-stack message-bar {
+    --message-bar-background-color: var(--lwt-popup-background-color, var(--lwt-accent-color)) !important;
+    --message-bar-text-color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
+    --message-bar-icon-color: var(--toolbarbutton-icon-fill, var(--lwt-popup-color, var(--lwt-text-color))) !important;
     background-color: var(--lwt-popup-background-color, var(--lwt-accent-color)) !important;
     color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
     border-bottom: 1px solid var(--toolbar-field-border, rgba(255,255,255,0.15)) !important;
+    border-radius: 6px !important;
+}
+
+moz-message-bar .container,
+notification-message .container {
+    background-color: transparent !important;
+}
+
+moz-message-bar .icon,
+notification-message .icon {
+    fill: var(--toolbarbutton-icon-fill, var(--lwt-popup-color, var(--lwt-text-color))) !important;
+    color: var(--toolbarbutton-icon-fill, var(--lwt-popup-color, var(--lwt-text-color))) !important;
 }
 
 notification-bar button,
@@ -229,11 +251,27 @@ notification button,
 message-bar button,
 infobar button,
 .notification-button,
-.notification-box button {
-    background-color: var(--toolbarbutton-hover-background, rgba(255, 255, 255, 0.1)) !important;
+.notification-box button,
+moz-message-bar moz-button.close,
+notification-message moz-button.close {
+    background-color: transparent !important;
     color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
+    fill: var(--lwt-popup-color, var(--lwt-text-color)) !important;
     border: 1px solid var(--toolbar-field-border, rgba(255,255,255,0.15)) !important;
     border-radius: 4px !important;
+}
+
+notification-bar button:hover,
+notification button:hover,
+message-bar button:hover,
+infobar button:hover,
+.notification-button:hover,
+.notification-box button:hover,
+moz-message-bar moz-button.close:hover,
+notification-message moz-button.close:hover {
+    background-color: var(--toolbarbutton-hover-background, rgba(255, 255, 255, 0.1)) !important;
+    color: var(--toolbarbutton-icon-fill, var(--lwt-popup-color, var(--lwt-text-color))) !important;
+    fill: var(--toolbarbutton-icon-fill, var(--lwt-popup-color, var(--lwt-text-color))) !important;
 }
 
 tooltip {

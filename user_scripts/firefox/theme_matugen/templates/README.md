@@ -45,8 +45,7 @@
 | **Website Templates** | `~/.config/dusky_sites/*.css` | Per-domain CSS files for webpage color injection |
 | **Native Host Source** | `~/.config/firefox_extentions/dusky_sites/dusky_sites_host.py` | Event-driven inotify file watcher host daemon |
 | **Installed Native Host** | `~/.local/share/dusky-sites/dusky_sites_host.py` | Installed host executable launched by Firefox |
-| **Setup Script (Root)** | `~/.config/firefox_extentions/dusky_sites/setup.py` | Profile installer & manifest provisioner |
-| **Setup Script (User)** | `~/user_scripts/firefox/theme_matugen/dusky_sites_setup.py` | User setup & desktop sync script |
+| **Setup Script** | `~/user_scripts/firefox/theme_matugen/dusky_sites_setup.py` | Single unified setup & profile provisioner script |
 | **WebExtension Dir** | `~/.config/firefox_extentions/dusky_sites/extension/` | WebExtension files (`background.js`, `manifest.json`) |
 | **Audit Script** | `~/user_scripts/firefox/theme_matugen/templates/audit_variables.py` | Automated variable verification script |
 | **Guide & README** | `~/user_scripts/firefox/theme_matugen/templates/README.md` | This documentation file |

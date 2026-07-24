@@ -270,9 +270,9 @@ def audit() -> int:
                 valid_profiles.append(p)
 
     required_selectors: list[str] = [
-        "menupopup", "panel", "menuitem", "--arrowpanel-background",
-        "#sidebar-box", "findbar", "tooltip", ".urlbarView-row",
-        "message-bar", "--message-bar-background-color"
+        "menupopup", "panel", "panelview", "panelmultiview", "menuitem",
+        "--arrowpanel-background", "#sidebar-box", "findbar", "tooltip",
+        ".urlbarView-row", "message-bar", "--message-bar-background-color"
     ]
 
     profile_audits_passed: bool = True
