@@ -271,7 +271,8 @@ def audit() -> int:
 
     required_selectors: list[str] = [
         "menupopup", "panel", "menuitem", "--arrowpanel-background",
-        "#sidebar-box", "findbar", "tooltip", ".urlbarView-row"
+        "#sidebar-box", "findbar", "tooltip", ".urlbarView-row",
+        "message-bar", "--message-bar-background-color"
     ]
 
     profile_audits_passed: bool = True
@@ -295,7 +296,7 @@ def audit() -> int:
         p_pref: str = f"{C_GREEN}Enabled{C_RESET}" if pref_ok else f"{C_RED}Missing{C_RESET}"
         p_file: str = f"{C_GREEN}Present{C_RESET}" if file_ok else f"{C_RED}Missing{C_RESET}"
         p_imp: str = f"{C_GREEN}Linked{C_RESET}" if import_ok else f"{C_RED}Missing{C_RESET}"
-        p_sel: str = f"{C_GREEN}All 8 Rules Present{C_RESET}" if selectors_ok else f"{C_RED}Incomplete{C_RESET}"
+        p_sel: str = f"{C_GREEN}All {len(required_selectors)} Rules Present{C_RESET}" if selectors_ok else f"{C_RED}Incomplete{C_RESET}"
 
         print(f"   {C_GREEN}├─ [{p.name}]{C_RESET}")
         print(f"   │    user.js Pref:        {p_pref}")
