@@ -660,40 +660,100 @@ class NetworkManagerEngine(BaseEngine):
 
         return True, "OK", ""
 
+    def _get_active_dns_provider(self) -> str:
+        try:
+            res = self._run_cmd(["resolvectl", "status"])
+            if not res:
+                res = self._run_cmd(["cat", "/etc/resolv.conf"])
+            if "1.1.1.1" in res or "1.0.0.1" in res:
+                return "Cloudflare"
+            if "8.8.8.8" in res or "8.8.4.4" in res:
+                return "Google"
+            if "9.9.9.9" in res or "149.112.112.112" in res:
+                return "Quad9"
+            m = re.search(r"Current DNS Server:\s*([\d.]+)", res)
+            if m:
+                dns_ip = m.group(1)
+                gw = self._verbose_info.get("gateway")
+                if gw and dns_ip == gw:
+                    return "DHCP"
+                return f"Custom ({dns_ip})"
+        except Exception:
+            pass
+        return "DHCP"
+
     def _handle_dns_action(self, key: str, value: str) -> tuple[bool, str, str]:
         dns_script = self._find_script("omarchy-dns")
-        env = self._get_exec_env()
+        if shutil.which("omarchy-dns") or Path(dns_script).exists():
+            env = self._get_exec_env()
+            if key == "dns_dhcp":
+                cmd = [dns_script, "DHCP"]
+            elif key == "dns_cloudflare":
+                cmd = [dns_script, "Cloudflare"]
+            elif key == "dns_google":
+                cmd = [dns_script, "Google"]
+            elif key == "dns_custom":
+                if not value:
+                    return False, "Custom DNS servers string cannot be empty.", ""
+                self._dns_servers_str = value
+                cmd = [dns_script, "Custom"]
+            else:
+                return True, "OK", ""
+
+            try:
+                res = subprocess.run(
+                    cmd,
+                    input=(value + "\n") if key == "dns_custom" else None,
+                    capture_output=True, text=True, env=env, timeout=20
+                )
+                if res.returncode == 0:
+                    self.rescan_event.set()
+                    return True, f"DNS updated to {key.replace('dns_', '').upper()}.", res.stdout
+                else:
+                    err = res.stderr.strip()
+                    if "sudo" in err.lower() or "root" in err.lower() or "password" in err.lower():
+                        return False, "AUTH_REQUIRED", res.stderr
+                    return False, f"Failed: {err}", res.stderr
+            except Exception as e:
+                return False, f"Error setting DNS: {e}", str(e)
+
+        # Native nmcli DNS fallback
+        active = self._get_active_wifi_connection()
+        conn_target = active["uuid"] if active else None
+        if not conn_target:
+            for line in self._run_cmd(["nmcli", "-t", "-f", "UUID,STATE", "connection", "show", "--active"]).splitlines():
+                parts = _split_nmcli_line(line)
+                if len(parts) >= 2 and parts[1] in ("activated", "activating"):
+                    conn_target = parts[0]
+                    break
+
+        if not conn_target:
+            return False, "No active connection found to apply DNS.", ""
 
         if key == "dns_dhcp":
-            cmd = [dns_script, "DHCP"]
+            cmd_mod = ["nmcli", "connection", "modify", conn_target, "ipv4.dns", "", "ipv4.ignore-auto-dns", "no"]
+            dns_lbl = "DHCP"
         elif key == "dns_cloudflare":
-            cmd = [dns_script, "Cloudflare"]
+            cmd_mod = ["nmcli", "connection", "modify", conn_target, "ipv4.dns", "1.1.1.1 1.0.0.1", "ipv4.ignore-auto-dns", "yes"]
+            dns_lbl = "Cloudflare"
         elif key == "dns_google":
-            cmd = [dns_script, "Google"]
+            cmd_mod = ["nmcli", "connection", "modify", conn_target, "ipv4.dns", "8.8.8.8 8.8.4.4", "ipv4.ignore-auto-dns", "yes"]
+            dns_lbl = "Google"
         elif key == "dns_custom":
             if not value:
                 return False, "Custom DNS servers string cannot be empty.", ""
             self._dns_servers_str = value
-            cmd = [dns_script, "Custom"]
+            cmd_mod = ["nmcli", "connection", "modify", conn_target, "ipv4.dns", value, "ipv4.ignore-auto-dns", "yes"]
+            dns_lbl = "Custom"
         else:
             return True, "OK", ""
 
-        try:
-            res = subprocess.run(
-                cmd,
-                input=(value + "\n") if key == "dns_custom" else None,
-                capture_output=True, text=True, env=env, timeout=20
-            )
-            if res.returncode == 0:
-                self.rescan_event.set()
-                return True, f"DNS updated to {key.replace('dns_', '').upper()}.", res.stdout
-            else:
-                err = res.stderr.strip()
-                if "sudo" in err.lower() or "root" in err.lower() or "password" in err.lower():
-                    return False, "AUTH_REQUIRED", res.stderr
-                return False, f"Failed: {err}", res.stderr
-        except Exception as e:
-            return False, f"Error setting DNS: {e}", str(e)
+        res1 = subprocess.run(cmd_mod, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=10)
+        if res1.returncode == 0:
+            res2 = subprocess.run(["nmcli", "connection", "up", conn_target], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=15)
+            self.rescan_event.set()
+            return True, f"DNS updated to {dns_lbl}.", res2.stdout
+        return False, f"Failed setting DNS: {res1.stderr.strip()}", res1.stderr
 
     def _handle_speedtest_action(self, key: str) -> tuple[bool, str, str]:
         if self._speedtest_running:
@@ -808,23 +868,71 @@ class NetworkManagerEngine(BaseEngine):
     def _enrich_network_status(self, verb: dict[str, str], active_wifi: dict[str, Any] | None) -> dict[str, Any]:
         enriched = dict(verb)
 
-        # 1. Physical connection type & SSID resolution
+    def _enrich_network_status(self, verb: dict[str, str], active_wifi: dict[str, Any] | None) -> dict[str, Any]:
+        enriched = dict(verb)
+
+        # 1. Physical connection type & SSID & interface resolution
         if active_wifi:
             enriched["type"] = "wifi"
             enriched["ssid"] = active_wifi.get("ssid", "")
-            if not enriched.get("iface") or not Path(f"/sys/class/net/{enriched['iface']}/wireless").exists():
-                enriched["phy_iface"] = active_wifi.get("device", "wlan0")
-            else:
-                enriched["phy_iface"] = enriched["iface"]
-        elif Path(f"/sys/class/net/{enriched.get('iface', '')}/wireless").exists():
-            enriched["type"] = "wifi"
-            enriched["phy_iface"] = enriched["iface"]
-        elif enriched.get("iface") and not enriched.get("type"):
-            enriched["type"] = "ethernet"
+            iface = active_wifi.get("device", "")
+            if iface:
+                enriched["iface"] = iface
+                enriched["phy_iface"] = iface
 
-        phy_iface = enriched.get("phy_iface", enriched.get("iface", ""))
+        if not enriched.get("iface"):
+            # Fallback to default route interface
+            try:
+                route_out = self._run_cmd(["ip", "-o", "route", "show", "default"])
+                m_dev = re.search(r"dev (\S+)", route_out)
+                if m_dev:
+                    enriched["iface"] = m_dev.group(1)
+            except Exception:
+                pass
 
-        # 2. Wi-Fi details fallback if missing
+        iface = enriched.get("iface", "")
+        if iface:
+            if not enriched.get("phy_iface"):
+                enriched["phy_iface"] = iface
+            if Path(f"/sys/class/net/{iface}/wireless").exists() or Path(f"/sys/class/net/{iface}/phy80211").exists():
+                enriched["type"] = "wifi"
+            elif not enriched.get("type"):
+                enriched["type"] = "ethernet"
+
+        # 2. IP address & prefix fallback
+        if iface and (not enriched.get("ip") or enriched.get("ip") == "N/A"):
+            try:
+                addr_out = self._run_cmd(["ip", "-o", "-4", "addr", "show", "dev", iface])
+                m_ip = re.search(r"inet ([\d.]+)/(?P<prefix>\d+)", addr_out)
+                if m_ip:
+                    enriched["ip"] = m_ip.group(1)
+                    enriched["prefix"] = m_ip.group("prefix")
+            except Exception:
+                pass
+
+        # 3. Default Gateway fallback if missing or empty
+        if not enriched.get("gateway") or enriched.get("gateway") == "N/A":
+            try:
+                route_out = self._run_cmd(["ip", "-o", "route", "show", "default"])
+                match = re.search(r"default via ([\d.]+)", route_out)
+                if match:
+                    enriched["gateway"] = match.group(1)
+            except Exception:
+                pass
+
+        # 4. Rx & Tx bytes fallback for live throughput calculation
+        if iface and (not enriched.get("rx_bytes") or not enriched.get("tx_bytes")):
+            rx_p = Path(f"/sys/class/net/{iface}/statistics/rx_bytes")
+            tx_p = Path(f"/sys/class/net/{iface}/statistics/tx_bytes")
+            if rx_p.exists():
+                try: enriched["rx_bytes"] = rx_p.read_text().strip()
+                except Exception: pass
+            if tx_p.exists():
+                try: enriched["tx_bytes"] = tx_p.read_text().strip()
+                except Exception: pass
+
+        # 5. Wi-Fi details fallback if missing
+        phy_iface = enriched.get("phy_iface", iface)
         if enriched.get("type") == "wifi" and phy_iface:
             if not enriched.get("freq") or not enriched.get("ssid"):
                 try:
@@ -843,17 +951,7 @@ class NetworkManagerEngine(BaseEngine):
                 except Exception:
                     pass
 
-        # 3. Default Gateway fallback if missing or empty
-        if not enriched.get("gateway"):
-            try:
-                route_out = self._run_cmd(["ip", "route", "show", "default"])
-                match = re.search(r"default via ([\d.]+)", route_out)
-                if match:
-                    enriched["gateway"] = match.group(1)
-            except Exception:
-                pass
-
-        # 4. Router ping fallback if missing
+        # 6. Router ping fallback if missing
         gw = enriched.get("gateway")
         if gw and "router_ping_ms" not in enriched:
             try:
@@ -861,6 +959,16 @@ class NetworkManagerEngine(BaseEngine):
                 m = re.search(r"time[=<]([\d.]+)", ping_out)
                 if m:
                     enriched["router_ping_ms"] = m.group(1)
+            except Exception:
+                pass
+
+        # 7. Internet ping (1.1.1.1) fallback if missing
+        if "internet_ping_ms" not in enriched:
+            try:
+                ping_out = self._run_cmd(["ping", "-n", "-c", "1", "-W", "1", "1.1.1.1"])
+                m = re.search(r"time[=<]([\d.]+)", ping_out)
+                if m:
+                    enriched["internet_ping_ms"] = m.group(1)
             except Exception:
                 pass
 
@@ -883,12 +991,12 @@ class NetworkManagerEngine(BaseEngine):
                 active = self._get_active_wifi_connection()
                 active_uuid = active["uuid"] if active else None
 
-                # Poll verbose status using omarchy-network-status --verbose
+                # Poll verbose status using omarchy-network-status --verbose if available
                 status_script = self._find_script("omarchy-network-status")
-                raw_verbose = self._run_cmd([status_script, "--verbose"], timeout=5)
+                raw_verbose = self._run_cmd([status_script, "--verbose"], timeout=5) if shutil.which("omarchy-network-status") or Path(status_script).exists() else ""
                 verbose_info = parse_key_value(raw_verbose)
 
-                # Enrich status with physical interface & real gateway detection
+                # Enrich status with physical interface & real gateway detection & live throughput
                 enriched_info = self._enrich_network_status(verbose_info, active)
                 self._verbose_info = enriched_info
 
@@ -899,8 +1007,7 @@ class NetworkManagerEngine(BaseEngine):
                 self._ping_state = ping_latency_state(self._ping_state, enriched_info, limit=24, average_limit=5)
 
                 # Poll DNS provider
-                dns_script = self._find_script("omarchy-dns")
-                self._dns_provider = self._run_cmd([dns_script], timeout=3).strip() or "DHCP"
+                self._dns_provider = self._get_active_dns_provider()
 
                 should_scan = self.rescan_event.is_set() or (now - last_scan_time > 25.0)
 
@@ -928,6 +1035,15 @@ class NetworkManagerEngine(BaseEngine):
         self._speedtest_running = True
         env = self._get_exec_env()
         speedtest_script = self._find_script("omarchy-network-speedtest")
+
+        if not shutil.which("omarchy-network-speedtest") and not Path(speedtest_script).exists():
+            self._run_native_speedtest(mode)
+            self._speedtest_status = "Test Completed"
+            self._speedtest_running = False
+            if self.app:
+                self.app.call_from_thread(self._rebuild_schema)
+                self.app.call_from_thread(self.app.notify_status, "Speed test completed!")
+            return
 
         if mode in ("full", "down"):
             self._speedtest_status = "Testing Download..."
@@ -988,6 +1104,66 @@ class NetworkManagerEngine(BaseEngine):
         if self.app:
             self.app.call_from_thread(self._rebuild_schema)
             self.app.call_from_thread(self.app.notify_status, "Speed test completed!")
+
+    def _run_native_speedtest(self, mode: str) -> tuple[float | None, float | None]:
+        import urllib.request
+        down_mbps = None
+        up_mbps = None
+
+        if mode in ("full", "down"):
+            self._speedtest_status = "Testing Download..."
+            self._speedtest_down_val = "Testing..."
+            if self.app:
+                self.app.call_from_thread(self._rebuild_schema)
+            try:
+                url = "https://speed.cloudflare.com/__down?bytes=15000000"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                start = time.time()
+                resp = urllib.request.urlopen(req, timeout=10)
+                downloaded = 0
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    downloaded += len(chunk)
+                    elapsed = time.time() - start
+                    if elapsed > 0:
+                        cur_mbps = (downloaded * 8) / (elapsed * 1_000_000)
+                        self._speedtest_down_val = format_speed_mbps(cur_mbps)
+                        if self.app:
+                            self.app.call_from_thread(self._rebuild_schema)
+                total_time = time.time() - start
+                if total_time > 0 and downloaded > 0:
+                    down_mbps = round((downloaded * 8) / (total_time * 1_000_000), 1)
+                    self._speedtest_down_val = format_speed_mbps(down_mbps)
+            except Exception as e:
+                logger.error(f"Native download speedtest error: {e}")
+                self._speedtest_down_val = "Failed"
+
+        if mode in ("full", "up"):
+            self._speedtest_status = "Testing Upload..."
+            self._speedtest_up_val = "Testing..."
+            if self.app:
+                self.app.call_from_thread(self._rebuild_schema)
+            try:
+                url = "https://speed.cloudflare.com/__up"
+                data = b"0" * 5_000_000
+                req = urllib.request.Request(
+                    url, data=data,
+                    headers={"User-Agent": "Mozilla/5.0", "Content-Type": "application/octet-stream"},
+                    method="POST"
+                )
+                start = time.time()
+                resp = urllib.request.urlopen(req, timeout=10)
+                total_time = time.time() - start
+                if total_time > 0:
+                    up_mbps = round((len(data) * 8) / (total_time * 1_000_000), 1)
+                    self._speedtest_up_val = format_speed_mbps(up_mbps)
+            except Exception as e:
+                logger.error(f"Native upload speedtest error: {e}")
+                self._speedtest_up_val = "Failed"
+
+        return down_mbps, up_mbps
 
     # =========================================================================
     #  ASYNC CONNECTION HELPERS

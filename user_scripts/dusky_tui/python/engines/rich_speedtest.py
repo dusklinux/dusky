@@ -77,6 +77,9 @@ def run_phase(direction: str, script_path: str, live: Live) -> tuple[float | Non
     env = dict(os.environ)
     env["PATH"] = f"/mnt/zram1/network:/mnt/zram1/omarchy-quattro/bin:{env.get('PATH', '')}"
 
+    if not os.access(script_path, os.X_OK) and not shutil.which(script_path):
+        return run_phase_native(direction, live)
+
     try:
         proc = subprocess.Popen(
             [script_path, direction],
@@ -86,9 +89,8 @@ def run_phase(direction: str, script_path: str, live: Live) -> tuple[float | Non
             bufsize=1,
             env=env
         )
-    except Exception as e:
-        console.print(f"[bold red]Failed to start speedtest process: {e}[/bold red]")
-        return None, False
+    except Exception:
+        return run_phase_native(direction, live)
 
     start_time = time.time()
 
@@ -171,6 +173,169 @@ def run_phase(direction: str, script_path: str, live: Live) -> tuple[float | Non
         grid.add_row(Text("Press [q] or [Esc] at any time to stop & return to Dusky TUI", style="bold dim yellow"))
 
         live.update(grid)
+
+    if user_cancelled:
+        return None, True
+
+    final_val = (sum(samples[-5:]) / len(samples[-5:])) if len(samples) >= 5 else (samples[-1] if samples else 0.0)
+def run_phase_native(direction: str, live: Live) -> tuple[float | None, bool]:
+    import urllib.request
+    label = "DOWNLOAD" if direction == "down" else "UPLOAD"
+    color = "cyan" if direction == "down" else "magenta"
+
+    samples: list[float] = []
+    peak: float = 0.0
+    current: float = 0.0
+    user_cancelled = False
+    start_time = time.time()
+
+    if direction == "down":
+        try:
+            url = "https://speed.cloudflare.com/__down?bytes=50000000"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            resp = urllib.request.urlopen(req, timeout=12)
+            downloaded = 0
+            last_sample_time = time.time()
+            while True:
+                elapsed = time.time() - start_time
+                if check_cancel_key():
+                    user_cancelled = True
+                    break
+                if elapsed >= PHASE_TIMEOUT_SECONDS:
+                    break
+
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                downloaded += len(chunk)
+
+                now = time.time()
+                if now - last_sample_time >= 0.15:
+                    current = (downloaded * 8) / (elapsed * 1_000_000)
+                    peak = max(peak, current)
+                    samples.append(current)
+                    last_sample_time = now
+
+                    avg = (sum(samples) / len(samples)) if samples else 0.0
+                    sparkline = make_sparkline(samples, width=28)
+                    scale_max = max(100.0, peak * 1.2)
+                    pct = min(1.0, current / scale_max)
+
+                    grid = Table.grid(expand=True)
+                    grid.add_column(justify="center")
+                    grid.add_row(Text(f"🚀 DUSKY {label} SPEED TEST", style=f"bold {color}"))
+                    grid.add_row(Text(""))
+                    speed_text = Text()
+                    speed_text.append(f"{current:.1f}", style=f"bold underline {color}")
+                    speed_text.append(" Mbps", style="bold white")
+                    grid.add_row(Align.center(speed_text))
+                    grid.add_row(Text(""))
+
+                    bar_text = Text()
+                    bar_text.append("Gauge: [", style="dim")
+                    bar_cells = int(pct * 30)
+                    bar_text.append("█" * bar_cells, style=f"bold {color}")
+                    bar_text.append("░" * (30 - bar_cells), style="dim")
+                    bar_text.append("]", style="dim")
+                    grid.add_row(Align.center(bar_text))
+
+                    grid.add_row(Text(""))
+                    spark_text = Text()
+                    spark_text.append("Live Graph: ", style="bold dim")
+                    spark_text.append(sparkline, style=f"bold {color}")
+                    grid.add_row(Align.center(spark_text))
+
+                    grid.add_row(Text(""))
+                    stats_table = Table(show_header=False, show_edge=False, box=None, padding=(0, 2))
+                    stats_table.add_column(style="dim", justify="right")
+                    stats_table.add_column(style="bold white", justify="left")
+                    stats_table.add_row("Peak Speed:", f"{peak:.1f} Mbps")
+                    stats_table.add_row("Average Speed:", f"{avg:.1f} Mbps")
+                    stats_table.add_row("Time Left:", f"{max(0.0, PHASE_TIMEOUT_SECONDS - elapsed):.1f}s")
+                    stats_table.add_row("Samples Gathered:", f"{len(samples)}")
+                    grid.add_row(Align.center(stats_table))
+
+                    grid.add_row(Text(""))
+                    grid.add_row(Text("Press [q] or [Esc] at any time to stop & return to Dusky TUI", style="bold dim yellow"))
+                    live.update(grid)
+
+        except Exception as e:
+            console.print(f"[bold red]Native speed test error: {e}[/bold red]")
+
+    else:
+        try:
+            url = "https://speed.cloudflare.com/__up"
+            chunk_size = 500_000
+            data_chunk = b"0" * chunk_size
+            uploaded = 0
+            last_sample_time = time.time()
+
+            while True:
+                elapsed = time.time() - start_time
+                if check_cancel_key():
+                    user_cancelled = True
+                    break
+                if elapsed >= PHASE_TIMEOUT_SECONDS:
+                    break
+
+                req = urllib.request.Request(
+                    url, data=data_chunk,
+                    headers={"User-Agent": "Mozilla/5.0", "Content-Type": "application/octet-stream"},
+                    method="POST"
+                )
+                urllib.request.urlopen(req, timeout=5)
+                uploaded += chunk_size
+
+                now = time.time()
+                current = (uploaded * 8) / (elapsed * 1_000_000)
+                peak = max(peak, current)
+                samples.append(current)
+
+                avg = (sum(samples) / len(samples)) if samples else 0.0
+                sparkline = make_sparkline(samples, width=28)
+                scale_max = max(100.0, peak * 1.2)
+                pct = min(1.0, current / scale_max)
+
+                grid = Table.grid(expand=True)
+                grid.add_column(justify="center")
+                grid.add_row(Text(f"🚀 DUSKY {label} SPEED TEST", style=f"bold {color}"))
+                grid.add_row(Text(""))
+                speed_text = Text()
+                speed_text.append(f"{current:.1f}", style=f"bold underline {color}")
+                speed_text.append(" Mbps", style="bold white")
+                grid.add_row(Align.center(speed_text))
+                grid.add_row(Text(""))
+
+                bar_text = Text()
+                bar_text.append("Gauge: [", style="dim")
+                bar_cells = int(pct * 30)
+                bar_text.append("█" * bar_cells, style=f"bold {color}")
+                bar_text.append("░" * (30 - bar_cells), style="dim")
+                bar_text.append("]", style="dim")
+                grid.add_row(Align.center(bar_text))
+
+                grid.add_row(Text(""))
+                spark_text = Text()
+                spark_text.append("Live Graph: ", style="bold dim")
+                spark_text.append(sparkline, style=f"bold {color}")
+                grid.add_row(Align.center(spark_text))
+
+                grid.add_row(Text(""))
+                stats_table = Table(show_header=False, show_edge=False, box=None, padding=(0, 2))
+                stats_table.add_column(style="dim", justify="right")
+                stats_table.add_column(style="bold white", justify="left")
+                stats_table.add_row("Peak Speed:", f"{peak:.1f} Mbps")
+                stats_table.add_row("Average Speed:", f"{avg:.1f} Mbps")
+                stats_table.add_row("Time Left:", f"{max(0.0, PHASE_TIMEOUT_SECONDS - elapsed):.1f}s")
+                stats_table.add_row("Samples Gathered:", f"{len(samples)}")
+                grid.add_row(Align.center(stats_table))
+
+                grid.add_row(Text(""))
+                grid.add_row(Text("Press [q] or [Esc] at any time to stop & return to Dusky TUI", style="bold dim yellow"))
+                live.update(grid)
+
+        except Exception as e:
+            console.print(f"[bold red]Native upload test error: {e}[/bold red]")
 
     if user_cancelled:
         return None, True

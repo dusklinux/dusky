@@ -289,19 +289,17 @@ def render_network_dashboard_view(app):
                 break
 
     if eng:
-        verb = getattr(eng, "_verbose_info", {})
-        if not verb:
+        verb = dict(getattr(eng, "_verbose_info", {}))
+        if not verb or not verb.get("iface"):
             try:
-                raw = eng._run_cmd([eng._find_script("omarchy-network-status"), "--verbose"], timeout=3)
-                v_info = parse_key_value(raw)
                 act = eng._get_active_wifi_connection()
-                verb = eng._enrich_network_status(v_info, act)
+                verb = eng._enrich_network_status(verb, act)
                 eng._verbose_info = verb
             except Exception:
                 pass
 
-        tp = getattr(eng, "_tp_state", {})
-        ping = getattr(eng, "_ping_state", {})
+        tp = dict(getattr(eng, "_tp_state", {}))
+        ping = dict(getattr(eng, "_ping_state", {}))
         dns_provider = getattr(eng, "_dns_provider", "DHCP")
 
     # Connection details
@@ -314,7 +312,7 @@ def render_network_dashboard_view(app):
     gw = verb.get("gateway", "N/A")
     iface = verb.get("iface", "N/A")
     phy_iface = verb.get("phy_iface", "")
-    if phy_iface and phy_iface != iface:
+    if phy_iface and phy_iface != iface and iface != "N/A":
         iface_str = f"{iface} ({phy_iface})"
     else:
         iface_str = iface
