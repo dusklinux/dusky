@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-🦊 MatugenFox & Dusky Sites — Bleeding-Edge System & Variable Audit Tool
-=======================================================================
+🦊 Dusky Sites — Bleeding-Edge System & Variable Audit Tool
+===========================================================
 Extensive, zero-hypothesis stress test for Matugen CSS variables,
 WebExtension theme mappings, Native Host manifests, and profile stylesheets.
 Supports live runtime querying of Firefox C++ engine theme properties.
 Optimized for: Arch Linux / Python 3.12+ / Bleeding Edge Runtimes.
 """
+
+from __future__ import annotations
 
 import sys
 import os
@@ -23,13 +25,65 @@ C_YELLOW: str = '\033[1;33m'
 C_RED: str = '\033[0;31m'
 C_RESET: str = '\033[0m'
 
+def iter_firefox_profiles(base_dir: Path):
+    """Yield profile directories from profiles.ini; fallback to prefs.js heuristic."""
+    ini = base_dir / "profiles.ini"
+    if ini.is_file():
+        current: dict[str, str] = {}
+        try:
+            text = ini.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+
+        profiles: list[Path] = []
+        def consider(cur: dict[str, str]) -> None:
+            rel = cur.get("path")
+            if not rel:
+                return
+            p = Path(rel)
+            is_relative = cur.get("isrelative", "1") != "0"
+            if is_relative:
+                profile = base_dir / p
+            else:
+                profile = p if p.is_absolute() else (base_dir / p)
+            try:
+                if profile.is_dir():
+                    profiles.append(profile.resolve())
+            except OSError:
+                if profile.is_dir():
+                    profiles.append(profile)
+
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("[") and line.endswith("]"):
+                consider(current)
+                current = {}
+            elif "=" in line:
+                k, v = line.split("=", 1)
+                current[k.strip().lower()] = v.strip()
+        consider(current)
+
+        seen: set[Path] = set()
+        for prof in profiles:
+            if prof not in seen:
+                seen.add(prof)
+                yield prof
+        return
+
+    try:
+        for profile in base_dir.iterdir():
+            if profile.is_dir() and (profile / "prefs.js").is_file():
+                yield profile
+    except OSError:
+        return
+
 def audit() -> int:
     home: Path = Path.home()
     total_checks: int = 0
     passed_checks: int = 0
 
     print(f"\n{C_CYAN}================================================================={C_RESET}")
-    print(f"{C_CYAN}  🦊 MATUGENFOX & DUSKY SITES BLEEDING-EDGE SYSTEM AUDIT TOOL{C_RESET}")
+    print(f"{C_CYAN}  🦊 DUSKY SITES BLEEDING-EDGE SYSTEM AUDIT TOOL{C_RESET}")
     print(f"{C_CYAN}================================================================={C_RESET}\n")
     sys.stdout.flush()
 
@@ -114,7 +168,8 @@ def audit() -> int:
             name: str = m_data.get("name", "Unknown")
             ver: str = m_data.get("version", "0.0.0")
             perms: list[str] = m_data.get("permissions", [])
-            print(f"   {C_GREEN}✓{C_RESET} Extension: {name} v{ver}")
+            ext_id: str = m_data.get("browser_specific_settings", {}).get("gecko", {}).get("id", "")
+            print(f"   {C_GREEN}✓{C_RESET} Extension: {name} v{ver} (ID: {ext_id})")
             print(f"   {C_GREEN}✓{C_RESET} Permissions: {', '.join(perms)}")
             passed_checks += 1
         except (json.JSONDecodeError, OSError) as e:
@@ -144,9 +199,10 @@ def audit() -> int:
             try:
                 data: dict[str, Any] = json.loads(m_file.read_text(encoding='utf-8'))
                 host_path: Path = Path(data.get("path", "")).expanduser()
+                allowed_exts: list[str] = data.get("allowed_extensions", [])
                 is_exec: bool = host_path.is_file() and (host_path.stat().st_mode & stat.S_IXUSR != 0 or os.access(host_path, os.X_OK))
                 status: str = f"{C_GREEN}EXECUTABLE{C_RESET}" if is_exec else f"{C_RED}NOT EXECUTABLE{C_RESET}"
-                print(f"   {C_GREEN}✓{C_RESET} Manifest in {d.parent.name}: Host path {host_path.name} [{status}]")
+                print(f"   {C_GREEN}✓{C_RESET} Manifest in {d.parent.name}: Host path {host_path.name} [{status}] | ID: {allowed_exts}")
                 if is_exec:
                     nmh_found += 1
             except (json.JSONDecodeError, OSError) as e:
@@ -207,15 +263,11 @@ def audit() -> int:
         home / ".var" / "app" / "io.gitlab.librewolf-community" / ".librewolf",
     ]
     
-    profiles: list[Path] = []
+    valid_profiles: list[Path] = []
     for base in profile_globs:
         if base.is_dir():
-            profiles.extend(list(base.glob("*")))
-            
-    valid_profiles: list[Path] = [
-        p for p in profiles 
-        if p.is_dir() and ((p / "prefs.js").exists() or ("." in p.name and "default" in p.name.lower()))
-    ]
+            for p in iter_firefox_profiles(base):
+                valid_profiles.append(p)
 
     required_selectors: list[str] = [
         "menupopup", "panel", "menuitem", "--arrowpanel-background",

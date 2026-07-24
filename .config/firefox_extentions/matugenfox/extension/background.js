@@ -272,26 +272,52 @@ function resetBrowserTheme() {
 
 
 
-// ─── Tab Broadcasting ───
+// ─── Domain Matching Engine ───
+function hostMatchesDomain(hostname, domain, allowSingleLabel = false) {
+    const h = (hostname || '').toLowerCase();
+    let d = (domain || '').toLowerCase();
+    if (!h || !d) return false;
+    if (d.startsWith('.')) d = d.slice(1);
+
+    // Strict domain suffix match (e.g. example.com, www.example.com)
+    if (h === d || h.endsWith('.' + d)) return true;
+
+    // Single-label template fallback (e.g. template "youtube" matching youtube.com)
+    if (allowSingleLabel && !d.includes('.')) {
+        const parts = h.split('.').filter(Boolean);
+        if (parts.length >= 2 && parts.slice(0, -1).includes(d)) return true;
+    }
+    return false;
+}
+
 function filterWebsiteCss(url, websites) {
     if (!url || !websites) return '';
     try {
         const hostname = new URL(url).hostname.toLowerCase();
-        let css = '';
+        let bestKey = '';
+        let bestCss = '';
         for (const [key, siteCss] of Object.entries(websites)) {
-            const domain = key.toLowerCase();
-            if (
-                hostname === domain ||
-                hostname.endsWith('.' + domain) ||
-                domain.includes(hostname) ||
-                hostname.includes(domain) ||
-                (domain.includes('.') && hostname.split('.')[0] === domain.split('.')[0])
-            ) {
-                css += `/* ${domain} */\n${siteCss}\n`;
+            const domain = String(key).toLowerCase();
+            if (!hostMatchesDomain(hostname, domain, true)) continue;
+            if (domain.length >= bestKey.length) {
+                bestKey = domain;
+                bestCss = siteCss;
             }
         }
-        return css;
-    } catch { return ''; }
+        return bestCss ? `/* ${bestKey} */\n${bestCss}\n` : '';
+    } catch {
+        return '';
+    }
+}
+
+function isSiteDisabled(url, disabledSites) {
+    if (!url || !disabledSites?.length) return false;
+    try {
+        const hostname = new URL(url).hostname.toLowerCase();
+        return disabledSites.some((d) => hostMatchesDomain(hostname, String(d), false));
+    } catch {
+        return false;
+    }
 }
 
 function broadcastToTabs(force = false) {
@@ -373,8 +399,9 @@ function saveConfig(partial = null) {
         .then(() => browser.storage.local.set({ config: state.config }))
         .then(() => {
             safePostMessage({ type: 'SET_CONFIG', config: state.config });
+            safePostMessage({ type: 'FETCH_NOW' });
         })
-        .catch(err => console.error('MatugenFox: saveConfig error:', err));
+        .catch(err => console.error('Dusky Sites: saveConfig error:', err));
     return state.configWritePromise;
 }
 

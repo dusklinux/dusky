@@ -15,7 +15,7 @@
                                                  ▼
 ┌───────────────────────────────┐   ┌───────────────────────────────────────────┐
 │     Dusky TUI / CLI Tools     │   │     Linux C-Library Inotify Watcher       │
-│  - tui_dusky_sites.py         ├──►│  (matugenfox_host.py Native Host Daemon)  │
+│  - tui_dusky_sites.py         ├──►│  (dusky_sites_host.py Native Host Daemon)  │
 │  - templates/dusky_sites.py   │   └─────────────────────┬─────────────────────┘
 └───────────────────────────────┘                         │
                                                           │ Native Messaging (stdio)
@@ -43,7 +43,7 @@
 | **Matugen Template** | `~/.config/matugen/templates/dusky_sites.css` | Matugen template input file |
 | **Matugen Generated** | `~/.config/matugen/generated/dusky_sites.css` | Raw generated CSS color palette variables |
 | **Website Templates** | `~/.config/dusky_sites/*.css` | Per-domain CSS files for webpage color injection |
-| **Native Host Daemon** | `~/.config/firefox_extentions/matugenfox/matugenfox_host.py` | Event-driven inotify file watcher host daemon |
+| **Native Host Daemon** | `~/.config/firefox_extentions/matugenfox/dusky_sites_host.py` | Event-driven inotify file watcher host daemon |
 | **Setup Script (Root)** | `~/.config/firefox_extentions/matugenfox/setup.py` | Profile installer & manifest provisioner |
 | **Setup Script (User)** | `~/user_scripts/firefox/theme_matugen/dusky_sites_setup.py` | User setup & desktop sync script |
 | **WebExtension Dir** | `~/.config/firefox_extentions/matugenfox/extension/` | WebExtension files (`background.js`, `manifest.json`) |
