@@ -26,7 +26,7 @@ from python.engines.dusky_sites import DuskySitesEngine
 # 1. CORE APPLICATION ROUTING
 # =============================================================================
 ENGINE_TYPE = "dusky_sites"
-TARGET_FILE = "~/.config/dusky/settings/matugenfox/config.json"
+TARGET_FILE = "~/.config/dusky/settings/dusky_sites/config.json"
 APP_TITLE = "Dusky Sites"
 DEFAULT_MODE = "auto"
 THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"

@@ -35,7 +35,7 @@ IN_MOVED_TO = 0x00000080
 IN_CREATE = 0x00000100
 IN_DELETE = 0x00000200
 
-CONFIG_PATH = Path.home() / ".config" / "dusky" / "settings" / "matugenfox" / "config.json"
+CONFIG_PATH = Path.home() / ".config" / "dusky" / "settings" / "dusky_sites" / "config.json"
 
 # Cross-thread wakeup pipe for main select() loop (Linux atomic pipe2)
 _wake_r, _wake_w = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
@@ -489,7 +489,7 @@ def message_handler() -> None:
 
             elif msg_type == "LIVE_THEME_RESPONSE":
                 theme_data = msg.get("theme", {})
-                cache_file = Path.home() / ".config/dusky/settings/matugenfox/live_theme_cache.json"
+                cache_file = Path.home() / ".config/dusky/settings/dusky_sites/live_theme_cache.json"
                 try:
                     cache_file.parent.mkdir(parents=True, exist_ok=True)
                     tmp = cache_file.with_suffix(".json.tmp")

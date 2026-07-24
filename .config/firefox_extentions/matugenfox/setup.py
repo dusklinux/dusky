@@ -297,7 +297,7 @@ def main() -> None:
         print_error(f"Failed to install host: {e}")
 
     print_step("Provisioning configuration directories...")
-    config_dir = home / ".config" / "dusky" / "settings" / "matugenfox"
+    config_dir = home / ".config" / "dusky" / "settings" / "dusky_sites"
     config_dir.mkdir(parents=True, exist_ok=True)
 
     config_file = config_dir / "config.json"

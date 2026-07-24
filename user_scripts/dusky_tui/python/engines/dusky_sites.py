@@ -3,7 +3,7 @@
 🦊 Dusky Sites Engine for Dusky TUI (Arch Linux / Python 3.12+)
 ================================================================
 Engine for managing MatugenFox per-site theming configuration and 
-templates in ~/.config/dusky_sites/ and ~/.config/dusky/settings/matugenfox/config.json.
+templates in ~/.config/dusky_sites/ and ~/.config/dusky/settings/dusky_sites/config.json.
 """
 
 import os
@@ -20,7 +20,7 @@ class DuskySitesEngine(BaseEngine):
     Engine for managing MatugenFox configuration and site-specific CSS themes.
     """
 
-    def __init__(self, config_path: str = "~/.config/dusky/settings/matugenfox/config.json"):
+    def __init__(self, config_path: str = "~/.config/dusky/settings/dusky_sites/config.json"):
         self.config_path = Path(config_path).expanduser().resolve()
         self.sites_dir = Path("~/.config/dusky_sites").expanduser().resolve()
         self.sites_dir.mkdir(parents=True, exist_ok=True)
@@ -159,26 +159,33 @@ class DuskySitesEngine(BaseEngine):
                     status_messages.append(f"userContent.css integration set to {bool_val}")
 
                 elif key.startswith("site_") or key.startswith("domain_"):
-                    raw_name = key.replace("site_", "").replace("domain_", "")
-                    css_file = self.sites_dir / f"{raw_name}.css"
-                    real_domain = raw_name
-                    if css_file.exists():
+                    raw_name = key.replace("site_", "").replace("domain_", "").lower()
+                    matched_files = []
+                    for f in self.get_site_files():
+                        f_stem = f.stem.lower()
+                        if f_stem == raw_name or f_stem.replace(".", "_") == raw_name or f_stem.replace("-", "_") == raw_name:
+                            matched_files.append(f)
+
+                    domains_to_toggle = {raw_name}
+                    for f in matched_files:
+                        domains_to_toggle.add(f.stem.lower())
                         try:
-                            content = css_file.read_text(encoding="utf-8")
-                            match = re.search(r'@-moz-document\s+domain\("([^"]+)"\)', content)
-                            if match:
-                                real_domain = match.group(1).lower()
+                            content = f.read_text(encoding="utf-8")
+                            for m in re.finditer(r'@-moz-document\s+domain\("([^"]+)"\)', content):
+                                domains_to_toggle.add(m.group(1).lower())
                         except Exception:
                             pass
 
+                    disp_name = matched_files[0].stem if matched_files else raw_name
+
                     if bool_val:
-                        disabled_set.discard(real_domain)
-                        disabled_set.discard(raw_name)
-                        status_messages.append(f"Enabled theme for {real_domain}")
+                        for d in domains_to_toggle:
+                            disabled_set.discard(d)
+                        status_messages.append(f"Enabled theme for {disp_name}")
                     else:
-                        disabled_set.add(real_domain)
-                        disabled_set.add(raw_name)
-                        status_messages.append(f"Disabled theme for {real_domain}")
+                        for d in domains_to_toggle:
+                            disabled_set.add(d)
+                        status_messages.append(f"Disabled theme for {disp_name}")
 
                 elif key == "action_add_site":
                     new_domain = str(val).strip().lower()

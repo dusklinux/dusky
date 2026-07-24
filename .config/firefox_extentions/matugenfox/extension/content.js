@@ -51,13 +51,15 @@ function applyTheme(data, force = false) {
 
 function removeTheme() {
     stopObserver();
+    const targetStyle = styleEl;
+    styleEl = null;
+    lastHash = null;
+
+    if (targetStyle) {
+        targetStyle.remove();
+    }
     const elements = document.querySelectorAll('#mf-theme');
     elements.forEach(el => el.remove());
-    if (styleEl) {
-        styleEl.remove();
-        styleEl = null;
-    }
-    lastHash = null;
 }
 
 // ─── Persistence Observer ───
@@ -87,7 +89,11 @@ function initTheme(retries = 3) {
             removeTheme();
         } else {
             browser.runtime.sendMessage({ type: 'GET_THEME_DATA' }).then(data => {
-                if (data) applyTheme(data, true);
+                if (data) {
+                    applyTheme(data, true);
+                } else {
+                    removeTheme();
+                }
             }).catch(() => { });
         }
     }).catch(() => {

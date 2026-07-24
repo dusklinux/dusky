@@ -257,7 +257,7 @@ function applyBrowserTheme(colors) {
         colors: themeColors,
         properties: { color_scheme: scheme, content_color_scheme: scheme },
     }).then(() => {
-        syncDarkReaderTheme(colors);
+        // syncDarkReaderTheme(colors);
         browser.theme.getCurrent().then(cur => {
             safePostMessage({ type: 'LIVE_THEME_RESPONSE', theme: cur });
         }).catch(() => {});
@@ -314,7 +314,7 @@ function isSiteDisabled(url, disabledSites) {
     if (!url || !disabledSites?.length) return false;
     try {
         const hostname = new URL(url).hostname.toLowerCase();
-        return disabledSites.some((d) => hostMatchesDomain(hostname, String(d), false));
+        return disabledSites.some((d) => hostMatchesDomain(hostname, String(d), true));
     } catch {
         return false;
     }
@@ -341,25 +341,19 @@ function broadcastToTabs(force = false) {
     }).catch(e => console.warn('Dusky Sites:', e));
 }
 
-function isSiteDisabled(url, disabledSites) {
-    if (!url || !disabledSites || !disabledSites.length) return false;
-    try {
-        const hostname = new URL(url).hostname.toLowerCase();
-        return disabledSites.some(d => {
-            const domain = d.toLowerCase();
-            return hostname === domain || hostname.endsWith('.' + domain) || hostname.includes(domain);
-        });
-    } catch { return false; }
-}
+
 
 function sendToTab(tabId, data, url, force = false) {
     if (!url) return;
-    if (!state.config.webThemeEnabled) return;
-    if (isSiteDisabled(url, data.disabledSites)) {
+    if (!state.config.webThemeEnabled || isSiteDisabled(url, data?.disabledSites)) {
         browser.tabs.sendMessage(tabId, { type: 'MATUGEN_ROLLBACK' }).catch(() => {});
         return;
     }
-    const siteCss = filterWebsiteCss(url, data.websites);
+    const siteCss = filterWebsiteCss(url, data?.websites);
+    if (!siteCss) {
+        browser.tabs.sendMessage(tabId, { type: 'MATUGEN_ROLLBACK' }).catch(() => {});
+        return;
+    }
 
     if (broadcastQueue.has(tabId)) clearTimeout(broadcastQueue.get(tabId));
     broadcastQueue.set(tabId, setTimeout(() => {
@@ -411,13 +405,18 @@ function handleHostMessage(msg) {
     switch (msg.type) {
         case 'MATUGEN_UPDATE': {
             if (!msg.data?.colors) return;
+            const oldWeb = state.config.webThemeEnabled;
             if (typeof msg.data.webThemeEnabled === 'boolean') {
                 state.config.webThemeEnabled = msg.data.webThemeEnabled;
             }
             state.lastThemeData = msg.data;
-            browser.storage.local.set({ themeData: msg.data }).catch(e => console.warn('MatugenFox: storage error:', e));
+            browser.storage.local.set({ themeData: msg.data, config: state.config }).catch(e => console.warn('Dusky Sites: storage error:', e));
 
-            broadcastToTabs();
+            if (state.config.webThemeEnabled) {
+                broadcastToTabs(true);
+            } else {
+                broadcastRollback();
+            }
             if (state.config.browserThemeEnabled) applyBrowserTheme(msg.data.colors);
             notifyUI({ type: 'THEME_APPLIED', colors: msg.data.colors });
             break;
@@ -473,7 +472,7 @@ browser.runtime.onMessage.addListener((req, sender) => {
         }
         case 'GET_THEME_DATA': {
             if (!state.config.webThemeEnabled) return Promise.resolve(null);
-            const url = sender.tab?.url || sender.url;
+            const url = sender.url || sender.tab?.url;
             const data = resolveThemeData();
             if (data && isSiteDisabled(url, data.disabledSites)) return Promise.resolve(null);
             if (!data) {
@@ -481,18 +480,20 @@ browser.runtime.onMessage.addListener((req, sender) => {
                     if (!res.themeData || !res.themeData.colors) return null;
                     if (isSiteDisabled(url, res.themeData.disabledSites)) return null;
                     const siteCss = filterWebsiteCss(url, res.themeData.websites);
+                    if (!siteCss) return null;
                     return {
                         colors: res.themeData.colors,
-                        websiteCss: siteCss || '',
+                        websiteCss: siteCss,
                         timestamp: res.themeData.timestamp,
                         status: res.themeData.status,
                     };
                 });
             }
             const siteCss = filterWebsiteCss(url, data.websites);
+            if (!siteCss) return Promise.resolve(null);
             return Promise.resolve({
                 colors: data.colors,
-                websiteCss: siteCss || '',
+                websiteCss: siteCss,
                 timestamp: data.timestamp,
                 status: data.status,
             });

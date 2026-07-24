@@ -115,7 +115,7 @@ def audit() -> int:
     # -------------------------------------------------------------------------
     total_checks += 1
     bg_js: Path = home / ".config" / "firefox_extentions" / "matugenfox" / "extension" / "background.js"
-    live_cache: Path = home / ".config" / "dusky" / "settings" / "matugenfox" / "live_theme_cache.json"
+    live_cache: Path = home / ".config" / "dusky" / "settings" / "dusky_sites" / "live_theme_cache.json"
     print(f"\n{C_CYAN}[2/6] Auditing Extension Engine (background.js)...{C_RESET}")
     
     if bg_js.is_file():
@@ -216,7 +216,7 @@ def audit() -> int:
     # 5. Settings & Config Directory Audit
     # -------------------------------------------------------------------------
     total_checks += 1
-    cfg_file: Path = home / ".config" / "dusky" / "settings" / "matugenfox" / "config.json"
+    cfg_file: Path = home / ".config" / "dusky" / "settings" / "dusky_sites" / "config.json"
     print(f"\n{C_CYAN}[5/6] Auditing Primary Configuration (config.json)...{C_RESET}")
     
     if cfg_file.is_file():
