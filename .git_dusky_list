@@ -9,6 +9,7 @@
 .config/fastfetch/
 .config/firefox_extention_export_data_backup/
 .config/firefox_extentions/dusky_sites/
+.config/firefox_extentions/dusky_template_generator/
 .config/foot/
 .config/fontconfig/
 .config/gtk-3.0/settings.ini

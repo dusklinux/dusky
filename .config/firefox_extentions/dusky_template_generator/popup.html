@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Dusky Template Generator</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <span class="icon">🦊</span>
+    <h1>Dusky Template Generator</h1>
+    <span class="domain-badge" id="domain-badge">detecting...</span>
+  </div>
+
+  <div class="btn-group">
+    <button class="btn btn-primary" id="btn-scan">⚡ Auto-Generate</button>
+    <button class="btn" id="btn-picker">🎯 Visual Picker</button>
+  </div>
+
+  <div class="stats-bar">
+    <span>Vars Detected: <strong id="stat-vars">0</strong></span>
+    <span>Auto-Mapped: <strong id="stat-mapped">0</strong></span>
+  </div>
+
+  <textarea class="preview-box" id="css-preview" placeholder="Click 'Auto-Generate' or 'Visual Picker' to generate template CSS..."></textarea>
+
+  <div class="footer-actions">
+    <button class="btn btn-primary" id="btn-save" style="flex: 2;">💾 Save to ~/.config/dusky_sites/</button>
+    <button class="btn" id="btn-copy">📋 Copy</button>
+  </div>
+
+  <div class="status-msg" id="status-msg"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "dusky_template_generator",
+  "description": "Dusky Sites Template Generator Native Host",
+  "path": "/home/dusk/.config/firefox_extentions/dusky_template_generator/host/dusky_template_host.py",
+  "type": "stdio",
+  "allowed_extensions": [
+    "dusky_template_generator@dusk.com"
+  ]
+}
