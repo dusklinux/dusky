@@ -22,7 +22,7 @@ C_YELLOW: str = '\033[1;33m'
 C_RED: str = '\033[0;31m'
 C_RESET: str = '\033[0m'
 
-def audit() -> None:
+def audit() -> int:
     home: Path = Path.home()
     total_checks: int = 0
     passed_checks: int = 0
@@ -30,6 +30,7 @@ def audit() -> None:
     print(f"\n{C_CYAN}================================================================={C_RESET}")
     print(f"{C_CYAN}  🦊 MATUGENFOX & DUSKY SITES BLEEDING-EDGE SYSTEM AUDIT TOOL{C_RESET}")
     print(f"{C_CYAN}================================================================={C_RESET}\n")
+    sys.stdout.flush()
 
     # -------------------------------------------------------------------------
     # 1. Matugen Generated Palette File Audit
@@ -52,6 +53,7 @@ def audit() -> None:
             print(f"   {C_RED}❌ Read Error:{C_RESET} Could not read {matugen_file}: {e}")
     else:
         print(f"   {C_RED}❌ Error:{C_RESET} {matugen_file} not found!")
+    sys.stdout.flush()
 
     # -------------------------------------------------------------------------
     # 2. WebExtension Engine (background.js) Mappings Audit
@@ -87,6 +89,7 @@ def audit() -> None:
             print(f"   {C_RED}❌ Parse Error:{C_RESET} Failed to audit {bg_js}: {e}")
     else:
         print(f"   {C_RED}❌ Error:{C_RESET} {bg_js} not found!")
+    sys.stdout.flush()
 
     # -------------------------------------------------------------------------
     # 3. WebExtension Manifest Integrity Audit
@@ -108,6 +111,7 @@ def audit() -> None:
             print(f"   {C_RED}❌ Manifest JSON Error:{C_RESET} {e}")
     else:
         print(f"   {C_RED}❌ Error:{C_RESET} {manifest_js} not found!")
+    sys.stdout.flush()
 
     # -------------------------------------------------------------------------
     # 4. Native Messaging Host Manifest & Executable Audit
@@ -138,6 +142,7 @@ def audit() -> None:
 
     if nmh_found > 0:
         passed_checks += 1
+    sys.stdout.flush()
 
     # -------------------------------------------------------------------------
     # 5. Settings & Config Directory Audit
@@ -169,6 +174,7 @@ def audit() -> None:
             print(f"   {C_RED}❌ Config JSON Error:{C_RESET} {e}")
     else:
         print(f"   {C_RED}❌ Error:{C_RESET} {cfg_file} not found!")
+    sys.stdout.flush()
 
     # -------------------------------------------------------------------------
     # 6. Installed Browser Profile Stylesheets & Selector Audit
@@ -196,7 +202,7 @@ def audit() -> None:
             
     valid_profiles: list[Path] = [
         p for p in profiles 
-        if p.is_dir() and (p / "prefs.js").exists() or ("." in p.name and "default" in p.name.lower())
+        if p.is_dir() and ((p / "prefs.js").exists() or ("." in p.name and "default" in p.name.lower()))
     ]
 
     required_selectors: list[str] = [
@@ -239,6 +245,7 @@ def audit() -> None:
 
     if profile_audits_passed and audited_profiles_count > 0:
         passed_checks += 1
+    sys.stdout.flush()
 
     # -------------------------------------------------------------------------
     # Final Stress Test Report & Verification
@@ -247,9 +254,15 @@ def audit() -> None:
     if passed_checks == total_checks:
         print(f"{C_GREEN}  ✓ STRESS TEST PASSED: {passed_checks}/{total_checks} System Checks Passed 100%!{C_RESET}")
         print(f"{C_GREEN}  ✓ ZERO HALLUCINATIONS | 100% EMPIRICAL HARDWARE & FS ACCURACY{C_RESET}")
+        print(f"{C_CYAN}=================================================================\n{C_RESET}")
+        sys.stdout.flush()
+        return 0
     else:
         print(f"{C_YELLOW}  ⚠️ STRESS TEST REPORT: {passed_checks}/{total_checks} Checks Passed.{C_RESET}")
-    print(f"{C_CYAN}=================================================================\n")
+        print(f"{C_CYAN}=================================================================\n{C_RESET}")
+        sys.stdout.flush()
+        return 1
 
 if __name__ == "__main__":
-    audit()
+    exit_code = audit()
+    sys.exit(exit_code)
