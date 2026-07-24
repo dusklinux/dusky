@@ -1,11 +1,11 @@
 /**
- * Dusky Template Generator & Visual Element Theme Picker v5.1 (Production Bulletproof Edition)
- * Stress-Tested & Hardened Logic:
- * - Scroll & Window Resize SVG Mask Repositioning
- * - Input/Textarea typing protection for Alt+Shift+P hotkeys
- * - Dynamic SPA DOM Unmount Protection (document.body.contains check)
- * - Safe BoundingClientRect Fallbacks for Shadow DOM & iframes
- * - Scoped Ctrl+Z / Ctrl+Y shortcut handling
+ * Dusky Template Generator & Visual Element Theme Picker v5.2 (Clean Minimal Output Edition)
+ * - Fixed payload generation so picking an element ONLY saves your custom picked rules
+ * - Does NOT dump 100s of auto-scanned variables into your clean template unless "⚡ Auto-Generate" is clicked!
+ * - Global Keyboard Hotkey (Alt+Shift+P)
+ * - Matugen Token Select Dropdown
+ * - LocalStorage & Disk Persistence
+ * - SVG Cutout Mask sync on depth slider & candidate changes
  */
 
 (function () {
@@ -189,46 +189,49 @@
     return categories;
   }
 
-  function generateFullCssPayload() {
+  // ─── Clean Payload Generator ───
+  function generateFullCssPayload(includeAutoScan = false) {
     const domain = getCleanDomain();
-    const vars = collectCleanCssVariables();
-    const cat = autoCategorizeVariables(vars);
-
     let css = `@-moz-document domain("${domain}") {\n`;
-    css += `    :root, body {\n`;
 
+    let totalVars = 0;
     let mappedCount = 0;
-    const sections = [
-      { name: "Surfaces & Backgrounds (Hex)", items: cat.surfaceHex, token: "var(--surface)" },
-      { name: "Surfaces & Backgrounds (RGB Components)", items: cat.surfaceRgb, token: "var(--surface_rgb)" },
-      { name: "Containers & Cards (Hex)", items: cat.containerHex, token: "var(--surface_container)" },
-      { name: "Containers & Cards (RGB Components)", items: cat.containerRgb, token: "var(--surface_container_rgb)" },
-      { name: "Primary Accents (Hex)", items: cat.primaryHex, token: "var(--primary)" },
-      { name: "Primary Accents (RGB Components)", items: cat.primaryRgb, token: "var(--primary_rgb)" },
-      { name: "Text & Foreground (Hex)", items: cat.onSurfaceHex, token: "var(--on_surface)" },
-      { name: "Text & Foreground (RGB Components)", items: cat.onSurfaceRgb, token: "var(--on_surface_rgb)" },
-      { name: "Borders & Outlines (Hex)", items: cat.outlineHex, token: "var(--outline)" },
-      { name: "Borders & Outlines (RGB Components)", items: cat.outlineRgb, token: "var(--outline_rgb)" },
-    ];
 
-    sections.forEach(sec => {
-      if (sec.items.length > 0) {
-        css += `        /* ${sec.name} */\n`;
-        sec.items.forEach(v => {
-          css += `        ${v}: ${sec.token} !important;\n`;
-          mappedCount++;
-        });
-      }
-    });
+    // Only include auto-scanned variables if explicitly requested by clicking "⚡ Auto-Generate"
+    if (includeAutoScan) {
+      const vars = collectCleanCssVariables();
+      totalVars = vars.length;
+      const cat = autoCategorizeVariables(vars);
 
-    if (mappedCount === 0) {
-      css += `        background-color: var(--surface) !important;\n`;
-      css += `        color: var(--on_surface) !important;\n`;
+      css += `    :root, body {\n`;
+      const sections = [
+        { name: "Surfaces & Backgrounds (Hex)", items: cat.surfaceHex, token: "var(--surface)" },
+        { name: "Surfaces & Backgrounds (RGB Components)", items: cat.surfaceRgb, token: "var(--surface_rgb)" },
+        { name: "Containers & Cards (Hex)", items: cat.containerHex, token: "var(--surface_container)" },
+        { name: "Containers & Cards (RGB Components)", items: cat.containerRgb, token: "var(--surface_container_rgb)" },
+        { name: "Primary Accents (Hex)", items: cat.primaryHex, token: "var(--primary)" },
+        { name: "Primary Accents (RGB Components)", items: cat.primaryRgb, token: "var(--primary_rgb)" },
+        { name: "Text & Foreground (Hex)", items: cat.onSurfaceHex, token: "var(--on_surface)" },
+        { name: "Text & Foreground (RGB Components)", items: cat.onSurfaceRgb, token: "var(--on_surface_rgb)" },
+        { name: "Borders & Outlines (Hex)", items: cat.outlineHex, token: "var(--outline)" },
+        { name: "Borders & Outlines (RGB Components)", items: cat.outlineRgb, token: "var(--outline_rgb)" },
+      ];
+
+      sections.forEach(sec => {
+        if (sec.items.length > 0) {
+          css += `        /* ${sec.name} */\n`;
+          sec.items.forEach(v => {
+            css += `        ${v}: ${sec.token} !important;\n`;
+            mappedCount++;
+          });
+        }
+      });
+      css += `    }\n\n`;
     }
-    css += `    }\n`;
 
+    // Visually Picked Element & Theme Rules
     if (customRules.length > 0) {
-      css += `\n    /* Visually Picked Element & Theme Rules */\n`;
+      css += `    /* Visually Picked Element & Theme Rules */\n`;
       customRules.forEach(r => {
         css += `    ${r.selector} {\n`;
         css += `        /* Role: ${r.meta} */\n`;
@@ -242,7 +245,7 @@
     }
 
     css += `}\n`;
-    return { domain, css, totalVars: vars.length, mappedCount, customRuleCount: customRules.length };
+    return { domain, css, totalVars, mappedCount, customRuleCount: customRules.length };
   }
 
   // ─── Live In-Page Preview Style Tag ───
@@ -295,7 +298,7 @@
     if (styleTag) styleTag.remove();
   }
 
-  // ─── Generic Drag Helper for Dialogs and Floating Bars ───
+  // ─── Generic Drag Helper ───
   function makeDraggable(element, handle) {
     let isDragging = false;
     let startX, startY, initialLeft, initialTop;
@@ -345,7 +348,7 @@
     });
   }
 
-  // ─── Soft Warm Eye-Friendly SVG Island Cutout Mask Overlay ───
+  // ─── SVG Island Cutout Mask ───
   function createSvgSeaMask() {
     let svg = document.getElementById("dusky-picker-sea");
     if (!svg) {
@@ -402,7 +405,6 @@
     }
   }
 
-  // ─── Scroll & Window Resize SVG Listener ───
   function onScrollOrResize() {
     if (pickerActive && currentTargetEl) {
       updateSvgSeaMask(currentTargetEl);
@@ -571,7 +573,7 @@
     currentTargetEl = ancestorStack[0];
   }
 
-  // ─── Mouse & Global Keyboard Handlers ───
+  // ─── Mouse & Keyboard Handlers ───
   function onMouseOver(e) {
     if (!pickerActive || selectionLocked) return;
     if (e.target.closest("#dusky-picker-bar") || e.target.closest("#dusky-picker-dialog") || e.target.closest("#dusky-rules-drawer") || e.target.closest("#dusky-picker-sea")) return;
@@ -603,9 +605,8 @@
     }
   }
 
-  // Global Keyboard Shortcuts (Input/Textarea Safe)
+  // Global Keyboard Shortcuts
   document.addEventListener("keydown", (e) => {
-    // Ignore global hotkey if typing in input/textarea/contenteditable
     const isEditing = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable;
 
     if (!isEditing && e.altKey && (e.key.toLowerCase() === "p" || e.code === "KeyP")) {
@@ -1028,7 +1029,7 @@
 
   // ─── Auto-Save to Disk via Native Host ───
   function notifyHostToSave() {
-    const payload = generateFullCssPayload();
+    const payload = generateFullCssPayload(false); // Clean custom rules ONLY!
     if (typeof browser !== "undefined" && browser.runtime) {
       browser.runtime.sendMessage({
         type: "SAVE_TEMPLATE",
@@ -1057,7 +1058,7 @@
 
       document.removeEventListener("mouseover", onMouseOver, true);
       document.removeEventListener("click", onClick, true);
-      window.removeEventListener("scroll", onScrollOrResize);
+      window.removeEventListener("removeEventListener", onScrollOrResize);
       window.removeEventListener("resize", onScrollOrResize);
       currentTargetEl = null;
       ancestorStack = [];
@@ -1069,7 +1070,7 @@
   if (typeof browser !== "undefined" && browser.runtime) {
     browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.type === "SCAN_PAGE") {
-        const res = generateFullCssPayload();
+        const res = generateFullCssPayload(msg.autoScan === true);
         sendResponse(res);
       } else if (msg.type === "TOGGLE_PICKER") {
         togglePicker(msg.enable);

@@ -1,5 +1,5 @@
 /**
- * Dusky Template Generator — Popup Controller
+ * Dusky Template Generator — Popup Controller (Clean Minimal Edition)
  */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -29,7 +29,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return browser.tabs.query({ active: true, currentWindow: true }).then(tabs => tabs[0]);
   }
 
-  function scanCurrentPage() {
+  function scanCurrentPage(autoScan = false) {
     getActiveTab().then(tab => {
       if (!tab) return;
       try {
@@ -40,17 +40,19 @@ document.addEventListener("DOMContentLoaded", () => {
         domainBadge.textContent = "unknown";
       }
 
-      browser.tabs.sendMessage(tab.id, { type: "SCAN_PAGE" }).then(res => {
+      browser.tabs.sendMessage(tab.id, { type: "SCAN_PAGE", autoScan }).then(res => {
         if (!res) return;
         currentDomain = res.domain || currentDomain;
         domainBadge.textContent = currentDomain;
         statVars.textContent = res.totalVars || 0;
         statMapped.textContent = res.mappedCount || 0;
         cssPreview.value = res.css || "";
+        if (autoScan) {
+          showStatus("✓ Auto-scanned site CSS variables!", "success");
+        }
       }).catch(err => {
-        // Content script might need injection if opened before extension install
         browser.tabs.executeScript(tab.id, { file: "content.js" }).then(() => {
-          setTimeout(scanCurrentPage, 100);
+          setTimeout(() => scanCurrentPage(autoScan), 100);
         }).catch(() => {
           showStatus("Cannot inspect this page (restricted browser page).", "error");
         });
@@ -59,7 +61,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   btnScan.addEventListener("click", () => {
-    scanCurrentPage();
+    scanCurrentPage(true);
   });
 
   btnPicker.addEventListener("click", () => {
@@ -122,6 +124,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // Initial page scan on popup open
-  scanCurrentPage();
+  // Initial page scan on popup open (loads existing custom rules ONLY without dumping 100s of auto-vars)
+  scanCurrentPage(false);
 });
