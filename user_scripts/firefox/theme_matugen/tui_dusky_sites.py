@@ -49,6 +49,7 @@ tab0_items = [
         scope="DEFAULT",
         type_="bool",
         default=False,
+        value=engine.cache.get("webThemeEnabled", False),
         group="Global Settings",
         extended_help="**Global Web Theme Switch**\n\nMaster toggle for webpage CSS color variable injection across all websites."
     ),
@@ -80,6 +81,7 @@ tab1_items = [
         scope="DEFAULT",
         type_="bool",
         default=True,
+        value=engine.cache.get("ecoMode", True),
         group="Performance & Optimization",
         extended_help="**Eco Mode (Performance Saver)**\n\nWhen enabled, Dusky Sites defers CSS updates for background tabs until activated, saving RAM and CPU."
     ),
@@ -89,6 +91,7 @@ tab1_items = [
         scope="DEFAULT",
         type_="bool",
         default=True,
+        value=engine.cache.get("browserThemeEnabled", True),
         group="Browser Integration",
         extended_help="**Native Browser UI Theme**\n\nMaster toggle for browser topbar, sidebar, popups, and right-click context menu theming using `--lwt-*` Lightweight Theme bindings."
     ),
@@ -98,6 +101,7 @@ tab1_items = [
         scope="DEFAULT",
         type_="bool",
         default=True,
+        value=engine.cache.get("userChromeEnabled", True),
         group="Stylesheet Injection",
         extended_help="**userChrome.css (Browser UI & Right-Click Menus)**\n\nControls whether native context menu, sidebar, and popups CSS rules (`dusky_menu.css`) are injected into profile `userChrome.css`."
     ),
@@ -107,6 +111,7 @@ tab1_items = [
         scope="DEFAULT",
         type_="bool",
         default=True,
+        value=engine.cache.get("userContentEnabled", True),
         group="Stylesheet Injection",
         extended_help="**userContent.css (Internal Pages & PDF Reader)**\n\nControls whether built-in PDF viewer, about:pages, and internal document stylesheets are injected into profile `userContent.css`."
     ),
