@@ -1,7 +1,7 @@
 /**
- * Dusky Template Generator & Visual Element Theme Picker v5.2 (Clean Minimal Output Edition)
- * - Fixed payload generation so picking an element ONLY saves your custom picked rules
- * - Does NOT dump 100s of auto-scanned variables into your clean template unless "⚡ Auto-Generate" is clicked!
+ * Dusky Template Generator & Visual Element Theme Picker v5.3 (Intelligent Upsert Edition)
+ * - Intelligent Rule Deduplication: Updating an already themed element updates its rule in-place instead of creating duplicate rules!
+ * - Clean Minimal Output: Only saves custom picked rules, no auto-var dumping!
  * - Global Keyboard Hotkey (Alt+Shift+P)
  * - Matugen Token Select Dropdown
  * - LocalStorage & Disk Persistence
@@ -197,7 +197,6 @@
     let totalVars = 0;
     let mappedCount = 0;
 
-    // Only include auto-scanned variables if explicitly requested by clicking "⚡ Auto-Generate"
     if (includeAutoScan) {
       const vars = collectCleanCssVariables();
       totalVars = vars.length;
@@ -229,7 +228,6 @@
       css += `    }\n\n`;
     }
 
-    // Visually Picked Element & Theme Rules
     if (customRules.length > 0) {
       css += `    /* Visually Picked Element & Theme Rules */\n`;
       customRules.forEach(r => {
@@ -864,7 +862,7 @@
     updateBarInfo();
   }
 
-  // ─── Rule Management ───
+  // ─── Rule Management (Intelligent Upsert) ───
   function addCustomRule(selector, actionType, customVal = "", customMeta = "") {
     let prop = "background-color";
     let val = "var(--surface)";
@@ -891,8 +889,18 @@
       cssText = customVal.endsWith(";") ? customVal : customVal + ";"; meta = "Custom CSS Rule";
     }
 
-    const ruleObj = { id: Date.now(), selector, prop, val, meta, cssText };
-    customRules.push(ruleObj);
+    // Check if a rule already exists for this exact selector
+    const existingIndex = customRules.findIndex(r => r.selector === selector);
+    const ruleObj = { id: existingIndex !== -1 ? customRules[existingIndex].id : Date.now(), selector, prop, val, meta, cssText };
+
+    if (existingIndex !== -1) {
+      // Intelligently UPDATE existing rule in-place instead of creating a duplicate entry
+      customRules[existingIndex] = ruleObj;
+    } else {
+      // Add new rule entry
+      customRules.push(ruleObj);
+    }
+
     undoStack.push(ruleObj);
     redoStack = [];
 
@@ -1029,7 +1037,7 @@
 
   // ─── Auto-Save to Disk via Native Host ───
   function notifyHostToSave() {
-    const payload = generateFullCssPayload(false); // Clean custom rules ONLY!
+    const payload = generateFullCssPayload(false);
     if (typeof browser !== "undefined" && browser.runtime) {
       browser.runtime.sendMessage({
         type: "SAVE_TEMPLATE",
@@ -1058,7 +1066,7 @@
 
       document.removeEventListener("mouseover", onMouseOver, true);
       document.removeEventListener("click", onClick, true);
-      window.removeEventListener("removeEventListener", onScrollOrResize);
+      window.removeEventListener("scroll", onScrollOrResize);
       window.removeEventListener("resize", onScrollOrResize);
       currentTargetEl = null;
       ancestorStack = [];
