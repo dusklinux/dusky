@@ -1,4 +1,4 @@
-# 🦊 Dusky Sites — Architecture & Variable Maintenance Guide
+# Dusky Sites — Architecture & Variable Maintenance Guide
 
 > **Notice for AI Assistants & Maintainers**: This document explains how Matugen CSS variables, WebExtension theme rules, and native Firefox profile stylesheets are configured and how to update them in the future.
 
@@ -43,7 +43,8 @@
 | **Matugen Template** | `~/.config/matugen/templates/dusky_sites.css` | Matugen template input file |
 | **Matugen Generated** | `~/.config/matugen/generated/dusky_sites.css` | Raw generated CSS color palette variables |
 | **Website Templates** | `~/.config/dusky_sites/*.css` | Per-domain CSS files for webpage color injection |
-| **Native Host Daemon** | `~/.config/firefox_extentions/dusky_sites/dusky_sites_host.py` | Event-driven inotify file watcher host daemon |
+| **Native Host Source** | `~/.config/firefox_extentions/dusky_sites/dusky_sites_host.py` | Event-driven inotify file watcher host daemon |
+| **Installed Native Host** | `~/.local/share/dusky-sites/dusky_sites_host.py` | Installed host executable launched by Firefox |
 | **Setup Script (Root)** | `~/.config/firefox_extentions/dusky_sites/setup.py` | Profile installer & manifest provisioner |
 | **Setup Script (User)** | `~/user_scripts/firefox/theme_matugen/dusky_sites_setup.py` | User setup & desktop sync script |
 | **WebExtension Dir** | `~/.config/firefox_extentions/dusky_sites/extension/` | WebExtension files (`background.js`, `manifest.json`) |
@@ -54,7 +55,7 @@
 
 ## 🎨 How Theme Variables Flow into Firefox
 
-The WebExtension maps colors in two stages inside `extension/background.js`:
+The WebExtension maps colors in two stages inside `~/.config/firefox_extentions/dusky_sites/extension/background.js`:
 
 ### 1. `paletteTemplate` (Matugen Variable ➔ Abstract Role)
 ```javascript
@@ -118,13 +119,13 @@ browserTemplate: {
 
 ### Scenario A: You want to map a new Matugen variable to Firefox UI
 
-1. **Open `extension/background.js`**:
+1. **Open `~/.config/firefox_extentions/dusky_sites/extension/background.js`**:
    - Add your new role to `paletteTemplate` (e.g. `myRole: '--surface_container_high'`).
    - Assign `myRole` to target elements in `browserTemplate` (e.g. `popup: 'myRole'`).
 
 2. **Update `dusky_menu.css` in Setup Scripts**:
-   - If the element requires custom CSS overrides (like popups, context menus, or scrollbars), open both `dusky_sites_setup.py` and `setup.py`.
-   - Add your CSS rules into `menu_css_content`.
+   - If the element requires custom CSS overrides (like popups, context menus, or scrollbars), open both `~/user_scripts/firefox/theme_matugen/dusky_sites_setup.py` and `~/.config/firefox_extentions/dusky_sites/setup.py`.
+   - Add your CSS rules into `MENU_CSS_CONTENT`.
 
 3. **Re-Run the Setup Script**:
    ```bash
@@ -144,5 +145,5 @@ python3 ~/user_scripts/firefox/theme_matugen/templates/audit_variables.py
 
 ### Checking Live in Firefox:
 1. Open Firefox ➔ go to `about:debugging#/runtime/this-firefox`.
-2. Click **"Load Temporary Add-on..."** and select `extension/manifest.json`.
+2. Click **"Load Temporary Add-on..."** and select `~/.config/firefox_extentions/dusky_sites/extension/manifest.json`.
 3. Press **`Ctrl + Alt + Shift + I`** to open Firefox Browser Toolbox to inspect live computed `--lwt-*` CSS variables on `:root`.
