@@ -39,14 +39,14 @@
 
 | Component | Path | Description |
 | :--- | :--- | :--- |
-| **Main Config** | `~/.config/dusky/settings/matugenfox/config.json` | Active extension configuration file |
+| **Main Config** | `~/.config/dusky/settings/dusky_sites/config.json` | Active extension configuration file |
 | **Matugen Template** | `~/.config/matugen/templates/dusky_sites.css` | Matugen template input file |
 | **Matugen Generated** | `~/.config/matugen/generated/dusky_sites.css` | Raw generated CSS color palette variables |
 | **Website Templates** | `~/.config/dusky_sites/*.css` | Per-domain CSS files for webpage color injection |
-| **Native Host Daemon** | `~/.config/firefox_extentions/matugenfox/dusky_sites_host.py` | Event-driven inotify file watcher host daemon |
-| **Setup Script (Root)** | `~/.config/firefox_extentions/matugenfox/setup.py` | Profile installer & manifest provisioner |
+| **Native Host Daemon** | `~/.config/firefox_extentions/dusky_sites/dusky_sites_host.py` | Event-driven inotify file watcher host daemon |
+| **Setup Script (Root)** | `~/.config/firefox_extentions/dusky_sites/setup.py` | Profile installer & manifest provisioner |
 | **Setup Script (User)** | `~/user_scripts/firefox/theme_matugen/dusky_sites_setup.py` | User setup & desktop sync script |
-| **WebExtension Dir** | `~/.config/firefox_extentions/matugenfox/extension/` | WebExtension files (`background.js`, `manifest.json`) |
+| **WebExtension Dir** | `~/.config/firefox_extentions/dusky_sites/extension/` | WebExtension files (`background.js`, `manifest.json`) |
 | **Audit Script** | `~/user_scripts/firefox/theme_matugen/templates/audit_variables.py` | Automated variable verification script |
 | **Guide & README** | `~/user_scripts/firefox/theme_matugen/templates/README.md` | This documentation file |
 

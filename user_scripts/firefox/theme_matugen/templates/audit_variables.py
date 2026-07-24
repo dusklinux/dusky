@@ -114,7 +114,7 @@ def audit() -> int:
     # 2. WebExtension Engine (background.js) & Live Theme Engine Audit
     # -------------------------------------------------------------------------
     total_checks += 1
-    bg_js: Path = home / ".config" / "firefox_extentions" / "matugenfox" / "extension" / "background.js"
+    bg_js: Path = home / ".config" / "firefox_extentions" / "dusky_sites" / "extension" / "background.js"
     live_cache: Path = home / ".config" / "dusky" / "settings" / "dusky_sites" / "live_theme_cache.json"
     print(f"\n{C_CYAN}[2/6] Auditing Extension Engine (background.js)...{C_RESET}")
     
@@ -159,7 +159,7 @@ def audit() -> int:
     # 3. WebExtension Manifest Integrity Audit
     # -------------------------------------------------------------------------
     total_checks += 1
-    manifest_js: Path = home / ".config" / "firefox_extentions" / "matugenfox" / "extension" / "manifest.json"
+    manifest_js: Path = home / ".config" / "firefox_extentions" / "dusky_sites" / "extension" / "manifest.json"
     print(f"\n{C_CYAN}[3/6] Auditing Extension Manifest (manifest.json)...{C_RESET}")
     
     if manifest_js.is_file():

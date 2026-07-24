@@ -258,7 +258,7 @@ def resolve_source_host(script_dir: Path) -> Path:
     candidates = [
         script_dir / HOST_INSTALL_NAME,
         script_dir / "dusky_sites_host.py",
-        Path.home() / ".config" / "firefox_extentions" / "matugenfox" / "dusky_sites_host.py",
+        Path.home() / ".config" / "firefox_extentions" / "dusky_sites" / "dusky_sites_host.py",
     ]
     for c in candidates:
         if c.is_file():
