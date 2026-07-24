@@ -1,7 +1,11 @@
 /**
- * Dusky Template Generator & Visual Element Theme Picker v4.4
- * Ultra-Responsive uBlock Origin Port with Soft Dark Warm Eye-Friendly Palette, Selection Locking,
- * Draggable Dialogs, Minimize Mode, Translucency, SVG Cutout Mask, Depth Slider & Live Match Count.
+ * Dusky Template Generator & Visual Element Theme Picker v5.1 (Production Bulletproof Edition)
+ * Stress-Tested & Hardened Logic:
+ * - Scroll & Window Resize SVG Mask Repositioning
+ * - Input/Textarea typing protection for Alt+Shift+P hotkeys
+ * - Dynamic SPA DOM Unmount Protection (document.body.contains check)
+ * - Safe BoundingClientRect Fallbacks for Shadow DOM & iframes
+ * - Scoped Ctrl+Z / Ctrl+Y shortcut handling
  */
 
 (function () {
@@ -10,7 +14,7 @@
 
   // ─── State Variables ───
   let pickerActive = false;
-  let selectionLocked = false; // uBlock Selection Lock: Freezes selected target when clicked
+  let selectionLocked = false;
   let currentTargetEl = null;
   let ancestorStack = [];
   let currentStackIndex = 0;
@@ -37,7 +41,27 @@
     dangerSoft: "#b8545e"
   };
 
-  // ─── Ignore List for Garbage & Circular Variable Prevention ───
+  // ─── Matugen Theme Tokens List ───
+  const MATUGEN_TOKENS = [
+    { label: "🏠 Surface", val: "var(--surface)", meta: "Surface Background" },
+    { label: "📦 Surface Container", val: "var(--surface_container)", meta: "Surface Container" },
+    { label: "📦 Surface Container High", val: "var(--surface_container_high)", meta: "Surface Container High" },
+    { label: "📦 Surface Container Low", val: "var(--surface_container_low)", meta: "Surface Container Low" },
+    { label: "🌟 Primary Accent", val: "var(--primary)", meta: "Primary Accent" },
+    { label: "💡 Primary Container", val: "var(--primary_container)", meta: "Primary Container" },
+    { label: "🌿 Secondary Accent", val: "var(--secondary)", meta: "Secondary Accent" },
+    { label: "🍃 Secondary Container", val: "var(--secondary_container)", meta: "Secondary Container" },
+    { label: "🌺 Tertiary Accent", val: "var(--tertiary)", meta: "Tertiary Accent" },
+    { label: "🌸 Tertiary Container", val: "var(--tertiary_container)", meta: "Tertiary Container" },
+    { label: "✏️ On Surface (Text)", val: "var(--on_surface)", meta: "Text / Foreground" },
+    { label: "✏️ On Surface Variant", val: "var(--on_surface_variant)", meta: "Muted Text" },
+    { label: "🖼️ Outline (Border)", val: "var(--outline)", meta: "Border / Outline" },
+    { label: "🖼️ Outline Variant", val: "var(--outline_variant)", meta: "Soft Divider" },
+    { label: "🚨 Error", val: "var(--error)", meta: "Error Accent" },
+    { label: "🚨 Error Container", val: "var(--error_container)", meta: "Error Container" }
+  ];
+
+  // ─── Ignore List for Variable Scanner ───
   const IGNORE_PATTERNS = [
     /^--darkreader/,
     /^--tw-/,
@@ -64,6 +88,35 @@
   function shouldIgnoreVariable(prop) {
     return IGNORE_PATTERNS.some(pattern => pattern.test(prop));
   }
+
+  // ─── LocalStorage Persistence ───
+  function loadSavedCustomRules() {
+    const domain = getCleanDomain();
+    try {
+      if (typeof browser !== "undefined" && browser.storage && browser.storage.local) {
+        browser.storage.local.get(`dusky_rules_${domain}`).then(data => {
+          if (data[`dusky_rules_${domain}`]) {
+            customRules = data[`dusky_rules_${domain}`];
+            applyLiveCustomCss();
+            updateBarInfo();
+          }
+        });
+      }
+    } catch (e) {}
+  }
+
+  function saveCustomRulesLocally() {
+    const domain = getCleanDomain();
+    try {
+      if (typeof browser !== "undefined" && browser.storage && browser.storage.local) {
+        const obj = {};
+        obj[`dusky_rules_${domain}`] = customRules;
+        browser.storage.local.set(obj);
+      }
+    } catch (e) {}
+  }
+
+  loadSavedCustomRules();
 
   // ─── CSS Variable Scanner ───
   function collectCleanCssVariables() {
@@ -215,7 +268,7 @@
   }
 
   // ─── Temporary Real-Time Hover Preview ───
-  function showTempLivePreview(selector, actionType) {
+  function showTempLivePreview(selector, actionType, customText = "") {
     let styleTag = document.getElementById("dusky-temp-preview-css");
     if (!styleTag) {
       styleTag = document.createElement("style");
@@ -232,6 +285,7 @@
     else if (actionType === "outline") cssText = "border-color: var(--outline) !important;";
     else if (actionType === "transparent") cssText = "background: transparent !important; border: none !important; box-shadow: none !important;";
     else if (actionType === "hide") cssText = "display: none !important;";
+    else if (actionType === "matugen_token") cssText = `background-color: ${customText} !important;`;
 
     styleTag.textContent = `${selector} { ${cssText} }\n`;
   }
@@ -327,26 +381,37 @@
 
   function updateSvgSeaMask(targetEl) {
     const svg = createSvgSeaMask();
-    if (!targetEl || !pickerActive) {
+    if (!targetEl || !pickerActive || !document.body.contains(targetEl)) {
       svg.style.display = "none";
       return;
     }
 
-    const rect = targetEl.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    try {
+      const rect = targetEl.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
 
-    const oceanPath = `M0 0h${vw}v${vh}h-${vw}z M${rect.left} ${rect.top}h${rect.width}v${rect.height}h-${rect.width}z`;
-    const borderPath = `M${rect.left} ${rect.top}h${rect.width}v${rect.height}h-${rect.width}z`;
+      const oceanPath = `M0 0h${vw}v${vh}h-${vw}z M${rect.left} ${rect.top}h${rect.width}v${rect.height}h-${rect.width}z`;
+      const borderPath = `M${rect.left} ${rect.top}h${rect.width}v${rect.height}h-${rect.width}z`;
 
-    svg.children[0].setAttribute("d", oceanPath);
-    svg.children[1].setAttribute("d", borderPath);
-    svg.style.display = "block";
+      svg.children[0].setAttribute("d", oceanPath);
+      svg.children[1].setAttribute("d", borderPath);
+      svg.style.display = "block";
+    } catch (e) {
+      svg.style.display = "none";
+    }
+  }
+
+  // ─── Scroll & Window Resize SVG Listener ───
+  function onScrollOrResize() {
+    if (pickerActive && currentTargetEl) {
+      updateSvgSeaMask(currentTargetEl);
+    }
   }
 
   // ─── Selector Candidate Generator ───
   function generateCandidateSelectors(el) {
-    if (!el || el === document.body || el === document.documentElement) {
+    if (!el || el === document.body || el === document.documentElement || !document.body.contains(el)) {
       return [{ label: "body", selector: "body", count: 1 }];
     }
 
@@ -428,7 +493,7 @@
     return parts.join(" > ");
   }
 
-  // ─── Draggable Top Control Bar (Soft Dark Warm Theme) ───
+  // ─── Draggable Top Control Bar ───
   function createControlBar() {
     let bar = document.getElementById("dusky-picker-bar");
     if (!bar) {
@@ -444,7 +509,7 @@
           <button id="dusky-bar-undo" title="Undo Rule (Ctrl+Z)" style="background:${THEME.bgButton}; color:${THEME.textCream}; border:1px solid ${THEME.borderWarm}; padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer;">↩️ Undo</button>
           <button id="dusky-bar-redo" title="Redo Rule (Ctrl+Y)" style="background:${THEME.bgButton}; color:${THEME.textCream}; border:1px solid ${THEME.borderWarm}; padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer;">↪️ Redo</button>
           <button id="dusky-bar-rules" title="View Active Custom Rules" style="background:${THEME.bgButton}; color:${THEME.accentWarm}; border:1px solid ${THEME.borderAccent}; padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer;">📋 Rules (${customRules.length})</button>
-          <button id="dusky-bar-close" title="Exit Picker (Esc)" style="background:${THEME.dangerSoft}; color:#fff; border:none; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;">✕ Exit</button>
+          <button id="dusky-bar-close" title="Exit Picker (Esc / Alt+Shift+P)" style="background:${THEME.dangerSoft}; color:#fff; border:none; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;">✕ Exit</button>
         </div>
       `;
       Object.assign(bar.style, {
@@ -493,7 +558,7 @@
     }
   }
 
-  // ─── Ancestor Hierarchy Stack (uBlock Depth Slider Engine) ───
+  // ─── Ancestor Hierarchy Stack ───
   function buildAncestorStack(el) {
     ancestorStack = [];
     let curr = el;
@@ -506,7 +571,7 @@
     currentTargetEl = ancestorStack[0];
   }
 
-  // ─── Mouse & Keyboard Handlers ───
+  // ─── Mouse & Global Keyboard Handlers ───
   function onMouseOver(e) {
     if (!pickerActive || selectionLocked) return;
     if (e.target.closest("#dusky-picker-bar") || e.target.closest("#dusky-picker-dialog") || e.target.closest("#dusky-rules-drawer") || e.target.closest("#dusky-picker-sea")) return;
@@ -523,10 +588,8 @@
     e.preventDefault();
     e.stopPropagation();
 
-    // 🔒 LOCK SELECTION ON CLICK
     selectionLocked = true;
 
-    // SHIFT + CLICK = Instant Zap (Hide Element)
     if (e.shiftKey && currentTargetEl) {
       const candidates = generateCandidateSelectors(currentTargetEl);
       const sel = candidates[0].selector;
@@ -540,26 +603,36 @@
     }
   }
 
-  function onKeyDown(e) {
+  // Global Keyboard Shortcuts (Input/Textarea Safe)
+  document.addEventListener("keydown", (e) => {
+    // Ignore global hotkey if typing in input/textarea/contenteditable
+    const isEditing = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable;
+
+    if (!isEditing && e.altKey && (e.key.toLowerCase() === "p" || e.code === "KeyP")) {
+      e.preventDefault();
+      togglePicker(!pickerActive);
+      return;
+    }
+
     if (!pickerActive) return;
 
     if (e.key === "Escape") {
       removeTempLivePreview();
       closeDialog();
-    } else if (e.key === "ArrowUp") {
+    } else if (!isEditing && e.key === "ArrowUp") {
       e.preventDefault();
       stepStackDepth(1);
-    } else if (e.key === "ArrowDown") {
+    } else if (!isEditing && e.key === "ArrowDown") {
       e.preventDefault();
       stepStackDepth(-1);
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+    } else if (!isEditing && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
       e.preventDefault();
       undoLastRule();
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+    } else if (!isEditing && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
       e.preventDefault();
       redoRule();
     }
-  }
+  }, true);
 
   function closeDialog() {
     selectionLocked = false;
@@ -582,7 +655,7 @@
     }
   }
 
-  // ─── Interactive Action Dialog (Soft Dark Warm Palette) ───
+  // ─── Interactive Action Dialog ───
   function showActionDialog(targetEl) {
     const existing = document.getElementById("dusky-picker-dialog");
     if (existing) existing.remove();
@@ -628,20 +701,29 @@
           </select>
         </div>
 
-        <!-- Action Role Buttons with Soft Eye-Friendly Colors -->
-        <div style="display:flex; flex-direction:column; gap:5px; max-height:200px; overflow-y:auto; padding-right:4px;">
+        <!-- Quick Action Role Buttons -->
+        <div style="display:flex; flex-direction:column; gap:5px; max-height:160px; overflow-y:auto; padding-right:4px; margin-bottom:8px;">
           <button data-action="surface" style="background:${THEME.bgCard}; color:${THEME.textCream}; border:1px solid ${THEME.borderWarm}; padding:6px 9px; border-radius:6px; font-size:11px; text-align:left; cursor:pointer;">🏠 Main Surface (background: var(--surface))</button>
           <button data-action="container" style="background:${THEME.bgCard}; color:${THEME.textCream}; border:1px solid ${THEME.borderWarm}; padding:6px 9px; border-radius:6px; font-size:11px; text-align:left; cursor:pointer;">📦 Surface Container (var(--surface_container))</button>
           <button data-action="primary" style="background:${THEME.accentGold}; color:#191614; border:none; padding:6px 9px; border-radius:6px; font-size:11px; font-weight:bold; text-align:left; cursor:pointer;">🌟 Primary Accent (var(--primary) & var(--on_primary))</button>
           <button data-action="primary_container" style="background:${THEME.accentWarm}; color:#191614; border:none; padding:6px 9px; border-radius:6px; font-size:11px; font-weight:bold; text-align:left; cursor:pointer;">💡 Accent Container / Pill (var(--primary_container))</button>
-          <button data-action="text" style="background:${THEME.bgCard}; color:${THEME.textCream}; border:1px solid ${THEME.borderWarm}; padding:6px 9px; border-radius:6px; font-size:11px; text-align:left; cursor:pointer;">✏️ Text / Foreground (color: var(--on_surface))</button>
-          <button data-action="outline" style="background:${THEME.bgCard}; color:${THEME.textCream}; border:1px solid ${THEME.borderWarm}; padding:6px 9px; border-radius:6px; font-size:11px; text-align:left; cursor:pointer;">🖼️ Border / Divider (border-color: var(--outline))</button>
           <button data-action="transparent" style="background:${THEME.bgButton}; color:${THEME.accentWarm}; border:1px dashed ${THEME.borderAccent}; padding:6px 9px; border-radius:6px; font-size:11px; font-weight:bold; text-align:left; cursor:pointer;">👻 Make Transparent (background: transparent)</button>
           <button data-action="hide" style="background:${THEME.dangerSoft}; color:#fff; border:none; padding:6px 9px; border-radius:6px; font-size:11px; font-weight:bold; text-align:left; cursor:pointer;">🙈 Hide Element Completely (display: none)</button>
         </div>
 
+        <!-- Full Matugen Token Selector Dropdown -->
+        <div style="margin-bottom:8px;">
+          <div style="font-size:10px; color:${THEME.textMuted}; margin-bottom:4px;">Pick Any Matugen Token:</div>
+          <div style="display:flex; gap:6px;">
+            <select id="dusky-matugen-select" style="flex:1; background:${THEME.bgCard}; color:${THEME.accentWarm}; border:1px solid ${THEME.borderWarm}; padding:5px 6px; border-radius:4px; font-size:11px; cursor:pointer;">
+              ${MATUGEN_TOKENS.map((t, idx) => `<option value="${idx}">${t.label}</option>`).join("")}
+            </select>
+            <button id="dusky-matugen-apply" style="background:${THEME.accentWarm}; color:#191614; border:none; padding:5px 10px; border-radius:4px; font-weight:bold; font-size:11px; cursor:pointer;">Apply Token</button>
+          </div>
+        </div>
+
         <!-- Custom CSS Rule Input -->
-        <div style="margin-top:8px; padding-top:8px; border-top:1px solid ${THEME.borderWarm};">
+        <div style="padding-top:6px; border-top:1px solid ${THEME.borderWarm};">
           <div style="font-size:10px; color:${THEME.textMuted}; margin-bottom:4px;">Custom CSS (Property: Value):</div>
           <div style="display:flex; gap:6px;">
             <input id="dusky-custom-input" type="text" placeholder="e.g. opacity: 0.8; filter: blur(2px);" style="flex:1; background:${THEME.bgCard}; color:${THEME.textCream}; border:1px solid ${THEME.borderWarm}; padding:5px; border-radius:4px; font-size:11px;">
@@ -661,7 +743,7 @@
       border: `1px solid ${THEME.borderAccent}`,
       boxShadow: "0 12px 40px rgba(0,0,0,0.85)",
       fontFamily: "system-ui, -apple-system, sans-serif",
-      width: "360px",
+      width: "370px",
       transition: "opacity 0.2s ease"
     };
 
@@ -707,6 +789,11 @@
       updateDialogForNewTarget();
     });
 
+    const candidateSelect = document.getElementById("dusky-candidate-select");
+    candidateSelect.addEventListener("change", () => {
+      updateSvgSeaMask(currentTargetEl);
+    });
+
     document.getElementById("dusky-dialog-close-x").addEventListener("click", closeDialog);
 
     dialog.querySelectorAll("button[data-action]").forEach(btn => {
@@ -726,6 +813,16 @@
         addCustomRule(selectedSel, action);
         closeDialog();
       });
+    });
+
+    document.getElementById("dusky-matugen-apply").addEventListener("click", () => {
+      const idx = parseInt(document.getElementById("dusky-matugen-select").value, 10);
+      const token = MATUGEN_TOKENS[idx];
+      if (token) {
+        const selectedSel = getSelectedCandidateSelector();
+        addCustomRule(selectedSel, "matugen_token", token.val, token.meta);
+        closeDialog();
+      }
     });
 
     document.getElementById("dusky-custom-apply").addEventListener("click", () => {
@@ -767,7 +864,7 @@
   }
 
   // ─── Rule Management ───
-  function addCustomRule(selector, actionType, customText = "") {
+  function addCustomRule(selector, actionType, customVal = "", customMeta = "") {
     let prop = "background-color";
     let val = "var(--surface)";
     let meta = "Main Surface";
@@ -787,8 +884,10 @@
       cssText = "background: transparent !important; border: none !important; box-shadow: none !important;"; meta = "Transparent Element";
     } else if (actionType === "hide") {
       prop = "display"; val = "none"; meta = "Hidden Element";
+    } else if (actionType === "matugen_token") {
+      prop = "background-color"; val = customVal; meta = customMeta || "Matugen Token";
     } else if (actionType === "custom") {
-      cssText = customText.endsWith(";") ? customText : customText + ";"; meta = "Custom CSS Rule";
+      cssText = customVal.endsWith(";") ? customVal : customVal + ";"; meta = "Custom CSS Rule";
     }
 
     const ruleObj = { id: Date.now(), selector, prop, val, meta, cssText };
@@ -798,6 +897,7 @@
 
     applyLiveCustomCss();
     updateBarInfo();
+    saveCustomRulesLocally();
     notifyHostToSave();
   }
 
@@ -808,6 +908,7 @@
 
     applyLiveCustomCss();
     updateBarInfo();
+    saveCustomRulesLocally();
     notifyHostToSave();
   }
 
@@ -818,6 +919,7 @@
 
     applyLiveCustomCss();
     updateBarInfo();
+    saveCustomRulesLocally();
     notifyHostToSave();
   }
 
@@ -826,10 +928,22 @@
     applyLiveCustomCss();
     updateBarInfo();
     renderRulesDrawerList();
+    saveCustomRulesLocally();
     notifyHostToSave();
   }
 
-  // ─── Active Rules Drawer (Soft Dark Warm Palette) ───
+  function clearAllRules() {
+    customRules = [];
+    undoStack = [];
+    redoStack = [];
+    applyLiveCustomCss();
+    updateBarInfo();
+    renderRulesDrawerList();
+    saveCustomRulesLocally();
+    notifyHostToSave();
+  }
+
+  // ─── Active Rules Drawer ───
   function toggleRulesDrawer() {
     let drawer = document.getElementById("dusky-rules-drawer");
     if (drawer) {
@@ -840,12 +954,15 @@
     drawer = document.createElement("div");
     drawer.id = "dusky-rules-drawer";
     drawer.innerHTML = `
-      <div id="dusky-drawer-drag-handle" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; cursor:grab; user-select:none; padding-bottom:4px; border-bottom:1px solid ${THEME.borderWarm};">
+      <div id="dusky-drawer-drag-handle" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; cursor:grab; user-select:none; padding-bottom:6px; border-bottom:1px solid ${THEME.borderWarm};">
         <div style="display:flex; align-items:center; gap:6px;">
           <span style="opacity:0.5; font-size:12px; color:${THEME.textMuted};">::</span>
           <span style="font-weight:bold; color:${THEME.accentWarm}; font-size:13px;">📋 Active Custom Rules</span>
         </div>
-        <button id="dusky-drawer-close" style="background:none; border:none; color:${THEME.textMuted}; font-size:14px; cursor:pointer;">✕</button>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <button id="dusky-drawer-clear-all" title="Clear All Custom Rules" style="background:${THEME.dangerSoft}; color:#fff; border:none; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold; cursor:pointer;">🗑️ Clear All</button>
+          <button id="dusky-drawer-close" style="background:none; border:none; color:${THEME.textMuted}; font-size:14px; cursor:pointer;">✕</button>
+        </div>
       </div>
       <div id="dusky-drawer-rules-list" style="display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto; padding-right:4px;"></div>
     `;
@@ -862,13 +979,19 @@
       border: `1px solid ${THEME.borderAccent}`,
       boxShadow: "0 10px 30px rgba(0,0,0,0.85)",
       fontFamily: "system-ui, -apple-system, sans-serif",
-      width: "320px"
+      width: "330px"
     });
 
     (document.body || document.documentElement).appendChild(drawer);
 
     makeDraggable(drawer, document.getElementById("dusky-drawer-drag-handle"));
     document.getElementById("dusky-drawer-close").addEventListener("click", () => drawer.remove());
+    document.getElementById("dusky-drawer-clear-all").addEventListener("click", () => {
+      if (confirm("Are you sure you want to clear all custom rules for this site?")) {
+        clearAllRules();
+      }
+    });
+
     renderRulesDrawerList();
   }
 
@@ -923,7 +1046,8 @@
       createSvgSeaMask();
       document.addEventListener("mouseover", onMouseOver, true);
       document.addEventListener("click", onClick, true);
-      document.addEventListener("keydown", onKeyDown, true);
+      window.addEventListener("scroll", onScrollOrResize, { passive: true });
+      window.addEventListener("resize", onScrollOrResize, { passive: true });
     } else {
       removeControlBar();
       closeDialog();
@@ -933,7 +1057,8 @@
 
       document.removeEventListener("mouseover", onMouseOver, true);
       document.removeEventListener("click", onClick, true);
-      document.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("scroll", onScrollOrResize);
+      window.removeEventListener("resize", onScrollOrResize);
       currentTargetEl = null;
       ancestorStack = [];
       selectionLocked = false;
