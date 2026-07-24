@@ -52,6 +52,14 @@ def setup_user_chrome(home: Path):
     --zen-accent-primary: var(--lwt-accent-color) !important;
     --zen-background: var(--lwt-accent-color) !important;
     --zen-text: var(--lwt-text-color) !important;
+
+    /* Panel & Arrowpanel Variables for Modern Firefox & Quantum UI */
+    --arrowpanel-background: var(--lwt-popup-background-color, var(--lwt-accent-color)) !important;
+    --arrowpanel-color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
+    --arrowpanel-border-color: var(--lwt-popup-border-color, var(--toolbar-field-border, transparent)) !important;
+    --panel-item-hover-bgcolor: var(--toolbarbutton-hover-background, rgba(255, 255, 255, 0.1)) !important;
+    --panel-item-hover-color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
+    --panel-separator-color: var(--toolbar-field-border, rgba(255, 255, 255, 0.15)) !important;
 }
 
 #navigator-toolbox,
@@ -59,24 +67,32 @@ def setup_user_chrome(home: Path):
     background: var(--lwt-accent-color) !important;
 }
 
+/* Sidebar styling */
+#sidebar-box,
+#sidebar-header,
+sidebarheader {
+    background-color: var(--lwt-sidebar-background-color, var(--lwt-accent-color)) !important;
+    color: var(--lwt-sidebar-text-color, var(--lwt-text-color)) !important;
+}
+
 menupopup,
 panel {
     appearance: none !important;
     -moz-default-appearance: none !important;
-    --panel-background-color: var(--lwt-accent-color) !important;
-    --panel-background: var(--lwt-accent-color) !important;
-    --panel-text-color: var(--lwt-text-color) !important;
-    --panel-color: var(--lwt-text-color) !important;
-    --panel-border-color: var(--toolbar-field-border, var(--lwt-accent-color)) !important;
-    --menu-background-color: var(--lwt-accent-color) !important;
-    --menu-color: var(--lwt-text-color) !important;
-    --menu-border-color: var(--toolbar-field-border, var(--lwt-accent-color)) !important;
+    --panel-background-color: var(--lwt-popup-background-color, var(--lwt-accent-color)) !important;
+    --panel-background: var(--lwt-popup-background-color, var(--lwt-accent-color)) !important;
+    --panel-text-color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
+    --panel-color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
+    --panel-border-color: var(--lwt-popup-border-color, var(--toolbar-field-border, var(--lwt-accent-color))) !important;
+    --menu-background-color: var(--lwt-popup-background-color, var(--lwt-accent-color)) !important;
+    --menu-color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
+    --menu-border-color: var(--lwt-popup-border-color, var(--toolbar-field-border, var(--lwt-accent-color))) !important;
 }
 
 menupopup::part(content) {
-    background-color: var(--lwt-accent-color) !important;
-    color: var(--lwt-text-color) !important;
-    border: 1px solid var(--toolbar-field-border, var(--lwt-accent-color)) !important;
+    background-color: var(--lwt-popup-background-color, var(--lwt-accent-color)) !important;
+    color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
+    border: 1px solid var(--lwt-popup-border-color, var(--toolbar-field-border, var(--lwt-accent-color))) !important;
 }
 
 menu,
@@ -86,14 +102,14 @@ menuitem {
     border-radius: 6px !important;
     padding: 6px 12px !important;
     background-color: transparent !important;
-    color: var(--lwt-text-color) !important;
+    color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
     transition: background-color 120ms ease, color 120ms ease;
 }
 
 menu:is(:hover, [_moz-menuactive="true"]):not([disabled]),
 menuitem:is(:hover, [_moz-menuactive="true"]):not([disabled]) {
     background-color: var(--toolbarbutton-hover-background, var(--toolbarbutton-background-color-hover, rgba(255,255,255,0.1))) !important;
-    color: var(--toolbarbutton-icon-fill, var(--lwt-text-color)) !important;
+    color: var(--toolbarbutton-icon-fill, var(--lwt-popup-color, var(--lwt-text-color))) !important;
 }
 
 menubar > menu[open] {
@@ -133,15 +149,41 @@ menuitem[type="checkbox"] > .menu-icon {
 
 menuitem[type="checkbox"][checked] > .menu-icon,
 menuitem[type="radio"][checked] > .menu-icon {
-    background-color: var(--toolbarbutton-icon-fill, var(--lwt-text-color)) !important;
+    background-color: var(--toolbarbutton-icon-fill, var(--lwt-popup-color, var(--lwt-text-color))) !important;
 }
 
 menuitem:is(:hover, [_moz-menuactive="true"]) > .menu-icon {
-    border-color: var(--toolbarbutton-icon-fill, var(--lwt-text-color)) !important;
+    border-color: var(--toolbarbutton-icon-fill, var(--lwt-popup-color, var(--lwt-text-color))) !important;
 }
 
 menuitem:is(:hover, [_moz-menuactive="true"])[checked] > .menu-icon {
     filter: brightness(1.1);
+}
+
+/* Findbar styling */
+findbar {
+    background-color: var(--lwt-accent-color) !important;
+    color: var(--lwt-text-color) !important;
+    border-top: 1px solid var(--toolbar-field-border, rgba(255,255,255,0.15)) !important;
+}
+
+.findbar-textbox {
+    background-color: var(--toolbar-field-background-color, rgba(255,255,255,0.1)) !important;
+    color: var(--lwt-text-color) !important;
+}
+
+/* Tooltips & URLBar View */
+tooltip {
+    appearance: none !important;
+    background-color: var(--lwt-popup-background-color, var(--lwt-accent-color)) !important;
+    color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
+    border: 1px solid var(--toolbar-field-border, rgba(255,255,255,0.15)) !important;
+    border-radius: 6px !important;
+}
+
+.urlbarView-row:is([selected], :hover) {
+    background-color: var(--toolbarbutton-hover-background, rgba(255, 255, 255, 0.1)) !important;
+    color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
 }
 """
 

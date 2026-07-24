@@ -59,7 +59,11 @@ const BUILTIN_DEFAULT_CONFIG = {
         popup_highlight: 'accentPrimary',
         popup_highlight_text: 'background',
         ntp_background: 'background',
+        ntp_card_background: 'backgroundLight',
         ntp_text: 'text',
+        bookmark_text: 'textFocus',
+        toolbar_top_separator: 'backgroundExtra',
+        toolbar_bottom_separator: 'backgroundExtra',
         button_background_hover: 'backgroundExtra',
         button_background_active: 'backgroundExtra',
     }
