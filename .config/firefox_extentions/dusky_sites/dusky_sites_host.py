@@ -173,6 +173,8 @@ def default_config() -> dict:
         "colors_file": str(Path.home() / ".config/matugen/generated/dusky_sites.css"),
         "websites_dir": str(Path.home() / ".config/dusky_sites"),
         "web_theme_enabled": False,
+        "browser_theme_enabled": True,
+        "eco_mode": True,
         "disabled_sites": [],
     }
 
@@ -191,6 +193,10 @@ def load_config_file() -> dict:
             cfg["websites_dir"] = str(Path(data["websitesDir"]).expanduser())
         if "webThemeEnabled" in data:
             cfg["web_theme_enabled"] = _as_bool(data["webThemeEnabled"])
+        if "browserThemeEnabled" in data:
+            cfg["browser_theme_enabled"] = _as_bool(data["browserThemeEnabled"])
+        if "ecoMode" in data:
+            cfg["eco_mode"] = _as_bool(data["ecoMode"])
         if "disabledSites" in data:
             cfg["disabled_sites"] = _norm_sites(data.get("disabledSites"))
     except Exception:
@@ -386,7 +392,7 @@ def parse_websites(websites_dir: str, disabled_sites: list[str] | None = None) -
         pass
     return websites
 
-def get_theme_data(colors_file: str, websites_dir: str, web_theme_enabled: bool | None = None, disabled_sites: list[str] | None = None) -> dict:
+def get_theme_data(colors_file: str, websites_dir: str, web_theme_enabled: bool | None = None, disabled_sites: list[str] | None = None, browser_theme_enabled: bool = True, eco_mode: bool = True) -> dict:
     status: list[str] = []
     p_colors = Path(colors_file).expanduser() if colors_file else None
     p_sites = Path(websites_dir).expanduser() if websites_dir else None
@@ -408,6 +414,8 @@ def get_theme_data(colors_file: str, websites_dir: str, web_theme_enabled: bool 
         "websites": websites,
         "disabledSites": disabled,
         "webThemeEnabled": bool(web_theme_enabled),
+        "browserThemeEnabled": bool(browser_theme_enabled),
+        "ecoMode": bool(eco_mode),
         "status": status if status else ["OK"],
         "ok": bool(colors),
     }
@@ -541,6 +549,8 @@ def main() -> None:
                 colors_file = config["colors_file"]
                 websites_dir = config["websites_dir"]
                 web_enabled = bool(config["web_theme_enabled"])
+                browser_theme_enabled = bool(config.get("browser_theme_enabled", True))
+                eco_mode = bool(config.get("eco_mode", True))
                 disabled_sites = list(config["disabled_sites"])
 
             watcher.sync_watches([str(CONFIG_PATH), colors_file, websites_dir])
@@ -571,7 +581,7 @@ def main() -> None:
 
             send_failed = False
             if should_update or not last_hash:
-                data = get_theme_data(colors_file, websites_dir, web_enabled, disabled_sites)
+                data = get_theme_data(colors_file, websites_dir, web_enabled, disabled_sites, browser_theme_enabled, eco_mode)
                 current_hash = get_data_hash(data)
                 if current_hash != last_hash or force_send:
                     data["timestamp"] = time.time()

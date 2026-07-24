@@ -38,6 +38,12 @@ def print_success(msg: str) -> None: print(f"{C_GREEN}✓{C_RESET} {msg}")
 def print_warn(msg: str) -> None: print(f"{C_YELLOW}⚠{C_RESET} {msg}")
 def print_error(msg: str) -> None: print(f"{C_RED}❌ Error:{C_RESET} {msg}"); sys.exit(1)
 
+PREFS_TO_SET = [
+    ("toolkit.legacyUserProfileCustomizations.stylesheets", "true"),
+    ("extensions.autoDisableScopes", "0"),
+    ("extensions.enabledScopes", "15"),
+]
+
 def atomic_write_text(path: Path, text: str) -> None:
     """Write text via tempfile + replace (same-directory atomic rename)."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -45,19 +51,26 @@ def atomic_write_text(path: Path, text: str) -> None:
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
 
-def ensure_userchrome_pref(user_js: Path) -> bool:
+def atomic_copy_file(src: Path, dst: Path) -> None:
+    """Copy file via tempfile + replace (same-directory atomic rename)."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + ".tmp")
+    shutil.copy2(src, tmp)
+    tmp.replace(dst)
+
+def ensure_firefox_prefs(user_js: Path) -> bool:
     try:
-        if user_js.is_file():
-            content = user_js.read_text(encoding="utf-8")
-            if PREF_RE.search(content):
-                content = PREF_RE.sub(PREF_LINE, content)
+        content = user_js.read_text(encoding="utf-8") if user_js.is_file() else ""
+        for pref_name, pref_val in PREFS_TO_SET:
+            pref_re = re.compile(rf'user_pref\(\s*"{re.escape(pref_name)}"\s*,\s*[^)]+\s*\)\s*;')
+            pref_line = f'user_pref("{pref_name}", {pref_val});'
+            if pref_re.search(content):
+                content = pref_re.sub(pref_line, content)
             else:
-                content = content.rstrip() + f"\n{PREF_LINE}\n"
-            if not content.endswith("\n"):
-                content += "\n"
-            atomic_write_text(user_js, content)
-        else:
-            atomic_write_text(user_js, PREF_LINE + "\n")
+                content = content.rstrip() + f"\n{pref_line}\n"
+        if not content.endswith("\n"):
+            content += "\n"
+        atomic_write_text(user_js, content)
         return True
     except OSError as e:
         print_warn(f"Could not write {user_js}: {e}")
@@ -204,7 +217,36 @@ tooltip {
 }
 """
 
-def setup_user_chrome(home: Path) -> None:
+def patch_extensions_json(profile: Path) -> None:
+    """Ensure extensions.json marks dusky_sites@dusk.com as active/enabled if present and invalidate addon cache."""
+    ext_json_path = profile / "extensions.json"
+    if ext_json_path.is_file():
+        try:
+            data = json.loads(ext_json_path.read_text(encoding="utf-8"))
+            addons = data.get("addons", [])
+            found = False
+            for addon in addons:
+                if addon.get("id") == EXTENSION_ID:
+                    addon["active"] = True
+                    addon["userDisabled"] = False
+                    addon["appDisabled"] = False
+                    addon["softDisabled"] = False
+                    addon["seen"] = True
+                    found = True
+                    break
+            if found:
+                atomic_write_text(ext_json_path, json.dumps(data, indent=2) + "\n")
+        except Exception as e:
+            print_warn(f"Could not patch extensions.json in {profile}: {e}")
+
+    startup_cache = profile / "addonStartup.json.lz4"
+    if startup_cache.is_file():
+        try:
+            startup_cache.unlink()
+        except OSError as e:
+            print_warn(f"Could not reset addonStartup cache in {profile}: {e}")
+
+def setup_user_chrome(home: Path, source_xpi: Path | None = None) -> None:
     browser_dirs = [
         home / ".mozilla" / "firefox",
         home / ".config" / "mozilla" / "firefox",
@@ -221,13 +263,32 @@ def setup_user_chrome(home: Path) -> None:
 
     installed_profiles = 0
     failed_prefs = 0
+    installed_xpis = 0
 
     for base_dir in browser_dirs:
         if not base_dir.is_dir():
             continue
         for profile in iter_firefox_profiles(base_dir):
-            if not ensure_userchrome_pref(profile / "user.js"):
+            if not ensure_firefox_prefs(profile / "user.js"):
                 failed_prefs += 1
+
+            if source_xpi and source_xpi.is_file():
+                ext_dir = profile / "extensions"
+                try:
+                    ext_dir.mkdir(parents=True, exist_ok=True)
+                    target_xpi = ext_dir / f"{EXTENSION_ID}.xpi"
+                    atomic_copy_file(source_xpi, target_xpi)
+                    patch_extensions_json(profile)
+                    installed_xpis += 1
+                    for stale in ("matugenfox.xpi", "matugenfox@ubaid.com.xpi"):
+                        old = ext_dir / stale
+                        if old.is_file():
+                            try:
+                                old.unlink()
+                            except OSError:
+                                pass
+                except OSError as e:
+                    print_warn(f"Could not copy XPI into {profile}: {e}")
 
             chrome_dir = profile / "chrome"
             try:
@@ -251,6 +312,8 @@ def setup_user_chrome(home: Path) -> None:
         print_success(f"Context menu styling injected into {installed_profiles} profile(s).")
     else:
         print_warn("No profile directories found for context menu styling.")
+    if installed_xpis > 0:
+        print_success(f"Signed XPI installed into {installed_xpis} browser profile(s).")
     if failed_prefs:
         print_warn(f"user.js pref write failed for {failed_prefs} profile(s); userChrome may be inert until fixed.")
 
@@ -265,16 +328,46 @@ def resolve_source_host(script_dir: Path) -> Path:
             return c
     return candidates[0]
 
+def resolve_source_xpi(script_dir: Path) -> Path | None:
+    candidates = [
+        Path.home() / ".config" / "firefox_extentions" / "dusky_sites" / "xpi" / f"{EXTENSION_ID}.xpi",
+        Path.home() / ".config" / "firefox_extentions" / "dusky_sites" / f"{EXTENSION_ID}.xpi",
+        script_dir / "xpi" / f"{EXTENSION_ID}.xpi",
+        script_dir / f"{EXTENSION_ID}.xpi",
+    ]
+    for c in candidates:
+        if c.is_file():
+            return c
+
+    search_dirs = [
+        Path.home() / ".config" / "firefox_extentions" / "dusky_sites" / "xpi",
+        Path.home() / ".config" / "firefox_extentions" / "dusky_sites",
+        script_dir / "xpi",
+        script_dir,
+    ]
+    for d in search_dirs:
+        if d.is_dir():
+            for xpi in d.glob("*.xpi"):
+                if xpi.is_file():
+                    return xpi
+    return None
+
 def main() -> None:
     print(f"\n{C_CYAN}🦊 Dusky Sites Setup Script (Arch Linux / Python 3.12+){C_RESET}\n")
 
     script_dir = Path(__file__).parent.resolve()
     source_host = resolve_source_host(script_dir)
+    source_xpi = resolve_source_xpi(script_dir)
 
     print_step("Performing pre-flight checks...")
     if not source_host.is_file():
         print_error(f"Host script not found. Place {HOST_INSTALL_NAME} next to this setup script.\n  looked for: {source_host}")
     print_success(f"Found host source at {source_host}")
+
+    if source_xpi and source_xpi.is_file():
+        print_success(f"Found signed WebExtension package at {source_xpi}")
+    else:
+        print_warn("Signed XPI package not found; fallback to manual add-on load.")
 
     home = Path.home()
     data_home = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share"))
@@ -379,13 +472,36 @@ def main() -> None:
     if installed_count == 0:
         print_warn("No native messaging manifests were installed.")
 
-    print_step("Provisioning native context menu & userChrome styling...")
-    setup_user_chrome(home)
+    if source_xpi and source_xpi.is_file():
+        print_step("Installing signed WebExtension into global extension paths...")
+        global_ext_dirs = [
+            home / ".mozilla" / "extensions" / "{ec86533a-4427-4660-8f2e-170944d3753d}",
+            home / ".config" / "mozilla" / "extensions" / "{ec86533a-4427-4660-8f2e-170944d3753d}",
+            home / ".librewolf" / "extensions",
+            home / ".zen" / "extensions",
+            home / ".waterfox" / "extensions",
+            home / ".floorp" / "extensions",
+        ]
+        g_count = 0
+        for g_dir in global_ext_dirs:
+            try:
+                g_dir.mkdir(parents=True, exist_ok=True)
+                atomic_copy_file(source_xpi, g_dir / f"{EXTENSION_ID}.xpi")
+                g_count += 1
+            except OSError as e:
+                print_warn(f"Could not copy XPI to {g_dir}: {e}")
+        if g_count > 0:
+            print_success(f"Signed XPI installed into {g_count} global extension path(s).")
 
-    print(f"\n{C_GREEN}✅ Setup Complete! Dusky Sites host installed cleanly.{C_RESET}")
+    print_step("Provisioning native context menu, userChrome & profile XPI extensions...")
+    setup_user_chrome(home, source_xpi)
+
+    print(f"\n{C_GREEN}✅ Setup Complete! Dusky Sites host and signed WebExtension provisioned cleanly.{C_RESET}")
     print("------------------------------------------------------------------")
     print(f"{C_CYAN}Host path:{C_RESET} {installed_host}")
     print(f"{C_CYAN}Manifest name:{C_RESET} {MANIFEST_NAME} (native app name: dusky_sites)")
+    if source_xpi:
+        print(f"{C_CYAN}Signed XPI:{C_RESET} {source_xpi}")
     print("------------------------------------------------------------------\n")
 
 if __name__ == "__main__":
