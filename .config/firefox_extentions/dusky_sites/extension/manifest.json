@@ -3,7 +3,7 @@
     "name": "Dusky Sites",
     "version": "2.0.2",
     "description": "Dynamic webpage and browser theming using Matugen colors",
-    "homepage_url": "https://github.com/Ubaidullah-Web-Dev/MatugenFox",
+    "homepage_url": "https://github.com/dusklinux/dusky",
     "browser_specific_settings": {
         "gecko": {
             "id": "dusky_sites@dusk.com",

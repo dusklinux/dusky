@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Dusky Dynamic Theme Builder - Ultimate Live Preview Master Edition
-Optimized for: Arch Linux, Python 3.14.5, MatugenFox Native Host Integration
+Optimized for: Arch Linux, Python 3.14.5, Dusky Sites Native Host Integration
 """
 
 import os
@@ -641,7 +641,7 @@ def flow_audit_mode():
 
         console.clear()
         console.print(f"[bold magenta]Auditing:[/] {selected_file.name}\n")
-        console.print("[dim]Live modifications will instantly trigger MatugenFox reload.[/dim]")
+        console.print("[dim]Live modifications will instantly trigger Dusky Sites reload.[/dim]")
         
         table = Table(title="Tracked Semantic Elements", show_header=True, header_style="bold cyan")
         table.add_column("ID", justify="center", style="yellow", width=4)
@@ -674,13 +674,13 @@ def flow_audit_mode():
                     if new_sel and new_sel != target['selector']:
                         manager.update_rule_selector(target['selector'], target['meta'], new_sel)
                         safe_write_atomic(selected_file, manager.generate_css())
-                        console.print("[bold green]✔ Selector updated & Pushed to Browser! (MatugenFox)[/]")
+                        console.print("[bold green]✔ Selector updated & Pushed to Browser! (Dusky Sites)[/]")
                 case "2":
                     confirm = Prompt.ask("[bold red]Are you sure you want to delete this rule?[/] (y/N)", default="n")
                     if confirm.lower() == 'y':
                         manager.delete_rule(target['selector'], target['meta'])
                         safe_write_atomic(selected_file, manager.generate_css())
-                        console.print("[bold green]✔ Rule purged & Pushed to Browser! (MatugenFox)[/]")
+                        console.print("[bold green]✔ Rule purged & Pushed to Browser! (Dusky Sites)[/]")
                         
             if action in ["1", "2"]:
                 time.sleep(1.0)
@@ -699,7 +699,7 @@ def flow_create_edit():
     if not domain: return
         
     console.print(f"[*] Locking on: [bold green]{domain}[/]")
-    console.print("[dim]Every mapped rule will instantly save and trigger MatugenFox in your browser.[/dim]\n")
+    console.print("[dim]Every mapped rule will instantly save and trigger Dusky Sites in your browser.[/dim]\n")
     
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     file_path = CONFIG_DIR / f"{domain}.css"
@@ -779,13 +779,13 @@ def flow_create_edit():
             try:
                 manager.inject_rules(pending_rules)
                 safe_write_atomic(file_path, manager.generate_css())
-                console.print(f"\n[bold green]🚀 Mapped {len(pending_rules)} rule(s). Pushed to MatugenFox Instantly![/]")
+                console.print(f"\n[bold green]🚀 Mapped {len(pending_rules)} rule(s). Pushed to Dusky Sites Instantly![/]")
             except Exception as e:
                 console.print(f"\n[bold red]✖ Critical Error during injection (Malformed Paste?): {e}[/]")
 
     console.print("\n[bold green]✔ Live session complete. File is up-to-date.[/]")
     
-    console.print("\n[dim]If MatugenFox is running, your browser is already synced.[/dim]")
+    console.print("\n[dim]If Dusky Sites is running, your browser is already synced.[/dim]")
     deploy_choice = Prompt.ask("Execute legacy hard-deploy shell scripts? (y/N)", default="n").lower()
     
     if deploy_choice == "y":
@@ -820,7 +820,7 @@ def main():
         console.clear()
         console.print(Panel.fit(
             "[bold cyan]Dusky Wayland CSS Generator[/] (Live Master Edition)\n"
-            "[dim]Powered by tinycss2 | Auto-Syncing with MatugenFox[/]",
+            "[dim]Powered by tinycss2 | Auto-Syncing with Dusky Sites[/]",
             border_style="magenta"
         ))
         

@@ -118,7 +118,7 @@ function connectNative() {
 
         notifyUI({ type: 'HOST_STATUS', connected: true });
     } catch (err) {
-        console.error('MatugenFox: connectNative error:', err);
+        console.error('Dusky Sites: connectNative error:', err);
         scheduleReconnect();
     } finally {
         state.isConnecting = false;
@@ -131,7 +131,7 @@ function safePostMessage(msg) {
         state.port.postMessage(msg);
         return true;
     } catch (e) {
-        console.warn('MatugenFox: postMessage failed:', e);
+        console.warn('Dusky Sites: postMessage failed:', e);
         state.port = null;
         scheduleReconnect();
         return false;
@@ -140,7 +140,7 @@ function safePostMessage(msg) {
 
 function handleHostDisconnect(p) {
     const err = p.error?.message || 'unknown';
-    console.error('MatugenFox: host disconnected:', err);
+    console.error('Dusky Sites: host disconnected:', err);
     state.port = null;
     notifyUI({ type: 'HOST_STATUS', connected: false, error: err, manuallyStopped: !state.shouldConnect });
     if (state.shouldConnect) scheduleReconnect();
@@ -384,7 +384,7 @@ function loadConfig() {
         if (res.config) state.config = mergeConfig(res.config);
         if (res.themeData) state.lastThemeData = res.themeData;
         connectNative();
-    }).catch(err => console.error('MatugenFox: loadConfig error:', err));
+    }).catch(err => console.error('Dusky Sites: loadConfig error:', err));
 }
 
 function saveConfig(partial = null) {
@@ -435,7 +435,7 @@ function handleHostMessage(msg) {
         case 'QUERY_LIVE_THEME': {
             browser.theme.getCurrent().then(cur => {
                 safePostMessage({ type: 'LIVE_THEME_RESPONSE', theme: cur });
-            }).catch(e => console.warn('MatugenFox theme query error:', e));
+            }).catch(e => console.warn('Dusky Sites theme query error:', e));
             break;
         }
         case 'SAVE_CONFIG_SUCCESS':
@@ -515,7 +515,7 @@ browser.runtime.onMessage.addListener((req, sender) => {
         case 'WRITE_USER_CONTENT':
         case 'SET_FONT_SIZE': {
             if (!sender.url || !sender.url.includes(browser.runtime.id)) {
-                console.warn('MatugenFox: Rejected native host command from untrusted sender:', sender);
+                console.warn('Dusky Sites: Rejected native host command from untrusted sender:', sender);
                 return Promise.resolve({ ok: false, error: 'Unauthorized' });
             }
             safePostMessage(req);

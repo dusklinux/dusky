@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ===============================================================================
-DUSKY TUI: MATUGENFOX WEBSITES SCHEMA & CONTROLLER
+DUSKY TUI: DUSKY SITES WEBSITES SCHEMA & CONTROLLER
 ===============================================================================
 This file serves a dual purpose:
 1. It is the visual layout schema consumed by Dusky TUI (`main.py tui_dusky_sites.py`).
@@ -81,7 +81,7 @@ tab1_items = [
         type_="bool",
         default=True,
         group="Performance & Optimization",
-        extended_help="**Eco Mode (Performance Saver)**\n\nWhen enabled, MatugenFox defers CSS updates for background tabs until activated, saving RAM and CPU."
+        extended_help="**Eco Mode (Performance Saver)**\n\nWhen enabled, Dusky Sites defers CSS updates for background tabs until activated, saving RAM and CPU."
     ),
     ConfigItem(
         label="Native Browser UI Chrome",

@@ -2,7 +2,7 @@
 """
 🦊 Dusky Sites Engine for Dusky TUI (Arch Linux / Python 3.12+)
 ================================================================
-Engine for managing MatugenFox per-site theming configuration and 
+Engine for managing Dusky Sites per-site theming configuration and 
 templates in ~/.config/dusky_sites/ and ~/.config/dusky/settings/dusky_sites/config.json.
 """
 
@@ -17,7 +17,7 @@ from python.frontend.core_types import BaseEngine
 
 class DuskySitesEngine(BaseEngine):
     """
-    Engine for managing MatugenFox configuration and site-specific CSS themes.
+    Engine for managing Dusky Sites configuration and site-specific CSS themes.
     """
 
     def __init__(self, config_path: str = "~/.config/dusky/settings/dusky_sites/config.json"):
