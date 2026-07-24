@@ -162,14 +162,17 @@ sidebarheader {
 
 menupopup,
 panel,
-#unified-extensions-panel {
+panelview,
+panelmultiview,
+#unified-extensions-panel,
+#unified-extensions-view,
+.panel-subview-body,
+.popup-notification-body {
     appearance: none !important;
     -moz-default-appearance: none !important;
     background-color: var(--lwt-popup-background-color, var(--lwt-accent-color, #1c1b22)) !important;
+    background: var(--lwt-popup-background-color, var(--lwt-accent-color, #1c1b22)) !important;
     color: var(--lwt-popup-color, var(--lwt-text-color, #fbfbfe)) !important;
-    border: 1px solid var(--lwt-popup-border-color, var(--toolbar-field-border, rgba(255,255,255,0.15))) !important;
-    border-radius: 8px !important;
-    padding: 4px !important;
     --panel-background-color: var(--lwt-popup-background-color, var(--lwt-accent-color, #1c1b22)) !important;
     --panel-background: var(--lwt-popup-background-color, var(--lwt-accent-color, #1c1b22)) !important;
     --panel-text-color: var(--lwt-popup-color, var(--lwt-text-color, #fbfbfe)) !important;
@@ -180,33 +183,27 @@ panel,
     --menu-border-color: var(--lwt-popup-border-color, var(--toolbar-field-border, rgba(255,255,255,0.15))) !important;
 }
 
-panelview,
-panelmultiview,
-#unified-extensions-view,
-.panel-subview-body,
-.popup-notification-body,
 menupopup::part(content) {
-    background: transparent !important;
-    background-color: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
+    background-color: var(--lwt-popup-background-color, var(--lwt-accent-color)) !important;
+    color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
+    border: 1px solid var(--lwt-popup-border-color, var(--toolbar-field-border, var(--lwt-accent-color))) !important;
 }
 
 menu,
 menuitem {
     appearance: none !important;
     -moz-default-appearance: none !important;
-    border-radius: 4px !important;
+    border-radius: 6px !important;
     padding: 6px 12px !important;
     background-color: transparent !important;
-    color: var(--lwt-popup-color, var(--lwt-text-color, #fbfbfe)) !important;
+    color: var(--lwt-popup-color, var(--lwt-text-color)) !important;
     transition: background-color 120ms ease, color 120ms ease;
 }
 
 menu:is(:hover, [_moz-menuactive="true"]):not([disabled]),
 menuitem:is(:hover, [_moz-menuactive="true"]):not([disabled]) {
     background-color: var(--toolbarbutton-hover-background, var(--toolbarbutton-background-color-hover, rgba(255,255,255,0.1))) !important;
-    color: var(--toolbarbutton-icon-fill, var(--lwt-popup-color, var(--lwt-text-color, #fbfbfe))) !important;
+    color: var(--toolbarbutton-icon-fill, var(--lwt-popup-color, var(--lwt-text-color))) !important;
 }
 
 findbar {
