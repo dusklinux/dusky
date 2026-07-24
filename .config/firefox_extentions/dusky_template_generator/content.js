@@ -1,11 +1,8 @@
 /**
- * Dusky Template Generator & Visual Element Theme Picker v5.3 (Intelligent Upsert Edition)
- * - Intelligent Rule Deduplication: Updating an already themed element updates its rule in-place instead of creating duplicate rules!
- * - Clean Minimal Output: Only saves custom picked rules, no auto-var dumping!
- * - Global Keyboard Hotkey (Alt+Shift+P)
- * - Matugen Token Select Dropdown
- * - LocalStorage & Disk Persistence
- * - SVG Cutout Mask sync on depth slider & candidate changes
+ * Dusky Template Generator & Visual Element Theme Picker v5.4 (Fixed Slider & DOM Traversal Edition)
+ * - Fixed buildAncestorStack to traverse all the way to documentElement so max > 0 always!
+ * - Added ⬆️ Parent Element & ⬇️ Child Element buttons alongside slider
+ * - Added input & change event listeners to ensure 100% smooth slider dragging
  */
 
 (function () {
@@ -558,12 +555,13 @@
     }
   }
 
-  // ─── Ancestor Hierarchy Stack ───
+  // ─── Ancestor Hierarchy Stack (Full DOM Traversal) ───
   function buildAncestorStack(el) {
     ancestorStack = [];
     let curr = el;
-    while (curr && curr.nodeType === Node.ELEMENT_NODE && curr !== document.body) {
+    while (curr && curr.nodeType === Node.ELEMENT_NODE) {
       ancestorStack.push(curr);
+      if (curr === document.documentElement) break;
       curr = curr.parentElement;
     }
     if (ancestorStack.length === 0 && el) ancestorStack = [el];
@@ -654,13 +652,14 @@
     }
   }
 
-  // ─── Interactive Action Dialog ───
+  // ─── Interactive Action Dialog (with Step Buttons + Range Slider) ───
   function showActionDialog(targetEl) {
     const existing = document.getElementById("dusky-picker-dialog");
     if (existing) existing.remove();
 
     buildAncestorStack(targetEl);
     const candidates = generateCandidateSelectors(currentTargetEl);
+    const maxDepth = Math.max(1, ancestorStack.length - 1);
 
     const dialog = document.createElement("div");
     dialog.id = "dusky-picker-dialog";
@@ -680,13 +679,17 @@
 
       <!-- Minimizable Body Content -->
       <div id="dusky-dialog-body-content">
-        <!-- uBlock-Style DOM Depth Slider -->
+        <!-- uBlock-Style DOM Depth Slider & Buttons -->
         <div style="background:${THEME.bgCard}; padding:8px 10px; border-radius:8px; border:1px solid ${THEME.borderWarm}; margin-bottom:10px;">
-          <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px;">
-            <span style="color:${THEME.textMuted};">DOM Tree Depth Level:</span>
-            <span id="dusky-depth-label" style="color:${THEME.accentWarm}; font-weight:bold;">0 / ${ancestorStack.length - 1} (&lt;${currentTargetEl.tagName.toLowerCase()}&gt;)</span>
+          <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; margin-bottom:6px;">
+            <span style="color:${THEME.textMuted};">DOM Tree Depth:</span>
+            <span id="dusky-depth-label" style="color:${THEME.accentWarm}; font-weight:bold;">0 / ${maxDepth} (&lt;${currentTargetEl.tagName.toLowerCase()}&gt;)</span>
           </div>
-          <input id="dusky-depth-slider" type="range" min="0" max="${ancestorStack.length - 1}" value="0" style="width:100%; accent-color:${THEME.accentWarm}; cursor:pointer;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <button id="dusky-depth-down" title="Target Child Element (Down Arrow)" style="background:${THEME.bgButton}; color:${THEME.accentWarm}; border:1px solid ${THEME.borderWarm}; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;">⬇️ Child</button>
+            <input id="dusky-depth-slider" type="range" min="0" max="${maxDepth}" value="0" style="flex:1; accent-color:${THEME.accentWarm}; cursor:pointer;">
+            <button id="dusky-depth-up" title="Target Parent Element (Up Arrow)" style="background:${THEME.bgButton}; color:${THEME.accentWarm}; border:1px solid ${THEME.borderWarm}; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;">⬆️ Parent</button>
+          </div>
         </div>
 
         <!-- Selector Candidate Dropdown & Match Count -->
@@ -779,14 +782,27 @@
       dialog.style.opacity = isTranslucent ? "0.35" : "1.0";
     });
 
+    // Slider & Button Change Handlers
     const slider = document.getElementById("dusky-depth-slider");
-    slider.addEventListener("input", (e) => {
+    const btnUp = document.getElementById("dusky-depth-up");
+    const btnDown = document.getElementById("dusky-depth-down");
+
+    const onSliderChange = (newVal) => {
       removeTempLivePreview();
-      currentStackIndex = parseInt(e.target.value, 10);
+      currentStackIndex = Math.max(0, Math.min(ancestorStack.length - 1, parseInt(newVal, 10)));
       currentTargetEl = ancestorStack[currentStackIndex];
+      if (slider) slider.value = currentStackIndex;
       updateSvgSeaMask(currentTargetEl);
       updateDialogForNewTarget();
-    });
+    };
+
+    if (slider) {
+      slider.addEventListener("input", (e) => onSliderChange(e.target.value));
+      slider.addEventListener("change", (e) => onSliderChange(e.target.value));
+    }
+
+    if (btnUp) btnUp.addEventListener("click", () => onSliderChange(currentStackIndex + 1));
+    if (btnDown) btnDown.addEventListener("click", () => onSliderChange(currentStackIndex - 1));
 
     const candidateSelect = document.getElementById("dusky-candidate-select");
     candidateSelect.addEventListener("change", () => {
@@ -862,7 +878,7 @@
     updateBarInfo();
   }
 
-  // ─── Rule Management (Intelligent Upsert) ───
+  // ─── Rule Management ───
   function addCustomRule(selector, actionType, customVal = "", customMeta = "") {
     let prop = "background-color";
     let val = "var(--surface)";
@@ -889,15 +905,12 @@
       cssText = customVal.endsWith(";") ? customVal : customVal + ";"; meta = "Custom CSS Rule";
     }
 
-    // Check if a rule already exists for this exact selector
     const existingIndex = customRules.findIndex(r => r.selector === selector);
     const ruleObj = { id: existingIndex !== -1 ? customRules[existingIndex].id : Date.now(), selector, prop, val, meta, cssText };
 
     if (existingIndex !== -1) {
-      // Intelligently UPDATE existing rule in-place instead of creating a duplicate entry
       customRules[existingIndex] = ruleObj;
     } else {
-      // Add new rule entry
       customRules.push(ruleObj);
     }
 
@@ -1087,7 +1100,6 @@
         clearAllRules();
         sendResponse({ status: "ok" });
       }
-
     });
   }
 })();
