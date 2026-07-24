@@ -34,7 +34,7 @@ class DuskySitesEngine(BaseEngine):
     def _read_config_json(self) -> dict[str, Any]:
         if not self.config_path.exists():
             return {
-                "colorsPath": "~/.config/matugen/generated/firefox_websites.css",
+                "colorsPath": "~/.config/matugen/generated/dusky_sites.css",
                 "websitesDir": "~/.config/dusky_sites",
                 "webThemeEnabled": False,
                 "disabledSites": []
@@ -97,7 +97,7 @@ class DuskySitesEngine(BaseEngine):
                 "DEFAULT/userChromeEnabled": chrome_enabled,
                 "userContentEnabled": content_enabled,
                 "DEFAULT/userContentEnabled": content_enabled,
-                "colorsPath": data.get("colorsPath", "~/.config/matugen/generated/firefox_websites.css"),
+                "colorsPath": data.get("colorsPath", "~/.config/matugen/generated/dusky_sites.css"),
                 "websitesDir": data.get("websitesDir", "~/.config/dusky_sites"),
             }
 

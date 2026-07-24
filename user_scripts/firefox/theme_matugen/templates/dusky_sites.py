@@ -91,7 +91,7 @@ class ColorTracker:
     If the wallpaper changes, it instantly absorbs the new variables for the TUI.
     """
     def __init__(self):
-        self.path = get_xdg_config_home() / "matugen" / "generated" / "firefox_websites.css"
+        self.path = get_xdg_config_home() / "matugen" / "generated" / "dusky_sites.css"
         self.last_mtime = 0.0
         self.colors: dict[str, str] = {}
 

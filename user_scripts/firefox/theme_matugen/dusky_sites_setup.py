@@ -221,7 +221,7 @@ def main():
     config_file = config_dir / "config.json"
     if not config_file.is_file():
         config_data = {
-            "colorsPath": "~/.config/matugen/generated/firefox_websites.css",
+            "colorsPath": "~/.config/matugen/generated/dusky_sites.css",
             "websitesDir": "~/.config/dusky_sites",
             "webThemeEnabled": False,
             "ecoMode": True,

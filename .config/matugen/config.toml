@@ -292,9 +292,9 @@ post_hook   = '''
   fi
 '''
 
-[templates.firefox_websites]
-input_path = '~/.config/matugen/templates/firefox_websites.css'
-output_path = '~/.config/matugen/generated/firefox_websites.css'
+[templates.dusky_sites]
+input_path = '~/.config/matugen/templates/dusky_sites.css'
+output_path = '~/.config/matugen/generated/dusky_sites.css'
 
 #=============================================================================
 # 4. System Services & Daemons (Triggered on theme change )

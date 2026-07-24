@@ -94,7 +94,7 @@ class InotifyWatcher:
 # --- Global State ---
 def load_external_config() -> tuple[str, str, bool, list[str]]:
     config_file = Path.home() / ".config/dusky/settings/matugenfox/config.json"
-    colors_file = str(Path.home() / ".config/matugen/generated/firefox_websites.css")
+    colors_file = str(Path.home() / ".config/matugen/generated/dusky_sites.css")
     websites_dir = str(Path.home() / ".config/dusky_sites")
     web_theme_enabled = False
     disabled_sites = []

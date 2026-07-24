@@ -11,7 +11,7 @@ const RECONNECT_MAX = 300000;
 
 // ─── Default Config ───
 const BUILTIN_DEFAULT_CONFIG = {
-    colorsPath: '~/.config/matugen/generated/firefox_websites.css',
+    colorsPath: '~/.config/matugen/generated/dusky_sites.css',
     websitesDir: '~/.config/dusky_sites',
     ecoMode: true,
     browserThemeEnabled: true,
