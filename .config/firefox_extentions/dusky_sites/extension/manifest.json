@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Dusky Sites",
-  "version": "2.0.2",
-  "description": "Dynamic webpage and browser theming using Matugen colors",
+  "version": "3.0",
+  "description": "Theme gecko browser with Dusky colors",
   "homepage_url": "https://github.com/dusklinux/dusky",
   "browser_specific_settings": {
     "gecko": {
