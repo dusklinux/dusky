@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════
-   MatugenFox User Configuration Overrides
+   Dusky Sites User Configuration Overrides
    ═══════════════════════════════════════════ */
 
 'use strict';

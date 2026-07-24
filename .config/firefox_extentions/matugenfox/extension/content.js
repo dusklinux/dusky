@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════
-   MatugenFox Content Script v2.0
+   Dusky Sites Content Script v2.0
    ═══════════════════════════════════════════ */
 
 'use strict';

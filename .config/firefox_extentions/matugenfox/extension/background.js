@@ -205,6 +205,49 @@ function isColorLight(hex) {
     return ((0.299 * r + 0.587 * g + 0.114 * b) / 255) > 0.5;
 }
 
+function adjustLuminance(hex, lum) {
+    if (!hex) return hex;
+    let c = hex.replace('#', '');
+    if (c.length === 3) c = c.split('').map(x => x + x).join('');
+    if (c.length !== 6) return hex;
+    let rgb = '#';
+    for (let i = 0; i < 3; i++) {
+        let val = parseInt(c.substr(i * 2, 2), 16);
+        val = Math.round(Math.min(Math.max(0, val + (val * lum)), 255)).toString(16);
+        rgb += ('00' + val).substr(val.length);
+    }
+    return rgb;
+}
+
+// ─── Dark Reader Extension Integration (Borrowed from Pywalfox) ───
+const DARKREADER_ID = 'addon@darkreader.org';
+
+function syncDarkReaderTheme(colors) {
+    if (!colors) return;
+    try {
+        const bg = colors['--background'] || colors['--surface'] || '#121212';
+        const fg = colors['--on_background'] || colors['--on_surface'] || '#e0e0e0';
+        const isDark = !isColorLight(bg);
+
+        const port = browser.runtime.connect(DARKREADER_ID);
+        if (port) {
+            port.postMessage({
+                type: 'setTheme',
+                data: isDark ? {
+                    darkSchemeBackgroundColor: bg,
+                    darkSchemeTextColor: fg
+                } : {
+                    lightSchemeBackgroundColor: bg,
+                    lightSchemeTextColor: fg
+                }
+            });
+            port.disconnect();
+        }
+    } catch (e) {
+        // Silent fallback if Dark Reader is not installed
+    }
+}
+
 function applyBrowserTheme(colors) {
     if (!colors || !state.config.browserThemeEnabled) return;
     const themeColors = buildBrowserThemeColors(colors);
@@ -214,6 +257,7 @@ function applyBrowserTheme(colors) {
         colors: themeColors,
         properties: { color_scheme: scheme, content_color_scheme: scheme },
     }).then(() => {
+        syncDarkReaderTheme(colors);
         browser.theme.getCurrent().then(cur => {
             safePostMessage({ type: 'LIVE_THEME_RESPONSE', theme: cur });
         }).catch(() => {});

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🦊 MatugenFox Native Messaging Host (Modern Arch Linux / Python 3.12+)
+🦊 Dusky Sites Native Messaging Host (Modern Arch Linux / Python 3.12+)
 ======================================================================
 Event-driven, zero-wakeup Native Messaging Host for Firefox.
 Watches Matugen generated color palettes using Linux C-library inotify.
@@ -169,7 +169,7 @@ def send_message(message_content: dict):
             sys.stdout.buffer.write(encoded_content)
             sys.stdout.buffer.flush()
     except Exception as e:
-        print(f"MatugenFox host error (send_message): {e}", file=sys.stderr)
+        print(f"Dusky Sites host error (send_message): {e}", file=sys.stderr)
 
 # --- Color & Template Parsing ---
 def parse_colors(colors_file: str) -> dict[str, str]:
@@ -314,7 +314,7 @@ def message_handler():
                     pass
 
         except Exception as e:
-            print(f"MatugenFox host error (handler): {e}", file=sys.stderr)
+            print(f"Dusky Sites host error (handler): {e}", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
 
 def main():
@@ -394,7 +394,7 @@ def main():
             else:
                 watcher.wait_for_events(timeout=60.0)
         except Exception as e:
-            print(f"MatugenFox host error (main): {e}", file=sys.stderr)
+            print(f"Dusky Sites host error (main): {e}", file=sys.stderr)
             time.sleep(5.0)
 
     watcher.close()
