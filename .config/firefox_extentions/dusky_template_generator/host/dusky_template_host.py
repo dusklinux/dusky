@@ -3,7 +3,7 @@
 🦊 Dusky Template Generator Native Messaging Host
 =================================================
 Receives generated template CSS from the WebExtension and writes
-it directly to ~/.config/dusky_sites/<domain>.css.
+or deletes site CSS files in ~/.config/dusky_sites/<domain>.css.
 """
 
 from __future__ import annotations
@@ -65,9 +65,6 @@ def main() -> None:
             if not domain:
                 send_message({"status": "error", "error": "Invalid domain name"})
                 continue
-            if not css_content.strip():
-                send_message({"status": "error", "error": "CSS content is empty"})
-                continue
 
             file_path = target_dir / f"{domain}.css"
             tmp_path = file_path.with_name(f"{file_path.name}.tmp")
@@ -82,6 +79,30 @@ def main() -> None:
                 })
             except Exception as e:
                 send_message({"status": "error", "error": f"Write failed: {e}"})
+
+        elif msg_type == "DELETE_TEMPLATE":
+            domain = sanitize_domain(str(msg.get("domain", "")))
+            if not domain:
+                send_message({"status": "error", "error": "Invalid domain name"})
+                continue
+
+            file_path = target_dir / f"{domain}.css"
+            try:
+                if file_path.exists():
+                    file_path.unlink()
+                    send_message({
+                        "status": "ok",
+                        "domain": domain,
+                        "message": f"Deleted {file_path.name} from ~/.config/dusky_sites/"
+                    })
+                else:
+                    send_message({
+                        "status": "ok",
+                        "domain": domain,
+                        "message": f"File {file_path.name} was not on disk."
+                    })
+            except Exception as e:
+                send_message({"status": "error", "error": f"Delete failed: {e}"})
 
         elif msg_type == "PING":
             send_message({"status": "ok", "pong": True})

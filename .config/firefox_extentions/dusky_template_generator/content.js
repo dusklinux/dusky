@@ -1083,7 +1083,11 @@
       } else if (msg.type === "TOGGLE_PICKER") {
         togglePicker(msg.enable);
         sendResponse({ pickerActive });
+      } else if (msg.type === "CLEAR_ALL_RULES") {
+        clearAllRules();
+        sendResponse({ status: "ok" });
       }
+
     });
   }
 })();

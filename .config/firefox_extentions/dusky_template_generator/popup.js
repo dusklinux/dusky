@@ -1,5 +1,5 @@
 /**
- * Dusky Template Generator — Popup Controller (Clean Minimal Edition)
+ * Dusky Template Generator — Popup Controller (Full Disk Save & Delete)
  */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -13,6 +13,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnPicker = document.getElementById("btn-picker");
   const btnSave = document.getElementById("btn-save");
   const btnCopy = document.getElementById("btn-copy");
+  const btnReset = document.getElementById("btn-reset");
 
   let currentDomain = "";
   let pickerActive = false;
@@ -98,7 +99,7 @@ document.addEventListener("DOMContentLoaded", () => {
       css: css
     }).then(response => {
       btnSave.disabled = false;
-      btnSave.textContent = "💾 Save to ~/.config/dusky_sites/";
+      btnSave.textContent = "💾 Save to Disk";
       if (response && response.status === "ok") {
         showStatus(`✓ ${response.message}`, "success");
       } else {
@@ -106,7 +107,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }).catch(err => {
       btnSave.disabled = false;
-      btnSave.textContent = "💾 Save to ~/.config/dusky_sites/";
+      btnSave.textContent = "💾 Save to Disk";
       showStatus(`Native host connection error: ${err.message}`, "error");
     });
   });
@@ -124,6 +125,41 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // Initial page scan on popup open (loads existing custom rules ONLY without dumping 100s of auto-vars)
+  btnReset.addEventListener("click", () => {
+    if (!currentDomain) {
+      showStatus("Unknown domain name!", "error");
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to completely delete ~/.config/dusky_sites/${currentDomain}.css from disk?`)) {
+      return;
+    }
+
+    btnReset.disabled = true;
+
+    browser.runtime.sendNativeMessage("dusky_template_generator", {
+      type: "DELETE_TEMPLATE",
+      domain: currentDomain
+    }).then(response => {
+      btnReset.disabled = false;
+      if (response && response.status === "ok") {
+        cssPreview.value = "";
+        showStatus(`✓ Deleted ~/.config/dusky_sites/${currentDomain}.css`, "success");
+
+        // Notify content script to clear local rules as well
+        getActiveTab().then(tab => {
+          if (tab) {
+            browser.tabs.sendMessage(tab.id, { type: "CLEAR_ALL_RULES" }).catch(() => {});
+          }
+        });
+      } else {
+        showStatus(`Delete failed: ${response?.error || "Unknown host error"}`, "error");
+      }
+    }).catch(err => {
+      btnReset.disabled = false;
+      showStatus(`Native host connection error: ${err.message}`, "error");
+    });
+  });
+
   scanCurrentPage(false);
 });
