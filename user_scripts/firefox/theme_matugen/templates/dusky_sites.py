@@ -790,11 +790,11 @@ def flow_create_edit():
     
     if deploy_choice == "y":
         scripts_dir = Path.home() / "user_scripts" / "firefox" / "theme_matugen"
-        tui_script = scripts_dir / "dusky_firefox_tui.sh"
+        tui_script = scripts_dir / "tui_dusky_sites.py"
         if tui_script.exists():
             console.print("[dim]Executing Hard AST Deployment...[/]")
             try:
-                subprocess.run(["bash", str(tui_script), "--auto"], check=True)
+                subprocess.run([sys.executable, str(tui_script), "--export-state"], check=True)
                 console.print("[bold green]✔ Deployment injected into Firefox profile![/]")
             except subprocess.CalledProcessError as e:
                 console.print(f"[bold red]✖ Deployment failed: {e}[/]")
