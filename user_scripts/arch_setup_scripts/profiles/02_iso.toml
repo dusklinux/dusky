@@ -103,7 +103,7 @@ scripts = [
     "U | if:gpu:nvidia | 383_configure_hyprland_gpu.py --auto",
     "U | if:wayland | 390_clipboard_persistance.py --ram --quiet",
     "S | if:gpu:intel | 395_intel_media_sdk_check.sh --auto",
-    "U | if:command:firefox | 400_firefox_matugen_pywalfox.sh",
+    "U | if:command:firefox | dusky_sites_setup.py",
     "U | if:command:waybar | 410_waybar_swap_config.py --set waybar=15",
     "U | if:command:mpv | 415_mpv_setup.sh",
     "U | if:command:wayclick | 434_wayclick_soundpacks_download.sh --auto",

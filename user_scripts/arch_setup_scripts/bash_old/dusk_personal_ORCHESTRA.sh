@@ -155,7 +155,7 @@ INSTALL_SEQUENCE=(
     "U | 390_clipboard_persistance.py"
     "S | 395_intel_media_sdk_check.sh"
 
-    "U | 400_firefox_matugen_pywalfox.sh"
+    "U | dusky_sites_setup.py"
 
     "U | optimize_firefox.py"
 

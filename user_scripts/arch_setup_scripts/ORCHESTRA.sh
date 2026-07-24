@@ -153,7 +153,7 @@ INSTALL_SEQUENCE=(
 #    "S | 385_waydroid_setup.sh"
     "U | 390_clipboard_persistance.py --ram --quiet"
     "S | 395_intel_media_sdk_check.sh --auto"
-    "U | 400_firefox_matugen_pywalfox.sh"
+    "U | dusky_sites_setup.py"
 #    "U | optimize_firefox.py"
 #    "U | 402_gecko_engine_colors_extention.sh"
 #    "U | 401_gecko_engine_colors.sh"
