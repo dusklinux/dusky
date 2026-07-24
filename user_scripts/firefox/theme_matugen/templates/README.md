@@ -1,4 +1,4 @@
-# 🦊 MatugenFox & Dusky Sites — Architecture & Variable Maintenance Guide
+# 🦊 Dusky Sites — Architecture & Variable Maintenance Guide
 
 > **Notice for AI Assistants & Maintainers**: This document explains how Matugen CSS variables, WebExtension theme rules, and native Firefox profile stylesheets are configured and how to update them in the future.
 
