@@ -1,0 +1,91 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Line endings — this is load-bearing, do not remove.
+#
+#  Dusky is deployed onto Arch Linux with `git checkout -f` straight into $HOME.
+#  A shell script that lands with CRLF endings does not "look slightly wrong",
+#  it hard-fails at exec time:
+#
+#      /usr/bin/env: 'bash\r': No such file or directory
+#
+#  Contributors on Windows or WSL frequently have `core.autocrlf=true`, which
+#  would otherwise commit CRLF into the repo. Pin the behaviour here rather than
+#  trusting every contributor's local git config.
+# ─────────────────────────────────────────────────────────────────────────────
+* text=auto eol=lf
+
+# Executables and code — always LF, no exceptions.
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.zsh       text eol=lf
+.zshrc      text eol=lf
+.zprofile   text eol=lf
+*.py        text eol=lf
+*.lua       text eol=lf
+*.js        text eol=lf
+*.mjs       text eol=lf
+*.ts        text eol=lf
+
+# Config formats consumed by daemons that are not CRLF-tolerant.
+*.conf      text eol=lf
+*.ini       text eol=lf
+*.toml      text eol=lf
+*.json      text eol=lf
+*.jsonc     text eol=lf
+*.kdl       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.css       text eol=lf
+*.rasi      text eol=lf
+*.desktop   text eol=lf
+*.service   text eol=lf
+*.timer     text eol=lf
+*.rules     text eol=lf
+*.glsl      text eol=lf
+*.frag      text eol=lf
+*.vert      text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Binary — never normalised, never diffed as text.
+# ─────────────────────────────────────────────────────────────────────────────
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.webp      binary
+*.gif       binary
+*.ico       binary
+*.svg       text eol=lf
+*.mp3       binary
+*.wav       binary
+*.ogg       binary
+*.opus      binary
+*.mp4       binary
+*.ttf       binary
+*.otf       binary
+*.woff      binary
+*.woff2     binary
+*.so        binary
+*.o         binary
+*.zip       binary
+*.xpi       binary
+*.gz        binary
+*.xz        binary
+*.zst       binary
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  GitHub Linguist — keep the language bar honest.
+#
+#  `Documents/` is a ~400-file Obsidian notes vault and `Pictures/` is image
+#  assets. Neither is source code, and without these hints GitHub reports this
+#  as a prose repository rather than the shell/python project it actually is.
+# ─────────────────────────────────────────────────────────────────────────────
+Documents/**                linguist-documentation
+Pictures/**                 linguist-vendored
+*.md                        linguist-documentation
+
+# Vendored/derived third-party code — excluded from language stats and from
+# "lines changed" noise in PR review.
+.config/sddm/**             linguist-vendored
+**/hyprland-focus-grab-v1-client-protocol.c    linguist-generated
+**/hyprland-focus-grab-v1-client-protocol.h    linguist-generated

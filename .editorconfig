@@ -1,0 +1,37 @@
+# https://editorconfig.org
+#
+# Matched to the conventions already present in the tree (4-space indent across
+# both shell and Python) so existing files are not reformatted wholesale.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Ecosystem convention is 2 spaces for these; fighting it just creates churn.
+[*.{yml,yaml,json,jsonc,kdl,toml}]
+indent_size = 2
+
+[*.{js,mjs,ts,css}]
+indent_size = 2
+
+# Markdown: two trailing spaces is a hard line break, so trimming corrupts prose.
+[*.md]
+trim_trailing_whitespace = false
+
+# The Obsidian vault is authored in Obsidian, not in an editor honouring this
+# file. Leave it entirely alone.
+[Documents/**]
+trim_trailing_whitespace = false
+insert_final_newline = false
+
+[Makefile]
+indent_style = tab
+
+[*.{png,jpg,jpeg,webp,gif,ico,mp3,wav,ogg,ttf,otf,woff,woff2,so}]
+insert_final_newline = false
+trim_trailing_whitespace = false

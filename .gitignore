@@ -15,3 +15,6 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+
+# Knowledge-graph tooling output (graphify) - local analysis artifact, not config
+graphify-out/
