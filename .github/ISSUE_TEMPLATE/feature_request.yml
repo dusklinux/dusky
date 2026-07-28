@@ -1,0 +1,77 @@
+name: ✨ Feature request
+description: Suggest a script, keybind, Rofi menu, TUI, or quality-of-life improvement.
+title: "[feature] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Dusky has a deliberate design constraint worth knowing before you write:
+
+        > **It stays lightweight.** Quickshell and similar heavyweight shells are
+        > intentionally not used — everything is TUI/script-based to keep idle RAM around
+        > 900 MB. A proposal that adds a large always-running daemon is unlikely to land
+        > unless it earns its footprint.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and this has not already been requested.
+          required: true
+        - label: I checked the feature list in the README and this does not already exist.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: >-
+        Describe the friction, not the solution. "I have to open a terminal and run three
+        commands every time I want X" is a far more useful starting point than
+        "add a button that does X".
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What should it do, and how would you invoke it — keybind, Rofi entry, TUI, Control Center panel?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does it belong?
+      multiple: true
+      options:
+        - Keybind
+        - Rofi menu entry
+        - TUI (dusky_tui)
+        - Dusky Control Center
+        - Setup script (ORCHESTRA subscript)
+        - Waybar module
+        - Theming / Matugen
+        - Documentation only
+        - Not sure
+
+  - type: textarea
+    id: cost
+    attributes:
+      label: Expected resource cost
+      description: >-
+        Does this need a background daemon, a Python runtime, an AUR package, a compiled
+        dependency? Be honest here — it is the main thing that decides whether a feature is
+        a good fit. "Runs only when invoked, pure bash, no new deps" is the ideal answer.
+      placeholder: "e.g. one bash script, invoked on keybind, depends on `socat` (already a dependency)"
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Would you like to implement it?
+      options:
+        - label: I am willing to open a PR for this.
+          required: false

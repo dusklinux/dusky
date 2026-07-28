@@ -1,0 +1,149 @@
+name: 🐞 Bug report
+description: Something in Dusky is broken — a script fails, a keybind does nothing, theming breaks.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file this.
+
+        **Before you continue:** most install problems are hardware-specific and get solved
+        far faster on [Discord](https://discord.gg/Nv2a7yTBQS). If this is a "it did not
+        install on my machine" question rather than a reproducible defect, please start there.
+
+        The fields below exist because ~90% of Dusky bugs come down to GPU vendor,
+        filesystem, or a partially-completed `ORCHESTRA.sh` run. Filling them in accurately
+        is the single biggest thing you can do to get this fixed quickly.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched [existing issues](https://github.com/dusklinux/dusky/issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
+        - label: I am on Arch Linux (or an Arch-based distro) with Hyprland.
+          required: true
+        - label: I re-ran `~/user_scripts/arch_setup_scripts/ORCHESTRA.sh` and the problem persists. (It is safe to re-run.)
+          required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What went wrong, and what you expected instead.
+      placeholder: |
+        The wallpaper selector opens but selecting a wallpaper does not regenerate the
+        Matugen colours. I expected the whole system theme to follow the new wallpaper.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps, starting from a state someone else can reach.
+      placeholder: |
+        1. Press SUPER + W to open the wallpaper selector
+        2. Pick any wallpaper
+        3. Waybar keeps the old colours; ~/.config/waybar/colors.css is not rewritten
+    validations:
+      required: true
+
+  - type: input
+    id: script
+    attributes:
+      label: Which script or component?
+      description: >-
+        If a setup subscript failed, give its filename. Subscripts live in
+        `~/user_scripts/arch_setup_scripts/scripts/`.
+      placeholder: "e.g. 118_matugen_setup.sh, or: waybar, rofi, hypridle, Dusky Control Center"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output
+      description: >-
+        Paste the actual error. For a failing script, re-run just that one script and paste
+        everything. For a Hyprland-level problem, `journalctl --user -b -e` is usually the
+        right log. This is rendered as a code block — no backticks needed.
+      render: shell
+
+  - type: dropdown
+    id: gpu
+    attributes:
+      label: GPU vendor
+      description: The single most common cause of Dusky bugs. Pick all that apply.
+      multiple: true
+      options:
+        - NVIDIA (proprietary driver)
+        - NVIDIA (nouveau)
+        - AMD
+        - Intel
+        - Hybrid — Intel + NVIDIA
+        - Hybrid — AMD + NVIDIA
+        - Hybrid — Intel + AMD
+        - Virtual machine / passthrough guest
+    validations:
+      required: true
+
+  - type: dropdown
+    id: filesystem
+    attributes:
+      label: Root filesystem
+      description: Dusky is optimised for BTRFS. ext4 mostly works but is not the tested path.
+      options:
+        - BTRFS
+        - ext4
+        - Other (state it in "Anything else")
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install Dusky?
+      options:
+        - Bare repo clone + ORCHESTRA.sh, on an existing Arch install
+        - Dusky ISO (offline installer)
+        - Manually copied individual configs
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: form-factor
+    attributes:
+      label: Machine type
+      description: Several features (battery notifier, TLP, touchpad gestures) are laptop-only.
+      options:
+        - Laptop
+        - Desktop
+        - Virtual machine
+    validations:
+      required: true
+
+  - type: textarea
+    id: sysinfo
+    attributes:
+      label: System info
+      description: |
+        Paste the output of:
+        ```
+        fastfetch --logo none
+        hyprctl version | head -3
+        cat ~/.config/dusky/version
+        ```
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: >-
+        Screenshots, a recording, dual-boot setup, whether you changed configs by hand,
+        whether this ever worked before. Drag images straight into this box.
