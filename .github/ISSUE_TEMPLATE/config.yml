@@ -1,0 +1,24 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: 💬 Discord — install help, troubleshooting, general chat
+    url: https://discord.gg/Nv2a7yTBQS
+    about: >-
+      Fastest route for "it did not install", "how do I change X", and anything
+      hardware-specific. Most setup problems are resolved here in minutes.
+      Please try Discord before opening an issue.
+
+  - name: 📺 Video walkthrough
+    url: https://youtu.be/OzeFAY_8T8Y
+    about: Full install tutorial. Worth watching before reporting an install failure.
+
+  - name: 📚 Included documentation
+    url: https://github.com/dusklinux/dusky/tree/main/Documents/pensive
+    about: >-
+      The repo ships a large Obsidian vault covering Arch install, BTRFS,
+      snapshots, GPU passthrough, KVM, NVIDIA, TLP and more. Your answer may
+      already be written down.
+
+  - name: 🖼️ Wallpapers
+    url: https://github.com/dusklinux/images
+    about: All 1050+ wallpapers live in a separate repo.

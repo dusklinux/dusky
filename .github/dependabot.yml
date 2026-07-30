@@ -1,0 +1,18 @@
+version: 2
+
+# Dusky has no package manifest to track — Arch packages come from pacman/paru
+# at install time, not from a lockfile in this repo. The one thing here that
+# *does* have pinned upstream versions is the GitHub Actions workflows, so that
+# is all Dependabot watches. Adding npm/pip ecosystems here would only generate
+# noise against manifests that do not exist.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    labels:
+      - ci
+      - dependencies
+    open-pull-requests-limit: 5

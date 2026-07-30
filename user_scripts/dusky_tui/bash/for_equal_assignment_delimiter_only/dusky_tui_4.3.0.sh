@@ -825,7 +825,7 @@ write_value_to_file() {
         _TMPMODE=""
         set_status "Refusing empty write."
         return 1
-    }
+    fi
 
     commit_tmpfile || {
         rm -f -- "$_TMPFILE" 2>/dev/null || :
