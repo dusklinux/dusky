@@ -20,6 +20,8 @@ const FEATURE_KEYS: AdaptiveFeatureKey[] = [
   "notifications",
 ]
 
+let featureMonitor: Gio.FileMonitor | null = null
+
 const TRUE_VALUES = new Set(["true", "yes", "1", "on", "enabled"])
 const FALSE_VALUES = new Set(["false", "no", "0", "off", "disabled"])
 
@@ -106,8 +108,8 @@ function startFeatureMonitor() {
   try {
     GLib.mkdir_with_parents(FEATURE_DIR, 0o755)
     const dir = Gio.File.new_for_path(FEATURE_DIR)
-    const monitor = dir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
-    monitor.connect("changed", handleFeatureFileChanged)
+    featureMonitor = dir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
+    featureMonitor.connect("changed", handleFeatureFileChanged)
   } catch (error) {
     console.error("Adaptive Glass: could not monitor feature settings", error)
   }

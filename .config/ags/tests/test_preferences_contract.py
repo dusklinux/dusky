@@ -22,6 +22,8 @@ def test_motion_state_contract_and_defaults():
     assert '"soft-magnetic"' in text
     assert '"precise-futuristic"' in text
     assert "monitor_directory" in text
+    assert "let motionMonitor: Gio.FileMonitor | null = null" in text
+    assert "motionMonitor = dir.monitor_directory" in text
 
 
 def test_feature_state_contract_and_defaults():
@@ -41,6 +43,8 @@ def test_feature_state_contract_and_defaults():
     assert "weatherEnabled" in text
     assert "notificationsEnabled" in text
     assert "monitor_directory" in text
+    assert "let featureMonitor: Gio.FileMonitor | null = null" in text
+    assert "featureMonitor = dir.monitor_directory" in text
 
 
 def test_bar_and_popups_receive_motion_classes():

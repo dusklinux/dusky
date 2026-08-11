@@ -17,6 +17,8 @@ const VALID_MOTION_STYLES = new Set<AdaptiveMotionStyle>([
   "precise-futuristic",
 ])
 
+let motionMonitor: Gio.FileMonitor | null = null
+
 const WORKSPACE_TIMINGS = {
   "soft-magnetic": {
     interactionReleaseDelayMs: 140,
@@ -83,8 +85,8 @@ function startMotionMonitor() {
   try {
     GLib.mkdir_with_parents(STATE_DIR, 0o755)
     const dir = Gio.File.new_for_path(STATE_DIR)
-    const monitor = dir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
-    monitor.connect("changed", handleMotionFileChanged)
+    motionMonitor = dir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
+    motionMonitor.connect("changed", handleMotionFileChanged)
   } catch (error) {
     console.error("Adaptive Glass: could not monitor motion settings", error)
   }
