@@ -1,8 +1,39 @@
-# Adaptive Glass AGS v2.6.4
+# Adaptive Glass AGS for Dusky
 
-# Dusky Adaptive Glass — AGS v2.0
+Base shell: Adaptive Glass AGS v2.6.4
 
 Adaptive Glass is the AGS v3 / GTK4 shell being developed as a polished Dusky bar option while the existing Waybar setup remains untouched as a fallback.
+
+## Dusky integration
+
+- Source lives in `.config/ags` and is launched through `user_scripts/bar/bar_switch.sh`.
+- Waybar remains the fallback. Use `SUPER + ALT + G` or `bar_switch.sh toggle` to switch between Waybar and Adaptive Glass.
+- Startup uses `bar_switch.sh start`, so the last saved bar choice is restored on login.
+- NovaBar is not part of the active integration. A legacy saved `novabar` state is normalized to `adaptive-glass`.
+- Dusky Control Center exposes Adaptive Glass preferences under `Status Bar`.
+
+## Preferences
+
+Adaptive Glass defaults to the full opinionated experience.
+
+- Motion: `Soft Magnetic` by default, or `Precise Futuristic`.
+- Feature toggles: Workspace Preview, Media Island, Weather, Notifications.
+- Settings are stored under `~/.config/dusky/settings/ags`.
+- Feature flags live under `~/.config/dusky/settings/ags/features`.
+
+Disabled optional entrypoints are not mounted by the bar, so Weather, Notifications, and Media Island avoid their component polling when disabled. Workspace Preview is also blocked at the preview state layer so hover cannot trigger captures while it is off.
+
+## Review checks
+
+From the Dusky repository root:
+
+```bash
+bash tests/test_bar_switch_adaptive.sh
+bash tests/test_adaptive_glass_source.sh
+bash .config/ags/tests/test_capture_helper.sh
+bash .config/ags/tests/test_install_smoke.sh
+PYTHONDONTWRITEBYTECODE=1 uvx --from pytest pytest -q .config/ags/tests
+```
 
 
 
