@@ -1014,7 +1014,8 @@ class StateMonitorMixin(AsyncPollingMixin):
         if event_type not in handled_events:
             return
 
-        val = utility.load_setting(key, default=False)
+        default_state = bool(self.properties.get("default", False))
+        val = utility.load_setting(key, default=default_state)
         if isinstance(val, bool):
             self._apply_state_update(val)
 
@@ -1668,7 +1669,8 @@ class ToggleRow(StateMonitorMixin, BaseActionRow):
         self.toggle_switch.set_valign(Gtk.Align.CENTER)
 
         if key := properties.get("key"):
-            val = utility.load_setting(str(key).strip(), default=False)
+            default_state = bool(properties.get("default", False))
+            val = utility.load_setting(str(key).strip(), default=default_state)
             if isinstance(val, bool):
                 self.toggle_switch.set_active(val)
 
@@ -2052,7 +2054,8 @@ class SelectionRow(DynamicIconMixin, HyprlandIPCMixin, Adw.ComboRow):
             self._queue_options_fetch()
 
         if key := properties.get("key"):
-            val = utility.load_setting(str(key).strip(), default="")
+            default_value = str(properties.get("default", ""))
+            val = utility.load_setting(str(key).strip(), default=default_value)
             val_lower = str(val).lower()
             mapped_val = self.options_map.get(val_lower, str(val))
             if mapped_val and mapped_val in self.options_list:
@@ -2241,7 +2244,8 @@ class SelectionRow(DynamicIconMixin, HyprlandIPCMixin, Adw.ComboRow):
         try:
             if key := self.properties.get("key"):
                 try:
-                    val = utility.load_setting(str(key).strip(), default="")
+                    default_value = str(self.properties.get("default", ""))
+                    val = utility.load_setting(str(key).strip(), default=default_value)
                     val_lower = str(val).lower()
                     mapped_val = self.options_map.get(val_lower, str(val))
                     if mapped_val:

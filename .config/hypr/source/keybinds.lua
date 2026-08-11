@@ -272,11 +272,11 @@ hl.bind(
 
 
 
--- --- Waybar Toggle ---
+-- --- Bar Toggle (Waybar <-> Adaptive Glass) ---
 hl.bind(
-    "ALT + 9",
-    hl.dsp.exec_cmd(dusky_scripts .. "waybar/waybar_toggle.sh"),
-    { description = "Start Waybar for 1 Min" }
+    "SUPER + ALT + G",
+    hl.dsp.exec_cmd(dusky_scripts .. "bar/bar_switch.sh toggle"),
+    { description = "Toggle bar: Waybar <-> Adaptive Glass" }
 )
 
 hl.bind(

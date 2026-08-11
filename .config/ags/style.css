@@ -1,0 +1,5005 @@
+/* Dusky Adaptive Glass — AGS v1.6
+ * The bar stays compact; rich controls live in dedicated layer-shell windows.
+ */
+
+window.dusky-adaptive-glass,
+window#dusky-adaptive-glass,
+window {
+  background: transparent;
+  color: @on_surface;
+  font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  font-size: 12px;
+}
+
+.bar-shell {
+  min-height: 32px;
+  margin: 3px 10px 0 10px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.bar-zone,
+.left-cluster,
+.right-cluster,
+.media-controls,
+.panel-actions,
+.calendar-actions,
+.action-grid,
+.power-grid,
+.slider-row,
+.metric-strip,
+.panel-row {
+  background: transparent;
+}
+
+button {
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  color: @on_surface;
+  background: transparent;
+}
+
+button:hover {
+  color: @on_primary_container;
+}
+
+.launcher-card,
+.weather-card,
+.notification-card,
+.clock-card,
+.control-leader,
+.battery-card {
+  min-height: 26px;
+  border: 1px solid alpha(@outline_variant, 0.32);
+  border-radius: 10px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.75),
+    alpha(@surface_container, 0.58));
+  box-shadow: 0 2px 5px alpha(#000000, 0.20), inset 0 1px alpha(@on_surface, 0.06);
+}
+
+.launcher-card {
+  min-width: 34px;
+  color: @on_primary_container;
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.58),
+    alpha(@primary_container, 0.76));
+  font-size: 15px;
+}
+
+.launcher-card:hover,
+.control-leader:hover,
+.clock-card:hover {
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.74),
+    alpha(@secondary_container, 0.64));
+  border-color: alpha(@primary, 0.48);
+}
+
+.workspace-deck {
+  min-height: 26px;
+  padding: 0 3px;
+  border: 1px solid alpha(@outline_variant, 0.27);
+  border-radius: 10px;
+  background: alpha(@surface_container_low, 0.66);
+  box-shadow: 0 2px 5px alpha(#000000, 0.18), inset 0 1px alpha(@on_surface, 0.045);
+}
+
+.workspace-button {
+  min-width: 25px;
+  min-height: 22px;
+  margin: 2px 0;
+  border-radius: 8px;
+  color: alpha(@on_surface_variant, 0.86);
+  font-weight: 700;
+}
+
+.workspace-button:hover {
+  background: alpha(@secondary_container, 0.44);
+  color: @on_surface;
+}
+
+.workspace-button.active {
+  color: @on_primary_container;
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.62),
+    alpha(@primary_container, 0.72));
+  box-shadow: 0 2px 6px alpha(@primary, 0.25), inset 0 1px alpha(@on_primary_container, 0.14);
+}
+
+.weather-card,
+.notification-card {
+  padding: 0 10px;
+  font-weight: 700;
+}
+
+.clock-card {
+  min-width: 118px;
+  padding: 0 14px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.82),
+    alpha(@primary_container, 0.32));
+}
+
+.clock-label {
+  font-feature-settings: "tnum";
+}
+
+.right-cluster {
+  margin-right: 1px;
+}
+
+.control-leader {
+  min-width: 30px;
+  padding: 0 8px;
+}
+
+.network-leader { color: #72f5ad; }
+.audio-leader { color: @on_surface; }
+.display-leader { color: @tertiary; }
+.power-leader {
+  color: @error;
+  background-image: linear-gradient(145deg,
+    alpha(@error_container, 0.62),
+    alpha(@surface_container_high, 0.66));
+}
+
+.battery-card {
+  padding: 0 9px;
+  color: @on_surface_variant;
+  font-weight: 800;
+}
+
+.media-slot {
+  background: transparent;
+}
+
+.media-card {
+  min-height: 28px;
+  padding: 1px 5px 1px 3px;
+  border: 1px solid alpha(@secondary, 0.38);
+  border-radius: 11px;
+  background-image: linear-gradient(110deg,
+    alpha(@secondary_container, 0.66),
+    alpha(@surface_container_high, 0.76) 60%,
+    alpha(@primary_container, 0.48));
+  box-shadow: 0 3px 9px alpha(#000000, 0.24), inset 0 1px alpha(@on_surface, 0.08);
+}
+
+.media-art-frame {
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 8px;
+  background: alpha(@surface_container_highest, 0.72);
+}
+
+.media-art,
+.media-source-icon {
+  border-radius: 7px;
+}
+
+.media-copy {
+  min-width: 58px;
+}
+
+.media-title {
+  color: @on_surface;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.media-artist {
+  color: alpha(@on_surface_variant, 0.78);
+  font-size: 9px;
+}
+
+.media-control {
+  min-width: 25px;
+  min-height: 23px;
+  border-radius: 8px;
+  color: @on_surface_variant;
+  font-size: 14px;
+}
+
+.media-control:hover {
+  background: alpha(@secondary_container, 0.56);
+}
+
+.media-control.play {
+  min-width: 29px;
+  color: @on_primary_container;
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.62),
+    alpha(@secondary, 0.52));
+  box-shadow: 0 2px 6px alpha(@primary, 0.22);
+}
+
+/* Popovers are the architectural difference from the old Waybar drawers. */
+popover.glass-popover > contents,
+.glass-popover > contents {
+  margin-top: 8px;
+  padding: 0;
+  border: 1px solid alpha(@outline_variant, 0.38);
+  border-radius: 16px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container, 0.97),
+    alpha(@surface, 0.95) 58%,
+    alpha(@primary_container, 0.88));
+  box-shadow: 0 15px 34px alpha(#000000, 0.46), inset 0 1px alpha(@on_surface, 0.09);
+}
+
+.control-panel,
+.calendar-panel {
+  min-width: 300px;
+  padding: 16px;
+}
+
+.network-panel { min-width: 330px; }
+.display-panel { min-width: 290px; }
+.power-panel { min-width: 300px; }
+.calendar-panel { min-width: 300px; }
+
+.panel-heading {
+  margin-bottom: 2px;
+}
+
+.panel-kicker {
+  color: @primary;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 1.4px;
+}
+
+.panel-title {
+  color: @on_surface;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.metric-strip,
+.slider-row {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid alpha(@outline_variant, 0.25);
+  border-radius: 12px;
+  background: alpha(@surface_container_high, 0.55);
+}
+
+.metric-value,
+.slider-value {
+  color: @on_surface_variant;
+  font-weight: 800;
+}
+
+.slider-value {
+  min-width: 42px;
+}
+
+scale.glass-slider trough {
+  min-height: 6px;
+  border-radius: 6px;
+  background: alpha(@surface_container_highest, 0.8);
+  box-shadow: inset 0 1px 2px alpha(#000000, 0.28);
+}
+
+scale.glass-slider highlight {
+  min-height: 6px;
+  border-radius: 6px;
+  background-image: linear-gradient(90deg, @tertiary, @primary);
+}
+
+scale.glass-slider slider {
+  min-width: 16px;
+  min-height: 16px;
+  margin: -5px;
+  border-radius: 50%;
+  background: @on_primary_container;
+  box-shadow: 0 2px 6px alpha(#000000, 0.35);
+}
+
+.panel-row {
+  min-height: 50px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: alpha(@surface_container_high, 0.42);
+}
+
+.row-title {
+  color: @on_surface;
+  font-weight: 800;
+}
+
+.row-subtitle {
+  color: alpha(@on_surface_variant, 0.74);
+  font-size: 10px;
+}
+
+.row-action,
+.soft-action {
+  padding: 6px 12px;
+  border: 1px solid alpha(@outline_variant, 0.25);
+  border-radius: 9px;
+  background: alpha(@secondary_container, 0.44);
+}
+
+.row-action:hover,
+.soft-action:hover {
+  background: alpha(@primary_container, 0.62);
+}
+
+.action-card,
+.power-action {
+  min-width: 96px;
+  min-height: 72px;
+  border: 1px solid alpha(@outline_variant, 0.26);
+  border-radius: 12px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.62),
+    alpha(@secondary_container, 0.30));
+}
+
+.action-card:hover,
+.power-action:hover {
+  border-color: alpha(@primary, 0.42);
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.58),
+    alpha(@primary_container, 0.44));
+}
+
+.action-icon,
+.power-action-icon,
+.panel-icon {
+  color: @tertiary;
+  font-size: 19px;
+}
+
+.power-action:first-child .power-action-icon {
+  color: @error;
+}
+
+.calendar-widget {
+  padding: 10px;
+  border-radius: 12px;
+  background: alpha(@surface_container_high, 0.54);
+}
+
+calendar:selected {
+  color: @on_primary;
+  background: @primary;
+  border-radius: 8px;
+}
+
+tooltip {
+  border: 1px solid alpha(@outline_variant, 0.35);
+  border-radius: 10px;
+  background: @surface_container;
+  color: @on_surface;
+}
+
+/* ========================================================================== */
+/* v1.3 — interaction polish + workspace activity preview                    */
+/* ========================================================================== */
+
+.bar-shell {
+  min-height: 34px;
+  margin: 6px 12px 0 12px;
+  padding: 0 2px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.left-cluster,
+.right-cluster {
+  padding: 1px 0;
+}
+
+.launcher-card,
+.weather-card,
+.notification-card,
+.clock-card,
+.control-leader,
+.battery-card,
+.workspace-deck,
+.media-card {
+  transition: 180ms ease;
+}
+
+.launcher-card,
+.clock-card,
+.media-card {
+  box-shadow:
+    0 4px 12px alpha(#000000, 0.24),
+    inset 0 1px alpha(@on_surface, 0.09);
+}
+
+.clock-card {
+  border-color: alpha(@primary, 0.34);
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.88),
+    alpha(@primary_container, 0.42));
+  box-shadow:
+    0 5px 14px alpha(#000000, 0.28),
+    0 0 10px alpha(@primary, 0.10),
+    inset 0 1px alpha(@on_surface, 0.10);
+}
+
+.workspace-deck {
+  padding: 0 4px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_low, 0.72),
+    alpha(@surface_container, 0.60));
+}
+
+.workspace-button {
+  min-width: 27px;
+  margin: 2px 1px;
+}
+
+.workspace-button.active {
+  color: @on_primary_container;
+  border: 1px solid alpha(@primary, 0.52);
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.72),
+    alpha(@primary_container, 0.82));
+  box-shadow:
+    0 3px 10px alpha(@primary, 0.38),
+    0 0 11px alpha(@tertiary, 0.16),
+    inset 0 1px alpha(@on_primary_container, 0.18);
+}
+
+.workspace-button:hover:not(.active) {
+  border: 1px solid alpha(@secondary, 0.28);
+  background: alpha(@secondary_container, 0.52);
+}
+
+.control-leader:hover,
+.battery-card:hover,
+.weather-card:hover,
+.notification-card:hover {
+  transform: translateY(-1px);
+  border-color: alpha(@primary, 0.42);
+  box-shadow: 0 4px 10px alpha(#000000, 0.24);
+}
+
+popover.glass-popover > contents,
+.glass-popover > contents {
+  border-color: alpha(@primary, 0.28);
+  background-image: linear-gradient(160deg,
+    alpha(@surface_container_high, 0.985),
+    alpha(@surface, 0.965) 46%,
+    alpha(@secondary_container, 0.86));
+  box-shadow:
+    0 18px 42px alpha(#000000, 0.52),
+    0 -1px alpha(@primary, 0.34),
+    inset 0 1px alpha(@on_surface, 0.10);
+}
+
+.panel-kicker {
+  color: @tertiary;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 1.6px;
+}
+
+.panel-title {
+  margin-top: 2px;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.workspace-preview {
+  min-width: 350px;
+  padding: 16px;
+}
+
+.workspace-preview-heading {
+  min-height: 42px;
+}
+
+.workspace-preview-badge {
+  min-width: 34px;
+  min-height: 34px;
+  border: 1px solid alpha(@primary, 0.44);
+  border-radius: 11px;
+  color: @on_primary_container;
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.64),
+    alpha(@primary_container, 0.72));
+  box-shadow: 0 3px 10px alpha(@primary, 0.24);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.workspace-preview-map {
+  min-height: 118px;
+  padding: 9px;
+  border: 1px solid alpha(@outline_variant, 0.24);
+  border-radius: 14px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_low, 0.76),
+    alpha(@surface_container_high, 0.44));
+  box-shadow: inset 0 1px 3px alpha(#000000, 0.22);
+}
+
+.workspace-preview-map-row {
+  min-height: 50px;
+}
+
+.workspace-mini-window {
+  padding: 6px 8px;
+  border: 1px solid alpha(@secondary, 0.24);
+  border-radius: 9px;
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.48),
+    alpha(@surface_container_high, 0.72));
+  box-shadow: 0 2px 6px alpha(#000000, 0.20), inset 0 1px alpha(@on_surface, 0.06);
+}
+
+.workspace-mini-titlebar {
+  min-height: 17px;
+}
+
+.workspace-mini-app {
+  color: alpha(@on_surface_variant, 0.88);
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.workspace-mini-title {
+  margin-top: 3px;
+  color: @on_surface;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.workspace-preview-list {
+  padding: 4px 0 0 0;
+}
+
+.workspace-app-row {
+  min-height: 42px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  background: alpha(@surface_container_high, 0.38);
+}
+
+.workspace-app-row:hover {
+  background: alpha(@secondary_container, 0.42);
+}
+
+.workspace-app-icon {
+  min-width: 24px;
+}
+
+.workspace-app-name {
+  color: @on_surface;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.workspace-app-title {
+  color: alpha(@on_surface_variant, 0.70);
+  font-size: 9px;
+}
+
+.workspace-empty {
+  min-height: 126px;
+  padding: 18px;
+  border: 1px dashed alpha(@outline_variant, 0.30);
+  border-radius: 14px;
+  background: alpha(@surface_container_low, 0.46);
+}
+
+.workspace-empty-icon {
+  color: alpha(@primary, 0.72);
+  font-size: 26px;
+}
+
+.workspace-empty-title {
+  color: @on_surface;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.workspace-empty-copy {
+  color: alpha(@on_surface_variant, 0.68);
+  font-size: 9px;
+}
+
+/* ========================================================================== */
+/* v1.5 — explicit layer-shell panels + real workspace navigator              */
+/* ========================================================================== */
+
+.adaptive-glass-popup-window {
+  background: transparent;
+}
+
+.popup-window-frame {
+  padding: 0;
+  border: 1px solid alpha(@outline_variant, 0.34);
+  border-radius: 18px;
+  background-image: linear-gradient(155deg,
+    alpha(@surface_container_high, 0.975),
+    alpha(@surface, 0.955) 48%,
+    alpha(@primary_container, 0.76));
+  box-shadow:
+    0 20px 46px alpha(#000000, 0.50),
+    0 0 0 1px alpha(@primary, 0.08),
+    inset 0 1px alpha(@on_surface, 0.09);
+}
+
+.popup-workspace {
+  background-image: linear-gradient(150deg,
+    alpha(@surface_container_high, 0.985),
+    alpha(@surface, 0.965) 58%,
+    alpha(@primary_container, 0.70));
+}
+
+.workspace-navigator {
+  min-width: 420px;
+  padding: 14px;
+}
+
+.workspace-preview-stage {
+  min-width: 420px;
+  min-height: 236px;
+  border: 1px solid alpha(@outline_variant, 0.30);
+  border-radius: 15px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_lowest, 0.96),
+    alpha(#000000, 0.74));
+  box-shadow:
+    inset 0 1px 4px alpha(#000000, 0.46),
+    0 5px 18px alpha(#000000, 0.20);
+}
+
+.workspace-preview-picture {
+  min-width: 420px;
+  min-height: 236px;
+  border-radius: 14px;
+  background: alpha(#000000, 0.58);
+}
+
+.workspace-preview-fallback {
+  min-width: 420px;
+  min-height: 214px;
+  color: @on_surface_variant;
+}
+
+.workspace-preview-fallback-name {
+  color: @on_surface;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.workspace-preview-fallback-copy,
+.workspace-preview-status {
+  color: alpha(@on_surface_variant, 0.72);
+  font-size: 9px;
+}
+
+.workspace-preview-status {
+  min-height: 18px;
+  padding: 2px 8px;
+  color: @tertiary;
+}
+
+.workspace-preview-status.error {
+  color: alpha(@error, 0.84);
+}
+
+.workspace-window-list {
+  padding-top: 2px;
+}
+
+.workspace-window-row {
+  min-height: 45px;
+  padding: 5px 9px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: alpha(@surface_container_high, 0.34);
+  transition: 100ms ease;
+}
+
+.workspace-window-row:hover {
+  border-color: alpha(@secondary, 0.28);
+  background: alpha(@secondary_container, 0.46);
+}
+
+.workspace-window-row.selected {
+  border-color: alpha(@primary, 0.46);
+  background-image: linear-gradient(110deg,
+    alpha(@primary_container, 0.58),
+    alpha(@secondary_container, 0.34));
+  box-shadow: inset 3px 0 alpha(@primary, 0.88);
+}
+
+.workspace-window-icon {
+  min-width: 26px;
+}
+
+.workspace-window-name {
+  color: @on_surface;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.workspace-window-title {
+  color: alpha(@on_surface_variant, 0.72);
+  font-size: 9px;
+}
+
+.workspace-window-open {
+  padding: 0 5px;
+  color: alpha(@primary, 0.70);
+  font-size: 13px;
+}
+
+/* Legacy schematic selectors intentionally remain unreferenced so an older
+ * managed config can be replaced safely; v1.5 renders only the navigator. */
+
+/* ========================================================================== */
+/* v1.6 — Phase 1 serious polish: workspace navigator only                    */
+/* ========================================================================== */
+
+.popup-workspace {
+  border-color: alpha(@primary, 0.25);
+  background-image: linear-gradient(152deg,
+    alpha(@surface_container_high, 0.965),
+    alpha(@surface, 0.945) 56%,
+    alpha(@primary_container, 0.64));
+  box-shadow:
+    0 26px 70px alpha(#000000, 0.54),
+    0 0 0 1px alpha(@primary, 0.08),
+    inset 0 1px alpha(@on_surface, 0.10);
+}
+
+.workspace-navigator {
+  min-width: 480px;
+  padding: 14px 14px 12px 14px;
+}
+
+.workspace-preview-heading {
+  min-height: 48px;
+  padding: 0 2px 2px 2px;
+}
+
+.workspace-preview-heading-title {
+  margin-top: 3px;
+  color: @on_surface;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.workspace-preview-mode-chip,
+.workspace-preview-count-chip {
+  padding: 2px 7px;
+  border: 1px solid alpha(@outline_variant, 0.24);
+  border-radius: 999px;
+  color: alpha(@on_surface_variant, 0.70);
+  background: alpha(@surface_container_high, 0.34);
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.8px;
+}
+
+.workspace-preview-count-chip {
+  color: alpha(@primary, 0.92);
+  border-color: alpha(@primary, 0.24);
+  background: alpha(@primary_container, 0.26);
+}
+
+.workspace-preview-badge {
+  min-width: 36px;
+  min-height: 36px;
+  border: 1px solid alpha(@primary, 0.50);
+  border-radius: 12px;
+  color: @on_primary_container;
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.72),
+    alpha(@primary_container, 0.68));
+  box-shadow:
+    0 5px 16px alpha(@primary, 0.24),
+    inset 0 1px alpha(@on_surface, 0.12);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.workspace-preview-hero {
+  min-width: 480px;
+  border: 1px solid alpha(@outline_variant, 0.32);
+  border-radius: 17px;
+  background-image: linear-gradient(160deg,
+    alpha(@surface_container_lowest, 0.94),
+    alpha(@surface_container, 0.84));
+  box-shadow:
+    0 9px 26px alpha(#000000, 0.28),
+    0 0 0 1px alpha(@primary, 0.05),
+    inset 0 1px alpha(@on_surface, 0.08);
+}
+
+.workspace-preview-hero-viewport {
+  min-width: 480px;
+  min-height: 270px;
+  border-radius: 16px 16px 0 0;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_lowest, 0.98),
+    alpha(#000000, 0.82));
+  box-shadow: inset 0 0 0 1px alpha(#000000, 0.26);
+}
+
+.workspace-preview-picture {
+  min-width: 480px;
+  min-height: 270px;
+  border-radius: 16px 16px 0 0;
+  background: alpha(#000000, 0.76);
+}
+
+.workspace-preview-fallback {
+  min-width: 480px;
+  min-height: 270px;
+  color: @on_surface_variant;
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.18),
+    alpha(@surface_container_lowest, 0.94));
+}
+
+.workspace-preview-fallback-name {
+  color: @on_surface;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.workspace-preview-fallback-copy {
+  color: alpha(@on_surface_variant, 0.66);
+  font-size: 9px;
+}
+
+.workspace-preview-hero-meta {
+  min-height: 54px;
+  padding: 8px 10px;
+  border-top: 1px solid alpha(@outline_variant, 0.22);
+  background-image: linear-gradient(90deg,
+    alpha(@surface_container_high, 0.72),
+    alpha(@primary_container, 0.28));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.03);
+}
+
+.workspace-preview-hero-icon-wrap,
+.workspace-window-icon-shell {
+  min-width: 38px;
+  min-height: 38px;
+  border: 1px solid alpha(@outline_variant, 0.22);
+  border-radius: 11px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_highest, 0.68),
+    alpha(@surface_container, 0.50));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.06);
+}
+
+.workspace-preview-hero-icon {
+  margin: 5px;
+}
+
+.workspace-preview-hero-copy {
+  padding: 2px 0;
+}
+
+.workspace-preview-hero-app {
+  color: @on_surface;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.workspace-preview-hero-title {
+  margin-top: 2px;
+  color: alpha(@on_surface_variant, 0.74);
+  font-size: 9px;
+}
+
+.workspace-preview-live-chip {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid alpha(@tertiary, 0.24);
+  border-radius: 999px;
+  color: alpha(@tertiary, 0.92);
+  background: alpha(@tertiary_container, 0.24);
+}
+
+.workspace-preview-live-dot {
+  color: @tertiary;
+  font-size: 7px;
+}
+
+.workspace-preview-live-label {
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.7px;
+}
+
+.workspace-preview-status.error {
+  min-height: 20px;
+  padding: 3px 10px;
+  color: alpha(@error, 0.88);
+  background: alpha(@error_container, 0.18);
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.workspace-window-list-wrap {
+  padding-top: 1px;
+}
+
+.workspace-window-list-heading {
+  min-height: 21px;
+  padding: 0 4px;
+}
+
+.workspace-window-list-title {
+  color: alpha(@on_surface_variant, 0.68);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 1.1px;
+}
+
+.workspace-window-list-help {
+  color: alpha(@on_surface_variant, 0.48);
+  font-size: 8px;
+}
+
+.workspace-window-list {
+  padding: 0;
+}
+
+.workspace-window-row {
+  min-height: 48px;
+  padding: 4px 8px 4px 5px;
+  border: 1px solid alpha(@outline_variant, 0.12);
+  border-radius: 12px;
+  background-image: linear-gradient(100deg,
+    alpha(@surface_container_high, 0.34),
+    alpha(@surface_container, 0.22));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  transition: 120ms ease;
+}
+
+.workspace-window-row:hover {
+  border-color: alpha(@secondary, 0.32);
+  background-image: linear-gradient(100deg,
+    alpha(@secondary_container, 0.34),
+    alpha(@surface_container_high, 0.30));
+  box-shadow:
+    0 4px 12px alpha(#000000, 0.14),
+    inset 0 1px alpha(@on_surface, 0.05);
+}
+
+.workspace-window-row.selected {
+  border-color: alpha(@primary, 0.54);
+  background-image: linear-gradient(102deg,
+    alpha(@primary_container, 0.62),
+    alpha(@secondary_container, 0.28) 70%,
+    alpha(@surface_container_high, 0.30));
+  box-shadow:
+    inset 3px 0 alpha(@primary, 0.94),
+    0 5px 16px alpha(@primary, 0.12),
+    inset 0 1px alpha(@on_surface, 0.07);
+}
+
+.workspace-window-selected-dot {
+  min-width: 8px;
+  color: alpha(@primary, 0.10);
+  font-size: 7px;
+}
+
+.workspace-window-row.selected .workspace-window-selected-dot {
+  color: @primary;
+}
+
+.workspace-window-index {
+  min-width: 22px;
+  color: alpha(@on_surface_variant, 0.44);
+  font-size: 8px;
+  font-weight: 850;
+}
+
+.workspace-window-row.selected .workspace-window-index {
+  color: alpha(@primary, 0.88);
+}
+
+.workspace-window-icon-shell {
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 10px;
+}
+
+.workspace-window-icon {
+  min-width: 24px;
+  margin: 5px;
+}
+
+.workspace-window-copy {
+  padding: 1px 0;
+}
+
+.workspace-window-name {
+  color: @on_surface;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.workspace-window-title {
+  margin-top: 2px;
+  color: alpha(@on_surface_variant, 0.64);
+  font-size: 8px;
+}
+
+.workspace-window-row.selected .workspace-window-title {
+  color: alpha(@on_surface_variant, 0.78);
+}
+
+.workspace-window-focus-hint {
+  min-width: 54px;
+  padding-left: 6px;
+}
+
+.workspace-window-focus-copy {
+  color: alpha(@primary, 0.78);
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.6px;
+}
+
+.workspace-window-open {
+  padding: 0 2px;
+  color: alpha(@primary, 0.70);
+  font-size: 13px;
+}
+
+.workspace-empty {
+  min-width: 452px;
+  min-height: 170px;
+  padding: 20px;
+  border: 1px dashed alpha(@outline_variant, 0.28);
+  border-radius: 16px;
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.14),
+    alpha(@surface_container_low, 0.46));
+}
+
+/* ========================================================================== */
+/* v1.7 — minimal workspace navigator                                         */
+/* Reference direction: one workspace identity, one hero, one compact list.   */
+/* ========================================================================== */
+
+.popup-workspace {
+  border-color: alpha(@primary, 0.26);
+  border-radius: 21px;
+  background-image: linear-gradient(155deg,
+    alpha(@surface_container_high, 0.935),
+    alpha(@surface, 0.905) 58%,
+    alpha(@primary_container, 0.46));
+  box-shadow:
+    0 28px 72px alpha(#000000, 0.50),
+    0 0 0 1px alpha(@primary, 0.07),
+    inset 0 1px alpha(@on_surface, 0.10);
+}
+
+.workspace-navigator {
+  min-width: 460px;
+  padding: 16px;
+}
+
+.workspace-preview-header {
+  min-height: 48px;
+  padding: 1px 1px 2px 1px;
+}
+
+.workspace-preview-header-icon {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  color: alpha(@primary, 0.98);
+  background: transparent;
+  box-shadow: none;
+  font-size: 16px;
+}
+
+.workspace-preview-header-copy {
+  padding: 1px 0;
+}
+
+.workspace-preview-header-title {
+  color: @on_surface;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.workspace-preview-header-subtitle {
+  margin-top: 2px;
+  color: alpha(@on_surface_variant, 0.63);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.workspace-preview-close {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid alpha(@outline_variant, 0.18);
+  border-radius: 11px;
+  color: alpha(@on_surface_variant, 0.70);
+  background: alpha(@surface_container_high, 0.30);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.04);
+  transition: 120ms ease;
+}
+
+.workspace-preview-close:hover {
+  color: @on_surface;
+  border-color: alpha(@primary, 0.30);
+  background: alpha(@primary_container, 0.34);
+}
+
+.workspace-preview-content {
+  min-width: 460px;
+}
+
+.workspace-preview-hero {
+  min-width: 460px;
+  padding: 0;
+  border: 1px solid alpha(@primary, 0.30);
+  border-radius: 16px;
+  background: alpha(@surface_container_lowest, 0.76);
+  box-shadow:
+    0 12px 30px alpha(#000000, 0.30),
+    0 0 0 1px alpha(@primary, 0.055),
+    inset 0 1px alpha(@on_surface, 0.06);
+}
+
+.workspace-preview-hero-viewport {
+  min-width: 460px;
+  min-height: 259px;
+  border-radius: 15px;
+  background-image: linear-gradient(150deg,
+    alpha(@surface_container_lowest, 0.99),
+    alpha(#000000, 0.84));
+  box-shadow:
+    inset 0 0 0 1px alpha(#000000, 0.34),
+    inset 0 -42px 56px alpha(#000000, 0.12);
+}
+
+.workspace-preview-picture {
+  min-width: 460px;
+  min-height: 259px;
+  border-radius: 15px;
+  background: alpha(#000000, 0.82);
+}
+
+.workspace-preview-fallback {
+  min-width: 460px;
+  min-height: 259px;
+  color: @on_surface_variant;
+  background-image: radial-gradient(circle at 50% 42%,
+    alpha(@primary_container, 0.30),
+    alpha(@surface_container_lowest, 0.96) 52%);
+}
+
+.workspace-preview-fallback-icon-wrap {
+  min-width: 46px;
+  min-height: 46px;
+  border: 1px solid alpha(@primary, 0.20);
+  border-radius: 14px;
+  background: alpha(@surface_container_high, 0.48);
+}
+
+.workspace-preview-fallback-icon {
+  margin: 8px;
+}
+
+.workspace-preview-fallback-name {
+  color: @on_surface;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.workspace-preview-fallback-copy {
+  color: alpha(@on_surface_variant, 0.58);
+  font-size: 8px;
+}
+
+.workspace-preview-status.error {
+  min-height: 18px;
+  padding: 2px 8px;
+  border-top: 1px solid alpha(@error, 0.12);
+  color: alpha(@error, 0.86);
+  background: alpha(@error_container, 0.12);
+  font-size: 8px;
+}
+
+.workspace-window-list-wrap {
+  padding-top: 2px;
+}
+
+.workspace-window-list-heading {
+  min-height: 18px;
+  padding: 0 3px;
+}
+
+.workspace-window-list-title {
+  color: alpha(@on_surface_variant, 0.58);
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 1.2px;
+}
+
+.workspace-window-list-help {
+  color: alpha(@on_surface_variant, 0.42);
+  font-size: 7px;
+}
+
+.workspace-window-list {
+  padding: 0;
+}
+
+.workspace-window-row {
+  min-height: 48px;
+  padding: 4px 9px;
+  border: 1px solid alpha(@outline_variant, 0.11);
+  border-radius: 12px;
+  background: alpha(@surface_container_high, 0.27);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  transition: 120ms ease;
+}
+
+.workspace-window-row:hover {
+  border-color: alpha(@primary, 0.24);
+  background: alpha(@surface_container_high, 0.39);
+  box-shadow:
+    0 4px 13px alpha(#000000, 0.13),
+    inset 0 1px alpha(@on_surface, 0.05);
+}
+
+.workspace-window-row.selected {
+  border-color: alpha(@primary, 0.68);
+  background-image: linear-gradient(100deg,
+    alpha(@primary_container, 0.54),
+    alpha(@surface_container_high, 0.38) 72%);
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.10),
+    0 6px 18px alpha(@primary, 0.12),
+    inset 2px 0 alpha(@primary, 0.98),
+    inset 0 1px alpha(@on_surface, 0.07);
+}
+
+.workspace-window-icon-shell {
+  min-width: 36px;
+  min-height: 36px;
+  border: 1px solid alpha(@outline_variant, 0.15);
+  border-radius: 10px;
+  background: alpha(@surface_container_highest, 0.38);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.04);
+}
+
+.workspace-window-row.selected .workspace-window-icon-shell {
+  border-color: alpha(@primary, 0.18);
+  background: alpha(@primary_container, 0.22);
+}
+
+.workspace-window-icon {
+  min-width: 25px;
+  margin: 5px;
+}
+
+.workspace-window-copy {
+  padding: 1px 0;
+}
+
+.workspace-window-name {
+  color: @on_surface;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.workspace-window-title {
+  margin-top: 2px;
+  color: alpha(@on_surface_variant, 0.58);
+  font-size: 8px;
+}
+
+.workspace-window-row.selected .workspace-window-title {
+  color: alpha(@on_surface_variant, 0.76);
+}
+
+.workspace-window-focus-hint {
+  min-width: 48px;
+  padding-left: 4px;
+}
+
+.workspace-window-focus-copy {
+  color: alpha(@primary, 0.92);
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.workspace-window-open {
+  padding: 0 1px;
+  color: alpha(@primary, 0.68);
+  font-size: 12px;
+}
+
+.workspace-empty {
+  min-width: 428px;
+  min-height: 148px;
+  padding: 18px;
+  border: 1px dashed alpha(@outline_variant, 0.24);
+  border-radius: 15px;
+  background: alpha(@surface_container_low, 0.34);
+}
+
+
+/* ========================================================================== */
+/* v1.8 — compact opaque workspace navigator + preview ownership              */
+/* ========================================================================== */
+
+.popup-workspace {
+  border-color: alpha(@primary, 0.30);
+  border-radius: 19px;
+  background-image: linear-gradient(155deg,
+    alpha(@surface_container_high, 0.985),
+    alpha(@surface, 0.975) 58%,
+    alpha(@primary_container, 0.88));
+  box-shadow:
+    0 22px 54px alpha(#000000, 0.48),
+    0 0 0 1px alpha(@primary, 0.08),
+    inset 0 1px alpha(@on_surface, 0.10);
+}
+
+.workspace-navigator {
+  min-width: 390px;
+  padding: 12px;
+}
+
+.workspace-preview-header {
+  min-height: 42px;
+  padding: 0 1px 1px 1px;
+}
+
+.workspace-preview-header-icon {
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 0;
+  font-size: 14px;
+}
+
+.workspace-preview-header-title {
+  font-size: 13px;
+}
+
+.workspace-preview-close {
+  min-width: 30px;
+  min-height: 30px;
+  border-radius: 10px;
+}
+
+.workspace-preview-content {
+  min-width: 390px;
+}
+
+.workspace-preview-hero {
+  min-width: 390px;
+  border-radius: 15px;
+  background: alpha(@surface_container_lowest, 0.96);
+  box-shadow:
+    0 9px 24px alpha(#000000, 0.28),
+    0 0 0 1px alpha(@primary, 0.05),
+    inset 0 1px alpha(@on_surface, 0.06);
+}
+
+.workspace-preview-hero-viewport {
+  min-width: 390px;
+  min-height: 219px;
+  border-radius: 14px;
+  background-image: linear-gradient(150deg,
+    alpha(@surface_container_lowest, 1.0),
+    alpha(#000000, 0.92));
+}
+
+.workspace-preview-picture {
+  min-width: 390px;
+  min-height: 219px;
+  border-radius: 14px;
+  background: alpha(#000000, 0.92);
+}
+
+.workspace-preview-fallback {
+  min-width: 390px;
+  min-height: 219px;
+}
+
+.workspace-window-list-wrap {
+  padding-top: 0;
+}
+
+.workspace-window-list-heading {
+  min-height: 16px;
+  padding: 0 2px;
+}
+
+.workspace-window-list {
+  padding: 0;
+}
+
+.workspace-window-row {
+  min-height: 42px;
+  padding: 3px 8px;
+  border: 1px solid alpha(@outline_variant, 0.14);
+  border-radius: 11px;
+  background: alpha(@surface_container_high, 0.58);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.035);
+  transition: 100ms ease;
+}
+
+.workspace-window-row:hover {
+  border-color: alpha(@primary, 0.30);
+  background: alpha(@surface_container_highest, 0.70);
+  box-shadow:
+    0 3px 10px alpha(#000000, 0.13),
+    inset 0 1px alpha(@on_surface, 0.05);
+}
+
+.workspace-window-row.selected {
+  border-color: alpha(@primary, 0.72);
+  background-image: linear-gradient(100deg,
+    alpha(@primary_container, 0.66),
+    alpha(@surface_container_high, 0.66) 74%);
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.10),
+    0 5px 14px alpha(@primary, 0.11),
+    inset 2px 0 alpha(@primary, 0.98),
+    inset 0 1px alpha(@on_surface, 0.07);
+}
+
+.workspace-window-icon-shell {
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 9px;
+}
+
+.workspace-window-icon {
+  min-width: 22px;
+  margin: 4px;
+}
+
+.workspace-window-name {
+  font-size: 9px;
+}
+
+.workspace-window-title {
+  margin-top: 1px;
+  font-size: 7px;
+}
+
+.workspace-window-focus-hint {
+  min-width: 43px;
+}
+
+.workspace-window-focus-copy {
+  font-size: 7px;
+}
+
+.workspace-empty {
+  min-width: 366px;
+  min-height: 130px;
+}
+
+/* A workspace can be focused, previewed, or both. Keep the preview owner
+ * illuminated while the pointer moves from its pill into the floating card. */
+.workspace-button.previewing {
+  color: @on_primary_container;
+  border-color: alpha(@primary, 0.76);
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.58),
+    alpha(@primary_container, 0.72));
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.18),
+    0 4px 13px alpha(@primary, 0.30),
+    0 0 14px alpha(@primary, 0.22),
+    inset 0 1px alpha(@on_primary_container, 0.16);
+}
+
+.workspace-button.active.previewing {
+  border-color: alpha(@primary, 0.94);
+  box-shadow:
+    0 0 0 1px alpha(@on_primary_container, 0.16),
+    0 4px 14px alpha(@primary, 0.38),
+    0 0 17px alpha(@tertiary, 0.22),
+    inset 0 1px alpha(@on_primary_container, 0.20);
+}
+
+/* ========================================================================== */
+/* v1.9 — minimal floating calendar + workspace header icon alignment         */
+/* ========================================================================== */
+
+/* The popup is deliberately denser and more opaque than the workspace card:
+ * calendar text needs calm contrast against bright wallpapers. */
+.popup-calendar {
+  border-color: alpha(@primary, 0.28);
+  border-radius: 18px;
+  background-image: linear-gradient(156deg,
+    alpha(@surface_container_high, 0.985),
+    alpha(@surface, 0.975) 64%,
+    alpha(@primary_container, 0.74));
+  box-shadow:
+    0 22px 52px alpha(#000000, 0.46),
+    0 0 0 1px alpha(@primary, 0.07),
+    inset 0 1px alpha(@on_surface, 0.10);
+}
+
+.calendar-panel {
+  min-width: 250px;
+  padding: 12px;
+}
+
+.calendar-date-header {
+  min-height: 28px;
+  padding: 1px 4px 5px 4px;
+}
+
+.calendar-date-label {
+  color: alpha(@on_surface, 0.90);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.15px;
+}
+
+.calendar-widget {
+  padding: 4px 5px 7px 5px;
+  border: 1px solid alpha(@outline_variant, 0.18);
+  border-radius: 14px;
+  background: alpha(@surface_container_lowest, 0.70);
+  box-shadow:
+    inset 0 1px alpha(@on_surface, 0.035),
+    inset 0 0 0 1px alpha(#000000, 0.12);
+}
+
+.calendar-widget header {
+  min-height: 34px;
+  margin: 0 0 4px 0;
+  padding: 0 1px;
+  border-bottom: 1px solid alpha(@outline_variant, 0.12);
+  background: transparent;
+}
+
+.calendar-widget header button {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: alpha(@on_surface_variant, 0.72);
+  background: transparent;
+}
+
+.calendar-widget header button:hover {
+  color: @on_surface;
+  border-color: alpha(@primary, 0.24);
+  background: alpha(@primary_container, 0.28);
+}
+
+.calendar-widget header stack.month,
+.calendar-widget header label.year {
+  color: @on_surface;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.calendar-widget .day-name {
+  min-height: 23px;
+  color: alpha(@on_surface_variant, 0.56);
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.calendar-widget .day-number {
+  min-width: 25px;
+  min-height: 25px;
+  margin: 1px;
+  border-radius: 8px;
+  color: alpha(@on_surface, 0.88);
+  font-size: 9px;
+  font-weight: 720;
+}
+
+.calendar-widget .day-number:hover {
+  background: alpha(@primary_container, 0.30);
+}
+
+.calendar-widget .other-month {
+  color: alpha(@on_surface_variant, 0.30);
+}
+
+.calendar-widget .today {
+  color: @on_primary_container;
+  background: alpha(@primary_container, 0.54);
+  box-shadow: inset 0 0 0 1px alpha(@primary, 0.46);
+}
+
+.calendar-widget .day-number:selected,
+.calendar-widget .today:selected,
+.calendar-widget:selected {
+  color: @on_primary;
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.94),
+    alpha(@tertiary, 0.72));
+  box-shadow:
+    0 3px 10px alpha(@primary, 0.24),
+    inset 0 1px alpha(@on_primary, 0.18);
+}
+
+.calendar-footer {
+  min-height: 28px;
+  padding-top: 0;
+}
+
+.calendar-footer-action {
+  min-height: 28px;
+  padding: 1px 8px;
+  border: 1px solid alpha(@outline_variant, 0.16);
+  border-radius: 10px;
+  color: alpha(@on_surface, 0.86);
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.50),
+    alpha(@surface_container, 0.32));
+  box-shadow:
+    inset 0 1px alpha(@on_surface, 0.04),
+    0 1px 0 alpha(#000000, 0.08);
+  font-size: 9px;
+  font-weight: 820;
+  transition: 120ms ease;
+}
+
+.calendar-footer-action-content {
+  min-height: 18px;
+}
+
+.calendar-footer-icon-shell {
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  color: alpha(@primary, 0.98);
+  background: transparent;
+  box-shadow: none;
+}
+
+.calendar-footer-icon {
+  color: alpha(@primary, 0.98);
+}
+
+.calendar-footer-action-label {
+  color: alpha(@on_surface, 0.88);
+  font-size: 9px;
+  font-weight: 840;
+}
+
+.calendar-footer-action:hover {
+  color: @on_surface;
+  border-color: alpha(@primary, 0.28);
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.28),
+    alpha(@surface_container_high, 0.42));
+  box-shadow:
+    0 2px 8px alpha(@primary, 0.08),
+    inset 0 1px alpha(@on_surface, 0.06);
+}
+
+.calendar-footer-action:hover .calendar-footer-icon-shell {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.calendar-footer-action:hover .calendar-footer-action-label {
+  color: @on_surface;
+}
+
+/* v1.9.1: draw the header grid ourselves rather than relying on icon-theme
+ * bearings. The four cells are geometrically centered inside the shell. */
+.workspace-preview-header-icon {
+  padding: 0;
+}
+
+.workspace-preview-grid-glyph {
+  min-width: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+}
+
+.workspace-preview-grid-cell {
+  min-width: 6px;
+  min-height: 6px;
+  padding: 0;
+  border-radius: 2px;
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.98),
+    alpha(@secondary, 0.78));
+  box-shadow: 0 1px 3px alpha(@primary, 0.12);
+}
+
+/* ========================================================================== */
+/* v2.0 — compact Network Dashboard                                           */
+/* ========================================================================== */
+
+.popup-network {
+  border-color: alpha(@primary, 0.30);
+  background-image: linear-gradient(155deg,
+    alpha(@surface_container_high, 0.992),
+    alpha(@surface, 0.978) 58%,
+    alpha(@primary_container, 0.88));
+  box-shadow:
+    0 22px 48px alpha(#000000, 0.52),
+    0 0 0 1px alpha(@primary, 0.08),
+    inset 0 1px alpha(@on_surface, 0.09);
+}
+
+.network-dashboard {
+  min-width: 295px;
+  padding: 9px;
+}
+
+.network-connection-header {
+  min-height: 38px;
+  padding: 0 1px;
+}
+
+.network-connection-icon {
+  color: alpha(@primary, 0.98);
+}
+
+.network-connection-copy {
+  padding: 1px 0;
+}
+
+.network-connection-name {
+  color: @on_surface;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.network-connection-status {
+  margin-top: 2px;
+  color: alpha(@on_surface_variant, 0.76);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.network-divider {
+  min-height: 1px;
+  background: alpha(@outline_variant, 0.18);
+}
+
+.network-section-kicker {
+  color: alpha(@on_surface_variant, 0.70);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 1.2px;
+}
+
+.network-live-grid {
+  min-height: 48px;
+  padding: 3px 2px;
+  border: 1px solid alpha(@outline_variant, 0.18);
+  border-radius: 13px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.54),
+    alpha(@surface_container, 0.34));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.045);
+}
+
+.network-metric-divider {
+  min-width: 1px;
+  margin: 5px 3px;
+  background: alpha(@outline_variant, 0.20);
+}
+
+.network-live-metric {
+  padding: 2px 4px;
+}
+
+.network-live-value {
+  color: @on_surface;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.network-live-label {
+  color: alpha(@on_surface_variant, 0.68);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.network-transfer-icon.download {
+  color: alpha(@primary, 0.98);
+}
+
+.network-transfer-icon.upload {
+  color: alpha(@secondary, 0.96);
+}
+
+.network-session-card {
+  padding: 6px 8px 5px 8px;
+  border: 1px solid alpha(@outline_variant, 0.18);
+  border-radius: 13px;
+  background-image: linear-gradient(150deg,
+    alpha(@surface_container_low, 0.72),
+    alpha(@surface_container_high, 0.46));
+  box-shadow:
+    inset 0 1px alpha(@on_surface, 0.04),
+    0 5px 14px alpha(#000000, 0.10);
+}
+
+.network-session-total {
+  color: @on_surface;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.network-session-breakdown {
+  min-height: 20px;
+}
+
+.network-session-stat {
+  color: alpha(@on_surface, 0.90);
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.network-session-since {
+  color: alpha(@on_surface_variant, 0.68);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.network-actions {
+  padding-top: 0;
+}
+
+.network-quick-action {
+  min-height: 34px;
+  padding: 2px 7px;
+  border: 1px solid alpha(@outline_variant, 0.16);
+  border-radius: 12px;
+  color: @on_surface;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.48),
+    alpha(@surface_container, 0.30));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.035);
+  transition: 120ms ease;
+}
+
+.network-quick-action:hover {
+  border-color: alpha(@primary, 0.30);
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.26),
+    alpha(@surface_container_high, 0.46));
+  box-shadow:
+    0 3px 10px alpha(@primary, 0.08),
+    inset 0 1px alpha(@on_surface, 0.05);
+}
+
+.network-quick-icon {
+  color: alpha(@primary, 0.96);
+}
+
+.network-quick-copy {
+  padding: 1px 0;
+}
+
+.network-quick-title {
+  color: @on_surface;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.network-quick-subtitle {
+  margin-top: 0;
+  color: alpha(@on_surface_variant, 0.66);
+  font-size: 9px;
+  font-weight: 680;
+}
+
+.network-quick-action-label {
+  color: alpha(@on_surface_variant, 0.78);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.network-quick-chevron {
+  color: alpha(@on_surface_variant, 0.52);
+}
+
+/* ========================================================================== */
+/* v2.1.1 — aligned output / input audio controls                              */
+/* ========================================================================== */
+
+.audio-panel {
+  min-width: 276px;
+  padding: 8px;
+}
+
+.audio-channel-row {
+  padding: 7px 8px 8px 8px;
+  border: 1px solid alpha(@outline_variant, 0.14);
+  border-radius: 12px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.50),
+    alpha(@surface_container, 0.32));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.04);
+}
+
+.audio-channel-row.input-channel {
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.45),
+    alpha(@surface_container, 0.29));
+}
+
+.audio-section-kicker {
+  color: alpha(@on_surface_variant, 0.66);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 1.05px;
+}
+
+.audio-device-label {
+  color: alpha(@on_surface, 0.90);
+  font-size: 10px;
+  font-weight: 820;
+}
+
+.audio-control-line {
+  min-height: 30px;
+  padding-top: 2px;
+}
+
+.audio-channel-icon {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: alpha(@primary, 0.98);
+  background: transparent;
+  box-shadow: none;
+  transition: 100ms ease;
+}
+
+.audio-channel-icon:hover {
+  color: @primary;
+  border-color: alpha(@primary, 0.22);
+  background: alpha(@primary_container, 0.18);
+  box-shadow: 0 2px 8px alpha(@primary, 0.08);
+}
+
+.audio-channel-icon:active {
+  color: @on_primary_container;
+  border-color: alpha(@primary, 0.34);
+  background: alpha(@primary_container, 0.32);
+  box-shadow: inset 0 2px 5px alpha(#000000, 0.18);
+}
+
+.audio-channel-icon:focus-visible {
+  border-color: alpha(@primary, 0.46);
+  box-shadow: 0 0 0 2px alpha(@primary, 0.10);
+}
+
+.audio-channel-icon.muted {
+  color: alpha(@on_surface_variant, 0.54);
+  border-color: alpha(@outline_variant, 0.12);
+  background: alpha(@surface_container_highest, 0.14);
+}
+
+.audio-channel-icon.mic:not(.muted) {
+  color: alpha(@tertiary, 0.98);
+}
+
+.audio-channel-icon.mic:not(.muted):hover {
+  border-color: alpha(@tertiary, 0.24);
+  background: alpha(@tertiary_container, 0.18);
+  box-shadow: 0 2px 8px alpha(@tertiary, 0.07);
+}
+
+.audio-channel-percent {
+  min-width: 32px;
+  color: alpha(@on_surface, 0.90);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+scale.audio-thick-slider trough {
+  min-height: 12px;
+  border-radius: 999px;
+  background: alpha(@surface_container_highest, 0.76);
+  box-shadow: inset 0 2px 4px alpha(#000000, 0.28);
+}
+
+scale.audio-thick-slider highlight {
+  min-height: 12px;
+  border-radius: 999px;
+  background-image: linear-gradient(90deg,
+    alpha(@primary, 0.94),
+    alpha(@tertiary, 0.88));
+  box-shadow: inset 0 1px alpha(@on_primary, 0.16);
+}
+
+scale.audio-thick-slider.input-slider highlight {
+  background-image: linear-gradient(90deg,
+    alpha(@tertiary, 0.92),
+    alpha(@secondary, 0.86));
+}
+
+scale.audio-thick-slider slider {
+  min-width: 18px;
+  min-height: 18px;
+  margin: -4px;
+  border: 1px solid alpha(@on_surface, 0.42);
+  border-radius: 999px;
+  background: @on_surface;
+  box-shadow:
+    0 2px 7px alpha(#000000, 0.36),
+    inset 0 1px alpha(#ffffff, 0.24);
+}
+
+.audio-mic-in-use {
+  color: alpha(@tertiary, 0.92);
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.55px;
+}
+
+.audio-mixer-action {
+  min-height: 27px;
+  padding: 2px 7px;
+  border: none;
+  border-radius: 8px;
+  color: alpha(@on_surface_variant, 0.76);
+  background: transparent;
+  box-shadow: none;
+  font-size: 9px;
+  font-weight: 820;
+  transition: 100ms ease;
+}
+
+.audio-mixer-action:hover {
+  color: @on_surface;
+  background: alpha(@primary_container, 0.18);
+}
+
+.audio-mixer-action:active {
+  background: alpha(@primary_container, 0.28);
+}
+
+.audio-mixer-chevron {
+  color: alpha(@primary, 0.72);
+  font-size: 14px;
+}
+
+
+
+/* ========================================================================== */
+/* v2.2 — compact brightness-first Display Hub                               */
+/* ========================================================================== */
+
+.display-panel {
+  min-width: 290px;
+  padding: 9px;
+}
+
+.display-kicker {
+  color: alpha(@tertiary, 0.88);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 1.2px;
+  margin: 0 1px 1px 1px;
+}
+
+.display-brightness-card {
+  padding: 8px 9px 9px 9px;
+  border: 1px solid alpha(@outline_variant, 0.15);
+  border-radius: 12px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.50),
+    alpha(@surface_container, 0.31));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.04);
+}
+
+.display-brightness-meta {
+  min-height: 22px;
+}
+
+.display-brightness-icon {
+  min-width: 22px;
+  color: alpha(@tertiary, 0.98);
+  font-size: 17px;
+}
+
+.display-brightness-label {
+  color: alpha(@on_surface, 0.94);
+  font-size: 11px;
+  font-weight: 860;
+}
+
+.display-brightness-percent {
+  min-width: 34px;
+  color: alpha(@on_surface, 0.90);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.display-brightness-row {
+  min-height: 18px;
+  padding: 0 2px 0 2px;
+}
+
+scale.display-thick-slider trough {
+  min-height: 11px;
+  border-radius: 999px;
+  background: alpha(@surface_container_highest, 0.76);
+  box-shadow: inset 0 2px 4px alpha(#000000, 0.27);
+}
+
+scale.display-thick-slider highlight {
+  min-height: 11px;
+  border-radius: 999px;
+  background-image: linear-gradient(90deg,
+    alpha(@tertiary, 0.94),
+    alpha(@primary, 0.88));
+  box-shadow: inset 0 1px alpha(@on_primary, 0.13);
+}
+
+scale.display-thick-slider slider {
+  min-width: 18px;
+  min-height: 18px;
+  margin: -4px;
+  border: 1px solid alpha(@on_surface, 0.38);
+  border-radius: 999px;
+  background: @on_surface;
+  box-shadow:
+    0 2px 7px alpha(#000000, 0.34),
+    inset 0 1px alpha(#ffffff, 0.22);
+}
+
+.display-theme-row,
+.display-action-row {
+  min-height: 36px;
+  padding: 5px 8px;
+  border: 1px solid alpha(@outline_variant, 0.13);
+  border-radius: 10px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.43),
+    alpha(@surface_container, 0.27));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.03);
+}
+
+.display-row-title {
+  color: alpha(@on_surface, 0.92);
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.display-row-subtitle {
+  color: alpha(@on_surface_variant, 0.63);
+  font-size: 8px;
+  font-weight: 680;
+}
+
+.display-theme-segment {
+  padding: 2px;
+  border: 1px solid alpha(@outline_variant, 0.16);
+  border-radius: 9px;
+  background: alpha(@surface_container_highest, 0.32);
+}
+
+.display-theme-choice {
+  min-height: 26px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: alpha(@on_surface_variant, 0.82);
+  font-size: 8px;
+  font-weight: 820;
+  transition: 100ms ease;
+}
+
+.display-theme-choice:hover {
+  color: @on_surface;
+  border-color: alpha(@primary, 0.18);
+  background: alpha(@primary_container, 0.20);
+}
+
+.display-theme-choice:active {
+  color: @on_primary_container;
+  border-color: alpha(@primary, 0.30);
+  background: alpha(@primary_container, 0.34);
+  box-shadow: inset 0 2px 4px alpha(#000000, 0.14);
+}
+
+.display-theme-choice.light:hover {
+  color: alpha(@tertiary, 0.98);
+}
+
+.display-theme-choice.dark:hover {
+  color: alpha(@primary, 0.98);
+}
+
+.display-theme-icon {
+  font-size: 11px;
+}
+
+.display-action-row {
+  transition: 100ms ease;
+}
+
+.display-action-row:hover {
+  border-color: alpha(@primary, 0.22);
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.20),
+    alpha(@surface_container_high, 0.43));
+}
+
+.display-action-row:active {
+  border-color: alpha(@primary, 0.30);
+  background: alpha(@primary_container, 0.26);
+  box-shadow: inset 0 2px 4px alpha(#000000, 0.14);
+}
+
+.display-row-icon {
+  min-width: 24px;
+  color: alpha(@primary, 0.92);
+  font-size: 16px;
+}
+
+.display-row-icon.night {
+  color: alpha(@tertiary, 0.95);
+}
+
+.display-row-chevron {
+  color: alpha(@primary, 0.66);
+  font-size: 15px;
+}
+
+/* ========================================================================== */
+/* v2.2.2 — Frosted Mist native theme switch + layered light appearance       */
+/* ========================================================================== */
+
+.display-theme-switch-wrap {
+  min-height: 30px;
+}
+
+.display-theme-mode-icon {
+  min-width: 16px;
+  color: alpha(@on_surface_variant, 0.56);
+  font-size: 13px;
+  transition: 120ms ease;
+}
+
+.display-theme-mode-icon.active {
+  color: @primary;
+}
+
+switch.display-theme-switch {
+  min-width: 42px;
+  min-height: 22px;
+  padding: 2px;
+  border: 1px solid alpha(@outline_variant, 0.28);
+  border-radius: 999px;
+  background: alpha(@surface_container_lowest, 0.52);
+  box-shadow: inset 0 1px 3px alpha(#000000, 0.22);
+  transition: 140ms ease;
+}
+
+switch.display-theme-switch:hover {
+  border-color: alpha(@primary, 0.46);
+  background: alpha(@tertiary_container, 0.34);
+}
+
+switch.display-theme-switch:checked {
+  border-color: alpha(@primary, 0.48);
+  background: alpha(@primary_container, 0.48);
+}
+
+switch.display-theme-switch:checked:hover {
+  background: alpha(@primary_container, 0.58);
+}
+
+switch.display-theme-switch slider {
+  min-width: 17px;
+  min-height: 17px;
+  border: 1px solid alpha(@on_surface, 0.24);
+  border-radius: 999px;
+  background: @on_surface;
+  box-shadow:
+    0 2px 6px alpha(#000000, 0.28),
+    inset 0 1px alpha(#ffffff, 0.18);
+  transition: 140ms ease;
+}
+
+switch.display-theme-switch:checked slider {
+  background: @primary;
+  border-color: alpha(@primary, 0.56);
+}
+
+/* Frosted Mist keeps Matugen accents but replaces white sheets with layered
+ * cool neutral glass. The shell layer is deeper than cards so each surface
+ * remains visibly separated even in bright wallpapers. */
+.theme-light .bar-shell {
+  background: transparent;
+}
+
+.theme-light .launcher-card,
+.theme-light .weather-card,
+.theme-light .notification-card,
+.theme-light .clock-card,
+.theme-light .control-leader,
+.theme-light .battery-card,
+.theme-light .workspace-deck,
+.theme-light .media-card {
+  border-color: alpha(#607583, 0.24);
+  background-image: linear-gradient(145deg,
+    alpha(#d7e3e9, 0.82),
+    alpha(#c8d7df, 0.70));
+  box-shadow:
+    0 3px 10px alpha(#314653, 0.14),
+    inset 0 1px alpha(#eef4f6, 0.56);
+}
+
+.theme-light .launcher-card {
+  color: #eef6f8;
+  border-color: alpha(@primary, 0.38);
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.78),
+    alpha(@secondary, 0.60));
+}
+
+.theme-light .workspace-deck {
+  background-image: linear-gradient(145deg,
+    alpha(#dce7ec, 0.84),
+    alpha(#c7d6de, 0.72));
+}
+
+.theme-light .workspace-button,
+.theme-light .weather-card,
+.theme-light .notification-card,
+.theme-light .clock-card,
+.theme-light .control-leader,
+.theme-light .battery-card,
+.theme-light .media-title,
+.theme-light .media-artist,
+.theme-light .media-control {
+  color: #243640;
+}
+
+.theme-light .workspace-button.active,
+.theme-light .media-control.play {
+  color: #eef6f8;
+}
+
+.theme-light .media-card {
+  background-image: linear-gradient(110deg,
+    alpha(#d9e5ea, 0.84),
+    alpha(#c8d8e0, 0.74) 62%,
+    alpha(@primary_container, 0.28));
+}
+
+.theme-light .popup-window-frame {
+  border-color: alpha(#607684, 0.28);
+  background-image: linear-gradient(145deg,
+    alpha(#d7e3e9, 0.95),
+    alpha(#c8d7df, 0.92) 56%,
+    alpha(#bccdd7, 0.90));
+  box-shadow:
+    0 18px 38px alpha(#2d424e, 0.20),
+    inset 0 1px alpha(#edf4f6, 0.60);
+}
+
+.theme-light .control-panel {
+  color: #243640;
+}
+
+.theme-light .popup-window-frame label,
+.theme-light .popup-window-frame button,
+.theme-light .popup-window-frame scale,
+.theme-light .popup-window-frame switch {
+  color: #243640;
+}
+
+.theme-light .calendar-widget,
+.theme-light .network-connection-card,
+.theme-light .network-live-card,
+.theme-light .network-session-card,
+.theme-light .network-action-row,
+.theme-light .audio-channel,
+.theme-light .audio-mixer-action,
+.theme-light .display-brightness-card,
+.theme-light .display-theme-row,
+.theme-light .display-action-row,
+.theme-light .panel-row,
+.theme-light .metric-strip,
+.theme-light .slider-row,
+.theme-light .workspace-empty,
+.theme-light .workspace-window-row,
+.theme-light .power-action,
+.theme-light .action-card {
+  border-color: alpha(#667b88, 0.20);
+  background-image: linear-gradient(145deg,
+    alpha(#e0e9ed, 0.68),
+    alpha(#c9d8df, 0.58));
+  box-shadow: inset 0 1px alpha(#edf4f6, 0.46);
+}
+
+.theme-light .workspace-window-row:hover,
+.theme-light .network-action-row:hover,
+.theme-light .display-action-row:hover,
+.theme-light .audio-mixer-action:hover {
+  border-color: alpha(@primary, 0.32);
+  background-image: linear-gradient(145deg,
+    alpha(#dce7ec, 0.82),
+    alpha(@primary_container, 0.25));
+}
+
+.theme-light .workspace-window-row.selected {
+  border-color: alpha(@primary, 0.46);
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.34),
+    alpha(#d4e1e7, 0.76));
+}
+
+.theme-light .display-row-title,
+.theme-light .display-brightness-label,
+.theme-light .display-brightness-percent,
+.theme-light .audio-channel-title,
+.theme-light .audio-channel-percent {
+  color: #243640;
+}
+
+.theme-light .display-row-subtitle,
+.theme-light .network-subtitle,
+.theme-light .audio-channel-device,
+.theme-light .media-artist {
+  color: #526570;
+}
+
+.theme-light scale trough,
+.theme-light scale.display-thick-slider trough,
+.theme-light scale.audio-thick-slider trough {
+  background: alpha(#8499a6, 0.30);
+  box-shadow: inset 0 1px 2px alpha(#3d525e, 0.16);
+}
+
+.theme-light scale slider,
+.theme-light scale.display-thick-slider slider,
+.theme-light scale.audio-thick-slider slider {
+  border-color: alpha(#607583, 0.34);
+  background: #e2eaee;
+  box-shadow:
+    0 2px 6px alpha(#344a56, 0.20),
+    inset 0 1px alpha(#edf4f6, 0.58);
+}
+
+.theme-light switch.display-theme-switch {
+  border-color: alpha(#607583, 0.30);
+  background: alpha(#aebfc8, 0.48);
+  box-shadow: inset 0 1px 2px alpha(#405561, 0.16);
+}
+
+.theme-light switch.display-theme-switch:hover {
+  border-color: alpha(@tertiary, 0.46);
+  background: alpha(@tertiary_container, 0.42);
+}
+
+.theme-light switch.display-theme-switch:checked {
+  border-color: alpha(@primary, 0.48);
+  background: alpha(@primary_container, 0.50);
+}
+
+.theme-light switch.display-theme-switch slider {
+  background: #e2eaee;
+  border-color: alpha(#607583, 0.32);
+}
+
+.theme-light switch.display-theme-switch:checked slider {
+  background: @primary;
+  border-color: alpha(@primary, 0.54);
+}
+
+.theme-light tooltip {
+  border-color: alpha(#607583, 0.26);
+  background: #dce6eb;
+  color: #243640;
+}
+
+
+/* ========================================================================== */
+/* v2.3.1 — Riced Power Deck                                                  */
+/* ========================================================================== */
+
+.power-panel {
+  min-width: 306px;
+  padding: 11px;
+}
+
+.power-kicker,
+.power-section-label {
+  color: alpha(@on_surface_variant, 0.72);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 1.25px;
+}
+
+.power-battery-card {
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid alpha(@outline_variant, 0.22);
+  border-radius: 13px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.70),
+    alpha(@surface_container, 0.48));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.055);
+}
+
+.power-battery-icon-wrap {
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 11px;
+  background: alpha(@surface_container_highest, 0.52);
+}
+
+.power-battery-icon { color: @primary; }
+
+.power-battery-percent {
+  color: @on_surface;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.power-battery-time {
+  color: alpha(@on_surface_variant, 0.80);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.power-battery-status {
+  color: alpha(@on_surface_variant, 0.68);
+  font-size: 10px;
+}
+
+.power-profile-section { padding: 1px 2px 0; }
+
+.power-profile-segments {
+  min-height: 31px;
+  padding: 3px;
+  border: 1px solid alpha(@outline_variant, 0.20);
+  border-radius: 11px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_highest, 0.40),
+    alpha(@surface_container, 0.23));
+  box-shadow: inset 0 1px 3px alpha(#000000, 0.14), inset 0 1px alpha(@on_surface, 0.04);
+}
+
+.power-profile-segment {
+  min-height: 25px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: alpha(@on_surface_variant, 0.58);
+  background: transparent;
+  box-shadow: none;
+  font-size: 8px;
+  font-weight: 800;
+  transition: 140ms ease;
+}
+
+.power-profile-segment:hover {
+  color: alpha(@on_surface, 0.90);
+  background: alpha(@secondary_container, 0.26);
+}
+
+.power-profile-segment:active {
+  background: alpha(@primary_container, 0.30);
+  box-shadow: inset 0 2px 4px alpha(#000000, 0.12);
+}
+
+.power-profile-segment.active {
+  color: @on_primary_container;
+  border-color: alpha(@primary, 0.32);
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.56),
+    alpha(@primary_container, 0.60));
+  box-shadow: 0 2px 7px alpha(@primary, 0.18), inset 0 1px alpha(@on_primary, 0.22);
+  font-weight: 900;
+}
+
+.power-caffeine-row {
+  min-height: 42px;
+  padding: 5px 9px;
+  border: 1px solid alpha(@outline_variant, 0.17);
+  border-radius: 12px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.46),
+    alpha(@surface_container, 0.27));
+  transition: 150ms ease;
+}
+
+.power-caffeine-row.active {
+  border-color: alpha(#f3b84b, 0.38);
+  background-image: linear-gradient(145deg,
+    alpha(#8d6428, 0.25),
+    alpha(@surface_container_high, 0.48));
+  box-shadow: inset 0 1px alpha(#ffd98b, 0.08), 0 2px 9px alpha(#f0a92e, 0.07);
+}
+
+.power-caffeine-icon {
+  min-width: 22px;
+  color: @tertiary;
+  font-size: 16px;
+}
+
+.power-caffeine-row.active .power-caffeine-icon { color: #f3b84b; }
+
+.power-session-title {
+  color: @on_surface;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.power-session-subtitle {
+  color: alpha(@on_surface_variant, 0.64);
+  font-size: 8px;
+}
+
+.power-caffeine-switch {
+  min-width: 34px;
+  min-height: 18px;
+  border: 1px solid alpha(@outline_variant, 0.28);
+  border-radius: 999px;
+  background: alpha(@surface_container_highest, 0.52);
+  transition: 150ms ease;
+}
+
+.power-caffeine-switch slider {
+  min-width: 14px;
+  min-height: 14px;
+  margin: 2px;
+  border-radius: 999px;
+  background: alpha(@on_surface_variant, 0.86);
+  box-shadow: 0 2px 6px alpha(#000000, 0.24);
+}
+
+.power-caffeine-switch:checked {
+  border-color: alpha(#f3b84b, 0.58);
+  background: alpha(#9a6b25, 0.62);
+}
+
+.power-caffeine-switch:checked slider {
+  background: #ffd889;
+  box-shadow: 0 2px 8px alpha(#f3b84b, 0.34);
+}
+
+.power-command-deck { margin-top: 1px; }
+
+.power-command-row { min-height: 64px; }
+
+.power-command-tile {
+  min-width: 86px;
+  min-height: 62px;
+  padding: 6px 5px;
+  border: 1px solid alpha(@outline_variant, 0.16);
+  border-radius: 13px;
+  background-image: linear-gradient(150deg,
+    alpha(@surface_container_high, 0.47),
+    alpha(@surface_container, 0.25));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.035), 0 2px 7px alpha(#000000, 0.07);
+  transition: 150ms ease;
+}
+
+.power-command-tile:hover {
+  border-color: alpha(@primary, 0.34);
+  background-image: linear-gradient(150deg,
+    alpha(@secondary_container, 0.45),
+    alpha(@surface_container_high, 0.39));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.06), 0 4px 12px alpha(@primary, 0.10);
+}
+
+.power-command-tile:active {
+  background: alpha(@primary_container, 0.35);
+  box-shadow: inset 0 2px 5px alpha(#000000, 0.14);
+}
+
+.power-command-icon {
+  color: @tertiary;
+  font-size: 18px;
+}
+
+.power-command-label {
+  color: @on_surface;
+  font-size: 8px;
+  font-weight: 820;
+}
+
+.power-command-tile.session .power-command-icon { color: @primary; }
+.power-command-tile.warning .power-command-icon { color: alpha(#f1b95e, 0.92); }
+.power-command-tile.danger .power-command-icon { color: alpha(@error, 0.92); }
+.power-command-tile.warning:hover .power-command-label { color: #f4c777; }
+.power-command-tile.danger:hover .power-command-label { color: @error; }
+
+.power-caffeine-dot {
+  color: #f3b84b;
+  font-size: 13px;
+}
+
+.power-caffeine-dot.bar-dot {
+  min-width: 5px;
+  margin-top: -7px;
+  margin-left: -2px;
+  font-size: 10px;
+}
+
+.power-confirm {
+  min-height: 90px;
+  padding: 10px;
+  border: 1px solid alpha(@error, 0.25);
+  border-radius: 13px;
+  background-image: linear-gradient(145deg,
+    alpha(@error_container, 0.26),
+    alpha(@surface_container_high, 0.54));
+}
+
+.power-confirm-icon { color: @error; font-size: 18px; }
+.power-confirm-title { color: @on_surface; font-size: 11px; font-weight: 900; }
+.power-confirm-copy { color: alpha(@on_surface_variant, 0.68); font-size: 8px; }
+
+.power-confirm-button {
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid alpha(@outline_variant, 0.22);
+  border-radius: 9px;
+  background: alpha(@surface_container_highest, 0.48);
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.power-confirm-button:hover { background: alpha(@secondary_container, 0.48); }
+.power-confirm-button.danger {
+  color: @on_error_container;
+  border-color: alpha(@error, 0.34);
+  background: alpha(@error_container, 0.58);
+}
+.power-confirm-button.danger:hover { background: alpha(@error_container, 0.76); }
+
+/* v2.3.2 — compact segmented power profiles + smaller Caffeine switch. */
+/* Frosted Mist: layered blue-grey glass, never plain white. */
+.theme-light .power-battery-card,
+.theme-light .power-caffeine-row,
+.theme-light .power-command-tile,
+.theme-light .power-confirm {
+  border-color: alpha(#667b88, 0.20);
+  background-image: linear-gradient(145deg,
+    alpha(#dce7ec, 0.70),
+    alpha(#c5d5dd, 0.58));
+  box-shadow: inset 0 1px alpha(#edf4f6, 0.46), 0 2px 7px alpha(#596f7c, 0.08);
+}
+
+.theme-light .power-battery-icon-wrap { background: alpha(#b9cad4, 0.42); }
+.theme-light .power-battery-percent,
+.theme-light .power-session-title,
+.theme-light .power-command-label,
+.theme-light .power-confirm-title { color: #243640; }
+
+.theme-light .power-battery-time,
+.theme-light .power-battery-status,
+.theme-light .power-session-subtitle,
+.theme-light .power-kicker,
+.theme-light .power-section-label { color: #526570; }
+
+.theme-light .power-profile-segments {
+  border-color: alpha(#607583, 0.22);
+  background-image: linear-gradient(145deg,
+    alpha(#c9d8df, 0.58),
+    alpha(#b9cbd4, 0.42));
+  box-shadow: inset 0 1px 3px alpha(#536874, 0.12), inset 0 1px alpha(#eef5f7, 0.32);
+}
+
+.theme-light .power-profile-segment { color: #617582; }
+.theme-light .power-profile-segment:hover {
+  color: #263944;
+  background: alpha(#e3ecef, 0.52);
+}
+.theme-light .power-profile-segment.active {
+  color: @on_primary_container;
+  border-color: alpha(@primary, 0.28);
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.48),
+    alpha(@primary_container, 0.54));
+  box-shadow: 0 2px 7px alpha(#536b78, 0.12), inset 0 1px alpha(#eef5f7, 0.30);
+}
+
+.theme-light .power-caffeine-switch {
+  border-color: alpha(#657986, 0.28);
+  background: alpha(#afc2cc, 0.58);
+}
+
+.theme-light .power-caffeine-switch slider { background: #526a77; }
+.theme-light .power-caffeine-switch:checked {
+  border-color: alpha(#b17a28, 0.38);
+  background: alpha(#d5b26e, 0.66);
+}
+.theme-light .power-caffeine-switch:checked slider { background: #fff0c7; }
+
+.theme-light .power-caffeine-row.active {
+  border-color: alpha(#b17a28, 0.34);
+  background-image: linear-gradient(145deg,
+    alpha(#e5d2ab, 0.64),
+    alpha(#c6d5dc, 0.60));
+}
+
+.theme-light .power-command-tile:hover {
+  border-color: alpha(@primary, 0.30);
+  background-image: linear-gradient(145deg,
+    alpha(#e3ecef, 0.82),
+    alpha(@primary_container, 0.22));
+  box-shadow: inset 0 1px alpha(#eef5f7, 0.52), 0 4px 11px alpha(#5e7582, 0.12);
+}
+
+.theme-light .power-confirm {
+  border-color: alpha(@error, 0.24);
+  background-image: linear-gradient(145deg,
+    alpha(#ead9d8, 0.58),
+    alpha(#cbd9df, 0.62));
+}
+
+
+/* ========================================================================== */
+/* v2.4 — Adaptive Media Island                                                */
+/* ========================================================================== */
+
+.media-card {
+  min-height: 28px;
+  padding: 1px 4px 1px 2px;
+  border-color: alpha(@secondary, 0.34);
+  transition: 140ms ease;
+}
+
+.media-card:hover {
+  border-color: alpha(@primary, 0.38);
+  box-shadow:
+    0 4px 13px alpha(#000000, 0.27),
+    0 0 0 1px alpha(@primary, 0.06),
+    inset 0 1px alpha(@on_surface, 0.10);
+}
+
+.media-main-hit {
+  min-height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.media-main-hit:hover {
+  background: alpha(@secondary_container, 0.20);
+}
+
+.media-main-hit:active {
+  background: alpha(@primary_container, 0.22);
+}
+
+.media-copy {
+  min-width: 58px;
+  padding-right: 2px;
+}
+
+.media-popup-panel {
+  min-width: 286px;
+  padding: 8px;
+}
+
+.media-popup-kicker,
+.media-popup-section {
+  color: alpha(@on_surface_variant, 0.66);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 1.05px;
+}
+
+.media-primary-card {
+  padding: 10px;
+  border: 1px solid alpha(@outline_variant, 0.19);
+  border-radius: 15px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.62),
+    alpha(@surface_container, 0.36) 62%,
+    alpha(@primary_container, 0.22));
+  box-shadow:
+    inset 0 1px alpha(@on_surface, 0.05),
+    0 4px 14px alpha(#000000, 0.13);
+}
+
+.media-primary-art-frame {
+  min-width: 68px;
+  min-height: 68px;
+  border: 1px solid alpha(@outline_variant, 0.18);
+  border-radius: 14px;
+  background: alpha(@surface_container_highest, 0.52);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.05);
+}
+
+.media-primary-art,
+.media-primary-source-icon {
+  border-radius: 13px;
+}
+
+.media-primary-source {
+  color: alpha(@primary, 0.92);
+  font-size: 8px;
+  font-weight: 850;
+}
+
+.media-playing-chip {
+  min-height: 18px;
+  padding: 0 6px;
+  border: 1px solid alpha(@primary, 0.20);
+  border-radius: 999px;
+  color: alpha(@primary, 0.88);
+  background: alpha(@primary_container, 0.20);
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.55px;
+}
+
+.media-primary-title {
+  color: @on_surface;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.media-primary-artist {
+  color: alpha(@on_surface_variant, 0.68);
+  font-size: 9px;
+}
+
+progressbar.media-primary-progress {
+  min-height: 5px;
+}
+
+progressbar.media-primary-progress trough {
+  min-height: 5px;
+  border-radius: 999px;
+  background: alpha(@on_surface_variant, 0.14);
+}
+
+progressbar.media-primary-progress progress {
+  min-height: 5px;
+  border-radius: 999px;
+  background-image: linear-gradient(90deg,
+    alpha(@primary, 0.86),
+    alpha(@secondary, 0.82));
+}
+
+.media-popup-controls {
+  min-height: 28px;
+}
+
+.media-popup-control {
+  min-width: 29px;
+  min-height: 27px;
+  border: 1px solid alpha(@outline_variant, 0.12);
+  border-radius: 9px;
+  color: alpha(@on_surface_variant, 0.88);
+  background: alpha(@surface_container_highest, 0.30);
+  font-size: 14px;
+  transition: 120ms ease;
+}
+
+.media-popup-control:hover {
+  border-color: alpha(@primary, 0.28);
+  background: alpha(@secondary_container, 0.36);
+}
+
+.media-popup-control.play {
+  color: @on_primary_container;
+  border-color: alpha(@primary, 0.28);
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.56),
+    alpha(@primary_container, 0.54));
+}
+
+.media-popup-controls.compact .media-popup-control {
+  min-width: 24px;
+  min-height: 24px;
+  font-size: 12px;
+}
+
+.media-source-list {
+  padding-top: 0;
+}
+
+.media-source-row {
+  min-height: 43px;
+  padding: 4px 6px;
+  border: 1px solid alpha(@outline_variant, 0.12);
+  border-radius: 11px;
+  background-image: linear-gradient(105deg,
+    alpha(@surface_container_high, 0.34),
+    alpha(@surface_container, 0.18));
+  transition: 130ms ease;
+}
+
+.media-source-row:hover {
+  border-color: alpha(@primary, 0.28);
+  background-image: linear-gradient(105deg,
+    alpha(@secondary_container, 0.34),
+    alpha(@surface_container_high, 0.28));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.04);
+}
+
+.media-source-row.playing {
+  border-color: alpha(@primary, 0.18);
+}
+
+.media-source-row-art {
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 9px;
+  background: alpha(@surface_container_highest, 0.42);
+}
+
+.media-source-row-title {
+  color: @on_surface;
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.media-source-row-meta {
+  color: alpha(@on_surface_variant, 0.62);
+  font-size: 8px;
+}
+
+.media-popup-empty {
+  min-width: 260px;
+  min-height: 86px;
+  padding: 12px;
+  border: 1px solid alpha(@outline_variant, 0.14);
+  border-radius: 13px;
+  background: alpha(@surface_container_high, 0.30);
+}
+
+.media-popup-empty-icon {
+  color: alpha(@on_surface_variant, 0.58);
+  font-size: 22px;
+}
+
+.media-popup-empty-title {
+  color: alpha(@on_surface_variant, 0.70);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.theme-light .media-card {
+  border-color: alpha(#607583, 0.20);
+  background-image: linear-gradient(110deg,
+    alpha(#d9e5ea, 0.82),
+    alpha(#c9d9e0, 0.70) 62%,
+    alpha(@primary_container, 0.25));
+}
+
+.theme-light .media-main-hit:hover {
+  background: alpha(#edf4f6, 0.36);
+}
+
+.theme-light .media-popup-panel {
+  color: #243640;
+}
+
+.theme-light .media-primary-card {
+  border-color: alpha(#667b88, 0.19);
+  background-image: linear-gradient(145deg,
+    alpha(#dce7ec, 0.78),
+    alpha(#c8d8e0, 0.62) 62%,
+    alpha(@primary_container, 0.20));
+  box-shadow: inset 0 1px alpha(#edf4f6, 0.48), 0 4px 13px alpha(#536b78, 0.08);
+}
+
+.theme-light .media-primary-title,
+.theme-light .media-source-row-title {
+  color: #243640;
+}
+
+.theme-light .media-primary-artist,
+.theme-light .media-source-row-meta,
+.theme-light .media-popup-kicker,
+.theme-light .media-popup-section {
+  color: #526570;
+}
+
+.theme-light .media-source-row {
+  border-color: alpha(#667b88, 0.16);
+  background-image: linear-gradient(105deg,
+    alpha(#d6e2e8, 0.64),
+    alpha(#c5d5dd, 0.42));
+}
+
+.theme-light .media-source-row:hover {
+  border-color: alpha(@primary, 0.26);
+  background-image: linear-gradient(105deg,
+    alpha(#e4ecef, 0.80),
+    alpha(@primary_container, 0.18));
+}
+
+.theme-light .media-popup-control {
+  color: #314650;
+  border-color: alpha(#667b88, 0.15);
+  background: alpha(#c5d5dd, 0.42);
+}
+
+.theme-light .media-popup-control.play {
+  color: @on_primary_container;
+}
+
+/* Frosted Mist: retain the same calm hierarchy without white-sheet glare. */
+.theme-light .workspace-deck {
+  border-color: alpha(#607583, 0.20);
+  background: alpha(#d3e0e6, 0.76);
+  box-shadow:
+    0 2px 6px alpha(#314653, 0.10),
+    inset 0 1px alpha(#eef4f6, 0.46);
+}
+
+.theme-light .workspace-button {
+  color: #344954;
+}
+
+.theme-light .workspace-button:hover:not(.active) {
+  color: #22343e;
+  border-color: alpha(@primary, 0.18);
+  background: alpha(#e1eaee, 0.58);
+  box-shadow: 0 2px 5px alpha(#314653, 0.08);
+}
+
+.theme-light .workspace-button.active {
+  color: #233640;
+  border-color: alpha(@primary, 0.30);
+  background: alpha(@primary_container, 0.34);
+  box-shadow:
+    0 2px 6px alpha(#314653, 0.10),
+    inset 0 1px alpha(#eef4f6, 0.40);
+}
+
+.theme-light .workspace-button.previewing {
+  color: #233640;
+  border-color: alpha(@primary, 0.26);
+  background: alpha(@secondary_container, 0.28);
+  box-shadow:
+    0 2px 5px alpha(#314653, 0.09),
+    inset 0 1px alpha(#eef4f6, 0.36);
+}
+
+.theme-light .workspace-button.active.previewing {
+  border-color: alpha(@primary, 0.36);
+  background: alpha(@primary_container, 0.40);
+  box-shadow:
+    0 2px 6px alpha(#314653, 0.11),
+    inset 0 1px alpha(#eef4f6, 0.42);
+}
+
+.theme-light .popup-workspace {
+  border-color: alpha(#607684, 0.24);
+  background-image: linear-gradient(150deg,
+    alpha(#d4e0e6, 0.96),
+    alpha(#c8d7df, 0.94) 58%,
+    alpha(#bccdd7, 0.92));
+  box-shadow:
+    0 16px 36px alpha(#314653, 0.16),
+    inset 0 1px alpha(#edf4f6, 0.54);
+}
+
+.theme-light .workspace-preview-header-subtitle {
+  color: #536671;
+  border-color: alpha(#667b88, 0.16);
+  background: alpha(#dce7ec, 0.54);
+}
+
+.theme-light .workspace-preview-hero {
+  border-color: alpha(#667b88, 0.18);
+  background: alpha(#b9c9d1, 0.88);
+  box-shadow:
+    0 6px 16px alpha(#314653, 0.12),
+    inset 0 1px alpha(#edf4f6, 0.30);
+}
+
+.theme-light .workspace-window-row {
+  border-color: alpha(#667b88, 0.18);
+  background: alpha(#d7e3e9, 0.56);
+}
+
+.theme-light .workspace-window-row:hover {
+  border-color: alpha(#607684, 0.28);
+  background: alpha(#e0e9ed, 0.68);
+  box-shadow:
+    0 3px 8px alpha(#314653, 0.07),
+    inset 0 1px alpha(#edf4f6, 0.34);
+}
+
+.theme-light .workspace-window-row.selected {
+  border-color: alpha(@primary, 0.32);
+  background-image: linear-gradient(100deg,
+    alpha(@primary_container, 0.26),
+    alpha(#d2dfe5, 0.68) 72%);
+  box-shadow:
+    0 3px 8px alpha(#314653, 0.08),
+    inset 2px 0 alpha(@primary, 0.50),
+    inset 0 1px alpha(#edf4f6, 0.36);
+}
+
+/* ========================================================================== */
+/* v2.5 — workspace strip + navigator polish                                  */
+/* Calm capsule motion, compact identity header, readable list typography.    */
+/* ========================================================================== */
+
+.workspace-deck {
+  min-height: 27px;
+  padding: 0 3px;
+  border: 1px solid alpha(@outline_variant, 0.20);
+  border-radius: 10px;
+  background: alpha(@surface_container_low, 0.70);
+  box-shadow:
+    0 2px 6px alpha(#000000, 0.16),
+    inset 0 1px alpha(@on_surface, 0.035);
+}
+
+.workspace-button {
+  min-width: 28px;
+  min-height: 22px;
+  margin: 2px 1px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: alpha(@on_surface_variant, 0.82);
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 760;
+  transition: 180ms ease;
+}
+
+.workspace-button:hover:not(.active) {
+  transform: translateY(-1px);
+  color: @on_surface;
+  border-color: alpha(@primary, 0.20);
+  background: alpha(@surface_container_highest, 0.34);
+  box-shadow: 0 2px 5px alpha(#000000, 0.12);
+}
+
+.workspace-button.active {
+  transform: translateY(-1px);
+  color: @on_surface;
+  border: 1px solid alpha(@primary, 0.38);
+  background: alpha(@primary_container, 0.46);
+  box-shadow:
+    0 2px 6px alpha(#000000, 0.16),
+    inset 0 1px alpha(@on_surface, 0.08);
+}
+
+.workspace-button.previewing {
+  color: @on_surface;
+  border-color: alpha(@primary, 0.32);
+  background: alpha(@secondary_container, 0.34);
+  box-shadow:
+    0 2px 6px alpha(#000000, 0.14),
+    inset 0 1px alpha(@on_surface, 0.06);
+}
+
+.workspace-button.active.previewing {
+  color: @on_surface;
+  border-color: alpha(@primary, 0.44);
+  background: alpha(@primary_container, 0.52);
+  box-shadow:
+    0 2px 7px alpha(#000000, 0.17),
+    inset 0 1px alpha(@on_surface, 0.09);
+}
+
+.popup-workspace {
+  border-color: alpha(@outline_variant, 0.24);
+  border-radius: 18px;
+  background-image: linear-gradient(155deg,
+    alpha(@surface_container_high, 0.985),
+    alpha(@surface, 0.975) 58%,
+    alpha(@surface_container, 0.965));
+  box-shadow:
+    0 16px 36px alpha(#000000, 0.36),
+    inset 0 1px alpha(@on_surface, 0.07);
+}
+
+.workspace-navigator {
+  min-width: 390px;
+  padding: 10px;
+}
+
+.workspace-preview-header {
+  min-height: 34px;
+  padding: 0;
+}
+
+.workspace-preview-header-icon {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  color: alpha(@primary, 0.82);
+}
+
+.workspace-preview-grid-glyph {
+  min-width: 16px;
+  min-height: 16px;
+  margin: 0;
+}
+
+.workspace-preview-grid-cell {
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 2px;
+  background: alpha(@primary, 0.82);
+  box-shadow: none;
+}
+
+.workspace-preview-header-copy {
+  padding: 0;
+}
+
+.workspace-preview-header-title {
+  color: @on_surface;
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.workspace-preview-header-subtitle {
+  margin: 0;
+  padding: 2px 7px;
+  border: 1px solid alpha(@outline_variant, 0.16);
+  border-radius: 999px;
+  color: alpha(@on_surface_variant, 0.70);
+  background: alpha(@surface_container_high, 0.36);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.workspace-preview-close {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 1px solid alpha(@outline_variant, 0.16);
+  border-radius: 9px;
+  color: alpha(@on_surface_variant, 0.68);
+  background: alpha(@surface_container_high, 0.24);
+  box-shadow: none;
+  transition: 150ms ease;
+}
+
+.workspace-preview-close:hover {
+  color: @on_surface;
+  border-color: alpha(@primary, 0.22);
+  background: alpha(@surface_container_highest, 0.40);
+  box-shadow: 0 2px 6px alpha(#000000, 0.12);
+}
+
+.workspace-preview-content {
+  min-width: 390px;
+}
+
+.workspace-preview-hero {
+  min-width: 390px;
+  border: 1px solid alpha(@outline_variant, 0.18);
+  border-radius: 14px;
+  background: alpha(@surface_container_lowest, 0.96);
+  box-shadow:
+    0 6px 16px alpha(#000000, 0.20),
+    inset 0 1px alpha(@on_surface, 0.035);
+}
+
+.workspace-preview-hero-viewport {
+  min-width: 390px;
+  min-height: 219px;
+  border-radius: 13px;
+  background: alpha(#000000, 0.92);
+}
+
+.workspace-preview-picture {
+  min-width: 390px;
+  min-height: 219px;
+  border-radius: 13px;
+  background: alpha(#000000, 0.94);
+}
+
+.workspace-preview-fallback {
+  min-width: 390px;
+  min-height: 219px;
+}
+
+.workspace-window-list-wrap {
+  padding-top: 1px;
+}
+
+.workspace-window-list-heading {
+  min-height: 20px;
+  padding: 0 3px;
+}
+
+.workspace-window-list-title {
+  color: alpha(@on_surface_variant, 0.72);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.9px;
+}
+
+.workspace-window-list-help {
+  color: alpha(@on_surface_variant, 0.55);
+  font-size: 9px;
+}
+
+.workspace-window-list {
+  padding: 0;
+}
+
+.workspace-window-row {
+  min-height: 46px;
+  padding: 5px 8px;
+  border: 1px solid alpha(@outline_variant, 0.14);
+  border-radius: 11px;
+  background: alpha(@surface_container_high, 0.58);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  transition: 150ms ease;
+}
+
+.workspace-window-row:hover {
+  border-color: alpha(@outline_variant, 0.28);
+  background: alpha(@surface_container_highest, 0.62);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.09),
+    inset 0 1px alpha(@on_surface, 0.04);
+}
+
+.workspace-window-row.selected {
+  border-color: alpha(@primary, 0.38);
+  background-image: linear-gradient(100deg,
+    alpha(@primary_container, 0.38),
+    alpha(@surface_container_high, 0.58) 72%);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.10),
+    inset 2px 0 alpha(@primary, 0.62),
+    inset 0 1px alpha(@on_surface, 0.05);
+}
+
+.workspace-window-icon-shell {
+  min-width: 34px;
+  min-height: 34px;
+  border: 1px solid alpha(@outline_variant, 0.12);
+  border-radius: 9px;
+  background: alpha(@surface_container_highest, 0.22);
+  box-shadow: none;
+}
+
+.workspace-window-row.selected .workspace-window-icon-shell {
+  border-color: alpha(@primary, 0.24);
+  background: alpha(@primary_container, 0.24);
+  box-shadow: none;
+}
+
+.workspace-window-icon {
+  min-width: 24px;
+  margin: 4px;
+}
+
+.workspace-window-copy {
+  padding: 1px 0;
+}
+
+.workspace-window-name {
+  color: @on_surface;
+  font-size: 11px;
+  font-weight: 820;
+}
+
+.workspace-window-title {
+  margin-top: 1px;
+  color: alpha(@on_surface_variant, 0.68);
+  font-size: 9px;
+}
+
+.workspace-window-row.selected .workspace-window-title {
+  color: alpha(@on_surface_variant, 0.80);
+}
+
+.workspace-window-focus-hint {
+  min-width: 48px;
+  padding-left: 5px;
+}
+
+.workspace-window-focus-copy {
+  color: alpha(@primary, 0.78);
+  font-size: 8px;
+  font-weight: 820;
+  letter-spacing: 0.4px;
+}
+
+.workspace-window-open {
+  padding: 0 2px;
+  color: alpha(@primary, 0.62);
+  font-size: 13px;
+}
+
+
+/* v2.5 window grid — icon-only launch/focus tiles with native hover tooltips. */
+.workspace-window-grid {
+  padding: 0;
+}
+
+.workspace-window-grid-row {
+  min-height: 48px;
+}
+
+.workspace-window-tile {
+  min-width: 52px;
+  min-height: 48px;
+  padding: 0;
+  border: 1px solid alpha(@outline_variant, 0.14);
+  border-radius: 11px;
+  color: @on_surface;
+  background: alpha(@surface_container_high, 0.48);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  transition: 150ms ease;
+}
+
+.workspace-window-tile:hover {
+  transform: translateY(-1px);
+  border-color: alpha(@outline_variant, 0.30);
+  background: alpha(@surface_container_highest, 0.64);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.09),
+    inset 0 1px alpha(@on_surface, 0.04);
+}
+
+.workspace-window-tile.selected {
+  border-color: alpha(@primary, 0.38);
+  background: alpha(@primary_container, 0.34);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.10),
+    inset 0 2px alpha(@primary, 0.56),
+    inset 0 1px alpha(@on_surface, 0.05);
+}
+
+.workspace-window-tile-icon-shell {
+  min-width: 38px;
+  min-height: 38px;
+  border-radius: 9px;
+  background: alpha(@surface_container_highest, 0.18);
+}
+
+.workspace-window-tile .workspace-window-icon {
+  min-width: 28px;
+  margin: 5px;
+}
+
+.theme-light .workspace-window-tile {
+  border-color: alpha(#667b88, 0.18);
+  color: #243640;
+  background: alpha(#d7e3e9, 0.58);
+  box-shadow: inset 0 1px alpha(#edf4f6, 0.36);
+}
+
+.theme-light .workspace-window-tile:hover {
+  border-color: alpha(#607684, 0.28);
+  background: alpha(#e0e9ed, 0.70);
+  box-shadow:
+    0 3px 8px alpha(#314653, 0.07),
+    inset 0 1px alpha(#edf4f6, 0.40);
+}
+
+.theme-light .workspace-window-tile.selected {
+  border-color: alpha(@primary, 0.32);
+  background: alpha(@primary_container, 0.28);
+  box-shadow:
+    0 3px 8px alpha(#314653, 0.08),
+    inset 0 2px alpha(@primary, 0.46),
+    inset 0 1px alpha(#edf4f6, 0.42);
+}
+
+/* v2.5 center anchor — structured, restrained clock pill. */
+.clock-card {
+  min-width: 102px;
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid alpha(@outline_variant, 0.22);
+  border-radius: 11px;
+  color: @on_surface;
+  background: alpha(@surface_container_high, 0.78);
+  box-shadow:
+    0 3px 9px alpha(#000000, 0.17),
+    inset 0 1px alpha(@on_surface, 0.055);
+  transition: 180ms ease;
+}
+
+.clock-card:hover {
+  transform: translateY(-1px);
+  border-color: alpha(@primary, 0.26);
+  background: alpha(@surface_container_highest, 0.84);
+  box-shadow:
+    0 4px 10px alpha(#000000, 0.19),
+    inset 0 1px alpha(@on_surface, 0.075);
+}
+
+.clock-card-content {
+  min-height: 22px;
+}
+
+.clock-accent-dot {
+  min-width: 5px;
+  min-height: 5px;
+  border-radius: 999px;
+  background: alpha(@primary, 0.78);
+  box-shadow: inset 0 1px alpha(@on_primary, 0.14);
+}
+
+.clock-time {
+  color: @on_surface;
+  font-size: 12px;
+  font-weight: 820;
+  font-feature-settings: "tnum";
+  letter-spacing: 0.25px;
+}
+
+.clock-divider {
+  min-height: 14px;
+  color: alpha(@outline_variant, 0.32);
+}
+
+.clock-meridiem {
+  color: alpha(@on_surface_variant, 0.68);
+  font-size: 8px;
+  font-weight: 820;
+  letter-spacing: 0.5px;
+}
+
+.theme-light .clock-card {
+  color: #243640;
+  border-color: alpha(#607583, 0.22);
+  background: alpha(#d3e0e6, 0.80);
+  box-shadow:
+    0 3px 9px alpha(#314653, 0.11),
+    inset 0 1px alpha(#eef4f6, 0.50);
+}
+
+.theme-light .clock-card:hover {
+  border-color: alpha(@primary, 0.24);
+  background: alpha(#dbe6eb, 0.88);
+  box-shadow:
+    0 4px 10px alpha(#314653, 0.12),
+    inset 0 1px alpha(#eef4f6, 0.58);
+}
+
+.theme-light .clock-time {
+  color: #243640;
+}
+
+.theme-light .clock-meridiem {
+  color: #536570;
+}
+
+/* ========================================================================== */
+/* v2.5.1 — micro-polish: moving workspace plate + unified top-bar geometry  */
+/* ========================================================================== */
+
+/* One plate owns workspace selection. It follows the hovered preview target
+ * and settles on the focused workspace when the preview closes. */
+.workspace-switcher {
+  min-height: 28px;
+  background: transparent;
+}
+
+.workspace-deck {
+  min-height: 28px;
+  padding: 0 3px;
+  border: 1px solid alpha(@outline_variant, 0.18);
+  border-radius: 10px;
+  background: alpha(@surface_container_low, 0.68);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.14),
+    inset 0 1px alpha(@on_surface, 0.035);
+}
+
+
+
+.workspace-button {
+  min-width: 28px;
+  min-height: 22px;
+  margin: 2px 1px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: alpha(@on_surface_variant, 0.80);
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 760;
+  transition: 180ms ease;
+}
+
+.workspace-button:hover:not(.active),
+.workspace-button.active,
+.workspace-button.previewing,
+.workspace-button.active.previewing {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workspace-button:hover:not(.active) {
+  transform: translateY(-1px);
+  color: @on_surface;
+}
+
+.workspace-button.active,
+.workspace-button.previewing,
+.workspace-button.active.previewing {
+  transform: none;
+  color: @on_surface;
+  font-weight: 860;
+}
+
+
+.theme-light .workspace-button.active,
+.theme-light .workspace-button.previewing,
+.theme-light .workspace-button.active.previewing {
+  border-color: transparent;
+  color: #243640;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Final workspace preview: softer perimeter, quieter depth, slightly more
+ * translucent surface while keeping the hero capture at 390 × 219. */
+.popup-workspace {
+  border-color: alpha(@outline_variant, 0.16);
+  border-radius: 17px;
+  background-image: linear-gradient(155deg,
+    alpha(@surface_container_high, 0.94),
+    alpha(@surface_container, 0.91) 58%,
+    alpha(@surface, 0.90));
+  box-shadow:
+    0 12px 28px alpha(#000000, 0.28),
+    inset 0 1px alpha(@on_surface, 0.055);
+}
+
+.workspace-preview-hero {
+  min-width: 390px;
+  border: 1px solid alpha(@outline_variant, 0.14);
+  border-radius: 14px;
+  background: alpha(@surface_container_lowest, 0.90);
+  box-shadow:
+    0 5px 14px alpha(#000000, 0.17),
+    inset 0 1px alpha(@on_surface, 0.03);
+}
+
+.workspace-window-list-title {
+  color: alpha(@on_surface_variant, 0.76);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.8px;
+}
+
+.workspace-window-grid-row {
+  min-height: 52px;
+}
+
+.workspace-window-tile {
+  min-width: 56px;
+  min-height: 52px;
+  padding: 0;
+  border: 1px solid alpha(@outline_variant, 0.13);
+  border-radius: 11px;
+  background: alpha(@surface_container_high, 0.42);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  transition: 150ms ease;
+}
+
+.workspace-window-tile:hover {
+  transform: translateY(-1px);
+  border-color: alpha(@outline_variant, 0.25);
+  background: alpha(@surface_container_highest, 0.56);
+  box-shadow:
+    0 3px 7px alpha(#000000, 0.08),
+    inset 0 1px alpha(@on_surface, 0.035);
+}
+
+.workspace-window-tile.selected {
+  border-color: alpha(@primary, 0.30);
+  background: alpha(@primary_container, 0.26);
+  box-shadow:
+    0 3px 7px alpha(#000000, 0.08),
+    inset 0 2px alpha(@primary, 0.46),
+    inset 0 1px alpha(@on_surface, 0.04);
+}
+
+.workspace-window-tile-icon-shell {
+  min-width: 42px;
+  min-height: 42px;
+  border-radius: 9px;
+  background: alpha(@surface_container_highest, 0.16);
+}
+
+.workspace-window-tile .workspace-window-icon {
+  min-width: 32px;
+  margin: 5px;
+}
+
+.theme-light .popup-workspace {
+  border-color: alpha(#667b88, 0.15);
+  background-image: linear-gradient(155deg,
+    alpha(#d5e1e7, 0.92),
+    alpha(#cbd9e0, 0.90) 58%,
+    alpha(#c3d2da, 0.88));
+  box-shadow:
+    0 12px 28px alpha(#314653, 0.12),
+    inset 0 1px alpha(#eef4f6, 0.48);
+}
+
+.theme-light .workspace-preview-hero {
+  border-color: alpha(#667b88, 0.13);
+  background: alpha(#dbe5e9, 0.82);
+  box-shadow:
+    0 5px 14px alpha(#314653, 0.08),
+    inset 0 1px alpha(#eef4f6, 0.38);
+}
+
+/* v2.5.1 — unified top-bar geometry */
+.launcher-card,
+.weather-card,
+.notification-card,
+.clock-card,
+.control-leader,
+.battery-card,
+.media-card {
+  min-height: 28px;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 10px;
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.14),
+    inset 0 1px alpha(@on_surface, 0.05);
+}
+
+.launcher-card:hover,
+.weather-card:hover,
+.notification-card:hover,
+.clock-card:hover,
+.control-leader:hover {
+  transform: translateY(-1px);
+}
+
+.media-card {
+  padding: 1px 5px 1px 3px;
+}
+
+.media-art-frame {
+  min-width: 24px;
+  min-height: 24px;
+  border-radius: 7px;
+}
+
+.media-art,
+.media-source-icon {
+  border-radius: 6px;
+}
+
+/* Stronger center anchor while keeping the same calendar trigger behavior. */
+.clock-card {
+  min-width: 108px;
+  min-height: 28px;
+  padding: 0 11px;
+  border-color: alpha(@outline_variant, 0.22);
+  border-radius: 10px;
+  color: @on_surface;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_highest, 0.72),
+    alpha(@surface_container_high, 0.76) 72%,
+    alpha(@primary_container, 0.24));
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.15),
+    inset 0 1px alpha(@on_surface, 0.065);
+  transition: 180ms ease;
+}
+
+.clock-card:hover {
+  transform: translateY(-1px);
+  border-color: alpha(@primary, 0.28);
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_highest, 0.80),
+    alpha(@surface_container_high, 0.82) 72%,
+    alpha(@primary_container, 0.30));
+  box-shadow:
+    0 4px 9px alpha(#000000, 0.17),
+    inset 0 1px alpha(@on_surface, 0.08);
+}
+
+.clock-accent-dot {
+  min-width: 6px;
+  min-height: 6px;
+  border: 1px solid alpha(@primary, 0.34);
+  border-radius: 999px;
+  background: alpha(@primary, 0.82);
+  box-shadow: inset 0 1px alpha(@on_primary, 0.14);
+}
+
+.clock-time {
+  color: @on_surface;
+  font-size: 13px;
+  font-weight: 900;
+  font-feature-settings: "tnum";
+  letter-spacing: 0.3px;
+}
+
+.clock-divider {
+  min-height: 14px;
+  color: alpha(@outline_variant, 0.38);
+}
+
+.clock-meridiem {
+  color: alpha(@primary, 0.78);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.55px;
+}
+
+.theme-light .launcher-card,
+.theme-light .weather-card,
+.theme-light .notification-card,
+.theme-light .clock-card,
+.theme-light .control-leader,
+.theme-light .battery-card,
+.theme-light .media-card,
+.theme-light .workspace-deck {
+  box-shadow:
+    0 3px 8px alpha(#314653, 0.09),
+    inset 0 1px alpha(#eef4f6, 0.44);
+}
+
+.theme-light .clock-card {
+  border-color: alpha(#607583, 0.20);
+  background-image: linear-gradient(145deg,
+    alpha(#dce6ea, 0.86),
+    alpha(#d2dfe5, 0.84) 72%,
+    alpha(@primary_container, 0.20));
+}
+
+.theme-light .clock-card:hover {
+  border-color: alpha(@primary, 0.24);
+  background-image: linear-gradient(145deg,
+    alpha(#e1eaed, 0.90),
+    alpha(#d8e3e8, 0.88) 72%,
+    alpha(@primary_container, 0.24));
+}
+
+.theme-light .clock-time { color: #243640; }
+.theme-light .clock-meridiem { color: alpha(@primary, 0.78); }
+
+/* Exact state overrides keep legacy selector blocks from reintroducing per-pill fills. */
+.workspace-button.active {
+  transform: none;
+  color: @on_surface;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  font-weight: 860;
+}
+
+.workspace-button.previewing {
+  transform: none;
+  color: @on_surface;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  font-weight: 860;
+}
+
+.workspace-button.active.previewing {
+  transform: none;
+  color: @on_surface;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  font-weight: 860;
+}
+
+
+/* v2.5.2 — stable hover geometry + compact clock */
+/* Hover feedback changes paint only. No translate/resize bounce at the bar edge. */
+.launcher-card:hover,
+.weather-card:hover,
+.notification-card:hover,
+.clock-card:hover,
+.control-leader:hover,
+.battery-card:hover,
+.media-card:hover,
+.workspace-button:hover:not(.active),
+.workspace-window-tile:hover {
+  transform: none;
+}
+
+/* Keep hover shadows inside the same footprint as rest state. */
+.launcher-card:hover,
+.weather-card:hover,
+.notification-card:hover,
+.clock-card:hover,
+.control-leader:hover,
+.battery-card:hover,
+.media-card:hover {
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.14),
+    inset 0 1px alpha(@on_surface, 0.05);
+}
+
+.workspace-button:hover:not(.active) {
+  box-shadow: none;
+}
+
+.workspace-window-tile:hover {
+  box-shadow:
+    0 2px 6px alpha(#000000, 0.07),
+    inset 0 1px alpha(@on_surface, 0.035);
+}
+
+/* Content-sized center clock: removes the dead area after AM/PM. */
+.clock-card {
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 8px;
+  border-color: alpha(@outline_variant, 0.22);
+  border-radius: 10px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_highest, 0.72),
+    alpha(@surface_container_high, 0.76) 72%,
+    alpha(@primary_container, 0.24));
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.14),
+    inset 0 1px alpha(@on_surface, 0.05);
+  transition: 180ms ease;
+}
+
+.clock-card:hover {
+  transform: none;
+  border-color: alpha(@primary, 0.28);
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_highest, 0.80),
+    alpha(@surface_container_high, 0.82) 72%,
+    alpha(@primary_container, 0.30));
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.14),
+    inset 0 1px alpha(@on_surface, 0.05);
+}
+
+.clock-card-content {
+  min-width: 0;
+}
+
+.theme-light .launcher-card:hover,
+.theme-light .weather-card:hover,
+.theme-light .notification-card:hover,
+.theme-light .clock-card:hover,
+.theme-light .control-leader:hover,
+.theme-light .battery-card:hover,
+.theme-light .media-card:hover {
+  box-shadow:
+    0 3px 8px alpha(#314653, 0.09),
+    inset 0 1px alpha(#eef4f6, 0.44);
+}
+
+/* v2.5.3 — elastic workspace rail */
+/* One segment always owns the extra width: the hovered workspace while the
+ * pointer is over the rail, otherwise the focused workspace. This transfers
+ * emphasis without changing the total footprint of the workspace rail. */
+.workspace-switcher {
+  min-height: 28px;
+  background: transparent;
+}
+
+.workspace-deck {
+  min-height: 28px;
+  padding: 0 3px;
+  border: 1px solid alpha(@outline_variant, 0.18);
+  border-radius: 10px;
+  background: alpha(@surface_container_low, 0.64);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.13),
+    inset 0 1px alpha(@on_surface, 0.035);
+}
+
+.workspace-button {
+  min-width: 27px;
+  min-height: 22px;
+  padding: 0;
+  margin: 2px 0;
+  border: 1px solid alpha(@outline_variant, 0.15);
+  border-radius: 8px;
+  color: alpha(@on_surface_variant, 0.82);
+  background: alpha(@surface_container_high, 0.18);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  font-size: 11px;
+  font-weight: 760;
+  transition: 190ms ease;
+}
+
+.workspace-button.expanded {
+  padding: 0 7px;
+}
+
+.workspace-button-content {
+  min-width: 7px;
+}
+
+.workspace-number {
+  min-width: 11px;
+  color: alpha(@on_surface_variant, 0.86);
+  font-size: 11px;
+  font-weight: 780;
+}
+
+.workspace-button.hovered {
+  transform: none;
+  border-color: alpha(@secondary, 0.42);
+  color: @on_surface;
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.46),
+    alpha(@surface_container_highest, 0.46) 58%,
+    alpha(@primary_container, 0.28));
+  box-shadow:
+    0 2px 6px alpha(@primary, 0.13),
+    0 0 10px alpha(@secondary, 0.10),
+    inset 0 1px alpha(@on_surface, 0.075);
+}
+
+.workspace-button.hovered:hover:not(.active) {
+  transform: none;
+  border-color: alpha(@secondary, 0.42);
+  color: @on_surface;
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.46),
+    alpha(@surface_container_highest, 0.46) 58%,
+    alpha(@primary_container, 0.28));
+  box-shadow:
+    0 2px 6px alpha(@primary, 0.13),
+    0 0 10px alpha(@secondary, 0.10),
+    inset 0 1px alpha(@on_surface, 0.075);
+}
+
+.workspace-button.hovered .workspace-number {
+  color: @on_surface;
+  font-weight: 860;
+}
+
+.workspace-button.active {
+  transform: none;
+  border-color: alpha(@primary, 0.58);
+  color: @on_primary_container;
+  background: alpha(@primary_container, 0.18);
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.14),
+    0 2px 6px alpha(@primary, 0.16),
+    inset 0 1px alpha(@on_primary_container, 0.10);
+}
+
+.workspace-button.active:not(.expanded) {
+  border-color: alpha(@primary, 0.58);
+  background: alpha(@primary_container, 0.14);
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.14),
+    inset 0 1px alpha(@on_primary_container, 0.08);
+}
+
+.workspace-button.active.expanded {
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.34),
+    alpha(@surface_container_high, 0.30));
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.16),
+    0 2px 7px alpha(@primary, 0.18),
+    0 0 10px alpha(@primary, 0.11),
+    inset 0 1px alpha(@on_primary_container, 0.12);
+}
+
+.workspace-button.active.hovered {
+  border-color: alpha(@primary, 0.72);
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.38),
+    alpha(@secondary_container, 0.32));
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.18),
+    0 2px 7px alpha(@primary, 0.20),
+    0 0 11px alpha(@secondary, 0.11),
+    inset 0 1px alpha(@on_primary_container, 0.14);
+}
+
+.workspace-active-dot {
+  min-width: 6px;
+  min-height: 6px;
+  border: 1px solid alpha(@on_primary_container, 0.38);
+  border-radius: 999px;
+  background: @primary;
+  box-shadow:
+    0 0 7px alpha(@primary, 0.52),
+    inset 0 1px alpha(@on_primary, 0.20);
+}
+
+.theme-light .workspace-deck {
+  border-color: alpha(#667b88, 0.18);
+  background: alpha(#d4e0e5, 0.66);
+  box-shadow:
+    0 3px 8px alpha(#314653, 0.08),
+    inset 0 1px alpha(#eef4f6, 0.42);
+}
+
+.theme-light .workspace-button {
+  border-color: alpha(#667b88, 0.14);
+  color: #536570;
+  background: alpha(#dce6ea, 0.28);
+  box-shadow: inset 0 1px alpha(#eef4f6, 0.34);
+}
+
+.theme-light .workspace-number {
+  color: #536570;
+}
+
+.theme-light .workspace-button.hovered,
+.theme-light .workspace-button.hovered:hover:not(.active) {
+  border-color: alpha(@primary, 0.34);
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.30),
+    alpha(#e1eaed, 0.52) 58%,
+    alpha(@primary_container, 0.22));
+  box-shadow:
+    0 2px 6px alpha(#314653, 0.08),
+    0 0 9px alpha(@primary, 0.08),
+    inset 0 1px alpha(#eef4f6, 0.48);
+}
+
+.theme-light .workspace-button.hovered .workspace-number {
+  color: #243640;
+}
+
+.theme-light .workspace-button.active,
+.theme-light .workspace-button.active:not(.expanded) {
+  border-color: alpha(@primary, 0.46);
+  background: alpha(@primary_container, 0.22);
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.10),
+    inset 0 1px alpha(#eef4f6, 0.42);
+}
+
+.theme-light .workspace-button.active.expanded,
+.theme-light .workspace-button.active.hovered {
+  border-color: alpha(@primary, 0.52);
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.27),
+    alpha(#d9e5e9, 0.42));
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.11),
+    0 2px 6px alpha(#314653, 0.07),
+    inset 0 1px alpha(#eef4f6, 0.50);
+}
+
+.theme-light .workspace-active-dot {
+  border-color: alpha(#eef4f6, 0.62);
+  background: @primary;
+  box-shadow:
+    0 0 6px alpha(@primary, 0.34),
+    inset 0 1px alpha(#ffffff, 0.32);
+}
+
+/* v2.5.5 — centered magnetic snap (v2.5.4 ownership preserved) */
+/* Expansion ownership persists while the pointer travels from a workspace
+ * segment into its preview. Resting layout width stays fixed while paint-time
+ * scaleX overshoots equally left/right, recoils, then settles. No vertical movement. */
+.workspace-button {
+  min-width: 27px;
+  min-height: 22px;
+  padding: 0;
+  margin: 2px 0;
+  border: 1px solid alpha(@outline_variant, 0.15);
+  border-radius: 8px;
+  color: alpha(@on_surface_variant, 0.82);
+  background: alpha(@surface_container_high, 0.18);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  font-size: 11px;
+  font-weight: 760;
+  transition: 190ms ease;
+}
+
+.workspace-button.expanded {
+  padding: 0 7px;
+}
+
+.workspace-button.hovered {
+  transform: none;
+  border-color: alpha(@secondary, 0.42);
+  color: @on_surface;
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.46),
+    alpha(@surface_container_highest, 0.46) 58%,
+    alpha(@primary_container, 0.28));
+  box-shadow:
+    0 2px 6px alpha(@primary, 0.13),
+    0 0 10px alpha(@secondary, 0.10),
+    inset 0 1px alpha(@on_surface, 0.075);
+}
+
+.workspace-button.active {
+  transform: none;
+  border-color: alpha(@primary, 0.58);
+  color: @on_primary_container;
+  background: alpha(@primary_container, 0.18);
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.14),
+    0 2px 6px alpha(@primary, 0.16),
+    inset 0 1px alpha(@on_primary_container, 0.10);
+}
+
+.workspace-active-dot {
+  min-width: 6px;
+  min-height: 6px;
+  border: 1px solid alpha(@on_primary_container, 0.38);
+  border-radius: 999px;
+  background: @primary;
+  box-shadow:
+    0 0 7px alpha(@primary, 0.52),
+    inset 0 1px alpha(@on_primary, 0.20);
+}
+
+.theme-light .workspace-button.hovered {
+  border-color: alpha(@primary, 0.34);
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.30),
+    alpha(#e1eaed, 0.52) 58%,
+    alpha(@primary_container, 0.22));
+  box-shadow:
+    0 2px 6px alpha(#314653, 0.08),
+    0 0 9px alpha(@primary, 0.08),
+    inset 0 1px alpha(#eef4f6, 0.48);
+}
+
+.theme-light .workspace-button.active {
+  border-color: alpha(@primary, 0.46);
+  background: alpha(@primary_container, 0.22);
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.10),
+    inset 0 1px alpha(#eef4f6, 0.42);
+}
+
+/* v2.5.7 — overlay magnetic shell
+ * The button remains the only measured elastic layout surface. Gtk.Overlay
+ * measures from the main workspace content; the magnetic shell is an overlay
+ * child and therefore cannot stretch the rail. The shell pulses after the
+ * 190 ms width transition and paints outside the resting footprint. */
+@keyframes workspace-overlay-magnetic-snap {
+  0% {
+    transform: scaleX(1.00);
+    opacity: 0.34;
+    box-shadow:
+      0 1px 3px alpha(#000000, 0.06),
+      0 0 3px alpha(@secondary, 0.04);
+  }
+  33% {
+    transform: scaleX(1.20);
+    opacity: 1.00;
+    box-shadow:
+      0 3px 10px alpha(@primary, 0.24),
+      0 0 18px alpha(@secondary, 0.24),
+      inset 0 1px alpha(@on_surface, 0.13);
+  }
+  63% {
+    transform: scaleX(0.96);
+    opacity: 0.72;
+    box-shadow:
+      0 2px 5px alpha(@primary, 0.10),
+      0 0 7px alpha(@secondary, 0.065),
+      inset 0 1px alpha(@on_surface, 0.05);
+  }
+  100% {
+    transform: scaleX(1.00);
+    opacity: 0;
+    box-shadow: 0 0 0 alpha(@secondary, 0);
+  }
+}
+
+.workspace-button {
+  min-width: 27px;
+  min-height: 22px;
+  padding: 0;
+  margin: 2px 0;
+  border: 1px solid alpha(@outline_variant, 0.15);
+  border-radius: 8px;
+  color: alpha(@on_surface_variant, 0.82);
+  background: alpha(@surface_container_high, 0.18);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  font-size: 11px;
+  font-weight: 760;
+  transition: 190ms ease;
+}
+
+.workspace-button.expanded {
+  padding: 0 7px;
+}
+
+.workspace-button-overlay {
+  min-height: 18px;
+}
+
+.workspace-magnetic-shell {
+  min-width: 39px;
+  min-height: 20px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  opacity: 0;
+  transform: scaleX(1.00);
+  transform-origin: 50% 50%;
+}
+
+.workspace-magnetic-shell.snapping {
+  border-color: alpha(@secondary, 0.48);
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.24),
+    alpha(@surface_container_highest, 0.16) 55%,
+    alpha(@primary_container, 0.20));
+  animation: workspace-overlay-magnetic-snap 510ms cubic-bezier(0.22, 0.74, 0.24, 1);
+}
+
+.theme-light .workspace-magnetic-shell.snapping {
+  border-color: alpha(@primary, 0.38);
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.20),
+    alpha(#eef4f6, 0.30) 55%,
+    alpha(@primary_container, 0.17));
+}
+
+/* v2.6 — scalable workspace navigator */
+.workspace-navigator {
+  min-width: 390px;
+  padding: 8px;
+}
+
+.workspace-preview-header {
+  min-height: 30px;
+  padding: 0;
+}
+
+.workspace-preview-content {
+  min-width: 390px;
+}
+
+.workspace-preview-hero-viewport,
+.workspace-preview-picture {
+  min-width: 390px;
+  min-height: 219px;
+}
+
+.workspace-preview-picture {
+  margin: 0;
+}
+
+.workspace-preview-identity {
+  min-height: 38px;
+  padding: 4px 6px;
+  border: 1px solid alpha(@outline_variant, 0.12);
+  border-radius: 10px;
+  background: alpha(@surface_container_high, 0.32);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+}
+
+.workspace-preview-identity-icon-shell {
+  min-width: 30px;
+  min-height: 30px;
+  border: 1px solid alpha(@outline_variant, 0.12);
+  border-radius: 8px;
+  background: alpha(@surface_container_highest, 0.22);
+}
+
+.workspace-preview-identity-icon {
+  min-width: 22px;
+  margin: 4px;
+}
+
+.workspace-preview-identity-copy {
+  padding: 1px 0;
+}
+
+.workspace-preview-identity-app {
+  color: @on_surface;
+  font-size: 12px;
+  font-weight: 840;
+}
+
+.workspace-preview-identity-title {
+  color: alpha(@on_surface_variant, 0.72);
+  font-size: 10px;
+  font-weight: 560;
+}
+
+.workspace-window-list-heading {
+  min-height: 24px;
+  padding: 0 2px;
+}
+
+.workspace-window-pager {
+  min-height: 22px;
+}
+
+.workspace-window-page-button {
+  min-width: 24px;
+  min-height: 22px;
+  padding: 0;
+  border: 1px solid alpha(@outline_variant, 0.14);
+  border-radius: 8px;
+  color: alpha(@on_surface_variant, 0.82);
+  background: alpha(@surface_container_high, 0.34);
+  box-shadow: none;
+  transition: 140ms ease;
+}
+
+.workspace-window-page-button:hover {
+  color: @on_surface;
+  border-color: alpha(@primary, 0.24);
+  background: alpha(@surface_container_highest, 0.46);
+  box-shadow: none;
+}
+
+.workspace-window-page-button:disabled {
+  color: alpha(@on_surface_variant, 0.30);
+  border-color: alpha(@outline_variant, 0.08);
+  background: alpha(@surface_container_high, 0.16);
+}
+
+.workspace-window-page-indicator {
+  min-width: 34px;
+  color: alpha(@on_surface_variant, 0.72);
+  font-size: 9px;
+  font-weight: 760;
+}
+
+.workspace-window-grid-row {
+  min-height: 52px;
+}
+
+.theme-light .workspace-preview-identity {
+  border-color: alpha(#667b88, 0.12);
+  background: alpha(#dbe5e9, 0.50);
+}
+
+.theme-light .workspace-preview-identity-icon-shell,
+.theme-light .workspace-window-page-button {
+  border-color: alpha(#667b88, 0.12);
+  background: alpha(#eef4f6, 0.38);
+}
+
+
+/* v2.6.1 — compact workspace navigator */
+.workspace-navigator {
+  min-width: 340px;
+  padding: 7px;
+}
+
+.workspace-preview-header {
+  min-height: 28px;
+}
+
+.workspace-preview-content {
+  min-width: 340px;
+}
+
+.workspace-preview-hero,
+.workspace-preview-hero-viewport,
+.workspace-preview-picture,
+.workspace-preview-fallback {
+  min-width: 320px;
+}
+
+.workspace-preview-hero-viewport,
+.workspace-preview-picture,
+.workspace-preview-fallback {
+  min-height: 160px;
+}
+
+.workspace-preview-identity {
+  min-height: 34px;
+  padding: 3px 5px;
+  border-radius: 9px;
+}
+
+.workspace-preview-identity-icon-shell {
+  min-width: 27px;
+  min-height: 27px;
+  border-radius: 7px;
+}
+
+.workspace-preview-identity-icon {
+  min-width: 20px;
+  margin: 3px;
+}
+
+.workspace-preview-identity-app {
+  font-size: 11px;
+}
+
+.workspace-preview-identity-title {
+  font-size: 9px;
+}
+
+.workspace-window-list-heading {
+  min-height: 22px;
+}
+
+.workspace-window-grid-row {
+  min-height: 48px;
+}
+
+.workspace-window-tile {
+  min-width: 52px;
+  min-height: 48px;
+  border-radius: 10px;
+}
+
+.workspace-window-tile-icon-shell {
+  min-width: 38px;
+  min-height: 38px;
+  border-radius: 8px;
+}
+
+.workspace-window-tile .workspace-window-icon {
+  min-width: 28px;
+  margin: 5px;
+}
+
+/* v2.6.1 explicit final sizing contracts */
+.workspace-preview-hero {
+  min-width: 320px;
+}
+
+.workspace-preview-hero-viewport {
+  min-width: 320px;
+  min-height: 160px;
+}
+
+.workspace-preview-picture {
+  min-width: 320px;
+  min-height: 160px;
+}
+
+.workspace-preview-fallback {
+  min-width: 320px;
+  min-height: 160px;
+}
+
+
+/* v2.6.1 authoritative compact navigator paint rules */
+.workspace-preview-header {
+  min-height: 30px;
+  padding: 0;
+}
+
+.workspace-preview-hero {
+  min-width: 320px;
+  border: 1px solid alpha(@outline_variant, 0.14);
+  border-radius: 14px;
+  background: alpha(@surface_container_lowest, 0.90);
+  box-shadow:
+    0 5px 14px alpha(#000000, 0.17),
+    inset 0 1px alpha(@on_surface, 0.03);
+}
+
+.workspace-preview-identity-app {
+  color: @on_surface;
+  font-size: 12px;
+  font-weight: 840;
+}
+
+.workspace-preview-identity-title {
+  color: alpha(@on_surface_variant, 0.72);
+  font-size: 10px;
+  font-weight: 560;
+}
+
+.workspace-window-grid-row {
+  min-height: 52px;
+}
+
+.workspace-window-tile {
+  min-width: 56px;
+  min-height: 52px;
+  padding: 0;
+  border: 1px solid alpha(@outline_variant, 0.13);
+  border-radius: 11px;
+  background: alpha(@surface_container_high, 0.42);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  transition: 150ms ease;
+}
+
+.workspace-window-tile-icon-shell {
+  min-width: 42px;
+  min-height: 42px;
+  border-radius: 9px;
+  background: alpha(@surface_container_highest, 0.16);
+}
+
+.workspace-window-tile .workspace-window-icon {
+  min-width: 32px;
+  margin: 5px;
+}
+
+/* ========================================================================== */
+/* v2.6.2 — compact preview states                                            */
+/* Empty and single-window workspaces shrink independently; multi-window      */
+/* rows distribute the 4 visible tiles across the full available width.       */
+/* ========================================================================== */
+
+.workspace-navigator.empty-state {
+  min-width: 220px;
+  padding: 6px;
+}
+
+.workspace-navigator.single-state {
+  min-width: 292px;
+  padding: 6px;
+}
+
+.workspace-navigator.multi-state {
+  min-width: 340px;
+  padding: 7px;
+}
+
+.workspace-empty.compact {
+  min-width: 0;
+  min-height: 0;
+  padding: 8px;
+  border: 1px solid alpha(@outline_variant, 0.12);
+  border-radius: 10px;
+  background: alpha(@surface_container_high, 0.26);
+}
+
+.workspace-empty.compact .workspace-empty-icon {
+  font-size: 18px;
+}
+
+.workspace-empty.compact .workspace-empty-title {
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.workspace-preview-content.single-window {
+  min-width: 276px;
+}
+
+.workspace-preview-content.single-window .workspace-preview-hero {
+  min-width: 276px;
+}
+
+.workspace-preview-content.single-window .workspace-preview-hero-viewport {
+  min-width: 276px;
+  min-height: 138px;
+}
+
+.workspace-preview-content.single-window .workspace-preview-picture,
+.workspace-preview-content.single-window .workspace-preview-fallback {
+  min-width: 276px;
+  min-height: 138px;
+}
+
+.workspace-preview-content.single-window .workspace-preview-identity {
+  min-height: 32px;
+  padding: 3px 5px;
+}
+
+.workspace-preview-content.multi-window {
+  min-width: 340px;
+}
+
+.workspace-window-grid {
+  padding: 0;
+}
+
+.workspace-window-grid-row {
+  min-height: 52px;
+}
+
+.workspace-window-grid-row .workspace-window-tile {
+  min-width: 0;
+  min-height: 52px;
+  padding: 0;
+}
+
+.workspace-window-tile .workspace-window-icon {
+  min-width: 32px;
+  margin: 5px;
+}
+
+.theme-light .workspace-empty.compact {
+  border-color: alpha(#667b88, 0.12);
+  background: alpha(#dbe5e9, 0.42);
+}
+
+
+/* ========================================================================== */
+/* v2.6.3 — natural popup resize + tighter multi-window tiles                  */
+/* The top-level popup resets to its natural request on workspace changes.    */
+/* These final rules keep 4x2 paging while reducing the grid's vertical load. */
+/* ========================================================================== */
+
+.workspace-window-grid {
+  padding: 0;
+}
+
+.workspace-window-grid-row {
+  min-height: 42px;
+}
+
+.workspace-window-grid-row .workspace-window-tile {
+  min-width: 0;
+  min-height: 42px;
+  padding: 0;
+  border-radius: 9px;
+}
+
+.workspace-window-tile-icon-shell {
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 7px;
+}
+
+.workspace-window-tile .workspace-window-icon {
+  min-width: 24px;
+  margin: 4px;
+}
+
+/* Adaptive Glass preferences: motion styles */
+.motion-soft-magnetic .workspace-button {
+  transition:
+    background 240ms cubic-bezier(0.18, 0.86, 0.24, 1),
+    background-image 240ms cubic-bezier(0.18, 0.86, 0.24, 1),
+    border-color 240ms cubic-bezier(0.18, 0.86, 0.24, 1),
+    box-shadow 260ms cubic-bezier(0.18, 0.86, 0.24, 1),
+    color 180ms ease,
+    transform 240ms cubic-bezier(0.18, 0.86, 0.24, 1);
+}
+
+.motion-soft-magnetic .workspace-button.hovered,
+.motion-soft-magnetic .workspace-button.hovered:hover:not(.active) {
+  border-color: alpha(@secondary, 0.48);
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.50),
+    alpha(@surface_container_highest, 0.46) 52%,
+    alpha(@primary_container, 0.30));
+  box-shadow:
+    0 2px 7px alpha(@primary, 0.14),
+    0 0 14px alpha(@secondary, 0.13),
+    inset 0 1px alpha(@on_surface, 0.085);
+}
+
+.motion-soft-magnetic .workspace-button.active,
+.motion-soft-magnetic .workspace-button.active.expanded,
+.motion-soft-magnetic .workspace-button.active.hovered {
+  border-color: alpha(@primary, 0.64);
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.38),
+    alpha(@secondary_container, 0.28));
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.16),
+    0 2px 8px alpha(@primary, 0.19),
+    0 0 13px alpha(@secondary, 0.12),
+    inset 0 1px alpha(@on_primary_container, 0.13);
+}
+
+.motion-soft-magnetic .workspace-magnetic-shell.snapping {
+  border-color: alpha(@secondary, 0.54);
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.28),
+    alpha(@surface_container_highest, 0.18) 55%,
+    alpha(@primary_container, 0.22));
+  animation: workspace-overlay-magnetic-snap 560ms cubic-bezier(0.18, 0.84, 0.22, 1);
+}
+
+.motion-soft-magnetic .popup-workspace,
+.motion-soft-magnetic .popup-window-frame {
+  transition:
+    opacity 240ms cubic-bezier(0.18, 0.86, 0.24, 1),
+    transform 240ms cubic-bezier(0.18, 0.86, 0.24, 1),
+    box-shadow 260ms cubic-bezier(0.18, 0.86, 0.24, 1),
+    border-color 240ms ease;
+}
+
+.motion-precise-futuristic .workspace-button {
+  transition:
+    background 130ms cubic-bezier(0.16, 0.74, 0.24, 1),
+    background-image 130ms cubic-bezier(0.16, 0.74, 0.24, 1),
+    border-color 120ms cubic-bezier(0.16, 0.74, 0.24, 1),
+    box-shadow 130ms cubic-bezier(0.16, 0.74, 0.24, 1),
+    color 100ms ease,
+    transform 120ms cubic-bezier(0.16, 0.74, 0.24, 1);
+}
+
+.motion-precise-futuristic .workspace-button.hovered,
+.motion-precise-futuristic .workspace-button.hovered:hover:not(.active) {
+  border-color: alpha(@tertiary, 0.46);
+  background-image: linear-gradient(135deg,
+    alpha(@surface_container_highest, 0.48),
+    alpha(@tertiary_container, 0.24) 48%,
+    alpha(@primary_container, 0.18));
+  box-shadow:
+    0 0 0 1px alpha(@tertiary, 0.13),
+    0 2px 5px alpha(#000000, 0.13),
+    inset 0 1px alpha(@on_surface, 0.08);
+}
+
+.motion-precise-futuristic .workspace-button.active,
+.motion-precise-futuristic .workspace-button.active.expanded,
+.motion-precise-futuristic .workspace-button.active.hovered {
+  border-color: alpha(@primary, 0.68);
+  background-image: linear-gradient(135deg,
+    alpha(@primary_container, 0.34),
+    alpha(@surface_container_highest, 0.24));
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.20),
+    0 2px 6px alpha(@primary, 0.14),
+    inset 0 1px alpha(@on_primary_container, 0.12);
+}
+
+.motion-precise-futuristic .workspace-magnetic-shell.snapping {
+  border-color: alpha(@tertiary, 0.52);
+  background-image: linear-gradient(135deg,
+    alpha(@tertiary_container, 0.22),
+    alpha(@surface_container_highest, 0.14) 52%,
+    alpha(@primary_container, 0.18));
+  animation: workspace-overlay-magnetic-snap 320ms cubic-bezier(0.18, 0.72, 0.20, 1);
+}
+
+.motion-precise-futuristic .popup-workspace,
+.motion-precise-futuristic .popup-window-frame {
+  transition:
+    opacity 130ms cubic-bezier(0.16, 0.74, 0.24, 1),
+    transform 130ms cubic-bezier(0.16, 0.74, 0.24, 1),
+    box-shadow 140ms cubic-bezier(0.16, 0.74, 0.24, 1),
+    border-color 120ms ease;
+}
+
+/* Geometry sentinel for legacy workspace regression tests. Motion-scoped
+ * selectors above are more specific, so their paint timing still wins. */
+.workspace-button {
+  min-width: 27px;
+  min-height: 22px;
+  padding: 0;
+  margin: 2px 0;
+  border: 1px solid alpha(@outline_variant, 0.15);
+  border-radius: 8px;
+  color: alpha(@on_surface_variant, 0.82);
+  background: alpha(@surface_container_high, 0.18);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  font-size: 11px;
+  font-weight: 760;
+  transition: 190ms ease;
+}

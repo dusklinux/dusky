@@ -2164,9 +2164,63 @@ description = "Specific component settings"
 [[pages.layout.items]]
 type = "navigation"
 [pages.layout.items.properties]
-title = "Status Bar (Waybar)"
-description = "Configure Waybar layout and style"
+title = "Status Bar"
+description = "Configure Adaptive Glass and Waybar"
 icon = "view-more-symbolic"
+
+[[pages.layout.items.layout]]
+type = "section"
+[pages.layout.items.layout.properties]
+title = "Adaptive Glass"
+description = "Premium bar preferences"
+
+[[pages.layout.items.layout.items]]
+type = "selection"
+[pages.layout.items.layout.items.properties]
+title = "Adaptive Glass Motion"
+description = "Workspace and panel animation style"
+icon = "preferences-desktop-effects-symbolic"
+key = "ags/adaptive-glass-motion"
+default = "soft-magnetic"
+interval = 2
+options = ["Soft Magnetic", "Precise Futuristic"]
+options_map = { "soft-magnetic" = "Soft Magnetic", "precise-futuristic" = "Precise Futuristic" }
+
+[[pages.layout.items.layout.items]]
+type = "toggle_card"
+[pages.layout.items.layout.items.properties]
+title = "Workspace Preview"
+description = "Show live workspace window previews"
+icon = "view-grid-symbolic"
+key = "ags/features/workspace-preview"
+default = true
+
+[[pages.layout.items.layout.items]]
+type = "toggle_card"
+[pages.layout.items.layout.items.properties]
+title = "Media Island"
+description = "Show media controls in the bar"
+icon = "audio-x-generic-symbolic"
+key = "ags/features/media-island"
+default = true
+
+[[pages.layout.items.layout.items]]
+type = "toggle_card"
+[pages.layout.items.layout.items.properties]
+title = "Weather"
+description = "Show weather in the bar"
+icon = "weather-few-clouds-symbolic"
+key = "ags/features/weather"
+default = true
+
+[[pages.layout.items.layout.items]]
+type = "toggle_card"
+[pages.layout.items.layout.items.properties]
+title = "Notifications"
+description = "Show notification entry in the bar"
+icon = "preferences-system-notifications-symbolic"
+key = "ags/features/notifications"
+default = true
 
 [[pages.layout.items.layout]]
 type = "section"

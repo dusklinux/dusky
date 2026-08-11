@@ -56,7 +56,7 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("uwsm-app -- wl-clip-persist --clipboard regular")
 
     -- --- OPTIONAL / USER INTERFACE ---
-    hl.exec_cmd("uwsm-app -- $HOME/user_scripts/waybar/waybar_toggle.sh")
+    hl.exec_cmd("uwsm-app -- $HOME/user_scripts/bar/bar_switch.sh start")
     -- hl.exec_cmd("uwsm-app -- $HOME/user_scripts/waybar/toggle_timer_waybar.sh")
     -- hl.exec_cmd("uwsm-app -- nm-applet")
 
@@ -95,4 +95,3 @@ hl.on("hyprland.start", function()
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --stop")
 
 end)
-
