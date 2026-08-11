@@ -27,7 +27,7 @@ def test_workspace_uses_elastic_segment_transfer_instead_of_selection_plate():
     expanded = css_block(css, '.workspace-button.expanded')
     button = css_block(css, '.workspace-button')
     assert 'padding: 0 7px' in expanded
-    assert 'transition: 190ms ease' in button
+    assert 'transition: 230ms cubic-bezier(0.34, 1.56, 0.64, 1)' in button
 
 
 def test_workspace_active_and_hover_states_are_distinct():
@@ -91,9 +91,9 @@ def test_clock_has_stronger_hierarchy_without_changing_calendar_trigger():
     face = css_block(css, '.clock-reel-digit-face')
     meridiem = css_block(css, '.clock-meridiem')
     dot = css_block(css, '.clock-accent-dot')
-    assert 'min-width: 0' in card
-    assert 'padding: 0 9px' in card
-    assert 'border-radius: 10px' in card
+    assert 'min-width: 98px' in card
+    assert 'padding: 5px 14px 0 14px' in card
+    assert 'border-radius: 0 0 10px 10px' in card
     assert 'animation: none' in digit
     assert 'clock-v28-reel-old' in css
     assert 'clock-v28-reel-new' in css
@@ -118,7 +118,7 @@ def test_all_top_bar_pills_share_one_geometry_language():
 
     deck = css_block(css, '.workspace-deck')
     assert 'min-height: 28px' in deck
-    assert 'border-radius: 10px' in deck
+    assert 'border-radius: 20px' in deck
 
 
 def test_media_visual_footprint_is_normalized_without_touching_mpris_logic():

@@ -1,6 +1,6 @@
 # Adaptive Glass AGS for Dusky
 
-Base shell: Adaptive Glass AGS v2.8
+Base shell: Adaptive Glass AGS v2.9
 
 Adaptive Glass is the AGS v3 / GTK4 shell being developed as a polished Dusky bar option while the existing Waybar setup remains untouched as a fallback.
 
@@ -36,6 +36,16 @@ PYTHONDONTWRITEBYTECODE=1 uvx --from pytest pytest -q .config/ags/tests
 ```
 
 
+
+## v2.9 — Waybar 05 Glass Polish
+
+- Expands the workspace rail to 10 visible slots and keeps the active workspace mapped into the pill for higher workspace numbers.
+- Keeps inactive workspace numbers neutral while moving the bright per-workspace Pac-Man colors into the final cascade layer for all 10 active states.
+- Refines the workspace active pill toward the Waybar `05_circular_h` liquid capsule style with stronger inset glow and a more visible recoil.
+- Slows the clock reel to make digit changes easier to see and reshapes the clock as a screen-attached top tab with dual glow rails.
+- Replaces the battery icon with a horizontal battery shell that carries the percentage inside, including a visible zero-percent glow state.
+- Adds a signal-change pulse to Wi-Fi strength colors and centers the right-side power control inside its own orb shell.
+- Gives the left launcher icon a matching luminous glass treatment.
 
 ## v2.8 — Status Motion Corrections
 

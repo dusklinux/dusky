@@ -7,12 +7,37 @@ import PanelTrigger from "./PanelTrigger"
 import { runBluetoothManager, runNetworkManager } from "../lib/dusky"
 import { formatBytes, formatRate, formatSince, networkSession } from "../lib/networkSession"
 
-function wifiSignalClass(strength: number) {
+type WifiSignalName = "offline" | "weak" | "ok" | "strong"
+
+const WIFI_SIGNAL_MOTION_CLASSES: Record<WifiSignalName, string> = {
+  offline: "wifi-signal-shift-offline",
+  weak: "wifi-signal-shift-weak",
+  ok: "wifi-signal-shift-ok",
+  strong: "wifi-signal-shift-strong",
+}
+
+const WIFI_SIGNAL_COLOR_CLASSES: Record<WifiSignalName, string> = {
+  offline: "wifi-signal-offline",
+  weak: "wifi-signal-weak",
+  ok: "wifi-signal-ok",
+  strong: "wifi-signal-strong",
+}
+
+function wifiSignalName(strength: number): WifiSignalName {
   const value = Number(strength) || 0
-  if (value <= 0) return "wifi-signal-offline"
-  if (value < 38) return "wifi-signal-weak"
-  if (value < 68) return "wifi-signal-ok"
-  return "wifi-signal-strong"
+  if (value <= 0) return "offline"
+  if (value < 38) return "weak"
+  if (value < 68) return "ok"
+  return "strong"
+}
+
+function wifiSignalMotionClass(name: WifiSignalName) {
+  return WIFI_SIGNAL_MOTION_CLASSES[name]
+}
+
+function wifiSignalClass(strength: number) {
+  const name = wifiSignalName(strength)
+  return `${WIFI_SIGNAL_COLOR_CLASSES[name]} ${wifiSignalMotionClass(name)}`
 }
 
 function ConnectionHeader({ network }: { network: any }) {

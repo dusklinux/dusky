@@ -28,7 +28,7 @@ def test_workspaces_use_dusky_lua_compatible_dispatcher():
     d=read('lib/dusky.ts')
     assert 'multi_monitor_workspace.sh' in d
     assert 'workspaceScript' in d
-    assert 'Array.from({ length: 5 }' in s
+    assert 'Array.from({ length: 10 }' in s
 
 def test_clock_has_real_gtk_calendar_panel():
     s=read('components/ClockCard.tsx')

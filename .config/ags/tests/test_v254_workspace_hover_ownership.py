@@ -84,8 +84,8 @@ def test_snap_lighting_peaks_then_returns_to_resting_hover_treatment():
     assert 'background-image:' in hovered
     assert 'alpha(@secondary_container, 0.46)' in hovered
     assert 'border-color: alpha(@primary, 0.58)' in active
-    assert 'font-size: 13px' in pacman
-    assert 'font-weight: 900' in pacman
+    assert 'font-size: 15px' in pacman
+    assert 'font-weight: 950' in pacman
 
 
 def test_v254_keeps_preview_and_other_component_backends_unchanged():

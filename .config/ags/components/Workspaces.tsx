@@ -18,7 +18,7 @@ export default function Workspaces() {
   const active = createBinding(hyprland, "focusedWorkspace", "id")((id) =>
     id > 0 ? ((id - 1) % 10) + 1 : 1,
   )
-  const workspaces = Array.from({ length: 5 }, (_, index) => index + 1)
+  const workspaces = Array.from({ length: 10 }, (_, index) => index + 1)
 
   return (
     <box class="workspace-switcher">

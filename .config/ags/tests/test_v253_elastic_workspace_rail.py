@@ -66,10 +66,10 @@ def test_elastic_css_has_separated_segments_stable_transfer_and_no_vertical_boun
     expanded = css_block(tail, '.workspace-button.expanded')
 
     assert 'spacing' not in deck  # spacing is owned by JSX
-    assert 'padding: 0 3px' in deck
-    assert 'min-width: 27px' in button
-    assert 'padding: 0' in button
-    assert 'transition: 190ms ease' in button
+    assert 'padding: 0 5px' in deck
+    assert 'min-width: 20px' in button
+    assert 'padding: 0 2px' in button
+    assert 'transition: 230ms cubic-bezier(0.34, 1.56, 0.64, 1)' in button
     assert 'padding: 0 7px' in expanded
     for selector in [
         '.workspace-button',
@@ -94,10 +94,10 @@ def test_active_pacman_and_hover_sheen_are_visually_distinct():
     assert '0 0 0 1px alpha(@primary, 0.14)' in active
     assert 'background-image:' in hovered
     assert 'alpha(@secondary_container, 0.46)' in hovered
-    assert 'min-width: 12px' in pacman
-    assert 'min-height: 14px' in pacman
-    assert 'font-size: 13px' in pacman
-    assert 'font-weight: 900' in pacman
+    assert 'min-width: 15px' in pacman
+    assert 'min-height: 15px' in pacman
+    assert 'font-size: 15px' in pacman
+    assert 'font-weight: 950' in pacman
 
 
 def test_active_compact_state_keeps_indicator_when_hover_moves_elsewhere():

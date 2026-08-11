@@ -68,7 +68,7 @@ def test_workspace_active_indicator_is_pacman_and_color_indexed():
     assert "workspace-pacman" in tsx
     assert 'label="󰮯"' in tsx
     assert "workspace-active-dot" not in tsx
-    for workspace_id in range(1, 6):
+    for workspace_id in range(1, 11):
         assert f".workspace-button.workspace-id-{workspace_id}.active .workspace-pacman" in css
 
 
@@ -105,7 +105,9 @@ def test_battery_uses_level_classes_and_three_pulse_warning():
 
     assert "function batteryLevelClass" in tsx
     assert "battery-level-critical" in tsx
-    assert "battery-icon" in tsx
+    assert "battery-shell" in tsx
+    assert "battery-fill" in tsx
+    assert "battery-icon" not in tsx
     assert "battery-percent" in tsx
     assert "battery-v28-warning-pulse" in css
     warning = css_block(css, ".battery-card.battery-level-warning:not(.charging)")

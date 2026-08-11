@@ -117,17 +117,33 @@ export default function ClockCard() {
       panel="calendar"
       class="clock-card"
       child={
-        <box class="clock-card-content" spacing={6} valign={Gtk.Align.CENTER}>
-          <box class="clock-reel" spacing={1} valign={Gtk.Align.CENTER}>
-            {timeSlots.map((slot, index) =>
-              index === 2
-                ? <label class="clock-reel-separator" label={slot((value: ClockSlot) => value.current)} />
-                : <ClockReelDigit slot={slot} />
-            )}
+        <overlay class="clock-card-stage">
+          <box class="clock-card-content" spacing={6} valign={Gtk.Align.CENTER}>
+            <box class="clock-reel" spacing={1} valign={Gtk.Align.CENTER}>
+              {timeSlots.map((slot, index) =>
+                index === 2
+                  ? <label class="clock-reel-separator" label={slot((value: ClockSlot) => value.current)} />
+                  : <ClockReelDigit slot={slot} />
+              )}
+            </box>
+            <Gtk.Separator class="clock-divider" orientation={Gtk.Orientation.VERTICAL} />
+            <label class="clock-meridiem" label={meridiem} />
           </box>
-          <Gtk.Separator class="clock-divider" orientation={Gtk.Orientation.VERTICAL} />
-          <label class="clock-meridiem" label={meridiem} />
-        </box>
+          <box
+            $type="overlay"
+            class="clock-edge-glow left"
+            canTarget={false}
+            halign={Gtk.Align.START}
+            valign={Gtk.Align.END}
+          />
+          <box
+            $type="overlay"
+            class="clock-edge-glow right"
+            canTarget={false}
+            halign={Gtk.Align.END}
+            valign={Gtk.Align.END}
+          />
+        </overlay>
       }
     />
   )

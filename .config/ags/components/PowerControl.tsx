@@ -235,16 +235,25 @@ export default function PowerControl() {
       panel="power"
       class="control-leader power-leader"
       child={
-        <box class="power-trigger-content" spacing={0}>
-          <box class="power-trigger-shell" halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
-            <label class="power-trigger-icon" label="󰐥" />
+        <overlay class="power-trigger-content">
+          <box class="power-trigger-shell power-trigger-orb" halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
+            <label
+              class="power-trigger-icon"
+              halign={Gtk.Align.CENTER}
+              valign={Gtk.Align.CENTER}
+              xalign={0.5}
+              label="⏻"
+            />
           </box>
-          <label
+          <box
+            $type="overlay"
             class="power-trigger-status-dot power-caffeine-dot bar-dot"
+            canTarget={false}
+            halign={Gtk.Align.END}
+            valign={Gtk.Align.START}
             visible={caffeineState((state) => state.trim() === "on")}
-            label="•"
           />
-        </box>
+        </overlay>
       }
     />
   )
