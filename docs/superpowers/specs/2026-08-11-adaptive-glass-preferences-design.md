@@ -1,25 +1,38 @@
-# Adaptive Glass Motion Styles Design
+# Adaptive Glass Preferences Design
 
 Date: 2026-08-11
 
 ## Goal
 
-Add a premium motion-style preference for Adaptive Glass, controlled from Dusky Control Center and consumed by the AGS shell at runtime.
+Add a premium, opinionated preferences system for Adaptive Glass, controlled from Dusky Control Center and consumed by the AGS shell at runtime.
 
-The first polish pass focuses on the workspace rail and workspace preview because they are the shell's signature interaction. The design should feel advanced and animated, while staying clean, legible, and useful.
+The first polish pass focuses on motion style and workspace preview because they define the shell's signature interaction. The design should feel advanced and animated, while staying clean, legible, and useful.
+
+Adaptive Glass should remain fully featured by default. Preferences are for users who want a calmer, lighter, or more focused shell, not for diluting the default experience.
 
 ## User-Facing Behavior
 
-Dusky Control Center gets an Adaptive Glass motion selector with two choices:
+Dusky Control Center gets Adaptive Glass preferences:
+
+Motion style:
 
 - Soft Magnetic
 - Precise Futuristic
+
+Feature toggles:
+
+- Workspace Preview
+- Media Island
+- Weather
+- Notifications
 
 Soft Magnetic is the default. It should feel like glass responding to touch: elastic hover expansion, gentle snap-back, soft glow, and smooth easing.
 
 Precise Futuristic should feel sharper and more technical: tighter timing, cleaner focus rings, less bounce, and quicker hover response.
 
-The setting should persist across logouts and reboots.
+Workspace Preview is enabled by default. It is part of the default Adaptive Glass identity, but users who prefer a simpler bar can disable it.
+
+All settings should persist across logouts and reboots.
 
 ## Settings Model
 
@@ -34,13 +47,40 @@ Allowed values:
 
 If the file is missing, empty, or invalid, AGS falls back to `soft-magnetic`.
 
+Store feature flags under:
+
+`~/.config/dusky/settings/ags/features/`
+
+Initial feature setting files:
+
+- `workspace-preview`
+- `media-island`
+- `weather`
+- `notifications`
+
+Allowed values:
+
+- `true`
+- `false`
+
+Defaults:
+
+- `workspace-preview`: `true`
+- `media-island`: `true`
+- `weather`: `true`
+- `notifications`: `true`
+
+If a feature setting file is missing, empty, or invalid, AGS uses the default for that feature.
+
 ## Dusky Control Center
 
 Rename or broaden the existing Status Bar area so it is not Waybar-only. A suitable label is:
 
 `Status Bar`
 
-Add a selection row for Adaptive Glass motion:
+Add an Adaptive Glass section under Status Bar.
+
+Add a selection row for motion:
 
 - Title: `Adaptive Glass Motion`
 - Description: `Workspace and panel animation style`
@@ -51,6 +91,27 @@ Add a selection row for Adaptive Glass motion:
   - `precise-futuristic` -> `Precise Futuristic`
 
 This should use the existing Control Center `selection` row pattern and settings-file persistence rather than a custom settings UI.
+
+Add toggle rows for feature flags:
+
+- `Workspace Preview`
+  - Description: `Show live window previews from the workspace rail`
+  - Key: `ags/features/workspace-preview`
+  - Default: on
+- `Media Island`
+  - Description: `Show the compact player surface in the bar`
+  - Key: `ags/features/media-island`
+  - Default: on
+- `Weather`
+  - Description: `Show weather in the left cluster`
+  - Key: `ags/features/weather`
+  - Default: on
+- `Notifications`
+  - Description: `Show notification status in the left cluster`
+  - Key: `ags/features/notifications`
+  - Default: on
+
+The Control Center should not expose every internal AGS component immediately. Start with feature toggles that users can understand without reading implementation details.
 
 ## AGS Runtime
 
@@ -68,6 +129,16 @@ The shell should add a root class based on the selected mode:
 - `motion-precise-futuristic`
 
 The class should be applied high enough in the AGS window tree that bar widgets and popup widgets can share the same motion system.
+
+Add a feature-state module next to the motion and theme state modules. It should:
+
+- read the `ags/features/*` setting files
+- validate boolean values
+- expose typed feature signals
+- use opinionated defaults when settings are missing
+- monitor the settings directory so Control Center changes can apply without restarting AGS
+
+Disabled features should not merely be hidden visually when they create runtime work. They should avoid unnecessary polling, subscriptions, and preview capture where practical.
 
 ## Visual Design
 
@@ -99,12 +170,18 @@ Both modes must remain clean:
 
 Apply the first pass to:
 
+- motion style setting
+- feature-state foundation
+- Control Center Adaptive Glass preference rows
 - workspace rail hover and active states
 - workspace magnetic snap pulse
 - workspace preview popup entrance and selected-window emphasis
+- workspace preview feature toggle
 - shared popup transition timing where it is low risk
 
 Do not redesign every module in the first pass. Network, audio, display, media, and power panels can adopt the motion classes later after the workspace interaction feels right.
+
+The first implementation should make Workspace Preview fully toggleable. Media Island, Weather, and Notifications can receive Control Center keys in the same settings model, but deeper poll/subscription pruning can be incremental if needed.
 
 ## Error Handling
 
@@ -114,16 +191,22 @@ If the settings file changes to an invalid value while AGS is running, AGS shoul
 
 If Control Center writes the setting while AGS is not running, AGS should pick it up on next launch.
 
+If a feature is disabled while AGS is running, AGS should close any dependent popup and stop opening that feature until it is re-enabled.
+
 ## Testing
 
 Add focused tests that verify:
 
 - the Control Center config exposes the Adaptive Glass motion selection
 - the persisted key is `ags/adaptive-glass-motion`
+- the Control Center config exposes the initial Adaptive Glass feature toggles
+- feature keys use `ags/features/*`
 - AGS accepts only `soft-magnetic` and `precise-futuristic`
 - invalid or missing motion state falls back to `soft-magnetic`
+- invalid or missing feature values fall back to opinionated defaults
 - the AGS root window receives a motion class
 - CSS contains scoped rules for both motion classes
+- workspace preview does not open when `workspace-preview` is disabled
 - workspace magnetic timing remains non-sizing and does not introduce layout expansion regressions
 
 Existing AGS contract tests and the bar switcher tests should continue to pass.
@@ -135,6 +218,7 @@ Existing AGS contract tests and the bar switcher tests should continue to pass.
 - Do not redesign the full Control Center page beyond the status-bar section naming needed for clarity.
 - Do not make motion style depend on wallpaper, theme mode, or monitor count.
 - Do not implement reduced motion yet; leave it as a future setting.
+- Do not make the default Adaptive Glass experience minimal. Defaults should remain opinionated and feature-rich.
 
 ## Future Follow-Up
 
@@ -145,4 +229,4 @@ After this pass, the same settings pattern can support:
 - panel density
 - workspace preview style
 - reduced motion
-- per-module enable/disable toggles
+- more per-module enable/disable toggles
