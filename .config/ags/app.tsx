@@ -6,6 +6,8 @@ import { readFile } from "ags/file"
 import fallback from "./styles/fallback.css"
 import shellStyle from "./style.css"
 import PopupWindows from "./components/PopupWindows"
+import { featureAccessors } from "./lib/featureState"
+import { motionStyle } from "./lib/motionState"
 
 const home = GLib.get_home_dir()
 const matugenPath = `${home}/.config/matugen/generated/waybar-colors.css`
@@ -19,10 +21,32 @@ try {
   console.error("Adaptive Glass: could not load Matugen palette", error)
 }
 
+function preferenceState() {
+  return {
+    motion: motionStyle(),
+    features: {
+      "workspace-preview": featureAccessors["workspace-preview"](),
+      "media-island": featureAccessors["media-island"](),
+      "weather": featureAccessors.weather(),
+      "notifications": featureAccessors.notifications(),
+    },
+  }
+}
+
 app.start({
   instanceName: "dusky-adaptive-glass",
   css: `${fallback}\n${matugen}\n${shellStyle}`,
   gtkTheme: "Adwaita",
+  requestHandler(argv, response) {
+    const [command] = argv
+
+    if (command === "state") {
+      response(JSON.stringify(preferenceState()))
+      return
+    }
+
+    response("usage: ags request -i dusky-adaptive-glass state")
+  },
   main() {
     const monitors = createBinding(app, "monitors")
 

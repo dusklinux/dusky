@@ -93,6 +93,20 @@ def test_optional_entrypoints_use_feature_visibility():
     assert "visible={mediaIslandEnabled}" not in right
 
 
+def test_runtime_state_request_exposes_preferences_for_live_smoke():
+    app = read("app.tsx")
+
+    assert "requestHandler" in app
+    assert "motionStyle" in app
+    assert "featureAccessors" in app
+    assert 'command === "state"' in app
+    assert "motion:" in app
+    assert '"workspace-preview"' in app
+    assert '"media-island"' in app
+    assert '"weather"' in app
+    assert '"notifications"' in app
+
+
 def test_motion_css_is_scoped_and_non_sizing():
     css = read("style.css")
     assert "Adaptive Glass preferences: motion styles" in css
