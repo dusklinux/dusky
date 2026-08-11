@@ -72,9 +72,21 @@ def test_workspace_preview_can_be_disabled():
 def test_optional_entrypoints_use_feature_visibility():
     left = read("components/LeftCluster.tsx")
     right = read("components/RightCluster.tsx")
+    optional = read("components/OptionalFeature.tsx")
+    assert "<With value={enabled}>" in optional
+    assert "render: () => JSX.Element" in optional
+    assert "return enabled ? render() : <box visible={false} />" in optional
     assert "weatherEnabled" in left
     assert "notificationsEnabled" in left
     assert "mediaIslandEnabled" in right
+    assert "OptionalFeature" in left
+    assert "OptionalFeature" in right
+    assert "render={() => <Weather />}" in left
+    assert "render={() => <Notification />}" in left
+    assert "render={() => <MediaCard />}" in right
+    assert "visible={weatherEnabled}" not in left
+    assert "visible={notificationsEnabled}" not in left
+    assert "visible={mediaIslandEnabled}" not in right
 
 
 def test_motion_css_is_scoped_and_non_sizing():

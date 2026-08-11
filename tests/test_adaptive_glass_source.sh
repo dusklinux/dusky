@@ -32,7 +32,6 @@ assert_file "$AGS_DIR/lib/workspacePreviewState.ts"
 assert_file "$AGS_DIR/scripts/capture_window_preview.sh"
 assert_file "$AGS_DIR/styles/fallback.css"
 assert_file "$AGS_DIR/tests/test_contract.py"
-assert_dir "$AGS_DIR/docs"
 
 [[ -x "$AGS_DIR/app.tsx" ]] || fail ".config/ags/app.tsx must be executable"
 [[ -x "$AGS_DIR/install.sh" ]] || fail ".config/ags/install.sh must be executable"
@@ -42,6 +41,7 @@ assert_absent "$AGS_DIR/@girs"
 assert_absent "$AGS_DIR/node_modules"
 assert_absent "$AGS_DIR/.pytest_cache"
 assert_absent "$AGS_DIR/tests/__pycache__"
+assert_absent "$AGS_DIR/docs/superpowers"
 
 grep -F 'ADAPTIVE_ENTRY="${HOME}/.config/ags/app.tsx"' "$ROOT/user_scripts/bar/bar_switch.sh" >/dev/null \
     || fail "bar switcher must launch the repo-owned AGS entry path"
