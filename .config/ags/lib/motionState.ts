@@ -23,12 +23,12 @@ const WORKSPACE_TIMINGS = {
   "soft-magnetic": {
     interactionReleaseDelayMs: 130,
     snapDelayMs: 120,
-    snapPulseMs: 640,
+    snapPulseMs: 720,
   },
   "precise-futuristic": {
     interactionReleaseDelayMs: 75,
     snapDelayMs: 70,
-    snapPulseMs: 360,
+    snapPulseMs: 420,
   },
 } as const
 

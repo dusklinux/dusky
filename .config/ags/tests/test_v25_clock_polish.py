@@ -21,7 +21,9 @@ def test_clock_pill_has_structured_time_and_meridiem_not_plain_single_label():
     assert 'class="clock-card-content"' in tsx
     assert 'ClockReelDigit' in tsx
     assert 'class="clock-reel"' in tsx
-    assert 'class="clock-reel-digit' in tsx
+    assert 'clock-reel-digit' in tsx
+    assert 'clock-reel-old' in tsx
+    assert 'clock-reel-new' in tsx
     assert 'class="clock-reel-separator"' in tsx
     assert 'class="clock-accent-dot"' not in tsx
     assert 'class="clock-divider"' in tsx
@@ -44,7 +46,9 @@ def test_clock_pill_is_restrained_center_anchor_with_subtle_motion():
     assert 'transition: 180ms ease' in card
     assert '0 0 10px alpha(@primary' not in card
     assert 'transform: none' in hover
-    assert 'animation: clock-v27-reel-in' in digit
+    assert 'animation: none' in digit
+    assert 'clock-v28-reel-old' in css
+    assert 'clock-v28-reel-new' in css
     assert 'font-size: 13px' in face
     assert 'font-feature-settings: "tnum"' in face
     assert 'font-size: 9px' in meridiem

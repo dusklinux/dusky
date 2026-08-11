@@ -42,7 +42,7 @@ def test_calendar_keeps_native_month_navigation_but_is_compact_and_dark():
     panel = css_block(css, ".calendar-panel")
     assert 'min-width: 252px' in panel
     assert 'max-width:' not in panel
-    assert 'padding: 11px' in panel
+    assert 'padding: 10px' in panel
     popup = css_block(css, ".popup-calendar")
     assert '0.98' in popup or '0.97' in popup
     assert '.calendar-widget header' in css

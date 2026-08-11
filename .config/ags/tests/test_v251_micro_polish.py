@@ -36,7 +36,8 @@ def test_workspace_active_and_hover_states_are_distinct():
     active = css_block(css, '.workspace-button.active')
     hovered = css_block(css, '.workspace-button.hovered')
 
-    assert 'workspace-active-dot' in tsx
+    assert 'workspace-pacman' in tsx
+    assert 'workspace-active-dot' not in tsx
     assert 'border-color: alpha(@primary, 0.58)' in active
     assert '0 0 0 1px alpha(@primary, 0.14)' in active
     assert 'background-image:' in hovered
@@ -93,7 +94,9 @@ def test_clock_has_stronger_hierarchy_without_changing_calendar_trigger():
     assert 'min-width: 0' in card
     assert 'padding: 0 9px' in card
     assert 'border-radius: 10px' in card
-    assert 'animation: clock-v27-reel-in' in digit
+    assert 'animation: none' in digit
+    assert 'clock-v28-reel-old' in css
+    assert 'clock-v28-reel-new' in css
     assert 'font-size: 13px' in face
     assert 'font-size: 9px' in meridiem
     assert 'alpha(@on_surface_variant, 0.68)' in meridiem

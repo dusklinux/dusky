@@ -79,12 +79,13 @@ def test_snap_lighting_peaks_then_returns_to_resting_hover_treatment():
     css = read("style.css")
     hovered = css_block(css, '.workspace-button.hovered')
     active = css_block(css, '.workspace-button.active')
-    dot = css_block(css, '.workspace-active-dot')
+    pacman = css_block(css, '.workspace-pacman')
 
     assert 'background-image:' in hovered
     assert 'alpha(@secondary_container, 0.46)' in hovered
     assert 'border-color: alpha(@primary, 0.58)' in active
-    assert '0 0 7px alpha(@primary, 0.52)' in dot
+    assert 'font-size: 13px' in pacman
+    assert 'font-weight: 900' in pacman
 
 
 def test_v254_keeps_preview_and_other_component_backends_unchanged():

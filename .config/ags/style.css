@@ -5315,3 +5315,446 @@ progressbar.media-primary-progress progress {
     inset 0 1px alpha(#ffffff, 0.48),
     inset 0 0 0 1px alpha(#314653, 0.05);
 }
+
+/* v2.8 - status motion corrections */
+@keyframes workspace-v28-premium-recoil {
+  0% {
+    transform: scaleX(1.00);
+    opacity: 0.28;
+    box-shadow:
+      0 1px 3px alpha(#000000, 0.08),
+      0 0 4px alpha(@secondary, 0.06);
+  }
+  22% {
+    transform: scaleX(1.44);
+    opacity: 1.00;
+    box-shadow:
+      0 4px 15px alpha(@primary, 0.36),
+      0 0 26px alpha(@secondary, 0.34),
+      inset 0 1px alpha(@on_surface, 0.18);
+  }
+  48% {
+    transform: scaleX(0.88);
+    opacity: 0.88;
+    box-shadow:
+      0 2px 8px alpha(@primary, 0.18),
+      0 0 13px alpha(@secondary, 0.16),
+      inset 0 1px alpha(@on_surface, 0.09);
+  }
+  74% {
+    transform: scaleX(1.08);
+    opacity: 0.54;
+    box-shadow:
+      0 1px 5px alpha(@primary, 0.10),
+      0 0 8px alpha(@secondary, 0.07);
+  }
+  100% {
+    transform: scaleX(1.00);
+    opacity: 0;
+    box-shadow: 0 0 0 alpha(@secondary, 0);
+  }
+}
+
+.motion-soft-magnetic .workspace-button {
+  transition:
+    padding 230ms cubic-bezier(0.18, 0.88, 0.20, 1),
+    background 190ms cubic-bezier(0.18, 0.82, 0.22, 1),
+    background-image 190ms cubic-bezier(0.18, 0.82, 0.22, 1),
+    border-color 190ms ease,
+    box-shadow 210ms cubic-bezier(0.18, 0.82, 0.22, 1),
+    color 150ms ease;
+}
+
+.motion-precise-futuristic .workspace-button {
+  transition:
+    padding 150ms cubic-bezier(0.16, 0.74, 0.20, 1),
+    background 130ms cubic-bezier(0.16, 0.74, 0.24, 1),
+    background-image 130ms cubic-bezier(0.16, 0.74, 0.24, 1),
+    border-color 120ms cubic-bezier(0.16, 0.74, 0.24, 1),
+    box-shadow 130ms cubic-bezier(0.16, 0.74, 0.24, 1),
+    color 100ms ease;
+}
+
+.motion-soft-magnetic .workspace-magnetic-shell.snapping {
+  border-color: alpha(@secondary, 0.68);
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.38),
+    alpha(@surface_container_highest, 0.24) 52%,
+    alpha(@primary_container, 0.32));
+  animation: workspace-v28-premium-recoil 720ms cubic-bezier(0.15, 0.90, 0.18, 1);
+}
+
+.motion-precise-futuristic .workspace-magnetic-shell.snapping {
+  border-color: alpha(@tertiary, 0.66);
+  background-image: linear-gradient(135deg,
+    alpha(@tertiary_container, 0.32),
+    alpha(@surface_container_highest, 0.18) 50%,
+    alpha(@primary_container, 0.24));
+  animation: workspace-v28-premium-recoil 420ms cubic-bezier(0.15, 0.72, 0.18, 1);
+}
+
+.workspace-pacman {
+  min-width: 12px;
+  min-height: 14px;
+  color: @primary;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.workspace-button.active .workspace-pacman {
+  animation: workspace-pacman-arrive 280ms cubic-bezier(0.18, 0.82, 0.24, 1);
+}
+
+@keyframes workspace-pacman-arrive {
+  0% {
+    transform: scale(0.84);
+    opacity: 0.54;
+  }
+  64% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.00);
+    opacity: 1;
+  }
+}
+
+.workspace-button.workspace-id-1.active .workspace-pacman { color: alpha(@primary, 0.96); }
+.workspace-button.workspace-id-2.active .workspace-pacman { color: alpha(@secondary, 0.96); }
+.workspace-button.workspace-id-3.active .workspace-pacman { color: alpha(@tertiary, 0.96); }
+.workspace-button.workspace-id-4.active .workspace-pacman { color: alpha(#72f5ad, 0.96); }
+.workspace-button.workspace-id-5.active .workspace-pacman { color: alpha(#f1b95e, 0.96); }
+
+@keyframes clock-v28-reel-old {
+  0% {
+    transform: translateY(0);
+    opacity: 0.72;
+  }
+  100% {
+    transform: translateY(18px);
+    opacity: 0;
+  }
+}
+
+@keyframes clock-v28-reel-new {
+  0% {
+    transform: translateY(-18px);
+    opacity: 0.36;
+  }
+  68% {
+    transform: translateY(2px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.clock-reel-digit {
+  min-width: 8px;
+  min-height: 18px;
+  animation: none;
+}
+
+.clock-reel-digit-face {
+  color: @on_surface;
+  font-size: 13px;
+  font-weight: 900;
+  font-feature-settings: "tnum";
+  letter-spacing: 0;
+}
+
+.clock-reel-old {
+  opacity: 0;
+}
+
+.clock-reel-new {
+  opacity: 1;
+}
+
+.clock-reel-digit.changed .clock-reel-old {
+  animation: clock-v28-reel-old 440ms cubic-bezier(0.18, 0.82, 0.24, 1);
+}
+
+.clock-reel-digit.changed .clock-reel-new {
+  animation: clock-v28-reel-new 440ms cubic-bezier(0.18, 0.82, 0.24, 1);
+}
+
+.clock-reel-digit.clock-reel-tick-odd.changed .clock-reel-old,
+.clock-reel-digit.clock-reel-tick-odd.changed .clock-reel-new {
+  animation-delay: 1ms;
+}
+
+@keyframes popup-v28-stable-reveal {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  76% {
+    opacity: 1;
+    transform: translateY(1px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.popup-window-frame {
+  animation: popup-v28-stable-reveal 180ms cubic-bezier(0.18, 0.82, 0.24, 1);
+  border-color: alpha(@outline_variant, 0.25);
+  background-image: linear-gradient(155deg,
+    alpha(@surface_container_high, 0.970),
+    alpha(@surface, 0.952) 54%,
+    alpha(@primary_container, 0.54));
+  box-shadow:
+    0 18px 38px alpha(#000000, 0.40),
+    0 0 0 1px alpha(@primary, 0.050),
+    inset 0 1px alpha(@on_surface, 0.080);
+}
+
+.motion-soft-magnetic .popup-window-frame {
+  transition:
+    opacity 190ms cubic-bezier(0.18, 0.86, 0.24, 1),
+    box-shadow 210ms cubic-bezier(0.18, 0.86, 0.24, 1),
+    border-color 190ms ease;
+  animation-duration: 205ms;
+  animation-timing-function: cubic-bezier(0.18, 0.86, 0.24, 1);
+}
+
+.motion-precise-futuristic .popup-window-frame {
+  transition:
+    opacity 120ms cubic-bezier(0.16, 0.74, 0.20, 1),
+    box-shadow 130ms cubic-bezier(0.16, 0.74, 0.20, 1),
+    border-color 110ms ease;
+  animation-duration: 130ms;
+  animation-timing-function: cubic-bezier(0.16, 0.72, 0.20, 1);
+}
+
+.popup-calendar {
+  border-color: alpha(@outline_variant, 0.22);
+  background-image: linear-gradient(155deg,
+    alpha(@surface_container_high, 0.970),
+    alpha(@surface, 0.952) 58%,
+    alpha(@secondary_container, 0.36));
+}
+
+.calendar-panel {
+  min-width: 252px;
+  padding: 10px;
+}
+
+.calendar-widget {
+  padding: 5px 6px 7px 6px;
+  border-color: alpha(@outline_variant, 0.14);
+  border-radius: 14px;
+  background: alpha(@surface_container_lowest, 0.58);
+  box-shadow:
+    inset 0 1px alpha(@on_surface, 0.040),
+    inset 0 0 0 1px alpha(#000000, 0.080);
+}
+
+.calendar-footer-action {
+  min-height: 26px;
+  padding: 0 8px;
+  border-color: alpha(@outline_variant, 0.13);
+  border-radius: 9px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.38),
+    alpha(@surface_container, 0.24));
+  box-shadow: inset 0 1px alpha(@on_surface, 0.034);
+}
+
+.calendar-footer-action:hover {
+  transform: none;
+  border-color: alpha(@primary, 0.24);
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.22),
+    alpha(@surface_container_high, 0.34));
+}
+
+.network-trigger-icon {
+  min-width: 15px;
+  min-height: 15px;
+}
+
+.wifi-signal-offline {
+  color: alpha(@on_surface_variant, 0.42);
+}
+
+.wifi-signal-weak {
+  color: alpha(@error, 0.92);
+}
+
+.wifi-signal-ok {
+  color: alpha(#f1b95e, 0.94);
+}
+
+.wifi-signal-strong {
+  color: alpha(#72f5ad, 0.96);
+}
+
+.power-trigger-content {
+  min-width: 20px;
+  min-height: 24px;
+}
+
+.power-trigger-shell {
+  min-width: 20px;
+  min-height: 20px;
+  border: 1px solid alpha(@error, 0.30);
+  border-radius: 8px;
+  background-image: linear-gradient(145deg,
+    alpha(@error_container, 0.44),
+    alpha(@surface_container_high, 0.46));
+  box-shadow: inset 0 1px alpha(@on_error_container, 0.10);
+}
+
+.power-trigger-icon {
+  color: alpha(@error, 0.94);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.power-trigger-status-dot {
+  min-width: 5px;
+  min-height: 5px;
+  margin-left: -2px;
+  color: alpha(@secondary, 0.96);
+}
+
+@keyframes battery-v28-warning-pulse {
+  0% {
+    box-shadow:
+      0 3px 8px alpha(#000000, 0.14),
+      0 0 0 alpha(@error, 0),
+      inset 0 1px alpha(@on_surface, 0.05);
+  }
+  45% {
+    box-shadow:
+      0 3px 8px alpha(#000000, 0.14),
+      0 0 14px alpha(@error, 0.36),
+      inset 0 1px alpha(@on_surface, 0.08);
+  }
+  100% {
+    box-shadow:
+      0 3px 8px alpha(#000000, 0.14),
+      0 0 0 alpha(@error, 0),
+      inset 0 1px alpha(@on_surface, 0.05);
+  }
+}
+
+.battery-card {
+  padding: 0 8px;
+  color: alpha(@on_surface_variant, 0.82);
+  transition:
+    color 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    background-image 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.battery-icon {
+  color: alpha(@on_surface_variant, 0.82);
+}
+
+.battery-percent {
+  color: alpha(@on_surface_variant, 0.86);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.battery-warning-sign {
+  min-width: 7px;
+  color: alpha(@error, 0.96);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.battery-card.battery-level-good .battery-icon,
+.battery-card.battery-level-good .battery-percent {
+  color: alpha(@on_surface_variant, 0.86);
+}
+
+.battery-card.battery-level-full .battery-icon,
+.battery-card.battery-level-full .battery-percent,
+.battery-card.charging .battery-icon,
+.battery-card.charging .battery-percent {
+  color: alpha(#72f5ad, 0.96);
+}
+
+.battery-card.battery-level-warning:not(.charging) {
+  color: alpha(#f1b95e, 0.96);
+  border-color: alpha(#f1b95e, 0.46);
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_highest, 0.72),
+    alpha(#f1b95e, 0.16));
+  animation: battery-v28-warning-pulse 760ms ease 3;
+}
+
+.battery-card.battery-level-critical:not(.charging) {
+  color: alpha(@error, 0.96);
+  border-color: alpha(@error, 0.56);
+  background-image: linear-gradient(145deg,
+    alpha(@error_container, 0.34),
+    alpha(@surface_container_high, 0.62));
+  animation: battery-v28-warning-pulse 680ms ease 3;
+}
+
+.battery-card.battery-level-warning:not(.charging) .battery-icon,
+.battery-card.battery-level-warning:not(.charging) .battery-percent {
+  color: alpha(#f1b95e, 0.96);
+}
+
+.battery-card.battery-level-critical:not(.charging) .battery-icon,
+.battery-card.battery-level-critical:not(.charging) .battery-percent {
+  color: alpha(@error, 0.96);
+}
+
+.theme-light .workspace-button.workspace-id-1.active .workspace-pacman { color: alpha(@primary, 0.92); }
+.theme-light .workspace-button.workspace-id-2.active .workspace-pacman { color: alpha(@secondary, 0.92); }
+.theme-light .workspace-button.workspace-id-3.active .workspace-pacman { color: alpha(@tertiary, 0.92); }
+.theme-light .workspace-button.workspace-id-4.active .workspace-pacman { color: alpha(#0f7e59, 0.92); }
+.theme-light .workspace-button.workspace-id-5.active .workspace-pacman { color: alpha(#a46c00, 0.92); }
+
+.theme-light .popup-window-frame {
+  border-color: alpha(#607684, 0.20);
+  background-image: linear-gradient(145deg,
+    alpha(#dde8ec, 0.92),
+    alpha(#d0dee5, 0.88) 58%,
+    alpha(#c3d3dc, 0.82));
+  box-shadow:
+    0 16px 32px alpha(#2d424e, 0.15),
+    inset 0 1px alpha(#edf4f6, 0.54);
+}
+
+.theme-light .calendar-widget {
+  border-color: alpha(#607684, 0.14);
+  background: alpha(#edf4f6, 0.54);
+  box-shadow:
+    inset 0 1px alpha(#ffffff, 0.46),
+    inset 0 0 0 1px alpha(#314653, 0.045);
+}
+
+/* Base geometry sentinel: motion-scoped selectors above are more specific. */
+.workspace-button {
+  min-width: 27px;
+  min-height: 22px;
+  padding: 0;
+  margin: 2px 0;
+  border: 1px solid alpha(@outline_variant, 0.15);
+  border-radius: 8px;
+  color: alpha(@on_surface_variant, 0.82);
+  background: alpha(@surface_container_high, 0.18);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  font-size: 11px;
+  font-weight: 760;
+  transition: 190ms ease;
+}
+
+.workspace-button.expanded {
+  padding: 0 7px;
+}

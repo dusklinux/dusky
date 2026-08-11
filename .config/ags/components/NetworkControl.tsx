@@ -7,15 +7,24 @@ import PanelTrigger from "./PanelTrigger"
 import { runBluetoothManager, runNetworkManager } from "../lib/dusky"
 import { formatBytes, formatRate, formatSince, networkSession } from "../lib/networkSession"
 
+function wifiSignalClass(strength: number) {
+  const value = Number(strength) || 0
+  if (value <= 0) return "wifi-signal-offline"
+  if (value < 38) return "wifi-signal-weak"
+  if (value < 68) return "wifi-signal-ok"
+  return "wifi-signal-strong"
+}
+
 function ConnectionHeader({ network }: { network: any }) {
   const ssid = createBinding(network, "wifi", "ssid")((value) => value || "Not connected")
   const signal = createBinding(network, "wifi", "activeAccessPoint", "strength")((value) => Number(value ?? 0))
   const icon = createBinding(network, "wifi", "iconName")((value) => value || "network-wireless-offline-symbolic")
+  const iconClass = signal((value) => `network-connection-icon ${wifiSignalClass(value)}`)
   const status = signal((value) => value > 0 ? `Connected · Signal ${value}%` : "Wi-Fi available")
 
   return (
     <box class="network-connection-header" spacing={12}>
-      <image class="network-connection-icon" pixelSize={28} iconName={icon} />
+      <image class={iconClass} pixelSize={28} iconName={icon} />
       <box class="network-connection-copy" orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER} hexpand>
         <label class="network-connection-name" xalign={0} label={ssid} />
         <label class="network-connection-status" xalign={0} label={status} />
@@ -80,12 +89,14 @@ function SessionData() {
 
 function QuickAction({
   iconName,
+  iconClass,
   title,
   subtitle,
   actionLabel,
   onClicked,
 }: {
   iconName: any
+  iconClass?: any
   title: string
   subtitle?: any
   actionLabel: string
@@ -94,7 +105,7 @@ function QuickAction({
   return (
     <button class="network-quick-action" onClicked={onClicked}>
       <box spacing={10}>
-        <image class="network-quick-icon" pixelSize={19} iconName={iconName} />
+        <image class={iconClass ?? "network-quick-icon"} pixelSize={19} iconName={iconName} />
         <box class="network-quick-copy" orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER} hexpand>
           <label class="network-quick-title" xalign={0} label={title} />
           {subtitle && <label class="network-quick-subtitle" xalign={0} label={subtitle as any} />}
@@ -125,6 +136,8 @@ export function NetworkPanel() {
     return count === 1 ? "1 connected" : `${count} connected`
   })
   const wifiActionIcon = createBinding(network, "wifi", "iconName")((icon) => icon || "network-wireless-offline-symbolic")
+  const wifiActionSignal = createBinding(network, "wifi", "activeAccessPoint", "strength")((value) => Number(value ?? 0))
+  const wifiActionClass = wifiActionSignal((value) => `network-quick-icon ${wifiSignalClass(value)}`)
   const btActionIcon = createComputed(() => btPowered() === "On" ? "bluetooth-active-symbolic" : "bluetooth-disabled-symbolic")
 
   return (
@@ -136,6 +149,7 @@ export function NetworkPanel() {
       <box class="network-actions" orientation={Gtk.Orientation.VERTICAL} spacing={4}>
         <QuickAction
           iconName={wifiActionIcon}
+          iconClass={wifiActionClass}
           title="Wi-Fi"
           actionLabel="Manage"
           onClicked={() => runNetworkManager()}
@@ -154,11 +168,15 @@ export function NetworkPanel() {
 
 export default function NetworkControl() {
   const network = AstalNetwork.get_default()
+  const wifiIcon = createBinding(network, "wifi", "iconName")((icon) => icon || "network-wireless-offline-symbolic")
+  const wifiSignal = createBinding(network, "wifi", "activeAccessPoint", "strength")((value) => Number(value ?? 0))
+  const wifiIconClass = wifiSignal((value) => `network-trigger-icon ${wifiSignalClass(value)}`)
+
   return (
     <PanelTrigger
       panel="network"
       class="control-leader network-leader"
-      child={<image iconName={createBinding(network, "wifi", "iconName")((icon) => icon || "network-wireless-offline-symbolic")} />}
+      child={<image class={wifiIconClass} iconName={wifiIcon} />}
     />
   )
 }

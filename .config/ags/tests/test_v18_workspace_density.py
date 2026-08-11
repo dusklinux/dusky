@@ -42,7 +42,8 @@ def test_workspace_hover_preview_is_independent_from_persistent_active_indicator
     assert 'claimWorkspaceInteraction(id)' in tsx
     assert 'openWorkspacePreview(id)' in tsx
     assert 'hoverPanel("workspace")' in tsx
-    assert 'workspace-active-dot' in tsx
+    assert 'workspace-pacman' in tsx
+    assert 'workspace-active-dot' not in tsx
     assert '.workspace-button.active' in css
     assert '.workspace-button.hovered' in css
 

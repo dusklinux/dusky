@@ -36,9 +36,10 @@ def test_exactly_one_segment_owns_expanded_state():
     assert 'if (active() === id) classes.push("active")' in tsx
 
 
-def test_active_workspace_replaces_number_with_centered_dot_and_keeps_ring_class():
+def test_active_workspace_replaces_number_with_centered_pacman_and_keeps_ring_class():
     tsx = read("components/Workspaces.tsx")
-    assert 'class="workspace-active-dot"' in tsx
+    assert 'class="workspace-pacman"' in tsx
+    assert 'class="workspace-active-dot"' not in tsx
     assert 'class="workspace-number"' in tsx
     assert 'visible={isActive}' in tsx
     assert 'visible={isInactive}' in tsx
@@ -80,23 +81,23 @@ def test_elastic_css_has_separated_segments_stable_transfer_and_no_vertical_boun
     assert 'workspace-selection-plate' not in tail
 
 
-def test_active_ring_dot_and_hover_sheen_are_visually_distinct():
+def test_active_pacman_and_hover_sheen_are_visually_distinct():
     css = read("style.css")
     marker = '/* v2.5.3 — elastic workspace rail */'
     tail = tail_after(css, marker)
 
     active = css_block(tail, '.workspace-button.active')
     hovered = css_block(tail, '.workspace-button.hovered')
-    dot = css_block(tail, '.workspace-active-dot')
+    pacman = css_block(tail, '.workspace-pacman')
 
     assert 'border-color: alpha(@primary, 0.58)' in active
     assert '0 0 0 1px alpha(@primary, 0.14)' in active
     assert 'background-image:' in hovered
     assert 'alpha(@secondary_container, 0.46)' in hovered
-    assert 'min-width: 6px' in dot
-    assert 'min-height: 6px' in dot
-    assert 'border-radius: 999px' in dot
-    assert '0 0 7px alpha(@primary, 0.52)' in dot
+    assert 'min-width: 12px' in pacman
+    assert 'min-height: 14px' in pacman
+    assert 'font-size: 13px' in pacman
+    assert 'font-weight: 900' in pacman
 
 
 def test_active_compact_state_keeps_indicator_when_hover_moves_elsewhere():
@@ -114,4 +115,4 @@ def test_frosted_mist_has_matching_elastic_active_and_hover_states():
     tail = tail_after(css, marker)
     assert '.theme-light .workspace-button.active' in tail
     assert '.theme-light .workspace-button.hovered' in tail
-    assert '.theme-light .workspace-active-dot' in tail
+    assert '.theme-light .workspace-button.workspace-id-1.active .workspace-pacman' in tail

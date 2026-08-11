@@ -34,7 +34,7 @@ export default function Workspaces() {
           const isActive = createComputed(() => active() === id)
           const isInactive = createComputed(() => active() !== id)
           const buttonClass = createComputed(() => {
-            const classes = ["workspace-button"]
+            const classes = ["workspace-button", `workspace-id-${id}`]
             const interactionId = workspaceInteractionId()
             const expanded = interactionId === id || (interactionId === null && active() === id)
             if (active() === id) classes.push("active")
@@ -84,7 +84,7 @@ export default function Workspaces() {
                   valign={Gtk.Align.CENTER}
                 >
                   <label class="workspace-number" visible={isInactive} label={`${id}`} />
-                  <box class="workspace-active-dot" visible={isActive} />
+                  <label class="workspace-pacman" visible={isActive} label="󰮯" />
                 </box>
                 <box
                   $type="overlay"

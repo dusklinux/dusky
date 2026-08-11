@@ -1,6 +1,6 @@
 # Adaptive Glass AGS for Dusky
 
-Base shell: Adaptive Glass AGS v2.6.4
+Base shell: Adaptive Glass AGS v2.8
 
 Adaptive Glass is the AGS v3 / GTK4 shell being developed as a polished Dusky bar option while the existing Waybar setup remains untouched as a fallback.
 
@@ -36,6 +36,13 @@ PYTHONDONTWRITEBYTECODE=1 uvx --from pytest pytest -q .config/ags/tests
 ```
 
 
+
+## v2.8 — Status Motion Corrections
+
+- Replaces the single-face clock animation with old/new reel faces so changed digits replay a vertical casino motion every minute.
+- Removes scale from popup reveal motion and overrides motion-scoped popup transitions so calendar and control popups no longer stretch sideways while appearing.
+- Swaps the active workspace dot for a color-indexed Pac-Man-style glyph and lengthens workspace recoil timing so the snap is more visible.
+- Adds Wi-Fi signal color states, a centered power trigger shell, and battery level classes with three-pulse warning/critical feedback.
 
 ## v2.6.4 — Explicit Preview Bounds
 
