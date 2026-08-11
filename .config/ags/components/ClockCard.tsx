@@ -4,6 +4,18 @@ import { createPoll } from "ags/time"
 import PanelTrigger from "./PanelTrigger"
 import { openClocks } from "../lib/dusky"
 
+function clockReelValueClass(char: string) {
+  return /^[0-9]$/.test(char) ? `clock-reel-value-${char}` : "clock-reel-value-empty"
+}
+
+function ClockReelDigit({ value }: { value: any }) {
+  return (
+    <box class={value((char: string) => `clock-reel-digit ${clockReelValueClass(char)}`)}>
+      <label class="clock-reel-digit-face" label={value} />
+    </box>
+  )
+}
+
 export function CalendarPanel() {
   const date = createPoll("", 60000, () => GLib.DateTime.new_now_local().format("%A, %B %d, %Y") ?? "")
   let calendar: Gtk.Calendar
@@ -51,6 +63,7 @@ export function CalendarPanel() {
 export default function ClockCard() {
   const time = createPoll("", 1000, () => GLib.DateTime.new_now_local().format("%I:%M") ?? "")
   const meridiem = createPoll("", 1000, () => GLib.DateTime.new_now_local().format("%p") ?? "")
+  const timeSlots = Array.from({ length: 5 }, (_, index) => time((value) => value[index] ?? " "))
 
   return (
     <PanelTrigger
@@ -58,8 +71,13 @@ export default function ClockCard() {
       class="clock-card"
       child={
         <box class="clock-card-content" spacing={6} valign={Gtk.Align.CENTER}>
-          <box class="clock-accent-dot" valign={Gtk.Align.CENTER} />
-          <label class="clock-time" label={time} />
+          <box class="clock-reel" spacing={1} valign={Gtk.Align.CENTER}>
+            {timeSlots.map((value, index) =>
+              index === 2
+                ? <label class="clock-reel-separator" label={value} />
+                : <ClockReelDigit value={value} />
+            )}
+          </box>
           <Gtk.Separator class="clock-divider" orientation={Gtk.Orientation.VERTICAL} />
           <label class="clock-meridiem" label={meridiem} />
         </box>

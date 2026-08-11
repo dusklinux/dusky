@@ -14,3 +14,5 @@ def test_gtk_css_contains_no_unsupported_web_layout_properties():
     css = (ROOT / "style.css").read_text()
     assert not re.search(r"(?m)^\s*overflow\s*:", css)
     assert not re.search(r"(?m)^\s*max-width\s*:", css)
+    assert not re.search(r"(?m)^\s*display\s*:", css)
+    assert not re.search(r"translate[XY]?\([^)]*%", css)

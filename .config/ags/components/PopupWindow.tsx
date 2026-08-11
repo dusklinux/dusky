@@ -35,6 +35,11 @@ export default function PopupWindow({
     const themeClass = themeMode() === "light" ? "theme-light" : "theme-dark"
     return `adaptive-glass-popup-window ${themeClass} ${motionClass()}`
   })
+  const frameClass = createComputed(() =>
+    activePanel() === id
+      ? `popup-window-frame popup-${id} popup-open`
+      : `popup-window-frame popup-${id}`,
+  )
   const windowVisible = createComputed(() => (enabled?.() ?? true) && activePanel() === id)
 
   onCleanup(() => {
@@ -61,7 +66,7 @@ export default function PopupWindow({
       marginLeft={marginLeft}
       marginRight={marginRight}
     >
-      <box class={`popup-window-frame popup-${id}`}>
+      <box class={frameClass}>
         <Gtk.EventControllerMotion
           onEnter={() => enterPanel(id)}
           onLeave={() => leavePanel(id)}

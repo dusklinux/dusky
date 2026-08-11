@@ -81,19 +81,26 @@ def test_clock_has_stronger_hierarchy_without_changing_calendar_trigger():
     css = read("style.css")
 
     assert 'panel="calendar"' in tsx
-    assert 'class="clock-accent-dot"' in tsx
+    assert 'ClockReelDigit' in tsx
+    assert 'class="clock-reel"' in tsx
+    assert 'class="clock-reel-separator"' in tsx
+    assert 'class="clock-accent-dot"' not in tsx
     card = css_block(css, '.clock-card')
-    time = css_block(css, '.clock-time')
+    digit = css_block(css, '.clock-reel-digit')
+    face = css_block(css, '.clock-reel-digit-face')
     meridiem = css_block(css, '.clock-meridiem')
     dot = css_block(css, '.clock-accent-dot')
     assert 'min-width: 0' in card
-    assert 'padding: 0 8px' in card
+    assert 'padding: 0 9px' in card
     assert 'border-radius: 10px' in card
-    assert 'font-size: 13px' in time
+    assert 'animation: clock-v27-reel-in' in digit
+    assert 'font-size: 13px' in face
     assert 'font-size: 9px' in meridiem
-    assert 'alpha(@primary, 0.78)' in meridiem
-    assert 'min-width: 6px' in dot
-    assert 'min-height: 6px' in dot
+    assert 'alpha(@on_surface_variant, 0.68)' in meridiem
+    assert 'min-width: 0' in dot
+    assert 'min-height: 0' in dot
+    assert 'opacity: 0' in dot
+    assert 'box-shadow: none' in dot
 
 
 def test_all_top_bar_pills_share_one_geometry_language():

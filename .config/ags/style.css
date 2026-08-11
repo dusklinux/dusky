@@ -5003,3 +5003,315 @@ progressbar.media-primary-progress progress {
   font-weight: 760;
   transition: 190ms ease;
 }
+
+/* v2.7 - premium workspace recoil
+ * The magnetic shell remains an overlay-only paint surface. Recoil is more
+ * visible than v2.5.7, but it still avoids sizing properties completely. */
+@keyframes workspace-v27-premium-recoil {
+  0% {
+    transform: scaleX(1.00);
+    opacity: 0.34;
+    box-shadow:
+      0 1px 3px alpha(#000000, 0.08),
+      0 0 4px alpha(@secondary, 0.06);
+  }
+  26% {
+    transform: scaleX(1.32);
+    opacity: 1.00;
+    box-shadow:
+      0 4px 13px alpha(@primary, 0.30),
+      0 0 22px alpha(@secondary, 0.30),
+      inset 0 1px alpha(@on_surface, 0.16);
+  }
+  48% {
+    transform: scaleX(0.91);
+    opacity: 0.86;
+    box-shadow:
+      0 2px 7px alpha(@primary, 0.15),
+      0 0 10px alpha(@secondary, 0.10),
+      inset 0 1px alpha(@on_surface, 0.08);
+  }
+  72% {
+    transform: scaleX(1.06);
+    opacity: 0.50;
+    box-shadow:
+      0 1px 5px alpha(@primary, 0.08),
+      0 0 6px alpha(@secondary, 0.05);
+  }
+  100% {
+    transform: scaleX(1.00);
+    opacity: 0;
+    box-shadow: 0 0 0 alpha(@secondary, 0);
+  }
+}
+
+.motion-soft-magnetic .workspace-magnetic-shell.snapping {
+  border-color: alpha(@secondary, 0.62);
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.34),
+    alpha(@surface_container_highest, 0.22) 52%,
+    alpha(@primary_container, 0.28));
+  animation: workspace-v27-premium-recoil 640ms cubic-bezier(0.16, 0.88, 0.18, 1);
+}
+
+.motion-precise-futuristic .workspace-magnetic-shell.snapping {
+  border-color: alpha(@tertiary, 0.58);
+  background-image: linear-gradient(135deg,
+    alpha(@tertiary_container, 0.28),
+    alpha(@surface_container_highest, 0.16) 50%,
+    alpha(@primary_container, 0.20));
+  animation: workspace-v27-premium-recoil 360ms cubic-bezier(0.16, 0.72, 0.18, 1);
+}
+
+.theme-light.motion-soft-magnetic .workspace-magnetic-shell.snapping,
+.theme-light.motion-precise-futuristic .workspace-magnetic-shell.snapping {
+  background-image: linear-gradient(145deg,
+    alpha(@secondary_container, 0.24),
+    alpha(#eef4f6, 0.34) 52%,
+    alpha(@primary_container, 0.20));
+}
+
+/* v2.7 - casino-scroll time pill */
+@keyframes clock-v27-reel-in {
+  0% {
+    transform: translateY(-18px);
+    opacity: 0.36;
+  }
+  58% {
+    transform: translateY(2px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.clock-card {
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 9px;
+  border-color: alpha(@outline_variant, 0.20);
+  border-radius: 10px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_highest, 0.70),
+    alpha(@surface_container_high, 0.76) 68%,
+    alpha(@secondary_container, 0.18));
+  transition: 180ms ease;
+}
+
+.clock-card-content {
+  min-width: 0;
+  min-height: 22px;
+}
+
+.clock-reel {
+  min-height: 18px;
+}
+
+.clock-reel-digit {
+  min-width: 8px;
+  min-height: 18px;
+  animation: clock-v27-reel-in 420ms cubic-bezier(0.18, 0.82, 0.24, 1);
+}
+
+.clock-reel-digit-face {
+  color: @on_surface;
+  font-size: 13px;
+  font-weight: 900;
+  font-feature-settings: "tnum";
+  letter-spacing: 0;
+}
+
+.clock-reel-separator {
+  min-width: 4px;
+  color: alpha(@on_surface_variant, 0.72);
+  font-size: 13px;
+  font-weight: 820;
+}
+
+.clock-accent-dot {
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.clock-meridiem {
+  color: alpha(@on_surface_variant, 0.68);
+  font-size: 9px;
+  font-weight: 820;
+  letter-spacing: 0.25px;
+}
+
+.theme-light .clock-card {
+  border-color: alpha(#607583, 0.19);
+  background-image: linear-gradient(145deg,
+    alpha(#e0e9ed, 0.88),
+    alpha(#d4e1e7, 0.84) 68%,
+    alpha(@secondary_container, 0.16));
+}
+
+.theme-light .clock-reel-digit-face {
+  color: #243640;
+}
+
+.theme-light .clock-reel-separator,
+.theme-light .clock-meridiem {
+  color: #536570;
+}
+
+/* v2.7 - shared popup reveal */
+@keyframes popup-v27-reveal {
+  0% {
+    opacity: 0;
+    transform: translateY(-7px) scale(0.982);
+  }
+  62% {
+    opacity: 1;
+    transform: translateY(1px) scale(1.004);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.popup-window-frame {
+  transform-origin: top center;
+  animation: popup-v27-reveal 210ms cubic-bezier(0.18, 0.82, 0.24, 1);
+  border-color: alpha(@outline_variant, 0.26);
+  background-image: linear-gradient(155deg,
+    alpha(@surface_container_high, 0.968),
+    alpha(@surface, 0.950) 52%,
+    alpha(@primary_container, 0.58));
+  box-shadow:
+    0 18px 40px alpha(#000000, 0.42),
+    0 0 0 1px alpha(@primary, 0.055),
+    inset 0 1px alpha(@on_surface, 0.085);
+}
+
+.popup-window-frame.popup-open {
+  opacity: 1;
+}
+
+.motion-soft-magnetic .popup-window-frame {
+  animation-duration: 250ms;
+  animation-timing-function: cubic-bezier(0.18, 0.86, 0.24, 1);
+}
+
+.motion-precise-futuristic .popup-window-frame {
+  animation-duration: 145ms;
+  animation-timing-function: cubic-bezier(0.16, 0.72, 0.20, 1);
+}
+
+/* v2.7 - calendar frosted refinement */
+.calendar-panel {
+  min-width: 252px;
+  padding: 11px;
+}
+
+.popup-calendar {
+  border-color: alpha(@outline_variant, 0.24);
+  background-image: linear-gradient(155deg,
+    alpha(@surface_container_high, 0.970),
+    alpha(@surface, 0.950) 58%,
+    alpha(@secondary_container, 0.42));
+}
+
+.calendar-date-header {
+  min-height: 25px;
+  padding: 0 3px 4px 3px;
+}
+
+.calendar-date-label {
+  color: alpha(@on_surface_variant, 0.76);
+  font-size: 9px;
+  font-weight: 840;
+  letter-spacing: 0.25px;
+}
+
+.calendar-widget {
+  padding: 5px 6px 7px 6px;
+  border-color: alpha(@outline_variant, 0.16);
+  border-radius: 16px;
+  background: alpha(@surface_container_lowest, 0.62);
+  box-shadow:
+    inset 0 1px alpha(@on_surface, 0.045),
+    inset 0 0 0 1px alpha(#000000, 0.10);
+}
+
+.calendar-widget header {
+  min-height: 32px;
+  margin: 0 0 5px 0;
+  border-bottom-color: alpha(@outline_variant, 0.10);
+}
+
+.calendar-widget header button {
+  min-width: 24px;
+  min-height: 24px;
+  border-radius: 9px;
+}
+
+.calendar-widget .day-number {
+  min-width: 25px;
+  min-height: 24px;
+  border-radius: 9px;
+}
+
+.calendar-widget .today {
+  color: @on_primary_container;
+  background: alpha(@primary_container, 0.45);
+  box-shadow: inset 0 0 0 1px alpha(@primary, 0.38);
+}
+
+.calendar-widget .day-number:selected,
+.calendar-widget .today:selected,
+.calendar-widget:selected {
+  color: @on_primary;
+  background-image: linear-gradient(145deg,
+    alpha(@primary, 0.88),
+    alpha(@secondary, 0.62));
+  box-shadow:
+    0 3px 9px alpha(@primary, 0.18),
+    inset 0 1px alpha(@on_primary, 0.16);
+}
+
+.calendar-footer {
+  min-height: 26px;
+}
+
+.calendar-footer-action {
+  min-height: 26px;
+  padding: 0 8px;
+  border-color: alpha(@outline_variant, 0.14);
+  border-radius: 9px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.42),
+    alpha(@surface_container, 0.26));
+  box-shadow:
+    inset 0 1px alpha(@on_surface, 0.035),
+    0 1px 0 alpha(#000000, 0.06);
+}
+
+.theme-light .popup-window-frame {
+  border-color: alpha(#607684, 0.22);
+  background-image: linear-gradient(145deg,
+    alpha(#dde8ec, 0.93),
+    alpha(#d0dee5, 0.89) 58%,
+    alpha(#c3d3dc, 0.84));
+  box-shadow:
+    0 16px 34px alpha(#2d424e, 0.16),
+    inset 0 1px alpha(#edf4f6, 0.56);
+}
+
+.theme-light .calendar-widget {
+  border-color: alpha(#607684, 0.16);
+  background: alpha(#edf4f6, 0.58);
+  box-shadow:
+    inset 0 1px alpha(#ffffff, 0.48),
+    inset 0 0 0 1px alpha(#314653, 0.05);
+}

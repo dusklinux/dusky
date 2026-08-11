@@ -21,14 +21,14 @@ let motionMonitor: Gio.FileMonitor | null = null
 
 const WORKSPACE_TIMINGS = {
   "soft-magnetic": {
-    interactionReleaseDelayMs: 140,
-    snapDelayMs: 205,
-    snapPulseMs: 560,
+    interactionReleaseDelayMs: 130,
+    snapDelayMs: 120,
+    snapPulseMs: 640,
   },
   "precise-futuristic": {
-    interactionReleaseDelayMs: 85,
-    snapDelayMs: 125,
-    snapPulseMs: 320,
+    interactionReleaseDelayMs: 75,
+    snapDelayMs: 70,
+    snapPulseMs: 360,
   },
 } as const
 

@@ -70,7 +70,13 @@ def test_elastic_css_has_separated_segments_stable_transfer_and_no_vertical_boun
     assert 'padding: 0' in button
     assert 'transition: 190ms ease' in button
     assert 'padding: 0 7px' in expanded
-    assert 'translateY(' not in tail
+    for selector in [
+        '.workspace-button',
+        '.workspace-button.expanded',
+        '.workspace-button.active',
+        '.workspace-button.hovered',
+    ]:
+        assert 'translateY(' not in css_block(tail, selector)
     assert 'workspace-selection-plate' not in tail
 
 

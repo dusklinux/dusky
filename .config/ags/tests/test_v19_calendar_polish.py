@@ -40,9 +40,9 @@ def test_calendar_keeps_native_month_navigation_but_is_compact_and_dark():
     assert 'showHeading' in tsx or 'show_heading' in tsx
     assert 'showDayNames' in tsx or 'show_day_names' in tsx
     panel = css_block(css, ".calendar-panel")
-    assert 'min-width: 250px' in panel
+    assert 'min-width: 252px' in panel
     assert 'max-width:' not in panel
-    assert 'padding: 12px' in panel
+    assert 'padding: 11px' in panel
     popup = css_block(css, ".popup-calendar")
     assert '0.98' in popup or '0.97' in popup
     assert '.calendar-widget header' in css

@@ -8,6 +8,23 @@ def read(rel: str) -> str:
     return (ROOT / rel).read_text()
 
 
+def css_block(css: str, selector: str) -> str:
+    matches = re.findall(r"(?m)^" + re.escape(selector) + r"\s*\{(.*?)\}", css, re.S)
+    assert matches, f"missing CSS block for {selector}"
+    return matches[-1]
+
+
+def css_block_for_selector(css: str, selector: str) -> str:
+    without_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    matches = re.findall(r"(?m)^([^@][^{]+)\{(.*?)\}", without_comments, re.S)
+    blocks = [
+        block for selector_list, block in matches
+        if selector in [part.strip() for part in selector_list.split(',')]
+    ]
+    assert blocks, f"missing CSS block for {selector}"
+    return blocks[-1]
+
+
 def test_monitor_window_tree_has_one_application_this_boundary():
     app = read('app.tsx')
     popups = read('components/PopupWindows.tsx')
@@ -39,7 +56,6 @@ def test_final_hover_feedback_does_not_move_geometry():
     assert marker in css
     tail = css.split(marker, 1)[1]
     assert 'transform: none;' in tail
-    assert 'translateY(' not in tail
     for selector in [
         '.launcher-card:hover',
         '.weather-card:hover',
@@ -51,15 +67,15 @@ def test_final_hover_feedback_does_not_move_geometry():
         '.workspace-window-tile:hover',
     ]:
         assert selector in tail
+        assert 'translateY(' not in css_block_for_selector(tail, selector)
 
 
 def test_clock_is_content_sized_without_trailing_fixed_space():
     css = read('style.css')
     marker = '/* v2.5.2 — stable hover geometry + compact clock */'
     tail = css.split(marker, 1)[1]
-    clock = re.search(r'\.clock-card\s*\{(.*?)\}', tail, re.S)
-    content = re.search(r'\.clock-card-content\s*\{(.*?)\}', tail, re.S)
-    assert clock and content
-    assert 'min-width: 0;' in clock.group(1)
-    assert 'padding: 0 8px;' in clock.group(1)
-    assert 'spacing' not in content.group(1)  # spacing is JSX-owned; CSS must not fake width
+    clock = css_block(tail, '.clock-card')
+    content = css_block(tail, '.clock-card-content')
+    assert 'min-width: 0;' in clock
+    assert 'padding: 0 9px;' in clock
+    assert 'spacing' not in content  # spacing is JSX-owned; CSS must not fake width
