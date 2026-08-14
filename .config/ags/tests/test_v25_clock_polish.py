@@ -41,10 +41,10 @@ def test_clock_pill_is_restrained_center_anchor_with_subtle_motion():
     meridiem = css_block(css, '.clock-meridiem')
     dot = css_block(css, '.clock-accent-dot')
 
-    assert 'min-width: 90px' in card
-    assert 'padding: 4px 9px 1px 9px' in card
-    assert 'border-top-color: alpha(@on_surface, 0.24)' in card
-    assert 'border-radius: 0 0 7px 7px' in card
+    assert 'min-width: 84px' in card
+    assert 'padding: 3px 10px 2px 10px' in card
+    assert 'border-top: none' in card
+    assert 'border-radius: 0 0 12px 12px' in card
     assert '0 0 10px alpha(@primary' not in card
     assert 'transform: none' in hover
     assert 'animation: none' in digit

@@ -6482,3 +6482,344 @@ progressbar.media-primary-progress progress {
   background: #ffd166;
   box-shadow: 0 0 8px alpha(#ffd166, 0.58);
 }
+
+/* v2.11 quiet status polish */
+@keyframes clock-v211-hour-glint {
+  0% {
+    opacity: 0;
+    box-shadow: none;
+  }
+  28% {
+    opacity: 0.72;
+    box-shadow:
+      0 0 5px alpha(@on_surface, 0.18),
+      0 0 11px alpha(@primary, 0.22);
+  }
+  100% {
+    opacity: 0;
+    box-shadow: none;
+  }
+}
+
+.motion-soft-magnetic .workspace-button,
+.motion-precise-futuristic .workspace-button {
+  transition: all 170ms ease;
+}
+
+.workspace-button.expanded {
+  padding: 0 5px;
+}
+
+.workspace-button.hovered {
+  min-width: 28px;
+  min-height: 22px;
+  transform: none;
+  border-color: alpha(@outline_variant, 0.24);
+  color: alpha(@on_surface, 0.92);
+  background-image: linear-gradient(180deg,
+    alpha(@surface_container_highest, 0.22),
+    alpha(@surface_container_high, 0.12));
+  box-shadow:
+    inset 0 1px alpha(@on_surface, 0.04),
+    0 0 0 1px alpha(@on_surface, 0.025);
+  animation: none;
+}
+
+.workspace-button.hovered:hover:not(.active) {
+  transform: none;
+  border-color: alpha(@outline_variant, 0.28);
+  background-image: linear-gradient(180deg,
+    alpha(@surface_container_highest, 0.26),
+    alpha(@surface_container_high, 0.14));
+  box-shadow:
+    inset 0 1px alpha(@on_surface, 0.05),
+    0 0 0 1px alpha(@on_surface, 0.03);
+  animation: none;
+}
+
+.workspace-button.active {
+  min-width: 34px;
+  min-height: 22px;
+  transform: none;
+  border-radius: 12px;
+  border-color: alpha(@primary, 0.46);
+  color: @on_primary_container;
+  background-image: linear-gradient(180deg,
+    alpha(@primary_container, 0.24),
+    alpha(@surface_container_highest, 0.16));
+  box-shadow:
+    inset 0 0 8px alpha(@primary, 0.28),
+    inset 0 1px alpha(@on_surface, 0.04),
+    0 0 0 1px alpha(@primary, 0.10),
+    0 0 10px alpha(@primary, 0.12);
+  animation: none;
+}
+
+.workspace-button.active:not(.expanded) {
+  min-width: 26px;
+  border-color: alpha(@primary, 0.46);
+  background: alpha(@primary_container, 0.14);
+  box-shadow:
+    inset 0 0 7px alpha(@primary, 0.24),
+    0 0 0 1px alpha(@primary, 0.08);
+  animation: none;
+}
+
+.workspace-button.active.expanded,
+.workspace-button.active.hovered {
+  min-width: 34px;
+  border-color: alpha(@primary, 0.46);
+  background-image: linear-gradient(180deg,
+    alpha(@primary_container, 0.24),
+    alpha(@surface_container_highest, 0.16));
+  box-shadow:
+    inset 0 0 8px alpha(@primary, 0.28),
+    inset 0 1px alpha(@on_surface, 0.04),
+    0 0 0 1px alpha(@primary, 0.10),
+    0 0 10px alpha(@primary, 0.12);
+  animation: none;
+}
+
+.motion-soft-magnetic .workspace-button.hovered,
+.motion-soft-magnetic .workspace-button.hovered:hover:not(.active),
+.motion-soft-magnetic .workspace-button.active,
+.motion-soft-magnetic .workspace-button.active.expanded,
+.motion-soft-magnetic .workspace-button.active.hovered,
+.motion-precise-futuristic .workspace-button.hovered,
+.motion-precise-futuristic .workspace-button.hovered:hover:not(.active),
+.motion-precise-futuristic .workspace-button.active,
+.motion-precise-futuristic .workspace-button.active.expanded,
+.motion-precise-futuristic .workspace-button.active.hovered {
+  animation: none;
+}
+
+.motion-soft-magnetic .workspace-button.active {
+  animation: none;
+}
+
+.motion-precise-futuristic .workspace-button.active {
+  animation: none;
+}
+
+.workspace-button {
+  min-width: 20px;
+  min-height: 22px;
+  padding: 0 2px;
+  margin: 2px 0;
+  border: 1px solid alpha(@outline_variant, 0.13);
+  border-radius: 12px;
+  color: alpha(@on_surface_variant, 0.82);
+  background: alpha(@surface_container_high, 0.14);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  font-size: 10px;
+  font-weight: 780;
+  transition: min-width 170ms ease, min-height 170ms ease, padding 170ms ease, border-color 170ms ease, background 170ms ease, box-shadow 170ms ease, color 170ms ease;
+}
+
+.clock-card {
+  min-width: 84px;
+  min-height: 28px;
+  margin-top: -2px;
+  padding: 3px 10px 2px 10px;
+  border: 1px solid alpha(@outline_variant, 0.16);
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+  color: @on_surface;
+  background: alpha(@surface_container_low, 0.58);
+  box-shadow:
+    0 4px 10px alpha(#000000, 0.13),
+    inset 0 1px alpha(@on_surface, 0.05),
+    inset 0 -1px alpha(@primary, 0.08);
+}
+
+.clock-card:hover {
+  transform: none;
+  border-color: alpha(@outline_variant, 0.20);
+  border-top: none;
+  background: alpha(@surface_container, 0.60);
+  box-shadow:
+    0 5px 12px alpha(#000000, 0.15),
+    inset 0 1px alpha(@on_surface, 0.06),
+    inset 0 -1px alpha(@primary, 0.10);
+}
+
+.clock-card-stage {
+  min-height: 23px;
+  min-width: 80px;
+}
+
+.clock-card-content {
+  min-height: 23px;
+}
+
+.clock-hour-line {
+  min-width: 46px;
+  min-height: 1px;
+  margin: 1px 0 0 0;
+  border-radius: 999px;
+  opacity: 0;
+  background: alpha(@primary, 0.48);
+  box-shadow: none;
+}
+
+.clock-hour-line.hour-changed {
+  animation: clock-v211-hour-glint 900ms ease-out;
+}
+
+.battery-card {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid alpha(@outline_variant, 0.16);
+  border-radius: 16px;
+  color: alpha(@on_surface, 0.92);
+  background: alpha(@surface_container_low, 0.56);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.12),
+    inset 0 1px alpha(@on_surface, 0.045),
+    inset 0 -1px alpha(@primary, 0.07);
+}
+
+.battery-card:hover {
+  transform: none;
+  border-color: alpha(@outline_variant, 0.22);
+  background: alpha(@surface_container, 0.58);
+  box-shadow:
+    0 4px 10px alpha(#000000, 0.13),
+    inset 0 1px alpha(@on_surface, 0.05),
+    inset 0 -1px alpha(@primary, 0.08);
+}
+
+.battery-waybar05-glass {
+  min-width: 23px;
+  min-height: 12px;
+  border-radius: 999px;
+  background: alpha(@surface_container_highest, 0.32);
+  box-shadow:
+    inset 0 0 0 1px alpha(@outline_variant, 0.16),
+    inset 0 1px alpha(@on_surface, 0.04);
+}
+
+.battery-waybar05-level {
+  min-width: 16px;
+  min-height: 7px;
+  margin: 2px 3px;
+  border-radius: 999px;
+  background-image: linear-gradient(90deg,
+    alpha(@primary, 0.82),
+    alpha(@tertiary, 0.58));
+  box-shadow: inset 0 0 6px alpha(@primary, 0.16);
+  animation: none;
+}
+
+.battery-percent {
+  color: alpha(@on_surface, 0.92);
+  font-size: 10px;
+  font-weight: 900;
+  text-shadow: none;
+}
+
+.battery-card.battery-level-empty {
+  color: @error;
+  border-color: alpha(@error, 0.38);
+  background: alpha(@surface_container_low, 0.58);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.12),
+    inset 0 0 8px alpha(@error, 0.12),
+    inset 0 1px alpha(@on_surface, 0.035);
+  animation: battery-v28-warning-pulse 760ms cubic-bezier(0.4, 0, 0.6, 1) 3;
+}
+
+.battery-card.battery-level-empty .battery-waybar05-level {
+  min-width: 5px;
+  background-image: linear-gradient(90deg, alpha(@error, 0.78), alpha(#ff5a78, 0.46));
+  box-shadow: none;
+  animation: none;
+}
+
+.battery-card.battery-level-critical:not(.charging) {
+  color: @error;
+  border-color: alpha(@error, 0.34);
+  animation: battery-v28-warning-pulse 760ms cubic-bezier(0.4, 0, 0.6, 1) 3;
+}
+
+.battery-card.battery-level-critical .battery-waybar05-level {
+  min-width: 9px;
+  background-image: linear-gradient(90deg, alpha(@error, 0.78), alpha(#ff5a78, 0.46));
+  box-shadow: none;
+  animation: none;
+}
+
+.battery-card.battery-level-warning:not(.charging) {
+  color: #ffd166;
+  border-color: alpha(#ffd166, 0.38);
+  animation: battery-v28-warning-pulse 760ms cubic-bezier(0.4, 0, 0.6, 1) 3;
+}
+
+.battery-card.battery-level-warning .battery-waybar05-level {
+  min-width: 13px;
+  background-image: linear-gradient(90deg, alpha(#ffd166, 0.80), alpha(#ff9f1c, 0.48));
+  box-shadow: none;
+  animation: none;
+}
+
+.battery-card.battery-level-good .battery-waybar05-level { min-width: 16px; }
+.battery-card.battery-level-full .battery-waybar05-level,
+.battery-card.charging .battery-waybar05-level { min-width: 20px; }
+
+.battery-card.charging {
+  color: alpha(@on_primary, 0.94);
+  background: alpha(@primary, 0.58);
+  border-color: alpha(@primary, 0.56);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.12),
+    inset 0 0 8px alpha(@primary, 0.18),
+    inset 0 1px alpha(@on_primary, 0.10);
+}
+
+.power-leader {
+  color: alpha(@on_surface_variant, 0.86);
+  border-color: alpha(@outline_variant, 0.16);
+  background: alpha(@surface_container_low, 0.52);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.12),
+    inset 0 1px alpha(@on_surface, 0.04);
+}
+
+.power-leader:hover {
+  color: @on_surface;
+  border-color: alpha(@primary, 0.26);
+  background: alpha(@surface_container, 0.58);
+  box-shadow:
+    0 4px 10px alpha(#000000, 0.13),
+    inset 0 0 8px alpha(@primary, 0.10),
+    inset 0 1px alpha(@on_surface, 0.05);
+}
+
+.power-trigger-content {
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.power-trigger-icon {
+  color: alpha(@on_surface_variant, 0.88);
+  font-size: 14px;
+  font-weight: 850;
+  text-shadow: none;
+}
+
+.power-leader:hover .power-trigger-icon {
+  color: @on_surface;
+  text-shadow: none;
+}
+
+.power-trigger-status-dot {
+  min-width: 0;
+  min-height: 0;
+  margin-top: 0;
+  margin-right: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0;
+}

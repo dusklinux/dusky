@@ -23,11 +23,6 @@ export default function Battery() {
   const percent = percentage((value) => `${Math.round(Number(value) * 100)}%`)
   const levelClass = createComputed(() => batteryLevelClass(Number(percentage()), Boolean(charging())))
   const cardClass = levelClass((value) => `battery-card ${value}`)
-  const warningVisible = levelClass((value) =>
-    value.includes("battery-level-warning") ||
-    value.includes("battery-level-critical") ||
-    value.includes("battery-level-empty")
-  )
 
   return (
     <box class={cardClass} visible={createBinding(battery, "isPresent")} spacing={6}>
@@ -35,12 +30,6 @@ export default function Battery() {
         <box class="battery-waybar05-level" />
       </box>
       <label class="battery-percent" valign={Gtk.Align.CENTER} label={percent} />
-      <label
-        class="battery-warning-sign"
-        valign={Gtk.Align.CENTER}
-        visible={warningVisible}
-        label="!"
-      />
     </box>
   )
 }

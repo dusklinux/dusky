@@ -44,7 +44,7 @@ def test_workspace_resting_geometry_stays_compact_and_stable():
     assert button_blocks and expanded_blocks
     assert 'min-width: 20px' in button_blocks[-1]
     assert 'padding: 0 2px' in button_blocks[-1]
-    assert 'padding: 0 7px' in expanded_blocks[-1]
+    assert 'padding: 0 5px' in expanded_blocks[-1]
     assert 'animation:' not in expanded_blocks[-1]
 
 

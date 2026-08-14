@@ -111,10 +111,15 @@ def test_battery_uses_level_classes_and_three_pulse_warning():
     assert "battery-shell" not in tsx
     assert "battery-icon" not in tsx
     assert "battery-percent" in tsx
+    assert "battery-warning-sign" not in tsx
     assert "battery-v28-warning-pulse" in css
     warning = css_block(css, ".battery-card.battery-level-warning:not(.charging)")
     critical = css_block(css, ".battery-card.battery-level-critical:not(.charging)")
+    empty = css_block(css, ".battery-card.battery-level-empty")
     assert "battery-v28-warning-pulse" in warning
     assert "3" in warning
     assert "battery-v28-warning-pulse" in critical
     assert "3" in critical
+    assert "battery-v28-warning-pulse" in empty
+    assert "3" in empty
+    assert "infinite" not in empty
