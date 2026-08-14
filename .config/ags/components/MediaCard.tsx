@@ -69,11 +69,11 @@ export default function MediaCard() {
                     <image class="media-source-icon" pixelSize={16} iconName={sourceIcon} visible={coverArt((path) => !path)} />
                   </box>
                   <box class="media-copy" orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER}>
-                    <MarqueeText text={() => player.title ?? "Unknown track"} width={30} />
+                    <MarqueeText text={() => player.title ?? "Unknown track"} width={22} />
                     <label
                       class="media-artist"
                       xalign={0}
-                      maxWidthChars={22}
+                      maxWidthChars={18}
                       ellipsize={Pango.EllipsizeMode.END}
                       label={artist((value) => value || player.identity || "Media")}
                     />

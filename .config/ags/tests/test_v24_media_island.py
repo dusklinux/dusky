@@ -34,7 +34,8 @@ def test_bar_renders_exactly_one_primary_media_island_not_for_each_player():
 
 
 def test_media_island_is_content_driven_and_capped_not_fixed_wide():
-    assert 'width={30}' in MEDIA or 'width={28}' in MEDIA
+    assert 'width={22}' in MEDIA
+    assert 'maxWidthChars={18}' in MEDIA
     assert 'min-width: 168px' not in CSS
     copy = re.search(r'\.media-copy\s*\{(.*?)\}', CSS, re.S)
     assert copy

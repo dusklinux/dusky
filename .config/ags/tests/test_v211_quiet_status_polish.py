@@ -14,6 +14,11 @@ def css_block(css: str, selector: str) -> str:
     return matches[-1]
 
 
+def v211_section(css: str) -> str:
+    section = css.split("/* v2.11 quiet status polish */", 1)[1]
+    return section.split("/* v2.12 reference primary glow capsule polish */", 1)[0]
+
+
 def test_v211_final_cascade_marker_and_workspace_hover_does_not_retrigger_bloom():
     css = read("style.css")
     final = css.split("/* v2.11 quiet status polish */", 1)[1]
@@ -33,10 +38,11 @@ def test_v211_final_cascade_marker_and_workspace_hover_does_not_retrigger_bloom(
 
 def test_v211_clock_is_compact_notch_with_hour_only_glint():
     css = read("style.css")
+    section = v211_section(css)
 
-    card = css_block(css, ".clock-card")
-    line = css_block(css, ".clock-hour-line")
-    changed_line = css_block(css, ".clock-hour-line.hour-changed")
+    card = css_block(section, ".clock-card")
+    line = css_block(section, ".clock-hour-line")
+    changed_line = css_block(section, ".clock-hour-line.hour-changed")
 
     assert "margin-top: -2px" in card
     assert "min-width: 84px" in card
@@ -50,10 +56,11 @@ def test_v211_clock_is_compact_notch_with_hour_only_glint():
 def test_v211_battery_is_quiet_horizontal_gauge_without_alarm_glyph():
     tsx = read("components/Battery.tsx")
     css = read("style.css")
+    section = v211_section(css)
 
-    card = css_block(css, ".battery-card")
-    level = css_block(css, ".battery-waybar05-level")
-    empty = css_block(css, ".battery-card.battery-level-empty")
+    card = css_block(section, ".battery-card")
+    level = css_block(section, ".battery-waybar05-level")
+    empty = css_block(section, ".battery-card.battery-level-empty")
 
     assert "battery-warning-sign" not in tsx
     assert 'label="!"' not in tsx
@@ -66,10 +73,11 @@ def test_v211_battery_is_quiet_horizontal_gauge_without_alarm_glyph():
 
 def test_v211_power_trigger_is_neutral_and_centered():
     css = read("style.css")
+    section = v211_section(css)
 
-    leader = css_block(css, ".power-leader")
-    icon = css_block(css, ".power-trigger-icon")
-    dot = css_block(css, ".power-trigger-status-dot")
+    leader = css_block(section, ".power-leader")
+    icon = css_block(section, ".power-trigger-icon")
+    dot = css_block(section, ".power-trigger-status-dot")
 
     assert "@error" not in leader
     assert "@error" not in icon

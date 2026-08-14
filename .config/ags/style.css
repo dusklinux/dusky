@@ -6823,3 +6823,347 @@ progressbar.media-primary-progress progress {
   box-shadow: none;
   opacity: 0;
 }
+
+/* v2.12 reference primary glow capsule polish */
+.clock-card {
+  min-width: 88px;
+  min-height: 29px;
+  margin-top: 0;
+  padding: 0 13px;
+  border: 1px solid alpha(@primary, 0.28);
+  border-color: alpha(@primary, 0.28);
+  border-radius: 13px;
+  color: alpha(@on_surface, 0.94);
+  background-image: linear-gradient(180deg,
+    alpha(@surface_container_high, 0.54),
+    alpha(@surface_container_low, 0.42));
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.18),
+    0 0 0 1px alpha(@primary, 0.09),
+    0 0 12px alpha(@primary, 0.24),
+    inset 0 0 10px alpha(@primary, 0.08),
+    inset 0 1px alpha(@on_surface, 0.06);
+}
+
+.clock-card:hover {
+  transform: none;
+  border-color: alpha(@primary, 0.42);
+  background-image: linear-gradient(180deg,
+    alpha(@surface_container_highest, 0.58),
+    alpha(@surface_container_low, 0.46));
+  box-shadow:
+    0 4px 10px alpha(#000000, 0.20),
+    0 0 0 1px alpha(@primary, 0.13),
+    0 0 14px alpha(@primary, 0.34),
+    inset 0 0 12px alpha(@primary, 0.11),
+    inset 0 1px alpha(@on_surface, 0.07);
+}
+
+.clock-card-stage {
+  min-width: 82px;
+  min-height: 25px;
+}
+
+.clock-card-content {
+  min-height: 25px;
+}
+
+.clock-reel-digit-face {
+  color: alpha(@on_surface, 0.96);
+  font-size: 13px;
+  font-feature-settings: "tnum";
+  text-shadow: 0 0 7px alpha(@primary, 0.22);
+}
+
+.clock-reel-separator,
+.clock-meridiem {
+  color: alpha(@on_surface_variant, 0.76);
+}
+
+.clock-meridiem {
+  color: alpha(@on_surface_variant, 0.68);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.clock-hour-line {
+  min-width: 46px;
+  margin-top: 1px;
+  opacity: 0;
+  background: alpha(@primary, 0.54);
+  box-shadow: none;
+}
+
+.clock-hour-line.hour-changed {
+  animation: clock-v211-hour-glint 900ms ease-out;
+}
+
+.media-card {
+  min-height: 30px;
+  padding: 2px 6px 2px 4px;
+  border-width: 1px;
+  border-style: solid;
+  border-color: alpha(@primary, 0.26);
+  border-radius: 12px;
+  color: alpha(@on_surface, 0.94);
+  background-image: linear-gradient(180deg,
+    alpha(@surface_container_high, 0.52),
+    alpha(@surface_container_low, 0.40));
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.18),
+    0 0 0 1px alpha(@primary, 0.08),
+    0 0 12px alpha(@primary, 0.24),
+    inset 0 0 10px alpha(@primary, 0.07),
+    inset 0 1px alpha(@on_surface, 0.06);
+}
+
+.media-card:hover {
+  transform: none;
+  border-color: alpha(@primary, 0.40);
+  background-image: linear-gradient(180deg,
+    alpha(@surface_container_highest, 0.56),
+    alpha(@surface_container_low, 0.44));
+  box-shadow:
+    0 4px 10px alpha(#000000, 0.20),
+    0 0 0 1px alpha(@primary, 0.12),
+    0 0 15px alpha(@primary, 0.32),
+    inset 0 0 12px alpha(@primary, 0.10),
+    inset 0 1px alpha(@on_surface, 0.07);
+}
+
+.media-main-hit {
+  min-height: 26px;
+  padding: 0 3px;
+  border-radius: 9px;
+}
+
+.media-main-hit:hover {
+  background: alpha(@primary, 0.07);
+}
+
+.media-art-frame {
+  min-width: 24px;
+  min-height: 24px;
+  border-radius: 7px;
+  border: 1px solid alpha(@primary, 0.26);
+  background: alpha(@surface_container_highest, 0.32);
+  box-shadow:
+    0 0 9px alpha(@primary, 0.20),
+    inset 0 1px alpha(@on_surface, 0.05);
+}
+
+.media-source-icon {
+  color: alpha(@primary, 0.88);
+  -gtk-icon-shadow: 0 0 8px alpha(@primary, 0.30);
+}
+
+.media-copy {
+  min-width: 64px;
+}
+
+.media-title,
+.marquee-text {
+  color: alpha(@on_surface, 0.95);
+  font-weight: 900;
+  text-shadow: 0 0 7px alpha(@primary, 0.18);
+}
+
+.media-artist {
+  color: alpha(@on_surface_variant, 0.66);
+  font-size: 8px;
+  font-weight: 760;
+}
+
+.media-controls {
+  min-height: 26px;
+}
+
+.media-control {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: alpha(@on_surface_variant, 0.76);
+  background: transparent;
+  box-shadow: none;
+}
+
+.media-control:hover {
+  color: alpha(@on_surface, 0.94);
+  border-color: alpha(@primary, 0.20);
+  background: alpha(@primary, 0.10);
+  box-shadow: 0 0 8px alpha(@primary, 0.18);
+}
+
+.media-control.play {
+  min-width: 31px;
+  border-color: alpha(@primary, 0.36);
+  color: @on_primary;
+  background: alpha(@primary, 0.62);
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.12),
+    0 0 12px alpha(@primary, 0.42),
+    inset 0 1px alpha(@on_primary, 0.16);
+}
+
+.media-control.play:hover {
+  color: @on_primary;
+  border-color: alpha(@primary, 0.48);
+  background: alpha(@primary, 0.72);
+  box-shadow:
+    0 0 0 1px alpha(@primary, 0.16),
+    0 0 15px alpha(@primary, 0.50),
+    inset 0 1px alpha(@on_primary, 0.18);
+}
+
+.control-leader {
+  min-width: 31px;
+  min-height: 30px;
+  padding: 0 8px;
+  border-width: 1px;
+  border-style: solid;
+  border-color: alpha(@primary, 0.24);
+  border-radius: 12px;
+  color: alpha(@on_surface, 0.90);
+  background: alpha(@surface_container_low, 0.52);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.18),
+    0 0 0 1px alpha(@primary, 0.08),
+    0 0 10px alpha(@primary, 0.22),
+    inset 0 0 9px alpha(@primary, 0.07),
+    inset 0 1px alpha(@on_surface, 0.055);
+}
+
+.control-leader:hover {
+  transform: none;
+  border-color: alpha(@primary, 0.40);
+  color: alpha(@on_surface, 0.98);
+  background: alpha(@surface_container, 0.58);
+  box-shadow:
+    0 4px 10px alpha(#000000, 0.20),
+    0 0 0 1px alpha(@primary, 0.12),
+    0 0 14px alpha(@primary, 0.32),
+    inset 0 0 11px alpha(@primary, 0.10),
+    inset 0 1px alpha(@on_surface, 0.07);
+}
+
+.network-leader {
+  color: alpha(@primary, 0.92);
+}
+
+.network-leader:hover {
+  color: @primary;
+}
+
+.audio-leader,
+.display-leader {
+  color: alpha(@on_surface, 0.88);
+}
+
+.battery-card {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid alpha(@primary, 0.28);
+  border-color: alpha(@primary, 0.28);
+  border-radius: 15px;
+  color: alpha(@on_surface, 0.94);
+  background: alpha(@surface_container_low, 0.52);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.18),
+    0 0 0 1px alpha(@primary, 0.08),
+    0 0 11px alpha(@primary, 0.24),
+    inset 0 0 10px alpha(@primary, 0.07),
+    inset 0 1px alpha(@on_surface, 0.055);
+}
+
+.battery-card:hover {
+  transform: none;
+  border-color: alpha(@primary, 0.42);
+  background: alpha(@surface_container, 0.58);
+  box-shadow:
+    0 4px 10px alpha(#000000, 0.20),
+    0 0 0 1px alpha(@primary, 0.12),
+    0 0 14px alpha(@primary, 0.34),
+    inset 0 0 11px alpha(@primary, 0.10),
+    inset 0 1px alpha(@on_surface, 0.07);
+}
+
+.battery-waybar05-glass {
+  min-width: 25px;
+  min-height: 13px;
+  border-radius: 999px;
+  background: alpha(@surface_container_highest, 0.36);
+  box-shadow:
+    inset 0 0 0 1px alpha(@primary, 0.20),
+    inset 0 1px alpha(@on_surface, 0.05),
+    0 0 8px alpha(@primary, 0.16);
+}
+
+.battery-waybar05-level {
+  min-width: 16px;
+  min-height: 7px;
+  margin: 3px;
+  border-radius: 999px;
+  background-image: linear-gradient(90deg,
+    alpha(@primary, 0.86),
+    alpha(@tertiary, 0.62));
+  box-shadow:
+    0 0 7px alpha(@primary, 0.24),
+    inset 0 1px alpha(@on_primary, 0.12);
+  animation: none;
+}
+
+.battery-percent {
+  color: alpha(@on_surface, 0.94);
+  font-size: 10px;
+  font-weight: 900;
+  text-shadow: 0 0 7px alpha(@primary, 0.18);
+}
+
+.power-leader {
+  min-width: 31px;
+  min-height: 30px;
+  padding: 0 8px;
+  border-width: 1px;
+  border-style: solid;
+  border-color: alpha(@primary, 0.24);
+  border-radius: 12px;
+  color: alpha(@on_surface, 0.90);
+  background: alpha(@surface_container_low, 0.52);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.18),
+    0 0 0 1px alpha(@primary, 0.08),
+    0 0 10px alpha(@primary, 0.22),
+    inset 0 0 9px alpha(@primary, 0.07),
+    inset 0 1px alpha(@on_surface, 0.055);
+}
+
+.power-leader:hover {
+  color: @on_surface;
+  border-color: alpha(@primary, 0.40);
+  background: alpha(@surface_container, 0.58);
+  box-shadow:
+    0 4px 10px alpha(#000000, 0.20),
+    0 0 0 1px alpha(@primary, 0.12),
+    0 0 14px alpha(@primary, 0.32),
+    inset 0 0 11px alpha(@primary, 0.10),
+    inset 0 1px alpha(@on_surface, 0.07);
+}
+
+.power-trigger-content {
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.power-trigger-icon {
+  color: alpha(@on_surface, 0.92);
+  font-size: 14px;
+  font-weight: 850;
+  text-shadow: none;
+}
+
+.power-leader:hover .power-trigger-icon {
+  color: @primary;
+  text-shadow: none;
+}

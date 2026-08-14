@@ -43,7 +43,7 @@ def test_workspace_rail_uses_five_dynamic_slots_and_quiet_pacman_hover():
         assert f".workspace-button.workspace-accent-{workspace_id}.active .workspace-pacman" in tail
 
 
-def test_clock_has_24h_toggle_and_quiet_notch_hour_glint():
+def test_clock_has_24h_toggle_and_reference_capsule_hour_glint():
     tsx = read("components/ClockCard.tsx")
     css = read("style.css")
 
@@ -57,10 +57,11 @@ def test_clock_has_24h_toggle_and_quiet_notch_hour_glint():
     new_face = css_block(css, ".clock-reel-digit.changed .clock-reel-new")
     old_face = css_block(css, ".clock-reel-digit.changed .clock-reel-old")
     line = css_block(css, ".clock-hour-line")
-    assert "min-width: 84px" in card
-    assert "padding: 3px 10px 2px 10px" in card
-    assert "border-radius: 0 0 12px 12px" in card
-    assert "background: alpha(@surface_container_low, 0.58)" in card
+    assert "min-width: 88px" in card
+    assert "padding: 0 13px" in card
+    assert "border-radius: 13px" in card
+    assert "border-color: alpha(@primary, 0.28)" in card
+    assert "background-image:" in card
     assert "clock-v211-hour-glint" in css
     assert "opacity: 0" in line
     assert "min-width: 46px" in line

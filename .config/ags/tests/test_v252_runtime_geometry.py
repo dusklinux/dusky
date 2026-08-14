@@ -76,7 +76,7 @@ def test_clock_is_content_sized_without_trailing_fixed_space():
     tail = css.split(marker, 1)[1]
     clock = css_block(tail, '.clock-card')
     content = css_block(tail, '.clock-card-content')
-    assert 'min-width: 84px;' in clock
-    assert 'padding: 3px 10px 2px 10px;' in clock
-    assert 'border-radius: 0 0 12px 12px;' in clock
+    assert 'min-width: 88px;' in clock
+    assert 'padding: 0 13px;' in clock
+    assert 'border-radius: 13px;' in clock
     assert 'spacing' not in content  # spacing is JSX-owned; CSS must not fake width

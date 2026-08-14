@@ -32,7 +32,7 @@ def test_clock_pill_has_structured_time_and_meridiem_not_plain_single_label():
     assert 'class="clock-label"' not in tsx
 
 
-def test_clock_pill_is_restrained_center_anchor_with_subtle_motion():
+def test_clock_pill_is_reference_capsule_with_subtle_motion():
     css = read('style.css')
     card = css_block(css, '.clock-card')
     hover = css_block(css, '.clock-card:hover')
@@ -41,11 +41,11 @@ def test_clock_pill_is_restrained_center_anchor_with_subtle_motion():
     meridiem = css_block(css, '.clock-meridiem')
     dot = css_block(css, '.clock-accent-dot')
 
-    assert 'min-width: 84px' in card
-    assert 'padding: 3px 10px 2px 10px' in card
-    assert 'border-top: none' in card
-    assert 'border-radius: 0 0 12px 12px' in card
-    assert '0 0 10px alpha(@primary' not in card
+    assert 'min-width: 88px' in card
+    assert 'padding: 0 13px' in card
+    assert 'border-color: alpha(@primary, 0.28)' in card
+    assert 'border-radius: 13px' in card
+    assert '0 0 12px alpha(@primary' in card
     assert 'transform: none' in hover
     assert 'animation: none' in digit
     assert 'clock-v28-reel-old' in css
