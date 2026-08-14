@@ -7,10 +7,12 @@ type OptionalFeatureProps = {
 
 export default function OptionalFeature({ enabled, render }: OptionalFeatureProps) {
   return (
-    <With value={enabled}>
-      {(enabled) => {
-        return enabled ? render() : <box visible={false} />
-      }}
-    </With>
+    <box class="optional-feature-slot" visible={enabled}>
+      <With value={enabled}>
+        {(enabled) => {
+          return enabled ? render() : <box visible={false} />
+        }}
+      </With>
+    </box>
   )
 }

@@ -119,6 +119,7 @@ export default function ClockCard() {
   })
   const meridiem = createPoll("", 1000, () => GLib.DateTime.new_now_local().format("%p") ?? "")
   const meridiemVisible = clock24hEnabled((enabled) => !enabled)
+  const clockCardClass = clock24hEnabled((enabled) => `clock-card ${enabled ? "clock-mode-24h" : "clock-mode-12h"}`)
   const hourLineClass = time((frame) => frame.hourChanged ? "clock-hour-line hour-changed" : "clock-hour-line")
   const timeSlots = Array.from({ length: 5 }, (_, index) => time((frame) => {
     const previous = frame.previous[index] ?? " "
@@ -129,10 +130,10 @@ export default function ClockCard() {
   return (
     <PanelTrigger
       panel="calendar"
-      class="clock-card"
+      class={clockCardClass}
       child={
         <overlay class="clock-card-stage">
-          <box class="clock-card-content" spacing={6} valign={Gtk.Align.CENTER}>
+          <box class="clock-card-content" spacing={0} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
             <box class="clock-reel" spacing={1} valign={Gtk.Align.CENTER}>
               {timeSlots.map((slot, index) =>
                 index === 2
@@ -140,9 +141,16 @@ export default function ClockCard() {
                   : <ClockReelDigit slot={slot} />
               )}
             </box>
-            <Gtk.Separator class="clock-divider" orientation={Gtk.Orientation.VERTICAL} visible={meridiemVisible} />
-            <label class="clock-meridiem" visible={meridiemVisible} label={meridiem} />
           </box>
+          <label
+            $type="overlay"
+            class="clock-meridiem"
+            visible={meridiemVisible}
+            canTarget={false}
+            halign={Gtk.Align.END}
+            valign={Gtk.Align.CENTER}
+            label={meridiem}
+          />
           <box
             $type="overlay"
             class={hourLineClass}

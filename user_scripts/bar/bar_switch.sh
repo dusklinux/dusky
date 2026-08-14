@@ -29,6 +29,8 @@ readonly ADAPTIVE_INSTANCE="dusky-adaptive-glass"
 readonly ADAPTIVE_ENTRY="${HOME}/.config/ags/app.tsx"
 readonly ADAPTIVE_LOG="${XDG_RUNTIME_DIR:-/tmp}/dusky-adaptive-glass.log"
 readonly LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/bar_switch.lock"
+readonly WAYBAR_SETTLE_SEC="2"
+readonly WAYBAR_UNIT="waybar-adaptive-glass"
 
 if [[ -t 2 ]]; then
     C_INFO='\033[0;34m'; C_OK='\033[0;32m'; C_WARN='\033[0;33m'
@@ -80,6 +82,24 @@ is_adaptive_glass_running() {
     ags list 2>/dev/null | grep -Fx "$ADAPTIVE_INSTANCE" >/dev/null 2>&1
 }
 
+wait_for_waybar() {
+    local attempts="${1:-12}"
+    local i
+
+    for (( i = 0; i < attempts; i++ )); do
+        is_waybar_running && return 0
+        sleep 0.1
+    done
+
+    return 1
+}
+
+waybar_stayed_running() {
+    wait_for_waybar || return 1
+    sleep "$WAYBAR_SETTLE_SEC"
+    is_waybar_running
+}
+
 stop_waybar() {
     if is_waybar_running; then
         log_info "Stopping Waybar..."
@@ -96,21 +116,67 @@ stop_adaptive_glass() {
     log_ok "Adaptive Glass stopped."
 }
 
+start_waybar_direct() {
+    if ! command -v waybar >/dev/null 2>&1; then
+        log_err "waybar command not found."
+        return 1
+    fi
+
+    log_info "Starting Waybar directly..."
+    (
+        exec 9>&-
+        unset XDG_ACTIVATION_TOKEN DESKTOP_STARTUP_ID
+        setsid waybar </dev/null >/dev/null 2>&1 &
+    )
+}
+
+start_waybar_service() {
+    if ! command -v systemd-run >/dev/null 2>&1; then
+        return 1
+    fi
+
+    log_info "Starting Waybar as a user service..."
+    systemd-run --user --quiet --collect --unit="$WAYBAR_UNIT" -- waybar
+}
+
 start_waybar() {
+    if is_waybar_running; then
+        log_ok "Waybar is already running."
+        return 0
+    fi
+
+    if start_waybar_service; then
+        if waybar_stayed_running; then
+            log_ok "Waybar launched."
+            return 0
+        fi
+        log_warn "systemd-run did not leave a stable Waybar process; falling back."
+    fi
+
     if [[ -f "$WAYBAR_TOGGLE" ]]; then
         log_info "Starting Waybar via waybar_toggle.sh..."
-        (
+        if (
             exec 9>&-
             bash "$WAYBAR_TOGGLE" --on
-        ) &
-    else
-        log_info "Starting Waybar directly..."
-        (
-            exec 9>&-
-            setsid waybar </dev/null >/dev/null 2>&1 &
-        )
+        ); then
+            if waybar_stayed_running; then
+                log_ok "Waybar launched."
+                return 0
+            fi
+            log_warn "waybar_toggle.sh did not leave a stable Waybar process; falling back."
+        else
+            log_warn "waybar_toggle.sh failed; falling back."
+        fi
     fi
-    log_ok "Waybar launched."
+
+    start_waybar_direct
+    if waybar_stayed_running; then
+        log_ok "Waybar launched."
+        return 0
+    fi
+
+    log_err "Waybar failed to stay running."
+    return 1
 }
 
 start_adaptive_glass() {

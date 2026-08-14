@@ -27,8 +27,9 @@ def test_clock_pill_has_structured_time_and_meridiem_not_plain_single_label():
     assert 'clock-reel-new' in tsx
     assert 'class="clock-reel-separator"' in tsx
     assert 'class="clock-accent-dot"' not in tsx
-    assert 'class="clock-divider"' in tsx
+    assert 'class="clock-divider"' not in tsx
     assert 'class="clock-meridiem"' in tsx
+    assert '$type="overlay"' in tsx
     assert 'class="clock-label"' not in tsx
 
 

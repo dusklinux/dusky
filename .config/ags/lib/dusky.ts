@@ -101,7 +101,7 @@ export function runCava() {
 }
 
 export function runTheme(mode: "dark" | "light" = "dark") {
-  return runShell(`dusky-run "${HOME}/user_scripts/theme_matugen/theme_ctl.sh" set --mode ${mode}`)
+  return runShell(`"${HOME}/user_scripts/theme_matugen/theme_ctl.sh" set --mode ${mode}`)
 }
 
 export function runWallpaper() {

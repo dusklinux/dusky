@@ -43,6 +43,10 @@ assert_log_not_contains() {
 }
 
 setup_fake_home() {
+    unset AGS_LIST_RUNNING AGS_RUN_SLEEP
+    unset PGREP_STATUS PGREP_STATUSES PGREP_WAYBAR_AFTER_DIRECT PGREP_WAYBAR_AFTER_SYSTEMD
+    unset SYSTEMD_RUN_STATUS
+
     TEST_ROOT="$(mktemp -d)"
     export TEST_ROOT
     export HOME="$TEST_ROOT/home"
@@ -78,6 +82,26 @@ STUB
     cat > "$TEST_ROOT/bin/pgrep" <<'STUB'
 #!/usr/bin/env bash
 printf 'pgrep %s\n' "$*" >> "$CALL_LOG"
+if [[ " $* " == *" waybar "* && "${PGREP_WAYBAR_AFTER_DIRECT:-0}" == "1" && -f "$TEST_ROOT/waybar-direct-started" ]]; then
+    exit 0
+fi
+if [[ " $* " == *" waybar "* && "${PGREP_WAYBAR_AFTER_SYSTEMD:-0}" == "1" && -f "$TEST_ROOT/waybar-systemd-started" ]]; then
+    exit 0
+fi
+if [[ -n "${PGREP_STATUSES:-}" ]]; then
+    seq_file="$TEST_ROOT/pgrep-statuses"
+    if ! [[ -f "$seq_file" ]]; then
+        printf '%s\n' "$PGREP_STATUSES" > "$seq_file"
+    fi
+    seq="$(cat "$seq_file")"
+    status="${seq%%,*}"
+    if [[ "$seq" == *","* ]]; then
+        printf '%s\n' "${seq#*,}" > "$seq_file"
+    else
+        : > "$seq_file"
+    fi
+    exit "$status"
+fi
 exit "${PGREP_STATUS:-1}"
 STUB
 
@@ -91,6 +115,22 @@ STUB
 #!/usr/bin/env bash
 printf 'setsid %s\n' "$*" >> "$CALL_LOG"
 exec "$@"
+STUB
+
+    cat > "$TEST_ROOT/bin/waybar" <<'STUB'
+#!/usr/bin/env bash
+printf 'waybar %s\n' "$*" >> "$CALL_LOG"
+touch "$TEST_ROOT/waybar-direct-started"
+exit 0
+STUB
+
+    cat > "$TEST_ROOT/bin/systemd-run" <<'STUB'
+#!/usr/bin/env bash
+printf 'systemd-run %s\n' "$*" >> "$CALL_LOG"
+if [[ " $* " == *" waybar"* ]]; then
+    touch "$TEST_ROOT/waybar-systemd-started"
+fi
+exit "${SYSTEMD_RUN_STATUS:-0}"
 STUB
 
     cat > "$TEST_ROOT/bin/notify-send" <<'STUB'
@@ -203,6 +243,7 @@ test_waybar_switch_stops_adaptive_glass() {
     setup_fake_home
     trap cleanup_fake_home RETURN
     printf 'adaptive-glass\n' > "$HOME/.config/dusky/settings/active_bar"
+    export PGREP_WAYBAR_AFTER_SYSTEMD=1
 
     if ! run_switch waybar >"$TEST_ROOT/stdout" 2>"$TEST_ROOT/stderr"; then
         sed 's/^/stderr: /' "$TEST_ROOT/stderr" >&2 || true
@@ -211,7 +252,43 @@ test_waybar_switch_stops_adaptive_glass() {
 
     assert_eq "waybar" "$(cat "$HOME/.config/dusky/settings/active_bar")" "waybar state"
     assert_log_contains "ags quit --instance dusky-adaptive-glass"
+    assert_log_contains "systemd-run --user --quiet --collect --unit=waybar-adaptive-glass -- waybar"
+    assert_log_not_contains "waybar_toggle --on"
+}
+
+test_waybar_switch_falls_back_when_toggle_exits_without_a_waybar_process() {
+    setup_fake_home
+    trap cleanup_fake_home RETURN
+    printf 'adaptive-glass\n' > "$HOME/.config/dusky/settings/active_bar"
+    export SYSTEMD_RUN_STATUS=1
+    export PGREP_WAYBAR_AFTER_DIRECT=1
+
+    if ! run_switch waybar >"$TEST_ROOT/stdout" 2>"$TEST_ROOT/stderr"; then
+        sed 's/^/stderr: /' "$TEST_ROOT/stderr" >&2 || true
+        fail "switching to waybar should fall back to a direct launch"
+    fi
+
+    assert_eq "waybar" "$(cat "$HOME/.config/dusky/settings/active_bar")" "waybar state"
     assert_log_contains "waybar_toggle --on"
+    assert_log_contains "setsid waybar"
+}
+
+test_waybar_switch_falls_back_when_toggle_process_dies_during_settle() {
+    setup_fake_home
+    trap cleanup_fake_home RETURN
+    printf 'adaptive-glass\n' > "$HOME/.config/dusky/settings/active_bar"
+    export SYSTEMD_RUN_STATUS=1
+    export PGREP_STATUSES="1,1,0,1"
+    export PGREP_WAYBAR_AFTER_DIRECT=1
+
+    if ! run_switch waybar >"$TEST_ROOT/stdout" 2>"$TEST_ROOT/stderr"; then
+        sed 's/^/stderr: /' "$TEST_ROOT/stderr" >&2 || true
+        fail "switching to waybar should recover when the first process dies"
+    fi
+
+    assert_eq "waybar" "$(cat "$HOME/.config/dusky/settings/active_bar")" "waybar state"
+    assert_log_contains "waybar_toggle --on"
+    assert_log_contains "setsid waybar"
 }
 
 test_toggle_from_waybar_starts_adaptive_glass
@@ -220,5 +297,7 @@ test_novabar_argument_is_rejected
 test_start_uses_saved_adaptive_glass_state
 test_adaptive_launch_does_not_leave_switch_lock_held
 test_waybar_switch_stops_adaptive_glass
+test_waybar_switch_falls_back_when_toggle_exits_without_a_waybar_process
+test_waybar_switch_falls_back_when_toggle_process_dies_during_settle
 
 printf 'bar switch adaptive-glass tests: PASS\n'

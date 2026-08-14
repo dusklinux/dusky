@@ -6868,6 +6868,24 @@ progressbar.media-primary-progress progress {
   min-height: 25px;
 }
 
+.clock-card.clock-mode-24h {
+  min-width: 88px;
+  padding: 0 13px;
+}
+
+.clock-card.clock-mode-12h {
+  min-width: 88px;
+  padding: 0 10px;
+}
+
+.clock-card.clock-mode-12h .clock-card-stage {
+  min-width: 82px;
+}
+
+.clock-card.clock-mode-12h .clock-card-content {
+  margin-right: 16px;
+}
+
 .clock-reel-digit-face {
   color: alpha(@on_surface, 0.96);
   font-size: 13px;
@@ -6882,6 +6900,7 @@ progressbar.media-primary-progress progress {
 
 .clock-meridiem {
   color: alpha(@on_surface_variant, 0.68);
+  min-width: 18px;
   font-size: 9px;
   font-weight: 900;
 }
@@ -7093,11 +7112,11 @@ progressbar.media-primary-progress progress {
   min-width: 25px;
   min-height: 13px;
   border-radius: 999px;
-  background: alpha(@surface_container_highest, 0.36);
+  background: alpha(@surface_container_highest, 0.42);
   box-shadow:
-    inset 0 0 0 1px alpha(@primary, 0.20),
-    inset 0 1px alpha(@on_surface, 0.05),
-    0 0 8px alpha(@primary, 0.16);
+    inset 0 0 0 1px alpha(@primary, 0.32),
+    inset 0 1px alpha(@on_surface, 0.06),
+    0 0 9px alpha(@primary, 0.24);
 }
 
 .battery-waybar05-level {
@@ -7106,11 +7125,11 @@ progressbar.media-primary-progress progress {
   margin: 3px;
   border-radius: 999px;
   background-image: linear-gradient(90deg,
-    alpha(@primary, 0.86),
-    alpha(@tertiary, 0.62));
+    alpha(@primary, 0.96),
+    alpha(@tertiary, 0.76));
   box-shadow:
-    0 0 7px alpha(@primary, 0.24),
-    inset 0 1px alpha(@on_primary, 0.12);
+    0 0 10px alpha(@primary, 0.36),
+    inset 0 1px alpha(@on_primary, 0.16);
   animation: none;
 }
 
