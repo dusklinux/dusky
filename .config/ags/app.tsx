@@ -6,6 +6,7 @@ import { readFile } from "ags/file"
 import fallback from "./styles/fallback.css"
 import shellStyle from "./style.css"
 import PopupWindows from "./components/PopupWindows"
+import { clock24hEnabled } from "./lib/clockState"
 import { featureAccessors } from "./lib/featureState"
 import { motionStyle } from "./lib/motionState"
 
@@ -24,6 +25,7 @@ try {
 function preferenceState() {
   return {
     motion: motionStyle(),
+    "clock-24h": clock24hEnabled(),
     features: {
       "workspace-preview": featureAccessors["workspace-preview"](),
       "media-island": featureAccessors["media-island"](),

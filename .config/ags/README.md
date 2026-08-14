@@ -1,6 +1,6 @@
 # Adaptive Glass AGS for Dusky
 
-Base shell: Adaptive Glass AGS v2.9
+Base shell: Adaptive Glass AGS v2.10
 
 Adaptive Glass is the AGS v3 / GTK4 shell being developed as a polished Dusky bar option while the existing Waybar setup remains untouched as a fallback.
 
@@ -17,6 +17,7 @@ Adaptive Glass is the AGS v3 / GTK4 shell being developed as a polished Dusky ba
 Adaptive Glass defaults to the full opinionated experience.
 
 - Motion: `Soft Magnetic` by default, or `Precise Futuristic`.
+- Clock: optional `24-hour Clock` mode hides AM/PM and uses `HH:MM`.
 - Feature toggles: Workspace Preview, Media Island, Weather, Notifications.
 - Settings are stored under `~/.config/dusky/settings/ags`.
 - Feature flags live under `~/.config/dusky/settings/ags/features`.
@@ -36,6 +37,15 @@ PYTHONDONTWRITEBYTECODE=1 uvx --from pytest pytest -q .config/ags/tests
 ```
 
 
+
+## v2.10 — Dynamic Rail and Clock Tab Refinement
+
+- Returns the workspace rail to five visual slots while the last slot dynamically becomes the active workspace number above 5.
+- Keeps workspace numbers neutral and moves the bright recycled 10-color palette onto Pac-Man only.
+- Adds a live Dusky Control Center `24-hour Clock` toggle backed by `~/.config/dusky/settings/ags/clock-24h`.
+- Refines the clock as a flatter top-attached tab matching the workspace pill surface, with one Matugen-tinted top line that glows on hour changes.
+- Replaces the battery shell with a compact Waybar `05_circular_h`-style glass module and state coloring.
+- Normalizes the power trigger to the same control-leader surface as audio and simplifies the launcher to a bare modern Arch symbol.
 
 ## v2.9 — Waybar 05 Glass Polish
 

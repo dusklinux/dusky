@@ -38,7 +38,7 @@ def test_v263_compact_tile_geometry_is_preserved():
 
 
 def test_empty_workspace_still_closes_without_opening_popup():
-    assert 'const windowCount = openWorkspacePreview(id)' in WORKSPACES
+    assert 'const windowCount = openWorkspacePreview(id())' in WORKSPACES
     assert 'if (windowCount === 0)' in WORKSPACES
     zero_branch = WORKSPACES.split('if (windowCount === 0)', 1)[1].split('}', 1)[0]
     assert 'closePanel("workspace")' in zero_branch

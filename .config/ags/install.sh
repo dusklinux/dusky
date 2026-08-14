@@ -44,7 +44,7 @@ ags types -u -d "$DEST" || echo "WARN: type generation failed; AGS can still att
 
 cat <<MSG
 
-Adaptive Glass AGS v2.9 installed at:
+Adaptive Glass AGS v2.10 installed at:
   $DEST
 
 Waybar was not changed.

@@ -6151,3 +6151,334 @@ progressbar.media-primary-progress progress {
   background: #ffd166;
   box-shadow: 0 0 8px alpha(#ffd166, 0.58);
 }
+
+/* v2.10 tail override - dynamic slots and top-tab clock polish */
+@keyframes clock-v210-hour-glow {
+  0% {
+    opacity: 0.54;
+    box-shadow: 0 0 5px alpha(@on_surface, 0.18), 0 0 8px alpha(@primary, 0.12);
+  }
+  38% {
+    opacity: 1;
+    box-shadow: 0 0 9px alpha(@on_surface, 0.32), 0 0 16px alpha(@primary, 0.34);
+  }
+  100% {
+    opacity: 0.68;
+    box-shadow: 0 0 6px alpha(@on_surface, 0.22), 0 0 10px alpha(@primary, 0.16);
+  }
+}
+
+.launcher-card {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  margin: 0 2px 0 0;
+  border: none;
+  border-radius: 0;
+  color: @primary;
+  background: transparent;
+  box-shadow: none;
+  transition: color 180ms ease, text-shadow 180ms ease;
+}
+
+.launcher-card:hover {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: @on_surface;
+}
+
+.launcher-glyph {
+  color: @primary;
+  font-size: 18px;
+  font-weight: 950;
+  text-shadow:
+    0 0 7px alpha(@primary, 0.56),
+    0 0 12px alpha(@on_surface, 0.14);
+}
+
+.launcher-card:hover .launcher-glyph {
+  color: @on_surface;
+  text-shadow:
+    0 0 8px alpha(@on_surface, 0.36),
+    0 0 14px alpha(@primary, 0.24);
+}
+
+.workspace-deck {
+  min-height: 28px;
+  padding: 0 5px;
+  border: 1px solid alpha(@outline_variant, 0.18);
+  border-radius: 20px;
+  background: alpha(@surface_container_low, 0.62);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.13),
+    inset 0 1px alpha(@on_surface, 0.04),
+    inset 0 -1px alpha(@primary, 0.10);
+}
+
+.workspace-button {
+  min-width: 20px;
+  min-height: 22px;
+  padding: 0 2px;
+  margin: 2px 0;
+  border: 1px solid alpha(@outline_variant, 0.13);
+  border-radius: 12px;
+  color: alpha(@on_surface_variant, 0.82);
+  background: alpha(@surface_container_high, 0.14);
+  box-shadow: inset 0 1px alpha(@on_surface, 0.025);
+  font-size: 10px;
+  font-weight: 780;
+  transition: 230ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.workspace-button.active,
+.workspace-button.workspace-accent-1.active,
+.workspace-button.workspace-accent-2.active,
+.workspace-button.workspace-accent-3.active,
+.workspace-button.workspace-accent-4.active,
+.workspace-button.workspace-accent-5.active,
+.workspace-button.workspace-accent-6.active,
+.workspace-button.workspace-accent-7.active,
+.workspace-button.workspace-accent-8.active,
+.workspace-button.workspace-accent-9.active,
+.workspace-button.workspace-accent-10.active,
+.workspace-button.active.hovered,
+.workspace-button.workspace-accent-1.active.hovered,
+.workspace-button.workspace-accent-2.active.hovered,
+.workspace-button.workspace-accent-3.active.hovered,
+.workspace-button.workspace-accent-4.active.hovered,
+.workspace-button.workspace-accent-5.active.hovered,
+.workspace-button.workspace-accent-6.active.hovered,
+.workspace-button.workspace-accent-7.active.hovered,
+.workspace-button.workspace-accent-8.active.hovered,
+.workspace-button.workspace-accent-9.active.hovered,
+.workspace-button.workspace-accent-10.active.hovered {
+  min-width: 36px;
+  min-height: 22px;
+  transform: none;
+  border-radius: 12px;
+  border-color: alpha(@primary, 0.58);
+  color: @on_primary_container;
+  background-image: linear-gradient(145deg,
+    alpha(@primary_container, 0.32),
+    alpha(@surface_container_highest, 0.22));
+  box-shadow:
+    inset 0 0 12px alpha(@primary, 0.54),
+    inset 0 0 4px alpha(@primary, 0.36),
+    0 0 0 1px alpha(@primary, 0.14),
+    0 0 14px alpha(@primary, 0.20);
+  animation: workspace-v29-liquid-bloom 560ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.workspace-number {
+  min-width: 12px;
+  color: alpha(@on_surface_variant, 0.84);
+  font-size: 10px;
+  font-weight: 820;
+}
+
+.workspace-button.workspace-accent-1.active .workspace-pacman,
+.theme-light .workspace-button.workspace-accent-1.active .workspace-pacman { color: #4cc9ff; text-shadow: 0 0 9px alpha(#4cc9ff, 0.72); }
+.workspace-button.workspace-accent-2.active .workspace-pacman,
+.theme-light .workspace-button.workspace-accent-2.active .workspace-pacman { color: #ffd166; text-shadow: 0 0 9px alpha(#ffd166, 0.72); }
+.workspace-button.workspace-accent-3.active .workspace-pacman,
+.theme-light .workspace-button.workspace-accent-3.active .workspace-pacman { color: #ff4fd8; text-shadow: 0 0 9px alpha(#ff4fd8, 0.72); }
+.workspace-button.workspace-accent-4.active .workspace-pacman,
+.theme-light .workspace-button.workspace-accent-4.active .workspace-pacman { color: #75ff6b; text-shadow: 0 0 9px alpha(#75ff6b, 0.72); }
+.workspace-button.workspace-accent-5.active .workspace-pacman,
+.theme-light .workspace-button.workspace-accent-5.active .workspace-pacman { color: #ff9f1c; text-shadow: 0 0 9px alpha(#ff9f1c, 0.72); }
+.workspace-button.workspace-accent-6.active .workspace-pacman,
+.theme-light .workspace-button.workspace-accent-6.active .workspace-pacman { color: #9b7bff; text-shadow: 0 0 9px alpha(#9b7bff, 0.72); }
+.workspace-button.workspace-accent-7.active .workspace-pacman,
+.theme-light .workspace-button.workspace-accent-7.active .workspace-pacman { color: #00ffd1; text-shadow: 0 0 9px alpha(#00ffd1, 0.72); }
+.workspace-button.workspace-accent-8.active .workspace-pacman,
+.theme-light .workspace-button.workspace-accent-8.active .workspace-pacman { color: #ff5a78; text-shadow: 0 0 9px alpha(#ff5a78, 0.72); }
+.workspace-button.workspace-accent-9.active .workspace-pacman,
+.theme-light .workspace-button.workspace-accent-9.active .workspace-pacman { color: #caff00; text-shadow: 0 0 9px alpha(#caff00, 0.72); }
+.workspace-button.workspace-accent-10.active .workspace-pacman,
+.theme-light .workspace-button.workspace-accent-10.active .workspace-pacman { color: #f6f7ff; text-shadow: 0 0 9px alpha(#f6f7ff, 0.62); }
+
+.clock-card {
+  min-width: 90px;
+  min-height: 29px;
+  margin-top: -8px;
+  padding: 4px 9px 1px 9px;
+  border: 1px solid alpha(@outline_variant, 0.18);
+  border-top-color: alpha(@on_surface, 0.24);
+  border-radius: 0 0 7px 7px;
+  background: alpha(@surface_container_low, 0.62);
+  box-shadow:
+    0 6px 14px alpha(#000000, 0.16),
+    inset 0 1px alpha(@on_surface, 0.06),
+    inset 0 -1px alpha(@primary, 0.11);
+}
+
+.clock-card-stage {
+  min-height: 24px;
+  min-width: 86px;
+}
+
+.clock-card-content {
+  min-height: 23px;
+}
+
+.clock-hour-line {
+  min-width: 124px;
+  min-height: 2px;
+  margin: -1px -17px 0 -17px;
+  border-radius: 999px;
+  opacity: 0.68;
+  background: alpha(@on_surface, 0.62);
+  box-shadow:
+    0 0 6px alpha(@on_surface, 0.22),
+    0 0 10px alpha(@primary, 0.16);
+}
+
+.clock-hour-line.hour-changed {
+  animation: clock-v210-hour-glow 1100ms cubic-bezier(0.18, 0.86, 0.24, 1);
+}
+
+.clock-reel-digit.changed .clock-reel-old {
+  animation: clock-v28-reel-old 880ms cubic-bezier(0.16, 0.84, 0.22, 1);
+}
+
+.clock-reel-digit.changed .clock-reel-new {
+  animation: clock-v28-reel-new 880ms cubic-bezier(0.16, 0.84, 0.22, 1);
+}
+
+.battery-card {
+  min-height: 28px;
+  padding: 0 11px;
+  border: 2px solid alpha(@primary_container, 0.55);
+  border-radius: 26px;
+  color: @primary;
+  background: alpha(@surface_container_low, 0.62);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.13),
+    inset 0 1px alpha(@on_surface, 0.04),
+    inset 0 -1px alpha(@primary, 0.10);
+}
+
+.battery-waybar05-glass {
+  min-width: 22px;
+  min-height: 13px;
+  border-radius: 999px;
+  background: alpha(@surface_container_highest, 0.36);
+  box-shadow: inset 0 0 0 1px alpha(@outline_variant, 0.18);
+}
+
+.battery-waybar05-level {
+  min-width: 16px;
+  min-height: 8px;
+  margin: 2px 3px;
+  border-radius: 999px;
+  background-image: linear-gradient(90deg,
+    alpha(@primary, 0.92),
+    alpha(@tertiary, 0.74));
+  box-shadow: inset 0 0 8px alpha(@primary, 0.28);
+  animation: battery-v29-fill-sheen 1800ms ease infinite alternate;
+}
+
+.battery-percent {
+  color: @on_surface;
+  font-size: 10px;
+  font-weight: 950;
+  text-shadow: 0 0 5px alpha(#000000, 0.28);
+}
+
+.battery-warning-sign {
+  min-width: 7px;
+  color: @error;
+  font-size: 11px;
+  font-weight: 950;
+  text-shadow: 0 0 7px alpha(@error, 0.58);
+}
+
+.battery-card.battery-level-empty {
+  color: @error;
+  border-color: alpha(@error, 0.66);
+  animation: battery-v28-warning-pulse 760ms cubic-bezier(0.4, 0, 0.6, 1) 3, battery-v29-zero-glow 1100ms cubic-bezier(0.4, 0, 0.6, 1) infinite alternate;
+}
+
+.battery-card.battery-level-empty .battery-waybar05-level {
+  min-width: 6px;
+  background-image: linear-gradient(90deg, alpha(@error, 0.94), alpha(#ff5a78, 0.72));
+}
+
+.battery-card.battery-level-critical:not(.charging) {
+  color: @error;
+  border-color: alpha(@error, 0.68);
+  animation: battery-v28-warning-pulse 760ms cubic-bezier(0.4, 0, 0.6, 1) 3;
+}
+
+.battery-card.battery-level-critical .battery-waybar05-level {
+  min-width: 9px;
+  background-image: linear-gradient(90deg, alpha(@error, 0.92), alpha(#ff5a78, 0.72));
+}
+
+.battery-card.battery-level-warning:not(.charging) {
+  color: #ffd166;
+  border-color: alpha(#ffd166, 0.70);
+  animation: battery-v28-warning-pulse 760ms cubic-bezier(0.4, 0, 0.6, 1) 3;
+}
+
+.battery-card.battery-level-warning .battery-waybar05-level {
+  min-width: 13px;
+  background-image: linear-gradient(90deg, alpha(#ffd166, 0.94), alpha(#ff9f1c, 0.74));
+}
+
+.battery-card.battery-level-good .battery-waybar05-level { min-width: 16px; }
+.battery-card.battery-level-full .battery-waybar05-level,
+.battery-card.charging .battery-waybar05-level { min-width: 20px; }
+
+.battery-card.charging {
+  color: @on_primary;
+  background: alpha(@primary, 0.72);
+  border-color: alpha(@primary, 0.88);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.13),
+    inset 0 0 10px alpha(@primary, 0.30),
+    inset 0 1px alpha(@on_primary, 0.12);
+}
+
+.power-leader {
+  color: @error;
+}
+
+.power-leader:hover {
+  color: @on_surface;
+  border-color: alpha(@error, 0.42);
+  background: alpha(@surface_container_high, 0.40);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.13),
+    inset 0 0 10px alpha(@error, 0.18),
+    inset 0 1px alpha(@on_surface, 0.04);
+}
+
+.power-trigger-content {
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.power-trigger-icon {
+  color: @error;
+  font-size: 15px;
+  font-weight: 950;
+  text-shadow: 0 0 8px alpha(@error, 0.34);
+}
+
+.power-leader:hover .power-trigger-icon {
+  color: @on_surface;
+  text-shadow: 0 0 9px alpha(@error, 0.30);
+}
+
+.power-trigger-status-dot {
+  min-width: 7px;
+  min-height: 7px;
+  margin-top: 1px;
+  margin-right: 0;
+  border: 1px solid alpha(@surface, 0.82);
+  border-radius: 999px;
+  background: #ffd166;
+  box-shadow: 0 0 8px alpha(#ffd166, 0.58);
+}

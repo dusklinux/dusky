@@ -20,10 +20,10 @@ def test_popup_state_has_preview_pin_state_machine():
 def test_workspace_uses_hover_preview_but_click_switches():
     s = read('components/Workspaces.tsx')
     assert '<button' in s
-    assert 'openWorkspacePreview(id)' in s
+    assert 'openWorkspacePreview(id())' in s
     assert 'hoverPanel("workspace")' in s
     assert 'onClicked=' in s
-    assert 'focusWorkspace(id)' in s
+    assert 'focusWorkspace(id())' in s
     assert 'HoverPopover' not in s
 
 

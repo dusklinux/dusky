@@ -109,8 +109,8 @@ def test_workspace_window_list_typography_is_more_readable():
 def test_workspace_functionality_and_preview_dimensions_are_preserved():
     workspaces = read("components/Workspaces.tsx")
     preview = read("components/WorkspacePreview.tsx")
-    assert "void focusWorkspace(id)" in workspaces
-    assert "openWorkspacePreview(id)" in workspaces
+    assert "void focusWorkspace(id())" in workspaces
+    assert "openWorkspacePreview(id())" in workspaces
     assert "hoverPanel(\"workspace\")" in workspaces
     assert "selectPreviewClient(client.address)" in preview
     assert "activatePreviewClient(previewWorkspaceLocalId.get(), client.address)" in preview

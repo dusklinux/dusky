@@ -11,7 +11,7 @@ export default function Launcher() {
     >
       <Gtk.GestureClick button={Gdk.BUTTON_MIDDLE} onPressed={() => runQuickPanel()} />
       <Gtk.GestureClick button={Gdk.BUTTON_SECONDARY} onPressed={() => runAppLauncher()} />
-      <label class="launcher-glyph" label="󰌽" />
+      <label class="launcher-glyph" label="󰣇" />
     </button>
   )
 }

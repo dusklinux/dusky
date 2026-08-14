@@ -64,12 +64,13 @@ def test_workspace_active_indicator_is_pacman_and_color_indexed():
     tsx = read("components/Workspaces.tsx")
     css = read("style.css")
 
-    assert "workspace-id-${id}" in tsx
+    assert "workspace-id-${id()}" in tsx
+    assert "workspace-accent-${workspaceAccentId(id())}" in tsx
     assert "workspace-pacman" in tsx
     assert 'label="󰮯"' in tsx
     assert "workspace-active-dot" not in tsx
     for workspace_id in range(1, 11):
-        assert f".workspace-button.workspace-id-{workspace_id}.active .workspace-pacman" in css
+        assert f".workspace-button.workspace-accent-{workspace_id}.active .workspace-pacman" in css
 
 
 def test_network_icon_uses_signal_strength_classes():
@@ -89,13 +90,14 @@ def test_power_trigger_uses_centered_icon_shell():
     tsx = read("components/PowerControl.tsx")
     css = read("style.css")
 
-    assert "power-trigger-shell" in tsx
+    assert "power-trigger-shell" not in tsx
+    assert "power-trigger-orb" not in tsx
     assert "power-trigger-icon" in tsx
     assert "power-trigger-status-dot" in tsx
-    shell = css_block(css, ".power-trigger-shell")
+    content = css_block(css, ".power-trigger-content")
     icon = css_block(css, ".power-trigger-icon")
-    assert "min-width:" in shell
-    assert "min-height:" in shell
+    assert "min-width:" in content
+    assert "min-height:" in content
     assert "font-size:" in icon
 
 
@@ -105,8 +107,8 @@ def test_battery_uses_level_classes_and_three_pulse_warning():
 
     assert "function batteryLevelClass" in tsx
     assert "battery-level-critical" in tsx
-    assert "battery-shell" in tsx
-    assert "battery-fill" in tsx
+    assert "battery-waybar05-level" in tsx
+    assert "battery-shell" not in tsx
     assert "battery-icon" not in tsx
     assert "battery-percent" in tsx
     assert "battery-v28-warning-pulse" in css

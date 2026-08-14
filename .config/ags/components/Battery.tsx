@@ -30,41 +30,17 @@ export default function Battery() {
   )
 
   return (
-    <box class={cardClass} visible={createBinding(battery, "isPresent")} spacing={0}>
-      <overlay class="battery-shell">
-        <box class="battery-shell-base" />
-        <box
-          $type="overlay"
-          class="battery-fill"
-          canTarget={false}
-          halign={Gtk.Align.START}
-          valign={Gtk.Align.CENTER}
-        />
-        <label
-          $type="overlay"
-          class="battery-percent"
-          canTarget={false}
-          halign={Gtk.Align.CENTER}
-          valign={Gtk.Align.CENTER}
-          label={percent}
-        />
-        <box
-          $type="overlay"
-          class="battery-cap"
-          canTarget={false}
-          halign={Gtk.Align.END}
-          valign={Gtk.Align.CENTER}
-        />
-        <label
-          $type="overlay"
-          class="battery-warning-sign"
-          canTarget={false}
-          halign={Gtk.Align.END}
-          valign={Gtk.Align.CENTER}
-          visible={warningVisible}
-          label="!"
-        />
-      </overlay>
+    <box class={cardClass} visible={createBinding(battery, "isPresent")} spacing={6}>
+      <box class="battery-waybar05-glass" valign={Gtk.Align.CENTER}>
+        <box class="battery-waybar05-level" />
+      </box>
+      <label class="battery-percent" valign={Gtk.Align.CENTER} label={percent} />
+      <label
+        class="battery-warning-sign"
+        valign={Gtk.Align.CENTER}
+        visible={warningVisible}
+        label="!"
+      />
     </box>
   )
 }

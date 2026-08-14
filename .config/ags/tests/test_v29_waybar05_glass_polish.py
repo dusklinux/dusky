@@ -14,12 +14,15 @@ def css_block(css: str, selector: str) -> str:
     return matches[-1]
 
 
-def test_workspace_rail_supports_ten_slots_and_waybar05_liquid_pacman():
+def test_workspace_rail_uses_five_dynamic_slots_and_waybar05_liquid_pacman():
     tsx = read("components/Workspaces.tsx")
     css = read("style.css")
     legacy, tail = css.split("/* v2.9 tail override - actual final cascade surface */", 1)
 
-    assert "Array.from({ length: 10 }" in tsx
+    assert "WORKSPACE_VISIBLE_SLOTS = [1, 2, 3, 4, 5] as const" in tsx
+    assert "workspaceIdForSlot" in tsx
+    assert "active() > 5 ? active() : slot" in tsx
+    assert "Array.from({ length: 10 }" not in tsx
     assert "workspace-v29-liquid-bloom" in css
     assert not re.findall(r"(?m)^\.workspace-button\.workspace-id-\d+\.active \.workspace-pacman\s*\{", legacy)
     assert not re.findall(r"(?m)^\.theme-light \.workspace-button\.workspace-id-\d+\.active \.workspace-pacman\s*\{", legacy)
@@ -30,42 +33,44 @@ def test_workspace_rail_supports_ten_slots_and_waybar05_liquid_pacman():
     assert "inset 0 0 12px" in active
     assert "color: alpha(@on_surface_variant, 0.84)" in number
     for workspace_id in range(1, 11):
-        assert f".workspace-button.workspace-id-{workspace_id}.active .workspace-pacman" in tail
+        assert f".workspace-button.workspace-accent-{workspace_id}.active .workspace-pacman" in tail
 
 
-def test_clock_has_slower_reel_and_screen_attached_glow_rails():
+def test_clock_has_24h_toggle_and_single_screen_attached_hour_line():
     tsx = read("components/ClockCard.tsx")
     css = read("style.css")
 
-    assert "clock-edge-glow left" in tsx
-    assert "clock-edge-glow right" in tsx
+    assert "clock24hEnabled" in tsx
+    assert '"%H:%M"' in tsx
+    assert '"%I:%M"' in tsx
+    assert "clock-hour-line" in tsx
+    assert "hourChanged" in tsx
+    assert "clock-edge-glow" not in tsx
     card = css_block(css, ".clock-card")
     new_face = css_block(css, ".clock-reel-digit.changed .clock-reel-new")
     old_face = css_block(css, ".clock-reel-digit.changed .clock-reel-old")
-    left = css_block(css, ".clock-edge-glow.left")
-    right = css_block(css, ".clock-edge-glow.right")
-    assert "min-width: 98px" in card
-    assert "border-radius: 0 0 10px 10px" in card
-    assert "clock-v29-edge-glow" in css
-    assert "#4cc9ff" not in left
-    assert "#ff4fd8" not in right
-    assert "alpha(@on_surface" in left
-    assert "alpha(@primary" in right
+    line = css_block(css, ".clock-hour-line")
+    assert "min-width: 90px" in card
+    assert "border-radius: 0 0 7px 7px" in card
+    assert "background: alpha(@surface_container_low, 0.62)" in card
+    assert "clock-v210-hour-glow" in css
+    assert "alpha(@on_surface" in line
+    assert "valign={Gtk.Align.START}" in tsx
     assert "880ms" in new_face
     assert "880ms" in old_face
 
 
-def test_launcher_has_final_gem_treatment_for_left_edge_anchor():
+def test_launcher_is_bare_modern_arch_symbol():
     tsx = read("components/Launcher.tsx")
     css = read("style.css")
 
     assert 'class="launcher-glyph"' in tsx
+    assert 'label="󰣇"' in tsx
     card = css_block(css, ".launcher-card")
     glyph = css_block(css, ".launcher-glyph")
-    assert "min-width: 32px" in card
-    assert "border-radius: 15px" in card
-    assert "#4cc9ff" in card
-    assert "#00ffd1" in card
+    assert "background: transparent" in card
+    assert "border: none" in card
+    assert "box-shadow: none" in card
     assert "text-shadow:" in glyph
 
 
@@ -80,36 +85,34 @@ def test_wifi_signal_changes_use_motion_classes_not_static_color_only():
         assert f"wifi-v29-signal-{name}" in css
 
 
-def test_battery_is_horizontal_shell_with_inside_percent_and_zero_glow():
+def test_battery_uses_waybar05_module_style_with_inside_percent_and_zero_glow():
     tsx = read("components/Battery.tsx")
     css = read("style.css")
 
     assert "battery-level-empty" in tsx
-    assert "battery-shell" in tsx
-    assert "battery-fill" in tsx
-    assert "battery-shell-base" in tsx
+    assert "battery-waybar05-level" in tsx
+    assert "battery-waybar05-glass" in tsx
+    assert "battery-shell" not in tsx
     assert "battery-icon" not in tsx
     assert "battery-v29-zero-glow" in css
     assert "battery-v29-fill-sheen" in css
     empty = css_block(css, ".battery-card.battery-level-empty")
-    shell = css_block(css, ".battery-shell")
+    level = css_block(css, ".battery-waybar05-level")
     percent = css_block(css, ".battery-percent")
     assert "battery-v29-zero-glow" in empty
-    assert "min-width:" in shell
-    assert "min-height:" in shell
+    assert "min-width:" in level
+    assert "min-height:" in level
     assert "font-size:" in percent
 
 
-def test_power_trigger_is_centered_overlay_orb():
+def test_power_trigger_is_normalized_to_control_leader_surface():
     tsx = read("components/PowerControl.tsx")
     css = read("style.css")
 
     assert '<overlay class="power-trigger-content">' in tsx
-    assert "power-trigger-orb" in tsx
+    assert "power-trigger-orb" not in tsx
+    assert "power-trigger-shell" not in tsx
     assert 'label="⏻"' in tsx
-    assert "power-v29-orb-glow" in css
     content = css_block(css, ".power-trigger-content")
-    shell = css_block(css, ".power-trigger-shell")
     assert "min-width:" in content
     assert "min-height:" in content
-    assert "border-radius:" in shell

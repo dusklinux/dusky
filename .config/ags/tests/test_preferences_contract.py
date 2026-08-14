@@ -47,6 +47,18 @@ def test_feature_state_contract_and_defaults():
     assert "featureMonitor = dir.monitor_directory" in text
 
 
+def test_clock_state_contract_and_defaults():
+    path = ROOT / "lib/clockState.ts"
+    assert path.exists(), "clockState.ts must exist"
+    text = path.read_text()
+    assert "clock-24h" in text
+    assert "DEFAULT_CLOCK_24H_ENABLED = false" in text
+    assert "clock24hEnabled" in text
+    assert "setClock24hEnabled" in text
+    assert "monitor_file" in text
+    assert "let clock24hMonitor: Gio.FileMonitor | null = null" in text
+
+
 def test_bar_and_popups_receive_motion_classes():
     bar = read("components/Bar.tsx")
     popup = read("components/PopupWindow.tsx")
@@ -98,9 +110,11 @@ def test_runtime_state_request_exposes_preferences_for_live_smoke():
 
     assert "requestHandler" in app
     assert "motionStyle" in app
+    assert "clock24hEnabled" in app
     assert "featureAccessors" in app
     assert 'command === "state"' in app
     assert "motion:" in app
+    assert '"clock-24h"' in app
     assert '"workspace-preview"' in app
     assert '"media-island"' in app
     assert '"weather"' in app
@@ -141,6 +155,12 @@ def test_control_center_exposes_adaptive_glass_preferences():
     assert 'options = ["Soft Magnetic", "Precise Futuristic"]' in config
     assert '"soft-magnetic" = "Soft Magnetic"' in config
     assert '"precise-futuristic" = "Precise Futuristic"' in config
+    assert 'title = "24-hour Clock"' in config
+    assert 'key = "ags/clock-24h"' in config
+    assert re.search(
+        r'title = "24-hour Clock"[\s\S]*?key = "ags/clock-24h"[\s\S]*?default = false',
+        config,
+    )
 
     for title, key in [
         ("Workspace Preview", "ags/features/workspace-preview"),

@@ -31,7 +31,7 @@ def test_open_preview_returns_count_and_empty_workspace_never_opens_panel():
     state = read("lib/workspacePreviewState.ts")
     workspaces = read("components/Workspaces.tsx")
     assert "return items.length" in state
-    assert "const windowCount = openWorkspacePreview(id)" in workspaces
+    assert "const windowCount = openWorkspacePreview(id())" in workspaces
     assert "if (windowCount === 0)" in workspaces
     empty_branch = workspaces.split("if (windowCount === 0)", 1)[1].split("hoverPanel(\"workspace\")", 1)[0]
     assert 'closePanel("workspace")' in empty_branch

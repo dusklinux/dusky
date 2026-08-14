@@ -59,9 +59,9 @@ def test_workspace_number_click_is_plain_button_and_direct_switch():
     s = read('components/Workspaces.tsx')
     assert '<button' in s
     assert 'onClicked=' in s
-    assert 'focusWorkspace(id)' in s
+    assert 'focusWorkspace(id())' in s
     assert 'HoverPopover' not in s
-    assert 'openWorkspacePreview(id)' in s
+    assert 'openWorkspacePreview(id())' in s
 
 
 def test_workspace_navigator_has_real_picture_not_schematic_map():

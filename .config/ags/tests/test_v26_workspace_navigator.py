@@ -32,20 +32,20 @@ def test_active_workspace_hover_suppresses_preview_immediately():
     src = read("components/Workspaces.tsx")
     assert 'closePanel("workspace")' in src
     assert "closeWorkspacePreview()" in src
-    assert "if (active() === id)" in src
-    active_branch = re.search(r"if \(active\(\) === id\) \{([\s\S]*?)\n\s*\}", src)
+    assert "if (active() === id())" in src
+    active_branch = re.search(r"if \(active\(\) === id\(\)\) \{([\s\S]*?)\n\s*\}", src)
     assert active_branch
     body = active_branch.group(1)
     assert "closeWorkspacePreview()" in body
     assert 'closePanel("workspace")' in body
-    assert "openWorkspacePreview(id)" not in body
+    assert "openWorkspacePreview(id())" not in body
     assert 'hoverPanel("workspace")' not in body
 
 
 def test_non_active_workspace_still_opens_preview_and_claims_ownership():
     src = read("components/Workspaces.tsx")
-    assert "claimWorkspaceInteraction(id)" in src
-    assert "openWorkspacePreview(id)" in src
+    assert "claimWorkspaceInteraction(id())" in src
+    assert "openWorkspacePreview(id())" in src
     assert 'hoverPanel("workspace")' in src
 
 

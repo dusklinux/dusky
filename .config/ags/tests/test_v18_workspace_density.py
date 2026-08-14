@@ -39,8 +39,8 @@ def test_workspace_hover_preview_is_independent_from_persistent_active_indicator
     css = read("style.css")
     assert 'createComputed' in tsx
     assert 'workspaceInteractionId' in tsx
-    assert 'claimWorkspaceInteraction(id)' in tsx
-    assert 'openWorkspacePreview(id)' in tsx
+    assert 'claimWorkspaceInteraction(id())' in tsx
+    assert 'openWorkspacePreview(id())' in tsx
     assert 'hoverPanel("workspace")' in tsx
     assert 'workspace-pacman' in tsx
     assert 'workspace-active-dot' not in tsx

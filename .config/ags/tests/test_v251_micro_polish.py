@@ -21,7 +21,7 @@ def test_workspace_uses_elastic_segment_transfer_instead_of_selection_plate():
     assert '<box class="workspace-switcher">' in tsx
     assert 'workspaceInteractionId' in tsx
     assert 'workspace-selection-plate' not in tsx
-    assert 'const expanded = interactionId === id || (interactionId === null && active() === id)' in tsx
+    assert 'const expanded = interactionId === currentId || (interactionId === null && active() === currentId)' in tsx
     assert '<box class="workspace-deck" spacing={3}>' in tsx
 
     expanded = css_block(css, '.workspace-button.expanded')
@@ -91,9 +91,9 @@ def test_clock_has_stronger_hierarchy_without_changing_calendar_trigger():
     face = css_block(css, '.clock-reel-digit-face')
     meridiem = css_block(css, '.clock-meridiem')
     dot = css_block(css, '.clock-accent-dot')
-    assert 'min-width: 98px' in card
-    assert 'padding: 5px 14px 0 14px' in card
-    assert 'border-radius: 0 0 10px 10px' in card
+    assert 'min-width: 90px' in card
+    assert 'padding: 4px 9px 1px 9px' in card
+    assert 'border-radius: 0 0 7px 7px' in card
     assert 'animation: none' in digit
     assert 'clock-v28-reel-old' in css
     assert 'clock-v28-reel-new' in css

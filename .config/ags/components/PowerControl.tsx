@@ -236,15 +236,13 @@ export default function PowerControl() {
       class="control-leader power-leader"
       child={
         <overlay class="power-trigger-content">
-          <box class="power-trigger-shell power-trigger-orb" halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
-            <label
-              class="power-trigger-icon"
-              halign={Gtk.Align.CENTER}
-              valign={Gtk.Align.CENTER}
-              xalign={0.5}
-              label="⏻"
-            />
-          </box>
+          <label
+            class="power-trigger-icon"
+            halign={Gtk.Align.CENTER}
+            valign={Gtk.Align.CENTER}
+            xalign={0.5}
+            label="⏻"
+          />
           <box
             $type="overlay"
             class="power-trigger-status-dot power-caffeine-dot bar-dot"

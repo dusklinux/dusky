@@ -2189,6 +2189,15 @@ options_map = { "soft-magnetic" = "Soft Magnetic", "precise-futuristic" = "Preci
 [[pages.layout.items.layout.items]]
 type = "toggle_card"
 [pages.layout.items.layout.items.properties]
+title = "24-hour Clock"
+description = "Use 24-hour time and hide AM/PM"
+icon = "preferences-system-time-symbolic"
+key = "ags/clock-24h"
+default = false
+
+[[pages.layout.items.layout.items]]
+type = "toggle_card"
+[pages.layout.items.layout.items.properties]
 title = "Workspace Preview"
 description = "Show live workspace window previews"
 icon = "view-grid-symbolic"

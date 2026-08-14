@@ -2,12 +2,14 @@ import GLib from "gi://GLib"
 import Gtk from "gi://Gtk?version=4.0"
 import { createPoll } from "ags/time"
 import PanelTrigger from "./PanelTrigger"
+import { clock24hEnabled } from "../lib/clockState"
 import { openClocks } from "../lib/dusky"
 
 type ClockFrame = {
   previous: string
   current: string
   tick: number
+  hourChanged: boolean
 }
 
 type ClockSlot = {
@@ -17,8 +19,12 @@ type ClockSlot = {
   tick: number
 }
 
-function formatClockTime() {
-  return GLib.DateTime.new_now_local().format("%I:%M") ?? ""
+function formatClockTime(use24h: boolean, time = GLib.DateTime.new_now_local()) {
+  return time.format(use24h ? "%H:%M" : "%I:%M") ?? ""
+}
+
+function hourKey(time = GLib.DateTime.new_now_local()) {
+  return time.format("%H") ?? ""
 }
 
 function clockReelValueClass(char: string) {
@@ -95,17 +101,25 @@ export function CalendarPanel() {
 }
 
 export default function ClockCard() {
-  const initialTime = formatClockTime()
+  const initialNow = GLib.DateTime.new_now_local()
+  const initialTime = formatClockTime(clock24hEnabled(), initialNow)
   let previousTime = initialTime
+  let previousHour = hourKey(initialNow)
   let clockReelTick = 0
-  const time = createPoll<ClockFrame>({ previous: initialTime, current: initialTime, tick: clockReelTick }, 1000, () => {
-    const current = formatClockTime()
+  const time = createPoll<ClockFrame>({ previous: initialTime, current: initialTime, tick: clockReelTick, hourChanged: false }, 1000, () => {
+    const now = GLib.DateTime.new_now_local()
+    const current = formatClockTime(clock24hEnabled(), now)
+    const currentHour = hourKey(now)
+    const hourChanged = currentHour !== previousHour
     if (current !== previousTime) clockReelTick = (clockReelTick + 1) % 2
-    const frame = { previous: previousTime, current, tick: clockReelTick }
+    const frame = { previous: previousTime, current, tick: clockReelTick, hourChanged }
     previousTime = current
+    previousHour = currentHour
     return frame
   })
   const meridiem = createPoll("", 1000, () => GLib.DateTime.new_now_local().format("%p") ?? "")
+  const meridiemVisible = clock24hEnabled((enabled) => !enabled)
+  const hourLineClass = time((frame) => frame.hourChanged ? "clock-hour-line hour-changed" : "clock-hour-line")
   const timeSlots = Array.from({ length: 5 }, (_, index) => time((frame) => {
     const previous = frame.previous[index] ?? " "
     const current = frame.current[index] ?? " "
@@ -126,22 +140,15 @@ export default function ClockCard() {
                   : <ClockReelDigit slot={slot} />
               )}
             </box>
-            <Gtk.Separator class="clock-divider" orientation={Gtk.Orientation.VERTICAL} />
-            <label class="clock-meridiem" label={meridiem} />
+            <Gtk.Separator class="clock-divider" orientation={Gtk.Orientation.VERTICAL} visible={meridiemVisible} />
+            <label class="clock-meridiem" visible={meridiemVisible} label={meridiem} />
           </box>
           <box
             $type="overlay"
-            class="clock-edge-glow left"
+            class={hourLineClass}
             canTarget={false}
-            halign={Gtk.Align.START}
-            valign={Gtk.Align.END}
-          />
-          <box
-            $type="overlay"
-            class="clock-edge-glow right"
-            canTarget={false}
-            halign={Gtk.Align.END}
-            valign={Gtk.Align.END}
+            halign={Gtk.Align.CENTER}
+            valign={Gtk.Align.START}
           />
         </overlay>
       }

@@ -28,7 +28,7 @@ def test_empty_workspace_preview_ui_is_suppressed_entirely():
     workspaces = read("components/Workspaces.tsx")
     assert 'class="workspace-empty compact"' not in src
     assert 'label="No preview available"' not in src
-    assert "const windowCount = openWorkspacePreview(id)" in workspaces
+    assert "const windowCount = openWorkspacePreview(id())" in workspaces
     assert "if (windowCount === 0)" in workspaces
     assert 'closePanel("workspace")' in workspaces
 

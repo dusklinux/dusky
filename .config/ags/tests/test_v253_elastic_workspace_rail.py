@@ -22,7 +22,7 @@ def css_block(css: str, selector: str) -> str:
 def test_workspace_rail_uses_shared_interaction_state_not_popup_state_for_elasticity():
     tsx = read("components/Workspaces.tsx")
     assert 'workspaceInteractionId' in tsx
-    assert 'claimWorkspaceInteraction(id)' in tsx
+    assert 'claimWorkspaceInteraction(id())' in tsx
     assert 'createState<number | null>(null)' not in tsx
     assert 'activePanel() === "workspace" ? previewWorkspaceLocalId() : active()' not in tsx
     assert 'workspace-selection-plate' not in tsx
@@ -30,10 +30,10 @@ def test_workspace_rail_uses_shared_interaction_state_not_popup_state_for_elasti
 
 def test_exactly_one_segment_owns_expanded_state():
     tsx = read("components/Workspaces.tsx")
-    assert 'const expanded = interactionId === id || (interactionId === null && active() === id)' in tsx
+    assert 'const expanded = interactionId === currentId || (interactionId === null && active() === currentId)' in tsx
     assert 'if (expanded) classes.push("expanded")' in tsx
-    assert 'if (workspaceInteractionId() === id) classes.push("hovered")' in tsx
-    assert 'if (active() === id) classes.push("active")' in tsx
+    assert 'if (workspaceInteractionId() === currentId) classes.push("hovered")' in tsx
+    assert 'if (active() === currentId) classes.push("active")' in tsx
 
 
 def test_active_workspace_replaces_number_with_centered_pacman_and_keeps_ring_class():
@@ -50,10 +50,10 @@ def test_active_workspace_replaces_number_with_centered_pacman_and_keeps_ring_cl
 
 def test_hover_preview_and_click_focus_behavior_are_preserved():
     tsx = read("components/Workspaces.tsx")
-    assert 'openWorkspacePreview(id)' in tsx
+    assert 'openWorkspacePreview(id())' in tsx
     assert 'hoverPanel("workspace")' in tsx
     assert 'leaveTrigger("workspace")' in tsx
-    assert 'void focusWorkspace(id)' in tsx
+    assert 'void focusWorkspace(id())' in tsx
 
 
 def test_elastic_css_has_separated_segments_stable_transfer_and_no_vertical_bounce():
@@ -115,4 +115,4 @@ def test_frosted_mist_has_matching_elastic_active_and_hover_states():
     tail = tail_after(css, marker)
     assert '.theme-light .workspace-button.active' in tail
     assert '.theme-light .workspace-button.hovered' in tail
-    assert '.theme-light .workspace-button.workspace-id-1.active .workspace-pacman' in tail
+    assert '.theme-light .workspace-button.workspace-accent-1.active .workspace-pacman' in tail

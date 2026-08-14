@@ -32,8 +32,8 @@ def test_workspace_hover_ownership_is_shared_between_rail_and_preview():
     assert 'leaveWorkspacePreview' in state
     assert 'clearWorkspaceInteraction' in state
     assert 'createState<number | null>(null)' not in rail
-    assert 'workspaceInteractionId() === id' in rail
-    assert 'claimWorkspaceInteraction(id)' in rail
+    assert 'workspaceInteractionId() === currentId' in rail
+    assert 'claimWorkspaceInteraction(id())' in rail
     assert 'leaveWorkspaceRail()' in rail
     assert 'enterWorkspacePreview()' in preview
     assert 'leaveWorkspacePreview()' in preview
@@ -91,7 +91,7 @@ def test_snap_lighting_peaks_then_returns_to_resting_hover_treatment():
 def test_v254_keeps_preview_and_other_component_backends_unchanged():
     rail = read("components/Workspaces.tsx")
     preview_state = read("lib/workspacePreviewState.ts")
-    assert 'openWorkspacePreview(id)' in rail
-    assert 'void focusWorkspace(id)' in rail
+    assert 'openWorkspacePreview(id())' in rail
+    assert 'void focusWorkspace(id())' in rail
     assert 'capture_window_preview.sh' in preview_state
     assert 'focusWindow(address)' in preview_state
