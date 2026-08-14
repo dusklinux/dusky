@@ -25,8 +25,8 @@ def test_calendar_footer_keeps_compact_actions_with_invisible_icon_shells():
     assert 'iconName="preferences-system-time-symbolic"' in tsx
 
     action = css_block(css, ".calendar-footer-action")
-    assert 'min-height: 26px' in action
-    assert 'border-radius: 9px' in action
+    assert 'min-height: 28px' in action
+    assert 'border-radius: 14px' in action
     assert 'background-image:' in action
 
     shell = css_block(css, ".calendar-footer-icon-shell")

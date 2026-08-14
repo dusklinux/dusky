@@ -102,9 +102,9 @@ def test_calendar_keeps_native_behavior_and_gets_v27_surface_polish():
     panel = css_block(css, ".calendar-panel")
     widget = css_block(css, ".calendar-widget")
     footer = css_block(css, ".calendar-footer-action")
-    assert "padding: 10px" in panel
-    assert "border-radius: 14px" in widget
-    assert "min-height: 26px" in footer
+    assert "padding: 13px" in panel
+    assert "border-radius: 20px" in widget
+    assert "min-height: 28px" in footer
 
 
 def test_popup_frames_have_open_state_and_stable_reveal_motion():

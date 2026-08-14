@@ -42,18 +42,18 @@ def test_clock_pill_is_reference_capsule_with_subtle_motion():
     meridiem = css_block(css, '.clock-meridiem')
     dot = css_block(css, '.clock-accent-dot')
 
-    assert 'min-width: 88px' in card
-    assert 'padding: 0 13px' in card
-    assert 'border-color: alpha(@primary, 0.28)' in card
+    assert 'min-width: 72px' in card
+    assert 'padding: 0 8px' in card
+    assert 'border-color: alpha(@primary, 0.30)' in card
     assert 'border-radius: 13px' in card
-    assert '0 0 12px alpha(@primary' in card
+    assert '0 0 9px alpha(@primary' in card
     assert 'transform: none' in hover
     assert 'animation: none' in digit
     assert 'clock-v28-reel-old' in css
     assert 'clock-v28-reel-new' in css
     assert 'font-size: 13px' in face
     assert 'font-feature-settings: "tnum"' in face
-    assert 'font-size: 9px' in meridiem
+    assert 'font-size: 8px' in meridiem
     assert 'min-width: 0' in dot
     assert 'min-height: 0' in dot
     assert 'opacity: 0' in dot

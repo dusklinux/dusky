@@ -40,9 +40,9 @@ def test_calendar_keeps_native_month_navigation_but_is_compact_and_dark():
     assert 'showHeading' in tsx or 'show_heading' in tsx
     assert 'showDayNames' in tsx or 'show_day_names' in tsx
     panel = css_block(css, ".calendar-panel")
-    assert 'min-width: 252px' in panel
+    assert 'min-width: 272px' in panel
     assert 'max-width:' not in panel
-    assert 'padding: 10px' in panel
+    assert 'padding: 13px' in panel
     popup = css_block(css, ".popup-calendar")
     assert '0.98' in popup or '0.97' in popup
     assert '.calendar-widget header' in css
@@ -55,7 +55,7 @@ def test_calendar_footer_is_minimal_two_action_layout():
     assert '.calendar-footer' in css
     action = css_block(css, ".calendar-footer-action")
     assert 'border-radius' in action
-    assert 'min-height' in action
+    assert 'min-height: 28px' in action
 
 
 def test_workspace_preview_header_uses_centered_non_font_grid_visual():

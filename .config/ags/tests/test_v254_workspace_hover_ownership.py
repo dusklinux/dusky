@@ -71,7 +71,7 @@ def test_elastic_snap_overshoots_horizontally_then_settles_without_vertical_boun
     assert 'padding:' not in keyframes
     assert 'box-shadow:' in keyframes
     assert 'animation: workspace-overlay-magnetic-snap 510ms' in snap_surface
-    assert 'padding: 0 5px' in expanded
+    assert 'padding: 0 2px' in expanded
     assert 'translateY(' not in keyframes
 
 
@@ -83,7 +83,7 @@ def test_snap_lighting_peaks_then_returns_to_resting_hover_treatment():
 
     assert 'background-image:' in hovered
     assert 'animation: none' in hovered
-    assert 'border-color: alpha(@primary, 0.46)' in active
+    assert 'border-color: alpha(@primary, 0.48)' in active
     assert 'animation: none' in active
     assert 'font-size: 15px' in pacman
     assert 'font-weight: 950' in pacman

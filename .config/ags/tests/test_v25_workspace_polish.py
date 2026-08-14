@@ -23,19 +23,20 @@ def test_workspace_strip_uses_restrained_capsule_motion_not_primary_bloom():
     assert "0 0 10px alpha(@primary" not in deck
 
     button = css_block(css, ".workspace-button")
-    assert "170ms ease" in button
+    assert "transform 420ms cubic-bezier" in button
+    assert "min-width" not in button.split("transition:", 1)[1]
     assert "cubic-bezier(0.34, 1.56" not in button
     assert "font-size: 10px" in button
 
     hover = css_block(css, ".workspace-button.hovered")
-    assert "transform: none" in hover
+    assert "transform: scaleX(1.16)" in hover
     assert "translateY(" not in hover
     assert "background-image:" in hover
     assert "animation: none" in hover
 
     active = css_block(css, ".workspace-button.active")
     assert "transform: none" in active
-    assert "border-color: alpha(@primary, 0.46)" in active
+    assert "border-color: alpha(@primary, 0.48)" in active
     assert "0 0 0 1px alpha(@primary, 0.10)" in active
     assert "animation: none" in active
     assert "alpha(@tertiary" not in active

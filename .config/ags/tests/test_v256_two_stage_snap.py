@@ -34,7 +34,7 @@ def test_resting_elastic_layout_is_unchanged_and_outer_expansion_does_not_animat
     expanded = re.findall(r'\.workspace-button\.expanded\s*\{([^}]*)\}', css, re.S)
     assert expanded
     final = expanded[-1]
-    assert 'padding: 0 5px' in final
+    assert 'padding: 0 2px' in final
     assert 'animation:' not in final
 
 

@@ -39,13 +39,14 @@ def test_main_workspace_content_remains_the_sizing_child():
 
 def test_workspace_resting_geometry_stays_compact_and_stable():
     css = read("style.css")
-    button_blocks = re.findall(r'\.workspace-button\s*\{([^}]*)\}', css, re.S)
-    expanded_blocks = re.findall(r'\.workspace-button\.expanded\s*\{([^}]*)\}', css, re.S)
-    assert button_blocks and expanded_blocks
-    assert 'min-width: 20px' in button_blocks[-1]
-    assert 'padding: 0 2px' in button_blocks[-1]
-    assert 'padding: 0 5px' in expanded_blocks[-1]
-    assert 'animation:' not in expanded_blocks[-1]
+    button = re.findall(r'(?m)^\.workspace-button\s*\{([^}]*)\}', css, re.S)
+    expanded = re.findall(r'(?m)^\.workspace-button\.expanded\s*\{([^}]*)\}', css, re.S)
+    assert button and expanded
+    assert 'min-width: 22px' in button[-1]
+    assert 'padding: 0 2px' in button[-1]
+    assert 'min-width' not in button[-1].split('transition:', 1)[1]
+    assert 'padding: 0 2px' in expanded[-1]
+    assert 'animation:' not in expanded[-1]
 
 
 def test_magnetic_shell_owns_delayed_horizontal_pulse_only():

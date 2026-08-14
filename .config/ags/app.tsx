@@ -1,6 +1,7 @@
 #!/usr/bin/env -S ags run
 import { For, createBinding } from "ags"
 import app from "ags/gtk4/app"
+import Gio from "gi://Gio"
 import GLib from "gi://GLib"
 import { readFile } from "ags/file"
 import fallback from "./styles/fallback.css"
@@ -11,15 +12,51 @@ import { featureAccessors } from "./lib/featureState"
 import { motionStyle } from "./lib/motionState"
 
 const home = GLib.get_home_dir()
-const matugenPath = `${home}/.config/matugen/generated/waybar-colors.css`
-let matugen = ""
+const matugenDir = `${home}/.config/matugen/generated`
+const matugenPath = `${matugenDir}/waybar-colors.css`
+let matugenMonitor: Gio.FileMonitor | null = null
+let matugenReloadSource = 0
 
-try {
-  if (GLib.file_test(matugenPath, GLib.FileTest.EXISTS)) {
-    matugen = readFile(matugenPath)
+function loadMatugenCss() {
+  try {
+    if (GLib.file_test(matugenPath, GLib.FileTest.EXISTS)) {
+      return readFile(matugenPath)
+    }
+  } catch (error) {
+    console.error("Adaptive Glass: could not load Matugen palette", error)
   }
-} catch (error) {
-  console.error("Adaptive Glass: could not load Matugen palette", error)
+  return ""
+}
+
+function composeCss() {
+  return `${fallback}\n${loadMatugenCss()}\n${shellStyle}`
+}
+
+function scheduleMatugenReload() {
+  if (matugenReloadSource !== 0) GLib.source_remove(matugenReloadSource)
+
+  matugenReloadSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 90, () => {
+    app.apply_css(composeCss(), true)
+    matugenReloadSource = 0
+    return GLib.SOURCE_REMOVE
+  })
+}
+
+function startMatugenMonitor() {
+  try {
+    if (!GLib.file_test(matugenDir, GLib.FileTest.IS_DIR)) return
+
+    const dir = Gio.File.new_for_path(matugenDir)
+    matugenMonitor = dir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
+    matugenMonitor.connect("changed", (_monitor, file, otherFile) => {
+      const changedName = file?.get_basename()
+      const otherName = otherFile?.get_basename()
+      if (changedName !== "waybar-colors.css" && otherName !== "waybar-colors.css") return
+      scheduleMatugenReload()
+    })
+  } catch (error) {
+    console.error("Adaptive Glass: could not monitor Matugen palette", error)
+  }
 }
 
 function preferenceState() {
@@ -35,9 +72,11 @@ function preferenceState() {
   }
 }
 
+startMatugenMonitor()
+
 app.start({
   instanceName: "dusky-adaptive-glass",
-  css: `${fallback}\n${matugen}\n${shellStyle}`,
+  css: composeCss(),
   gtkTheme: "Adwaita",
   requestHandler(argv, response) {
     const [command] = argv

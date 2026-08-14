@@ -28,15 +28,14 @@ def test_v212_clock_matches_reference_capsule_with_matugen_primary_glow():
     hover = css_block(css, ".clock-card:hover")
     line = css_block(css, ".clock-hour-line")
 
-    assert "min-width: 88px" in card
-    assert "min-height: 29px" in card
-    assert "margin-top: 0" in card
-    assert "padding: 0 13px" in card
-    assert "border-color: alpha(@primary, 0.28)" in card
+    assert "min-width: 72px" in card
+    assert "min-height: 28px" in card
+    assert "padding: 0 8px" in card
+    assert "border-color: alpha(@primary, 0.30)" in card
     assert "border-radius: 13px" in card
     assert "alpha(@primary" in card
-    assert "border-color: alpha(@primary, 0.42)" in hover
-    assert "0 0 14px alpha(@primary, 0.34)" in hover
+    assert "border-color: alpha(@primary, 0.40)" in hover
+    assert "0 0 11px alpha(@primary, 0.24)" in hover
     assert "opacity: 0" in line
 
 
@@ -52,12 +51,13 @@ def test_v212_media_island_uses_dark_glass_and_primary_play_glow():
     assert "width={22}" in media
     assert "maxWidthChars={18}" in media
     assert "min-height: 30px" in card
-    assert "border-radius: 12px" in card
-    assert "border-color: alpha(@primary, 0.26)" in card
-    assert "0 0 12px alpha(@primary, 0.24)" in card
+    assert "border-radius: 13px" in card
+    assert "border-color: alpha(@primary, 0.22)" in card
+    assert "0 2px 7px alpha(#000000, 0.18)" in card
     assert "min-width: 64px" in copy
-    assert "min-width: 24px" in art
-    assert "min-height: 24px" in art
+    assert "min-width: 26px" in art
+    assert "min-height: 26px" in art
+    assert "box-shadow: none" in art
     assert "background: alpha(@primary, 0.62)" in play
     assert "color: @on_primary" in play
     assert "0 0 12px alpha(@primary, 0.42)" in play

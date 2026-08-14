@@ -37,7 +37,7 @@ def test_workspace_rail_uses_five_dynamic_slots_and_quiet_pacman_hover():
     assert "animation: none" in active
     assert "workspace-v29-liquid-bloom" not in active
     assert "animation: none" in hovered
-    assert "padding: 0 5px" in expanded
+    assert "padding: 0 2px" in expanded
     assert "color: alpha(@on_surface_variant, 0.84)" in number
     for workspace_id in range(1, 11):
         assert f".workspace-button.workspace-accent-{workspace_id}.active .workspace-pacman" in tail
@@ -57,10 +57,10 @@ def test_clock_has_24h_toggle_and_reference_capsule_hour_glint():
     new_face = css_block(css, ".clock-reel-digit.changed .clock-reel-new")
     old_face = css_block(css, ".clock-reel-digit.changed .clock-reel-old")
     line = css_block(css, ".clock-hour-line")
-    assert "min-width: 88px" in card
-    assert "padding: 0 13px" in card
+    assert "min-width: 72px" in card
+    assert "padding: 0 8px" in card
     assert "border-radius: 13px" in card
-    assert "border-color: alpha(@primary, 0.28)" in card
+    assert "border-color: alpha(@primary, 0.30)" in card
     assert "background-image:" in card
     assert "clock-v211-hour-glint" in css
     assert "opacity: 0" in line

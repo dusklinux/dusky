@@ -39,10 +39,10 @@ def test_clock_12h_meridiem_is_overlay_and_cannot_expand_the_pill_rightward():
     assert 'class="clock-divider"' not in tsx
     assert '$type="overlay"' in tsx
     assert 'class="clock-meridiem"' in tsx
-    assert "min-width: 88px" in card_12h
-    assert "padding: 0 10px" in card_12h
-    assert "margin-right: 16px" in content_12h
-    assert "min-width: 18px" in meridiem
+    assert "min-width: 84px" in card_12h
+    assert "padding: 0 8px" in card_12h
+    assert "margin-right: 14px" in content_12h
+    assert "min-width: 16px" in meridiem
 
 
 def test_battery_inner_level_is_brighter_than_the_reference_ring():

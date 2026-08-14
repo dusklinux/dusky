@@ -36,7 +36,7 @@ def test_centered_snap_has_visible_peak_recoil_and_exact_rest():
 
 def test_resting_elastic_width_is_unchanged_from_v254():
     block = expanded_block()
-    assert "padding: 0 5px" in block
+    assert "padding: 0 2px" in block
 
 
 def test_snapback_is_slower_than_v254():

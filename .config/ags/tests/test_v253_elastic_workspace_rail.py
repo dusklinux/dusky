@@ -67,11 +67,12 @@ def test_elastic_css_has_separated_segments_stable_transfer_and_no_vertical_boun
 
     assert 'spacing' not in deck  # spacing is owned by JSX
     assert 'padding: 0 5px' in deck
-    assert 'min-width: 20px' in button
+    assert 'min-width: 22px' in button
     assert 'padding: 0 2px' in button
-    assert '170ms ease' in button
+    assert 'transform 420ms cubic-bezier' in button
+    assert 'min-width' not in button.split('transition:', 1)[1]
     assert 'cubic-bezier(0.34, 1.56' not in button
-    assert 'padding: 0 5px' in expanded
+    assert 'padding: 0 2px' in expanded
     for selector in [
         '.workspace-button',
         '.workspace-button.expanded',
@@ -91,7 +92,7 @@ def test_active_pacman_and_hover_sheen_are_visually_distinct():
     hovered = css_block(tail, '.workspace-button.hovered')
     pacman = css_block(tail, '.workspace-pacman')
 
-    assert 'border-color: alpha(@primary, 0.46)' in active
+    assert 'border-color: alpha(@primary, 0.48)' in active
     assert '0 0 0 1px alpha(@primary, 0.10)' in active
     assert 'animation: none' in active
     assert 'background-image:' in hovered
@@ -107,8 +108,8 @@ def test_active_compact_state_keeps_indicator_when_hover_moves_elsewhere():
     marker = '/* v2.5.3 — elastic workspace rail */'
     tail = tail_after(css, marker)
     compact = css_block(tail, '.workspace-button.active:not(.expanded)')
-    assert 'border-color: alpha(@primary, 0.46)' in compact
-    assert 'background: alpha(@primary_container, 0.14)' in compact
+    assert 'border-color: alpha(@primary, 0.48)' in compact
+    assert 'background-image:' in compact
 
 
 def test_frosted_mist_has_matching_elastic_active_and_hover_states():

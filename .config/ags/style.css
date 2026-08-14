@@ -7186,3 +7186,371 @@ progressbar.media-primary-progress progress {
   color: @primary;
   text-shadow: none;
 }
+
+/* v2.15 — live Matugen and calm glass polish */
+.clock-card {
+  min-width: 72px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-color: alpha(@primary, 0.30);
+  border-radius: 13px;
+  background-image: linear-gradient(180deg,
+    alpha(@surface_container_high, 0.50),
+    alpha(@surface_container_low, 0.38));
+  box-shadow:
+    0 2px 7px alpha(#000000, 0.16),
+    0 0 0 1px alpha(@primary, 0.08),
+    0 0 9px alpha(@primary, 0.18),
+    inset 0 1px alpha(@on_surface, 0.055);
+}
+
+.clock-card:hover {
+  transform: none;
+  border-color: alpha(@primary, 0.40);
+  background-image: linear-gradient(180deg,
+    alpha(@surface_container_highest, 0.54),
+    alpha(@surface_container_low, 0.42));
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.18),
+    0 0 0 1px alpha(@primary, 0.11),
+    0 0 11px alpha(@primary, 0.24),
+    inset 0 1px alpha(@on_surface, 0.06);
+}
+
+.clock-card-stage {
+  min-width: 62px;
+  min-height: 24px;
+}
+
+.clock-card-content {
+  min-height: 24px;
+}
+
+.clock-card.clock-mode-24h {
+  min-width: 72px;
+  padding: 0 8px;
+}
+
+.clock-card.clock-mode-24h .clock-card-stage {
+  min-width: 62px;
+}
+
+.clock-card.clock-mode-12h {
+  min-width: 84px;
+  padding: 0 8px;
+}
+
+.clock-card.clock-mode-12h .clock-card-stage {
+  min-width: 78px;
+}
+
+.clock-card.clock-mode-12h .clock-card-content {
+  margin-right: 14px;
+}
+
+.clock-meridiem {
+  min-width: 16px;
+  font-size: 8px;
+  color: alpha(@on_surface_variant, 0.68);
+}
+
+.popup-calendar {
+  border-color: alpha(@primary, 0.24);
+  border-radius: 22px;
+  background-image: linear-gradient(150deg,
+    alpha(@surface_container_high, 0.97),
+    alpha(@surface, 0.948) 56%,
+    alpha(@primary_container, 0.36));
+  box-shadow:
+    0 14px 30px alpha(#000000, 0.32),
+    0 0 0 1px alpha(@primary, 0.07),
+    inset 0 1px alpha(@on_surface, 0.08);
+}
+
+.calendar-panel {
+  min-width: 272px;
+  padding: 13px;
+}
+
+.calendar-date-header {
+  min-height: 31px;
+  padding: 1px 4px 7px 4px;
+}
+
+.calendar-date-label {
+  color: alpha(@on_surface, 0.90);
+  font-size: 13px;
+  font-weight: 860;
+  letter-spacing: 0;
+}
+
+.calendar-widget {
+  padding: 7px 8px 9px 8px;
+  border-color: alpha(@outline_variant, 0.15);
+  border-radius: 20px;
+  background: alpha(@surface_container_lowest, 0.64);
+  box-shadow:
+    inset 0 1px alpha(@on_surface, 0.035),
+    inset 0 0 0 1px alpha(#000000, 0.07);
+}
+
+.calendar-widget header {
+  min-height: 36px;
+  margin: 0 0 6px 0;
+  border-bottom-color: alpha(@outline_variant, 0.10);
+}
+
+.calendar-widget header button {
+  border-radius: 12px;
+}
+
+.calendar-widget .day-name {
+  font-size: 9px;
+}
+
+.calendar-widget .day-number {
+  min-width: 27px;
+  min-height: 27px;
+  border-radius: 11px;
+  font-size: 10px;
+}
+
+.calendar-widget .day-number:selected,
+.calendar-widget .today:selected,
+.calendar-widget:selected {
+  border-radius: 12px;
+}
+
+.calendar-footer-action {
+  min-height: 28px;
+  padding: 1px 8px;
+  border-color: alpha(@outline_variant, 0.15);
+  border-radius: 14px;
+  background-image: linear-gradient(145deg,
+    alpha(@surface_container_high, 0.48),
+    alpha(@surface_container, 0.30));
+}
+
+.media-card {
+  min-height: 30px;
+  padding: 2px 6px 2px 2px;
+  border-color: alpha(@primary, 0.22);
+  border-radius: 13px;
+  background: alpha(@surface_container_low, 0.44);
+  box-shadow:
+    0 2px 7px alpha(#000000, 0.18),
+    0 0 0 1px alpha(@primary, 0.06),
+    inset 0 1px alpha(@on_surface, 0.055);
+}
+
+.media-card:hover {
+  transform: none;
+  border-color: alpha(@primary, 0.34);
+  background: alpha(@surface_container, 0.48);
+  box-shadow:
+    0 3px 8px alpha(#000000, 0.20),
+    0 0 0 1px alpha(@primary, 0.08),
+    inset 0 1px alpha(@on_surface, 0.06);
+}
+
+.media-main-hit {
+  padding: 0 2px 0 0;
+}
+
+.media-main-hit:hover {
+  background: alpha(@primary, 0.045);
+}
+
+.media-art-frame {
+  min-width: 26px;
+  min-height: 26px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.media-art {
+  border-radius: 8px;
+}
+
+.media-source-icon {
+  color: alpha(@primary, 0.92);
+  -gtk-icon-shadow: none;
+}
+
+.launcher-card {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: none;
+  border-color: transparent;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.launcher-card:hover {
+  border: none;
+  border-color: alpha(@primary, 0.22);
+  background: alpha(@primary, 0.08);
+  box-shadow:
+    0 0 10px alpha(@primary, 0.18),
+    inset 0 0 10px alpha(@primary, 0.08);
+}
+
+.launcher-glyph {
+  color: @primary;
+  font-size: 18px;
+  font-weight: 950;
+  text-shadow:
+    0 0 8px alpha(@primary, 0.54),
+    0 0 16px alpha(@tertiary, 0.20);
+}
+
+.launcher-card:hover .launcher-glyph {
+  color: @tertiary;
+  text-shadow:
+    0 0 9px alpha(@tertiary, 0.58),
+    0 0 18px alpha(@primary, 0.28);
+}
+
+.theme-light .launcher-card {
+  border: none;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.theme-light .launcher-card:hover {
+  border: none;
+  border-color: alpha(@primary, 0.22);
+  background: alpha(@primary, 0.075);
+  box-shadow: 0 0 9px alpha(@primary, 0.16);
+}
+
+.workspace-button {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0 2px;
+  font-size: 10px;
+  transform: scaleX(1);
+  transform-origin: center;
+  transition:
+    transform 420ms cubic-bezier(0.18, 0.82, 0.22, 1),
+    border-color 360ms ease,
+    background 360ms ease,
+    background-image 360ms ease,
+    box-shadow 360ms ease,
+    color 260ms ease;
+}
+
+.workspace-button.expanded {
+  padding: 0 2px;
+}
+
+.workspace-button.hovered {
+  min-width: 22px;
+  min-height: 22px;
+  transform: scaleX(1.16);
+  border-color: alpha(@primary, 0.26);
+  background-image: linear-gradient(180deg,
+    alpha(@surface_container_highest, 0.26),
+    alpha(@surface_container_high, 0.14));
+  box-shadow:
+    inset 0 1px alpha(@on_surface, 0.045),
+    0 0 0 1px alpha(@primary, 0.045);
+  animation: none;
+}
+
+.workspace-button.hovered:hover:not(.active) {
+  min-width: 22px;
+  min-height: 22px;
+  transform: scaleX(1.16);
+  border-color: alpha(@primary, 0.26);
+  background-image: linear-gradient(180deg,
+    alpha(@surface_container_highest, 0.26),
+    alpha(@surface_container_high, 0.14));
+  box-shadow:
+    inset 0 1px alpha(@on_surface, 0.045),
+    0 0 0 1px alpha(@primary, 0.045);
+  animation: none;
+}
+
+.workspace-button.active,
+.workspace-button.active:not(.expanded),
+.workspace-button.active.expanded,
+.workspace-button.active.hovered {
+  min-width: 34px;
+  min-height: 22px;
+  padding: 0 2px;
+  border-color: alpha(@primary, 0.48);
+  background-image: linear-gradient(180deg,
+    alpha(@primary_container, 0.24),
+    alpha(@surface_container_highest, 0.16));
+  box-shadow:
+    inset 0 0 8px alpha(@primary, 0.30),
+    inset 0 1px alpha(@on_surface, 0.04),
+    0 0 0 1px alpha(@primary, 0.10),
+    0 0 10px alpha(@primary, 0.13);
+  animation: none;
+}
+
+.workspace-button.active {
+  min-width: 34px;
+  min-height: 22px;
+  padding: 0 2px;
+  transform: none;
+  border-radius: 12px;
+  border-color: alpha(@primary, 0.48);
+  background-image: linear-gradient(180deg,
+    alpha(@primary_container, 0.24),
+    alpha(@surface_container_highest, 0.16));
+  box-shadow:
+    inset 0 0 8px alpha(@primary, 0.30),
+    inset 0 1px alpha(@on_surface, 0.04),
+    0 0 0 1px alpha(@primary, 0.10),
+    0 0 10px alpha(@primary, 0.13);
+  animation: none;
+}
+
+.workspace-button.active:not(.expanded) {
+  min-width: 34px;
+  min-height: 22px;
+  padding: 0 2px;
+  border-radius: 12px;
+  border-color: alpha(@primary, 0.48);
+  background-image: linear-gradient(180deg,
+    alpha(@primary_container, 0.24),
+    alpha(@surface_container_highest, 0.16));
+  box-shadow:
+    inset 0 0 8px alpha(@primary, 0.30),
+    inset 0 1px alpha(@on_surface, 0.04),
+    0 0 0 1px alpha(@primary, 0.10),
+    0 0 10px alpha(@primary, 0.13);
+  animation: none;
+}
+
+.workspace-button.active.hovered {
+  transform: scaleX(1.06);
+}
+
+.motion-soft-magnetic .workspace-button {
+  transition:
+    transform 560ms cubic-bezier(0.16, 0.86, 0.18, 1),
+    border-color 460ms ease,
+    background 460ms ease,
+    background-image 460ms ease,
+    box-shadow 460ms ease,
+    color 320ms ease;
+}
+
+.motion-precise-futuristic .workspace-button {
+  transition:
+    transform 260ms cubic-bezier(0.16, 0.72, 0.20, 1),
+    border-color 210ms ease,
+    background 210ms ease,
+    background-image 210ms ease,
+    box-shadow 210ms ease,
+    color 160ms ease;
+}
