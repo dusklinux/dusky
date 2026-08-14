@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = Path(__file__).resolve().parents[3]
@@ -174,3 +175,28 @@ def test_control_center_exposes_adaptive_glass_preferences():
             rf'title = "{re.escape(title)}"[\s\S]*?key = "{re.escape(key)}"[\s\S]*?default = true',
             config,
         )
+
+
+def test_control_center_status_bar_section_surfaces_adaptive_glass_preferences():
+    config_path = REPO / "user_scripts/dusky_system/control_center/dusky_config.toml"
+    data = tomllib.loads(config_path.read_text())
+    components = next(page for page in data["pages"] if page.get("id") == "components")
+    status_section = next(
+        section
+        for section in components.get("layout", [])
+        if section.get("properties", {}).get("title") == "Status Bar & Notifications"
+    )
+
+    visible_items = status_section.get("items", [])
+    visible_text = "\n".join(str(item) for item in visible_items)
+
+    assert 'Adaptive Glass Motion' in visible_text
+    assert 'ags/adaptive-glass-motion' in visible_text
+    assert 'ags/clock-24h' in visible_text
+    for key in [
+        "ags/features/workspace-preview",
+        "ags/features/media-island",
+        "ags/features/weather",
+        "ags/features/notifications",
+    ]:
+        assert key in visible_text
