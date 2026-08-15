@@ -19,6 +19,12 @@ Adaptive Glass is opt-in. Dusky should not force users to install or switch bars
 - After a successful install, `bar_switch.sh adaptive-glass` switches the active bar.
 - `Use Waybar` returns to the stable fallback with `bar_switch.sh waybar`.
 
+Quick switching:
+
+- `SUPER + ALT + G` toggles between Waybar and Adaptive Glass.
+- The keybind is defined in `.config/hypr/source/keybinds.lua` and calls `~/user_scripts/bar/bar_switch.sh toggle`.
+- Command equivalents are `~/user_scripts/bar/bar_switch.sh adaptive-glass`, `~/user_scripts/bar/bar_switch.sh waybar`, and `~/user_scripts/bar/bar_switch.sh toggle`.
+
 Manual installer modes:
 
 ```bash

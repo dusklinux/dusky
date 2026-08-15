@@ -17,6 +17,13 @@ This branch adds Adaptive Glass as a source-owned AGS bar option in Dusky while 
 
 NovaBar is intentionally not integrated. A legacy saved `novabar` state is migrated to `adaptive-glass` so existing testers do not get stuck on an invalid value.
 
+## Switching And Keybinds
+
+- `SUPER + ALT + G` toggles between Waybar and Adaptive Glass.
+- The bind lives in `.config/hypr/source/keybinds.lua`.
+- It dispatches `~/user_scripts/bar/bar_switch.sh toggle`.
+- Direct commands remain available: `bar_switch.sh adaptive-glass`, `bar_switch.sh waybar`, and `bar_switch.sh toggle`.
+
 ## Preferences
 
 Adaptive Glass preferences are exposed in Dusky Control Center.
