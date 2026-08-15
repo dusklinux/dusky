@@ -2232,6 +2232,43 @@ title = "Adaptive Glass"
 description = "Premium bar preferences"
 
 [[pages.layout.items.layout.items]]
+type = "button"
+[pages.layout.items.layout.items.properties]
+title = "Use Adaptive Bar"
+description = "Install or repair Adaptive Glass, then switch to it"
+icon = "preferences-desktop-theme-symbolic"
+button_text = "Use"
+style = "suggested"
+[pages.layout.items.layout.items.on_press]
+type = "exec"
+command = "kitty --class adaptive_glass_install --title \"Adaptive Glass Installer\" --hold sh -c \"$HOME/.config/ags/install.sh --interactive --activate\""
+terminal = false
+
+[[pages.layout.items.layout.items]]
+type = "button"
+[pages.layout.items.layout.items.properties]
+title = "Use Waybar"
+description = "Return to the stable Waybar fallback"
+icon = "view-more-symbolic"
+button_text = "Use"
+[pages.layout.items.layout.items.on_press]
+type = "exec"
+command = "$HOME/user_scripts/bar/bar_switch.sh waybar"
+terminal = false
+
+[[pages.layout.items.layout.items]]
+type = "button"
+[pages.layout.items.layout.items.properties]
+title = "Check Adaptive Dependencies"
+description = "Verify AGS, Astal modules, Hyprland capture tools, and startup restore"
+icon = "emblem-system-symbolic"
+button_text = "Check"
+[pages.layout.items.layout.items.on_press]
+type = "exec"
+command = "kitty --class adaptive_glass_check --title \"Adaptive Glass Dependency Check\" --hold sh -c \"$HOME/.config/ags/install.sh --check\""
+terminal = false
+
+[[pages.layout.items.layout.items]]
 type = "selection"
 [pages.layout.items.layout.items.properties]
 title = "Adaptive Glass Motion"

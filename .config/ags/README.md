@@ -1,8 +1,63 @@
 # Adaptive Glass AGS for Dusky
 
-Base shell: Adaptive Glass AGS v2.10
+Base shell: Adaptive Glass AGS v2.15
+
+Branch contact: Charles Hangoma <charleshangoma7@gmail.com>
 
 Adaptive Glass is the AGS v3 / GTK4 shell being developed as a polished Dusky bar option while the existing Waybar setup remains untouched as a fallback.
+
+This branch is ready for public testing, not final design lock. Suggestions and improvements are welcome during pull request review, especially around visual polish, install edge cases, package names on non-Arch derivatives, and optional feature defaults.
+
+## Public tester install flow
+
+Adaptive Glass is opt-in. Dusky should not force users to install or switch bars during a normal dotfiles update.
+
+- Open Dusky Control Center → `Status Bar` → `Use Adaptive Bar`.
+- That button launches `~/.config/ags/install.sh --interactive --activate` in a terminal.
+- The installer checks AGS, GJS, Hyprland capture tools, and required Astal GI modules.
+- Missing dependencies are installed with retries; the installer stops if verification still fails.
+- After a successful install, `bar_switch.sh adaptive-glass` switches the active bar.
+- `Use Waybar` returns to the stable fallback with `bar_switch.sh waybar`.
+
+Manual installer modes:
+
+```bash
+~/.config/ags/install.sh --check
+~/.config/ags/install.sh --interactive --activate
+~/.config/ags/install.sh --auto --activate
+~/.config/ags/install.sh --skip-deps --no-activate
+```
+
+Flag notes:
+
+- `--interactive` asks before dependency installation.
+- `--auto` installs/repairs dependencies without prompts.
+- `--check` verifies dependencies and startup persistence without copying or switching.
+- `--activate` switches to Adaptive Glass after install.
+- `--no-activate` installs or repairs files while leaving the current bar alone.
+- `--skip-deps` is for source-copy tests or advanced users who already handled packages.
+
+## Persistence and update survival
+
+- Installed runtime files live at `~/.config/ags`.
+- The marker `.adaptive-glass-managed` identifies the directory as Dusky-owned Adaptive Glass.
+- An unrelated existing AGS config is moved to `~/.config/ags.backup-YYYYmmdd-HHMMSS` before install.
+- Waybar files are not removed or edited.
+- Session restore is handled by `~/user_scripts/bar/bar_switch.sh start`, which reads `~/.config/dusky/settings/active_bar`.
+- The installer verifies or repairs the default autostart hook so the selected bar survives logout/login and Dusky updates.
+
+## Contributor map
+
+- App entry: `app.tsx`
+- Main bar shell: `components/Bar.tsx`
+- Popup windows: `components/PopupWindows.tsx`, `components/PopupWindow.tsx`
+- Status components: `components/*`
+- Settings state: `lib/motionState.ts`, `lib/featureState.ts`, `lib/clockState.ts`, `lib/themeState.ts`
+- Dusky launch/switch integration: `~/user_scripts/bar/bar_switch.sh`
+- Public installer: `install.sh`
+- Visual cascade: `style.css`, with newer versioned polish layers appended near the end
+- Control Center entries: `user_scripts/dusky_system/control_center/dusky_config.toml`
+- PR screenshots for this branch were staged locally at `/home/hangoma/adaptive bar screenshots`.
 
 ## Dusky integration
 
@@ -10,7 +65,7 @@ Adaptive Glass is the AGS v3 / GTK4 shell being developed as a polished Dusky ba
 - Waybar remains the fallback. Use `SUPER + ALT + G` or `bar_switch.sh toggle` to switch between Waybar and Adaptive Glass.
 - Startup uses `bar_switch.sh start`, so the last saved bar choice is restored on login.
 - NovaBar is not part of the active integration. A legacy saved `novabar` state is normalized to `adaptive-glass`.
-- Dusky Control Center exposes Adaptive Glass preferences under `Status Bar`.
+- Dusky Control Center exposes `Use Adaptive Bar`, `Use Waybar`, dependency checks, and Adaptive Glass preferences under `Status Bar`.
 
 ## Preferences
 

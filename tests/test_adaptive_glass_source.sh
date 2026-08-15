@@ -48,7 +48,7 @@ grep -F 'ADAPTIVE_ENTRY="${HOME}/.config/ags/app.tsx"' "$ROOT/user_scripts/bar/b
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/home/.config"
+mkdir -p "$TMP/home/.config" "$TMP/home/user_scripts/bar" "$TMP/home/user_scripts/hypr/defaults/edit_here"
 cp -a "$AGS_DIR" "$TMP/home/.config/ags"
 
 cat > "$TMP/ags" <<'STUB'
@@ -56,8 +56,18 @@ cat > "$TMP/ags" <<'STUB'
 exit 0
 STUB
 chmod +x "$TMP/ags"
+cat > "$TMP/home/user_scripts/bar/bar_switch.sh" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$TMP/home/user_scripts/bar/bar_switch.sh"
+cat > "$TMP/home/user_scripts/hypr/defaults/edit_here/autostart.lua" <<'STUB'
+hl.on("hyprland.start", function()
+    hl.exec_cmd("uwsm-app -- $HOME/user_scripts/bar/bar_switch.sh start")
+end)
+STUB
 
-HOME="$TMP/home" PATH="$TMP:$PATH" "$TMP/home/.config/ags/install.sh" >/dev/null
+HOME="$TMP/home" PATH="$TMP:$PATH" "$TMP/home/.config/ags/install.sh" --skip-deps --no-activate >/dev/null
 test -f "$TMP/home/.config/ags/app.tsx"
 test -f "$TMP/home/.config/ags/install.sh"
 test -f "$TMP/home/.config/ags/.adaptive-glass-managed"
