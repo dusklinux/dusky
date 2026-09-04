@@ -523,6 +523,12 @@ class DuskyDownloaderApp(Gtk.Window):
         self.abort_all_flag = False
         self.worker_thread: threading.Thread | None = None
 
+        # Concurrency & Multi-Download State (defaults to 3 concurrent downloads)
+        self.max_concurrent = 3
+        self.active_downloads: dict[DownloadItem, dict] = {}
+        self.active_downloads_lock = threading.Lock()
+        self.focused_item: DownloadItem | None = None
+
         # Probing & Live Extraction State
         self.is_probing = False
         self.probing_cancelled = False
@@ -832,6 +838,7 @@ class DuskyDownloaderApp(Gtk.Window):
         self.treeview.connect("query-tooltip", self.on_treeview_query_tooltip)
         self.treeview.connect("row-activated", self.on_row_activated)
         self.treeview.connect("button-press-event", self.on_treeview_button_press)
+        self.treeview.connect("cursor-changed", self.on_treeview_cursor_changed)
 
         # Checkbox column for enable / disable / skip
         check_renderer = Gtk.CellRendererToggle()
@@ -1516,7 +1523,8 @@ class DuskyDownloaderApp(Gtk.Window):
             done = sum(1 for x in self.queue if x.status == "Success")
             skip = sum(1 for x in self.queue if x.status == "Skipped")
             fail = sum(1 for x in self.queue if x.status == "Failed")
-            active = 1 if self.active_item and self.active_item.status == "Downloading" else 0
+            with self.active_downloads_lock:
+                active = len(self.active_downloads)
 
         try:
             total_b, used_b, free_b = shutil.disk_usage(self.storage_dir)
@@ -1542,7 +1550,7 @@ class DuskyDownloaderApp(Gtk.Window):
         if total > 0:
             summary.append(f"{total} total")
         if active > 0:
-            summary.append(f"{active} active")
+            summary.append(f"{active} active ({self.max_concurrent} slots)")
         if done > 0:
             summary.append(f"{done} completed")
         if skip > 0:
@@ -1553,51 +1561,58 @@ class DuskyDownloaderApp(Gtk.Window):
         if summary:
             self.status_lbl.set_text(" | " + " • ".join(summary))
         else:
-            self.status_lbl.set_text(" | Queue idle")
+            self.status_lbl.set_text(f" | Queue idle ({self.max_concurrent} concurrent slots)")
 
         if hasattr(self, "queue_badge"):
             self.queue_badge.set_text(f"{total} items")
 
     def _ensure_worker_running(self):
-        if self.worker_thread and self.worker_thread.is_alive():
-            return
         self.abort_all_flag = False
-        self.worker_thread = threading.Thread(target=self._queue_worker_loop, daemon=True)
-        self.worker_thread.start()
+        self._trigger_workers()
 
-    # ==========================================
-    # WORKER THREAD & STREAMING PIPELINE
-    # ==========================================
-    def _queue_worker_loop(self):
-        while not self.abort_all_flag:
-            item_to_process: DownloadItem | None = None
+    def _trigger_workers(self):
+        if self.abort_all_flag:
+            return
 
-            with self.queue_lock:
-                for it in self.queue:
-                    if it.status == "Queued":
-                        item_to_process = it
-                        it.status = "Downloading"
-                        break
+        to_start: list[DownloadItem] = []
+        with self.queue_lock:
+            with self.active_downloads_lock:
+                running_cnt = len(self.active_downloads)
+                slots_avail = max(0, self.max_concurrent - running_cnt)
+                if slots_avail > 0:
+                    for it in self.queue:
+                        if it.status == "Queued" and not it.skip_requested:
+                            it.status = "Downloading"
+                            self.active_downloads[it] = {
+                                "proc": None,
+                                "pgid": None,
+                                "progress": engine.MediaProgress(),
+                                "started_ns": time.monotonic_ns(),
+                            }
+                            to_start.append(it)
+                            if len(to_start) >= slots_avail:
+                                break
 
-            if item_to_process is None:
-                # No more queued items
-                break
+        for item in to_start:
+            GLib.idle_add(self._on_item_started, item)
+            threading.Thread(target=self._download_worker_thread, args=(item,), daemon=True).start()
 
-            self.active_item = item_to_process
-            GLib.idle_add(self._on_item_started, item_to_process)
+        with self.active_downloads_lock:
+            active_cnt = len(self.active_downloads)
+        with self.queue_lock:
+            queued_cnt = sum(1 for x in self.queue if x.status == "Queued")
 
-            # Check if user requested skip before download spawned
-            if item_to_process.skip_requested or self.abort_all_flag:
-                item_to_process.status = "Skipped"
-                item_to_process.error = "skipped by user"
-                GLib.idle_add(self._on_item_finished, item_to_process)
-                continue
+        if active_cnt == 0 and queued_cnt == 0:
+            GLib.idle_add(self._on_queue_finished)
 
-            # Execute single download
-            self._download_item(item_to_process)
-
-        self.active_item = None
-        GLib.idle_add(self._on_queue_finished)
+    def _download_worker_thread(self, item: DownloadItem):
+        try:
+            self._download_item(item)
+        finally:
+            with self.active_downloads_lock:
+                self.active_downloads.pop(item, None)
+            GLib.idle_add(self._on_item_finished, item)
+            self._trigger_workers()
 
     def _find_row_for_item(self, item: DownloadItem):
         for row in self.liststore:
@@ -1605,7 +1620,31 @@ class DuskyDownloaderApp(Gtk.Window):
                 return row
         return None
 
+    def on_treeview_cursor_changed(self, treeview):
+        selection = treeview.get_selection()
+        model, tree_iter = selection.get_selected()
+        if tree_iter:
+            item = model.get_value(tree_iter, COL_ITEM)
+            with self.active_downloads_lock:
+                if item and item in self.active_downloads:
+                    self.focused_item = item
+                    d = self.active_downloads[item]
+                    self._update_progress_ui(item, d["progress"])
+
+    def _get_displayed_item(self) -> DownloadItem | None:
+        with self.active_downloads_lock:
+            if self.focused_item and self.focused_item in self.active_downloads:
+                return self.focused_item
+            if self.active_downloads:
+                return next(iter(self.active_downloads.keys()))
+        return None
+
     def _download_item(self, item: DownloadItem):
+        if self.abort_all_flag or item.skip_requested:
+            item.status = "Skipped" if item.skip_requested else "Failed"
+            item.error = "skipped by user" if item.skip_requested else "aborted by user"
+            return
+
         # 1. Background probe to resolve title and metadata only if generic URL title
         if not item.title or item.title.startswith("http://") or item.title.startswith("https://"):
             try:
@@ -1617,6 +1656,11 @@ class DuskyDownloaderApp(Gtk.Window):
             except Exception:
                 pass
             GLib.idle_add(self._update_item_title, item)
+
+        if self.abort_all_flag or item.skip_requested:
+            item.status = "Skipped" if item.skip_requested else "Failed"
+            item.error = "skipped by user" if item.skip_requested else "aborted by user"
+            return
 
         runner = engine.YtdlpRunner(item.mode, self.storage_dir, item.url, item.quality_cap)
         parser = engine.YtdlpProgressParser()
@@ -1632,12 +1676,16 @@ class DuskyDownloaderApp(Gtk.Window):
         pgid: int | None = None
         try:
             proc, pgid = runner.spawn()
-            self.active_proc = proc
-            self.active_pgid = pgid
+            with self.active_downloads_lock:
+                self.active_downloads[item] = {
+                    "proc": proc,
+                    "pgid": pgid,
+                    "progress": progress_state,
+                    "started_ns": started_ns,
+                }
         except Exception as err:
             item.status = "Failed"
             item.error = str(err)
-            GLib.idle_add(self._on_item_finished, item)
             return
 
         # Drain streams
@@ -1655,7 +1703,7 @@ class DuskyDownloaderApp(Gtk.Window):
                             line = bytes(buf).decode("utf-8", errors="replace")
                             del buf[:]
                             parser.parse_line(line, progress_state)
-                            GLib.idle_add(self._update_progress_ui, progress_state)
+                            GLib.idle_add(self._update_progress_ui, item, progress_state)
                         continue
                     buf.append(byte)
             except Exception:
@@ -1664,7 +1712,7 @@ class DuskyDownloaderApp(Gtk.Window):
                 if buf:
                     line = bytes(buf).decode("utf-8", errors="replace")
                     parser.parse_line(line, progress_state)
-                    GLib.idle_add(self._update_progress_ui, progress_state)
+                    GLib.idle_add(self._update_progress_ui, item, progress_state)
 
         t_out = threading.Thread(target=drain, args=(proc.stdout, True), daemon=True)
         t_err = threading.Thread(target=drain, args=(proc.stderr, False), daemon=True)
@@ -1673,39 +1721,16 @@ class DuskyDownloaderApp(Gtk.Window):
 
         # Monitor loop
         while proc.poll() is None:
-            if self.abort_all_flag:
+            if self.abort_all_flag or item.skip_requested:
                 if pgid and pgid > 1:
                     engine._kill_pgids([pgid], signal.SIGTERM)
                 try:
                     proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
+                except Exception:
                     if pgid and pgid > 1:
                         engine._kill_pgids([pgid], signal.SIGKILL)
-                    proc.wait()
                 break
-
-            if item.skip_requested:
-                if pgid and pgid > 1:
-                    engine._kill_pgids([pgid], signal.SIGTERM)
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    if pgid and pgid > 1:
-                        engine._kill_pgids([pgid], signal.SIGKILL)
-                    proc.wait()
-                break
-
             time.sleep(0.1)
-
-        # Cleanup streams
-        try:
-            proc.stdout.close()
-        except Exception:
-            pass
-        try:
-            proc.stderr.close()
-        except Exception:
-            pass
 
         t_out.join(timeout=1.0)
         t_err.join(timeout=1.0)
@@ -1713,32 +1738,26 @@ class DuskyDownloaderApp(Gtk.Window):
         with engine._ACTIVE_PG_LOCK:
             if pgid:
                 engine.ACTIVE_PROCESS_GROUPS.discard(pgid)
-        self.active_proc = None
-        self.active_pgid = None
 
         if item.skip_requested:
             item.status = "Skipped"
             item.error = "skipped by user"
-            GLib.idle_add(self._on_item_finished, item)
             return
 
         if self.abort_all_flag:
             item.status = "Failed"
             item.error = "aborted by user"
-            GLib.idle_add(self._on_item_finished, item)
             return
 
         if proc.returncode != 0:
             item.status = "Failed"
             item.error = f"yt-dlp exited with error code {proc.returncode}"
-            GLib.idle_add(self._on_item_finished, item)
             return
 
         if progress_state.already_archived:
             item.status = "Skipped"
             item.saved_file = "--"
             item.error = "already in archive"
-            GLib.idle_add(self._on_item_finished, item)
             return
 
         # Locate produced file
@@ -1762,47 +1781,83 @@ class DuskyDownloaderApp(Gtk.Window):
             item.status = "Failed"
             item.error = "no output file produced"
 
-        GLib.idle_add(self._on_item_finished, item)
-
     # ==========================================
     # GLIB IDLE CALLBACKS (MAIN THREAD UI UPDATES)
     # ==========================================
     def _on_item_started(self, item: DownloadItem):
-        self.active_title_lbl.set_text(item.title)
-        self.prog_pct_lbl.set_text("Starting...")
-        self.prog_sub_lbl.set_text("Initializing streams...")
-        self.progress_bar.set_fraction(0.0)
-
         self.skip_current_btn.set_sensitive(True)
         self.cancel_all_btn.set_sensitive(True)
 
         row = self._find_row_for_item(item)
         if row:
             row[COL_STATUS] = "Downloading"
+
+        with self.active_downloads_lock:
+            active_cnt = len(self.active_downloads)
+
+        displayed = self._get_displayed_item()
+        if displayed is item or active_cnt <= 1:
+            self.active_title_lbl.set_text(f"[{active_cnt} Active] {item.title}" if active_cnt > 1 else item.title)
+            self.prog_pct_lbl.set_text("Starting...")
+            self.prog_sub_lbl.set_text("Initializing streams...")
+            self.progress_bar.set_fraction(0.0)
+
         self._update_status_bar()
 
     def _update_item_title(self, item: DownloadItem):
-        self.active_title_lbl.set_text(item.title)
+        displayed = self._get_displayed_item()
+        if displayed is item:
+            with self.active_downloads_lock:
+                active_cnt = len(self.active_downloads)
+            prefix = f"[{active_cnt} Active] " if active_cnt > 1 else ""
+            self.active_title_lbl.set_text(f"{prefix}{item.title}")
         row = self._find_row_for_item(item)
         if row:
             row[COL_TITLE] = item.title
 
-    def _update_progress_ui(self, progress_state: engine.MediaProgress):
-        fraction = max(0.0, min(1.0, progress_state.percentage / 100.0))
-        self.progress_bar.set_fraction(fraction)
+    def _update_progress_ui(self, item: DownloadItem, progress_state: engine.MediaProgress):
+        # Update row in treeview with live percentage
+        row = self._find_row_for_item(item)
+        if row and row[COL_STATUS] != "Skipped":
+            row[COL_STATUS] = f"Downloading ({progress_state.percentage:.0f}%)"
 
-        # Labels above progress bar
-        self.prog_pct_lbl.set_text(f"Downloading • {progress_state.percentage:.1f}%")
-        self.prog_sub_lbl.set_text(f"{format_speed(progress_state.speed_bps)} • ETA: {format_eta(progress_state.eta_secs)}")
+        displayed = self._get_displayed_item()
+        with self.active_downloads_lock:
+            active_cnt = len(self.active_downloads)
+            total_speed = sum((d["progress"].speed_bps or 0.0) for d in self.active_downloads.values())
+
+        if displayed is item:
+            fraction = max(0.0, min(1.0, progress_state.percentage / 100.0))
+            self.progress_bar.set_fraction(fraction)
+
+            # Left side above progress bar
+            self.prog_pct_lbl.set_text(f"Downloading • {progress_state.percentage:.1f}%")
+
+            # Right side above progress bar: Transferred size only (NO SPEED, NO ETA! Clean & non-redundant!)
+            dl_str = format_bytes(progress_state.downloaded_bytes)
+            tot_str = format_bytes(progress_state.total_bytes)
+            if active_cnt > 1:
+                self.prog_sub_lbl.set_text(f"Transferred: {dl_str} / {tot_str} • {active_cnt} active")
+            else:
+                self.prog_sub_lbl.set_text(f"Transferred: {dl_str} / {tot_str}")
+
+            prefix = f"[{active_cnt} Active] " if active_cnt > 1 else ""
+            self.active_title_lbl.set_text(f"{prefix}{item.title}")
 
         # Telemetry pills below progress bar
-        self.badge_speed.set_text(f"Speed: {format_speed(progress_state.speed_bps)}")
-        dl_str = format_bytes(progress_state.downloaded_bytes)
-        tot_str = format_bytes(progress_state.total_bytes)
-        self.badge_downloaded.set_text(f"Size: {dl_str} / {tot_str}")
-        self.badge_eta.set_text(f"ETA: {format_eta(progress_state.eta_secs)}")
-        stage_name = progress_state.stage.value.capitalize()
-        self.badge_stage.set_text(f"Stage: {stage_name}")
+        speed_tag = f" ({active_cnt} parallel)" if active_cnt > 1 else ""
+        self.badge_speed.set_text(f"Speed: {format_speed(total_speed)}{speed_tag}")
+
+        if displayed:
+            with self.active_downloads_lock:
+                disp_info = self.active_downloads.get(displayed)
+                disp_prog = disp_info["progress"] if disp_info else progress_state
+            dl_str = format_bytes(disp_prog.downloaded_bytes)
+            tot_str = format_bytes(disp_prog.total_bytes)
+            self.badge_downloaded.set_text(f"Size: {dl_str} / {tot_str}")
+            self.badge_eta.set_text(f"ETA: {format_eta(disp_prog.eta_secs)}")
+            stage_name = disp_prog.stage.value.capitalize()
+            self.badge_stage.set_text(f"Stage: {stage_name}")
 
     def _on_item_finished(self, item: DownloadItem):
         row = self._find_row_for_item(item)
@@ -1812,9 +1867,14 @@ class DuskyDownloaderApp(Gtk.Window):
             row[COL_SIZE] = size_str
             if item.status == "Skipped":
                 row[COL_CHECK] = False
+        if self.focused_item is item:
+            self.focused_item = None
         self._update_status_bar()
 
     def _on_queue_finished(self):
+        with self.active_downloads_lock:
+            if len(self.active_downloads) > 0:
+                return
         self.active_title_lbl.set_text("Queue is idle")
         self.prog_pct_lbl.set_text("Idle")
         self.prog_sub_lbl.set_text("Ready")
@@ -1833,19 +1893,36 @@ class DuskyDownloaderApp(Gtk.Window):
     # USER ACTIONS: SKIP & CANCEL
     # ==========================================
     def on_skip_current_clicked(self, widget):
-        if self.active_item:
-            self.active_item.skip_requested = True
-            if self.active_pgid and self.active_pgid > 1:
-                engine._kill_pgids([self.active_pgid], signal.SIGTERM)
+        with self.active_downloads_lock:
+            target_item = self.focused_item
+            if target_item is None or target_item not in self.active_downloads:
+                target_item = next(iter(self.active_downloads.keys()), None)
+            if target_item and target_item in self.active_downloads:
+                target_item.skip_requested = True
+                pgid = self.active_downloads[target_item].get("pgid")
+                if pgid and pgid > 1:
+                    engine._kill_pgids([pgid], signal.SIGTERM)
 
     def on_abort_all_clicked(self, widget):
         if self.is_probing:
             self.probing_cancelled = True
         self.abort_all_flag = True
-        if self.active_item:
-            self.active_item.skip_requested = True
-        if self.active_pgid and self.active_pgid > 1:
-            engine._kill_pgids([self.active_pgid], signal.SIGTERM)
+        with self.active_downloads_lock:
+            for it, d in list(self.active_downloads.items()):
+                it.skip_requested = True
+                pgid = d.get("pgid")
+                if pgid and pgid > 1:
+                    engine._kill_pgids([pgid], signal.SIGTERM)
+        with self.queue_lock:
+            for it in self.queue:
+                if it.status == "Queued":
+                    it.status = "Skipped"
+                    it.error = "aborted by user"
+                    row = self._find_row_for_item(it)
+                    if row:
+                        row[COL_STATUS] = "Skipped"
+                        row[COL_CHECK] = False
+        self._update_status_bar()
 
     def on_skip_selected_clicked(self, widget):
         selection = self.treeview.get_selection()
@@ -1856,14 +1933,22 @@ class DuskyDownloaderApp(Gtk.Window):
         if not item:
             return
 
-        with self.queue_lock:
-            if item.status == "Downloading":
-                self.on_skip_current_clicked(None)
-            elif item.status == "Queued":
-                item.status = "Skipped"
-                item.error = "skipped by user in queue"
-                model.set_value(tree_iter, COL_STATUS, "Skipped")
-                model.set_value(tree_iter, COL_CHECK, False)
+        with self.active_downloads_lock:
+            is_active = item in self.active_downloads
+            active_info = self.active_downloads.get(item)
+
+        if is_active and active_info:
+            item.skip_requested = True
+            pgid = active_info.get("pgid")
+            if pgid and pgid > 1:
+                engine._kill_pgids([pgid], signal.SIGTERM)
+        else:
+            with self.queue_lock:
+                if item.status == "Queued":
+                    item.status = "Skipped"
+                    item.error = "skipped by user in queue"
+                    model.set_value(tree_iter, COL_STATUS, "Skipped")
+                    model.set_value(tree_iter, COL_CHECK, False)
         self._update_status_bar()
 
     def on_remove_selected_clicked(self, widget):
@@ -1875,9 +1960,15 @@ class DuskyDownloaderApp(Gtk.Window):
         if not item:
             return
 
+        with self.active_downloads_lock:
+            active_info = self.active_downloads.get(item)
+            if active_info:
+                item.skip_requested = True
+                pgid = active_info.get("pgid")
+                if pgid and pgid > 1:
+                    engine._kill_pgids([pgid], signal.SIGTERM)
+
         with self.queue_lock:
-            if item.status == "Downloading":
-                self.on_skip_current_clicked(None)
             if item in self.queue:
                 self.queue.remove(item)
             model.remove(tree_iter)
