@@ -523,6 +523,12 @@ class DuskyDownloaderApp(Gtk.Window):
         self.abort_all_flag = False
         self.worker_thread: threading.Thread | None = None
 
+        # Probing & Live Extraction State
+        self.is_probing = False
+        self.probing_cancelled = False
+        self.probe_pulse_timer: int | None = None
+        self.probe_total: int | None = None
+
         # Storage Pool
         self.storage_dir = engine.resolve_storage_pool()
 
@@ -649,6 +655,35 @@ class DuskyDownloaderApp(Gtk.Window):
         ctrl_row.pack_end(self.add_btn, False, False, 0)
 
         input_card.pack_start(ctrl_row, False, False, 0)
+
+        # Probing Banner Revealer (displays live feedback while querying large playlists/mixes)
+        self.probe_revealer = Gtk.Revealer()
+        self.probe_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.probe_revealer.set_transition_duration(250)
+
+        probe_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        probe_box.get_style_context().add_class("stat-pill")
+        probe_box.set_margin_top(8)
+
+        self.probe_spinner = Gtk.Spinner()
+        probe_box.pack_start(self.probe_spinner, False, False, 0)
+
+        self.probe_msg_lbl = Gtk.Label(label="Analyzing media target...", xalign=0)
+        self.probe_msg_lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        probe_box.pack_start(self.probe_msg_lbl, True, True, 0)
+
+        self.probe_cancel_btn = make_icon_btn(
+            "process-stop-symbolic",
+            label_text="Cancel",
+            tooltip="Cancel probing this target",
+            css_class="btn-skip",
+        )
+        self.probe_cancel_btn.connect("clicked", self._on_cancel_probe_clicked)
+        probe_box.pack_end(self.probe_cancel_btn, False, False, 0)
+
+        self.probe_revealer.add(probe_box)
+        input_card.pack_start(self.probe_revealer, False, False, 0)
+
         main_box.pack_start(input_card, False, False, 0)
 
         # ==========================================
@@ -1271,6 +1306,11 @@ class DuskyDownloaderApp(Gtk.Window):
                 self._update_status_bar()
         fcd.destroy()
 
+    def _on_cancel_probe_clicked(self, widget):
+        self.probing_cancelled = True
+        self.probe_msg_lbl.set_text("Cancelling extraction probe...")
+        self.probe_cancel_btn.set_sensitive(False)
+
     def on_add_clicked(self, widget):
         raw_target = self.url_entry.get_text().strip()
         if not raw_target:
@@ -1282,16 +1322,81 @@ class DuskyDownloaderApp(Gtk.Window):
         q_id = self.quality_combo.get_active_id() or "best"
         quality_cap = None if q_id == "best" else int(q_id)
 
-        # Clear input box and indicate probing
-        self.url_entry.set_text("")
-        self.url_entry.set_placeholder_text("Probing target media / playlist...")
-        if hasattr(self, "add_btn"):
-            self.add_btn.set_sensitive(False)
+        # Probing state initialization
+        self.is_probing = True
+        self.probing_cancelled = False
+        self.probe_total = None
+        self.url_entry.set_sensitive(False)
+        self.add_btn.set_sensitive(False)
+        self.cancel_all_btn.set_sensitive(True)
+
+        self.probe_revealer.set_reveal_child(True)
+        self.probe_spinner.start()
+        self.probe_cancel_btn.set_sensitive(True)
+        self.probe_msg_lbl.set_text("Connecting to media target and inspecting playlist...")
+
+        # If download worker is idle, show visual cues in Active Download dashboard
+        if self.active_item is None:
+            self.active_title_lbl.set_text("Analyzing target collection / playlist...")
+            self.prog_pct_lbl.set_text("Probing...")
+            self.prog_sub_lbl.set_text("Connecting...")
+            self.badge_stage.set_text("Stage: Probing")
+            self.progress_bar.set_fraction(0.0)
+
+            def _pulse():
+                if self.is_probing and self.probe_total is None:
+                    self.progress_bar.pulse()
+                    return True
+                return False
+
+            self.probe_pulse_timer = GLib.timeout_add(80, _pulse)
+
+        def _apply_probe_progress(msg: str, current: int | None, total: int | None):
+            if not self.is_probing:
+                return
+            self.probe_msg_lbl.set_text(msg)
+            self.status_lbl.set_text(msg)
+            if self.active_item is None:
+                self.active_title_lbl.set_text(msg)
+                if total and current:
+                    self.probe_total = total
+                    fraction = min(1.0, max(0.0, current / total))
+                    self.progress_bar.set_fraction(fraction)
+                    self.prog_pct_lbl.set_text(f"{int(fraction * 100)}% ({current}/{total})")
+                    self.prog_sub_lbl.set_text(f"{current} of {total} items discovered")
+                    self.badge_downloaded.set_text(f"Items: {current} / {total}")
+                    self.badge_stage.set_text(f"Stage: Item {current}/{total}")
+                elif current:
+                    self.progress_bar.pulse()
+                    self.prog_pct_lbl.set_text(f"{current} items")
+                    self.prog_sub_lbl.set_text(f"{current} items discovered so far")
+                    self.badge_downloaded.set_text(f"Items: {current}")
+
+        def _on_probe_progress(msg: str, current: int | None, total: int | None):
+            GLib.idle_add(_apply_probe_progress, msg, current, total)
 
         def _restore_ui():
+            self.is_probing = False
+            if self.probe_pulse_timer:
+                GLib.source_remove(self.probe_pulse_timer)
+                self.probe_pulse_timer = None
+            self.probe_spinner.stop()
+            self.probe_revealer.set_reveal_child(False)
+            self.url_entry.set_sensitive(True)
+            self.url_entry.set_text("")
             self.url_entry.set_placeholder_text("Enter video URL, playlist link, or batch file path...")
-            if hasattr(self, "add_btn"):
-                self.add_btn.set_sensitive(True)
+            self.add_btn.set_sensitive(True)
+            if self.active_item is None:
+                self.active_title_lbl.set_text("Queue is idle")
+                self.prog_pct_lbl.set_text("Idle")
+                self.prog_sub_lbl.set_text("Ready")
+                self.progress_bar.set_fraction(0.0)
+                self.badge_speed.set_text("Speed: -- KB/s")
+                self.badge_downloaded.set_text("Size: -- / --")
+                self.badge_eta.set_text("ETA: --:--")
+                self.badge_stage.set_text("Stage: Idle")
+                self.cancel_all_btn.set_sensitive(False)
+                self._update_status_bar()
 
         # Resolve paths or URL lists in background to avoid any GUI freeze
         def _resolve_and_queue():
@@ -1310,13 +1415,11 @@ class DuskyDownloaderApp(Gtk.Window):
                         GLib.idle_add(_restore_ui)
                         return
 
-                    # Offer playlist selection modal for batch files
                     items = [(engine.label_from_url(u) or u, u) for u in urls]
-                    GLib.idle_add(self._prompt_playlist_selection, f"Batch File: {target_path.name}", items, mode, quality_cap)
                     GLib.idle_add(_restore_ui)
+                    GLib.idle_add(self._prompt_playlist_selection, f"Batch File: {target_path.name}", items, mode, quality_cap)
                     return
 
-                # Normal URL input
                 url_candidates = engine.split_url_list(raw_target)
                 if not url_candidates:
                     GLib.idle_add(self._show_error, "No valid URLs or batch entries found.")
@@ -1325,37 +1428,47 @@ class DuskyDownloaderApp(Gtk.Window):
 
                 if len(url_candidates) == 1:
                     u = url_candidates[0]
-                    # Probe target to detect if playlist / collection or single video
                     try:
-                        found, is_coll, label, _ = engine.probe_media_target(u)
-                        if is_coll and len(found) > 1:
-                            # Detected multi-track playlist / album / collection!
-                            GLib.idle_add(self._prompt_playlist_selection, label, found, mode, quality_cap)
+                        found, is_coll, label, _ = engine.probe_media_target(
+                            u,
+                            progress_cb=_on_probe_progress,
+                            cancel_check=lambda: self.probing_cancelled,
+                        )
+                        if self.probing_cancelled:
                             GLib.idle_add(_restore_ui)
+                            return
+                        if is_coll and len(found) > 1:
+                            GLib.idle_add(_restore_ui)
+                            GLib.idle_add(self._prompt_playlist_selection, label, found, mode, quality_cap)
                             return
                         elif found:
                             title = found[0][0]
                             real_url = found[0][1]
                             item = DownloadItem(title=title, url=real_url, mode=mode, quality_cap=quality_cap)
+                            GLib.idle_add(_restore_ui)
                             GLib.idle_add(self._append_to_queue, [item])
+                            return
+                    except KeyboardInterrupt:
+                        GLib.idle_add(_restore_ui)
+                        return
+                    except Exception:
+                        if self.probing_cancelled:
                             GLib.idle_add(_restore_ui)
                             return
-                    except Exception:
-                        # Fallback to direct DownloadItem on network/probe error
                         pass
 
                     label = engine.label_from_url(u) or u
                     item = DownloadItem(title=label, url=u, mode=mode, quality_cap=quality_cap)
+                    GLib.idle_add(_restore_ui)
                     GLib.idle_add(self._append_to_queue, [item])
-                    GLib.idle_add(_restore_ui)
                 else:
-                    # Multiple comma-separated URLs
                     items = [(engine.label_from_url(u) or u, u) for u in url_candidates]
-                    GLib.idle_add(self._prompt_playlist_selection, f"Batch List ({len(items)} items)", items, mode, quality_cap)
                     GLib.idle_add(_restore_ui)
+                    GLib.idle_add(self._prompt_playlist_selection, f"Batch List ({len(items)} items)", items, mode, quality_cap)
 
-            except Exception as e:
-                GLib.idle_add(self._show_error, f"Error processing target: {e}")
+            except BaseException as e:
+                if not isinstance(e, (KeyboardInterrupt, SystemExit)) and not self.probing_cancelled:
+                    GLib.idle_add(self._show_error, f"Error processing target: {e}")
                 GLib.idle_add(_restore_ui)
 
         threading.Thread(target=_resolve_and_queue, daemon=True).start()
@@ -1726,6 +1839,8 @@ class DuskyDownloaderApp(Gtk.Window):
                 engine._kill_pgids([self.active_pgid], signal.SIGTERM)
 
     def on_abort_all_clicked(self, widget):
+        if self.is_probing:
+            self.probing_cancelled = True
         self.abort_all_flag = True
         if self.active_item:
             self.active_item.skip_requested = True
@@ -1786,6 +1901,11 @@ class DuskyDownloaderApp(Gtk.Window):
         self._update_status_bar()
 
     def on_window_close(self, widget):
+        self.is_probing = False
+        self.probing_cancelled = True
+        if self.probe_pulse_timer:
+            GLib.source_remove(self.probe_pulse_timer)
+            self.probe_pulse_timer = None
         self.abort_all_flag = True
         if self.active_pgid and self.active_pgid > 1:
             engine._kill_pgids([self.active_pgid], signal.SIGTERM)

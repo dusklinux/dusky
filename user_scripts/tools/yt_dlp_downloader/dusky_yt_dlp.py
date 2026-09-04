@@ -28,7 +28,7 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Final
+from typing import Callable, Final
 import uuid
 
 # ==============================================================================
@@ -1937,21 +1937,90 @@ class VideoDetails:
     heights: list[int]
 
 
+class _ProbeLogger:
+    """Logger hook to capture real-time playlist extraction events and pass to callbacks."""
+
+    def __init__(
+        self,
+        progress_cb: Callable[[str, int | None, int | None], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+    ):
+        self.progress_cb = progress_cb
+        self.cancel_check = cancel_check
+        self.playlist_title: str | None = None
+        self.total_items: int | None = None
+        self._item_pat = re.compile(r"Downloading item\s+(\d+)(?:\s+of\s+(\d+))?", re.IGNORECASE)
+        self._items_total_pat = re.compile(r"Downloading\s+(\d+)\s+items", re.IGNORECASE)
+        self._playlist_pat = re.compile(r"Downloading playlist:\s*(.+)", re.IGNORECASE)
+
+    def debug(self, msg: str) -> None:
+        if self.cancel_check and self.cancel_check():
+            raise KeyboardInterrupt("Probing cancelled by user.")
+        if not self.progress_cb:
+            return
+        clean = re.sub(r"^\[.*?\]\s*", "", msg).strip()
+        m_pl = self._playlist_pat.search(clean)
+        if m_pl:
+            self.playlist_title = m_pl.group(1).strip('"\' ')
+            self.progress_cb(f"Found collection: {self.playlist_title}", None, self.total_items)
+            return
+        m_tot = self._items_total_pat.search(clean)
+        if m_tot:
+            try:
+                self.total_items = int(m_tot.group(1))
+                prefix = f"{self.playlist_title}: " if self.playlist_title else ""
+                self.progress_cb(f"{prefix}Fetching {self.total_items} items...", None, self.total_items)
+            except ValueError:
+                pass
+            return
+        m_item = self._item_pat.search(clean)
+        if m_item:
+            curr_str = m_item.group(1)
+            tot_str = m_item.group(2)
+            try:
+                curr = int(curr_str)
+                if tot_str:
+                    self.total_items = int(tot_str)
+                prefix = f"{self.playlist_title}: " if self.playlist_title else ""
+                tot_display = f" of {self.total_items}" if self.total_items else ""
+                self.progress_cb(f"{prefix}Fetching item {curr}{tot_display}...", curr, self.total_items)
+            except ValueError:
+                pass
+            return
+        if "Downloading webpage" in clean:
+            prefix = f"{self.playlist_title}: " if self.playlist_title else ""
+            self.progress_cb(f"{prefix}Querying collection webpage...", None, self.total_items)
+
+    def info(self, msg: str) -> None:
+        self.debug(msg)
+
+    def warning(self, msg: str) -> None:
+        pass
+
+    def error(self, msg: str) -> None:
+        pass
+
+
 def probe_media_target(
     url: str,
     cookies: Path | None = None,
     cookies_from_browser: str | None = None,
+    progress_cb: Callable[[str, int | None, int | None], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> tuple[list[tuple[str, str]], bool, str, VideoDetails | None]:
-    """Universal flat extraction probe across any media endpoint."""
+    """Universal flat extraction probe across any media endpoint with live progress reporting."""
     opts: dict[str, object] = {
         "extract_flat": "in_playlist",
         "skip_download": True,
-        "quiet": True,
+        "quiet": False if progress_cb else True,
         "no_warnings": True,
         "socket_timeout": 30,
         "retries": 5,
         "ignoreerrors": "only_download",
     }
+    if progress_cb or cancel_check:
+        opts["logger"] = _ProbeLogger(progress_cb, cancel_check)
+
     if cookies is not None and Path(cookies).is_file():
         opts["cookiefile"] = str(cookies)
     elif cookies_from_browser:
