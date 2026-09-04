@@ -101,9 +101,10 @@ import argparse
 from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from enum import StrEnum
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import yt_dlp
+from yt_dlp.utils import PlaylistEntries
 from rich import box
 from rich.align import Align
 from rich.console import Console
@@ -329,6 +330,9 @@ def global_signal_handler(signum: int, frame: object) -> None:
         sys.exit(130)
 
     elapsed = (now_ns - _LAST_SIGINT_NS) / 1e9
+    if elapsed < 0.25:
+        # Debounce duplicate SIGINT / character events from the same physical keypress
+        return
     _LAST_SIGINT_NS = now_ns
     if elapsed < ABORT_WINDOW_SECS:
         request_abort_all()
@@ -361,10 +365,13 @@ def fzf_pick(prompt: str, choices: list[str], default: str) -> str:
                 ["fzf", "--prompt", f"{prompt}> ", "--height", "40%",
                  "--reverse", "--no-multi"],
                 input="\n".join(choices) + "\n",
-                capture_output=True,
+                stdout=subprocess.PIPE,
                 text=True,
                 timeout=120,
             )
+            if proc.returncode == 130:
+                console.print("\n[bold red][!] Interrupted.[/]")
+                sys.exit(130)
             picked = (proc.stdout or "").strip()
             if picked and picked in choices:
                 return picked
@@ -401,10 +408,13 @@ def fzf_multi_pick(prompt: str, choices: list[str]) -> list[str] | None:
              "--reverse", "--multi", "--ansi",
              "--header", "TAB to mark, ENTER to confirm, ESC for none"],
             input="\n".join(choices) + "\n",
-            capture_output=True,
+            stdout=subprocess.PIPE,
             text=True,
             timeout=300,
         )
+        if proc.returncode == 130:
+            console.print("\n[bold red][!] Interrupted.[/]")
+            sys.exit(130)
         # Keep lines verbatim (only drop blanks); match tolerantly below.
         picked = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
         by_exact = set(choices)
@@ -434,9 +444,16 @@ def label_from_url(url: str) -> str:
     """
     try:
         parts = urlsplit(url)
+        q = parse_qs(parts.query)
+        if "v" in q and q["v"] and q["v"][0].strip():
+            return f"watch?v={q['v'][0].strip()}"
+
         seg = (parts.path or "").rstrip("/").rsplit("/", 1)[-1]
         seg = unquote(seg)
-        seg = re.sub(r"\.(html?|php|aspx?|m3u8|mpd)$", "", seg, flags=re.IGNORECASE)
+        seg = re.sub(
+            r"\.(html?|php|aspx?|m3u8|mpd|mp4|mkv|webm|mov|flv|m4a|mp3|opus)$",
+            "", seg, flags=re.IGNORECASE,
+        )
         m = re.match(r"^[A-Za-z]?\d+[A-Za-z0-9]*-(.+)$", seg)
         if m and m.group(1).strip(" -_."):
             seg = m.group(1)
@@ -463,6 +480,22 @@ def label_from_url(url: str) -> str:
 # always exactly `>:` so nothing can desync.
 # ==============================================================================
 
+def config_state_dir() -> Path | None:
+    """Persistent state dir: ~/.config/dusky/settings/dusky_ytdlp (XDG-aware).
+
+    Lives on real disk (NOT zram) so resume/skip state survives reboots.
+    No username is hardcoded — resolved from $XDG_CONFIG_HOME or $HOME.
+    Returns None if the directory cannot be created (caller runs stateless).
+    """
+    try:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+        state_dir = base / "dusky" / "settings" / "dusky_ytdlp"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        return state_dir
+    except (OSError, PermissionError, RuntimeError):
+        return None
+
+
 _PT_HISTORY: object | None = None
 
 
@@ -470,7 +503,7 @@ def _input_history() -> object:
     """Persistent input history in the state dir; in-memory if unwritable."""
     global _PT_HISTORY
     if _PT_HISTORY is None:
-        state_dir = config_state_dir() if "config_state_dir" in globals() else None
+        state_dir = config_state_dir()
         try:
             _PT_HISTORY = FileHistory(str(state_dir / "input_history.txt")) if state_dir else InMemoryHistory()
         except Exception:
@@ -799,22 +832,6 @@ class YtdlpProgressParser:
 # ==============================================================================
 
 
-def config_state_dir() -> Path | None:
-    """Persistent state dir: ~/.config/dusky/settings/dusky_ytdlp (XDG-aware).
-
-    Lives on real disk (NOT zram) so resume/skip state survives reboots.
-    No username is hardcoded — resolved from $XDG_CONFIG_HOME or $HOME.
-    Returns None if the directory cannot be created (caller runs stateless).
-    """
-    try:
-        base = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
-        state_dir = base / "dusky" / "settings" / "dusky_ytdlp"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        return state_dir
-    except (OSError, PermissionError, RuntimeError):
-        return None
-
-
 def download_archive_path(mode: TargetFormat) -> Path | None:
     """Per-format yt-dlp download-archive file (the resume/skip state file).
 
@@ -1032,6 +1049,10 @@ _ERROR_HINTS: Final[tuple[tuple[str, str], ...]] = (
     ("private video", "video is private or removed"),
     ("video has not been found", "video is private or removed"),
     ("video unavailable", "video is private or removed"),
+    ("sign in if you've been granted access", "requires login/permission — supply cookies or retry signed in"),
+    ("allowed_segment_extensions", "ffmpeg format error — consider updating ffmpeg"),
+    ("unable to download webpage", "network error or site unreachable"),
+    ("connection refused", "connection refused by server"),
 )
 
 
@@ -1059,7 +1080,7 @@ def resolve_job_title(job: MediaJob) -> None:
     simply labelled with the collection name.
     """
     try:
-        found, is_collection, label = probe_media_target(job.url)
+        found, is_collection, label, _ = probe_media_target(job.url)
     except Exception:
         return
     if is_collection:
@@ -1184,6 +1205,9 @@ def execute_download(
     Completed files are never touched by any skip/abort path (only the
     child's partial `.part`, which yt-dlp resumes on retry, is left behind).
     """
+    if ABORT_ALL_EVENT.is_set():
+        return JobReport(title=job.title, status="Failed", error="aborted by user (Ctrl-C)")
+
     runner = YtdlpRunner(job.mode, output_dir, job.url, job.max_height)
     parser = YtdlpProgressParser()
     progress_state = MediaProgress()
@@ -1421,22 +1445,6 @@ def _newest_file_since(directory: Path, started_ns: int) -> Path | None:
         if mtime >= started_s and mtime > newest_mtime:
             newest = entry
             newest_mtime = mtime
-    # Fallback: if nothing newer (e.g. "already downloaded" fast path),
-    # return the most recent finished file rather than nothing.
-    if newest is None:
-        try:
-            finished = [
-                p for p in directory.iterdir()
-                if p.is_file() and not p.name.startswith(".probe_")
-                and p.suffix not in (".part", ".ytdl")
-            ]
-        except OSError:
-            return None
-        if finished:
-            try:
-                newest = max(finished, key=lambda p: p.stat().st_mtime)
-            except OSError:
-                return None
     return newest
 
 
@@ -1735,7 +1743,15 @@ def run_queue(
 # ==============================================================================
 
 
-def probe_media_target(url: str) -> tuple[list[tuple[str, str]], bool, str]:
+@dataclass(slots=True)
+class VideoDetails:
+    title: str
+    duration_secs: int | None
+    uploader: str | None
+    heights: list[int]
+
+
+def probe_media_target(url: str) -> tuple[list[tuple[str, str]], bool, str, VideoDetails | None]:
     """Universal flat extraction probe across any media endpoint."""
     opts = {
         "extract_flat": "in_playlist",
@@ -1743,7 +1759,7 @@ def probe_media_target(url: str) -> tuple[list[tuple[str, str]], bool, str]:
         "quiet": True,
         "no_warnings": True,
         "socket_timeout": 30,
-        "retries": 10,
+        "retries": 5,
         "ignoreerrors": "only_download",
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -1763,7 +1779,7 @@ def probe_media_target(url: str) -> tuple[list[tuple[str, str]], bool, str]:
                 # Flat YouTube entries carry a bare video id; rebuild a
                 # directly-downloadable watch URL instead of passing the id.
                 vid = e.get("id")
-                if vid and e.get("ie_key") == "Youtube":
+                if vid and e.get("ie_key") in ("Youtube", "YoutubeTab", "youtube"):
                     item_url = f"https://www.youtube.com/watch?v={vid}"
                 elif vid:
                     item_url = vid
@@ -1776,19 +1792,29 @@ def probe_media_target(url: str) -> tuple[list[tuple[str, str]], bool, str]:
                 f"[bold yellow]![/] Large collection: {len(items)} items. "
                 "Consider a narrow range to save time/RAM."
             )
-        return items, True, info.get("title") or "Collection / Feed"
+        return items, True, info.get("title") or "Collection / Feed", None
 
     single_url = info.get("webpage_url") or info.get("original_url") or url
     single_title = info.get("title") or single_url
-    return [(single_title, single_url)], False, single_title
 
-
-@dataclass(slots=True)
-class VideoDetails:
-    title: str
-    duration_secs: int | None
-    uploader: str | None
-    heights: list[int]
+    heights = sorted(
+        {
+            f.get("height")
+            for f in (info.get("formats") or [])
+            if isinstance(f.get("height"), int) and f.get("height")
+        },
+        reverse=True,
+    )
+    raw_dur = info.get("duration")
+    duration = int(raw_dur) if isinstance(raw_dur, (int, float)) else None
+    uploader = info.get("uploader") or info.get("channel") or info.get("extractor_key")
+    details = VideoDetails(
+        title=single_title,
+        duration_secs=duration,
+        uploader=str(uploader) if uploader else None,
+        heights=heights,
+    )
+    return [(single_title, single_url)], False, single_title, details
 
 
 def probe_video_details(url: str) -> VideoDetails | None:
@@ -1831,6 +1857,44 @@ def probe_video_details(url: str) -> VideoDetails | None:
     )
 
 
+def expand_selection_spec(spec: str, total: int) -> list[int]:
+    """Parse a yt-dlp -I style spec into 0-based unique indices in order.
+
+    Supports: 'all', '*', 'none', single numbers ('5', '-1'), ranges ('1-3', '1:3'),
+    steps ('1:10:2', '::-1'), negative indices ('-3:', ':-3', '-5--2', '-1'),
+    and comma-separated combinations ('1,3,5-7', '-3, -1').
+    """
+    s = (spec or "").strip().lower()
+    if not s or s in ("none", "no", "skip-none", "-"):
+        return []
+    if s in ("all", "*"):
+        return list(range(total))
+    if total <= 0:
+        return []
+
+    chunks = [c.strip() for c in s.split(",") if c.strip()]
+    if not chunks:
+        return []
+    clean_spec = ",".join(chunks)
+
+    info = {"_type": "playlist", "entries": list(range(total))}
+    pe = PlaylistEntries(yt_dlp.YoutubeDL({"quiet": True}), info)
+
+    indices: list[int] = []
+    seen: set[int] = set()
+    try:
+        for segment in PlaylistEntries.parse_playlist_items(clean_spec):
+            for i, _ in pe[segment]:
+                idx = i - 1
+                if 0 <= idx < total and idx not in seen:
+                    seen.add(idx)
+                    indices.append(idx)
+    except Exception as err:
+        raise ValueError(f"Invalid range or item specification {spec!r}: {err}") from err
+
+    return indices
+
+
 def select_playlist_items(
     discovered: list[tuple[str, str]],
     range_val: str,
@@ -1842,74 +1906,13 @@ def select_playlist_items(
     an empty selection raises ValueError.
     """
     total = len(discovered)
-    spec = range_val.strip().lower()
-    if spec in ("all", "*"):
-        return list(discovered)
-
-    picked: list[int] = []  # 0-based
-    for chunk in spec.split(","):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        # Normalise legacy `a-b` to canonical `a:b`
-        if "-" in chunk and ":" not in chunk:
-            a, _, b = chunk.partition("-")
-            chunk = f"{a}:{b}"
-        try:
-            idxs = _expand_item_spec(chunk, total)
-        except ValueError:
-            continue
-        for i in idxs:
-            if i not in picked:
-                picked.append(i)
-
-    selected = [discovered[i] for i in picked if 0 <= i < total]
+    if not total:
+        return []
+    idxs = expand_selection_spec(range_val, total)
+    selected = [discovered[i] for i in idxs if 0 <= i < total]
     if not selected:
         raise ValueError(f"No items matched range {range_val!r} (playlist has {total}).")
     return selected
-
-
-def _expand_item_spec(chunk: str, total: int) -> list[int]:
-    """Expand one `START[:STOP[:STEP]]` chunk (1-based, inclusive STOP)."""
-    if ":" not in chunk:  # single index
-        n = int(chunk)
-        i = n - 1 if n > 0 else total + n
-        if not 0 <= i < total:
-            raise ValueError("out of range")
-        return [i]
-    parts = chunk.split(":")
-    if len(parts) > 3:
-        raise ValueError("bad spec")
-    while len(parts) < 3:
-        parts.append("")
-    start_s, stop_s, step_s = (p.strip() for p in parts)
-    step = int(step_s) if step_s else 1
-    if step == 0:
-        raise ValueError("step cannot be 0")
-    # Convert 1-based inclusive bounds to 0-based exclusive slice bounds.
-    if step > 0:
-        start = int(start_s) - 1 if start_s else 0
-        stop = int(stop_s) if stop_s else total
-        if start_s and int(start_s) < 0:
-            start = total + int(start_s)
-        if stop_s and int(stop_s) < 0:
-            stop = total + int(stop_s) + 1
-    else:
-        start = (int(start_s) - 1 if start_s else total - 1)
-        stop = (int(stop_s) - 2 if stop_s else -total - 1)
-        if start_s and int(start_s) < 0:
-            start = total + int(start_s)
-        if stop_s and int(stop_s) < 0:
-            stop = total + int(stop_s) - 1
-        # Build reversed range manually below.
-        out: list[int] = []
-        i = start
-        while (i > stop) if step < 0 else (i < stop):
-            if 0 <= i < total:
-                out.append(i)
-            i += step
-        return out
-    return [i for i in range(start, stop, step) if 0 <= i < total]
 
 
 def parse_skip_indices(spec: str, total: int) -> set[int]:
@@ -1918,24 +1921,12 @@ def parse_skip_indices(spec: str, total: int) -> set[int]:
     `""`/`"none"` → empty (skip nothing); `"all"`/`"*"` → everything.
     Invalid chunks are ignored; out-of-range indices are dropped.
     """
-    text = (spec or "").strip().lower()
-    if not text or text in ("none", "no", "skip-none", "-"):
+    if not total:
         return set()
-    if text in ("all", "*"):
-        return set(range(total))
-    skipped: set[int] = set()
-    for chunk in text.split(","):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        if "-" in chunk and ":" not in chunk:
-            a, _, b = chunk.partition("-")
-            chunk = f"{a}:{b}"
-        try:
-            skipped.update(_expand_item_spec(chunk, total))
-        except ValueError:
-            continue
-    return {i for i in skipped if 0 <= i < total}
+    try:
+        return set(expand_selection_spec(spec, total))
+    except Exception:
+        return set()
 
 
 def filter_skipped_items(
@@ -1964,7 +1955,7 @@ def show_queue_preview(items: list[tuple[str, str]], *, limit: int = 50) -> None
         head = list(enumerate(items[:20], start=1))
         tail_start = total - 10 + 1
         tail = list(enumerate(items[-10:], start=tail_start))
-        rows = head + [(-1, ("…", f"{total - 30} more items hidden — use ranges or fzf"))] + tail  # type: ignore[list-item]
+        rows = head + [(-1, (f"{total - 30} more items hidden — use ranges or fzf", "…"))] + tail  # type: ignore[list-item]
     for num, (title, url) in rows:
         if num == -1:
             table.add_row("…", f"[dim]{escape(title)}[/]", f"[dim]{escape(url)}[/]")
@@ -2157,17 +2148,16 @@ def ask_concurrent_downloads(n_jobs: int, explicit: int | None = None) -> int:
         console.print(f"[bold red]Enter a number 1–{n_jobs}.[/]")
 
 
-_COMMA_BEFORE_URL: Final[re.Pattern] = re.compile(r",\s*(?=https?://)", re.IGNORECASE)
+_URL_SPLIT_PATTERN: Final[re.Pattern] = re.compile(r"(?:,\s*|\s+)(?=['\"]?https?://)", re.IGNORECASE)
 
 
 def split_url_list(raw: str) -> list[str]:
-    """Split pasted multi-URL input on commas that introduce a new URL.
+    """Split pasted multi-URL input on commas or whitespace preceding http(s)://.
 
-    Only commas directly preceding `http(s)://` act as separators, so commas
-    embedded inside a single URL are preserved. Surrounding whitespace and
-    empty fragments are dropped.
+    Commas embedded inside a single URL are preserved. Surrounding quotes
+    and whitespace are cleanly stripped.
     """
-    return [frag.strip() for frag in _COMMA_BEFORE_URL.split(raw) if frag.strip()]
+    return [frag.strip().strip("'\"") for frag in _URL_SPLIT_PATTERN.split(raw.strip()) if frag.strip()]
 
 
 def collect_targets(
@@ -2182,7 +2172,7 @@ def collect_targets(
     errors: list[str] = []
     for url in raw_urls:
         try:
-            found, is_collection, _ = probe_media_target(url)
+            found, is_collection, _, _ = probe_media_target(url)
             if is_collection:
                 try:
                     found = select_playlist_items(found, playlist_items)
@@ -2215,6 +2205,7 @@ def run_interactive_wizard() -> tuple[list[MediaJob], Path, int]:
     is_collection = False
     label = ""
     multi_mode = False
+    details: VideoDetails | None = None
 
     while True:
         # Hint on its own line (kernel-script pattern): Rich prints the prompt
@@ -2228,8 +2219,9 @@ def run_interactive_wizard() -> tuple[list[MediaJob], Path, int]:
             continue
 
         raw_urls = split_url_list(raw_target)
-        if len(raw_urls) == 1 and Path(raw_urls[0]).expanduser().is_file():
-            local_file = Path(raw_urls[0]).expanduser()
+        target_path = Path(raw_target.strip().strip("'\"")).expanduser()
+        if len(raw_urls) <= 1 and target_path.is_file():
+            local_file = target_path
             try:
                 urls = parse_batch_file(local_file)
             except OSError as err:
@@ -2245,7 +2237,7 @@ def run_interactive_wizard() -> tuple[list[MediaJob], Path, int]:
         if len(raw_urls) == 1:
             try:
                 with console.status("[bold cyan]Probing remote endpoint...[/]", spinner="dots"):
-                    discovered, is_collection, label = probe_media_target(raw_urls[0])
+                    discovered, is_collection, label, details = probe_media_target(raw_urls[0])
                 break
             except Exception as err:
                 console.print(Panel(f"[bold red]Probe failed:[/] {escape(str(err))}", border_style="red"))
@@ -2271,7 +2263,6 @@ def run_interactive_wizard() -> tuple[list[MediaJob], Path, int]:
         console.print("[bold red]No link resolved to anything downloadable.[/]")
 
     # 2. Show what the link(s) actually offer, then offer matching options.
-    details: VideoDetails | None = None
     if batch_urls is None:
         if multi_mode:
             console.print(
@@ -2284,8 +2275,9 @@ def run_interactive_wizard() -> tuple[list[MediaJob], Path, int]:
             )
         elif not is_collection:
             title, link = discovered[0]
-            with console.status("[bold cyan]Inspecting available formats...[/]", spinner="dots"):
-                details = probe_video_details(link)
+            if details is None:
+                with console.status("[bold cyan]Inspecting available formats...[/]", spinner="dots"):
+                    details = probe_video_details(link)
             show_title = details.title if details else title
             meta_bits: list[str] = []
             if details and details.uploader:
@@ -2460,7 +2452,7 @@ def main() -> None:
         batch_urls: list[str] = []
         link_urls: list[str] = []
         for raw_arg in args.target:
-            arg_path = Path(raw_arg).expanduser()
+            arg_path = Path(raw_arg.strip("'\"")).expanduser()
             if arg_path.is_file():
                 try:
                     batch_urls.extend(parse_batch_file(arg_path))
@@ -2476,16 +2468,20 @@ def main() -> None:
             for err in probe_errors:
                 console.print(f"[bold yellow]![/] Skipped: {escape(err)}")
             discovered.extend(found)
-        jobs = [MediaJob(title=f"Item {idx}", url=u, mode=mode, max_height=max_height, needs_probe=True) for idx, u in enumerate(batch_urls, start=1)]
+        jobs = [
+            MediaJob(
+                title=label_from_url(u) or f"Item {idx}",
+                url=u,
+                mode=mode,
+                max_height=max_height,
+                needs_probe=True,
+            )
+            for idx, u in enumerate(batch_urls, start=1)
+        ]
         jobs.extend(
             MediaJob(title=item[0], url=item[1], mode=mode, max_height=max_height)
             for item in discovered
         )
-        # Batch entries never got real titles (fast path, no per-URL probe);
-        # renumber the combined queue so titles stay unique.
-        for idx, job in enumerate(jobs, start=1):
-            if job.title.startswith("Item "):
-                job.title = f"Item {idx}"
 
         # CLI-side skipping: same -I syntax, applied to final queue order.
         if args.skip_items and jobs:
@@ -2503,6 +2499,9 @@ def main() -> None:
         max_workers = ask_concurrent_downloads(len(jobs), explicit=args.concurrent)
 
     if not jobs:
+        if args.skip_items:
+            console.print("[bold yellow]![/] All items were skipped by --skip-items.")
+            sys.exit(0)
         console.print("[bold red]No download targets queued.[/]")
         sys.exit(1)
 
