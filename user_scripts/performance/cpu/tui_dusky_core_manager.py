@@ -149,11 +149,52 @@ DEFAULT_MODE = "auto"
 THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"
 REQUIRE_ROOT = True
 
+
+def generate_affinity_presets(p_cores: list[int], e_cores: list[int]) -> list[str]:
+    """
+    Dynamically generates CPUAffinity presets matching the machine's hardware topology.
+    Scales generically from 2-core machines to 128+ core systems.
+    """
+    all_cores = sorted(p_cores + e_cores)
+    if not all_cores:
+        return ["unset"]
+
+    max_idx = max(all_cores)
+    total = len(all_cores)
+    presets = ["unset"]
+
+    if total > 1:
+        presets.append(f"1-{max_idx}" if max_idx > 1 else "1")
+
+    if p_cores and e_cores:
+        p_min, p_max = min(p_cores), max(p_cores)
+        e_min, e_max = min(e_cores), max(e_cores)
+        presets.append(f"{p_min}-{p_max}" if p_min != p_max else f"{p_min}")
+        presets.append(f"{e_min}-{e_max}" if e_min != e_max else f"{e_min}")
+        p_no_zero = [c for c in p_cores if c != 0]
+        if p_no_zero:
+            presets.append(f"{min(p_no_zero)}-{max(p_no_zero)}" if min(p_no_zero) != max(p_no_zero) else f"{min(p_no_zero)}")
+    else:
+        if total >= 4:
+            mid = total // 2
+            presets.append(f"0-{mid - 1}")
+            presets.append(f"{mid}-{max_idx}")
+            if mid > 1:
+                presets.append(f"1-{mid - 1}")
+
+    presets.append("0")
+    return list(dict.fromkeys(presets))
+
+
+affinity_presets = generate_affinity_presets(p_cores, e_cores)
+max_core_id = max(p_cores + e_cores) if (p_cores or e_cores) else 0
+
 TABS = []
 if p_cores:
     TABS.append("Performance Cores")
 if e_cores:
     TABS.append("Efficient Cores")
+TABS.append("System Affinity")
 TABS.append("Presets")
 
 USER_PRESETS_TAB = "Presets"
@@ -191,6 +232,34 @@ if e_cores:
                 extended_help=f"Toggle Efficient Core {c} online/offline state."
             )
         )
+    tab_idx += 1
+
+SCHEMA[tab_idx] = [
+    ConfigItem(
+        label="System CPU Affinity",
+        key="systemd_cpu_affinity",
+        scope="DEFAULT",
+        type_="string",
+        options=affinity_presets,
+        default="unset",
+        group="systemd Process Scheduling",
+        extended_help=(
+            "**Systemd Process CPU Affinity (`CPUAffinity=`)**\n\n"
+            "Configures which CPU cores systemd (PID 1) and all descendant user sessions, "
+            "desktop applications, and background services are allowed to execute on.\n\n"
+            "**Why this is essential for Core 0:**\n"
+            f"Because Linux kernel 6.6+ permanently forbids hotplug-offlining Core 0 (BSP), "
+            f"setting CPU Affinity to `1-{max_core_id}` is the official runtime mechanism to ensure user applications "
+            "and system daemons NEVER run on Core 0, leaving Core 0 dedicated exclusively to kernel interrupts.\n\n"
+            "**Common Configurations & Presets:**\n"
+            "- `unset`: Normal scheduling across all CPU cores.\n"
+            f"- `1-{max_core_id}`: Exclude Core 0 (frees bootstrap core for kernel IRQs and timing).\n"
+            "- P-Cores / E-Cores: Restrict all systemd workloads to high-power or high-efficiency cores.\n\n"
+            "*Note:* Fully configurable. Presets adapt to your hardware topology, and you can type any custom range (e.g. `2-7`, `0,2,4`, `1-15`). Applied live via `systemctl daemon-reexec`."
+        )
+    )
+]
+tab_idx += 1
 
 # Delegator block
 if __name__ == "__main__":
@@ -228,6 +297,11 @@ if __name__ == "__main__":
 
     # 2. Display status table helper
     def display_status_table():
+        from python.engines.cpu_core import CpuCoreEngine
+        engine = CpuCoreEngine()
+        cfg_aff = engine.get_systemd_affinity()
+        eff_aff = engine.get_effective_affinity()
+
         try:
             from rich.console import Console
             from rich.table import Table
@@ -244,6 +318,8 @@ if __name__ == "__main__":
                 else:
                     status = "ON" if get_core_status(core) else "OFF"
                 print(f"CPU {core:02d}     | {arch:<8} | {status:<8} | {get_core_freq(core)}")
+            print("-" * 45)
+            print(f"systemd CPUAffinity: {cfg_aff}  |  PID 1 Allowed: {eff_aff}")
             return
 
         console = Console()
@@ -264,6 +340,7 @@ if __name__ == "__main__":
                 freq = get_core_freq(core) if status else "---"
                 table.add_row(f"CPU {core:02d}", arch, st_icon, freq)
         console.print(table)
+        console.print(f"[bold cyan]systemd CPUAffinity:[/bold cyan] [bold green]{cfg_aff}[/bold green]  |  [bold cyan]PID 1 Allowed:[/bold cyan] [bold yellow]{eff_aff}[/bold yellow]\n")
 
     # 3. Batch process cores helper
     def batch_process_cores(cores_list, enable, action_name):
@@ -296,6 +373,9 @@ if __name__ == "__main__":
     subparsers.add_parser("pcores-only")
     subparsers.add_parser("all-cores")
 
+    aff_p = subparsers.add_parser("affinity", help="Inspect or set systemd CPU affinity")
+    aff_p.add_argument("mask", nargs="?", default=None, help="Core range or 'unset' (e.g. 1-19, 0-15, unset)")
+
     toggle_p = subparsers.add_parser("toggle")
     toggle_p.add_argument("cores", nargs="+")
     enable_p = subparsers.add_parser("enable")
@@ -308,6 +388,22 @@ if __name__ == "__main__":
 
     if args.command == "status":
         display_status_table()
+    elif args.command == "affinity":
+        from python.engines.cpu_core import CpuCoreEngine
+        engine = CpuCoreEngine()
+        if args.mask is None:
+            cfg = engine.get_systemd_affinity()
+            eff = engine.get_effective_affinity()
+            print(f"systemd CPUAffinity: {cfg} (PID 1 Active: {eff})")
+        else:
+            ok, msg = engine.set_systemd_affinity(args.mask)
+            if ok:
+                print(f"[OK] {msg}")
+                eff = engine.get_effective_affinity()
+                print(f"[*] Live PID 1 Allowed Mask: {eff}")
+            else:
+                print(f"[-] Error: {msg}")
+                sys.exit(1)
     else:
         if args.command == "ecores-only":
             if not e_cores:

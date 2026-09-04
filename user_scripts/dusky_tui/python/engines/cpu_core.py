@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import os
+import re
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -82,7 +84,9 @@ class FastEnergyReader:
             self.fd = None
 
 class CpuCoreEngine(BaseEngine):
-    def __init__(self, config_path: str = ""):
+    def __init__(self, config_path: str = "", systemd_dropin_path: Path | None = None):
+        self.config_path = config_path
+        self.systemd_dropin_path = systemd_dropin_path or Path("/etc/systemd/system.conf.d/50-dusky-affinity.conf")
         self.p_cores, self.e_cores, self.locked_cores = self.detect_topology()
         
         # Setup telemetry energy reader
@@ -222,15 +226,168 @@ class CpuCoreEngine(BaseEngine):
     def target_path(self) -> str:
         return "/sys/devices/system/cpu"
 
+    def get_systemd_affinity(self) -> str:
+        """Reads the currently configured CPUAffinity from the systemd drop-in file."""
+        dropin = self.systemd_dropin_path
+        if dropin.is_file():
+            try:
+                for line in dropin.read_text(encoding="utf-8", errors="replace").splitlines():
+                    line_s = line.strip()
+                    if line_s.startswith("#") or line_s.startswith(";"):
+                        continue
+                    if "=" in line_s:
+                        k, v = line_s.split("=", 1)
+                        if k.strip() == "CPUAffinity":
+                            val = v.strip()
+                            return val if val else "unset"
+            except Exception:
+                pass
+        return "unset"
+
+    def get_effective_affinity(self) -> str:
+        """Reads the live effective allowed CPUs from cgroup user.slice, or PID 1 status."""
+        cpuset_file = Path("/sys/fs/cgroup/user.slice/cpuset.cpus")
+        if cpuset_file.is_file():
+            try:
+                val = cpuset_file.read_text(encoding="utf-8").strip()
+                if val:
+                    return val
+            except Exception:
+                pass
+
+        try:
+            status_file = Path("/proc/1/status")
+            if status_file.is_file():
+                for line in status_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if line.startswith("Cpus_allowed_list:"):
+                        return line.split(":", 1)[1].strip()
+        except Exception:
+            pass
+        return "unknown"
+
+    def validate_affinity_mask(self, val: str) -> tuple[bool, str]:
+        """
+        Validates systemd CPUAffinity string format (e.g. '1-19', '0,2,4', '1-7,12-15').
+        Ensures all core IDs are non-negative, in hardware bounds, start <= end for ranges,
+        and at least one core is specified.
+        """
+        raw = val.strip()
+        if not raw:
+            return False, "Affinity string cannot be empty"
+
+        all_cores = self.p_cores + self.e_cores
+        max_core = max(all_cores) if all_cores else (os.cpu_count() or 1) - 1
+
+        parsed_cores: set[int] = set()
+        parts = [p.strip() for p in raw.split(",")]
+        if not parts or any(p == "" for p in parts):
+            return False, "Invalid syntax: empty or consecutive comma token"
+
+        for part in parts:
+            if "-" in part:
+                sub = part.split("-")
+                if len(sub) != 2 or not sub[0].isdigit() or not sub[1].isdigit():
+                    return False, f"Invalid range format: '{part}'"
+                start, end = int(sub[0]), int(sub[1])
+                if start > end:
+                    return False, f"Invalid range: start ({start}) > end ({end})"
+                if start < 0 or end > max_core:
+                    return False, f"Range '{part}' exceeds hardware bounds (0-{max_core})"
+                parsed_cores.update(range(start, end + 1))
+            else:
+                if not part.isdigit():
+                    return False, f"Invalid CPU ID: '{part}'"
+                cid = int(part)
+                if cid < 0 or cid > max_core:
+                    return False, f"CPU {cid} exceeds hardware bounds (0-{max_core})"
+                parsed_cores.add(cid)
+
+        if not parsed_cores:
+            return False, "No cores specified"
+
+        return True, "Valid"
+
+    def set_systemd_affinity(self, val: str, run_daemon_reexec: bool = True) -> tuple[bool, str]:
+        """
+        Applies or removes systemd CPUAffinity via atomic drop-in configuration
+        and live cgroups v2 slice enforcement across user.slice and system.slice.
+        """
+        dropin = self.systemd_dropin_path
+        val_clean = str(val).strip()
+
+        # 1. Unset / All Cores
+        if val_clean.lower() in ("unset", "__delete__", "", "all"):
+            if dropin.exists():
+                try:
+                    dropin.unlink()
+                except OSError as e:
+                    return False, f"Failed to remove drop-in {dropin}: {e}"
+
+            if run_daemon_reexec:
+                try:
+                    subprocess.run(["systemctl", "set-property", "user.slice", "AllowedCPUs="], capture_output=True, timeout=5)
+                    subprocess.run(["systemctl", "set-property", "system.slice", "AllowedCPUs="], capture_output=True, timeout=5)
+                    for ctrl_dir in (Path("/etc/systemd/system.control/user.slice.d"), Path("/etc/systemd/system.control/system.slice.d")):
+                        if ctrl_dir.exists():
+                            import shutil
+                            shutil.rmtree(ctrl_dir, ignore_errors=True)
+                    subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=5)
+                    subprocess.run(["systemctl", "daemon-reexec"], capture_output=True, timeout=10)
+                except Exception as e:
+                    return False, f"systemctl reset error: {e}"
+
+            self.save_persistent_state()
+            return True, "Removed systemd CPU affinity drop-in and slice limits (all cores active)"
+
+        # 2. Validation
+        valid, msg = self.validate_affinity_mask(val_clean)
+        if not valid:
+            return False, msg
+
+        # 3. Write drop-in atomically for boot persistence (NO .bak files)
+        try:
+            dropin.parent.mkdir(parents=True, exist_ok=True)
+            content = (
+                "# Generated by Dusky CPU Core Manager\n"
+                "# Configures systemd PID 1 and descendant service/session CPU affinity\n"
+                "[Manager]\n"
+                f"CPUAffinity={val_clean}\n"
+            )
+            temp_file = dropin.parent / f".{dropin.name}.tmp-{os.getpid()}"
+            temp_file.write_text(content, encoding="utf-8")
+            temp_file.replace(dropin)
+        except OSError as e:
+            return False, f"Failed to write drop-in {dropin}: {e}"
+
+        # 4. Apply live cgroups v2 slice enforcement & re-exec
+        if run_daemon_reexec:
+            try:
+                subprocess.run(["systemctl", "set-property", "user.slice", f"AllowedCPUs={val_clean}"], capture_output=True, timeout=5)
+                subprocess.run(["systemctl", "set-property", "system.slice", f"AllowedCPUs={val_clean}"], capture_output=True, timeout=5)
+                subprocess.run(["systemctl", "daemon-reexec"], capture_output=True, timeout=10)
+            except Exception as e:
+                return False, f"systemctl execution error: {e}"
+
+        self.save_persistent_state()
+        return True, f"Successfully applied live and persistent CPU affinity: {val_clean}"
+
     def load_state(self) -> dict[str, Any]:
         state = {}
         for core in self.p_cores + self.e_cores:
             status = get_core_status(core)
             state[f"cpu{core}"] = status
             state[f"DEFAULT/cpu{core}"] = status
+
+        aff = self.get_systemd_affinity()
+        state["systemd_cpu_affinity"] = aff
+        state["DEFAULT/systemd_cpu_affinity"] = aff
         return state
 
     def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
+        if target_key == "systemd_cpu_affinity":
+            ok, msg = self.set_systemd_affinity(new_value)
+            return ok, msg, ""
+
         if not target_key.startswith("cpu") or not target_key[3:].isdigit():
             return False, f"Invalid key: {target_key}", ""
 
@@ -238,7 +395,7 @@ class CpuCoreEngine(BaseEngine):
         if core_id in self.locked_cores:
             return False, f"CPU {core_id} is locked (BSP) and cannot be toggled", ""
 
-        enable = new_value.lower() in ("true", "1", "yes")
+        enable = str(new_value).lower() in ("true", "1", "yes")
         success, msg = set_core_status(core_id, enable)
         if success:
             self.save_persistent_state()
@@ -252,12 +409,13 @@ class CpuCoreEngine(BaseEngine):
             config_dir = home / ".config" / "dusky" / "settings"
             config_dir.mkdir(parents=True, exist_ok=True)
             state_file = config_dir / "dusky_cores"
-            
+
             # Read current active states of all toggleable cores to save
             cores_state = {}
             for core in self.p_cores + self.e_cores:
                 cores_state[f"cpu{core}"] = get_core_status(core)
-                
+            cores_state["systemd_cpu_affinity"] = self.get_systemd_affinity()
+
             import json
             state_file.write_text(json.dumps(cores_state, indent=2))
         except Exception:
@@ -276,6 +434,9 @@ class CpuCoreEngine(BaseEngine):
                     core_id = int(k[3:])
                     if core_id not in self.locked_cores:
                         set_core_status(core_id, v)
+                elif k == "systemd_cpu_affinity":
+                    if v and v != "unset":
+                        self.set_systemd_affinity(v)
             return True
         except Exception:
             return False
@@ -283,7 +444,7 @@ class CpuCoreEngine(BaseEngine):
     def get_telemetry(self) -> str:
         all_cores = self.p_cores + self.e_cores
         online_count = sum(1 for c in all_cores if get_core_status(c))
-        
+
         # Calculate RAPL power
         pkg_watts = 0.0
         if self.reader:
@@ -300,9 +461,13 @@ class CpuCoreEngine(BaseEngine):
             self.last_t = curr_t
 
         # Build telemetry bar
-        bar_w = 20
+        bar_w = 16
         total_cores = len(all_cores)
-        filled = max(0, min(bar_w, int((online_count / total_cores) * bar_w)))
+        filled = max(0, min(bar_w, int((online_count / total_cores) * bar_w))) if total_cores else 0
         bar_graph = "█" * filled + "░" * (bar_w - filled)
 
-        return f"⚡ Active: {online_count}/{total_cores} Cores  [{bar_graph}]  Power: {pkg_watts:5.1f} W"
+        eff_aff = self.get_effective_affinity()
+        cfg_aff = self.get_systemd_affinity()
+        aff_info = f"Affinity: {cfg_aff} (PID 1: {eff_aff})" if cfg_aff != "unset" else f"Affinity: All ({eff_aff})"
+
+        return f" {online_count}/{total_cores} Cores [{bar_graph}] | {aff_info} | {pkg_watts:4.1f} W"
