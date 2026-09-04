@@ -566,14 +566,60 @@ def ask_confirm(question: str, default: bool = False) -> bool:
 
 
 class TargetFormat(StrEnum):
+    VIDEO_BEST = "video-best"
     VIDEO = "video"
+    VIDEO_AV1 = "video-av1"
+    VIDEO_VP9 = "video-vp9"
+    VIDEO_MKV = "video-mkv"
+    AUDIO_BEST = "audio-best"
     AUDIO_OPUS = "audio-opus"
     AUDIO_MP3 = "audio-mp3"
-    AUDIO_BEST = "audio-best"
+    AUDIO_FLAC = "audio-flac"
+    AUDIO_M4A = "audio-m4a"
+    AUDIO_WAV = "audio-wav"
+
+    @property
+    def is_video(self) -> bool:
+        return self in (
+            TargetFormat.VIDEO,
+            TargetFormat.VIDEO_BEST,
+            TargetFormat.VIDEO_AV1,
+            TargetFormat.VIDEO_VP9,
+            TargetFormat.VIDEO_MKV,
+        )
+
+    @property
+    def label(self) -> str:
+        labels = {
+            TargetFormat.AUDIO_BEST: "Audio: Best (Native Lossless/Opus/AAC)",
+            TargetFormat.AUDIO_OPUS: "Audio: Opus (High Quality)",
+            TargetFormat.AUDIO_MP3: "Audio: MP3 (320 kbps)",
+            TargetFormat.AUDIO_FLAC: "Audio: FLAC (Lossless)",
+            TargetFormat.AUDIO_M4A: "Audio: M4A / AAC",
+            TargetFormat.AUDIO_WAV: "Audio: WAV (Lossless PCM)",
+            TargetFormat.VIDEO_BEST: "Video: Best Quality (Native AV1/VP9/Highest)",
+            TargetFormat.VIDEO: "Video: MP4 (H.264 / AAC Universal)",
+            TargetFormat.VIDEO_AV1: "Video: AV1 (Modern Next-Gen Codec)",
+            TargetFormat.VIDEO_VP9: "Video: VP9 / WebM (Google Open Media)",
+            TargetFormat.VIDEO_MKV: "Video: MKV (Lossless Multi-Track)",
+        }
+        return labels.get(self, self.value)
 
 
 # Wizard order: audio-best sits on top so plain Enter picks it.
-FORMAT_CHOICES: Final[list[str]] = ["audio-best", "audio-opus", "audio-mp3", "video"]
+FORMAT_CHOICES: Final[list[str]] = [
+    "audio-best",
+    "audio-opus",
+    "audio-mp3",
+    "audio-flac",
+    "audio-m4a",
+    "audio-wav",
+    "video-best",
+    "video",
+    "video-av1",
+    "video-vp9",
+    "video-mkv",
+]
 DEFAULT_FORMAT: Final[str] = "audio-best"
 
 # Standard video caps offered in the quality picker.
@@ -949,6 +995,11 @@ class YtdlpRunner:
 
     def _compile_format(self, output_template: str) -> None:
         match self.mode:
+            case TargetFormat.AUDIO_BEST:
+                self.args.extend([
+                    "-f", "bestaudio/best",
+                    "-x", "--audio-format", "best",
+                ])
             case TargetFormat.AUDIO_OPUS:
                 self.args.extend([
                     "-f", "bestaudio[ext=opus]/bestaudio[acodec=opus]/bestaudio/best",
@@ -959,13 +1010,34 @@ class YtdlpRunner:
                     "-f", "bestaudio/best",
                     "-x", "--audio-format", "mp3", "--audio-quality", "0",
                 ])
-            case TargetFormat.AUDIO_BEST:
-                # `--audio-format best` keeps the native best audio stream
-                # without transcoding (verified: `best` is the documented
-                # default/no-op conversion target).
+            case TargetFormat.AUDIO_FLAC:
                 self.args.extend([
                     "-f", "bestaudio/best",
-                    "-x", "--audio-format", "best",
+                    "-x", "--audio-format", "flac", "--audio-quality", "0",
+                ])
+            case TargetFormat.AUDIO_M4A:
+                self.args.extend([
+                    "-f", "bestaudio/best",
+                    "-x", "--audio-format", "m4a", "--audio-quality", "0",
+                ])
+            case TargetFormat.AUDIO_WAV:
+                self.args.extend([
+                    "-f", "bestaudio/best",
+                    "-x", "--audio-format", "wav",
+                ])
+            case TargetFormat.VIDEO_BEST:
+                if self.max_height is not None:
+                    cap = self.max_height
+                    selector = (
+                        f"bv*[height<={cap}]+ba/b[height<={cap}]"
+                        f"/bv*[height<={cap}]+ba/b"
+                    )
+                else:
+                    selector = "bv*+ba/b"
+                self.args.extend([
+                    "-f", selector,
+                    "-S", "res,fps,quality,hdr:12",
+                    "--merge-output-format", "mkv/mp4",
                 ])
             case TargetFormat.VIDEO:
                 if self.max_height is not None:
@@ -975,16 +1047,53 @@ class YtdlpRunner:
                         f"/bv*[height<={cap}]+ba/b"
                     )
                 else:
-                    # `bv*+ba/b` prefers separate AV streams (highest quality);
-                    # `-S` prioritizes highest resolution/fps first, then biases
-                    # toward phone-compatible H.264/AAC-in-MP4 without forcing
-                    # a quality downgrade when only VP9/AV1 exists.
                     selector = "bv*+ba/b"
                 self.args.extend([
                     "-f", selector,
                     "-S", "res,fps,vcodec:h264,acodec:aac,vext:mp4,lang,quality,hdr:12",
                     "--merge-output-format", "mp4",
                     "--remux-video", "mp4",
+                ])
+            case TargetFormat.VIDEO_AV1:
+                if self.max_height is not None:
+                    cap = self.max_height
+                    selector = (
+                        f"bv*[height<={cap}][vcodec^=av01]+ba/bv*[height<={cap}]+ba/b[height<={cap}]/b"
+                    )
+                else:
+                    selector = "bv*[vcodec^=av01]+ba/bv*+ba/b"
+                self.args.extend([
+                    "-f", selector,
+                    "-S", "vcodec:av01,res,fps,quality,hdr:12",
+                    "--merge-output-format", "mkv/mp4",
+                ])
+            case TargetFormat.VIDEO_VP9:
+                if self.max_height is not None:
+                    cap = self.max_height
+                    selector = (
+                        f"bv*[height<={cap}][vcodec^=vp9]+ba/bv*[height<={cap}]+ba/b[height<={cap}]/b"
+                    )
+                else:
+                    selector = "bv*[vcodec^=vp9]+ba/bv*+ba/b"
+                self.args.extend([
+                    "-f", selector,
+                    "-S", "vcodec:vp9,res,fps,quality,hdr:12",
+                    "--merge-output-format", "mkv/webm/mp4",
+                ])
+            case TargetFormat.VIDEO_MKV:
+                if self.max_height is not None:
+                    cap = self.max_height
+                    selector = (
+                        f"bv*[height<={cap}]+ba/b[height<={cap}]"
+                        f"/bv*[height<={cap}]+ba/b"
+                    )
+                else:
+                    selector = "bv*+ba/b"
+                self.args.extend([
+                    "-f", selector,
+                    "-S", "res,fps,quality,hdr:12",
+                    "--merge-output-format", "mkv",
+                    "--embed-subs",
                 ])
 
         self.args.extend(["-o", output_template, self.url])
@@ -1087,9 +1196,8 @@ def translate_error(err_msg: str, mode: TargetFormat) -> str:
     """Append a plain-English hint to known yt-dlp failure signatures."""
     lowered = err_msg.lower()
     # The source simply carries no audio track (e.g. a video-only clip), so
-    # no audio mode can ever succeed — say so instead of leaking internals.
-    if mode != TargetFormat.VIDEO and "unable to obtain file audio codec" in lowered:
-        return err_msg + " — source has no audio track; retry with -f video"
+    if not mode.is_video and "unable to obtain file audio codec" in lowered:
+        return err_msg + " — source has no audio track; retry with a video format"
     for signature, hint in _ERROR_HINTS:
         if signature in lowered:
             return f"{err_msg} — {hint}"
@@ -2419,7 +2527,7 @@ def run_interactive_wizard() -> tuple[list[MediaJob], Path, int]:
 
     # 4. Video quality — capped to what the link really provides.
     max_height: int | None = None
-    if mode == TargetFormat.VIDEO:
+    if mode.is_video:
         q_choices = build_quality_choices(details.heights if details else [])
         q_labels = [label for label, _ in q_choices]
         q_pick = fzf_pick("Select video quality", q_labels, q_labels[0])
@@ -2513,7 +2621,7 @@ def main() -> None:
     parser.add_argument(
         "-f",
         "--format",
-        choices=["video", "audio-opus", "audio-mp3", "audio-best"],
+        choices=FORMAT_CHOICES,
         default="audio-best",
         help="Delivery format (default: audio-best)",
     )
@@ -2522,7 +2630,7 @@ def main() -> None:
         "--quality",
         choices=["best", "2160", "1440", "1080", "720", "480", "360"],
         default="best",
-        help="Video quality cap (default: best). Applies to -f video only.",
+        help="Video quality cap (default: best). Applies to video formats only.",
     )
     parser.add_argument("-o", "--output-dir", type=Path, help="Storage directory override")
     parser.add_argument(
@@ -2553,8 +2661,18 @@ def main() -> None:
         default=None,
         help="The name of the browser to load cookies from (e.g. chrome, firefox, brave)",
     )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Launch Dusky Downloader GTK graphical user interface",
+    )
 
     args = parser.parse_args()
+
+    if args.gui:
+        from dusky_downloader_gui import main as gui_main
+        gui_main()
+        return
 
     max_workers = 1
     if not args.target:
@@ -2563,7 +2681,7 @@ def main() -> None:
         destination = resolve_storage_pool(args.output_dir.expanduser() if args.output_dir else None)
         mode = TargetFormat(args.format)
         max_height = None if args.quality == "best" else int(args.quality)
-        if max_height is not None and mode != TargetFormat.VIDEO:
+        if max_height is not None and not mode.is_video:
             console.print("[bold yellow]![/] --quality only applies to video; ignoring.")
             max_height = None
 
@@ -2640,7 +2758,7 @@ def main() -> None:
         sys.exit(1)
 
     fmt_label = jobs[0].mode.upper()
-    if jobs[0].mode == TargetFormat.VIDEO and jobs[0].max_height is not None:
+    if jobs[0].mode.is_video and jobs[0].max_height is not None:
         fmt_label += f" ≤{jobs[0].max_height}P"
     workers_label = f" | Workers: [cyan]{max_workers}[/]" if len(jobs) > 1 else ""
     console.print(

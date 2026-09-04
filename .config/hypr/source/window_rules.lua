@@ -665,6 +665,15 @@ hl.window_rule({
     center = true
 })
 
+--- Dusky Downloader (GTK3 Media & Playlist Downloader) ---
+hl.window_rule({
+    name = "dusky_downloader",
+    match = { class = "^(dusky-downloader)$" },
+    float = true,
+    size = {920, 700},
+    center = true
+})
+
 --- terminal clipboard ---
 hl.window_rule({
     name = "terminal_clipboard",

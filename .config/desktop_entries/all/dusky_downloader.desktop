@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Downloader
+GenericName=Universal Media Downloader
+Comment=Fast, modern GTK3 media & playlist downloader with memory acceleration
+Exec=/usr/bin/env python3 /home/dusk/user_scripts/tools/yt_dlp_downloader/dusky_downloader_gui.py %U
+Icon=folder-download
+Terminal=false
+Categories=AudioVideo;Network;GTK;
+Keywords=dusky;youtube;yt-dlp;download;downloader;video;audio;mp3;mp4;flac;opus;playlist;stream;music;
+StartupWMClass=dusky-downloader
+StartupNotify=true
+MimeType=x-scheme-handler/http;x-scheme-handler/https;
