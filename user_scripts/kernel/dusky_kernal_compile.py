@@ -535,7 +535,7 @@ CHOICE_HELP: Final[dict[tuple[str, str], dict[str, str]]] = {
     },
     ("compiler", "optimize"): {
         "o2": "-O2: upstream default, best tested",
-        "o3": "inject -O3 via KCFLAGS (unsupported upstream; marginal gains, larger text)",
+        "o3": "-O3: aggressive instruction scheduling, loop pipelining, and x86 SIMD safety guards",
         "size": "-Os: ~15-25% smaller text; slower hot paths; for minimal/embedded footprints",
     },
     ("compiler", "lto"): {
@@ -665,8 +665,11 @@ PROFILE_SPEC: Final[dict[str, tuple[FieldSpec, ...]]] = {
     ),
     "dusky": (
         F("enhanced", "bool", False, "Desktop heuristics (nowatchdog, faster fbcon takeover)"),
-        F("hostname", "str", "dusky", "KBUILD_BUILD_HOST", wizard=False),
-        F("user", "str", "dusky", "KBUILD_BUILD_USER", wizard=False),
+        F("patch_sched_inline", "bool", True, "Inline finish_task_switch() (~8.6%-35% context switch speedup)"),
+        F("patch_evdev_rcu", "bool", True, "Asynchronous evdev detach (eliminates 27s input close stalls)"),
+        F("patch_pci_pme", "bool", True, "Clear Linux 4000ms PCI PME polling timeout (reduces wakeups/saves power)"),
+        F("hostname", "str", "", "KBUILD_BUILD_HOST (empty = system hostname)", wizard=False),
+        F("user", "str", "", "KBUILD_BUILD_USER (empty = dynamic active user)", wizard=False),
         F("reproducible", "bool", True, "Fixed KBUILD_BUILD_TIMESTAMP / SOURCE_DATE_EPOCH", wizard=False),
         F("seed", "str", "auto", "Seed .config source", SEED_CHOICES),
         F("extra_config", "table", {}, "Arbitrary Kconfig overrides: SYMBOL = true|false|\"m\"|int|\"string\""),
@@ -736,6 +739,7 @@ PROFILE_SPEC: Final[dict[str, tuple[FieldSpec, ...]]] = {
     "compiler": (
         F("toolchain", "str", "llvm", "Toolchain", TOOLCHAIN_CHOICES),
         F("optimize", "str", "o2", "Optimization level", OPT_CHOICES),
+        F("polly", "bool", False, "Clang Polly loop optimizer (CONFIG_POLLY_CLANG)"),
         F("lto", "str", "thin", "Link-time optimization", LTO_CHOICES),
         F("thinlto_cache", "bool", True, "Persist the ThinLTO cache across builds"),
         F("thinlto_cache_size_gb", "int", 20, "Prune the ThinLTO cache above this size", minimum=1, maximum=500),
@@ -812,6 +816,7 @@ PROFILE_SPEC: Final[dict[str, tuple[FieldSpec, ...]]] = {
         F("cmdline_extra", "str", "", "Extra kernel parameters appended to the flavor tuning"),
         F("write_entries", "bool", True, "Write/refresh systemd-boot entries for this flavor"),
         F("nowatchdog", "bool", True, "Disable NMI/soft watchdog (nowatchdog nmi_watchdog=0)"),
+        F("acs_override", "bool", False, "PCIe ACS override for broken IOMMU groups (VFIO GPU passthrough; dangerous)"),
     ),
     "verify": (
         F("strict", "bool", True, "Hard-fail when a non-optional Kconfig contract entry is unmet"),
@@ -842,9 +847,9 @@ WIZARD_STEPS: Final[tuple[WizardStep, ...]] = (
                                                 "dirty_bytes_mb", "slub_tiny", "slab_buckets", "per_vma_lock", "numa", "numa_balancing", "nodes_shift", "ksm", "ksm_run",
                                                 "damon", "page_reporting", "hugetlbfs", "kallsyms_all", "memcg", "base_small", "log_buf_shift", "tracing", "kexec",
                                                 "ikconfig", "systemd_oomd", "trim_unused_ksyms", "dead_code_elimination")),)),
-    WizardStep("Compiler & Toolchain", (("compiler", ("toolchain", "optimize", "lto", "thinlto_cache", "thinlto_cache_size_gb", "kcfi", "fdo", "fdo_profile_dir",
+    WizardStep("Compiler & Toolchain", (("compiler", ("toolchain", "optimize", "polly", "lto", "thinlto_cache", "thinlto_cache_size_gb", "kcfi", "fdo", "fdo_profile_dir",
                                                        "debug_info", "module_compress", "rust", "jobs", "modversions")),
-                                        ("dusky", ("seed", "enhanced", "extra_config")))),
+                                        ("dusky", ("seed", "enhanced", "patch_sched_inline", "patch_evdev_rcu", "patch_pci_pme", "extra_config")))),
     WizardStep("Security", (("security", ("profile", "init_on_alloc", "init_on_free", "hardened_usercopy", "stackprotector", "slab_freelist_hardened",
                                           "slab_freelist_random", "randomize_kstack", "ubsan_bounds", "apparmor", "selinux", "lockdown_early", "acknowledge_risk")),)),
     WizardStep("Gaming / Low-Latency", (("gaming", ("ntsync", "uclamp", "max_map_count", "split_lock_mitigate", "controllers")),)),
@@ -854,7 +859,7 @@ WIZARD_STEPS: Final[tuple[WizardStep, ...]] = (
     WizardStep("Modules, Headers & Boot", (("modules", ("mode", "modprobed_db", "modprobed_db_path", "allow_lsmod_fallback", "lmc_keep_extra", "keep_symbols",
                                                         "localyesconfig", "manage_service", "sig_force")),
                                            ("compiler", ("headers",)),
-                                           ("boot", ("cmdline", "cmdline_extra", "write_entries", "nowatchdog")),
+                                           ("boot", ("cmdline", "cmdline_extra", "write_entries", "nowatchdog", "acs_override")),
                                            ("meta", ("bare_metal_only", "portable_package")),
                                            ("verify", ("strict", "require_ntsync", "require_btf", "require_sched_ext")))),
 )
@@ -1026,6 +1031,7 @@ def normalize_profile(p: KernelProfile) -> list[str]:
         force("compiler", "lto", "none", "LTO requires LLVM")
         force("compiler", "kcfi", False, "kCFI requires clang")
         force("compiler", "fdo", "none", "AutoFDO/Propeller require clang")
+        force("compiler", "polly", False, "Polly requires clang/LLVM")
     if s["compiler"]["lto"] != "thin":
         force("compiler", "thinlto_cache", False, "ThinLTO cache only applies to lto=thin")
     if s["timing"]["preempt"] == "rt":
@@ -1441,6 +1447,7 @@ class WizardSignal(StrEnum):
     SKIP_SECTION = "s"
     ACCEPT_REST = "!"
     BACK = "b"
+    MENU = "m"
 
 
 def prompt_field(p: KernelProfile, sec: str, spec: FieldSpec, facts: "HostFacts | None") -> str | WizardSignal | None:
@@ -1474,11 +1481,17 @@ def prompt_field(p: KernelProfile, sec: str, spec: FieldSpec, facts: "HostFacts 
     if (sec, spec.key) == ("memory", "footprint") and facts is not None:
         note(f"    host RAM: {facts.mem_gib:.1f} GiB -> suggested tier: {suggest_footprint(facts.mem_gib)}")
     while True:
-        raw = ask("Enter keeps current | value | 's' skip section | '!' accept everything else | 'b' back", "")
+        raw = ask("Enter keeps current | value | 'b' back | 's' skip section | '!' accept rest | 'm' jump to section", "")
         if raw == "":
             return None
-        if raw in ("s", "!", "b"):
-            return WizardSignal(raw)
+        if raw in ("b", "back"):
+            return WizardSignal.BACK
+        if raw in ("s", "skip"):
+            return WizardSignal.SKIP_SECTION
+        if raw in ("!", "accept"):
+            return WizardSignal.ACCEPT_REST
+        if raw in ("m", "menu", "jump"):
+            return WizardSignal.MENU
         try:
             val = _parse_answer(spec, raw, current)
         except ValueError as e:
@@ -1504,39 +1517,88 @@ def suggest_footprint(mem_gib: float) -> str:
 
 
 def run_wizard(p: KernelProfile, facts: "HostFacts | None", steps: Sequence[int] | None = None) -> list[str]:
-    """Granular questionnaire over every tunable knob (Enter keeps the profile default)."""
-    diff: list[str] = []
+    """Granular questionnaire over tunable knobs with per-question backward navigation ('b'), skip ('s'), jump ('m'), and accept ('!')."""
     order = list(steps) if steps else list(range(len(WIZARD_STEPS)))
     say("")
-    info("Wizard controls: Enter = keep profile default, number/name = new value, 's' = skip section, '!' = accept all remaining defaults, 'b' = previous section")
-    pos = 0
-    while pos < len(order):
-        idx = order[pos]
-        step = WIZARD_STEPS[idx]
-        rule(f"Wizard {idx + 1}/{len(WIZARD_STEPS)} · {step.title}")
-        outcome: WizardSignal | None = None
+    info("Wizard controls: Enter = keep current, value = new value, 'b' = previous question, 's' = skip section, '!' = accept rest, 'm' = jump to section")
+
+    active_questions: list[tuple[int, str, str, FieldSpec]] = []
+    for step_idx in order:
+        step = WIZARD_STEPS[step_idx]
         for sec, keys in step.groups:
-            if outcome is not None:
-                break
             specs = {f.key: f for f in PROFILE_SPEC[sec]}
             for key in keys:
                 spec = specs[key]
-                if not spec.wizard or not field_relevant(p.sections, sec, key):
-                    continue
-                res = prompt_field(p, sec, spec, facts)
-                if isinstance(res, WizardSignal):
-                    outcome = res
-                    break
-                if res:
-                    diff.append(res)
-        if outcome is WizardSignal.ACCEPT_REST:
-            info("Accepting profile defaults for all remaining sections")
-            break
-        if outcome is WizardSignal.BACK:
-            pos = max(0, pos - 1)
+                if spec.wizard:
+                    active_questions.append((step_idx, step.title, sec, spec))
+
+    pos = 0
+    history: list[tuple[int, str, str, Any, str | None]] = []
+    diff_map: dict[str, str] = {}
+    current_step_idx = -1
+
+    while pos < len(active_questions):
+        step_idx, step_title, sec, spec = active_questions[pos]
+        if not field_relevant(p.sections, sec, spec.key):
+            pos += 1
             continue
+
+        if step_idx != current_step_idx:
+            current_step_idx = step_idx
+            rule(f"Wizard {step_idx + 1}/{len(WIZARD_STEPS)} · {step_title}")
+
+        old_val = p.g(sec, spec.key)
+        res = prompt_field(p, sec, spec, facts)
+
+        if isinstance(res, WizardSignal):
+            if res is WizardSignal.BACK:
+                if history:
+                    prev_pos, prev_sec, prev_key, prev_old_val, _ = history.pop()
+                    p.set(prev_sec, prev_key, prev_old_val)
+                    diff_map.pop(f"{prev_sec}.{prev_key}", None)
+                    prev_spec = active_questions[prev_pos][3]
+                    warn(f"Reverted {prev_sec}.{prev_key} to {_fmt_value(prev_spec, prev_old_val)} and stepped back.")
+                    pos = prev_pos
+                    current_step_idx = -1
+                    continue
+                else:
+                    warn("Already at the very first question in the wizard.")
+                    continue
+            elif res is WizardSignal.SKIP_SECTION:
+                cur_s = step_idx
+                while pos < len(active_questions) and active_questions[pos][0] == cur_s:
+                    pos += 1
+                continue
+            elif res is WizardSignal.ACCEPT_REST:
+                info("Accepting profile defaults for all remaining sections")
+                break
+            elif res is WizardSignal.MENU:
+                say("")
+                say(f"{C.ACCENT}  Wizard sections:{C.RESET}")
+                for i, st in enumerate(WIZARD_STEPS, 1):
+                    marker = "▶" if (i - 1) == step_idx else " "
+                    say(f"  {marker} {i:>2}) {st.title}")
+                target_step = ask_index("Jump to section", len(WIZARD_STEPS), step_idx + 1) - 1
+                found = False
+                for idx, (s_idx, _, _, _) in enumerate(active_questions):
+                    if s_idx == target_step:
+                        pos = idx
+                        current_step_idx = -1
+                        found = True
+                        break
+                if found:
+                    continue
+                else:
+                    warn(f"Section '{WIZARD_STEPS[target_step].title}' has no active questions in this pass.")
+                    continue
+
+        diff_line = res if isinstance(res, str) else None
+        if diff_line:
+            diff_map[f"{sec}.{spec.key}"] = diff_line
+        history.append((pos, sec, spec.key, old_val, diff_line))
         pos += 1
-    return diff
+
+    return list(diff_map.values())
 
 
 def wizard_review_loop(p: KernelProfile, facts: "HostFacts | None", diff: list[str], *, force: bool) -> list[str]:
@@ -2621,6 +2683,797 @@ def apply_scheduler_patch(tree: Path, p: KernelProfile, rel: Release) -> str:
     raise BuildError(f"No applicable {sched.upper()} patch for Linux {mm} and vanilla fallback is disabled")
 
 
+# ---------------------------------------------------------------------------------------------------
+# Built-in kernel enhancement patches (Linux 7.2 / 7.3+)
+# ---------------------------------------------------------------------------------------------------
+BUILTIN_PATCH_SCHED_INLINE: Final = r"""diff --git a/arch/arm/include/asm/mmu_context.h b/arch/arm/include/asm/mmu_context.h
+index db2cb06aa..bebde469f 100644
+--- a/arch/arm/include/asm/mmu_context.h
++++ b/arch/arm/include/asm/mmu_context.h
+@@ -80,7 +80,7 @@ static inline void check_and_switch_context(struct mm_struct *mm,
+ #ifndef MODULE
+ #define finish_arch_post_lock_switch \
+ 	finish_arch_post_lock_switch
+-static inline void finish_arch_post_lock_switch(void)
++static __always_inline void finish_arch_post_lock_switch(void)
+ {
+ 	struct mm_struct *mm = current->mm;
+ 
+diff --git a/arch/riscv/include/asm/sync_core.h b/arch/riscv/include/asm/sync_core.h
+index 9153016da..2fe6b7fe6 100644
+--- a/arch/riscv/include/asm/sync_core.h
++++ b/arch/riscv/include/asm/sync_core.h
+@@ -6,7 +6,7 @@
+  * RISC-V implements return to user-space through an xRET instruction,
+  * which is not core serializing.
+  */
+-static inline void sync_core_before_usermode(void)
++static __always_inline void sync_core_before_usermode(void)
+ {
+ 	asm volatile ("fence.i" ::: "memory");
+ }
+diff --git a/arch/s390/include/asm/mmu_context.h b/arch/s390/include/asm/mmu_context.h
+index bd1ef5e2d..95d03be2c 100644
+--- a/arch/s390/include/asm/mmu_context.h
++++ b/arch/s390/include/asm/mmu_context.h
+@@ -93,7 +93,7 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
+ }
+ 
+ #define finish_arch_post_lock_switch finish_arch_post_lock_switch
+-static inline void finish_arch_post_lock_switch(void)
++static __always_inline void finish_arch_post_lock_switch(void)
+ {
+ 	struct task_struct *tsk = current;
+ 	struct mm_struct *mm = tsk->mm;
+diff --git a/arch/sparc/include/asm/mmu_context_64.h b/arch/sparc/include/asm/mmu_context_64.h
+index 78bbacc14..d1967214e 100644
+--- a/arch/sparc/include/asm/mmu_context_64.h
++++ b/arch/sparc/include/asm/mmu_context_64.h
+@@ -160,7 +160,7 @@ static inline void arch_start_context_switch(struct task_struct *prev)
+ }
+ 
+ #define finish_arch_post_lock_switch	finish_arch_post_lock_switch
+-static inline void finish_arch_post_lock_switch(void)
++static __always_inline void finish_arch_post_lock_switch(void)
+ {
+ 	/* Restore the state of MCDPER register for the new process
+ 	 * just switched to.
+diff --git a/arch/x86/include/asm/sync_core.h b/arch/x86/include/asm/sync_core.h
+index 96bda4353..4b55fa353 100644
+--- a/arch/x86/include/asm/sync_core.h
++++ b/arch/x86/include/asm/sync_core.h
+@@ -93,7 +93,7 @@ static __always_inline void sync_core(void)
+  * to user-mode. x86 implements return to user-space through sysexit,
+  * sysrel, and sysretq, which are not core serializing.
+  */
+-static inline void sync_core_before_usermode(void)
++static __always_inline void sync_core_before_usermode(void)
+ {
+ 	/* With PTI, we unconditionally serialize before running user code. */
+ 	if (static_cpu_has(X86_FEATURE_PTI))
+diff --git a/include/linux/perf_event.h b/include/linux/perf_event.h
+index 48d851fbd..7c1dac8da 100644
+--- a/include/linux/perf_event.h
++++ b/include/linux/perf_event.h
+@@ -1632,7 +1632,7 @@ static inline void perf_event_task_migrate(struct task_struct *task)
+ 		task->sched_migrated = 1;
+ }
+ 
+-static inline void perf_event_task_sched_in(struct task_struct *prev,
++static __always_inline void perf_event_task_sched_in(struct task_struct *prev,
+ 					    struct task_struct *task)
+ {
+ 	if (static_branch_unlikely(&perf_sched_events))
+diff --git a/include/linux/sched/mm.h b/include/linux/sched/mm.h
+index 95d0040df..4a279ee2d 100644
+--- a/include/linux/sched/mm.h
++++ b/include/linux/sched/mm.h
+@@ -44,7 +44,7 @@ static inline void smp_mb__after_mmgrab(void)
+ 
+ extern void __mmdrop(struct mm_struct *mm);
+ 
+-static inline void mmdrop(struct mm_struct *mm)
++static __always_inline void mmdrop(struct mm_struct *mm)
+ {
+ 	/*
+ 	 * The implicit full barrier implied by atomic_dec_and_test() is
+@@ -71,14 +71,14 @@ static inline void __mmdrop_delayed(struct rcu_head *rhp)
+  * Invoked from finish_task_switch(). Delegates the heavy lifting on RT
+  * kernels via RCU.
+  */
+-static inline void mmdrop_sched(struct mm_struct *mm)
++static __always_inline void mmdrop_sched(struct mm_struct *mm)
+ {
+ 	/* Provides a full memory barrier. See mmdrop() */
+ 	if (atomic_dec_and_test(&mm->mm_count))
+ 		call_rcu(&mm->delayed_drop, __mmdrop_delayed);
+ }
+ #else
+-static inline void mmdrop_sched(struct mm_struct *mm)
++static __always_inline void mmdrop_sched(struct mm_struct *mm)
+ {
+ 	mmdrop(mm);
+ }
+@@ -104,7 +104,7 @@ static inline void mmdrop_lazy_tlb(struct mm_struct *mm)
+ 	}
+ }
+ 
+-static inline void mmdrop_lazy_tlb_sched(struct mm_struct *mm)
++static __always_inline void mmdrop_lazy_tlb_sched(struct mm_struct *mm)
+ {
+ 	if (IS_ENABLED(CONFIG_MMU_LAZY_TLB_REFCOUNT))
+ 		mmdrop_sched(mm);
+@@ -532,7 +532,7 @@ enum {
+ #include <asm/membarrier.h>
+ #endif
+ 
+-static inline void membarrier_mm_sync_core_before_usermode(struct mm_struct *mm)
++static __always_inline void membarrier_mm_sync_core_before_usermode(struct mm_struct *mm)
+ {
+ 	/*
+ 	 * The atomic_read() below prevents CSE. The following should
+diff --git a/include/linux/tick.h b/include/linux/tick.h
+index 1cf4651f0..2f91eccd2 100644
+--- a/include/linux/tick.h
++++ b/include/linux/tick.h
+@@ -173,7 +173,7 @@ extern cpumask_var_t tick_nohz_full_mask;
+ #ifdef CONFIG_NO_HZ_FULL
+ extern bool tick_nohz_full_running;
+ 
+-static inline bool tick_nohz_full_enabled(void)
++static __always_inline bool tick_nohz_full_enabled(void)
+ {
+ 	if (!context_tracking_enabled())
+ 		return false;
+@@ -297,7 +297,7 @@ static inline void __tick_nohz_task_switch(void) { }
+ static inline void tick_nohz_full_setup(cpumask_var_t cpumask) { }
+ #endif
+ 
+-static inline void tick_nohz_task_switch(void)
++static __always_inline void tick_nohz_task_switch(void)
+ {
+ 	if (tick_nohz_full_enabled())
+ 		__tick_nohz_task_switch();
+diff --git a/include/linux/vtime.h b/include/linux/vtime.h
+index 82825e775..28234dda2 100644
+--- a/include/linux/vtime.h
++++ b/include/linux/vtime.h
+@@ -26,12 +26,12 @@ static inline void vtime_guest_exit(struct task_struct *tsk) { }
+ static inline void vtime_init_idle(struct task_struct *tsk, int cpu) { }
+ #endif
+ 
+-static inline bool vtime_generic_enabled_cpu(int cpu)
++static __always_inline bool vtime_generic_enabled_cpu(int cpu)
+ {
+ 	return context_tracking_enabled_cpu(cpu);
+ }
+ 
+-static inline bool vtime_generic_enabled_this_cpu(void)
++static __always_inline bool vtime_generic_enabled_this_cpu(void)
+ {
+ 	return context_tracking_enabled_this_cpu();
+ }
+@@ -89,24 +89,24 @@ static __always_inline void vtime_account_guest_exit(void)
+  * For now vtime state is tied to context tracking. We might want to decouple
+  * those later if necessary.
+  */
+-static inline bool vtime_accounting_enabled(void)
++static __always_inline bool vtime_accounting_enabled(void)
+ {
+ 	return context_tracking_enabled();
+ }
+ 
+-static inline bool vtime_accounting_enabled_cpu(int cpu)
++static __always_inline bool vtime_accounting_enabled_cpu(int cpu)
+ {
+ 	return vtime_generic_enabled_cpu(cpu);
+ }
+ 
+-static inline bool vtime_accounting_enabled_this_cpu(void)
++static __always_inline bool vtime_accounting_enabled_this_cpu(void)
+ {
+ 	return vtime_generic_enabled_this_cpu();
+ }
+ 
+ extern void vtime_task_switch_generic(struct task_struct *prev);
+ 
+-static inline void vtime_task_switch(struct task_struct *prev)
++static __always_inline void vtime_task_switch(struct task_struct *prev)
+ {
+ 	if (vtime_accounting_enabled_this_cpu())
+ 		vtime_task_switch_generic(prev);
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index 96226707c..6014cc8fb 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -5074,7 +5074,7 @@ static inline void prepare_task(struct task_struct *next)
+ 	WRITE_ONCE(next->on_cpu, 1);
+ }
+ 
+-static inline void finish_task(struct task_struct *prev)
++static __always_inline void finish_task(struct task_struct *prev)
+ {
+ 	/*
+ 	 * This must be the very last reference to @prev from this CPU. After
+@@ -5118,7 +5118,7 @@ static void zap_balance_callbacks(struct rq *rq)
+ 	rq->balance_callback = found ? &balance_push_callback : NULL;
+ }
+ 
+-static void do_balance_callbacks(struct rq *rq, struct balance_callback *head)
++static __always_inline void do_balance_callbacks(struct rq *rq, struct balance_callback *head)
+ {
+ 	void (*func)(struct rq *rq);
+ 	struct balance_callback *next;
+@@ -5153,7 +5153,7 @@ struct balance_callback balance_push_callback = {
+ 	.func = balance_push,
+ };
+ 
+-static inline struct balance_callback *
++static __always_inline struct balance_callback *
+ __splice_balance_callbacks(struct rq *rq, bool split)
+ {
+ 	struct balance_callback *head = rq->balance_callback;
+@@ -5183,7 +5183,7 @@ struct balance_callback *splice_balance_callbacks(struct rq *rq)
+ 	return __splice_balance_callbacks(rq, true);
+ }
+ 
+-void __balance_callbacks(struct rq *rq, struct rq_flags *rf)
++__always_inline void __balance_callbacks(struct rq *rq, struct rq_flags *rf)
+ {
+ 	if (rf)
+ 		rq_unpin_lock(rq, rf);
+@@ -5227,7 +5227,7 @@ prepare_lock_switch(struct rq *rq, struct task_struct *next, struct rq_flags *rf
+ 	__acquire(__rq_lockp(this_rq()));
+ }
+ 
+-static inline void finish_lock_switch(struct rq *rq)
++static __always_inline void finish_lock_switch(struct rq *rq)
+ 	__releases(__rq_lockp(rq))
+ {
+ 	/*
+@@ -5261,7 +5261,7 @@ static inline void kmap_local_sched_out(void)
+ #endif
+ }
+ 
+-static inline void kmap_local_sched_in(void)
++static __always_inline void kmap_local_sched_in(void)
+ {
+ #ifdef CONFIG_KMAP_LOCAL
+ 	if (unlikely(current->kmap_ctrl.idx))
+@@ -5315,7 +5315,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
+  * past. 'prev == current' is still correct but we need to recalculate this_rq
+  * because prev may have moved to another CPU.
+  */
+-static struct rq *finish_task_switch(struct task_struct *prev)
++static __always_inline struct rq *finish_task_switch(struct task_struct *prev)
+ 	__releases(__rq_lockp(this_rq()))
+ {
+ 	struct rq *rq = this_rq();
+diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
+index 56acf502b..b8e75cdc2 100644
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -1457,12 +1457,12 @@ static inline struct cpumask *sched_group_span(struct sched_group *sg);
+ 
+ DECLARE_STATIC_KEY_FALSE(__sched_core_enabled);
+ 
+-static inline bool sched_core_enabled(struct rq *rq)
++static __always_inline bool sched_core_enabled(struct rq *rq)
+ {
+ 	return static_branch_unlikely(&__sched_core_enabled) && rq->core_enabled;
+ }
+ 
+-static inline bool sched_core_disabled(void)
++static __always_inline bool sched_core_disabled(void)
+ {
+ 	return !static_branch_unlikely(&__sched_core_enabled);
+ }
+@@ -1471,7 +1471,7 @@ static inline bool sched_core_disabled(void)
+  * Be careful with this function; not for general use. The return value isn't
+  * stable unless you actually hold a relevant rq->__lock.
+  */
+-static inline raw_spinlock_t *rq_lockp(struct rq *rq)
++static __always_inline raw_spinlock_t *rq_lockp(struct rq *rq)
+ {
+ 	if (sched_core_enabled(rq))
+ 		return &rq->core->__lock;
+@@ -1479,7 +1479,7 @@ static inline raw_spinlock_t *rq_lockp(struct rq *rq)
+ 	return &rq->__lock;
+ }
+ 
+-static inline raw_spinlock_t *__rq_lockp(struct rq *rq)
++static __always_inline raw_spinlock_t *__rq_lockp(struct rq *rq)
+ 	__returns_ctx_lock(rq_lockp(rq)) /* alias them */
+ {
+ 	if (rq->core_enabled)
+@@ -1582,12 +1582,12 @@ static inline bool sched_core_disabled(void)
+ 	return true;
+ }
+ 
+-static inline raw_spinlock_t *rq_lockp(struct rq *rq)
++static __always_inline raw_spinlock_t *rq_lockp(struct rq *rq)
+ {
+ 	return &rq->__lock;
+ }
+ 
+-static inline raw_spinlock_t *__rq_lockp(struct rq *rq)
++static __always_inline raw_spinlock_t *__rq_lockp(struct rq *rq)
+ 	__returns_ctx_lock(rq_lockp(rq)) /* alias them */
+ {
+ 	return &rq->__lock;
+@@ -1647,26 +1647,26 @@ extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass)
+ extern bool raw_spin_rq_trylock(struct rq *rq)
+ 	__cond_acquires(true, __rq_lockp(rq));
+ 
+-static inline void raw_spin_rq_lock(struct rq *rq)
++static __always_inline void raw_spin_rq_lock(struct rq *rq)
+ 	__acquires(__rq_lockp(rq))
+ {
+ 	raw_spin_rq_lock_nested(rq, 0);
+ }
+ 
+-static inline void raw_spin_rq_unlock(struct rq *rq)
++static __always_inline void raw_spin_rq_unlock(struct rq *rq)
+ 	__releases(__rq_lockp(rq))
+ {
+ 	raw_spin_unlock(rq_lockp(rq));
+ }
+ 
+-static inline void raw_spin_rq_lock_irq(struct rq *rq)
++static __always_inline void raw_spin_rq_lock_irq(struct rq *rq)
+ 	__acquires(__rq_lockp(rq))
+ {
+ 	local_irq_disable();
+ 	raw_spin_rq_lock(rq);
+ }
+ 
+-static inline void raw_spin_rq_unlock_irq(struct rq *rq)
++static __always_inline void raw_spin_rq_unlock_irq(struct rq *rq)
+ 	__releases(__rq_lockp(rq))
+ {
+ 	raw_spin_rq_unlock(rq);
+"""
+
+BUILTIN_PATCH_EVDEV_RCU: Final = r"""diff --git a/drivers/input/evdev.c b/drivers/input/evdev.c
+index c7325226c..4f18a50ea 100644
+--- a/drivers/input/evdev.c
++++ b/drivers/input/evdev.c
+@@ -46,6 +46,7 @@ struct evdev_client {
+ 	struct fasync_struct *fasync;
+ 	struct evdev *evdev;
+ 	struct list_head node;
++	struct rcu_head rcu;
+ 	enum input_clock_type clk_type;
+ 	bool revoked;
+ 	unsigned long *evmasks[EV_CNT];
+@@ -368,13 +369,22 @@ static void evdev_attach_client(struct evdev *evdev,
+ 	spin_unlock(&evdev->client_lock);
+ }
+ 
++static void evdev_reclaim_client(struct rcu_head *rp)
++{
++	struct evdev_client *client = container_of(rp, struct evdev_client, rcu);
++	unsigned int i;
++	for (i = 0; i < EV_CNT; ++i)
++		bitmap_free(client->evmasks[i]);
++	kvfree(client);
++}
++
+ static void evdev_detach_client(struct evdev *evdev,
+ 				struct evdev_client *client)
+ {
+ 	spin_lock(&evdev->client_lock);
+ 	list_del_rcu(&client->node);
+ 	spin_unlock(&evdev->client_lock);
+-	synchronize_rcu();
++	call_rcu(&client->rcu, evdev_reclaim_client);
+ }
+ 
+ static int evdev_open_device(struct evdev *evdev)
+@@ -427,7 +437,6 @@ static int evdev_release(struct inode *inode, struct file *file)
+ {
+ 	struct evdev_client *client = file->private_data;
+ 	struct evdev *evdev = client->evdev;
+-	unsigned int i;
+ 
+ 	mutex_lock(&evdev->mutex);
+ 
+@@ -439,11 +448,6 @@ static int evdev_release(struct inode *inode, struct file *file)
+ 
+ 	evdev_detach_client(evdev, client);
+ 
+-	for (i = 0; i < EV_CNT; ++i)
+-		bitmap_free(client->evmasks[i]);
+-
+-	kvfree(client);
+-
+ 	evdev_close_device(evdev);
+ 
+ 	return 0;
+@@ -486,7 +490,6 @@ static int evdev_open(struct inode *inode, struct file *file)
+ 
+  err_free_client:
+ 	evdev_detach_client(evdev, client);
+-	kvfree(client);
+ 	return error;
+ }
+ 
+"""
+
+BUILTIN_PATCH_PCI_PME: Final = r"""diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -62,7 +62,7 @@ struct pci_pme_device {
+ 	struct pci_dev *dev;
+ };
+ 
+-#define PME_TIMEOUT 1000 /* How long between PME checks */
++#define PME_TIMEOUT 4000 /* How long between PME checks */
+ 
+ static void pci_dev_d3_sleep(struct pci_dev *dev)
+ {
+"""
+
+BUILTIN_PATCH_CLANG_POLLY: Final = r"""diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -870,6 +870,23 @@ endif
+ KBUILD_RUSTFLAGS += -Cdebug-assertions=$(if $(CONFIG_RUST_DEBUG_ASSERTIONS),y,n)
+ KBUILD_RUSTFLAGS += -Coverflow-checks=$(if $(CONFIG_RUST_OVERFLOW_CHECKS),y,n)
+ 
++ifdef CONFIG_POLLY_CLANG
++KBUILD_CFLAGS	+= -fplugin=LLVMPolly.so \
++		   -mllvm -polly \
++		   -mllvm -polly-ast-use-context \
++		   -mllvm -polly-invariant-load-hoisting \
++		   -mllvm -polly-loopfusion-greedy \
++		   -mllvm -polly-run-inliner \
++		   -mllvm -polly-vectorizer=stripmine
++# Polly may optimise loops with dead paths beyound what the linker
++# can understand. This may negate the effect of the linker's DCE
++# so we tell Polly to perfom proven DCE on the loops it optimises
++# in order to preserve the overall effect of the linker's DCE.
++ifdef CONFIG_LD_DEAD_CODE_DATA_ELIMINATION
++KBUILD_CFLAGS	+= -mllvm -polly-run-dce
++endif
++endif
++
+ # Tell gcc to never replace conditional load with a non-conditional one
+ ifdef CONFIG_CC_IS_GCC
+ # gcc-10 renamed --param=allow-store-data-races=0 to
+diff --git a/init/Kconfig b/init/Kconfig
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -251,6 +251,19 @@ config BUILD_SALT
+ 	  This is mostly useful for distributions which want to ensure the
+ 	  build is unique between builds. It's safe to leave the default.
+ 
++config POLLY_CLANG
++	bool "Use Clang Polly optimizations"
++	depends on CC_IS_CLANG && $(cc-option,-mllvm -polly -fplugin=LLVMPolly.so)
++	depends on !COMPILE_TEST
++	help
++	  This option enables Clang's polyhedral loop optimizer known as
++	  Polly. Polly is able to optimize various loops throughout the
++	  kernel for cache locality. This requires a Clang toolchain
++	  compiled with support for Polly. More information can be found
++	  from Polly's website:
++
++	    https://polly.llvm.org
++
+ config HAVE_KERNEL_GZIP
+ 	bool
+ """
+
+BUILTIN_PATCH_OPTIMIZE_O3: Final = r"""diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -929,16 +929,25 @@ KBUILD_CFLAGS	+= -fno-delete-null-pointer-checks
+ ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE
+ KBUILD_CFLAGS += -O2
+ KBUILD_RUSTFLAGS += -Copt-level=2
++else ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3
++KBUILD_CFLAGS += -O3
++KBUILD_RUSTFLAGS += -Copt-level=3
+ else ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
+ KBUILD_CFLAGS += -Os
+ KBUILD_RUSTFLAGS += -Copt-level=s
+ endif
+ 
++# Perform swing modulo scheduling immediately before the first scheduling pass.
++# This pass looks at innermost loops and reorders their instructions by
++# overlapping different iterations.
++KBUILD_CFLAGS += $(call cc-option,-fmodulo-sched -fmodulo-sched-allow-regmoves -fivopts)
++KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-pipeliner)
++
+ # Always set `debug-assertions` and `overflow-checks` because their default
+ # depends on `opt-level` and `debug-assertions`, respectively.
+ KBUILD_RUSTFLAGS += -Cdebug-assertions=$(if $(CONFIG_RUST_DEBUG_ASSERTIONS),y,n)
+ KBUILD_RUSTFLAGS += -Coverflow-checks=$(if $(CONFIG_RUST_OVERFLOW_CHECKS),y,n)
+ 
+ # Tell gcc to never replace conditional load with a non-conditional one
+ ifdef CONFIG_CC_IS_GCC
+ # gcc-10 renamed --param=allow-store-data-races=0 to
+@@ -1154,11 +1179,6 @@ KBUILD_CFLAGS	+= -fno-strict-overflow
+ # Make sure -fstack-check isn't enabled (like gentoo apparently did)
+ KBUILD_CFLAGS  += -fno-stack-check
+ 
+-# conserve stack if available
+-ifdef CONFIG_CC_IS_GCC
+-KBUILD_CFLAGS   += -fconserve-stack
+-endif
+-
+ # Ensure compilers do not transform certain loops into calls to wcslen()
+ KBUILD_CFLAGS += -fno-builtin-wcslen
+ 
+ diff --git a/arch/x86/Makefile b/arch/x86/Makefile
+--- a/arch/x86/Makefile
++++ b/arch/x86/Makefile
+@@ -73,7 +73,7 @@ export BITS
+ #
+ #    https://gcc.gnu.org/bugzilla/show_bug.cgi?id=53383
+ #
+-KBUILD_CFLAGS += -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx -mno-sse4a
++KBUILD_CFLAGS += -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx -mno-sse4a -mno-avx2 -fno-tree-vectorize
+ KBUILD_RUSTFLAGS += --target=$(objtree)/scripts/target.json
+ KBUILD_RUSTFLAGS += -Ctarget-feature=-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-avx2
+ 
+diff --git a/init/Kconfig b/init/Kconfig
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -1613,6 +1613,12 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
+ 	  with the "-O2" compiler flag for best performance and most
+ 	  helpful compile-time warnings.
+ 
++config CC_OPTIMIZE_FOR_PERFORMANCE_O3
++	bool "Optimize more for performance (-O3)"
++	help
++	  Choosing this option will pass "-O3" to your compiler to optimize
++	  the kernel yet more for performance.
++
+ config CC_OPTIMIZE_FOR_SIZE
+ 	bool "Optimize for size (-Os)"
+ 	help
+"""
+
+BUILTIN_PATCH_ACS_OVERRIDE: Final = r"""diff --git a/drivers/pci/quirks.c b/drivers/pci/quirks.c
+index 4700d24e5d55..8f7a3d7fd9c1 100644
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -3372,6 +3372,106 @@ static void quirk_no_bus_reset(struct pci_dev *dev)
+ 	dev->dev_flags |= PCI_DEV_FLAGS_NO_BUS_RESET;
+ }
+ 
++static bool acs_on_downstream;
++static bool acs_on_multifunction;
++
++#define NUM_ACS_IDS 16
++struct acs_on_id {
++	unsigned short vendor;
++	unsigned short device;
++};
++static struct acs_on_id acs_on_ids[NUM_ACS_IDS];
++static u8 max_acs_id;
++
++static __init int pcie_acs_override_setup(char *p)
++{
++	if (!p)
++		return -EINVAL;
++
++	while (*p) {
++		if (!strncmp(p, "downstream", 10))
++			acs_on_downstream = true;
++		if (!strncmp(p, "multifunction", 13))
++			acs_on_multifunction = true;
++		if (!strncmp(p, "id:", 3)) {
++			char opt[5];
++			int ret;
++			long val;
++
++			if (max_acs_id >= NUM_ACS_IDS - 1) {
++				pr_warn("Out of PCIe ACS override slots (%d)\n",
++						NUM_ACS_IDS);
++				goto next;
++			}
++
++			p += 3;
++			snprintf(opt, 5, "%s", p);
++			ret = kstrtol(opt, 16, &val);
++			if (ret) {
++				pr_warn("PCIe ACS ID parse error %d\n", ret);
++				goto next;
++			}
++			acs_on_ids[max_acs_id].vendor = val;
++
++			p += strcspn(p, ":");
++			if (*p != ':') {
++				pr_warn("PCIe ACS invalid ID\n");
++				goto next;
++			}
++
++			p++;
++			snprintf(opt, 5, "%s", p);
++			ret = kstrtol(opt, 16, &val);
++			if (ret) {
++				pr_warn("PCIe ACS ID parse error %d\n", ret);
++				goto next;
++			}
++			acs_on_ids[max_acs_id].device = val;
++			max_acs_id++;
++		}
++next:
++		p += strcspn(p, ",");
++		if (*p == ',')
++			p++;
++	}
++
++	if (acs_on_downstream || acs_on_multifunction || max_acs_id)
++		pr_warn("Warning: PCIe ACS overrides enabled; This may allow non-IOMMU protected peer-to-peer DMA\n");
++
++	return 0;
++}
++early_param("pcie_acs_override", pcie_acs_override_setup);
++
++static int pcie_acs_overrides(struct pci_dev *dev, u16 acs_flags)
++{
++	int i;
++
++	/* Never override ACS for legacy devices or devices with ACS caps */
++	if (!pci_is_pcie(dev) ||
++		pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ACS))
++			return -ENOTTY;
++
++	for (i = 0; i < max_acs_id; i++)
++		if (acs_on_ids[i].vendor == dev->vendor &&
++			acs_on_ids[i].device == dev->device)
++				return 1;
++
++	switch (pci_pcie_type(dev)) {
++	case PCI_EXP_TYPE_DOWNSTREAM:
++	case PCI_EXP_TYPE_ROOT_PORT:
++		if (acs_on_downstream)
++			return 1;
++		break;
++	case PCI_EXP_TYPE_ENDPOINT:
++	case PCI_EXP_TYPE_UPSTREAM:
++	case PCI_EXP_TYPE_LEG_END:
++	case PCI_EXP_TYPE_RC_END:
++		if (acs_on_multifunction && dev->multifunction)
++			return 1;
++	}
++
++	return -ENOTTY;
++}
+ /*
+  * Some Atheros AR9xxx and QCA988x chips do not behave after a bus reset.
+  * The device will throw a Link Down error on AER-capable systems and
+@@ -5102,6 +5102,7 @@
+ 	{ PCI_VENDOR_ID_ZHAOXIN, PCI_ANY_ID, pci_quirk_zhaoxin_pcie_ports_acs },
+ 	/* Wangxun nics */
+ 	{ PCI_VENDOR_ID_WANGXUN, PCI_ANY_ID, pci_quirk_wangxun_nic_acs },
++	{ PCI_ANY_ID, PCI_ANY_ID, pcie_acs_overrides },
+ 	{ 0 }
+ };
+ 
+
+"""
+
+
+def apply_patch_content(tree: Path, name: str, patch_text: str) -> bool:
+    """Applies an embedded patch to the kernel source tree, with idempotency and reverse-dry-run checks."""
+    state = _patch_state(tree)
+    if name in state.get("applied", []):
+        ok(f"Patch '{name}' already applied to {tree.name}")
+        return True
+
+    dusky_dir = tree / ".dusky"
+    dusky_dir.mkdir(parents=True, exist_ok=True)
+    pfile = dusky_dir / f"{name}.patch"
+    pfile.write_text(patch_text, encoding="utf-8")
+
+    dry = run(["patch", "-p1", "-N", "--dry-run", "-F0", "-i", str(pfile)], cwd=tree, check=False)
+    fuzz = False
+    if dry.returncode != 0:
+        dry = run(["patch", "-p1", "-N", "--dry-run", "-i", str(pfile)], cwd=tree, check=False)
+        if dry.returncode != 0:
+            rev_dry = run(["patch", "-p1", "-R", "--dry-run", "-i", str(pfile)], cwd=tree, check=False)
+            if rev_dry.returncode == 0:
+                state.setdefault("applied", []).append(name)
+                state[name] = {"builtin": True, "applied_at": datetime.now(UTC).isoformat(), "note": "already present in tree"}
+                _save_patch_state(tree, state)
+                ok(f"Patch '{name}' already present in source tree")
+                return True
+            warn(f"Patch '{name}' does not apply cleanly to Linux {tree.name}; skipping")
+            return False
+        fuzz = True
+
+    if fuzz:
+        warn(f"Patch '{name}' applies with fuzz")
+    run(["patch", "-p1", "-N", "-i", str(pfile)], cwd=tree)
+    state.setdefault("applied", []).append(name)
+    state[name] = {"builtin": True, "applied_at": datetime.now(UTC).isoformat()}
+    _save_patch_state(tree, state)
+    ok(f"Applied built-in patch: {name}")
+    return True
+
+
+def apply_enhancement_patches(tree: Path, p: KernelProfile, rel: Release, facts: HostFacts) -> None:
+    """Applies high-value performance, responsiveness, and safety enhancement patches."""
+    rule("Kernel enhancement patches")
+    applied_count = 0
+
+    if p.g("dusky", "patch_sched_inline"):
+        if apply_patch_content(tree, "sched_inline", BUILTIN_PATCH_SCHED_INLINE):
+            applied_count += 1
+
+    if p.g("dusky", "patch_evdev_rcu"):
+        if apply_patch_content(tree, "evdev_rcu", BUILTIN_PATCH_EVDEV_RCU):
+            applied_count += 1
+
+    if p.g("dusky", "patch_pci_pme"):
+        if apply_patch_content(tree, "pci_pme", BUILTIN_PATCH_PCI_PME):
+            applied_count += 1
+
+    if p.g("compiler", "polly") and p.g("compiler", "toolchain") == "llvm":
+        if apply_patch_content(tree, "clang_polly", BUILTIN_PATCH_CLANG_POLLY):
+            applied_count += 1
+
+    if p.g("compiler", "optimize") == "o3":
+        if apply_patch_content(tree, "optimize_o3", BUILTIN_PATCH_OPTIMIZE_O3):
+            applied_count += 1
+
+    if p.g("boot", "acs_override"):
+        if apply_patch_content(tree, "acs_override", BUILTIN_PATCH_ACS_OVERRIDE):
+            applied_count += 1
+
+    if applied_count == 0:
+        info("No additional enhancement patches selected for this profile")
+    else:
+        ok(f"Applied/verified {applied_count} enhancement patch(es)")
+
+
+def inject_dkms_march_in_makefile(tree: Path, march: str, mtune: str) -> bool:
+    """Injects microarchitecture flags into the top-level Makefile so out-of-tree and DKMS
+    modules built against this kernel/headers tree inherit target CPU optimizations."""
+    if not march and not mtune:
+        return False
+    makefile = tree / "Makefile"
+    if not makefile.is_file():
+        return False
+    txt = makefile.read_text(encoding="utf-8")
+    marker = "# Injected by Dusky: propagate target CPU architecture to DKMS/modules"
+    if marker in txt:
+        return False
+
+    cflags: list[str] = []
+    if march:
+        cflags.append(f"-march={march}")
+    if mtune:
+        cflags.append(f"-mtune={mtune}")
+    flags_str = " ".join(cflags)
+
+    injection = (
+        f"\n{marker}\n"
+        f"KBUILD_CFLAGS   += {flags_str}\n"
+        f"KBUILD_CPPFLAGS += {flags_str}\n\n"
+    )
+
+    target_pattern = r"(KBUILD_CPPFLAGS\s*\+=\s*\$\(KCPPFLAGS\))"
+    if re.search(target_pattern, txt):
+        new_txt = re.sub(target_pattern, injection + r"\1", txt, count=1)
+    else:
+        target_pattern2 = r"(KBUILD_CFLAGS\s*\+=\s*\$\(KCFLAGS\))"
+        if re.search(target_pattern2, txt):
+            new_txt = re.sub(target_pattern2, injection + r"\1", txt, count=1)
+        else:
+            warn("Could not find KCPPFLAGS/KCFLAGS anchor in Makefile; skipping DKMS march injection")
+            return False
+
+    makefile.write_text(new_txt, encoding="utf-8")
+    ok(f"Injected DKMS microarchitecture flags ({flags_str}) into top-level Makefile")
+    return True
+
+
 def ensure_hz_choice(tree: Path, hz: int) -> bool:
     """Vanilla trees only offer 100/250/300/1000 Hz. Add a Kconfig choice member for other values (idempotent)."""
     if hz in HZ_UPSTREAM:
@@ -2888,6 +3741,8 @@ class Derived:
     rust_reason: str
     fdo: str
     fdo_reason: str
+    march: str = ""
+    mtune: str = ""
     kcflags: list[str] = field(default_factory=list)
     krustflags: list[str] = field(default_factory=list)
     kernelrelease: str = ""
@@ -2929,13 +3784,36 @@ def derive(p: KernelProfile, facts: HostFacts, idx: KconfigIndex, tree: Path, sc
         warn("CONFIG_SCHED_CACHE (cache-aware scheduling) is not present in this tree; CAS knobs become no-ops")
     if s["gaming"]["ntsync"] and not idx.has("NTSYNC"):
         warn("CONFIG_NTSYNC is not present in this tree")
+
+    arch = s["cpu"]["arch"]
+    custom_march = s["cpu"]["march"].strip()
+    if custom_march:
+        march = custom_march
+        mtune = custom_march
+    elif arch == "native":
+        march = "native"
+        mtune = "native"
+    elif arch == "generic":
+        march = "x86-64"
+        mtune = "generic"
+    elif arch.startswith("generic_v"):
+        v = arch.split("_v")[1]
+        march = f"x86-64-v{v}"
+        mtune = "generic"
+    elif "x86-64" in arch:
+        march = arch.replace("_", "-")
+        mtune = "generic"
+    else:
+        march = arch
+        mtune = arch
+
     return Derived(facts=facts, idx=idx, tree=tree, version=tree_version(tree), sched=sched, toolchain=toolchain, lto=lto, btf=btf,
-                   tracing=tracing, rust=rust, rust_reason=reason, fdo=fdo, fdo_reason=fdo_reason)
+                   tracing=tracing, rust=rust, rust_reason=reason, fdo=fdo, fdo_reason=fdo_reason, march=march, mtune=mtune)
 
 
 MANAGED_CMDLINE_KEYS: Final = frozenset({"mitigations", "nosmt", "amd_pstate", "amd_prefcore", "preempt", "cpuidle.governor", "nvme.poll_queues", "zswap.enabled",
                                          "zswap.compressor", "zswap.zpool", "zswap.max_pool_percent", "zswap.shrinker_enabled", "split_lock_detect", "nowatchdog",
-                                         "nmi_watchdog", "pcie_aspm.policy", "transparent_hugepage", "rcu_nocbs", "rcutree.enable_rcu_lazy"})
+                                         "nmi_watchdog", "pcie_aspm.policy", "transparent_hugepage", "rcu_nocbs", "rcutree.enable_rcu_lazy", "pcie_acs_override"})
 
 
 def flavor_cmdline(p: KernelProfile, facts: HostFacts) -> list[str]:
@@ -2975,6 +3853,8 @@ def flavor_cmdline(p: KernelProfile, facts: HostFacts) -> list[str]:
     out.append(f"transparent_hugepage={s['memory']['thp']}")
     if s["power"]["rcu_lazy"]:
         out.append("rcutree.enable_rcu_lazy=1")
+    if s["boot"].get("acs_override", False):
+        out.append("pcie_acs_override=downstream,multifunction")
     out += shlex.split(s["boot"]["cmdline_extra"])
     return out
 
@@ -3338,7 +4218,14 @@ def _ops_compiler(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     s = p.sections
     c, sec = s["compiler"], s["security"]
     extreme, hardened = sec["profile"] == "extreme", sec["profile"] == "hardened"
-    mx.choice(("CC_OPTIMIZE_FOR_PERFORMANCE", "CC_OPTIMIZE_FOR_SIZE"), "CC_OPTIMIZE_FOR_SIZE" if c["optimize"] == "size" else "CC_OPTIMIZE_FOR_PERFORMANCE")
+    if c["optimize"] == "o3" and d.idx.has("CC_OPTIMIZE_FOR_PERFORMANCE_O3"):
+        mx.choice(("CC_OPTIMIZE_FOR_PERFORMANCE", "CC_OPTIMIZE_FOR_PERFORMANCE_O3", "CC_OPTIMIZE_FOR_SIZE"), "CC_OPTIMIZE_FOR_PERFORMANCE_O3", why="optimize=o3")
+    elif c["optimize"] == "size":
+        mx.choice(("CC_OPTIMIZE_FOR_PERFORMANCE", "CC_OPTIMIZE_FOR_SIZE"), "CC_OPTIMIZE_FOR_SIZE", why="optimize=size")
+    else:
+        mx.choice(("CC_OPTIMIZE_FOR_PERFORMANCE", "CC_OPTIMIZE_FOR_SIZE"), "CC_OPTIMIZE_FOR_PERFORMANCE", why="optimize=o2")
+    if bool(c.get("polly", False)) and d.toolchain == "llvm":
+        mx.y("POLLY_CLANG", optional=True, why="Clang Polly loop optimizer")
     if d.toolchain == "llvm":
         mx.choice(("LTO_NONE", "LTO_CLANG_THIN", "LTO_CLANG_FULL"), {"none": "LTO_NONE", "thin": "LTO_CLANG_THIN", "full": "LTO_CLANG_FULL"}[d.lto], why=f"lto={d.lto}")
     cfi_sym = "CFI" if d.idx.has("CFI") else "CFI_CLANG"
@@ -3897,8 +4784,10 @@ def build_env(p: KernelProfile, d: Derived, facts: HostFacts, epoch: float) -> d
     for key in ("LOCALVERSION", "MAKEFLAGS", "KCFLAGS", "KRUSTFLAGS", "LLVM", "LLVM_IAS", "CC", "LD", "AR", "NM", "OBJCOPY", "STRIP", "HOSTCC", "HOSTLD"):
         env.pop(key, None)
     env["LANG"] = env["LC_ALL"] = "C.UTF-8"
-    env["KBUILD_BUILD_USER"] = p.g("dusky", "user")
-    env["KBUILD_BUILD_HOST"] = p.g("dusky", "hostname")
+    kbuild_user = (p.g("dusky", "user") or "").strip() or os.environ.get("KBUILD_BUILD_USER") or os.environ.get("USER") or "builduser"
+    kbuild_host = (p.g("dusky", "hostname") or "").strip() or os.environ.get("KBUILD_BUILD_HOST") or platform.node() or "archlinux"
+    env["KBUILD_BUILD_USER"] = kbuild_user
+    env["KBUILD_BUILD_HOST"] = kbuild_host
     if p.g("dusky", "reproducible"):
         env["KBUILD_BUILD_TIMESTAMP"] = datetime.fromtimestamp(epoch, UTC).strftime("%a %b %d %H:%M:%S UTC %Y")
         env["SOURCE_DATE_EPOCH"] = str(int(epoch))
@@ -3960,6 +4849,23 @@ def check_dependencies(p: KernelProfile, facts: HostFacts, d_toolchain: str, wan
             missing = [(cmd, pkg) for cmd, pkg in missing if not have(cmd)]
         if missing:
             raise DependencyError("Install: pacman -S --needed " + " ".join(pkgs))
+    if p.g("compiler", "polly") and d_toolchain == "llvm":
+        polly_found = any(Path(loc).is_file() for loc in [
+            "/usr/lib/LLVMPolly.so",
+            "/usr/lib/llvm/lib/LLVMPolly.so",
+            *Path("/usr/lib").glob("llvm*/lib/LLVMPolly.so"),
+        ])
+        if not polly_found:
+            warn("Clang Polly optimization is enabled, but LLVMPolly.so was not found (Arch package: polly)")
+            if interactive() and ask_yes("Install polly now with pacman -S --needed polly?", True):
+                PRIV.run(["pacman", "-S", "--needed", "--noconfirm", "polly"], capture=False)
+                polly_found = any(Path(loc).is_file() for loc in [
+                    "/usr/lib/LLVMPolly.so",
+                    "/usr/lib/llvm/lib/LLVMPolly.so",
+                    *Path("/usr/lib").glob("llvm*/lib/LLVMPolly.so"),
+                ])
+            if not polly_found:
+                raise DependencyError("Clang Polly requires the 'polly' package: sudo pacman -S --needed polly")
     clang_v = facts.tools.get("clang", "")
     if d_toolchain == "llvm" and clang_v and version_tuple(clang_v) < (19,):
         warn(f"clang {clang_v} detected; Linux 7.x LTO/kCFI/AutoFDO paths are validated with clang >= 21")
@@ -4452,7 +5358,6 @@ def do_build(args: argparse.Namespace) -> int:
     profiles = ensure_profiles_exist()
     profile = select_profile(profiles, args.profile, facts).clone()
     diff = configure_profile_interactively(profile, facts, args)
-    show_configuration(profile, diff)
 
     if getattr(args, "build_dir", None):
         set_build_dir(args.build_dir)
@@ -4462,9 +5367,24 @@ def do_build(args: argparse.Namespace) -> int:
     else:
         set_build_dir(BUILD_DIR)
 
-    if not ask_yes("Proceed with this configuration?", True):
-        info("Aborted by user")
-        return 0
+    while True:
+        show_configuration(profile, diff)
+        if getattr(args, "no_prompt", False) or ASSUME_YES or not interactive():
+            break
+        action = ask("Proceed with this configuration? [Y]es / [e]dit / [n]o", "y").strip().lower()
+        if action in ("y", "yes"):
+            break
+        if action in ("n", "no", "q", "quit"):
+            info("Aborted by user")
+            return 0
+        if action in ("e", "edit", "m", "menu"):
+            diff.extend(run_wizard(profile, facts))
+            diff = wizard_review_loop(profile, facts, diff, force=bool(getattr(args, "force", False)))
+            if diff:
+                offer_save_profile(profile)
+            continue
+        warn(f"Unrecognized response '{action}'. Choose [y]es to proceed, [e]dit to modify, or [n]o to abort.")
+
     if not args.no_install and not args.configure_only:
         PRIV.ensure()
     JOURNAL.open(profile.name)
@@ -4477,6 +5397,7 @@ def do_build(args: argparse.Namespace) -> int:
     patchset = profile.g("scheduler", "type") if profile.g("scheduler", "type") != "eevdf" else ""
     tree = unpack(tarball, release, patchset, bool(args.fresh))
     sched = apply_scheduler_patch(tree, profile, release)
+    apply_enhancement_patches(tree, profile, release, facts)
     ensure_hz_choice(tree, int(profile.g("timing", "hz")))
     env0 = toolchain_env(profile)
     seed_source = seed_config(tree, profile, env0, Path(args.seed_config).expanduser() if args.seed_config else None)
@@ -4488,6 +5409,7 @@ def do_build(args: argparse.Namespace) -> int:
     rust_ok, rust_out = (rust_probe(tree, env0) if profile.g("compiler", "rust") else (False, ""))
     d = derive(profile, facts, idx, tree, sched, rust_ok, rust_out)
     d.seed_source = seed_source
+    inject_dkms_march_in_makefile(tree, d.march, d.mtune)
     mx = build_config_matrix(profile, d)
     apply_matrix(tree, mx)
     env = build_env(profile, d, facts, tarball.stat().st_mtime)
@@ -4750,7 +5672,7 @@ def do_fdo_record(args: argparse.Namespace) -> int:
 # Built-in profiles
 # ---------------------------------------------------------------------------------------------------
 DEFAULT_PROFILES: Final[tuple[tuple[str, str, str, int, dict[str, dict[str, Any]]], ...]] = (
-    ("dusky_personal", "Dusky Personal: 64 GiB desktop, full LTO, native, EEVDF + CAS + scx_lavd, NTSync, lazy preemption, mitigations off", "dusky-personal", 10, {
+    ("dusky_personal", "Performance Desktop: full LTO, native -march, EEVDF + CAS + scx_lavd, NTSync, lazy preemption, mitigations off", "dusky-personal", 10, {
         "meta": {"bare_metal_only": True},
         "release": {"channel": "mainline", "allow_rc": True},
         "scheduler": {"type": "eevdf", "scx": "scx_lavd", "scx_flags": "--autopilot", "scx_enable_class": True},
@@ -5162,7 +6084,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         _reap_all()
         sys.stdout.write(C.SHOW + "\n")
         warn("Interrupted -- child process groups terminated")
-        return 130
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        except Exception:
+            pass
+        return 0
     finally:
         _reap_all()
         PRIV.stop()

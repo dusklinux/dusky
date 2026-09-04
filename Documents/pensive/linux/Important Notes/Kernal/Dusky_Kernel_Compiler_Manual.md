@@ -219,6 +219,22 @@ Overrides apply dynamically to the loaded profile without modifying the TOML fil
 --no-color               # Strip ANSI escape sequences from console output
 ```
 
+### Interactive Wizard Navigation & Review Controls
+
+When entering the granular configuration wizard (`--wizard` or selecting `[n]` at the defaults prompt), the engine provides non-linear "time-travel" navigation so mistakes can be undone instantly without restarting:
+
+| Signal Key | Action | Scope & Behavior |
+| :---: | :--- | :--- |
+| `b` | **Back** | Steps back to the immediate previous question, restores its previous value, and clears its diff entry. |
+| `m` | **Menu Jump** | Displays an indexed menu of all 11 wizard sections to jump directly to any subsystem. |
+| `s` | **Skip Section** | Skips all remaining questions in the active section, keeping their defaults. |
+| `!` | **Accept All** | Accepts all remaining defaults across the entire wizard and moves directly to validation. |
+| `?` | **Help** | Displays contextual architectural help for the current parameter and its allowed values. |
+
+> [!tip] Non-Destructive Pre-Build Review Gate
+> Before launching compilation, the engine displays the complete resolved configuration diff and enters an interactive gate: `Proceed with this configuration? [Y]es / [e]dit / [n]o`.
+> Choosing `[e]dit` allows you to revisit the wizard or jump straight to any section to modify options, preventing accidental builds without discarding your earlier answers.
+
 ### Exit Codes Contract
 
 | Exit Code | Classification | Cause & Remedy |
@@ -388,8 +404,9 @@ Overrides apply dynamically to the loaded profile without modifying the TOML fil
 
 | Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
 | :--- | :---: | :---: | :---: | :--- |
-| `toolchain` | `str` | `"llvm"` | `llvm`, `gcc` | Compiler toolchain. `llvm` uses Clang/LLD (required for ThinLTO, kCFI, Rust). |
-| `optimize` | `str` | `"o2"` | `o2`, `o3`, `size` | Optimization flag. `o3` injects `-O3` via `KCFLAGS`; `size` uses `-Os`. |
+| `toolchain` | `str` | `"llvm"` | `llvm`, `gcc` | Compiler toolchain. `llvm` uses Clang/LLD (required for ThinLTO, kCFI, Rust, Polly). |
+| `optimize` | `str` | `"o2"` | `o2`, `o3`, `size` | Optimization level. `o3` enables `CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3` with swing modulo scheduling (`-fmodulo-sched -fmodulo-sched-allow-regmoves -fivopts`), LLVM pipelining (`-mllvm -enable-pipeliner`), and x86 SIMD safety guards (`-mno-avx2 -fno-tree-vectorize`). |
+| `polly` | `bool`| `false` | `true`, `false` | Clang Polly polyhedral loop optimizer (`CONFIG_POLLY_CLANG`). Optimizes multi-nested loop cache locality and data layout using `LLVMPolly.so`. |
 | `lto` | `str` | `"thin"` | `none`, `thin`, `full` | Link-Time Optimization (`CONFIG_LTO_CLANG_THIN` / `CONFIG_LTO_CLANG_FULL`). |
 | `thinlto_cache` | `bool`| `true` | `true`, `false` | Persists ThinLTO bitcode cache across compilation runs. |
 | `thinlto_cache_size_gb`| `int`| `20` | `1`–`500` | Storage ceiling for pruning ThinLTO object cache. |
@@ -402,6 +419,9 @@ Overrides apply dynamically to the loaded profile without modifying the TOML fil
 | `jobs` | `int` | `0` | `0`–`1024` | Parallel build threads (`0` auto-calculates from CPU cores and available RAM). |
 | `headers` | `str` | `"auto"` | `auto`, `always`, `never` | Package headers policy. `auto` generates headers only if DKMS modules are installed on the host. |
 | `modversions` | `bool`| `false` | `true`, `false` | `CONFIG_MODVERSIONS`. Generates symbol CRCs for external module ABI validation. |
+
+> [!tip] Persistent DKMS Microarchitecture Inheritance
+> Dusky injects target `-march` and `-mtune` flags directly into the top-level `Makefile` of the build tree (positioned directly before `$(KCFLAGS)`). When external DKMS modules (`nvidia-dkms`, `zfs-dkms`, `v4l2loopback-dkms`) build against `linux-headers`, they persistently inherit identical CPU microarchitecture tuning.
 
 ---
 
@@ -501,6 +521,7 @@ Overrides apply dynamically to the loaded profile without modifying the TOML fil
 | `cmdline_extra` | `str` | `""` | Kernel parameters | Arbitrary kernel parameters appended to generated boot string. |
 | `write_entries` | `bool`| `true` | `true`, `false` | Generates Boot Loader Specification (BLS) entry files for `systemd-boot`. |
 | `nowatchdog` | `bool`| `true` | `true`, `false` | Disables kernel and NMI watchdogs (`nowatchdog nmi_watchdog=0`) to eliminate timer jitter. |
+| `acs_override` | `bool`| `false` | `true`, `false` | Injects `pcie_acs_override=downstream,multifunction` and applies kernel ACS override patch to break multifunction IOMMU groupings for VFIO GPU passthrough (dangerous). |
 
 ---
 
@@ -521,7 +542,12 @@ Overrides apply dynamically to the loaded profile without modifying the TOML fil
 | Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
 | :--- | :---: | :---: | :---: | :--- |
 | `enhanced` | `bool`| `false` | `true`, `false` | Desktop heuristics: turns off slow framebuffer takeover and disables boot-time watchdogs. |
+| `patch_sched_inline`| `bool`| `true` | `true`, `false` | Inlines `finish_task_switch` and subfunctions (~8.6% faster context switch path without mitigations; ~34.8% faster with Spectre v2 mitigations). |
+| `patch_evdev_rcu` | `bool`| `true` | `true`, `false` | Uses `call_rcu` instead of `synchronize_rcu` in `evdev_detach_client` to eliminate 27s stalls when closing input devices or switching VTs. |
+| `patch_pci_pme` | `bool`| `true` | `true`, `false` | Clear Linux power-saving patch extending PCIe PME polling timeout from 1000ms to 4000ms, eliminating unnecessary CPU wakeups. |
 | `seed` | `str` | `"auto"` | `auto`, `snapshot`, `arch`, `running`, `headers`, `defconfig` | Base configuration seed order. `auto` checks: snapshot $\rightarrow$ Arch GitLab config $\rightarrow$ `/proc/config.gz` $\rightarrow$ headers $\rightarrow$ `defconfig`. |
+| `hostname` | `str` | `""` | Any string | `KBUILD_BUILD_HOST` baked into `/proc/version`. Empty string dynamically autodetects host machine name via `platform.node()`. |
+| `user` | `str` | `""` | Any string | `KBUILD_BUILD_USER` baked into `/proc/version`. Empty string dynamically autodetects active username via `$USER`. |
 | `extra_config` | `table`| `{}` | TOML Key-Value | Injects arbitrary raw Kconfig symbols (e.g. `CONFIG_SAMPLE = true`). |
 | `reproducible` | `bool`| `true` | `true`, `false` | Fixes `KBUILD_BUILD_TIMESTAMP` and `SOURCE_DATE_EPOCH` for bit-for-bit reproducible artifacts. |
 
@@ -534,6 +560,7 @@ The compiler enforces deterministic normalization rules to resolve conflicting o
 | Setting A | Setting B | Conflict Resolution Mechanism |
 | :--- | :--- | :--- |
 | `compiler.toolchain = "gcc"` | `compiler.lto != "none"` | Clang ThinLTO requires LLVM. The engine forces `compiler.lto = "none"`. |
+| `compiler.toolchain = "gcc"` | `compiler.polly = true` | Polly polyhedral loop optimizer requires LLVM Clang. Forced to `polly = false`. |
 | `compiler.toolchain = "gcc"` | `compiler.kcfi = true` | kCFI depends on Clang instrumentation. Forced to `compiler.kcfi = false`. |
 | `compiler.toolchain = "gcc"` | `compiler.fdo != "none"` | AutoFDO/Propeller require LLVM `perf` mapping. Forced to `fdo = "none"`. |
 | `compiler.lto != "thin"` | `compiler.thinlto_cache = true` | ThinLTO cache applies only to ThinLTO. Forced to `false`. |

@@ -71,9 +71,9 @@ slice_ext_nsec = 10000
 # Desktop heuristics (nowatchdog, faster fbcon takeover)
 enhanced = false
 # KBUILD_BUILD_HOST
-hostname = "dusky"
+hostname = ""
 # KBUILD_BUILD_USER
-user = "dusky"
+user = ""
 # Fixed KBUILD_BUILD_TIMESTAMP / SOURCE_DATE_EPOCH
 reproducible = true
 # Seed .config source | choices: auto | snapshot | arch | running | headers | defconfig

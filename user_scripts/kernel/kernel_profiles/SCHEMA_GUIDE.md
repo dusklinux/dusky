@@ -108,8 +108,8 @@ slice_ext_nsec = 10000
 enhanced = false
 
 # Identifiers baked into kernel build metadata for reproducibility
-hostname = "dusky"
-user = "dusky"
+hostname = ""
+user = ""
 
 # Fixes build timestamp to tarball release date (SOURCE_DATE_EPOCH)
 reproducible = true
