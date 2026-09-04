@@ -651,7 +651,7 @@ PROFILE_SPEC: Final[dict[str, tuple[FieldSpec, ...]]] = {
         F("autogroup", "bool", True, "SCHED_AUTOGROUP (per-session fairness)"),
         F("rt_group", "bool", False, "RT_GROUP_SCHED bandwidth control"),
         F("sched_core", "bool", False, "SCHED_CORE core scheduling (SMT side-channel isolation; overhead)"),
-        F("patch_sources", "list", ["cachyos", "upstream_author"], "Ordered patch resolvers", wizard=False),
+        F("patch_sources", "list", ["cachyos", "upstream_author", "tkg"], "Ordered patch resolvers", wizard=False),
     ),
     "cache": (
         F("sched_cache", "bool", True, "CONFIG_SCHED_CACHE Cache-Aware Scheduling (LLC affinity)"),
@@ -2604,6 +2604,11 @@ def resolve_patch_urls(sched: str, mm: str, is_rc: bool, sources: Sequence[str])
                         urls += [("firelzrd", u) for u in github_dir_patches("firelzrd/bore-scheduler", sub)]
                     except (NetworkError, ValueError, KeyError):
                         continue
+            case ("bore", "tkg"):
+                local_tkg = Path(f"/mnt/zram1/linux-tkg-master/linux-tkg-patches/{mm}/0001-bore.patch")
+                if local_tkg.is_file():
+                    urls.append(("tkg", str(local_tkg)))
+                urls.append(("tkg", f"https://raw.githubusercontent.com/Frogging-Family/linux-tkg/master/linux-tkg-patches/{mm}/0001-bore.patch"))
             case ("bmq", "cachyos"):
                 urls += [("cachyos", f"{CACHYOS_RAW}/{mm}/sched/0001-prjc.patch"), ("cachyos", f"{CACHYOS_RAW}/{mm}/sched/0001-prjc-cachy.patch")]
             case ("bmq", "upstream_author"):
@@ -2612,7 +2617,7 @@ def resolve_patch_urls(sched: str, mm: str, is_rc: bool, sources: Sequence[str])
                 except (NetworkError, ValueError, KeyError):
                     pass
             case _:
-                if src.startswith(("http://", "https://")):
+                if src.startswith(("http://", "https://", "/", "file://")):
                     urls.append(("custom", src.replace("{mm}", mm)))
     return urls
 
@@ -2622,6 +2627,14 @@ def fetch_patch(url: str, sched: str, mm: str) -> Path | None:
     if dest.is_file() and dest.stat().st_size > 0:
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if url.startswith("/") or url.startswith("file://"):
+        local_p = Path(url.removeprefix("file://"))
+        if local_p.is_file():
+            data = local_p.read_bytes()
+            if b"diff --git" in data or b"\n+++ " in data:
+                dest.write_bytes(data)
+                return dest
+        return None
     try:
         data = http_get(url, timeout=60)
     except NetworkError:
@@ -3455,8 +3468,11 @@ def inject_dkms_march_in_makefile(tree: Path, march: str, mtune: str) -> bool:
     injection = (
         f"\n{marker}\n"
         f"KBUILD_CFLAGS   += {flags_str}\n"
-        f"KBUILD_CPPFLAGS += {flags_str}\n\n"
+        f"KBUILD_CPPFLAGS += {flags_str}\n"
     )
+    if march:
+        injection += f"KBUILD_RUSTFLAGS += -Ctarget-cpu={march}\n"
+    injection += "\n"
 
     target_pattern = r"(KBUILD_CPPFLAGS\s*\+=\s*\$\(KCPPFLAGS\))"
     if re.search(target_pattern, txt):

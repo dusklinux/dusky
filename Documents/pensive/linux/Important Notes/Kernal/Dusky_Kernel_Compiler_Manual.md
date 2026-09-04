@@ -291,7 +291,7 @@ When entering the granular configuration wizard (`--wizard` or selecting `[n]` a
 | `autogroup` | `bool`| `true` | `true`, `false` | `CONFIG_SCHED_AUTOGROUP`. Organises tasks by TTY session to prevent terminal builds from starving desktop interactivity. |
 | `rt_group` | `bool`| `false` | `true`, `false` | `CONFIG_RT_GROUP_SCHED`. Limits real-time bandwidth. Set to `false` for pro-audio and gaming to eliminate PipeWire buffer underruns. |
 | `sched_core` | `bool`| `false` | `true`, `false` | `CONFIG_SCHED_CORE`. SMT core scheduling for side-channel isolation. Incurs 10%–25% throughput loss; disable for single-user systems. |
-| `patch_sources`| `list`| `["cachyos", "upstream_author"]` | Resolvers | Ordered resolvers for fetching out-of-tree scheduler patches. |
+| `patch_sources`| `list`| `["cachyos", "upstream_author", "tkg"]` | Resolvers | Ordered resolvers for fetching out-of-tree scheduler patches (`cachyos`, `upstream_author`, `tkg`, local path, or URL). |
 
 > [!note] EEVDF Mathematical Model
 > EEVDF balances tasks using two metrics:
