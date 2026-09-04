@@ -68,6 +68,7 @@ Productivity| espeakup              | For getting speech to text for firefox to 
 Docs        | arch-wiki-lite        | Compressed Wiki reader (Pair with arch-wiki-docs)
 Docs        | arch-wiki-docs        | Arch Wiki data pages (Pair with arch-wiki-lite)
 Media       | pear-desktop-bin      | Youtube Music GUI
+Media       | sonora-bin            | Native music client (Spotify + YouTube Music + local)
 Media       | noto-fonts-cjk        | Asian fonts
 Media       | noto-fonts            | Asian fonts
 Media       | noto-fonts-emoji      | Google Noto Color Emoji font
