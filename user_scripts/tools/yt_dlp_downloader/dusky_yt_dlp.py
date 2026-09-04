@@ -217,6 +217,8 @@ def _kill_pgids(pgids: list[int], sig: int = signal.SIGTERM) -> int:
     """SIGTERM a list of process groups; returns how many signals were sent."""
     sent = 0
     for pgid in pgids:
+        if pgid <= 1:
+            continue
         try:
             os.killpg(pgid, sig)
             sent += 1
@@ -879,11 +881,21 @@ def resolve_storage_pool(custom_path: Path | None = None) -> Path:
 class YtdlpRunner:
     """Compiles yt-dlp arguments and manages isolated process execution."""
 
-    def __init__(self, mode: TargetFormat, output_dir: Path, url: str, max_height: int | None = None):
+    def __init__(
+        self,
+        mode: TargetFormat,
+        output_dir: Path,
+        url: str,
+        max_height: int | None = None,
+        cookies: Path | None = None,
+        cookies_from_browser: str | None = None,
+    ):
         self.mode = mode
         self.output_dir = output_dir
         self.url = url
         self.max_height = max_height
+        self.cookies = cookies
+        self.cookies_from_browser = cookies_from_browser
 
         # Keeps original title; `%(title).180B` byte-truncates for 255B FAT32/
         # eCryptfs limits. `--windows-filenames` + `--trim-filenames 180`
@@ -895,6 +907,7 @@ class YtdlpRunner:
             "--newline",
             "--progress",
             "--no-color",
+            "--no-mtime",
             "--progress-template", RAW_PROGRESS_TEMPLATE,
             "--progress-delta", "0.5",
             # Our queue expands playlists manually -> each job must be single.
@@ -915,6 +928,17 @@ class YtdlpRunner:
             "--embed-metadata",
             "--embed-chapters",
         ]
+
+        # Cookie handling: explicit file, browser extraction, or auto-detected state file
+        if self.cookies is not None and Path(self.cookies).is_file():
+            self.args.extend(["--cookies", str(self.cookies)])
+        elif self.cookies_from_browser:
+            self.args.extend(["--cookies-from-browser", self.cookies_from_browser])
+        else:
+            state_dir = config_state_dir()
+            if state_dir and (state_dir / "cookies.txt").is_file():
+                self.args.extend(["--cookies", str(state_dir / "cookies.txt")])
+
         # Resume/skip state: per-format download archive on persistent disk.
         # Re-running the same URLs/batch skips finished items and continues
         # where the queue stopped. Omitted only if no state dir is writable.
@@ -952,12 +976,13 @@ class YtdlpRunner:
                     )
                 else:
                     # `bv*+ba/b` prefers separate AV streams (highest quality);
-                    # `-S` biases toward phone-compatible H.264/AAC-in-MP4
-                    # without hard-failing when only VP9/AV1 exists.
+                    # `-S` prioritizes highest resolution/fps first, then biases
+                    # toward phone-compatible H.264/AAC-in-MP4 without forcing
+                    # a quality downgrade when only VP9/AV1 exists.
                     selector = "bv*+ba/b"
                 self.args.extend([
                     "-f", selector,
-                    "-S", "vcodec:h264,acodec:aac,vext:mp4,lang,quality,res,fps,hdr:12",
+                    "-S", "res,fps,vcodec:h264,acodec:aac,vext:mp4,lang,quality,hdr:12",
                     "--merge-output-format", "mp4",
                     "--remux-video", "mp4",
                 ])
@@ -982,7 +1007,7 @@ class YtdlpRunner:
             stdin=subprocess.DEVNULL,  # never allow interactive prompts to hang
             process_group=0,  # isolate process tree
         )
-        pgid = os.getpgid(proc.pid)
+        pgid = proc.pid
         with _ACTIVE_PG_LOCK:
             ACTIVE_PROCESS_GROUPS.add(pgid)
         return proc, pgid
@@ -1000,6 +1025,8 @@ class MediaJob:
     mode: TargetFormat
     max_height: int | None = None
     needs_probe: bool = False
+    cookies: Path | None = None
+    cookies_from_browser: str | None = None
 
 
 @dataclass(slots=True)
@@ -1023,7 +1050,7 @@ def parse_batch_file(path: Path) -> list[str]:
     urls: list[str] = []
     with path.open("r", encoding="utf-8-sig") as f:
         for line in f:
-            clean = line.strip()
+            clean = line.strip().strip("'\"")
             if not clean or clean.startswith(_BATCH_COMMENT_PREFIXES):
                 continue
             urls.append(clean)
@@ -1079,8 +1106,11 @@ def resolve_job_title(job: MediaJob) -> None:
     Playlist lines keep single-video (`--no-playlist`) semantics; they are
     simply labelled with the collection name.
     """
+    job.needs_probe = False
     try:
-        found, is_collection, label, _ = probe_media_target(job.url)
+        found, is_collection, label, _ = probe_media_target(
+            job.url, cookies=job.cookies, cookies_from_browser=job.cookies_from_browser
+        )
     except Exception:
         return
     if is_collection:
@@ -1094,8 +1124,10 @@ def _short_title(title: str, width: int = 45) -> str:
 
     Bars must stay compact or multi-worker rows overflow the terminal; the
     full title is always printed on pickup/completion lines and the final log.
+    Whitespace and newlines are normalized to preserve clean terminal layouts.
     """
-    return (title[: width - 2] + "..") if len(title) > width else title
+    clean = " ".join(title.split())
+    return (clean[: width - 2] + "..") if len(clean) > width else clean
 
 
 def make_progress() -> Progress:
@@ -1129,33 +1161,55 @@ def _pump_progress_loop(
     of worker threads may pump their own task_id concurrently.
 
     Also honours ABORT_ALL_EVENT (double Ctrl-C / `q` key): kills the child
-    promptly instead of waiting out the download.
+    promptly instead of waiting out the download. Escalate to SIGKILL if
+    a process group ignores SIGTERM during skip/abort.
     """
+    skip_requested_at: float | None = None
     while proc.poll() is None:
         if ABORT_ALL_EVENT.is_set():
             try:
-                os.killpg(pgid, signal.SIGTERM)
+                if pgid > 1:
+                    os.killpg(pgid, signal.SIGTERM)
             except OSError:
                 pass
             try:
-                proc.wait(timeout=10)
+                proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 try:
-                    os.killpg(pgid, signal.SIGKILL)
+                    if pgid > 1:
+                        os.killpg(pgid, signal.SIGKILL)
                 except OSError:
                     pass
                 proc.wait()
             break
+
+        with _SKIP_LOCK:
+            was_skip = pgid in USER_SKIPPED_PGIDS
+        if was_skip:
+            now = time.monotonic()
+            if skip_requested_at is None:
+                skip_requested_at = now
+            elif now - skip_requested_at > 5.0:
+                try:
+                    if pgid > 1:
+                        os.killpg(pgid, signal.SIGKILL)
+                except OSError:
+                    pass
+                proc.wait()
+                break
+
         if timeout_secs is not None and (time.monotonic_ns() - started_ns) / 1e9 > timeout_secs:
             try:
-                os.killpg(pgid, signal.SIGTERM)
+                if pgid > 1:
+                    os.killpg(pgid, signal.SIGTERM)
             except OSError:
                 pass
             try:
-                proc.wait(timeout=10)
+                proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 try:
-                    os.killpg(pgid, signal.SIGKILL)
+                    if pgid > 1:
+                        os.killpg(pgid, signal.SIGKILL)
                 except OSError:
                     pass
                 proc.wait()
@@ -1208,7 +1262,14 @@ def execute_download(
     if ABORT_ALL_EVENT.is_set():
         return JobReport(title=job.title, status="Failed", error="aborted by user (Ctrl-C)")
 
-    runner = YtdlpRunner(job.mode, output_dir, job.url, job.max_height)
+    runner = YtdlpRunner(
+        job.mode,
+        output_dir,
+        job.url,
+        job.max_height,
+        cookies=job.cookies,
+        cookies_from_browser=job.cookies_from_browser,
+    )
     parser = YtdlpProgressParser()
     progress_state = MediaProgress()
     started_ns = time.monotonic_ns()
@@ -1250,8 +1311,8 @@ def execute_download(
     stderr_lock = threading.Lock()
 
     def drain_stream(stream: object, is_stdout: bool) -> None:
-        # Reads byte-by-byte splits on \\n/\\r so `--newline` progress lines
-        # and \\r-style FFmpeg updates are both handled without blocking.
+        # Reads byte-by-byte splits on \n/\r so `--newline` progress lines
+        # and \r-style FFmpeg updates are both handled without blocking.
         buf = bytearray()
         read1 = getattr(stream, "read", None)
         try:
@@ -1260,7 +1321,7 @@ def execute_download(
                 if not chunk:
                     break
                 byte = chunk[0] if isinstance(chunk, (bytes, bytearray)) else ord(chunk)
-                if byte in (10, 13):  # \\n or \\r
+                if byte in (10, 13):  # \n or \r
                     if buf:
                         text = bytes(buf).decode("utf-8", errors="replace")
                         del buf[:]
@@ -1306,6 +1367,14 @@ def execute_download(
                 owned_task = progress_ui.add_task("Initializing", total=None, title=display_title)
                 _pump_progress_loop(proc, pgid, progress_ui, owned_task, progress_state, started_ns, timeout_secs)
         finally:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+            try:
+                proc.stderr.close()
+            except Exception:
+                pass
             stdout_thread.join(timeout=2.0)
             stderr_thread.join(timeout=2.0)
             with _ACTIVE_PG_LOCK:
@@ -1321,6 +1390,14 @@ def execute_download(
                     pass
             _pump_progress_loop(proc, pgid, progress, task_id, progress_state, started_ns, timeout_secs)
         finally:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+            try:
+                proc.stderr.close()
+            except Exception:
+                pass
             stdout_thread.join(timeout=2.0)
             stderr_thread.join(timeout=2.0)
             with _ACTIVE_PG_LOCK:
@@ -1420,8 +1497,9 @@ def execute_download(
             size_mb = actual_path.stat().st_size / (1024 * 1024)
         except OSError:
             size_mb = 0.0
+        return JobReport(title=job.title, status="Success", saved_file=dest_file, size_mb=size_mb)
 
-    return JobReport(title=job.title, status="Success", saved_file=dest_file, size_mb=size_mb)
+    return JobReport(title=job.title, status="Failed", saved_file="--", error="no output file produced")
 
 
 def _newest_file_since(directory: Path, started_ns: int) -> Path | None:
@@ -1437,7 +1515,7 @@ def _newest_file_since(directory: Path, started_ns: int) -> Path | None:
         try:
             if not entry.is_file() or entry.name.startswith(".probe_"):
                 continue
-            if entry.suffix == ".part" or entry.suffix == ".ytdl":
+            if entry.suffix in (".part", ".ytdl", ".temp", ".aria2"):
                 continue
             mtime = entry.stat().st_mtime
         except OSError:
@@ -1472,7 +1550,7 @@ def _resolve_output_file(
         p for p in current
         if p.name not in before_names
         and not p.name.startswith(".probe_")
-        and p.suffix not in (".part", ".ytdl")
+        and p.suffix not in (".part", ".ytdl", ".temp", ".aria2")
     ]
     if new_files:
         if destination_file:
@@ -1751,9 +1829,13 @@ class VideoDetails:
     heights: list[int]
 
 
-def probe_media_target(url: str) -> tuple[list[tuple[str, str]], bool, str, VideoDetails | None]:
+def probe_media_target(
+    url: str,
+    cookies: Path | None = None,
+    cookies_from_browser: str | None = None,
+) -> tuple[list[tuple[str, str]], bool, str, VideoDetails | None]:
     """Universal flat extraction probe across any media endpoint."""
-    opts = {
+    opts: dict[str, object] = {
         "extract_flat": "in_playlist",
         "skip_download": True,
         "quiet": True,
@@ -1762,6 +1844,15 @@ def probe_media_target(url: str) -> tuple[list[tuple[str, str]], bool, str, Vide
         "retries": 5,
         "ignoreerrors": "only_download",
     }
+    if cookies is not None and Path(cookies).is_file():
+        opts["cookiefile"] = str(cookies)
+    elif cookies_from_browser:
+        opts["cookiesfrombrowser"] = (cookies_from_browser,)
+    else:
+        state_dir = config_state_dir()
+        if state_dir and (state_dir / "cookies.txt").is_file():
+            opts["cookiefile"] = str(state_dir / "cookies.txt")
+
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
 
@@ -1817,13 +1908,17 @@ def probe_media_target(url: str) -> tuple[list[tuple[str, str]], bool, str, Vide
     return [(single_title, single_url)], False, single_title, details
 
 
-def probe_video_details(url: str) -> VideoDetails | None:
+def probe_video_details(
+    url: str,
+    cookies: Path | None = None,
+    cookies_from_browser: str | None = None,
+) -> VideoDetails | None:
     """Full-metadata inspect of a single video: duration, uploader, heights.
 
     Returns None on any failure (caller falls back to generic options).
     Playlists/collections are never inspected here — pass.
     """
-    opts = {
+    opts: dict[str, object] = {
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
@@ -1831,6 +1926,15 @@ def probe_video_details(url: str) -> VideoDetails | None:
         "socket_timeout": 30,
         "retries": 5,
     }
+    if cookies is not None and Path(cookies).is_file():
+        opts["cookiefile"] = str(cookies)
+    elif cookies_from_browser:
+        opts["cookiesfrombrowser"] = (cookies_from_browser,)
+    else:
+        state_dir = config_state_dir()
+        if state_dir and (state_dir / "cookies.txt").is_file():
+            opts["cookiefile"] = str(state_dir / "cookies.txt")
+
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -2161,7 +2265,10 @@ def split_url_list(raw: str) -> list[str]:
 
 
 def collect_targets(
-    raw_urls: list[str], playlist_items: str = "all"
+    raw_urls: list[str],
+    playlist_items: str = "all",
+    cookies: Path | None = None,
+    cookies_from_browser: str | None = None,
 ) -> tuple[list[tuple[str, str]], list[str]]:
     """Probe each URL independently; one bad link never kills the queue.
 
@@ -2172,7 +2279,9 @@ def collect_targets(
     errors: list[str] = []
     for url in raw_urls:
         try:
-            found, is_collection, _, _ = probe_media_target(url)
+            found, is_collection, _, _ = probe_media_target(
+                url, cookies=cookies, cookies_from_browser=cookies_from_browser
+            )
             if is_collection:
                 try:
                     found = select_playlist_items(found, playlist_items)
@@ -2433,6 +2542,17 @@ def main() -> None:
         help="Skip queue positions using -I syntax: '1,3,5-7', '-3:' (default: none). "
              "Applies to the final combined queue order.",
     )
+    parser.add_argument(
+        "--cookies",
+        type=Path,
+        default=None,
+        help="Netscape formatted file to read cookies from",
+    )
+    parser.add_argument(
+        "--cookies-from-browser",
+        default=None,
+        help="The name of the browser to load cookies from (e.g. chrome, firefox, brave)",
+    )
 
     args = parser.parse_args()
 
@@ -2464,7 +2584,12 @@ def main() -> None:
         discovered: list[tuple[str, str]] = []
         if link_urls:
             with console.status(f"[bold cyan]Probing {len(link_urls)} link(s)...[/]", spinner="dots"):
-                found, probe_errors = collect_targets(link_urls, args.playlist_items)
+                found, probe_errors = collect_targets(
+                    link_urls,
+                    args.playlist_items,
+                    cookies=args.cookies,
+                    cookies_from_browser=args.cookies_from_browser,
+                )
             for err in probe_errors:
                 console.print(f"[bold yellow]![/] Skipped: {escape(err)}")
             discovered.extend(found)
@@ -2475,11 +2600,20 @@ def main() -> None:
                 mode=mode,
                 max_height=max_height,
                 needs_probe=True,
+                cookies=args.cookies,
+                cookies_from_browser=args.cookies_from_browser,
             )
             for idx, u in enumerate(batch_urls, start=1)
         ]
         jobs.extend(
-            MediaJob(title=item[0], url=item[1], mode=mode, max_height=max_height)
+            MediaJob(
+                title=item[0],
+                url=item[1],
+                mode=mode,
+                max_height=max_height,
+                cookies=args.cookies,
+                cookies_from_browser=args.cookies_from_browser,
+            )
             for item in discovered
         )
 
@@ -2544,7 +2678,8 @@ def main() -> None:
             status_str = "[bold red]Failed[/]"
         size_str = f"{r.size_mb:.2f} MB" if r.status == "Success" else "--"
         detail = r.saved_file if r.status == "Success" else (r.error or "failed")
-        table.add_row(escape(r.title), status_str, size_str, escape(detail))
+        clean_title = " ".join(r.title.split())
+        table.add_row(escape(clean_title), status_str, size_str, escape(detail))
 
     console.print("\n")
     console.print(table)
