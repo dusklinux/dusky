@@ -963,8 +963,15 @@ class YtdlpRunner:
             "--retries", "30",
             "--fragment-retries", "30",
             "--file-access-retries", "10",
+            "--extractor-retries", "10",
             "--retry-sleep", "fragment:exp=1:20",
+            "--retry-sleep", "http:exp=1:15",
             "--socket-timeout", "30",
+            # YouTube & CDN Anti-Throttling & Speed Optimization (yt-dlp 2026)
+            "--throttled-rate", "100K",
+            "--buffer-size", "16K",
+            # Additional JavaScript challenge solver runtime fallback
+            "--js-runtimes", "node",
             # Replace invalid FAT32/Android characters for safe phone transfer
             "--windows-filenames",
             "--trim-filenames", "180",
