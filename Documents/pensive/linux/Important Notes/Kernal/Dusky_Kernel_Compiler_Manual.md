@@ -1,1575 +1,1118 @@
+---
+title: "Dusky Kernel Compiler (v6.0.0) — Architecture, Configuration & Profile Engineering Manual"
+aliases:
+  - Dusky Kernel Manual
+  - Dusky Compiler Manual
+  - dusky_kernal_compile
+tags:
+  - linux
+  - kernel
+  - archlinux
+  - performance
+  - llvm
+  - optimization
+  - systemd
+version: "6.0.0"
+date_created: 2026-09-02
+last_modified: 2026-09-04
+status: complete
+---
+
 # Dusky Kernel Compiler (v6.0.0) — Architecture, Configuration & Profile Engineering Manual
 
-*Targeting Linux 7.2+ and Linux 7.3-rc on Arch Linux (September 2026 Specification)*
+> [!abstract] Executive Summary
+> `dusky_kernal_compile.py` is a specialized kernel compilation and optimization engine for Arch Linux targeting **Linux 7.2+ and 7.3-rc** (September 2026 specification). It eliminates generic distribution overhead by bridging **compile-time hardware tailoring** (`scripts/config`, Clang ThinLTO, `modprobed-db`) with **boot-time system provisioning** (`systemd`, `udev`, `sysctl`, `zram-generator`, `scx_loader`).
 
 ---
 
-## Table of Contents
+## Quick Navigation
 
-1. [Executive Summary & Core Architecture](#1-executive-summary--core-architecture)  
-2. [The Kernel Optimization Trilemma (Performance vs. Battery vs. RAM)](#2.-the-kernel-optimization-trilemma)  
-3. [Comprehensive Section & Parameter Reference](#3-comprehensive-section--parameter-reference)  
-   - [3.1. \[meta\] — Package Metadata & Hardware Portability](#31-meta--package-metadata--hardware-portability)  
-   - [3.2. \[release\] — Source Channels & Version Enforcement](#32-release--source-channels--version-enforcement)  
-   - [3.3. \[scheduler\] — CPU Scheduling Core (EEVDF, BORE, BMQ, sched\_ext)](#33-scheduler--cpu-scheduling-core-eevdf-bore-bmq-sched_ext)  
-   - [3.4. \[cache\] — Cache-Aware Scheduling (CAS) & LLC Domains](#34-cache--cache-aware-scheduling-cas--llc-domains)  
-   - [3.5. \[rseq\] — Restartable Sequences Time-Slice Extensions](#35-rseq--restartable-sequences-time-slice-extensions)  
-   - [3.6. \[cpu\] — Microarchitecture, P-State Autonomy & Mitigations](#36-cpu--microarchitecture-p-state-autonomy--mitigations)  
-   - [3.7. \[timing\] — Clock Cadence, PREEMPT\_LAZY & Tickless Modes](#37-timing--clock-cadence-preempt_lazy--tickless-modes)  
-   - [3.8. \[memory\] — Paging, Multi-Gen LRU, Compressed Swap & Footprint Tiers](#38-memory--paging-multi-gen-lru-compressed-swap--footprint-tiers)  
-   - [3.9. \[compiler\] — LLVM/Clang, ThinLTO Caching, kCFI & Rust-for-Linux](#39-compiler--llvmclang-thinlto-caching-kcfi--rust-for-linux)  
-   - [3.10. \[security\] — Hardening Profiles, Allocator Defenses & Lockdown](#310-security--hardening-profiles-allocator-defenses--lockdown)  
-   - [3.11. \[gaming\] — NTSync Driver, UCLAMP & Wine/Proton Optimizations](#311-gaming--ntsync-driver-uclamp--wineproton-optimizations)  
-   - [3.12. \[storage\] — NVMe IOPOLL, Multi-Queue Schedulers & Writeback](#312-storage--nvme-iopoll-multi-queue-schedulers--writeback)  
-   - [3.13. \[power\] — Energy Models, Idle Governors (TEO) & RCU Lazy](#313-power--energy-models-idle-governors-teo--rcu-lazy)  
-   - [3.14. \[network\] — BBR Congestion, CAKE/FQ Qdiscs & Protocol Engines](#314-network--bbr-congestion-cakefq-qdiscs--protocol-engines)  
-   - [3.15. \[modules\] — Streamlined localmodconfig & modprobed-db Safety Nets](#315-modules--streamlined-localmodconfig--modprobed-db-safety-nets)  
-   - [3.16. \[boot\] — Command-Line Injection & Bootloader Synchronization](#316-boot--command-line-injection--bootloader-synchronization)  
-   - [3.17. \[verify\] — Invariant Contract Enforcement](#317-verify--invariant-contract-enforcement)  
-   - [3.18. \[dusky\] — Seed Configurations & Runtime Dispatch](#318-dusky--seed-configurations--runtime-dispatch)  
-4. [Cross-Subsystem Incompatibilities & Conflict Rules](#4-cross-subsystem-incompatibilities--conflict-rules)  
-5. [Production Configuration Templates (TOML Profiles)](#5.-production-configuration-templates-\(toml-profiles\))  
-   - [Template 1: Sub-300MB Idle Minimalist (Low-RAM / Embedded)](#template-1-sub-300mb-idle-minimalist-low-ram--embedded)  
-   - [Template 2: Unconstrained Maximum Performance (Gaming / Workstation)](#template-2-unconstrained-maximum-performance-gaming--workstation)  
-   - [Template 3: Maximum Battery Endurance (Laptops / Handhelds)](#template-3-maximum-battery-endurance-laptops--handhelds)  
-   - [Template 4: The Golden Ratio (Daily Driver Workstation & Laptop)](#template-4-the-golden-ratio-daily-driver-workstation--laptop)  
-6. [Compilation & Operational Workflow](#6-compilation--operational-workflow)
+- [[#1. Executive Summary & Engine Pipeline|1. Executive Summary & Engine Pipeline]]
+- [[#2. Architecture Taxonomy & Modern Kernel Evolution|2. Architecture Taxonomy & Linux 7.2+/7.3 Evolution]]
+- [[#3. The Kernel Optimization Trilemma|3. The Kernel Optimization Trilemma]]
+- [[#4. Command-Line Interface & Operational Modes|4. CLI & Operational Modes]]
+- [[#5. Comprehensive Section & Parameter Reference|5. Parameter Reference (18 Sections)]]
+  - `[meta]` • `[release]` • `[scheduler]` • `[cache]` • `[rseq]` • `[cpu]` • `[timing]` • `[memory]` • `[compiler]` • `[security]` • `[gaming]` • `[storage]` • `[power]` • `[network]` • `[modules]` • `[boot]` • `[verify]` • `[dusky]`
+- [[#6. Cross-Subsystem Incompatibilities & Conflict Rules|6. Incompatibilities & Conflict Rules]]
+- [[#7. Decision Tree, Profile Catalog & Production Templates|7. Decision Tree, Profiles & TOML Templates]]
+- [[#8. Advanced Engineering Workflows|8. Advanced Workflows (Remote Bundles, AutoFDO, Uninstall)]]
+- [[#9. Step-by-Step Operational Runbook|9. Operational Runbook]]
 
 ---
 
-## 1\. Executive Summary & Core Architecture
+## 1. Executive Summary & Engine Pipeline
 
-`dusky_kernal_compile.py` is a specialized kernel compilation and optimization engine designed for Arch Linux running on the cutting-edge Linux 7.2 and 7.3-rc kernel series. It eliminates generic distribution bloat by bridging compile-time hardware tailoring (`scripts/config`, LLVM ThinLTO, `modprobed-db`) with boot-time system tuning (`systemd`, `udev`, `sysctl`, `zram-generator`).
+The Dusky compilation pipeline executes in strict chronological stages to produce twin Arch Linux native packages: `linux-dusky-<flavor>` and `linux-dusky-<flavor>-headers`.
 
-### The Pipeline Architecture
+```mermaid
+flowchart TD
+    A["<b>1. Profile & Host Telemetry</b><br>Parse TOML • Probe CPU, LLC, RAM, GPUs"] --> B["<b>2. Source Resolution</b><br>kernel.org releases.json • PGP / SHA256"]
+    B --> C["<b>3. Tree Setup & Patches</b><br>Extract tarball • Apply BORE/BMQ • Inject Kconfig.hz"]
+    C --> D["<b>4. Seed Ingestion & Pruning</b><br>Seed .config • make localmodconfig (modprobed.db)"]
+    D --> E["<b>5. Declarative Matrix & Invariant Check</b><br>scripts/config batch • olddefconfig • Contract Verification"]
+    E --> F["<b>6. Native LLVM/Clang Build</b><br>ThinLTO/Full LTO • kCFI • make pacman-pkg"]
+    F --> G["<b>7. Package Installation</b><br>pacman -U linux-dusky-* • DKMS modules"]
+    G --> H["<b>8. Runtime Provisioning & Boot Sync</b><br>sysctl • udev • zram • scx_loader • systemd-boot/GRUB"]
+```
 
-1. **Host Discovery & Hardware Profiling**: Evaluates CPU microarchitecture, psABI levels (x86-64-v1 through v4), Last-Level Cache (LLC) topology, ACPI CPPC capabilities, disk controller queues, and GPU drivers.  
-2. **Deterministic Source Resolution**: Fetches signed releases from kernel.org or tracking branches, validates cryptographic PGP keys or SHA256 hashes, and extracts clean sources.  
-3. **Out-of-Tree Scheduler & Timer Injections**: Conditionally applies monolithic patches (such as BORE or Project C BMQ) and patches `kernel/Kconfig.hz` to introduce non-standard desktop tick rates (500 Hz, 600 Hz, 750 Hz).  
-4. **Seed Ingestion & localmodconfig Pruning**: Seeds from running configs, Arch Linux packaging defaults, or snapshots, and runs `make localmodconfig` using `modprobed.db` with path-based safety overrides (`LMC_KEEP`).  
-5. **Declarative Kconfig Matrix Application**: Applies atomic configuration batches via `scripts/config`, resolves dependencies with `make olddefconfig`, and strictly validates invariant contracts before invoking the compiler.  
-6. **LLVM/Clang Native Compilation**: Compiles the kernel and modules with ThinLTO or monolithic Full LTO, generating twin Arch Linux native packages (`linux-dusky-<flavor>` and `linux-dusky-<flavor>-headers`).  
-7. **Runtime & Bootloader Provisioning**: Deploys per-flavor sysctls, udev rules, NTSync device nodes, ZRAM multi-compression recompression timers, and updates systemd-boot, GRUB, or Limine entries.
+### Filesystem Layout & Storage Topology
 
----
-
-## 2\. The Kernel Optimization Trilemma
-
-Every kernel customization decision navigates three competing architectural forces:
-
-                  \[1\] Responsiveness & Low Latency
-
-                   (Frametime Pacing, 1000Hz, Audio)
-
-                                 /                                /                                 /                                  /                                   /   ⚙                                /                                     /              \[2\] Compute Throughput  /\_\_\_\_\_\_\_\_\_\_\_\_\_\_\\  \[3\] Resource & Power Footprint
-
-  (Batch Processing, LTO,                  (Sub-300MB Idle RAM, C10 States,
-
-   mTHP, Unrolled Loops)                    SLUB\_TINY, RCU Lazy)
-
-1. **Responsiveness vs. Throughput**: Forcing an interrupt tick rate of 1000 Hz or running full preemption (`PREEMPT_FULL`) guarantees immediate response to incoming input events and eliminates audio buffer underruns. However, it constantly interrupts active CPU execution pipelines and evicts L1/L2 caches, causing a 3% to 8% penalty in raw multi-core batch processing (such as code compilation or video encoding).  
-2. **Throughput vs. Memory Footprint**: Transparent Huge Pages (`THP=always`) and multi-size THP (mTHP) drastically reduce Translation Lookaside Buffer (TLB) misses, accelerating game render loops and JVM runtimes. However, allocating 2MB blocks for small data structures creates severe internal fragmentation, inflating memory footprint and destabilizing systems with 4GB–8GB of RAM.  
-3. **Responsiveness vs. Battery Endurance**: Immediate frequency scaling (`performance` governor, `EPP=performance`) and high tick rates wake CPU cores hundreds of times per second. This prevents CPU packages from settling into deep low-power sleep states (C8/C10), increasing idle power draw by 1.5W to 4W on mobile platforms.
+| Path Category | Default Location | Environment Override | Purpose |
+| :--- | :--- | :--- | :--- |
+| **Engine Script** | `~/user_scripts/kernel/dusky_kernal_compile.py` | — | Core compiler & provisioning engine |
+| **System Profiles** | `~/user_scripts/kernel/kernel_profiles/` | `DUSKY_PROFILES_DIR` | Shared TOML profile recipes |
+| **User Profiles** | `~/.config/dusky-kernel/kernel_profiles/` | — | User-authored custom profiles |
+| **Config Snapshots**| `~/.config/dusky-kernel/configs/` | — | Per-profile `.config` snapshots |
+| **Build Root** | `/mnt/zram1/dusky_kernel` or `~/.cache/dusky-kernel/` | `DUSKY_BUILD_DIR` | Working build tree (`src`, `tarballs`, `seeds`) |
+| **Patch Cache** | `~/.cache/dusky-kernel/patches/` | `DUSKY_PATCH_CACHE` | Cached out-of-tree patches (BORE/BMQ) |
+| **ThinLTO Cache** | `~/.cache/dusky-kernel/thinlto-cache/` | `DUSKY_THINLTO_CACHE`| Persistent LLVM ThinLTO object store |
+| **Package Output** | `~/.cache/dusky-kernel/packages/` | `DUSKY_PKGDEST` | Built `.pkg.tar.zst` packages |
+| **State & Logs** | `~/.local/state/dusky-kernel/logs/` | `XDG_STATE_HOME` | Plain-text build journals & history |
+| **Hardware DB** | `~/.config/modprobed.db` | — | Active modules database (`modprobed-db`) |
+| **Runtime Libs** | `/usr/local/lib/dusky/` | — | Dispatcher & tuning scripts (`dusky-tune.sh`) |
+| **Runtime Manifest**| `/etc/dusky/manifest-<flavor>.txt` | — | Deployed file index for clean uninstallation |
 
 ---
 
-## 3\. Comprehensive Section & Parameter Reference
+## 2. Architecture Taxonomy & Modern Kernel Evolution
 
-### 3.1. \[meta\] — Package Metadata & Hardware Portability
+### 2.1. Subsystem Architecture Mindmap
 
-Governs packaging identity, bootloader naming, and hardware targeting scope.
+```mermaid
+mindmap
+  root((Dusky Kernel 7.2+ / 7.3))
+    CPU & Schedulers
+      Core Schedulers
+        EEVDF upstream default
+        BORE burst-oriented EEVDF
+        BMQ Project C static bitmap
+      sched_ext BPF Classes
+        scx_lavd gaming & handhelds
+        scx_bpfland interactive latency
+        scx_layered workstation cgroups
+        scx_cosmos / scx_p2dq cache-first
+      Cache-Aware Scheduling CAS
+        CONFIG_SCHED_CACHE
+        LLC domain affinity
+        CCX co-location
+      Hardware P-State
+        AMD P-State active autonomous EPP
+        Intel HWP & Thread Director
+    Clock & Timing
+      Tick Frequency HZ
+        1000 Hz low-latency
+        500 Hz / 600 Hz desktop sweet spot
+        300 Hz display sync & battery
+        250 Hz throughput
+      Preemption Architecture
+        PREEMPT_LAZY modern 7.x standard
+        PREEMPT_FULL low audio buffer
+        PREEMPT_RT hard real-time
+      Tickless NO_HZ
+        NO_HZ_IDLE desktop power saving
+        NO_HZ_FULL isolated cores
+    Memory & Storage
+      Virtual Memory
+        Multi-Gen LRU MGLRU generational
+        Per-VMA read/write locking
+        DAMON proactive reclaim
+      Compressed Swap
+        ZRAM multi-compression zstd+lz4
+        Hourly idle recompression timer
+        zswap disk cache alternative
+      Paging & Allocators
+        Transparent Hugepages mTHP
+        SLUB standard vs SLUB_TINY
+        SLAB_BUCKETS security isolation
+      Block I/O Layer
+        NVMe IOPOLL sub-2us queues
+        No scheduler for fast NVMe
+        MQ-Deadline & BFQ for SATA/HDD
+    Toolchain & Security
+      Compiler & LTO
+        LLVM/Clang 21+ toolchain
+        ThinLTO persistent disk cache
+        AutoFDO & Propeller basic blocks
+        Rust-for-Linux in-tree
+      Exploit Defenses
+        Clang kCFI & FineIBT
+        Usercopy & Stackprotector strong
+        Randomized stack & freelists
+        Lockdown early LSM
+```
 
-* **`name`** *(String)*: Base package name passed to `PACMAN_PKGBASE` (e.g., `"dusky_personal"`, `"gaming"`). Defines the package filename and directory paths under `/usr/lib/modules/`.  
-* **`description`** *(String)*: Informational metadata embedded into the package header, viewable via `pacman -Qi`.  
-* **`suffix`** *(String)*: Unique identifier appended to `LOCALVERSION` and pacman packages (e.g., `"dusky-gaming"` creates `linux-dusky-gaming` and `/boot/vmlinuz-linux-dusky-gaming`). Isolates out-of-tree DKMS modules from stock distribution kernels.  
-* **`priority`** *(Integer, 1–100)*: Determines sorting precedence when multiple profiles match host telemetry and orders bootloader entries.  
-* **`tags`** *(List of Strings)*: Metadata labels (e.g., `["gaming", "laptop", "low-ram"]`) used for filtering and search.  
-* **`bare_metal_only`** *(Boolean)*:  
-  - `true`: Completely compiles out hypervisor and virtualization guest drivers (`CONFIG_HYPERVISOR_GUEST`, `CONFIG_PARAVIRT`, `CONFIG_KVM_GUEST`, `CONFIG_XEN`, `CONFIG_VIRTIO*`). Reduces static kernel size and eliminates indirect hypercall overhead.  
-  - `false`: Retains paravirtualization guest awareness.  
-  - *Conflict*: If `true`, the resulting kernel will panic with `VFS: Unable to mount root fs` if booted inside QEMU/KVM, VirtualBox, Proxmox, or cloud instances.  
-* **`portable_package`** *(Boolean)*:  
-  - `true`: Targets a generic microarchitecture baseline (`generic_v3`) for distribution to multiple machines.  
-  - `false`: Compiles strictly for the host CPU using native instructions.  
-  - *Conflict*: `portable_package = true` strictly forbids `cpu.arch = "native"`. Building with AVX-512 or AVX2 instructions on a modern host and booting on an older machine causes an immediate `#UD` (Invalid Opcode) kernel panic.
+### 2.2. Linux 7.2+ / 7.3 Modern Standards vs. Obsolete Pre-7.0 Paradigms
 
----
+> [!important] Hard Version Floor
+> Dusky enforces a strict minimum floor of **Linux 7.2**. Legacy kernel interfaces prior to Linux 7.0 are completely unsupported.
 
-### 3.2. \[release\] — Source Channels & Version Enforcement
-
-Specifies upstream source acquisition, branch policies, and cryptographic verification.
-
-* **`channel`** *(Choice: `"mainline"`, `"stable"`, `"longterm"`)*:  
-  - `"mainline"`: Tracks Linus Torvalds’ active development tree, enabling access to 7.3-rc snapshots.  
-  - `"stable"`: Tracks official point releases (e.g., 7.2.y). Recommended for production daily drivers.  
-  - `"longterm"`: Tracks active Long Term Support branches.  
-* **`pin`** *(String)*: Forces compilation of an exact version string (e.g., `"7.2.4"` or `"7.3-rc2"`), overriding channel discovery.  
-* **`allow_rc`** *(Boolean)*: Toggles permission to download and build pre-release Release Candidate (`-rcX`) tarballs. Automatically enabled if `channel = "mainline"`.  
-* **`min_version`** *(String)*: Hard version floor (default `"7.2"`). Aborts the build if an older tree is selected, preventing compilation failures on features requiring 7.2+ APIs (such as in-tree NTSync or Cache-Aware Scheduling).  
-* **`require_signature`** *(Boolean)*: Enforces cryptographic PGP signature verification of downloaded kernel tarballs using kernel.org release keys (Torvalds, Kroah-Hartman, Levin) via GnuPG Web Key Directory (WKD). If signature verification fails or keys are missing, the build halts.
-
----
-
-### 3.3. \[scheduler\] — CPU Scheduling Core (EEVDF, BORE, BMQ, sched\_ext)
-
-Manages process runqueues, priority assignments, and thread dispatching across CPU cores.
-
-* **`type`** *(Choice: `"eevdf"`, `"bore"`, `"bmq"`)*:  
-  - `"eevdf"`: Upstream Earliest Eligible Virtual Deadline First. Manages task scheduling via two scalar metrics: *Eligibility Time* ($V(t) \\ge v\_i$) and *Virtual Deadline* ($d\_i \= v\_i \+ q\_i/w\_i$). Delivers excellent multi-core scaling and balanced throughput.  
-  - `"bore"` *(Burst-Oriented Response Enhancer)*: Out-of-tree patch over EEVDF by FireLzrd. Measures thread burstiness (ratio of execution time to sleep time). Interactive tasks (compositors, input handlers, audio threads) receive burst score 0 and deadline priority boosts, while background batch tasks are penalized, eliminating micro-stutter under heavy compilation or rendering.  
-  - `"bmq"` *(BitMap Queue)*: Project C scheduler by Alfred Chen. Replaces red-black trees with static priority array bitmapped queues. Delivers deterministic $O(1)$ dispatching on low-core-count machines ($\\le 16$ threads), but lacks upstream cgroup scalability.  
-* **`scx`** *(Choice: `"none"`, `"scx_lavd"`, `"scx_bpfland"`, `"scx_layered"`, `"scx_rusty"`, `"scx_flash"`, `"scx_p2dq"`, `"scx_cosmos"`)*:  
-  - Dynamically loads a user-space/eBPF scheduler daemon on top of `sched_ext`:  
-    - `"scx_lavd"`: Criticality-aware virtual deadline scheduler tailored for gaming and handhelds. Compacts tasks to conserve battery under low load and spreads across cores when frametimes drop.  
-    - `"scx_bpfland"`: vruntime-based scheduler that evaluates voluntary context switches to prioritize interactive desktop tasks.  
-    - `"scx_layered"`: Meta's production scheduler. Partitions tasks into distinct cgroup layers with custom execution policies.  
-    - `"scx_p2dq"`: Pick-2 dispatch queue scheduler with strong Last-Level Cache (LLC) awareness.  
-    - `"scx_cosmos"`: Minimalist scheduler focused on high cache affinity and reduced TLB shootdowns.  
-* **`scx_flags`** *(String)*: Command-line parameters passed directly to the SCX daemon (e.g., `"--autopilot"`, `"-m performance"`).  
-* **`scx_enable_class`** *(Boolean)*: Compiles `CONFIG_SCHED_CLASS_EXT=y`. Embeds the BPF scheduling class into the core scheduling hierarchy immediately above the fair class. Requires `CONFIG_DEBUG_INFO_BTF=y`.  
-* **`require_patch`** *(Boolean)*: Halts the build immediately if an out-of-tree scheduler patch (BORE or BMQ) fails to apply cleanly.  
-* **`allow_vanilla_fallback`** *(Boolean)*: If a patch fails due to source changes in rapid `-rc` kernels, cleanly discards the rejected patch and falls back to vanilla upstream EEVDF.  
-* **`autogroup`** *(Boolean)*: `CONFIG_SCHED_AUTOGROUP=y`. Automatically organizes tasks by TTY terminal session into dedicated scheduling cgroups, preventing background compilation commands (`make -j64`) from starving desktop UI responsiveness.  
-* **`rt_group`** *(Boolean)*: `CONFIG_RT_GROUP_SCHED`. Enforces bandwidth limits on real-time threads (typically throttling to 95%).  
-  - *Recommendation*: Set to `false` on audio workstations and gaming systems. Throttling can cause PipeWire/JACK buffer underruns (Xruns) under heavy loads.  
-* **`sched_core`** *(Boolean)*: `CONFIG_SCHED_CORE=y`. Enforces SMT core scheduling via security cookies to prevent side-channel data leaks across sibling threads. Introduces a 10% to 25% multi-threaded throughput penalty; should be disabled on single-user gaming systems.  
-* **`patch_sources`** *(List of Strings)*: Ordered list of mirrors and repositories (e.g., CachyOS, upstream git) to fetch scheduler patches from.
-
----
-
-### 3.4. \[cache\] — Cache-Aware Scheduling (CAS) & LLC Domains
-
-Configures Linux 7.2+ Cache-Aware Scheduling (`CONFIG_SCHED_CACHE`) to optimize task placement based on Last-Level Cache (L3/LLC) topology.
-
-* **`sched_cache`** *(Boolean)*: Activates `CONFIG_SCHED_CACHE`. Directs the scheduler to track task memory footprints (`mm_struct`) and bias load balancing toward co-locating cooperating threads within the same physical CCX/L3 cache cluster.  
-* **`llc_aggr_tolerance`** *(Integer, 0–100)*:  
-  - `0`: Disables task aggregation.  
-  - `1` (Strict): Aggregates tasks only if their combined Resident Set Size (RSS) fits completely within the physical capacity of a single L3 cache (e.g., 32MB). Prevents L3 cache thrashing.  
-  - `2`–`100` (Relaxed): Permits aggressive thread co-location even if memory footprints exceed single-cache limits. Ideal for synchronization-bound multithreaded software.  
-* **`llc_aggr_cap`** *(Integer, \-1–100)*: Percentage cap of runqueue depth on an LLC domain before spilling tasks to neighboring CCXs. `-1` uses the kernel default.  
-* **`persist`** *(Boolean)*: Installs a boot-time systemd service to write CAS parameters to `/sys/kernel/debug/sched/` across reboots.
-
----
-
-### 3.5. \[rseq\] — Restartable Sequences Time-Slice Extensions
-
-Optimizes user-space per-CPU lockless memory structures via the `rseq` ABI.
-
-* **`slice_extension`** *(Boolean)*: Enables `CONFIG_RSEQ_SLICE_EXTENSION`. Allows a user-space thread executing inside an atomic per-CPU sequence (e.g., jemalloc or glibc heap allocators) to request a short preemption delay when its timeslice expires.  
-* **`slice_ext_nsec`** *(Integer, 1000–100000)*: Duration in nanoseconds (default `10000` \= 10 µs) of the preemption extension. Prevents lock-holder preemption without letting threads monopolize CPU cores.
-
----
-
-### 3.6. \[cpu\] — Microarchitecture, P-State Autonomy & Mitigations
-
-Directs CPU compiler optimizations, frequency scaling drivers, and hardware security mitigations.
-
-* **`arch`** *(Choice: `"native"`, `"generic_v1"` through `"generic_v4"`, or specific architectures like `"znver4"`, `"alderlake"`)*:  
-  - `"native"`: Uses `-march=native`. Emits AVX2, AVX-512, BMI2, and host-specific instruction sets. Produces the fastest execution on physical hardware.  
-  - `"generic_v3"`: Baseline for AVX2/BMI2. The recommended target for portable packages.  
-* **`march`** *(String)*: Custom compiler flag override appended to `KCFLAGS`.  
-* **`governor`** *(Choice: `"schedutil"`, `"performance"`, `"powersave"`, `"ondemand"`, `"conservative"`)*:  
-  - `"schedutil"`: Integrates with scheduler PELT signals. Default recommendation for EEVDF and desktop setups.  
-  - `"performance"`: Pins CPU frequencies to maximum non-boost/boost states.  
-  - `"powersave"`: On `amd_pstate=active` and `intel_pstate`, delegates dynamic scaling to hardware autonomous EPP registers rather than running at minimum clock speeds.  
-* **`amd_pstate`** *(Choice: `"active"`, `"guided"`, `"passive"`, `"disable"`, `"undefined"`)*:  
-  - `"active"`: Enables autonomous CPPC hardware frequency management (`amd-pstate-epp`). Frequency adjustments occur in sub-millisecond hardware intervals rather than 10ms OS polling loops.  
-  - `"guided"`: The kernel provides operating bounds; firmware chooses frequencies within that range.  
-  - `"passive"`: The OS governor explicitly calculates target frequencies via traditional CPPC interfaces.  
-* **`epp`** *(Choice: `"default"`, `"performance"`, `"balance_performance"`, `"balance_power"`, `"power"`)*:  
-  - Energy-Performance Preference register hint.  
-  - Desktop/Gaming recommendation: `"balance_performance"` or `"performance"`.  
-  - Battery recommendation: `"power"` or `"balance_power"`.  
-* **`mitigations`** *(Choice: `"on"`, `"off"`, `"nosmt"`)*:  
-  - `"on"`: Full hardware vulnerability mitigations active (Spectre, Meltdown, Retbleed, Downfall, Zenbleed).  
-  - `"off"`: Compiles out mitigations and passes `mitigations=off`. Bypasses Page Table Isolation (KPTI), IBPB, and return trampolines, recovering 5% to 15% compute and I/O throughput on trusted single-user systems. Requires `security.acknowledge_risk = true`.  
-  - `"nosmt"`: Disables SMT/Hyper-Threading siblings to seal cross-thread speculative side channels.  
-* **`nr_cpus`** *(Integer, 0–8192)*: Clamps `CONFIG_NR_CPUS`. Setting `0` auto-detects the host thread count rounded up to the nearest 8\. Reduces per-CPU static memory overhead and array sizes compared to distribution kernels built for 512+ cores.  
-* **`smt`** *(Boolean)*: Keeps SMT/Hyper-Threading enabled (`CONFIG_SCHED_SMT=y`).  
-* **`mce`** *(Boolean)*: Machine Check Exception handling (`CONFIG_X86_MCE`). Catches hardware memory parity and CPU bus errors.  
-* **`prefcore`** *(Boolean)*: Enables AMD Preferred Core / Intel ITMT (`CONFIG_SCHED_MC_PRIO`). Instructs the scheduler to route high-priority single-threaded tasks to the highest-binned silicon cores.  
-* **`compat32`** *(Boolean)*: `CONFIG_IA32_EMULATION`. Enables 32-bit application execution. Required for Steam runtime compatibility, older games, and Wine/Proton 32-bit wrappers.
+| Subsystem | Obsolete Pre-7.0 Paradigm | Modern Linux 7.2+ / 7.3 Architecture in Dusky | Architectural Advantage |
+| :--- | :--- | :--- | :--- |
+| **CPU Scheduling** | Completely Fair Scheduler (CFS) with static latency target heuristics. | **EEVDF** (`CONFIG_SCHED_FAIR`) + **sched_ext** (`CONFIG_SCHED_CLASS_EXT`) dynamic BPF schedulers. | Guaranteed virtual runtime deadlines ($d_i = v_i + \frac{q_i}{w_i}$); dynamic kernel scheduling in userspace eBPF. |
+| **Cache Balancing**| NUMA-only coarse scheduling; oblivious to Last-Level Cache CCX splits. | **Cache-Aware Scheduling (CAS)** (`CONFIG_SCHED_CACHE`). | Co-locates communicating threads within the same physical L3 cache slice, eliminating inter-CCX fabric stalls. |
+| **Preemption** | Forced binary choice between `PREEMPT_VOLUNTARY` (throughput) and `PREEMPT_FULL` (latency). | **PREEMPT_LAZY** (`CONFIG_PREEMPT_LAZY`). | Dual-flag preemption: urgent RT tasks preempt immediately (`TIF_NEED_RESCHED`), while fair tasks run to slice boundaries. |
+| **Windows Sync** | Slow `wineserver` IPC roundtrips or experimental out-of-tree patches. | **In-tree NTSync Driver** (`CONFIG_NTSYNC=m`, `/dev/ntsync`). | Native kernel emulation of Windows NT mutexes, semaphores, and event objects; accelerates DX11/DX12 frametimes. |
+| **Memory Reclaim**| Two-list LRU (Active/Inactive) suffering severe lock contention and page thrashing. | **Multi-Gen LRU (MGLRU)** (`CONFIG_LRU_GEN=y`). | Generational aging via multi-level page table scans; reduces reclaim CPU overhead and prevents OOM freezing. |
+| **Slab Allocator** | Legacy SLAB allocator (`CONFIG_SLAB`, removed in Linux 6.8). | **SLUB** exclusively, with **SLUB_TINY** (`CONFIG_SLUB_TINY`) or **SLAB_BUCKETS** hardening. | 20–60 MB lower base footprint (`SLUB_TINY`) or complete heap spray mitigation buckets (`SLAB_BUCKETS`). |
+| **P-State Control**| Legacy `acpi-cpufreq` software polling loops (10 ms intervals). | **Autonomous CPPC v2 EPP** (`amd_pstate=active` / `intel_pstate`). | Hardware autonomy adjusts clock frequencies in sub-millisecond hardware loops based on autonomous EPP hints. |
+| **Compiler / LTO** | GCC monolithic LTO (high RAM usage, fragile module linking). | **LLVM/Clang 21+ ThinLTO** (`CONFIG_LTO_CLANG_THIN`) with persistent caching. | 95–99% of monolithic Full LTO codegen performance with incremental compilation and parallel multi-core linking. |
+| **Kernel CFI** | Legacy GCC plugins or disabled control flow protection. | **Clang kCFI** (`CONFIG_CFI_CLANG`) paired with hardware **FineIBT**. | Forward-edge indirect call protection via 4-byte type hashes without breaking module loading or BPF JIT compilation. |
+| **Compressed Swap**| Single-algorithm ZRAM (forced compromise between ratio and CPU overhead). | **ZRAM Multi-Compression** (`CONFIG_ZRAM_MULTI_COMP`). | High-speed primary compressor (LZ4/Zstd) paired with background idle-page recompression (Zstd level 9–11). |
 
 ---
 
-### 3.7. \[timing\] — Clock Cadence, PREEMPT\_LAZY & Tickless Modes
+## 3. The Kernel Optimization Trilemma
 
-Governs interrupt frequencies, preemption boundaries, and timer tick suppression.
+Every kernel optimization balances three competing architectural forces:
 
-* **`hz`** *(Choice: `100`, `250`, `300`, `500`, `600`, `750`, `1000`)*:  
-  - `100`: Maximum compute throughput. Minimal timer interrupts; unsuitable for interactive desktops.  
-  - `250`: Upstream enterprise default.  
-  - `300`: Synchronizes with standard video framerates (24, 30, 60, 120 FPS).  
-  - `500`: Balanced sweet spot for desktop responsiveness and energy efficiency.  
-  - `600`: Aligns with high-refresh display panels (60, 120, 240, 300 Hz).  
-  - `1000`: Minimum input latency and fastest thread wakeups. Increases power draw and context-switch frequency.  
-* **`tickless`** *(Choice: `"periodic"`, `"idle"`, `"full"`)*:  
-  - `"idle"` (`CONFIG_NO_HZ_IDLE`): Suppresses timer ticks on idle cores, allowing CPUs to enter deep package C-states. Active cores tick at the configured HZ rate. Recommended for desktops and laptops.  
-  - `"full"` (`CONFIG_NO_HZ_FULL`): Suppresses ticks on cores running a single active task. Requires setting `nohz_full=<cpus>` on the kernel command line. Increases kernel-entry context overhead and is beneficial only for isolated real-time/HPC workloads.  
-  - `"periodic"`: Ticks continuously; legacy debug setting.  
-* **`preempt`** *(Choice: `"lazy"`, `"full"`, `"rt"`)*:  
-  - `"lazy"` (`CONFIG_PREEMPT_LAZY`): The default preemption model in Linux 7.2+. Introduces dual preemption flags: $$	ext{Preemption Requests} ightarrow egin{cases} \\mathbf{TIF\_NEED\_RESCHED} & 	ext{(Urgent: RT / High-priority wakes preempt immediately)} \\ \\mathbf{TIF\_NEED\_RESCHED\_LAZY} & 	ext{(Normal: Fair tasks run to slice boundaries)} \\end{cases}$$ Delivers the raw throughput of `PREEMPT_VOLUNTARY` with the interactive responsiveness of `PREEMPT_FULL`.  
-  - `"full"` (`CONFIG_PREEMPT`): Preempts any non-critical kernel execution path. Yields low latency, but costs 2% to 4% in raw throughput due to frequent cache evictions.  
-  - `"rt"` (`CONFIG_PREEMPT_RT`): Deterministic hard real-time preemption. Converts spinlocks into sleeping mutexes. Used for industrial control and low-latency pro audio; reduces overall system throughput.  
-* **`preempt_dynamic`** *(Boolean)*: `CONFIG_PREEMPT_DYNAMIC`. Allows changing preemption behavior at boot (`preempt=lazy|full|voluntary`) or at runtime via `/sys/kernel/debug/sched/preempt`.
+```mermaid
+flowchart TD
+    subgraph Trilemma["The Kernel Optimization Trilemma"]
+        A["<b>1. Responsiveness & Low Latency</b><br>1000 Hz • PREEMPT_FULL • Low Buffer • BORE"]
+        B["<b>2. Compute Throughput</b><br>ThinLTO/Full LTO • THP Always • Schedutil • Large Slices"]
+        C["<b>3. Power & Footprint</b><br>TEO Idle • RCU Lazy • SLUB_TINY • ZRAM Multi-Comp • Sub-300MB"]
+        A <--->|"Timer interrupt overhead vs multi-core batch throughput"| B
+        B <--->|"mTHP fragmentation vs minimal base memory target"| C
+        C <--->|"Aggressive package C-states vs instant core wakeup latency"| A
+    end
+```
 
----
-
-### 3.8. \[memory\] — Paging, Multi-Gen LRU, Compressed Swap & Footprint Tiers
-
-Configures virtual memory reclamation, allocation algorithms, page sizing, and compressed memory storage.
-
-* **`footprint`** *(Choice: `"standard"`, `"lean"`, `"minimal"`, `"embedded"`)*:  
-  - `"standard"`: Full distribution-grade features.  
-  - `"lean"`: Optimized for $\\le 8	ext{ GB}$ systems. Strips debugfs, tracing, kexec, and legacy cgroup v1 interfaces.  
-  - `"minimal"`: Optimized for $\\le 4	ext{ GB}$ targets. Enables `CONFIG_SLUB_TINY`, disables hugetlbfs, strips kallsyms, and configures DAMON proactive reclamation.  
-  - `"embedded"`: Strips IA32 emulation, core dumps, and hibernation, using `CONFIG_BASE_SMALL=1` for a minimal memory footprint.  
-* **`thp`** *(Choice: `"always"`, `"madvise"`, `"never"`)*:  
-  - `"always"`: Backs all anonymous memory with 2MB huge pages. Reduces TLB misses in compute tasks, but increases memory usage via internal fragmentation.  
-  - `"madvise"`: Allocates 2MB huge pages only when explicitly requested via `madvise(MADV_HUGEPAGE)`. Best balance for desktop and gaming.  
-  - `"never"`: Enforces strict 4KB paging across all allocations. Essential for sub-300MB idle RAM profiles.  
-* **`thp_defrag`** *(Choice: `"always"`, `"defer"`, `"defer+madvise"`, `"madvise"`, `"never"`)*:  
-  - `"defer+madvise"`: Wakes `kcompactd` in the background for general memory while allowing direct compaction for `MADV_HUGEPAGE` regions. Avoids synchronous frame-time stalls during gaming.  
-* **`thp_shmem`** *(Choice: `"always"`, `"within_size"`, `"advise"`, `"never"`)*: Configures huge page backing for shared memory (`tmpfs` and `/dev/shm`).  
-* **`mglru`** *(Boolean)*: `CONFIG_LRU_GEN=y`. Replaces the legacy two-list (Active/Inactive) LRU page reclamation algorithm with Multi-Gen LRU. Uses generational aging and page-table walking to dramatically reduce CPU reclaim overhead and eliminate low-memory thrashing.  
-* **`mglru_mask`** *(Integer, 0–7)*: Feature bitmask (`0x0001` \= anon, `0x0002` \= file, `0x0004` \= page-table walking). `7` enables all paths.  
-* **`mglru_min_ttl_ms`** *(Integer, 0–60000)*: Minimum generational Time-To-Live in milliseconds. Protects active working sets from eviction during transient memory spikes.  
-* **`swap_backend`** *(Choice: `"zram"`, `"zswap"`, `"none"`)*:  
-  - `"zram"`: Creates a compressed RAM block device (`/dev/zram0`) formatted as swap space. Delivers microsecond access times and avoids disk wear.  
-  - `"zswap"`: Compressed write-through cache sitting in front of a physical disk swap partition.  
-  - `"none"`: Disables swap entirely.  
-* **`zram_algo`** *(Choice: `"zstd"`, `"lz4"`, `"lz4hc"`, `"lzo-rle"`)*: Primary compression algorithm for ZRAM. `lz4` provides maximum throughput; `zstd` delivers a 2.7:1–3.2:1 compression ratio.  
-* **`zram_recomp_algo`** *(Choice: `"zstd"`, `"lz4"`, `"lz4hc"`, `"lzo-rle"`)*: Secondary algorithm used for idle-page recompression (e.g., recompressing cold pages with `zstd` level 9–11).  
-* **`zram_size_pct`** *(Integer, 10–400)*: Virtual swap device capacity as a percentage of physical RAM (typically `100` to `200`).  
-* **`zram_multi_comp`** *(Boolean)*: `CONFIG_ZRAM_MULTI_COMP`. Enables tiered multi-compression streams in ZRAM.  
-* **`swappiness`** *(Integer, 0–200)*: Controls kernel swap bias. Set to `150`–`180` for ZRAM to prioritize compressing cold anonymous memory over evicting filesystem caches.  
-* **`vfs_cache_pressure`** *(Integer, 0–1000)*: Controls reclamation of dentry and inode caches. Lower values (`50`–`70`) retain filesystem metadata in RAM, speeding up repeated directory lookups.  
-* **`watermark_scale_factor`** *(Integer, 10–3000)*: Sets the distance between `WMARK_MIN`, `WMARK_LOW`, and `WMARK_HIGH`. Raising to `125`–`200` wakes `kswapd` earlier under allocation pressure, preventing synchronous direct reclaim stalls.  
-* **`watermark_boost_factor`** *(Integer, 0–30000)*: Set to `0` on gaming and ZRAM setups to prevent erratic reclaim bursts triggered by high-order allocation failures.  
-* **`compaction_proactiveness`** *(Integer, 0–100)*: Determines how proactively `kcompactd` consolidates memory blocks in the background.  
-* **`dirty_bytes_mb`** *(Integer)*: Sets hard byte limits for dirty memory writeback (e.g., `128` or `256` MB), preventing I/O stalls caused by percentage-based defaults on high-RAM machines.  
-* **`slub_tiny`** *(Boolean)*: `CONFIG_SLUB_TINY`. Strips per-CPU partial slab lists and allocator debugging, saving 20MB–60MB of RAM.  
-* **`slab_buckets`** *(Boolean)*: `CONFIG_SLAB_BUCKETS`. Isolates slab allocations into separate memory buckets to mitigate heap spraying. Incompatible with `slub_tiny`.  
-* **`per_vma_lock`** *(Boolean)*: `CONFIG_PER_VMA_LOCK`. Enables per-VMA read/write locks for concurrent page-fault processing.  
-* **`numa`** *(Boolean)*: Toggles NUMA support. Disabling on single-socket desktops eliminates per-node tracking arrays and saves 15MB–35MB of static memory.  
-* **`ksm`** *(Boolean)*: `CONFIG_KSM`. Enables Kernel Samepage Merging memory deduplication.  
-* **`damon`** *(Boolean)*: `CONFIG_DAMON`. Enables the Data Access Monitor framework for proactive memory management.  
-* **`hugetlbfs`** *(Boolean)*: Controls HugeTLB filesystem support.  
-* **`kallsyms_all`** *(Boolean)*: Setting to `false` removes non-exported symbols from the kernel binary, saving 4MB–10MB of unevictable `.rodata` memory.  
-* **`memcg`** *(Boolean)*: Controls the cgroup memory resource controller. Disabling saves 30MB–70MB of base RAM, but disables `systemd-oomd`.  
-* **`trim_unused_ksyms`** *(Boolean)*: `CONFIG_TRIM_UNUSED_KSYMS`. Drops unreferenced exported symbols from `.rodata`. Requires `compiler.headers = "never"`.
+1. **Responsiveness vs. Throughput**: A 1000 Hz timer tick and `PREEMPT_FULL` guarantee immediate response to user input and eliminate audio buffer underruns (PipeWire/JACK). However, the frequent timer interrupts and context switches evict L1/L2 caches, causing a **3% to 8% penalty** in sustained multi-core workloads (compilation, rendering).
+2. **Throughput vs. Memory Footprint**: Transparent Huge Pages (`THP=always`) and multi-size THP (mTHP) drastically reduce TLB misses, boosting game frame pacing and JVM runtimes. However, allocating 2 MB chunks for small data structures increases internal fragmentation, inflating memory footprint on 4 GB–8 GB machines.
+3. **Responsiveness vs. Battery Endurance**: Pinning maximum frequencies (`performance` governor, `EPP=performance`) and high tick rates wake CPU cores hundreds of times per second. This prevents CPU packages from settling into deep low-power C-states (C8/C10), increasing idle power draw by **1.5W to 4W** on laptops.
 
 ---
 
-### 3.9. \[compiler\] — LLVM/Clang, ThinLTO Caching, kCFI & Rust-for-Linux
+## 4. Command-Line Interface & Operational Modes
 
-Governs the compilation toolchain, Link-Time Optimization, exploit mitigations, and cross-language modules.
+### Syntax
+```bash
+./dusky_kernal_compile.py [MODES] [OVERRIDES] [BEHAVIOUR]
+```
 
-* **`toolchain`** *(Choice: `"llvm"`, `"gcc"`)*:  
-  - `"llvm"`: Uses Clang, LLD, and LLVM binary utilities (`make LLVM=1`). Required for ThinLTO, kCFI, AutoFDO, and Rust cross-language optimization.  
-  - `"gcc"`: Uses GNU GCC and Binutils.  
-* **`optimize`** *(Choice: `"o2"`, `"o3"`, `"size"`)*:  
-  - `"o2"`: Upstream standard optimization level.  
-  - `"o3"`: Injects aggressive loop unrolling and vectorization via `KCFLAGS`.  
-  - `"size"` (`-Os`): Strips alignment padding and inlining to minimize binary size.  
-* **`lto`** *(Choice: `"none"`, `"thin"`, `"full"`)*:  
-  - `"none"`: Fast compilation without inter-module link-time optimization.  
-  - `"thin"` (`CONFIG_LTO_CLANG_THIN`): Parallel Link-Time Optimization using module summaries. Delivers \~95–99% of Full LTO performance with faster link times and modest RAM usage (3GB–6GB).  
-  - `"full"` (`CONFIG_LTO_CLANG_FULL`): Monolithic Whole-Program LTO. Merges intermediate representation across the entire kernel before code generation. Requires 16GB–32GB of RAM during linking.  
-* **`thinlto_cache`** *(Boolean)*: Directs `ld.lld` to persist backend compilation artifacts across builds.  
-* **`thinlto_cache_size_gb`** *(Integer)*: Maximum storage cap for cached ThinLTO compilation objects.  
-* **`fdo`** *(Choice: `"none"`, `"autofdo"`, `"autofdo_propeller"`)*:  
-  - `"autofdo"`: Profile-Guided Optimization using hardware PMU branch samples via `perf`.  
-  - `"autofdo_propeller"`: Uses basic block sections and `ld.lld` to reorder basic blocks and optimize code layout across the binary.  
-* **`kcfi`** *(Boolean)*: `CONFIG_CFI_CLANG`. Enforces forward-edge Control Flow Integrity by embedding 4-byte type hashes before indirect call targets.  
-* **`debug_info`** *(Choice: `"none"`, `"reduced"`, `"full"`)*:  
-  - `"none"`: Strips DWARF debug symbols.  
-  - `"reduced"`: Minimal debug information for basic backtraces.  
-  - `"full"`: DWARF5 debug symbols. Required for BTF metadata extraction via `pahole`.  
-* **`module_compress`** *(Choice: `"zstd"`, `"xz"`, `"gzip"`, `"none"`)*: Post-build module compression format. `zstd` is recommended.  
-* **`rust`** *(Boolean)*: `CONFIG_RUST=y`. Enables Rust support in the kernel. Automatically disabled if LTO and BTF are enabled simultaneously without a compatible `pahole` release.  
-* **`headers`** *(Choice: `"auto"`, `"always"`, `"never"`)*: Policy for building the kernel headers package (`linux-headers`). `"auto"` builds headers only if active DKMS modules are detected on the host.  
-* **`modversions`** *(Boolean)*: `CONFIG_MODVERSIONS`. Generates CRC checksums for exported symbols to enforce ABI compatibility.
+### Core Execution Modes
 
----
+| Command Flag | Description |
+| :--- | :--- |
+| `-p`, `--profile NAME` | Selects profile to build (launches interactive picker if omitted). |
+| `-l`, `--list-profiles` | Lists all discovered profiles, priorities, channels, and scheduler classes. |
+| `--show` | Displays the fully resolved configuration for a profile. |
+| `--dump-toml` | Used with `--show`: outputs the resolved profile as clean TOML. |
+| `--spec` | Prints the complete profile schema specification with types and defaults. |
+| `--doctor` | Runs complete diagnostics: toolchains, host telemetry, microcode, bootloaders. |
+| `--print-matrix` | Evaluates and prints the Kconfig matrix diff against upstream defaults. |
+| `--configure-only` | Halts execution immediately after configuration and contract verification. |
+| `--clean [WHAT]` | Prunes caches: `all`, `src`, `tarballs`, `patches`, `packages`, `thinlto`, `logs`, `seeds`. |
+| `--write-default-profiles` | Emits all 10 built-in reference profiles into the profile directory. |
+| `--export-bundle [FILE]` | Exports local hardware telemetry, `modprobed.db`, and PCI inventory for remote builds. |
+| `--import-bundle FILE` | Ingests a remote bundle and generates a customized `remote_<host>` profile. |
+| `--uninstall FLAVOR` | Cleanly removes `linux-<flavor>{,-headers}`, bootloader entries, and runtime files. |
+| `--fdo-record SECONDS` | Records branch execution profiles using Linux `perf` for Clang AutoFDO. |
+| `--fdo-propeller` | Used with `--fdo-record`: generates Propeller basic-block layout profiles. |
+| `--menu` | Opens the full-screen interactive terminal configuration and management menu. |
 
-### 3.10. \[security\] — Hardening Profiles, Allocator Defenses & Lockdown
+### Command-Line Overrides
 
-Controls runtime kernel protection mechanisms, memory poisoning, and access control.
+Overrides apply dynamically to the loaded profile without modifying the TOML file on disk:
 
-* **`profile`** *(Choice: `"balanced"`, `"extreme"`, `"hardened"`)*:  
-  - `"balanced"`: Production desktop security with negligible performance overhead.  
-  - `"extreme"`: Maximizes security mechanisms at the expense of throughput. Requires `acknowledge_risk = true`.  
-  - `"hardened"`: Follows Kernel Self Protection Project (KSPP) baselines.  
-* **`init_on_alloc`** *(Boolean)*: `CONFIG_INIT_ON_ALLOC_DEFAULT_ON`. Zeroes memory pages and slab allocations upon allocation. Prevents uninitialized memory disclosure vulnerabilities with a 1% to 3% performance cost.  
-* **`init_on_free`** *(Boolean)*: `CONFIG_INIT_ON_FREE_DEFAULT_ON`. Clears memory blocks immediately when freed. Mitigates Use-After-Free (UAF) exploits, but carries a 5% to 12% performance cost and reduces cache warmth.  
-* **`hardened_usercopy`** *(Boolean)*: `CONFIG_HARDENED_USERCOPY`. Validates memory bounds on `copy_to_user()` and `copy_from_user()` boundaries to prevent buffer overflows.  
-* **`stackprotector`** *(Choice: `"strong"`, `"regular"`, `"none"`)*: Injects stack canaries to detect and prevent return address hijacking.  
-* **`slab_freelist_hardened`** *(Boolean)*: `CONFIG_SLAB_FREELIST_HARDENED`. Obfuscates freelist pointers using XOR cookies.  
-* **`slab_freelist_random`** *(Boolean)*: `CONFIG_SLAB_FREELIST_RANDOM`. Randomizes allocation order within newly allocated slab pages.  
-* **`randomize_kstack`** *(Boolean)*: `CONFIG_RANDOMIZE_KSTACK_OFFSET_DEFAULT`. Adds a random offset to the kernel stack address on each system call.  
-* **`ubsan_bounds`** *(Boolean)*: `CONFIG_UBSAN_BOUNDS`. Compiles in runtime bounds checking for array indexing.  
-* **`apparmor`** *(Boolean)*: Enables the AppArmor pathname-based Mandatory Access Control LSM.  
-* **`selinux`** *(Boolean)*: Enables the SELinux security module.  
-* **`lockdown_early`** *(Boolean)*: `CONFIG_SECURITY_LOCKDOWN_LSM_EARLY`. Restricts root access to running kernel memory from early boot. Incompatible with unsigned proprietary modules and debuggers.  
-* **`acknowledge_risk`** *(Boolean)*: Explicit safety confirmation required when using `profile = "extreme"` or `cpu.mitigations = "off"`.
+```bash
+--cpu-arch ARCH          # native | generic_v2 | generic_v3 | generic_v4 | znver4 | ...
+--modules-mode MODE      # strict | expanded
+--toolchain TC           # llvm | gcc
+--lto TYPE               # none | thin | full
+--channel CHAN           # mainline | stable | longterm
+--scheduler SCHED        # eevdf | bore | bmq
+--scx DAEMON             # none | scx_lavd | scx_bpfland | scx_layered | ...
+--headers POLICY         # auto | always | never
+--no-headers             # Alias for --headers never
+--footprint TIER         # standard | lean | minimal | embedded
+--pin VERSION            # Exact kernel version (e.g. 7.2.4, 7.3-rc2)
+-j, --jobs N             # Compilation parallelism (0 = auto-detected)
+--no-rust                # Disables Rust-for-Linux support
+```
 
----
+### Build Behaviour Flags
 
-### 3.11. \[gaming\] — NTSync Driver, UCLAMP & Wine/Proton Optimizations
+```bash
+--build-dir DIR          # Override build root directory
+--wizard                 # Always execute the 11-step granular interactive wizard
+--no-prompt              # Never prompt for wizard confirmation; build immediately
+--fresh                  # Force fresh re-extraction of the kernel source tree
+--seed-config FILE       # Ingest seed configuration from a custom file
+--no-install             # Compile Arch packages into PKGDEST without installing
+--kernel-install         # Register kernel via systemd kernel-install(8)
+--force                  # Bypass bare_metal_only virtualization checks
+-y, --yes                # Automatically accept defaults for all prompts
+-v, --verbose            # Enable detailed debug logging
+--json                   # Output structured JSON for --doctor and --show
+--no-color               # Strip ANSI escape sequences from console output
+```
 
-Tuned specifically for low-latency gaming and running Windows titles via Wine and Proton.
+### Exit Codes Contract
 
-* **`ntsync`** *(Boolean)*: Compiles the in-tree `ntsync` driver (`CONFIG_NTSYNC=y` or `=m`) and provisions `/dev/ntsync`. Implements native Windows NT synchronization primitives (mutexes, semaphores, events) directly in the kernel, eliminating `wineserver` IPC overhead and improving frame pacing in multithreaded DirectX 11/12 games.  
-* **`uclamp`** *(Boolean)*: Enables Utilization Clamping (`CONFIG_UCLAMP_TASK=y`). Allows assigning utilization floors (`uclamp.min`) to game render loops, prompting CPU frequency governors to ramp up instantly without waiting for PELT load accumulation.  
-* **`max_map_count`** *(Integer)*: Sets `vm.max_map_count` to `2147483642` (`MAX_INT - 5`). Prevents memory allocation crashes in memory-intensive Windows games, modern anti-cheat modules, and DirectX 12 translation layers.  
-* **`split_lock_mitigate`** *(Boolean)*:  
-  - `true`: Penalizes threads that issue unaligned atomic instructions across cache lines by forcing sleep delays.  
-  - `false`: Disables the artificial sleep penalty, eliminating severe 10ms–20ms frametime spikes in games and emulation software.  
-* **`controllers`** *(Boolean)*: Bundles in-tree drivers and force-feedback support for Xbox, PlayStation (DualShock/DualSense), Nintendo Switch, and Steam controllers.
-
----
-
-### 3.12. \[storage\] — NVMe IOPOLL, Multi-Queue Schedulers & Writeback
-
-Configures the block I/O layer and physical storage handling.
-
-* **`nvme_poll_queues`** *(Integer, 0–128)*: Sets `nvme.poll_queues`. Allocates dedicated completion queues for interrupt-free polling via `io_uring` (`IORING_SETUP_IOPOLL`). Reduces I/O latency to sub-2 µs on high-end NVMe drives at the cost of 100% CPU thread utilization during active polling.  
-* **`io_scheduler`** *(Choice: `"none"`, `"mq-deadline"`, `"bfq"`, `"kyber"`, `"keep"`)*:  
-  - `"none"`: Bypasses software queuing. Recommended for high-speed NVMe drives.  
-  - `"mq-deadline"`: Deadline-based queue sorting. Ideal for single-queue SATA SSDs.  
-  - `"bfq"`: Budget Fair Queueing. Prioritizes interactive UI responsiveness on mechanical HDDs.  
-  - `"kyber"`: Lightweight latency-bounded scheduler designed for fast flash storage.  
-* **`blk_wbt`** *(Boolean)*: `CONFIG_BLK_WBT=y`. Throttles background write operations when read latencies exceed target thresholds to mitigate storage bufferbloat.  
-* **`iocost`** *(Boolean)*: Proportional I/O control model for cgroup v2.  
-* **`extra_filesystems`** *(List of Strings)*: Additional filesystems compiled into the kernel image (e.g., `["btrfs", "f2fs", "xfs"]`).
+| Exit Code | Classification | Cause & Remedy |
+| :---: | :--- | :--- |
+| `0` | **Success** | Build completed, packages generated and/or installed. |
+| `1` | **Generic Error** | Unspecified runtime failure or missing binary. Check logs. |
+| `2` | **Profile Error** | Schema validation failed, missing required keys, or invalid range. |
+| `3` | **Network Error** | Download failure from kernel.org or release mirrors. Check network. |
+| `4` | **Verify Error** | Invariant contract violation (e.g., missing BTF, NTSync, or SCHED_CLASS_EXT). |
+| `5` | **Build Error** | Source compilation error, patch rejection, or link-time failure. |
+| `6` | **Dependency Error**| Essential host tool missing (`clang`, `pahole`, `bc`, `cpio`). |
+| `130` | **Aborted** | Process interrupted by user (`Ctrl-C`); child process groups reaped. |
 
 ---
 
-### 3.13. \[power\] — Energy Models, Idle Governors (TEO) & RCU Lazy
+## 5. Comprehensive Section & Parameter Reference
 
-Optimizes power dissipation, battery longevity, and processor sleep states.
+### 5.1. `[meta]` — Package Metadata & Portability
 
-* **`wq_power_efficient`** *(Boolean)*: `CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y`. Routes unbound workqueues to active CPU cores, allowing idle cores to stay in deep low-power C-states.  
-* **`cpu_idle_governor`** *(Choice: `"teo"`, `"menu"`, `"haltpoll"`)*:  
-  - `"teo"` (Timer Events Oriented): Evaluates upcoming timer deadlines using integer heuristics. Designed for tickless client desktop and laptop workloads.  
-  - `"menu"`: Predictive model tailored for enterprise servers with sustained, predictable workloads.  
-  - `"haltpoll"`: Used strictly inside virtual machines; consumes full CPU power on physical hardware.  
-* **`rcu_lazy`** *(Boolean)*: `CONFIG_RCU_LAZY=y`. Batches non-urgent memory-freeing RCU callbacks for up to 10 seconds. Prevents timer interrupts on idle cores and reduces idle power draw on mobile systems by 5% to 15%.  
-* **`energy_model`** *(Boolean)*: `CONFIG_ENERGY_MODEL=y`. Exposes hardware power and efficiency tables to the scheduler on heterogeneous hybrid CPUs (such as Intel P/E-cores or ARM big.LITTLE).  
-* **`suspend`** *(Boolean)*: Enables suspend-to-RAM (`s2idle` / `deep`).  
-* **`hibernation`** *(Boolean)*: Enables suspend-to-disk (`CONFIG_HIBERNATION=y`).  
-* **`pcie_aspm`** *(Choice: `"default"`, `"powersave"`, `"powersupersave"`, `"performance"`)*: Active State Power Management policy for PCIe links. Setting `"powersave"` or `"powersupersave"` activates PCIe L1.1/L1.2 sub-states, reducing idle power draw for NVMe drives and network cards.  
-* **`hda_power_save`** *(Integer)*: Inactivity timeout in seconds before powering down the audio controller. Setting to `1` or `2` saves 0.5W–1.5W of idle battery draw on laptops.
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `name` | `str` | `""` | `[A-Za-z0-9_.-]+` | **Required**. Profile ID referenced via `--profile <name>`. |
+| `description` | `str` | `""` | Any string | Human-readable description displayed in pickers and tables. |
+| `suffix` | `str` | `""` | `[a-z0-9][a-z0-9-]*` | **Required**. Appended to `LOCALVERSION` (`CONFIG_LOCALVERSION`) and packages (`linux-<suffix>`). |
+| `priority` | `int` | `50` | `1`–`100` | Sorting precedence in profile selectors (lower numbers sort first). |
+| `tags` | `list`| `[]` | Strings | Free-form categorisation tags (e.g. `["gaming", "laptop"]`). |
+| `bare_metal_only`| `bool`| `false` | `true`, `false` | If `true`, strips all hypervisor and paravirt drivers (`CONFIG_HYPERVISOR_GUEST`, `CONFIG_PARAVIRT`, `CONFIG_KVM_GUEST`, `CONFIG_VIRTIO*`). Will fail to boot inside VMs unless `--force` is used. |
+| `portable_package`| `bool`| `false` | `true`, `false` | Builds for distribution across multiple machines. **Strictly forbids** `cpu.arch = "native"` to prevent `#UD` (Invalid Opcode) faults. |
 
 ---
 
-### 3.14. \[network\] — BBR Congestion, CAKE/FQ Qdiscs & Protocol Engines
+### 5.2. `[release]` — Source Channels & Verification
 
-Configures packet scheduling, transport protocols, and network fast paths.
-
-* **`congestion`** *(Choice: `"bbr"`, `"cubic"`, `"reno"`)*:  
-  - `"bbr"`: Bottleneck Bandwidth and Round-trip propagation time model. Maximizes throughput over lossy links and prevents bufferbloat by pacing packet transmission.  
-  - `"cubic"`: Standard loss-based TCP congestion control algorithm.  
-* **`qdisc`** *(Choice: `"fq"`, `"cake"`, `"fq_codel"`, `"fq_pie"`, `"pfifo_fast"`)*:  
-  - `"fq"`: Socket-level pacing discipline. Essential pairing for BBR.  
-  - `"cake"`: Advanced Active Queue Management (AQM) featuring per-host fairness and framing overhead compensation.  
-  - `"fq_codel"`: Upstream standard fair-queuing discipline.  
-* **`mptcp`** *(Boolean)*: Enables Multipath TCP (`CONFIG_MPTCP=y`), allowing connections to bond across multiple network interfaces.  
-* **`xdp`** *(Boolean)*: Enables eXpress Data Path (`CONFIG_XDP_SOCKETS=y`) for high-throughput packet processing via eBPF.  
-* **`nf_conntrack_procfs`** *(Boolean)*: Disabling removes the legacy `/proc/net/nf_conntrack` interface, eliminating lock contention and saving memory on high-throughput systems.  
-* **`tcp_fastopen`** *(Boolean)*: Enables TCP Fast Open (`net.ipv4.tcp_fastopen=3`) for clients and servers to exchange data during initial handshakes.
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `channel` | `str` | `"stable"` | `mainline`, `stable`, `longterm` | Target branch tracked on kernel.org. `mainline` tracks Linus' master tree (Linux 7.3-rc). |
+| `pin` | `str` | `""` | Semantic version | Pins an exact release (e.g. `"7.2.4"`, `"7.3-rc2"`), bypassing channel discovery. |
+| `allow_rc` | `bool`| `true` | `true`, `false` | Permits downloading and building Release Candidate tarballs (`-rcX`). |
+| `min_version` | `str` | `"7.2"` | Major.Minor | Hard version floor. Rejects older trees lacking required 7.2+ interfaces. |
+| `require_signature`| `bool`| `true` | `true`, `false` | Enforces cryptographic PGP signature validation using kernel.org release keys. |
 
 ---
 
-### 3.15. \[modules\] — Streamlined localmodconfig & modprobed-db Safety Nets
+### 5.3. `[scheduler]` — CPU Scheduling Core
 
-Governs kernel module pruning to minimize compile times and binary footprint.
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `type` | `str` | `"eevdf"` | `eevdf`, `bore`, `bmq` | Base scheduler engine: upstream **EEVDF** (`CONFIG_SCHED_FAIR`), FireLzrd's **BORE** (`CONFIG_SCHED_BORE`), or Alfred Chen's **BMQ** (`CONFIG_SCHED_BMQ`). |
+| `scx` | `str` | `"none"` | `none`, `scx_lavd`, `scx_bpfland`, `scx_layered`, `scx_rusty`, `scx_flash`, `scx_p2dq`, `scx_cosmos` | Dynamic BPF scheduler daemon loaded on top of `sched_ext`. |
+| `scx_flags` | `str` | `""` | Shell tokens | Arguments passed to the SCX daemon (e.g. `"--autopilot"`, `"-m performance"`). |
+| `scx_enable_class`| `bool`| `true` | `true`, `false` | Compiles `CONFIG_SCHED_CLASS_EXT=y` (+BTF and BPF JIT support). |
+| `require_patch` | `bool`| `false` | `true`, `false` | Halts the build immediately if an out-of-tree scheduler patch fails to apply. |
+| `allow_vanilla_fallback`| `bool`| `true` | `true`, `false` | Reverts cleanly to upstream EEVDF if a scheduler patch rejects. |
+| `autogroup` | `bool`| `true` | `true`, `false` | `CONFIG_SCHED_AUTOGROUP`. Organises tasks by TTY session to prevent terminal builds from starving desktop interactivity. |
+| `rt_group` | `bool`| `false` | `true`, `false` | `CONFIG_RT_GROUP_SCHED`. Limits real-time bandwidth. Set to `false` for pro-audio and gaming to eliminate PipeWire buffer underruns. |
+| `sched_core` | `bool`| `false` | `true`, `false` | `CONFIG_SCHED_CORE`. SMT core scheduling for side-channel isolation. Incurs 10%–25% throughput loss; disable for single-user systems. |
+| `patch_sources`| `list`| `["cachyos", "upstream_author"]` | Resolvers | Ordered resolvers for fetching out-of-tree scheduler patches. |
 
-* **`mode`** *(Choice: `"strict"`, `"expanded"`)*:  
-  - `"strict"`: Retains only hardware drivers present in the active `modprobed.db` profile or currently loaded in memory.  
-  - `"expanded"`: Retains essential subsystem trees (`drivers/usb`, `drivers/gpu`, `sound`, `net/wireless`, `fs`) to ensure hotplugged devices work reliably.  
-* **`modprobed_db`** *(Boolean)*: Passes historical hardware driver profiles to `localmodconfig` via the `LSMOD` environment variable.  
-* **`modprobed_db_path`** *(String)*: Path to the `modprobed.db` file (defaulting to `~/.config/modprobed.db`).  
-* **`allow_lsmod_fallback`** *(Boolean)*: Falls back to live `lsmod` if `modprobed.db` is missing or unpopulated.  
-* **`lmc_keep_extra`** *(List of Strings)*: Directory paths preserved during `localmodconfig` pruning via the `LMC_KEEP` environment variable.  
-* **`keep_symbols`** *(List of Strings)*: Explicit `CONFIG_*` driver symbols forced to `=m` after pruning.  
-* **`localyesconfig`** *(Boolean)*: Compiles all active modules directly into the monolithic kernel image (`vmlinuz`) instead of producing modular `.ko` files.  
-* **`manage_service`** *(Boolean)*: Automatically enables the `modprobed-db.service` user timer to ensure continuous background hardware logging.  
-* **`sig_force`** *(Boolean)*: Enforces strict module signature verification (`CONFIG_MODULE_SIG_FORCE=y`), blocking unsigned out-of-tree modules.
-
----
-
-### 3.16. \[boot\] — Command-Line Injection & Bootloader Synchronization
-
-Handles command-line parameter baking and bootloader entry generation.
-
-* **`cmdline`** *(Choice: `"bake"`, `"entry"`, `"print"`)*:  
-  - `"bake"`: Compiles kernel parameters directly into the binary via `CONFIG_CMDLINE`. Tamper-resistant; recommended for Unified Kernel Images (UKIs).  
-  - `"entry"`: Writes parameters to external bootloader entries (e.g., systemd-boot configuration files).  
-  - `"print"`: Prints the recommended command-line parameters to the console without writing files.  
-* **`cmdline_extra`** *(String)*: Custom command-line flags appended to the generated parameter string.  
-* **`write_entries`** *(Boolean)*: Automatically installs or updates Boot Loader Specification (BLS) entries under `/boot/loader/entries/`.  
-* **`nowatchdog`** *(Boolean)*: Disables software and hardware NMI watchdogs (`nowatchdog nmi_watchdog=0`), eliminating periodic timer interrupts to minimize system jitter.
+> [!note] EEVDF Mathematical Model
+> EEVDF balances tasks using two metrics:
+> 1. **Eligibility Time**: $V(t) \ge v_i$ (task is eligible to run when its virtual runtime does not exceed system virtual time).
+> 2. **Virtual Deadline**: $d_i = v_i + \frac{q_i}{w_i}$ (prioritises tasks with earlier deadlines, where $q_i$ is allocation slice and $w_i$ is weight).
 
 ---
 
-### 3.17. \[verify\] — Invariant Contract Enforcement
+### 5.4. `[cache]` — Cache-Aware Scheduling (CAS)
 
-Automated validation checks executed against the resolved `.config` before compilation begins.
-
-* **`strict`** *(Boolean)*: If `true`, fails and halts the build if any non-optional Kconfig contract requirement is unsatisfied.  
-* **`optional_symbols`** *(List of Strings)*: Symbols that emit non-fatal warnings rather than build failures if missing.  
-* **`require_ntsync`** *(Boolean)*: Verifies that `CONFIG_NTSYNC` is compiled when `gaming.ntsync = true`.  
-* **`require_btf`** *(Boolean)*: Asserts that `CONFIG_DEBUG_INFO_BTF=y` is present whenever `sched_ext` is enabled.  
-* **`require_sched_ext`** *(Boolean)*: Asserts that `CONFIG_SCHED_CLASS_EXT=y` is enabled when an SCX scheduler is configured.
-
----
-
-### 3.18. \[dusky\] — Seed Configurations & Runtime Dispatch
-
-Internal orchestration settings managing baseline configuration sources and script behavior.
-
-* **`enhanced`** *(Boolean)*: Enables desktop-focused optimizations (disabling deferred framebuffer takeover and turning off boot watchdogs).  
-* **`seed`** *(Choice: `"auto"`, `"snapshot"`, `"arch"`, `"running"`, `"headers"`, `"defconfig"`)*:  
-  - `"auto"`: Evaluates configuration sources in order: saved snapshot $ ightarrow$ Arch upstream packaging config $ ightarrow$ `/proc/config.gz` $ ightarrow$ installed headers $ ightarrow$ `defconfig`.  
-* **`extra_config`** *(Table)*: Arbitrary key-value mappings directly injected into `.config` (e.g., `CONFIG_FOO = true`).  
-* **`reproducible`** *(Boolean)*: Pins `KBUILD_BUILD_TIMESTAMP` and `SOURCE_DATE_EPOCH` to ensure byte-for-byte reproducible kernel builds.
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `sched_cache` | `bool`| `true` | `true`, `false` | `CONFIG_SCHED_CACHE`. Directs scheduler load balancing to respect Last-Level Cache (L3/LLC) domain boundaries. |
+| `llc_aggr_tolerance`| `int` | `1` | `0`–`100` | `0` = disabled. `1` = strict (co-locates tasks only if combined RSS fits in LLC). `>1` = relaxed aggregation. |
+| `llc_aggr_cap` | `int` | `-1` | `-1`–`100` | Runqueue depth cap on an LLC domain before spilling across CCXs. `-1` uses kernel defaults. |
+| `persist` | `bool`| `true` | `true`, `false` | Installs boot-time service (`dusky-tune.service`) to persist CAS sysfs/debugfs tunables across reboots. |
 
 ---
 
-## 4\. Cross-Subsystem Incompatibilities & Conflict Rules
+### 5.5. `[rseq]` — Restartable Sequences Slice Extensions
 
-When designing custom profiles, avoid these known subsystem conflicts:
-
-┌───────────────────────────────────┬───────────────────────────────────┬────────────────────────────────────────────────────────┐
-
-│ Setting A                         │ Setting B                         │ Conflict Mechanism & Resolution                        │
-
-├───────────────────────────────────┼───────────────────────────────────┼────────────────────────────────────────────────────────┤
-
-│ compiler.toolchain \= "gcc"        │ compiler.lto \= "thin" / "full"    │ Clang ThinLTO requires LLVM. The script forces         │
-
-│                                   │                                   │ compiler.lto \= "none" under GCC.                       │
-
-├───────────────────────────────────┼───────────────────────────────────┼────────────────────────────────────────────────────────┤
-
-│ compiler.toolchain \= "gcc"        │ compiler.kcfi \= true              │ kCFI depends on Clang runtime instrumentation.          │
-
-│                                   │                                   │ The script forces compiler.kcfi \= false.               │
-
-├───────────────────────────────────┼───────────────────────────────────┼────────────────────────────────────────────────────────┤
-
-│ scheduler.type \= "bmq"            │ scheduler.scx \!= "none"           │ Project C BMQ replaces EEVDF completely. sched\_ext     │
-
-│                                   │                                   │ requires EEVDF; the script forces scx \= "none".        │
-
-├───────────────────────────────────┼───────────────────────────────────┼────────────────────────────────────────────────────────┤
-
-│ timing.preempt \= "rt"             │ timing.preempt\_dynamic \= true     │ PREEMPT\_RT replaces core spinlocks and does not        │
-
-│                                   │                                   │ support dynamic preemption switching.                  │
-
-├───────────────────────────────────┼───────────────────────────────────┼────────────────────────────────────────────────────────┤
-
-│ memory.slub\_tiny \= true           │ memory.slab\_buckets \= true        │ Hardened SLAB buckets depend on full SLUB allocator    │
-
-│                                   │                                   │ multi-tier caches; incompatible with SLUB\_TINY.        │
-
-├───────────────────────────────────┼───────────────────────────────────┼────────────────────────────────────────────────────────┤
-
-│ memory.trim\_unused\_ksyms \= true   │ compiler.headers \!= "never"       │ Trimming unreferenced symbols breaks out-of-tree       │
-
-│                                   │                                   │ external DKMS module builds.                           │
-
-├───────────────────────────────────┼───────────────────────────────────┼────────────────────────────────────────────────────────┤
-
-│ compiler.rust \= true              │ compiler.lto \!= "none" \+ BTF      │ LLVM bitcode mismatch between Clang and rustc can      │
-
-│                                   │                                   │ break pahole BTF extraction during linking.            │
-
-├───────────────────────────────────┼───────────────────────────────────┼────────────────────────────────────────────────────────┤
-
-│ memory.swap\_backend \= "zram"      │ zswap.enabled \= 1                 │ Causes an inefficient double-compression loop. ZSWAP   │
-
-│                                   │                                   │ must be disabled when ZRAM swap is active.             │
-
-├───────────────────────────────────┼───────────────────────────────────┼────────────────────────────────────────────────────────┤
-
-│ cpu.mitigations \= "off"           │ security.profile \= "hardened"     │ Direct security policy contradiction. The script       │
-
-│                                   │                                   │ overrides cpu.mitigations to "on".                     │
-
-├───────────────────────────────────┼───────────────────────────────────┼────────────────────────────────────────────────────────┤
-
-│ meta.portable\_package \= true      │ cpu.arch \= "native"               │ Native compilation emits non-portable instructions.    │
-
-│                                   │                                   │ The script rejects this configuration.                 │
-
-└───────────────────────────────────┴───────────────────────────────────┴────────────────────────────────────────────────────────┘
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `slice_extension` | `bool`| `true` | `true`, `false` | `CONFIG_RSEQ_SLICE_EXTENSION`. Allows threads inside lockless per-CPU critical sections to request a short preemption delay. |
+| `slice_ext_nsec` | `int` | `10000` | `1000`–`100000` | Maximum preemption extension duration in nanoseconds (default: 10 µs). |
 
 ---
 
-## 5\. Production Configuration Templates (TOML Profiles)
-
-### Template 1: Sub-300MB Idle Minimalist (Low-RAM / Embedded)
-
-*Designed for 4GB–8GB RAM systems, lightweight netbooks, or headless workloads targeting minimal base memory usage.*
-
-\[meta\]
-
-name \= "minimal\_strict"
-
-description \= "Sub-300MB idle footprint, SLUB\_TINY, stripped debugging, ZRAM"
-
-suffix \= "dusky-minimal"
-
-priority \= 31
-
-bare\_metal\_only \= true
-
-portable\_package \= false
-
-\[release\]
-
-channel \= "stable"
-
-allow\_rc \= true
-
-require\_signature \= true
-
-\[scheduler\]
-
-type \= "eevdf"
-
-scx \= "none"
-
-scx\_enable\_class \= false
-
-autogroup \= true
-
-rt\_group \= false
-
-sched\_core \= false
-
-\[cache\]
-
-sched\_cache \= false
-
-\[rseq\]
-
-slice\_extension \= true
-
-slice\_ext\_nsec \= 10000
-
-\[cpu\]
-
-arch \= "native"
-
-governor \= "schedutil"
-
-mitigations \= "on"
-
-nr\_cpus \= 0
-
-smt \= true
-
-mce \= true
-
-prefcore \= true
-
-compat32 \= false
-
-\[timing\]
-
-hz \= 250
-
-tickless \= "idle"
-
-preempt \= "lazy"
-
-preempt\_dynamic \= false
-
-\[memory\]
-
-footprint \= "minimal"
-
-thp \= "never"
-
-thp\_defrag \= "never"
-
-mglru \= true
-
-mglru\_mask \= 7
-
-mglru\_min\_ttl\_ms \= 1000
-
-swap\_backend \= "zram"
-
-zram\_algo \= "zstd"
-
-zram\_size\_pct \= 150
-
-zram\_multi\_comp \= false
-
-swappiness \= 180
-
-vfs\_cache\_pressure \= 150
-
-watermark\_scale\_factor \= 125
-
-dirty\_bytes\_mb \= 64
-
-slub\_tiny \= true
-
-slab\_buckets \= false
-
-per\_vma\_lock \= true
-
-numa \= false
-
-ksm \= false
-
-damon \= true
-
-hugetlbfs \= false
-
-kallsyms\_all \= false
-
-memcg \= true
-
-base\_small \= true
-
-log\_buf\_shift \= 15
-
-tracing \= "minimal"
-
-kexec \= false
-
-ikconfig \= false
-
-systemd\_oomd \= true
-
-trim\_unused\_ksyms \= true
-
-\[compiler\]
-
-toolchain \= "llvm"
-
-optimize \= "size"
-
-lto \= "thin"
-
-thinlto\_cache \= true
-
-thinlto\_cache\_size\_gb \= 10
-
-fdo \= "none"
-
-kcfi \= false
-
-debug\_info \= "none"
-
-module\_compress \= "zstd"
-
-rust \= false
-
-headers \= "never"
-
-modversions \= false
-
-\[security\]
-
-profile \= "balanced"
-
-init\_on\_alloc \= true
-
-init\_on\_free \= false
-
-hardened\_usercopy \= true
-
-stackprotector \= "strong"
-
-slab\_freelist\_hardened \= false
-
-slab\_freelist\_random \= false
-
-randomize\_kstack \= true
-
-ubsan\_bounds \= false
-
-lockdown\_early \= false
-
-acknowledge\_risk \= false
-
-\[gaming\]
-
-ntsync \= false
-
-uclamp \= false
-
-max\_map\_count \= 2147483642
-
-split\_lock\_mitigate \= true
-
-controllers \= false
-
-\[storage\]
-
-nvme\_poll\_queues \= 0
-
-io\_scheduler \= "mq-deadline"
-
-blk\_wbt \= true
-
-iocost \= false
-
-\[power\]
-
-wq\_power\_efficient \= true
-
-cpu\_idle\_governor \= "teo"
-
-rcu\_lazy \= true
-
-energy\_model \= false
-
-suspend \= true
-
-hibernation \= false
-
-pcie\_aspm \= "powersave"
-
-hda\_power\_save \= 1
-
-\[network\]
-
-congestion \= "bbr"
-
-qdisc \= "fq\_codel"
-
-mptcp \= false
-
-xdp \= false
-
-nf\_conntrack\_procfs \= false
-
-tcp\_fastopen \= true
-
-\[modules\]
-
-mode \= "strict"
-
-modprobed\_db \= true
-
-allow\_lsmod\_fallback \= true
-
-localyesconfig \= false
-
-manage\_service \= true
-
-sig\_force \= false
-
-\[boot\]
-
-cmdline \= "bake"
-
-nowatchdog \= true
-
-write\_entries \= true
-
-\[verify\]
-
-strict \= true
-
-require\_ntsync \= false
-
-require\_btf \= false
-
-require\_sched\_ext \= false
+### 5.6. `[cpu]` — Microarchitecture, P-State Autonomy & Mitigations
+
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `arch` | `str` | `"native"` | `native`, `generic_v2`–`v4`, `znver1`–`v5`, `alderlake`–`arrowlake`, etc. | Target CPU architecture. `native` generates `-march=native` (`CONFIG_X86_NATIVE_CPU`). |
+| `march` | `str` | `""` | Compiler flags | Optional compiler flags appended directly to `KCFLAGS`. |
+| `governor` | `str` | `"schedutil"`| `schedutil`, `performance`, `powersave`, `ondemand`, `conservative` | Default CPU frequency scaling governor (`CONFIG_CPU_FREQ_DEFAULT_GOV_*`). |
+| `amd_pstate` | `str` | `"active"` | `active`, `guided`, `passive`, `disable`, `undefined` | AMD P-State mode (`CONFIG_X86_AMD_PSTATE_DEFAULT_MODE`). `active` enables autonomous hardware EPP. |
+| `epp` | `str` | `"balance_performance"` | `default`, `performance`, `balance_performance`, `balance_power`, `power` | Hardware Energy-Performance Preference register hint applied at boot. |
+| `mitigations` | `str` | `"on"` | `on`, `off`, `nosmt` | CPU vulnerability mitigations (`CONFIG_CPU_MITIGATIONS`). `"off"` removes runtime overheads on trusted machines. |
+| `nr_cpus` | `int` | `0` | `0`–`8192` | `CONFIG_NR_CPUS`. `0` auto-detects host thread count rounded up to nearest multiple of 8. |
+| `smt` | `bool`| `true` | `true`, `false` | Enables Simultaneous Multi-Threading / Hyper-Threading (`CONFIG_SCHED_SMT=y`). |
+| `mce` | `bool`| `true` | `true`, `false` | Machine Check Exception handling (`CONFIG_X86_MCE`) for hardware error logging. |
+| `prefcore` | `bool`| `true` | `true`, `false` | Preferred core awareness (`CONFIG_SCHED_MC_PRIO`) for boosting highest-binned silicon cores. |
+| `compat32` | `bool`| `true` | `true`, `false` | `CONFIG_IA32_EMULATION`. Required for Steam, 32-bit Wine/Proton games, and legacy binaries. |
 
 ---
 
-### Template 2: Unconstrained Maximum Performance (Gaming / Workstation)
-
-*Tuned for maximum throughput, low dispatch latency, and frame-time consistency in gaming and heavy multithreaded workloads.*
-
-\[meta\]
-
-name \= "gaming\_max"
-
-description \= "Unconstrained gaming profile: BORE, scx\_bpfland, 1000Hz, NTSync"
-
-suffix \= "dusky-gaming"
-
-priority \= 10
-
-bare\_metal\_only \= true
-
-portable\_package \= false
-
-\[release\]
-
-channel \= "stable"
-
-allow\_rc \= true
-
-require\_signature \= true
-
-\[scheduler\]
-
-type \= "bore"
-
-scx \= "scx\_bpfland"
-
-scx\_flags \= "-m performance"
-
-scx\_enable\_class \= true
-
-allow\_vanilla\_fallback \= true
-
-autogroup \= true
-
-rt\_group \= false
-
-sched\_core \= false
-
-\[cache\]
-
-sched\_cache \= true
-
-llc\_aggr\_tolerance \= 0
-
-persist \= true
-
-\[rseq\]
-
-slice\_extension \= true
-
-slice\_ext\_nsec \= 10000
-
-\[cpu\]
-
-arch \= "native"
-
-governor \= "performance"
-
-amd\_pstate \= "active"
-
-epp \= "performance"
-
-mitigations \= "off"
-
-smt \= true
-
-mce \= true
-
-prefcore \= true
-
-compat32 \= true
-
-\[timing\]
-
-hz \= 1000
-
-tickless \= "idle"
-
-preempt \= "full"
-
-preempt\_dynamic \= true
-
-\[memory\]
-
-footprint \= "standard"
-
-thp \= "always"
-
-thp\_defrag \= "defer+madvise"
-
-mglru \= true
-
-swap\_backend \= "zram"
-
-zram\_algo \= "zstd"
-
-zram\_size\_pct \= 50
-
-zram\_multi\_comp \= false
-
-swappiness \= 150
-
-vfs\_cache\_pressure \= 50
-
-watermark\_scale\_factor \= 150
-
-watermark\_boost\_factor \= 0
-
-dirty\_bytes\_mb \= 256
-
-slub\_tiny \= false
-
-slab\_buckets \= false
-
-per\_vma\_lock \= true
-
-numa \= true
-
-ksm \= false
-
-hugetlbfs \= true
-
-kallsyms\_all \= true
-
-tracing \= "full"
-
-systemd\_oomd \= false
-
-\[compiler\]
-
-toolchain \= "llvm"
-
-optimize \= "o2"
-
-lto \= "thin"
-
-thinlto\_cache \= true
-
-thinlto\_cache\_size\_gb \= 20
-
-fdo \= "none"
-
-kcfi \= false
-
-debug\_info \= "reduced"
-
-module\_compress \= "zstd"
-
-rust \= false
-
-headers \= "auto"
-
-\[security\]
-
-profile \= "extreme"
-
-init\_on\_alloc \= false
-
-init\_on\_free \= false
-
-hardened\_usercopy \= false
-
-stackprotector \= "regular"
-
-slab\_freelist\_hardened \= false
-
-slab\_freelist\_random \= false
-
-randomize\_kstack \= false
-
-ubsan\_bounds \= false
-
-acknowledge\_risk \= true
-
-\[gaming\]
-
-ntsync \= true
-
-uclamp \= true
-
-max\_map\_count \= 2147483642
-
-split\_lock\_mitigate \= false
-
-controllers \= true
-
-\[storage\]
-
-nvme\_poll\_queues \= 0
-
-io\_scheduler \= "none"
-
-blk\_wbt \= true
-
-iocost \= false
-
-\[power\]
-
-wq\_power\_efficient \= false
-
-cpu\_idle\_governor \= "teo"
-
-rcu\_lazy \= false
-
-energy\_model \= true
-
-suspend \= true
-
-hibernation \= false
-
-pcie\_aspm \= "performance"
-
-hda\_power\_save \= 0
-
-\[network\]
-
-congestion \= "bbr"
-
-qdisc \= "cake"
-
-mptcp \= true
-
-xdp \= false
-
-tcp\_fastopen \= true
-
-\[modules\]
-
-mode \= "strict"
-
-modprobed\_db \= true
-
-allow\_lsmod\_fallback \= true
-
-localyesconfig \= false
-
-manage\_service \= true
-
-\[boot\]
-
-cmdline \= "bake"
-
-nowatchdog \= true
-
-write\_entries \= true
-
-\[verify\]
-
-strict \= true
-
-require\_ntsync \= true
-
-require\_btf \= true
-
-require\_sched\_ext \= true
+### 5.7. `[timing]` — Clock Cadence, PREEMPT_LAZY & Tickless Modes
+
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `hz` | `int` | `1000` | `100`, `250`, `300`, `500`, `600`, `750`, `1000` | Timer interrupt frequency (`CONFIG_HZ_*`). Non-standard rates (500, 600, 750) are injected via `kernel/Kconfig.hz`. |
+| `tickless` | `str` | `"idle"` | `periodic`, `idle`, `full` | `idle` (`CONFIG_NO_HZ_IDLE`) stops ticks on idle CPUs. `full` (`CONFIG_NO_HZ_FULL`) requires `nohz_full=` parameter. |
+| `preempt` | `str` | `"lazy"` | `lazy`, `full`, `rt` | Preemption model (`CONFIG_PREEMPT_LAZY`, `CONFIG_PREEMPT`, `CONFIG_PREEMPT_RT`). |
+| `preempt_dynamic`| `bool`| `true` | `true`, `false` | `CONFIG_PREEMPT_DYNAMIC`. Allows changing preemption at boot (`preempt=`) or runtime via debugfs. |
+
+> [!info] PREEMPT_LAZY Architectural Mechanism
+> In Linux 7.2+, `PREEMPT_LAZY` decouples urgent rescheduling from normal preemption:
+> $$\text{Preemption Trigger} \rightarrow \begin{cases} \mathbf{TIF\_NEED\_RESCHED} & \text{Urgent: Real-Time tasks preempt immediately} \\ \mathbf{TIF\_NEED\_RESCHED\_LAZY} & \text{Fair: Tasks run until slice boundary or voluntary yield} \end{cases}$$
 
 ---
 
-### Template 3: Maximum Battery Endurance (Laptops / Handhelds)
-
-*Engineered to keep mobile processors in deep package C-states and minimize background wakeups.*
-
-\[meta\]
-
-name \= "battery\_efficiency"
-
-description \= "Maximum battery profile: TEO, RCU lazy, powersupersave ASPM, 300Hz"
-
-suffix \= "dusky-battery"
-
-priority \= 20
-
-bare\_metal\_only \= true
-
-portable\_package \= false
-
-\[release\]
-
-channel \= "stable"
-
-allow\_rc \= true
-
-require\_signature \= true
-
-\[scheduler\]
-
-type \= "eevdf"
-
-scx \= "scx\_lavd"
-
-scx\_flags \= "--autopower"
-
-scx\_enable\_class \= true
-
-autogroup \= true
-
-rt\_group \= false
-
-sched\_core \= false
-
-\[cache\]
-
-sched\_cache \= true
-
-llc\_aggr\_tolerance \= 1
-
-persist \= true
-
-\[rseq\]
-
-slice\_extension \= true
-
-slice\_ext\_nsec \= 10000
-
-\[cpu\]
-
-arch \= "native"
-
-governor \= "powersave"
-
-amd\_pstate \= "active"
-
-epp \= "power"
-
-mitigations \= "on"
-
-smt \= true
-
-mce \= true
-
-prefcore \= true
-
-compat32 \= true
-
-\[timing\]
-
-hz \= 300
-
-tickless \= "idle"
-
-preempt \= "lazy"
-
-preempt\_dynamic \= true
-
-\[memory\]
-
-footprint \= "lean"
-
-thp \= "madvise"
-
-thp\_defrag \= "defer"
-
-mglru \= true
-
-swap\_backend \= "zram"
-
-zram\_algo \= "zstd"
-
-zram\_recomp\_algo \= "zstd"
-
-zram\_size\_pct \= 50
-
-zram\_multi\_comp \= true
-
-swappiness \= 180
-
-vfs\_cache\_pressure \= 100
-
-watermark\_scale\_factor \= 125
-
-dirty\_bytes\_mb \= 128
-
-slub\_tiny \= false
-
-per\_vma\_lock \= true
-
-numa \= false
-
-tracing \= "minimal"
-
-\[compiler\]
-
-toolchain \= "llvm"
-
-optimize \= "o2"
-
-lto \= "thin"
-
-thinlto\_cache \= true
-
-thinlto\_cache\_size\_gb \= 15
-
-debug\_info \= "none"
-
-module\_compress \= "zstd"
-
-rust \= false
-
-headers \= "auto"
-
-\[security\]
-
-profile \= "balanced"
-
-init\_on\_alloc \= true
-
-init\_on\_free \= false
-
-hardened\_usercopy \= true
-
-stackprotector \= "strong"
-
-slab\_freelist\_hardened \= true
-
-slab\_freelist\_random \= true
-
-randomize\_kstack \= true
-
-ubsan\_bounds \= false
-
-\[gaming\]
-
-ntsync \= true
-
-uclamp \= false
-
-max\_map\_count \= 2147483642
-
-split\_lock\_mitigate \= true
-
-controllers \= true
-
-\[storage\]
-
-nvme\_poll\_queues \= 0
-
-io\_scheduler \= "none"
-
-blk\_wbt \= true
-
-iocost \= false
-
-\[power\]
-
-wq\_power\_efficient \= true
-
-cpu\_idle\_governor \= "teo"
-
-rcu\_lazy \= true
-
-energy\_model \= true
-
-suspend \= true
-
-hibernation \= true
-
-pcie\_aspm \= "powersupersave"
-
-hda\_power\_save \= 2
-
-\[network\]
-
-congestion \= "bbr"
-
-qdisc \= "fq\_codel"
-
-mptcp \= false
-
-xdp \= false
-
-tcp\_fastopen \= true
-
-\[modules\]
-
-mode \= "strict"
-
-modprobed\_db \= true
-
-allow\_lsmod\_fallback \= true
-
-\[boot\]
-
-cmdline \= "bake"
-
-nowatchdog \= true
-
-write\_entries \= true
-
-\[verify\]
-
-strict \= true
-
-require\_ntsync \= false
-
-require\_btf \= true
-
-require\_sched\_ext \= true
+### 5.8. `[memory]` — Paging, Multi-Gen LRU, Compressed Swap & Footprints
+
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `footprint` | `str` | `"standard"`| `standard`, `lean`, `minimal`, `embedded` | Footprint tier. Bundles progressive Kconfig reductions for low-RAM systems. |
+| `thp` | `str` | `"madvise"` | `always`, `madvise`, `never` | Transparent Huge Pages mode (`CONFIG_TRANSPARENT_HUGEPAGE_*`). |
+| `thp_defrag` | `str` | `"defer+madvise"` | `always`, `defer`, `defer+madvise`, `madvise`, `never` | Memory defragmentation strategy. `defer+madvise` prevents synchronous frame stalls. |
+| `thp_shmem` | `str` | `"never"` | `always`, `within_size`, `advise`, `never` | Transparent huge pages policy for shared memory and `tmpfs`. |
+| `mglru` | `bool`| `true` | `true`, `false` | `CONFIG_LRU_GEN=y`. Multi-Gen LRU replacement for legacy two-list page reclamation. |
+| `mglru_mask` | `int` | `7` | `0`–`7` | MGLRU bitmask (`1` = anon, `2` = file, `4` = page-table scan). `7` enables all paths. |
+| `mglru_min_ttl_ms`| `int` | `1000` | `0`–`60000` | Minimum generational TTL in milliseconds to protect active sets from thrashing. |
+| `swap_backend` | `str` | `"zram"` | `zram`, `zswap`, `none` | Compressed swap architecture (`CONFIG_ZRAM` vs `CONFIG_ZSWAP`). |
+| `zram_algo` | `str` | `"zstd"` | `zstd`, `lz4`, `lz4hc`, `lzo-rle` | Primary ZRAM compression algorithm (`CONFIG_ZRAM_DEF_COMP_*`). |
+| `zram_recomp_algo`| `str` | `"zstd"` | `zstd`, `lz4`, `lz4hc`, `lzo-rle` | Secondary recompression algorithm for idle pages (`CONFIG_ZRAM_MULTI_COMP`). |
+| `zram_size_pct` | `int` | `100` | `10`–`400` | ZRAM device capacity as a percentage of physical RAM. |
+| `zram_multi_comp`| `bool`| `true` | `true`, `false` | Enables multi-compression streams and hourly idle recompression timer (`CONFIG_ZRAM_MULTI_COMP`). |
+| `zswap_compressor`| `str` | `"zstd"` | `zstd`, `lz4`, `lz4hc`, `lzo` | Compression algorithm used by zswap (if `swap_backend = "zswap"`). |
+| `zswap_max_pool_pct`| `int`| `25` | `5`–`80` | Maximum percentage of RAM zswap pool may occupy. |
+| `swappiness` | `int` | `0` | `0`–`200` | `vm.swappiness`. `0` auto-selects: `180` for zram, `100` for zswap, `60` for none. |
+| `vfs_cache_pressure`| `int`| `0` | `0`–`1000` | `0` auto-selects based on footprint tier (`50`–`70` for desktop, `150`–`200` for low-RAM). |
+| `watermark_scale_factor`| `int`| `125` | `10`–`3000` | Distance between memory watermarks. Raising wakes `kswapd` earlier under pressure. |
+| `watermark_boost_factor`| `int`| `0` | `0`–`30000` | High-order allocation boost. Set to `0` for zram/gaming to stop erratic reclaim bursts. |
+| `compaction_proactiveness`| `int`| `0` | `0`–`100` | Proactiveness of background memory compaction (`kcompactd`). `0` = auto. |
+| `dirty_bytes_mb`| `int` | `0` | `0`–`65536` | Hard dirty memory byte ceiling in MiB (`0` uses percentage-based defaults). |
+| `slub_tiny` | `bool`| `false` | `true`, `false` | `CONFIG_SLUB_TINY`. Strips per-CPU partial slab lists. Saves 20–60 MB RAM; sacrifices scalability. |
+| `slab_buckets` | `bool`| `false` | `true`, `false` | `CONFIG_SLAB_BUCKETS`. Hardens slab allocations into discrete size buckets. Incompatible with `slub_tiny`. |
+| `per_vma_lock` | `bool`| `true` | `true`, `false` | `CONFIG_PER_VMA_LOCK`. Enables concurrent page faults across multiple threads. |
+| `numa` | `bool`| `true` | `true`, `false` | Non-Uniform Memory Access architecture (`CONFIG_NUMA`). Disabling saves 15–35 MB. |
+| `numa_balancing`| `bool`| `false` | `true`, `false` | Automatic page migration across NUMA nodes (`CONFIG_NUMA_BALANCING`). |
+| `ksm` | `bool`| `true` | `true`, `false` | `CONFIG_KSM`. Kernel Samepage Merging memory deduplication framework. |
+| `ksm_run` | `bool`| `false` | `true`, `false` | Automatically enables `ksmd` at boot via sysfs. |
+| `damon` | `bool`| `false` | `true`, `false` | Data Access Monitoring (`CONFIG_DAMON`) and proactive page reclaim. |
+| `page_reporting`| `bool`| `false` | `true`, `false` | Reports freed pages back to hypervisor (`CONFIG_PAGE_REPORTING`, VM guests only). |
+| `hugetlbfs` | `bool`| `true` | `true`, `false` | Traditional HugeTLB filesystem support (`CONFIG_HUGETLBFS`). |
+| `kallsyms_all` | `bool`| `true` | `true`, `false` | Embeds all symbols in kernel image (`CONFIG_KALLSYMS_ALL`). `false` saves 2–4 MB. |
+| `memcg` | `bool`| `true` | `true`, `false` | Memory cgroup controller (`CONFIG_MEMCG`). Required for `systemd-oomd`. |
+| `base_small` | `bool`| `false` | `true`, `false` | `CONFIG_BASE_SMALL`. Shrinks core kernel hash tables for minimal/embedded footprints. |
+| `log_buf_shift` | `int` | `0` | `0`, `12`–`25` | Kernel log ring-buffer exponent (`CONFIG_LOG_BUF_SHIFT`). `0` auto-selects. |
+| `tracing` | `str` | `"auto"` | `auto`, `full`, `minimal` | ftrace/kprobes/uprobes surface. `auto` enables full tracing only when an SCX daemon is selected. |
+| `kexec` | `bool`| `true` | `true`, `false` | Kernel image fast reloading without BIOS reboot (`CONFIG_KEXEC`). |
+| `ikconfig` | `bool`| `true` | `true`, `false` | Embeds `.config` into `/proc/config.gz` (`CONFIG_IKCONFIG_PROC`). |
+| `systemd_oomd` | `bool`| `false` | `true`, `false` | Configures systemd PSI-based userspace out-of-memory daemon. |
+| `trim_unused_ksyms`| `bool`| `false`| `true`, `false` | Drops unreferenced symbols from kernel binary. Requires `compiler.headers = "never"`. |
+| `dead_code_elimination`| `bool`| `false`| `true`, `false` | `CONFIG_LD_DEAD_CODE_DATA_ELIMINATION` (inert on x86-64; kept for schema completeness). |
 
 ---
 
-### Template 4: The Golden Ratio (Daily Driver Workstation & Laptop)
-
-*Balanced general-purpose profile providing low desktop latency, safe memory margins, full security mitigations, and solid battery life.*
-
-\[meta\]
-
-name \= "dusky\_balanced"
-
-description \= "Balanced profile: EEVDF, PREEMPT\_LAZY, 500Hz, ThinLTO, ZRAM"
-
-suffix \= "dusky-balanced"
-
-priority \= 1
-
-bare\_metal\_only \= true
-
-portable\_package \= false
-
-\[release\]
-
-channel \= "stable"
-
-allow\_rc \= true
-
-require\_signature \= true
-
-\[scheduler\]
-
-type \= "eevdf"
-
-scx \= "scx\_lavd"
-
-scx\_flags \= "--autopilot"
-
-scx\_enable\_class \= true
-
-autogroup \= true
-
-rt\_group \= false
-
-sched\_core \= false
-
-\[cache\]
-
-sched\_cache \= true
-
-llc\_aggr\_tolerance \= 1
-
-persist \= true
-
-\[rseq\]
-
-slice\_extension \= true
-
-slice\_ext\_nsec \= 10000
-
-\[cpu\]
-
-arch \= "native"
-
-governor \= "schedutil"
-
-amd\_pstate \= "active"
-
-epp \= "balance\_performance"
-
-mitigations \= "on"
-
-smt \= true
-
-mce \= true
-
-prefcore \= true
-
-compat32 \= true
-
-\[timing\]
-
-hz \= 500
-
-tickless \= "idle"
-
-preempt \= "lazy"
-
-preempt\_dynamic \= true
-
-\[memory\]
-
-footprint \= "standard"
-
-thp \= "madvise"
-
-thp\_defrag \= "defer+madvise"
-
-mglru \= true
-
-swap\_backend \= "zram"
-
-zram\_algo \= "zstd"
-
-zram\_recomp\_algo \= "zstd"
-
-zram\_size\_pct \= 75
-
-zram\_multi\_comp \= true
-
-swappiness \= 160
-
-vfs\_cache\_pressure \= 100
-
-watermark\_scale\_factor \= 125
-
-dirty\_bytes\_mb \= 128
-
-slub\_tiny \= false
-
-per\_vma\_lock \= true
-
-numa \= true
-
-tracing \= "auto"
-
-systemd\_oomd \= true
-
-\[compiler\]
-
-toolchain \= "llvm"
-
-optimize \= "o2"
-
-lto \= "thin"
-
-thinlto\_cache \= true
-
-thinlto\_cache\_size\_gb \= 20
-
-debug\_info \= "reduced"
-
-module\_compress \= "zstd"
-
-rust \= false
-
-headers \= "auto"
-
-\[security\]
-
-profile \= "balanced"
-
-init\_on\_alloc \= true
-
-init\_on\_free \= false
-
-hardened\_usercopy \= true
-
-stackprotector \= "strong"
-
-slab\_freelist\_hardened \= true
-
-slab\_freelist\_random \= true
-
-randomize\_kstack \= true
-
-ubsan\_bounds \= false
-
-\[gaming\]
-
-ntsync \= true
-
-uclamp \= true
-
-max\_map\_count \= 2147483642
-
-split\_lock\_mitigate \= false
-
-controllers \= true
-
-\[storage\]
-
-nvme\_poll\_queues \= 0
-
-io\_scheduler \= "none"
-
-blk\_wbt \= true
-
-iocost \= false
-
-\[power\]
-
-wq\_power\_efficient \= true
-
-cpu\_idle\_governor \= "teo"
-
-rcu\_lazy \= true
-
-energy\_model \= true
-
-suspend \= true
-
-hibernation \= true
-
-pcie\_aspm \= "powersave"
-
-hda\_power\_save \= 1
-
-\[network\]
-
-congestion \= "bbr"
-
-qdisc \= "fq"
-
-mptcp \= true
-
-xdp \= false
-
-tcp\_fastopen \= true
-
-\[modules\]
-
-mode \= "strict"
-
-modprobed\_db \= true
-
-allow\_lsmod\_fallback \= true
-
-\[boot\]
-
-cmdline \= "bake"
-
-nowatchdog \= true
-
-write\_entries \= true
-
-\[verify\]
-
-strict \= true
-
-require\_ntsync \= true
-
-require\_btf \= true
-
-require\_sched\_ext \= true
+### 5.9. `[compiler]` — Toolchain, LTO, kCFI & Rust
+
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `toolchain` | `str` | `"llvm"` | `llvm`, `gcc` | Compiler toolchain. `llvm` uses Clang/LLD (required for ThinLTO, kCFI, Rust). |
+| `optimize` | `str` | `"o2"` | `o2`, `o3`, `size` | Optimization flag. `o3` injects `-O3` via `KCFLAGS`; `size` uses `-Os`. |
+| `lto` | `str` | `"thin"` | `none`, `thin`, `full` | Link-Time Optimization (`CONFIG_LTO_CLANG_THIN` / `CONFIG_LTO_CLANG_FULL`). |
+| `thinlto_cache` | `bool`| `true` | `true`, `false` | Persists ThinLTO bitcode cache across compilation runs. |
+| `thinlto_cache_size_gb`| `int`| `20` | `1`–`500` | Storage ceiling for pruning ThinLTO object cache. |
+| `fdo` | `str` | `"none"` | `none`, `autofdo`, `autofdo_propeller` | Profile-Guided Optimization using hardware PMU counters. |
+| `fdo_profile_dir`| `str`| `""` | Directory path | Directory holding `kernel.afdo` or Propeller profile files. |
+| `kcfi` | `bool`| `false` | `true`, `false` | Forward-edge Control Flow Integrity (`CONFIG_CFI_CLANG`) with FineIBT (`CONFIG_X86_KERNEL_IBT`). |
+| `debug_info` | `str` | `"reduced"`| `none`, `reduced`, `full` | Debug symbols level. `reduced` enables DWARF5 (required for BTF/eBPF). |
+| `module_compress`| `str` | `"zstd"` | `zstd`, `xz`, `gzip`, `none` | In-tree kernel module compression algorithm (`CONFIG_MODULE_COMPRESS_*`). |
+| `rust` | `bool`| `true` | `true`, `false` | Compiles Rust-for-Linux infrastructure (`CONFIG_RUST=y`). |
+| `jobs` | `int` | `0` | `0`–`1024` | Parallel build threads (`0` auto-calculates from CPU cores and available RAM). |
+| `headers` | `str` | `"auto"` | `auto`, `always`, `never` | Package headers policy. `auto` generates headers only if DKMS modules are installed on the host. |
+| `modversions` | `bool`| `false` | `true`, `false` | `CONFIG_MODVERSIONS`. Generates symbol CRCs for external module ABI validation. |
 
 ---
 
-## 6\. Compilation & Operational Workflow
+### 5.10. `[security]` — Hardening Profiles & Defenses
 
-### Step 1: Initialize System Tools & Module Profiling
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `profile` | `str` | `"balanced"`| `balanced`, `extreme`, `hardened` | Hardening baseline bundle: balanced desktop, extreme performance, or KSPP hardened. |
+| `init_on_alloc` | `bool`| `true` | `true`, `false` | Zeroes pages and slabs on allocation (`CONFIG_INIT_ON_ALLOC_DEFAULT_ON`). |
+| `init_on_free` | `bool`| `false` | `true`, `false` | Clears memory blocks immediately when freed (`CONFIG_INIT_ON_FREE_DEFAULT_ON`). Heavy overhead (5%–12%). |
+| `hardened_usercopy`| `bool`| `true` | `true`, `false` | Validates bounds on `copy_to_user()` / `copy_from_user()` (`CONFIG_HARDENED_USERCOPY`). |
+| `stackprotector`| `str` | `"strong"` | `strong`, `regular`, `none` | Injects canary protections to detect stack buffer overflows (`CONFIG_STACKPROTECTOR_STRONG`). |
+| `slab_freelist_hardened`| `bool`| `true` | `true`, `false` | Obfuscates slab freelist pointers using XOR cookies (`CONFIG_SLAB_FREELIST_HARDENED`). |
+| `slab_freelist_random`| `bool`| `true` | `true`, `false` | Randomizes slab allocation order (`CONFIG_SLAB_FREELIST_RANDOM`). |
+| `randomize_kstack`| `bool`| `true` | `true`, `false` | Randomizes kernel stack offset on each syscall (`CONFIG_RANDOMIZE_KSTACK_OFFSET_DEFAULT`). |
+| `ubsan_bounds` | `bool`| `true` | `true`, `false` | Runtime array index bounds validation (`CONFIG_UBSAN_BOUNDS`). |
+| `apparmor` | `bool`| `false` | `true`, `false` | In-tree AppArmor Mandatory Access Control LSM (`CONFIG_SECURITY_APPARMOR`). |
+| `selinux` | `bool`| `false` | `true`, `false` | In-tree SELinux module (`CONFIG_SECURITY_SELINUX`). |
+| `lockdown_early`| `bool`| `false` | `true`, `false` | Enables early kernel lockdown (`CONFIG_SECURITY_LOCKDOWN_LSM_EARLY`). |
+| `acknowledge_risk`| `bool`| `false` | `true`, `false` | **Required safety flag** when selecting `profile = "extreme"` or `cpu.mitigations = "off"`. |
 
-\# Install core build dependencies
+---
 
-sudo pacman \-S \--needed base-devel clang lld llvm bc cpio kmod pahole zram-generator scx-scheds curl gnupg
+### 5.11. `[gaming]` — Low-Latency & Gaming Optimizations
 
-\# Install and populate modprobed-db (AUR)
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `ntsync` | `bool`| `true` | `true`, `false` | In-tree Windows NT synchronization primitive driver (`CONFIG_NTSYNC`). Replaces `wineserver` IPC. |
+| `uclamp` | `bool`| `true` | `true`, `false` | Task utilization clamping (`CONFIG_UCLAMP_TASK`). Allows render threads to demand instant CPU frequencies. |
+| `max_map_count` | `int` | `2147483642` | `65530`–`2147483642` | Sets `vm.max_map_count`. Prevents crashes in memory-mapped DirectX 12 games and anti-cheat modules. |
+| `split_lock_mitigate`| `bool`| `false` | `true`, `false` | `false` disables kernel split-lock penalties, eliminating 10–20 ms stutters in games and emulators. |
+| `controllers` | `bool`| `true` | `true`, `false` | Retains gamepad drivers (Xbox, PlayStation, DualSense, Nintendo Switch, Steam Controller, `uinput`). |
 
-paru \-S modprobed-db
+---
 
+### 5.12. `[storage]` — NVMe IOPOLL & Block Schedulers
+
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `nvme_poll_queues`| `int` | `0` | `0`–`128` | Sets `nvme.poll_queues`. Dedicated completion queues for sub-2 µs polling via `io_uring`. |
+| `io_scheduler` | `str` | `"none"` | `none`, `mq-deadline`, `bfq`, `kyber`, `keep` | NVMe block I/O scheduler udev policy. `none` avoids queue overhead on fast NVMe drives. |
+| `blk_wbt` | `bool`| `true` | `true`, `false` | `CONFIG_BLK_WBT`. Block writeback throttling to mitigate storage bufferbloat during heavy writes. |
+| `iocost` | `bool`| `false` | `true`, `false` | Proportional I/O control model for cgroup v2 (`CONFIG_BLK_CGROUP_IOCOST`). |
+| `extra_filesystems`| `list`| `[]` | Filesystem names | Additional filesystems compiled into the module set (e.g. `["btrfs", "f2fs", "xfs"]`). |
+
+---
+
+### 5.13. `[power]` — Idle Governors & Power Management
+
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `wq_power_efficient`| `bool`| `false` | `true`, `false` | `CONFIG_WQ_POWER_EFFICIENT_DEFAULT`. Directs unbound workqueues to active cores, keeping idle cores asleep. |
+| `cpu_idle_governor`| `str`| `"teo"` | `teo`, `menu`, `haltpoll` | cpuidle governor (`CONFIG_CPU_IDLE_GOV_TEO`). `teo` is optimal for tickless desktops/laptops. |
+| `rcu_lazy` | `bool`| `false` | `true`, `false` | `CONFIG_RCU_LAZY`. Batches non-urgent RCU callbacks for up to 10s. Reduces idle battery draw by 5%–15%. |
+| `energy_model` | `bool`| `false` | `true`, `false` | Exposes Energy Model tables for heterogeneous hybrid topologies (`CONFIG_ENERGY_MODEL`). |
+| `suspend` | `bool`| `true` | `true`, `false` | Enables suspend-to-RAM (`CONFIG_SUSPEND`, `s2idle` / `deep`). |
+| `hibernation` | `bool`| `true` | `true`, `false` | Enables suspend-to-disk with zstd image compression (`CONFIG_HIBERNATION`). |
+| `pcie_aspm` | `str` | `"default"` | `default`, `powersave`, `powersupersave`, `performance` | PCIe Active State Power Management policy written to boot parameters. |
+| `hda_power_save`| `int` | `0` | `0`–`3600` | Inactivity timeout in seconds before powering down HD-audio controller (`0` = disabled). |
+
+---
+
+### 5.14. `[network]` — Congestion & Queuing Disciplines
+
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `congestion` | `str` | `"bbr"` | `bbr`, `cubic`, `reno` | TCP congestion control algorithm (`CONFIG_TCP_CONG_BBR`). Maximizes throughput over lossy links. |
+| `qdisc` | `str` | `"fq"` | `fq`, `cake`, `fq_codel`, `fq_pie`, `pfifo_fast` | Root packet queueing discipline (`CONFIG_NET_SCH_FQ`, `CONFIG_NET_SCH_CAKE`). |
+| `mptcp` | `bool`| `true` | `true`, `false` | `CONFIG_MPTCP`. Multipath TCP for aggregating multiple network interfaces. |
+| `xdp` | `bool`| `false` | `true`, `false` | `CONFIG_XDP_SOCKETS`. AF_XDP high-speed bypass sockets for software routing/firewalls. |
+| `nf_conntrack_procfs`| `bool`| `false` | `true`, `false` | Disabling strips legacy `/proc/net/nf_conntrack`, eliminating lock contention on gigabit links. |
+| `tcp_fastopen` | `bool`| `true` | `true`, `false` | Enables TCP Fast Open (`net.ipv4.tcp_fastopen=3`) for zero-RTT handshakes. |
+
+---
+
+### 5.15. `[modules]` — Streamlined localmodconfig & Pruning
+
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `mode` | `str` | `"strict"` | `strict`, `expanded` | `strict` compiles only active hardware modules in `modprobed.db`. `expanded` keeps USB/GPU/net trees. |
+| `modprobed_db` | `bool`| `true` | `true`, `false` | Passes `modprobed.db` to `make localmodconfig` via the `LSMOD` environment variable. |
+| `modprobed_db_path`| `str`| `""` | File path | Custom path to `modprobed.db` (used for remote machine builds). Defaults to `~/.config/modprobed.db`. |
+| `allow_lsmod_fallback`| `bool`| `false` | `true`, `false` | Permits strict mode to fall back to live `lsmod` if `modprobed.db` is missing or empty. |
+| `lmc_keep_extra` | `list`| `[]` | Subsystem paths | Additional subsystem source paths preserved during `localmodconfig` via `LMC_KEEP`. |
+| `keep_symbols` | `list`| `[]` | Kconfig symbols | Explicit driver symbols forced to `=m` after pruning (e.g. `["WIREGUARD", "TUN", "VETH"]`). |
+| `localyesconfig`| `bool`| `false` | `true`, `false` | Converts all modular drivers directly into monolithic built-in code (`=y`). |
+| `manage_service`| `bool`| `true` | `true`, `false` | Automatically enables `modprobed-db.service` user timer to keep driver logs continuously updated. |
+| `sig_force` | `bool`| `false` | `true`, `false` | `CONFIG_MODULE_SIG_FORCE`. Requires all kernel modules to be signed with a valid build key. |
+
+---
+
+### 5.16. `[boot]` — Command-Line Injection & Bootloaders
+
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `cmdline` | `str` | `"bake"` | `bake`, `entry`, `print` | `bake` embeds parameters into `CONFIG_CMDLINE`. `entry` writes them to bootloader configs. |
+| `cmdline_extra` | `str` | `""` | Kernel parameters | Arbitrary kernel parameters appended to generated boot string. |
+| `write_entries` | `bool`| `true` | `true`, `false` | Generates Boot Loader Specification (BLS) entry files for `systemd-boot`. |
+| `nowatchdog` | `bool`| `true` | `true`, `false` | Disables kernel and NMI watchdogs (`nowatchdog nmi_watchdog=0`) to eliminate timer jitter. |
+
+---
+
+### 5.17. `[verify]` — Invariant Contract Enforcement
+
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `strict` | `bool`| `true` | `true`, `false` | Halts the build if any non-optional Kconfig contract entry is unmet after `olddefconfig`. |
+| `optional_symbols`| `list`| `[]` | Kconfig symbols | Extra symbols treated as soft warnings rather than fatal errors if unmet. |
+| `require_ntsync`| `bool`| `true` | `true`, `false` | Verifies `CONFIG_NTSYNC` is compiled when `gaming.ntsync = true`. |
+| `require_btf` | `bool`| `true` | `true`, `false` | Asserts `CONFIG_DEBUG_INFO_BTF=y` is active whenever `sched_ext` is enabled. |
+| `require_sched_ext`| `bool`| `true` | `true`, `false` | Asserts `CONFIG_SCHED_CLASS_EXT=y` is present when an SCX scheduler daemon is selected. |
+
+---
+
+### 5.18. `[dusky]` — Seed Sources & Internal Orchestration
+
+| Key | Type | Default | Choices / Bounds | Description & Architectural Impact |
+| :--- | :---: | :---: | :---: | :--- |
+| `enhanced` | `bool`| `false` | `true`, `false` | Desktop heuristics: turns off slow framebuffer takeover and disables boot-time watchdogs. |
+| `seed` | `str` | `"auto"` | `auto`, `snapshot`, `arch`, `running`, `headers`, `defconfig` | Base configuration seed order. `auto` checks: snapshot $\rightarrow$ Arch GitLab config $\rightarrow$ `/proc/config.gz` $\rightarrow$ headers $\rightarrow$ `defconfig`. |
+| `extra_config` | `table`| `{}` | TOML Key-Value | Injects arbitrary raw Kconfig symbols (e.g. `CONFIG_SAMPLE = true`). |
+| `reproducible` | `bool`| `true` | `true`, `false` | Fixes `KBUILD_BUILD_TIMESTAMP` and `SOURCE_DATE_EPOCH` for bit-for-bit reproducible artifacts. |
+
+---
+
+## 6. Cross-Subsystem Incompatibilities & Conflict Rules
+
+The compiler enforces deterministic normalization rules to resolve conflicting options prior to configuration:
+
+| Setting A | Setting B | Conflict Resolution Mechanism |
+| :--- | :--- | :--- |
+| `compiler.toolchain = "gcc"` | `compiler.lto != "none"` | Clang ThinLTO requires LLVM. The engine forces `compiler.lto = "none"`. |
+| `compiler.toolchain = "gcc"` | `compiler.kcfi = true` | kCFI depends on Clang instrumentation. Forced to `compiler.kcfi = false`. |
+| `compiler.toolchain = "gcc"` | `compiler.fdo != "none"` | AutoFDO/Propeller require LLVM `perf` mapping. Forced to `fdo = "none"`. |
+| `compiler.lto != "thin"` | `compiler.thinlto_cache = true` | ThinLTO cache applies only to ThinLTO. Forced to `false`. |
+| `scheduler.type = "bmq"` | `scheduler.scx != "none"` | Project C BMQ replaces EEVDF. sched_ext requires EEVDF; forced to `scx = "none"`. |
+| `scheduler.scx != "none"` | `scheduler.scx_enable_class = false` | SCX daemons require the in-tree class. Forced to `scx_enable_class = true`. |
+| `timing.preempt = "rt"` | `timing.preempt_dynamic = true` | PREEMPT_RT replaces core spinlocks; cannot switch dynamically. Forced to `false`. |
+| `memory.swap_backend != "zram"`| `memory.zram_multi_comp = true`| Multi-compression requires ZRAM swap device. Forced to `false`. |
+| `memory.thp = "never"` | `memory.thp_defrag != "never"` | Defragmentation is meaningless without THP. Forced to `thp_defrag = "never"`. |
+| `memory.slub_tiny = true` | `memory.slab_buckets = true` | Slab buckets require the full SLUB allocator. Forced to `slab_buckets = false`. |
+| `memory.trim_unused_ksyms = true`| `compiler.headers != "never"` | Trimming exported symbols breaks out-of-tree DKMS modules. Forced to `false`. |
+| `memory.footprint = "embedded"` | `cpu.compat32 = true` | Embedded tier strips IA32 emulation. Forced to `cpu.compat32 = false`. |
+| `memory.footprint = "embedded"` | `power.hibernation = true` | Embedded tier strips hibernation. Forced to `power.hibernation = false`. |
+| `cpu.mitigations = "off"` | `security.profile = "hardened"` | Security contradiction. The engine forces `cpu.mitigations = "on"`. |
+| `meta.portable_package = true` | `cpu.arch = "native"` | **Fatal ProfileError**. Native code generation cannot be distributed safely. |
+| `modules.mode = "strict"` | `modprobed_db = false` | **Fatal ProfileError** unless `allow_lsmod_fallback = true`. |
+| `security.profile = "extreme"` | `acknowledge_risk = false` | **Fatal ProfileError**. Extreme profiles require explicit acknowledgment. |
+
+---
+
+## 7. Decision Tree, Profile Catalog & Production Templates
+
+### 7.1. Profile Selection Decision Tree
+
+```mermaid
+flowchart TD
+    Start["What is your hardware & primary workload?"] --> HW{Hardware & Memory}
+    
+    HW -->|"Gaming Rig / Dedicated Desktop<br>(16+ GB RAM, discrete GPU)"| D1[Workload Focus?]
+    D1 -->|"Lowest Frametime Variance & Wine/Proton"| P_GAME["<b>Profile: gaming</b><br>BORE • scx_bpfland • 1000 Hz • NTSync<br>THP always • CAKE • Mitigations off"]
+    D1 -->|"Daily Driver + Max Compute Throughput"| P_PERS["<b>Profile: dusky_personal</b><br>EEVDF + CAS + scx_lavd • Full LTO<br>1000 Hz • PREEMPT_LAZY • NTSync"]
+
+    HW -->|"Modern AMD Zen 4 / Zen 5 CPU<br>(Ryzen 7000/8000/9000)"| P_ZEN["<b>Profile: zen4_zen5</b><br>znver4 • P-State Active EPP • EEVDF+CAS<br>scx_lavd • Rust for Linux • ThinLTO"]
+
+    HW -->|"Laptop / Handheld Console<br>(Steam Deck, ROG Ally, ThinkPad)"| D2[Battery Priority?]
+    D2 -->|"Maximum Battery Endurance"| P_BATT["<b>Profile: battery_efficiency</b><br>Powersave + EPP power • TEO idle<br>RCU lazy • ASPM powersupersave • 300 Hz"]
+    D2 -->|"Balanced Mobile Daily Driver"| P_BAL["<b>Profile: low_ram / dusky_personal</b><br>500 Hz • PREEMPT_LAZY • ZRAM multi-comp<br>MGLRU • Schedutil"]
+
+    HW -->|"Low-RAM PC / Appliance<br>(<= 4 GB - 8 GB RAM)"| D3[Footprint Target?]
+    D3 -->|"Sub-300MB Idle Target"| P_MIN["<b>Profile: minimal_strict</b><br>SLUB_TINY • -Os • THP off • DAMON<br>Strict modprobed.db • ZRAM zstd 150%"]
+    D3 -->|"Headless / Embedded (<= 4 GB)"| P_EMB["<b>Profile: embedded_lowram</b><br>BASE_SMALL • No 32-bit • No Hibernation<br>NR_CPUS 8 • -Os"]
+
+    HW -->|"High-Core Server / Workstation<br>(NUMA, Compilation, KVM)"| P_SRV["<b>Profile: server_workstation</b><br>250 Hz • NUMA balancing • iocost<br>scx_layered • Full LTO • Headers always"]
+
+    HW -->|"Virtual Machine Guest<br>(Proxmox, QEMU/KVM, Hyper-V)"| P_VM["<b>Profile: vm_guest</b><br>Paravirt • VirtIO • Free Page Reporting<br>Haltpoll governor • generic_v3"]
+
+    HW -->|"High Security / Hardened Machine<br>(Untrusted Networks, Hardening)"| P_SEC["<b>Profile: hardened</b><br>KSPP • kCFI + FineIBT • init_on_free<br>Lockdown early • AppArmor • Mitigations on"]
+```
+
+---
+
+### 7.2. Default Profile Catalog
+
+| Profile ID | Target Workload / Hardware | Suffix | Priority | Key Optimizations |
+| :--- | :--- | :--- | :---: | :--- |
+| `dusky_personal` | Daily driver workstation (64 GB RAM) | `dusky-personal` | 10 | EEVDF + CAS + scx_lavd, Full LTO, 1000 Hz, PREEMPT_LAZY, mitigations off |
+| `gaming` | Dedicated gaming & emulation rig | `dusky-gaming` | 20 | BORE + scx_bpfland, THP always, NTSync, CAKE, split-lock mitigation off |
+| `low_ram` | Laptops and PCs with $\le 8\text{ GB}$ RAM | `dusky-lowram` | 30 | Lean footprint, MGLRU anti-thrash, ZRAM lz4+zstd, systemd-oomd |
+| `minimal_strict` | Extreme sub-300MB idle RAM targets | `dusky-minimal` | 31 | Minimal tier, SLUB_TINY, -Os, THP off, DAMON reclaim, strict pruning |
+| `embedded_lowram`| Headless appliances with $\le 4\text{ GB}$ RAM | `dusky-embedded`| 32 | BASE_SMALL, no 32-bit compat, no hibernation, NR_CPUS 8, -Os |
+| `zen4_zen5` | AMD Zen 4 & Zen 5 desktop/mobile | `dusky-zen` | 40 | znver4 codegen, AMD P-State active EPP, EEVDF + CAS, Rust enabled |
+| `server_workstation`| High-core build boxes & servers | `dusky-server` | 50 | 250 Hz, NUMA balancing, iocost, scx_layered, Full LTO, expanded drivers |
+| `battery_efficiency`| Mobile laptops & handheld gaming PCs | `dusky-battery` | 60 | Powersave + EPP power, TEO idle, RCU lazy, ASPM powersupersave, 300 Hz |
+| `vm_guest` | Virtual machines (KVM, Hyper-V) | `dusky-vm` | 70 | Paravirt, virtio, free page reporting, haltpoll governor, generic_v3 |
+| `hardened` | High-security servers & systems | `dusky-hardened`| 80 | KSPP hardening, kCFI + FineIBT, init_on_free, lockdown early, AppArmor |
+
+---
+
+### 7.3. Production TOML Templates
+
+> [!example]- Template 1: Gaming / Maximum Responsiveness (`gaming.toml`)
+> ```toml
+> [meta]
+> name = "gaming"
+> description = "Gaming: BORE + scx_bpfland, 1000 Hz, full preemption, THP always, NTSync, cake, mitigations off"
+> suffix = "dusky-gaming"
+> priority = 20
+> bare_metal_only = true
+> portable_package = false
+> 
+> [release]
+> channel = "stable"
+> allow_rc = true
+> require_signature = true
+> 
+> [scheduler]
+> type = "bore"
+> scx = "scx_bpfland"
+> scx_flags = "-m performance"
+> scx_enable_class = true
+> allow_vanilla_fallback = true
+> autogroup = true
+> rt_group = false
+> sched_core = false
+> 
+> [cache]
+> sched_cache = true
+> llc_aggr_tolerance = 0
+> persist = true
+> 
+> [rseq]
+> slice_extension = true
+> slice_ext_nsec = 10000
+> 
+> [cpu]
+> arch = "native"
+> governor = "performance"
+> amd_pstate = "active"
+> epp = "performance"
+> mitigations = "off"
+> smt = true
+> mce = true
+> prefcore = true
+> compat32 = true
+> 
+> [timing]
+> hz = 1000
+> tickless = "idle"
+> preempt = "full"
+> preempt_dynamic = true
+> 
+> [memory]
+> footprint = "standard"
+> thp = "always"
+> thp_defrag = "defer+madvise"
+> mglru = true
+> swap_backend = "zram"
+> zram_algo = "zstd"
+> zram_size_pct = 50
+> swappiness = 150
+> vfs_cache_pressure = 50
+> watermark_scale_factor = 150
+> watermark_boost_factor = 0
+> dirty_bytes_mb = 256
+> per_vma_lock = true
+> numa = true
+> tracing = "full"
+> 
+> [compiler]
+> toolchain = "llvm"
+> optimize = "o2"
+> lto = "thin"
+> thinlto_cache = true
+> thinlto_cache_size_gb = 20
+> debug_info = "reduced"
+> module_compress = "zstd"
+> rust = false
+> headers = "auto"
+> 
+> [security]
+> profile = "extreme"
+> acknowledge_risk = true
+> 
+> [gaming]
+> ntsync = true
+> uclamp = true
+> max_map_count = 2147483642
+> split_lock_mitigate = false
+> controllers = true
+> 
+> [storage]
+> io_scheduler = "none"
+> blk_wbt = true
+> 
+> [power]
+> wq_power_efficient = false
+> cpu_idle_governor = "teo"
+> rcu_lazy = false
+> energy_model = true
+> suspend = true
+> hibernation = false
+> pcie_aspm = "performance"
+> hda_power_save = 0
+> 
+> [network]
+> congestion = "bbr"
+> qdisc = "cake"
+> mptcp = true
+> tcp_fastopen = true
+> 
+> [modules]
+> mode = "strict"
+> modprobed_db = true
+> allow_lsmod_fallback = true
+> manage_service = true
+> 
+> [boot]
+> cmdline = "bake"
+> nowatchdog = true
+> write_entries = true
+> 
+> [verify]
+> strict = true
+> require_ntsync = true
+> require_btf = true
+> require_sched_ext = true
+> 
+> [dusky]
+> enhanced = true
+> ```
+
+> [!example]- Template 2: Sub-300MB Idle Minimalist (`minimal_strict.toml`)
+> ```toml
+> [meta]
+> name = "minimal_strict"
+> description = "Sub-300MB idle footprint, SLUB_TINY, stripped debugging, ZRAM"
+> suffix = "dusky-minimal"
+> priority = 31
+> bare_metal_only = true
+> portable_package = false
+> 
+> [release]
+> channel = "stable"
+> allow_rc = true
+> require_signature = true
+> 
+> [scheduler]
+> type = "eevdf"
+> scx = "none"
+> scx_enable_class = false
+> autogroup = true
+> rt_group = false
+> sched_core = false
+> 
+> [cache]
+> sched_cache = false
+> 
+> [rseq]
+> slice_extension = true
+> slice_ext_nsec = 10000
+> 
+> [cpu]
+> arch = "native"
+> governor = "schedutil"
+> mitigations = "on"
+> nr_cpus = 0
+> smt = true
+> mce = true
+> prefcore = true
+> compat32 = false
+> 
+> [timing]
+> hz = 250
+> tickless = "idle"
+> preempt = "lazy"
+> preempt_dynamic = false
+> 
+> [memory]
+> footprint = "minimal"
+> thp = "never"
+> thp_defrag = "never"
+> mglru = true
+> mglru_mask = 7
+> mglru_min_ttl_ms = 1000
+> swap_backend = "zram"
+> zram_algo = "zstd"
+> zram_size_pct = 150
+> zram_multi_comp = false
+> swappiness = 180
+> vfs_cache_pressure = 150
+> watermark_scale_factor = 125
+> dirty_bytes_mb = 64
+> slub_tiny = true
+> slab_buckets = false
+> per_vma_lock = true
+> numa = false
+> ksm = false
+> damon = true
+> hugetlbfs = false
+> kallsyms_all = false
+> memcg = true
+> base_small = true
+> log_buf_shift = 15
+> tracing = "minimal"
+> kexec = false
+> ikconfig = false
+> systemd_oomd = true
+> trim_unused_ksyms = true
+> 
+> [compiler]
+> toolchain = "llvm"
+> optimize = "size"
+> lto = "thin"
+> thinlto_cache = true
+> thinlto_cache_size_gb = 10
+> debug_info = "none"
+> module_compress = "zstd"
+> rust = false
+> headers = "never"
+> modversions = false
+> 
+> [security]
+> profile = "balanced"
+> ubsan_bounds = false
+> acknowledge_risk = false
+> 
+> [gaming]
+> ntsync = false
+> uclamp = false
+> max_map_count = 2147483642
+> split_lock_mitigate = true
+> controllers = false
+> 
+> [storage]
+> io_scheduler = "mq-deadline"
+> blk_wbt = true
+> 
+> [power]
+> wq_power_efficient = true
+> cpu_idle_governor = "teo"
+> rcu_lazy = true
+> suspend = true
+> hibernation = false
+> pcie_aspm = "powersave"
+> hda_power_save = 1
+> 
+> [network]
+> congestion = "bbr"
+> qdisc = "fq_codel"
+> mptcp = false
+> xdp = false
+> tcp_fastopen = true
+> 
+> [modules]
+> mode = "strict"
+> modprobed_db = true
+> allow_lsmod_fallback = true
+> manage_service = true
+> 
+> [boot]
+> cmdline = "bake"
+> nowatchdog = true
+> write_entries = true
+> 
+> [verify]
+> strict = true
+> require_ntsync = false
+> require_btf = false
+> require_sched_ext = false
+> ```
+
+> [!example]- Template 3: Maximum Battery Endurance (`battery_efficiency.toml`)
+> ```toml
+> [meta]
+> name = "battery_efficiency"
+> description = "Maximum battery profile: TEO, RCU lazy, powersupersave ASPM, 300Hz"
+> suffix = "dusky-battery"
+> priority = 60
+> bare_metal_only = true
+> portable_package = false
+> 
+> [release]
+> channel = "stable"
+> allow_rc = true
+> require_signature = true
+> 
+> [scheduler]
+> type = "eevdf"
+> scx = "scx_lavd"
+> scx_flags = "--autopower"
+> scx_enable_class = true
+> autogroup = true
+> 
+> [cache]
+> sched_cache = true
+> llc_aggr_tolerance = 1
+> persist = true
+> 
+> [cpu]
+> arch = "native"
+> governor = "powersave"
+> amd_pstate = "active"
+> epp = "power"
+> mitigations = "on"
+> prefcore = true
+> 
+> [timing]
+> hz = 300
+> tickless = "idle"
+> preempt = "lazy"
+> preempt_dynamic = true
+> 
+> [memory]
+> footprint = "lean"
+> thp = "madvise"
+> thp_defrag = "defer"
+> mglru = true
+> swap_backend = "zram"
+> zram_algo = "zstd"
+> zram_recomp_algo = "zstd"
+> zram_size_pct = 50
+> zram_multi_comp = true
+> swappiness = 180
+> vfs_cache_pressure = 100
+> tracing = "minimal"
+> 
+> [power]
+> wq_power_efficient = true
+> cpu_idle_governor = "teo"
+> rcu_lazy = true
+> energy_model = true
+> suspend = true
+> hibernation = true
+> pcie_aspm = "powersupersave"
+> hda_power_save = 2
+> 
+> [modules]
+> mode = "strict"
+> modprobed_db = true
+> allow_lsmod_fallback = true
+> 
+> [boot]
+> cmdline = "bake"
+> nowatchdog = true
+> write_entries = true
+> 
+> [verify]
+> strict = true
+> require_ntsync = false
+> require_btf = true
+> require_sched_ext = true
+> ```
+
+---
+
+## 8. Advanced Engineering Workflows
+
+### 8.1. Cross-Machine Hardware Bundles
+Build tailored kernels on a powerful workstation for a weak laptop or remote server.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Target Machine (Laptop)
+    participant Host as Build Rig (Workstation)
+    User->>User: ./dusky_kernal_compile.py --export-bundle
+    Note over User: Generates ~/dusky_bundle_<laptop>.tar.gz<br>(modprobed.db, cpuinfo, meminfo, lspci, lsmod)
+    User->>Host: scp dusky_bundle_<laptop>.tar.gz host:~/
+    Host->>Host: ./dusky_kernal_compile.py --import-bundle ~/dusky_bundle_<laptop>.tar.gz
+    Note over Host: Creates ~/.config/dusky-kernel/kernel_profiles/remote_<laptop>.toml
+    Host->>Host: ./dusky_kernal_compile.py -p remote_<laptop> --no-install
+    Host->>User: scp linux-dusky-*.pkg.tar.zst laptop:~/
+    User->>User: sudo pacman -U linux-dusky-*.pkg.tar.zst
+```
+
+### 8.2. Feedback-Directed Optimization (AutoFDO & Propeller)
+Leverage CPU performance counters to optimize branch layout and basic block ordering:
+
+```bash
+# 1. Record 60 seconds of real-world gaming/workload PMU branch counters
+./dusky_kernal_compile.py --profile gaming --fdo-record 60 --fdo-propeller
+
+# 2. Output is saved to: ~/.cache/dusky-kernel/fdo/
+# 3. Enable FDO in your profile:
+#    compiler.fdo = "autofdo_propeller"
+#    compiler.fdo_profile_dir = "~/.cache/dusky-kernel/fdo"
+
+# 4. Rebuild the kernel with profile-guided code placement
+./dusky_kernal_compile.py --profile gaming
+```
+
+### 8.3. Runtime Provisioning & Systemd Integration Architecture
+
+When a Dusky kernel package is installed, the engine provisions system tuning files keyed specifically to that flavor:
+
+```mermaid
+flowchart LR
+    A["Bootloader: linux-dusky-gaming"] --> B["Kernel Boot: uname -r = *-dusky-gaming"]
+    B --> C["systemd: dusky-tune.service"]
+    C --> D["/usr/local/lib/dusky/dusky-tune.sh"]
+    D --> E["Loads /usr/local/lib/dusky/tune.d/dusky-gaming.sh"]
+    E --> F["sysctl -p /etc/dusky/sysctl-dusky-gaming.conf"]
+    E --> G["sysfs/debugfs: THP • MGLRU • CAS • RSEQ • EPP"]
+```
+
+- **Manifest Indexing**: All installed files are recorded in `/etc/dusky/manifest-<flavor>.txt`.
+- **Clean Uninstallation**: Executing `./dusky_kernal_compile.py --uninstall <flavor>` removes all packages, cleans systemd drop-ins, deletes bootloader entries, and purges the runtime configuration without leaving orphaned files.
+
+---
+
+## 9. Step-by-Step Operational Runbook
+
+### Step 1: Toolchain Installation & Hardware Logging
+
+Install the required Arch Linux packages and initialize the hardware module tracker:
+
+```bash
+# Core compiler, linker, LLVM tools, and system utilities
+sudo pacman -S --needed base-devel clang lld llvm rust rust-bindgen bc cpio kmod pahole zram-generator scx-scheds perf curl gnupg
+
+# Install modprobed-db from AUR (using paru or yay)
+paru -S --needed modprobed-db
+
+# Store currently loaded modules and activate the background logging timer
 modprobed-db store
+systemctl --user enable --now modprobed-db.service
+```
 
-systemctl \--user enable \--now modprobed-db.timer
+> [!tip] Hardware Discovery Window
+> Before building your first `strict` module kernel, plug in all common USB peripherals, gamepads, DACs, and webcams, and run `modprobed-db store`. This guarantees necessary hardware drivers are included in `modprobed.db`.
 
-### Step 2: Write Default Profiles
+---
 
-./dusky\_kernal\_compile.py \--write-default-profiles
+### Step 2: System Audit & Diagnostic Verification
 
-### Step 3: Run Diagnostics
+Run the built-in system doctor to audit compiler toolchains, kernel headers, and bootloader status:
 
-./dusky\_kernal\_compile.py \--doctor
+```bash
+./dusky_kernal_compile.py --doctor
+```
 
-### Step 4: Preview Kconfig Configuration Matrix
+---
 
-./dusky\_kernal\_compile.py \--profile dusky\_balanced \--configure-only \--print-matrix
+### Step 3: Initialize Built-in Profiles
 
-### Step 5: Execute the Kernel Build
+Generate the 10 production-tested profiles into the profile repository:
 
-\# Build and install using the balanced template
+```bash
+./dusky_kernal_compile.py --write-default-profiles
+./dusky_kernal_compile.py --list-profiles
+```
 
-./dusky\_kernal\_compile.py \--profile dusky\_balanced  
+---
+
+### Step 4: Execute Kernel Compilation
+
+Build and install your chosen profile:
+
+```bash
+# Option A: Fast build using profile defaults
+./dusky_kernal_compile.py --profile dusky_personal
+
+# Option B: Interactive configuration wizard (walk through all 11 tuning steps)
+./dusky_kernal_compile.py --profile gaming --wizard
+
+# Option C: Build packages only without installing (ideal for testing or remote packaging)
+./dusky_kernal_compile.py --profile gaming --no-install
+```
+
+---
+
+### Step 5: Post-Install Bootloader Verification
+
+Verify that bootloader entries have been written and the kernel image is in place:
+
+```bash
+# For systemd-boot:
+bootctl list
+
+# Inspect generated runtime tuning files:
+cat /etc/dusky/manifest-dusky-personal.txt
+systemctl status dusky-tune.service
+```
+Restart your system and select your new **Dusky Linux** kernel from the bootloader menu.
