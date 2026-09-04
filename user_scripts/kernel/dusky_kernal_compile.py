@@ -3604,6 +3604,12 @@ def ensure_modprobed_db(p: KernelProfile) -> Path | None:
             warn("modprobed.db is small; use the system for a few days (USB devices, VPN, printers...) before trusting strict mode")
         return db
     if not custom:
+        for fallback_db in (Path("/mnt/zram1/linux-tkg-master/linux-tkg-config/7.3/minimal-modprobed.db"),
+                            Path("/mnt/zram1/linux-tkg-master/linux-tkg-config/7.2/minimal-modprobed.db")):
+            if fallback_db.is_file() and fallback_db.stat().st_size > 0:
+                count = len([line for line in _read(fallback_db).splitlines() if line.strip()])
+                ok(f"modprobed.db: using bundled fallback {fallback_db.name} ({count} modules)")
+                return fallback_db
         warn("modprobed.db missing (install from AUR: paru -S modprobed-db; modprobed-db store)")
     else:
         warn(f"modprobed.db not found at {db}")
@@ -3935,6 +3941,8 @@ def _ops_core(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     mx.flag("IMA", False)
     mx.flag("EVM", False)
     mx.n("WERROR")
+    for werr in ("DRM_WERROR", "DRM_AMDGPU_WERROR", "DRM_XE_WERROR", "DRM_I915_WERROR", "KVM_WERROR"):
+        mx.n(werr, optional=True)
     mx.s("SYSTEM_TRUSTED_KEYS", "")
     mx.s("SYSTEM_REVOCATION_KEYS", "")
     mx.flag("FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER", not s["dusky"]["enhanced"])
@@ -4519,6 +4527,7 @@ def _ops_gpu(mx: Matrix, p: KernelProfile, d: Derived) -> None:
         mx.y("DRM_AMDGPU_CIK", optional=True)
         mx.y("DRM_AMDGPU_USERPTR", optional=True)
         mx.m("HSA_AMD", optional=True)
+        mx.y("AMD_PRIVATE_COLOR", optional=True, why="enable AMD KMS color management for Gamescope/HDR")
     if "intel" in gpus:
         mx.m("DRM_I915", why="Intel GPU present")
         mx.m("DRM_XE", why="Intel GPU present")
@@ -4531,6 +4540,10 @@ def _ops_gpu(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     mx.m("DRM", why="modular DRM core (mkinitcpio kms hook ships it in the initramfs)")
     mx.m("DRM_SIMPLEDRM", why="early firmware framebuffer console")
     mx.y("DRM_FBDEV_EMULATION")
+    mx.y("DRM_PANIC", optional=True)
+    if not d.rust or p.g("compiler", "lto") != "none":
+        mx.n("DRM_PANIC_SCREEN_QR_CODE", optional=True, why="QR panic requires Rust; avoid LTO link mismatch")
+        mx.s("DRM_PANIC_SCREEN", "kmsg", optional=True)
 
 
 def _ops_extra(mx: Matrix, p: KernelProfile, d: Derived) -> None:

@@ -503,7 +503,7 @@ When entering the granular configuration wizard (`--wizard` or selecting `[n]` a
 | :--- | :---: | :---: | :---: | :--- |
 | `mode` | `str` | `"strict"` | `strict`, `expanded` | `strict` compiles only active hardware modules in `modprobed.db`. `expanded` keeps USB/GPU/net trees. |
 | `modprobed_db` | `bool`| `true` | `true`, `false` | Passes `modprobed.db` to `make localmodconfig` via the `LSMOD` environment variable. |
-| `modprobed_db_path`| `str`| `""` | File path | Custom path to `modprobed.db` (used for remote machine builds). Defaults to `~/.config/modprobed.db`. |
+| `modprobed_db_path`| `str`| `""` | File path | Custom path to `modprobed.db`. When empty, queries `~/.config/modprobed.db` with automated fallback to bundled database if absent. |
 | `allow_lsmod_fallback`| `bool`| `false` | `true`, `false` | Permits strict mode to fall back to live `lsmod` if `modprobed.db` is missing or empty. |
 | `lmc_keep_extra` | `list`| `[]` | Subsystem paths | Additional subsystem source paths preserved during `localmodconfig` via `LMC_KEEP`. |
 | `keep_symbols` | `list`| `[]` | Kconfig symbols | Explicit driver symbols forced to `=m` after pruning (e.g. `["WIREGUARD", "TUN", "VETH"]`). |
