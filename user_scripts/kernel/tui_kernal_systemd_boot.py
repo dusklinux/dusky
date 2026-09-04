@@ -4,6 +4,7 @@ Systemd-Boot Kernel Manager - Advanced Dusky TUI Schema.
 Provides dynamic multi-kernel switching, granular cmdline parameter tuning,
 direct renaming for any installed kernel entry, and EFI maintenance actions.
 """
+import os
 import sys
 from pathlib import Path
 
@@ -96,6 +97,64 @@ def build_entry_override_items() -> list[ConfigItem]:
 
 _INITIAL_KERNEL_OPTIONS, _INITIAL_KERNEL_HINTS = discover_kernel_options()
 _INITIAL_TARGET_OPTIONS = ["Auto (Follows Default Kernel)"] + [opt for opt in _INITIAL_KERNEL_OPTIONS if not opt.startswith("@")]
+
+
+def generate_cpu_isolation_presets() -> tuple[list[str], list[str]]:
+    """
+    Dynamically generates sensible isolcpus and nohz_full presets based on
+    the detected online/present CPU hardware topology.
+    Works generically across any CPU architecture (x86_64, aarch64, riscv, etc.)
+    and core counts (from 2 cores up to 128+ cores).
+    """
+    count = os.cpu_count() or 4
+    max_idx = count - 1
+
+    isol = ["unset", "0"]
+    if count >= 2:
+        isol.append("1")
+    if count >= 4:
+        isol.append("0,1")
+        mid = count // 2
+        if mid - 1 > 0:
+            isol.append(f"0-{mid - 1}")
+        if mid < max_idx:
+            isol.append(f"{mid}-{max_idx}")
+    if count > 2:
+        isol.append(f"1-{max_idx}")
+    if count >= 8:
+        quarter = count // 4
+        if count - quarter < max_idx:
+            isol.append(f"{count - quarter}-{max_idx}")
+
+    isol.append("domain,0")
+    isol.append("nohz,domain,0")
+    if count >= 4:
+        mid = count // 2
+        isol.append(f"managed_irq,domain,0-{mid - 1}")
+
+    dedup_isol = list(dict.fromkeys(isol))
+
+    nohz = ["unset"]
+    if count >= 2:
+        nohz.append("1")
+    if count >= 4:
+        mid = count // 2
+        if mid - 1 > 1:
+            nohz.append(f"1-{mid - 1}")
+        if mid < max_idx:
+            nohz.append(f"{mid}-{max_idx}")
+    if count > 2:
+        nohz.append(f"1-{max_idx}")
+    if count >= 8:
+        quarter = count // 4
+        if count - quarter < max_idx:
+            nohz.append(f"{count - quarter}-{max_idx}")
+
+    dedup_nohz = list(dict.fromkeys(nohz))
+    return dedup_isol, dedup_nohz
+
+
+_INITIAL_ISOLCPUS_OPTIONS, _INITIAL_NOHZ_FULL_OPTIONS = generate_cpu_isolation_presets()
 
 # =============================================================================
 # 2. CORE APPLICATION ROUTING & ENVIRONMENT
@@ -353,6 +412,45 @@ SCHEMA = {
             default="unset",
             group="CPU & Scheduler",
             extended_help="**Processor Max C-State**\n\nLimits the deepest sleep C-state the CPU can enter. Limiting to C1 minimizes wake-up latency for pro-audio and gaming."
+        ),
+        ConfigItem(
+            label="Isolated CPUs",
+            key="isolcpus",
+            scope="DEFAULT",
+            type_="string",
+            options=_INITIAL_ISOLCPUS_OPTIONS,
+            default="unset",
+            group="CPU & Scheduler",
+            extended_help=(
+                "**CPU Core Isolation (`isolcpus`)**\n\n"
+                "Removes specified CPU cores from the general kernel scheduler load-balancing domain.\n"
+                "Isolated cores will never run user-space tasks or background processes by default unless tasks are explicitly assigned to them using `taskset -c <cpus>` or cgroups.\n\n"
+                "**Common Configurations & Presets:**\n"
+                "- `unset`: Normal scheduling (all cores participate in load balancing).\n"
+                "- `0`: Isolates Core 0 (keeps user apps off the bootstrap core; dedicates it to kernel interrupts).\n"
+                "- `0,1` or `0-3`: Isolates a specific list or range of cores.\n"
+                "- Upper core ranges: Isolates specific high-index cores for dedicated background tasks, audio, or VMs.\n"
+                "- `nohz,domain,<cores>`: Disables ticks and scheduling domains on specified cores for ultra-low latency.\n"
+                "- `managed_irq,domain,<cores>`: Fully isolates cores from both managed IRQs and scheduling domains.\n\n"
+                "*Note:* Hardware-agnostic. Presets adapt dynamically to detected CPU threads, and you can freely type any custom core range or comma-separated list (e.g. `1,3,5`, `2-7`, `0-1,4-5`)."
+            )
+        ),
+        ConfigItem(
+            label="Full Tickless Cores",
+            key="nohz_full",
+            scope="DEFAULT",
+            type_="string",
+            options=_INITIAL_NOHZ_FULL_OPTIONS,
+            default="unset",
+            group="CPU & Scheduler",
+            extended_help=(
+                "**Full Tickless Cores (`nohz_full`)**\n\n"
+                "Stops the periodic kernel timer tick on specified cores when only one runnable task is active.\n"
+                "Drastically minimizes timer interrupt jitter for real-time computing, gaming, and emulators.\n\n"
+                "- `unset`: Normal tickless-idle (`CONFIG_NO_HZ_IDLE`).\n"
+                "- `<cores>`: List or range of cores (e.g. `1`, `1-3`, `4-7`, `1-15`).\n\n"
+                "*Note:* Core 0 cannot be tickless because the kernel requires at least one core to maintain global timekeeping ticks."
+            )
         ),
         ConfigItem(
             label="Memory Limit",

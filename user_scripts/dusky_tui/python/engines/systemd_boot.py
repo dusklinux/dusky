@@ -420,6 +420,7 @@ class SystemdBootEngine(BaseEngine):
         self.loader_conf_path: Path = self._resolve_loader_path()
         self._target_override: str = ""
         self._cached_entries_map: EntryMap = {}
+        self._explicit_config_path: str = config_path
         self.config_path: Path = self._resolve_config_path(config_path)
         self.cache: BridgedStateDict = BridgedStateDict()
         self.file_mtime_ns: int = 0
@@ -687,7 +688,7 @@ class SystemdBootEngine(BaseEngine):
             self.cache[f"ENTRY_OVERRIDE/{slug}"] = title_in_file
 
         # 3. Resolve active entry config file
-        self.config_path = self._resolve_config_path()
+        self.config_path = self._resolve_config_path(self._explicit_config_path)
 
         # 4. Load active entry config (DEFAULT cmdline parameters and ENTRY metadata)
         if self.config_path.exists():
