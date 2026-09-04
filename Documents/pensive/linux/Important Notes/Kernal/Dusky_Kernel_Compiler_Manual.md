@@ -617,7 +617,7 @@ flowchart TD
 | :--- | :--- | :--- | :---: | :--- |
 | `dusky_personal` | Daily driver workstation (64 GB RAM) | `dusky-personal` | 10 | EEVDF + CAS + scx_lavd, Full LTO, 1000 Hz, PREEMPT_LAZY, mitigations off |
 | `gaming` | Dedicated gaming & emulation rig | `dusky-gaming` | 20 | BORE + scx_bpfland, THP always, NTSync, CAKE, split-lock mitigation off |
-| `low_ram` | Laptops and PCs with $\le 8\text{ GB}$ RAM | `dusky-lowram` | 30 | Lean footprint, MGLRU anti-thrash, ZRAM lz4+zstd, systemd-oomd |
+| `low_ram` | Laptops and PCs with $\le 8\text{ GB}$ RAM | `dusky-lowram` | 30 | Lean footprint, MGLRU anti-thrash, ZRAM zstd, systemd-oomd |
 | `minimal_strict` | Extreme sub-300MB idle RAM targets | `dusky-minimal` | 31 | Minimal tier, SLUB_TINY, -Os, THP off, DAMON reclaim, strict pruning |
 | `embedded_lowram`| Headless appliances with $\le 4\text{ GB}$ RAM | `dusky-embedded`| 32 | BASE_SMALL, no 32-bit compat, no hibernation, NR_CPUS 8, -Os |
 | `zen4_zen5` | AMD Zen 4 & Zen 5 desktop/mobile | `dusky-zen` | 40 | znver4 codegen, AMD P-State active EPP, EEVDF + CAS, Rust enabled |

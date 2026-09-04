@@ -5735,7 +5735,7 @@ DEFAULT_PROFILES: Final[tuple[tuple[str, str, str, int, dict[str, dict[str, Any]
         "modules": {"mode": "strict", "modprobed_db": True},
         "dusky": {"enhanced": True},
     }),
-    ("low_ram", "Low RAM (<= 8 GiB): lean footprint, zram lz4+zstd multi-comp, MGLRU anti-thrash, ThinLTO, strict modules, systemd-oomd", "dusky-lowram", 30, {
+    ("low_ram", "Low RAM (<= 8 GiB): lean footprint, zram zstd, MGLRU anti-thrash, ThinLTO, strict modules, systemd-oomd", "dusky-lowram", 30, {
         "release": {"channel": "stable", "allow_rc": True},
         "scheduler": {"type": "eevdf", "scx": "none", "scx_enable_class": False},
         "cpu": {"arch": "native", "governor": "schedutil", "mitigations": "on"},
