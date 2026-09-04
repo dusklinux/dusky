@@ -4843,6 +4843,7 @@ def build_env(p: KernelProfile, d: Derived, facts: HostFacts, epoch: float) -> d
     jobs = p.g("compiler", "jobs") or auto_jobs(facts, d.lto)
     env["MAKEFLAGS"] = f"-j{jobs}"
     env["KCONFIG_NOTIMESTAMP"] = "1"
+    env["ZSTD_CLEVEL"] = "9"
     return env
 
 
@@ -4919,6 +4920,7 @@ def compile_kernel(tree: Path, p: KernelProfile, d: Derived, env: Mapping[str, s
     b_env["PACKAGER"] = f"{APP_NAME} <dusky@localhost>"
     b_env["PACMAN_EXTRAPACKAGES"] = "headers" if resolve_build_headers(p, facts) else ""
     b_env["MAKEFLAGS"] = f"-j{jobs}"
+    b_env["ZSTD_CLEVEL"] = "9"
     info(f"pkgbase={p.pkgbase} jobs={jobs} lto={d.lto} toolchain={d.toolchain} headers={'yes' if b_env['PACMAN_EXTRAPACKAGES'] else 'no'} rust={'yes' if d.rust else 'no'}")
     if d.lto == "full":
         warn("Full LTO: the final vmlinux link is single-threaded and memory hungry; expect a long silent phase")
