@@ -32,6 +32,9 @@ def get_user_home() -> Path:
             return Path(pwd.getpwuid(int(pkexec_uid)).pw_dir)
         except (KeyError, ValueError):
             pass
+    home_env = os.environ.get("HOME")
+    if home_env and home_env != "/root" and Path(home_env).is_dir():
+        return Path(home_env)
     home_dir = Path("/home")
     if home_dir.exists():
         users = [
@@ -43,26 +46,53 @@ def get_user_home() -> Path:
     return Path("~").expanduser()
 
 
+def get_cpu_model() -> str:
+    """Reads processor model name from /proc/cpuinfo across x86, ARM, and RISC-V."""
+    try:
+        with open("/proc/cpuinfo", "r", encoding="utf-8") as f:
+            lines = [l.strip() for l in f.readlines()]
+            for l in lines:
+                if l.lower().startswith("model name") and ":" in l:
+                    val = l.split(":", 1)[1].strip()
+                    if val:
+                        return val
+            for l in lines:
+                if (l.startswith("Model") or l.startswith("Hardware") or l.startswith("uarch")) and ":" in l:
+                    val = l.split(":", 1)[1].strip()
+                    if val:
+                        return val
+    except Exception:
+        pass
+    return "Generic CPU"
+
+
 def ensure_real_user_ownership(path: Path) -> None:
-    """Ensures created state and cache files in user home are owned by the real user."""
+    """Ensures created state, cache files, and parent directories in user home are owned by the real user."""
     if os.geteuid() != 0:
         return
     try:
+        home = get_user_home()
+        uid, gid = None, None
         sudo_user = os.environ.get("SUDO_USER")
         if sudo_user and sudo_user != "root":
             pw = pwd.getpwnam(sudo_user)
-            os.chown(path, pw.pw_uid, pw.pw_gid)
-            return
-        pkexec_uid = os.environ.get("PKEXEC_UID")
-        if pkexec_uid:
-            pw = pwd.getpwuid(int(pkexec_uid))
-            os.chown(path, pw.pw_uid, pw.pw_gid)
-            return
-        home = get_user_home()
-        if home.exists():
+            uid, gid = pw.pw_uid, pw.pw_gid
+        elif os.environ.get("PKEXEC_UID"):
+            pw = pwd.getpwuid(int(os.environ["PKEXEC_UID"]))
+            uid, gid = pw.pw_uid, pw.pw_gid
+        elif home.exists() and home.stat().st_uid != 0:
             st = home.stat()
-            if st.st_uid != 0:
-                os.chown(path, st.st_uid, st.st_gid)
+            uid, gid = st.st_uid, st.st_gid
+        
+        if uid is not None and gid is not None and uid != 0:
+            curr = path
+            while curr != home and curr != curr.parent:
+                try:
+                    if curr.stat().st_uid == 0:
+                        os.chown(curr, uid, gid)
+                except Exception:
+                    pass
+                curr = curr.parent
     except Exception:
         pass
 
@@ -180,14 +210,17 @@ def detect_topology() -> tuple[list[int], list[int], set[int]]:
     if cache_path.is_file():
         try:
             data = json.loads(cache_path.read_text(encoding="utf-8"))
-            cached_p = [int(c) for c in data.get("p_cores", [])]
-            cached_e = [int(c) for c in data.get("e_cores", [])]
-            cached_locked = set(int(c) for c in data.get("locked_cores", []))
-            all_cached = set(cached_p + cached_e)
-            all_hw = set(int(n.name[3:]) for n in cpu_nodes)
-            if all_cached == all_hw and len(all_cached) == total_cpus:
-                final_locked = locked_cores | cached_locked
-                return sorted(cached_p), sorted(cached_e), final_locked
+            cached_model = data.get("cpu_model")
+            curr_model = get_cpu_model()
+            if not (cached_model and curr_model != "Generic CPU" and cached_model != curr_model):
+                cached_p = [int(c) for c in data.get("p_cores", [])]
+                cached_e = [int(c) for c in data.get("e_cores", [])]
+                cached_locked = set(int(c) for c in data.get("locked_cores", []))
+                all_cached = set(cached_p + cached_e)
+                all_hw = set(int(n.name[3:]) for n in cpu_nodes)
+                if all_cached == all_hw and len(all_cached) == total_cpus:
+                    final_locked = locked_cores | cached_locked
+                    return sorted(cached_p), sorted(cached_e), final_locked
         except Exception:
             pass
 
@@ -338,6 +371,7 @@ def detect_topology() -> tuple[list[int], list[int], set[int]]:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             ensure_real_user_ownership(cache_path.parent)
             cache_data = {
+                "cpu_model": get_cpu_model(),
                 "total_cores": total_cpus,
                 "p_cores": res_p,
                 "e_cores": res_e,
@@ -711,7 +745,7 @@ class CpuCoreEngine(BaseEngine):
             ensure_real_user_ownership(config_dir)
             state_file = config_dir / "dusky_cores"
 
-            cores_state: dict[str, Any] = {}
+            cores_state: dict[str, Any] = {"cpu_model": get_cpu_model()}
             for core in self.all_cores:
                 cores_state[f"cpu{core}"] = get_core_status(core)
             cores_state["systemd_cpu_affinity"] = self.get_systemd_affinity()
@@ -731,10 +765,16 @@ class CpuCoreEngine(BaseEngine):
             if not state_file.exists():
                 return False
             cores_state = json.loads(state_file.read_text(encoding="utf-8"))
+
+            cached_model = cores_state.get("cpu_model")
+            curr_model = get_cpu_model()
+            if cached_model and curr_model != "Generic CPU" and cached_model != curr_model:
+                return False
+
             for k, v in cores_state.items():
                 if k.startswith("cpu") and k[3:].isdigit():
                     core_id = int(k[3:])
-                    if core_id not in self.locked_cores:
+                    if core_id in self.all_cores and core_id not in self.locked_cores:
                         set_core_status(core_id, bool(v))
                 elif k == "systemd_cpu_affinity":
                     self.set_systemd_affinity(v if v else "unset", save_state=False)
