@@ -1,23 +1,3 @@
----
-title: "Dusky Kernel Compiler (v6.0.0) — Architecture, Configuration & Profile Engineering Manual"
-aliases:
-  - Dusky Kernel Manual
-  - Dusky Compiler Manual
-  - dusky_kernal_compile
-tags:
-  - linux
-  - kernel
-  - archlinux
-  - performance
-  - llvm
-  - optimization
-  - systemd
-version: "6.0.0"
-date_created: 2026-09-02
-last_modified: 2026-09-04
-status: complete
----
-
 # Dusky Kernel Compiler (v6.0.0) — Architecture, Configuration & Profile Engineering Manual
 
 > [!abstract] Executive Summary
@@ -76,69 +56,60 @@ flowchart TD
 
 ## 2. Architecture Taxonomy & Modern Kernel Evolution
 
-### 2.1. Subsystem Architecture Mindmap
+### 2.1. Subsystem Architecture Map
 
 ```mermaid
-mindmap
-  root((Dusky Kernel 7.2+ / 7.3))
-    CPU & Schedulers
-      Core Schedulers
-        EEVDF upstream default
-        BORE burst-oriented EEVDF
-        BMQ Project C static bitmap
-      sched_ext BPF Classes
-        scx_lavd gaming & handhelds
-        scx_bpfland interactive latency
-        scx_layered workstation cgroups
-        scx_cosmos / scx_p2dq cache-first
-      Cache-Aware Scheduling CAS
-        CONFIG_SCHED_CACHE
-        LLC domain affinity
-        CCX co-location
-      Hardware P-State
-        AMD P-State active autonomous EPP
-        Intel HWP & Thread Director
-    Clock & Timing
-      Tick Frequency HZ
-        1000 Hz low-latency
-        500 Hz / 600 Hz desktop sweet spot
-        300 Hz display sync & battery
-        250 Hz throughput
-      Preemption Architecture
-        PREEMPT_LAZY modern 7.x standard
-        PREEMPT_FULL low audio buffer
-        PREEMPT_RT hard real-time
-      Tickless NO_HZ
-        NO_HZ_IDLE desktop power saving
-        NO_HZ_FULL isolated cores
-    Memory & Storage
-      Virtual Memory
-        Multi-Gen LRU MGLRU generational
-        Per-VMA read/write locking
-        DAMON proactive reclaim
-      Compressed Swap
-        ZRAM multi-compression zstd+lz4
-        Hourly idle recompression timer
-        zswap disk cache alternative
-      Paging & Allocators
-        Transparent Hugepages mTHP
-        SLUB standard vs SLUB_TINY
-        SLAB_BUCKETS security isolation
-      Block I/O Layer
-        NVMe IOPOLL sub-2us queues
-        No scheduler for fast NVMe
-        MQ-Deadline & BFQ for SATA/HDD
-    Toolchain & Security
-      Compiler & LTO
-        LLVM/Clang 21+ toolchain
-        ThinLTO persistent disk cache
-        AutoFDO & Propeller basic blocks
-        Rust-for-Linux in-tree
-      Exploit Defenses
-        Clang kCFI & FineIBT
-        Usercopy & Stackprotector strong
-        Randomized stack & freelists
-        Lockdown early LSM
+%%{init: {'theme': 'base', 'themeVariables': {'darkMode': true, 'primaryTextColor': '#ffffff', 'lineColor': '#60a5fa'}}}%%
+flowchart TD
+    ROOT(["<b>Dusky Kernel Architecture (Linux 7.2+ / 7.3-rc)</b><br>Modular Engine Core & Hardware Tailoring"]):::rootNode
+
+    subgraph CPU["⚡ 1. CPU & Scheduling Core"]
+        direction TB
+        C1["<b>Core Scheduler Engines</b><br>• Upstream EEVDF (7.x Default)<br>• BORE (Burst-Oriented Response)<br>• BMQ (Project C O(1) Bitmap)"]
+        C2["<b>sched_ext (SCX) BPF Classes</b><br>• scx_lavd (Handhelds & Gaming)<br>• scx_bpfland (Interactive Desktop)<br>• scx_layered (Cgroup Workstations)<br>• scx_cosmos / scx_p2dq (Cache-Aware)"]
+        C3["<b>Cache-Aware Scheduling (CAS)</b><br>• CONFIG_SCHED_CACHE<br>• LLC / CCX Domain Affinity<br>• Communicating Task Co-location"]
+        C4["<b>Hardware P-State Autonomy</b><br>• AMD P-State Active EPP (CPPC v2)<br>• Intel HWP & Thread Director (HFI)<br>• Schedutil PELT Governor"]
+    end
+
+    subgraph TIMING["⏱️ 2. Clock, Timing & Preemption"]
+        direction TB
+        T1["<b>Interrupt Cadence (HZ)</b><br>• 1000 Hz: Minimum input & frame latency<br>• 500/600 Hz: High-refresh desktop sweet spot<br>• 300 Hz: Video framerate sync & battery<br>• 250 Hz: Sustained batch throughput"]
+        T2["<b>Preemption Architecture</b><br>• PREEMPT_LAZY: 7.x desktop standard<br>• PREEMPT_FULL: Lowest audio buffer underruns<br>• PREEMPT_RT: Deterministic hard real-time<br>• PREEMPT_DYNAMIC: Boot & debugfs runtime toggle"]
+        T3["<b>Tickless NO_HZ & RCU</b><br>• NO_HZ_IDLE: Suppress ticks on idle cores<br>• NO_HZ_FULL: Adaptive ticks (isolated cores)<br>• RCU_LAZY: Batch 10s idle RCU callbacks"]
+        T4["<b>Time-Slice Extensions</b><br>• CONFIG_RSEQ_SLICE_EXTENSION<br>• 10 µs critical section extension"]
+    end
+
+    subgraph MEMORY["🧠 3. Memory & Storage Architecture"]
+        direction TB
+        M1["<b>Virtual Memory & Reclaim</b><br>• Multi-Gen LRU (MGLRU) enabled<br>• Concurrent Per-VMA read/write locks<br>• DAMON proactive page reclaim<br>• Watermark scale factor tuning"]
+        M2["<b>Compressed Memory Swap</b><br>• ZRAM Multi-Comp: LZ4/Zstd primary<br>• Hourly idle-page recompression timer<br>• zswap write-through disk cache"]
+        M3["<b>Paging & Allocator Defenses</b><br>• Transparent Hugepages (THP / mTHP)<br>• SLUB standard vs SLUB_TINY (<= 4 GB)<br>• SLAB_BUCKETS security isolation"]
+        M4["<b>Block Layer & Filesystems</b><br>• NVMe IOPOLL sub-2µs completion<br>• Bypass software I/O queues on NVMe<br>• MQ-Deadline (SATA) & BFQ (Rotational)"]
+    end
+
+    subgraph TOOLCHAIN["🛡️ 4. Toolchain, Security & Gaming"]
+        direction TB
+        S1["<b>LLVM/Clang 21+ Toolchain</b><br>• ThinLTO with persistent disk cache<br>• Monolithic Full LTO for build boxes<br>• AutoFDO & Propeller basic-block PGO<br>• In-tree Rust-for-Linux support"]
+        S2["<b>Exploit Defenses</b><br>• Clang kCFI with hardware FineIBT<br>• Hardened usercopy bounds checking<br>• Stackprotector strong & random kstack<br>• Early lockdown LSM & AppArmor"]
+        S3["<b>Low-Latency Gaming & Wine</b><br>• In-tree NTSync driver (/dev/ntsync)<br>• UCLAMP utilization clamping<br>• Split-lock mitigation penalty bypass<br>• 2B vm.max_map_count ceiling"]
+        S4["<b>High-Throughput Network</b><br>• TCP BBRv3 congestion pacing<br>• FQ / CAKE bufferbloat elimination<br>• Multipath TCP (MPTCP) & AF_XDP"]
+    end
+
+    ROOT ==> CPU
+    ROOT ==> TIMING
+    ROOT ==> MEMORY
+    ROOT ==> TOOLCHAIN
+
+    classDef rootNode fill:#1e1b4b,stroke:#818cf8,stroke-width:3px,color:#ffffff,font-size:15px;
+    classDef cpuCard fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#ffffff;
+    classDef timeCard fill:#0f172a,stroke:#fbbf24,stroke-width:2px,color:#ffffff;
+    classDef memCard fill:#0f172a,stroke:#c084fc,stroke-width:2px,color:#ffffff;
+    classDef toolCard fill:#0f172a,stroke:#34d399,stroke-width:2px,color:#ffffff;
+
+    class C1,C2,C3,C4 cpuCard;
+    class T1,T2,T3,T4 timeCard;
+    class M1,M2,M3,M4 memCard;
+    class S1,S2,S3,S4 toolCard;
 ```
 
 ### 2.2. Linux 7.2+ / 7.3 Modern Standards vs. Obsolete Pre-7.0 Paradigms
