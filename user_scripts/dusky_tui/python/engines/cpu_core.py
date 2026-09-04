@@ -594,19 +594,19 @@ class CpuCoreEngine(BaseEngine):
                 except OSError as e:
                     return False, f"Failed to remove drop-in {dropin}: {e}"
 
+            if os.geteuid() == 0:
+                try:
+                    os.sched_setaffinity(1, set(self.all_cores))
+                except OSError:
+                    pass
+
             if run_daemon_reexec:
                 try:
                     subprocess.run(["systemctl", "revert", "user.slice", "system.slice"], capture_output=True, timeout=10)
                     for ctrl_dir in (Path("/etc/systemd/system.control/user.slice.d"), Path("/etc/systemd/system.control/system.slice.d")):
                         if ctrl_dir.exists():
                             shutil.rmtree(ctrl_dir, ignore_errors=True)
-                    if os.geteuid() == 0:
-                        try:
-                            os.sched_setaffinity(1, set(self.all_cores))
-                        except OSError:
-                            pass
                     subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=10)
-                    subprocess.run(["systemctl", "daemon-reexec"], capture_output=True, timeout=15)
                 except Exception as e:
                     return False, f"systemctl reset error: {e}"
 
@@ -635,18 +635,18 @@ class CpuCoreEngine(BaseEngine):
         except OSError as e:
             return False, f"Failed to write drop-in {dropin}: {e}"
 
-        # 4. Apply live PID 1, cgroups v2 slice enforcement & re-exec
+        # 4. Apply live PID 1, cgroups v2 slice enforcement
+        if os.geteuid() == 0:
+            try:
+                os.sched_setaffinity(1, parsed_cores)
+            except OSError:
+                pass
+
         if run_daemon_reexec:
             try:
-                if os.geteuid() == 0:
-                    try:
-                        os.sched_setaffinity(1, parsed_cores)
-                    except OSError:
-                        pass
                 subprocess.run(["systemctl", "set-property", "user.slice", f"AllowedCPUs={normalized_mask}"], capture_output=True, timeout=10)
                 subprocess.run(["systemctl", "set-property", "system.slice", f"AllowedCPUs={normalized_mask}"], capture_output=True, timeout=10)
                 subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=10)
-                subprocess.run(["systemctl", "daemon-reexec"], capture_output=True, timeout=15)
             except Exception as e:
                 return False, f"systemctl execution error: {e}"
 
@@ -777,7 +777,7 @@ class CpuCoreEngine(BaseEngine):
                     if core_id in self.all_cores and core_id not in self.locked_cores:
                         set_core_status(core_id, bool(v))
                 elif k == "systemd_cpu_affinity":
-                    self.set_systemd_affinity(v if v else "unset", save_state=False)
+                    self.set_systemd_affinity(v if v else "unset", run_daemon_reexec=False, save_state=False)
             return True
         except Exception:
             return False

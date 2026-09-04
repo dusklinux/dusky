@@ -481,6 +481,11 @@ def process_service_batch(
             suggest_missing(src_path)
             continue
 
+        if src_path.is_relative_to(Path("/usr/lib/systemd")):
+            log_info(f"System-provided unit [bold]{service_name}[/bold] already in system search path.")
+            installed_units.append(cfg)
+            continue
+
         log_info(f"Installing to {target_file}...")
         if dry_run:
             log_info(f"[Dry-Run] Deploy {src_path} -> {target_file} (mode=0644)")
