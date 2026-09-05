@@ -740,9 +740,22 @@ case "$MODE" in
         
         while true; do
             [[ -d "$STATE_DIR" ]] && printf "" > "$HEARTBEAT_FILE"
-            
+
             if [[ -r "$STATE_FILE" ]]; then
-                read -r unit up down _ < "$STATE_FILE" || true
+                unit=""; up=""; down=""
+                for ((_rt=0; _rt<5; _rt++)); do
+                    if read -r _u _up _down _c < "$STATE_FILE" 2>/dev/null; then
+                        case "${_u:-}" in
+                            KB|MB|GB|-)
+                                if [[ -n "${_up:-}" && -n "${_down:-}" && -n "${_c:-}" ]]; then
+                                    unit="$_u"; up="$_up"; down="$_down"
+                                    break
+                                fi
+                                ;;
+                        esac
+                    fi
+                done
+                unset _rt _u _up _down _c
                 up="${up:-0}"; down="${down:-0}"; unit="${unit:-B}"
                 short_unit="${unit%B}"
                 send_osd "${up}${short_unit} ${down}${short_unit}"
