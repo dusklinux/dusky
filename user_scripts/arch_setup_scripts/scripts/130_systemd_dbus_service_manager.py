@@ -521,8 +521,17 @@ def process_service_batch(
         if not safe_mkdir(target_dir):
             log_error(f"Aborting batch due to directory creation failure: {target_dir}")
             return False
-        # Garbage-collect any stale temp files from previous hard power-losses
+        # Garbage-collect stale temp files from crashes, sparing live concurrent runs (PID check).
         for tmp_file in target_dir.glob(".*.tmp"):
+            parts = tmp_file.name.split(".")
+            if len(parts) >= 3 and parts[-2].isdigit():
+                try:
+                    os.kill(int(parts[-2]), 0)
+                    continue  # owning process still alive
+                except ProcessLookupError:
+                    pass  # dead, safe to clean
+                except PermissionError:
+                    continue  # belongs to another user, leave it
             try:
                 tmp_file.unlink(missing_ok=True)
             except OSError:
