@@ -1182,7 +1182,11 @@ cmd_list() {
     # unavailable" sentinel when cliphist failed, because awk cannot see the
     # producer's exit status. Decide here, where both statuses are visible.
     if (( st[0] != 0 )); then
-        (( n > 0 )) || printf '  (clipboard backend unavailable)%s%s%s\n' "$SEP" error "$SEP"
+        if [[ ! -f ${CLIPHIST_DB_PATH:-} ]] && have cliphist; then
+            (( n > 0 )) || printf '  (clipboard empty)%s%s%s\n' "$SEP" empty "$SEP"
+        else
+            (( n > 0 )) || printf '  (clipboard backend unavailable)%s%s%s\n' "$SEP" error "$SEP"
+        fi
     elif (( st[1] == 20 && n == 0 )); then
         printf '  (clipboard empty)%s%s%s\n' "$SEP" empty "$SEP"
     fi
