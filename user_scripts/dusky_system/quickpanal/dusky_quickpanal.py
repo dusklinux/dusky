@@ -621,16 +621,28 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
     def _fetch_network(self) -> None:
         if not hasattr(self, 'metrics_row') or not self.get_visible():
             return
-        state_file = Path(f'/run/user/{os.getuid()}/waybar-net/state')
+        rt = Path(f'/run/user/{os.getuid()}/waybar-net')
+        try:
+            (rt / 'heartbeat').touch(exist_ok=True)
+            pid_txt = (rt / 'daemon.pid').read_text(encoding='utf-8').strip()
+            if pid_txt.isdigit():
+                with open(f'/proc/{pid_txt}/cmdline', 'rb') as fh:
+                    cmd = fh.read().replace(b'\0', b' ').decode('utf-8', 'ignore')
+                if 'network_meter_daemon' in cmd:
+                    os.kill(int(pid_txt), signal.SIGUSR1)
+        except Exception:
+            pass
+        state_file = rt / 'state'
         if state_file.exists():
             try:
-                parts = state_file.read_text(encoding='utf-8').strip().split()
-                if len(parts) >= 4:
-                    unit, up, down, cls = parts[0], parts[1], parts[2], parts[3]
-                    txt = f"{up} {unit} {down}"
-                    tt = "Disconnected" if cls == "network-disconnected" else f"Upload: {up} {unit}/s\nDownload: {down} {unit}/s"
-                    GLib.idle_add(self.pill_net.apply_json, {"text": txt, "class": cls, "tooltip": tt}, 'network-disconnected')
-                    return
+                for _ in range(5):
+                    parts = state_file.read_text(encoding='utf-8').strip().split()
+                    if len(parts) >= 4 and parts[0] in ('KB', 'MB', 'GB', '-'):
+                        unit, up, down, cls = parts[0], parts[1], parts[2], parts[3]
+                        txt = f"{up} {unit} {down}"
+                        tt = "Disconnected" if cls == "network-disconnected" else f"Upload: {up} {unit}/s\nDownload: {down} {unit}/s"
+                        GLib.idle_add(self.pill_net.apply_json, {"text": txt, "class": cls, "tooltip": tt}, 'network-disconnected')
+                        return
             except Exception:
                 pass
         data = fetch_json_output(f'{HOME}/user_scripts/waybar/network/network_meter_calling.sh --horizontal')
