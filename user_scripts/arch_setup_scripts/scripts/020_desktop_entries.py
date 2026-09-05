@@ -46,7 +46,7 @@ def resolve_user_context() -> tuple[str, Path]:
     except KeyError:
         pass
 
-    user = os.environ.get('USER') or os.environ.get('LOGNAME') or 'dusk'
+    user = os.environ.get('USER') or os.environ.get('LOGNAME') or str(real_uid)
     home = Path(os.environ.get('HOME', f'/home/{user}'))
     return user, home
 
@@ -140,7 +140,7 @@ def get_file_hash(filepath: Path) -> str | None:
 def patch_line(line: str) -> str:
     """Surgically substitutes username and expands variables/tildes ONLY in valid desktop keys."""
     if PATCH_KEYS_RE.match(line):
-        line = USER_PATH_RE.sub(lambda _: f'/home/{USER}/', line)
+        line = USER_PATH_RE.sub(lambda _: f'{HOME}/', line)
         line = line.replace('$HOME', str(HOME)).replace('${HOME}', str(HOME))
         line = line.replace('$USER', USER).replace('${USER}', USER)
         line = line.replace('$XDG_DATA_HOME', str(XDG_DATA_HOME)).replace('${XDG_DATA_HOME}', str(XDG_DATA_HOME))
