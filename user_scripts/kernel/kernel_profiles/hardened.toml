@@ -58,8 +58,6 @@ sched_cache = true
 llc_aggr_tolerance = 1
 # LLC aggregation capacity percent (-1 = kernel default)
 llc_aggr_cap = -1
-# Install the boot-time tuning unit that persists CAS knobs
-persist = true
 
 [rseq]
 # RSEQ time-slice extension (CONFIG_RSEQ_SLICE_EXTENSION)
@@ -139,7 +137,7 @@ zram_algo = "zstd"
 zram_recomp_algo = "zstd"
 # ZRAM size as percent of RAM
 zram_size_pct = 100
-# CONFIG_ZRAM_MULTI_COMP + hourly idle recompression timer
+# CONFIG_ZRAM_MULTI_COMP (multi-algorithm swap compression in kernel)
 zram_multi_comp = true
 # zswap compressor | choices: zstd | lz4 | lz4hc | lzo
 zswap_compressor = "zstd"
@@ -193,8 +191,6 @@ tracing = "auto"
 kexec = true
 # Embed .config (/proc/config.gz)
 ikconfig = true
-# Enable systemd-oomd with pressure-based killing
-systemd_oomd = false
 # TRIM_UNUSED_KSYMS (breaks out-of-tree modules; only with headers=never)
 trim_unused_ksyms = false
 # LD_DEAD_CODE_DATA_ELIMINATION (inert on upstream x86-64)
@@ -259,7 +255,7 @@ lockdown_early = true
 acknowledge_risk = false
 
 [gaming]
-# In-tree NTSync driver (CONFIG_NTSYNC=m) + udev/uaccess + autoload
+# In-tree NTSync driver (CONFIG_NTSYNC=m)
 ntsync = true
 # UCLAMP_TASK utilization clamping
 uclamp = true
@@ -329,8 +325,6 @@ lmc_keep_extra = []
 keep_symbols = []
 # Build pruned modules into the image (localyesconfig)
 localyesconfig = false
-# Enable modprobed-db.service to keep the database fresh
-manage_service = true
 # MODULE_SIG_FORCE (auto-generated key)
 sig_force = false
 
@@ -343,7 +337,6 @@ cmdline_extra = ""
 write_entries = true
 # Disable NMI/soft watchdog (nowatchdog nmi_watchdog=0)
 nowatchdog = false
-
 [verify]
 # Hard-fail when a non-optional Kconfig contract entry is unmet
 strict = true

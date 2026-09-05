@@ -14,7 +14,6 @@ Pipeline (one profile -> two pacman packages):
   -> olddefconfig -> localmodconfig(LSMOD=modprobed.db, strict|expanded) -> Kconfig index scan
   -> declarative Kconfig matrix (batched scripts/config) -> olddefconfig -> contract verification
   -> make pacman-pkg (linux-dusky-<flavor> + linux-dusky-<flavor>-headers) -> pacman -U
-  -> runtime integration (sysctl, tmpfiles, udev, modprobe, zram-generator, scx_loader, tune unit)
   -> bootloader refresh (systemd-boot entries, GRUB, rEFInd, Limine, kernel-install)
 
 Quick start:
@@ -114,8 +113,6 @@ def set_build_dir(new_path: Path | str) -> None:
 LOG_DIR: Final = STATE_DIR / "logs"
 HISTORY_FILE: Final = STATE_DIR / "history.json"
 MODPROBED_DB_PATH: Final = XDG_CONFIG / "modprobed.db"
-RUNTIME_LIB_DIR: Final = Path("/usr/local/lib/dusky")
-RUNTIME_MANIFEST_DIR: Final = Path("/etc/dusky")
 KERNEL_ORG_RELEASES: Final = "https://www.kernel.org/releases.json"
 ARCH_UPSTREAM_CONFIG_URL: Final = "https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/raw/main/config"
 KERNEL_SIGNING_FPRS: Final = frozenset({
@@ -657,7 +654,6 @@ PROFILE_SPEC: Final[dict[str, tuple[FieldSpec, ...]]] = {
         F("sched_cache", "bool", True, "CONFIG_SCHED_CACHE Cache-Aware Scheduling (LLC affinity)"),
         F("llc_aggr_tolerance", "int", 1, "LLC aggregation tolerance written to debugfs at boot", minimum=0, maximum=100),
         F("llc_aggr_cap", "int", -1, "LLC aggregation capacity percent (-1 = kernel default)", minimum=-1, maximum=100),
-        F("persist", "bool", True, "Install the boot-time tuning unit that persists CAS knobs"),
     ),
     "rseq": (
         F("slice_extension", "bool", True, "RSEQ time-slice extension (CONFIG_RSEQ_SLICE_EXTENSION)"),
@@ -705,7 +701,7 @@ PROFILE_SPEC: Final[dict[str, tuple[FieldSpec, ...]]] = {
         F("zram_algo", "str", "zstd", "Primary ZRAM compressor", ZRAM_ALGO_CHOICES),
         F("zram_recomp_algo", "str", "zstd", "ZRAM recompression algorithm for idle pages (multi-comp)", ZRAM_ALGO_CHOICES),
         F("zram_size_pct", "int", 100, "ZRAM size as percent of RAM", minimum=10, maximum=400),
-        F("zram_multi_comp", "bool", True, "CONFIG_ZRAM_MULTI_COMP + hourly idle recompression timer"),
+        F("zram_multi_comp", "bool", True, "CONFIG_ZRAM_MULTI_COMP (multi-algorithm swap compression in kernel)"),
         F("zswap_compressor", "str", "zstd", "zswap compressor", ZSWAP_COMP_CHOICES),
         F("zswap_max_pool_pct", "int", 25, "zswap.max_pool_percent", minimum=5, maximum=80),
         F("swappiness", "int", 0, "vm.swappiness (0 = auto: 180 zram, 100 zswap, 60 none)", minimum=0, maximum=200),
@@ -732,7 +728,6 @@ PROFILE_SPEC: Final[dict[str, tuple[FieldSpec, ...]]] = {
         F("tracing", "str", "auto", "ftrace/kprobes/uprobes surface", TRACING_CHOICES),
         F("kexec", "bool", True, "kexec + crash dump support"),
         F("ikconfig", "bool", True, "Embed .config (/proc/config.gz)"),
-        F("systemd_oomd", "bool", False, "Enable systemd-oomd with pressure-based killing"),
         F("trim_unused_ksyms", "bool", False, "TRIM_UNUSED_KSYMS (breaks out-of-tree modules; only with headers=never)"),
         F("dead_code_elimination", "bool", False, "LD_DEAD_CODE_DATA_ELIMINATION (inert on upstream x86-64)"),
     ),
@@ -769,7 +764,7 @@ PROFILE_SPEC: Final[dict[str, tuple[FieldSpec, ...]]] = {
         F("acknowledge_risk", "bool", False, "Acknowledge extreme profile / mitigations=off risks"),
     ),
     "gaming": (
-        F("ntsync", "bool", True, "In-tree NTSync driver (CONFIG_NTSYNC=m) + udev/uaccess + autoload"),
+        F("ntsync", "bool", True, "In-tree NTSync driver (CONFIG_NTSYNC=m)"),
         F("uclamp", "bool", True, "UCLAMP_TASK utilization clamping"),
         F("max_map_count", "int", 2147483642, "vm.max_map_count", minimum=65530, maximum=2147483642),
         F("split_lock_mitigate", "bool", False, "Split-lock detection penalty (off = better emulator/game frametimes)"),
@@ -808,7 +803,6 @@ PROFILE_SPEC: Final[dict[str, tuple[FieldSpec, ...]]] = {
         F("lmc_keep_extra", "list", [], "Extra LMC_KEEP paths (expanded mode)"),
         F("keep_symbols", "list", [], "Kconfig symbols forced to =m after pruning (e.g. WIREGUARD, TUN)"),
         F("localyesconfig", "bool", False, "Build pruned modules into the image (localyesconfig)"),
-        F("manage_service", "bool", True, "Enable modprobed-db.service to keep the database fresh"),
         F("sig_force", "bool", False, "MODULE_SIG_FORCE (auto-generated key)"),
     ),
     "boot": (
@@ -838,7 +832,7 @@ WIZARD_STEPS: Final[tuple[WizardStep, ...]] = (
     WizardStep("Release", (("release", ("channel", "pin", "allow_rc", "require_signature")),)),
     WizardStep("CPU", (("cpu", ("arch", "governor", "amd_pstate", "epp", "mitigations", "nr_cpus", "smt", "prefcore", "compat32", "mce")),)),
     WizardStep("Scheduler", (("scheduler", ("type", "scx", "scx_flags", "scx_enable_class", "require_patch", "allow_vanilla_fallback", "autogroup", "rt_group", "sched_core")),
-                             ("cache", ("sched_cache", "llc_aggr_tolerance", "llc_aggr_cap", "persist")),
+                             ("cache", ("sched_cache", "llc_aggr_tolerance", "llc_aggr_cap")),
                              ("rseq", ("slice_extension", "slice_ext_nsec")))),
     WizardStep("Timing", (("timing", ("hz", "tickless", "preempt", "preempt_dynamic")),)),
     WizardStep("Memory & Low-RAM", (("memory", ("footprint", "thp", "thp_defrag", "thp_shmem", "mglru", "mglru_mask", "mglru_min_ttl_ms", "swap_backend",
@@ -846,7 +840,7 @@ WIZARD_STEPS: Final[tuple[WizardStep, ...]] = (
                                                 "swappiness", "vfs_cache_pressure", "watermark_scale_factor", "watermark_boost_factor", "compaction_proactiveness",
                                                 "dirty_bytes_mb", "slub_tiny", "slab_buckets", "per_vma_lock", "numa", "numa_balancing", "nodes_shift", "ksm", "ksm_run",
                                                 "damon", "page_reporting", "hugetlbfs", "kallsyms_all", "memcg", "base_small", "log_buf_shift", "tracing", "kexec",
-                                                "ikconfig", "systemd_oomd", "trim_unused_ksyms", "dead_code_elimination")),)),
+                                                "ikconfig", "trim_unused_ksyms", "dead_code_elimination")),)),
     WizardStep("Compiler & Toolchain", (("compiler", ("toolchain", "optimize", "polly", "lto", "thinlto_cache", "thinlto_cache_size_gb", "kcfi", "fdo", "fdo_profile_dir",
                                                        "debug_info", "module_compress", "rust", "jobs", "modversions")),
                                         ("dusky", ("seed", "enhanced", "patch_sched_inline", "patch_evdev_rcu", "patch_pci_pme", "extra_config")))),
@@ -857,7 +851,7 @@ WIZARD_STEPS: Final[tuple[WizardStep, ...]] = (
                                    ("power", ("cpu_idle_governor", "rcu_lazy", "energy_model", "wq_power_efficient", "suspend", "hibernation", "pcie_aspm", "hda_power_save")))),
     WizardStep("Network", (("network", ("congestion", "qdisc", "mptcp", "xdp", "nf_conntrack_procfs", "tcp_fastopen")),)),
     WizardStep("Modules, Headers & Boot", (("modules", ("mode", "modprobed_db", "modprobed_db_path", "allow_lsmod_fallback", "lmc_keep_extra", "keep_symbols",
-                                                        "localyesconfig", "manage_service", "sig_force")),
+                                                        "localyesconfig", "sig_force")),
                                            ("compiler", ("headers",)),
                                            ("boot", ("cmdline", "cmdline_extra", "write_entries", "nowatchdog", "acs_override")),
                                            ("meta", ("bare_metal_only", "portable_package")),
@@ -1333,7 +1327,7 @@ def field_relevant(s: Sections, sec: str, key: str) -> bool:
             return s["scheduler"]["scx"] != "none"
         case ("scheduler", "require_patch") | ("scheduler", "allow_vanilla_fallback"):
             return s["scheduler"]["type"] != "eevdf"
-        case ("cache", "llc_aggr_tolerance") | ("cache", "llc_aggr_cap") | ("cache", "persist"):
+        case ("cache", "llc_aggr_tolerance") | ("cache", "llc_aggr_cap"):
             return bool(s["cache"]["sched_cache"])
         case ("rseq", "slice_ext_nsec"):
             return bool(s["rseq"]["slice_extension"])
@@ -1467,8 +1461,6 @@ def prompt_field(p: KernelProfile, sec: str, spec: FieldSpec, facts: "HostFacts 
             say(f"    {marker} {i:>2}) {C.BOLD}{ch}{C.RESET}  {C.DIM}{ctx}{C.RESET}")
         if (sec, spec.key) == ("cpu", "arch") and facts is not None:
             note(f"    host: {facts.model} -> detected uarch '{facts.uarch or 'unknown'}', psABI v{facts.psabi_level}, {facts.threads} threads")
-        if (sec, spec.key) == ("scheduler", "scx") and facts is not None and not facts.tools.get("scx_loader"):
-            note("    scx_loader not installed yet (pacman -S scx-scheds); a direct unit will be generated instead")
     elif spec.kind == "bool":
         say(f"    {C.DIM}y/n{C.RESET}")
     elif spec.kind == "int":
@@ -3595,8 +3587,6 @@ def ensure_modprobed_db(p: KernelProfile) -> Path | None:
     db = Path(custom).expanduser().resolve() if custom else MODPROBED_DB_PATH
     if not custom and have("modprobed-db"):
         run(["modprobed-db", "store"], check=False, timeout=60)
-        if p.g("modules", "manage_service") and have("systemctl"):
-            run(["systemctl", "--user", "enable", "--now", "modprobed-db.service"], check=False, timeout=30)
     if db.is_file() and db.stat().st_size > 0:
         count = len([line for line in _read(db).splitlines() if line.strip()])
         ok(f"modprobed.db: {db} ({count} modules)")
@@ -3746,7 +3736,7 @@ class Matrix:
         return len(self._ops)
 
 # ---------------------------------------------------------------------------------------------------
-# Derived build state (resolved once, shared by matrix, environment, runtime files and verification)
+# Derived build state (resolved once, shared by matrix, environment, cmdline and verification)
 # ---------------------------------------------------------------------------------------------------
 @dataclass(slots=True)
 class Derived:
@@ -4955,239 +4945,6 @@ def install_packages(pkgs: Sequence[Path]) -> None:
     ok("Kernel packages installed (mkinitcpio and DKMS pacman hooks have run)")
 
 # ---------------------------------------------------------------------------------------------------
-# Runtime integration (all flavor-specific settings are applied only when that flavor is booted)
-# ---------------------------------------------------------------------------------------------------
-def render_sysctl(p: KernelProfile, facts: HostFacts) -> str:
-    s = p.sections
-    m = s["memory"]
-    swap = m["swap_backend"]
-    swappiness = m["swappiness"] or {"zram": 180, "zswap": 100, "none": 60}[swap]
-    vfs = m["vfs_cache_pressure"] or {"standard": 50, "lean": 100, "minimal": 150, "embedded": 200}[m["footprint"]]
-    proactive = m["compaction_proactiveness"] or (20 if m["thp"] != "never" else 0)
-    lines = [f"# {APP_NAME} {APP_VERSION} -- runtime sysctls for {p.pkgbase} (loaded by dusky-tune.service)",
-             f"vm.swappiness = {swappiness}", f"vm.vfs_cache_pressure = {vfs}", f"vm.watermark_scale_factor = {m['watermark_scale_factor']}",
-             f"vm.watermark_boost_factor = {m['watermark_boost_factor']}", f"vm.compaction_proactiveness = {proactive}", "vm.zone_reclaim_mode = 0"]
-    if swap != "none":
-        lines.append("vm.page-cluster = 0")
-    if m["dirty_bytes_mb"]:
-        dirty = m["dirty_bytes_mb"] << 20
-        lines += [f"vm.dirty_bytes = {dirty}", f"vm.dirty_background_bytes = {max(4 << 20, dirty // 4)}"]
-    lines += [f"vm.max_map_count = {s['gaming']['max_map_count']}", f"kernel.split_lock_mitigate = {1 if s['gaming']['split_lock_mitigate'] else 0}",
-              f"kernel.sched_autogroup_enabled = {1 if s['scheduler']['autogroup'] else 0}"]
-    if s["boot"]["nowatchdog"]:
-        lines.append("kernel.nmi_watchdog = 0")
-    if m["numa"]:
-        lines.append(f"kernel.numa_balancing = {1 if m['numa_balancing'] else 0}")
-    lines += [f"net.core.default_qdisc = {s['network']['qdisc']}", f"net.ipv4.tcp_congestion_control = {s['network']['congestion']}", "net.ipv4.tcp_mtu_probing = 1"]
-    if s["network"]["tcp_fastopen"]:
-        lines.append("net.ipv4.tcp_fastopen = 3")
-    if s["network"]["mptcp"]:
-        lines.append("net.mptcp.enabled = 1")
-    return "\n".join(lines) + "\n"
-
-
-def render_tune_script(p: KernelProfile, facts: HostFacts) -> str:
-    s = p.sections
-    m, c = s["memory"], s["cpu"]
-    L: list[str] = ["#!/bin/sh", f"# {APP_NAME} {APP_VERSION} -- runtime tuning for {p.pkgbase}; sourced by dusky-tune.sh only when this flavor is booted",
-                    "w() { [ -w \"$2\" ] && printf '%s\\n' \"$1\" > \"$2\" 2>/dev/null; return 0; }",
-                    f"sysctl -q -p /etc/dusky/sysctl-{p.suffix}.conf 2>/dev/null || true"]
-    L += ["# transparent hugepages", f"w {m['thp']} /sys/kernel/mm/transparent_hugepage/enabled", f"w {m['thp_defrag']} /sys/kernel/mm/transparent_hugepage/defrag",
-          f"w {m['thp_shmem']} /sys/kernel/mm/transparent_hugepage/shmem_enabled", f"w {1 if m['thp'] != 'never' else 0} /sys/kernel/mm/transparent_hugepage/khugepaged/defrag"]
-    if m["mglru"]:
-        L += ["# multi-gen LRU", f"w {m['mglru_mask']} /sys/kernel/mm/lru_gen/enabled", f"w {m['mglru_min_ttl_ms']} /sys/kernel/mm/lru_gen/min_ttl_ms"]
-    if m["ksm_run"]:
-        L += ["# KSM", "w 1 /sys/kernel/mm/ksm/run", "w 200 /sys/kernel/mm/ksm/pages_to_scan"]
-    if s["cache"]["sched_cache"] and s["cache"]["persist"]:
-        L += ["# cache-aware scheduling (Linux 7.2+ debugfs knobs; silently skipped if absent)",
-              f"for f in /sys/kernel/debug/sched/llc_aggr_tolerance /sys/kernel/debug/sched/cache_aggr_tolerance; do w {s['cache']['llc_aggr_tolerance']} \"$f\"; done",
-              "grep -qw NO_SCHED_CACHE /sys/kernel/debug/sched/features 2>/dev/null && w SCHED_CACHE /sys/kernel/debug/sched/features"]
-        if s["cache"]["llc_aggr_cap"] >= 0:
-            L.append(f"w {s['cache']['llc_aggr_cap']} /sys/kernel/debug/sched/llc_aggr_cap")
-    if s["rseq"]["slice_extension"]:
-        L += ["# rseq time-slice extension", f"for f in /sys/kernel/debug/rseq/slice_ext_nsec /sys/kernel/debug/rseq/slice_extension_nsec; do w {s['rseq']['slice_ext_nsec']} \"$f\"; done"]
-    L += ["# cpufreq / P-State", f"for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do w {c['governor']} \"$f\"; done"]
-    if c["epp"] != "default":
-        L.append(f"for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do w {c['epp']} \"$f\"; done")
-    if c["amd_pstate"] in ("active", "guided", "passive"):
-        L.append(f"[ -f /sys/devices/system/cpu/amd_pstate/status ] && [ \"$(cat /sys/devices/system/cpu/amd_pstate/status)\" != \"{c['amd_pstate']}\" ] && w {c['amd_pstate']} /sys/devices/system/cpu/amd_pstate/status")
-    if s["power"]["cpu_idle_governor"]:
-        L.append(f"w {s['power']['cpu_idle_governor']} /sys/devices/system/cpu/cpuidle/current_governor")
-    L.append("exit 0")
-    return "\n".join(L) + "\n"
-
-
-TUNE_DISPATCHER: Final = """#!/bin/sh
-# Dusky Kernel Compiler -- dispatch per-flavor runtime tuning based on the booted kernel release
-rel=$(uname -r)
-for s in /usr/local/lib/dusky/tune.d/*.sh; do
-  [ -f "$s" ] || continue
-  flavor=$(basename "$s" .sh)
-  case "$rel" in
-    *-"$flavor") . "$s" ;;
-  esac
-done
-exit 0
-"""
-
-TUNE_UNIT: Final = """[Unit]
-Description=Dusky per-flavor runtime tuning (sysctl, THP, MGLRU, CAS, RSEQ, EPP)
-After=sys-kernel-debug.mount systemd-sysctl.service systemd-tmpfiles-setup.service
-Wants=sys-kernel-debug.mount
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/local/lib/dusky/dusky-tune.sh
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-ZRAM_RECOMPRESS_SCRIPT: Final = """#!/bin/sh
-# Dusky Kernel Compiler -- recompress idle zram pages with the secondary (denser) algorithm
-for dev in /sys/block/zram*; do
-  [ -w "$dev/recompress" ] || continue
-  if ! printf '1800\\n' > "$dev/idle" 2>/dev/null; then printf 'all\\n' > "$dev/idle" 2>/dev/null || continue; fi
-  printf 'type=idle\\n' > "$dev/recompress" 2>/dev/null || true
-done
-exit 0
-"""
-
-ZRAM_RECOMPRESS_SERVICE: Final = """[Unit]
-Description=Dusky zram idle-page recompression
-ConditionPathExists=/sys/block/zram0/recompress
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/lib/dusky/zram-recompress.sh
-Nice=19
-IOSchedulingClass=idle
-"""
-
-ZRAM_RECOMPRESS_TIMER: Final = """[Unit]
-Description=Hourly Dusky zram idle-page recompression
-
-[Timer]
-OnBootSec=30min
-OnUnitActiveSec=1h
-AccuracySec=5min
-
-[Install]
-WantedBy=timers.target
-"""
-
-SCX_CONDITION_DROPIN: Final = "[Unit]\nConditionPathIsDirectory=/sys/kernel/sched_ext\n"
-
-
-def render_zram_generator(p: KernelProfile) -> str:
-    m = p.sections["memory"]
-    algo = m["zram_algo"]
-    if m["zram_multi_comp"] and m["zram_recomp_algo"] != algo:
-        algo = f"{algo} {m['zram_recomp_algo']}"
-    return (f"# {APP_NAME} -- zram swap for {p.pkgbase} (multi-compression: primary + recompression algorithm)\n[zram0]\n"
-            f"zram-size = ram * {m['zram_size_pct'] / 100:.2f}\ncompression-algorithm = {algo}\nswap-priority = 100\nfs-type = swap\n")
-
-
-def render_scx_loader_toml(p: KernelProfile) -> str:
-    sched = p.g("scheduler", "scx")
-    flags = shlex.split(p.g("scheduler", "scx_flags"))
-    return (f"# {APP_NAME} -- sched_ext loader configuration\ndefault_sched = {json.dumps(sched)}\ndefault_mode = \"Auto\"\n\n"
-            f"[scheds.{sched}]\nauto_mode = {json.dumps(flags)}\n")
-
-
-def render_scx_unit(p: KernelProfile) -> str:
-    sched, flags = p.g("scheduler", "scx"), p.g("scheduler", "scx_flags")
-    return (f"[Unit]\nDescription=Dusky sched_ext scheduler ({sched})\nConditionPathIsDirectory=/sys/kernel/sched_ext\nAfter=multi-user.target\n\n"
-            f"[Service]\nType=simple\nExecStart=/usr/bin/{sched} {flags}\nRestart=on-failure\nRestartSec=2\nNice=-20\nOOMScoreAdjust=-1000\n\n"
-            "[Install]\nWantedBy=multi-user.target\n")
-
-
-def render_udev_io(p: KernelProfile) -> str:
-    sched = p.g("storage", "io_scheduler")
-    return (f"# {APP_NAME} -- block I/O scheduler defaults\n"
-            f'ACTION=="add|change", KERNEL=="nvme[0-9]*n[0-9]*", ATTR{{queue/scheduler}}="{sched}"\n'
-            'ACTION=="add|change", KERNEL=="sd[a-z]*|mmcblk[0-9]*", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="mq-deadline"\n'
-            'ACTION=="add|change", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"\n')
-
-
-def manifest_path(flavor: str) -> Path:
-    return RUNTIME_MANIFEST_DIR / f"manifest-{flavor}.txt"
-
-
-def write_runtime_system_files(p: KernelProfile, facts: HostFacts) -> None:
-    rule("Runtime integration")
-    s = p.sections
-    flavor = p.suffix
-    files: dict[Path, tuple[str, str]] = {}
-    units_enable: list[str] = []
-    files[Path(f"/etc/dusky/sysctl-{flavor}.conf")] = (render_sysctl(p, facts), "0644")
-    files[RUNTIME_LIB_DIR / "tune.d" / f"{flavor}.sh"] = (render_tune_script(p, facts), "0755")
-    files[RUNTIME_LIB_DIR / "dusky-tune.sh"] = (TUNE_DISPATCHER, "0755")
-    files[Path("/etc/systemd/system/dusky-tune.service")] = (TUNE_UNIT, "0644")
-    units_enable.append("dusky-tune.service")
-    if s["storage"]["io_scheduler"] != "keep":
-        files[Path("/etc/udev/rules.d/60-dusky-ioscheduler.rules")] = (render_udev_io(p), "0644")
-    if s["gaming"]["ntsync"]:
-        files[Path("/etc/udev/rules.d/70-dusky-ntsync.rules")] = (f"# {APP_NAME} -- NTSync device access for Wine/Proton\nKERNEL==\"ntsync\", MODE=\"0644\", TAG+=\"uaccess\"\n", "0644")
-        files[Path("/etc/modules-load.d/dusky-ntsync.conf")] = ("# load the in-tree NT synchronization primitive driver at boot\nntsync\n", "0644")
-    if s["storage"]["nvme_poll_queues"]:
-        files[Path(f"/etc/modprobe.d/dusky-{flavor}.conf")] = (f"options nvme poll_queues={s['storage']['nvme_poll_queues']}\n", "0644")
-    if s["memory"]["swap_backend"] == "zram":
-        if not facts.tools.get("zram-generator") and interactive() and ask_yes("zram-generator is not installed; install it now (pacman -S zram-generator)?", True):
-            PRIV.run(["pacman", "-S", "--needed", "--noconfirm", "zram-generator"], capture=False)
-        files[Path("/etc/systemd/zram-generator.conf.d/90-dusky.conf")] = (render_zram_generator(p), "0644")
-        if s["memory"]["zram_multi_comp"]:
-            files[RUNTIME_LIB_DIR / "zram-recompress.sh"] = (ZRAM_RECOMPRESS_SCRIPT, "0755")
-            files[Path("/etc/systemd/system/dusky-zram-recompress.service")] = (ZRAM_RECOMPRESS_SERVICE, "0644")
-            files[Path("/etc/systemd/system/dusky-zram-recompress.timer")] = (ZRAM_RECOMPRESS_TIMER, "0644")
-            units_enable.append("dusky-zram-recompress.timer")
-    scx = s["scheduler"]["scx"]
-    if scx != "none":
-        if not have(scx) and interactive() and ask_yes(f"{scx} is not installed; install scx-scheds now?", True):
-            PRIV.run(["pacman", "-S", "--needed", "--noconfirm", "scx-scheds"], capture=False)
-            facts.tools["scx_loader"] = "present" if have("scx_loader") else ""
-        if have("scx_loader") and Path("/usr/lib/systemd/system/scx_loader.service").is_file():
-            files[Path("/etc/scx_loader.toml")] = (render_scx_loader_toml(p), "0644")
-            files[Path("/etc/systemd/system/scx_loader.service.d/90-dusky.conf")] = (SCX_CONDITION_DROPIN, "0644")
-            units_enable.append("scx_loader.service")
-        elif Path("/usr/lib/systemd/system/scx.service").is_file():
-            files[Path("/etc/default/scx")] = (f"SCX_SCHEDULER={scx}\nSCX_FLAGS={shlex.quote(s['scheduler']['scx_flags'])}\n", "0644")
-            files[Path("/etc/systemd/system/scx.service.d/90-dusky.conf")] = (SCX_CONDITION_DROPIN, "0644")
-            units_enable.append("scx.service")
-        else:
-            files[Path("/etc/systemd/system/dusky-scx.service")] = (render_scx_unit(p), "0644")
-            units_enable.append("dusky-scx.service")
-    if s["memory"]["systemd_oomd"]:
-        files[Path("/etc/systemd/oomd.conf.d/90-dusky.conf")] = ("[OOM]\nSwapUsedLimit=90%\nDefaultMemoryPressureLimit=60%\nDefaultMemoryPressureDurationSec=20s\n", "0644")
-        files[Path("/etc/systemd/system/user@.service.d/90-dusky-oomd.conf")] = ("[Service]\nManagedOOMMemoryPressure=kill\nManagedOOMMemoryPressureLimit=60%\n", "0644")
-        files[Path("/etc/systemd/system/-.slice.d/90-dusky-oomd.conf")] = ("[Slice]\nManagedOOMSwap=kill\n", "0644")
-        units_enable.append("systemd-oomd.service")
-    manifest_lines = [str(path) for path in files] + [str(manifest_path(flavor))]
-    files[manifest_path(flavor)] = ("\n".join(manifest_lines) + "\n", "0644")
-    PRIV.write_files(files)
-    PRIV.run(["systemctl", "daemon-reload"], check=False)
-    PRIV.run(["udevadm", "control", "--reload"], check=False)
-    for unit in units_enable:
-        PRIV.run(["systemctl", "enable", unit], check=False)
-    ok(f"Installed {len(files)} runtime files; enabled: {', '.join(units_enable)} (flavor-specific settings apply when {p.pkgbase} boots)")
-
-
-def uninstall_runtime(flavor: str) -> None:
-    mf = manifest_path(flavor)
-    if not mf.is_file():
-        warn(f"No runtime manifest for flavor '{flavor}' ({mf})")
-        return
-    paths = [ln.strip() for ln in _read(mf).splitlines() if ln.strip()]
-    shared = {str(RUNTIME_LIB_DIR / "dusky-tune.sh"), "/etc/systemd/system/dusky-tune.service"}
-    others = [m for m in RUNTIME_MANIFEST_DIR.glob("manifest-*.txt") if m != mf]
-    victims = [pth for pth in paths if not (pth in shared and others)]
-    PRIV.run(["rm", "-f", *victims], check=False)
-    PRIV.run(["systemctl", "daemon-reload"], check=False)
-    ok(f"Removed {len(victims)} runtime files for {flavor}")
-
-
-# ---------------------------------------------------------------------------------------------------
 # Bootloader integration
 # ---------------------------------------------------------------------------------------------------
 def base_cmdline_tokens(facts: HostFacts) -> list[str]:
@@ -5339,7 +5096,7 @@ def do_import_bundle(src: Path) -> str:
         "memory": {"footprint": suggest_footprint(mem), "swap_backend": "zram", "page_reporting": manifest.get("virt", "none") != "none"},
         "compiler": {"toolchain": "llvm", "lto": "thin", "headers": "always" if manifest.get("dkms_modules") else "never", "rust": False},
         "storage": {"extra_filesystems": [fs for fs in manifest.get("filesystems", []) if fs in FS_SYMBOLS]},
-        "modules": {"mode": "strict" if db_path else "expanded", "modprobed_db": bool(db_path), "modprobed_db_path": db_path, "manage_service": False},
+        "modules": {"mode": "strict" if db_path else "expanded", "modprobed_db": bool(db_path), "modprobed_db_path": db_path},
         "security": {"profile": "balanced"},
         "boot": {"write_entries": False},
     }
@@ -5462,7 +5219,6 @@ def do_build(args: argparse.Namespace) -> int:
         ok("Packages built (--no-install). Install later with: sudo pacman -U " + " ".join(str(x) for x in pkgs))
         return 0
     install_packages(pkgs)
-    write_runtime_system_files(profile, facts)
     refresh_boot(profile, facts, d, kernel_install=bool(args.kernel_install))
     rule("Done")
     ok(f"{d.kernelrelease} ({profile.name}) installed as {profile.pkgbase}. Reboot to test; roll back with --uninstall {profile.suffix}.")
@@ -5569,7 +5325,7 @@ def do_doctor(args: argparse.Namespace) -> int:
         ("makepkg", "Arch packaging", True),
         ("mkinitcpio", "initramfs generator", True),
         ("modprobed-db", "hardware module profiler", True),
-        ("zram-generator", "ZRAM RAM swap generator", True),
+        ("zram-generator", "ZRAM swap generator (optional)", False),
         ("perf", "kernel telemetry / AutoFDO", False),
         ("scx_lavd", "sched_ext gaming/latency", False),
         ("scx_bpfland", "sched_ext low-latency", False),
@@ -5657,7 +5413,6 @@ def do_uninstall(args: argparse.Namespace) -> int:
         ok(f"Removed packages: {', '.join(pkgs)}")
     else:
         warn(f"No installed packages named linux-{flavor}*")
-    uninstall_runtime(flavor)
     facts = host_facts()
     root = facts.xbootldr or facts.esp
     if root:
@@ -5707,7 +5462,7 @@ DEFAULT_PROFILES: Final[tuple[tuple[str, str, str, int, dict[str, dict[str, Any]
         "meta": {"bare_metal_only": True},
         "release": {"channel": "mainline", "allow_rc": True},
         "scheduler": {"type": "eevdf", "scx": "scx_lavd", "scx_flags": "--autopilot", "scx_enable_class": True},
-        "cache": {"sched_cache": True, "llc_aggr_tolerance": 1, "persist": True},
+        "cache": {"sched_cache": True, "llc_aggr_tolerance": 1},
         "rseq": {"slice_extension": True, "slice_ext_nsec": 10000},
         "cpu": {"arch": "native", "governor": "schedutil", "amd_pstate": "active", "epp": "balance_performance", "mitigations": "off", "prefcore": True},
         "timing": {"hz": 1000, "tickless": "idle", "preempt": "lazy", "preempt_dynamic": True},
@@ -5735,7 +5490,7 @@ DEFAULT_PROFILES: Final[tuple[tuple[str, str, str, int, dict[str, dict[str, Any]
         "modules": {"mode": "strict", "modprobed_db": True},
         "dusky": {"enhanced": True},
     }),
-    ("low_ram", "Low RAM (<= 8 GiB): lean footprint, zram zstd, MGLRU anti-thrash, ThinLTO, strict modules, systemd-oomd", "dusky-lowram", 30, {
+    ("low_ram", "Low RAM (<= 8 GiB): lean footprint, zram zstd, MGLRU anti-thrash, ThinLTO, strict modules", "dusky-lowram", 30, {
         "release": {"channel": "stable", "allow_rc": True},
         "scheduler": {"type": "eevdf", "scx": "none", "scx_enable_class": False},
         "cpu": {"arch": "native", "governor": "schedutil", "mitigations": "on"},
@@ -5743,7 +5498,7 @@ DEFAULT_PROFILES: Final[tuple[tuple[str, str, str, int, dict[str, dict[str, Any]
         "memory": {"footprint": "lean", "thp": "madvise", "thp_defrag": "defer", "mglru": True, "mglru_min_ttl_ms": 1000, "swap_backend": "zram", "zram_algo": "zstd",
                    "zram_recomp_algo": "zstd", "zram_size_pct": 100, "zram_multi_comp": True, "swappiness": 180, "vfs_cache_pressure": 120, "watermark_scale_factor": 125,
                    "dirty_bytes_mb": 128, "slub_tiny": False, "numa": False, "ksm": True, "damon": False, "kallsyms_all": False, "tracing": "minimal", "kexec": False,
-                   "systemd_oomd": True, "hugetlbfs": False},
+                   "hugetlbfs": False},
         "compiler": {"toolchain": "llvm", "optimize": "o2", "lto": "thin", "debug_info": "none", "rust": False, "headers": "auto"},
         "security": {"profile": "balanced"},
         "gaming": {"ntsync": True, "controllers": True},
@@ -5757,7 +5512,7 @@ DEFAULT_PROFILES: Final[tuple[tuple[str, str, str, int, dict[str, dict[str, Any]
         "memory": {"footprint": "minimal", "thp": "never", "mglru": True, "mglru_min_ttl_ms": 1000, "swap_backend": "zram", "zram_algo": "zstd", "zram_recomp_algo": "zstd",
                    "zram_size_pct": 150, "zram_multi_comp": False, "swappiness": 180, "vfs_cache_pressure": 150, "watermark_scale_factor": 125, "dirty_bytes_mb": 64,
                    "slub_tiny": True, "per_vma_lock": True, "numa": False, "ksm": True, "ksm_run": False, "damon": True, "hugetlbfs": False, "kallsyms_all": False,
-                   "log_buf_shift": 15, "tracing": "minimal", "kexec": False, "ikconfig": False, "systemd_oomd": True, "trim_unused_ksyms": True},
+                   "log_buf_shift": 15, "tracing": "minimal", "kexec": False, "ikconfig": False, "trim_unused_ksyms": True},
         "compiler": {"toolchain": "llvm", "optimize": "size", "lto": "thin", "debug_info": "none", "rust": False, "headers": "never", "module_compress": "zstd"},
         "security": {"profile": "balanced", "ubsan_bounds": False},
         "gaming": {"ntsync": False, "uclamp": False, "controllers": False},
@@ -5775,7 +5530,7 @@ DEFAULT_PROFILES: Final[tuple[tuple[str, str, str, int, dict[str, dict[str, Any]
         "memory": {"footprint": "embedded", "thp": "never", "mglru": True, "swap_backend": "zram", "zram_algo": "zstd", "zram_multi_comp": False, "zram_size_pct": 150,
                    "swappiness": 180, "vfs_cache_pressure": 200, "watermark_scale_factor": 125, "dirty_bytes_mb": 32, "slub_tiny": True, "numa": False, "ksm": False,
                    "damon": True, "hugetlbfs": False, "kallsyms_all": False, "memcg": True, "base_small": True, "log_buf_shift": 15, "tracing": "minimal", "kexec": False,
-                   "ikconfig": False, "systemd_oomd": True, "trim_unused_ksyms": True},
+                   "ikconfig": False, "trim_unused_ksyms": True},
         "compiler": {"toolchain": "llvm", "optimize": "size", "lto": "thin", "debug_info": "none", "rust": False, "headers": "never"},
         "security": {"profile": "balanced", "ubsan_bounds": False},
         "gaming": {"ntsync": False, "uclamp": False, "controllers": False},
@@ -5789,7 +5544,7 @@ DEFAULT_PROFILES: Final[tuple[tuple[str, str, str, int, dict[str, dict[str, Any]
     ("zen4_zen5", "AMD Zen 4 / Zen 5: znver4 codegen, P-State active EPP, EEVDF + CAS + scx_lavd, ThinLTO, Rust", "dusky-zen", 40, {
         "release": {"channel": "stable", "allow_rc": True},
         "scheduler": {"type": "eevdf", "scx": "scx_lavd", "scx_flags": "--autopilot", "scx_enable_class": True},
-        "cache": {"sched_cache": True, "llc_aggr_tolerance": 1, "persist": True},
+        "cache": {"sched_cache": True, "llc_aggr_tolerance": 1},
         "cpu": {"arch": "znver4", "governor": "schedutil", "amd_pstate": "active", "epp": "balance_performance", "prefcore": True, "mitigations": "on"},
         "timing": {"hz": 1000, "tickless": "idle", "preempt": "lazy", "preempt_dynamic": True},
         "memory": {"thp": "madvise", "mglru": True, "swap_backend": "zram", "zram_algo": "zstd", "zram_recomp_algo": "zstd", "zram_size_pct": 50},
@@ -5869,7 +5624,7 @@ EPILOG: Final = textwrap.dedent(f"""\
       %(prog)s -p gaming --wizard --no-install walk every knob, build packages only
       %(prog)s -p zen4_zen5 --configure-only --print-matrix
       %(prog)s --export-bundle / --import-bundle FILE   cross-machine hardware bundles
-      %(prog)s --uninstall dusky-gaming        remove packages, runtime files and boot entries
+      %(prog)s --uninstall dusky-gaming        remove packages and boot entries
     environment: DUSKY_PROFILES_DIR DUSKY_BUILD_DIR DUSKY_PATCH_CACHE DUSKY_THINLTO_CACHE DUSKY_PKGDEST DUSKY_CPU_ARCH DUSKY_LTO DUSKY_JOBS ...
     exit codes: 1 generic, 2 profile, 3 network, 4 verification, 5 build, 6 dependency, 130 aborted
     """)
@@ -5891,7 +5646,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--write-default-profiles", action="store_true", help="write the built-in profiles")
     mode.add_argument("--export-bundle", nargs="?", const="", default=None, metavar="FILE", help="export a hardware bundle for remote builds")
     mode.add_argument("--import-bundle", type=Path, metavar="FILE", help="import a hardware bundle and register remote_<host>")
-    mode.add_argument("--uninstall", metavar="FLAVOR", help="remove linux-<flavor>{,-headers}, runtime files and boot entries")
+    mode.add_argument("--uninstall", metavar="FLAVOR", help="remove linux-<flavor>{,-headers} and boot entries")
     mode.add_argument("--fdo-record", metavar="SECONDS", help="record an AutoFDO profile for --profile (needs perf + create_llvm_prof)")
     mode.add_argument("--fdo-propeller", action="store_true", help="with --fdo-record: also emit Propeller profiles")
     mode.add_argument("--menu", action="store_true", help="interactive main menu")
@@ -5945,10 +5700,10 @@ def install_aur_package(pkg: str) -> bool:
 
 def initialize_toolchains() -> None:
     rule("Toolchains & hardware profiler")
-    official_pkgs = ["base-devel", "clang", "lld", "llvm", "rust", "rust-bindgen", "bc", "cpio", "kmod", "pahole", "zram-generator", "scx-scheds", "perf", "curl", "gnupg", "terminus-font"]
+    official_pkgs = ["base-devel", "clang", "lld", "llvm", "rust", "rust-bindgen", "bc", "cpio", "kmod", "pahole", "perf", "curl", "gnupg", "terminus-font"]
     if ask_yes(f"Install official packages (pacman -S --needed {' '.join(official_pkgs)}) ?", True):
         PRIV.run(["pacman", "-S", "--needed", *official_pkgs], capture=False)
-    
+
     if not have("modprobed-db"):
         if ask_yes("modprobed-db is an AUR package (tracks loaded modules for localmodconfig); install from AUR now?", True):
             if install_aur_package("modprobed-db"):
@@ -5958,7 +5713,6 @@ def initialize_toolchains() -> None:
 
     if have("modprobed-db"):
         run(["modprobed-db", "store"], check=False)
-        run(["systemctl", "--user", "enable", "--now", "modprobed-db.service"], check=False)
         ok("modprobed-db storing loaded modules (keep using the machine before strict builds)")
 
 
@@ -6029,7 +5783,7 @@ def interactive_menu() -> int:
         say("")
         banner()
         say(f"{C.ACCENT}  Main menu{C.RESET}")
-        say(" 1) Install toolchains & start the hardware profiler (modprobed-db)\n 2) Live hardware telemetry\n 3) Diagnostics (--doctor)\n 4) Configuration manager & profiles\n"
+        say(" 1) Install toolchains & snapshot the hardware profiler (modprobed-db)\n 2) Live hardware telemetry\n 3) Diagnostics (--doctor)\n 4) Configuration manager & profiles\n"
             " 5) Export / import remote hardware bundle\n 6) Compile & install a kernel (profile picker)\n 7) Uninstall a Dusky flavor\n 8) Clean caches\n 9) Exit\n")
         try:
             choice = ask_index("Select", 9, 6)
