@@ -94,6 +94,7 @@ USER_SERVICES: Final[list[ServiceConfig]] = [
     ServiceConfig("gnome-keyring-daemon.service", True, "GNOME Keyring secret storage daemon"),
     ServiceConfig("gnome-keyring-daemon.socket", True, "GNOME Keyring control socket"),
     ServiceConfig("mako.service", True, "Mako notification daemon"),
+    ServiceConfig("dusky_clipboard.service", True, "Dusky Wayland Clipboard Manager (History & Persistence)"),
     # Optional / Disabled by Default:
     ServiceConfig("hyprsunset.service", False, "Hyprland blue-light temperature daemon"),
     ServiceConfig("dusky_notif_time.service", False, "Dusky Notification Timestamp Tracking Daemon"),

@@ -90,7 +90,9 @@ hl_env("VISUAL", "nvim")
 hl_env("LIBVIRT_DEFAULT_URI", "qemu:///system")
 
 -- 9. Clipboard persistence - dynamic path from toggler
--- Reads ~/.config/dusky/settings/cliphist_db_env atomically written by 390_clipboard_persistance.py
+-- Reads ~/.config/dusky/settings/cliphist_db_env written by 390_clipboard_persistance.py.
+-- Populates Hyprland's session environment so apps launched via keybinds inherit it.
+-- Systemd user units load the same file via EnvironmentFile= for daemon supervision.
 do
   local f = io.open(home.. "/.config/dusky/settings/cliphist_db_env", "r")
   if f then

@@ -59,25 +59,11 @@ export VISUAL='nvim'
 
 # Compilation Optimization: Moved to ~/.config/pacman/makepkg.conf
 
-# Clipboard DB path - dynamic, set by 390_clipboard_persistance.sh toggle
-[ -f "$HOME/.config/dusky/settings/cliphist_db_env" ] && source "$HOME/.config/dusky/settings/cliphist_db_env"
-
-# --- Clipboard DB path auto-reload (live RAM/disk switch) ---
-# Ensures old shells pick up new CLIPHIST_DB_PATH after running 390_clipboard_persistance.py
-# in another terminal, without needing reboot or manual source.
-__clip_db_env_file="$HOME/.config/dusky/settings/cliphist_db_env"
-__clip_db_env_mtime=0
-__reload_clip_env() {
-  [[ -f "$__clip_db_env_file" ]] || return 0
-  local mtime
-  zmodload zsh/stat 2>/dev/null
-  mtime=$(zstat +mtime "$__clip_db_env_file" 2>/dev/null || stat -c %Y "$__clip_db_env_file" 2>/dev/null || echo 0)
-  if (( mtime != __clip_db_env_mtime )); then
-    # shellcheck source=/dev/null
-    source "$__clip_db_env_file" 2>/dev/null && __clip_db_env_mtime=$mtime
-  fi
-}
-autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook precmd __reload_clip_env
+# Clipboard DB path: load active mode from settings
+if [[ -f "$HOME/.config/dusky/settings/cliphist_db_env" ]]; then
+  source "$HOME/.config/dusky/settings/cliphist_db_env"
+  export CLIPHIST_DB_PATH
+fi
 
 # Configure PATH - enabled for npm global bins (fixes gemini-cli)
 # Deduped PATH - ensures npm global bins without duplication (Hyprland also sets PATH via systemd)
@@ -296,18 +282,10 @@ _dusky_load_matugen_fzf() {
 _dusky_load_matugen_fzf
 
 
-# --- Zoxide ---
-_zoxide_cache="$HOME/.zoxide-init.zsh"
-_zoxide_bin="$(command -v zoxide)"
-if [[ -n "$_zoxide_bin" ]]; then
-  if [[ ! -f "$_zoxide_cache" || "$_zoxide_bin" -nt "$_zoxide_cache" ]]; then
-    "$_zoxide_bin" init zsh --cmd cd >! "$_zoxide_cache"
-  fi
-  source "$_zoxide_cache"
-fi
+# --- Zoxide: lives in ~/.config/zshrc/zoxide (sourced via [6] modules) ---
 
 # Cleanup
-unset _starship_cache _starship_bin _fzf_cache _fzf_bin _zoxide_cache _zoxide_bin
+unset _starship_cache _starship_bin _fzf_cache _fzf_bin
 
 # -----------------------------------------------------------------------------
 # [8] PLUGINS (Execution Order Critical)

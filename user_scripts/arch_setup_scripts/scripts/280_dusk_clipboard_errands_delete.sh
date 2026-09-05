@@ -20,7 +20,7 @@ readonly TARGETS=(
 )
 
 # Systemd services that must be paused to prevent DB corruption
-readonly SERVICES=("cliphist.service" "wl-paste.service")
+readonly SERVICES=("dusky_clipboard.service")
 
 # GUI Processes to kill (Non-systemd apps that hold file locks)
 readonly APPS_TO_KILL=("errands")

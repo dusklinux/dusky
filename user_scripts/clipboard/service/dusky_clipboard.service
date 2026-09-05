@@ -1,0 +1,22 @@
+[Unit]
+Description=Dusky Wayland Clipboard Manager (History & Persistence)
+Documentation=https://github.com/sentriz/cliphist https://github.com/Linus789/wl-clip-persist
+PartOf=graphical-session.target
+After=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/dusky/settings/cliphist_db_env
+ExecStart=%h/user_scripts/clipboard/dusky_clipboard_daemon.sh
+ExecReload=/usr/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=1s
+Slice=app.slice
+TimeoutStopSec=2
+SuccessExitStatus=0 143
+NoNewPrivileges=true
+
+[Install]
+WantedBy=graphical-session.target

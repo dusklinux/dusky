@@ -41,10 +41,10 @@ def env_for(db):
 def update_config(mode,migrate=False):
     rt=get_runtime(); cache=os.environ.get("XDG_CACHE_HOME",str(HOME/".cache"))
     if mode=="ephemeral":
-        db=f"{rt}/cliphist.db"; write_atomic(STATE_FILE,"false\n"); write_atomic(DB_ENV_FILE,f'export CLIPHIST_DB_PATH="{db}"\n'); log_s(f"Set to Ephemeral (RAM) -> {db}")
+        db=f"{rt}/cliphist.db"; write_atomic(STATE_FILE,"false\n"); write_atomic(DB_ENV_FILE,f'CLIPHIST_DB_PATH="{db}"\n'); log_s(f"Set to Ephemeral (RAM) -> {db}")
     else:
         td=Path(cache)/"cliphist"; td.mkdir(parents=True,exist_ok=True,mode=0o700)
-        db=str(td/"db"); write_atomic(STATE_FILE,"true\n"); write_atomic(DB_ENV_FILE,f'export CLIPHIST_DB_PATH="{db}"\n'); log_s(f"Set to Persistent (Disk) -> {db}")
+        db=str(td/"db"); write_atomic(STATE_FILE,"true\n"); write_atomic(DB_ENV_FILE,f'CLIPHIST_DB_PATH="{db}"\n'); log_s(f"Set to Persistent (Disk) -> {db}")
     p=Path(db); p.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
     if p.exists():
         try: os.chmod(p,0o600)
@@ -61,17 +61,35 @@ def update_config(mode,migrate=False):
     except: pass
     return db
 
+def get_systemd_pids():
+    pids = set()
+    try:
+        r = subprocess.run(["systemctl", "--user", "show", "-p", "MainPID", "--value", "dusky_clipboard.service"], capture_output=True, text=True, timeout=2, check=False)
+        val = r.stdout.strip()
+        if val.isdigit() and int(val) > 0:
+            main_pid = int(val)
+            pids.add(main_pid)
+            cr = subprocess.run(["pgrep", "-P", str(main_pid)], capture_output=True, text=True, timeout=2, check=False)
+            for c in cr.stdout.split():
+                if c.isdigit():
+                    pids.add(int(c))
+    except: pass
+    return pids
+
 def _cmdline(pid:int)->str:
     try: raw=Path(f"/proc/{pid}/cmdline").read_bytes()
     except: return ""
     return raw.replace(b"\x00",b" ").decode(errors="replace")
 
-def kill_watchers():
+def kill_watchers(exclude_managed=False):
+    managed = get_systemd_pids() if exclude_managed else set()
     v=set()
     try:
         r=subprocess.run(["pgrep","-x","wl-paste"],capture_output=True,text=True,check=False)
         for t in r.stdout.split():
-            try: v.add(int(t))
+            try:
+                pid = int(t)
+                if pid not in managed: v.add(pid)
             except: pass
     except FileNotFoundError: pass
     try:
@@ -79,13 +97,14 @@ def kill_watchers():
         for t in r.stdout.split():
             try: pid=int(t)
             except: continue
+            if pid in managed: continue
             c=_cmdline(pid)
             if "wl-paste" in c and "cliphist" in c: v.add(pid)
     except FileNotFoundError: pass
     for pid in sorted(v):
         try: os.kill(pid,signal.SIGTERM)
         except: pass
-    dl=time.time()+1.5
+    dl=time.time()+1.0
     while time.time()<dl and v:
         alive=[p for p in v if Path(f"/proc/{p}").exists()]
         if not alive: break
@@ -94,7 +113,7 @@ def kill_watchers():
         if Path(f"/proc/{pid}").exists():
             try: os.kill(pid,signal.SIGKILL)
             except: pass
-    time.sleep(0.15)
+    time.sleep(0.1)
 
 def update_session_env(db):
     try: subprocess.run(["systemctl","--user","set-environment",f"CLIPHIST_DB_PATH={db}"],timeout=5,check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -140,17 +159,34 @@ def reload(db):
     log_i("Live-reloading clipboard daemons...")
     wp=shutil.which("wl-paste"); cb=_bin()
     if not wp or not cb: log_e("wl-paste or cliphist not in PATH"); sys.exit(1)
-    denv=env_for(db)
     
     ids_before=list_ids(db)
-    update_session_env(db); kill_watchers()
+    update_session_env(db)
+    kill_watchers(exclude_managed=True)
     
-    cmd_t = ["sh", "-c", 'exec wl-paste --type text --watch sh -c "[ \\\"\\$CLIPBOARD_STATE\\\" = data ] && cliphist store"']
-    cmd_i = ["sh", "-c", 'exec wl-paste --type image --watch sh -c "[ \\\"\\$CLIPBOARD_STATE\\\" = data ] && cliphist store"']
+    sysd_ok = False
     try:
-        subprocess.Popen(cmd_t,env=denv,start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        subprocess.Popen(cmd_i,env=denv,start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    except Exception as e: log_e(f"Failed start watchers: {e}"); sys.exit(1)
+        # First attempt hot reload (sends SIGHUP to dusky_clipboard_daemon.sh)
+        # This instantaneously updates CLIPHIST_DB_PATH for watchers WITHOUT stopping wl-clip-persist,
+        # preserving the in-flight clipboard selection across mode switches!
+        r = subprocess.run(["systemctl", "--user", "reload", "dusky_clipboard.service"], timeout=3, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if r.returncode == 0:
+            sysd_ok = True
+        else:
+            r = subprocess.run(["systemctl", "--user", "restart", "dusky_clipboard.service"], timeout=5, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if r.returncode == 0:
+                sysd_ok = True
+    except: pass
+    
+    if not sysd_ok:
+        kill_watchers(exclude_managed=False)
+        denv = env_for(db)
+        cmd_t = ["sh", "-c", 'exec wl-paste --type text --watch sh -c "[ \\\"\\$CLIPBOARD_STATE\\\" = data ] && cliphist store"']
+        cmd_i = ["sh", "-c", 'exec wl-paste --type image --watch sh -c "[ \\\"\\$CLIPBOARD_STATE\\\" = data ] && cliphist store"']
+        try:
+            subprocess.Popen(cmd_t,env=denv,start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            subprocess.Popen(cmd_i,env=denv,start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        except Exception as e: log_e(f"Failed start watchers: {e}"); sys.exit(1)
     
     time.sleep(0.7)
     

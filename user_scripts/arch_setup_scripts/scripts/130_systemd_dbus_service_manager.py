@@ -69,6 +69,9 @@ USER_SERVICES: list[ServiceConfig] = [
 
     # Dusky Notification Time Tracker Daemon (Default: Disable)
     ServiceConfig("$HOME/user_scripts/dusky_system/quickpanal/service/notification_time_service/dusky_notif_time.service", "disable"),
+
+    # Dusky Wayland Clipboard Manager (History & Persistence) (Default: Enable)
+    ServiceConfig("$HOME/user_scripts/clipboard/service/dusky_clipboard.service", "enable"),
 ]
 
 # ------------------------------------------------------------------------------
@@ -276,7 +279,10 @@ def deploy_unit_file(src_path: Path, target_file: Path, ctx: UserContext) -> boo
         }
 
         # 2. Template variable substitution ($USER, ${USER}, $HOME, etc.)
-        content = string.Template(raw_content).safe_substitute(replacements)
+        # Protect systemd escape sequences ($$) so string.Template doesn't convert them to single $
+        escaped_content = raw_content.replace("$$", "\x00_SYSTEMD_DOUBLE_DOLLAR_\x00")
+        content = string.Template(escaped_content).safe_substitute(replacements)
+        content = content.replace("\x00_SYSTEMD_DOUBLE_DOLLAR_\x00", "$$")
 
         # 3. Path sanitization: rewrite foreign /home/<other_user>/ paths to active ctx.home
         # This handles cases where someone hardcoded a path from another computer

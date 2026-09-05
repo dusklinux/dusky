@@ -81,6 +81,10 @@ CORE_USER_DEFS = {
         "Dusky Polkit",
         "Lightweight Python/Rich Polkit agent. Prompts for root/admin password on privilege escalation (like pkexec).",
     ),
+    "dusky_clipboard.service": (
+        "Dusky Clipboard Manager",
+        "Unified Wayland clipboard history and persistence daemon (cliphist + wl-clip-persist). Seamlessly records copied text and images to SQLite history, preserves clipboard selections even after source apps close, and supports live RAM/disk persistence switching without reboot.",
+    ),
     "dusky_ram_monitor.service": (
         "Dusky RAM Monitor Daemon",
         "Background monitor that alerts you if physical RAM usage exceeds 95% or ZRAM swap occupancy exceeds 90%. Clicking the alert opens an interactive Rofi menu to select and terminate memory-heavy processes before a system crash.",

@@ -4,8 +4,8 @@ LOG=/tmp/clip_verify.log
 # FIXED 2026-07-11: tee to terminal AND log, was `exec >"$LOG" 2>&1` which hid output
 exec > >(tee "$LOG") 2>&1
 
-RAM_DB="/run/user/1000/cliphist.db"
-DISK_DB="$HOME/.cache/cliphist/db"
+RAM_DB="${XDG_RUNTIME_DIR:-/run/user/${UID}}/cliphist.db"
+DISK_DB="${XDG_CACHE_HOME:-$HOME/.cache}/cliphist/db"
 SCRIPT="$HOME/user_scripts/arch_setup_scripts/scripts/390_clipboard_persistance.py"
 CLIP_UI="$HOME/user_scripts/clipboard/terminal_clipboard.sh"
 PASS=0
@@ -17,6 +17,14 @@ rm -f "$RAM_DB" "$DISK_DB"
 ok()   { echo "  PASS: $*"; PASS=$((PASS+1)); }
 bad()  { echo "  FAIL: $*"; FAIL=$((FAIL+1)); }
 say()  { echo; echo "=== $* ==="; }
+
+say "0: service architecture validation"
+systemctl --user is-enabled dusky_clipboard.service >/dev/null && ok "dusky_clipboard.service is enabled" || bad "dusky_clipboard.service not enabled"
+systemctl --user is-active dusky_clipboard.service >/dev/null && ok "dusky_clipboard.service is active" || bad "dusky_clipboard.service not active"
+systemctl --user is-active cliphist.service >/dev/null 2>&1 && bad "old cliphist.service still running" || ok "old cliphist.service decommissioned"
+systemctl --user is-active cliphist-image.service >/dev/null 2>&1 && bad "old cliphist-image.service still running" || ok "old cliphist-image.service decommissioned"
+systemctl --user is-active wl-clip-persist.service >/dev/null 2>&1 && bad "old wl-clip-persist.service still running" || ok "old wl-clip-persist.service decommissioned"
+
 watch_env() {
   local p c
   for p in $(pgrep -x wl-paste || true); do
@@ -188,6 +196,31 @@ if [[ "$PASTED_IMG" == "$M_IMG_PERSIST" ]]; then
 else
   bad "clipboard image selection lost after source closed (persistence failed, got: ${PASTED_IMG:0:40})"
 fi
+
+say "J: dusky_clipboard.service toggle on/off validation"
+systemctl --user stop dusky_clipboard.service
+sleep 0.5
+pgrep -x wl-paste >/dev/null && bad "wl-paste still running after service stop" || ok "watchers cleanly stopped on service stop"
+pgrep -x wl-clip-persist >/dev/null && bad "wl-clip-persist still running after service stop" || ok "persistence cleanly stopped on service stop"
+systemctl --user start dusky_clipboard.service
+sleep 0.8
+systemctl --user is-active dusky_clipboard.service >/dev/null && ok "dusky_clipboard.service revived on start" || bad "service failed to start"
+TOGGLE_TEST="TOGGLE_TEST_$(date +%s)"
+wl-copy "$TOGGLE_TEST"
+sleep 0.8
+ACTIVE_DB=$(grep -o '"[^"]*"' "$HOME/.config/dusky/settings/cliphist_db_env" | tr -d '"')
+CLIPHIST_DB_PATH="$ACTIVE_DB" cliphist list | grep -F "$TOGGLE_TEST" >/dev/null && ok "copy works after service toggle cycle" || bad "copy dropped after toggle cycle"
+
+say "K: dusky_clipboard.service violent crash recovery"
+DAEMON_PID=$(systemctl --user show -p MainPID --value dusky_clipboard.service)
+kill -9 "$DAEMON_PID" 2>/dev/null || true
+sleep 1.8
+systemctl --user is-active dusky_clipboard.service >/dev/null && ok "dusky_clipboard.service auto-restarted after SIGKILL" || bad "service did not restart"
+CRASH_TEST="CRASH_RECOVERY_$(date +%s)"
+wl-copy "$CRASH_TEST"
+sleep 0.8
+ACTIVE_DB=$(grep -o '"[^"]*"' "$HOME/.config/dusky/settings/cliphist_db_env" | tr -d '"')
+CLIPHIST_DB_PATH="$ACTIVE_DB" cliphist list | grep -F "$CRASH_TEST" >/dev/null && ok "copy captured immediately after crash recovery" || bad "copy dropped after crash recovery"
 
 say "I: harness still alive"
 ok "test harness completed without being killed"
