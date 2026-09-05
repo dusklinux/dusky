@@ -400,8 +400,16 @@ def run_systemctl(args: list[str], is_user: bool, dry_run: bool, ctx: UserContex
     try:
         res = subprocess.run(cmd, capture_output=True, env=env, text=True, timeout=20)
         if res.returncode != 0:
-            err_msg = res.stderr.strip()
-            log_error(f"Systemctl failed ({cmd_str}):\n{err_msg}" if err_msg else f"Systemctl returned non-zero ({cmd_str})")
+            out_msg = (res.stdout or "").strip()
+            err_msg = (res.stderr or "").strip()
+            combined = "\n".join(p for p in (err_msg, out_msg) if p)
+            log_error(f"Systemctl failed ({cmd_str}):\n{combined}" if combined else f"Systemctl returned non-zero ({cmd_str})")
+            units = [a for a in args if a.endswith((".service", ".timer", ".socket", ".target"))]
+            scope_flag = "--user " if is_user else ""
+            if units:
+                log_info(f"Hint: systemctl {scope_flag}status {' '.join(units)} --no-pager -l; journalctl {scope_flag}-xeu {units[0]}")
+            else:
+                log_info(f"Hint: systemctl {scope_flag}status --no-pager -l; journalctl {scope_flag}-xe")
             return False
         return True
     except subprocess.TimeoutExpired:
@@ -410,6 +418,49 @@ def run_systemctl(args: list[str], is_user: bool, dry_run: bool, ctx: UserContex
     except Exception as e:
         log_error(f"Execution error ({cmd_str}): {e}")
         return False
+
+
+def heal_vendor_shadow(
+    service_name: str,
+    vendor_src: Path,
+    target_file: Path,
+    is_user: bool,
+    dry_run: bool,
+    ctx: UserContext,
+) -> bool:
+    """Removes a stale /etc (or ~/.config) shadow of a vendor unit when it is a proven artifact.
+
+    Returns True if caller should proceed to enable the vendor unit, False to skip it.
+    Only deletes when the shadow is byte-identical to vendor content with $$ collapsed
+    to $ (the old string.Template bug). Intentional overrides are preserved.
+    """
+    if target_file.is_symlink() or not target_file.exists():
+        return True
+    if target_file.is_dir():
+        log_error(f"Target path {target_file} is a directory! Cannot replace. Skipping {service_name}.")
+        return False
+    try:
+        vendor_content = vendor_src.read_text(encoding="utf-8", errors="surrogateescape")
+        shadow_content = target_file.read_text(encoding="utf-8", errors="surrogateescape")
+    except OSError as e:
+        log_error(f"Failed to read vendor/shadow for {service_name}: {e}")
+        return False
+    if vendor_content.replace("$$", "$") == shadow_content:
+        log_warn(f"Stale shadow {target_file} is a proven $$->$ artifact ({target_file.stat().st_size}B vs {vendor_src.stat().st_size}B). Removing to restore vendor unit.")
+        if dry_run:
+            log_info(f"[Dry-Run] Would disable + remove stale shadow {target_file} and re-enable {service_name} from {vendor_src}")
+            return True
+        # Remove wrong wants/ link first so re-enable recreates a link to vendor path.
+        run_systemctl(["disable", service_name], is_user=is_user, dry_run=False, ctx=ctx)
+        try:
+            target_file.unlink(missing_ok=True)
+            log_success(f"Removed stale shadow {service_name}")
+        except OSError as e:
+            log_error(f"Failed to remove stale shadow {target_file}: {e}")
+            return False
+        return True
+    log_warn(f"Preserving intentional override {target_file} (differs beyond $$ collapse). Enabling as-is.")
+    return True
 
 
 def reload_dbus(dry_run: bool, ctx: UserContext) -> bool:
@@ -450,15 +501,15 @@ def process_service_batch(
     use_defaults: bool,
     dry_run: bool,
     ctx: UserContext,
-) -> None:
-    """Installs and manages systemd service units cleanly using fast direct file copy (shutil.copy2)."""
+) -> bool:
+    """Installs and manages systemd service units. Returns True if all operations succeeded."""
     scope = "User" if is_user else "System"
     console.print(f"\n[bold magenta]--- Processing {scope} Services ---[/bold magenta]")
 
     if not dry_run:
         if not safe_mkdir(target_dir):
             log_error(f"Aborting batch due to directory creation failure: {target_dir}")
-            return
+            return False
         # Garbage-collect any stale temp files from previous hard power-losses
         for tmp_file in target_dir.glob(".*.tmp"):
             try:
@@ -489,6 +540,8 @@ def process_service_batch(
 
         if src_path.is_relative_to(Path("/usr/lib/systemd")):
             log_info(f"System-provided unit [bold]{service_name}[/bold] already in system search path.")
+            if not heal_vendor_shadow(service_name, src_path, target_file, is_user, dry_run, ctx):
+                continue
             installed_units.append(cfg)
             continue
 
@@ -504,12 +557,12 @@ def process_service_batch(
         installed_units.append(cfg)
 
     if not installed_units:
-        return
+        return True
 
     # Phase 2: SINGLE Daemon Reload
     console.print("-" * 50)
     log_info(f"Reloading {scope.lower()} systemd daemon...")
-    run_systemctl(["daemon-reload"], is_user=is_user, dry_run=dry_run, ctx=ctx)
+    overall_ok = run_systemctl(["daemon-reload"], is_user=is_user, dry_run=dry_run, ctx=ctx)
 
     # Phase 3: Action Assessment
     enable_units: list[str] = []
@@ -544,11 +597,15 @@ def process_service_batch(
     # Detect caller units to prevent stopping/restarting host service
     caller_units = get_caller_cgroup_units() if is_user else set()
 
-    # Phase 4: Bulk Systemd Execution
+    # Phase 4: Per-unit execution so one failure cannot mask the others.
     if enable_units:
         log_info(f"Enabling & Starting ({len(enable_units)} units)...")
-        if run_systemctl(["enable", "--now"] + enable_units, is_user=is_user, dry_run=dry_run, ctx=ctx):
-            log_success(f"Successfully activated: {', '.join(enable_units)}")
+        for unit in enable_units:
+            if run_systemctl(["enable", "--now", unit], is_user=is_user, dry_run=dry_run, ctx=ctx):
+                log_success(f"Successfully activated: {unit}")
+            else:
+                log_error(f"Failed to enable & start {unit} (others still attempted).")
+                overall_ok = False
 
     if disable_units:
         # Filter out caller's hosting service if present to avoid process suicide
@@ -560,8 +617,14 @@ def process_service_batch(
 
         if safe_disable_units:
             log_info(f"Disabling ({len(safe_disable_units)} units)...")
-            if run_systemctl(["disable"] + safe_disable_units, is_user=is_user, dry_run=dry_run, ctx=ctx):
-                log_success(f"Successfully disabled: {', '.join(safe_disable_units)}")
+            for unit in safe_disable_units:
+                if run_systemctl(["disable", unit], is_user=is_user, dry_run=dry_run, ctx=ctx):
+                    log_success(f"Successfully disabled: {unit}")
+                else:
+                    log_error(f"Failed to disable {unit} (others still attempted).")
+                    overall_ok = False
+
+    return overall_ok
 
 
 def process_symlinks(
@@ -626,8 +689,8 @@ def process_symlinks(
     console.print("-" * 50)
     if need_user_daemon_reload:
         log_info("Systemd user units changed. Reloading daemon...")
-        run_systemctl(["daemon-reload"], is_user=True, dry_run=dry_run, ctx=ctx)
-        log_success("Systemd user daemon reloaded.")
+        if run_systemctl(["daemon-reload"], is_user=True, dry_run=dry_run, ctx=ctx):
+            log_success("Systemd user daemon reloaded.")
 
     if need_dbus_reload:
         reload_dbus(dry_run, ctx=ctx)
@@ -718,14 +781,19 @@ def display_status(ctx: UserContext) -> None:
         src = expand_path(cfg.source_path, ctx)
         target = SYSTEMD_SYSTEM_DIR / src.name
         active, enabled = sys_states.get(src.name, ("unknown", "unknown"))
-        table.add_row(src.name, "System Service", "Found" if src.exists() else "Missing", "Installed" if target.exists() else "Not Installed", active, enabled)
+        if src.is_relative_to(Path("/usr/lib/systemd")):
+            installed_label = "Vendor" if not target.exists() else "Override"
+        else:
+            installed_label = "Installed" if target.exists() else "Not Installed"
+        table.add_row(src.name, "System Service", "Found" if src.exists() else "Missing", installed_label, active, enabled)
 
     console.print(table)
 
 
-def uninstall_all(ctx: UserContext, dry_run: bool, scope: Literal["user", "system", "all"] = "all") -> None:
-    """Stops, disables, and removes installed units and symlinks with O(1) batch execution."""
+def uninstall_all(ctx: UserContext, dry_run: bool, scope: Literal["user", "system", "all"] = "all") -> bool:
+    """Stops, disables, and removes installed units and symlinks. Returns True on success."""
     console.print(f"\n[bold red]--- Reverting Configured Services ({scope.upper()}) ---[/bold red]")
+    overall_ok = True
 
     if scope in ("user", "all"):
         user_target_dir = get_user_config_dir(ctx) / "systemd" / "user"
@@ -736,18 +804,24 @@ def uninstall_all(ctx: UserContext, dry_run: bool, scope: Literal["user", "syste
             target = user_target_dir / src_name
             if target.is_symlink() or target.exists():
                 user_units_to_disable.append(src_name)
-                log_info(f"Removing {target}")
-                if not dry_run:
-                    try:
-                        target.unlink(missing_ok=True)
-                    except Exception as e:
-                        log_error(f"Failed to remove {target}: {e}")
 
         if user_units_to_disable:
             log_info(f"Stopping & disabling user units: {', '.join(user_units_to_disable)}")
-            run_systemctl(["disable", "--now"] + user_units_to_disable, is_user=True, dry_run=dry_run, ctx=ctx)
+            if not run_systemctl(["disable", "--now"] + user_units_to_disable, is_user=True, dry_run=dry_run, ctx=ctx):
+                overall_ok = False
+            if not dry_run:
+                for unit in user_units_to_disable:
+                    target = user_target_dir / unit
+                    try:
+                        if target.is_symlink() or target.is_file():
+                            log_info(f"Removing {target}")
+                            target.unlink(missing_ok=True)
+                    except Exception as e:
+                        log_error(f"Failed to remove {target}: {e}")
+                        overall_ok = False
 
-        run_systemctl(["daemon-reload"], is_user=True, dry_run=dry_run, ctx=ctx)
+        if not run_systemctl(["daemon-reload"], is_user=True, dry_run=dry_run, ctx=ctx):
+            overall_ok = False
 
         for cfg in DBUS_SYMLINKS:
             target = expand_path(cfg.target_path, ctx)
@@ -767,22 +841,54 @@ def uninstall_all(ctx: UserContext, dry_run: bool, scope: Literal["user", "syste
             for cfg in SYSTEM_SERVICES:
                 src_name = Path(cfg.source_path).name
                 target = SYSTEMD_SYSTEM_DIR / src_name
-                if target.is_symlink() or target.exists():
+                # Vendor units (e.g. linux-modules-cleanup) have no /etc file when healthy,
+                # only a wants/ symlink, so always include them for disable.
+                is_vendor = expand_path(cfg.source_path, ctx).is_relative_to(Path("/usr/lib/systemd"))
+                if is_vendor or target.is_symlink() or target.exists():
                     sys_units_to_disable.append(src_name)
-                    log_info(f"Removing {target}")
-                    if not dry_run:
-                        try:
-                            target.unlink(missing_ok=True)
-                        except Exception as e:
-                            log_error(f"Failed to remove {target}: {e}")
 
             if sys_units_to_disable:
                 log_info(f"Stopping & disabling system units: {', '.join(sys_units_to_disable)}")
-                run_systemctl(["disable", "--now"] + sys_units_to_disable, is_user=False, dry_run=dry_run, ctx=ctx)
+                if not run_systemctl(["disable", "--now"] + sys_units_to_disable, is_user=False, dry_run=dry_run, ctx=ctx):
+                    overall_ok = False
+                if not dry_run:
+                    for unit in sys_units_to_disable:
+                        target = SYSTEMD_SYSTEM_DIR / unit
+                        try:
+                            # Never touch vendor source; only remove /etc shadow/override.
+                            if target.is_symlink() or target.is_file():
+                                # Preserve intentional overrides: only auto-remove proven
+                                # $$->$ artifacts, otherwise leave file and warn.
+                                vendor_src = expand_path(
+                                    next(c.source_path for c in SYSTEM_SERVICES if Path(c.source_path).name == unit),
+                                    ctx,
+                                )
+                                if vendor_src.is_relative_to(Path("/usr/lib/systemd")) and vendor_src.exists():
+                                    try:
+                                        v = vendor_src.read_text(encoding="utf-8", errors="surrogateescape")
+                                        s = target.read_text(encoding="utf-8", errors="surrogateescape")
+                                        if v.replace("$$", "$") == s:
+                                            log_info(f"Removing stale shadow {target}")
+                                            target.unlink(missing_ok=True)
+                                            continue
+                                        log_warn(f"Preserving intentional override {target}")
+                                        continue
+                                    except OSError:
+                                        pass
+                                log_info(f"Removing {target}")
+                                target.unlink(missing_ok=True)
+                        except Exception as e:
+                            log_error(f"Failed to remove {target}: {e}")
+                            overall_ok = False
 
-            run_systemctl(["daemon-reload"], is_user=False, dry_run=dry_run, ctx=ctx)
+            if not run_systemctl(["daemon-reload"], is_user=False, dry_run=dry_run, ctx=ctx):
+                overall_ok = False
 
-    log_success("Uninstall sequence complete.")
+    if overall_ok:
+        log_success("Uninstall sequence complete.")
+    else:
+        log_error("Uninstall completed with errors. See hints above.")
+    return overall_ok
 
 
 # ==============================================================================
@@ -844,15 +950,16 @@ def main() -> None:
 
     if args.uninstall:
         scope: Literal["user", "system", "all"] = "system" if ctx.is_root else ("all" if args.all else ("user" if args.user or args.dbus else "all"))
-        uninstall_all(ctx, dry_run=args.dry_run, scope=scope)
+        ok = uninstall_all(ctx, dry_run=args.dry_run, scope=scope)
 
         # Fork for system uninstall if requested by a normal user
         if scope in ("all", "user") and args.all and not ctx.is_root and not args.dry_run:
             if shutil.which("sudo"):
                 log_info("Forking system uninstallation via sudo...")
                 python_path = os.pathsep.join(sys.path)
-                subprocess.run(["sudo", "env", f"PYTHONPATH={python_path}", sys.executable, script_path, "--uninstall", "--system"], check=False)
-        return
+                res = subprocess.run(["sudo", "env", f"PYTHONPATH={python_path}", sys.executable, script_path, "--uninstall", "--system"], check=False)
+                ok = ok and res.returncode == 0
+        sys.exit(0 if ok else 1)
 
     # Subprocess Split Execution for System Scope
     if run_system and not ctx.is_root and not args.dry_run:
@@ -876,19 +983,24 @@ def main() -> None:
     # Core Execution Flow
     try:
         user_target_dir = get_user_config_dir(ctx) / "systemd" / "user"
+        overall_ok = True
 
         if run_user:
-            process_service_batch(USER_SERVICES, target_dir=user_target_dir, is_user=True, use_defaults=args.default, dry_run=args.dry_run, ctx=ctx)
+            overall_ok &= process_service_batch(USER_SERVICES, target_dir=user_target_dir, is_user=True, use_defaults=args.default, dry_run=args.dry_run, ctx=ctx)
 
         if run_dbus:
             process_symlinks(DBUS_SYMLINKS, dry_run=args.dry_run, ctx=ctx)
 
         if run_system and (ctx.is_root or args.dry_run):
-            process_service_batch(SYSTEM_SERVICES, target_dir=SYSTEMD_SYSTEM_DIR, is_user=False, use_defaults=args.default, dry_run=args.dry_run, ctx=ctx)
+            overall_ok &= process_service_batch(SYSTEM_SERVICES, target_dir=SYSTEMD_SYSTEM_DIR, is_user=False, use_defaults=args.default, dry_run=args.dry_run, ctx=ctx)
 
         if run_user or run_dbus or (run_system and (ctx.is_root or args.dry_run)):
             console.print("-" * 50)
-            log_success("All assigned operations completed successfully.")
+            if overall_ok:
+                log_success("All assigned operations completed successfully.")
+            else:
+                log_error("Completed with errors. One or more units failed - see per-unit errors + hints above.")
+                sys.exit(1)
 
     except KeyboardInterrupt:
         console.print("\n[bold red][ABORTED][/bold red] Caught SIGINT.")
