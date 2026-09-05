@@ -223,7 +223,7 @@ local conf_dir="$HOME/.config/zshrc"
 local -a my_modules=(
     batstat git kvm lmstudio logs logs_old mon_info
     pkg pkg_search res_mon vfio waydroid win10 wthr cmd_atlas
-    sshfile scripts neovim_delta core gemini stt_dusky
+    sshfile scripts neovim_delta core zoxide gemini stt_dusky
 )
 
 for mod in "${my_modules[@]}"; do
