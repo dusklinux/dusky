@@ -241,10 +241,11 @@ def write_atomic(dest: Path, content: str, mode: int = 0o644) -> bool:
         temp_file.unlink(missing_ok=True)
 
 
-def deploy_unit_file(src_path: Path, target_file: Path, ctx: UserContext) -> bool:
+def deploy_unit_file(src_path: Path, target_file: Path, ctx: UserContext) -> tuple[bool, bool]:
     """
     Reads, sanitizes, substitutes environment variables, and atomically deploys unit files.
     Guarantees seamless portability across different usernames, home paths, and machines.
+    Returns (ok, changed): changed is False when target already had identical content.
     """
     try:
         raw_content = src_path.read_text(encoding="utf-8", errors="surrogateescape")
@@ -289,11 +290,20 @@ def deploy_unit_file(src_path: Path, target_file: Path, ctx: UserContext) -> boo
         content = re.sub(r"/home/[^/\s]+/", f"{ctx.home}/", content)
         content = re.sub(r"(?<=[\s=:\"'])~/(?=[a-zA-Z0-9_\.])", f"{ctx.home}/", content)
 
-        # 4. Atomic file write with strict 0644 permissions and fsync
-        return write_atomic(target_file, content, mode=0o644)
+        # 4. Idempotency: skip write when content already identical (avoids mtime churn + needless reload).
+        try:
+            if target_file.is_file() and not target_file.is_symlink():
+                existing = target_file.read_text(encoding="utf-8", errors="surrogateescape")
+                if existing == content:
+                    return (True, False)
+        except OSError:
+            pass
+
+        # 5. Atomic file write with strict 0644 permissions and fsync
+        return (write_atomic(target_file, content, mode=0o644), True)
     except Exception as e:
         log_error(f"Failed to process and deploy {src_path.name}: {e}")
-        return False
+        return (False, False)
 
 
 def safe_mkdir(target_dir: Path) -> bool:
@@ -427,29 +437,30 @@ def heal_vendor_shadow(
     is_user: bool,
     dry_run: bool,
     ctx: UserContext,
-) -> bool:
+) -> tuple[bool, bool]:
     """Removes a stale /etc (or ~/.config) shadow of a vendor unit when it is a proven artifact.
 
-    Returns True if caller should proceed to enable the vendor unit, False to skip it.
-    Only deletes when the shadow is byte-identical to vendor content with $$ collapsed
-    to $ (the old string.Template bug). Intentional overrides are preserved.
+    Returns (proceed, changed): proceed False means skip the unit, changed True means
+    a shadow was removed (caller needs daemon-reload). Only deletes when the shadow
+    is byte-identical to vendor content with $$ collapsed to $ (the old Template bug).
+    Intentional overrides are preserved.
     """
     if target_file.is_symlink() or not target_file.exists():
-        return True
+        return (True, False)
     if target_file.is_dir():
         log_error(f"Target path {target_file} is a directory! Cannot replace. Skipping {service_name}.")
-        return False
+        return (False, False)
     try:
         vendor_content = vendor_src.read_text(encoding="utf-8", errors="surrogateescape")
         shadow_content = target_file.read_text(encoding="utf-8", errors="surrogateescape")
     except OSError as e:
         log_error(f"Failed to read vendor/shadow for {service_name}: {e}")
-        return False
+        return (False, False)
     if vendor_content.replace("$$", "$") == shadow_content:
         log_warn(f"Stale shadow {target_file} is a proven $$->$ artifact ({target_file.stat().st_size}B vs {vendor_src.stat().st_size}B). Removing to restore vendor unit.")
         if dry_run:
             log_info(f"[Dry-Run] Would disable + remove stale shadow {target_file} and re-enable {service_name} from {vendor_src}")
-            return True
+            return (True, True)
         # Remove wrong wants/ link first so re-enable recreates a link to vendor path.
         run_systemctl(["disable", service_name], is_user=is_user, dry_run=False, ctx=ctx)
         try:
@@ -457,10 +468,10 @@ def heal_vendor_shadow(
             log_success(f"Removed stale shadow {service_name}")
         except OSError as e:
             log_error(f"Failed to remove stale shadow {target_file}: {e}")
-            return False
-        return True
+            return (False, False)
+        return (True, True)
     log_warn(f"Preserving intentional override {target_file} (differs beyond $$ collapse). Enabling as-is.")
-    return True
+    return (True, False)
 
 
 def reload_dbus(dry_run: bool, ctx: UserContext) -> bool:
@@ -519,6 +530,7 @@ def process_service_batch(
 
     installed_units: list[ServiceConfig] = []
     valid_extensions = {".service", ".timer", ".socket", ".target"}
+    dirty = False
 
     # Phase 1: Installation (Fast Direct Copy)
     for cfg in configs:
@@ -540,8 +552,10 @@ def process_service_batch(
 
         if src_path.is_relative_to(Path("/usr/lib/systemd")):
             log_info(f"System-provided unit [bold]{service_name}[/bold] already in system search path.")
-            if not heal_vendor_shadow(service_name, src_path, target_file, is_user, dry_run, ctx):
+            proceed, changed = heal_vendor_shadow(service_name, src_path, target_file, is_user, dry_run, ctx)
+            if not proceed:
                 continue
+            dirty |= changed
             installed_units.append(cfg)
             continue
 
@@ -549,20 +563,28 @@ def process_service_batch(
         if dry_run:
             log_info(f"[Dry-Run] Deploy {src_path} -> {target_file} (mode=0644)")
         else:
-            if deploy_unit_file(src_path, target_file, ctx):
+            ok, changed = deploy_unit_file(src_path, target_file, ctx)
+            if not ok:
+                continue
+            dirty |= changed
+            if changed:
                 log_success(f"Installed {service_name}")
             else:
-                continue
+                log_success(f"Already up to date: {service_name}")
 
         installed_units.append(cfg)
 
     if not installed_units:
         return True
 
-    # Phase 2: SINGLE Daemon Reload
+    # Phase 2: SINGLE Daemon Reload (skipped when nothing changed for true idempotency)
     console.print("-" * 50)
-    log_info(f"Reloading {scope.lower()} systemd daemon...")
-    overall_ok = run_systemctl(["daemon-reload"], is_user=is_user, dry_run=dry_run, ctx=ctx)
+    if dirty or dry_run:
+        log_info(f"Reloading {scope.lower()} systemd daemon...")
+        overall_ok = run_systemctl(["daemon-reload"], is_user=is_user, dry_run=dry_run, ctx=ctx)
+    else:
+        log_info(f"Skipping {scope.lower()} daemon reload (no file changes).")
+        overall_ok = True
 
     # Phase 3: Action Assessment
     enable_units: list[str] = []
