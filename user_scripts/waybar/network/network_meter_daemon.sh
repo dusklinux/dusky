@@ -3,13 +3,12 @@ set -euo pipefail
 # shellcheck disable=SC2154
 export LC_ALL=C
 
-# 1. Load 'sleep' and 'stat' as builtins if available (critical for loop performance)
-if [[ -f /usr/lib/bash/sleep ]]; then
-    enable -f /usr/lib/bash/sleep sleep 2>/dev/null || true
-fi
-if [[ -f /usr/lib/bash/stat ]]; then
-    enable -f /usr/lib/bash/stat stat 2>/dev/null || true
-fi
+# 1. Load builtins if available (critical for loop performance & zero-fork execution)
+for _b in sleep stat rm; do
+    if [[ -f "/usr/lib/bash/$_b" ]]; then
+        enable -f "/usr/lib/bash/$_b" "$_b" 2>/dev/null || true
+    fi
+done
 
 # 2. Environment Setup
 RUNTIME="${XDG_RUNTIME_DIR:-/run/user/${UID:-$(id -u)}}"
@@ -149,9 +148,7 @@ while :; do
 
     # D. Disconnected State
     if [[ -z "$current_iface" ]]; then
-        # Atomic write
-        printf '%s\n' "- - - network-disconnected" > "$STATE_FILE.tmp"
-        mv -f "$STATE_FILE.tmp" "$STATE_FILE"
+        printf '%s\n' "- - - network-disconnected" > "$STATE_FILE"
         rx_prev=0; tx_prev=0; iface=""
         sleep 3 || true
         continue
@@ -190,11 +187,10 @@ while :; do
     rx_prev=$rx_now
     tx_prev=$tx_now
 
-    # G. Format and Write
+    # G. Format and Write (Zero-Fork tmpfs write)
     format_speed unit tx_fmt rx_fmt class "$rx_delta" "$tx_delta"
     # shellcheck disable=SC2154
-    printf '%s %s %s %s\n' "$unit" "$tx_fmt" "$rx_fmt" "$class" > "$STATE_FILE.tmp"
-    mv -f "$STATE_FILE.tmp" "$STATE_FILE"
+    printf '%s %s %s %s\n' "$unit" "$tx_fmt" "$rx_fmt" "$class" > "$STATE_FILE"
 
     # H. Precision Sleep
     end_time="${EPOCHREALTIME/./}"

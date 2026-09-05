@@ -1,11 +1,12 @@
 [Unit]
-Description=Waybar network speed daemon (UWSM Linked)
-# HOOK 1: Wait until the graphical session (Hyprland) is actually ready
+Description=Waybar network speed daemon
+# HOOK 1: Wait until the graphical session is actually ready
 After=graphical-session.target
 
-# HOOK 2: Bind the lifecycle to the session. 
-# If Hyprland/UWSM stops, this service is legally required to stop.
+# HOOK 2: Bind the lifecycle to the graphical session.
+# If the graphical session stops, this service is stopped.
 PartOf=graphical-session.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -15,6 +16,7 @@ Restart=always
 RestartSec=1s
 OOMPolicy=kill
 OOMScoreAdjust=400
+SuccessExitStatus=0 143
 
 # Hardening (Keep your system safe)
 ProtectSystem=strict
