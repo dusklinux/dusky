@@ -1471,7 +1471,7 @@ hl.window_rule({
     name = "music_recognition.py",
     match = { class = "^(music_recognition.py)$" },
     float = true,
-    size = {614, 253}, -- set absolute window size in pixels
+    size = {614, 353}, -- set absolute window size in pixels
     center = true
 })
 
