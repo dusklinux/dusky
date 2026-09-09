@@ -1,30 +1,25 @@
 #version 300 es
-// Invert Colors Shader - OPTIMIZED
-// Added: Optional luminance-preserving mode
-
 precision highp float;
+precision highp int;
+precision highp sampler2D;
 
 in vec2 v_texcoord;
 uniform sampler2D tex;
 out vec4 fragColor;
 
-// Set true for "smart invert" that preserves relative brightness
-const bool PRESERVE_LUMINANCE = false;
-const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+// Input/output: SDR, opaque or premultiplied alpha.
 
 void main() {
-    vec4 color = texture(tex, v_texcoord);
-    vec3 inverted = 1.0 - color.rgb;
-    
-    if (PRESERVE_LUMINANCE) {
-        // Adjust inverted colors to match original luminance
-        float origLuma = dot(color.rgb, LUMA);
-        float invLuma = dot(inverted, LUMA);
-        if (invLuma > 0.001) {
-            inverted *= origLuma / invLuma;
-            inverted = clamp(inverted, 0.0, 1.0);
-        }
-    }
-    
+    vec2 halfTexel = 0.5 / vec2(textureSize(tex, 0));
+    vec2 uv = clamp(v_texcoord, halfTexel, 1.0 - halfTexel);
+    vec4 color = textureLod(tex, uv, 0.0);
+
+    // alpha * (1 - straightRGB) = alpha - premultipliedRGB.
+    vec3 inverted = clamp(
+        vec3(color.a) - color.rgb,
+        vec3(0.0),
+        vec3(color.a)
+    );
+
     fragColor = vec4(inverted, color.a);
 }

@@ -1,89 +1,126 @@
 #version 300 es
 precision highp float;
+precision highp int;
+precision highp sampler2D;
 
 in vec2 v_texcoord;
 uniform sampler2D tex;
 out vec4 fragColor;
 
-// --- CONFIGURATION ---
-const float edge_threshold = 0.15;      // Sensitivity (0.05-0.5) - lower = more edges
-const float edge_softness = 0.08;       // Anti-aliasing amount
-const float line_thickness = 1.0;       // 1.0 = normal, 2.0 = thicker
-const float line_darkness = 0.05;       // 0.0 = pure black, higher = lighter
-const float paper_brightness = 0.98;    // Paper color
-const float paper_grain = 0.03;         // Paper texture intensity
-const float noise_reduction = 0.5;      // Reduces speckles in smooth areas
-// ---------------------
+// Input/output: SDR, opaque or premultiplied alpha.
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
-float luminance(vec3 color) {
-    return dot(color, vec3(0.2126, 0.7152, 0.0722));
+const float EDGE_THRESHOLD = 0.15; // Nonnegative.
+const float EDGE_SOFTNESS = 0.08;  // Must be positive.
+
+// Sobel sample spacing, not literal stroke width.
+const float SAMPLE_RADIUS_PX = 1.0; // Must be positive.
+
+const float LINE_VALUE = 0.05;  // [0, 1]
+const float PAPER_VALUE = 0.98; // [0, 1]
+const float PAPER_GRAIN = 0.03; // [0, 1]
+
+// Local standard-deviation threshold adjustment.
+// This is a heuristic, not a general denoiser.
+const float LOCAL_THRESHOLD_GAIN = 0.5; // Nonnegative.
+
+vec3 straightRGB(vec4 color) {
+    if (color.a <= 0.0) {
+        return vec3(0.0);
+    }
+
+    return clamp(color.rgb / color.a, 0.0, 1.0);
 }
 
-float hash12(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
+float pixelHash(uvec2 pixel) {
+    // Unsigned overflow is intentional and defined.
+    uint h = (pixel.x * 0x9e3779b9u)
+        ^ (pixel.y * 0x85ebca6bu);
+
+    h ^= h >> 16u;
+    h *= 0x7feb352du;
+    h ^= h >> 15u;
+    h *= 0x846ca68bu;
+    h ^= h >> 16u;
+
+    return float(h & 0x00ffffffu) * (1.0 / 16777216.0);
 }
 
-// Sample luminance with bounds checking
-float sampleLum(vec2 uv) {
-    vec2 safe_uv = clamp(uv, 0.0, 1.0);
-    return luminance(texture(tex, safe_uv).rgb);
+float sampleLuma(vec2 uv, vec2 halfTexel) {
+    vec4 color = textureLod(
+        tex,
+        clamp(uv, halfTexel, 1.0 - halfTexel),
+        0.0
+    );
+
+    return dot(straightRGB(color), LUMA);
 }
 
 void main() {
-    vec2 screen_res = vec2(textureSize(tex, 0));
-    vec2 pixel_size = line_thickness / screen_res;
-    vec2 pixel_coords = v_texcoord * screen_res;
-    
-    // Sobel kernel sampling with proper edge clamping
-    float tl = sampleLum(v_texcoord + vec2(-pixel_size.x, -pixel_size.y));
-    float t  = sampleLum(v_texcoord + vec2( 0.0,          -pixel_size.y));
-    float tr = sampleLum(v_texcoord + vec2( pixel_size.x, -pixel_size.y));
-    float l  = sampleLum(v_texcoord + vec2(-pixel_size.x,  0.0));
-    float c  = sampleLum(v_texcoord);  // Center pixel
-    float r  = sampleLum(v_texcoord + vec2( pixel_size.x,  0.0));
-    float bl = sampleLum(v_texcoord + vec2(-pixel_size.x,  pixel_size.y));
-    float b  = sampleLum(v_texcoord + vec2( 0.0,           pixel_size.y));
-    float br = sampleLum(v_texcoord + vec2( pixel_size.x,  pixel_size.y));
-    
-    // Sobel operators
-    float Gx = (tr + 2.0 * r + br) - (tl + 2.0 * l + bl);
-    float Gy = (bl + 2.0 * b + br) - (tl + 2.0 * t + tr);
-    float gradient = sqrt(Gx * Gx + Gy * Gy);
-    
-    // Calculate local variance for noise reduction
-    // (reduces speckles in smooth areas while preserving real edges)
+    vec2 size = vec2(textureSize(tex, 0));
+    vec2 halfTexel = 0.5 / size;
+    vec2 stepUV = SAMPLE_RADIUS_PX / size;
+    vec2 uv = clamp(v_texcoord, halfTexel, 1.0 - halfTexel);
+
+    vec4 center = textureLod(tex, uv, 0.0);
+    float c = dot(straightRGB(center), LUMA);
+
+    float tl = sampleLuma(
+        uv + vec2(-stepUV.x, -stepUV.y), halfTexel
+    );
+    float t = sampleLuma(
+        uv + vec2(0.0, -stepUV.y), halfTexel
+    );
+    float tr = sampleLuma(
+        uv + vec2(stepUV.x, -stepUV.y), halfTexel
+    );
+    float l = sampleLuma(
+        uv + vec2(-stepUV.x, 0.0), halfTexel
+    );
+    float r = sampleLuma(
+        uv + vec2(stepUV.x, 0.0), halfTexel
+    );
+    float bl = sampleLuma(
+        uv + vec2(-stepUV.x, stepUV.y), halfTexel
+    );
+    float b = sampleLuma(
+        uv + vec2(0.0, stepUV.y), halfTexel
+    );
+    float br = sampleLuma(
+        uv + vec2(stepUV.x, stepUV.y), halfTexel
+    );
+
+    float gx = (tr + 2.0 * r + br) - (tl + 2.0 * l + bl);
+    float gy = (bl + 2.0 * b + br) - (tl + 2.0 * t + tr);
+    float gradient = length(vec2(gx, gy));
+
     float mean = (tl + t + tr + l + c + r + bl + b + br) / 9.0;
-    float variance = 0.0;
-    variance += (tl - mean) * (tl - mean);
-    variance += (t - mean) * (t - mean);
-    variance += (tr - mean) * (tr - mean);
-    variance += (l - mean) * (l - mean);
-    variance += (c - mean) * (c - mean);
-    variance += (r - mean) * (r - mean);
-    variance += (bl - mean) * (bl - mean);
-    variance += (b - mean) * (b - mean);
-    variance += (br - mean) * (br - mean);
-    variance = sqrt(variance / 9.0);
-    
-    // Adaptive threshold: require stronger edges in noisy areas
-    float adaptive_threshold = edge_threshold + variance * noise_reduction;
-    
-    // Smooth edge detection (anti-aliased)
+
+    vec3 d0 = vec3(tl, t, tr) - mean;
+    vec3 d1 = vec3(l, c, r) - mean;
+    vec3 d2 = vec3(bl, b, br) - mean;
+
+    float standardDeviation = sqrt(
+        (dot(d0, d0) + dot(d1, d1) + dot(d2, d2)) / 9.0
+    );
+
+    float threshold = EDGE_THRESHOLD
+        + standardDeviation * LOCAL_THRESHOLD_GAIN;
+
     float edge = smoothstep(
-        adaptive_threshold - edge_softness,
-        adaptive_threshold + edge_softness,
+        threshold - EDGE_SOFTNESS,
+        threshold + EDGE_SOFTNESS,
         gradient
     );
-    
-    // Paper texture
-    float paper = paper_brightness;
-    paper -= hash12(pixel_coords * 0.4) * paper_grain;
-    paper -= hash12(pixel_coords * 2.1) * paper_grain * 0.4;
-    
-    // Final blend
-    float final_value = mix(paper, line_darkness, edge);
-    
-    fragColor = vec4(vec3(final_value), 1.0);
+
+    uvec2 pixel = uvec2(floor(uv * size));
+
+    float paper = clamp(
+        PAPER_VALUE - pixelHash(pixel) * PAPER_GRAIN,
+        0.0,
+        1.0
+    );
+
+    float value = mix(paper, LINE_VALUE, edge);
+    fragColor = vec4(vec3(value) * center.a, center.a);
 }

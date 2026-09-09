@@ -1,37 +1,61 @@
 #version 300 es
-// Vignette Shader - OPTIMIZED  
-// Fixes: Aspect ratio correction for circular vignette, safe smoothstep bounds
-
 precision highp float;
+precision highp int;
+precision highp sampler2D;
 
 in vec2 v_texcoord;
 uniform sampler2D tex;
 out vec4 fragColor;
 
-// --- CONFIGURATION ---
-const float RADIUS = 0.65;
-const float SOFTNESS = 0.45;
-const float STRENGTH = 0.5;
-// Set to your monitor's aspect ratio for circular vignette
-const float ASPECT_RATIO = 16.0 / 9.0;
+// Adaptive saturation enhancement.
+// Input/output: SDR, opaque or premultiplied alpha.
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+
+// 0 disables. Less-saturated colors receive more requested boost.
+const float VIBRANCE = 0.35; // [0, 1]
+
+vec3 straightRGB(vec4 color) {
+    if (color.a <= 0.0) {
+        return vec3(0.0);
+    }
+
+    return clamp(color.rgb / color.a, 0.0, 1.0);
+}
 
 void main() {
-    vec4 color = texture(tex, v_texcoord);
-    
-    // FIXED: Aspect-corrected distance for circular (not elliptical) vignette
-    vec2 centered = v_texcoord - 0.5;
-    centered.x *= ASPECT_RATIO;
-    float dist = length(centered);
-    // Normalize so corner distance is ~1.0 regardless of aspect ratio
-    dist /= length(vec2(ASPECT_RATIO * 0.5, 0.5));
-    
-    // FIXED: Ensure smoothstep has valid bounds (edge1 > edge0)
-    float innerEdge = RADIUS;
-    float outerEdge = RADIUS + SOFTNESS;
-    float vignette = 1.0 - smoothstep(innerEdge, outerEdge, dist);
-    
-    // Apply with strength control
-    color.rgb = mix(color.rgb, color.rgb * vignette, STRENGTH);
-    
-    fragColor = color;
+    vec2 halfTexel = 0.5 / vec2(textureSize(tex, 0));
+    vec2 uv = clamp(v_texcoord, halfTexel, 1.0 - halfTexel);
+
+    vec4 sampleColor = textureLod(tex, uv, 0.0);
+    vec3 color = straightRGB(sampleColor);
+
+    float highChannel = max(color.r, max(color.g, color.b));
+    float lowChannel = min(color.r, min(color.g, color.b));
+    float gray = clamp(dot(color, LUMA), 0.0, 1.0);
+
+    float saturation = 0.0;
+
+    if (highChannel > 0.0) {
+        saturation = (highChannel - lowChannel) / highChannel;
+    }
+
+    float gain = 1.0 + VIBRANCE * (1.0 - saturation);
+
+    float upperChroma = highChannel - gray;
+    float lowerChroma = gray - lowChannel;
+
+    // Only divide when expansion would actually leave the gamut.
+    // Each condition implies its denominator is positive.
+    if (upperChroma * gain > 1.0 - gray) {
+        gain = (1.0 - gray) / upperChroma;
+    }
+
+    if (lowerChroma * gain > gray) {
+        gain = gray / lowerChroma;
+    }
+
+    vec3 result = vec3(gray) + (color - vec3(gray)) * gain;
+    result = clamp(result, 0.0, 1.0);
+
+    fragColor = vec4(result * sampleColor.a, sampleColor.a);
 }

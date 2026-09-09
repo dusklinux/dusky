@@ -1,39 +1,57 @@
 #version 300 es
-// Posterization Shader - OPTIMIZED
-// Fixes: Proper rounding, optional dithering to reduce banding
-
 precision highp float;
+precision highp int;
+precision highp sampler2D;
 
 in vec2 v_texcoord;
 uniform sampler2D tex;
 out vec4 fragColor;
 
-// --- CONFIGURATION ---
-const float COLOR_LEVELS = 4.0;
-// Enable dithering to reduce visible banding
+// Input/output: SDR, opaque or premultiplied alpha.
+const int COLOR_LEVELS = 4; // Must be >= 2.
 const bool DITHER = true;
 
-// Simple dither pattern
-float dither(vec2 pos) {
-    // 4x4 Bayer matrix approximation
-    vec2 p = fract(pos * 0.5);
-    float d = fract(dot(p, vec2(0.75, 0.5)));
-    return (d - 0.5) / COLOR_LEVELS;
+const float BAYER[16] = float[16](
+     0.0,  8.0,  2.0, 10.0,
+    12.0,  4.0, 14.0,  6.0,
+     3.0, 11.0,  1.0,  9.0,
+    15.0,  7.0, 13.0,  5.0
+);
+
+vec3 straightRGB(vec4 color) {
+    if (color.a <= 0.0) {
+        return vec3(0.0);
+    }
+
+    return clamp(color.rgb / color.a, 0.0, 1.0);
+}
+
+float bayerThreshold(vec2 pixelPosition) {
+    ivec2 p = ivec2(mod(floor(pixelPosition), 4.0));
+    return (BAYER[p.x + 4 * p.y] + 0.5) / 16.0 - 0.5;
 }
 
 void main() {
-    vec4 color = texture(tex, v_texcoord);
-    
-    vec3 posterized;
-    if (DITHER) {
-        // Add dither noise before quantization
-        float ditherValue = dither(gl_FragCoord.xy);
-        posterized = floor((color.rgb + ditherValue) * COLOR_LEVELS + 0.5) / COLOR_LEVELS;
-    } else {
-        // FIXED: Use round() behavior instead of floor() for better color accuracy
-        posterized = floor(color.rgb * COLOR_LEVELS + 0.5) / COLOR_LEVELS;
-    }
-    
+    vec2 size = vec2(textureSize(tex, 0));
+    vec2 halfTexel = 0.5 / size;
+    vec2 uv = clamp(v_texcoord, halfTexel, 1.0 - halfTexel);
+
+    vec4 sampleColor = textureLod(tex, uv, 0.0);
+    vec3 color = straightRGB(sampleColor);
+
+    float steps = float(COLOR_LEVELS - 1);
+    float threshold = DITHER
+        ? bayerThreshold(uv * size)
+        : 0.0;
+
+    vec3 posterized = floor(
+        color * steps + 0.5 + threshold
+    ) / steps;
+
     posterized = clamp(posterized, 0.0, 1.0);
-    fragColor = vec4(posterized, color.a);
+
+    fragColor = vec4(
+        posterized * sampleColor.a,
+        sampleColor.a
+    );
 }

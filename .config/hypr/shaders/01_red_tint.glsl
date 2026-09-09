@@ -1,16 +1,21 @@
 #version 300 es
-// Pure Red Channel Shader - OPTIMIZED
 precision highp float;
+precision highp int;
+precision highp sampler2D;
 
 in vec2 v_texcoord;
 uniform sampler2D tex;
 out vec4 fragColor;
 
-// Using Rec. 709 for consistency
+// Weighted grayscale placed in the red channel.
+// Input/output: SDR, opaque or premultiplied alpha.
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
 void main() {
-    vec4 pixColor = texture(tex, v_texcoord);
-    float gray = dot(pixColor.rgb, LUMA);
-    fragColor = vec4(gray, 0.0, 0.0, pixColor.a);
+    vec2 halfTexel = 0.5 / vec2(textureSize(tex, 0));
+    vec2 uv = clamp(v_texcoord, halfTexel, 1.0 - halfTexel);
+    vec4 color = textureLod(tex, uv, 0.0);
+
+    float gray = dot(color.rgb, LUMA);
+    fragColor = vec4(gray, 0.0, 0.0, color.a);
 }
