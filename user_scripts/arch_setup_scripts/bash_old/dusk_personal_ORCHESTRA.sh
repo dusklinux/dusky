@@ -175,7 +175,7 @@ INSTALL_SEQUENCE=(
 
 # ------ CUSTOM PATH SCRIPTS -------
 
-    "U | wallpaper_selector.py --build-cache"
+    "U | ignore-fail | wallpaper_selector.py --build-cache"
     "U | kokoro_installer.sh"
     "U | parakeet_installer.sh"
     "U | dusky_neovim_manager.sh -a -t dusky"

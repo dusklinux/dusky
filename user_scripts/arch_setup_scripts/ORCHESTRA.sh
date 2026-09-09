@@ -164,7 +164,7 @@ INSTALL_SEQUENCE=(
 
 # ------ CUSTOM PATH SCRIPTS -------
 
-    "U | wallpaper_selector.py --build-cache"
+    "U | ignore-fail | wallpaper_selector.py --build-cache"
 #    "U | dusky_neovim_manager.sh"
 )
 

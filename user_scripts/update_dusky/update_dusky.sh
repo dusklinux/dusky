@@ -296,7 +296,7 @@ declare -ra UPDATE_SEQUENCE=(
     "U | copy_service_files.sh --default"
     "U | update_checker.sh --num"
 #    "U | cc_restart.sh --quiet"
-    "U | wallpaper_selector.py --build-cache"
+    "U | ignore-fail | wallpaper_selector.py --build-cache"
 #    "U | append_defaults_keybinds_edit_here.sh"
     "U | ignore-fail | tui_matugen.py --smart",
     "U | ignore-fail | hypr_anim.sh --current"

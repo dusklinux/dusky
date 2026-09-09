@@ -153,7 +153,7 @@ scripts = [
     "U | 475_reverting_sleep_timeout.sh",
     "U | 480_dusky_commands.py -s",
     "S | 485_sudoers_nopassword.sh",
-    "U | wallpaper_selector.py --build-cache",
+    "U | ignore-fail | wallpaper_selector.py --build-cache",
     "U | kokoro_installer.sh",
     "U | parakeet_installer.sh",
     "U | keylogger_installer.py",
