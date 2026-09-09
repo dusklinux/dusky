@@ -1793,9 +1793,10 @@ def main() -> int:
 
         if memory_mode:
             LOGGER.info(
-                "Only the HTTP cache policy was changed. History, cookies, "
-                "site storage, downloads, and other profile data can still "
-                "be written to disk."
+                "The memory-cache policy is configured. Any legacy optimizer "
+                "migration also removed the listed legacy preference overrides. "
+                "History, cookies, site storage, downloads, and other profile "
+                "data can still be written to disk."
             )
 
         return 0
