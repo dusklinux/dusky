@@ -2408,7 +2408,7 @@ def stage_payloads(cfg: ISOConfig) -> None:
     if cfg.source_dir.exists() and not installer.is_file():
         warn(f"Expected installer missing: {installer}")
 
-    # Union releng + asset list (dedupe). inject_dotfiles still strips grml-zsh-config.
+    # Use curated asset package list if present; fallback to releng profile.
     releng_pkg = cfg.profile_dir / "packages.x86_64"
     asset_pkg = cfg.source_dir / "assets" / "iso_temp_packages" / "packages.x86_64"
     seen: set[str] = set()
@@ -2423,12 +2423,12 @@ def stage_payloads(cfg: ISOConfig) -> None:
                 seen.add(s)
                 out.append(s)
 
-    if releng_pkg.is_file():
-        consume(releng_pkg.read_text(encoding="utf-8"))
     if asset_pkg.is_file():
         consume(asset_pkg.read_text(encoding="utf-8"))
+    elif releng_pkg.is_file():
+        consume(releng_pkg.read_text(encoding="utf-8"))
     if not out:
-        die("packages.x86_64 empty after union")
+        die("packages.x86_64 empty")
     releng_pkg.write_text("\n".join(out) + "\n", encoding="utf-8")
     ok(f"Payloads staged ({len(out)} packages.x86_64 entries)")
 
