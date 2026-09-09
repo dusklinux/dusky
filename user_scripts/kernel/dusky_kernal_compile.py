@@ -2156,8 +2156,7 @@ class Live:
                 self._samples.append((now, self.steps))
 
             if tag in ("CC", "RUSTC", "AS"):
-                if self.phase in ("configure", "packaging"):
-                    self.phase = "compile"
+                self.phase = "compile"
                 # Dynamic step count expansion: if compile steps exceed expected_steps,
                 # extend expected_steps so progress never freezes or causes retrograde ETA
                 if self.steps >= self.expected_steps - 10:
@@ -2167,13 +2166,15 @@ class Live:
                 if self._link_phase_start is None:
                     self._link_phase_start = now
             elif tag == "BTF":
-                self.phase = "BTF generation"
+                self.phase = "BTF generation" if ("vmlinux" in target or not target.endswith(".ko")) else "module BTF"
             elif tag == "MODPOST":
                 self.phase = "modpost"
             elif tag in ("INSTALL", "STRIP", "SIGN", "ZSTD", "XZ", "GZIP") and ("modules" in target or tag == "DEPMOD"):
                 self.phase = "modules_install"
         elif line.startswith("==>"):
-            self.phase = "packaging: " + line[4:50].strip()
+            low_line = line.lower()
+            if "package" in low_line or "fakeroot" in low_line or "compress" in low_line:
+                self.phase = "packaging: " + line[4:40].strip()
         low = line.lower()
         if ("error:" in low or " error " in low or low.startswith("make: ***") or "undefined reference" in low or "Error " in line) and len(self.errors) < 40:
             self.errors.append(line.strip()[:200])
@@ -2188,7 +2189,7 @@ class Live:
             target_eta = remaining_link + 40.0
         elif self.phase == "BTF generation":
             target_eta = 35.0
-        elif self.phase in ("modpost", "modules_install"):
+        elif self.phase in ("modpost", "modules_install", "module BTF"):
             target_eta = 25.0
         elif self.phase.startswith("packaging"):
             target_eta = 15.0
