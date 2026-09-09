@@ -96,9 +96,9 @@ def _detect_default_build_dir() -> Path:
 
 BUILD_DIR: Path = _detect_default_build_dir()
 SRC_DIR: Path = BUILD_DIR / "src"
-TARBALL_DIR: Path = BUILD_DIR / "tarballs"
-PATCH_CACHE: Path = Path(os.environ.get("DUSKY_PATCH_CACHE") or BUILD_DIR / "patches")
-THINLTO_CACHE_DIR: Path = Path(os.environ.get("DUSKY_THINLTO_CACHE") or BUILD_DIR / "thinlto-cache")
+TARBALL_DIR: Path = Path(os.environ.get("DUSKY_TARBALL_DIR") or XDG_CACHE / "dusky-kernel" / "tarballs")
+PATCH_CACHE: Path = Path(os.environ.get("DUSKY_PATCH_CACHE") or XDG_CACHE / "dusky-kernel" / "patches")
+THINLTO_CACHE_DIR: Path = Path(os.environ.get("DUSKY_THINLTO_CACHE") or XDG_CACHE / "dusky-kernel" / "thinlto-cache")
 PKGDEST_DIR: Path = Path(os.environ.get("DUSKY_PKGDEST") or BUILD_DIR / "packages")
 IMPORT_DIR: Final = STATE_DIR / "imports"
 
@@ -108,9 +108,9 @@ def set_build_dir(new_path: Path | str) -> None:
     BUILD_DIR = Path(new_path).expanduser()
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     SRC_DIR = BUILD_DIR / "src"
-    TARBALL_DIR = BUILD_DIR / "tarballs"
-    PATCH_CACHE = Path(os.environ.get("DUSKY_PATCH_CACHE") or BUILD_DIR / "patches")
-    THINLTO_CACHE_DIR = Path(os.environ.get("DUSKY_THINLTO_CACHE") or BUILD_DIR / "thinlto-cache")
+    TARBALL_DIR = Path(os.environ.get("DUSKY_TARBALL_DIR") or XDG_CACHE / "dusky-kernel" / "tarballs")
+    PATCH_CACHE = Path(os.environ.get("DUSKY_PATCH_CACHE") or XDG_CACHE / "dusky-kernel" / "patches")
+    THINLTO_CACHE_DIR = Path(os.environ.get("DUSKY_THINLTO_CACHE") or XDG_CACHE / "dusky-kernel" / "thinlto-cache")
     PKGDEST_DIR = Path(os.environ.get("DUSKY_PKGDEST") or BUILD_DIR / "packages")
     IMPORT_DIR.mkdir(parents=True, exist_ok=True)
     for d in (SRC_DIR, TARBALL_DIR, PATCH_CACHE, THINLTO_CACHE_DIR, PKGDEST_DIR, BUILD_DIR / "seeds"):
@@ -5241,6 +5241,7 @@ def build_env(p: KernelProfile, d: Derived, facts: HostFacts, epoch: float) -> d
         env["LD"] = "ld.bfd"
     if bool(p.g("compiler", "ccache", True)) and Path("/usr/lib/ccache/bin").is_dir():
         env["PATH"] = f"/usr/lib/ccache/bin:{env.get('PATH', '')}"
+        env.setdefault("CCACHE_SLOPPINESS", "file_macro,time_macros,include_file_mtime")
     kcflags = list(d.kcflags)
     if p.g("compiler", "optimize") == "o3":
         kcflags.append("-O3")
@@ -5998,7 +5999,7 @@ def do_doctor(args: argparse.Namespace) -> int:
     else:
         _db_status = f"missing (searched: {', '.join(str(c) for c in modprobed_db_candidates())})"
     table(["path", "value"], [["profiles", ", ".join(str(d) for d in profile_dirs())], ["build dir", f"{BUILD_DIR} ({fmt_bytes(free)} free)"],
-                              ["snapshots", str(CONFIG_SNAPSHOT_DIR)], ["ThinLTO cache", str(THINLTO_CACHE_DIR)], ["packages", str(PKGDEST_DIR)], ["logs", str(LOG_DIR)],
+                              ["snapshots", str(CONFIG_SNAPSHOT_DIR)], ["tarballs", str(TARBALL_DIR)], ["ThinLTO cache", str(THINLTO_CACHE_DIR)], ["packages", str(PKGDEST_DIR)], ["logs", str(LOG_DIR)],
                               ["modprobed.db", _db_status]])
     hist = load_history()
     if hist:
