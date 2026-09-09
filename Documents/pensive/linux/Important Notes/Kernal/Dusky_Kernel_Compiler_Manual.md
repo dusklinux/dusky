@@ -1094,7 +1094,7 @@ Additionally: `cpu.governor` sets only the Kconfig **default** governor; `storag
 | `amd_pstate` | `str` | `"active"` | `active`, `guided`, `passive`, `disable`, `undefined` | **K/C** | `CONFIG_X86_AMD_PSTATE_DEFAULT_MODE` (`1`=disable, `2`=passive, `3`=active, `4`=guided) plus `amd_pstate=<mode>` on the cmdline. `active` → the `amd-pstate-epp` driver; the CPU's own CPPC controller picks P-states in microseconds. `guided` → kernel sets min/max, hardware chooses within the window. `passive` → classic kernel-driven scaling with full governor choice. |
 | `epp` | `str` | `"balance_performance"` | `default`, `performance`, `balance_performance`, `balance_power`, `power` | **R** | Written to `energy_performance_preference` by your runtime script. Only meaningful in `active` mode. |
 | `mitigations` | `str` | `"on"` | `on`, `off`, `nosmt` | **K/C** | `on` = default. `off` = `CONFIG_CPU_MITIGATIONS=n` **and** `mitigations=off` on the cmdline. `nosmt` = `mitigations=auto,nosmt` (mitigate, and disable SMT where a mitigation requires it). |
-| `nr_cpus` | `int` | `0` | `0`–`8192` | **K** | `CONFIG_NR_CPUS`. `0` = detected thread count rounded up to a multiple of 8. Sizing this correctly saves per-CPU arrays and cpumask storage (0.5–2 MB). CPUs beyond the limit are ignored at boot — set it too low on a machine you later upgrade and you silently lose cores. |
+| `nr_cpus` | `int` | `0` | `0`–`8192` | **K** | `CONFIG_NR_CPUS`. `0` = detected thread count rounded up to a multiple of 8, with a **minimum floor of 64** (`max(64, ...)`). In x86-64 Linux, `cpumask_t` is a single 64-bit integer (`unsigned long`) for any value $\le 64$, meaning zero memory or instruction penalty compared to 8. A floor of 64 prevents hybrid P+E CPUs (12th–14th Gen Intel, Zen 4c/5c) and offlined/sleeping cores from locking the system into a lower core ceiling across rebuilds. |
 | `smt` | `bool` | `true` | `true`/`false` | **K/C** | `false` compiles `CONFIG_SCHED_SMT=n` and passes `nosmt`. Halves logical CPU count; occasionally *raises* frametime consistency in games at a large cost to compile throughput. |
 | `mce` | `bool` | `true` | `true`/`false` | **K** | `CONFIG_X86_MCE`. Machine-check reporting. Disabling hides real hardware failures — keep it on unless building an appliance where any MCE should just reboot. |
 | `prefcore` | `bool` | `true` | `true`/`false` | **K/C** | `CONFIG_SCHED_MC_PRIO` (ITMT). Ranks physical cores by silicon quality/max boost and biases single-threaded work to the best ones. Feeds AMD `amd_prefcore` and Intel Turbo Boost Max 3.0. `false` passes `amd_prefcore=disable`. |
@@ -1769,6 +1769,20 @@ ZRAM creates a compressed swap device entirely resident inside volatile RAM. ACP
 **Consequence:** The kernel does not run BPF scheduling automatically at boot. Until a userspace daemon (such as `scx_bpfland` or `scx_lavd`) is launched via `scx_loader` or systemd, the system runs standard EEVDF (or BORE).
 **Rule:** Start and enable your desired scheduler daemon in the runtime layer (§12.5). Verify: `cat /sys/kernel/sched_ext/state` (expect `running`).
 
+#### 8.12.12. Dynamic `nr_cpus` Under-Counting & The Self-Reinforcing Core-Clipping Trap
+
+When `cpu.nr_cpus = 0` (auto), the compiler engine previously rounded the detected thread count (`f.threads`) up to the nearest multiple of 8 with a floor of 8 (`max(8, ...)`).
+
+**Consequence:** On modern hybrid CPUs with asymmetric Performance and Efficient cores (Intel 12th–14th Gen Alder/Raptor Lake, AMD Zen 4c/5c) or systems with temporarily offlined or parked cores, the running kernel may only expose 8 logical threads. The engine would calculate `nr = 8` and compile the kernel with `CONFIG_NR_CPUS=8`. When that kernel boots, Linux ACPI detects the remaining physical cores (e.g. 6 additional E-cores) but permanently drops them, logging `ACPI: Unable to map lapic to logical cpu number`. On any subsequent rebuild, `f.threads` again sees only 8 active CPUs, baking `CONFIG_NR_CPUS=8` into every future build in a permanent, self-reinforcing trap.
+**Rule:** In x86-64 Linux, CPU bitmasks (`cpumask_t`) are stored in 64-bit machine words (`unsigned long`). For any core count between 1 and 64, the mask is a single 64-bit integer, meaning `NR_CPUS=64` incurs **zero memory or instruction cycle overhead** compared to `NR_CPUS=8`. The engine now enforces a minimum floor of 64 (`max(64, ...)`), perfectly supporting up to 64 threads on any desktop or mobile hardware while scaling dynamically above 64 on large workstations and multi-socket servers.
+
+#### 8.12.13. `scx_lavd` & sched_ext Daemons Failing Under `tracing = "minimal"`
+
+`scx_lavd` and other advanced eBPF schedulers rely on BPF `fentry` trampoline probes (`fentry/bpf_scx_reg`) and tracepoints (`sys_enter_futex`, `sys_enter_execve`) to hook into task lifecycle and registration events.
+
+**Consequence:** In Linux, BPF `fentry` programs strictly require `CONFIG_FTRACE` and `CONFIG_DYNAMIC_FTRACE`. When a profile selects `tracing = "minimal"` (standard in battery or lean profiles to strip tracing overhead), the compiler deliberately disables `FTRACE` and tracepoints. If `scx_lavd` is launched against this kernel, the BPF verifier rejects the program with `libbpf: prog 'scx_lib_init_probe': BPF program load failed: -EINVAL` (`os error 22`), failing to start. Furthermore, if `scx_lavd` is configured as a blocking systemd unit at boot or paired with `CONFIG_MODULE_ALLOW_BTF_MISMATCH=n` on an NVIDIA DKMS system, the display manager or boot process hangs before reaching the desktop.
+**Rule:** Never pair `scx_lavd` with `tracing = "minimal"`. For maximum laptop battery savings, do not use `scx_lavd` at all: `scx_lavd` requires a persistent userspace Rust daemon continuously processing scheduling events, which wakes CPU cores and inhibits deep hardware C-states (C8/C10). Native upstream **EEVDF with CAS (Capacity-Aware Scheduling)** runs entirely in compiled in-kernel C, natively respects Intel ITMT / AMD Preferred Core silicon ratings, and delivers superior battery endurance.
+
 ---
 
 ## 9. Decision Tree & Profile Catalog
@@ -2178,9 +2192,9 @@ flowchart TD
 >
 > [scheduler]
 > type = "eevdf"
-> scx = "scx_lavd"
-> scx_flags = "--autopower"
-> scx_enable_class = true
+> scx = "none"                    # pure in-kernel EEVDF+CAS; zero daemon wakeups on mobile silicon
+> scx_flags = ""
+> scx_enable_class = true         # compiles CONFIG_SCHED_CLASS_EXT for optional BPF experimentation
 > autogroup = true
 > rt_group = false
 >
@@ -2197,6 +2211,7 @@ flowchart TD
 > amd_pstate = "active"
 > epp = "power"                  # runtime hint; the real lever on mobile
 > mitigations = "on"             # a laptop leaves the house
+> nr_cpus = 0                    # auto-detected (minimum floor of 64 protects hybrid P+E cores)
 > smt = true
 > prefcore = true
 > compat32 = true
@@ -2236,7 +2251,7 @@ flowchart TD
 > optimize = "o2"
 > lto = "thin"
 > thinlto_cache = true
-> debug_info = "reduced"
+> debug_info = "full"            # required for BTF, sched_ext infrastructure & CO-RE eBPF (F-01)
 > module_compress = "zstd"
 > rust = false
 > headers = "auto"

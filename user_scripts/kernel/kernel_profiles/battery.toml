@@ -81,7 +81,7 @@ amd_pstate = "undefined"        # You have Intel silicon, not AMD
 governor = "powersave"          # Standard driver for Intel HWP
 epp = "power"                   # Energy-Performance Preference
 mitigations = "off"             # disabled all security stuff for at home stuff, no shared network
-nr_cpus = 0                     # Automatically size per-CPU structures to physical thread count
+nr_cpus = 0                     # Automatically size per-CPU structures (0 = auto, minimum floor of 64)
 smt = true                      # Keep Hyper-Threading/SMT active
 mce = true                      # Machine Check Exception reporting
 prefcore = true                 # AMD Preferred Core / Intel ITMT core ranking
@@ -159,7 +159,7 @@ thinlto_cache_size_gb = 20
 fdo = "none"
 fdo_profile_dir = ""
 kcfi = false                    # Keep false to avoid conflicts with out-of-tree modules
-debug_info = "reduced"          # DWARF5 + BTF generation (required for sched_ext)
+debug_info = "reduced"          # DWARF5 without struct info (promoted to full if BTF is required)
 module_compress = "zstd"        # Fast decompression at modprobe time
 rust = false                    # Required: BTF (sched_ext) + LTO excludes in-kernel Rust
 jobs = 0                        # Auto-detect parallel jobs from cores and RAM

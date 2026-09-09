@@ -56,6 +56,9 @@ type = "eevdf"
 
 # Dynamic userspace BPF scheduler daemon:
 # "none", "scx_lavd", "scx_bpfland", "scx_layered", "scx_rusty", "scx_flash", "scx_p2dq", "scx_cosmos"
+# NOTE: sched_ext daemons (like scx_lavd) require memory.tracing = "full" for BPF fentry probes.
+# For maximum laptop battery savings, scx = "none" with in-kernel EEVDF + CAS is recommended
+# to avoid the constant CPU wakeups and polling overhead of the userspace BPF daemon.
 scx = "none"
 
 # Flags passed to SCX daemon (e.g., "--autopilot", "-m performance")
@@ -167,7 +170,10 @@ epp = "balance_performance"
 # Vulnerability mitigations: "on", "off" (requires acknowledge_risk), "nosmt"
 mitigations = "on"
 
-# CONFIG_NR_CPUS (0 = automatically rounded up to nearest multiple of 8)
+# CONFIG_NR_CPUS (0 = auto: host threads rounded up to multiple of 8, minimum floor of 64)
+# Note: Sizing with a minimum floor of 64 prevents hybrid P+E CPUs (e.g. 14-24 cores), offlined cores,
+# or SMT/Hyper-Threading toggling from permanently clipping core counts across boots.
+# On x86-64, NR_CPUS <= 64 fits in a single 64-bit machine word (zero memory/instruction penalty).
 nr_cpus = 0
 
 # Symmetric Multi-Threading support (CONFIG_SCHED_SMT)
@@ -310,6 +316,8 @@ base_small = false
 log_buf_shift = 0
 
 # Kernel tracing surface: "auto", "full", "minimal"
+# Note: "minimal" strips FTRACE and function tracing for power/latency gains, but breaks
+# sched_ext daemons (e.g. scx_lavd) whose BPF trampoline probes require CONFIG_FTRACE.
 tracing = "auto"
 
 # Fast kernel kexec reboot and crash dump support
@@ -359,7 +367,7 @@ fdo_profile_dir = ""
 # Clang Control Flow Integrity (kCFI + FineIBT; incompatible with nvidia-dkms)
 kcfi = false
 
-# DWARF debug info: "reduced" (DWARF5 + BTF), "full", "none" (disables BTF/sched_ext)
+# DWARF debug info: "full" (DWARF5; required for BTF, sched_ext & CO-RE eBPF), "reduced" (DWARF5 without struct info; disables BTF), "none"
 debug_info = "reduced"
 
 # Module compression codec: "zstd", "xz", "gzip", "none"
