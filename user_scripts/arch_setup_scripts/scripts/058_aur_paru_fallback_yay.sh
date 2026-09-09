@@ -169,9 +169,78 @@ wait_for_pacman_lock() {
     return 0
 }
 
+# Map an alternate linker (requested via -fuse-ld=<name> in makepkg configs)
+# to the package that provides it. binutils linkers (bfd/gold) are already
+# covered by base-devel.
+_linker_pkg() {
+    case "$1" in
+        mold) printf 'mold' ;;
+        lld) printf 'lld' ;;
+        *) return 1 ;;
+    esac
+}
+
+# Install any alternate linker demanded by makepkg configs that is not yet
+# available. Only runs on the build path (callers short-circuit when the
+# helper is already installed), so a healthy system is never touched.
+ensure_configured_linker() {
+    local r_user="${1:-}"
+    local home=""
+    if [[ -n "$r_user" ]]; then
+        home=$(getent passwd "$r_user" 2>/dev/null | cut -d: -f6) || home=""
+    fi
+
+    local cfg_files=(/etc/makepkg.conf /etc/makepkg.conf.d/*.conf)
+    if [[ -n "$home" ]]; then
+        cfg_files+=("$home/.config/pacman/makepkg.conf")
+    fi
+    if (( ${#cfg_files[@]} == 0 )); then
+        return 0
+    fi
+
+    local names=""
+    names=$(grep -rhoE -- '-fuse-ld=[A-Za-z0-9_.-]+' "${cfg_files[@]}" 2>/dev/null | sed 's/.*=//' | sort -u) || names=""
+    [[ -n "$names" ]] || return 0
+
+    local missing_pkgs=()
+    local name pkg
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        # A manually installed linker is fine too; only missing ones need pacman.
+        if command -v "ld.$name" &>/dev/null || command -v "$name" &>/dev/null; then
+            continue
+        fi
+        if pkg=$(_linker_pkg "$name"); then
+            if ! pacman -Qq "$pkg" &>/dev/null; then
+                missing_pkgs+=("$pkg")
+            fi
+        else
+            log_warn "makepkg configs request unknown linker '$name'; hoping it exists at build time."
+        fi
+    done <<< "$names"
+
+    if (( ${#missing_pkgs[@]} == 0 )); then
+        return 0
+    fi
+
+    log_info "Installing linkers required by makepkg configs: ${missing_pkgs[*]}..."
+    wait_for_pacman_lock || return 1
+    # -Syu (never bare -Sy) so a stale sync DB cannot partial-upgrade.
+    if ! pacman -Syu --needed --noconfirm -- "${missing_pkgs[@]}"; then
+        log_error "Failed to install linkers: ${missing_pkgs[*]}"
+        return 1
+    fi
+    return 0
+}
+
 ensure_build_deps() {
-    # $1 = name of deps array (nameref).
+    # $1 = name of deps array (nameref), $2 = build username.
     local -n _deps_ref=$1
+    local _r_user="${2:-}"
+
+    # Alternate linkers demanded by makepkg configs (e.g. mold) must exist
+    # before anything tries to link. No-op when configs want stock ld.
+    ensure_configured_linker "$_r_user" || return 1
 
     # If all dependencies are already satisfied, avoid touching the pacman DB.
     if pacman -T "${_deps_ref[@]}" &>/dev/null; then
@@ -293,23 +362,47 @@ build_helper() {
 
     # -s/--syncdeps covers future makedepends drift (no-op when pre-installed).
     # Export PKGDEST to ensure artifacts stay in the build folder regardless of user/system makepkg.conf.
+    # Attempt 1 honors the user's makepkg.conf (its linker demands were already
+    # installed by ensure_configured_linker). Attempt 2 neutralizes per-user
+    # makepkg configs via an empty XDG_CONFIG_HOME (stock /etc/makepkg.conf),
+    # so a broken custom config can never kill the install.
+    # (cargo/go read HOME-based paths, so they are unaffected either way.)
     # Never run makepkg as root: AUR builds must run as the unprivileged user.
     if ! sudo -H -u "$r_user" bash -c '
         set -euo pipefail
-        cd "$1"
-        for try in 1 2 3; do
-            if git clone --depth 1 "$2" "$3"; then
-                break
-            fi
-            if (( try == 3 )); then
-                echo "Failed to clone repository $2 after 3 attempts." >&2
-                exit 1
-            fi
-            sleep 2
-        done
-        cd "$3"
+        # NOTE: callers must pass args explicitly (clone_pkg "$1" "$2" "$3"):
+        # a function called with no arguments sees EMPTY positionals, it does
+        # NOT inherit the caller positionals.
+        clone_pkg() {
+            local _dest="${1:?clone_pkg: missing dest}" _repo="${2:?clone_pkg: missing repo}" _dir="${3:?clone_pkg: missing dir}"
+            local tries=0
+            while (( ++tries <= 3 )); do
+                if git clone --depth 1 "$_repo" "$_dir"; then
+                    return 0
+                fi
+                if (( tries == 3 )); then
+                    echo "Failed to clone repository $_repo after 3 attempts." >&2
+                    return 1
+                fi
+                sleep 2
+            done
+        }
+        cd "$1" || exit 1
+        clone_pkg "$1" "$2" "$3" || exit 1
+        cd "$3" || exit 1
         export PKGDEST="$PWD"
-        makepkg -s --noconfirm -cf
+        if makepkg -s --noconfirm -cf; then
+            exit 0
+        fi
+        echo "Build with user makepkg.conf failed; retrying with stock /etc/makepkg.conf..." >&2
+        cd "$1" || exit 1
+        rm -rf -- "$3"
+        clone_pkg "$1" "$2" "$3" || exit 1
+        cd "$3" || exit 1
+        export PKGDEST="$PWD"
+        export XDG_CONFIG_HOME="$PWD/.xdg-empty"
+        mkdir -p "$XDG_CONFIG_HOME"
+        makepkg -s --noconfirm -cf || exit 1
     ' -- "$BUILD_DIR" "$url" "$pkg_name"; then
         log_error "Compilation of $pkg_name failed."
         return 1
@@ -365,7 +458,7 @@ try_install_paru() {
     fi
 
     log_info "Attempting to install Paru..."
-    ensure_build_deps PARU_DEPS || return 1
+    ensure_build_deps PARU_DEPS "$r_user" || return 1
 
     if build_helper "$r_user" "$PARU_URL" "paru"; then
         log_success "Paru successfully installed."
@@ -384,7 +477,7 @@ try_install_yay() {
     fi
 
     log_info "Attempting to install Yay..."
-    ensure_build_deps YAY_DEPS || return 1
+    ensure_build_deps YAY_DEPS "$r_user" || return 1
 
     if build_helper "$r_user" "$YAY_URL" "yay"; then
         log_success "Yay successfully installed."
@@ -460,7 +553,8 @@ main() {
             local user_input=""
             if read -r -t 1 user_input; then
                 choice="${user_input:-P}"
-                log_info "Read selection from input stream: ${choice}"
+                # Never log the value: stdin may carry a piped sudo password.
+                log_info "Read selection from input stream."
             else
                 log_info "Non-interactive session detected. Defaulting to Paru."
                 choice="P"
