@@ -1,336 +1,786 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Dusky Package Atlas (Platinum Edition - Revision 19 - Centered Apex)
-# Architecture: Translated 1:1 from ZSH to universally compliant Bash.
-#               Fully supports CLI fallback pipeline, Wayland wl-copy integration,
-#               and a dedicated --desktop flag for GUI application launchers.
+# Dusky Package Atlas
+#
+# Requirements:
+#   pacman, expac, gawk, GNU coreutils
+#   fzf for interactive mode
+#   wl-copy optionally, for Wayland clipboard integration
+#
+# Without count: interactive browser; default is newest first.
+# With count:    CLI listing; default is largest first.
+#
+# Interactive stdout contains only the selected package name.
+# Diagnostics and desktop feedback go to stderr.
+#
+# The package list is a startup snapshot. Relaunch to refresh it.
+# Previews query current installed-package metadata.
 # =============================================================================
 
-# DRY Header Helper
-_pkg_header() {
-    printf "\n\e[34m::\e[0m \e[1m%s\e[0m (Top %s)\n" "$1" "$2"
-    printf "\e[38;5;238m------------------------------------------------------------\e[0m\n"
-    printf "\e[38;5;242mDATE              SIZE  PACKAGE\e[0m\n"
-    printf "\e[38;5;238m------------------------------------------------------------\e[0m\n"
+_pkg_help() {
+    cat <<'EOF'
+Dusky Package Atlas
+
+Usage:
+  pkg [target] [metric] [count] [--desktop]
+
+Arguments may appear in any order.
+Repeated targets, metrics, and counts use the last supplied value.
+
+Targets:
+  all                     All installed packages (default)
+  explicit, user          Explicitly installed packages
+
+Metrics:
+  hogs, size, big, fat,
+  massive, huge, giant    Largest first
+
+  tiny, small, micro,
+  mini, little            Smallest first
+
+  new, recent, latest     Newest installation first
+  old, ancient            Oldest installation first
+  alpha, name             Alphabetical order
+
+Modes:
+  Without count           Interactive browser; default: newest first
+  With positive count     CLI listing; default: largest first
+
+Options:
+  --desktop               Show selection/clipboard feedback on stderr
+  -h, --help, help        Show this help
+
+Examples:
+  pkg
+  pkg explicit hogs
+  pkg 50 size
+  pkg old 20
+  pkg explicit alpha 100
+
+Interactive shortcuts:
+  Ctrl-S                  Largest first
+  Alt-S                   Smallest first
+  Ctrl-D                  Newest first
+  Alt-D                   Oldest first
+  Ctrl-R                  Alphabetical order
+  Ctrl-P                  Show/hide right-hand details
+  Ctrl-L                  Refresh current package details
+  Page Up / Page Down     Scroll details by a page
+  Shift-Up / Shift-Down   Scroll details by a line
+  Alt-C                   Copy the complete details report
+  Enter                   Print and attempt to copy the package name
+  F1                      Show keyboard help
+  Esc                     Exit without selecting
+
+Notes:
+  Searching matches package names and the displayed date/size.
+  Descriptions and versions are shown in the details pane.
+
+  Searching preserves the selected sort order.
+
+  The package list is a startup snapshot. Relaunch to refresh it.
+  Ctrl-L refreshes details only, not the package list.
+
+  Dates and installed sizes come from pacman's database.
+  Dates are not necessarily first-ever installation dates.
+  Sizes are not measurements of actual filesystem allocation.
+
+  "user" means explicitly installed, not installed by the current Unix user.
+
+  Integration sections show package-owned paths. They do not indicate
+  whether a service is enabled/running or whether a file still exists.
+
+  Command paths cover standard bin directories. Libexec paths are listed
+  separately. This is not a scan of every executable file in the package.
+
+  Enter replaces the clipboard with the package name.
+  To retain details copied with Alt-C, exit with Escape instead.
+
+  Clipboard support requires wl-copy and a working Wayland connection.
+
+  --desktop does not create a terminal. A desktop launcher must use
+  Terminal=true or explicitly run this script in a terminal emulator.
+
+  CLI output omits colors when redirected, when TERM=dumb,
+  or when NO_COLOR is set.
+EOF
 }
 
-# The Interactive FZF Engine
-_pkg_interactive() {
-    local init_mode="${1:-date_desc}"
-    local init_target="${2:-all}"
+_pkg_keys() {
+    printf '\033[2J\033[H'
+
+    cat <<'EOF'
+
+  DUSKY PACKAGE ATLAS
+  ────────────────────────────────────────────────────────
+
+  SORT
+    Ctrl-S       Largest first
+    Alt-S        Smallest first
+    Ctrl-D       Newest first
+    Alt-D        Oldest first
+    Ctrl-R       Alphabetical order
+
+  DETAILS
+    Ctrl-P       Show / hide right-hand details
+    Ctrl-L       Refresh current package details
+    Page Up      Scroll details upward
+    Page Down    Scroll details downward
+    Shift-Up     Scroll details upward one line
+    Shift-Down   Scroll details downward one line
+    Alt-C        Copy the complete details report
+
+  SELECT
+    Enter        Print and attempt to copy package name
+    Esc          Exit without selecting
+
+  Searching preserves the selected sort order.
+  Relaunch to refresh the installed-package list.
+
+  Services and timers are listed near the top of the details.
+  Full package metadata is available farther down.
+
+  Enter replaces the clipboard with the package name.
+  After Alt-C, use Esc if you want to retain copied details.
+
+EOF
+
+    printf '  Press any key to return...'
+    IFS= read -r -s -n 1 < /dev/tty
+    printf '\n'
+}
+
+_pkg_require() {
+    local dependency
+    local missing=0
+
+    for dependency in "$@"; do
+        if ! command -v "$dependency" >/dev/null 2>&1; then
+            printf 'Error: required command not found: %s\n' \
+                "$dependency" >&2
+            missing=1
+        fi
+    done
+
+    (( missing == 0 ))
+}
+
+_pkg_fetch() (
+    set -o pipefail
     export LC_ALL=C
 
-    # F1 Help Menu Payload
-    export DUSKY_PKG_HELP='clear; printf "\n\n  \033[1;38;5;81m󰏖 Dusky Package Atlas - Keyboard Shortcuts\033[0m\n  \033[38;5;238m──────────────────────────────────────────────\033[0m\n  \033[1;33m[CTRL-S]\033[0m  Sort by Largest Package Size (Hogs)\n  \033[1;33m[ALT-S]\033[0m   Sort by Smallest Package Size (Tiny)\n  \033[1;33m[CTRL-D]\033[0m  Sort by Newest Install Date\n  \033[1;33m[CTRL-R]\033[0m  Reset to Default Alphabetical Order\n  \033[1;33m[ALT-C]\033[0m   Copy Package Details to Clipboard\n  \033[1;33m[F1]\033[0m      Show this Help Menu\n  \033[1;33m[ESC]\033[0m     Exit Interactive Atlas\n  \033[1;33m[ENTER]\033[0m   Select Package and Copy/Output\n\n  \033[38;5;242mPress any key to return...\033[0m"; read -rsn1'
+    local target="$1"
+    local names
 
-    # Compile Live List Generator
-    export DUSKY_PKG_LIST='
-export LC_ALL=C
-mode="$1"
-target="$2"
+    # Raw fields: package name | version | install timestamp | bytes.
+    if [[ "$target" == explicit ]]; then
+        # Check pacman separately so expac cannot hide its failure.
+        names=$(pacman -Qeq) || return 1
 
-case "$mode" in
-    size_desc) sort_args=(-t"|" -k4 -nr) ;;
-    size_asc)  sort_args=(-t"|" -k4 -n) ;;
-    date_desc) sort_args=(-t"|" -k3 -nr) ;;
-    date_asc)  sort_args=(-t"|" -k3 -n) ;;
-    alpha|*)   sort_args=(-t"|" -k1) ;;
-esac
+        # Do not pass an empty target stream to expac.
+        [[ -n "$names" ]] || return 0
 
-fetch_data() {
-    if [ "$target" = "explicit" ]; then
-        pacman -Qeq | expac --timefmt=%s "%n|%v|%l|%m|%d" - 2>/dev/null
+        printf '%s\n' "$names" |
+            expac -Q --timefmt='%s' '%n|%v|%l|%m' -
     else
-        expac --timefmt=%s "%n|%v|%l|%m|%d" 2>/dev/null
+        expac -Q --timefmt='%s' '%n|%v|%l|%m'
     fi
+)
+
+_pkg_sort() {
+    local mode="$1"
+
+    # Bound numeric keys explicitly and break ties by package name.
+    case "$mode" in
+        size_desc)
+            LC_ALL=C sort -t '|' -k4,4nr -k1,1
+            ;;
+        size_asc)
+            LC_ALL=C sort -t '|' -k4,4n -k1,1
+            ;;
+        date_desc)
+            LC_ALL=C sort -t '|' -k3,3nr -k1,1
+            ;;
+        date_asc)
+            LC_ALL=C sort -t '|' -k3,3n -k1,1
+            ;;
+        alpha)
+            LC_ALL=C sort -t '|' -k1,1
+            ;;
+        *)
+            printf 'Error: invalid internal sort mode: %s\n' \
+                "$mode" >&2
+            return 2
+            ;;
+    esac
 }
 
-fetch_data | sort "${sort_args[@]}" | awk -F"|" '\''
-    {
-        name = $1; ver = $2; date = $3; size = $4; desc = $5;
-        for(i=6; i<=NF; i++) desc = desc "|" $i
-        if (length(desc) == 0) desc = "<No description provided>"
-        
-        size_mb = size / 1048576
-        if (size_mb >= 1024) { size_fmt = sprintf("%.2f GiB", size_mb/1024) }
-        else if (size_mb >= 1) { size_fmt = sprintf("%.2f MiB", size_mb) }
-        else { size_fmt = sprintf("%.2f KiB", size / 1024) }
-        
-        date_fmt = strftime("%m/%d", date)
+_pkg_list() (
+    set -o pipefail
 
-        disp_name = (length(name) > 27) ? substr(name, 1, 24) "..." : name
-        disp_ver  = (length(ver) > 11)  ? substr(ver, 1, 8) "..."  : ver
-        
-        visual_str = sprintf("\033[1;38;5;39m%-27s\033[0m \033[38;5;238m│\033[0m \033[38;5;220m%-11s\033[0m \033[38;5;238m│\033[0m \033[38;5;114m%-5s\033[0m \033[38;5;238m│\033[0m \033[38;5;208m%10s\033[0m", disp_name, disp_ver, date_fmt, size_fmt)
-        
-        pad = sprintf("%150s", "")
-        printf "%s|%s%s%s %s\n", name, visual_str, pad, name, desc
-    }
-'\''
-'
+    _pkg_sort "$1" < "$DUSKY_PKG_DATA" |
+        gawk -F '|' '
+            function human_size(bytes) {
+                if (bytes >= 1099511627776)
+                    return sprintf("%.2f TiB", bytes / 1099511627776)
+                if (bytes >= 1073741824)
+                    return sprintf("%.2f GiB", bytes / 1073741824)
+                if (bytes >= 1048576)
+                    return sprintf("%.2f MiB", bytes / 1048576)
+                if (bytes >= 1024)
+                    return sprintf("%.2f KiB", bytes / 1024)
+                return sprintf("%.0f B", bytes)
+            }
 
-    # Compile Preview Script
-    export DUSKY_PKG_PREVIEW='
-export LC_ALL=C
-pkg="$1"
+            {
+                # Field 1 is the exact name for fzf placeholders.
+                # Field 2 is the displayed and searchable text.
+                #
+                # Full names remain searchable. Date and size come first
+                # so a long name cannot displace those columns.
+                printf "%s\t", $1
+                printf "\033[38;5;114m%s\033[0m", strftime("%Y-%m-%d", $3)
+                printf " \033[38;5;208m%10s\033[0m", human_size($4)
+                printf " \033[1;38;5;39m%s\033[0m\n", $1
+            }
+        '
+)
 
-left_str=":: Package Details: $pkg"
-left_len=${#left_str}
+_pkg_integration() {
+    gawk '
+        function section(title, text, count) {
+            printf ":: %s (%d)\n", title, count
+            printf "%s\n", text != "" ? text : "  (None)\n"
+        }
 
-count_str=""
-right_len=0
-if [[ -n "$FZF_POS" && -n "$FZF_MATCH_COUNT" ]]; then
-    count_str="[${FZF_POS}/${FZF_MATCH_COUNT}]"
-    right_len=${#count_str}
-elif [[ -n "$FZF_MATCH_COUNT" ]]; then
-    count_str="[${FZF_MATCH_COUNT}/${FZF_TOTAL_COUNT}]"
-    right_len=${#count_str}
-fi
+        function unit_entry(path, name) {
+            name = path
+            sub(/^.*\//, "", name)
+            return "  " name "\n    " path "\n"
+        }
 
-cols=${FZF_PREVIEW_COLUMNS:-80}
-pad_len=$(( cols - left_len - right_len - 1 ))
-(( pad_len < 1 )) && pad_len=1
-pad=$(printf "%*s" "$pad_len" "")
+        {
+            path = $0
 
-hr=$(printf "%*s" "$cols" "" | sed "s/ /─/g")
+            # Directory entries are not command files or units.
+            if (path == "" || path ~ /\/$/)
+                next
 
-printf "\033[1;38;5;81m:: \033[1;37mPackage Details: \033[1;32m%s\033[0m%s\033[1;38;5;242m%s\033[0m\n\033[38;5;238m%s\033[0m\n" "$pkg" "$pad" "$count_str" "$hr"
+            is_unit_root = (path ~ /^(\/usr\/lib|\/usr\/local\/lib|\/usr\/share|\/etc)\/systemd\/(system|user)\//)
+            is_unit = (path ~ /\.(service|socket|device|mount|automount|swap|target|path|timer|slice|scope)$/)
+            is_command = (path ~ /^\/(usr\/(local\/)?)?s?bin\/[^/]+$/)
+            is_helper = (path ~ /^\/usr\/(local\/)?libexec\//)
+            is_desktop = (path ~ /^\/usr\/(local\/)?share\/applications\/.*\.desktop$/)
 
-repo=$(pacman -Si "$pkg" 2>/dev/null | awk -F":" '\''/^Repository/ {sub(/^[ \t]+/, "", $2); print $2; exit}'\'')
-[[ -z "$repo" ]] && repo="Local/AUR"
+            if (is_unit_root && is_unit) {
+                if (path ~ /\/systemd\/system\//) {
+                    system_units = system_units unit_entry(path)
+                    system_count++
+                } else {
+                    user_units = user_units unit_entry(path)
+                    user_count++
+                }
+            } else if (is_unit_root && path ~ /\.conf$/) {
+                configs = configs "  " path "\n"
+                config_count++
+            } else if (is_command) {
+                commands = commands "  " path "\n"
+                command_count++
+            } else if (is_helper) {
+                helpers = helpers "  " path "\n"
+                helper_count++
+            } else if (is_desktop) {
+                desktops = desktops "  " path "\n"
+                desktop_count++
+            }
+        }
 
-pacman -Qi "$pkg" 2>/dev/null | awk -F":" -v repo="$repo" '\''
-    BEGIN {
-        print_kv("Repository", repo, repo == "Local/AUR" ? "203" : "213")
-    }
-    function print_kv(key, val, color) {
-        printf "\033[1;38;5;39m%-18s\033[0m: \033[38;5;%sm%s\033[0m\n", key, color, val
-    }
-    {
-        key = $1; sub(/[ \t]+$/, "", key)
-        val = $2; for(i=3; i<=NF; i++) val = val ":" $i
-        sub(/^[ \t]+/, "", val)
-    }
-    key == "Version"        { print_kv("Version", val, "220") }
-    key == "Description"    { print_kv("Description", val, "253") }
-    key == "Architecture"   { print_kv("Architecture", val, "141") }
-    key == "URL"            { print_kv("URL", val, "114") }
-    key == "Depends On"     { print_kv("Dependencies", val, val == "None" ? "242" : "250") }
-    key == "Required By"    { print_kv("Required By", val, val == "None" ? "242" : "203") }
-    key == "Conflicts With" { print_kv("Conflicts", val, val == "None" ? "242" : "196") }
-    key == "Replaces"       { print_kv("Replaces", val, val == "None" ? "242" : "208") }
-    key == "Packager"       { print_kv("Packager", val, "242") }
-    key == "Build Date"     { print_kv("Built", val, "250") }
-    key == "Install Date"   { print_kv("Installed", val, "250") }
-    key == "Install Reason" { print_kv("Reason", val, "203") }
-'\''
+        END {
+            section("System units", system_units, system_count)
+            section("User units", user_units, user_count)
+            section("Systemd configuration / drop-ins", configs, config_count)
+            section("Command paths", commands, command_count)
+            section("Libexec helper paths", helpers, helper_count)
+            section("Desktop entries", desktops, desktop_count)
+        }
+    '
+}
 
-printf "\n\033[1;38;5;81m:: \033[1;37mSystem Integration\033[0m\n\033[38;5;238m%s\033[0m\n" "$hr"
+_pkg_details() (
+    set -o pipefail
 
-pacman -Ql "$pkg" 2>/dev/null | awk '\''
-    BEGIN { bins=""; srvs=""; apps="" }
-    {
-        path = substr($0, length($1) + 2)
-        
-        if (path ~ /^\/usr\/(local\/)?s?bin\/[^\/]+$/) 
-            bins = bins "  \033[38;5;114m" path "\033[0m\n"
-        else if (path ~ /^(\/usr\/lib|\/etc)\/systemd\/(system|user)\/.*\.(service|timer|socket|path|mount|conf|target|device)$/) 
-            srvs = srvs "  \033[38;5;203m" path "\033[0m\n"
-        else if (path ~ /^\/usr\/share\/applications\/[^\/]+\.desktop$/) 
-            apps = apps "  \033[38;5;39m" path "\033[0m\n"
-    }
-    END {
-        if (bins != "") { printf "\033[1;33m󰘚 Binaries:\033[0m\n%s", bins } 
-        else { printf "\033[1;33m󰘚 Binaries:\033[0m \033[38;5;242m(None)\033[0m\n" }
-        
-        if (srvs != "") { printf "\n\033[1;35m󰒓 Systemd Units:\033[0m\n%s", srvs } 
-        else { printf "\n\033[1;35m󰒓 Systemd Units:\033[0m \033[38;5;242m(None)\033[0m\n" }
-        
-        if (apps != "") { printf "\n\033[1;36m󰀻 Desktop Entries:\033[0m\n%s", apps } 
-        else { printf "\n\033[1;36m󰀻 Desktop Entries:\033[0m \033[38;5;242m(None)\033[0m\n" }
-    }
-'\''
-'
+    local pkg="$1"
+    local info
+    local paths
+    local summary
+    local integration
 
-    # Wayland Clipboard Payload
-    export DUSKY_PKG_COPY='
-export LC_ALL=C
-pkg="$1"
-bash -c "$DUSKY_PKG_PREVIEW" _ "$pkg" | sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g" | wl-copy
-'
+    if [[ -z "$pkg" ]]; then
+        printf 'Error: no package name supplied.\n' >&2
+        return 1
+    fi
 
-    local prompt_str="   Search Packages ❯ "
-    case "$init_mode" in
-        size_desc) prompt_str="   Hogs (Largest) ❯ " ;;
-        size_asc)  prompt_str="   Tiny (Smallest) ❯ " ;;
-        date_desc) prompt_str="   Newest (Date) ❯ " ;;
+    if ! info=$(LC_ALL=C pacman --color never -Qi -- "$pkg"); then
+        printf 'Error: pacman could not read installed metadata for %s.\n' \
+            "$pkg" >&2
+        return 1
+    fi
+
+    if ! paths=$(LC_ALL=C pacman -Qql -- "$pkg"); then
+        printf 'Error: pacman could not read the file list for %s.\n' \
+            "$pkg" >&2
+        return 1
+    fi
+
+    # Overview first, integration second, complete metadata last.
+    # Preserve continuation lines belonging to overview fields.
+    if ! summary=$(
+        gawk '
+            /^[^[:space:]][^:]*:/ {
+                key = $0
+                sub(/:.*/, "", key)
+                sub(/[[:space:]]+$/, "", key)
+
+                keep = (key == "Name" || key == "Version" || key == "Description" || key == "Installed Size" || key == "Install Date" || key == "Install Reason")
+            }
+
+            keep {
+                print
+            }
+        ' <<< "$info"
+    ); then
+        printf 'Error: could not format the package overview.\n' >&2
+        return 1
+    fi
+
+    if ! integration=$(_pkg_integration <<< "$paths"); then
+        printf 'Error: could not format package integration details.\n' >&2
+        return 1
+    fi
+
+    # Emit only after all required queries and formatting succeed.
+    # Do not infer AUR/repository origin from a package-name lookup.
+    printf '%s\n' \
+        ":: Package: $pkg" \
+        "$summary" \
+        '' \
+        "$integration" \
+        ':: Complete installed-package metadata' \
+        "$info" \
+        '' \
+        ':: Interpretation' \
+        'Integration sections list package-owned paths, not service state.' \
+        'Unit counts count paths, including aliases or enablement links.' \
+        'Command paths cover standard bin directories; helpers cover libexec.' \
+        'Installed size is database metadata, not measured disk allocation.'
+)
+
+_pkg_preview() (
+    set -o pipefail
+
+    local details
+    local status
+
+    # Show the actual diagnostic rather than guessing that a package
+    # disappeared whenever any step of report generation fails.
+    if details=$(_pkg_details "$1" 2>&1); then
+        :
+    else
+        status=$?
+        printf '\033[1;31mCould not generate details for: %s\033[0m\n\n' \
+            "$1"
+        printf '%s\n' "$details"
+        return "$status"
+    fi
+
+    gawk '
+        /^:: / {
+            printf "\033[1;38;5;81m%s\033[0m\n", $0
+            next
+        }
+
+        /^[^[:space:]][^:]*:/ {
+            separator = index($0, ":")
+            key = substr($0, 1, separator - 1)
+            value = substr($0, separator + 1)
+
+            printf "\033[1;38;5;39m%s\033[0m:", key
+            printf "\033[38;5;253m%s\033[0m\n", value
+            next
+        }
+
+        /^  [^ /].*\.(service|socket|device|mount|automount|swap|target|path|timer|slice|scope)$/ {
+            printf "\033[1;38;5;203m%s\033[0m\n", $0
+            next
+        }
+
+        /^    \// {
+            printf "\033[38;5;245m%s\033[0m\n", $0
+            next
+        }
+
+        /^  \// {
+            printf "\033[38;5;114m%s\033[0m\n", $0
+            next
+        }
+
+        {
+            print
+        }
+    ' <<< "$details"
+)
+
+_pkg_copy_details() (
+    set -o pipefail
+
+    local details
+
+    command -v wl-copy >/dev/null 2>&1 || return 1
+    details=$(_pkg_details "$1") || return 1
+
+    # Copy the complete plain-text report, not just the visible preview.
+    printf '%s\n' "$details" | wl-copy --type text/plain
+)
+
+_pkg_interactive() {
+    local mode="$1"
+    local target="$2"
+    local desktop="$3"
+    local prompt
+    local columns
+    local header
+    local choice
+    local status
+    local pkg
+    local copied=0
+
+    case "$mode" in
+        size_desc) prompt=' Largest › ' ;;
+        size_asc)  prompt=' Smallest › ' ;;
+        date_desc) prompt=' Newest › ' ;;
+        date_asc)  prompt=' Oldest › ' ;;
+        alpha)     prompt=' Alphabetical › ' ;;
+        *)
+            printf 'Error: invalid interactive sort mode: %s\n' \
+                "$mode" >&2
+            return 2
+            ;;
     esac
 
-    # Perfectly Centered Header Strings (Math verified against layout boundaries: 27 | 11 | 5 | 10)
-    local visual_header=$(printf "\033[1;37m          PACKAGE          \033[0m \033[38;5;238m│\033[0m \033[38;5;242m  VERSION  \033[0m \033[38;5;238m│\033[0m \033[38;5;242m DATE\033[0m \033[38;5;238m│\033[0m \033[38;5;242m   SIZE   \033[0m")
+    printf -v columns '%-10s %10s %s' INSTALLED SIZE PACKAGE
+    printf -v header '%s\n%s\n\n%s' \
+        'Enter: select · Alt-C: copy details' \
+        'PgUp/PgDn: scroll details · F1: help' \
+        "$columns"
 
-    local fzf_choice
-    fzf_choice=$(bash -c "$DUSKY_PKG_LIST" _ "$init_mode" "$init_target" | fzf --ansi \
-        --delimiter='\|' \
-        --with-nth=2 \
-        --tiebreak=begin,length \
-        --no-hscroll \
-        --ellipsis='' \
-        --highlight-line \
-        --prompt="$prompt_str" \
-        --pointer="" \
-        --marker="✓" \
-        --layout=reverse \
-        --border=rounded \
-        --border-label=" 󰏖 Dusky Package Atlas [F1: Help] " \
-        --border-label-pos=3 \
-        --info=hidden \
-        --header="$visual_header" \
-        --header-first \
-        --bind="ctrl-s:reload-sync(bash -c \"\$DUSKY_PKG_LIST\" _ size_desc $init_target)+change-prompt(   Hogs (Largest) ❯ )" \
-        --bind="alt-s:reload-sync(bash -c \"\$DUSKY_PKG_LIST\" _ size_asc $init_target)+change-prompt(   Tiny (Smallest) ❯ )" \
-        --bind="ctrl-d:reload-sync(bash -c \"\$DUSKY_PKG_LIST\" _ date_desc $init_target)+change-prompt(   Newest (Date) ❯ )" \
-        --bind="ctrl-r:reload-sync(bash -c \"\$DUSKY_PKG_LIST\" _ alpha $init_target)+change-prompt(   Search Packages ❯ )" \
-        --bind="f1:execute(bash -c \"\$DUSKY_PKG_HELP\")" \
-        --bind="alt-c:execute-silent(bash -c \"\$DUSKY_PKG_COPY\" _ {1})+change-prompt(   Copied Info! ❯ )" \
-        --bind="result:refresh-preview" \
-        --color="bg+:#1e1e2e,bg:#11111b,spinner:#f5e0dc" \
-        --color="fg:#cdd6f4,fg+:#cdd6f4,header:#89b4fa,info:#cba6f7" \
-        --color="pointer:#a6e3a1,marker:#f5e0dc,prompt:#cba6f7" \
-        --color="hl:#f38ba8,hl+:#f38ba8,border:#585b70,label:#a6e3a1" \
-        --preview='bash -c "$DUSKY_PKG_PREVIEW" _ {1}' \
-        --preview-window="right,50%,border-left,wrap")
+    # fzf subprocesses use Bash explicitly and import these helpers.
+    export -f _pkg_sort _pkg_list _pkg_integration _pkg_details
+    export -f _pkg_preview _pkg_copy_details _pkg_keys
 
-    # Environment Cleanup
-    unset DUSKY_PKG_LIST
-    unset DUSKY_PKG_PREVIEW
-    unset DUSKY_PKG_COPY
-    unset DUSKY_PKG_HELP
+    # Generate initial input before launching fzf so cancellation or
+    # early selection cannot SIGPIPE an upstream generator.
+    if ! _pkg_list "$mode" > "$DUSKY_PKG_DATA.initial"; then
+        printf 'Error: could not prepare the interactive package list.\n' >&2
+        return 1
+    fi
 
-    # Action Router
-    if [[ -n "$fzf_choice" ]]; then
-        local target_pkg="${fzf_choice%%|*}"
-        
-        # 1. Output to standard stdout so shell piping works seamlessly if run in a terminal
-        printf "%s\n" "$target_pkg"
+    # Isolate this application from user fzf defaults that could change
+    # its output protocol, such as --multi, --expect, or --print-query.
+    choice=$(
+        FZF_DEFAULT_OPTS= FZF_DEFAULT_OPTS_FILE=/dev/null \
+        fzf \
+            --with-shell='bash -c' \
+            --ansi \
+            --no-multi \
+            --no-sort \
+            --delimiter=$'\t' \
+            --with-nth=2.. \
+            --no-hscroll \
+            --ellipsis='…' \
+            --highlight-line \
+            --prompt="$prompt" \
+            --pointer='▌' \
+            --layout=reverse \
+            --border=rounded \
+            --border-label=" Dusky Package Atlas · $target " \
+            --border-label-pos=3 \
+            --info=inline \
+            --header="$header" \
+            --header-first \
+            --preview-label=' Details · PgUp/PgDn: scroll ' \
+            --bind='ctrl-s:reload-sync(_pkg_list size_desc)+change-prompt( Largest › )' \
+            --bind='alt-s:reload-sync(_pkg_list size_asc)+change-prompt( Smallest › )' \
+            --bind='ctrl-d:reload-sync(_pkg_list date_desc)+change-prompt( Newest › )' \
+            --bind='alt-d:reload-sync(_pkg_list date_asc)+change-prompt( Oldest › )' \
+            --bind='ctrl-r:reload-sync(_pkg_list alpha)+change-prompt( Alphabetical › )' \
+            --bind='ctrl-p:toggle-preview' \
+            --bind='ctrl-l:refresh-preview' \
+            --bind='pgup:preview-page-up' \
+            --bind='pgdn:preview-page-down' \
+            --bind='shift-up:preview-up' \
+            --bind='shift-down:preview-down' \
+            --bind='f1:execute(_pkg_keys)' \
+            --bind="alt-c:transform(if _pkg_copy_details {1} 2>/dev/null; then printf '%s' 'change-border-label( Details copied · Esc keeps details · Enter copies name )'; else printf '%s' 'change-border-label( Copy failed · Check wl-copy, Wayland, or package details )'; fi)" \
+            --bind="focus:change-border-label( Dusky Package Atlas · $target )" \
+            --bind='esc:abort' \
+            --bind='enter:accept' \
+            --color='bg+:#1e1e2e,bg:#11111b,spinner:#f5e0dc' \
+            --color='fg:#cdd6f4,fg+:#cdd6f4,header:#89b4fa,info:#6c7086' \
+            --color='pointer:#a6e3a1,prompt:#cba6f7' \
+            --color='hl:#f38ba8,hl+:#f38ba8,border:#585b70,label:#a6e3a1' \
+            --preview='_pkg_preview {1}' \
+            --preview-window='right,55%,border-left,wrap' \
+            < "$DUSKY_PKG_DATA.initial"
+    )
+    status=$?
 
-        # 2. Quietly copy to Wayland clipboard as a convenience
-        if command -v wl-copy >/dev/null 2>&1; then
-            printf "%s" "$target_pkg" | wl-copy
-        fi
+    if (( status != 0 )); then
+        case "$status" in
+            1|130)
+                # No selection or cancellation; preserve fzf's status.
+                ;;
+            *)
+                printf 'Error: fzf exited with status %s.\n' \
+                    "$status" >&2
+                ;;
+        esac
+        return "$status"
+    fi
 
-        # 3. If launched from the .desktop GUI Entry, give visual feedback before the terminal shatters
-        if (( IS_DESKTOP_ENTRY )); then
-            printf "\n\e[1;32m✔ Success!\e[0m Copied package \e[1;39m'%s'\e[0m to clipboard.\n" "$target_pkg" >&2
-            sleep 1.5
+    if [[ -z "$choice" || "$choice" != *$'\t'* || "$choice" == *$'\n'* ]]; then
+        printf 'Error: fzf returned an invalid selection.\n' >&2
+        return 1
+    fi
+
+    pkg=${choice%%$'\t'*}
+
+    if [[ -z "$pkg" ]]; then
+        printf 'Error: fzf returned an empty package name.\n' >&2
+        return 1
+    fi
+
+    # Emitting the selected name is the primary operation.
+    # Clipboard failure must not invalidate successful pipeline output.
+    printf '%s\n' "$pkg" || return 1
+
+    if command -v wl-copy >/dev/null 2>&1; then
+        if printf '%s' "$pkg" | wl-copy --type text/plain; then
+            copied=1
+        else
+            printf 'Warning: selected %s, but clipboard copying failed.\n' \
+                "$pkg" >&2
         fi
     fi
+
+    if (( desktop )); then
+        if (( copied )); then
+            printf '\nSelected %s and copied its name to the clipboard.\n' \
+                "$pkg" >&2
+        else
+            printf '\nSelected %s; its name was not copied to the clipboard.\n' \
+                "$pkg" >&2
+        fi
+        sleep 1.5
+    fi
+
+    return 0
 }
 
-main() {
-    if ! command -v expac >/dev/null 2>&1; then
-        printf "\n\e[31m✖ Error:\e[0m 'expac' is not installed.\n" >&2
-        printf "  Please install it first: \e[36msudo pacman -S expac\e[0m\n\n" >&2
-        sleep 4; exit 1
-    fi
-    if ! command -v fzf >/dev/null 2>&1; then
-        printf "\n\e[31m✖ Error:\e[0m 'fzf' is not installed.\n" >&2
-        printf "  Please install it first: \e[36msudo pacman -S fzf\e[0m\n\n" >&2
-        sleep 4; exit 1
+_pkg_cli() (
+    set -o pipefail
+
+    local mode="$1"
+    local count="$2"
+    local target="$3"
+    local title
+    local color=0
+
+    case "$mode" in
+        size_desc) title='Largest' ;;
+        size_asc)  title='Smallest' ;;
+        date_desc) title='Newest' ;;
+        date_asc)  title='Oldest' ;;
+        alpha)     title='Alphabetical' ;;
+        *)
+            printf 'Error: invalid CLI sort mode: %s\n' "$mode" >&2
+            return 2
+            ;;
+    esac
+
+    if [[ "$target" == explicit ]]; then
+        title+=' explicitly installed packages'
+    else
+        title+=' installed packages'
     fi
 
-    local target="all"
-    local metric=""
-    declare -i count=-1
-    declare -i show_help=0
-    export IS_DESKTOP_ENTRY=0
+    if [[ -t 1 && ${TERM:-dumb} != dumb && ! -v NO_COLOR ]]; then
+        color=1
+    fi
+
+    if (( color )); then
+        printf '\n\033[34m::\033[0m \033[1m%s\033[0m (Top %s)\n' \
+            "$title" "$count" || return 1
+    else
+        printf '\n:: %s (Top %s)\n' "$title" "$count" || return 1
+    fi
+
+    printf '%-10s %10s %s\n' INSTALLED SIZE PACKAGE || return 1
+    printf '%s\n' '------------------------------------------------------------' ||
+        return 1
+
+    if ! _pkg_sort "$mode" < "$DUSKY_PKG_DATA" |
+        gawk -F '|' -v limit="$count" '
+            BEGIN {
+                limit += 0
+            }
+
+            # Consume all input rather than exiting early like head.
+            # This avoids upstream SIGPIPE under pipefail.
+            NR <= limit {
+                printf "%s|%s|%s\n", $3, $4, $1
+            }
+        ' |
+        numfmt \
+            --to=iec-i \
+            --suffix=B \
+            --field=2 \
+            --delimiter='|' \
+            --padding=10 |
+        gawk -F '|' -v color="$color" '
+            {
+                date = strftime("%Y-%m-%d", $1)
+
+                if (color) {
+                    printf "\033[38;5;114m%s\033[0m ", date
+                    printf "\033[38;5;208m%10s\033[0m ", $2
+                    printf "\033[1;38;5;39m%s\033[0m\n", $3
+                } else {
+                    printf "%s %10s %s\n", date, $2, $3
+                }
+            }
+        '
+    then
+        printf 'Error: could not produce the CLI package list.\n' >&2
+        return 1
+    fi
+
+    printf '\n'
+)
+
+main() (
+    # Confine environment changes, exported helpers, and traps.
+    # Expected nonzero statuses are handled explicitly; no errexit.
+    set -o pipefail
+    export LC_ALL=C.UTF-8
+
+    local target=all
+    local metric=''
+    local count=''
+    local desktop=0
+    local arg
+    local tmpdir
+
+    # Help takes precedence and does not require pacman, expac, or fzf.
+    for arg in "$@"; do
+        case "${arg,,}" in
+            help|-h|--help)
+                _pkg_help
+                return
+                ;;
+        esac
+    done
 
     for arg in "$@"; do
-        arg_lower="${arg,,}"
-        case "$arg_lower" in
-            --desktop) IS_DESKTOP_ENTRY=1 ;;
-            help|-h|--help) show_help=1 ;;
-            explicit|user) target="explicit" ;;
-            all) target="all" ;;
-            hogs|size|big|fat|massive|huge|giant) metric="size_desc" ;;
-            tiny|small|micro|mini|little) metric="size_asc" ;;
-            new|recent|latest) metric="date_desc" ;;
-            old|ancient) metric="date_asc" ;;
+        case "${arg,,}" in
+            --desktop)
+                desktop=1
+                ;;
+            explicit|user)
+                target=explicit
+                ;;
+            all)
+                target=all
+                ;;
+            hogs|size|big|fat|massive|huge|giant)
+                metric=size_desc
+                ;;
+            tiny|small|micro|mini|little)
+                metric=size_asc
+                ;;
+            new|recent|latest)
+                metric=date_desc
+                ;;
+            old|ancient)
+                metric=date_asc
+                ;;
+            alpha|name)
+                metric=alpha
+                ;;
             *)
                 if [[ "$arg" =~ ^[1-9][0-9]*$ ]]; then
-                    count="$arg"
+                    # Keep as text to avoid Bash integer overflow.
+                    count=$arg
                 else
-                    printf "\n\e[31m✖ Error:\e[0m Unknown argument: '\e[33m%s\e[0m'\n\n" "$arg" >&2
-                    sleep 3; exit 1
+                    printf 'Error: unknown argument: %s\n' "$arg" >&2
+                    printf 'Use --help for usage.\n' >&2
+                    return 2
                 fi
                 ;;
         esac
     done
 
-    # 4. Help Menu Overlay
-    if (( show_help )); then
-        printf "\n\e[34m::\e[0m \e[1mpkg\e[0m — Advanced Package Query Tool\n"
-        printf "\e[38;5;238m------------------------------------------------------------\e[0m\n"
-        printf "\e[32mUsage:\e[0m pkg [target] [metric] [count]\n"
-        printf "       \e[38;5;242m(Arguments can be provided in ANY order)\e[0m\n"
-        printf "       \e[38;5;14mOmitting [count] launches the Interactive FZF Atlas.\e[0m\n\n"
-        
-        printf "\e[1mTargets:\e[0m\n"
-        printf "  \e[36mall\e[0m                  - System-wide packages (Default)\n"
-        printf "  \e[36mexplicit\e[0m, \e[36muser\e[0m       - Only explicitly installed packages\n\n"
-        
-        printf "\e[1mMetrics:\e[0m\n"
-        printf "  \e[36mhogs\e[0m, \e[36mbig\e[0m, \e[36mmassive\e[0m... - Sort by size descending (largest first)\n"
-        printf "  \e[36mtiny\e[0m, \e[36msmall\e[0m, \e[36mmicro\e[0m... - Sort by size ascending (smallest first)\n"
-        printf "  \e[36mnew\e[0m, \e[36mrecent\e[0m, \e[36mlatest\e[0m  - Sort by installation date (newest first)\n"
-        printf "  \e[36mold\e[0m, \e[36mancient\e[0m          - Sort by installation date (oldest first)\n\n"
-        
-        printf "\e[1mExamples:\e[0m\n"
-        printf "  \e[33mpkg\e[0m                  # Launch Interactive FZF Package Atlas\n"
-        printf "  \e[33mpkg explicit massive\e[0m # Launch Atlas showing explicitly installed Hogs\n"
-        printf "  \e[33mpkg 50 size\e[0m          # Print classic CLI list of Top 50 largest packages\n\n"
-        exit 0
-    fi
+    _pkg_require pacman expac gawk sort mktemp rm || return 1
 
-    # 5. Execution Router: Launch Interactive Atlas if no count is provided
-    if (( count == -1 )); then
-        local init_mode="${metric:-date_desc}"
-        _pkg_interactive "$init_mode" "$target"
-        exit 0
-    fi
+    if [[ -z "$count" ]]; then
+        _pkg_require fzf bash || return 1
 
-    # 6. Fallback: Classic CLI List Execution (if count > 0)
-    metric="${metric:-size_desc}"
-    declare -a expac_args=(--timefmt='%s' '%l|%m|%n')
-    declare -a sort_cmd
-    local title_metric=""
+        # stdout may legitimately be piped. Check the controlling
+        # terminal instead of requiring stdout to be a terminal.
+        if ! { : <> /dev/tty; } 2>/dev/null; then
+            printf 'Error: interactive mode requires a controlling terminal.\n' >&2
+            printf 'For CLI output, supply a count: pkg 20 hogs\n' >&2
+            printf 'For a desktop launcher, use Terminal=true.\n' >&2
+            return 1
+        fi
 
-    case "$metric" in
-        size_desc) title_metric="Largest"; sort_cmd=(sort -t '|' -k2 -rn) ;;
-        size_asc)  title_metric="Smallest"; sort_cmd=(sort -t '|' -k2 -n) ;;
-        date_desc) title_metric="Newest"; sort_cmd=(sort -t '|' -k1 -rn) ;;
-        date_asc)  title_metric="Oldest";   sort_cmd=(sort -t '|' -k1 -n) ;;
-        alpha|*)   title_metric="Alpha"; sort_cmd=(sort -t '|' -k3) ;;
-    esac
+        metric=${metric:-date_desc}
 
-    local title_full=""
-    if [[ "$target" == "explicit" ]]; then
-        title_full="${title_metric} Explicitly Installed Packages"
+        if (( desktop )); then
+            _pkg_require sleep || return 1
+        fi
     else
-        title_full="${title_metric} Installed Packages (Overall)"
+        _pkg_require numfmt || return 1
+        metric=${metric:-size_desc}
     fi
 
-    _pkg_header "$title_full" "$count"
-    
-    local awk_color='{ printf "\033[38;5;246m%-15s\033[0m \033[38;5;220m%10s\033[0m  \033[1;38;5;39m%s\033[0m\n", strftime("%m/%d", $1), $2, $3 }'
+    tmpdir=$(mktemp -d) || {
+        printf 'Error: could not create a temporary directory.\n' >&2
+        return 1
+    }
 
-    if [[ "$target" == "explicit" ]]; then
-        pacman -Qeq | expac "${expac_args[@]}" - 2>/dev/null | "${sort_cmd[@]}" | head -n "$count" | numfmt --to=iec-i --suffix=B --field=2 --delimiter='|' --padding=8 | awk -F '|' "$awk_color"
+    # Both the raw snapshot and initial fzf input live here.
+    trap 'rm -rf -- "$tmpdir"' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    export DUSKY_PKG_DATA="$tmpdir/packages"
+
+    if ! _pkg_fetch "$target" > "$DUSKY_PKG_DATA"; then
+        printf 'Error: could not query installed packages.\n' >&2
+        return 1
+    fi
+
+    if [[ ! -s "$DUSKY_PKG_DATA" ]]; then
+        printf 'No installed packages matched target: %s\n' "$target" >&2
+        return 1
+    fi
+
+    if [[ -z "$count" ]]; then
+        _pkg_interactive "$metric" "$target" "$desktop"
     else
-        expac "${expac_args[@]}" 2>/dev/null | "${sort_cmd[@]}" | head -n "$count" | numfmt --to=iec-i --suffix=B --field=2 --delimiter='|' --padding=8 | awk -F '|' "$awk_color"
+        _pkg_cli "$metric" "$count" "$target"
     fi
-
-    printf "\n"
-}
+)
 
 main "$@"
