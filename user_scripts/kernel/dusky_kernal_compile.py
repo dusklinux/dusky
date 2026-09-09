@@ -4585,7 +4585,9 @@ def _ops_cpu(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     elif s["meta"]["portable_package"]:
         nr = 512
     else:
-        nr = max(8, ((f.threads + 7) // 8) * 8)
+        # Default to at least 64 CPUs so hybrid P+E architectures (e.g. 14-24 cores),
+        # offlined cores, and re-enabled SMT/Hyper-Threading are never dropped by the kernel.
+        nr = max(64, ((f.threads + 7) // 8) * 8)
     portable = s["meta"]["portable_package"]
     mx.val("NR_CPUS", nr)
     mx.n("MAXSMP")
