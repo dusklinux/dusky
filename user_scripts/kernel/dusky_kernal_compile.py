@@ -367,9 +367,35 @@ def pad(s: str, width: int) -> str:
     return s + " " * max(0, width - visible_len(s))
 
 
+def truncate_ansi(s: str, max_len: int) -> str:
+    if max_len <= 0:
+        return ""
+    if visible_len(s) <= max_len:
+        return s
+    res: list[str] = []
+    vis = 0
+    i = 0
+    n = len(s)
+    while i < n:
+        if s[i] == ESC:
+            m = _ANSI_RE.match(s[i:])
+            if m:
+                res.append(m.group(0))
+                i += len(m.group(0))
+                continue
+        if vis < max_len:
+            res.append(s[i])
+            vis += 1
+            i += 1
+        else:
+            break
+    res.append(C.RESET)
+    return "".join(res)
+
+
 def term_width() -> int:
     try:
-        return max(60, min(160, os.get_terminal_size().columns))
+        return max(20, min(240, os.get_terminal_size().columns))
     except OSError:
         return 100
 
@@ -2095,10 +2121,11 @@ _KBUILD_STEP_RE: Final = re.compile(r"^\s{2}([A-Z][A-Z0-9_]+)(?:\s\[[MA]\])?\s+(
 class Live:
     SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-    def __init__(self, label: str, expected_steps: int | None, expected_seconds: float | None) -> None:
+    def __init__(self, label: str, expected_steps: int | None, expected_seconds: float | None, lto: str = "thin") -> None:
         self.label = label
-        self.expected_steps = expected_steps
+        self.expected_steps = expected_steps or 8380
         self.expected_seconds = expected_seconds
+        self.lto = lto
         self.steps = 0
         self.phase = "configure"
         self.last = ""
@@ -2110,6 +2137,13 @@ class Live:
         self._tick = 0
         self.tty = sys.stdout.isatty()
 
+        # Adaptive throughput tracking and smoothed ETA
+        self._samples: collections.deque[tuple[float, int]] = collections.deque(maxlen=60)
+        self._samples.append((self.start, 0))
+        self._smoothed_eta: float | None = None
+        self._link_phase_start: float | None = None
+        self._orig_winch: Any = None
+
     def feed(self, line: str) -> None:
         self.tail.append(line)
         m = _KBUILD_STEP_RE.match(line)
@@ -2117,37 +2151,126 @@ class Live:
             self.steps += 1
             tag, target = m.group(1), m.group(2)
             self.last = f"{tag} {target}"[-70:]
-            if tag in ("CC", "RUSTC", "AS") and self.phase in ("configure", "packaging"):
-                self.phase = "compile"
-            if tag in ("LTO", "LD") and target.startswith("vmlinux"):
+            now = time.monotonic()
+            if not self._samples or (now - self._samples[-1][0]) >= 0.25:
+                self._samples.append((now, self.steps))
+
+            if tag in ("CC", "RUSTC", "AS"):
+                if self.phase in ("configure", "packaging"):
+                    self.phase = "compile"
+                # Dynamic step count expansion: if compile steps exceed expected_steps,
+                # extend expected_steps so progress never freezes or causes retrograde ETA
+                if self.steps >= self.expected_steps - 10:
+                    self.expected_steps = max(self.expected_steps + 150, int(self.steps * 1.05))
+            elif tag in ("LTO", "LD") and ("vmlinux" in target):
                 self.phase = "link vmlinux" + (" (LTO)" if tag == "LTO" or "vmlinux.o" in target else "")
+                if self._link_phase_start is None:
+                    self._link_phase_start = now
             elif tag == "BTF":
                 self.phase = "BTF generation"
             elif tag == "MODPOST":
                 self.phase = "modpost"
-            elif tag in ("INSTALL", "STRIP", "SIGN", "ZSTD", "XZ", "GZIP") and "modules" in target or tag == "DEPMOD":
+            elif tag in ("INSTALL", "STRIP", "SIGN", "ZSTD", "XZ", "GZIP") and ("modules" in target or tag == "DEPMOD"):
                 self.phase = "modules_install"
         elif line.startswith("==>"):
-            self.phase = "packaging: " + line[4:60].strip()
+            self.phase = "packaging: " + line[4:50].strip()
         low = line.lower()
         if ("error:" in low or " error " in low or low.startswith("make: ***") or "undefined reference" in low or "Error " in line) and len(self.errors) < 40:
             self.errors.append(line.strip()[:200])
 
+    def _calc_eta(self, elapsed: float) -> float | None:
+        now = time.monotonic()
+        if self.phase.startswith("link vmlinux"):
+            link_started = self._link_phase_start or now
+            link_spent = now - link_started
+            link_total = 150.0 if self.lto == "full" else (75.0 if self.lto == "thin" else 25.0)
+            remaining_link = max(8.0, link_total - link_spent)
+            target_eta = remaining_link + 40.0
+        elif self.phase == "BTF generation":
+            target_eta = 35.0
+        elif self.phase in ("modpost", "modules_install"):
+            target_eta = 25.0
+        elif self.phase.startswith("packaging"):
+            target_eta = 15.0
+        elif self.steps < 30:
+            if self.expected_seconds and self.expected_seconds > elapsed:
+                target_eta = self.expected_seconds - elapsed
+            else:
+                return None
+        else:
+            # Active compilation phase: calculate measured step throughput
+            recent_rate = 0.0
+            if len(self._samples) >= 3:
+                t0, s0 = self._samples[0]
+                t1, s1 = self._samples[-1]
+                dt = t1 - t0
+                ds = s1 - s0
+                if dt >= 5.0 and ds > 0:
+                    recent_rate = ds / dt
+
+            overall_rate = self.steps / max(1.0, elapsed)
+            effective_rate = (0.70 * recent_rate + 0.30 * overall_rate) if recent_rate > 0 else overall_rate
+
+            remaining_compile_steps = max(0, self.expected_steps - self.steps)
+            remaining_compile_time = remaining_compile_steps / max(0.2, effective_rate)
+
+            post_overhead = 180.0 if self.lto == "full" else (90.0 if self.lto == "thin" else 45.0)
+            raw_eta = remaining_compile_time + post_overhead
+
+            # Smoothly blend with historical/heuristic estimate during initial warmup (first 90s)
+            if elapsed < 90.0 and self.expected_seconds and self.expected_seconds > elapsed:
+                alpha = elapsed / 90.0
+                baseline_eta = max(15.0, self.expected_seconds - elapsed)
+                target_eta = alpha * raw_eta + (1.0 - alpha) * baseline_eta
+            else:
+                target_eta = raw_eta
+
+        # Exponential moving average to eliminate jitter while keeping responsiveness
+        if self._smoothed_eta is None:
+            self._smoothed_eta = target_eta
+        else:
+            self._smoothed_eta = 0.15 * target_eta + 0.85 * self._smoothed_eta
+
+        return max(1.0, self._smoothed_eta)
+
     def _status(self) -> str:
         elapsed = time.monotonic() - self.start
-        parts = [f"{C.ACCENT}{self.SPIN[self._tick % len(self.SPIN)]}{C.RESET} {self.label}", fmt_duration(elapsed), f"{self.steps:,} steps", self.phase]
-        if self.expected_steps and self.expected_seconds and self.steps > 50:
-            frac = min(0.98, self.steps / max(1, self.expected_steps))
-            eta = max(0.0, self.expected_seconds - elapsed) if frac < 0.5 else max(0.0, elapsed / frac - elapsed)
-            parts.append(f"ETA ~{fmt_duration(eta)}")
-        if self.last:
-            parts.append(C.DIM + self.last + C.RESET)
-        s = " │ ".join(parts)
+        spin = f"{C.ACCENT}{self.SPIN[self._tick % len(self.SPIN)]}{C.RESET}"
+        eta = self._calc_eta(elapsed)
+        eta_part = f"ETA ~{fmt_duration(eta)}" if eta is not None and eta > 0 else ""
+
         w = term_width()
-        while visible_len(s) > w - 1 and self.last:
-            self.last = self.last[:-8]
-            parts[-1] = C.DIM + self.last + C.RESET
+        prefix = f"{spin} {self.label} │ {fmt_duration(elapsed)} │ {self.steps:,} steps"
+        avail = w - 1 - visible_len(prefix)
+
+        extra_parts: list[str] = []
+        if eta_part and avail > (visible_len(eta_part) + 4):
+            extra_parts.append(eta_part)
+            avail -= (visible_len(eta_part) + 3)
+
+        phase_str = self.phase
+        if avail > 10:
+            if visible_len(phase_str) > avail - 3:
+                phase_str = phase_str[:max(4, avail - 5)] + ".."
+            extra_parts.append(phase_str)
+            avail -= (visible_len(phase_str) + 3)
+
+        last_str = self.last
+        if last_str and avail >= 12:
+            display_last = last_str[-avail:] if len(last_str) > avail else last_str
+            extra_parts.append(C.DIM + display_last + C.RESET)
+
+        parts = [prefix] + extra_parts
+        s = " │ ".join(parts)
+
+        # Safety bound: strictly ensure visible length never exceeds w - 1 to prevent line-wrapping duplicate lines
+        while len(parts) > 1 and visible_len(s) > w - 1:
+            parts.pop()
             s = " │ ".join(parts)
+
+        if visible_len(s) > w - 1:
+            s = truncate_ansi(s, w - 1)
+
         return s
 
     def _loop(self) -> None:
@@ -2170,6 +2293,14 @@ class Live:
         _LIVE = self
         if self.tty:
             sys.stdout.write(C.HIDE)
+            try:
+                if threading.current_thread() is threading.main_thread() and hasattr(signal, "SIGWINCH"):
+                    def _sigwinch_handler(sig: int, frame: Any) -> None:
+                        sys.stdout.write("\r" + C.CLEAR_EOL)
+                        sys.stdout.flush()
+                    self._orig_winch = signal.signal(signal.SIGWINCH, _sigwinch_handler)
+            except (ValueError, OSError):
+                pass
         self._thread = threading.Thread(target=self._loop, name="live-status", daemon=True)
         self._thread.start()
         return self
@@ -2181,6 +2312,11 @@ class Live:
             self._thread.join(timeout=2)
         _LIVE = None
         if self.tty:
+            if self._orig_winch is not None:
+                try:
+                    signal.signal(signal.SIGWINCH, self._orig_winch)
+                except (ValueError, OSError):
+                    pass
             sys.stdout.write("\r" + C.CLEAR_EOL + C.SHOW)
             sys.stdout.flush()
 
@@ -2208,14 +2344,59 @@ def record_history(entry: Json) -> None:
         pass
 
 
-def history_estimate(profile: str, lto: str) -> tuple[int | None, float | None]:
-    for entry in reversed(load_history()):
-        if entry.get("profile") == profile and entry.get("lto") == lto and entry.get("success"):
-            return int(entry.get("steps") or 0) or None, float(entry.get("duration") or 0) or None
-    for entry in reversed(load_history()):
-        if entry.get("success") and entry.get("lto") == lto:
-            return int(entry.get("steps") or 0) or None, float(entry.get("duration") or 0) or None
-    return None, None
+def history_estimate(profile: str, lto: str, current_jobs: int = 0, is_clean: bool = True) -> tuple[int, float]:
+    """Estimate expected steps and build duration (in seconds) based on history and host hardware.
+
+    Scales historical durations to current job/core count via Amdahl's law (parallel compile vs serial link/BTF),
+    differentiates clean full builds from incremental rebuilds, and provides an accurate hardware-derived
+    fallback for fresh installations with no previous history.
+    """
+    hist = [e for e in reversed(load_history()) if e.get("success")]
+    jobs = max(1, current_jobs or os.cpu_count() or 4)
+
+    # Segregate history by build type (full >= 5000 steps vs incremental < 5000 steps)
+    target_hist = [e for e in hist if (int(e.get("steps") or 0) >= 5000 if is_clean else int(e.get("steps") or 0) < 5000)]
+    if not target_hist:
+        target_hist = hist
+
+    matched_entry: Json | None = None
+    for e in target_hist:
+        if e.get("profile") == profile and e.get("lto") == lto:
+            matched_entry = e
+            break
+    if not matched_entry:
+        for e in target_hist:
+            if e.get("lto") == lto:
+                matched_entry = e
+                break
+    if not matched_entry and target_hist:
+        matched_entry = target_hist[0]
+
+    if matched_entry:
+        h_steps = int(matched_entry.get("steps") or 0)
+        h_dur = float(matched_entry.get("duration") or 0.0)
+        h_jobs = int(matched_entry.get("jobs") or jobs)
+
+        # Scale duration to current job count using Amdahl's Law:
+        # ~80% of kernel build is parallel compilations, ~20% is serialized linking/BTF/packaging
+        if h_jobs > 0 and jobs > 0 and h_dur > 0:
+            parallel = h_dur * 0.80 * (h_jobs / jobs)
+            serial = h_dur * 0.20
+            scaled_dur = max(20.0, parallel + serial)
+        else:
+            scaled_dur = h_dur
+
+        steps = h_steps if h_steps > 100 else (8380 if is_clean else 2000)
+        return steps, round(scaled_dur, 1)
+
+    # Fallback for fresh machine / no history: hardware-calibrated heuristic
+    # Full build: ~8,380 steps. Incremental: ~2,000 steps.
+    base_steps = 8380 if is_clean else 2000
+    parallel_sec = (base_steps * 0.95) / (jobs * 0.65)
+    link_sec = 160.0 if lto == "full" else (85.0 if lto == "thin" else 40.0)
+    fallback_dur = max(30.0, parallel_sec + link_sec)
+    return base_steps, round(fallback_dur, 1)
+
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -5393,8 +5574,9 @@ def compile_kernel(tree: Path, p: KernelProfile, d: Derived, env: Mapping[str, s
     if d.lto == "full":
         warn("Full LTO: the final vmlinux link is single-threaded and memory hungry; expect a long silent phase")
     start_wall = time.time()
-    expected_steps, expected_seconds = history_estimate(p.name, d.lto)
-    with Live(p.pkgbase, expected_steps, expected_seconds) as live:
+    is_clean = not (tree / "vmlinux").exists()
+    expected_steps, expected_seconds = history_estimate(p.name, d.lto, current_jobs=jobs, is_clean=is_clean)
+    with Live(p.pkgbase, expected_steps, expected_seconds, lto=d.lto) as live:
         ret = run_stream(["make", f"-j{jobs}", "pacman-pkg"], cwd=tree, env=b_env, on_line=live.feed)
         duration = live.elapsed
         steps = live.steps
@@ -5403,7 +5585,7 @@ def compile_kernel(tree: Path, p: KernelProfile, d: Derived, env: Mapping[str, s
     d.compile_duration = duration
     d.compile_steps = steps
     record_history({"profile": p.name, "version": d.version, "lto": d.lto, "toolchain": d.toolchain, "jobs": jobs, "duration": round(duration, 1),
-                    "steps": steps, "success": ret == 0, "ts": datetime.now(UTC).isoformat()})
+                    "steps": steps, "clean": is_clean, "success": ret == 0, "ts": datetime.now(UTC).isoformat()})
     if ret != 0:
         err(f"Kernel build failed (exit {ret}) after {fmt_duration(duration)}")
         for line in (errors or tail)[-20:]:
