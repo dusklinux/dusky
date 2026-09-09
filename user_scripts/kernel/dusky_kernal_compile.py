@@ -4136,6 +4136,8 @@ class Derived:
     krustflags: list[str] = field(default_factory=list)
     kernelrelease: str = ""
     seed_source: str = ""
+    compile_duration: float = 0.0
+    compile_steps: int = 0
 
     @property
     def scx_class(self) -> bool:
@@ -5398,6 +5400,8 @@ def compile_kernel(tree: Path, p: KernelProfile, d: Derived, env: Mapping[str, s
         steps = live.steps
         errors = list(live.errors)
         tail = list(live.tail)
+    d.compile_duration = duration
+    d.compile_steps = steps
     record_history({"profile": p.name, "version": d.version, "lto": d.lto, "toolchain": d.toolchain, "jobs": jobs, "duration": round(duration, 1),
                     "steps": steps, "success": ret == 0, "ts": datetime.now(UTC).isoformat()})
     if ret != 0:
@@ -5856,16 +5860,26 @@ def do_build(args: argparse.Namespace) -> int:
         ok(f"Configuration complete (--configure-only). Tree: {tree}")
         return 0
     link_thinlto_cache(tree, profile, d)
+    compile_wall_start = time.time()
     pkgs = compile_kernel(tree, profile, d, env, facts)
     d.kernelrelease = kernelrelease(tree, env)
     if args.no_install:
-        ok("Packages built (--no-install). Install later with: sudo pacman -U " + " ".join(str(x) for x in pkgs) + " or --install-pkg " + " ".join(str(x) for x in pkgs))
+        total_wall = time.time() - compile_wall_start
+        rule("Done")
+        ok(f"Packages built in {fmt_duration(d.compile_duration)} (--no-install). Install later with: sudo pacman -U " + " ".join(str(x) for x in pkgs))
+        say(f"  {C.CYAN}⏱ Kernel compilation:{C.RESET} {fmt_duration(d.compile_duration)}" + (f" ({d.compile_steps:,} steps)" if d.compile_steps else ""))
+        say(f"  {C.CYAN}⏱ Total process time:{C.RESET} {fmt_duration(total_wall)}")
+        send_notification("Kernel build complete", f"{d.kernelrelease} ({profile.name}) compiled in {fmt_duration(d.compile_duration)}", icon="dialog-information")
         return 0
     install_packages(pkgs, profile)
     refresh_boot(profile, facts, d, kernel_install=bool(args.kernel_install))
+    total_wall = time.time() - compile_wall_start
     rule("Done")
-    ok(f"{d.kernelrelease} ({profile.name}) installed as {profile.pkgbase}. Reboot to test; roll back with --uninstall {profile.suffix}.")
-    send_notification("Kernel build complete", f"{d.kernelrelease} ({profile.name}) installed", icon="dialog-information")
+    ok(f"{d.kernelrelease} ({profile.name}) installed as {profile.pkgbase}.")
+    say(f"  {C.CYAN}⏱ Kernel compilation:{C.RESET} {fmt_duration(d.compile_duration)}" + (f" ({d.compile_steps:,} steps)" if d.compile_steps else ""))
+    say(f"  {C.CYAN}⏱ Total process time:{C.RESET} {fmt_duration(total_wall)} (compilation + packaging + install + initramfs)")
+    say(f"  {C.DIM}Reboot to test; roll back with --uninstall {profile.suffix}.{C.RESET}")
+    send_notification("Kernel build complete", f"{d.kernelrelease} ({profile.name}) compiled in {fmt_duration(d.compile_duration)} (total: {fmt_duration(total_wall)})", icon="dialog-information")
     return 0
 
 
