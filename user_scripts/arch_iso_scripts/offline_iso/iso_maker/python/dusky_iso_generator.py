@@ -103,20 +103,26 @@ _FACTORY_MAKEPKG_CONF_TEMPLATE = r'''#!/hint/bash
 CARCH="x86_64"
 CHOST="x86_64-pc-linux-gnu"
 
-CFLAGS="-march=x86-64 -mtune=generic -O2 -pipe -fno-plt -fexceptions \
+CFLAGS="-march=x86-64 -mtune=generic -O2 -pipe -fno-plt -fno-semantic-interposition -fexceptions \
         -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security \
         -fstack-clash-protection -fcf-protection \
         -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
 CXXFLAGS="$CFLAGS -Wp,-D_GLIBCXX_ASSERTIONS"
+
+FFLAGS="-march=x86-64 -mtune=generic -O2 -pipe -fno-plt -fno-semantic-interposition \
+        -Wp,-D_FORTIFY_SOURCE=3 -fstack-clash-protection -fcf-protection \
+        -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
+FCFLAGS="$FFLAGS"
+
 __LDFLAGS_LINE__
 LTOFLAGS="-flto=auto"
-MAKEFLAGS="-j$(nproc) -l$(nproc)"
-NINJAFLAGS="-j$(nproc)"
+MAKEFLAGS="-j$(nproc) -l$(( $(nproc) * 3 / 2 ))"
+NPROC="$(nproc)"
 RUSTFLAGS="__RUSTFLAGS__"
 DEBUG_CFLAGS="-g"
 DEBUG_CXXFLAGS="$DEBUG_CFLAGS"
 
-BUILDENV=(!distcc color !ccache !check !sign)
+BUILDENV=(!distcc color __CCACHE__ !check !sign)
 OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto autodeps)
 INTEGRITY_CHECK=(sha256)
 STRIP_BINARIES="--strip-all"
@@ -144,7 +150,7 @@ VCSCLIENTS=('bzr::breezy'
 COMPRESSGZ=(gzip -c -f -n)
 COMPRESSBZ2=(bzip2 -c -f)
 COMPRESSXZ=(xz -c -z -)
-COMPRESSZST=(zstd -c -T0 -)
+COMPRESSZST=(zstd -c -T0 --auto-threads=logical -)
 COMPRESSLRZ=(lrzip -q)
 COMPRESSLZO=(lzop -q)
 COMPRESSZ=(compress -c -f)
@@ -159,11 +165,14 @@ _MAKEPKG_ENV_SCRUB = (
     "CFLAGS",
     "CXXFLAGS",
     "CPPFLAGS",
+    "FFLAGS",
+    "FCFLAGS",
     "LDFLAGS",
     "LTOFLAGS",
     "RUSTFLAGS",
     "MAKEFLAGS",
     "NINJAFLAGS",
+    "NPROC",
     "CARGO_BUILD_RUSTFLAGS",
     "CARGO_TARGET_CPU",
     "MAKEPKG_CONF",
@@ -188,7 +197,7 @@ ALL_GROUPS: Dict[str, List[str]] = {
         "cryptsetup", "efibootmgr",
     ],
     "graphics": [
-        "intel-media-driver", "vpl-gpu-rt", "mesa", "vulkan-intel", "mesa-utils",
+        "intel-media-driver", "vpl-gpu-rt", "mesa", "vulkan-intel", "vulkan-radeon", "mesa-utils",
         "intel-gpu-tools", "libva", "libva-utils", "vulkan-icd-loader", "vulkan-tools",
         "sof-firmware", "linux-firmware", "linux-headers", "acpi_call", "kernel-modules-hook",
         "linux-firmware-nvidia", "linux-firmware-amdgpu", "linux-firmware-radeon",
@@ -817,22 +826,35 @@ def prepare_alpm_cache_dir(path: Path) -> None:
 
 def write_factory_makepkg_conf(dest: Path) -> Path:
     use_mold = check_tool("mold")
+    use_ccache = check_tool("ccache")
+    ccache_flag = "ccache" if use_ccache else "!ccache"
+
+    rust_common = (
+        "-C target-cpu=x86-64 -C opt-level=3 "
+        "-C link-arg=-Wl,--as-needed "
+        "-C link-arg=-Wl,-z,relro "
+        "-C link-arg=-Wl,-z,now "
+        "-C link-arg=-Wl,-z,pack-relative-relocs"
+    )
+
     if use_mold:
         ld_line = (
-            'LDFLAGS="-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now '
+            'LDFLAGS="-Wl,--as-needed -Wl,-z,relro -Wl,-z,now '
             '-Wl,-z,pack-relative-relocs -fuse-ld=mold"'
         )
-        rust = "-C target-cpu=x86-64 -C link-arg=-fuse-ld=mold"
+        rust = f"{rust_common} -C link-arg=-fuse-ld=mold"
         step("makepkg: mold linker enabled")
     else:
         ld_line = (
             'LDFLAGS="-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now '
             '-Wl,-z,pack-relative-relocs"'
         )
-        rust = "-C target-cpu=x86-64"
+        rust = rust_common
         step("makepkg: default linker (install mold for faster link)")
-    text = _FACTORY_MAKEPKG_CONF_TEMPLATE.replace("__LDFLAGS_LINE__", ld_line).replace(
-        "__RUSTFLAGS__", rust
+    text = (
+        _FACTORY_MAKEPKG_CONF_TEMPLATE.replace("__LDFLAGS_LINE__", ld_line)
+        .replace("__RUSTFLAGS__", rust)
+        .replace("__CCACHE__", ccache_flag)
     )
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text, encoding="utf-8")
