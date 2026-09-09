@@ -5426,6 +5426,8 @@ def build_env(p: KernelProfile, d: Derived, facts: HostFacts, epoch: float) -> d
     if bool(p.g("compiler", "ccache", True)) and Path("/usr/lib/ccache/bin").is_dir():
         env["PATH"] = f"/usr/lib/ccache/bin:{env.get('PATH', '')}"
         env.setdefault("CCACHE_SLOPPINESS", "file_macro,time_macros,include_file_mtime")
+        env.setdefault("CCACHE_BASEDIR", str(SRC_DIR))
+        env.setdefault("CCACHE_NOHASHDIR", "1")
     kcflags = list(d.kcflags)
     if p.g("compiler", "optimize") == "o3":
         kcflags.append("-O3")
