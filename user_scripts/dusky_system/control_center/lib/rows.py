@@ -2517,8 +2517,41 @@ class EntryRow(DynamicIconMixin, HyprlandIPCMixin, Adw.EntryRow):
 
         self.connect("map", self._on_entry_map)
         self.connect("unmap", self._on_entry_unmap)
+        # Hide libadwaita's built-in trailing icons (edit/apply/indicator).
+        # Under Papirus-Dark, adw-entry-edit-symbolic / adw-entry-apply-symbolic
+        # are unresolvable (has_icon=False) and fall back to image-missing.svg
+        # (white circle-with-slash), which looks like an error/stop icon next
+        # to Apply/Allocate. Dusky already provides its own suffix buttons, so
+        # the internals are redundant. See dusky_style.css (row.entry rules).
+        self._hide_internal_adwaita_icons()
+
+    def _hide_internal_adwaita_icons(self) -> None:
+        stack: list[Gtk.Widget | None] = [self.get_first_child()]
+        while stack:
+            widget = stack.pop()
+            while widget is not None:
+                try:
+                    classes = widget.get_css_classes()
+                except Exception:
+                    classes = ()
+                if any(c in ("edit-icon", "apply-button", "indicator") for c in classes):
+                    with suppress(Exception):
+                        widget.set_visible(False)
+                try:
+                    first = widget.get_first_child()
+                except Exception:
+                    first = None
+                nxt = None
+                try:
+                    nxt = widget.get_next_sibling()
+                except Exception:
+                    nxt = None
+                if first is not None:
+                    stack.append(first)
+                widget = nxt
 
     def _on_entry_map(self, _widget: Gtk.Widget) -> None:
+        self._hide_internal_adwaita_icons()
         self._start_hyprland_ipc()
         self._resume_all_polls()
         if (val_cmd := self.properties.get("value_command")) and not self.get_text():

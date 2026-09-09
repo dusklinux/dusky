@@ -809,6 +809,31 @@ flowboxchild:selected {
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   ENTRY ROW — Hide Libadwaita internal icons (broken under Papirus-Dark)
+   AdwEntryRow embeds .edit-icon (pencil) + .apply-button (checkmark) inside
+   .editable-area. Under Papirus-Dark, `adw-entry-edit-symbolic` and
+   `adw-entry-apply-symbolic` are missing from the theme AND the IconTheme
+   lookup (has_icon=False), so GTK falls back to Papirus
+   `image-missing.svg` — a white circle-with-slash (prohibited) icon that
+   users mistake for an error/stop indicator next to Apply/Allocate.
+   Dusky EntryRows already provide their own custom Apply/Allocate buttons
+   via add_suffix(), so the internal icons are redundant. Hide them and
+   reclaim their allocated width.
+   Ref: AdwEntryRow template (/org/gnome/Adwaita/ui/adw-entry-row.ui),
+   CSS nodes: row.entry > box.header > .editable-area > .edit-icon/.apply-button
+   ───────────────────────────────────────────────────────────────────────────── */
+row.entry > box.header > .editable-area > .edit-icon,
+row.entry > box.header > .editable-area > .apply-button {
+    opacity: 0;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    margin-left: 0;
+    margin-right: 0;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
    UTILITY CLASSES
    ───────────────────────────────────────────────────────────────────────────── */
 .rounded-full {
