@@ -84,9 +84,13 @@ def _detect_default_build_dir() -> Path:
     env = os.environ.get("DUSKY_BUILD_DIR")
     if env:
         return Path(env).expanduser()
-    zram = Path("/mnt/zram1/dusky_kernel")
-    if Path("/mnt/zram1").is_dir():
-        return zram
+    zram_root = Path("/mnt/zram1")
+    if zram_root.is_dir() and os.access(zram_root, os.W_OK):
+        try:
+            if shutil.disk_usage(zram_root).free >= 20 << 30:
+                return zram_root / f"dusky_kernel_{os.geteuid()}"
+        except OSError:
+            pass
     return XDG_CACHE / "dusky-kernel"
 
 
@@ -947,6 +951,7 @@ PROFILE_SPEC: Final[dict[str, tuple[FieldSpec, ...]]] = {
         F("jobs", "int", 0, "Parallel jobs (0 = auto from CPU threads and RAM)", minimum=0, maximum=1024),
         F("headers", "str", "auto", "Headers package policy", HEADERS_CHOICES),
         F("modversions", "bool", False, "MODVERSIONS symbol CRCs (needs GENDWARFKSYMS with Rust)"),
+        F("ccache", "bool", True, "Enable ccache compiler cache if available on the host"),
     ),
     "security": (
         F("profile", "str", "balanced", "Hardening bundle", SECURITY_PROFILES),
@@ -2369,7 +2374,7 @@ def _tool_versions() -> dict[str, str]:
     probes = {"clang": ["clang", "--version"], "ld.lld": ["ld.lld", "--version"], "llvm-ar": ["llvm-ar", "--version"], "gcc": ["gcc", "--version"],
               "rustc": ["rustc", "--version"], "bindgen": ["bindgen", "--version"], "pahole": ["pahole", "--version"], "make": ["make", "--version"],
               "makepkg": ["makepkg", "--version"], "mkinitcpio": ["mkinitcpio", "--version"], "perf": ["perf", "--version"],
-              "create_llvm_prof": ["create_llvm_prof", "--version"], "gpg": ["gpg", "--version"], "curl": ["curl", "--version"], "aria2c": ["aria2c", "--version"]}
+              "create_llvm_prof": ["create_llvm_prof", "--version"], "ccache": ["ccache", "--version"], "gpg": ["gpg", "--version"], "curl": ["curl", "--version"], "aria2c": ["aria2c", "--version"]}
     out: dict[str, str] = {}
     for name, cmd in probes.items():
         out[name] = tool_version(cmd) or ("present" if have(name) else "") if have(name) else ""
@@ -4254,10 +4259,30 @@ def _ops_uarch(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     if arch == "native":
         if d.idx.has("X86_NATIVE_CPU"):
             mx.y("X86_NATIVE_CPU", why="-march=native")
-        else:
-            d.kcflags.append("-march=native")
+            if d.rust:
+                d.krustflags.append("-Ctarget-cpu=native")
+            return
+        if d.facts.vendor == "intel" and d.idx.has("MNATIVE_INTEL"):
+            mx.y("MNATIVE_INTEL", why="Graysky native Intel optimization")
+            if d.rust:
+                d.krustflags.append("-Ctarget-cpu=native")
+            return
+        if d.facts.vendor == "amd" and d.idx.has("MNATIVE_AMD"):
+            mx.y("MNATIVE_AMD", why="Graysky native AMD optimization")
+            if d.rust:
+                d.krustflags.append("-Ctarget-cpu=native")
+            return
+        uarch = d.facts.uarch
+        if uarch and uarch in UARCH_INFO:
+            _, gsym = UARCH_INFO[uarch]
+            if gsym != "GENERIC_CPU" and d.idx.has(gsym):
+                mx.y(gsym, why=f"Graysky detected host uarch ({uarch}) via {gsym}")
+                if d.rust:
+                    d.krustflags.append(f"-Ctarget-cpu={uarch}")
+                return
         mx.y("GENERIC_CPU", optional=True)
         mx.val("X86_64_VERSION", min(d.facts.psabi_level, d.idx.x86_64_version_max), optional=True)
+        d.kcflags += ["-march=native", "-mtune=native"]
         if d.rust:
             d.krustflags.append("-Ctarget-cpu=native")
         return
@@ -4413,6 +4438,7 @@ def _ops_cpu(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     mx.flag("INTEL_IDLE", f.vendor != "amd" or portable)
     if f.vendor == "intel" or portable:
         mx.y("INTEL_HFI_THERMAL", optional=True, why="Intel Thread Director feedback")
+        mx.y("INTEL_TURBO_MAX_3", optional=True, why="Intel ITMT preferred-core boost")
         mx.m("INTEL_TCC_COOLING", optional=True)
         mx.m("INTEL_RAPL", optional=True)
         mx.y("X86_INTEL_LPSS")
@@ -4427,8 +4453,9 @@ def _ops_cpu(mx: Matrix, p: KernelProfile, d: Derived) -> None:
         mx.n("AMD_HSMP")
         mx.flag("AMD_NUMA", s["memory"]["numa"])
     mx.flag("X86_CPU_RESCTRL", not lean, optional=True)
-    vsys = "LEGACY_VSYSCALL_NONE" if (s["security"]["profile"] == "hardened" or lean) else "LEGACY_VSYSCALL_XONLY"
-    mx.choice(("LEGACY_VSYSCALL_XONLY", "LEGACY_VSYSCALL_NONE"), vsys)
+    mx.y("LEGACY_VSYSCALL_NONE", why="Modern VDSO only, eliminate legacy vsyscall page")
+    mx.n("LEGACY_VSYSCALL_XONLY", optional=True)
+    mx.n("LEGACY_VSYSCALL_EMULATE", optional=True)
 
 
 def _ops_timing(mx: Matrix, p: KernelProfile, d: Derived) -> None:
@@ -5198,7 +5225,7 @@ def build_env(p: KernelProfile, d: Derived, facts: HostFacts, epoch: float) -> d
     for key in ("LOCALVERSION", "MAKEFLAGS", "KCFLAGS", "KRUSTFLAGS", "LLVM", "LLVM_IAS", "CC", "LD", "AR", "NM", "OBJCOPY", "STRIP", "HOSTCC", "HOSTLD"):
         env.pop(key, None)
     env["LANG"] = env["LC_ALL"] = "C.UTF-8"
-    kbuild_user = (p.g("dusky", "user") or "").strip() or os.environ.get("KBUILD_BUILD_USER") or os.environ.get("USER") or "builduser"
+    kbuild_user = (p.g("dusky", "user") or "").strip() or os.environ.get("KBUILD_BUILD_USER") or os.environ.get("SUDO_USER") or os.environ.get("USER") or os.environ.get("LOGNAME") or Path.home().name or "builduser"
     kbuild_host = (p.g("dusky", "hostname") or "").strip() or os.environ.get("KBUILD_BUILD_HOST") or platform.node() or "archlinux"
     env["KBUILD_BUILD_USER"] = kbuild_user
     env["KBUILD_BUILD_HOST"] = kbuild_host
@@ -5212,6 +5239,8 @@ def build_env(p: KernelProfile, d: Derived, facts: HostFacts, epoch: float) -> d
         env["CC"] = "gcc"
         env["HOSTCC"] = "gcc"
         env["LD"] = "ld.bfd"
+    if bool(p.g("compiler", "ccache", True)) and Path("/usr/lib/ccache/bin").is_dir():
+        env["PATH"] = f"/usr/lib/ccache/bin:{env.get('PATH', '')}"
     kcflags = list(d.kcflags)
     if p.g("compiler", "optimize") == "o3":
         kcflags.append("-O3")
@@ -5348,7 +5377,12 @@ def compile_kernel(tree: Path, p: KernelProfile, d: Derived, env: Mapping[str, s
     b_env = dict(env)
     b_env["PACMAN_PKGBASE"] = p.pkgbase
     b_env["PKGDEST"] = str(pkgdest)
-    b_env["PACKAGER"] = f"{APP_NAME} <dusky@localhost>"
+    packager_val = os.environ.get("PACKAGER")
+    if not packager_val:
+        k_user = b_env.get("KBUILD_BUILD_USER") or os.environ.get("SUDO_USER") or os.environ.get("USER") or os.environ.get("LOGNAME") or Path.home().name or "builduser"
+        k_host = b_env.get("KBUILD_BUILD_HOST") or platform.node() or "localhost"
+        packager_val = f"{k_user} <{k_user}@{k_host}>"
+    b_env["PACKAGER"] = packager_val
     b_env["PACMAN_EXTRAPACKAGES"] = "headers" if resolve_build_headers(p, d.facts) else ""
     b_env["MAKEFLAGS"] = f"-j{jobs}"
     b_env["ZSTD_CLEVEL"] = "9"
@@ -5930,6 +5964,7 @@ def do_doctor(args: argparse.Namespace) -> int:
         ("bindgen", "Rust-for-Linux", True),
         ("pahole", "BTF generation", True),
         ("make", "build automation", True),
+        ("ccache", "compiler cache (optional)", False),
         ("makepkg", "Arch packaging", True),
         ("mkinitcpio", "initramfs generator", True),
         ("modprobed-db", "hardware module profiler", True),
