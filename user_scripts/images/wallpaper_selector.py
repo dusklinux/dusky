@@ -1,563 +1,1511 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# ==============================================================================
+# =============================================================================
 # ARCH LINUX :: DUSKY THEME :: GTK3 WALLPAPER SELECTOR
-# ==============================================================================
-# Description: Native, lightning-fast GTK3 replacement for the Rofi wallpaper
-#              selector. Features lazy-loading, instant grid mapping, smart
-#              mtime caching, live search, and full keyboard navigation.
-# ==============================================================================
+#
+# Target: Python 3.14+, Linux, GTK3 / PyGObject
+#
+# Features:
+#   - Asynchronous directory scanning and bounded thumbnail loading
+#   - Atomic thumbnail replacement and source-fingerprint caching
+#   - Coordinated GUI/CLI cache operations
+#   - Serialized wallpaper/theme application
+#   - Favorites, search, keyboard navigation, and cache rebuild progress
+#
+# External dependencies:
+#   - PyGObject with Gtk 3.0, GdkPixbuf 2.0, and Pango introspection data
+#   - ImageMagick: magick
+#   - awww and awww-daemon
+#   - theme_ctl.sh for full application / favorite cycling
+#   - notify-send is optional
+#
+# TRACKER FORMAT:
+#   "basename" preserves the original external tracker-file contract.
+#   Ambiguous duplicate basenames are rejected before application.
+#
+#   Change to "relative" only when ALL external tracker readers support IDs
+#   such as "landscapes/example.jpg".
+#
+# This is asynchronous loading, not a virtualized/viewport-only image grid.
+# =============================================================================
 
-import os
-import sys
-import re
-import uuid
-import time
-import shutil
-import hashlib
-import threading
-import subprocess
+from __future__ import annotations
+
 import argparse
-import ctypes
-import gc
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+import uuid
+
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    Future,
+    ThreadPoolExecutor,
+    wait,
+)
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable
 
 import gi
-gi.require_version('Gtk', '3.0')
-gi.require_version('Gdk', '3.0')
-gi.require_version('GdkPixbuf', '2.0')
-gi.require_version('Pango', '1.0')
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Gio, Pango
 
-# Libc bindings for active heap compaction
-try:
-    _LIBC = ctypes.CDLL("libc.so.6", use_errno=True)
-    if hasattr(_LIBC, "malloc_trim"):
-        _LIBC.malloc_trim.argtypes = [ctypes.c_size_t]
-        _LIBC.malloc_trim.restype = ctypes.c_int
-except (OSError, AttributeError):
-    _LIBC = None
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
+gi.require_version("Pango", "1.0")
 
-def _reclaim_idle_memory() -> None:
-    """Active memory compaction & zombie reaping."""
-    try:
-        re.purge()
-        if hasattr(sys, "_clear_internal_caches"):
-            sys._clear_internal_caches()
-        gc.collect()
-        if _LIBC and hasattr(_LIBC, "malloc_trim"):
-            _LIBC.malloc_trim(0)
-    except Exception:
-        pass
-    try:
-        while True:
-            pid, _ = os.waitpid(-1, os.WNOHANG)
-            if pid <= 0:
-                break
-    except OSError:
-        pass
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango
 
-# --- CONSTANTS & PATHS ---
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
 HOME = Path.home()
+
 WALLPAPER_DIR = HOME / "Pictures/wallpapers"
 SETTINGS_DIR = HOME / ".config/dusky/settings"
 THEME_DIR = SETTINGS_DIR / "dusky_theme"
+
 FAVORITES_FILE = THEME_DIR / "wal_fav_list"
 STATE_FILE = THEME_DIR / "state.conf"
 FAV_STATE_FILE = THEME_DIR / "current_fav"
 TRACK_LIGHT = THEME_DIR / "light_wal"
 TRACK_DARK = THEME_DIR / "dark_wal"
-THEME_CTL = HOME / "user_scripts/theme_matugen/theme_ctl.sh"
 
 APP_SETTINGS_FILE = THEME_DIR / "gtk_wall_settings"
-CACHE_DIR = HOME / ".cache/dusky_images/wallpaper_selector/"
+THEME_CTL = HOME / "user_scripts/theme_matugen/theme_ctl.sh"
+
+CACHE_DIR = HOME / ".cache/dusky_images/wallpaper_selector"
 THUMB_DIR = CACHE_DIR / "thumbs"
 
-# Dynamic Binary Resolution with Fallbacks
-AWWW_BIN = shutil.which("awww") or "awww"
-AWWW_DAEMON_BIN = shutil.which("awww-daemon") or "awww-daemon"
-MAGICK_BIN = shutil.which("magick") or "magick"
+# Lock files must remain outside the directory being swept.
+CACHE_LOCK_FILE = CACHE_DIR / "cache.lock"
+APPLY_LOCK_FILE = CACHE_DIR / "apply.lock"
+FAVORITES_LOCK_FILE = CACHE_DIR / "favorites.lock"
+
+TRACKER_ID_FORMAT = "basename"  # "basename" or "relative"
+
+AWWW_COMMAND = "awww"
+AWWW_DAEMON_COMMAND = "awww-daemon"
+MAGICK_COMMAND = "magick"
 
 THUMB_SIZE = 240
 RENDER_SIZE = 145
-IMAGE_EXTENSIONS = frozenset({'.jpg', '.jpeg', '.png', '.webp', '.gif'})
+THUMB_RECIPE = "dusky-gtk-thumb-r26"
 
-_NATURAL_SORT_RE = re.compile(r'(\d+)')
+IMAGE_EXTENSIONS = frozenset({
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+})
 
-def natural_keys(text: str) -> list:
-    """Algorithms for natural/version sorting (matches bash 'sort -V')."""
-    return [int(c) if c.isdigit() else c.lower() for c in _NATURAL_SORT_RE.split(text)]
+# Conservative concurrency: ImageMagick limits apply PER process.
+WORKER_COUNT = min(os.process_cpu_count() or 2, 4)
+MAX_IMAGE_JOBS = WORKER_COUNT * 2
+
+THUMB_TIMEOUT = 25.0
+BAD_THUMB_RETRY_SECONDS = 300.0
+AWWW_QUERY_TIMEOUT = 1.5
+AWWW_START_TIMEOUT = 7.0
+AWWW_APPLY_TIMEOUT = 30.0
+THEME_TIMEOUT = 180.0
+
+DEFAULT_SETTINGS = {
+    "AUTO_CLOSE": False,
+    "FAST_APPLY_AUTO_CLOSE": False,
+    "SHOW_FILENAMES": True,
+    "START_IN_FAVORITES": False,
+    "AUTO_SWEEP_CACHE": False,
+}
+
+TRANSITION_OPTIONS = (
+    ("AWWW_TRANS_TYPE", "--transition-type"),
+    ("AWWW_TRANS_DURATION", "--transition-duration"),
+    ("AWWW_TRANS_FPS", "--transition-fps"),
+    ("AWWW_TRANS_BEZIER", "--transition-bezier"),
+    ("AWWW_TRANS_ANGLE", "--transition-angle"),
+    ("AWWW_TRANS_POS", "--transition-pos"),
+)
+
+RELEVANT_STATE_KEYS = {
+    "THEME_MODE",
+    *(key for key, _ in TRANSITION_OPTIONS),
+}
+
+_NATURAL_PARTS = re.compile(r"([0-9]+)")
+_CACHE_FILENAME = re.compile(r"([0-9a-f]{64})\.(.+)")
 
 
-def atomic_write(path: Path, content: str):
-    """Ensures state and setting files are never corrupted and preserves symlinks."""
-    real_path = path.resolve()
-    real_path.parent.mkdir(parents=True, exist_ok=True)
-    # Safely append tmp suffix without stripping original extension
-    tmp_path = real_path.with_name(f"{real_path.name}.tmp.{uuid.uuid4().hex}")
-    
-    try:
-        with open(tmp_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
-            
-        os.replace(tmp_path, real_path)
-        
-        try:
-            dir_fd = os.open(str(real_path.parent), os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-        except OSError:
-            pass
-            
-    except OSError as e:
-        print(f"Atomic write failed for {real_path}: {e}")
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+# =============================================================================
+# GENERAL HELPERS
+# =============================================================================
+
+class OperationCancelled(Exception):
+    """An operation was intentionally cancelled."""
 
 
-def ensure_awww_daemon(timeout: float = 5.0) -> bool:
+class BusyError(RuntimeError):
+    """A cooperating process already owns an operation lock."""
+
+
+def log_error(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
+def check_cancelled(stop_event: threading.Event | None) -> None:
+    if stop_event is not None and stop_event.is_set():
+        raise OperationCancelled()
+
+
+def natural_key(text: str) -> tuple:
     """
-    Ensures that awww-daemon is running and responsive.
-    If awww-daemon is not running or unresponsive, launches it and waits
-    for the Wayland socket to be ready.
+    Deterministic, case-insensitive natural sorting by ASCII digit runs.
+
+    Uses digit-string lengths rather than int(), so extremely long numeric
+    filenames do not encounter Python's integer-string conversion limit.
+
+    This is not an implementation of GNU sort -V.
     """
+    parts = []
+
+    for part in _NATURAL_PARTS.split(text):
+        if part and part[0].isascii() and part[0].isdigit():
+            normalized = part.lstrip("0") or "0"
+            parts.append((1, len(normalized), normalized))
+        else:
+            parts.append((0, part.casefold()))
+
+    return tuple(parts), text
+
+
+def read_optional_text(path: Path) -> str:
+    """Missing files are optional; other failures must remain visible."""
     try:
-        res = subprocess.run(
-            [AWWW_BIN, "query"],
-            capture_output=True,
-            text=True,
-            timeout=1.5,
-            env=os.environ
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+
+
+def atomic_write(path: Path, content: str) -> None:
+    """
+    Atomically replace a UTF-8 text file.
+
+    Existing symlinks are followed. Failure is reported to the caller.
+    Individual file replacement is atomic; multiple files are not a transaction.
+    """
+    target = path.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    temporary = target.with_name(
+        f"{target.name}.tmp.{uuid.uuid4().hex}"
+    )
+
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        os.replace(temporary, target)
+
+        directory_fd = os.open(
+            target.parent,
+            os.O_RDONLY | os.O_DIRECTORY,
         )
-        if res.returncode == 0:
-            return True
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+@contextmanager
+def file_lock(
+    path: Path,
+    *,
+    exclusive: bool = True,
+    timeout: float | None = None,
+    stop_event: threading.Event | None = None,
+):
+    """
+    Cancellable advisory flock.
+
+    All operations that need coordination must use the same lock file.
+    Lock files must not be deleted while operations may be using them.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+    deadline = (
+        None if timeout is None
+        else time.monotonic() + timeout
+    )
+
+    with path.open("a+b") as handle:
+        while True:
+            check_cancelled(stop_event)
+
+            try:
+                fcntl.flock(
+                    handle.fileno(),
+                    operation | fcntl.LOCK_NB,
+                )
+                break
+            except BlockingIOError:
+                if (
+                    deadline is not None
+                    and time.monotonic() >= deadline
+                ):
+                    raise BusyError(
+                        f"Another operation is already using {path.name}."
+                    ) from None
+
+                if stop_event is None:
+                    time.sleep(0.05)
+                else:
+                    stop_event.wait(0.05)
+
+        try:
+            check_cancelled(stop_event)
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def require_binary(command: str) -> str:
+    resolved = shutil.which(command)
+    if resolved is None:
+        raise FileNotFoundError(
+            f"Required executable was not found: {command}"
+        )
+    return resolved
+
+
+def kill_process_group(process: subprocess.Popen) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
         pass
 
-    print("awww-daemon is not running or unresponsive. Starting awww-daemon...")
+
+def run_command(
+    command: list[str],
+    *,
+    timeout: float,
+    stop_event: threading.Event | None = None,
+    pass_fds: tuple[int, ...] = (),
+    check: bool = True,
+) -> subprocess.CompletedProcess:
+    """
+    Run a command with bounded duration and cancellation.
+
+    On timeout/cancellation, terminate its process group and reap the specific
+    child. This covers ordinary descendants that remain in that group.
+    """
+    check_cancelled(stop_event)
+
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        start_new_session=True,
+        pass_fds=pass_fds,
+    )
+
+    deadline = time.monotonic() + timeout
+
     try:
-        subprocess.Popen(
-            [AWWW_DAEMON_BIN, "--format", "xrgb"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            env=os.environ
-        )
-    except Exception as e:
-        print(f"Failed to launch awww-daemon: {e}")
-        return False
+        while True:
+            check_cancelled(stop_event)
 
-    start_time = time.monotonic()
-    while time.monotonic() - start_time < timeout:
-        time.sleep(0.15)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+
+            try:
+                stdout, stderr = process.communicate(
+                    timeout=min(0.2, remaining)
+                )
+                break
+            except subprocess.TimeoutExpired:
+                continue
+
+    except BaseException:
+        kill_process_group(process)
+        process.communicate()
+        raise
+
+    result = subprocess.CompletedProcess(
+        command,
+        process.returncode,
+        stdout,
+        stderr,
+    )
+
+    if check and result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode,
+            command,
+            output=stdout,
+            stderr=stderr,
+        )
+
+    return result
+
+
+def describe_error(error: BaseException) -> str:
+    if isinstance(error, subprocess.TimeoutExpired):
+        command = error.cmd
+        executable = command[0] if isinstance(command, list) else command
+        return f"{executable} timed out after {error.timeout:g} seconds."
+
+    if isinstance(error, subprocess.CalledProcessError):
+        command = error.cmd
+        executable = command[0] if isinstance(command, list) else command
+        details = (error.stderr or error.output or "").strip()
+
+        if isinstance(details, bytes):
+            details = details.decode("utf-8", errors="replace")
+
+        message = (
+            f"{executable} exited with status {error.returncode}."
+        )
+        return message + (f"\n{details}" if details else "")
+
+    if isinstance(error, OperationCancelled):
+        return "Operation cancelled."
+
+    return str(error) or error.__class__.__name__
+
+
+def validate_relative_id(value: str) -> str:
+    """
+    Validate an ID representable by the existing UTF-8 line-based files.
+
+    Symlinks inside WALLPAPER_DIR are supported; IDs remain lexical paths
+    relative to WALLPAPER_DIR rather than resolved target paths.
+    """
+    if not value:
+        raise ValueError("An empty wallpaper ID is not valid.")
+
+    value.encode("utf-8")
+
+    if "\n" in value or "\r" in value or "\0" in value:
+        raise ValueError("Wallpaper IDs must not contain line breaks or NUL.")
+
+    path = Path(value)
+
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(
+            f"Wallpaper ID must be relative to {WALLPAPER_DIR}: {value!r}"
+        )
+
+    if str(path) in {"", "."}:
+        raise ValueError("Invalid wallpaper ID.")
+
+    return str(path)
+
+
+# =============================================================================
+# DIRECTORY SCANNING
+# =============================================================================
+
+def scan_wallpapers(
+    stop_event: threading.Event | None = None,
+) -> list[str]:
+    """
+    Iterative traversal with directory-inode cycle detection.
+
+    Directory-read failures propagate. An incomplete scan must not be used
+    as an authoritative inventory for cache sweeping.
+    """
+    check_cancelled(stop_event)
+
+    if not WALLPAPER_DIR.is_dir():
+        raise NotADirectoryError(
+            f"Wallpaper directory does not exist or is not a directory:\n"
+            f"{WALLPAPER_DIR}"
+        )
+
+    pending = [WALLPAPER_DIR]
+    visited = set()
+    wallpapers = []
+
+    while pending:
+        check_cancelled(stop_event)
+        directory = pending.pop()
+
         try:
-            res = subprocess.run(
-                [AWWW_BIN, "query"],
-                capture_output=True,
-                text=True,
-                timeout=1.0,
-                env=os.environ
-            )
-            if res.returncode == 0:
-                print("awww-daemon started and initialized successfully.")
-                return True
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            pass
+            info = directory.stat()
+        except OSError as error:
+            raise OSError(
+                f"Cannot inspect wallpaper directory {directory}: {error}"
+            ) from error
 
-    print(f"Timed out waiting for awww-daemon to initialize after {timeout} seconds.")
-    return False
+        identity = (info.st_dev, info.st_ino)
+        if identity in visited:
+            continue
+        visited.add(identity)
 
+        try:
+            with os.scandir(directory) as iterator:
+                entries = sorted(iterator, key=lambda entry: entry.name)
+        except OSError as error:
+            raise OSError(
+                f"Cannot read wallpaper directory {directory}: {error}"
+            ) from error
 
-class ThemedErrorDialog(Gtk.Dialog):
-    """
-    Modern, dynamically-themed modal dialog for displaying backend errors
-    with Dusky/Matugen colors, monospace log area, and interactive transitions.
-    """
-    def __init__(self, parent_window, title_text: str, secondary_text: str, err_msg: str = ""):
-        super().__init__(
-            title="",
-            transient_for=parent_window,
-            modal=True,
-            destroy_with_parent=True
-        )
-        self.get_style_context().add_class("themed-error-dialog")
-        self.set_default_size(540, -1)
-        self.set_resizable(False)
-        self.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
+        subdirectories = []
 
-        content_area = self.get_content_area()
-        content_area.set_spacing(0)
+        for entry in entries:
+            check_cancelled(stop_event)
+            path = directory / entry.name
 
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        main_box.set_margin_start(24)
-        main_box.set_margin_end(24)
-        main_box.set_margin_top(24)
-        main_box.set_margin_bottom(20)
-        main_box.get_style_context().add_class("dialog-main-box")
+            try:
+                if entry.is_dir(follow_symlinks=True):
+                    subdirectories.append(path)
+                elif (
+                    entry.is_file(follow_symlinks=True)
+                    and path.suffix.lower() in IMAGE_EXTENSIONS
+                ):
+                    relative = str(path.relative_to(WALLPAPER_DIR))
 
-        # Header Box with Error Icon & Title
-        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
-        header_box.set_halign(Gtk.Align.START)
-        header_box.set_valign(Gtk.Align.CENTER)
+                    try:
+                        relative = validate_relative_id(relative)
+                    except (ValueError, UnicodeError) as error:
+                        log_error(
+                            f"Skipping unsupported filename "
+                            f"{relative!r}: {error}"
+                        )
+                        continue
 
-        icon = Gtk.Image.new_from_icon_name("dialog-error-symbolic", Gtk.IconSize.DIALOG)
-        icon.set_pixel_size(44)
-        icon.get_style_context().add_class("dialog-error-icon")
-        header_box.pack_start(icon, False, False, 0)
+                    wallpapers.append(relative)
 
-        title_lbl = Gtk.Label(label=title_text)
-        title_lbl.get_style_context().add_class("dialog-title")
-        title_lbl.set_halign(Gtk.Align.START)
-        title_lbl.set_valign(Gtk.Align.CENTER)
-        header_box.pack_start(title_lbl, False, False, 0)
+            except OSError as error:
+                raise OSError(
+                    f"Cannot inspect wallpaper entry {path}: {error}"
+                ) from error
 
-        main_box.pack_start(header_box, False, False, 0)
+        # Deterministic depth-first traversal, with scandir already closed.
+        pending.extend(reversed(subdirectories))
 
-        # Secondary text
-        if secondary_text:
-            sec_lbl = Gtk.Label(label=secondary_text)
-            sec_lbl.get_style_context().add_class("dialog-subtitle")
-            sec_lbl.set_halign(Gtk.Align.START)
-            sec_lbl.set_line_wrap(True)
-            main_box.pack_start(sec_lbl, False, False, 0)
-
-        # Monospace error details container
-        if err_msg:
-            err_scrolled = Gtk.ScrolledWindow()
-            err_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-            err_scrolled.set_min_content_height(100)
-            err_scrolled.set_max_content_height(220)
-            err_scrolled.get_style_context().add_class("dialog-error-scroll")
-
-            err_text_view = Gtk.TextView()
-            err_text_view.set_editable(False)
-            err_text_view.set_cursor_visible(False)
-            err_text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-            err_text_view.get_style_context().add_class("dialog-error-text")
-
-            buffer = err_text_view.get_buffer()
-            buffer.set_text(err_msg)
-
-            err_scrolled.add(err_text_view)
-            main_box.pack_start(err_scrolled, True, True, 0)
-
-        # Button Box
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        btn_box.set_halign(Gtk.Align.END)
-        btn_box.set_margin_top(8)
-
-        ok_btn = Gtk.Button(label="OK")
-        ok_btn.get_style_context().add_class("dialog-ok-btn")
-        ok_btn.set_can_default(True)
-        ok_btn.connect("clicked", lambda b: self.response(Gtk.ResponseType.OK))
-        btn_box.pack_start(ok_btn, False, False, 0)
-
-        main_box.pack_start(btn_box, False, False, 0)
-        content_area.pack_start(main_box, True, True, 0)
-
-        self.connect("key-press-event", self._on_key_press)
-        self.show_all()
-        ok_btn.grab_focus()
-
-    def _on_key_press(self, widget, event):
-        if event.keyval in (Gdk.KEY_Escape, Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-            self.response(Gtk.ResponseType.OK)
-            return True
-        return False
+    wallpapers.sort(key=natural_key)
+    return wallpapers
 
 
-# ==============================================================================
-# HEADLESS CACHE MANAGER
-# ==============================================================================
+# =============================================================================
+# CACHE MANAGEMENT
+# =============================================================================
+
+@dataclass
+class CacheBuildResult:
+    wallpapers: list[str]
+    generated: int = 0
+    failed: int = 0
+
+
 class CacheManager:
     @staticmethod
-    def get_all_wallpapers() -> list[str]:
-        """
-        Scans the wallpaper directory via a safe recursive traversal.
-        Implements st_dev/st_ino tracking and iterator exhaustion to completely
-        neutralize symlink loops and prevent File Descriptor exhaustion.
-        """
-        wallpapers = []
-        if not WALLPAPER_DIR.exists():
-            return wallpapers
-
-        visited_nodes = set()
-
-        def traverse_dir(virtual_dir: Path):
-            try:
-                stat = virtual_dir.stat()
-                node_id = (stat.st_dev, stat.st_ino)
-                if node_id in visited_nodes:
-                    return
-                visited_nodes.add(node_id)
-            except OSError:
-                return
-
-            dirs_to_visit = []
-            try:
-                with os.scandir(virtual_dir) as it:
-                    for entry in it:
-                        try:
-                            is_dir = entry.is_dir(follow_symlinks=True)
-                            is_file = entry.is_file(follow_symlinks=True)
-                        except OSError:
-                            continue
-
-                        virtual_path = virtual_dir / entry.name
-                        if is_dir:
-                            dirs_to_visit.append(virtual_path)
-                        elif is_file:
-                            if virtual_path.suffix.lower() in IMAGE_EXTENSIONS:
-                                try:
-                                    rel = virtual_path.relative_to(WALLPAPER_DIR)
-                                    wallpapers.append(str(rel))
-                                except ValueError:
-                                    wallpapers.append(virtual_path.name)
-            except OSError:
-                return
-
-            for d in dirs_to_visit:
-                traverse_dir(d)
-
-        traverse_dir(WALLPAPER_DIR)
-        wallpapers.sort(key=natural_keys)
-        return wallpapers
-
-    @staticmethod
     def get_digest(rel_path: str) -> str:
-        """Calculates SHA256 digest with aggressive invalidation tagging."""
-        return hashlib.sha256((rel_path + "_r24").encode('utf-8')).hexdigest()
+        data = (
+            os.fsencode(str(WALLPAPER_DIR))
+            + b"\0"
+            + os.fsencode(rel_path)
+            + b"\0"
+            + THUMB_RECIPE.encode("ascii")
+        )
+        return hashlib.sha256(data).hexdigest()
 
     @staticmethod
     def get_thumb_path(rel_path: str) -> Path:
         return THUMB_DIR / f"{CacheManager.get_digest(rel_path)}.png"
 
     @staticmethod
-    def generate_thumb(rel_path: str, force: bool = False) -> bool:
-        """
-        Thumbnail generation with optional force regeneration.
-        When force=False, acts idempotently (skips if cache is fresh).
-        When force=True, always regenerates regardless of mtime.
-        """
-        full_path = WALLPAPER_DIR / rel_path
-        if not full_path.exists():
-            full_path = Path(rel_path)
-            if not full_path.exists():
-                return False
+    def signature(info: os.stat_result) -> list[int]:
+        return [
+            info.st_dev,
+            info.st_ino,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        ]
 
+    @staticmethod
+    def read_metadata(path: Path) -> dict:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError, UnicodeError):
+            return {}
+
+    @staticmethod
+    def generate_thumb(
+        rel_path: str,
+        *,
+        force: bool = False,
+        stop_event: threading.Event | None = None,
+        cache_locked: bool = False,
+    ) -> str:
+        """
+        Return 'generated', 'cached', or 'failed'.
+
+        Cancellation propagates. A 'failed' result must not be interpreted as
+        permission to display an old thumbnail that happens to remain on disk.
+        """
+        check_cancelled(stop_event)
+
+        def generate_with_image_lock():
+            THUMB_DIR.mkdir(parents=True, exist_ok=True)
+            thumb = CacheManager.get_thumb_path(rel_path)
+
+            with file_lock(
+                thumb.with_suffix(".lock"),
+                stop_event=stop_event,
+            ):
+                return CacheManager._generate_locked(
+                    rel_path,
+                    force=force,
+                    stop_event=stop_event,
+                )
+
+        try:
+            if cache_locked:
+                return generate_with_image_lock()
+
+            with file_lock(
+                CACHE_LOCK_FILE,
+                exclusive=False,
+                stop_event=stop_event,
+            ):
+                return generate_with_image_lock()
+
+        except OperationCancelled:
+            raise
+        except Exception as error:
+            log_error(
+                f"Thumbnail failed for {rel_path!r}: "
+                f"{describe_error(error)}"
+            )
+            return "failed"
+
+    @staticmethod
+    def _generate_locked(
+        rel_path: str,
+        *,
+        force: bool,
+        stop_event: threading.Event | None,
+    ) -> str:
+        check_cancelled(stop_event)
+
+        source_path = WALLPAPER_DIR / validate_relative_id(rel_path)
         thumb_path = CacheManager.get_thumb_path(rel_path)
-        bad_marker_path = thumb_path.with_suffix('.bad')
-        tmp_thumb_path = None
+        metadata_path = thumb_path.with_suffix(".json")
+        temporary = thumb_path.with_name(
+            f"{thumb_path.stem}.{uuid.uuid4().hex}.tmp.png"
+        )
 
-        try:
-            # Short-circuit empty/0-byte files immediately
-            if full_path.stat().st_size == 0:
-                bad_marker_path.touch(exist_ok=True)
-                return False
-        except OSError:
-            return False
+        with source_path.open("rb") as source:
+            signature = CacheManager.signature(os.fstat(source.fileno()))
+            metadata = CacheManager.read_metadata(metadata_path)
 
-        try:
-            if not force:
-                # Fast path out: skip if marked uncacheable and marker is up to date
-                if bad_marker_path.exists() and bad_marker_path.stat().st_mtime >= full_path.stat().st_mtime:
+            if not force and metadata.get("source") == signature:
+                if metadata.get("status") == "ok":
+                    try:
+                        thumb_info = thumb_path.stat()
+                    except OSError:
+                        pass
+                    else:
+                        if (
+                            metadata.get("thumbnail")
+                            == CacheManager.signature(thumb_info)
+                        ):
+                            return "cached"
+
+                if metadata.get("status") == "bad":
+                    retry_at = metadata.get("retry_at")
+                    if (
+                        isinstance(retry_at, (int, float))
+                        and time.time() < retry_at
+                    ):
+                        return "failed"
+
+            def source_unchanged() -> bool:
+                try:
+                    return (
+                        CacheManager.signature(os.fstat(source.fileno()))
+                        == signature
+                        and CacheManager.signature(source_path.stat())
+                        == signature
+                    )
+                except OSError:
                     return False
-                # Fast path out: skip if valid cache exists and is up to date
-                if thumb_path.exists() and thumb_path.stat().st_mtime >= full_path.stat().st_mtime:
-                    return False
 
-            tmp_thumb_path = thumb_path.with_suffix(f'.{uuid.uuid4().hex}.tmp.png')
+            def record_conversion_failure() -> None:
+                if not source_unchanged():
+                    return
 
-            # Safely escape characters that trigger Magick's internal parsers
-            escaped_path = str(full_path).replace('[', '\\[').replace(']', '\\]').replace('*', '\\*').replace('?', '\\?')
-            input_arg = f"{escaped_path}[0]"
+                atomic_write(
+                    metadata_path,
+                    json.dumps({
+                        "source": signature,
+                        "status": "bad",
+                        "retry_at": (
+                            time.time() + BAD_THUMB_RETRY_SECONDS
+                        ),
+                    }) + "\n",
+                )
 
-            subprocess.run([
-                "nice", "-n", "19", MAGICK_BIN, 
+            if signature[2] == 0:
+                record_conversion_failure()
+                return "failed"
+
+            # Missing dependencies are not negatively cached.
+            magick = require_binary(MAGICK_COMMAND)
+            nice = require_binary("nice")
+
+            # Passing an opened file descriptor avoids ImageMagick interpreting
+            # brackets, glob characters, or backslashes in the actual filename.
+            command = [
+                nice, "-n", "19",
+                magick,
                 "-limit", "thread", "1",
-                "-limit", "memory", "256MiB",  # Prevent RAM exhaustion
-                "-limit", "map", "512MiB",     # Prevent map exhaustion
-                "-limit", "width", "16384",    # Prevent decompression dimension bombs
-                "-limit", "height", "16384",
-                "-limit", "time", "14",        # Allow Magick to safely abort right before subprocess SIGKILL
-                input_arg, "-auto-orient", "-strip",  
+                "-limit", "memory", "128MiB",
+                "-limit", "map", "256MiB",
+                "-limit", "disk", "1GiB",
+                "-limit", "time", str(max(1, int(THUMB_TIMEOUT) - 2)),
+                f"/proc/self/fd/{source.fileno()}[0]",
+                "-auto-orient",
+                "-strip",
                 "-thumbnail", f"{THUMB_SIZE}x{THUMB_SIZE}^",
-                "-gravity", "center", "-extent", f"{THUMB_SIZE}x{THUMB_SIZE}",
-                "(", "-size", f"{THUMB_SIZE}x{THUMB_SIZE}", "xc:none", "-fill", "white",
-                "-draw", f"roundrectangle 0,0,{THUMB_SIZE - 1},{THUMB_SIZE - 1},24,24", ")",
-                "-alpha", "set", "-compose", "DstIn", "-composite",
-                str(tmp_thumb_path)
-            ], check=True, capture_output=True, text=True, timeout=15)
+                "-gravity", "center",
+                "-extent", f"{THUMB_SIZE}x{THUMB_SIZE}",
+                "(",
+                "-size", f"{THUMB_SIZE}x{THUMB_SIZE}",
+                "xc:none",
+                "-fill", "white",
+                "-draw",
+                (
+                    f"roundrectangle 0,0,"
+                    f"{THUMB_SIZE - 1},{THUMB_SIZE - 1},24,24"
+                ),
+                ")",
+                "-alpha", "set",
+                "-compose", "DstIn",
+                "-composite",
+                str(temporary),
+            ]
 
-            os.replace(tmp_thumb_path, thumb_path)
-            
-            # Clean up the .bad marker if processing finally succeeded
-            if bad_marker_path.exists():
+            try:
+                run_command(
+                    command,
+                    timeout=THUMB_TIMEOUT,
+                    stop_event=stop_event,
+                    pass_fds=(source.fileno(),),
+                )
+
+                check_cancelled(stop_event)
+
+                if not source_unchanged():
+                    log_error(
+                        f"Source changed during conversion: {rel_path!r}"
+                    )
+                    return "failed"
+
+                if temporary.stat().st_size == 0:
+                    raise OSError("ImageMagick produced an empty thumbnail.")
+
+                os.replace(temporary, thumb_path)
+
+                atomic_write(
+                    metadata_path,
+                    json.dumps({
+                        "source": signature,
+                        "status": "ok",
+                        "thumbnail": CacheManager.signature(
+                            thumb_path.stat()
+                        ),
+                    }) + "\n",
+                )
+                return "generated"
+
+            except (
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+            ) as error:
+                log_error(
+                    f"ImageMagick could not convert {rel_path!r}:\n"
+                    f"{describe_error(error)}"
+                )
+                record_conversion_failure()
+                return "failed"
+
+            finally:
                 try:
-                    bad_marker_path.unlink()
+                    temporary.unlink(missing_ok=True)
                 except OSError:
                     pass
 
-            return True
-
-        except subprocess.TimeoutExpired as e:
-            print(f"Magick timed out processing {rel_path} after {e.timeout}s. Marking as bad.")
-            try:
-                bad_marker_path.touch(exist_ok=True)
-            except OSError:
-                pass
-        except subprocess.CalledProcessError as e:
-            print(f"Magick failed to process {rel_path}:\n{e.stderr.strip()}\nMarking as bad.")
-            try:
-                bad_marker_path.touch(exist_ok=True)
-            except OSError:
-                pass
-        except Exception as e:
-            print(f"Error processing {rel_path}: {e}")
-            try:
-                bad_marker_path.touch(exist_ok=True)
-            except OSError:
-                pass
-        finally:
-            if tmp_thumb_path:
-                try:
-                    tmp_thumb_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-
-        return False
-
     @staticmethod
-    def sweep_orphaned_cache(valid_wallpapers: list[str]):
-        """Garbage collection for deleted wallpapers & outdated thumbnails."""
-        print("Sweeping orphaned cache files...")
-        valid_digests = {CacheManager.get_digest(w) for w in valid_wallpapers}
-        orphans_removed = 0
+    def _sweep_locked(
+        wallpapers: list[str],
+        stop_event: threading.Event | None = None,
+    ) -> int:
+        """
+        Caller must hold CACHE_LOCK_FILE exclusively.
 
-        if THUMB_DIR.exists():
-            try:
-                with os.scandir(THUMB_DIR) as it:
-                    for entry in it:
-                        # Sweep both standard .png cache and .bad markers
-                        if entry.is_file() and (entry.name.endswith('.png') or entry.name.endswith('.bad')):
-                            # Prevent concurrency race: Only sweep stale tmp files older than 1 hour
-                            if '.tmp.' in entry.name:
-                                try:
-                                    if time.time() - entry.stat().st_mtime > 3600:
-                                        os.remove(entry.path)
-                                except OSError:
-                                    pass
-                                continue
-
-                            stem = entry.name.split('.')[0]
-                            if stem not in valid_digests:
-                                try:
-                                    os.remove(entry.path)
-                                    orphans_removed += 1
-                                except OSError:
-                                    pass
-            except OSError:
-                pass
-
-        print(f"Orphans removed: {orphans_removed}")
-
-    @staticmethod
-    def nuke_cache():
-        """Completely deletes the entire thumbnail cache directory."""
-        if THUMB_DIR.exists():
-            print(f"Nuking cache directory: {THUMB_DIR}")
-            shutil.rmtree(THUMB_DIR, ignore_errors=True)
+        No cooperating thumbnail writer can be active, so temporary files
+        may be removed without an arbitrary age threshold.
+        """
         THUMB_DIR.mkdir(parents=True, exist_ok=True)
-        print("Cache directory purged and recreated.")
+        valid = {
+            CacheManager.get_digest(path)
+            for path in wallpapers
+        }
+        removed = 0
+
+        with os.scandir(THUMB_DIR) as entries:
+            for entry in entries:
+                check_cancelled(stop_event)
+
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+
+                match = _CACHE_FILENAME.fullmatch(entry.name)
+                if match is None:
+                    continue
+
+                digest, suffix = match.groups()
+                recognized = suffix in {"png", "json", "bad", "lock"}
+                temporary = ".tmp." in entry.name
+
+                if temporary or (recognized and digest not in valid):
+                    try:
+                        os.unlink(entry.path)
+                        removed += 1
+                    except FileNotFoundError:
+                        pass
+
+        return removed
 
     @staticmethod
-    def build_cache(force: bool = False, progress_callback=None) -> list[str]:
-        """
-        Unified cache builder.
-        Returns the finalized list of wallpapers to eliminate redundant I/O calls downstream.
-        """
-        if force:
-            CacheManager.nuke_cache()
-        else:
+    def scan_and_sweep(
+        stop_event: threading.Event | None = None,
+    ) -> list[str]:
+        with file_lock(CACHE_LOCK_FILE, stop_event=stop_event):
+            wallpapers = scan_wallpapers(stop_event)
+            removed = CacheManager._sweep_locked(
+                wallpapers, stop_event
+            )
+            print(f"Cache files removed: {removed}", flush=True)
+            return wallpapers
+
+    @staticmethod
+    def build_cache(
+        *,
+        force: bool = False,
+        progress_callback: Callable[[int, int, int, int], None] | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> CacheBuildResult:
+        # Check once, rather than emitting a missing-binary error per image.
+        require_binary(MAGICK_COMMAND)
+        require_binary("nice")
+
+        with file_lock(CACHE_LOCK_FILE, stop_event=stop_event):
             THUMB_DIR.mkdir(parents=True, exist_ok=True)
 
-        print(f"Scanning directory: {WALLPAPER_DIR}")
-        wallpapers = CacheManager.get_all_wallpapers()
-        total = len(wallpapers)
-        print(f"Found {total} valid images.")
+            print(f"Scanning: {WALLPAPER_DIR}", flush=True)
+            wallpapers = scan_wallpapers(stop_event)
 
-        CacheManager.sweep_orphaned_cache(wallpapers)
+            removed = CacheManager._sweep_locked(
+                wallpapers, stop_event
+            )
+            print(
+                f"Found {len(wallpapers)} images; "
+                f"removed {removed} stale cache files.",
+                flush=True,
+            )
 
-        print("Verifying cache and generating thumbnails...")
-        workers = min(os.process_cpu_count() or 4, 8)
-        generated_count = 0
-        last_update = 0.0
+            result = CacheBuildResult(wallpapers)
+            total = len(wallpapers)
+            completed = 0
+            last_progress = 0.0
+            remaining = iter(wallpapers)
 
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(CacheManager.generate_thumb, w, force): w
-                for w in wallpapers
-            }
+            def generate(path: str) -> str:
+                return CacheManager.generate_thumb(
+                    path,
+                    force=force,
+                    stop_event=stop_event,
+                    cache_locked=True,
+                )
 
-            for i, future in enumerate(as_completed(futures), 1):
+            def report_progress(force_report: bool = False) -> None:
+                nonlocal last_progress
+                now = time.monotonic()
+
+                if not force_report and now - last_progress < 0.05:
+                    return
+
+                if progress_callback is not None:
+                    progress_callback(
+                        completed,
+                        total,
+                        result.generated,
+                        result.failed,
+                    )
+                else:
+                    print(
+                        f"\rProgress: {completed}/{total} | "
+                        f"Generated: {result.generated} | "
+                        f"Failed: {result.failed}",
+                        end="",
+                        flush=True,
+                    )
+
+                last_progress = now
+
+            with ThreadPoolExecutor(
+                max_workers=WORKER_COUNT,
+                thread_name_prefix="cache-build",
+            ) as executor:
+                pending: dict[Future, str] = {}
+
+                def fill_queue() -> None:
+                    while len(pending) < MAX_IMAGE_JOBS:
+                        check_cancelled(stop_event)
+                        try:
+                            path = next(remaining)
+                        except StopIteration:
+                            break
+                        pending[executor.submit(generate, path)] = path
+
                 try:
-                    if future.result():
-                        generated_count += 1
-                    
-                    now = time.monotonic()
-                    if now - last_update > 0.05 or i == total:
-                        if progress_callback:
-                            progress_callback(i, total, generated_count)
-                        else:
-                            sys.stdout.write(
-                                f"\rProgress: [{i}/{total}] | Generated: {generated_count} "
-                            )
-                            sys.stdout.flush()
-                        last_update = now
-                except Exception as e:
-                    print(f"\nWorker exception on {futures[future]}: {e}")
+                    fill_queue()
+                    report_progress(force_report=True)
 
-        if not progress_callback:
-            print()
-        print(f"Done! Generated {generated_count} new/updated wallpapers. Cache is warm.")
-        return wallpapers
+                    while pending:
+                        check_cancelled(stop_event)
+
+                        finished, _ = wait(
+                            pending,
+                            timeout=0.2,
+                            return_when=FIRST_COMPLETED,
+                        )
+
+                        for future in finished:
+                            path = pending.pop(future)
+
+                            try:
+                                status = future.result()
+                            except OperationCancelled:
+                                raise
+                            except Exception as error:
+                                log_error(
+                                    f"Cache worker failed for {path!r}: "
+                                    f"{describe_error(error)}"
+                                )
+                                status = "failed"
+
+                            completed += 1
+                            result.generated += status == "generated"
+                            result.failed += status == "failed"
+
+                        fill_queue()
+                        report_progress()
+
+                    report_progress(force_report=True)
+
+                finally:
+                    for future in pending:
+                        future.cancel()
+
+            if progress_callback is None:
+                print()
+
+            print(
+                f"Cache complete: {result.generated} generated, "
+                f"{result.failed} unavailable.",
+                flush=True,
+            )
+            return result
 
 
-# ==============================================================================
-# GTK APPLICATION LOGIC
-# ==============================================================================
+# =============================================================================
+# STATE, FAVORITES, AND BACKEND
+# =============================================================================
+
+def read_state_conf() -> dict[str, str]:
+    """
+    Read relevant literal KEY=value settings.
+
+    Supports quoted literals and trailing comments, but deliberately does not
+    execute shell code or perform variable/command expansion.
+    """
+    state = {}
+
+    for line_number, raw_line in enumerate(
+        read_optional_text(STATE_FILE).splitlines(), 1
+    ):
+        line = raw_line.strip()
+
+        if not line or line.startswith("#"):
+            continue
+
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+
+        if "=" not in line:
+            continue
+
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+
+        if key not in RELEVANT_STATE_KEYS:
+            continue
+
+        try:
+            values = shlex.split(
+                raw_value,
+                comments=True,
+                posix=True,
+            )
+        except ValueError as error:
+            raise ValueError(
+                f"{STATE_FILE}:{line_number}: {error}"
+            ) from error
+
+        if len(values) > 1:
+            raise ValueError(
+                f"{STATE_FILE}:{line_number}: "
+                f"{key} must contain one literal value."
+            )
+
+        value = values[0] if values else ""
+
+        if "$" in value or "`" in value:
+            raise ValueError(
+                f"{STATE_FILE}:{line_number}: "
+                "Shell expansion is not supported in selector settings."
+            )
+
+        state[key] = value
+
+    mode = state.get("THEME_MODE", "dark")
+    if mode not in {"light", "dark"}:
+        raise ValueError(f"Invalid THEME_MODE: {mode!r}")
+
+    return state
+
+
+def read_tracker(path: Path) -> str:
+    return read_optional_text(path).rstrip("\r\n")
+
+
+def match_wallpaper_id(
+    wallpapers: list[str],
+    tracker: str,
+) -> str | None:
+    if not tracker:
+        return None
+
+    if TRACKER_ID_FORMAT == "relative":
+        if tracker in wallpapers:
+            return tracker
+
+        # Allow unambiguous old basename trackers during migration.
+        if "/" in tracker:
+            return None
+
+    matches = [
+        path
+        for path in wallpapers
+        if os.path.basename(path) == tracker
+    ]
+
+    if len(matches) > 1:
+        raise ValueError(
+            f"Ambiguous wallpaper tracker: {tracker!r}.\n"
+            "Multiple wallpapers have that basename."
+        )
+
+    return matches[0] if matches else None
+
+
+def tracker_id_for(
+    rel_path: str,
+    wallpapers: list[str],
+) -> str:
+    if TRACKER_ID_FORMAT == "relative":
+        return rel_path
+
+    if TRACKER_ID_FORMAT != "basename":
+        raise ValueError(
+            "TRACKER_ID_FORMAT must be 'basename' or 'relative'."
+        )
+
+    basename = os.path.basename(rel_path)
+    matches = [
+        path
+        for path in wallpapers
+        if os.path.basename(path) == basename
+    ]
+
+    if len(matches) != 1:
+        examples = "\n".join(matches[:8])
+        raise ValueError(
+            f"Cannot safely apply {rel_path!r} with basename trackers.\n\n"
+            f"Conflicting paths:\n{examples}\n\n"
+            "Rename the duplicate files, or update all external tracker "
+            "readers to support relative paths and set "
+            "TRACKER_ID_FORMAT = 'relative'."
+        )
+
+    return basename
+
+
+def load_favorites() -> set[str]:
+    favorites = set()
+
+    for value in read_optional_text(FAVORITES_FILE).splitlines():
+        if not value:
+            continue
+
+        try:
+            favorites.add(validate_relative_id(value))
+        except (ValueError, UnicodeError) as error:
+            log_error(f"Ignoring invalid favorite {value!r}: {error}")
+
+    return favorites
+
+
+def save_favorites(favorites: set[str]) -> None:
+    content = "\n".join(sorted(favorites, key=natural_key))
+    atomic_write(
+        FAVORITES_FILE,
+        content + ("\n" if content else ""),
+    )
+
+
+def toggle_saved_favorite(rel_path: str) -> set[str]:
+    rel_path = validate_relative_id(rel_path)
+
+    # GUI actions should fail clearly rather than block GTK indefinitely.
+    with file_lock(FAVORITES_LOCK_FILE, timeout=0):
+        favorites = load_favorites()
+
+        if rel_path in favorites:
+            favorites.remove(rel_path)
+        else:
+            favorites.add(rel_path)
+
+        save_favorites(favorites)
+        return favorites
+
+
+def ensure_awww_daemon(
+    stop_event: threading.Event | None = None,
+) -> str:
+    client = require_binary(AWWW_COMMAND)
+
+    def query(timeout: float) -> subprocess.CompletedProcess:
+        return run_command(
+            [client, "query"],
+            timeout=timeout,
+            stop_event=stop_event,
+            check=False,
+        )
+
+    try:
+        result = query(AWWW_QUERY_TIMEOUT)
+        if result.returncode == 0:
+            return client
+        last_error = (result.stderr or result.stdout or "").strip()
+    except subprocess.TimeoutExpired as error:
+        last_error = describe_error(error)
+
+    daemon_binary = require_binary(AWWW_DAEMON_COMMAND)
+    check_cancelled(stop_event)
+
+    print("Starting awww-daemon...", flush=True)
+
+    daemon = subprocess.Popen(
+        [daemon_binary, "--format", "xrgb"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+    # Reap only this particular child. Never use waitpid(-1).
+    threading.Thread(
+        target=daemon.wait,
+        name="awww-daemon-waiter",
+        daemon=True,
+    ).start()
+
+    deadline = time.monotonic() + AWWW_START_TIMEOUT
+
+    while True:
+        check_cancelled(stop_event)
+        remaining = deadline - time.monotonic()
+
+        if remaining <= 0:
+            break
+
+        try:
+            result = query(min(AWWW_QUERY_TIMEOUT, remaining))
+            if result.returncode == 0:
+                return client
+            last_error = (result.stderr or result.stdout or "").strip()
+        except subprocess.TimeoutExpired as error:
+            last_error = describe_error(error)
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+
+        if stop_event is None:
+            time.sleep(min(0.15, remaining))
+        else:
+            stop_event.wait(min(0.15, remaining))
+
+    daemon_status = daemon.poll()
+    message = "awww-daemon did not become responsive."
+
+    if daemon_status is not None:
+        message += f"\nThe launched daemon exited with status {daemon_status}."
+
+    if last_error:
+        message += f"\n{last_error}"
+
+    message += "\nCheck: awww query; awww-daemon --help"
+    raise RuntimeError(message)
+
+
+def _apply_wallpaper_locked(
+    rel_path: str,
+    *,
+    regen: bool,
+    wallpapers: list[str] | None = None,
+    stop_event: threading.Event | None = None,
+) -> None:
+    """
+    Caller must hold APPLY_LOCK_FILE.
+
+    Trackers are committed after successful wallpaper application and before
+    theme refresh, because the theme controller may read those trackers.
+    """
+    rel_path = validate_relative_id(rel_path)
+    check_cancelled(stop_event)
+
+    if wallpapers is None:
+        wallpapers = scan_wallpapers(stop_event)
+
+    if rel_path not in wallpapers:
+        raise FileNotFoundError(
+            f"Wallpaper is no longer in the collection: {rel_path}"
+        )
+
+    full_path = WALLPAPER_DIR / rel_path
+    if not full_path.is_file():
+        raise FileNotFoundError(f"Wallpaper not found: {full_path}")
+
+    tracker_id = tracker_id_for(rel_path, wallpapers)
+    state = read_state_conf()
+    mode = state.get("THEME_MODE", "dark")
+
+    if regen and (
+        not THEME_CTL.is_file()
+        or not os.access(THEME_CTL, os.X_OK)
+    ):
+        raise RuntimeError(
+            "Theme controller is missing or not executable:\n"
+            f"{THEME_CTL}"
+        )
+
+    client = ensure_awww_daemon(stop_event)
+    command = [client, "img"]
+
+    for key, flag in TRANSITION_OPTIONS:
+        value = state.get(key, "disable")
+        if value and value != "disable":
+            command.extend([flag, value])
+
+    command.append(str(full_path))
+
+    print(f"Applying: {full_path} (full apply: {regen})", flush=True)
+
+    run_command(
+        command,
+        timeout=AWWW_APPLY_TIMEOUT,
+        stop_event=stop_event,
+    )
+
+    track_file = TRACK_LIGHT if mode == "light" else TRACK_DARK
+
+    try:
+        # Do not insert a cancellation point between successful application
+        # and these short persistence operations.
+        atomic_write(track_file, tracker_id + "\n")
+        atomic_write(FAV_STATE_FILE, tracker_id + "\n")
+    except Exception as error:
+        raise RuntimeError(
+            "The wallpaper command succeeded, but tracker persistence "
+            "failed. Some tracker files may already have been updated.\n\n"
+            f"{describe_error(error)}"
+        ) from error
+
+    if regen:
+        try:
+            run_command(
+                [str(THEME_CTL), "refresh"],
+                timeout=THEME_TIMEOUT,
+                stop_event=stop_event,
+            )
+        except Exception as error:
+            raise RuntimeError(
+                "The wallpaper was applied and its trackers were updated, "
+                "but theme regeneration did not complete successfully.\n\n"
+                f"{describe_error(error)}"
+            ) from error
+
+
+def perform_wallpaper_apply(
+    rel_path: str,
+    *,
+    regen: bool,
+    stop_event: threading.Event | None = None,
+) -> None:
+    with file_lock(
+        APPLY_LOCK_FILE,
+        timeout=0,
+        stop_event=stop_event,
+    ):
+        _apply_wallpaper_locked(
+            rel_path,
+            regen=regen,
+            stop_event=stop_event,
+        )
+
+
+def notify_best_effort(
+    title: str,
+    message: str,
+    urgency: str = "low",
+) -> None:
+    binary = shutil.which("notify-send")
+    if binary is None:
+        return
+
+    try:
+        run_command(
+            [
+                binary,
+                "-a", "dusky-fav-wal",
+                "-h", "string:x-canonical-private-synchronous:fav-wal",
+                "-i", "emblem-favorite-symbolic",
+                "-u", urgency,
+                "-t", "2000",
+                "--",
+                title,
+                message,
+            ],
+            timeout=3,
+            check=False,
+        )
+    except Exception:
+        # Notifications must never determine whether application succeeded.
+        pass
+
+
+def cycle_favorites(
+    direction: str,
+    stop_event: threading.Event | None = None,
+) -> int:
+    if direction not in {"next", "prev"}:
+        raise ValueError(f"Invalid cycling direction: {direction!r}")
+
+    try:
+        with file_lock(
+            APPLY_LOCK_FILE,
+            timeout=0,
+            stop_event=stop_event,
+        ):
+            wallpapers = scan_wallpapers(stop_event)
+            available = set(wallpapers)
+
+            favorites = sorted(
+                load_favorites() & available,
+                key=natural_key,
+            )
+
+            if not favorites:
+                notify_best_effort(
+                    "No Favorites",
+                    "No existing favorite wallpapers were found.",
+                    "normal",
+                )
+                return 0
+
+            # Resolve against the whole collection, not just favorites.
+            # Otherwise a basename could appear unique only because its
+            # conflicting counterpart is not a favorite.
+            current = match_wallpaper_id(
+                wallpapers,
+                read_tracker(FAV_STATE_FILE),
+            )
+
+            if current not in favorites:
+                selected = (
+                    favorites[0]
+                    if direction == "next"
+                    else favorites[-1]
+                )
+            else:
+                step = 1 if direction == "next" else -1
+                index = (favorites.index(current) + step) % len(favorites)
+                selected = favorites[index]
+
+            _apply_wallpaper_locked(
+                selected,
+                regen=True,
+                wallpapers=wallpapers,
+                stop_event=stop_event,
+            )
+
+        notify_best_effort("Favorite", os.path.basename(selected))
+        return 0
+
+    except OperationCancelled:
+        raise
+    except Exception as error:
+        message = describe_error(error)
+        log_error(f"Favorite application failed:\n{message}")
+        notify_best_effort("Wallpaper Error", message, "critical")
+        return 1
+
+
+# =============================================================================
+# ERROR DIALOG
+# =============================================================================
+
+class ThemedErrorDialog(Gtk.Dialog):
+    def __init__(
+        self,
+        parent: Gtk.Window,
+        title: str,
+        message: str,
+    ):
+        super().__init__(
+            title=title,
+            transient_for=parent,
+            modal=True,
+            destroy_with_parent=True,
+        )
+        self.set_default_size(560, 300)
+        self.get_style_context().add_class("themed-error-dialog")
+
+        content = self.get_content_area()
+        content.set_spacing(14)
+        content.set_border_width(20)
+
+        header = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=12,
+        )
+
+        icon = Gtk.Image.new_from_icon_name(
+            "dialog-error-symbolic",
+            Gtk.IconSize.DIALOG,
+        )
+        header.pack_start(icon, False, False, 0)
+
+        label = Gtk.Label(label=title)
+        label.set_line_wrap(True)
+        label.set_xalign(0)
+        label.get_style_context().add_class("dialog-title")
+        header.pack_start(label, True, True, 0)
+        content.pack_start(header, False, False, 0)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(
+            Gtk.PolicyType.AUTOMATIC,
+            Gtk.PolicyType.AUTOMATIC,
+        )
+        scrolled.set_min_content_height(140)
+        scrolled.set_hexpand(True)
+        scrolled.set_vexpand(True)
+
+        text_view = Gtk.TextView()
+        text_view.set_editable(False)
+        text_view.set_cursor_visible(False)
+        text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        text_view.set_monospace(True)
+        text_view.set_left_margin(10)
+        text_view.set_right_margin(10)
+        text_view.set_top_margin(10)
+        text_view.set_bottom_margin(10)
+
+        # Keep unexpectedly enormous command output from overwhelming GTK.
+        if len(message) > 100_000:
+            message = message[:100_000] + "\n\n[Further output omitted]"
+
+        text_view.get_buffer().set_text(message)
+        scrolled.add(text_view)
+        content.pack_start(scrolled, True, True, 0)
+
+        self.add_button("OK", Gtk.ResponseType.OK)
+        self.set_default_response(Gtk.ResponseType.OK)
+        self.connect("response", lambda dialog, response: dialog.destroy())
+        self.connect("key-press-event", self._on_key_press)
+
+        self.show_all()
+
+    def _on_key_press(self, widget, event):
+        if event.keyval == Gdk.KEY_Escape:
+            self.response(Gtk.ResponseType.CLOSE)
+            return True
+        return False
+
+
+# =============================================================================
+# GTK APPLICATION
+# =============================================================================
+
 class WallpaperApp:
     def __init__(self):
-        self.Gtk = Gtk
-        self.Gdk = Gdk
-        self.GdkPixbuf = GdkPixbuf
-        self.GLib = GLib
-        self.Pango = Pango
-
-        settings = self.Gtk.Settings.get_default()
-        if settings:
-            settings.set_property('gtk-application-prefer-dark-theme', True)
-
-        self.app = self.Gtk.Application(
-            application_id='com.dusky.wallpaperselector',
-            flags=Gio.ApplicationFlags.FLAGS_NONE
+        self.app = Gtk.Application(
+            application_id="com.dusky.wallpaperselector",
+            flags=Gio.ApplicationFlags.DEFAULT_FLAGS,
         )
         self.app.connect("activate", self.do_activate)
-        self.app.connect("shutdown", self.on_app_shutdown)
+        self.app.connect("shutdown", self.on_shutdown)
 
         self.window = None
-        self.scrolled = None
         self.flowbox = None
-        self.search_entry = None
+        self.scrolled = None
         self.stack = None
+        self.search_entry = None
 
         self.btn_all = None
         self.btn_fav = None
@@ -565,1310 +1513,1625 @@ class WallpaperApp:
         self.btn_settings = None
         self.btn_help = None
 
-        self._loading_progress_bar = None
-        self._loading_status_label = None
+        self.loading_spinner = None
+        self.loading_title = None
+        self.loading_progress = None
+        self.loading_status = None
 
-        self.wallpapers = []
-        self.favorites = set()
-        self.app_settings = {}
-        self.search_query = ""
+        self.empty_title = None
+        self.empty_subtitle = None
+        self.popover = None
 
-        self.ui_children = {}
-        self.loaded_pixbufs = {}
-        self.current_generation = 0
+        self.wallpapers: list[str] = []
+        self.favorites: set[str] = set()
+        self.children: dict[str, Gtk.FlowBoxChild] = {}
         self.current_selected_child = None
-        self._is_refreshing = False
 
-        workers = min(os.process_cpu_count() or 4, 8)
-        self.executor = ThreadPoolExecutor(max_workers=workers)
+        self.search_query = ""
+        self.settings = DEFAULT_SETTINGS.copy()
+        self.show_only_favorites = False
 
-        self._load_app_settings()
-        self._load_favorites()
+        self.closing = False
+        self.shutting_down = False
+        self.is_refreshing = False
+        self.is_applying = False
 
-    def _load_app_settings(self):
-        self.app_settings = {
-            "AUTO_CLOSE": False,
-            "FAST_APPLY_AUTO_CLOSE": False,
-            "SHOW_FILENAMES": True,
-            "START_IN_FAVORITES": False,
-            "AUTO_SWEEP_CACHE": False
+        self.generation = 0
+        self.generation_stop = threading.Event()
+        self.backend_stop = threading.Event()
+
+        self.image_futures: set[Future] = set()
+        self.image_iterator = iter(())
+        self.control_future = None
+
+        self.image_executor = ThreadPoolExecutor(
+            max_workers=WORKER_COUNT,
+            thread_name_prefix="thumbnail",
+        )
+        self.control_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="selector-control",
+        )
+
+        self.signal_sources = []
+        self.startup_messages = []
+
+        self._load_settings()
+
+        try:
+            self.favorites = load_favorites()
+        except Exception as error:
+            self.startup_messages.append(
+                f"Could not read favorites:\n{describe_error(error)}"
+            )
+
+    # -------------------------------------------------------------------------
+    # Settings and main-thread dispatch
+    # -------------------------------------------------------------------------
+
+    def _load_settings(self):
+        try:
+            content = read_optional_text(APP_SETTINGS_FILE)
+        except Exception as error:
+            self.startup_messages.append(
+                f"Could not read settings:\n{describe_error(error)}"
+            )
+            content = ""
+
+        boolean_values = {
+            "true": True,
+            "1": True,
+            "yes": True,
+            "false": False,
+            "0": False,
+            "no": False,
         }
 
-        if APP_SETTINGS_FILE.exists():
-            try:
-                content = APP_SETTINGS_FILE.read_text(encoding='utf-8')
-                for line in content.splitlines():
-                    line = line.strip()
-                    if line and not line.startswith('#') and '=' in line:
-                        k, v = line.split('=', 1)
-                        k = k.strip()
-                        v_raw = v.strip()
-                        v_lower = v_raw.lower()
-                        if v_lower in ('true', '1', 'yes'):
-                            self.app_settings[k] = True
-                        elif v_lower in ('false', '0', 'no'):
-                            self.app_settings[k] = False
-                        else:
-                            self.app_settings[k] = v_raw
-            except Exception as e:
-                print(f"Error loading app settings: {e}")
+        for line in content.splitlines():
+            line = line.strip()
 
-        self.show_only_favorites = self.app_settings.get("START_IN_FAVORITES", False)
+            if not line or line.startswith("#") or "=" not in line:
+                continue
 
-    def _save_app_settings(self):
-        lines = ["# Dusky GTK Wallpaper Selector Configuration"]
-        for k, v in sorted(self.app_settings.items()):
-            if isinstance(v, bool):
-                val = 'true' if v else 'false'
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().lower()
+
+            if key not in self.settings:
+                log_error(f"Ignoring unknown selector setting: {key}")
+            elif value not in boolean_values:
+                log_error(
+                    f"Ignoring invalid Boolean setting: {key}={value}"
+                )
             else:
-                val = str(v)
-            lines.append(f"{k}={val}")
+                self.settings[key] = boolean_values[value]
+
+        self.show_only_favorites = self.settings["START_IN_FAVORITES"]
+
+    def _save_settings(self):
+        lines = ["# Dusky GTK Wallpaper Selector Configuration"]
+
+        for key, value in sorted(self.settings.items()):
+            lines.append(f"{key}={'true' if value else 'false'}")
 
         atomic_write(APP_SETTINGS_FILE, "\n".join(lines) + "\n")
 
-    def _load_favorites(self):
-        self.favorites.clear()
-        if FAVORITES_FILE.exists():
-            try:
-                content = FAVORITES_FILE.read_text(encoding='utf-8')
-                self.favorites.update(filter(None, content.splitlines()))
-            except Exception as e:
-                print(f"Error loading favorites: {e}")
+    def _post_ui(self, callback, *args):
+        if self.closing or self.shutting_down:
+            return
+        GLib.idle_add(self._dispatch_ui, callback, args)
 
-    def _save_favorites(self):
-        atomic_write(FAVORITES_FILE, "\n".join(sorted(self.favorites)) + "\n")
+    def _dispatch_ui(self, callback, args):
+        if not self.closing and not self.shutting_down:
+            callback(*args)
+        return GLib.SOURCE_REMOVE
 
-    def set_view_mode(self, show_favorites: bool):
-        if not self.btn_all or not self.btn_fav:
+    def show_error(self, title: str, message: str):
+        log_error(f"{title}:\n{message}")
+
+        if self.closing or self.window is None:
             return
 
-        self.show_only_favorites = show_favorites
+        self.window.present()
+        ThemedErrorDialog(self.window, title, message)
 
-        if self.show_only_favorites:
-            self.btn_all.get_style_context().remove_class("active-all")
-            self.btn_fav.get_style_context().add_class("active-fav")
-        else:
-            self.btn_all.get_style_context().add_class("active-all")
-            self.btn_fav.get_style_context().remove_class("active-fav")
-
-        if self.flowbox:
-            self.flowbox.invalidate_filter()
-            self.GLib.idle_add(self._update_visibility_and_selection)
+    # -------------------------------------------------------------------------
+    # Window construction
+    # -------------------------------------------------------------------------
 
     def do_activate(self, application):
-        if not self.window:
-            self.window = self.Gtk.ApplicationWindow(application=application)
-            self.window.set_title("Wallpaper Selector")
-            self.window.set_default_size(800, 600)
-            self.window.set_position(self.Gtk.WindowPosition.CENTER)
+        if self.closing:
+            return
 
-            self.window.connect("destroy", self.on_window_destroy)
-            self.window.connect("key-press-event", self.on_key_press)
-
-            self.setup_css()
-
-            vbox = self.Gtk.Box(orientation=self.Gtk.Orientation.VERTICAL, spacing=0)
-            self.window.add(vbox)
-
-            header = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=0)
-            header.set_name("header_bar")
-
-            left_box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=15)
-
-            self.search_entry = self.Gtk.SearchEntry()
-            self.search_entry.set_placeholder_text("Search... (Press /)")
-            self.search_entry.set_tooltip_text("Filter wallpapers by filename (Press / to focus)")
-            self.search_entry.set_width_chars(28)
-            self.search_entry.get_style_context().add_class("search-bar")
-            self.search_entry.connect("search-changed", self.on_search_changed)
-            left_box.pack_start(self.search_entry, False, False, 0)
-
-            center_box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=0)
-
-            tab_container = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=4)
-            tab_container.get_style_context().add_class("tab-container")
-
-            self.btn_all = self.Gtk.Button(label="All")
-            self.btn_all.get_style_context().add_class("tab-btn")
-            self.btn_all.set_tooltip_text("Show all wallpapers")
-            self.btn_all.connect("clicked", lambda w: self.set_view_mode(False))
-
-            self.btn_fav = self.Gtk.Button(label="♥")
-            self.btn_fav.get_style_context().add_class("tab-btn")
-            self.btn_fav.get_style_context().add_class("fav-btn")
-            self.btn_fav.set_tooltip_text("Show only favorite wallpapers [Alt+P]")
-            self.btn_fav.connect("clicked", lambda w: self.set_view_mode(True))
-
-            if self.show_only_favorites:
-                self.btn_fav.get_style_context().add_class("active-fav")
-            else:
-                self.btn_all.get_style_context().add_class("active-all")
-
-            tab_container.pack_start(self.btn_all, False, False, 0)
-            tab_container.pack_start(self.btn_fav, False, False, 0)
-            center_box.pack_start(tab_container, False, False, 0)
-
-            right_box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=8)
-
-            self.btn_refresh = self.Gtk.Button()
-            self.btn_refresh.set_tooltip_text("Rebuild Cache [Alt+R]")
-            self.btn_refresh.set_image(
-                self.Gtk.Image.new_from_icon_name("view-refresh-symbolic", self.Gtk.IconSize.BUTTON)
-            )
-            self.btn_refresh.connect("clicked", lambda w: self.trigger_action('refresh'))
-            self.btn_refresh.get_style_context().add_class("action-btn")
-            self.btn_refresh.get_style_context().add_class("icon-btn")
-
-            self.btn_settings = self.Gtk.Button()
-            self.btn_settings.set_tooltip_text("Preferences [Alt+O]")
-            self.btn_settings.set_image(
-                self.Gtk.Image.new_from_icon_name("preferences-system-symbolic", self.Gtk.IconSize.BUTTON)
-            )
-            self.btn_settings.connect("clicked", self.show_settings_popover)
-            self.btn_settings.get_style_context().add_class("action-btn")
-            self.btn_settings.get_style_context().add_class("icon-btn")
-
-            self.btn_help = self.Gtk.Button()
-            self.btn_help.set_tooltip_text("Keyboard Shortcuts [F1]")
-            self.btn_help.set_image(
-                self.Gtk.Image.new_from_icon_name("help-about-symbolic", self.Gtk.IconSize.BUTTON)
-            )
-            self.btn_help.connect("clicked", self.show_shortcuts_popover)
-            self.btn_help.get_style_context().add_class("action-btn")
-            self.btn_help.get_style_context().add_class("icon-btn")
-
-            right_box.pack_start(self.btn_refresh, False, False, 0)
-            right_box.pack_start(self.btn_settings, False, False, 0)
-            right_box.pack_start(self.btn_help, False, False, 0)
-
-            header.pack_start(left_box, False, False, 0)
-            header.set_center_widget(center_box)
-            header.pack_end(right_box, False, False, 0)
-
-            vbox.pack_start(header, False, False, 0)
-
-            self.stack = self.Gtk.Stack()
-            self.stack.set_transition_type(self.Gtk.StackTransitionType.CROSSFADE)
-            self.stack.set_transition_duration(150)
-
-            self.scrolled = self.Gtk.ScrolledWindow()
-            self.scrolled.set_policy(self.Gtk.PolicyType.NEVER, self.Gtk.PolicyType.AUTOMATIC)
-            self.scrolled.set_hexpand(True)
-            self.scrolled.set_vexpand(True)
-
-            self.flowbox = self.Gtk.FlowBox()
-            self.flowbox.set_valign(self.Gtk.Align.START)
-            self.flowbox.set_selection_mode(self.Gtk.SelectionMode.SINGLE)
-            self.flowbox.set_min_children_per_line(3)
-            self.flowbox.set_max_children_per_line(30)
-
-            self.flowbox.set_sort_func(self.sort_flowbox)
-            self.flowbox.set_filter_func(self.filter_flowbox)
-            self.flowbox.connect("child-activated", self.on_child_activated)
-            self.flowbox.connect("selected-children-changed", self.on_selection_changed)
-            self.flowbox.connect("button-press-event", self.on_flowbox_button_press)
-
-            self.scrolled.add(self.flowbox)
-
-            self.stack.add_named(self.scrolled, "grid")
-            self.stack.add_named(self._create_empty_state_placeholder(), "empty")
-            self.stack.add_named(self._create_loading_state_placeholder(), "loading")
-
-            vbox.pack_start(self.stack, True, True, 0)
-            self.window.show_all()
-
-            self.refresh_ui()
-
-        if self.window:
+        if self.window is not None:
             self.window.present()
-            self.flowbox.grab_focus()
+            return
 
-    def show_settings_popover(self, widget):
-        popover = self.Gtk.Popover.new(widget)
-        popover.set_position(self.Gtk.PositionType.BOTTOM)
-
-        box = self.Gtk.Box(orientation=self.Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_start(18)
-        box.set_margin_end(18)
-        box.set_margin_top(16)
-        box.set_margin_bottom(16)
-
-        title = self.Gtk.Label(label="Preferences")
-        title.get_style_context().add_class("popover-title")
-        title.set_halign(self.Gtk.Align.START)
-        box.pack_start(title, False, False, 0)
-
-        grid = self.Gtk.Grid()
-        grid.set_column_spacing(24)
-        grid.set_row_spacing(14)
-
-        def add_setting(row, label_text, key):
-            lbl = self.Gtk.Label(label=label_text)
-            lbl.set_halign(self.Gtk.Align.START)
-
-            switch = self.Gtk.Switch()
-            switch.set_valign(self.Gtk.Align.CENTER)
-            switch.set_halign(self.Gtk.Align.END)
-            switch.set_active(self.app_settings.get(key, False))
-
-            def on_toggled(sw, gparam, k=key):
-                self.app_settings[k] = sw.get_active()
-                self._save_app_settings()
-                if k == "SHOW_FILENAMES":
-                    self.apply_filename_visibility()
-
-            switch.connect("notify::active", on_toggled)
-
-            grid.attach(lbl, 0, row, 1, 1)
-            grid.attach(switch, 1, row, 1, 1)
-
-        add_setting(0, "Auto-close after Full Apply", "AUTO_CLOSE")
-        add_setting(1, "Auto-close after Fast Apply", "FAST_APPLY_AUTO_CLOSE")
-        add_setting(2, "Show Wallpaper Filenames", "SHOW_FILENAMES")
-        add_setting(3, "Default to Favorites View", "START_IN_FAVORITES")
-        add_setting(4, "Auto-Sweep Cache on Startup", "AUTO_SWEEP_CACHE")
-
-        box.pack_start(grid, False, False, 0)
-        box.show_all()
-        popover.add(box)
-        popover.popup()
-
-    def show_shortcuts_popover(self, widget):
-        popover = self.Gtk.Popover.new(widget)
-        popover.set_position(self.Gtk.PositionType.BOTTOM)
-
-        box = self.Gtk.Box(orientation=self.Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_start(18)
-        box.set_margin_end(18)
-        box.set_margin_top(16)
-        box.set_margin_bottom(16)
-
-        title = self.Gtk.Label(label="Keyboard Shortcuts")
-        title.get_style_context().add_class("popover-title")
-        title.set_halign(self.Gtk.Align.START)
-        box.pack_start(title, False, False, 0)
-
-        grid = self.Gtk.Grid()
-        grid.set_column_spacing(24)
-        grid.set_row_spacing(10)
-
-        shortcuts = [
-            ("Apply & Regen Theme", "Enter / L-Click"),
-            ("Fast Apply", "Alt+S / R-Click"),
-            ("Toggle Favorite (Pin)", "Alt+A / M-Click"),
-            ("Toggle Favorites View", "Alt+P"),
-            ("Rebuild Cache", "Alt+R"),
-            ("Preferences", "Alt+O"),
-            ("Keyboard Shortcuts", "F1"),
-            ("Focus Search", "Ctrl+F / /"),
-            ("Quit Selector", "Esc / Q / Ctrl+C")
-        ]
-
-        for i, (desc, keys) in enumerate(shortcuts):
-            lbl_desc = self.Gtk.Label(label=desc)
-            lbl_desc.set_halign(self.Gtk.Align.START)
-
-            lbl_keys = self.Gtk.Label()
-            lbl_keys.set_markup(
-                f"<span font_family='monospace' foreground='#a6adc8'><b>{keys}</b></span>"
+        gtk_settings = Gtk.Settings.get_default()
+        if gtk_settings is not None:
+            gtk_settings.set_property(
+                "gtk-application-prefer-dark-theme", True
             )
-            lbl_keys.set_halign(self.Gtk.Align.END)
 
-            grid.attach(lbl_desc, 0, i, 1, 1)
-            grid.attach(lbl_keys, 1, i, 1, 1)
+        self.window = Gtk.ApplicationWindow(application=application)
+        self.window.set_title("Wallpaper Selector")
+        self.window.set_default_size(800, 600)
+        self.window.connect("destroy", self.on_window_destroy)
+        self.window.connect("key-press-event", self.on_key_press)
 
-        box.pack_start(grid, False, False, 0)
-        box.show_all()
-        popover.add(box)
-        popover.popup()
+        self.setup_css()
 
-    def on_window_destroy(self, widget):
-        self.window = None
-
-    def on_app_shutdown(self, application):
-        self.executor.shutdown(wait=False, cancel_futures=True)
-        _reclaim_idle_memory()
-
-    def _create_empty_state_placeholder(self):
-        box = self.Gtk.Box(orientation=self.Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_halign(self.Gtk.Align.CENTER)
-        box.set_valign(self.Gtk.Align.CENTER)
-
-        icon = self.Gtk.Image.new_from_icon_name("edit-find-symbolic", self.Gtk.IconSize.DIALOG)
-        icon.set_pixel_size(72)
-        icon.get_style_context().add_class("placeholder-icon")
-
-        title = self.Gtk.Label(label="No Wallpapers Found")
-        title.get_style_context().add_class("placeholder-title")
-
-        subtitle = self.Gtk.Label(
-            label="Try adjusting your search criteria or toggling your favorites view."
+        root = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=0,
         )
-        subtitle.get_style_context().add_class("placeholder-subtitle")
+        self.window.add(root)
 
-        for w in (icon, title, subtitle):
-            box.pack_start(w, False, False, 0)
-        box.show_all()
+        header = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=12,
+        )
+        header.set_name("header_bar")
+
+        self.search_entry = Gtk.SearchEntry()
+        self.search_entry.set_placeholder_text("Search…  /")
+        self.search_entry.set_tooltip_text("Search filenames: Ctrl+F or /")
+        self.search_entry.set_width_chars(22)
+        self.search_entry.set_hexpand(True)
+        self.search_entry.connect("changed", self.on_search_changed)
+        header.pack_start(self.search_entry, True, True, 0)
+
+        tabs = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=4,
+        )
+        tabs.get_style_context().add_class("tab-container")
+
+        self.btn_all = Gtk.Button(label="All")
+        self.btn_all.get_style_context().add_class("tab-btn")
+        self.btn_all.connect(
+            "clicked", lambda button: self.set_view_mode(False)
+        )
+
+        self.btn_fav = Gtk.Button(label="♥")
+        self.btn_fav.get_style_context().add_class("tab-btn")
+        self.btn_fav.set_tooltip_text("Favorites view: Alt+P")
+        self.btn_fav.connect(
+            "clicked", lambda button: self.set_view_mode(True)
+        )
+
+        tabs.pack_start(self.btn_all, False, False, 0)
+        tabs.pack_start(self.btn_fav, False, False, 0)
+        header.pack_start(tabs, False, False, 0)
+
+        self.btn_refresh = self._icon_button(
+            "view-refresh-symbolic",
+            "Rebuild cache: Alt+R",
+            lambda button: self.start_refresh(rebuild=True),
+        )
+        self.btn_settings = self._icon_button(
+            "preferences-system-symbolic",
+            "Preferences: Alt+O",
+            self.show_settings_popover,
+        )
+        self.btn_help = self._icon_button(
+            "help-about-symbolic",
+            "Keyboard shortcuts: F1",
+            self.show_shortcuts_popover,
+        )
+
+        for button in (
+            self.btn_refresh,
+            self.btn_settings,
+            self.btn_help,
+        ):
+            header.pack_start(button, False, False, 0)
+
+        root.pack_start(header, False, False, 0)
+
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.stack.set_transition_duration(120)
+        self.stack.set_hexpand(True)
+        self.stack.set_vexpand(True)
+
+        self.scrolled = Gtk.ScrolledWindow()
+        self.scrolled.set_policy(
+            Gtk.PolicyType.NEVER,
+            Gtk.PolicyType.AUTOMATIC,
+        )
+
+        self.flowbox = Gtk.FlowBox()
+        self.flowbox.set_valign(Gtk.Align.START)
+        self.flowbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.flowbox.set_min_children_per_line(1)
+        self.flowbox.set_max_children_per_line(30)
+        self.flowbox.set_homogeneous(True)
+        self.flowbox.set_activate_on_single_click(True)
+        self.flowbox.set_filter_func(self.filter_child)
+        self.flowbox.connect("child-activated", self.on_child_activated)
+        self.flowbox.connect(
+            "selected-children-changed",
+            self.on_selection_changed,
+        )
+
+        # Inventory is already sorted; no repeated FlowBox sort callback.
+        self.scrolled.add(self.flowbox)
+        self.stack.add_named(self.scrolled, "grid")
+        self.stack.add_named(self._make_empty_view(), "empty")
+        self.stack.add_named(self._make_loading_view(), "loading")
+
+        root.pack_start(self.stack, True, True, 0)
+
+        self.window.show_all()
+        self.set_view_mode(self.show_only_favorites)
+        self.start_refresh()
+
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            source = GLib.unix_signal_add(
+                GLib.PRIORITY_DEFAULT,
+                signum,
+                self._on_unix_signal,
+            )
+            self.signal_sources.append(source)
+
+        self.window.present()
+
+        if self.startup_messages:
+            message = "\n\n".join(self.startup_messages)
+            self.startup_messages.clear()
+            self._post_ui(
+                self.show_error,
+                "Configuration Read Error",
+                message,
+            )
+
+    def _icon_button(self, icon_name, tooltip, callback):
+        button = Gtk.Button()
+        button.set_image(
+            Gtk.Image.new_from_icon_name(
+                icon_name,
+                Gtk.IconSize.BUTTON,
+            )
+        )
+        button.set_tooltip_text(tooltip)
+        button.get_style_context().add_class("action-btn")
+        button.connect("clicked", callback)
+        return button
+
+    def _make_empty_view(self):
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+        )
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_valign(Gtk.Align.CENTER)
+        box.set_border_width(24)
+
+        icon = Gtk.Image.new_from_icon_name(
+            "edit-find-symbolic",
+            Gtk.IconSize.DIALOG,
+        )
+        icon.set_pixel_size(64)
+
+        self.empty_title = Gtk.Label(label="No Wallpapers Found")
+        self.empty_title.get_style_context().add_class("placeholder-title")
+
+        self.empty_subtitle = Gtk.Label(
+            label="Try another search or switch out of favorites."
+        )
+        self.empty_subtitle.set_line_wrap(True)
+        self.empty_subtitle.set_justify(Gtk.Justification.CENTER)
+
+        box.pack_start(icon, False, False, 0)
+        box.pack_start(self.empty_title, False, False, 0)
+        box.pack_start(self.empty_subtitle, False, False, 0)
         return box
 
-    def _create_loading_state_placeholder(self):
-        box = self.Gtk.Box(orientation=self.Gtk.Orientation.VERTICAL, spacing=16)
-        box.set_halign(self.Gtk.Align.CENTER)
-        box.set_valign(self.Gtk.Align.CENTER)
-
-        spinner = self.Gtk.Spinner()
-        spinner.start()
-        spinner.set_size_request(64, 64)
-
-        title = self.Gtk.Label(label="Rebuilding Image Cache...")
-        title.get_style_context().add_class("placeholder-title")
-
-        subtitle = self.Gtk.Label(
-            label="Optimizing thumbnails, analyzing geometry, and sweeping orphans."
+    def _make_loading_view(self):
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=16,
         )
-        subtitle.get_style_context().add_class("placeholder-subtitle")
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_valign(Gtk.Align.CENTER)
+        box.set_border_width(24)
 
-        progress_bar = self.Gtk.ProgressBar()
-        progress_bar.set_size_request(400, -1)
-        progress_bar.set_show_text(True)
-        progress_bar.set_text("Preparing...")
-        progress_bar.get_style_context().add_class("rebuild-progress")
-        self._loading_progress_bar = progress_bar
+        self.loading_spinner = Gtk.Spinner()
+        self.loading_spinner.set_size_request(56, 56)
 
-        status_label = self.Gtk.Label(label="")
-        status_label.get_style_context().add_class("placeholder-subtitle")
-        self._loading_status_label = status_label
+        self.loading_title = Gtk.Label(label="Loading Wallpapers…")
+        self.loading_title.get_style_context().add_class(
+            "placeholder-title"
+        )
 
-        for w in (spinner, title, subtitle, progress_bar, status_label):
-            box.pack_start(w, False, False, 0)
-        box.show_all()
+        self.loading_progress = Gtk.ProgressBar()
+        self.loading_progress.set_size_request(360, -1)
+        self.loading_progress.set_show_text(True)
+
+        self.loading_status = Gtk.Label(label="")
+        self.loading_status.set_line_wrap(True)
+        self.loading_status.set_justify(Gtk.Justification.CENTER)
+
+        for widget in (
+            self.loading_spinner,
+            self.loading_title,
+            self.loading_progress,
+            self.loading_status,
+        ):
+            box.pack_start(widget, False, False, 0)
+
         return box
 
     def setup_css(self):
-        css_provider = self.Gtk.CssProvider()
-        custom_css = """
-        window { background-color: @theme_bg_color; }
-        #header_bar {
-            background-color: shade(@theme_bg_color, 0.97);
-            padding: 10px 14px;
-            border-bottom: 1px solid alpha(@theme_fg_color, 0.1);
+        css = """
+        window {
+            background-color: @theme_bg_color;
         }
-        .search-bar {
+        #header_bar {
+            padding: 10px 14px;
+            background-color: shade(@theme_bg_color, 0.97);
+            border-bottom: 1px solid alpha(@theme_fg_color, 0.12);
+        }
+        entry {
             border-radius: 8px;
-            padding: 6px 10px;
-            font-size: 0.95em;
-            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
         }
         .action-btn {
-            padding: 5px 12px; border-radius: 8px; font-weight: bold; font-size: 0.9em;
-            background-color: alpha(@theme_fg_color, 0.04);
-            border: 1px solid alpha(@theme_fg_color, 0.08);
-            transition: all 0.2s ease;
-        }
-        .action-btn:hover {
-            background-color: alpha(@theme_selected_bg_color, 0.15);
-            border-color: @theme_selected_bg_color;
-        }
-        .icon-btn {
+            border-radius: 8px;
             padding: 6px 8px;
         }
-
         .tab-container {
-            background-color: alpha(@theme_fg_color, 0.03);
-            border: 1px solid alpha(@theme_fg_color, 0.06);
-            border-radius: 10px;
-            padding: 4px;
-            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
+            border-radius: 9px;
+            padding: 3px;
+            background-color: alpha(@theme_fg_color, 0.05);
         }
         .tab-btn {
             background-image: none;
             background-color: transparent;
             border: 1px solid transparent;
             border-radius: 6px;
-            padding: 6px 24px;
-            font-weight: 800;
-            font-size: 0.95em;
-            color: alpha(@theme_fg_color, 0.5);
-            transition: all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
-        }
-        .tab-btn.fav-btn {
-            font-size: 1.05em;
-        }
-        .tab-btn:hover {
-            background-color: alpha(@theme_fg_color, 0.05);
-            color: alpha(@theme_fg_color, 0.8);
+            padding: 6px 15px;
+            font-weight: bold;
         }
         .tab-btn.active-all {
-            background-color: alpha(@theme_fg_color, 0.12);
-            color: @theme_fg_color;
-            border: 1px solid alpha(@theme_fg_color, 0.1);
-            box-shadow: 0px 4px 10px rgba(0,0,0,0.15);
+            background-color: alpha(@theme_fg_color, 0.13);
+            border-color: alpha(@theme_fg_color, 0.15);
         }
         .tab-btn.active-fav {
-            background-color: alpha(#f38ba8, 0.15);
             color: #f38ba8;
-            border: 1px solid alpha(#f38ba8, 0.3);
-            box-shadow: 0px 4px 12px alpha(#f38ba8, 0.25);
-            text-shadow: 0px 1px 3px alpha(#f38ba8, 0.4);
-        }
-
-        .popover-title {
-            font-weight: 800;
-            font-size: 1.1em;
-            margin-bottom: 8px;
-            color: @theme_selected_bg_color;
-            border-bottom: 1px solid alpha(@theme_fg_color, 0.1);
-            padding-bottom: 6px;
+            background-color: alpha(#f38ba8, 0.15);
+            border-color: alpha(#f38ba8, 0.35);
         }
         stack, scrolledwindow, viewport {
             background-color: @theme_base_color;
         }
-
-        /* THEME THE OVERSCROLL "RUBBER BAND" GLOW */
         scrolledwindow overshoot.top {
-            background-image: radial-gradient(farthest-side at top, alpha(@theme_selected_bg_color, 0.2), transparent);
+            background-image: linear-gradient(
+                to bottom,
+                alpha(@theme_selected_bg_color, 0.2),
+                transparent
+            );
         }
         scrolledwindow overshoot.bottom {
-            background-image: radial-gradient(farthest-side at bottom, alpha(@theme_selected_bg_color, 0.2), transparent);
+            background-image: linear-gradient(
+                to top,
+                alpha(@theme_selected_bg_color, 0.2),
+                transparent
+            );
         }
-
-        /* REMOVE THE STATIC UNDERSHOOT "DASHED LINE" IF PRESENT */
         scrolledwindow undershoot.top,
         scrolledwindow undershoot.bottom {
             background-image: none;
             background-color: transparent;
         }
-
         flowbox {
-            background-color: transparent;
             padding: 12px;
+            background-color: transparent;
         }
         flowboxchild {
-            border-radius: 20px; padding: 6px; margin: 4px;
-            background-color: transparent; transition: all 0.2s ease;
+            border-radius: 18px;
+            padding: 6px;
+            margin: 4px;
             border: 2px solid transparent;
-        }
-        flowboxchild:selected {
-            background-color: alpha(@theme_selected_bg_color, 0.15);
-            border: 2px solid @theme_selected_bg_color;
-            box-shadow: 0px 4px 12px alpha(@theme_selected_bg_color, 0.3);
+            background-color: transparent;
         }
         flowboxchild:hover {
-            background-color: alpha(@theme_selected_bg_color, 0.1);
+            background-color: alpha(@theme_fg_color, 0.06);
         }
-        .placeholder-box {
-            background-color: alpha(@theme_fg_color, 0.05);
+        flowboxchild:selected {
+            border-color: @theme_selected_bg_color;
+            background-color: alpha(@theme_selected_bg_color, 0.15);
+        }
+        .thumbnail-placeholder {
             border-radius: 14px;
+            background-color: alpha(@theme_fg_color, 0.06);
+            color: alpha(@theme_fg_color, 0.45);
         }
         .wallpaper-name-overlay {
-            background-color: alpha(@theme_bg_color, 0.85); color: @theme_fg_color;
-            border-radius: 6px; padding: 4px 8px; font-size: 0.75em; font-weight: bold;
-            box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            padding: 4px 6px;
+            color: @theme_fg_color;
+            background-color: alpha(@theme_bg_color, 0.88);
+            font-size: 0.8em;
+            font-weight: bold;
         }
         .heart-icon {
             color: #f38ba8;
             font-size: 1.5em;
-            text-shadow: 0px 2px 5px rgba(0,0,0,0.6);
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
         }
-        .placeholder-icon { color: alpha(@theme_fg_color, 0.4); margin-bottom: 10px; }
         .placeholder-title {
-            font-size: 1.5em; font-weight: 800;
-            color: alpha(@theme_fg_color, 0.8); margin-bottom: 4px;
-        }
-        .placeholder-subtitle {
-            font-size: 1.0em; color: alpha(@theme_fg_color, 0.5);
-        }
-        .rebuild-progress {
-            border-radius: 6px;
-            min-height: 12px;
-        }
-        .rebuild-progress trough {
-            border-radius: 6px;
-            min-height: 12px;
-            background-color: alpha(@theme_fg_color, 0.08);
-        }
-        .rebuild-progress progress {
-            border-radius: 6px;
-            min-height: 12px;
-            background-color: @theme_selected_bg_color;
-        }
-
-        /* GTK DIALOG & ERROR POPUP DYNAMIC THEMING */
-        dialog.themed-error-dialog, window.themed-error-dialog {
-            background-color: alpha(@theme_bg_color, 0.98);
-            border: 1px solid alpha(@theme_fg_color, 0.15);
-            border-radius: 16px;
-            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
-        }
-        messagedialog {
-            background-color: alpha(@theme_bg_color, 0.98);
-            color: @theme_fg_color;
-        }
-        messagedialog .dialog-action-area button {
-            background-color: alpha(@theme_selected_bg_color, 0.15);
-            color: @theme_fg_color;
-            border: 1px solid @theme_selected_bg_color;
-            border-radius: 8px;
-            padding: 8px 24px;
+            font-size: 1.35em;
             font-weight: bold;
         }
-        .dialog-main-box {
-            background-color: transparent;
-        }
-        .dialog-error-icon {
-            color: #f38ba8;
+        .popover-title {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: @theme_selected_bg_color;
         }
         .dialog-title {
-            font-size: 1.25em;
-            font-weight: 800;
+            font-size: 1.15em;
+            font-weight: bold;
             color: #f38ba8;
         }
-        .dialog-subtitle {
-            font-size: 0.95em;
-            color: alpha(@theme_fg_color, 0.85);
-        }
-        .dialog-error-scroll {
-            background-color: alpha(@theme_fg_color, 0.04);
-            border: 1px solid alpha(@theme_fg_color, 0.1);
-            border-radius: 10px;
-            padding: 4px;
-        }
-        .dialog-error-text {
-            font-family: "JetBrainsMono Nerd Font", monospace;
-            font-size: 0.85em;
-            background-color: transparent;
-            color: alpha(@theme_fg_color, 0.9);
-        }
-        .dialog-ok-btn {
-            background-color: alpha(@theme_selected_bg_color, 0.15);
-            color: @theme_fg_color;
-            border: 1px solid @theme_selected_bg_color;
-            border-radius: 10px;
-            padding: 8px 32px;
-            font-weight: 800;
-            font-size: 0.95em;
-            transition: all 0.2s ease;
-        }
-        .dialog-ok-btn:hover {
-            background-color: alpha(@theme_selected_bg_color, 0.35);
-            box-shadow: 0 4px 12px alpha(@theme_selected_bg_color, 0.3);
+        .themed-error-dialog textview text {
+            background-color: @theme_base_color;
+            color: @theme_text_color;
         }
         """
 
+        provider = Gtk.CssProvider()
+
         try:
-            css_provider.load_from_data(custom_css.encode('utf-8'))
-            self.Gtk.StyleContext.add_provider_for_screen(
-                self.Gdk.Screen.get_default(), css_provider,
-                self.Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            provider.load_from_data(css.encode("utf-8"))
+            screen = Gdk.Screen.get_default()
+            if screen is not None:
+                Gtk.StyleContext.add_provider_for_screen(
+                    screen,
+                    provider,
+                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+                )
+        except GLib.Error as error:
+            log_error(f"Could not load application CSS: {error}")
+
+    # -------------------------------------------------------------------------
+    # Popovers
+    # -------------------------------------------------------------------------
+
+    def _new_popover(self, relative_to, title):
+        if self.popover is not None:
+            self.popover.destroy()
+
+        popover = Gtk.Popover.new(relative_to)
+        popover.set_position(Gtk.PositionType.BOTTOM)
+        self.popover = popover
+
+        def destroyed(widget):
+            if self.popover is widget:
+                self.popover = None
+
+        popover.connect("closed", lambda widget: widget.destroy())
+        popover.connect("destroy", destroyed)
+
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=14,
+        )
+        box.set_border_width(18)
+
+        label = Gtk.Label(label=title)
+        label.set_xalign(0)
+        label.get_style_context().add_class("popover-title")
+        box.pack_start(label, False, False, 0)
+
+        popover.add(box)
+        return popover, box
+
+    def show_settings_popover(self, widget):
+        if self.closing:
+            return
+
+        popover, box = self._new_popover(widget, "Preferences")
+
+        grid = Gtk.Grid()
+        grid.set_column_spacing(22)
+        grid.set_row_spacing(12)
+
+        rows = (
+            ("Auto-close after Full Apply", "AUTO_CLOSE"),
+            ("Auto-close after Fast Apply", "FAST_APPLY_AUTO_CLOSE"),
+            ("Show Wallpaper Filenames", "SHOW_FILENAMES"),
+            ("Default to Favorites View", "START_IN_FAVORITES"),
+            ("Auto-Sweep Cache on Startup", "AUTO_SWEEP_CACHE"),
+        )
+
+        for row, (description, key) in enumerate(rows):
+            label = Gtk.Label(label=description)
+            label.set_xalign(0)
+
+            switch = Gtk.Switch()
+            switch.set_active(self.settings[key])
+            switch.set_halign(Gtk.Align.END)
+            switch.set_valign(Gtk.Align.CENTER)
+
+            def toggled(control, specification, setting=key):
+                old_value = self.settings[setting]
+                new_value = control.get_active()
+
+                if old_value == new_value:
+                    return
+
+                self.settings[setting] = new_value
+
+                try:
+                    self._save_settings()
+                except Exception as error:
+                    self.settings[setting] = old_value
+                    control.set_active(old_value)
+                    self.show_error(
+                        "Settings Save Failed",
+                        describe_error(error),
+                    )
+                    return
+
+                if setting == "SHOW_FILENAMES":
+                    self.update_filename_visibility()
+
+            switch.connect("notify::active", toggled)
+            grid.attach(label, 0, row, 1, 1)
+            grid.attach(switch, 1, row, 1, 1)
+
+        box.pack_start(grid, False, False, 0)
+        popover.show_all()
+        popover.popup()
+
+    def show_shortcuts_popover(self, widget):
+        if self.closing:
+            return
+
+        popover, box = self._new_popover(widget, "Keyboard Shortcuts")
+
+        grid = Gtk.Grid()
+        grid.set_column_spacing(24)
+        grid.set_row_spacing(10)
+
+        shortcuts = (
+            ("Apply and regenerate theme", "Enter / Left-click"),
+            ("Fast apply", "Alt+S / Right-click"),
+            ("Toggle favorite", "Alt+A / Middle-click"),
+            ("Toggle favorites view", "Alt+P"),
+            ("Rebuild cache", "Alt+R"),
+            ("Preferences", "Alt+O"),
+            ("Keyboard shortcuts", "F1"),
+            ("Focus search", "Ctrl+F / /"),
+            ("Quit outside search", "Esc / Q / Ctrl+C"),
+        )
+
+        for row, (description, keys) in enumerate(shortcuts):
+            label = Gtk.Label(label=description)
+            label.set_xalign(0)
+
+            key_label = Gtk.Label(label=keys)
+            key_label.set_xalign(1)
+
+            attributes = Pango.AttrList()
+            attributes.insert(Pango.attr_family_new("monospace"))
+            key_label.set_attributes(attributes)
+
+            grid.attach(label, 0, row, 1, 1)
+            grid.attach(key_label, 1, row, 1, 1)
+
+        box.pack_start(grid, False, False, 0)
+        popover.show_all()
+        popover.popup()
+
+    # -------------------------------------------------------------------------
+    # Scanning, rebuilds, and batched widget creation
+    # -------------------------------------------------------------------------
+
+    def _cancel_generation(self):
+        self.generation_stop.set()
+
+        for future in self.image_futures:
+            future.cancel()
+
+        self.image_futures.clear()
+        self.image_iterator = iter(())
+
+        if self.control_future is not None:
+            self.control_future.cancel()
+            self.control_future = None
+
+        self.generation += 1
+        self.generation_stop = threading.Event()
+
+    def _update_busy_controls(self):
+        if self.btn_refresh is not None:
+            self.btn_refresh.set_sensitive(
+                not self.is_refreshing and not self.is_applying
             )
-        except Exception as e:
-            print(f"CSS Error: {e}")
 
-    def sort_flowbox(self, child1, child2):
-        key1 = natural_keys(getattr(child1, 'rel_path', ''))
-        key2 = natural_keys(getattr(child2, 'rel_path', ''))
-        if key1 < key2:
-            return -1
-        if key1 > key2:
-            return 1
-        return 0
+    def start_refresh(self, *, rebuild=False):
+        if self.closing or self.is_refreshing or self.is_applying:
+            return
 
-    def filter_flowbox(self, child) -> bool:
-        rel_path = getattr(child, 'rel_path', '')
-        if self.show_only_favorites and rel_path not in self.favorites:
-            return False
-        if self.search_query and self.search_query not in rel_path.lower():
-            return False
-        return True
+        self._cancel_generation()
+        generation = self.generation
+        stop_event = self.generation_stop
 
-    def _update_visibility_and_selection(self):
-        if getattr(self, '_is_refreshing', False):
-            return False
+        self.is_refreshing = True
+        self._update_busy_controls()
 
-        selected = self.flowbox.get_selected_children()
-        current_selected = selected[0] if selected else None
+        self.loading_title.set_text(
+            "Rebuilding Image Cache…" if rebuild
+            else "Loading Wallpapers…"
+        )
+        self.loading_progress.set_fraction(0)
+        self.loading_progress.set_text("Preparing…")
+        self.loading_status.set_text("")
+        self.loading_spinner.start()
+        self.stack.set_visible_child_name("loading")
 
-        if current_selected and self.filter_flowbox(current_selected):
-            self.stack.set_visible_child_name("grid")
-            return False
+        def progress(current, total, generated, failed):
+            self._post_ui(
+                self._update_cache_progress,
+                generation,
+                current,
+                total,
+                generated,
+                failed,
+            )
 
-        has_visible = False
-        first_visible = None
+        def work():
+            check_cancelled(stop_event)
+
+            if rebuild:
+                result = CacheManager.build_cache(
+                    force=True,
+                    progress_callback=progress,
+                    stop_event=stop_event,
+                )
+            else:
+                if self.settings["AUTO_SWEEP_CACHE"]:
+                    paths = CacheManager.scan_and_sweep(stop_event)
+                else:
+                    paths = scan_wallpapers(stop_event)
+                result = CacheBuildResult(paths)
+
+            favorites = load_favorites()
+
+            # Tracker errors should not prevent browsing the collection.
+            current_path = None
+            tracker_warning = ""
+
+            try:
+                state = read_state_conf()
+                track = (
+                    TRACK_LIGHT
+                    if state.get("THEME_MODE", "dark") == "light"
+                    else TRACK_DARK
+                )
+                current_path = match_wallpaper_id(
+                    result.wallpapers,
+                    read_tracker(track),
+                )
+            except Exception as error:
+                tracker_warning = describe_error(error)
+
+            return result, favorites, current_path, tracker_warning
+
+        self.control_future = self.control_executor.submit(work)
+        self.control_future.add_done_callback(
+            lambda future: self._post_ui(
+                self._scan_complete,
+                future,
+                generation,
+            )
+        )
+
+    def _update_cache_progress(
+        self,
+        generation,
+        current,
+        total,
+        generated,
+        failed,
+    ):
+        if generation != self.generation or not self.is_refreshing:
+            return
+
+        self.loading_progress.set_fraction(
+            current / total if total else 1.0
+        )
+        self.loading_progress.set_text(f"{current} / {total}")
+        self.loading_status.set_text(
+            f"{generated} regenerated · {failed} unavailable"
+        )
+
+    def _scan_complete(self, future, generation):
+        if generation != self.generation:
+            return
+
+        self.control_future = None
+
+        try:
+            result, favorites, current_path, warning = future.result()
+        except OperationCancelled:
+            return
+        except Exception as error:
+            self.is_refreshing = False
+            self.loading_spinner.stop()
+            self._update_busy_controls()
+
+            if self.children:
+                self.update_visibility_and_selection()
+                self._start_image_jobs()
+            else:
+                self.empty_title.set_text("Could Not Load Wallpapers")
+                self.empty_subtitle.set_text(
+                    "Check the wallpaper directory and try rebuilding."
+                )
+                self.stack.set_visible_child_name("empty")
+
+            self.show_error(
+                "Wallpaper Loading Failed",
+                describe_error(error),
+            )
+            return
+
+        if warning:
+            log_error(f"Tracker warning: {warning}")
+
+        self.favorites = favorites
+        self.wallpapers = result.wallpapers
+
+        self.current_selected_child = None
 
         for child in self.flowbox.get_children():
-            if self.filter_flowbox(child):
-                has_visible = True
-                first_visible = child
+            child.destroy()
+
+        self.children.clear()
+
+        self.loading_progress.set_fraction(0)
+        self.loading_progress.set_text("Building image grid…")
+
+        iterator = iter(self.wallpapers)
+        created = 0
+        total = len(self.wallpapers)
+
+        def create_batch():
+            nonlocal created
+
+            if self.closing or generation != self.generation:
+                return GLib.SOURCE_REMOVE
+
+            try:
+                for _ in range(80):
+                    rel_path = next(iterator)
+                    child = self._create_child(rel_path)
+                    self.children[rel_path] = child
+                    self.flowbox.add(child)
+                    child.show_all()
+                    created += 1
+            except StopIteration:
+                self._finish_grid(generation, current_path, result.failed)
+                return GLib.SOURCE_REMOVE
+            except Exception as error:
+                self.is_refreshing = False
+                self.loading_spinner.stop()
+                self._update_busy_controls()
+                self.update_visibility_and_selection()
+                self.show_error(
+                    "Grid Creation Failed",
+                    describe_error(error),
+                )
+                return GLib.SOURCE_REMOVE
+
+            self.loading_progress.set_fraction(
+                created / total if total else 1.0
+            )
+            return GLib.SOURCE_CONTINUE
+
+        GLib.idle_add(create_batch)
+
+    def _create_child(self, rel_path):
+        child = Gtk.FlowBoxChild()
+        child.rel_path = rel_path
+        child.name_label = None
+        child.pixbuf = None
+        child.image_finished = False
+
+        # A persistent EventBox provides reliable per-tile middle/right clicks
+        # without guessing FlowBox event coordinate origins.
+        event_box = Gtk.EventBox()
+        event_box.set_visible_window(False)
+        event_box.set_size_request(RENDER_SIZE, RENDER_SIZE)
+        event_box.set_tooltip_text(rel_path)
+        event_box.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+        event_box.connect(
+            "button-press-event",
+            self.on_tile_button_press,
+            child,
+        )
+
+        child.event_box = event_box
+        event_box.add(self._thumbnail_placeholder(failed=False))
+        child.add(event_box)
+        return child
+
+    def _finish_grid(self, generation, current_path, failed):
+        if generation != self.generation:
+            return
+
+        self.is_refreshing = False
+        self.loading_spinner.stop()
+        self._update_busy_controls()
+
+        self.empty_title.set_text("No Wallpapers Found")
+        self.empty_subtitle.set_text(
+            "Try another search or switch out of favorites."
+        )
+
+        self.flowbox.invalidate_filter()
+
+        target = self.children.get(current_path)
+        if target is not None and self.filter_child(target):
+            self.flowbox.select_child(target)
+
+        self.update_visibility_and_selection()
+        self._start_image_jobs()
+        self._focus_selected_later(generation)
+
+        if failed:
+            log_error(
+                f"Cache rebuild finished with {failed} unavailable images."
+            )
+
+    # -------------------------------------------------------------------------
+    # Bounded asynchronous image loading
+    # -------------------------------------------------------------------------
+
+    def _start_image_jobs(self):
+        if self.closing:
+            return
+
+        self.image_iterator = iter(self.wallpapers)
+        self._pump_image_jobs()
+
+    def _pump_image_jobs(self):
+        if self.closing or self.is_refreshing:
+            return
+
+        generation = self.generation
+        stop_event = self.generation_stop
+
+        while len(self.image_futures) < MAX_IMAGE_JOBS:
+            try:
+                rel_path = next(self.image_iterator)
+            except StopIteration:
                 break
 
-        if has_visible:
-            self.stack.set_visible_child_name("grid")
-            if first_visible:
-                self.flowbox.select_child(first_visible)
-        else:
-            self.stack.set_visible_child_name("empty")
+            future = self.image_executor.submit(
+                self._load_pixbuf,
+                rel_path,
+                stop_event,
+            )
+            self.image_futures.add(future)
 
-        return False
+            future.add_done_callback(
+                lambda finished, path=rel_path, gen=generation:
+                    self._post_ui(
+                        self._image_complete,
+                        finished,
+                        path,
+                        gen,
+                    )
+            )
 
-    def on_search_changed(self, widget):
-        self.search_query = self.search_entry.get_text().lower()
-        self.flowbox.invalidate_filter()
-        self.GLib.idle_add(self._update_visibility_and_selection)
+    @staticmethod
+    def _load_pixbuf(rel_path, stop_event):
+        check_cancelled(stop_event)
 
-    def on_selection_changed(self, flowbox):
-        selected = flowbox.get_selected_children()
+        status = CacheManager.generate_thumb(
+            rel_path,
+            stop_event=stop_event,
+        )
 
-        prev = self.current_selected_child
-        if prev and hasattr(prev, 'name_label'):
-            prev.name_label.hide()
+        if status not in {"cached", "generated"}:
+            return None
 
-        if selected:
-            self.current_selected_child = selected[0]
-            if hasattr(self.current_selected_child, 'name_label'):
-                if self.app_settings.get("SHOW_FILENAMES", True):
-                    self.current_selected_child.name_label.show()
-        else:
-            self.current_selected_child = None
+        thumb = CacheManager.get_thumb_path(rel_path)
 
-    def apply_filename_visibility(self):
-        show_labels = self.app_settings.get("SHOW_FILENAMES", True)
-        selected = self.flowbox.get_selected_children()
-        active_child = selected[0] if selected else None
+        for attempt in range(2):
+            check_cancelled(stop_event)
 
-        if active_child and hasattr(active_child, 'name_label'):
-            if show_labels:
-                active_child.name_label.show()
-            else:
-                active_child.name_label.hide()
-
-    def get_current_wallpaper_id(self) -> str:
-        state = self.parse_state_conf()
-        theme_mode = state.get('THEME_MODE', 'dark')
-        track_file = TRACK_LIGHT if theme_mode == "light" else TRACK_DARK
-
-        if track_file.exists():
             try:
-                return track_file.read_text(encoding='utf-8').strip()
-            except Exception as e:
-                print(f"Error reading track file: {e}")
-        return ""
+                return GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                    str(thumb),
+                    RENDER_SIZE,
+                    RENDER_SIZE,
+                    True,
+                )
+            except (GLib.Error, OSError) as error:
+                if attempt:
+                    log_error(
+                        f"Cannot decode thumbnail for {rel_path!r}: {error}"
+                    )
+                    return None
 
-    def refresh_ui(self, pre_scanned_wallpapers=None):
-        """
-        Reconstructs the UI state.
-        Uses pre_scanned_wallpapers to skip blocking the UI thread if triggered by a background rebuild.
-        """
-        self.current_generation += 1
+                # A broken cached PNG is not proof of a broken source image.
+                status = CacheManager.generate_thumb(
+                    rel_path,
+                    force=True,
+                    stop_event=stop_event,
+                )
+                if status != "generated":
+                    return None
 
-        for child in self.flowbox.get_children():
-            self.flowbox.remove(child)
-            child.destroy()
-            
-        self.ui_children.clear()
-        self.loaded_pixbufs.clear()
+        return None
 
-        THUMB_DIR.mkdir(parents=True, exist_ok=True)
-        
-        if pre_scanned_wallpapers is not None:
-            self.wallpapers = pre_scanned_wallpapers
-        else:
-            self.wallpapers = CacheManager.get_all_wallpapers()
+    def _image_complete(self, future, rel_path, generation):
+        self.image_futures.discard(future)
 
-        # Orphan sweep safely relies on file age/timestamp thresholds to avoid race conditions
-        if self.app_settings.get("AUTO_SWEEP_CACHE", False):
-            self.executor.submit(CacheManager.sweep_orphaned_cache, self.wallpapers)
-
-        current_id = self.get_current_wallpaper_id()
-        target_child = None
-
-        for rel_path in self.wallpapers:
-            child = self.Gtk.FlowBoxChild()
-            child.rel_path = rel_path
-
-            box = self.Gtk.Box()
-            box.set_size_request(RENDER_SIZE, RENDER_SIZE)
-            box.get_style_context().add_class("placeholder-box")
-
-            spinner = self.Gtk.Spinner()
-            spinner.start()
-            spinner.set_halign(self.Gtk.Align.CENTER)
-            spinner.set_valign(self.Gtk.Align.CENTER)
-            box.pack_start(spinner, True, True, 0)
-
-            child.add(box)
-            self.flowbox.add(child)
-            self.ui_children[rel_path] = child
-
-            if current_id and (rel_path == current_id or os.path.basename(rel_path) == current_id):
-                target_child = child
-
-        if self.window:
-            self.window.show_all()
-
-        if target_child:
-            self.flowbox.select_child(target_child)
-
-        self.flowbox.invalidate_filter()
-        self._update_visibility_and_selection()
-
-        scroll_ctx = {'retries': 0}
-
-        def _grab_focus():
-            selected = self.flowbox.get_selected_children()
-            if selected:
-                child = selected[0]
-                alloc = child.get_allocation()
-
-                if alloc.height <= 1 and scroll_ctx['retries'] < 20:
-                    scroll_ctx['retries'] += 1
-                    return True
-
-                child.grab_focus()
-
-                if self.scrolled:
-                    adj = self.scrolled.get_vadjustment()
-                    row_offset = RENDER_SIZE + 24
-                    target_y = alloc.y - row_offset
-
-                    lower = adj.get_lower()
-                    upper = adj.get_upper() - adj.get_page_size()
-
-                    if upper > lower:
-                        adj.set_value(max(lower, min(target_y, upper)))
-            else:
-                self.flowbox.grab_focus()
-            return False
-
-        self.GLib.timeout_add(16, _grab_focus)
-
-        gen = self.current_generation
-        for rel_path in self.wallpapers:
-            self.executor.submit(self._load_and_render_image, rel_path, gen)
-
-    def _load_and_render_image(self, rel_path: str, generation: int):
-        if generation != self.current_generation:
+        if generation != self.generation:
             return
-
-        CacheManager.generate_thumb(rel_path, force=False)
-
-        if generation != self.current_generation:
-            return
-
-        thumb_path = CacheManager.get_thumb_path(rel_path)
 
         try:
-            if not thumb_path.exists():
-                # Throw silently so the UI spinner can be cleaned up without terminal spam
-                raise FileNotFoundError("Thumbnail not generated (possibly marked as bad)")
-
-            pixbuf = self.GdkPixbuf.Pixbuf.new_from_file_at_scale(
-                str(thumb_path), RENDER_SIZE, RENDER_SIZE, True
+            pixbuf = future.result()
+        except OperationCancelled:
+            return
+        except Exception as error:
+            log_error(
+                f"Image worker failed for {rel_path!r}: "
+                f"{describe_error(error)}"
             )
-            self.GLib.idle_add(self._update_ui_child, rel_path, pixbuf, generation)
-        except Exception as e:
-            # Only print the error if it's NOT just an intentionally skipped bad file
-            if not isinstance(e, FileNotFoundError):
-                print(f"Failed loading {rel_path} into Pixbuf: {e}")
-                # If the thumb actually exists but crashed GdkPixbuf, it's corrupt. Destroy and mark bad.
-                if thumb_path.exists():
-                    try:
-                        thumb_path.unlink(missing_ok=True)
-                        CacheManager.get_thumb_path(rel_path).with_suffix('.bad').touch(exist_ok=True)
-                    except OSError:
-                        pass
-                        
-            # Handles exceptions by passing None to the UI so the spinner is cleanly destroyed
-            self.GLib.idle_add(self._update_ui_child, rel_path, None, generation)
+            pixbuf = None
 
-    def _update_ui_child(self, rel_path: str, pixbuf, generation: int = -1):
-        if generation != -1 and generation != self.current_generation:
-            return False
+        child = self.children.get(rel_path)
+        if child is not None:
+            child.pixbuf = pixbuf
+            child.image_finished = True
+            self._render_child(child)
 
-        self.loaded_pixbufs[rel_path] = pixbuf
+        self._pump_image_jobs()
 
-        child = self.ui_children.get(rel_path)
-        if not child:
-            return False
+    def _thumbnail_placeholder(self, *, failed):
+        box = Gtk.Box()
+        box.set_size_request(RENDER_SIZE, RENDER_SIZE)
+        box.get_style_context().add_class("thumbnail-placeholder")
 
-        # Destroy the spinner
-        for c in child.get_children():
-            child.remove(c)
-            c.destroy()
-            
-        if not pixbuf:
-            # Reached if thumbnail failed or doesn't exist. Leaves the empty placeholder box.
-            return False
+        icon = Gtk.Image.new_from_icon_name(
+            "image-missing-symbolic" if failed
+            else "image-x-generic-symbolic",
+            Gtk.IconSize.DIALOG,
+        )
+        icon.set_halign(Gtk.Align.CENTER)
+        icon.set_valign(Gtk.Align.CENTER)
+        box.pack_start(icon, True, True, 0)
+        return box
 
-        image = self.Gtk.Image.new_from_pixbuf(pixbuf)
-        overlay = self.Gtk.Overlay()
+    def _render_child(self, child):
+        child.name_label = None
+
+        old_content = child.event_box.get_child()
+        if old_content is not None:
+            old_content.destroy()
+
+        if child.pixbuf is None:
+            placeholder = self._thumbnail_placeholder(
+                failed=child.image_finished
+            )
+            child.event_box.add(placeholder)
+            placeholder.show_all()
+            return
+
+        overlay = Gtk.Overlay()
+        image = Gtk.Image.new_from_pixbuf(child.pixbuf)
         overlay.add(image)
 
-        if rel_path in self.favorites:
-            heart = self.Gtk.Label(label="♥")
+        if child.rel_path in self.favorites:
+            heart = Gtk.Label(label="♥")
             heart.get_style_context().add_class("heart-icon")
-            heart.set_halign(self.Gtk.Align.END)
-            heart.set_valign(self.Gtk.Align.START)
-            heart.set_margin_top(8)
+            heart.set_halign(Gtk.Align.END)
+            heart.set_valign(Gtk.Align.START)
+            heart.set_margin_top(6)
             heart.set_margin_end(8)
             overlay.add_overlay(heart)
+            overlay.set_overlay_pass_through(heart, True)
 
-        name_label = self.Gtk.Label(label=os.path.basename(rel_path))
-        name_label.get_style_context().add_class("wallpaper-name-overlay")
-        name_label.set_halign(self.Gtk.Align.END)
-        name_label.set_valign(self.Gtk.Align.END)
+        name_label = Gtk.Label(
+            label=os.path.basename(child.rel_path)
+        )
+        name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        name_label.set_max_width_chars(17)
+        name_label.set_halign(Gtk.Align.END)
+        name_label.set_valign(Gtk.Align.END)
         name_label.set_margin_bottom(8)
         name_label.set_margin_end(8)
         name_label.set_no_show_all(True)
+        name_label.get_style_context().add_class(
+            "wallpaper-name-overlay"
+        )
+
+        overlay.add_overlay(name_label)
+        overlay.set_overlay_pass_through(name_label, True)
 
         child.name_label = name_label
-        overlay.add_overlay(name_label)
+        child.event_box.add(overlay)
         overlay.show_all()
-        child.add(overlay)
 
-        if self.current_selected_child == child and self.app_settings.get("SHOW_FILENAMES", True):
-            name_label.show()
+        name_label.set_visible(
+            child is self.current_selected_child
+            and self.settings["SHOW_FILENAMES"]
+        )
 
-        return False
+    # -------------------------------------------------------------------------
+    # Filtering, selection, and focus
+    # -------------------------------------------------------------------------
 
-    def get_selected_path(self):
-        selected = self.flowbox.get_selected_children()
-        return getattr(selected[0], 'rel_path', None) if selected else None
+    def filter_child(self, child):
+        rel_path = getattr(child, "rel_path", "")
 
-    def trigger_action(self, action_type: str):
-        path = self.get_selected_path()
-        match action_type:
-            case 'fast':
-                if path:
-                    self.apply_wallpaper(path, regen=False)
-            case 'fav':
-                if path:
-                    self.toggle_favorite(path)
-            case 'toggle':
-                self.set_view_mode(not self.show_only_favorites)
-            case 'refresh':
-                if self._is_refreshing:
-                    return
-
-                self._is_refreshing = True
-                print("Force rebuilding entire cache...")
-                self.stack.set_visible_child_name("loading")
-
-                if self._loading_progress_bar:
-                    self._loading_progress_bar.set_fraction(0.0)
-                    self._loading_progress_bar.set_text("Preparing...")
-                if self._loading_status_label:
-                    self._loading_status_label.set_text("")
-
-                def _progress_callback(current, total, generated):
-                    fraction = current / total if total > 0 else 0.0
-                    text = f"{current} / {total}  ({generated} regenerated)"
-                    self.GLib.idle_add(self._update_rebuild_progress, fraction, text)
-
-                def _bg_rebuild():
-                    wallpapers = None
-                    try:
-                        wallpapers = CacheManager.build_cache(force=True, progress_callback=_progress_callback)
-                    finally:
-                        def _on_done():
-                            self._is_refreshing = False
-                            self.refresh_ui(wallpapers)
-                        self.GLib.idle_add(_on_done)
-
-                threading.Thread(target=_bg_rebuild, daemon=True).start()
-
-    def _update_rebuild_progress(self, fraction: float, text: str):
-        if self._loading_progress_bar:
-            self._loading_progress_bar.set_fraction(fraction)
-            self._loading_progress_bar.set_text(text)
-        return False
-
-    def on_child_activated(self, flowbox, child):
-        self.apply_wallpaper(getattr(child, 'rel_path', None), regen=True)
-
-    def on_flowbox_button_press(self, widget, event):
-        if event.type == self.Gdk.EventType.BUTTON_PRESS:
-            if event.button in (2, 3):
-                child = self.flowbox.get_child_at_pos(int(event.x), int(event.y))
-                if child:
-                    rel_path = getattr(child, 'rel_path', None)
-                    if rel_path:
-                        self.flowbox.select_child(child)
-
-                        if event.button == 3:
-                            self.apply_wallpaper(rel_path, regen=False)
-                        elif event.button == 2:
-                            self.toggle_favorite(rel_path)
-
-                        return True
-        return False
-
-    def on_key_press(self, widget, event):
-        keyval = event.keyval
-        state = event.state
-
-        is_alt = (state & self.Gdk.ModifierType.MOD1_MASK) != 0
-        is_ctrl = (state & self.Gdk.ModifierType.CONTROL_MASK) != 0
-
-        if keyval == self.Gdk.KEY_Escape:
-            if self.search_entry and self.search_entry.is_focus():
-                if self.search_entry.get_text():
-                    self.search_entry.set_text("")
-                else:
-                    self.flowbox.grab_focus()
-                return True
-            if self.window:
-                self.window.close()
-            return True
-
-        if keyval in (self.Gdk.KEY_q, self.Gdk.KEY_Q) and not is_alt and not is_ctrl:
-            if not self.search_entry.is_focus():
-                if self.window:
-                    self.window.close()
-                return True
-
-        if keyval in (self.Gdk.KEY_c, self.Gdk.KEY_C) and is_ctrl:
-            if self.window:
-                self.window.close()
-            return True
-
-        if keyval == self.Gdk.KEY_F1:
-            if self.btn_help:
-                self.show_shortcuts_popover(self.btn_help)
-            return True
-
-        if keyval in (self.Gdk.KEY_o, self.Gdk.KEY_O) and is_alt:
-            if self.btn_settings:
-                self.show_settings_popover(self.btn_settings)
-            return True
-
-        if self.search_entry.is_focus():
+        if self.show_only_favorites and rel_path not in self.favorites:
             return False
 
-        if keyval == self.Gdk.KEY_slash and not is_alt and not is_ctrl:
-            self.search_entry.grab_focus()
+        return not self.search_query or (
+            self.search_query in rel_path.casefold()
+        )
+
+    def set_view_mode(self, favorites):
+        if self.closing:
+            return
+
+        self.show_only_favorites = bool(favorites)
+
+        if self.btn_all is not None:
+            all_context = self.btn_all.get_style_context()
+            fav_context = self.btn_fav.get_style_context()
+
+            all_context.remove_class("active-all")
+            fav_context.remove_class("active-fav")
+
+            if self.show_only_favorites:
+                fav_context.add_class("active-fav")
+            else:
+                all_context.add_class("active-all")
+
+        if self.flowbox is not None:
+            self.flowbox.invalidate_filter()
+            self.update_visibility_and_selection()
+
+    def on_search_changed(self, entry):
+        if self.closing:
+            return
+
+        self.search_query = entry.get_text().casefold()
+        self.flowbox.invalidate_filter()
+        self.update_visibility_and_selection()
+
+    def update_visibility_and_selection(self):
+        if self.closing or self.is_refreshing or self.flowbox is None:
+            return
+
+        selected = self.flowbox.get_selected_children()
+
+        if selected and self.filter_child(selected[0]):
+            self.stack.set_visible_child_name("grid")
+            return
+
+        first = next(
+            (
+                child
+                for child in self.flowbox.get_children()
+                if self.filter_child(child)
+            ),
+            None,
+        )
+
+        if first is None:
+            self.flowbox.unselect_all()
+            self.stack.set_visible_child_name("empty")
+        else:
+            self.stack.set_visible_child_name("grid")
+            self.flowbox.select_child(first)
+
+    def on_selection_changed(self, flowbox):
+        previous_label = getattr(
+            self.current_selected_child,
+            "name_label",
+            None,
+        )
+        if previous_label is not None:
+            previous_label.hide()
+
+        selected = flowbox.get_selected_children()
+        self.current_selected_child = selected[0] if selected else None
+        self.update_filename_visibility()
+
+    def update_filename_visibility(self):
+        label = getattr(
+            self.current_selected_child,
+            "name_label",
+            None,
+        )
+        if label is not None:
+            label.set_visible(self.settings["SHOW_FILENAMES"])
+
+    def get_selected_path(self):
+        if self.closing or self.is_refreshing:
+            return None
+
+        selected = self.flowbox.get_selected_children()
+
+        if not selected or not self.filter_child(selected[0]):
+            return None
+
+        return selected[0].rel_path
+
+    def _focus_selected_later(self, generation):
+        attempts = 0
+
+        def focus():
+            nonlocal attempts
+
+            if self.closing or generation != self.generation:
+                return GLib.SOURCE_REMOVE
+
+            selected = self.flowbox.get_selected_children()
+            if not selected:
+                return GLib.SOURCE_REMOVE
+
+            child = selected[0]
+            allocation = child.get_allocation()
+
+            if allocation.height <= 1 and attempts < 20:
+                attempts += 1
+                return GLib.SOURCE_CONTINUE
+
+            # Do not steal focus if the user has already begun searching.
+            if self.search_entry.is_focus():
+                return GLib.SOURCE_REMOVE
+
+            child.grab_focus()
+
+            translated = child.translate_coordinates(
+                self.flowbox, 0, 0
+            )
+            if translated is not None:
+                _, y = translated
+                adjustment = self.scrolled.get_vadjustment()
+                lower = adjustment.get_lower()
+                upper = max(
+                    lower,
+                    adjustment.get_upper() - adjustment.get_page_size(),
+                )
+                adjustment.set_value(
+                    max(lower, min(y - 20, upper))
+                )
+
+            return GLib.SOURCE_REMOVE
+
+        GLib.timeout_add(16, focus)
+
+    # -------------------------------------------------------------------------
+    # Input handling
+    # -------------------------------------------------------------------------
+
+    def on_child_activated(self, flowbox, child):
+        if not self.is_refreshing:
+            self.apply_wallpaper(child.rel_path, regen=True)
+
+    def on_tile_button_press(self, event_box, event, child):
+        if (
+            event.type != Gdk.EventType.BUTTON_PRESS
+            or event.button not in (2, 3)
+        ):
+            return False
+
+        if self.is_refreshing:
             return True
 
-        if keyval in (self.Gdk.KEY_f, self.Gdk.KEY_F) and is_ctrl:
-            self.search_entry.grab_focus()
+        self.flowbox.select_child(child)
+        child.grab_focus()
+
+        if event.button == 2:
+            self.toggle_favorite(child.rel_path)
+        else:
+            self.apply_wallpaper(child.rel_path, regen=False)
+
+        return True
+
+    def _focus_is_in_grid(self, focus):
+        widget = focus
+
+        while widget is not None:
+            if widget is self.flowbox:
+                return True
+            widget = widget.get_parent()
+
+        return False
+
+    def on_key_press(self, window, event):
+        if self.closing:
+            return False
+
+        # Let the active popover handle its own Escape, switches, and focus.
+        if self.popover is not None:
+            return False
+
+        key = event.keyval
+        state = event.state
+        alt = bool(state & Gdk.ModifierType.MOD1_MASK)
+        ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        super_key = bool(state & Gdk.ModifierType.SUPER_MASK)
+        focus = window.get_focus()
+        editing = isinstance(focus, Gtk.Entry)
+
+        if super_key:
+            return False
+
+        if key == Gdk.KEY_F1:
+            self.show_shortcuts_popover(self.btn_help)
             return True
 
-        rel_path = self.get_selected_path()
+        if ctrl and not alt and key in (Gdk.KEY_f, Gdk.KEY_F):
+            self.search_entry.grab_focus()
+            self.search_entry.select_region(0, -1)
+            return True
 
-        match keyval:
-            case self.Gdk.KEY_Return | self.Gdk.KEY_KP_Enter:
-                if rel_path:
-                    self.apply_wallpaper(rel_path, regen=True)
+        if alt and not ctrl:
+            if key in (Gdk.KEY_o, Gdk.KEY_O):
+                self.show_settings_popover(self.btn_settings)
                 return True
 
-            case self.Gdk.KEY_s | self.Gdk.KEY_S if is_alt:
+            if key in (Gdk.KEY_p, Gdk.KEY_P):
+                self.set_view_mode(not self.show_only_favorites)
+                return True
+
+            if key in (Gdk.KEY_r, Gdk.KEY_R):
+                self.start_refresh(rebuild=True)
+                return True
+
+            if key in (Gdk.KEY_s, Gdk.KEY_S):
+                rel_path = self.get_selected_path()
                 if rel_path:
                     self.apply_wallpaper(rel_path, regen=False)
                 return True
 
-            case self.Gdk.KEY_a | self.Gdk.KEY_A if is_alt:
+            if key in (Gdk.KEY_a, Gdk.KEY_A):
+                rel_path = self.get_selected_path()
                 if rel_path:
                     self.toggle_favorite(rel_path)
                 return True
 
-            case self.Gdk.KEY_p | self.Gdk.KEY_P if is_alt:
-                self.trigger_action('toggle')
+        if key == Gdk.KEY_Escape:
+            if editing:
+                if self.search_entry.get_text():
+                    self.search_entry.set_text("")
+                else:
+                    selected = self.flowbox.get_selected_children()
+                    if selected:
+                        selected[0].grab_focus()
+                    else:
+                        self.flowbox.grab_focus()
+            else:
+                self.window.close()
+            return True
+
+        if editing:
+            if (
+                not alt
+                and not ctrl
+                and key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter)
+            ):
+                selected = self.flowbox.get_selected_children()
+                if selected:
+                    selected[0].grab_focus()
                 return True
 
-            case self.Gdk.KEY_r | self.Gdk.KEY_R if is_alt:
-                self.trigger_action('refresh')
+            # Preserve normal editing, including Ctrl+C.
+            return False
+
+        if ctrl and not alt and key in (Gdk.KEY_c, Gdk.KEY_C):
+            self.window.close()
+            return True
+
+        if not ctrl and not alt:
+            if key in (Gdk.KEY_q, Gdk.KEY_Q):
+                self.window.close()
                 return True
+
+            if key == Gdk.KEY_slash:
+                self.search_entry.grab_focus()
+                return True
+
+            if key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                # Toolbar buttons retain their normal Enter behavior.
+                if self._focus_is_in_grid(focus):
+                    rel_path = self.get_selected_path()
+                    if rel_path:
+                        self.apply_wallpaper(rel_path, regen=True)
+                    return True
 
         return False
 
-    def toggle_favorite(self, rel_path: str):
-        if rel_path in self.favorites:
-            self.favorites.remove(rel_path)
-        else:
-            self.favorites.add(rel_path)
+    # -------------------------------------------------------------------------
+    # Favorites and backend application
+    # -------------------------------------------------------------------------
 
-        self._save_favorites()
-
-        if rel_path in self.loaded_pixbufs:
-            self._update_ui_child(rel_path, self.loaded_pixbufs[rel_path], self.current_generation)
-
-        if self.show_only_favorites:
-            self.flowbox.invalidate_filter()
-            self.GLib.idle_add(self._update_visibility_and_selection)
-
-    def parse_state_conf(self) -> dict[str, str]:
-        state = {}
-        if STATE_FILE.exists():
-            try:
-                content = STATE_FILE.read_text(encoding='utf-8')
-                for line in content.splitlines():
-                    line = line.strip()
-                    if line and not line.startswith('#') and '=' in line:
-                        k, v = line.split('=', 1)
-                        state[k.strip()] = v.strip().strip("'").strip('"')
-            except Exception as e:
-                print(f"Error reading state file: {e}")
-        return state
-
-    def update_trackers(self, rel_path: str, theme_mode: str):
-        basename = os.path.basename(rel_path)
-        track_file = TRACK_LIGHT if theme_mode == "light" else TRACK_DARK
-        atomic_write(track_file, f"{basename}\n")
-        atomic_write(FAV_STATE_FILE, f"{basename}\n")
-
-    def apply_wallpaper(self, rel_path: str, regen: bool):
-        if not rel_path:
+    def toggle_favorite(self, rel_path):
+        if self.closing or self.is_refreshing:
             return
-        full_path = WALLPAPER_DIR / rel_path
 
-        if not full_path.exists():
-            full_path = Path(rel_path)
-            if not full_path.exists():
-                print(f"Error: Path {full_path} does not exist.")
-                return
+        try:
+            favorites = toggle_saved_favorite(rel_path)
+        except Exception as error:
+            self.show_error(
+                "Favorites Save Failed",
+                describe_error(error),
+            )
+            return
 
-        print(f"Applying: {full_path} (Regen: {regen})")
+        changed = self.favorites ^ favorites
+        self.favorites = favorites
 
-        should_close = False
-        if regen and self.app_settings.get("AUTO_CLOSE", False):
-            should_close = True
-        elif not regen and self.app_settings.get("FAST_APPLY_AUTO_CLOSE", False):
-            should_close = True
+        for path in changed:
+            child = self.children.get(path)
+            if child is not None and child.image_finished:
+                self._render_child(child)
 
-        if should_close and self.window:
+        self.flowbox.invalidate_filter()
+        self.update_visibility_and_selection()
+
+    def apply_wallpaper(self, rel_path, *, regen):
+        if (
+            not rel_path
+            or self.closing
+            or self.is_refreshing
+            or self.is_applying
+        ):
+            return
+
+        self.is_applying = True
+        self._update_busy_controls()
+
+        close_setting = (
+            "AUTO_CLOSE" if regen
+            else "FAST_APPLY_AUTO_CLOSE"
+        )
+        should_close = self.settings[close_setting]
+
+        if should_close:
             self.window.hide()
-
-        state = self.parse_state_conf()
-        theme_mode = state.get('THEME_MODE', 'dark')
-        self.update_trackers(rel_path, theme_mode)
-
-        awww_cmd = [AWWW_BIN, "img"]
-
-        def add_opt(key, flag):
-            val = state.get(key, 'disable')
-            if val and val != 'disable':
-                awww_cmd.extend([flag, val])
-
-        add_opt('AWWW_TRANS_TYPE', '--transition-type')
-        add_opt('AWWW_TRANS_DURATION', '--transition-duration')
-        add_opt('AWWW_TRANS_FPS', '--transition-fps')
-        add_opt('AWWW_TRANS_BEZIER', '--transition-bezier')
-        add_opt('AWWW_TRANS_ANGLE', '--transition-angle')
-        add_opt('AWWW_TRANS_POS', '--transition-pos')
-        awww_cmd.append(str(full_path))
 
         self.app.hold()
 
-        def _exec_backend():
+        def work():
             success = False
-            err_msg = ""
+            message = ""
+
             try:
-                if not ensure_awww_daemon():
-                    raise RuntimeError("Failed to start awww-daemon background service.")
-                subprocess.run(awww_cmd, check=True, capture_output=True, text=True)
-                if regen:
-                    subprocess.run(
-                        [str(THEME_CTL), "refresh"], check=True, capture_output=True, text=True
-                    )
+                perform_wallpaper_apply(
+                    rel_path,
+                    regen=regen,
+                    stop_event=self.backend_stop,
+                )
                 success = True
-            except subprocess.CalledProcessError as e:
-                err_msg = e.stderr.strip() if e.stderr else str(e)
-                print(f"Backend execution failed: {err_msg}")
-            except Exception as e:
-                err_msg = str(e)
-                print(f"Unexpected execution error: {err_msg}")
+            except Exception as error:
+                message = describe_error(error)
             finally:
-                self.GLib.idle_add(self._on_backend_complete, success, err_msg, should_close)
+                # Must run even after the window closes: it releases app.hold().
+                GLib.idle_add(
+                    self._backend_complete,
+                    success,
+                    message,
+                    should_close,
+                )
 
-        threading.Thread(target=_exec_backend, daemon=True).start()
-
-    def _on_backend_complete(self, success: bool, err_msg: str, should_close: bool):
         try:
+            threading.Thread(
+                target=work,
+                name="wallpaper-apply",
+                daemon=True,
+            ).start()
+        except Exception as error:
+            self._backend_complete(
+                False,
+                describe_error(error),
+                should_close,
+            )
+
+    def _backend_complete(self, success, message, should_close):
+        self.is_applying = False
+
+        try:
+            if not self.closing:
+                self._update_busy_controls()
+
             if not success:
-                if self.window:
-                    self.window.present()
-                    parent_win = self.window if (hasattr(self.window, 'get_realized') and self.window.get_realized()) else None
-                    dialog = ThemedErrorDialog(
-                        parent_window=parent_win,
-                        title_text="Theme Application Failed",
-                        secondary_text="The backend process encountered an error:",
-                        err_msg=err_msg
-                    )
-
-                    def on_dialog_response(dlg, response_id):
-                        dlg.destroy()
-
-                    dialog.connect("response", on_dialog_response)
-                    dialog.show_all()
-            elif should_close and self.window:
+                self.show_error(
+                    "Wallpaper Application Failed",
+                    message,
+                )
+            elif should_close and self.window is not None:
                 self.window.close()
+
         finally:
             self.app.release()
-        return False
+
+        return GLib.SOURCE_REMOVE
+
+    # -------------------------------------------------------------------------
+    # Shutdown
+    # -------------------------------------------------------------------------
+
+    def _on_unix_signal(self):
+        # Signals request cancellation; normal window-close lets an already
+        # running wallpaper/theme application finish.
+        self.backend_stop.set()
+
+        if self.window is not None:
+            self.window.close()
+
+        return GLib.SOURCE_CONTINUE
+
+    def on_window_destroy(self, window):
+        self.closing = True
+        self.generation_stop.set()
+
+        for future in self.image_futures:
+            future.cancel()
+        self.image_futures.clear()
+
+        if self.control_future is not None:
+            self.control_future.cancel()
+
+        self.image_iterator = iter(())
+        self.current_selected_child = None
+        self.children.clear()
+        self.window = None
+
+    def on_shutdown(self, application):
+        self.shutting_down = True
+        self.closing = True
+        self.generation_stop.set()
+        self.backend_stop.set()
+
+        self.image_executor.shutdown(
+            wait=False,
+            cancel_futures=True,
+        )
+        self.control_executor.shutdown(
+            wait=False,
+            cancel_futures=True,
+        )
+
+        for source in self.signal_sources:
+            GLib.source_remove(source)
+        self.signal_sources.clear()
 
     def run(self):
-        return self.app.run([sys.argv[0]])
-
-
-def load_favorites_list() -> list[str]:
-    if FAVORITES_FILE.exists():
         try:
-            content = FAVORITES_FILE.read_text(encoding='utf-8')
-            return sorted(filter(None, content.splitlines()), key=natural_keys)
-        except Exception as e:
-            print(f"Error loading favorites: {e}")
-    return []
+            return self.app.run([sys.argv[0]])
+        finally:
+            # Also covers failure before Gtk.Application reaches shutdown.
+            self.generation_stop.set()
+            self.backend_stop.set()
+
+            self.image_executor.shutdown(
+                wait=False,
+                cancel_futures=True,
+            )
+            self.control_executor.shutdown(
+                wait=False,
+                cancel_futures=True,
+            )
 
 
-def get_current_fav() -> str:
-    if FAV_STATE_FILE.exists():
-        try:
-            return FAV_STATE_FILE.read_text(encoding='utf-8').strip()
-        except Exception as e:
-            print(f"Error reading current fav state file: {e}")
-    return ""
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
 
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Dusky Theme GTK3 Wallpaper Selector",
+    )
 
-def apply_fav_wallpaper(rel_path: str):
-    full_path = WALLPAPER_DIR / rel_path
-    if not full_path.exists():
-        full_path = Path(rel_path)
-        if not full_path.exists():
-            print(f"Error: Path {full_path} does not exist.")
-            return
+    group = parser.add_mutually_exclusive_group()
 
-    basename = os.path.basename(rel_path)
-    
-    # Parse state.conf
-    state = {}
-    if STATE_FILE.exists():
-        try:
-            content = STATE_FILE.read_text(encoding='utf-8')
-            for line in content.splitlines():
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    k, v = line.split('=', 1)
-                    state[k.strip()] = v.strip().strip("'").strip('"')
-        except Exception as e:
-            print(f"Error reading state file: {e}")
+    group.add_argument(
+        "--build-cache",
+        action="store_true",
+        help=(
+            "Generate missing/outdated thumbnails and sweep orphaned cache "
+            "files, then exit."
+        ),
+    )
+    group.add_argument(
+        "--rebuild-cache",
+        action="store_true",
+        help=(
+            "Force-regenerate thumbnails atomically and sweep orphaned "
+            "cache files, then exit."
+        ),
+    )
+    group.add_argument(
+        "--next-fav",
+        action="store_true",
+        help="Apply the next existing favorite and regenerate its theme.",
+    )
+    group.add_argument(
+        "--prev-fav",
+        action="store_true",
+        help="Apply the previous existing favorite and regenerate its theme.",
+    )
+    group.add_argument(
+        "--precache",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
 
-    theme_mode = state.get('THEME_MODE', 'dark')
-    track_file = TRACK_LIGHT if theme_mode == "light" else TRACK_DARK
-    atomic_write(track_file, f"{basename}\n")
-    atomic_write(FAV_STATE_FILE, f"{basename}\n")
+    args = parser.parse_args()
 
-    awww_cmd = [AWWW_BIN, "img"]
-    def add_opt(key, flag):
-        val = state.get(key, 'disable')
-        if val and val != 'disable':
-            awww_cmd.extend([flag, val])
+    if TRACKER_ID_FORMAT not in {"basename", "relative"}:
+        parser.error(
+            "TRACKER_ID_FORMAT must be 'basename' or 'relative'."
+        )
 
-    add_opt('AWWW_TRANS_TYPE', '--transition-type')
-    add_opt('AWWW_TRANS_DURATION', '--transition-duration')
-    add_opt('AWWW_TRANS_FPS', '--transition-fps')
-    add_opt('AWWW_TRANS_BEZIER', '--transition-bezier')
-    add_opt('AWWW_TRANS_ANGLE', '--transition-angle')
-    add_opt('AWWW_TRANS_POS', '--transition-pos')
-    awww_cmd.append(str(full_path))
+    headless = any((
+        args.build_cache,
+        args.rebuild_cache,
+        args.precache,
+        args.next_fav,
+        args.prev_fav,
+    ))
+
+    if not headless:
+        return WallpaperApp().run()
+
+    stop_event = threading.Event()
+    received_signal = [None]
+
+    def request_stop(signum, frame):
+        received_signal[0] = signum
+        stop_event.set()
+
+    old_handlers = {
+        signum: signal.signal(signum, request_stop)
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
 
     try:
-        if not ensure_awww_daemon():
-            raise RuntimeError("Failed to start awww-daemon background service.")
-        subprocess.run(awww_cmd, check=True, capture_output=True, text=True)
-        subprocess.run(
-            [str(THEME_CTL), "refresh"], check=True, capture_output=True, text=True
-        )
-        subprocess.run([
-            "notify-send", "-a", "dusky-fav-wal", 
-            "-h", "string:x-canonical-private-synchronous:fav-wal",
-            "-i", "/usr/share/icons/Papirus/16x16/symbolic/emblems/emblem-favorite-symbolic.svg",
-            "Favorite", basename,
-            "-u", "low", "-t", "1200"
-        ])
-    except Exception as e:
-        err_msg = getattr(e, 'stderr', '').strip() if hasattr(e, 'stderr') and e.stderr else str(e)
-        print(f"Backend execution failed: {err_msg}")
-        subprocess.run([
-            "notify-send", "-a", "dusky-fav-wal", 
-            "-h", "string:x-canonical-private-synchronous:fav-wal",
-            "-i", "/usr/share/icons/Papirus/16x16/symbolic/emblems/emblem-favorite-symbolic.svg",
-            "Error", "Failed to apply wallpaper", 
-            "-u", "critical"
-        ])
+        if args.build_cache or args.rebuild_cache or args.precache:
+            result = CacheManager.build_cache(
+                force=args.rebuild_cache,
+                stop_event=stop_event,
+            )
+            check_cancelled(stop_event)
+            return 1 if result.failed else 0
+
+        direction = "next" if args.next_fav else "prev"
+        status = cycle_favorites(direction, stop_event)
+        check_cancelled(stop_event)
+        return status
+
+    except OperationCancelled:
+        signum = received_signal[0]
+        return 128 + signum if signum is not None else 130
+
+    finally:
+        stop_event.set()
+        for signum, old_handler in old_handlers.items():
+            signal.signal(signum, old_handler)
 
 
-def cycle_favorites(direction: str = "next"):
-    favs = load_favorites_list()
-    if not favs:
-        subprocess.run([
-            "notify-send", "-a", "dusky-fav-wal", 
-            "-i", "/usr/share/icons/Papirus/16x16/symbolic/emblems/emblem-favorite-symbolic.svg",
-            "No Favorites", "No liked wallpapers yet.", 
-            "-u", "normal", "-t", "2500"
-        ])
-        sys.exit(0)
-    
-    current_fav = get_current_fav()
-    next_fav = favs[0]
-    
-    if current_fav:
-        try:
-            current_index = -1
-            for idx, fav in enumerate(favs):
-                if os.path.basename(fav) == current_fav or fav == current_fav:
-                    current_index = idx
-                    break
-            
-            if current_index != -1:
-                if direction == "next":
-                    next_idx = (current_index + 1) % len(favs)
-                else:
-                    next_idx = (current_index - 1) % len(favs)
-                next_fav = favs[next_idx]
-        except Exception as e:
-            print(f"Error cycling favorites: {e}")
-            
-    apply_fav_wallpaper(next_fav)
-
-
-# ==============================================================================
-# ENTRY POINT & CLI PARSING
-# ==============================================================================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Dusky Theme GTK3 Wallpaper Selector")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        '--build-cache', action='store_true',
-        help="Idempotent: generate missing thumbnails and sweep orphans, then exit."
-    )
-    group.add_argument(
-        '--rebuild-cache', action='store_true',
-        help="Force: nuke entire cache directory and regenerate all thumbnails, then exit."
-    )
-    group.add_argument(
-        '--next-fav', action='store_true',
-        help="Cycle to the next favorite wallpaper and exit."
-    )
-    group.add_argument(
-        '--prev-fav', action='store_true',
-        help="Cycle to the previous favorite wallpaper and exit."
-    )
-    group.add_argument('--precache', action='store_true', help=argparse.SUPPRESS)
+    try:
+        exit_status = main()
+    except KeyboardInterrupt:
+        exit_status = 130
+    except Exception as error:
+        log_error(f"Error:\n{describe_error(error)}")
+        exit_status = 1
 
-    args, unknown = parser.parse_known_args()
-
-    if args.rebuild_cache:
-        CacheManager.build_cache(force=True)
-        sys.exit(0)
-    elif args.build_cache or args.precache:
-        CacheManager.build_cache(force=False)
-        sys.exit(0)
-    elif args.next_fav:
-        cycle_favorites("next")
-        sys.exit(0)
-    elif args.prev_fav:
-        cycle_favorites("prev")
-        sys.exit(0)
-    else:
-        selector = WallpaperApp()
-        exit_status = selector.run()
-        sys.exit(exit_status)
+    sys.exit(exit_status)
