@@ -215,11 +215,66 @@ _pkg_sort() {
     esac
 }
 
+_pkg_theme() {
+    local theme_file="$HOME/.config/matugen/generated/dusky_tui.json"
+    local values key hex rgb
+
+    _pkg_require python || return 1
+
+    if ! values=$(
+        python - "$theme_file" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+keys = ("bg", "fg", "accent", "error", "warning", "success", "muted")
+path = Path(sys.argv[1])
+
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("expected a JSON object")
+
+    for key in keys:
+        value = data.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+            raise ValueError(f"{key!r} must contain a color formatted as #RRGGBB")
+
+    for key in keys:
+        print(key.upper(), data[key])
+except (OSError, UnicodeError, ValueError) as exc:
+    print(f"Error: cannot load theme {path}: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+    ); then
+        return 1
+    fi
+
+    while read -r key hex; do
+        export "DUSKY_THEME_${key}=$hex"
+
+        printf -v rgb '\033[38;2;%d;%d;%dm' \
+            "$((16#${hex:1:2}))" \
+            "$((16#${hex:3:2}))" \
+            "$((16#${hex:5:2}))"
+
+        export "DUSKY_COLOR_${key}=$rgb"
+    done <<< "$values"
+}
+
 _pkg_list() (
     set -o pipefail
 
     _pkg_sort "$1" < "$DUSKY_PKG_DATA" |
         gawk -F '|' '
+            BEGIN {
+                success = ENVIRON["DUSKY_COLOR_SUCCESS"]
+                warning = ENVIRON["DUSKY_COLOR_WARNING"]
+                accent = ENVIRON["DUSKY_COLOR_ACCENT"]
+                reset = "\033[0m"
+            }
+
             function human_size(bytes) {
                 if (bytes >= 1099511627776)
                     return sprintf("%.2f TiB", bytes / 1099511627776)
@@ -233,15 +288,10 @@ _pkg_list() (
             }
 
             {
-                # Field 1 is the exact name for fzf placeholders.
-                # Field 2 is the displayed and searchable text.
-                #
-                # Full names remain searchable. Date and size come first
-                # so a long name cannot displace those columns.
                 printf "%s\t", $1
-                printf "\033[38;5;114m%s\033[0m", strftime("%Y-%m-%d", $3)
-                printf " \033[38;5;208m%10s\033[0m", human_size($4)
-                printf " \033[1;38;5;39m%s\033[0m\n", $1
+                printf "%s%s%s", success, strftime("%Y-%m-%d", $3), reset
+                printf " %s%10s%s", warning, human_size($4), reset
+                printf " \033[1m%s%s%s\n", accent, $1, reset
             }
         '
 )
@@ -381,21 +431,28 @@ _pkg_preview() (
     local details
     local status
 
-    # Show the actual diagnostic rather than guessing that a package
-    # disappeared whenever any step of report generation fails.
     if details=$(_pkg_details "$1" 2>&1); then
         :
     else
         status=$?
-        printf '\033[1;31mCould not generate details for: %s\033[0m\n\n' \
-            "$1"
+        printf '%s\033[1mCould not generate details for: %s\033[0m\n\n' \
+            "$DUSKY_COLOR_ERROR" "$1"
         printf '%s\n' "$details"
         return "$status"
     fi
 
     gawk '
+        BEGIN {
+            accent = ENVIRON["DUSKY_COLOR_ACCENT"]
+            foreground = ENVIRON["DUSKY_COLOR_FG"]
+            warning = ENVIRON["DUSKY_COLOR_WARNING"]
+            success = ENVIRON["DUSKY_COLOR_SUCCESS"]
+            muted = ENVIRON["DUSKY_COLOR_MUTED"]
+            reset = "\033[0m"
+        }
+
         /^:: / {
-            printf "\033[1;38;5;81m%s\033[0m\n", $0
+            printf "\033[1m%s%s%s\n", accent, $0, reset
             next
         }
 
@@ -404,28 +461,33 @@ _pkg_preview() (
             key = substr($0, 1, separator - 1)
             value = substr($0, separator + 1)
 
-            printf "\033[1;38;5;39m%s\033[0m:", key
-            printf "\033[38;5;253m%s\033[0m\n", value
+            printf "\033[1m%s%s%s:", accent, key, reset
+            printf "%s%s%s\n", foreground, value, reset
             next
         }
 
         /^  [^ /].*\.(service|socket|device|mount|automount|swap|target|path|timer|slice|scope)$/ {
-            printf "\033[1;38;5;203m%s\033[0m\n", $0
+            printf "\033[1m%s%s%s\n", warning, $0, reset
             next
         }
 
         /^    \// {
-            printf "\033[38;5;245m%s\033[0m\n", $0
+            printf "%s%s%s\n", foreground, $0, reset
             next
         }
 
         /^  \// {
-            printf "\033[38;5;114m%s\033[0m\n", $0
+            printf "%s%s%s\n", success, $0, reset
+            next
+        }
+
+        /^  \(None\)$/ {
+            printf "%s%s%s\n", muted, $0, reset
             next
         }
 
         {
-            print
+            printf "%s%s%s\n", foreground, $0, reset
         }
     ' <<< "$details"
 )
@@ -446,13 +508,10 @@ _pkg_interactive() {
     local mode="$1"
     local target="$2"
     local desktop="$3"
-    local prompt
-    local columns
-    local header
-    local choice
-    local status
-    local pkg
+    local prompt columns header choice status pkg
     local copied=0
+
+    _pkg_theme || return 1
 
     case "$mode" in
         size_desc) prompt=' Largest › ' ;;
@@ -473,19 +532,14 @@ _pkg_interactive() {
         'PgUp/PgDn: scroll details · F1: help' \
         "$columns"
 
-    # fzf subprocesses use Bash explicitly and import these helpers.
     export -f _pkg_sort _pkg_list _pkg_integration _pkg_details
     export -f _pkg_preview _pkg_copy_details _pkg_keys
 
-    # Generate initial input before launching fzf so cancellation or
-    # early selection cannot SIGPIPE an upstream generator.
     if ! _pkg_list "$mode" > "$DUSKY_PKG_DATA.initial"; then
         printf 'Error: could not prepare the interactive package list.\n' >&2
         return 1
     fi
 
-    # Isolate this application from user fzf defaults that could change
-    # its output protocol, such as --multi, --expect, or --print-query.
     choice=$(
         FZF_DEFAULT_OPTS= FZF_DEFAULT_OPTS_FILE=/dev/null \
         fzf \
@@ -524,10 +578,18 @@ _pkg_interactive() {
             --bind="focus:change-border-label( Dusky Package Atlas · $target )" \
             --bind='esc:abort' \
             --bind='enter:accept' \
-            --color='bg+:#1e1e2e,bg:#11111b,spinner:#f5e0dc' \
-            --color='fg:#cdd6f4,fg+:#cdd6f4,header:#89b4fa,info:#6c7086' \
-            --color='pointer:#a6e3a1,prompt:#cba6f7' \
-            --color='hl:#f38ba8,hl+:#f38ba8,border:#585b70,label:#a6e3a1' \
+            --color="bg:$DUSKY_THEME_BG,bg+:$DUSKY_THEME_MUTED" \
+            --color="fg:$DUSKY_THEME_FG,fg+:$DUSKY_THEME_FG" \
+            --color="hl:$DUSKY_THEME_ACCENT,hl+:$DUSKY_THEME_ACCENT" \
+            --color="header:$DUSKY_THEME_ACCENT,info:$DUSKY_THEME_FG" \
+            --color="prompt:$DUSKY_THEME_ACCENT,pointer:$DUSKY_THEME_SUCCESS" \
+            --color="marker:$DUSKY_THEME_SUCCESS,spinner:$DUSKY_THEME_WARNING" \
+            --color="border:$DUSKY_THEME_MUTED,label:$DUSKY_THEME_ACCENT" \
+            --color="gutter:$DUSKY_THEME_BG,separator:$DUSKY_THEME_MUTED" \
+            --color="scrollbar:$DUSKY_THEME_MUTED" \
+            --color="preview-bg:$DUSKY_THEME_BG,preview-fg:$DUSKY_THEME_FG" \
+            --color="preview-border:$DUSKY_THEME_MUTED,preview-label:$DUSKY_THEME_ACCENT" \
+            --color="preview-scrollbar:$DUSKY_THEME_MUTED" \
             --preview='_pkg_preview {1}' \
             --preview-window='right,55%,border-left,wrap' \
             < "$DUSKY_PKG_DATA.initial"
@@ -536,9 +598,7 @@ _pkg_interactive() {
 
     if (( status != 0 )); then
         case "$status" in
-            1|130)
-                # No selection or cancellation; preserve fzf's status.
-                ;;
+            1|130) ;;
             *)
                 printf 'Error: fzf exited with status %s.\n' \
                     "$status" >&2
@@ -559,8 +619,6 @@ _pkg_interactive() {
         return 1
     fi
 
-    # Emitting the selected name is the primary operation.
-    # Clipboard failure must not invalidate successful pipeline output.
     printf '%s\n' "$pkg" || return 1
 
     if command -v wl-copy >/dev/null 2>&1; then
@@ -614,19 +672,28 @@ _pkg_cli() (
     fi
 
     if [[ -t 1 && ${TERM:-dumb} != dumb && ! -v NO_COLOR ]]; then
+        _pkg_theme || return 1
         color=1
     fi
 
     if (( color )); then
-        printf '\n\033[34m::\033[0m \033[1m%s\033[0m (Top %s)\n' \
+        printf '\n%s::\033[0m %s\033[1m%s\033[0m (Top %s)\n' \
+            "$DUSKY_COLOR_ACCENT" "$DUSKY_COLOR_FG" \
             "$title" "$count" || return 1
+
+        printf '%s%-10s %10s %s\033[0m\n' \
+            "$DUSKY_COLOR_ACCENT" INSTALLED SIZE PACKAGE || return 1
+
+        printf '%s%s\033[0m\n' "$DUSKY_COLOR_MUTED" \
+            '------------------------------------------------------------' ||
+            return 1
     else
         printf '\n:: %s (Top %s)\n' "$title" "$count" || return 1
+        printf '%-10s %10s %s\n' INSTALLED SIZE PACKAGE || return 1
+        printf '%s\n' \
+            '------------------------------------------------------------' ||
+            return 1
     fi
-
-    printf '%-10s %10s %s\n' INSTALLED SIZE PACKAGE || return 1
-    printf '%s\n' '------------------------------------------------------------' ||
-        return 1
 
     if ! _pkg_sort "$mode" < "$DUSKY_PKG_DATA" |
         gawk -F '|' -v limit="$count" '
@@ -634,8 +701,6 @@ _pkg_cli() (
                 limit += 0
             }
 
-            # Consume all input rather than exiting early like head.
-            # This avoids upstream SIGPIPE under pipefail.
             NR <= limit {
                 printf "%s|%s|%s\n", $3, $4, $1
             }
@@ -647,13 +712,20 @@ _pkg_cli() (
             --delimiter='|' \
             --padding=10 |
         gawk -F '|' -v color="$color" '
+            BEGIN {
+                success = ENVIRON["DUSKY_COLOR_SUCCESS"]
+                warning = ENVIRON["DUSKY_COLOR_WARNING"]
+                accent = ENVIRON["DUSKY_COLOR_ACCENT"]
+                reset = "\033[0m"
+            }
+
             {
                 date = strftime("%Y-%m-%d", $1)
 
                 if (color) {
-                    printf "\033[38;5;114m%s\033[0m ", date
-                    printf "\033[38;5;208m%10s\033[0m ", $2
-                    printf "\033[1;38;5;39m%s\033[0m\n", $3
+                    printf "%s%s%s ", success, date, reset
+                    printf "%s%10s%s ", warning, $2, reset
+                    printf "\033[1m%s%s%s\n", accent, $3, reset
                 } else {
                     printf "%s %10s %s\n", date, $2, $3
                 }
