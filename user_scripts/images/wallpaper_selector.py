@@ -313,12 +313,19 @@ def run_command(
     check: bool = True,
 ) -> subprocess.CompletedProcess:
     """
-    Run a command with bounded duration and cancellation.
+    Run a command with a timeout and cancellation checks.
 
-    On timeout/cancellation, terminate its process group and reap the specific
-    child. This covers ordinary descendants that remain in that group.
+    On timeout/cancellation, terminate its process group and perform bounded
+    output cleanup and child-reaping attempts.
+
+    Descendants that create another process group/session are not guaranteed
+    to be terminated. Cleanup does not wait indefinitely for such descendants
+    to close inherited stdout/stderr pipes.
     """
     check_cancelled(stop_event)
+
+    if timeout <= 0:
+        raise ValueError("Command timeout must be greater than zero.")
 
     process = subprocess.Popen(
         command,
@@ -333,6 +340,8 @@ def run_command(
     )
 
     deadline = time.monotonic() + timeout
+    last_stdout = None
+    last_stderr = None
 
     try:
         while True:
@@ -340,19 +349,104 @@ def run_command(
 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise subprocess.TimeoutExpired(command, timeout)
+                raise subprocess.TimeoutExpired(
+                    command,
+                    timeout,
+                    output=last_stdout,
+                    stderr=last_stderr,
+                )
 
             try:
                 stdout, stderr = process.communicate(
                     timeout=min(0.2, remaining)
                 )
                 break
-            except subprocess.TimeoutExpired:
-                continue
+            except subprocess.TimeoutExpired as error:
+                # communicate() retains accumulated output across retries.
+                last_stdout = error.output
+                last_stderr = error.stderr
 
-    except BaseException:
-        kill_process_group(process)
-        process.communicate()
+    except BaseException as original_error:
+        try:
+            kill_process_group(process)
+        except OSError as cleanup_error:
+            log_error(
+                "Could not terminate the command's process group: "
+                f"{describe_error(cleanup_error)}"
+            )
+
+            # Still attempt to terminate the direct child.
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            except OSError as child_error:
+                log_error(
+                    "Could not terminate the direct child: "
+                    f"{describe_error(child_error)}"
+                )
+
+        cleanup_stdout = None
+        cleanup_stderr = None
+
+        try:
+            cleanup_stdout, cleanup_stderr = process.communicate(
+                timeout=2.0
+            )
+        except subprocess.TimeoutExpired as cleanup_error:
+            # A descendant outside the killed process group may still
+            # own an inherited pipe writer.
+            cleanup_stdout = cleanup_error.output
+            cleanup_stderr = cleanup_error.stderr
+        except Exception as cleanup_error:
+            log_error(
+                "Could not finish reading command output during cleanup: "
+                f"{describe_error(cleanup_error)}"
+            )
+        finally:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError as cleanup_error:
+                        log_error(
+                            "Could not close a command output pipe: "
+                            f"{describe_error(cleanup_error)}"
+                        )
+
+        if isinstance(original_error, subprocess.TimeoutExpired):
+            if cleanup_stdout is not None:
+                original_error.output = cleanup_stdout
+            if cleanup_stderr is not None:
+                original_error.stderr = cleanup_stderr
+
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            log_error(
+                f"Child PID {process.pid} did not exit promptly after "
+                "termination; reaping will continue in the background."
+            )
+
+            # Reap only this child. A daemon waiter must not prevent the
+            # selector itself from exiting if the child remains stuck.
+            try:
+                threading.Thread(
+                    target=process.wait,
+                    name=f"command-reaper-{process.pid}",
+                    daemon=True,
+                ).start()
+            except Exception as cleanup_error:
+                log_error(
+                    "Could not start the child-reaping thread: "
+                    f"{describe_error(cleanup_error)}"
+                )
+        except Exception as cleanup_error:
+            log_error(
+                "Could not reap the command during cleanup: "
+                f"{describe_error(cleanup_error)}"
+            )
+
         raise
 
     result = subprocess.CompletedProcess(
@@ -374,22 +468,34 @@ def run_command(
 
 
 def describe_error(error: BaseException) -> str:
-    if isinstance(error, subprocess.TimeoutExpired):
+    if isinstance(
+        error,
+        (subprocess.TimeoutExpired, subprocess.CalledProcessError),
+    ):
         command = error.cmd
-        executable = command[0] if isinstance(command, list) else command
-        return f"{executable} timed out after {error.timeout:g} seconds."
+        executable = (
+            command[0]
+            if isinstance(command, (list, tuple)) and command
+            else command
+        )
 
-    if isinstance(error, subprocess.CalledProcessError):
-        command = error.cmd
-        executable = command[0] if isinstance(command, list) else command
-        details = (error.stderr or error.output or "").strip()
+        details = error.stderr or error.output or ""
 
         if isinstance(details, bytes):
             details = details.decode("utf-8", errors="replace")
 
-        message = (
-            f"{executable} exited with status {error.returncode}."
-        )
+        details = details.strip()
+
+        if isinstance(error, subprocess.TimeoutExpired):
+            message = (
+                f"{executable} timed out after "
+                f"{error.timeout:g} seconds."
+            )
+        else:
+            message = (
+                f"{executable} exited with status {error.returncode}."
+            )
+
         return message + (f"\n{details}" if details else "")
 
     if isinstance(error, OperationCancelled):
@@ -625,7 +731,9 @@ class CacheManager:
         )
 
         with source_path.open("rb") as source:
-            signature = CacheManager.signature(os.fstat(source.fileno()))
+            signature = CacheManager.signature(
+                os.fstat(source.fileno())
+            )
             metadata = CacheManager.read_metadata(metadata_path)
 
             if not force and metadata.get("source") == signature:
@@ -643,16 +751,32 @@ class CacheManager:
 
                 if metadata.get("status") == "bad":
                     retry_at = metadata.get("retry_at")
+
                     if (
                         isinstance(retry_at, (int, float))
                         and time.time() < retry_at
                     ):
+                        reason = metadata.get("error")
+
+                        if not isinstance(reason, str) or not reason:
+                            reason = (
+                                "A previous conversion failed; "
+                                "no detailed error was recorded."
+                            )
+
+                        log_error(
+                            f"Thumbnail temporarily unavailable for "
+                            f"{rel_path!r}; automatic retry is deferred:\n"
+                            f"{reason}"
+                        )
                         return "failed"
 
             def source_unchanged() -> bool:
                 try:
                     return (
-                        CacheManager.signature(os.fstat(source.fileno()))
+                        CacheManager.signature(
+                            os.fstat(source.fileno())
+                        )
                         == signature
                         and CacheManager.signature(source_path.stat())
                         == signature
@@ -660,7 +784,7 @@ class CacheManager:
                 except OSError:
                     return False
 
-            def record_conversion_failure() -> None:
+            def record_conversion_failure(reason: str) -> None:
                 if not source_unchanged():
                     return
 
@@ -669,6 +793,7 @@ class CacheManager:
                     json.dumps({
                         "source": signature,
                         "status": "bad",
+                        "error": reason[:8000],
                         "retry_at": (
                             time.time() + BAD_THUMB_RETRY_SECONDS
                         ),
@@ -676,15 +801,20 @@ class CacheManager:
                 )
 
             if signature[2] == 0:
-                record_conversion_failure()
+                reason = "The source image is empty (0 bytes)."
+
+                log_error(
+                    f"Thumbnail failed for {rel_path!r}: {reason}"
+                )
+                record_conversion_failure(reason)
                 return "failed"
 
             # Missing dependencies are not negatively cached.
             magick = require_binary(MAGICK_COMMAND)
             nice = require_binary("nice")
 
-            # Passing an opened file descriptor avoids ImageMagick interpreting
-            # brackets, glob characters, or backslashes in the actual filename.
+            # Passing an opened file descriptor avoids ImageMagick
+            # interpreting special characters in the actual filename.
             command = [
                 nice, "-n", "19",
                 magick,
@@ -732,7 +862,9 @@ class CacheManager:
                     return "failed"
 
                 if temporary.stat().st_size == 0:
-                    raise OSError("ImageMagick produced an empty thumbnail.")
+                    raise OSError(
+                        "ImageMagick produced an empty thumbnail."
+                    )
 
                 os.replace(temporary, thumb_path)
 
@@ -752,11 +884,14 @@ class CacheManager:
                 subprocess.CalledProcessError,
                 subprocess.TimeoutExpired,
             ) as error:
+                reason = describe_error(error)
+
                 log_error(
                     f"ImageMagick could not convert {rel_path!r}:\n"
-                    f"{describe_error(error)}"
+                    f"{reason}"
                 )
-                record_conversion_failure()
+
+                record_conversion_failure(reason)
                 return "failed"
 
             finally:
@@ -826,7 +961,7 @@ class CacheManager:
         progress_callback: Callable[[int, int, int, int], None] | None = None,
         stop_event: threading.Event | None = None,
     ) -> CacheBuildResult:
-        # Check once, rather than emitting a missing-binary error per image.
+        # Check once rather than reporting missing dependencies per image.
         require_binary(MAGICK_COMMAND)
         require_binary("nice")
 
@@ -837,7 +972,8 @@ class CacheManager:
             wallpapers = scan_wallpapers(stop_event)
 
             removed = CacheManager._sweep_locked(
-                wallpapers, stop_event
+                wallpapers,
+                stop_event,
             )
             print(
                 f"Found {len(wallpapers)} images; "
@@ -849,7 +985,18 @@ class CacheManager:
             total = len(wallpapers)
             completed = 0
             last_progress = 0.0
+            last_reported = None
             remaining = iter(wallpapers)
+
+            terminal_progress = (
+                progress_callback is None and sys.stdout.isatty()
+            )
+
+            progress_interval = (
+                0.05 if progress_callback is not None
+                else 0.2 if terminal_progress
+                else 1.0
+            )
 
             def generate(path: str) -> str:
                 return CacheManager.generate_thumb(
@@ -860,29 +1007,47 @@ class CacheManager:
                 )
 
             def report_progress(force_report: bool = False) -> None:
-                nonlocal last_progress
+                nonlocal last_progress, last_reported
+
+                snapshot = (
+                    completed,
+                    total,
+                    result.generated,
+                    result.failed,
+                )
+
+                # Never emit an identical progress snapshot twice.
+                if snapshot == last_reported:
+                    return
+
                 now = time.monotonic()
 
-                if not force_report and now - last_progress < 0.05:
+                if (
+                    not force_report
+                    and now - last_progress < progress_interval
+                ):
                     return
 
                 if progress_callback is not None:
-                    progress_callback(
-                        completed,
-                        total,
-                        result.generated,
-                        result.failed,
-                    )
+                    progress_callback(*snapshot)
                 else:
-                    print(
-                        f"\rProgress: {completed}/{total} | "
+                    message = (
+                        f"Progress: {completed}/{total} | "
                         f"Generated: {result.generated} | "
-                        f"Failed: {result.failed}",
-                        end="",
-                        flush=True,
+                        f"Failed: {result.failed}"
                     )
 
+                    if terminal_progress:
+                        print(
+                            "\r" + message,
+                            end="",
+                            flush=True,
+                        )
+                    else:
+                        print(message, flush=True)
+
                 last_progress = now
+                last_reported = snapshot
 
             with ThreadPoolExecutor(
                 max_workers=WORKER_COUNT,
@@ -893,10 +1058,12 @@ class CacheManager:
                 def fill_queue() -> None:
                     while len(pending) < MAX_IMAGE_JOBS:
                         check_cancelled(stop_event)
+
                         try:
                             path = next(remaining)
                         except StopIteration:
                             break
+
                         pending[executor.submit(generate, path)] = path
 
                 try:
@@ -939,14 +1106,15 @@ class CacheManager:
                     for future in pending:
                         future.cancel()
 
-            if progress_callback is None:
-                print()
+            if terminal_progress:
+                print(flush=True)
 
             print(
                 f"Cache complete: {result.generated} generated, "
                 f"{result.failed} unavailable.",
                 flush=True,
             )
+
             return result
 
 
@@ -1086,14 +1254,18 @@ def tracker_id_for(
 def load_favorites() -> set[str]:
     favorites = set()
 
-    for value in read_optional_text(FAVORITES_FILE).splitlines():
+    # The file format is LF-delimited. str.splitlines() would also split
+    # some otherwise valid filename characters, breaking round trips.
+    for value in read_optional_text(FAVORITES_FILE).split("\n"):
         if not value:
             continue
 
         try:
             favorites.add(validate_relative_id(value))
         except (ValueError, UnicodeError) as error:
-            log_error(f"Ignoring invalid favorite {value!r}: {error}")
+            log_error(
+                f"Ignoring invalid favorite {value!r}: {error}"
+            )
 
     return favorites
 
@@ -1213,7 +1385,11 @@ def _apply_wallpaper_locked(
     Caller must hold APPLY_LOCK_FILE.
 
     Trackers are committed after successful wallpaper application and before
-    theme refresh, because the theme controller may read those trackers.
+    theme refresh because the theme controller may read those trackers.
+
+    Wallpaper application, tracker persistence, and theme refresh are not
+    one transaction. A failure or cancellation can occur after an earlier
+    stage has already completed.
     """
     rel_path = validate_relative_id(rel_path)
     check_cancelled(stop_event)
@@ -1228,7 +1404,9 @@ def _apply_wallpaper_locked(
 
     full_path = WALLPAPER_DIR / rel_path
     if not full_path.is_file():
-        raise FileNotFoundError(f"Wallpaper not found: {full_path}")
+        raise FileNotFoundError(
+            f"Wallpaper not found: {full_path}"
+        )
 
     tracker_id = tracker_id_for(rel_path, wallpapers)
     state = read_state_conf()
@@ -1248,12 +1426,16 @@ def _apply_wallpaper_locked(
 
     for key, flag in TRANSITION_OPTIONS:
         value = state.get(key, "disable")
+
         if value and value != "disable":
             command.extend([flag, value])
 
     command.append(str(full_path))
 
-    print(f"Applying: {full_path} (full apply: {regen})", flush=True)
+    print(
+        f"Applying: {full_path} (full apply: {regen})",
+        flush=True,
+    )
 
     run_command(
         command,
@@ -1264,8 +1446,8 @@ def _apply_wallpaper_locked(
     track_file = TRACK_LIGHT if mode == "light" else TRACK_DARK
 
     try:
-        # Do not insert a cancellation point between successful application
-        # and these short persistence operations.
+        # Once application has reported success, persist its trackers
+        # without inserting another cancellation point between these writes.
         atomic_write(track_file, tracker_id + "\n")
         atomic_write(FAV_STATE_FILE, tracker_id + "\n")
     except Exception as error:
@@ -1282,6 +1464,8 @@ def _apply_wallpaper_locked(
                 timeout=THEME_TIMEOUT,
                 stop_event=stop_event,
             )
+        except OperationCancelled:
+            raise
         except Exception as error:
             raise RuntimeError(
                 "The wallpaper was applied and its trackers were updated, "
@@ -2151,19 +2335,29 @@ class WallpaperApp:
                 not self.is_refreshing and not self.is_applying
             )
 
+        if self.window is not None:
+            self.window.set_title(
+                "Wallpaper Selector — Applying…"
+                if self.is_applying
+                else "Wallpaper Selector"
+            )
+
     def start_refresh(self, *, rebuild=False):
         if self.closing or self.is_refreshing or self.is_applying:
             return
 
         self._cancel_generation()
+
         generation = self.generation
         stop_event = self.generation_stop
+        auto_sweep = self.settings["AUTO_SWEEP_CACHE"]
 
         self.is_refreshing = True
         self._update_busy_controls()
 
         self.loading_title.set_text(
-            "Rebuilding Image Cache…" if rebuild
+            "Rebuilding Image Cache…"
+            if rebuild
             else "Loading Wallpapers…"
         )
         self.loading_progress.set_fraction(0)
@@ -2192,17 +2386,30 @@ class WallpaperApp:
                     stop_event=stop_event,
                 )
             else:
-                if self.settings["AUTO_SWEEP_CACHE"]:
+                if auto_sweep:
                     paths = CacheManager.scan_and_sweep(stop_event)
                 else:
                     paths = scan_wallpapers(stop_event)
+
                 result = CacheBuildResult(paths)
 
-            favorites = load_favorites()
+            check_cancelled(stop_event)
 
-            # Tracker errors should not prevent browsing the collection.
+            warnings = []
+            favorites = None
+
+            # Auxiliary state must not invalidate a successful inventory.
+            # None tells the GTK callback to retain its previous favorites.
+            try:
+                favorites = load_favorites()
+            except Exception as error:
+                warnings.append(
+                    "Could not reload favorites; keeping the last "
+                    "successfully loaded favorites set:\n"
+                    f"{describe_error(error)}"
+                )
+
             current_path = None
-            tracker_warning = ""
 
             try:
                 state = read_state_conf()
@@ -2211,14 +2418,24 @@ class WallpaperApp:
                     if state.get("THEME_MODE", "dark") == "light"
                     else TRACK_DARK
                 )
+
                 current_path = match_wallpaper_id(
                     result.wallpapers,
                     read_tracker(track),
                 )
             except Exception as error:
-                tracker_warning = describe_error(error)
+                warnings.append(
+                    f"Tracker warning:\n{describe_error(error)}"
+                )
 
-            return result, favorites, current_path, tracker_warning
+            check_cancelled(stop_event)
+
+            return (
+                result,
+                favorites,
+                current_path,
+                "\n\n".join(warnings),
+            )
 
         self.control_future = self.control_executor.submit(work)
         self.control_future.add_done_callback(
@@ -2267,7 +2484,9 @@ class WallpaperApp:
                 self.update_visibility_and_selection()
                 self._start_image_jobs()
             else:
-                self.empty_title.set_text("Could Not Load Wallpapers")
+                self.empty_title.set_text(
+                    "Could Not Load Wallpapers"
+                )
                 self.empty_subtitle.set_text(
                     "Check the wallpaper directory and try rebuilding."
                 )
@@ -2280,11 +2499,14 @@ class WallpaperApp:
             return
 
         if warning:
-            log_error(f"Tracker warning: {warning}")
+            log_error(
+                f"Wallpaper loading warning:\n{warning}"
+            )
 
-        self.favorites = favorites
+        if favorites is not None:
+            self.favorites = favorites
+
         self.wallpapers = result.wallpapers
-
         self.current_selected_child = None
 
         for child in self.flowbox.get_children():
@@ -2309,18 +2531,27 @@ class WallpaperApp:
                 for _ in range(80):
                     rel_path = next(iterator)
                     child = self._create_child(rel_path)
+
                     self.children[rel_path] = child
                     self.flowbox.add(child)
                     child.show_all()
+
                     created += 1
+
             except StopIteration:
-                self._finish_grid(generation, current_path, result.failed)
+                self._finish_grid(
+                    generation,
+                    current_path,
+                    result.failed,
+                )
                 return GLib.SOURCE_REMOVE
+
             except Exception as error:
                 self.is_refreshing = False
                 self.loading_spinner.stop()
                 self._update_busy_controls()
                 self.update_visibility_and_selection()
+
                 self.show_error(
                     "Grid Creation Failed",
                     describe_error(error),
@@ -2341,8 +2572,7 @@ class WallpaperApp:
         child.pixbuf = None
         child.image_finished = False
 
-        # A persistent EventBox provides reliable per-tile middle/right clicks
-        # without guessing FlowBox event coordinate origins.
+        # Keep the event target stable while its thumbnail content changes.
         event_box = Gtk.EventBox()
         event_box.set_visible_window(False)
         event_box.set_size_request(RENDER_SIZE, RENDER_SIZE)
@@ -2355,8 +2585,9 @@ class WallpaperApp:
         )
 
         child.event_box = event_box
-        event_box.add(self._thumbnail_placeholder(failed=False))
         child.add(event_box)
+
+        self._render_child(child)
         return child
 
     def _finish_grid(self, generation, current_path, failed):
@@ -2432,41 +2663,57 @@ class WallpaperApp:
     def _load_pixbuf(rel_path, stop_event):
         check_cancelled(stop_event)
 
-        status = CacheManager.generate_thumb(
-            rel_path,
+        # Keep a cooperating exclusive sweep/rebuild from removing a
+        # thumbnail between validation/generation and its actual decoding.
+        with file_lock(
+            CACHE_LOCK_FILE,
+            exclusive=False,
             stop_event=stop_event,
-        )
+        ):
+            status = CacheManager.generate_thumb(
+                rel_path,
+                stop_event=stop_event,
+                cache_locked=True,
+            )
 
-        if status not in {"cached", "generated"}:
-            return None
+            if status not in {"cached", "generated"}:
+                return None
 
-        thumb = CacheManager.get_thumb_path(rel_path)
+            thumb = CacheManager.get_thumb_path(rel_path)
 
-        for attempt in range(2):
-            check_cancelled(stop_event)
+            for attempt in range(2):
+                check_cancelled(stop_event)
 
-            try:
-                return GdkPixbuf.Pixbuf.new_from_file_at_scale(
-                    str(thumb),
-                    RENDER_SIZE,
-                    RENDER_SIZE,
-                    True,
-                )
-            except (GLib.Error, OSError) as error:
-                if attempt:
-                    log_error(
-                        f"Cannot decode thumbnail for {rel_path!r}: {error}"
+                try:
+                    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                        str(thumb),
+                        RENDER_SIZE,
+                        RENDER_SIZE,
+                        True,
                     )
-                    return None
 
-                # A broken cached PNG is not proof of a broken source image.
-                status = CacheManager.generate_thumb(
-                    rel_path,
-                    force=True,
-                    stop_event=stop_event,
-                )
-                if status != "generated":
-                    return None
+                    check_cancelled(stop_event)
+                    return pixbuf
+
+                except (GLib.Error, OSError) as error:
+                    if attempt:
+                        log_error(
+                            f"Cannot decode thumbnail for "
+                            f"{rel_path!r}: {error}"
+                        )
+                        return None
+
+                    # A broken cached PNG is not proof that the source
+                    # image is broken. Regenerate once, then retry decoding.
+                    status = CacheManager.generate_thumb(
+                        rel_path,
+                        force=True,
+                        stop_event=stop_event,
+                        cache_locked=True,
+                    )
+
+                    if status != "generated":
+                        return None
 
         return None
 
@@ -2517,17 +2764,16 @@ class WallpaperApp:
         if old_content is not None:
             old_content.destroy()
 
+        overlay = Gtk.Overlay()
+
         if child.pixbuf is None:
-            placeholder = self._thumbnail_placeholder(
+            base = self._thumbnail_placeholder(
                 failed=child.image_finished
             )
-            child.event_box.add(placeholder)
-            placeholder.show_all()
-            return
+        else:
+            base = Gtk.Image.new_from_pixbuf(child.pixbuf)
 
-        overlay = Gtk.Overlay()
-        image = Gtk.Image.new_from_pixbuf(child.pixbuf)
-        overlay.add(image)
+        overlay.add(base)
 
         if child.rel_path in self.favorites:
             heart = Gtk.Label(label="♥")
@@ -2536,6 +2782,7 @@ class WallpaperApp:
             heart.set_valign(Gtk.Align.START)
             heart.set_margin_top(6)
             heart.set_margin_end(8)
+
             overlay.add_overlay(heart)
             overlay.set_overlay_pass_through(heart, True)
 
@@ -2877,7 +3124,8 @@ class WallpaperApp:
 
         for path in changed:
             child = self.children.get(path)
-            if child is not None and child.image_finished:
+
+            if child is not None:
                 self._render_child(child)
 
         self.flowbox.invalidate_filter()
