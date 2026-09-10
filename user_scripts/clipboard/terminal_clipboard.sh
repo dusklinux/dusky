@@ -1318,6 +1318,11 @@ cmd_list() {
         remove_tmpfile "$pins_tmp"
     fi
 
+    # Used by the initial fzf load event to skip the pinned rows.
+    if [[ -n $SESSION_DIR && -d $SESSION_DIR ]]; then
+        printf '%d\n' "$n" >"$SESSION_DIR/initial-pin-count"
+    fi
+
     cliphist list 2>/dev/null | LC_ALL=C.UTF-8 gawk \
         -v pin_count="$n" -v icon_img="$ICON_IMG" -v icon_bin="$ICON_BIN" \
         -v sep="$SEP" -v max_len="$LIST_TRUNC" '
@@ -1665,6 +1670,15 @@ format_ts() {
 
 cmd_preview() {
     local type="${1:-}" id="${2:-}" pin_file img info tmp mtime
+
+    # Pins arrive before history. Skip their initial preview until the
+    # one-time load action has finished positioning the cursor.
+    # Non-pinned entries and standalone previews are unaffected.
+    if [[ $type == pin && -n $SESSION_DIR &&
+          ! -e $SESSION_DIR/initial-focus-ready ]]; then
+        return 0
+    fi
+
     write_preview_size
     is_kitty && kitty_purge
 
@@ -2080,7 +2094,8 @@ show_menu() {
     local -a args=(
         --multi --ansi --no-sort --exact --cycle --layout=reverse --scheme=history
         --with-shell='bash -c'
-        --margin=0 --padding=0 --highlight-line --no-scrollbar --ellipsis=''
+        --margin=0 --padding=0 --highlight-line --ellipsis=''
+        --scrollbar='│┃'
         --border=rounded --border-label="$border_main" --border-label-pos=bottom:3
         --info=hidden
         --pointer='▌' --marker='┃'
@@ -2089,11 +2104,32 @@ show_menu() {
         --preview="$SELF_REF --preview {2} {3}"
         --preview-window="${STATE[PREVIEW_LAYOUT]}"
         --preview-label="$LABEL_PREVIEW" --preview-label-pos=3
-        --color='label:bold'
+        --color="label:bold,preview-scrollbar:${MATUGEN_ACCENT}"
 
         # Mode bootstrap: one transform at `start` decides prompt + search
         # state + keymap, so vim and standard mode share ONE fzf process.
         --bind="start:transform:$SELF_REF --vim-init"
+        # Position once, then enable pinned previews.
+        # If the user already typed a query, preserve their filtered position:
+        # the full-list pin count is not a valid offset into filtered results.
+        --bind='load:transform:
+            printf "unbind(load)"
+            n=0
+            if ! IFS= read -r n <"$CLIPFZF_SESSION/initial-pin-count" 2>/dev/null ||
+               [[ ! $n =~ ^[0-9]+$ ]]; then
+                n=0
+            fi
+
+            if [[ -z ${FZF_QUERY:-} ]] &&
+               (( n > 0 && n < ${FZF_MATCH_COUNT:-0} )); then
+                printf "+pos(%d)" "$((n + 1))"
+            fi
+
+            printf "%s" "+execute-silent(: > \"\$CLIPFZF_SESSION/initial-focus-ready\")"
+
+            if (( n > 0 )); then
+                printf "+refresh-preview"
+            fi'
         --bind="alt-m:transform:$SELF_REF --toggle-vim"
         --bind="f1:transform:$SELF_REF --toggle-help"
         --bind="esc:transform:$SELF_REF --key-escape"
