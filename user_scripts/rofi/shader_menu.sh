@@ -1,412 +1,503 @@
 #!/usr/bin/env bash
 #
-# Hyprshade Selector - Interactive shader picker with live preview
-# Powered natively by hyprctl & Lua eval (Hyprland 0.55+ Compatible)
-# Requires: rofi, hyprctl, flock
+# Hyprland shader picker with Up/Down live preview.
+# Requires: rofi, hyprctl, flock, python3.
+#
+# Applies use the supplied hl.config Lua interface.
+# A successful option readback does not prove GPU shader compilation.
 #
 
-set -o errexit
-set -o nounset
-set -o pipefail
+set -euo pipefail
 
-declare -rA ICONS=(
-    [active]=""
-    [inactive]=""
-    [off]=""
-    [shader]=""
-)
+declare SHADER_DIR="$HOME/.config/hypr/shaders"
+declare -r MEMORY_FILE="$HOME/.config/dusky/settings/dusky_shader/rofi_shader_memory"
 
 declare -ra ROFI_CMD=(
     rofi
     -dmenu
     -i
-    -markup-rows
+    -no-markup-rows
     -no-custom
     -no-sort
     -theme-str 'window { width: 400px; }'
 )
 
-declare -a SHADERS=()
-declare -a PREVIEW_PIDS=()
+# Empty path represents "Turn Off"; real shader entries retain full paths.
+declare -a SHADERS=("")
+declare -a MENU_LINES=("Turn Off")
 
-declare ORIGINAL_SHADER="off"
-declare PREVIEW_SHADER="off"
+declare ORIGINAL_SHADER=""
+declare LIVE_SHADER=""
 declare SEARCH_QUERY=""
-declare TMP_DIR=""
-declare LOCK_FILE=""
-declare TOKEN_FILE=""
+declare MENU_TEXT=""
+declare LOCK_FD=""
 
 declare -i CURRENT_IDX=0
-declare -i MAX_IDX=0
-declare -i CLEANUP_NEEDED=1
-declare -i REQUEST_SEQ=0
-
-trim() {
-    local str="${1-}"
-    str="${str#"${str%%[![:space:]]*}"}"
-    str="${str%"${str##*[![:space:]]}"}"
-    printf '%s' "$str"
-}
-
-escape_pango() {
-    local str="${1-}"
-    str=${str//&/&amp;}
-    str=${str//</&lt;}
-    str=${str//>/&gt;}
-    printf '%s' "$str"
-}
+declare -i ACTIVE_IDX=-1
+declare -i MATCH_IDX=-1
+declare -i RESTORE_NEEDED=0
 
 err() {
     printf 'Error: %s\n' "$*" >&2
 }
 
 check_dependencies() {
-    local -a missing=()
     local cmd
+    local -a missing=()
 
-    for cmd in rofi hyprctl flock; do
+    for cmd in rofi hyprctl flock python3; do
         command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
     done
 
-    if ((${#missing[@]} > 0)); then
+    if ((${#missing[@]})); then
         err "Missing required commands: ${missing[*]}"
-        exit 1
+        return 1
     fi
 }
 
-write_latest_token() {
-    local token="$1"
-    local tmp_file="${TOKEN_FILE}.tmp.${BASHPID}.${RANDOM}"
+# Set LIVE_SHADER only after a successful query and valid JSON parsing.
+# A NUL delimiter preserves paths ending in newline characters.
+read_live_shader() {
+    local json
+    local -a values=()
 
-    printf '%s\n' "$token" >"$tmp_file"
-    mv -f -- "$tmp_file" "$TOKEN_FILE"
+    json=$(hyprctl getoption decoration:screen_shader -j) || return 1
+
+    mapfile -d '' -t values < <(
+        python3 -c '
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+    if not isinstance(data, dict) or not isinstance(data.get("str"), str):
+        raise ValueError("expected a string-valued str member")
+    value = data["str"]
+    if value == "[[EMPTY]]":
+        value = ""
+except (ValueError, TypeError) as exc:
+    print(f"Cannot parse screen_shader state: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+sys.stdout.write(value + "\0")
+' <<< "$json"
+    )
+
+    ((${#values[@]} == 1)) || return 1
+    LIVE_SHADER="${values[0]}"
 }
 
-apply_shader_sync() {
-    local shader="${1:-off}"
+# Exact configured-path matches take priority. Filesystem aliases may
+# identify the same shader when Hyprland reports another path spelling.
+find_shader_index() {
+    local wanted="$1"
+    local i
 
-    if [[ "$shader" == "off" ]]; then
-        # Turn off in Hyprland 0.55+ via Lua Eval
-        hyprctl eval 'hl.config({ decoration = { screen_shader = "" } })' >/dev/null 2>&1 || true
-    else
-        # Resolve full path natively for both .glsl and .frag
-        local shader_path=""
-        local dir
-        local ext
-        for dir in "$HOME/.config/hypr/shaders" "/usr/share/hyprshade/shaders"; do
-            for ext in glsl frag; do
-                if [[ -f "$dir/$shader.$ext" ]]; then
-                    shader_path="$dir/$shader.$ext"
-                    break 2
-                fi
-            done
-        done
+    MATCH_IDX=-1
 
-        if [[ -n "$shader_path" ]]; then
-            # Apply in Hyprland 0.55+ via Lua Eval
-            hyprctl eval "hl.config({ decoration = { screen_shader = \"$shader_path\" } })" >/dev/null 2>&1 || true
-        else
-            err "Could not resolve path for shader: $shader"
+    for i in "${!SHADERS[@]}"; do
+        if [[ "${SHADERS[i]}" == "$wanted" ]]; then
+            MATCH_IDX=$i
+            return 0
         fi
-    fi
-}
-
-queue_preview() {
-    local shader="$1"
-    local token
-
-    ((++REQUEST_SEQ))
-    token=$REQUEST_SEQ
-    write_latest_token "$token"
-
-    (
-        exec {__lock_fd}>"$LOCK_FILE"
-        flock "$__lock_fd"
-
-        __latest=$(<"$TOKEN_FILE") || exit 0
-        [[ "$__latest" == "$token" ]] || exit 0
-
-        apply_shader_sync "$shader" >/dev/null 2>&1 || exit 0
-    ) &
-
-    PREVIEW_PIDS+=("$!")
-}
-
-apply_serialized() {
-    local shader="$1"
-    local lock_fd
-
-    ((++REQUEST_SEQ))
-    write_latest_token "$REQUEST_SEQ"
-
-    exec {lock_fd}>"$LOCK_FILE"
-    flock "$lock_fd"
-    apply_shader_sync "$shader"
-    exec {lock_fd}>&-
-}
-
-reap_preview_jobs() {
-    local pid
-
-    for pid in "${PREVIEW_PIDS[@]}"; do
-        wait "$pid" 2>/dev/null || true
     done
 
-    PREVIEW_PIDS=()
+    if [[ -n "$wanted" && -f "$wanted" ]]; then
+        for i in "${!SHADERS[@]}"; do
+            if [[ -n "${SHADERS[i]}" && "${SHADERS[i]}" -ef "$wanted" ]]; then
+                MATCH_IDX=$i
+                return 0
+            fi
+        done
+    fi
+
+    return 0
+}
+
+apply_shader() {
+    local path="$1"
+    local lua
+
+    if [[ -n "$path" && ! -f "$path" ]]; then
+        err "Shader file no longer exists: $path"
+        return 1
+    fi
+
+    # Lua decimal byte escapes preserve the filesystem path without
+    # relying on JSON escapes being valid Lua escapes.
+    lua=$(python3 - "$path" <<'PY'
+import os
+import sys
+
+encoded = "".join(f"\\{byte:03d}" for byte in os.fsencode(sys.argv[1]))
+print('hl.config({ decoration = { screen_shader = "' + encoded + '" } })')
+PY
+    ) || return 1
+
+    hyprctl eval "$lua" >/dev/null || return 1
+    read_live_shader || return 1
+
+    if [[ "$LIVE_SHADER" != "$path" ]]; then
+        err "screen_shader readback does not match the requested value."
+        return 1
+    fi
+
+    return 0
+}
+
+# Output the remembered value followed by NUL.
+# New values are JSON strings; old plain stem values remain readable.
+read_memory() {
+    python3 - "$MEMORY_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    lines = Path(sys.argv[1]).read_text().splitlines()
+except OSError:
+    sys.exit(0)
+
+raw = None
+for line in lines:
+    if line.startswith("shader_menu="):
+        raw = line[len("shader_menu="):]
+
+if raw is None:
+    sys.exit(0)
+
+try:
+    value = json.loads(raw)
+except ValueError:
+    value = raw
+
+if not isinstance(value, str):
+    value = raw
+
+if raw == "off":
+    value = ""
+
+sys.stdout.write(value + "\0")
+PY
+}
+
+write_memory() {
+    local path="$1"
+
+    mkdir -p -- "${MEMORY_FILE%/*}" || return 1
+
+    python3 - "$MEMORY_FILE" "$path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+
+try:
+    lines = path.read_text().splitlines()
+except FileNotFoundError:
+    lines = []
+
+lines = [line for line in lines if not line.startswith("shader_menu=")]
+lines.append("shader_menu=" + json.dumps(sys.argv[2], ensure_ascii=True))
+path.write_text("\n".join(lines) + "\n")
+PY
+}
+
+choose_initial_row() {
+    local remembered
+    local name
+    local i
+    local -i legacy_idx=-1
+    local -i legacy_count=0
+    local -a values=()
+
+    find_shader_index "$ORIGINAL_SHADER"
+    ACTIVE_IDX=$MATCH_IDX
+
+    if ((ACTIVE_IDX >= 0)); then
+        CURRENT_IDX=$ACTIVE_IDX
+        return 0
+    fi
+
+    CURRENT_IDX=0
+    mapfile -d '' -t values < <(read_memory)
+    ((${#values[@]} == 1)) || return 0
+    remembered="${values[0]}"
+
+    find_shader_index "$remembered"
+    if ((MATCH_IDX >= 0)); then
+        CURRENT_IDX=$MATCH_IDX
+        return 0
+    fi
+
+    # Migrate a legacy basename-without-extension only if unambiguous.
+    for i in "${!SHADERS[@]}"; do
+        [[ -n "${SHADERS[i]}" ]] || continue
+        name="${SHADERS[i]##*/}"
+
+        if [[ "${name%.*}" == "$remembered" ]]; then
+            legacy_idx=$i
+            legacy_count=$((legacy_count + 1))
+        fi
+    done
+
+    if ((legacy_count == 1)); then
+        CURRENT_IDX=$legacy_idx
+    fi
+
+    return 0
+}
+
+build_menu() {
+    local file
+    local label
+
+    shopt -s nullglob dotglob
+
+    for file in "$SHADER_DIR/"*.glsl "$SHADER_DIR/"*.frag; do
+        [[ -f "$file" ]] || continue
+
+        SHADERS+=("$file")
+        label="${file##*/}"
+
+        # Keep every filename on one rofi row. Escape backslash first
+        # so literal "\n" and a real newline remain distinguishable.
+        label=${label//\\/'\\'}
+        label=${label//$'\n'/'\n'}
+        label=${label//$'\r'/'\r'}
+        label=${label//$'\t'/'\t'}
+
+        MENU_LINES+=("$label")
+    done
+
+    # A here-string adds exactly one final newline when invoking rofi.
+    printf -v MENU_TEXT '%s\n' "${MENU_LINES[@]}"
+    MENU_TEXT="${MENU_TEXT%$'\n'}"
+}
+
+notify_applied() {
+    local path="$1"
+    local message="Off"
+
+    if [[ -n "$path" ]]; then
+        message="${path##*/}"
+    fi
+
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -i video-display \
+            "Hyprshade" "Applied: $message" >/dev/null 2>&1 || true
+    fi
 }
 
 cleanup() {
     local status=$?
 
-    if ((CLEANUP_NEEDED)) && [[ -n "$LOCK_FILE" && -n "$TOKEN_FILE" ]]; then
-        apply_serialized "$ORIGINAL_SHADER" >/dev/null 2>&1 || true
-        CLEANUP_NEEDED=0
+    # Cleanup keeps the existing session lock; it never reacquires it.
+    trap '' INT TERM HUP
+
+    if ((RESTORE_NEEDED)); then
+        if ! apply_shader "$ORIGINAL_SHADER"; then
+            err "Failed to restore the original screen shader."
+            if ((status == 0)); then
+                status=1
+            fi
+        fi
     fi
 
-    reap_preview_jobs
-
-    if [[ -n "$TMP_DIR" ]]; then
-        rm -rf -- "$TMP_DIR"
-    fi
-
-    return "$status"
+    # Process exit releases the session lock descriptor.
+    exit "$status"
 }
 
-init() {
-    local current_path
-    local shader_file
-    local name
-    local i
-    local dir
-    local ext
-    local -A seen=([off]=1)
+valid_index() {
+    [[ "$1" =~ ^[0-9]+$ ]] || return 1
+    (($1 < ${#SHADERS[@]}))
+}
 
-    check_dependencies
+# Build the currently visible rows for SEARCH_QUERY.
+# view_idx[k] is the index into SHADERS/MENU_LINES for visible row k.
+#
+# Filtering is done here instead of via rofi's -filter flag because
+# rofi 2.x parses a filter value that is exactly one color keyword
+# (red, blue, green, ...) as a Color option and aborts with
+# "Option: filter needs to be set with a string not a Color."
+# Feeding rofi only the matching rows avoids -filter (and -dump) entirely.
+build_view() {
+    local -n _idx=$1
+    local -n _lines=$2
+    local row label hay tok
+    local -a tokens=()
 
-    umask 077
-    TMP_DIR=$(mktemp -d -t hyprshade-selector.XXXXXXXX)
-    LOCK_FILE="$TMP_DIR/apply.lock"
-    TOKEN_FILE="$TMP_DIR/latest.token"
+    _idx=()
+    _lines=()
 
-    : >"$LOCK_FILE"
-    write_latest_token 0
-
-    trap cleanup EXIT
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-    trap 'exit 129' HUP
-
-    # Get current shader purely through hyprctl JSON (Bypassing hyprshade bugs)
-    current_path=$(hyprctl getoption decoration:screen_shader -j 2>/dev/null | grep '"str"' | cut -d'"' -f4 || true)
-    
-    if [[ -z "$current_path" || "$current_path" == "[[EMPTY]]" ]]; then
-        ORIGINAL_SHADER="off"
-    else
-        ORIGINAL_SHADER=$(basename "$current_path")
-        ORIGINAL_SHADER="${ORIGINAL_SHADER%.*}"
-    fi
-    [[ -z "$ORIGINAL_SHADER" ]] && ORIGINAL_SHADER="off"
-
-    SHADERS=("off")
-
-    # Native directory scan for shaders (Supporting both .glsl and .frag)
-    for dir in "$HOME/.config/hypr/shaders" "/usr/share/hyprshade/shaders"; do
-        [[ -d "$dir" ]] || continue
-        for ext in glsl frag; do
-            for shader_file in "$dir/"*."$ext"; do
-                [[ -f "$shader_file" ]] || continue
-                name=$(basename "$shader_file")
-                name="${name%.*}"
-                [[ -z "$name" || "$name" == "off" ]] && continue
-                [[ -n "${seen[$name]+_}" ]] && continue
-                seen["$name"]=1
-                SHADERS+=("$name")
-            done
+    if [[ -z "${SEARCH_QUERY//[[:space:]]/}" ]]; then
+        for row in "${!SHADERS[@]}"; do
+            _idx+=("$row")
+            _lines+=("${MENU_LINES[row]}")
         done
-    done
-
-    CURRENT_IDX=0
-    for i in "${!SHADERS[@]}"; do
-        if [[ "${SHADERS[i]}" == "$ORIGINAL_SHADER" ]]; then
-            CURRENT_IDX=$i
-            break
-        fi
-    done
-
-    MAX_IDX=$((${#SHADERS[@]} - 1))
-    PREVIEW_SHADER="$ORIGINAL_SHADER"
-}
-
-build_menu() {
-    local -n menu_ref=$1
-    local -n active_ref=$2
-
-    menu_ref=()
-    active_ref=-1
-
-    local i
-    local item
-    local icon
-    local display_name
-    local prefix
-    local suffix
-
-    for i in "${!SHADERS[@]}"; do
-        item="${SHADERS[i]}"
-        prefix=""
-        suffix=""
-
-        if [[ "$item" == "$PREVIEW_SHADER" ]]; then
-            active_ref=$i
-            prefix="<b>"
-            suffix=" (Active)</b>"
-            if [[ "$item" == "off" ]]; then
-                icon="${ICONS[off]}"
-            else
-                icon="${ICONS[active]}"
-            fi
-        else
-            if [[ "$item" == "off" ]]; then
-                icon="${ICONS[inactive]}"
-            else
-                icon="${ICONS[shader]}"
-            fi
-        fi
-
-        if [[ "$item" == "off" ]]; then
-            display_name="Turn Off"
-        else
-            display_name=$(escape_pango "$item")
-        fi
-
-        icon=$(escape_pango "$icon")
-
-        if [[ -n "$icon" ]]; then
-            menu_ref+=("${prefix}${icon}  ${display_name}${suffix}")
-        else
-            menu_ref+=("${prefix}${display_name}${suffix}")
-        fi
-    done
-}
-
-notify_applied() {
-    local shader="$1"
-    local msg="$shader"
-
-    [[ "$msg" == "off" ]] && msg="Off"
-
-    if command -v notify-send >/dev/null 2>&1; then
-        notify-send -i video-display "Hyprshade" "Applied: $msg" >/dev/null 2>&1 || true
+        return 0
     fi
+
+    read -ra tokens <<< "${SEARCH_QUERY,,}" || true
+
+    for row in "${!SHADERS[@]}"; do
+        label="${MENU_LINES[row]}"
+        hay="${label,,}"
+        for tok in "${tokens[@]}"; do
+            [[ "$hay" == *"$tok"* ]] || continue 2
+        done
+        _idx+=("$row")
+        _lines+=("$label")
+    done
 }
 
 main_loop() {
-    local -a menu_lines=()
-    local -a rofi_flags=()
-    local -i active_row_index=-1
-    local -i exit_code=0
     local raw_output
     local selection
-    local returned_query
     local target
+    local query_display
+    local view_text
+    local i
+    local -i exit_code
+    local -i view_pos
+    local -i view_count
+    local -i sel_row
+    local -i act_row
+    local -a flags=()
+    local -a view_idx=()
+    local -a view_lines=()
 
     while true; do
-        build_menu menu_lines active_row_index
+        build_view view_idx view_lines
+        view_count=${#view_idx[@]}
 
-        rofi_flags=(
-            -p "Shader Preview"
-            -format "i|f"
-        )
-
-        if ((active_row_index >= 0)); then
-            rofi_flags+=(-a "$active_row_index")
+        if ((view_count > 0)); then
+            printf -v view_text '%s\n' "${view_lines[@]}"
+            view_text="${view_text%$'\n'}"
+        else
+            view_text=""
         fi
+
+        # Cursor follows CURRENT_IDX when it is visible, else first row.
+        sel_row=0
+        for i in "${!view_idx[@]}"; do
+            if ((view_idx[i] == CURRENT_IDX)); then
+                sel_row=$i
+                break
+            fi
+        done
 
         if [[ -n "$SEARCH_QUERY" ]]; then
-            rofi_flags+=(-filter "$SEARCH_QUERY")
+            query_display="Shader [$SEARCH_QUERY]"
         else
-            rofi_flags+=(
-                -selected-row "$CURRENT_IDX"
-                -kb-custom-1 "Down"
-                -kb-custom-2 "Up"
-                -kb-row-down ""
-                -kb-row-up ""
-            )
+            query_display="Shader Preview"
         fi
 
-        set +o errexit
-        raw_output=$(
-            printf '%s\n' "${menu_lines[@]}" |
-                "${ROFI_CMD[@]}" "${rofi_flags[@]}" 2>/dev/null
+        flags=(
+            -p "$query_display"
+            -format 'i|f'
+            -selected-row "$sel_row"
+            -kb-custom-1 "Down"
+            -kb-custom-2 "Up"
+            -kb-row-down ""
+            -kb-row-up ""
         )
-        exit_code=$?
-        set -o errexit
+
+        act_row=-1
+        if ((ACTIVE_IDX >= 0)); then
+            for i in "${!view_idx[@]}"; do
+                if ((view_idx[i] == ACTIVE_IDX)); then
+                    act_row=$i
+                    break
+                fi
+            done
+        fi
+
+        if ((act_row >= 0)); then
+            flags+=(-a "$act_row")
+        fi
+
+        # No producer pipeline: capture rofi's status directly.
+        if raw_output=$(
+            "${ROFI_CMD[@]}" "${flags[@]}" <<< "$view_text"
+        ); then
+            exit_code=0
+        else
+            exit_code=$?
+        fi
 
         selection="${raw_output%%|*}"
-        returned_query=""
-        [[ "$raw_output" == *"|"* ]] && returned_query="${raw_output#*|}"
+
+        if [[ "$raw_output" == *"|"* ]]; then
+            SEARCH_QUERY="${raw_output#*|}"
+            SEARCH_QUERY="${SEARCH_QUERY//$'\n'/}"
+        fi
 
         case "$exit_code" in
             0)
-                if [[ "$selection" =~ ^[0-9]+$ ]] && ((selection >= 0 && selection <= MAX_IDX)); then
-                    target="${SHADERS[selection]}"
+                # view positions map back through view_idx; rofi only
+                # ever sees the pre-filtered rows, so no -dump lookup.
+                if [[ "$selection" =~ ^[0-9]+$ ]] && ((selection >= 0 && selection < view_count)); then
+                    target="${SHADERS[view_idx[selection]]}"
                 else
-                    target="$PREVIEW_SHADER"
+                    # e.g. Enter on an empty view: keep browsing.
+                    continue
                 fi
 
-                if ! apply_serialized "$target"; then
-                    err "Failed to apply shader: $target"
+                # Even a partially failed apply requires rollback.
+                RESTORE_NEEDED=1
+                if ! apply_shader "$target"; then
+                    err "Failed to apply the selected shader."
                     exit 1
                 fi
 
-                PREVIEW_SHADER="$target"
-                CLEANUP_NEEDED=0
+                RESTORE_NEEDED=0
+
+                if ! write_memory "$target"; then
+                    err "Shader applied, but selection memory could not be saved."
+                fi
+
                 notify_applied "$target"
                 exit 0
                 ;;
 
-            10)
-                if [[ -n "$returned_query" ]]; then
-                    SEARCH_QUERY="$returned_query"
-                    continue
+            10|11)
+                # No matches: preserve the query and preview nothing.
+                ((view_count == 0)) && continue
+
+                if [[ "$selection" =~ ^[0-9]+$ ]] && ((selection >= 0 && selection < view_count)); then
+                    view_pos=$selection
+                    if ((exit_code == 10)); then
+                        view_pos=$(((view_pos + 1) % view_count))
+                    else
+                        view_pos=$(((view_pos - 1 + view_count) % view_count))
+                    fi
+                elif ((exit_code == 10)); then
+                    view_pos=0
+                else
+                    view_pos=$((view_count - 1))
                 fi
 
-                SEARCH_QUERY=""
-                CURRENT_IDX=$(((CURRENT_IDX + 1) % (MAX_IDX + 1)))
-                PREVIEW_SHADER="${SHADERS[CURRENT_IDX]}"
-                queue_preview "$PREVIEW_SHADER"
-                ;;
+                CURRENT_IDX=${view_idx[view_pos]}
+                target="${SHADERS[CURRENT_IDX]}"
 
-            11)
-                if [[ -n "$returned_query" ]]; then
-                    SEARCH_QUERY="$returned_query"
-                    continue
-                fi
-
-                SEARCH_QUERY=""
-                CURRENT_IDX=$(((CURRENT_IDX - 1 + MAX_IDX + 1) % (MAX_IDX + 1)))
-                PREVIEW_SHADER="${SHADERS[CURRENT_IDX]}"
-                queue_preview "$PREVIEW_SHADER"
-                ;;
-
-            1)
-                if ! apply_serialized "$ORIGINAL_SHADER"; then
-                    err "Failed to restore original shader: $ORIGINAL_SHADER"
+                RESTORE_NEEDED=1
+                if ! apply_shader "$target"; then
+                    err "Failed to preview the selected shader."
                     exit 1
                 fi
 
-                CLEANUP_NEEDED=0
+                ACTIVE_IDX=$CURRENT_IDX
+                ;;
+
+            1)
+                # EXIT cleanup restores only if an apply was attempted.
                 exit 0
                 ;;
 
             *)
                 err "Rofi exited with unexpected code: $exit_code"
-
-                if ! apply_serialized "$ORIGINAL_SHADER"; then
-                    err "Failed to restore original shader: $ORIGINAL_SHADER"
-                fi
-
-                CLEANUP_NEEDED=0
                 exit 1
                 ;;
         esac
@@ -414,7 +505,54 @@ main_loop() {
 }
 
 main() {
-    init
+    local runtime_dir
+
+    if (($# > 1)); then
+        err "Usage: ${0##*/} [shader-dir]"
+        exit 1
+    fi
+
+    if (($# == 1)); then
+        if [[ -d "$1" ]]; then
+            SHADER_DIR="$1"
+        else
+            err "Shader directory not found: $1"
+            exit 1
+        fi
+    fi
+
+    check_dependencies
+
+    if [[ ! -d "$SHADER_DIR" ]]; then
+        err "Shader directory not found: $SHADER_DIR"
+        exit 1
+    fi
+
+    runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+    # Serialize entire sessions so one picker's cancel cannot undo
+    # another picker's accepted selection.
+    exec {LOCK_FD}>"$runtime_dir/dusky-shader-menu.lock"
+
+    if ! flock -n "$LOCK_FD"; then
+        err "Another shader picker is already running, or its lock is unavailable."
+        exit 1
+    fi
+
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+
+    if ! read_live_shader; then
+        err "Could not read the current screen shader; nothing was changed."
+        exit 1
+    fi
+
+    ORIGINAL_SHADER="$LIVE_SHADER"
+
+    build_menu
+    choose_initial_row
     main_loop
 }
 
