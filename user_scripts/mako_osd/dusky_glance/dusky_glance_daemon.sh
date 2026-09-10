@@ -933,7 +933,7 @@ case "$MODE" in
                 ram_mb=$(( (mem_tot - mem_avail) / 1024 ))
                 send_osd "${ram_mb}"
             else
-                send_osd "RAM: N/A"
+                send_osd "N/A"
             fi
             sleep 1
         done
@@ -983,9 +983,9 @@ case "$MODE" in
                 used_mb=$(( mem_used / 1048576 ))
                 if (( compr_data > 0 )); then
                     ratio=$(( orig_data / compr_data ))
-                    send_osd "${used_mb}MiB ${ratio}:1"
+                    send_osd "${used_mb}MB ${ratio}:1"
                 else
-                    send_osd "${used_mb}MiB"
+                    send_osd "${used_mb}MB"
                 fi
             else
                 send_osd "N/A"
@@ -1215,7 +1215,7 @@ case "$MODE" in
                     total_mib=$((current_sectors / 2048))
 
                     send_osd \
-                        "${total_mib}MiB $((rate_tenths / 10)).$((rate_tenths % 10))MiB/s"
+                        "${total_mib} $((rate_tenths / 10)).$((rate_tenths % 10))"
                 else
                     send_osd "N/A"
                 fi
@@ -1700,7 +1700,7 @@ case "$MODE" in
                             for key in "${!client_mem[@]}"; do
                                 sum=$((sum + client_mem[$key]))
                             done
-                            cached_intel_mem="$((sum / 1048576))MiB"
+                            cached_intel_mem="$((sum / 1048576))MB"
                         else
                             cached_intel_mem="N/A"
                         fi
@@ -1716,7 +1716,7 @@ case "$MODE" in
 
                 while true; do
                     if [[ -r "$used_path" ]] && { read -r used < "$used_path"; } 2>/dev/null; then
-                        send_osd "$(( used / 1048576 ))MiB"
+                        send_osd "$(( used / 1048576 ))MB"
                     else
                         send_osd "N/A"
                     fi
@@ -1737,7 +1737,7 @@ case "$MODE" in
                         fi
                         used="${used//[[:space:]]/}"
                         if [[ "$used" =~ ^[0-9]+$ ]]; then
-                            send_osd "${used}MiB"
+                            send_osd "${used}MB"
                         else
                             send_osd "N/A"
                         fi
@@ -1971,7 +1971,7 @@ case "$MODE" in
                 ram_used_mb=$(( (mem_tot - mem_avail) / 1024 ))
                 ram_used_gb=$(( ram_used_mb / 1024 ))
                 ram_used_gb_frac=$(( (ram_used_mb % 1024) * 10 / 1024 ))
-                ram_str="${ram_used_gb}.${ram_used_gb_frac}GiB"
+                ram_str="${ram_used_gb}.${ram_used_gb_frac}GB"
             else
                 ram_str="N/A"
             fi
@@ -1989,7 +1989,7 @@ case "$MODE" in
 
             case "${vendor,,}" in
                 intel)
-                    vram_label="GPU mem"
+                    vram_label="VRAM"
 
                     if [[ ${#gpu_temp_files[@]} -gt 0 ]] && { read -r gt < "${gpu_temp_files[0]}"; } 2>/dev/null; then
                         gpu_temp="$((gt/1000))°C"
@@ -2131,7 +2131,7 @@ case "$MODE" in
                             vram_mb=$((sum / 1048576))
                             vram_gb=$(( vram_mb / 1024 ))
                             vram_gb_frac=$(( (vram_mb % 1024) * 10 / 1024 ))
-                            cached_hud_vram="${vram_gb}.${vram_gb_frac}GiB"
+                            cached_hud_vram="${vram_gb}.${vram_gb_frac}GB"
                         else
                             cached_hud_vram="N/A"
                         fi
@@ -2173,7 +2173,7 @@ case "$MODE" in
                             vram_mb=$(( vram_bytes / 1048576 ))
                             vram_gb=$(( vram_mb / 1024 ))
                             vram_gb_frac=$(( (vram_mb % 1024) * 10 / 1024 ))
-                            gpu_vram="${vram_gb}.${vram_gb_frac}GiB"
+                            gpu_vram="${vram_gb}.${vram_gb_frac}GB"
                         fi
                     fi
                     ;;
@@ -2215,7 +2215,7 @@ case "$MODE" in
                             if [[ "$nv_mem_used" =~ ^[0-9]+$ ]]; then
                                 nv_used_gb=$(( nv_mem_used / 1024 ))
                                 nv_used_gb_frac=$(( (nv_mem_used % 1024) * 10 / 1024 ))
-                                gpu_vram="${nv_used_gb}.${nv_used_gb_frac}GiB"
+                                gpu_vram="${nv_used_gb}.${nv_used_gb_frac}GB"
                             fi
 
                             [[ "$nv_tmp" =~ ^[0-9]+$ ]] && gpu_temp="${nv_tmp}°C"
