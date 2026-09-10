@@ -52,7 +52,7 @@ group.add_argument("--tmpfs", action="store_true", help="Deploy pure high-perfor
 group.add_argument("--zram", action="store_true", help="Deploy Ext4 on compressed ZRAM block device (/dev/zram1 on /mnt/zram1)")
 group.add_argument("--disable", "--none", dest="disable", action="store_true", help="Disable secondary RAM mount and clean up zram1/tmpfs")
 parser.add_argument("--size", "-s", type=str, default="", help="Size expression (e.g. '50%%', 'ram / 2', '8G', 'ram')")
-parser.add_argument("--resident-limit", "-r", type=str, default="", help="Resident limit for ZRAM block mapping (default: 'ram / 4')")
+parser.add_argument("--resident-limit", "-r", type=str, default="", help="Resident limit for ZRAM block mapping (default: 0 / unlimited)")
 parser.add_argument("--no-color", action="store_true", help="Disable ANSI color output")
 
 args = parser.parse_args()
@@ -310,7 +310,8 @@ def safely_unmount_and_stage(mount_point: Path = MOUNT_POINT) -> Path | None:
                 
                 st = os.statvfs(str(staging_base))
                 free_bytes = st.f_bavail * st.f_frsize
-                if free_bytes > int(allocated_bytes * 1.2) + (100 * 1024 * 1024):
+                required_bytes = int(allocated_bytes * 1.2) + (100 * 1024 * 1024)
+                if free_bytes > required_bytes:
                     s_dir = staging_base / f".zram1_migration_{os.getpid()}_{int(time.time())}"
                     s_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
                     
@@ -409,7 +410,7 @@ Before=local-fs.target
 What=tmpfs
 Where={MOUNT_POINT}
 Type=tmpfs
-Options=rw,nosuid,nodev,relatime,size={size_expr},mode=1777
+Options=rw,nosuid,nodev,noatime,size={size_expr},mode=1777
 
 [Install]
 WantedBy=local-fs.target
@@ -425,7 +426,7 @@ WantedBy=local-fs.target
         time.sleep(0.3)
 
     if get_mount_source() != "tmpfs":
-        run_cmd(["mount", "-t", "tmpfs", "-o", f"rw,nosuid,nodev,relatime,size={size_expr},mode=1777", "tmpfs", str(MOUNT_POINT)], ignore_errors=True)
+        run_cmd(["mount", "-t", "tmpfs", "-o", f"rw,nosuid,nodev,noatime,size={size_expr},mode=1777", "tmpfs", str(MOUNT_POINT)], ignore_errors=True)
 
     fix_mount_permissions()
     restore_staged_files(stage_dir)
@@ -436,9 +437,19 @@ WantedBy=local-fs.target
     else:
         die("Failed to mount tmpfs. Check `systemctl status mnt-zram1.mount`.")
 
+def get_system_ram_kb() -> int:
+    try:
+        text = Path("/proc/meminfo").read_text(encoding="utf-8")
+        m = re.search(r"^MemTotal:\s+(\d+)\s+kB", text, re.M)
+        return int(m.group(1)) if m else 0
+    except Exception:
+        return 0
+
 def configure_zram(size_override: str = "", resident_override: str = "") -> None:
-    size_expr = parse_size_expression(size_override, default="ram / 2") if size_override else "ram / 2"
-    resident_expr = parse_size_expression(resident_override, default="ram / 4") if resident_override else "ram / 4"
+    ram_kb = get_system_ram_kb()
+    default_size = "ram / 4" if (ram_kb and ram_kb < 14680064) else "ram / 2"
+    size_expr = parse_size_expression(size_override, default=default_size) if size_override else default_size
+    resident_expr = parse_size_expression(resident_override, default="0") if resident_override else "0"
 
     info(f"Initializing Ext4 ZRAM Block Mount for: {C.BOLD}{MOUNT_POINT}{C.RST} (Size: {size_expr}, Resident Cap: {resident_expr})")
     
@@ -466,10 +477,10 @@ options = {FS_OPTIONS}
         LEGACY_ZRAM_CONF_FILE.unlink()
     ok(f"ZRAM pool configuration written to {ZRAM_CONF_FILE}")
 
-    # 2. Drop-in for systemd-zram-setup@zram1: strip journal and set 0% root reserve via tune2fs right after creation
+    # 2. Drop-in for systemd-zram-setup@zram1: strip journal via tune2fs right after creation
     setup_override_content = """# Managed by 206_zram_tmpfs_mounts.py
 [Service]
-ExecStartPost=/usr/bin/tune2fs -O ^has_journal -m 0 /dev/%i
+ExecStartPost=/usr/bin/tune2fs -O ^has_journal /dev/%i
 """
     SETUP_OVERRIDE_DIR.mkdir(parents=True, exist_ok=True)
     write_file_atomic(SETUP_OVERRIDE_CONF, setup_override_content)

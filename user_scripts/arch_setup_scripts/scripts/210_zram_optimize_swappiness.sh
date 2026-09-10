@@ -33,8 +33,8 @@ print_help() {
 ${C_BOLD}Usage:${C_RESET} ${SCRIPT_NAME} [OPTIONS]
 
   --auto, -a           Auto-detect RAM size and set dynamic profile (default)
-  --performance, -p    Force >=32GB "Performance Lean" profile
-  --savings, -s        Force <32GB "Strict Dynamic Efficiency" profile
+  --performance, -p    Force >=32GB class "Performance Lean" profile
+  --savings, -s        Force <32GB class "Strict Dynamic Efficiency" profile
   --dry-run, -n        Print the generated configuration and exit
   --help, -h           Show this help menu
 EOF
@@ -116,24 +116,44 @@ declare -i EXPECTED_DIRTY_BYTES
 declare -i EXPECTED_DIRTY_BG_BYTES
 declare -i EXPECTED_MGLRU_TTL
 
-declare -i THRESHOLD_KB=$((30 * 1048576))
+# Unified 4-Tier Memory Demarcation
+# S:  < 7 GiB       (< 7,340,032 KiB)
+# M:  7 - < 14 GiB  (7,340,032 - < 14,680,064 KiB)
+# L:  14 - < 28 GiB (14,680,064 - < 29,360,128 KiB)
+# XL: >= 28 GiB     (>= 29,360,128 KiB, captures 32GB+ systems with iGPU/UMA carve-outs)
 
-if [[ "$MODE" == "PERFORMANCE" ]] || { [[ "$MODE" == "AUTO" ]] && (( SYSTEM_RAM_KB >= THRESHOLD_KB )); }; then
-    PROFILE_NAME="PERFORMANCE_LEAN (>=32GB)"
+if [[ "$MODE" == "PERFORMANCE" ]] || { [[ "$MODE" == "AUTO" ]] && (( SYSTEM_RAM_KB >= 29360128 )); }; then
+    PROFILE_NAME="PERFORMANCE_LEAN (>=32GB class)"
     EXPECTED_SWAPPINESS=150
     EXPECTED_VFS_PRESSURE=50
     EXPECTED_SCALE_FACTOR=10
     EXPECTED_DIRTY_BYTES=536870912       # 512MiB cap prevents massive multi-GB writeback stalls
     EXPECTED_DIRTY_BG_BYTES=134217728    # 128MiB background flush
-    EXPECTED_MGLRU_TTL=100               # 100ms prevents refault thrashing on high-spec systems
-else
-    PROFILE_NAME="DYNAMIC_EFFICIENCY (<32GB)"
+    EXPECTED_MGLRU_TTL=0                 # 0ms prevents premature OOM under tight memory
+elif (( SYSTEM_RAM_KB >= 14680064 )); then
+    PROFILE_NAME="BALANCED_EFFICIENCY (16-24GB class)"
     EXPECTED_SWAPPINESS=180
     EXPECTED_VFS_PRESSURE=125
-    EXPECTED_SCALE_FACTOR=15
+    EXPECTED_SCALE_FACTOR=50             # 50 = ~80-140MB kswapd runway to prevent direct reclaim stalls
     EXPECTED_DIRTY_BYTES=134217728       # 128MiB cap
     EXPECTED_DIRTY_BG_BYTES=33554432     # 32MiB background flush
-    EXPECTED_MGLRU_TTL=0                 # 0ms allows immediate cold eviction under tight RAM
+    EXPECTED_MGLRU_TTL=0
+elif (( SYSTEM_RAM_KB >= 7340032 )); then
+    PROFILE_NAME="DYNAMIC_EFFICIENCY (8-12GB class)"
+    EXPECTED_SWAPPINESS=180
+    EXPECTED_VFS_PRESSURE=125
+    EXPECTED_SCALE_FACTOR=75             # 75 = ~60-100MB kswapd runway
+    EXPECTED_DIRTY_BYTES=134217728       # 128MiB cap
+    EXPECTED_DIRTY_BG_BYTES=33554432     # 32MiB background flush
+    EXPECTED_MGLRU_TTL=0
+else
+    PROFILE_NAME="DYNAMIC_EFFICIENCY (<8GB class)"
+    EXPECTED_SWAPPINESS=180
+    EXPECTED_VFS_PRESSURE=125
+    EXPECTED_SCALE_FACTOR=100            # 100 = 1% RAM runway (~40-70MB)
+    EXPECTED_DIRTY_BYTES=134217728       # 128MiB cap
+    EXPECTED_DIRTY_BG_BYTES=33554432     # 32MiB background flush
+    EXPECTED_MGLRU_TTL=0
 fi
 
 readonly EXPECTED_PAGE_CLUSTER=0        # Disables swap readahead

@@ -15,44 +15,46 @@ from typing import NoReturn, Dict
 TMPFILES_FILE = Path("/etc/tmpfiles.d/99-damon-reclaim.conf")
 DAMON_PARAMS_DIR = Path("/sys/module/damon_reclaim/parameters")
 
-RAM_DEMARCATION_GB = 30.0
-
-LOW_RAM_CONFIG: Dict[str, int | str] = {
+# Unified 4-Tier Memory Demarcation (MemTotal in GiB)
+TIER_S_CONFIG: Dict[str, int | str] = {
     "sample_interval": 500000,
     "aggr_interval": 5000000,
-    "min_age": 20000000,
+    "min_age": 60000000,         # 60s
     "wmarks_high": 800,
     "wmarks_mid": 700,
     "wmarks_low": 50,
     "wmarks_interval": 5000000,
     "quota_ms": 100,
-    "quota_sz": 1073741824,
+    "quota_sz": 268435456,       # 256 MiB
     "quota_reset_interval_ms": 1000,
     "min_nr_regions": 10,
     "max_nr_regions": 1000,
     "skip_anon": "N",
     "addr_unit": 1,
-    "quota_mem_pressure_us": 0,
+    "quota_mem_pressure_us": 1000,
     "quota_autotune_feedback": 0,
 }
 
-HIGH_RAM_CONFIG: Dict[str, int | str] = {
+TIER_M_CONFIG: Dict[str, int | str] = {
+    **TIER_S_CONFIG,
+    "min_age": 120000000,        # 120s (2 min)
+}
+
+TIER_L_CONFIG: Dict[str, int | str] = {
+    **TIER_S_CONFIG,
+    "min_age": 300000000,        # 300s (5 min)
+    "wmarks_high": 500,
+    "wmarks_mid": 400,
+    "quota_ms": 50,
+}
+
+TIER_XL_CONFIG: Dict[str, int | str] = {
+    **TIER_S_CONFIG,
     "sample_interval": 1000000,
-    "aggr_interval": 5000000,
-    "min_age": 60000000,
+    "min_age": 600000000,        # 600s (10 min)
     "wmarks_high": 400,
     "wmarks_mid": 300,
-    "wmarks_low": 50,
-    "wmarks_interval": 5000000,
-    "quota_ms": 100,
-    "quota_sz": 1073741824,
-    "quota_reset_interval_ms": 1000,
-    "min_nr_regions": 10,
-    "max_nr_regions": 1000,
-    "skip_anon": "N",
-    "addr_unit": 1,
-    "quota_mem_pressure_us": 0,
-    "quota_autotune_feedback": 0,
+    "quota_ms": 50,
 }
 
 class C:
@@ -134,6 +136,18 @@ def apply_live_params(cfg):
     required=["sample_interval","aggr_interval","min_age","wmarks_high","wmarks_mid","wmarks_low"]
     for n in required:
         if not (DAMON_PARAMS_DIR/n).is_file(): die(f"Missing {DAMON_PARAMS_DIR/n}")
+
+    # Ensure conflicting DAMON modules step aside first (exclusive in kernel)
+    for mod in ["damon_stat", "damon_lru_sort"]:
+        mod_param = Path(f"/sys/module/{mod}/parameters/enabled")
+        if mod_param.is_file():
+            try:
+                if mod_param.read_text(encoding="utf-8").strip() == "Y":
+                    info(f"Disabling conflicting {mod} module to ensure -EBUSY avoidance...")
+                    mod_param.write_text("N", encoding="utf-8")
+            except Exception as e:
+                warn(f"Could not disable conflicting {mod}: {e}")
+
     has_commit=(DAMON_PARAMS_DIR/"commit_inputs").is_file()
     has_enabled=(DAMON_PARAMS_DIR/"enabled").is_file()
     has_pid=(DAMON_PARAMS_DIR/"kdamond_pid").is_file()
@@ -162,11 +176,11 @@ def apply_live_params(cfg):
         if has_enabled:
             sysfs_write(enabled_path,"Y"); ok("Enabled DAMON_RECLAIM")
             if has_pid and not wait_for(lambda: sysfs_read(DAMON_PARAMS_DIR/"kdamond_pid") not in ("-1",""), timeout=3.0, desc="kdamond_pid active"):
-                warn("kdamond_pid still -1 after enable - may be watermark inactive")
+                warn("kdamond_pid still -1 after enable - may be watermark inactive or conflicting DAMON module")
 
 def verify_live(cfg):
     errs=[]
-    for k in ["sample_interval","aggr_interval","min_age","wmarks_high","wmarks_mid","wmarks_low","wmarks_interval","quota_ms","quota_sz","quota_reset_interval_ms","min_nr_regions","max_nr_regions"]:
+    for k in ["sample_interval","aggr_interval","min_age","wmarks_high","wmarks_mid","wmarks_low","wmarks_interval","quota_ms","quota_sz","quota_reset_interval_ms","min_nr_regions","max_nr_regions","quota_mem_pressure_us"]:
         if k in cfg:
             p=DAMON_PARAMS_DIR/k
             if p.is_file():
@@ -175,12 +189,18 @@ def verify_live(cfg):
     en=sysfs_read(DAMON_PARAMS_DIR/"enabled")
     pid=sysfs_read(DAMON_PARAMS_DIR/"kdamond_pid") if (DAMON_PARAMS_DIR/"kdamond_pid").is_file() else "unknown"
     if en!="Y": errs.append(f"enabled expected Y got {en}")
-    if pid=="-1": warn("kdamond_pid is -1 even though enabled=Y - may be watermark inactive")
+    if pid=="-1":
+        for mod in ["damon_stat", "damon_lru_sort"]:
+            mod_en = Path(f"/sys/module/{mod}/parameters/enabled")
+            if mod_en.is_file() and mod_en.read_text(encoding="utf-8").strip() == "Y":
+                errs.append(f"kdamond_pid is -1 due to module conflict: {mod} is running!")
+        if not errs:
+            warn("kdamond_pid is -1 even though enabled=Y - watermark inactive (free memory is above wmarks_mid)")
     if errs:
         for e in errs: err(e)
         die("Verification failed")
     ok(f"Verified: enabled={en}, kdamond_pid={pid}")
-    for k in ["sample_interval","aggr_interval","min_age","wmarks_high","wmarks_mid","wmarks_low","quota_ms","quota_sz"]:
+    for k in ["sample_interval","aggr_interval","min_age","wmarks_high","wmarks_mid","wmarks_low","quota_ms","quota_sz","quota_mem_pressure_us"]:
         if k in cfg: ok(f" {k} = {sysfs_read(DAMON_PARAMS_DIR/k)}")
 
 def main(argv):
@@ -197,12 +217,54 @@ def main(argv):
     if not DAMON_PARAMS_DIR.is_dir():
         info("DAMON Reclaim not found at /sys/module/damon_reclaim/parameters. Skipping."); return 0
     ram=detect_ram_gb(); info(f"Detected RAM: {C.BOLD}{ram:.2f} GiB{C.RST}")
-    if ram < RAM_DEMARCATION_GB:
-        label="STRICT_RAM_SAVINGS (<30 GiB)"; blurb="Aggressive: 500ms sample, 5s aggr, 20s cold age, reclaim when free <70% down to 5%"; cfg=LOW_RAM_CONFIG
+    if ram < 7.0:
+        label="STRICT_RAM_SAVINGS (<8GB class)"; blurb="Aggressive: 500ms sample, 5s aggr, 60s cold age, reclaim when free <70% down to 5%"; cfg=TIER_S_CONFIG
+    elif ram < 14.0:
+        label="DYNAMIC_EFFICIENCY (8-12GB class)"; blurb="Dynamic: 500ms sample, 5s aggr, 120s cold age, reclaim when free <70% down to 5%"; cfg=TIER_M_CONFIG
+    elif ram < 28.0:
+        label="BALANCED_EFFICIENCY (16-24GB class)"; blurb="Balanced: 500ms sample, 5s aggr, 300s cold age, reclaim when free <40% down to 5%"; cfg=TIER_L_CONFIG
     else:
-        label="PERFORMANCE_LEAN (>=30 GiB)"; blurb="Conservative: 1s sample, 5s aggr, 60s cold age, reclaim when free <30% down to 5%"; cfg=HIGH_RAM_CONFIG
+        label="PERFORMANCE_LEAN (>=32GB class)"; blurb="Conservative: 1s sample, 5s aggr, 600s cold age, reclaim when free <30% down to 5%"; cfg=TIER_XL_CONFIG
     validate_profile(cfg,label); info(f"Selected: {C.BOLD}{label}{C.RST} — {C.DIM}{blurb}{C.RST}")
-    lines=[f"# Managed by {Path(__file__).name} - {label}",f"# Static configuration tuned for {ram:.2f} GiB system RAM","#","# DAMON_RECLAIM is static built-in when CONFIG_DAMON_RECLAIM=y","", "# Monitoring intervals (us)", f"w- /sys/module/damon_reclaim/parameters/sample_interval - - - - {cfg['sample_interval']}", f"w- /sys/module/damon_reclaim/parameters/aggr_interval - - - - {cfg['aggr_interval']}", f"w- /sys/module/damon_reclaim/parameters/min_age - - - - {cfg['min_age']}", f"w- /sys/module/damon_reclaim/parameters/wmarks_interval - - - - {cfg['wmarks_interval']}", "", "# Watermarks per-thousand", f"w- /sys/module/damon_reclaim/parameters/wmarks_high - - - - {cfg['wmarks_high']}", f"w- /sys/module/damon_reclaim/parameters/wmarks_mid - - - - {cfg['wmarks_mid']}", f"w- /sys/module/damon_reclaim/parameters/wmarks_low - - - - {cfg['wmarks_low']}", "", "# Quotas", f"w- /sys/module/damon_reclaim/parameters/quota_ms - - - - {cfg['quota_ms']}", f"w- /sys/module/damon_reclaim/parameters/quota_sz - - - - {cfg['quota_sz']}", f"w- /sys/module/damon_reclaim/parameters/quota_reset_interval_ms - - - - {cfg['quota_reset_interval_ms']}", f"w- /sys/module/damon_reclaim/parameters/quota_mem_pressure_us - - - - {cfg['quota_mem_pressure_us']}", f"w- /sys/module/damon_reclaim/parameters/quota_autotune_feedback - - - - {cfg['quota_autotune_feedback']}", "", "# Regions and behavior", f"w- /sys/module/damon_reclaim/parameters/min_nr_regions - - - - {cfg['min_nr_regions']}", f"w- /sys/module/damon_reclaim/parameters/max_nr_regions - - - - {cfg['max_nr_regions']}", f"w- /sys/module/damon_reclaim/parameters/addr_unit - - - - {cfg['addr_unit']}", f"w- /sys/module/damon_reclaim/parameters/skip_anon - - - - {cfg['skip_anon']}", "", "# Must be last", f"w- /sys/module/damon_reclaim/parameters/enabled - - - - Y",""]
+    lines=[
+        f"# Managed by {Path(__file__).name} - {label}",
+        f"# Static configuration tuned for {ram:.2f} GiB system RAM",
+        "#",
+        "# Step aside conflicting DAMON modules first (exclusive in kernel)",
+        "w- /sys/module/damon_stat/parameters/enabled - - - - N",
+        "w- /sys/module/damon_lru_sort/parameters/enabled - - - - N",
+        "",
+        "# Monitoring intervals (us)",
+        f"w- /sys/module/damon_reclaim/parameters/sample_interval - - - - {cfg['sample_interval']}",
+        f"w- /sys/module/damon_reclaim/parameters/aggr_interval - - - - {cfg['aggr_interval']}",
+        f"w- /sys/module/damon_reclaim/parameters/min_age - - - - {cfg['min_age']}",
+        f"w- /sys/module/damon_reclaim/parameters/wmarks_interval - - - - {cfg['wmarks_interval']}",
+        "",
+        "# Watermarks per-thousand",
+        f"w- /sys/module/damon_reclaim/parameters/wmarks_high - - - - {cfg['wmarks_high']}",
+        f"w- /sys/module/damon_reclaim/parameters/wmarks_mid - - - - {cfg['wmarks_mid']}",
+        f"w- /sys/module/damon_reclaim/parameters/wmarks_low - - - - {cfg['wmarks_low']}",
+        "",
+        "# Quotas & PSI Back-off feedback",
+        f"w- /sys/module/damon_reclaim/parameters/quota_ms - - - - {cfg['quota_ms']}",
+        f"w- /sys/module/damon_reclaim/parameters/quota_sz - - - - {cfg['quota_sz']}",
+        f"w- /sys/module/damon_reclaim/parameters/quota_reset_interval_ms - - - - {cfg['quota_reset_interval_ms']}",
+        f"w- /sys/module/damon_reclaim/parameters/quota_mem_pressure_us - - - - {cfg['quota_mem_pressure_us']}",
+        f"w- /sys/module/damon_reclaim/parameters/quota_autotune_feedback - - - - {cfg['quota_autotune_feedback']}",
+        "",
+        "# Prevent monitoring interval drift on idle desktop",
+        "w- /sys/module/damon_reclaim/parameters/autotune_monitoring_intervals - - - - N",
+        "",
+        "# Regions and behavior",
+        f"w- /sys/module/damon_reclaim/parameters/min_nr_regions - - - - {cfg['min_nr_regions']}",
+        f"w- /sys/module/damon_reclaim/parameters/max_nr_regions - - - - {cfg['max_nr_regions']}",
+        f"w- /sys/module/damon_reclaim/parameters/addr_unit - - - - {cfg['addr_unit']}",
+        f"w- /sys/module/damon_reclaim/parameters/skip_anon - - - - {cfg['skip_anon']}",
+        "",
+        "# Enable DAMON reclaim scheme",
+        "w- /sys/module/damon_reclaim/parameters/enabled - - - - Y",
+        ""
+    ]
     content="\n".join(lines)+"\n"
     if args.dry_run:
         print(f"\n{C.BOLD}[ DRY RUN: Would write to {TMPFILES_FILE} ]{C.RST}"); print(content); return 0

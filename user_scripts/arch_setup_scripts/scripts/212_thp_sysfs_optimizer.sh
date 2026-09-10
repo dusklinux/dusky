@@ -11,7 +11,6 @@ set -euo pipefail
 readonly CONFIG_FILE="/etc/tmpfiles.d/99-thp-mglru-optimize.conf"
 readonly SCRIPT_NAME="${0##*/}"
 readonly THP_BASE_DIR="/sys/kernel/mm/transparent_hugepage"
-readonly MGLRU_BASE_DIR="/sys/kernel/mm/lru_gen"
 
 orig_args=("$@")
 SELF_PATH=""
@@ -39,8 +38,8 @@ print_help() {
 ${C_BOLD:-}Usage:${C_RESET:-} ${SCRIPT_NAME} [OPTIONS]
 
   --auto, -a         Auto-detect RAM size and set dynamic THP profile (default)
-  --aggressive, -A   Force 32GB+ "Performance" THP allocation (Looser limits, 4096 scan)
-  --standard, -S     Force <32GB "Strict RAM Savings" THP allocation (Tight limits, 1024 scan)
+  --aggressive, -A   Force >=32GB class "Performance" THP allocation (Looser limits, 4096 scan)
+  --standard, -S     Force <32GB class "Strict RAM Savings" THP allocation (Tight limits, 1024 scan)
   --dry-run, -n      Print the generated systemd-tmpfiles config and exit
   --help, -h         Show this help menu
 HELP_EOF
@@ -79,25 +78,48 @@ else
     die "FATAL: Could not parse /proc/meminfo."
 fi
 
-declare -i THRESHOLD_KB=$((30 * 1048576))
+declare -i THRESHOLD_KB=29360128  # 28 GiB cutoff for >=32GB class
 declare -i IS_PERF_MODE=0
 
 declare -i EXPECTED_MAX_PTES
+declare -i EXPECTED_MAX_PTES_SWAP
 declare -i EXPECTED_SCAN_SLEEP
 declare -i EXPECTED_PAGES_TO_SCAN
 readonly EXPECTED_ALLOC_SLEEP=60000
 readonly EXPECTED_KHUGEPAGED_DEFRAG=1
 
+# Unified 4-Tier THP Demarcation
+# S:  < 7 GiB       -> max_ptes_none = 128 (25% padding allowed, balanced baseline)
+# M:  7 - < 14 GiB  -> max_ptes_none = 256 (50% padding allowed)
+# L:  14 - < 28 GiB -> max_ptes_none = 450 (aggressive collapse for 16-24GB)
+# XL: >= 28 GiB     -> max_ptes_none = 450 (aggressive collapse for >=32GB)
+
 if [[ "$MODE" == "AGGRESSIVE" ]] || { [[ "$MODE" == "AUTO" ]] && (( SYSTEM_RAM_KB >= THRESHOLD_KB )); }; then
     IS_PERF_MODE=1
-    EXPECTED_MODE="PERFORMANCE_LEAN (32GB+)"
-    EXPECTED_MAX_PTES=450
+    EXPECTED_MODE="PERFORMANCE_LEAN (>=32GB class)"
+    EXPECTED_MAX_PTES=450               # Aggressive collapse for large memory
+    EXPECTED_MAX_PTES_SWAP=64           # Default swap-in allowance
     EXPECTED_SCAN_SLEEP=15000
     EXPECTED_PAGES_TO_SCAN=4096
+elif (( SYSTEM_RAM_KB >= 14680064 )); then
+    IS_PERF_MODE=1
+    EXPECTED_MODE="BALANCED_PERFORMANCE (16-24GB class)"
+    EXPECTED_MAX_PTES=450               # Aggressive collapse for 16-24GB
+    EXPECTED_MAX_PTES_SWAP=0            # Forbid swapping pages back IN from ZRAM
+    EXPECTED_SCAN_SLEEP=30000
+    EXPECTED_PAGES_TO_SCAN=2048
+elif (( SYSTEM_RAM_KB >= 7340032 )); then
+    IS_PERF_MODE=0
+    EXPECTED_MODE="DYNAMIC_EFFICIENCY (8-12GB class)"
+    EXPECTED_MAX_PTES=256               # 50% threshold collapse
+    EXPECTED_MAX_PTES_SWAP=0            # Forbid swapping pages back IN from ZRAM
+    EXPECTED_SCAN_SLEEP=60000
+    EXPECTED_PAGES_TO_SCAN=1024
 else
     IS_PERF_MODE=0
-    EXPECTED_MODE="STRICT_RAM_SAVINGS (<32GB)"
-    EXPECTED_MAX_PTES=0
+    EXPECTED_MODE="COMPACT_EFFICIENCY (<8GB class)"
+    EXPECTED_MAX_PTES=128               # Base 128 threshold (25% padding allowed)
+    EXPECTED_MAX_PTES_SWAP=0            # Forbid swapping pages back IN from ZRAM
     EXPECTED_SCAN_SLEEP=60000
     EXPECTED_PAGES_TO_SCAN=1024
 fi
@@ -110,7 +132,7 @@ if [[ ! -d "$THP_BASE_DIR" && -d "/sys/kernel/mm" ]]; then
     die "FATAL: Transparent HugePages (THP) are not supported or disabled in this kernel."
 fi
 
-log_info "Initializing Multi-Size THP & MGLRU Optimizer..."
+log_info "Initializing Multi-Size THP Optimizer..."
 log_info "Detected System RAM: ${C_BOLD:-}${SYSTEM_RAM_GB} GB${C_RESET:-} (${SYSTEM_RAM_KB} KiB)"
 
 if [[ "$MODE" != "AUTO" ]]; then
@@ -122,11 +144,10 @@ trap 'rm -f "${tmpfile:-}"' EXIT
 
 cat > "$tmpfile" <<CONF_EOF
 # Managed by ${SCRIPT_NAME}
-# Scope: Transparent HugePages (mTHP) and MGLRU systemd-tmpfiles initialization
+# Scope: Transparent HugePages (mTHP) systemd-tmpfiles initialization
 # Target: Kernel 7.2+ / systemd 261+ / Arch Linux
 # Profile: ${EXPECTED_MODE} | Detected RAM: ${SYSTEM_RAM_GB}GB
 # Docs: https://docs.kernel.org/admin-guide/mm/transhuge.html
-#       https://docs.kernel.org/admin-guide/mm/multigen_lru.html
 
 # --- GLOBAL THP CONTROLS ---
 w- /sys/kernel/mm/transparent_hugepage/enabled - - - - ${EXPECTED_ENABLED}
@@ -139,6 +160,7 @@ w- /sys/kernel/mm/transparent_hugepage/shrink_underused - - - - 1
 
 # --- KHUGEPAGED DAEMON TUNING ---
 w- /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none - - - - ${EXPECTED_MAX_PTES}
+w- /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_swap - - - - ${EXPECTED_MAX_PTES_SWAP}
 w- /sys/kernel/mm/transparent_hugepage/khugepaged/scan_sleep_millisecs - - - - ${EXPECTED_SCAN_SLEEP}
 w- /sys/kernel/mm/transparent_hugepage/khugepaged/pages_to_scan - - - - ${EXPECTED_PAGES_TO_SCAN}
 w- /sys/kernel/mm/transparent_hugepage/khugepaged/defrag - - - - ${EXPECTED_KHUGEPAGED_DEFRAG}
@@ -195,12 +217,6 @@ for sz in "${detected_sizes[@]}"; do
     } >> "$tmpfile"
 done
 
-cat >> "$tmpfile" <<MGLRU_EOF
-
-# --- MULTI-GEN LRU (MGLRU) RUNTIME SWITCH ---
-w- /sys/kernel/mm/lru_gen/enabled - - - - 0x0007
-MGLRU_EOF
-
 if (( DRY_RUN == 1 )); then
     log_info "DRY RUN EXECUTED. Generated configuration for ${CONFIG_FILE}:"
     cat "$tmpfile"
@@ -230,6 +246,7 @@ actual_enabled="$(< "${THP_BASE_DIR}/enabled")"
 actual_defrag="$(< "${THP_BASE_DIR}/defrag")"
 actual_shmem="$(< "${THP_BASE_DIR}/shmem_enabled")"
 actual_ptes="$(< "${THP_BASE_DIR}/khugepaged/max_ptes_none")"
+actual_ptes_swap="$(< "${THP_BASE_DIR}/khugepaged/max_ptes_swap")"
 actual_scan_sleep="$(< "${THP_BASE_DIR}/khugepaged/scan_sleep_millisecs")"
 actual_pages_to_scan="$(< "${THP_BASE_DIR}/khugepaged/pages_to_scan")"
 
@@ -237,6 +254,7 @@ actual_pages_to_scan="$(< "${THP_BASE_DIR}/khugepaged/pages_to_scan")"
 [[ "$actual_defrag" == *"[$EXPECTED_DEFRAG]"* ]]   || die "Verification failed: THP 'defrag' is '${actual_defrag}', expected '[${EXPECTED_DEFRAG}]'."
 [[ "$actual_shmem" == *"[$EXPECTED_SHMEM]"* ]]     || die "Verification failed: THP 'shmem_enabled' is '${actual_shmem}', expected '[${EXPECTED_SHMEM}]'."
 [[ "$actual_ptes" == "$EXPECTED_MAX_PTES" ]]       || die "Verification failed: 'max_ptes_none' is '${actual_ptes}', expected '${EXPECTED_MAX_PTES}'."
+[[ "$actual_ptes_swap" == "$EXPECTED_MAX_PTES_SWAP" ]] || die "Verification failed: 'max_ptes_swap' is '${actual_ptes_swap}', expected '${EXPECTED_MAX_PTES_SWAP}'."
 [[ "$actual_scan_sleep" == "$EXPECTED_SCAN_SLEEP" ]] || die "Verification failed: 'scan_sleep_millisecs' is '${actual_scan_sleep}', expected '${EXPECTED_SCAN_SLEEP}'."
 [[ "$actual_pages_to_scan" == "$EXPECTED_PAGES_TO_SCAN" ]] || die "Verification failed: 'pages_to_scan' is '${actual_pages_to_scan}', expected '${EXPECTED_PAGES_TO_SCAN}'."
 
@@ -291,20 +309,15 @@ for sz in "${detected_sizes[@]}"; do
     fi
 done
 
-if [[ -f "${MGLRU_BASE_DIR}/enabled" ]]; then
-    actual_mglru="$(< "${MGLRU_BASE_DIR}/enabled")"
-    [[ "$actual_mglru" == "0x0007" ]] || die "Verification failed: MGLRU 'enabled' is '${actual_mglru}', expected '0x0007'."
-fi
-
 log_success "Verified live sysfs kernel values:"
 log_success "  enabled = [${EXPECTED_ENABLED}]"
 log_success "  defrag = [${EXPECTED_DEFRAG}]"
 log_success "  shmem_enabled = [${EXPECTED_SHMEM}]"
-log_success "  max_ptes_none = ${actual_ptes} (0=strict savings, 450=perf collapse)"
+log_success "  max_ptes_none = ${actual_ptes} (128=compact, 256=balanced, 450=perf collapse)"
+log_success "  max_ptes_swap = ${actual_ptes_swap} (0=prevent swap-in uncompress)"
 log_success "  scan_sleep_millisecs = ${actual_scan_sleep} (idle sleep)"
 log_success "  pages_to_scan = ${actual_pages_to_scan}"
 log_success "  use_zero_page = 1, shrink_underused = 1, khugepaged/defrag = 1"
-[[ -f "${MGLRU_BASE_DIR}/enabled" ]] && log_success "  MGLRU enabled = 0x0007 (Anon + Clean File + Dirty File)"
 log_success "  Active Profile: [${C_BOLD:-}${EXPECTED_MODE}${C_RESET:-}]"
 
 exit 0

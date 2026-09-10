@@ -43,9 +43,8 @@ Configure high-efficiency ZRAM swap for Arch Linux (Linux 7.2+, systemd 261+).
 
 Options:
   --size, -s <expr>           ZRAM size expression (auto-detected if omitted)
-                              • <= 8GB RAM  -> "ram"     (100% RAM - Expands tight memory)
-                              • 8GB - 32GB  -> "ram"     (100% RAM - Optimal balance)
-                              • >= 32GB RAM -> "ram * 0.5" (50% RAM - Massive headroom)
+                              • < 32GB class  -> "ram"     (100% RAM - Expands tight memory)
+                              • >= 32GB class -> "ram / 2" (50% RAM - Massive headroom)
   --resident-limit, -r <expr> Resident memory limit expression (default: 0 / unlimited)
   --priority, -p <prio>       Swap priority (default: 32767 - Maximum priority over disk)
   --algorithm, -a <algo>      Compression algorithm (default: "zstd(level=2)")
@@ -67,21 +66,18 @@ declare -i RAM_MB=$(( RAM_KB / 1024 ))
 declare -i RAM_GB=$(( (RAM_MB + 512) / 1024 ))
 
 AUTO_SIZE_EXPR="ram"
-AUTO_LIMIT_EXPR="ram * 0.8"
+AUTO_LIMIT_EXPR="0"
 TIER_DESC=""
 
-if (( RAM_MB <= 8704 )); then
+# Unified Tier Demarcation (28 GiB / 29,360,128 KiB accounts for 32GB systems with iGPU reservations)
+if (( RAM_KB < 29360128 )); then
     AUTO_SIZE_EXPR="ram"
-    AUTO_LIMIT_EXPR="ram * 0.8"
-    TIER_DESC="<= 8GB RAM (${RAM_GB}GB detected) -> Size: 100% (1.0x), Resident Cap: 80% (0.8x)"
-elif (( RAM_MB < 31744 )); then
-    AUTO_SIZE_EXPR="ram"
-    AUTO_LIMIT_EXPR="ram * 0.5"
-    TIER_DESC="8GB - 32GB RAM (${RAM_GB}GB detected) -> Size: 100% (1.0x), Resident Cap: 50% (0.5x)"
+    AUTO_LIMIT_EXPR="0"
+    TIER_DESC="Standard (<32GB class, ${RAM_GB}GB detected) -> Size: 100% (1.0x RAM), Resident Cap: unlimited (0)"
 else
-    AUTO_SIZE_EXPR="ram * 0.5"
-    AUTO_LIMIT_EXPR="ram * 0.2"
-    TIER_DESC=">= 32GB RAM (${RAM_GB}GB detected) -> Size: 50% (0.5x), Resident Cap: 20% (0.2x)"
+    AUTO_SIZE_EXPR="ram / 2"
+    AUTO_LIMIT_EXPR="0"
+    TIER_DESC="High-Capacity (>=32GB class, ${RAM_GB}GB detected) -> Size: 50% (0.5x RAM), Resident Cap: unlimited (0)"
 fi
 
 ZRAM_SIZE_EXPR=""
@@ -181,7 +177,7 @@ fi
 install -d -m 0755 /etc/tmpfiles.d
 cat > /etc/tmpfiles.d/00-disable-zswap.conf <<'EOF'
 # Disable zswap to prevent redundant double-compression with ZRAM
-w! /sys/module/zswap/parameters/enabled - - - - 0
+w-! /sys/module/zswap/parameters/enabled - - - - 0
 EOF
 log_success "Persistence: Created /etc/tmpfiles.d/00-disable-zswap.conf (bootloader-agnostic)."
 

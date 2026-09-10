@@ -181,10 +181,10 @@ def perform_reclaim() -> None:
 
             before_reclaimed = parse_proactive_reclaimed_bytes(stat_file)
 
-            target_reclaim = int(anon_bytes * 0.50)
+            target_reclaim = anon_bytes
             if target_reclaim < 1024 * 1024:
                 if anon_bytes >= 1024 * 1024:
-                    target_reclaim = 1024 * 1024
+                    target_reclaim = anon_bytes
                 else:
                     info(f"No cold anonymous pages (anon={anon_bytes} B) in {slice_name}.")
                     continue
@@ -195,16 +195,19 @@ def perform_reclaim() -> None:
                 reclaim_file.write_text(reclaim_command, encoding="utf-8")
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    info(f"Kernel could not reclaim enough from {slice_name} (EAGAIN). No reclaimable cold pages or no swap.")
-                    continue
+                    info(f"Kernel processed reclaim for {slice_name} (partial reclaim - EAGAIN returned).")
                 elif e.errno == errno.EINVAL:
                     try:
                         reclaim_file.write_text(str(target_reclaim), encoding="utf-8")
                     except OSError as e2:
                         if e2.errno == errno.EAGAIN:
+                            info(f"Kernel processed reclaim for {slice_name} (partial reclaim - EAGAIN returned).")
+                        else:
+                            err(f"Invalid reclaim command for {slice_name}: {target_reclaim} ({e2})")
                             continue
-                        err(f"Invalid reclaim command for {slice_name}: {target_reclaim} ({e2})")
-                        continue
+                elif e.errno == errno.ENOENT:
+                    info(f"Reclaim interface missing for {slice_name} (controller unmounted). Skipping.")
+                    continue
                 else:
                     raise
 
@@ -248,7 +251,6 @@ Documentation=https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html
 After=multi-user.target local-fs.target
 ConditionPathExists=/sys/fs/cgroup
 ConditionPathExists=/sys/fs/cgroup/system.slice
-DefaultDependencies=no
 
 [Service]
 Type=oneshot
@@ -272,11 +274,11 @@ MemoryDenyWriteExecute=no
 
     timer_path = Path("/etc/systemd/system/dusky_boot_mem_reclaim.timer")
     timer_content = """[Unit]
-Description=Trigger Boot-time Cold Memory Reclaimer 1 minute after boot
+Description=Trigger Boot-time Cold Memory Reclaimer 45 seconds after boot
 Documentation=https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html
 
 [Timer]
-OnBootSec=1min
+OnBootSec=45s
 AccuracySec=1s
 Persistent=false
 Unit=dusky_boot_mem_reclaim.service
@@ -299,7 +301,7 @@ WantedBy=timers.target
     except subprocess.CalledProcessError as e:
         die(f"Failed to enable timer: {e}")
 
-    ok("Boot-time reclaimer timer is active. Cold memory will be purged 1 minute after boot (AccuracySec=1s).")
+    ok("Boot-time reclaimer timer is active. Cold memory will be purged 45 seconds after boot (AccuracySec=1s).")
     info("Verify with: systemctl status dusky_boot_mem_reclaim.timer && systemctl status dusky_boot_mem_reclaim.service && journalctl -u dusky_boot_mem_reclaim.service")
 
 def main() -> None:
