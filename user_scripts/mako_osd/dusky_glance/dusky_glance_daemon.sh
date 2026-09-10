@@ -1,136 +1,443 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# DUSKY GLANCE DAEMON - DYNAMIC WIDTH EDITION
+# DUSKY GLANCE DAEMON - HIGH-PERFORMANCE & RELIABILITY EDITION
 # ==============================================================================
 
 set -euo pipefail
 
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID}"
+GLANCE_STATE_DIR="$RUNTIME_DIR/dusky-glance"
 MODE="${1:-}"
 
-if [[ -z "$MODE" ]]; then
-    echo "Usage: $0 --mode [args]"
+die() {
+    printf 'dusky-glance: %s\n' "$*" >&2
     exit 1
-fi
-
-# Generate a clean mode slug for per-mode PID files and D-Bus sync channels
-get_mode_slug() {
-    local str="$*"
-    str="${str#--}"
-    echo "$str" | tr '/ ' '--'
 }
 
-MODE_SLUG=$(get_mode_slug "$@")
-MODE_BASE="${MODE#--}"
-
-# APP matches mako.ini rules (e.g. dusky-glance-cpu, dusky-glance-ram, dusky-glance-hud)
-CURRENT_APP="dusky-glance-${MODE_BASE%% *}"
-SYNC_ID="dusky-glance-sync-${MODE_SLUG}"
-PID_FILE="${RUNTIME_DIR}/dusky_glance_${MODE_SLUG}.pid"
-
-# --- CORE LIFECYCLE ---
-clear_osd() {
-    local app="${1:-$CURRENT_APP}"
-    local sync="${2:-$SYNC_ID}"
-    if command -v makoctl >/dev/null 2>&1; then
-        local ids
-        ids=$(makoctl list -j 2>/dev/null | awk -v target="$app" '
-            /"id":/ { id=$2; gsub(/[^0-9]/, "", id) }
-            /"app_name":/ {
-                a=$2; gsub(/["\t,]/, "", a)
-                if (a == target) print id
-            }
-        ')
-        for id in $ids; do
-            makoctl dismiss -n "$id" -h 2>/dev/null || true
-        done
-    fi
-    notify-send -a "$app" -h string:x-canonical-private-synchronous:"$sync" -t 10 " " " " 2>/dev/null || true
+usage() {
+    printf 'Usage: %s --mode [arguments]\n' "$0" >&2
+    exit 2
 }
 
-stop_all_daemons() {
-    for pf in "${RUNTIME_DIR}"/dusky_glance_*.pid; do
-        [[ -f "$pf" ]] || continue
-        local old_pid
-        old_pid=$(<"$pf")
-        if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
-            kill -15 "$old_pid" 2>/dev/null || true
-            pkill -P "$old_pid" 2>/dev/null || true
-        fi
-        rm -f "$pf"
+[[ -n "$MODE" ]] || usage
+[[ -d "$RUNTIME_DIR" && -w "$RUNTIME_DIR" ]] ||
+    die "Runtime directory unavailable: $RUNTIME_DIR"
+
+normalize_seconds() {
+    local value="$1"
+    local minimum="$2"
+
+    [[ "$value" =~ ^[0-9]+$ ]] ||
+        die "Duration must contain decimal digits only"
+
+    while [[ ${#value} -gt 1 && "$value" == 0* ]]; do
+        value="${value#0}"
     done
-    if command -v makoctl >/dev/null 2>&1; then
-        local ids
-        ids=$(makoctl list -j 2>/dev/null | awk '
-            /"id":/ { id=$2; gsub(/[^0-9]/, "", id) }
-            /"app_name":/ {
-                a=$2; gsub(/["\t,]/, "", a)
-                if (a ~ /^dusky-glance/) print id
-            }
-        ')
-        for id in $ids; do
-            makoctl dismiss -n "$id" -h 2>/dev/null || true
-        done
-    fi
+
+    (( ${#value} <= 10 )) || die "Duration is too large"
+
+    value=$((10#$value))
+
+    (( value >= minimum && value <= 2147483647 )) ||
+        die "Duration is outside the supported range"
+
+    printf '%s\n' "$value"
 }
 
-# Global Stop
-if [[ "$MODE" == "--stop" || "$MODE" == "--stop-all" ]]; then
-    stop_all_daemons
-    exit 0
-fi
+case "$MODE" in
+    --stop|--stop-all)
+        (( $# == 1 )) || usage
+        ;;
 
-IS_DAEMON_OWNER=false
-MY_PID=$BASHPID
+    --clock|--clock-short|--stopwatch|--cpu-power|--cpu|--ram|\
+    --ram-temp|--zram|--temp|--battery|--battery-percent|\
+    --battery-watts|--battery-time|--disk|--network|--uptime|--workspace)
+        (( $# == 1 )) || usage
+        ;;
 
-# Atomic Lock Creation: set -C (noclobber) fails atomically if file exists (no TOCTOU race)
-if ! ( set -C; echo "$MY_PID" > "$PID_FILE" ) 2>/dev/null; then
-    old_pid=$(tr -d '[:space:]' < "$PID_FILE" 2>/dev/null || echo "")
-    if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null && [[ "$old_pid" != "$MY_PID" ]]; then
-        rm -f "$PID_FILE" 2>/dev/null || true
-        kill -9 "$old_pid" 2>/dev/null || true
-        pkill -9 -P "$old_pid" 2>/dev/null || true
-        clear_osd
-        exit 0
-    else
-        # Stale lockfile recovery
-        rm -f "$PID_FILE" 2>/dev/null || true
-        echo "$MY_PID" > "$PID_FILE"
-        IS_DAEMON_OWNER=true
+    --timer)
+        (( $# <= 2 )) || usage
+        duration=$(normalize_seconds "${2:-900}" 1)
+        set -- "$MODE" "$duration"
+        ;;
+
+    --pomodoro)
+        (( $# <= 3 )) || usage
+        work=$(normalize_seconds "${2:-1500}" 1)
+        rest=$(normalize_seconds "${3:-300}" 0)
+        set -- "$MODE" "$work" "$rest"
+        ;;
+
+    --world-clock)
+        (( $# >= 2 && $# <= 3 )) || usage
+
+        [[ "$2" != /* && "$2" != *".."* &&
+           -f "/usr/share/zoneinfo/$2" ]] ||
+            die "Expected an installed timezone such as Asia/Kolkata"
+
+        set -- "$MODE" "$2" "${3:-Time}"
+        ;;
+
+    --disk-read|--disk-write|--disk-temp)
+        (( $# == 2 )) || usage
+
+        [[ "$2" =~ ^[[:alnum:]_.+-]+$ ]] ||
+            die "Invalid block-device name: $2"
+        ;;
+
+    --gpu-power|--gpu-usage|--gpu-mem)
+        (( $# == 3 )) || usage
+
+        [[ "$2" =~ ^card[0-9]+$ ]] ||
+            die "Expected a DRM card name such as card0"
+
+        case "${3,,}" in
+            intel|amd|nvidia) ;;
+            *) die "Unsupported GPU vendor: $3" ;;
+        esac
+
+        set -- "$MODE" "$2" "${3,,}"
+        ;;
+
+    --hud)
+        if (( $# != 1 && $# != 3 )); then
+            usage
+        fi
+
+        if (( $# == 3 )); then
+            [[ "$2" =~ ^card[0-9]+$ ]] ||
+                die "Expected a DRM card name such as card0"
+
+            case "${3,,}" in
+                intel|amd|nvidia) ;;
+                *) die "Unsupported GPU vendor: $3" ;;
+            esac
+
+            set -- "$MODE" "$2" "${3,,}"
+        fi
+        ;;
+
+    *)
+        die "Unknown mode: $MODE"
+        ;;
+esac
+
+for required_cmd in flock busctl sha256sum timeout; do
+    command -v "$required_cmd" >/dev/null 2>&1 ||
+        die "Missing required command: $required_cmd"
+done
+
+mkdir -p -- "$GLANCE_STATE_DIR"
+
+# --- SHARED PROCESS & INSTANCE CONTROL ---
+
+process_start() {
+    local pid="$1"
+    local raw
+    local -a fields
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    (( pid > 1 )) || return 1
+
+    { IFS= read -r raw < "/proc/$pid/stat"; } 2>/dev/null ||
+        return 1
+
+    # Strip through the final ") " after process command name
+    read -r -a fields <<< "${raw##*) }"
+
+    (( ${#fields[@]} >= 20 )) || return 1
+    [[ "${fields[0]}" != Z && "${fields[0]}" != X ]] ||
+        return 1
+
+    printf '%s\n' "${fields[19]}"
+}
+
+same_process() {
+    local actual_start
+    actual_start=$(process_start "$1") || return 1
+    [[ "$actual_start" == "$2" ]]
+}
+
+stop_record() {
+    local file="$1"
+    local pid="" started=""
+    local attempt
+
+    if ! { read -r pid started < "$file"; } 2>/dev/null; then
+        rm -f -- "$file"
+        return 0
     fi
-else
-    IS_DAEMON_OWNER=true
+
+    if ! same_process "$pid" "$started"; then
+        rm -f -- "$file"
+        return 0
+    fi
+
+    # Send SIGTERM to the daemon to trigger standard exit traps and notification cleanup.
+    kill -TERM "$pid" 2>/dev/null || true
+
+    # Allow generous time (up to 8.0s) for any bounded query to abort and cleanup to execute D-Bus calls
+    for ((attempt = 0; attempt < 80; attempt++)); do
+        if ! same_process "$pid" "$started"; then
+            rm -f -- "$file"
+            return 0
+        fi
+        sleep 0.1
+    done
+
+    # If the process is still running after the full grace window, preserve the record and report failure
+    printf 'dusky-glance: Process %s did not terminate within grace period; retaining record\n' "$pid" >&2
+    return 1
+}
+
+# Serialize start and stop operations using advisory lock
+exec 9>"$GLANCE_STATE_DIR/control.lock"
+flock -x 9
+
+if [[ "$MODE" == "--stop" || "$MODE" == "--stop-all" ]]; then
+    result=0
+
+    for record in "$GLANCE_STATE_DIR"/*.pid; do
+        [[ -f "$record" ]] || continue
+        stop_record "$record" || result=1
+    done
+
+    exit "$result"
 fi
+
+case "$MODE" in
+    --timer|--pomodoro)
+        command -v notify-send >/dev/null 2>&1 ||
+            die "Missing command: notify-send"
+        ;;
+esac
+
+MODE_BASE="${MODE#--}"
+instance_hash=$(printf '%s\0' "$@" | sha256sum)
+instance_hash="${instance_hash%% *}"
+
+MODE_SLUG="${MODE_BASE}-${instance_hash}"
+CURRENT_APP="dusky-glance-${MODE_BASE}"
+PID_FILE="$GLANCE_STATE_DIR/${MODE_SLUG}.pid"
+
+if [[ -f "$PID_FILE" ]]; then
+    old_pid=""
+    old_start=""
+
+    if { read -r old_pid old_start < "$PID_FILE"; } 2>/dev/null &&
+       same_process "$old_pid" "$old_start"; then
+        stop_record "$PID_FILE"
+        exit 0
+    fi
+
+    rm -f -- "$PID_FILE"
+fi
+
+case "$MODE" in
+    --disk-read|--disk-write|--disk-temp)
+        [[ -d "/sys/class/block/$2" ]] ||
+            die "Unknown block device: $2"
+        ;;
+esac
+
+MY_PID=$BASHPID
+MY_START=$(process_start "$MY_PID")
+OSD_ID=0
+OSD_OWNER=""
+LAST_NOTIFY_WARNING=-30
+
+warn_notification() {
+    if (( SECONDS - LAST_NOTIFY_WARNING >= 30 )); then
+        printf 'dusky-glance: notification delivery failed; retrying\n' >&2
+        LAST_NOTIFY_WARNING=$SECONDS
+    fi
+    return 0
+}
+
+notification_owner() {
+    local reply kind owner
+
+    if ! reply=$(busctl --user --timeout=2 -- call \
+        org.freedesktop.DBus /org/freedesktop/DBus \
+        org.freedesktop.DBus GetNameOwner \
+        s org.freedesktop.Notifications 2>/dev/null); then
+
+        busctl --user --timeout=3 -- call \
+            org.freedesktop.DBus /org/freedesktop/DBus \
+            org.freedesktop.DBus StartServiceByName \
+            su org.freedesktop.Notifications 0 \
+            >/dev/null 2>&1 || return 1
+
+        reply=$(busctl --user --timeout=2 -- call \
+            org.freedesktop.DBus /org/freedesktop/DBus \
+            org.freedesktop.DBus GetNameOwner \
+            s org.freedesktop.Notifications 2>/dev/null) ||
+            return 1
+    fi
+
+    read -r kind owner <<< "$reply"
+    [[ "$kind" == s ]] || return 1
+
+    owner="${owner#\"}"
+    owner="${owner%\"}"
+
+    [[ "$owner" == :* ]] || return 1
+    printf '%s\n' "$owner"
+}
+
+clear_osd() {
+    # Close notification strictly on the owner that issued OSD_ID to avoid cross-server dismissal
+    if [[ -n "$OSD_OWNER" ]] && (( OSD_ID > 0 )); then
+        busctl --user --timeout=2 -- call \
+            "$OSD_OWNER" /org/freedesktop/Notifications \
+            org.freedesktop.Notifications CloseNotification \
+            u "$OSD_ID" >/dev/null 2>&1 || true
+    fi
+
+    OSD_ID=0
+}
 
 cleanup() {
-    if [[ "$IS_DAEMON_OWNER" == true ]]; then
-        local pf_content=""
-        [[ -f "$PID_FILE" ]] && pf_content=$(cat "$PID_FILE" 2>/dev/null || echo "")
-        if [[ "$pf_content" == "$MY_PID" ]]; then
-            rm -f "$PID_FILE" 2>/dev/null || true
-        fi
-        for child in $(pgrep -P "$MY_PID" 2>/dev/null || true); do
-            kill -9 "$child" 2>/dev/null || true
-        done
-        clear_osd
+    local pid="" started=""
+
+    clear_osd
+
+    if [[ -f "$PID_FILE" ]] &&
+       { read -r pid started < "$PID_FILE"; } 2>/dev/null &&
+       [[ "$pid" == "$MY_PID" && "$started" == "$MY_START" ]]; then
+        rm -f -- "$PID_FILE"
     fi
 }
-trap 'cleanup' EXIT
+
+trap cleanup EXIT
 trap 'exit 0' INT TERM
 
-# --- HELPER ROUTINES ---
+printf '%s %s\n' "$MY_PID" "$MY_START" > "$PID_FILE"
+
+flock -u 9
+exec 9>&-
+
+# --- NOTIFICATION DISPATCHERS ---
+
 send_osd() {
-    [[ -f "$PID_FILE" ]] || exit 0
     local text="$1"
-    local body="<span font='monospace 20' weight='bold'>${text}</span>"
-    notify-send -a "$CURRENT_APP" -h string:x-canonical-private-synchronous:"$SYNC_ID" -t 2000 " " "$body" 2>/dev/null || true
+    local font="${2:-monospace 20}"
+    local reply kind new_id
+
+    if [[ -z "$OSD_OWNER" ]]; then
+        if ! OSD_OWNER=$(notification_owner); then
+            OSD_OWNER=""
+            warn_notification
+            return 0
+        fi
+        OSD_ID=0
+    fi
+
+    # Escape raw data characters before Pango markup wrapping
+    text="${text//&/'&amp;'}"
+    text="${text//</'&lt;'}"
+    text="${text//>/'&gt;'}"
+
+    local body="<span font='${font}' weight='bold'>${text}</span>"
+
+    if ! reply=$(busctl --user --timeout=3 -- call \
+        "$OSD_OWNER" /org/freedesktop/Notifications \
+        org.freedesktop.Notifications Notify \
+        'susssasa{sv}i' \
+        "$CURRENT_APP" "$OSD_ID" "" " " "$body" \
+        0 0 15000 2>/dev/null); then
+
+        OSD_OWNER=""
+        OSD_ID=0
+        warn_notification
+        return 0
+    fi
+
+    read -r kind new_id <<< "$reply"
+
+    if [[ "$kind" == u && "$new_id" =~ ^[0-9]+$ ]]; then
+        OSD_ID="$new_id"
+    else
+        OSD_OWNER=""
+        OSD_ID=0
+        warn_notification
+    fi
+
+    return 0
 }
 
 send_hud_osd() {
-    [[ -f "$PID_FILE" ]] || exit 0
-    local text="$1"
-    local body="<span font='monospace 9' weight='bold'>${text}</span>"
-    notify-send -a "$CURRENT_APP" -h string:x-canonical-private-synchronous:"$SYNC_ID" -t 0 " " "$body" 2>/dev/null || true
+    send_osd "$1" "monospace 9"
+}
+
+send_world_clock_osd() {
+    local time_str="$1"
+    local place_lbl="$2"
+    local diff_lbl="$3"
+    local reply kind new_id
+
+    if [[ -z "$OSD_OWNER" ]]; then
+        if ! OSD_OWNER=$(notification_owner); then
+            OSD_OWNER=""
+            warn_notification
+            return 0
+        fi
+        OSD_ID=0
+    fi
+
+    time_str="${time_str//&/'&amp;'}"
+    time_str="${time_str//</'&lt;'}"
+    time_str="${time_str//>/'&gt;'}"
+
+    place_lbl="${place_lbl//&/'&amp;'}"
+    place_lbl="${place_lbl//</'&lt;'}"
+    place_lbl="${place_lbl//>/'&gt;'}"
+
+    diff_lbl="${diff_lbl//&/'&amp;'}"
+    diff_lbl="${diff_lbl//</'&lt;'}"
+    diff_lbl="${diff_lbl//>/'&gt;'}"
+
+    local body="<span font='monospace 11' weight='bold'>${time_str}</span>"$'\n'"<span font='monospace 9'>${place_lbl} • ${diff_lbl}</span>"
+
+    if ! reply=$(busctl --user --timeout=3 -- call \
+        "$OSD_OWNER" /org/freedesktop/Notifications \
+        org.freedesktop.Notifications Notify \
+        'susssasa{sv}i' \
+        "$CURRENT_APP" "$OSD_ID" "" " " "$body" \
+        0 0 15000 2>/dev/null); then
+
+        OSD_OWNER=""
+        OSD_ID=0
+        warn_notification
+        return 0
+    fi
+
+    read -r kind new_id <<< "$reply"
+
+    if [[ "$kind" == u && "$new_id" =~ ^[0-9]+$ ]]; then
+        OSD_ID="$new_id"
+    else
+        OSD_OWNER=""
+        OSD_ID=0
+        warn_notification
+    fi
+
+    return 0
+}
+
+# --- TIMING & SYSTEM HELPERS ---
+
+monotonic_us() {
+    local -n _out_us=$1
+    local value whole fraction
+
+    { read -r value _ < /proc/uptime; } 2>/dev/null || return 1
+
+    whole="${value%%.*}"
+    fraction="${value#*.}000000"
+    fraction="${fraction:0:6}"
+
+    _out_us=$((10#$whole * 1000000 + 10#$fraction))
 }
 
 format_time() {
@@ -155,21 +462,205 @@ play_sound() {
     fi
 }
 
-offset_to_minutes() {
-    local offset="$1"
-    local sign="${offset:0:1}"
-    local hours="${offset:1:2}"
-    local mins="${offset:3:2}"
-    hours=$((10#$hours))
-    mins=$((10#$mins))
-    local total_mins=$((hours * 60 + mins))
-    if [[ "$sign" == "-" ]]; then
-        total_mins=$((-total_mins))
+send_alert_notification() {
+    local tag="$1" msg="$2"
+    if ! timeout --kill-after=1s 3s notify-send \
+        -u critical \
+        -a "dusky-glance-alert" \
+        -h string:x-canonical-private-synchronous:"${tag}-${MY_PID}" \
+        "$msg" 2>/dev/null; then
+        printf 'dusky-glance: Alert notification delivery failed ("%s")\n' "$msg" >&2
     fi
-    echo "$total_mins"
 }
 
+offset_to_minutes() {
+    local -n _out_min=$1
+    local offset="$2"
+    local hours minutes
+
+    [[ "$offset" =~ ^[+-][0-9]{4}$ ]] || return 1
+
+    hours=$((10#${offset:1:2}))
+    minutes=$((10#${offset:3:2}))
+
+    _out_min=$((hours * 60 + minutes))
+    [[ "${offset:0:1}" == "-" ]] && _out_min=$((-_out_min))
+
+    return 0
+}
+
+NVIDIA_PCI_ID=""
+
+init_nvidia_device() {
+    local card_node="$1"
+    local resolved cand
+    resolved=$(readlink -f -- "/sys/class/drm/$card_node/device" 2>/dev/null) || return 1
+    cand="${resolved##*/}"
+    if [[ "$cand" =~ ^[[:xdigit:]]{4}:[[:xdigit:]]{2}:[[:xdigit:]]{2}\.[0-7]$ ]]; then
+        NVIDIA_PCI_ID="$cand"
+        return 0
+    fi
+    return 1
+}
+
+is_nvidia_suspended() {
+    local card_node="$1"
+    local pstate="" rt_status=""
+    local dev_dir="/sys/class/drm/$card_node/device"
+
+    if [[ -r "$dev_dir/power_state" ]]; then
+        { read -r pstate < "$dev_dir/power_state"; } 2>/dev/null || pstate=""
+    fi
+    if [[ -r "$dev_dir/power/runtime_status" ]]; then
+        { read -r rt_status < "$dev_dir/power/runtime_status"; } 2>/dev/null || rt_status=""
+    fi
+
+    [[ "$pstate" == D3* || "$rt_status" == "suspended" ]]
+}
+
+query_nvidia() {
+    timeout --kill-after=1s 3s nvidia-smi \
+        --id="$NVIDIA_PCI_ID" \
+        --query-gpu="$1" \
+        --format=csv,noheader,nounits 2>/dev/null
+}
+
+find_system_battery() {
+    local candidate
+    for candidate in /sys/class/power_supply/*; do
+        [[ -d "$candidate" ]] || continue
+
+        local type_val="" scope_val="" present_val=""
+        { read -r type_val < "$candidate/type"; } 2>/dev/null || continue
+        [[ "$type_val" == "Battery" ]] || continue
+
+        # Exclude peripheral devices (mice, keyboards, etc.)
+        { read -r scope_val < "$candidate/scope"; } 2>/dev/null || true
+        [[ "$scope_val" == "Device" ]] && continue
+
+        # Ensure battery is present
+        { read -r present_val < "$candidate/present"; } 2>/dev/null || true
+        [[ "$present_val" == "0" ]] && continue
+
+        printf '%s\n' "$candidate"
+        return 0
+    done
+    return 1
+}
+
+find_cpu_temp_sensor() {
+    local hwmon dir name tfile tz type
+    for hwmon in /sys/class/hwmon/hwmon*/name; do
+        [[ -r "$hwmon" ]] || continue
+        name=""
+        { read -r name < "$hwmon"; } 2>/dev/null || continue
+        if [[ "$name" == "coretemp" || "$name" == "k10temp" || "$name" == "zenpower" || "$name" == "cpu_thermal" ]]; then
+            dir="${hwmon%/*}"
+            if [[ -r "$dir/temp1_input" ]]; then
+                printf '%s\n' "$dir/temp1_input"
+                return 0
+            fi
+        fi
+    done
+
+    for tz in /sys/class/thermal/thermal_zone*/type; do
+        [[ -r "$tz" ]] || continue
+        type=""
+        { read -r type < "$tz"; } 2>/dev/null || continue
+        if [[ "$type" == *"x86_pkg_temp"* || "$type" == *"cpu"* ]]; then
+            dir="${tz%/*}"
+            if [[ -r "$dir/temp" ]]; then
+                printf '%s\n' "$dir/temp"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+# ARCHITECTURAL NOTES & HARDWARE LIMITATIONS:
+# 1. Intel Graphics Power (RAPL uncore):
+#    On integrated Intel platforms, the energy counter for RAPL domain "uncore" is sampled
+#    as an energy proxy for graphics / uncore activity. It does not measure discrete Intel Arc
+#    cards or arbitrary discrete PCI devices, nor is it guaranteed 1:1 if multiple GPUs are present.
+find_intel_rapl_uncore() {
+    local name_file name_val
+    for name_file in /sys/devices/virtual/powercap/intel-rapl/intel-rapl:0/*/name; do
+        [[ -f "$name_file" ]] || continue
+        name_val=$(cat "$name_file" 2>/dev/null || echo "")
+        if [[ "$name_val" == "uncore" && -r "${name_file%/*}/energy_uj" ]]; then
+            printf '%s\n' "${name_file%/*}/energy_uj"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_amd_pwr_sensor() {
+    local card_node="$1" f
+    for f in /sys/class/drm/"$card_node"/device/hwmon/hwmon*/power1_average /sys/class/drm/"$card_node"/device/hwmon/hwmon*/power1_input; do
+        if [[ -f "$f" && -r "$f" ]]; then
+            printf '%s\n' "$f"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_gpu_temp_sensors() {
+    local card_node="$1" tfile
+    for tfile in /sys/class/drm/"$card_node"/device/hwmon/hwmon*/temp*_input /sys/class/drm/"$card_node"/device/hwmon*/temp*_input; do
+        [[ -f "$tfile" && -r "$tfile" ]] && printf '%s\n' "$tfile"
+    done
+}
+
+find_disk_temp_sensors() {
+    local dev_name="$1" ctrl_dev="" tfile real_p found=false
+    local -A seen_paths=()
+
+    for tfile in \
+        /sys/class/block/"$dev_name"/device/hwmon*/temp*_input \
+        /sys/class/block/"$dev_name"/device/hwmon/hwmon*/temp*_input; do
+        if [[ -r "$tfile" ]]; then
+            real_p=$(readlink -f -- "$tfile" 2>/dev/null) || real_p="$tfile"
+            if [[ -z "${seen_paths[$real_p]:-}" ]]; then
+                seen_paths["$real_p"]=1
+                printf '%s\n' "$tfile"
+                found=true
+            fi
+        fi
+    done
+
+    if [[ "$found" == false && "$dev_name" =~ ^(nvme[0-9]+) ]]; then
+        ctrl_dev="${BASH_REMATCH[1]}"
+        for tfile in \
+            /sys/class/nvme/"$ctrl_dev"/hwmon*/temp*_input \
+            /sys/class/nvme/"$ctrl_dev"/hwmon/hwmon*/temp*_input \
+            /sys/class/nvme/"$ctrl_dev"/device/hwmon*/temp*_input \
+            /sys/class/nvme/"$ctrl_dev"/device/hwmon/hwmon*/temp*_input; do
+            if [[ -r "$tfile" ]]; then
+                real_p=$(readlink -f -- "$tfile" 2>/dev/null) || real_p="$tfile"
+                if [[ -z "${seen_paths[$real_p]:-}" ]]; then
+                    seen_paths["$real_p"]=1
+                    printf '%s\n' "$tfile"
+                fi
+            fi
+        done
+    fi
+}
+
+# 2. Intel GPU Usage (RC6 residency):
+#    Non-residency in the RC6 low-power sleep state is an activity and power-state proxy,
+#    not true multi-engine hardware compute utilization. The 50ms tolerance window mitigates
+#    coarse-grained sleep and timer drift in user-space polling.
+# 3. Intel Memory Accounting (fdinfo):
+#    Aggregated client allocations across /proc/[0-9]*/fdinfo/* represent client-side
+#    requested buffer objects (drm-total-system / drm-total-vram). Because buffers can be shared
+#    or imported between clients (e.g. Wayland compositor and clients), this value is an
+#    estimate of allocated driver memory, not a guaranteed hardware-physical VRAM footprint.
+
 # --- HARDWARE & STATE MODULES ---
+
 START_SEC=$SECONDS
 
 case "$MODE" in
@@ -190,53 +681,56 @@ case "$MODE" in
         ;;
 
     --world-clock)
-        tz_name="${2:-}"
-        place_lbl="${3:-Time}"
-        if [[ -z "$tz_name" ]]; then
-            send_osd "N/A"
-            exit 1
-        fi
-        
+        tz_name="$2"
+        place_lbl="$3"
+
         while true; do
-            time_str=$(TZ="$tz_name" date +"%I:%M:%S %p")
-            local_offset=$(date +%z)
-            target_offset=$(TZ="$tz_name" date +%z)
-            
-            local_min=$(offset_to_minutes "$local_offset")
-            target_min=$(offset_to_minutes "$target_offset")
-            diff_min=$((target_min - local_min))
-            
-            if (( diff_min == 0 )); then
-                diff_str="same"
-            else
-                diff_hours=$((diff_min / 60))
-                diff_mins=$((diff_min % 60))
-                abs_hours=${diff_hours#-}
-                abs_mins=${diff_mins#-}
-                
-                sign=""
-                if (( diff_min > 0 )); then
-                    sign="+"
-                else
-                    sign="-"
-                fi
-                
-                if (( abs_mins == 0 )); then
-                    diff_str="${sign}${abs_hours}h"
-                else
-                    diff_str="${sign}${abs_hours}h ${abs_mins}m"
-                fi
+            printf -v epoch '%(%s)T' -1
+            printf -v local_offset '%(%z)T' "$epoch"
+
+            if ! target_data=$(
+                TZ="$tz_name" date -d "@$epoch" '+%I:%M:%S %p|%z' 2>/dev/null
+            ); then
+                send_osd "N/A"
+                sleep 1
+                continue
             fi
-            
-            diff_lbl="$diff_str"
-            [[ "$diff_lbl" == "same" ]] && diff_lbl="same time"
-            
-            body="<span font='monospace 11' weight='bold'>${time_str}</span>\n<span font='monospace 9'>${diff_lbl}</span>"
-            notify-send -a "$CURRENT_APP" -h string:x-canonical-private-synchronous:"$SYNC_ID" -t 2000 " " "$body" 2>/dev/null || true
+
+            time_str="${target_data%|*}"
+            target_offset="${target_data##*|}"
+            local_min=0 target_min=0
+
+            if offset_to_minutes local_min "$local_offset" &&
+               offset_to_minutes target_min "$target_offset"; then
+                diff_min=$((target_min - local_min))
+
+                if (( diff_min == 0 )); then
+                    diff_lbl="same time"
+                else
+                    sign="+"
+                    (( diff_min < 0 )) && sign="-"
+
+                    absolute_diff=$diff_min
+                    (( absolute_diff < 0 )) &&
+                        absolute_diff=$((-absolute_diff))
+
+                    diff_hours=$((absolute_diff / 60))
+                    diff_mins=$((absolute_diff % 60))
+
+                    if (( diff_mins == 0 )); then
+                        diff_lbl="${sign}${diff_hours}h"
+                    else
+                        diff_lbl="${sign}${diff_hours}h ${diff_mins}m"
+                    fi
+                fi
+                send_world_clock_osd "$time_str" "$place_lbl" "$diff_lbl"
+            else
+                send_world_clock_osd "$time_str" "$place_lbl" "N/A"
+            fi
             sleep 1
         done
         ;;
-        
+
     --stopwatch)
         while true; do
             elapsed=$((SECONDS - START_SEC))
@@ -245,19 +739,17 @@ case "$MODE" in
             sleep 1
         done
         ;;
-        
+
     --timer)
-        DURATION_SEC="${2:-900}"
-        if (( DURATION_SEC <= 0 )); then exit 1; fi
+        DURATION_SEC="$2"
         TARGET_SEC=$((START_SEC + DURATION_SEC))
-        
+
         while true; do
             left=$((TARGET_SEC - SECONDS))
             if (( left <= 0 )); then
-                # Leaving 'dusky-glance-alert' intact as requested via config overrides
-                notify-send -u critical -a "dusky-glance-alert" -h string:x-canonical-private-synchronous:dusky-timer-alert "󰔛  Time's Up!" 2>/dev/null || true
+                send_alert_notification "dusky-timer-alert" "󰔛  Time's Up!"
                 play_sound "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga"
-                
+
                 for _ in {1..5}; do
                     send_osd "00:00"
                     sleep 0.5
@@ -273,42 +765,36 @@ case "$MODE" in
         ;;
 
     --pomodoro)
-        WORK_SEC="${2:-1500}"
-        BREAK_SEC="${3:-300}"
-        
-        if (( WORK_SEC <= 0 )); then 
-            send_osd "Invalid Time"
-            sleep 2
-            exit 1
-        fi
-        
+        WORK_SEC="$2"
+        BREAK_SEC="$3"
+
         PHASE="WORK"
         TARGET_SEC=$((START_SEC + WORK_SEC))
-        
+
         while true; do
             left=$((TARGET_SEC - SECONDS))
-            
+
             if (( left <= 0 )); then
                 if [[ "$PHASE" == "WORK" ]] && (( BREAK_SEC > 0 )); then
-                    notify-send -u critical -a "dusky-glance-alert" -h string:x-canonical-private-synchronous:dusky-timer-alert "󰦖  Break Time!" 2>/dev/null || true
+                    send_alert_notification "dusky-pomo-alert" "󰦖  Break Time!"
                     play_sound "/usr/share/sounds/gnome/default/alarms/glass-bell.oga"
-                    
+
                     PHASE="BREAK"
                     TARGET_SEC=$((SECONDS + BREAK_SEC))
                     continue
                 else
                     msg="Session Finished"
                     (( BREAK_SEC > 0 )) && msg="Back to Work!"
-                    
-                    notify-send -u critical -a "dusky-glance-alert" -h string:x-canonical-private-synchronous:dusky-timer-alert "󰔚  $msg" 2>/dev/null || true
+
+                    send_alert_notification "dusky-pomo-alert" "󰔚  $msg"
                     play_sound "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga"
-                    
+
                     PHASE="WORK"
                     TARGET_SEC=$((SECONDS + WORK_SEC))
                     continue
                 fi
             fi
-            
+
             prefix=""
             [[ "$PHASE" == "BREAK" ]] && prefix="B "
             format_time time_str "$left"
@@ -319,59 +805,109 @@ case "$MODE" in
 
     --cpu-power)
         path="/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj"
-        if [[ ! -r "$path" ]]; then
-            send_osd "N/A"
-            exit 1
-        fi
-        
-        # Read initial values
-        read -r last_energy < "$path"
-        last_time_str="${EPOCHREALTIME//./}"
-        
-        sleep 1
-        
+        has_energy_range=false
+        energy_range=0
+        last_energy=0
+        last_time_us=0
+        has_baseline=false
+
         while true; do
-            if read -r current_energy < "$path" 2>/dev/null; then
-                curr_time_str="${EPOCHREALTIME//./}"
-                
-                delta_energy=$((current_energy - last_energy))
-                delta_time_us=$((curr_time_str - last_time_str))
-                
-                if (( delta_time_us > 0 )); then
-                    if (( delta_energy < 0 )); then
-                        # Dynamic counter rollover compensation via kernel max_energy_range_uj
-                        max_range=4294967296
-                        read -r max_range < "${path%/*}/max_energy_range_uj" 2>/dev/null || true
-                        delta_energy=$(( delta_energy + max_range ))
-                    fi
-                    watts_x10=$(( (delta_energy * 10) / delta_time_us ))
-                    watts_int=$(( watts_x10 / 10 ))
-                    watts_frac=$(( watts_x10 % 10 ))
-                    send_osd "${watts_int}.${watts_frac}W"
+            if [[ ! -r "$path" ]]; then
+                has_baseline=false
+                has_energy_range=false
+                energy_range=0
+                send_osd "N/A"
+                sleep 3
+                continue
+            fi
+
+            # Dynamically read hardware counter range if not already discovered
+            if [[ "$has_energy_range" == false ]]; then
+                if { read -r range_val < "${path%/*}/max_energy_range_uj"; } 2>/dev/null &&
+                   [[ "$range_val" =~ ^[0-9]+$ ]] && (( range_val > 0 )); then
+                    energy_range=$range_val
+                    has_energy_range=true
                 fi
-                
+            fi
+
+            curr_time_us=0
+            if { read -r current_energy < "$path"; } 2>/dev/null && monotonic_us curr_time_us; then
+                if [[ "$has_baseline" == true ]]; then
+                    delta_energy=$((current_energy - last_energy))
+                    delta_time_us=$((curr_time_us - last_time_us))
+
+                    if (( delta_energy < 0 )); then
+                        if [[ "$has_energy_range" == true ]]; then
+                            delta_energy=$((delta_energy + energy_range))
+                        else
+                            delta_energy=-1
+                        fi
+                    fi
+
+                    if (( delta_time_us > 0 && delta_time_us <= 5000000 && delta_energy >= 0 )); then
+                        watts_x10=$(( (delta_energy * 10) / delta_time_us ))
+                        send_osd "$((watts_x10 / 10)).$((watts_x10 % 10))W"
+                    else
+                        send_osd "N/A"
+                    fi
+                else
+                    send_osd "N/A"
+                fi
+
                 last_energy=$current_energy
-                last_time_str=$curr_time_str
+                last_time_us=$curr_time_us
+                has_baseline=true
+            else
+                has_baseline=false
+                has_energy_range=false
+                energy_range=0
+                send_osd "N/A"
             fi
             sleep 1
         done
         ;;
 
     --cpu)
-        prev_idle=0; prev_total=0
+        prev_idle=0
+        prev_total=0
+        has_prev=false
+
+        if { read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat; } 2>/dev/null; then
+            prev_idle=$((idle + iowait))
+            prev_total=$((user + nice + system + idle + iowait + irq + softirq + steal))
+            has_prev=true
+        fi
+
+        sleep 1
+
         while true; do
-            read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
-            total=$((user + nice + system + idle + iowait + irq + softirq + steal))
-            diff_idle=$((idle - prev_idle))
-            diff_total=$((total - prev_total))
-            
-            if (( prev_total > 0 && diff_total > 0 )); then
-                usage=$(( 100 * (diff_total - diff_idle) / diff_total ))
-                send_osd "${usage}%"
+            if { read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat; } 2>/dev/null; then
+                idle_all=$((idle + iowait))
+                total=$((user + nice + system + idle + iowait + irq + softirq + steal))
+
+                if [[ "$has_prev" == true ]]; then
+                    diff_idle=$((idle_all - prev_idle))
+                    diff_total=$((total - prev_total))
+
+                    if (( diff_total > 0 )); then
+                        usage=$(( 100 * (diff_total - diff_idle) / diff_total ))
+                        (( usage < 0 )) && usage=0
+                        (( usage > 100 )) && usage=100
+                        send_osd "${usage}%"
+                    else
+                        send_osd "N/A"
+                    fi
+                else
+                    send_osd "N/A"
+                fi
+
+                prev_idle=$idle_all
+                prev_total=$total
+                has_prev=true
+            else
+                has_prev=false
+                send_osd "N/A"
             fi
-            
-            prev_idle=$idle
-            prev_total=$total
             sleep 1
         done
         ;;
@@ -379,46 +915,58 @@ case "$MODE" in
     --ram)
         while true; do
             mem_tot=0; mem_avail=0
+            has_tot=false; has_avail=false
+
             while read -r key val _; do
                 case "$key" in
-                    MemTotal:) mem_tot=$val ;;
-                    MemAvailable:) mem_avail=$val ;;
+                    MemTotal:) mem_tot=$val; has_tot=true ;;
+                    MemAvailable:) mem_avail=$val; has_avail=true ;;
                 esac
-                if (( mem_tot > 0 && mem_avail > 0 )); then
+                if [[ "$has_tot" == true && "$has_avail" == true ]]; then
                     break
                 fi
             done < /proc/meminfo
-            
-            ram_mb=$(( (mem_tot - mem_avail) / 1024 ))
-            send_osd "${ram_mb}"
+
+            # MemAvailable=0 is valid under severe pressure; only fail if missing or malformed
+            if [[ "$has_tot" == true && "$has_avail" == true ]] &&
+               (( mem_tot > 0 && mem_avail >= 0 && mem_avail <= mem_tot )); then
+                ram_mb=$(( (mem_tot - mem_avail) / 1024 ))
+                send_osd "${ram_mb}MiB"
+            else
+                send_osd "RAM: N/A"
+            fi
             sleep 1
         done
         ;;
 
     --ram-temp)
-        # Discover all DDR5 SPD5118 temperature sensors
         temp_files=()
-        for hwmon_dir in /sys/class/hwmon/hwmon*/; do
-            name_file="${hwmon_dir}name"
-            [[ -f "$name_file" ]] || continue
-            read -r name < "$name_file"
-            if [[ "$name" == "spd5118" || "$name" == "jc42" || "$name" == "tmp421" ]]; then
-                tfile="${hwmon_dir}temp1_input"
-                [[ -f "$tfile" ]] && temp_files+=("$tfile")
-            fi
-        done
 
         while true; do
+            if (( ${#temp_files[@]} == 0 )); then
+                for hwmon_dir in /sys/class/hwmon/hwmon*/; do
+                    name_file="${hwmon_dir}name"
+                    [[ -f "$name_file" ]] || continue
+                    name=""
+                    { read -r name < "$name_file"; } 2>/dev/null || continue
+                    if [[ "$name" == "spd5118" || "$name" == "jc42" ]]; then
+                        tfile="${hwmon_dir}temp1_input"
+                        [[ -f "$tfile" ]] && temp_files+=("$tfile")
+                    fi
+                done
+            fi
+
             if [[ ${#temp_files[@]} -gt 0 ]]; then
                 temps=()
                 for tf in "${temp_files[@]}"; do
-                    if read -r t < "$tf" 2>/dev/null; then
+                    if { read -r t < "$tf"; } 2>/dev/null; then
                         temps+=("$((t/1000))°")
                     fi
                 done
                 if [[ ${#temps[@]} -gt 0 ]]; then
                     send_osd "${temps[*]}"
                 else
+                    temp_files=()
                     send_osd "N/A"
                 fi
             else
@@ -431,13 +979,13 @@ case "$MODE" in
     --zram)
         zram_file="/sys/block/zram0/mm_stat"
         while true; do
-            if [[ -f "$zram_file" ]] && read -r orig_data compr_data mem_used _ _ _ _ _ _ < "$zram_file" 2>/dev/null; then
+            if [[ -f "$zram_file" ]] && { read -r orig_data compr_data mem_used _ _ _ _ _ _ < "$zram_file"; } 2>/dev/null; then
                 used_mb=$(( mem_used / 1048576 ))
                 if (( compr_data > 0 )); then
                     ratio=$(( orig_data / compr_data ))
-                    send_osd "${used_mb}MB ${ratio}:1"
+                    send_osd "${used_mb}MiB ${ratio}:1"
                 else
-                    send_osd "${used_mb}MB"
+                    send_osd "${used_mb}MiB"
                 fi
             else
                 send_osd "N/A"
@@ -448,38 +996,21 @@ case "$MODE" in
 
     --temp)
         zone_file=""
-        
-        for hwmon in /sys/class/hwmon/hwmon*/name; do
-            [[ -r "$hwmon" ]] || continue
-            read -r name < "$hwmon"
-            if [[ "$name" == "coretemp" || "$name" == "k10temp" || "$name" == "zenpower" || "$name" == "cpu_thermal" ]]; then
-                dir="${hwmon%/*}"
-                if [[ -r "$dir/temp1_input" ]]; then
-                    zone_file="$dir/temp1_input"
-                    break
+        last_zone_discover=-5
+
+        while true; do
+            if [[ -z "$zone_file" || ! -r "$zone_file" ]]; then
+                if (( SECONDS - last_zone_discover >= 5 )); then
+                    last_zone_discover=$SECONDS
+                    zone_file=$(find_cpu_temp_sensor || echo "")
                 fi
             fi
-        done
-        
-        if [[ -z "$zone_file" ]]; then
-            for tz in /sys/class/thermal/thermal_zone*/type; do
-                [[ -r "$tz" ]] || continue
-                read -r type < "$tz"
-                if [[ "$type" == *"x86_pkg_temp"* || "$type" == *"cpu"* ]]; then
-                    dir="${tz%/*}"
-                    if [[ -r "$dir/temp" ]]; then
-                        zone_file="$dir/temp"
-                        break
-                    fi
-                fi
-            done
-        fi
-        
-        while true; do
-            if [[ -n "$zone_file" ]] && read -r t < "$zone_file" 2>/dev/null; then
+
+            if [[ -n "$zone_file" ]] && { read -r t < "$zone_file"; } 2>/dev/null; then
                 temp_c=$(( t / 1000 ))
                 send_osd "${temp_c}°C"
             else
+                zone_file=""
                 send_osd "N/A"
             fi
             sleep 1
@@ -488,98 +1019,130 @@ case "$MODE" in
 
     --battery|--battery-percent|--battery-watts|--battery-time)
         bat_dir=""
-        for d in /sys/class/power_supply/*; do
-            if [[ -f "$d/type" ]]; then
-                read -r type < "$d/type" 2>/dev/null || continue
-                if [[ "$type" == "Battery" ]]; then
-                    bat_dir="$d"
-                    break
-                fi
-            fi
-        done
-
-        has_power=false
-        has_current=false
-        has_energy=false
-        has_charge=false
-        has_energy_full=false
-        has_charge_full=false
-
-        if [[ -n "$bat_dir" ]]; then
-            if [[ -f "$bat_dir/power_now" ]]; then
-                has_power=true
-                [[ -f "$bat_dir/energy_now" ]] && has_energy=true
-                [[ -f "$bat_dir/energy_full" ]] && has_energy_full=true
-            elif [[ -f "$bat_dir/current_now" && -f "$bat_dir/voltage_now" ]]; then
-                has_current=true
-                [[ -f "$bat_dir/charge_now" ]] && has_charge=true
-                [[ -f "$bat_dir/charge_full" ]] && has_charge_full=true
-            fi
-        fi
 
         while true; do
+            # Verify battery presence; rediscover dynamically if missing, hotplugged, or unpresent
+            is_valid_bat=false
+            if [[ -n "$bat_dir" && -d "$bat_dir" ]]; then
+                present_val=""
+                { read -r present_val < "$bat_dir/present"; } 2>/dev/null || present_val="1"
+                [[ "$present_val" != "0" ]] && is_valid_bat=true
+            fi
+
+            if [[ "$is_valid_bat" == false ]]; then
+                bat_dir=$(find_system_battery || echo "")
+            fi
+
             if [[ -n "$bat_dir" ]]; then
-                read -r cap < "$bat_dir/capacity" 2>/dev/null || cap="?"
-                read -r stat < "$bat_dir/status" 2>/dev/null || stat="Unknown"
-                
-                watts_int=0; watts_frac=0
+                if [[ "$MODE" == "--battery-percent" ]]; then
+                    cap="?"
+                    if { read -r cap < "$bat_dir/capacity"; } 2>/dev/null && [[ "$cap" =~ ^[0-9]+$ ]]; then
+                        send_osd "${cap}%"
+                    else
+                        send_osd "Bat: N/A"
+                    fi
+                    sleep 1
+                    continue
+                fi
+
+                cap="?"
+                stat="Unknown"
+                { read -r cap < "$bat_dir/capacity"; } 2>/dev/null || cap="?"
+                { read -r stat < "$bat_dir/status"; } 2>/dev/null || stat="Unknown"
+
+                # Read power or compute from voltage & current
+                watts_str="N/A"
+                pwr=0
+                has_power=false
+
+                if [[ -f "$bat_dir/power_now" ]]; then
+                    raw_pwr=""
+                    if { read -r raw_pwr < "$bat_dir/power_now"; } 2>/dev/null && [[ "$raw_pwr" =~ ^-?[0-9]+$ ]]; then
+                        pwr=${raw_pwr#-}
+                        watts_int=$(( pwr / 1000000 ))
+                        watts_frac=$(( (pwr % 1000000) / 100000 ))
+                        watts_str="${watts_int}.${watts_frac}W"
+                        has_power=true
+                    fi
+                fi
+
+                if [[ "$has_power" == false ]] && [[ -f "$bat_dir/current_now" && -f "$bat_dir/voltage_now" ]]; then
+                    curr="" volt=""
+                    if { read -r curr < "$bat_dir/current_now"; } 2>/dev/null &&
+                       { read -r volt < "$bat_dir/voltage_now"; } 2>/dev/null &&
+                       [[ "$curr" =~ ^-?[0-9]+$ && "$volt" =~ ^[0-9]+$ ]]; then
+                        c_abs=${curr#-}
+                        p_uw=$(( (c_abs / 1000) * (volt / 1000) ))
+                        watts_int=$(( p_uw / 1000000 ))
+                        watts_frac=$(( (p_uw % 1000000) / 100000 ))
+                        watts_str="${watts_int}.${watts_frac}W"
+                        pwr=$p_uw
+                        has_power=true
+                    fi
+                fi
+
+                if [[ "$MODE" == "--battery-watts" ]]; then
+                    send_osd "$watts_str"
+                    sleep 1
+                    continue
+                fi
+
+                # Compute remaining time if requested (energy/power first, fallback to charge/current if energy failed)
                 time_str=""
-                
-                if [[ "$has_power" == true ]]; then
-                    read -r pwr < "$bat_dir/power_now" 2>/dev/null || pwr=0
-                    watts_int=$(( pwr / 1000000 ))
-                    watts_frac=$(( (pwr % 1000000) / 100000 ))
-                    
-                    if [[ "$stat" == "Discharging" && "$has_energy" == true ]]; then
-                        read -r energy_now < "$bat_dir/energy_now" 2>/dev/null || energy_now=0
-                        if (( pwr > 0 )); then
+                if [[ "$stat" == "Discharging" ]]; then
+                    if [[ "$has_power" == true && -f "$bat_dir/energy_now" ]] && (( pwr > 0 )); then
+                        energy_now=""
+                        if { read -r energy_now < "$bat_dir/energy_now"; } 2>/dev/null && [[ "$energy_now" =~ ^[0-9]+$ ]]; then
                             total_mins=$(( (energy_now * 60) / pwr ))
                             time_str=$'\n'"$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
                         fi
-                    elif [[ "$stat" == "Charging" && "$has_energy_full" == true ]]; then
-                        read -r energy_now < "$bat_dir/energy_now" 2>/dev/null || energy_now=0
-                        read -r energy_full < "$bat_dir/energy_full" 2>/dev/null || energy_full=0
-                        if (( pwr > 0 && energy_full > energy_now )); then
+                    fi
+                    if [[ -z "$time_str" ]] && [[ -f "$bat_dir/charge_now" && -f "$bat_dir/current_now" ]]; then
+                        charge_now="" curr_now=""
+                        if { read -r charge_now < "$bat_dir/charge_now"; } 2>/dev/null &&
+                           { read -r curr_now < "$bat_dir/current_now"; } 2>/dev/null &&
+                           [[ "$charge_now" =~ ^[0-9]+$ && "$curr_now" =~ ^-?[0-9]+$ ]]; then
+                            c_abs=${curr_now#-}
+                            if (( c_abs > 0 )); then
+                                total_mins=$(( (charge_now * 60) / c_abs ))
+                                time_str=$'\n'"$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
+                            fi
+                        fi
+                    fi
+                elif [[ "$stat" == "Charging" ]]; then
+                    if [[ "$has_power" == true && -f "$bat_dir/energy_now" && -f "$bat_dir/energy_full" ]] && (( pwr > 0 )); then
+                        energy_now="" energy_full=""
+                        if { read -r energy_now < "$bat_dir/energy_now"; } 2>/dev/null &&
+                           { read -r energy_full < "$bat_dir/energy_full"; } 2>/dev/null &&
+                           [[ "$energy_now" =~ ^[0-9]+$ && "$energy_full" =~ ^[0-9]+$ ]] &&
+                           (( energy_full > energy_now )); then
                             total_mins=$(( ((energy_full - energy_now) * 60) / pwr ))
                             time_str=$'\n'"$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
                         fi
                     fi
-                    
-                elif [[ "$has_current" == true ]]; then
-                    read -r curr < "$bat_dir/current_now" 2>/dev/null || curr=0
-                    read -r volt < "$bat_dir/voltage_now" 2>/dev/null || volt=0
-                    p_uw=$(( (curr / 1000) * (volt / 1000) ))
-                    watts_int=$(( p_uw / 1000000 ))
-                    watts_frac=$(( (p_uw % 1000000) / 100000 ))
-                    
-                    if [[ "$stat" == "Discharging" && "$has_charge" == true ]]; then
-                        read -r charge_now < "$bat_dir/charge_now" 2>/dev/null || charge_now=0
-                        if (( curr > 0 )); then
-                            total_mins=$(( (charge_now * 60) / curr ))
-                            time_str=$'\n'"$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
-                        fi
-                    elif [[ "$stat" == "Charging" && "$has_charge_full" == true ]]; then
-                        read -r charge_now < "$bat_dir/charge_now" 2>/dev/null || charge_now=0
-                        read -r charge_full < "$bat_dir/charge_full" 2>/dev/null || charge_full=0
-                        if (( curr > 0 && charge_full > charge_now )); then
-                            total_mins=$(( ((charge_full - charge_now) * 60) / curr ))
-                            time_str=$'\n'"$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
+                    if [[ -z "$time_str" ]] && [[ -f "$bat_dir/charge_now" && -f "$bat_dir/charge_full" && -f "$bat_dir/current_now" ]]; then
+                        charge_now="" charge_full="" curr_now=""
+                        if { read -r charge_now < "$bat_dir/charge_now"; } 2>/dev/null &&
+                           { read -r charge_full < "$bat_dir/charge_full"; } 2>/dev/null &&
+                           { read -r curr_now < "$bat_dir/current_now"; } 2>/dev/null &&
+                           [[ "$charge_now" =~ ^[0-9]+$ && "$charge_full" =~ ^[0-9]+$ && "$curr_now" =~ ^-?[0-9]+$ ]]; then
+                            c_abs=${curr_now#-}
+                            if (( c_abs > 0 && charge_full > charge_now )); then
+                                total_mins=$(( ((charge_full - charge_now) * 60) / c_abs ))
+                                time_str=$'\n'"$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
+                            fi
                         fi
                     fi
                 fi
-                
-                if [[ "$MODE" == "--battery-percent" ]]; then
-                    out_str="${cap}%"
-                elif [[ "$MODE" == "--battery-watts" ]]; then
-                    out_str="${watts_int}.${watts_frac}W"
-                elif [[ "$MODE" == "--battery-time" ]]; then
+
+                if [[ "$MODE" == "--battery-time" ]]; then
                     if [[ -n "$time_str" ]]; then
                         out_str="${time_str#$'\n'}"
                     else
                         out_str="N/A"
                     fi
                 else
-                    printf -v out_str "%s%% %d.%dW%s" "$cap" "$watts_int" "$watts_frac" "$time_str"
+                    printf -v out_str "%s%% %s%s" "$cap" "$watts_str" "$time_str"
                 fi
                 send_osd "$out_str"
             else
@@ -590,128 +1153,141 @@ case "$MODE" in
         ;;
 
     --disk)
-        while true; do
-            {
-                read -r _ # Discard the header row
-                read -r used size pcent
-            } < <(df -h --output=used,size,pcent /)
-
-            send_osd "${used}/${size} ${pcent}"
-            sleep 1
-        done
-        ;;
-
-    --disk-read)
-        DEV="${2:-}"
-        stat_file="/sys/block/$DEV/stat"
-        if [[ -z "$DEV" || ! -f "$stat_file" ]]; then
-            send_osd "Unknown Drive"
-            exit 1
-        fi
-
-        prev_read_sec=0
-        if read -r -a stats < "$stat_file"; then
-            prev_read_sec=${stats[2]}
-        fi
+        command -v df >/dev/null 2>&1 || die "Missing command: df"
 
         while true; do
-            if read -r -a stats < "$stat_file"; then
-                curr_read_sec=${stats[2]}
-                
-                # OPTIMIZATION: Native Bash arithmetic replaces awk. Zero subprocess overhead, exact integer mapping.
-                read_mb_s=$(( (curr_read_sec - prev_read_sec) * 512 / 1048576 ))
-                tot_read_mb=$(( curr_read_sec * 512 / 1048576 ))
-
-                send_osd "${tot_read_mb} ${read_mb_s}"
-                
-                prev_read_sec=$curr_read_sec
+            df_out=$(df -h --output=used,size,pcent / 2>/dev/null) || df_out=""
+            if [[ -n "$df_out" ]]; then
+                row=""
+                while IFS= read -r line; do
+                    [[ -n "$line" ]] && row="$line"
+                done <<< "$df_out"
+                read -r used size pcent <<< "$row"
+                if [[ -n "${used:-}" && -n "${size:-}" && -n "${pcent:-}" ]]; then
+                    send_osd "${used}/${size} ${pcent}"
+                else
+                    send_osd "Disk: N/A"
+                fi
+            else
+                send_osd "Disk: N/A"
             fi
             sleep 1
         done
         ;;
 
-    --disk-write)
-        DEV="${2:-}"
-        stat_file="/sys/block/$DEV/stat"
-        if [[ -z "$DEV" || ! -f "$stat_file" ]]; then
-            send_osd "Unknown Drive"
-            exit 1
-        fi
+    --disk-read|--disk-write)
+        DEV="$2"
+        stat_file="/sys/class/block/$DEV/stat"
 
-        prev_write_sec=0
-        if read -r -a stats < "$stat_file"; then
-            prev_write_sec=${stats[6]}
-        fi
+        [[ -r "$stat_file" ]] ||
+            die "Cannot read block-device statistics: $DEV"
+
+        field=2
+        [[ "$MODE" == "--disk-write" ]] && field=6
+
+        have_previous=false
 
         while true; do
-            if read -r -a stats < "$stat_file"; then
-                curr_write_sec=${stats[6]}
-                
-                # OPTIMIZATION: Native Bash arithmetic replaces awk. Zero subprocess overhead, exact integer mapping.
-                write_mb_s=$(( (curr_write_sec - prev_write_sec) * 512 / 1048576 ))
-                tot_write_mb=$(( curr_write_sec * 512 / 1048576 ))
-
-                send_osd "${tot_write_mb} ${write_mb_s}"
-                
-                prev_write_sec=$curr_write_sec
+            if ! { read -r -a stats < "$stat_file"; } 2>/dev/null ||
+               (( ${#stats[@]} <= field )) ||
+               [[ ! "${stats[field]}" =~ ^[0-9]+$ ]]; then
+                have_previous=false
+                send_osd "N/A"
+                sleep 1
+                continue
             fi
+
+            current_sectors="${stats[field]}"
+
+            if ! monotonic_us current_time; then
+                have_previous=false
+                send_osd "N/A"
+                sleep 1
+                continue
+            fi
+
+            if [[ "$have_previous" == true ]]; then
+                delta_sectors=$((current_sectors - previous_sectors))
+                delta_us=$((current_time - previous_time))
+
+                if (( delta_sectors >= 0 && delta_us > 0 )); then
+                    rate_tenths=$((delta_sectors * 10000000 / (2048 * delta_us)))
+                    total_mib=$((current_sectors / 2048))
+
+                    send_osd \
+                        "${total_mib}MiB $((rate_tenths / 10)).$((rate_tenths % 10))MiB/s"
+                else
+                    send_osd "N/A"
+                fi
+            else
+                send_osd "Sampling"
+            fi
+
+            previous_sectors=$current_sectors
+            previous_time=$current_time
+            have_previous=true
+
             sleep 1
         done
         ;;
 
     --disk-temp)
-        DEV="${2:-}"
-        stat_file="/sys/block/$DEV/stat"
-        if [[ -z "$DEV" || ! -f "$stat_file" ]]; then
-            send_osd "Unknown Drive"
-            exit 1
+        DEV="$2"
+        mapfile -t temp_files < <(find_disk_temp_sensors "$DEV")
+
+        has_smartctl=false
+        if command -v smartctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+            has_smartctl=true
         fi
 
-        # Method 1: Kernel hwmon (fastest, zero subprocess)
-        temp_files=()
-        for tfile in /sys/block/"$DEV"/device/hwmon*/temp*_input; do
-            [[ -f "$tfile" ]] && temp_files+=("$tfile")
-        done
-        if [[ ${#temp_files[@]} -eq 0 && "$DEV" == nvme* ]]; then
-            ctrl_dev=$(echo "$DEV" | grep -o 'nvme[0-9]\+')
-            for tfile in /sys/class/nvme/"$ctrl_dev"/hwmon*/temp*_input; do
-                [[ -f "$tfile" ]] && temp_files+=("$tfile")
-            done
-        fi
-
-        # Method 2: smartctl (USB enclosures, external drives without hwmon)
-        use_smartctl=false
-        if [[ ${#temp_files[@]} -eq 0 ]] && command -v smartctl >/dev/null 2>&1; then
-            use_smartctl=true
-        fi
+        cached_smart_temp=""
+        last_smart_query=-15
+        last_temp_discover=$SECONDS
+        (( ${#temp_files[@]} == 0 )) && last_temp_discover=-5
 
         while true; do
+            # Periodically rediscover hwmon temperature paths if currently empty
+            if (( ${#temp_files[@]} == 0 )) && (( SECONDS - last_temp_discover >= 5 )); then
+                last_temp_discover=$SECONDS
+                mapfile -t temp_files < <(find_disk_temp_sensors "$DEV")
+            fi
+
             if [[ ${#temp_files[@]} -gt 0 ]]; then
                 temps=()
                 for tf in "${temp_files[@]}"; do
-                    if read -r t < "$tf" 2>/dev/null; then
+                    if { read -r t < "$tf"; } 2>/dev/null; then
                         temps+=("$((t/1000))°")
                     fi
                 done
                 if [[ ${#temps[@]} -gt 0 ]]; then
                     send_osd "${temps[*]}"
                 else
+                    temp_files=()
                     send_osd "N/A"
                 fi
-            elif [[ "$use_smartctl" == true ]]; then
-                smart_out=$(smartctl -A "/dev/$DEV" 2>/dev/null || sudo smartctl -A "/dev/$DEV" 2>/dev/null)
-                if [[ -n "$smart_out" ]]; then
-                    # SATA: "194 Temperature_Celsius ... 32" → last field
-                    # NVMe: "Temperature: 34 Celsius" → field after colon
-                    temps=()
-                    while IFS= read -r val; do
-                        [[ "$val" =~ ^[0-9]+$ ]] && (( val > 0 && val < 200 )) && temps+=("${val}°")
-                    done < <(echo "$smart_out" | awk '/Temperature_Celsius/{print $NF} /^Temperature:/{print $2}')
-                    if [[ ${#temps[@]} -gt 0 ]]; then
-                        send_osd "${temps[*]}"
-                    else
-                        send_osd "N/A"
+            elif [[ "$has_smartctl" == true ]]; then
+                if (( SECONDS - last_smart_query >= 15 )); then
+                    last_smart_query=$SECONDS
+                    temp_candidate=""
+
+                    smart_json=$(timeout --kill-after=1s 3s smartctl -Aj "/dev/$DEV" 2>/dev/null || true)
+                    if [[ -n "$smart_json" ]]; then
+                        temp_candidate=$(jq -er '.temperature.current | select(type == "number")' <<< "$smart_json" 2>/dev/null || echo "")
                     fi
+
+                    # Fallback to sudo -n if unprivileged query failed or yielded no usable temperature (e.g. permission error JSON)
+                    if [[ -z "$temp_candidate" ]]; then
+                        smart_json=$(timeout --kill-after=1s 3s sudo -n smartctl -Aj "/dev/$DEV" 2>/dev/null || true)
+                        if [[ -n "$smart_json" ]]; then
+                            temp_candidate=$(jq -er '.temperature.current | select(type == "number")' <<< "$smart_json" 2>/dev/null || echo "")
+                        fi
+                    fi
+
+                    cached_smart_temp="$temp_candidate"
+                fi
+
+                if [[ -n "$cached_smart_temp" ]]; then
+                    send_osd "${cached_smart_temp}°"
                 else
                     send_osd "N/A"
                 fi
@@ -723,44 +1299,46 @@ case "$MODE" in
         ;;
 
     --network)
-        STATE_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID}/waybar-net"
-        STATE_FILE="$STATE_DIR/state"
-        HEARTBEAT_FILE="$STATE_DIR/heartbeat"
-        DAEMON_PID_FILE="$STATE_DIR/daemon.pid"
-        
-        if [[ -d "$STATE_DIR" ]]; then
-            printf "" > "$HEARTBEAT_FILE"
+        NET_STATE_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID}/waybar-net"
+        STATE_FILE="$NET_STATE_DIR/state"
+        HEARTBEAT_FILE="$NET_STATE_DIR/heartbeat"
+        DAEMON_PID_FILE="$NET_STATE_DIR/daemon.pid"
+
+        if [[ -d "$NET_STATE_DIR" ]]; then
+            : > "$HEARTBEAT_FILE" 2>/dev/null || true
             if [[ -r "$DAEMON_PID_FILE" ]]; then
                 read -r d_pid < "$DAEMON_PID_FILE" 2>/dev/null || d_pid=""
                 case "$d_pid" in
                     ""|*[!0-9]*) ;;
                     *)
                         if kill -0 "$d_pid" 2>/dev/null; then
-                            if exec {_gfd}< "/proc/$d_pid/cmdline" 2>/dev/null; then
+                            _gfd=""
+                            if { exec {_gfd}< "/proc/$d_pid/cmdline"; } 2>/dev/null; then
                                 IFS= read -r -d '' _g1 <&"$_gfd" 2>/dev/null || _g1=""
                                 IFS= read -r -d '' _g2 <&"$_gfd" 2>/dev/null || _g2=""
-                                exec {_gfd}<&- 2>/dev/null
-                                [[ "$_g2" == *network_meter_daemon* ]] && kill -USR1 "$d_pid" 2>/dev/null
+                                { exec {_gfd}<&-; } 2>/dev/null
+                                [[ "$_g2" == *network_meter_daemon* ]] && kill -USR1 "$d_pid" 2>/dev/null || true
                             fi
                         fi
                         ;;
                 esac
             fi
         fi
-        
+
         while true; do
-            [[ -d "$STATE_DIR" ]] && printf "" > "$HEARTBEAT_FILE"
+            [[ -d "$NET_STATE_DIR" ]] && : > "$HEARTBEAT_FILE" 2>/dev/null || true
             if [[ -r "$DAEMON_PID_FILE" ]]; then
                 read -r _gp < "$DAEMON_PID_FILE" 2>/dev/null || _gp=""
                 case "$_gp" in
                     ""|*[!0-9]*) ;;
                     *)
                         if kill -0 "$_gp" 2>/dev/null; then
-                            if exec {_gfd}< "/proc/$_gp/cmdline" 2>/dev/null; then
+                            _gfd=""
+                            if { exec {_gfd}< "/proc/$_gp/cmdline"; } 2>/dev/null; then
                                 IFS= read -r -d '' _g1 <&"$_gfd" 2>/dev/null || _g1=""
                                 IFS= read -r -d '' _g2 <&"$_gfd" 2>/dev/null || _g2=""
-                                exec {_gfd}<&- 2>/dev/null
-                                [[ "$_g2" == *network_meter_daemon* ]] && kill -USR1 "$_gp" 2>/dev/null
+                                { exec {_gfd}<&-; } 2>/dev/null
+                                [[ "$_g2" == *network_meter_daemon* ]] && kill -USR1 "$_gp" 2>/dev/null || true
                             fi
                         fi
                         ;;
@@ -791,10 +1369,10 @@ case "$MODE" in
             sleep 1
         done
         ;;
-        
+
     --uptime)
         while true; do
-            if read -r up_time _ < /proc/uptime; then
+            if { read -r up_time _ < /proc/uptime; } 2>/dev/null; then
                 up_sec=${up_time%%.*}
                 h=$(( up_sec / 3600 ))
                 m=$(( (up_sec % 3600) / 60 ))
@@ -807,7 +1385,7 @@ case "$MODE" in
             sleep 1
         done
         ;;
-        
+
     --gpu-power)
         card="${2:-}"
         vendor="${3:-}"
@@ -815,91 +1393,116 @@ case "$MODE" in
             send_osd "GPU Err"
             exit 1
         fi
-        
+
         case "${vendor,,}" in
             intel)
                 path=""
-                for name_file in /sys/devices/virtual/powercap/intel-rapl/intel-rapl:0/*/name; do
-                    if [[ -f "$name_file" ]] && [[ "$(cat "$name_file")" == "uncore" ]]; then
-                        path="${name_file%/*}/energy_uj"
-                        break
-                    fi
-                done
-                
-                if [[ -z "$path" || ! -r "$path" ]]; then
-                    while true; do
-                        send_osd "N/A"
-                        sleep 5
-                    done
-                fi
-                
-                read -r last_energy < "$path"
-                last_time_str="${EPOCHREALTIME//./}"
-                
-                sleep 1
-                
+                has_energy_range=false
+                energy_range=0
+                last_energy=0
+                last_time_us=0
+                has_baseline=false
+
                 while true; do
-                    if read -r current_energy < "$path" 2>/dev/null; then
-                        curr_time_str="${EPOCHREALTIME//./}"
-                        delta_energy=$((current_energy - last_energy))
-                        delta_time_us=$((curr_time_str - last_time_str))
-                        if (( delta_time_us > 0 )); then
+                    if [[ -z "$path" || ! -r "$path" ]]; then
+                        path=$(find_intel_rapl_uncore || echo "")
+                        has_baseline=false
+                        has_energy_range=false
+                        energy_range=0
+                    fi
+
+                    if [[ -z "$path" || ! -r "$path" ]]; then
+                        has_baseline=false
+                        has_energy_range=false
+                        energy_range=0
+                        send_osd "N/A"
+                        sleep 3
+                        continue
+                    fi
+
+                    if [[ "$has_energy_range" == false ]]; then
+                        if { read -r range_val < "${path%/*}/max_energy_range_uj"; } 2>/dev/null &&
+                           [[ "$range_val" =~ ^[0-9]+$ ]] && (( range_val > 0 )); then
+                            energy_range=$range_val
+                            has_energy_range=true
+                        fi
+                    fi
+
+                    curr_time_us=0
+                    if { read -r current_energy < "$path"; } 2>/dev/null && monotonic_us curr_time_us; then
+                        if [[ "$has_baseline" == true ]]; then
+                            delta_energy=$((current_energy - last_energy))
+                            delta_time_us=$((curr_time_us - last_time_us))
+
                             if (( delta_energy < 0 )); then
-                                max_range=4294967296
-                                read -r max_range < "${path%/*}/max_energy_range_uj" 2>/dev/null || true
-                                delta_energy=$(( delta_energy + max_range ))
+                                if [[ "$has_energy_range" == true ]]; then
+                                    delta_energy=$((delta_energy + energy_range))
+                                else
+                                    delta_energy=-1
+                                fi
                             fi
-                            watts_x10=$(( (delta_energy * 10) / delta_time_us ))
-                            watts_int=$(( watts_x10 / 10 ))
-                            watts_frac=$(( watts_x10 % 10 ))
-                            send_osd "${watts_int}.${watts_frac}W"
+
+                            if (( delta_time_us > 0 && delta_time_us <= 5000000 && delta_energy >= 0 )); then
+                                watts_x10=$(( (delta_energy * 10) / delta_time_us ))
+                                send_osd "$((watts_x10 / 10)).$((watts_x10 % 10))W"
+                            else
+                                send_osd "N/A"
+                            fi
+                        else
+                            send_osd "N/A"
                         fi
                         last_energy=$current_energy
-                        last_time_str=$curr_time_str
+                        last_time_us=$curr_time_us
+                        has_baseline=true
+                    else
+                        path=""
+                        has_baseline=false
+                        has_energy_range=false
+                        energy_range=0
+                        send_osd "N/A"
                     fi
                     sleep 1
                 done
                 ;;
-                
+
             amd)
                 path=""
-                for f in /sys/class/drm/"$card"/device/hwmon/hwmon*/power1_average /sys/class/drm/"$card"/device/hwmon/hwmon*/power1_input; do
-                    if [[ -f "$f" ]]; then
-                        path="$f"
-                        break
-                    fi
-                done
-                
-                if [[ -z "$path" || ! -r "$path" ]]; then
-                    while true; do
-                        send_osd "N/A"
-                        sleep 5
-                    done
-                fi
-                
+
                 while true; do
-                    if read -r microwatts < "$path" 2>/dev/null; then
+                    if [[ -z "$path" || ! -r "$path" ]]; then
+                        path=""
+                        for f in /sys/class/drm/"$card"/device/hwmon/hwmon*/power1_average /sys/class/drm/"$card"/device/hwmon/hwmon*/power1_input; do
+                            if [[ -f "$f" ]]; then
+                                path="$f"
+                                break
+                            fi
+                        done
+                    fi
+
+                    if [[ -n "$path" && -r "$path" ]] && { read -r microwatts < "$path"; } 2>/dev/null; then
                         watts_x10=$(( microwatts / 100000 ))
-                        watts_int=$(( watts_x10 / 10 ))
-                        watts_frac=$(( watts_x10 % 10 ))
-                        send_osd "${watts_int}.${watts_frac}W"
+                        send_osd "$((watts_x10 / 10)).$((watts_x10 % 10))W"
                     else
+                        path=""
                         send_osd "N/A"
                     fi
                     sleep 1
                 done
                 ;;
-                
+
             nvidia)
-                pstate_path="/sys/class/drm/$card/device/power_state"
+                command -v nvidia-smi >/dev/null 2>&1 || die "Missing command: nvidia-smi"
+                init_nvidia_device "$card" || die "Cannot identify NVIDIA device for $card"
+
                 while true; do
-                    pstate=""
-                    [[ -r "$pstate_path" ]] && read -r pstate < "$pstate_path" 2>/dev/null
-                    if [[ "$pstate" == D3* ]]; then
+                    if is_nvidia_suspended "$card"; then
                         send_osd "D3"
                     else
-                        power_str=$(nvidia-smi --query-gpu=power.draw --format=csv,noheader,nounits 2>/dev/null || echo "N/A")
-                        if [[ "$power_str" != "N/A" ]]; then
+                        if ! power_str=$(query_nvidia power.draw); then
+                            power_str=""
+                        fi
+                        power_str="${power_str//[[:space:]]/}"
+                        if [[ "$power_str" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
                             if [[ "$power_str" =~ ^([0-9]+)\.([0-9]) ]]; then
                                 send_osd "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}W"
                             else
@@ -912,7 +1515,7 @@ case "$MODE" in
                     sleep 1
                 done
                 ;;
-                
+
             *)
                 send_osd "N/A"
                 exit 1
@@ -927,53 +1530,59 @@ case "$MODE" in
             send_osd "GPU Err"
             exit 1
         fi
-        
+
         case "${vendor,,}" in
             intel)
                 path="/sys/class/drm/$card/device/drm/$card/power/rc6_residency_ms"
-                if [[ ! -r "$path" ]]; then
-                    while true; do
-                        send_osd "N/A"
-                        sleep 5
-                    done
-                fi
-                
-                read -r last_rc6 < "$path"
-                last_time_str="${EPOCHREALTIME//./}"
-                last_time_ms=$(( last_time_str / 1000 ))
-                
-                sleep 1
-                
+                last_rc6=0
+                last_time_us=0
+                has_rc6_baseline=false
+
                 while true; do
-                    if read -r current_rc6 < "$path" 2>/dev/null; then
-                        curr_time_str="${EPOCHREALTIME//./}"
-                        curr_time_ms=$(( curr_time_str / 1000 ))
-                        delta_rc6=$((current_rc6 - last_rc6))
-                        delta_time=$((curr_time_ms - last_time_ms))
-                        if (( delta_time > 0 )); then
-                            usage=$(( 100 * (delta_time - delta_rc6) / delta_time ))
-                            (( usage < 0 )) && usage=0
-                            (( usage > 100 )) && usage=100
-                            send_osd "${usage}%"
+                    if [[ ! -r "$path" ]]; then
+                        has_rc6_baseline=false
+                        send_osd "N/A"
+                        sleep 3
+                        continue
+                    fi
+
+                    if { read -r current_rc6 < "$path"; } 2>/dev/null && monotonic_us curr_time_us; then
+                        if [[ "$has_rc6_baseline" == true ]]; then
+                            delta_rc6=$((current_rc6 - last_rc6))
+                            delta_time_ms=$(( (curr_time_us - last_time_us) / 1000 ))
+
+                            # Allow slight 50ms timestamping tolerance for near-zero activity
+                            if (( delta_time_ms > 0 && delta_time_ms <= 5000 && delta_rc6 >= 0 && delta_rc6 <= delta_time_ms + 50 )); then
+                                if (( delta_rc6 > delta_time_ms )); then
+                                    usage=0
+                                else
+                                    usage=$(( 100 * (delta_time_ms - delta_rc6) / delta_time_ms ))
+                                fi
+                                (( usage < 0 )) && usage=0
+                                (( usage > 100 )) && usage=100
+                                send_osd "${usage}%"
+                            else
+                                send_osd "N/A"
+                            fi
+                        else
+                            send_osd "N/A"
                         fi
                         last_rc6=$current_rc6
-                        last_time_ms=$curr_time_ms
+                        last_time_us=$curr_time_us
+                        has_rc6_baseline=true
+                    else
+                        has_rc6_baseline=false
+                        send_osd "N/A"
                     fi
                     sleep 1
                 done
                 ;;
-                
+
             amd)
                 path="/sys/class/drm/$card/device/gpu_busy_percent"
-                if [[ ! -r "$path" ]]; then
-                    while true; do
-                        send_osd "N/A"
-                        sleep 5
-                    done
-                fi
-                
+
                 while true; do
-                    if read -r usage < "$path" 2>/dev/null; then
+                    if [[ -r "$path" ]] && { read -r usage < "$path"; } 2>/dev/null; then
                         send_osd "${usage}%"
                     else
                         send_osd "N/A"
@@ -981,17 +1590,20 @@ case "$MODE" in
                     sleep 1
                 done
                 ;;
-                
+
             nvidia)
-                pstate_path="/sys/class/drm/$card/device/power_state"
+                command -v nvidia-smi >/dev/null 2>&1 || die "Missing command: nvidia-smi"
+                init_nvidia_device "$card" || die "Cannot identify NVIDIA device for $card"
+
                 while true; do
-                    pstate=""
-                    [[ -r "$pstate_path" ]] && read -r pstate < "$pstate_path" 2>/dev/null
-                    if [[ "$pstate" == D3* ]]; then
+                    if is_nvidia_suspended "$card"; then
                         send_osd "D3"
                     else
-                        usage=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null || echo "N/A")
-                        if [[ "$usage" != "N/A" ]]; then
+                        if ! usage=$(query_nvidia utilization.gpu); then
+                            usage=""
+                        fi
+                        usage="${usage//[[:space:]]/}"
+                        if [[ "$usage" =~ ^[0-9]+$ ]]; then
                             send_osd "${usage}%"
                         else
                             send_osd "N/A"
@@ -1000,7 +1612,7 @@ case "$MODE" in
                     sleep 1
                 done
                 ;;
-                
+
             *)
                 send_osd "N/A"
                 exit 1
@@ -1015,87 +1627,117 @@ case "$MODE" in
             send_osd "GPU Err"
             exit 1
         fi
-        
+
         case "${vendor,,}" in
             intel)
+                target_pdev=""
+                if resolved=$(readlink -f -- "/sys/class/drm/$card/device" 2>/dev/null); then
+                    target_pdev="${resolved##*/}"
+                fi
+
+                last_intel_mem_scan=-5
+                cached_intel_mem="N/A"
+
                 while true; do
-                    # Pure Bash proc fdinfo scanner for user DRM memory (no subprocesses)
-                    declare -A client_mem=()
-                    while read -r f; do
-                        [[ -r "$f" ]] || continue
-                        driver=""
-                        client_id=""
-                        total_sys=0
-                        total_vram=0
-                        
-                        # || [[ -n "$name" ]] handles EOF without trailing newline
-                        # || true prevents set -e crash if process exits mid-read
-                        while read -r name val unit || [[ -n "$name" ]]; do
-                            case "$name" in
-                                drm-driver:) driver="$val" ;;
-                                drm-client-id:) client_id="$val" ;;
-                                drm-total-system0:|drm-total-system:)
-                                    total_sys="$val"
-                                    [[ "$unit" == "KiB" ]] && total_sys=$((val * 1024))
-                                    ;;
-                                drm-total-vram:)
-                                    total_vram="$val"
-                                    [[ "$unit" == "KiB" ]] && total_vram=$((val * 1024))
-                                    ;;
-                            esac
-                        done < "$f" 2>/dev/null || true
-                        
-                        if [[ -n "$driver" && -n "$client_id" ]]; then
-                            total=$((total_sys + total_vram))
-                            key="${driver}_${client_id}"
-                            if [[ -z "${client_mem[$key]:-}" ]] || (( total > client_mem[$key] )); then
-                                client_mem["$key"]=$total
-                            fi
+                    # Scan memory allocations every 5 seconds to reduce proc fdinfo overhead
+                    if (( SECONDS - last_intel_mem_scan >= 5 )); then
+                        last_intel_mem_scan=$SECONDS
+                        declare -A client_mem=()
+                        found_accounting=false
+
+                        if [[ -n "$target_pdev" ]]; then
+                            for f in /proc/[0-9]*/fdinfo/*; do
+                                [[ -f "$f" && -r "$f" ]] || continue
+                                driver=""
+                                client_id=""
+                                pdev=""
+                                total_sys=0
+                                total_vram=0
+                                has_mem_field=false
+
+                                while read -r name val unit || [[ -n "$name" ]]; do
+                                    case "$name" in
+                                        drm-driver:) driver="$val" ;;
+                                        drm-client-id:) client_id="$val" ;;
+                                        drm-pdev:) pdev="$val" ;;
+                                        drm-total-system0:|drm-total-system:)
+                                            if [[ "$val" =~ ^[0-9]+$ ]]; then
+                                                case "$unit" in
+                                                    KiB) total_sys=$((val * 1024)); has_mem_field=true ;;
+                                                    MiB) total_sys=$((val * 1048576)); has_mem_field=true ;;
+                                                    GiB) total_sys=$((val * 1073741824)); has_mem_field=true ;;
+                                                    B|"") total_sys=$val; has_mem_field=true ;;
+                                                esac
+                                            fi
+                                            ;;
+                                        drm-total-vram0:|drm-total-vram:)
+                                            if [[ "$val" =~ ^[0-9]+$ ]]; then
+                                                case "$unit" in
+                                                    KiB) total_vram=$((val * 1024)); has_mem_field=true ;;
+                                                    MiB) total_vram=$((val * 1048576)); has_mem_field=true ;;
+                                                    GiB) total_vram=$((val * 1073741824)); has_mem_field=true ;;
+                                                    B|"") total_vram=$val; has_mem_field=true ;;
+                                                esac
+                                            fi
+                                            ;;
+                                    esac
+                                done < "$f" 2>/dev/null || true
+
+                                # Filter strictly to the targeted PCI device and Intel driver with verified memory fields
+                                if [[ "$driver" =~ ^(i915|xe)$ && -n "$client_id" && "$pdev" == "$target_pdev" && "$has_mem_field" == true ]]; then
+                                    found_accounting=true
+                                    total=$((total_sys + total_vram))
+                                    key="${driver}_${pdev}_${client_id}"
+                                    if [[ -z "${client_mem[$key]:-}" ]] || (( total > client_mem[$key] )); then
+                                        client_mem["$key"]=$total
+                                    fi
+                                fi
+                            done
                         fi
-                    done < <(grep -l "drm-driver" /proc/[0-9]*/fdinfo/* 2>/dev/null || true)
-                    
-                    sum=0
-                    for key in "${!client_mem[@]}"; do
-                        sum=$((sum + client_mem[$key]))
-                    done
-                    
-                    send_osd "$((sum / 1048576))MB"
+
+                        if [[ "$found_accounting" == true ]]; then
+                            sum=0
+                            for key in "${!client_mem[@]}"; do
+                                sum=$((sum + client_mem[$key]))
+                            done
+                            cached_intel_mem="$((sum / 1048576))MiB"
+                        else
+                            cached_intel_mem="N/A"
+                        fi
+                    fi
+
+                    send_osd "$cached_intel_mem"
                     sleep 1
                 done
                 ;;
-                
+
             amd)
                 used_path="/sys/class/drm/$card/device/mem_info_vram_used"
-                if [[ ! -r "$used_path" ]]; then
-                    send_osd "N/A"
-                    exit 1
-                fi
-                
+
                 while true; do
-                    if read -r used < "$used_path" 2>/dev/null; then
-                        used_mb=$(( used / 1048576 ))
-                        send_osd "${used_mb}MB"
+                    if [[ -r "$used_path" ]] && { read -r used < "$used_path"; } 2>/dev/null; then
+                        send_osd "$(( used / 1048576 ))MiB"
                     else
                         send_osd "N/A"
                     fi
                     sleep 1
                 done
                 ;;
-                
+
             nvidia)
-                pstate_path="/sys/class/drm/$card/device/power_state"
+                command -v nvidia-smi >/dev/null 2>&1 || die "Missing command: nvidia-smi"
+                init_nvidia_device "$card" || die "Cannot identify NVIDIA device for $card"
+
                 while true; do
-                    pstate=""
-                    [[ -r "$pstate_path" ]] && read -r pstate < "$pstate_path" 2>/dev/null
-                    if [[ "$pstate" == D3* ]]; then
+                    if is_nvidia_suspended "$card"; then
                         send_osd "D3"
                     else
-                        mem_str=$(nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits 2>/dev/null || echo "N/A")
-                        if [[ "$mem_str" != "N/A" ]]; then
-                            total=$(echo "$mem_str" | cut -d, -f1 | tr -d ' ')
-                            free=$(echo "$mem_str" | cut -d, -f2 | tr -d ' ')
-                            used=$((total - free))
-                            send_osd "${used}MB"
+                        if ! used=$(query_nvidia memory.used); then
+                            used=""
+                        fi
+                        used="${used//[[:space:]]/}"
+                        if [[ "$used" =~ ^[0-9]+$ ]]; then
+                            send_osd "${used}MiB"
                         else
                             send_osd "N/A"
                         fi
@@ -1103,7 +1745,7 @@ case "$MODE" in
                     sleep 1
                 done
                 ;;
-                
+
             *)
                 send_osd "N/A"
                 exit 1
@@ -1114,360 +1756,500 @@ case "$MODE" in
     --hud)
         card="${2:-}"
         vendor="${3:-}"
-        
-        cpu_zone_file=""
-        for hwmon in /sys/class/hwmon/hwmon*/name; do
-            [[ -r "$hwmon" ]] || continue
-            read -r name < "$hwmon" 2>/dev/null || continue
-            if [[ "$name" == "coretemp" || "$name" == "k10temp" || "$name" == "zenpower" || "$name" == "cpu_thermal" ]]; then
-                dir="${hwmon%/*}"
-                if [[ -r "$dir/temp1_input" ]]; then
-                    cpu_zone_file="$dir/temp1_input"
-                    break
-                fi
-            fi
-        done
-        if [[ -z "$cpu_zone_file" ]]; then
-            for tz in /sys/class/thermal/thermal_zone*/type; do
-                [[ -r "$tz" ]] || continue
-                read -r type < "$tz" 2>/dev/null || continue
-                if [[ "$type" == *"x86_pkg_temp"* || "$type" == *"cpu"* ]]; then
-                    dir="${tz%/*}"
-                    if [[ -r "$dir/temp" ]]; then
-                        cpu_zone_file="$dir/temp"
-                        break
-                    fi
-                fi
-            done
-        fi
-        
+
+        cpu_zone_file=$(find_cpu_temp_sensor || echo "")
+        last_cpu_temp_discover=$SECONDS
+        [[ -z "$cpu_zone_file" ]] && last_cpu_temp_discover=-5
+
         cpu_energy_path="/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj"
         has_cpu_power=false
+        has_cpu_range=false
+        cpu_energy_range=0
+        last_cpu_pwr_discover=$SECONDS
         if [[ -r "$cpu_energy_path" ]]; then
             has_cpu_power=true
+            if { read -r crange < "${cpu_energy_path%/*}/max_energy_range_uj"; } 2>/dev/null &&
+               [[ "$crange" =~ ^[0-9]+$ ]] && (( crange > 0 )); then
+                cpu_energy_range=$crange
+                has_cpu_range=true
+            fi
+        else
+            last_cpu_pwr_discover=-5
         fi
-        
-        nv_pstate_path=""
+
+        NVIDIA_PCI_ID=""
         if [[ "${vendor,,}" == "nvidia" ]]; then
-            nv_pstate_path="/sys/class/drm/$card/device/power_state"
+            init_nvidia_device "$card" 2>/dev/null || true
         fi
-        
+
         amd_pwr_path=""
+        last_amd_pwr_discover=-5
         if [[ "${vendor,,}" == "amd" ]]; then
-            for f in /sys/class/drm/"$card"/device/hwmon/hwmon*/power1_average /sys/class/drm/"$card"/device/hwmon/hwmon*/power1_input; do
-                if [[ -f "$f" ]]; then
-                    amd_pwr_path="$f"
-                    break
-                fi
-            done
+            amd_pwr_path=$(find_amd_pwr_sensor "$card" || echo "")
+            [[ -n "$amd_pwr_path" ]] && last_amd_pwr_discover=$SECONDS
         fi
-        
+
+        intel_target_pdev=""
+        if [[ "${vendor,,}" == "intel" ]] && resolved=$(readlink -f -- "/sys/class/drm/$card/device" 2>/dev/null); then
+            intel_target_pdev="${resolved##*/}"
+        fi
+
         intel_pwr_path=""
+        has_intel_pwr_range=false
+        intel_energy_range=0
+        last_intel_pwr_discover=-5
         if [[ "${vendor,,}" == "intel" ]]; then
-            for name_file in /sys/devices/virtual/powercap/intel-rapl/intel-rapl:0/*/name; do
-                if [[ -f "$name_file" ]]; then
-                    name_val=$(cat "$name_file" 2>/dev/null || echo "")
-                    if [[ "$name_val" == "uncore" ]]; then
-                        intel_pwr_path="${name_file%/*}/energy_uj"
-                        break
-                    fi
+            intel_pwr_path=$(find_intel_rapl_uncore || echo "")
+            if [[ -n "$intel_pwr_path" ]]; then
+                last_intel_pwr_discover=$SECONDS
+                if { read -r irange < "${intel_pwr_path%/*}/max_energy_range_uj"; } 2>/dev/null &&
+                   [[ "$irange" =~ ^[0-9]+$ ]] && (( irange > 0 )); then
+                    intel_energy_range=$irange
+                    has_intel_pwr_range=true
                 fi
-            done
+            fi
         fi
-        
+
         amd_busy_path=""
         if [[ "${vendor,,}" == "amd" ]]; then
             amd_busy_path="/sys/class/drm/$card/device/gpu_busy_percent"
         fi
-        
+
         intel_rc6_path=""
         if [[ "${vendor,,}" == "intel" ]]; then
             intel_rc6_path="/sys/class/drm/$card/device/drm/$card/power/rc6_residency_ms"
         fi
-        
+
         amd_vram_path=""
         if [[ "${vendor,,}" == "amd" ]]; then
             amd_vram_path="/sys/class/drm/$card/device/mem_info_vram_used"
         fi
-        
+
         gpu_temp_files=()
+        last_gpu_temp_discover=-5
         if [[ -n "$card" ]]; then
-            for tfile in /sys/class/drm/"$card"/device/hwmon/hwmon*/temp*_input; do
-                [[ -f "$tfile" ]] && gpu_temp_files+=("$tfile")
-            done
+            mapfile -t gpu_temp_files < <(find_gpu_temp_sensors "$card")
+            (( ${#gpu_temp_files[@]} > 0 )) && last_gpu_temp_discover=$SECONDS
         fi
-        
-        prev_idle=0; prev_total=0
+
+        prev_idle=0
+        prev_total=0
+        has_cpu_baseline=false
+        if { read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat; } 2>/dev/null; then
+            prev_idle=$((idle + iowait))
+            prev_total=$((user + nice + system + idle + iowait + irq + softirq + steal))
+            has_cpu_baseline=true
+        fi
+
         last_cpu_energy=0
         last_cpu_time=0
-        if [[ "$has_cpu_power" == true ]]; then
-            read -r last_cpu_energy < "$cpu_energy_path"
-            last_cpu_time="${EPOCHREALTIME//./}"
+        has_cpu_energy_baseline=false
+        if [[ "$has_cpu_power" == true ]] && { read -r last_cpu_energy < "$cpu_energy_path"; } 2>/dev/null && monotonic_us last_cpu_time; then
+            has_cpu_energy_baseline=true
         fi
-        
+
         last_gpu_energy=0
         last_gpu_time=0
-        if [[ -n "$intel_pwr_path" && -r "$intel_pwr_path" ]]; then
-            read -r last_gpu_energy < "$intel_pwr_path"
-            last_gpu_time="${EPOCHREALTIME//./}"
+        has_gpu_energy_baseline=false
+        if [[ -n "$intel_pwr_path" && -r "$intel_pwr_path" ]] && { read -r last_gpu_energy < "$intel_pwr_path"; } 2>/dev/null && monotonic_us last_gpu_time; then
+            has_gpu_energy_baseline=true
         fi
-        
+
         last_rc6=0
-        last_time_ms=0
-        if [[ -n "$intel_rc6_path" && -r "$intel_rc6_path" ]]; then
-            read -r last_rc6 < "$intel_rc6_path"
-            last_rc6_time_str="${EPOCHREALTIME//./}"
-            last_time_ms=$(( last_rc6_time_str / 1000 ))
+        last_rc6_time=0
+        has_rc6_baseline=false
+        if [[ -n "$intel_rc6_path" && -r "$intel_rc6_path" ]] && { read -r last_rc6 < "$intel_rc6_path"; } 2>/dev/null && monotonic_us last_rc6_time; then
+            has_rc6_baseline=true
         fi
-        
+
+        last_hud_mem_scan=-5
+        cached_hud_vram="N/A"
+
         sleep 1
-        
+
         while true; do
-            read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
-            total=$((user + nice + system + idle + iowait + irq + softirq + steal))
-            diff_idle=$((idle - prev_idle))
-            diff_total=$((total - prev_total))
-            cpu_usage=0
-            if (( prev_total > 0 && diff_total > 0 )); then
-                cpu_usage=$(( 100 * (diff_total - diff_idle) / diff_total ))
+            cpu_usage="N/A"
+            if { read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat; } 2>/dev/null; then
+                idle_all=$((idle + iowait))
+                total=$((user + nice + system + idle + iowait + irq + softirq + steal))
+
+                if [[ "$has_cpu_baseline" == true ]]; then
+                    diff_idle=$((idle_all - prev_idle))
+                    diff_total=$((total - prev_total))
+
+                    if (( diff_total > 0 )); then
+                        u=$(( 100 * (diff_total - diff_idle) / diff_total ))
+                        (( u < 0 )) && u=0
+                        (( u > 100 )) && u=100
+                        cpu_usage="${u}%"
+                    fi
+                fi
+                prev_idle=$idle_all
+                prev_total=$total
+                has_cpu_baseline=true
+            else
+                has_cpu_baseline=false
             fi
-            prev_idle=$idle
-            prev_total=$total
-            
+
+            # CPU power with recovery
+            if [[ "$has_cpu_power" == false ]]; then
+                if (( SECONDS - last_cpu_pwr_discover >= 5 )); then
+                    last_cpu_pwr_discover=$SECONDS
+                    if [[ -r "$cpu_energy_path" ]]; then
+                        has_cpu_power=true
+                        has_cpu_energy_baseline=false
+                        if { read -r crange < "${cpu_energy_path%/*}/max_energy_range_uj"; } 2>/dev/null &&
+                           [[ "$crange" =~ ^[0-9]+$ ]] && (( crange > 0 )); then
+                            cpu_energy_range=$crange
+                            has_cpu_range=true
+                        else
+                            has_cpu_range=false
+                        fi
+                    fi
+                fi
+            fi
+
             cpu_watts="N/A"
             if [[ "$has_cpu_power" == true ]]; then
-                if read -r current_cpu_energy < "$cpu_energy_path" 2>/dev/null; then
-                    curr_cpu_time="${EPOCHREALTIME//./}"
-                    delta_energy=$((current_cpu_energy - last_cpu_energy))
-                    delta_time_us=$((curr_cpu_time - last_cpu_time))
-                    if (( delta_time_us > 0 )); then
+                curr_cpu_time=0
+                if { read -r current_cpu_energy < "$cpu_energy_path"; } 2>/dev/null && monotonic_us curr_cpu_time; then
+                    if [[ "$has_cpu_energy_baseline" == true ]]; then
+                        delta_energy=$((current_cpu_energy - last_cpu_energy))
+                        delta_time_us=$((curr_cpu_time - last_cpu_time))
+
                         if (( delta_energy < 0 )); then
-                            max_range=4294967296
-                            read -r max_range < "${cpu_energy_path%/*}/max_energy_range_uj" 2>/dev/null || true
-                            delta_energy=$(( delta_energy + max_range ))
+                            if [[ "$has_cpu_range" == true ]]; then
+                                delta_energy=$(( delta_energy + cpu_energy_range ))
+                            else
+                                delta_energy=-1
+                            fi
                         fi
-                        watts_x10=$(( (delta_energy * 10) / delta_time_us ))
-                        cpu_watts="$(( watts_x10 / 10 )).$(( watts_x10 % 10 ))W"
+
+                        if (( delta_time_us > 0 && delta_time_us <= 5000000 && delta_energy >= 0 )); then
+                            watts_x10=$(( (delta_energy * 10) / delta_time_us ))
+                            cpu_watts="$(( watts_x10 / 10 )).$(( watts_x10 % 10 ))W"
+                        fi
                     fi
                     last_cpu_energy=$current_cpu_energy
                     last_cpu_time=$curr_cpu_time
+                    has_cpu_energy_baseline=true
+                else
+                    has_cpu_power=false
+                    has_cpu_energy_baseline=false
                 fi
             fi
-            
-            cpu_temp="N/A"
-            if [[ -n "$cpu_zone_file" ]] && read -r t < "$cpu_zone_file" 2>/dev/null; then
-                cpu_temp="$(( t / 1000 ))°C"
+
+            # CPU temperature with recovery
+            if [[ -z "$cpu_zone_file" || ! -r "$cpu_zone_file" ]]; then
+                if (( SECONDS - last_cpu_temp_discover >= 5 )); then
+                    last_cpu_temp_discover=$SECONDS
+                    cpu_zone_file=$(find_cpu_temp_sensor || echo "")
+                fi
             fi
-            
+
+            cpu_temp="N/A"
+            if [[ -n "$cpu_zone_file" ]] && { read -r t < "$cpu_zone_file"; } 2>/dev/null; then
+                cpu_temp="$(( t / 1000 ))°C"
+            else
+                cpu_zone_file=""
+            fi
+
             mem_tot=0; mem_avail=0
+            has_tot=false; has_avail=false
             while read -r key val _; do
                 case "$key" in
-                    MemTotal:) mem_tot=$val ;;
-                    MemAvailable:) mem_avail=$val ;;
+                    MemTotal:) mem_tot=$val; has_tot=true ;;
+                    MemAvailable:) mem_avail=$val; has_avail=true ;;
                 esac
-                if (( mem_tot > 0 && mem_avail > 0 )); then
+                if [[ "$has_tot" == true && "$has_avail" == true ]]; then
                     break
                 fi
             done < /proc/meminfo
-            ram_used_mb=$(( (mem_tot - mem_avail) / 1024 ))
-            ram_used_gb=$(( ram_used_mb / 1024 ))
-            ram_used_gb_frac=$(( (ram_used_mb % 1024) * 10 / 1024 ))
-            ram_str="${ram_used_gb}.${ram_used_gb_frac}GB"
-            
+
+            if [[ "$has_tot" == true && "$has_avail" == true ]] &&
+               (( mem_tot > 0 && mem_avail >= 0 && mem_avail <= mem_tot )); then
+                ram_used_mb=$(( (mem_tot - mem_avail) / 1024 ))
+                ram_used_gb=$(( ram_used_mb / 1024 ))
+                ram_used_gb_frac=$(( (ram_used_mb % 1024) * 10 / 1024 ))
+                ram_str="${ram_used_gb}.${ram_used_gb_frac}GiB"
+            else
+                ram_str="N/A"
+            fi
+
             gpu_usage="N/A"
             gpu_watts="N/A"
             gpu_vram="N/A"
             gpu_temp="N/A"
-            
-            if [[ ${#gpu_temp_files[@]} -gt 0 ]]; then
-                if read -r gt < "${gpu_temp_files[0]}" 2>/dev/null; then
-                    gpu_temp="$((gt/1000))°C"
-                fi
+            vram_label="VRAM"
+
+            if [[ -n "$card" ]] && (( ${#gpu_temp_files[@]} == 0 )) && (( SECONDS - last_gpu_temp_discover >= 5 )); then
+                last_gpu_temp_discover=$SECONDS
+                mapfile -t gpu_temp_files < <(find_gpu_temp_sensors "$card")
             fi
-            
+
             case "${vendor,,}" in
                 intel)
+                    vram_label="GPU mem"
+
+                    if [[ ${#gpu_temp_files[@]} -gt 0 ]] && { read -r gt < "${gpu_temp_files[0]}"; } 2>/dev/null; then
+                        gpu_temp="$((gt/1000))°C"
+                    else
+                        gpu_temp_files=()
+                    fi
+
+                    if [[ -z "$intel_pwr_path" || ! -r "$intel_pwr_path" ]]; then
+                        if (( SECONDS - last_intel_pwr_discover >= 5 )); then
+                            last_intel_pwr_discover=$SECONDS
+                            intel_pwr_path=$(find_intel_rapl_uncore || echo "")
+                            has_gpu_energy_baseline=false
+                            if [[ -n "$intel_pwr_path" ]] && { read -r irange < "${intel_pwr_path%/*}/max_energy_range_uj"; } 2>/dev/null &&
+                               [[ "$irange" =~ ^[0-9]+$ ]] && (( irange > 0 )); then
+                                intel_energy_range=$irange
+                                has_intel_pwr_range=true
+                            else
+                                has_intel_pwr_range=false
+                            fi
+                        fi
+                    fi
+
                     if [[ -n "$intel_pwr_path" && -r "$intel_pwr_path" ]]; then
-                        if read -r current_gpu_energy < "$intel_pwr_path" 2>/dev/null; then
-                            curr_gpu_time="${EPOCHREALTIME//./}"
-                            delta_energy=$((current_gpu_energy - last_gpu_energy))
-                            delta_time_us=$((curr_gpu_time - last_gpu_time))
-                            if (( delta_time_us > 0 )); then
+                        curr_gpu_time=0
+                        if { read -r current_gpu_energy < "$intel_pwr_path"; } 2>/dev/null && monotonic_us curr_gpu_time; then
+                            if [[ "$has_gpu_energy_baseline" == true ]]; then
+                                delta_energy=$((current_gpu_energy - last_gpu_energy))
+                                delta_time_us=$((curr_gpu_time - last_gpu_time))
+
                                 if (( delta_energy < 0 )); then
-                                    delta_energy=$(( delta_energy + 4294967296 ))
-                               fi
-                               watts_x10=$(( (delta_energy * 10) / delta_time_us ))
-                               gpu_watts="$(( watts_x10 / 10 )).$(( watts_x10 % 10 ))W"
+                                    if [[ "$has_intel_pwr_range" == true ]]; then
+                                        delta_energy=$(( delta_energy + intel_energy_range ))
+                                    else
+                                        delta_energy=-1
+                                    fi
+                                fi
+
+                                if (( delta_time_us > 0 && delta_time_us <= 5000000 && delta_energy >= 0 )); then
+                                    watts_x10=$(( (delta_energy * 10) / delta_time_us ))
+                                    gpu_watts="$(( watts_x10 / 10 )).$(( watts_x10 % 10 ))W"
+                                fi
                             fi
                             last_gpu_energy=$current_gpu_energy
                             last_gpu_time=$curr_gpu_time
+                            has_gpu_energy_baseline=true
+                        else
+                            intel_pwr_path=""
+                            has_gpu_energy_baseline=false
                         fi
                     fi
-                    
+
                     if [[ -n "$intel_rc6_path" && -r "$intel_rc6_path" ]]; then
-                        if read -r current_rc6 < "$intel_rc6_path" 2>/dev/null; then
-                            curr_time_str="${EPOCHREALTIME//./}"
-                            curr_time_ms=$(( curr_time_str / 1000 ))
-                            delta_rc6=$((current_rc6 - last_rc6))
-                            delta_time=$((curr_time_ms - last_time_ms))
-                            if (( delta_time > 0 )); then
-                                u=$(( 100 * (delta_time - delta_rc6) / delta_time ))
-                                (( u < 0 )) && u=0
-                                (( u > 100 )) && u=100
-                                gpu_usage="${u}%"
+                        curr_rc6_time=0
+                        if { read -r current_rc6 < "$intel_rc6_path"; } 2>/dev/null && monotonic_us curr_rc6_time; then
+                            if [[ "$has_rc6_baseline" == true ]]; then
+                                delta_rc6=$((current_rc6 - last_rc6))
+                                delta_time_ms=$(( (curr_rc6_time - last_rc6_time) / 1000 ))
+
+                                if (( delta_time_ms > 0 && delta_time_ms <= 5000 && delta_rc6 >= 0 && delta_rc6 <= delta_time_ms + 50 )); then
+                                    if (( delta_rc6 > delta_time_ms )); then
+                                        u=0
+                                    else
+                                        u=$(( 100 * (delta_time_ms - delta_rc6) / delta_time_ms ))
+                                    fi
+                                    (( u < 0 )) && u=0
+                                    (( u > 100 )) && u=100
+                                    gpu_usage="${u}%"
+                                fi
                             fi
                             last_rc6=$current_rc6
-                            last_time_ms=$curr_time_ms
+                            last_rc6_time=$curr_rc6_time
+                            has_rc6_baseline=true
+                        else
+                            has_rc6_baseline=false
                         fi
                     fi
-                    
-                    declare -A client_mem=()
-                    while read -r f; do
-                        [[ -r "$f" ]] || continue
-                        driver=""
-                        client_id=""
-                        total_sys=0
-                        total_vram=0
-                        while read -r name val unit || [[ -n "$name" ]]; do
-                            case "$name" in
-                                drm-driver:) driver="$val" ;;
-                                drm-client-id:) client_id="$val" ;;
-                                drm-total-system0:|drm-total-system:)
-                                    total_sys="$val"
-                                    [[ "$unit" == "KiB" ]] && total_sys=$((val * 1024))
-                                    ;;
-                                drm-total-vram:)
-                                    total_vram="$val"
-                                    [[ "$unit" == "KiB" ]] && total_vram=$((val * 1024))
-                                    ;;
-                            esac
-                        done < "$f" 2>/dev/null || true
-                        if [[ -n "$driver" && -n "$client_id" ]]; then
-                            total=$((total_sys + total_vram))
-                            key="${driver}_${client_id}"
-                            if [[ -z "${client_mem[$key]:-}" ]] || (( total > client_mem[$key] )); then
-                                client_mem["$key"]=$total
-                            fi
+
+                    # Cache Intel GPU allocation scan for 5 seconds to reduce HUD scan cost
+                    if (( SECONDS - last_hud_mem_scan >= 5 )); then
+                        last_hud_mem_scan=$SECONDS
+                        declare -A client_mem=()
+                        found_acc=false
+
+                        if [[ -n "$intel_target_pdev" ]]; then
+                            for f in /proc/[0-9]*/fdinfo/*; do
+                                [[ -f "$f" && -r "$f" ]] || continue
+                                driver=""
+                                client_id=""
+                                pdev=""
+                                total_sys=0
+                                total_vram=0
+                                has_mem_field=false
+
+                                while read -r name val unit || [[ -n "$name" ]]; do
+                                    case "$name" in
+                                        drm-driver:) driver="$val" ;;
+                                        drm-client-id:) client_id="$val" ;;
+                                        drm-pdev:) pdev="$val" ;;
+                                        drm-total-system0:|drm-total-system:)
+                                            if [[ "$val" =~ ^[0-9]+$ ]]; then
+                                                case "$unit" in
+                                                    KiB) total_sys=$((val * 1024)); has_mem_field=true ;;
+                                                    MiB) total_sys=$((val * 1048576)); has_mem_field=true ;;
+                                                    GiB) total_sys=$((val * 1073741824)); has_mem_field=true ;;
+                                                    B|"") total_sys=$val; has_mem_field=true ;;
+                                                esac
+                                            fi
+                                            ;;
+                                        drm-total-vram0:|drm-total-vram:)
+                                            if [[ "$val" =~ ^[0-9]+$ ]]; then
+                                                case "$unit" in
+                                                    KiB) total_vram=$((val * 1024)); has_mem_field=true ;;
+                                                    MiB) total_vram=$((val * 1048576)); has_mem_field=true ;;
+                                                    GiB) total_vram=$((val * 1073741824)); has_mem_field=true ;;
+                                                    B|"") total_vram=$val; has_mem_field=true ;;
+                                                esac
+                                            fi
+                                            ;;
+                                    esac
+                                done < "$f" 2>/dev/null || true
+
+                                # Filter strictly to targeted PCI device and Intel driver with verified memory fields
+                                if [[ "$driver" =~ ^(i915|xe)$ && -n "$client_id" && "$pdev" == "$intel_target_pdev" && "$has_mem_field" == true ]]; then
+                                    found_acc=true
+                                    total=$((total_sys + total_vram))
+                                    key="${driver}_${pdev}_${client_id}"
+                                    if [[ -z "${client_mem[$key]:-}" ]] || (( total > client_mem[$key] )); then
+                                        client_mem["$key"]=$total
+                                    fi
+                                fi
+                            done
                         fi
-                    done < <(grep -l "drm-driver" /proc/[0-9]*/fdinfo/* 2>/dev/null || true)
-                    sum=0
-                    for key in "${!client_mem[@]}"; do
-                        sum=$((sum + client_mem[$key]))
-                    done || true
-                    vram_mb=$((sum / 1048576))
-                    vram_gb=$(( vram_mb / 1024 ))
-                    vram_gb_frac=$(( (vram_mb % 1024) * 10 / 1024 ))
-                    gpu_vram="${vram_gb}.${vram_gb_frac}GB"
+
+                        if [[ "$found_acc" == true ]]; then
+                            sum=0
+                            for key in "${!client_mem[@]}"; do
+                                sum=$((sum + client_mem[$key]))
+                            done || true
+                            vram_mb=$((sum / 1048576))
+                            vram_gb=$(( vram_mb / 1024 ))
+                            vram_gb_frac=$(( (vram_mb % 1024) * 10 / 1024 ))
+                            cached_hud_vram="${vram_gb}.${vram_gb_frac}GiB"
+                        else
+                            cached_hud_vram="N/A"
+                        fi
+                    fi
+                    gpu_vram="$cached_hud_vram"
                     ;;
-                    
+
                 amd)
+                    if [[ ${#gpu_temp_files[@]} -gt 0 ]] && { read -r gt < "${gpu_temp_files[0]}"; } 2>/dev/null; then
+                        gpu_temp="$((gt/1000))°C"
+                    else
+                        gpu_temp_files=()
+                    fi
+
+                    if [[ -z "$amd_pwr_path" || ! -r "$amd_pwr_path" ]]; then
+                        if (( SECONDS - last_amd_pwr_discover >= 5 )); then
+                            last_amd_pwr_discover=$SECONDS
+                            amd_pwr_path=$(find_amd_pwr_sensor "$card" || echo "")
+                        fi
+                    fi
+
                     if [[ -n "$amd_pwr_path" && -r "$amd_pwr_path" ]]; then
-                        if read -r microwatts < "$amd_pwr_path" 2>/dev/null; then
+                        if { read -r microwatts < "$amd_pwr_path"; } 2>/dev/null; then
                             watts_x10=$(( microwatts / 100000 ))
                             gpu_watts="$(( watts_x10 / 10 )).$(( watts_x10 % 10 ))W"
+                        else
+                            amd_pwr_path=""
                         fi
                     fi
-                    
+
                     if [[ -n "$amd_busy_path" && -r "$amd_busy_path" ]]; then
-                        if read -r u < "$amd_busy_path" 2>/dev/null; then
+                        if { read -r u < "$amd_busy_path"; } 2>/dev/null; then
                             gpu_usage="${u}%"
                         fi
                     fi
-                    
+
                     if [[ -n "$amd_vram_path" && -r "$amd_vram_path" ]]; then
-                        if read -r vram_bytes < "$amd_vram_path" 2>/dev/null; then
+                        if { read -r vram_bytes < "$amd_vram_path"; } 2>/dev/null; then
                             vram_mb=$(( vram_bytes / 1048576 ))
                             vram_gb=$(( vram_mb / 1024 ))
                             vram_gb_frac=$(( (vram_mb % 1024) * 10 / 1024 ))
-                            gpu_vram="${vram_gb}.${vram_gb_frac}GB"
+                            gpu_vram="${vram_gb}.${vram_gb_frac}GiB"
                         fi
                     fi
                     ;;
-                    
+
                 nvidia)
-                    pstate=""
-                    [[ -n "$nv_pstate_path" && -r "$nv_pstate_path" ]] && read -r pstate < "$nv_pstate_path" 2>/dev/null
-                    if [[ "$pstate" == D3* ]]; then
+                    # Check suspension FIRST before touching any sysfs hwmon nodes or nvidia-smi
+                    if is_nvidia_suspended "$card"; then
                         gpu_usage="D3"
                         gpu_watts="D3"
                         gpu_vram="D3"
                         gpu_temp="D3"
-                    else
-                        nv_info=$(nvidia-smi --query-gpu=power.draw,utilization.gpu,memory.total,memory.free,temperature.gpu --format=csv,noheader,nounits 2>/dev/null || echo "N/A")
-                        if [[ "$nv_info" != "N/A" ]]; then
-                            IFS=',' read -r nv_pwr nv_usg nv_mem_tot nv_mem_free nv_tmp <<< "$nv_info"
-                            nv_pwr=$(echo "$nv_pwr" | tr -d ' ')
-                            nv_usg=$(echo "$nv_usg" | tr -d ' ')
-                            nv_mem_tot=$(echo "$nv_mem_tot" | tr -d ' ')
-                            nv_mem_free=$(echo "$nv_mem_free" | tr -d ' ')
-                            nv_tmp=$(echo "$nv_tmp" | tr -d ' ')
-                            
-                            if [[ "$nv_pwr" =~ ^([0-9]+)\.([0-9]) ]]; then
-                                gpu_watts="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}W"
-                            else
-                                gpu_watts="${nv_pwr}W"
+                    elif [[ -n "$NVIDIA_PCI_ID" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+                        if [[ ${#gpu_temp_files[@]} -gt 0 ]] && { read -r gt < "${gpu_temp_files[0]}"; } 2>/dev/null; then
+                            gpu_temp="$((gt/1000))°C"
+                        else
+                            gpu_temp_files=()
+                        fi
+
+                        if ! nv_info=$(query_nvidia power.draw,utilization.gpu,memory.used,temperature.gpu); then
+                            nv_info=""
+                        fi
+                        if [[ -n "$nv_info" ]]; then
+                            IFS=',' read -r nv_pwr nv_usg nv_mem_used nv_tmp <<< "$nv_info"
+                            nv_pwr="${nv_pwr//[[:space:]]/}"
+                            nv_usg="${nv_usg//[[:space:]]/}"
+                            nv_mem_used="${nv_mem_used//[[:space:]]/}"
+                            nv_tmp="${nv_tmp//[[:space:]]/}"
+
+                            if [[ "$nv_pwr" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+                                if [[ "$nv_pwr" =~ ^([0-9]+)\.([0-9]) ]]; then
+                                    gpu_watts="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}W"
+                                else
+                                    gpu_watts="${nv_pwr}W"
+                                fi
                             fi
-                            gpu_usage="${nv_usg}%"
-                            if [[ -n "$nv_mem_tot" && -n "$nv_mem_free" ]]; then
-                                nv_used=$((nv_mem_tot - nv_mem_free))
-                                nv_used_gb=$(( nv_used / 1024 ))
-                                nv_used_gb_frac=$(( (nv_used % 1024) * 10 / 1024 ))
-                                gpu_vram="${nv_used_gb}.${nv_used_gb_frac}GB"
+
+                            [[ "$nv_usg" =~ ^[0-9]+$ ]] && gpu_usage="${nv_usg}%"
+
+                            if [[ "$nv_mem_used" =~ ^[0-9]+$ ]]; then
+                                nv_used_gb=$(( nv_mem_used / 1024 ))
+                                nv_used_gb_frac=$(( (nv_mem_used % 1024) * 10 / 1024 ))
+                                gpu_vram="${nv_used_gb}.${nv_used_gb_frac}GiB"
                             fi
-                            gpu_temp="${nv_tmp}°C"
+
+                            [[ "$nv_tmp" =~ ^[0-9]+$ ]] && gpu_temp="${nv_tmp}°C"
                         fi
                     fi
                     ;;
             esac
-            
-            hud_body="  ${cpu_usage}% • ${cpu_watts} • ${cpu_temp}\n󰢮  ${gpu_usage} • ${gpu_watts} • ${gpu_temp}\n󰘚  ${ram_str} | VRAM ${gpu_vram}"
+
+            printf -v hud_body '  %s • %s • %s\n  %s • %s • %s\n  %s | %s %s' \
+                "$cpu_usage" "$cpu_watts" "$cpu_temp" \
+                "$gpu_usage" "$gpu_watts" "$gpu_temp" \
+                "$ram_str" "$vram_label" "$gpu_vram"
+
             send_hud_osd "$hud_body"
-            
             sleep 1
         done
         ;;
 
     --workspace)
-        if [[ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
-            send_osd "WS: ?"
-            exit 1
-        fi
-        
-        if ws_info=$(hyprctl activeworkspace 2>/dev/null); then
-            if [[ "$ws_info" =~ "workspace ID "([0-9\-]+) ]]; then
-                ws_id="${BASH_REMATCH[1]}"
-            else
-                ws_id="?"
+        command -v hyprctl >/dev/null 2>&1 || die "Missing command: hyprctl"
+
+        while true; do
+            ws_id="?"
+            if ws_info=$(hyprctl -j activeworkspace 2>/dev/null); then
+                if [[ "$ws_info" =~ \"id\":[[:space:]]*([0-9-]+) ]]; then
+                    ws_id="${BASH_REMATCH[1]}"
+                fi
+            elif ws_info=$(hyprctl activeworkspace 2>/dev/null); then
+                if [[ "$ws_info" =~ workspace\ ID\ ([0-9-]+) ]]; then
+                    ws_id="${BASH_REMATCH[1]}"
+                fi
             fi
             send_osd "WS: $ws_id"
-        else
-            send_osd "WS: ?"
-        fi
-
-        socket_path="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
-        if command -v socat >/dev/null 2>&1 && [[ -S "$socket_path" ]]; then
-            # OPTIMIZATION: Background the pipeline directly without the { } wrapper
-            socat -U - UNIX-CONNECT:"$socket_path" 2>/dev/null | while read -r line; do
-                if [[ "$line" == "workspace>>"* ]]; then
-                    send_osd "WS: ${line#workspace>>}"
-                fi
-            done &
-            
-            bg_pid=$!
-            
-            wait "$bg_pid" 2>/dev/null || true
-        else
-            while true; do
-                if ws_info=$(hyprctl activeworkspace 2>/dev/null); then
-                    if [[ "$ws_info" =~ "workspace ID "([0-9\-]+) ]]; then
-                        ws_id="${BASH_REMATCH[1]}"
-                    else
-                        ws_id="?"
-                    fi
-                    send_osd "WS: $ws_id"
-                fi
-                sleep 1
-            done
-        fi
+            sleep 1
+        done
         ;;
 esac
