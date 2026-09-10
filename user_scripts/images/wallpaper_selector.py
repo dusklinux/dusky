@@ -3040,8 +3040,17 @@ class WallpaperApp:
         if self.closing:
             return
 
-        self.search_requested = True
-        self.search_query = entry.get_text().casefold()
+        text = entry.get_text()
+
+        # Nonempty text is evidence of search interaction. An empty
+        # notification alone is not: GTK may emit entry changes during
+        # initialization or state handling.
+        #
+        # Explicit clicks and search shortcuts are tracked separately.
+        if text:
+            self.search_requested = True
+
+        self.search_query = text.casefold()
 
         self.flowbox.invalidate_filter()
         self.update_visibility_and_selection()
@@ -3109,10 +3118,18 @@ class WallpaperApp:
         return selected[0].rel_path
 
     def _focus_selected_later(self, generation):
-        attempts = 0
+        selected = self.flowbox.get_selected_children()
+        if not selected:
+            return
 
-        def focus():
-            nonlocal attempts
+        target = selected[0]
+        original_query = self.search_query
+
+        attempts = 0
+        previous_geometry = None
+
+        def focus_and_reveal():
+            nonlocal attempts, previous_geometry
 
             if (
                 self.closing
@@ -3122,77 +3139,82 @@ class WallpaperApp:
             ):
                 return GLib.SOURCE_REMOVE
 
-            if self.popover is not None:
+            # Do not override a selection or search changed by the user
+            # while this callback was waiting for GTK's layout.
+            selected_now = self.flowbox.get_selected_children()
+            if (
+                not selected_now
+                or selected_now[0] is not target
+                or self.search_query != original_query
+                or not self.filter_child(target)
+            ):
                 return GLib.SOURCE_REMOVE
 
             if self.stack.get_visible_child_name() != "grid":
                 return GLib.SOURCE_REMOVE
 
-            # Automatic initial entry focus should not suppress startup
-            # selection. Explicit search interaction should.
-            if (
-                self.search_requested
-                and self.search_entry.is_focus()
-            ):
-                return GLib.SOURCE_REMOVE
+            attempts += 1
 
-            selected = self.flowbox.get_selected_children()
-            if not selected:
-                return GLib.SOURCE_REMOVE
-
-            child = selected[0]
-            if not self.filter_child(child):
-                return GLib.SOURCE_REMOVE
-
-            allocation = child.get_allocation()
-            translated = child.translate_coordinates(
+            allocation = target.get_allocation()
+            translated = target.translate_coordinates(
                 self.flowbox, 0, 0
             )
             adjustment = self.scrolled.get_vadjustment()
+            page_size = adjustment.get_page_size()
 
-            usable = (
-                child.get_mapped()
-                and allocation.height > 1
-                and translated is not None
-                and adjustment.get_page_size() > 1
-            )
-
-            if usable:
-                _, y = translated
-
-                # The child may have an allocation before the adjustment
-                # has incorporated the final grid height.
-                usable = (
-                    y + allocation.height
-                    <= adjustment.get_upper() + 2
-                )
-
-            if not usable:
-                attempts += 1
+            if (
+                not target.get_mapped()
+                or allocation.height <= 1
+                or translated is None
+                or page_size <= 1
+            ):
                 return (
                     GLib.SOURCE_CONTINUE
                     if attempts < 60
                     else GLib.SOURCE_REMOVE
                 )
 
-            # Reveal the selected image even if another window currently
-            # owns desktop focus, but do not request keyboard focus then.
-            if self.window.is_active():
-                child.grab_focus()
+            _, y = translated
 
+            geometry = (
+                y,
+                allocation.height,
+                page_size,
+                adjustment.get_upper(),
+            )
+
+            # Allow GTK to settle the grid allocation and scroll bounds.
+            # Unlike the previous check, this does not require a tile's
+            # bottom coordinate to satisfy an extra upper-bound test.
+            if geometry != previous_geometry and attempts < 60:
+                previous_geometry = geometry
+                return GLib.SOURCE_CONTINUE
+
+            preserve_search_focus = (
+                self.search_requested
+                and self.search_entry.is_focus()
+            )
+
+            if self.popover is None and not preserve_search_focus:
+                # Sets focus within this window; does not present or
+                # forcibly activate the toplevel window.
+                target.grab_focus()
+
+            # Scrolling is independent of the keyboard-focus decision.
             lower = adjustment.get_lower()
-            upper = max(
+            maximum = max(
                 lower,
                 adjustment.get_upper() - adjustment.get_page_size(),
             )
+
             adjustment.set_value(
-                max(lower, min(y - 20, upper))
+                max(lower, min(y - 20, maximum))
             )
 
             self._schedule_image_pump()
             return GLib.SOURCE_REMOVE
 
-        GLib.timeout_add(16, focus)
+        GLib.timeout_add(16, focus_and_reveal)
 
     # -------------------------------------------------------------------------
     # Input handling
