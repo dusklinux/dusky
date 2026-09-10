@@ -5,9 +5,11 @@
 # Target: Python 3.14+, Linux, GTK3 / PyGObject
 #
 # Features:
-#   - Asynchronous directory scanning and progressive grid construction
+#   - Asynchronous directory scanning and virtual-scrolling GTK3 canvas grid
+#   - Opens directly at the tracked current wallpaper without creating off-screen widgets
+#   - Collection-wide search and favorites filtering
 #   - Bounded viewport-prioritized thumbnail loading
-#   - Off-screen decoded-image eviction without deleting disk thumbnails
+#   - Off-screen widget and decoded-image eviction without deleting disk thumbnails
 #   - Atomic thumbnail replacement and source-fingerprint caching
 #   - Coordinated GUI/CLI cache operations
 #   - Serialized wallpaper/theme application
@@ -27,7 +29,8 @@
 #   Change to "relative" only when ALL external tracker readers support IDs
 #   such as "landscapes/example.jpg".
 #
-# Thumbnail decoding is viewport-lazy; the Gtk.FlowBox itself is not virtualized.
+# The virtual grid uses Gtk.Layout: only nearby rows and the selected tile
+# instantiate widgets, bounding collection-related GTK construction work.
 # =============================================================================
 
 from __future__ import annotations
@@ -66,7 +69,7 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("Pango", "1.0")
 
-from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk, Pango
 
 
 # =============================================================================
@@ -104,6 +107,11 @@ MAGICK_COMMAND = "magick"
 
 THUMB_SIZE = 240
 RENDER_SIZE = 145
+# Fixed geometry makes scroll positions calculable without constructing
+# all preceding tiles.
+GRID_TILE_SIZE = RENDER_SIZE + 16
+GRID_GAP = 12
+GRID_PADDING = 12
 THUMB_RECIPE = "dusky-gtk-thumb-r26"
 
 IMAGE_EXTENSIONS = frozenset({
@@ -1688,6 +1696,471 @@ class ThemedErrorDialog(Gtk.Dialog):
         return False
 
 
+class VirtualWallpaperGrid(Gtk.Layout):
+    """
+    GTK3 virtual tile grid.
+
+    The full collection is represented by strings. Only nearby rows and
+    the selected tile have GTK widgets. Gtk.Layout supplies the full
+    scrollable extent without requiring widgets for off-screen entries.
+
+    All methods run on the GTK main thread.
+    """
+
+    __gsignals__ = {
+        "selected-children-changed": (
+            GObject.SignalFlags.RUN_LAST,
+            None,
+            (),
+        ),
+    }
+
+    def __init__(self, create_tile, tiles_changed):
+        super().__init__()
+
+        self.set_name("wallpaper_grid")
+        self.set_can_focus(True)
+        self.set_hexpand(True)
+        self.set_vexpand(True)
+
+        self.create_tile = create_tile
+        self.tiles_changed = tiles_changed
+
+        self.paths = []
+        self.positions = {}
+        self.tiles = {}
+
+        self.selected_index = None
+        self.columns = 1
+
+        self._source = 0
+        self._dead = False
+        self._pending_reveal = False
+        self._pending_focus = False
+        self._layout_width = 0
+
+        # Gtk.ScrolledWindow may replace the Gtk.Scrollable adjustment.
+        # Keep the handlers attached to the CURRENT adjustment.
+        self._watched_vadjustment = None
+        self._vadjustment_handlers = []
+
+        self.connect("size-allocate", self._on_size_allocate)
+        self.connect("map", self._on_grid_map)
+        self.connect("destroy", self._on_destroy)
+        self.connect("key-press-event", self._on_grid_key)
+
+        self.connect(
+            "notify::vadjustment",
+            self._on_vadjustment_replaced,
+        )
+
+        self._bind_vadjustment()
+
+    def _disconnect_vadjustment(self):
+        adjustment = self._watched_vadjustment
+
+        if adjustment is not None:
+            for handler_id in self._vadjustment_handlers:
+                adjustment.disconnect(handler_id)
+
+        self._vadjustment_handlers.clear()
+        self._watched_vadjustment = None
+
+    def _bind_vadjustment(self):
+        if self._dead:
+            return
+
+        adjustment = self.get_vadjustment()
+
+        if adjustment is self._watched_vadjustment:
+            return
+
+        self._disconnect_vadjustment()
+        self._watched_vadjustment = adjustment
+
+        if adjustment is not None:
+            self._vadjustment_handlers = [
+                adjustment.connect(
+                    "value-changed",
+                    self._on_viewport_changed,
+                ),
+                adjustment.connect(
+                    "changed",
+                    self._on_viewport_changed,
+                ),
+            ]
+
+        self._schedule()
+
+    def _on_vadjustment_replaced(self, widget, specification):
+        self._bind_vadjustment()
+
+    def _on_viewport_changed(self, adjustment):
+        self._schedule()
+
+    def _on_grid_map(self, widget):
+        # Also check when remapped after loading, filtering, or hiding.
+        self._bind_vadjustment()
+        self._schedule()
+
+    @property
+    def row_height(self):
+        return GRID_TILE_SIZE + GRID_GAP
+
+    def selected_path(self):
+        index = self.selected_index
+
+        if index is None or not 0 <= index < len(self.paths):
+            return None
+
+        return self.paths[index]
+
+    def get_selected_children(self):
+        path = self.selected_path()
+        tile = self.tiles.get(path)
+        return [tile] if tile is not None else []
+
+    def unselect_all(self):
+        previous = self.tiles.get(self.selected_path())
+
+        if previous is not None:
+            previous.unset_state_flags(Gtk.StateFlags.SELECTED)
+
+        self.selected_index = None
+        self.emit("selected-children-changed")
+
+    def select_child(self, child):
+        self.select_path(getattr(child, "rel_path", None))
+
+    def select_path(self, path, *, reveal=False, focus=False):
+        if path is None:
+            return
+
+        index = self.positions.get(path)
+        if index is None:
+            return
+
+        selection_changed = index != self.selected_index
+
+        if selection_changed:
+            previous = self.tiles.get(self.selected_path())
+            if previous is not None:
+                previous.unset_state_flags(Gtk.StateFlags.SELECTED)
+
+            self.selected_index = index
+
+        current = self.tiles.get(path)
+        if current is not None:
+            current.set_state_flags(Gtk.StateFlags.SELECTED, False)
+
+        if reveal:
+            self._pending_reveal = True
+
+        if focus:
+            self._pending_focus = True
+
+        if selection_changed:
+            self.emit("selected-children-changed")
+
+        self._schedule()
+
+    def set_paths(self, paths, *, target_path=None, focus=False):
+        self.unselect_all()
+
+        for tile in list(self.tiles.values()):
+            tile.destroy()
+        self.tiles.clear()
+
+        self.paths = list(paths)
+        self.positions = {
+            path: index for index, path in enumerate(self.paths)
+        }
+
+        if self.paths:
+            self.selected_index = self.positions.get(target_path, 0)
+        else:
+            self.selected_index = None
+
+        self._pending_reveal = bool(self.paths)
+        self._pending_focus = bool(focus and self.paths)
+
+        self._schedule()
+
+    def reveal_selected(self, *, focus=False):
+        if self.selected_index is None:
+            return
+
+        self._pending_reveal = True
+        self._pending_focus = bool(focus)
+        self._schedule()
+
+    def _on_size_allocate(self, widget, allocation):
+        self._bind_vadjustment()
+        self._schedule()
+
+    def _schedule(self):
+        if self._dead or self._source:
+            return
+
+        def dispatch():
+            self._source = 0
+
+            if not self._dead:
+                self._sync_tiles()
+
+            return GLib.SOURCE_REMOVE
+
+        # Coalesce scroll and layout signals. No inventory-wide GTK walk.
+        self._source = GLib.timeout_add(16, dispatch)
+
+    def _sync_tiles(self):
+        if self._dead or not self.get_mapped():
+            return
+
+        self._bind_vadjustment()
+
+        width = self.get_allocated_width()
+        adjustment = self.get_vadjustment()
+        page_size = adjustment.get_page_size()
+
+        if width <= 1 or page_size <= 1:
+            return
+
+        old_columns = self.columns
+        old_top = adjustment.get_value()
+        old_top_row = max(
+            0,
+            int((old_top - GRID_PADDING) // self.row_height),
+        )
+        anchor_index = old_top_row * old_columns
+        within_row = old_top - (
+            GRID_PADDING + old_top_row * self.row_height
+        )
+
+        usable_width = max(
+            GRID_TILE_SIZE,
+            width - GRID_PADDING * 2,
+        )
+        columns = max(
+            1,
+            int((usable_width + GRID_GAP) // self.row_height),
+        )
+        self.columns = columns
+
+        count = len(self.paths)
+        rows = (count + columns - 1) // columns
+
+        content_height = (
+            GRID_PADDING * 2
+            + rows * self.row_height
+            - (GRID_GAP if rows else 0)
+        )
+        content_height = max(
+            int(page_size),
+            content_height,
+            1,
+        )
+
+        # Change the virtual extent only when its dimensions change.
+        # Ordinary scrolling should not request another size update.
+        old_width, old_height = self.get_size()
+
+        if old_width != width or old_height != content_height:
+            self.set_size(width, content_height)
+
+        # Ensure the current adjustment permits the startup reveal.
+        # Gtk.Layout and Gtk.ScrolledWindow share this adjustment.
+        if adjustment.get_upper() != float(content_height):
+            adjustment.set_upper(float(content_height))
+
+        maximum = max(
+            adjustment.get_lower(),
+            adjustment.get_upper() - page_size,
+        )
+
+        if self._pending_reveal and self.selected_index is not None:
+            row = self.selected_index // columns
+            y = GRID_PADDING + row * self.row_height
+
+            # Center the selected row when possible.
+            value = y - (page_size - GRID_TILE_SIZE) / 2
+            adjustment.set_value(
+                max(adjustment.get_lower(), min(value, maximum))
+            )
+            self._pending_reveal = False
+
+        elif self._layout_width and columns != old_columns:
+            # Preserve the approximate top item across window resizing.
+            row = anchor_index // columns
+            value = (
+                GRID_PADDING
+                + row * self.row_height
+                + within_row
+            )
+            adjustment.set_value(
+                max(adjustment.get_lower(), min(value, maximum))
+            )
+
+        self._layout_width = width
+
+        top = adjustment.get_value()
+        bottom = top + page_size
+
+        # One additional viewport above and below the visible viewport.
+        first_row = max(
+            0,
+            int((top - page_size - GRID_PADDING) // self.row_height),
+        )
+        last_row = min(
+            rows,
+            int(
+                (bottom + page_size - GRID_PADDING)
+                // self.row_height
+            ) + 1,
+        )
+
+        wanted_indices = set(
+            range(
+                first_row * columns,
+                min(count, last_row * columns),
+            )
+        )
+
+        # Retain the selected tile so keyboard focus/selection does not
+        # disappear merely because the user scrolls away from it.
+        if self.selected_index is not None:
+            wanted_indices.add(self.selected_index)
+
+        wanted_paths = {
+            self.paths[index] for index in wanted_indices
+        }
+
+        for path in list(self.tiles):
+            if path not in wanted_paths:
+                tile = self.tiles.pop(path)
+
+                # Gtk.Image also releases its pixbuf during destruction.
+                tile.pixbuf = None
+                tile.destroy()
+
+        slot_width = usable_width / columns
+        selection_created = False
+
+        for index in sorted(wanted_indices):
+            path = self.paths[index]
+            tile = self.tiles.get(path)
+
+            x = round(
+                GRID_PADDING
+                + (index % columns) * slot_width
+                + (slot_width - GRID_TILE_SIZE) / 2
+            )
+            y = GRID_PADDING + (index // columns) * self.row_height
+
+            if tile is None:
+                tile = self.create_tile(path)
+                self.tiles[path] = tile
+                self.put(tile, x, y)
+                tile.show_all()
+
+                if index == self.selected_index:
+                    tile.set_state_flags(
+                        Gtk.StateFlags.SELECTED,
+                        False,
+                    )
+                    selection_created = True
+            else:
+                allocation = tile.get_allocation()
+
+                if allocation.x != x or allocation.y != y:
+                    self.move(tile, x, y)
+
+        if selection_created:
+            self.emit("selected-children-changed")
+
+        if self._pending_focus:
+            selected = self.get_selected_children()
+
+            if selected:
+                selected[0].grab_focus()
+                self._pending_focus = False
+
+        # The viewport can change without changing the resident tile set.
+        # Reprioritize unfinished images for the current viewport anyway.
+        #
+        # WallpaperApp coalesces these notifications into one bounded
+        # image-pump callback.
+        self.tiles_changed()
+
+    def _on_grid_key(self, widget, event):
+        if event.state & (
+            Gdk.ModifierType.CONTROL_MASK
+            | Gdk.ModifierType.MOD1_MASK
+            | Gdk.ModifierType.SUPER_MASK
+        ):
+            return False
+
+        if not self.paths:
+            return False
+
+        index = self.selected_index
+        if index is None:
+            index = 0
+
+        key = event.keyval
+        page_rows = max(
+            1,
+            int(
+                self.get_vadjustment().get_page_size()
+                // self.row_height
+            ),
+        )
+
+        if key == Gdk.KEY_Left:
+            new_index = index - 1
+        elif key == Gdk.KEY_Right:
+            new_index = index + 1
+        elif key == Gdk.KEY_Up:
+            new_index = index - self.columns
+        elif key == Gdk.KEY_Down:
+            new_index = index + self.columns
+        elif key == Gdk.KEY_Page_Up:
+            new_index = index - page_rows * self.columns
+        elif key == Gdk.KEY_Page_Down:
+            new_index = index + page_rows * self.columns
+        elif key == Gdk.KEY_Home:
+            new_index = 0
+        elif key == Gdk.KEY_End:
+            new_index = len(self.paths) - 1
+        else:
+            return False
+
+        new_index = max(0, min(new_index, len(self.paths) - 1))
+
+        previous = self.tiles.get(self.selected_path())
+        if previous is not None:
+            previous.unset_state_flags(Gtk.StateFlags.SELECTED)
+
+        self.selected_index = new_index
+
+        selected = self.tiles.get(self.selected_path())
+        if selected is not None:
+            selected.set_state_flags(Gtk.StateFlags.SELECTED, False)
+
+        self.emit("selected-children-changed")
+        self.reveal_selected(focus=True)
+        return True
+
+    def _on_destroy(self, widget):
+        self._dead = True
+
+        if self._source:
+            GLib.source_remove(self._source)
+            self._source = 0
+
+        self._disconnect_vadjustment()
+
+
 # =============================================================================
 # GTK APPLICATION
 # =============================================================================
@@ -1724,7 +2197,7 @@ class WallpaperApp:
 
         self.wallpapers: list[str] = []
         self.favorites: set[str] = set()
-        self.children: dict[str, Gtk.FlowBoxChild] = {}
+        self.children: dict[str, Gtk.Widget] = {}
         self.current_selected_child = None
 
         self.search_query = ""
@@ -1887,7 +2360,10 @@ class WallpaperApp:
         self.search_entry.set_tooltip_text("Search filenames: Ctrl+F or /")
         self.search_entry.set_width_chars(22)
         self.search_entry.set_hexpand(True)
-        self.search_entry.connect("changed", self.on_search_changed)
+        self.search_entry.connect(
+            "search-changed",
+            self.on_search_changed,
+        )
         self.search_entry.connect(
             "button-press-event",
             self._on_search_button_press,
@@ -1954,37 +2430,21 @@ class WallpaperApp:
             Gtk.PolicyType.AUTOMATIC,
         )
 
-        self.flowbox = Gtk.FlowBox()
-        self.flowbox.set_valign(Gtk.Align.START)
-        self.flowbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self.flowbox.set_min_children_per_line(1)
-        self.flowbox.set_max_children_per_line(30)
-        self.flowbox.set_homogeneous(True)
-        self.flowbox.set_activate_on_single_click(True)
-        self.flowbox.set_filter_func(self.filter_child)
-        self.flowbox.connect("child-activated", self.on_child_activated)
+        # Retain the existing attribute name to minimize changes to the
+        # surrounding application. This is now a virtual Gtk.Layout,
+        # not a Gtk.FlowBox.
+        self.flowbox = VirtualWallpaperGrid(
+            self._create_child,
+            self._start_image_jobs,
+        )
+        self.children = self.flowbox.tiles
+
         self.flowbox.connect(
             "selected-children-changed",
             self.on_selection_changed,
         )
 
-        # Inventory is already sorted; no repeated FlowBox sort callback.
         self.scrolled.add(self.flowbox)
-
-        adjustment = self.scrolled.get_vadjustment()
-        adjustment.connect(
-            "value-changed",
-            lambda adjustment: self._schedule_image_pump(),
-        )
-        adjustment.connect(
-            "changed",
-            lambda adjustment: self._schedule_image_pump(),
-        )
-        self.flowbox.connect(
-            "size-allocate",
-            lambda widget, allocation: self._schedule_image_pump(),
-        )
-
         self.stack.add_named(self.scrolled, "grid")
         self.stack.add_named(self._make_empty_view(), "empty")
         self.stack.add_named(self._make_loading_view(), "loading")
@@ -2152,21 +2612,21 @@ class WallpaperApp:
             background-image: none;
             background-color: transparent;
         }
-        flowbox {
-            padding: 12px;
+        #wallpaper_grid {
+            padding: 0;
             background-color: transparent;
         }
-        flowboxchild {
+        .wallpaper-tile {
             border-radius: 18px;
             padding: 6px;
-            margin: 4px;
+            margin: 0;
             border: 2px solid transparent;
             background-color: transparent;
         }
-        flowboxchild:hover {
+        .wallpaper-tile:hover {
             background-color: alpha(@theme_fg_color, 0.06);
         }
-        flowboxchild:selected {
+        .wallpaper-tile:selected {
             border-color: @theme_selected_bg_color;
             background-color: alpha(@theme_selected_bg_color, 0.15);
         }
@@ -2391,6 +2851,37 @@ class WallpaperApp:
                 else "Wallpaper Selector"
             )
 
+    def _matching_wallpapers(self):
+        # Operate on lightweight strings, not thousands of GTK widgets.
+        # The inventory is already naturally sorted.
+        query = self.search_query
+        favorites_only = self.show_only_favorites
+        favorites = self.favorites
+
+        return [
+            path
+            for path in self.wallpapers
+            if (
+                (not favorites_only or path in favorites)
+                and (not query or query in path.casefold())
+            )
+        ]
+
+    def _update_view_buttons(self):
+        if self.btn_all is None:
+            return
+
+        all_context = self.btn_all.get_style_context()
+        fav_context = self.btn_fav.get_style_context()
+
+        all_context.remove_class("active-all")
+        fav_context.remove_class("active-fav")
+
+        if self.show_only_favorites:
+            fav_context.add_class("active-fav")
+        else:
+            all_context.add_class("active-all")
+
     def start_refresh(self, *, rebuild=False):
         if self.closing or self.is_refreshing or self.is_applying:
             return
@@ -2514,6 +3005,40 @@ class WallpaperApp:
             f"{generated} regenerated · {failed} unavailable"
         )
 
+    def _show_collection(self, *, target_path=None, focus=False):
+        if self.closing or self.shutting_down:
+            return
+
+        if self.is_refreshing:
+            return
+
+        matches = self._matching_wallpapers()
+
+        # Cancel old thumbnail work only when replacing the result set,
+        # not when scrolling through the existing result set.
+        self._cancel_generation()
+
+        self.flowbox.set_paths(
+            matches,
+            target_path=target_path,
+            focus=focus,
+        )
+
+        self.initial_grid = False
+        self.loading_spinner.stop()
+
+        self.empty_title.set_text("No Wallpapers Found")
+        self.empty_subtitle.set_text(
+            "Try another search or switch out of favorites."
+        )
+
+        self.stack.set_visible_child_name(
+            "grid" if matches else "empty"
+        )
+
+        self._update_busy_controls()
+        self._start_image_jobs()
+
     def _scan_complete(self, future, generation):
         if generation != self.generation:
             return
@@ -2525,22 +3050,15 @@ class WallpaperApp:
         except OperationCancelled:
             return
         except Exception as error:
-            self.grid_building = False
             self.is_refreshing = False
+            self.grid_building = False
             self.loading_spinner.stop()
             self._update_busy_controls()
 
-            if self.children:
-                # A failed rebuild may already have replaced some disk
-                # thumbnails. Revalidate lazily instead of restoring old
-                # in-memory images as if nothing had changed.
-                for child in self.children.values():
-                    child.pixbuf = None
-                    child.image_finished = False
-                    self._render_child(child)
-
-                self.update_visibility_and_selection()
-                self._start_image_jobs()
+            if self.wallpapers:
+                self._show_collection(
+                    target_path=self.flowbox.selected_path(),
+                )
             else:
                 self.empty_title.set_text("Could Not Load Wallpapers")
                 self.empty_subtitle.set_text(
@@ -2562,18 +3080,6 @@ class WallpaperApp:
 
         self.wallpapers = result.wallpapers
 
-        self.flowbox.unselect_all()
-        self.current_selected_child = None
-
-        for child in self.flowbox.get_children():
-            child.destroy()
-
-        self.children.clear()
-        self.grid_building = True
-
-        # On first load, reveal the tracked wallpaper even if the saved
-        # preference starts in Favorites and that image is not a favorite.
-        # Do not override a search the user has already entered.
         if (
             self.initial_grid
             and current_path is not None
@@ -2581,74 +3087,37 @@ class WallpaperApp:
             and current_path not in self.favorites
             and not self.search_query
         ):
-            self.set_view_mode(False)
+            self.show_only_favorites = False
+            self._update_view_buttons()
 
-        self.loading_progress.set_fraction(0)
-        self.loading_progress.set_text("Building image grid…")
+        self.is_refreshing = False
+        self.grid_building = False
 
-        iterator = iter(self.wallpapers)
+        preserve_search_focus = (
+            self.search_requested
+            and self.search_entry.is_focus()
+        )
 
-        def create_batch():
-            if self.closing or generation != self.generation:
-                return GLib.SOURCE_REMOVE
+        self._show_collection(
+            target_path=current_path,
+            focus=(
+                not preserve_search_focus
+                and self.popover is None
+            ),
+        )
 
-            # Limit both tile count and approximate callback duration.
-            # A single GTK call can exceed this budget; it is not a
-            # hard real-time guarantee.
-            deadline = time.monotonic() + 0.006
-
-            try:
-                for _ in range(32):
-                    try:
-                        rel_path = next(iterator)
-                    except StopIteration:
-                        self._finish_grid(
-                            generation,
-                            current_path,
-                            result.failed,
-                        )
-                        return GLib.SOURCE_REMOVE
-
-                    child = self._create_child(rel_path)
-                    self.children[rel_path] = child
-                    self.flowbox.add(child)
-                    child.show_all()
-
-                    if (
-                        rel_path == current_path
-                        and self.filter_child(child)
-                    ):
-                        self.flowbox.select_child(child)
-
-                    if time.monotonic() >= deadline:
-                        break
-
-            except Exception as error:
-                # Preserve the successfully created portion instead of
-                # leaving the application stuck in refreshing state.
-                self._finish_grid(
-                    generation,
-                    current_path,
-                    result.failed,
-                )
-                self.show_error(
-                    "Grid Creation Failed",
-                    describe_error(error),
-                )
-                return GLib.SOURCE_REMOVE
-
-            # Make the completed batch visible immediately. Later batches
-            # and thumbnail jobs continue through the main loop.
-            self.loading_spinner.stop()
-            self.stack.set_visible_child_name("grid")
-            self._schedule_image_pump()
-
-            return GLib.SOURCE_CONTINUE
-
-        GLib.idle_add(create_batch)
+        if result.failed:
+            log_error(
+                f"Cache rebuild finished with "
+                f"{result.failed} unavailable images."
+            )
 
     def _create_child(self, rel_path):
-        child = Gtk.FlowBoxChild()
+        child = Gtk.EventBox()
+        child.set_visible_window(False)
+        child.set_can_focus(True)
+        child.set_size_request(GRID_TILE_SIZE, GRID_TILE_SIZE)
+        child.get_style_context().add_class("wallpaper-tile")
         child.rel_path = rel_path
         child.pixbuf = None
         child.image_finished = False
@@ -2713,37 +3182,6 @@ class WallpaperApp:
         self._render_child(child)
         return child
 
-    def _finish_grid(self, generation, current_path, failed):
-        if generation != self.generation:
-            return
-
-        self.grid_building = False
-        self.is_refreshing = False
-        self.initial_grid = False
-
-        self.loading_spinner.stop()
-        self._update_busy_controls()
-
-        self.empty_title.set_text("No Wallpapers Found")
-        self.empty_subtitle.set_text(
-            "Try another search or switch out of favorites."
-        )
-
-        self.flowbox.invalidate_filter()
-
-        target = self.children.get(current_path)
-        if target is not None and self.filter_child(target):
-            self.flowbox.select_child(target)
-
-        self.update_visibility_and_selection()
-        self._start_image_jobs()
-        self._focus_selected_later(generation)
-
-        if failed:
-            log_error(
-                f"Cache rebuild finished with {failed} unavailable images."
-            )
-
     # -------------------------------------------------------------------------
     # Bounded asynchronous image loading
     # -------------------------------------------------------------------------
@@ -2752,13 +3190,7 @@ class WallpaperApp:
         self._schedule_image_pump()
 
     def _schedule_image_pump(self):
-        if self.closing or self.shutting_down:
-            return
-
-        # Scanning and an explicit rebuild do not have a new usable grid.
-        # Progressive widget construction does: its completed batches may
-        # begin loading thumbnails immediately.
-        if self.is_refreshing and not self.grid_building:
+        if self.closing or self.shutting_down or self.is_refreshing:
             return
 
         if self.image_pump_source:
@@ -2769,117 +3201,61 @@ class WallpaperApp:
             self._pump_image_jobs()
             return GLib.SOURCE_REMOVE
 
-        # Coalesce scroll, allocation, selection, and completion events.
-        # Newly created or filtered tiles also need a layout opportunity
-        # before their viewport positions are useful.
         self.image_pump_source = GLib.timeout_add(40, dispatch)
 
     def _pump_image_jobs(self):
-        if self.closing or self.shutting_down:
-            return
-
-        if self.is_refreshing and not self.grid_building:
+        if (
+            self.closing
+            or self.shutting_down
+            or self.is_refreshing
+        ):
             return
 
         if self.stack.get_visible_child_name() != "grid":
             return
 
-        adjustment = self.scrolled.get_vadjustment()
-        page_size = adjustment.get_page_size()
-
-        if page_size <= 1:
-            # Adjustment/layout signals will schedule another attempt.
-            return
-
-        top = adjustment.get_value()
-        bottom = top + page_size
-        midpoint = (top + bottom) / 2
-
-        # Keep approximately one extra viewport on either side. This
-        # avoids constantly decoding the same images during small scrolls.
-        margin = max(page_size, RENDER_SIZE * 2)
-        low = top - margin
-        high = bottom + margin
-
-        selected = self.current_selected_child
+        grid = self.flowbox
+        adjustment = grid.get_vadjustment()
+        midpoint = (
+            adjustment.get_value() + adjustment.get_page_size() / 2
+        )
+        selected_path = grid.selected_path()
         candidates = []
 
-        for rel_path, child in self.children.items():
-            keep = False
-            priority = 1
-            distance = 0.0
+        for path, child in self.children.items():
+            if child.image_finished or path in self.image_paths:
+                continue
 
-            if self.filter_child(child):
-                if child is selected:
-                    # The tracked wallpaper may be far below the initial
-                    # viewport. Load it before the final startup scroll.
-                    keep = True
-                    priority = 0
+            index = grid.positions.get(path)
+            if index is None:
+                continue
 
-                elif child.get_mapped():
-                    allocation = child.get_allocation()
+            y = (
+                GRID_PADDING
+                + (index // grid.columns) * grid.row_height
+                + GRID_TILE_SIZE / 2
+            )
+            candidates.append(
+                (0 if path == selected_path else 1, abs(y - midpoint), path)
+            )
 
-                    if allocation.height > 1:
-                        translated = child.translate_coordinates(
-                            self.flowbox, 0, 0
-                        )
-
-                        if translated is not None:
-                            _, y = translated
-                            tile_bottom = y + allocation.height
-
-                            if tile_bottom >= low and y <= high:
-                                keep = True
-                                distance = abs(
-                                    y + allocation.height / 2 - midpoint
-                                )
-
-            if keep:
-                if (
-                    not child.image_finished
-                    and rel_path not in self.image_paths
-                ):
-                    candidates.append(
-                        (priority, distance, rel_path)
-                    )
-
-            elif (
-                not self.grid_building
-                and child.pixbuf is not None
-            ):
-                # Drop both Python's and Gtk.Image's pixbuf references.
-                # The persistent PNG and metadata remain untouched.
-                child.pixbuf = None
-                child.image_finished = False
-                self._render_child(child)
-
+        candidates.sort()
         generation = self.generation
         stop_event = self.generation_stop
 
-        # Selected first, then tiles nearest the viewport center.
-        candidates.sort()
-
-        for _, _, rel_path in candidates:
+        for _, _, path in candidates:
             if len(self.image_futures) >= MAX_IMAGE_JOBS:
                 break
 
             future = self.image_executor.submit(
-                self._load_pixbuf,
-                rel_path,
-                stop_event,
+                self._load_pixbuf, path, stop_event
             )
-
             self.image_futures.add(future)
-            self.image_paths.add(rel_path)
-
+            self.image_paths.add(path)
             future.add_done_callback(
-                lambda finished, path=rel_path, gen=generation:
-                    self._post_ui(
-                        self._image_complete,
-                        finished,
-                        path,
-                        gen,
-                    )
+                lambda finished, rel_path=path, gen=generation: self._post_ui(
+                    self._image_complete, finished, rel_path, gen
+                )
             )
 
     @staticmethod
@@ -2990,7 +3366,7 @@ class WallpaperApp:
         )
 
         child.name_label.set_visible(
-            child is self.current_selected_child
+            child.rel_path == self.flowbox.selected_path()
             and self.settings["SHOW_FILENAMES"]
         )
 
@@ -2998,38 +3374,18 @@ class WallpaperApp:
     # Filtering, selection, and focus
     # -------------------------------------------------------------------------
 
-    def filter_child(self, child):
-        rel_path = getattr(child, "rel_path", "")
-
-        if self.show_only_favorites and rel_path not in self.favorites:
-            return False
-
-        return not self.search_query or (
-            self.search_query in rel_path.casefold()
-        )
-
     def set_view_mode(self, favorites):
         if self.closing:
             return
 
+        changed = self.show_only_favorites != bool(favorites)
         self.show_only_favorites = bool(favorites)
+        self._update_view_buttons()
 
-        if self.btn_all is not None:
-            all_context = self.btn_all.get_style_context()
-            fav_context = self.btn_fav.get_style_context()
+        if self.flowbox is None or self.is_refreshing or not changed:
+            return
 
-            all_context.remove_class("active-all")
-            fav_context.remove_class("active-fav")
-
-            if self.show_only_favorites:
-                fav_context.add_class("active-fav")
-            else:
-                all_context.add_class("active-all")
-
-        if self.flowbox is not None:
-            self.flowbox.invalidate_filter()
-            self.update_visibility_and_selection()
-            self._schedule_image_pump()
+        self._show_collection(target_path=self.flowbox.selected_path())
 
     def _on_search_button_press(self, entry, event):
         # Record explicit interaction, not GTK's automatic initial focus.
@@ -3041,208 +3397,70 @@ class WallpaperApp:
             return
 
         text = entry.get_text()
-
-        # Nonempty text is evidence of search interaction. An empty
-        # notification alone is not: GTK may emit entry changes during
-        # initialization or state handling.
-        #
-        # Explicit clicks and search shortcuts are tracked separately.
         if text:
             self.search_requested = True
 
-        self.search_query = text.casefold()
+        query = text.casefold()
+        if query == self.search_query:
+            return
 
-        self.flowbox.invalidate_filter()
-        self.update_visibility_and_selection()
-        self._schedule_image_pump()
+        self.search_query = query
+        if self.flowbox is None or self.is_refreshing:
+            return
+
+        self._show_collection()
 
     def update_visibility_and_selection(self):
         if self.closing or self.is_refreshing or self.flowbox is None:
             return
 
-        selected = self.flowbox.get_selected_children()
-
-        if selected and self.filter_child(selected[0]):
-            self.stack.set_visible_child_name("grid")
-            return
-
-        first = next(
-            (
-                child
-                for child in self.flowbox.get_children()
-                if self.filter_child(child)
-            ),
-            None,
+        self.stack.set_visible_child_name(
+            "grid" if self.flowbox.paths else "empty"
         )
-
-        if first is None:
-            self.flowbox.unselect_all()
-            self.stack.set_visible_child_name("empty")
-        else:
-            self.stack.set_visible_child_name("grid")
-            self.flowbox.select_child(first)
 
     def on_selection_changed(self, flowbox):
-        previous_label = getattr(
-            self.current_selected_child,
-            "name_label",
-            None,
-        )
-        if previous_label is not None:
-            previous_label.hide()
-
         selected = flowbox.get_selected_children()
         self.current_selected_child = selected[0] if selected else None
-
         self.update_filename_visibility()
         self._schedule_image_pump()
 
     def update_filename_visibility(self):
-        label = getattr(
-            self.current_selected_child,
-            "name_label",
-            None,
-        )
-        if label is not None:
-            label.set_visible(self.settings["SHOW_FILENAMES"])
+        selected_path = self.flowbox.selected_path() if self.flowbox else None
+        show_name = self.settings["SHOW_FILENAMES"]
+        for path, child in self.children.items():
+            child.name_label.set_visible(show_name and path == selected_path)
 
     def get_selected_path(self):
-        if self.closing or self.is_refreshing:
+        if self.closing or self.is_refreshing or self.flowbox is None:
             return None
 
-        selected = self.flowbox.get_selected_children()
-
-        if not selected or not self.filter_child(selected[0]):
-            return None
-
-        return selected[0].rel_path
-
-    def _focus_selected_later(self, generation):
-        selected = self.flowbox.get_selected_children()
-        if not selected:
-            return
-
-        target = selected[0]
-        original_query = self.search_query
-
-        attempts = 0
-        previous_geometry = None
-
-        def focus_and_reveal():
-            nonlocal attempts, previous_geometry
-
-            if (
-                self.closing
-                or self.shutting_down
-                or generation != self.generation
-                or self.window is None
-            ):
-                return GLib.SOURCE_REMOVE
-
-            # Do not override a selection or search changed by the user
-            # while this callback was waiting for GTK's layout.
-            selected_now = self.flowbox.get_selected_children()
-            if (
-                not selected_now
-                or selected_now[0] is not target
-                or self.search_query != original_query
-                or not self.filter_child(target)
-            ):
-                return GLib.SOURCE_REMOVE
-
-            if self.stack.get_visible_child_name() != "grid":
-                return GLib.SOURCE_REMOVE
-
-            attempts += 1
-
-            allocation = target.get_allocation()
-            translated = target.translate_coordinates(
-                self.flowbox, 0, 0
-            )
-            adjustment = self.scrolled.get_vadjustment()
-            page_size = adjustment.get_page_size()
-
-            if (
-                not target.get_mapped()
-                or allocation.height <= 1
-                or translated is None
-                or page_size <= 1
-            ):
-                return (
-                    GLib.SOURCE_CONTINUE
-                    if attempts < 60
-                    else GLib.SOURCE_REMOVE
-                )
-
-            _, y = translated
-
-            geometry = (
-                y,
-                allocation.height,
-                page_size,
-                adjustment.get_upper(),
-            )
-
-            # Allow GTK to settle the grid allocation and scroll bounds.
-            # Unlike the previous check, this does not require a tile's
-            # bottom coordinate to satisfy an extra upper-bound test.
-            if geometry != previous_geometry and attempts < 60:
-                previous_geometry = geometry
-                return GLib.SOURCE_CONTINUE
-
-            preserve_search_focus = (
-                self.search_requested
-                and self.search_entry.is_focus()
-            )
-
-            if self.popover is None and not preserve_search_focus:
-                # Sets focus within this window; does not present or
-                # forcibly activate the toplevel window.
-                target.grab_focus()
-
-            # Scrolling is independent of the keyboard-focus decision.
-            lower = adjustment.get_lower()
-            maximum = max(
-                lower,
-                adjustment.get_upper() - adjustment.get_page_size(),
-            )
-
-            adjustment.set_value(
-                max(lower, min(y - 20, maximum))
-            )
-
-            self._schedule_image_pump()
-            return GLib.SOURCE_REMOVE
-
-        GLib.timeout_add(16, focus_and_reveal)
+        return self.flowbox.selected_path()
 
     # -------------------------------------------------------------------------
     # Input handling
     # -------------------------------------------------------------------------
 
-    def on_child_activated(self, flowbox, child):
-        if not self.is_refreshing:
-            self.apply_wallpaper(child.rel_path, regen=True)
-
     def on_tile_button_press(self, event_box, event, child):
-        if (
-            event.type != Gdk.EventType.BUTTON_PRESS
-            or event.button not in (2, 3)
-        ):
+        if event.type != Gdk.EventType.BUTTON_PRESS:
             return False
 
         if self.is_refreshing:
             return True
 
-        self.flowbox.select_child(child)
+        self.flowbox.select_path(child.rel_path)
         child.grab_focus()
 
-        if event.button == 2:
+        if event.button == 1:
+            self.apply_wallpaper(child.rel_path, regen=True)
+            return True
+        elif event.button == 2:
             self.toggle_favorite(child.rel_path)
-        else:
+            return True
+        elif event.button == 3:
             self.apply_wallpaper(child.rel_path, regen=False)
+            return True
 
-        return True
+        return False
 
     def _focus_is_in_grid(self, focus):
         widget = focus
@@ -3312,12 +3530,10 @@ class WallpaperApp:
             if editing:
                 if self.search_entry.get_text():
                     self.search_entry.set_text("")
+                    self.on_search_changed(self.search_entry)
                 else:
-                    selected = self.flowbox.get_selected_children()
-                    if selected:
-                        selected[0].grab_focus()
-                    else:
-                        self.flowbox.grab_focus()
+                    self.flowbox.grab_focus()
+                    self.flowbox.reveal_selected(focus=True)
             else:
                 self.window.close()
             return True
@@ -3330,9 +3546,12 @@ class WallpaperApp:
                 and not ctrl
                 and key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter)
             ):
-                selected = self.flowbox.get_selected_children()
-                if selected:
-                    selected[0].grab_focus()
+                # Apply any pending delayed search update before moving
+                # focus into its result set.
+                self.on_search_changed(self.search_entry)
+
+                self.flowbox.grab_focus()
+                self.flowbox.reveal_selected(focus=True)
                 return True
 
             # Preserve normal editing, including Ctrl+C.
@@ -3382,13 +3601,16 @@ class WallpaperApp:
         changed = self.favorites ^ favorites
         self.favorites = favorites
 
+        if self.show_only_favorites:
+            self._show_collection(target_path=self.flowbox.selected_path())
+            return
+
+        # In All view, favorites do not change page membership.
         for path in changed:
             child = self.children.get(path)
             if child is not None:
                 self._render_child(child)
 
-        self.flowbox.invalidate_filter()
-        self.update_visibility_and_selection()
         self._schedule_image_pump()
 
     def apply_wallpaper(self, rel_path, *, regen):
