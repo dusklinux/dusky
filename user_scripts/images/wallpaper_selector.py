@@ -41,6 +41,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -115,7 +116,11 @@ IMAGE_EXTENSIONS = frozenset({
 WORKER_COUNT = min(os.process_cpu_count() or 2, 4)
 MAX_IMAGE_JOBS = WORKER_COUNT * 2
 
-THUMB_TIMEOUT = 25.0
+# Limits are PER ImageMagick process, not shared across all workers.
+THUMB_TIMEOUT = 60.0
+MAGICK_MEMORY_LIMIT = "128MiB"
+MAGICK_MAP_LIMIT = "256MiB"
+MAGICK_DISK_LIMIT = "4GiB"
 BAD_THUMB_RETRY_SECONDS = 300.0
 AWWW_QUERY_TIMEOUT = 1.5
 AWWW_START_TIMEOUT = 7.0
@@ -813,45 +818,58 @@ class CacheManager:
             magick = require_binary(MAGICK_COMMAND)
             nice = require_binary("nice")
 
-            # Passing an opened file descriptor avoids ImageMagick
-            # interpreting special characters in the actual filename.
-            command = [
-                nice, "-n", "19",
-                magick,
-                "-limit", "thread", "1",
-                "-limit", "memory", "128MiB",
-                "-limit", "map", "256MiB",
-                "-limit", "disk", "1GiB",
-                "-limit", "time", str(max(1, int(THUMB_TIMEOUT) - 2)),
-                f"/proc/self/fd/{source.fileno()}[0]",
-                "-auto-orient",
-                "-strip",
-                "-thumbnail", f"{THUMB_SIZE}x{THUMB_SIZE}^",
-                "-gravity", "center",
-                "-extent", f"{THUMB_SIZE}x{THUMB_SIZE}",
-                "(",
-                "-size", f"{THUMB_SIZE}x{THUMB_SIZE}",
-                "xc:none",
-                "-fill", "white",
-                "-draw",
-                (
-                    f"roundrectangle 0,0,"
-                    f"{THUMB_SIZE - 1},{THUMB_SIZE - 1},24,24"
-                ),
-                ")",
-                "-alpha", "set",
-                "-compose", "DstIn",
-                "-composite",
-                str(temporary),
-            ]
-
             try:
-                run_command(
-                    command,
-                    timeout=THUMB_TIMEOUT,
-                    stop_event=stop_event,
-                    pass_fds=(source.fileno(),),
-                )
+                # Use an explicitly located, per-conversion scratch directory.
+                # It is outside THUMB_DIR, so thumbnail sweeping never touches
+                # an active conversion's ImageMagick pixel-cache files.
+                #
+                # The context removes scratch files even when ImageMagick is
+                # terminated by run_command() after a timeout/cancellation.
+                with tempfile.TemporaryDirectory(
+                    prefix="magick-",
+                    dir=CACHE_DIR,
+                ) as scratch_dir:
+                    command = [
+                        nice, "-n", "19",
+                        magick,
+                        "-limit", "thread", "1",
+                        "-limit", "memory", MAGICK_MEMORY_LIMIT,
+                        "-limit", "map", MAGICK_MAP_LIMIT,
+                        "-limit", "disk", MAGICK_DISK_LIMIT,
+                        "-limit", "time",
+                        str(max(1, int(THUMB_TIMEOUT) - 2)),
+                        "-define",
+                        f"registry:temporary-path={scratch_dir}",
+                        # An opened descriptor avoids interpretation of
+                        # special characters in the original filename.
+                        f"/proc/self/fd/{source.fileno()}[0]",
+                        "-auto-orient",
+                        "-strip",
+                        "-thumbnail", f"{THUMB_SIZE}x{THUMB_SIZE}^",
+                        "-gravity", "center",
+                        "-extent", f"{THUMB_SIZE}x{THUMB_SIZE}",
+                        "(",
+                        "-size", f"{THUMB_SIZE}x{THUMB_SIZE}",
+                        "xc:none",
+                        "-fill", "white",
+                        "-draw",
+                        (
+                            f"roundrectangle 0,0,"
+                            f"{THUMB_SIZE - 1},{THUMB_SIZE - 1},24,24"
+                        ),
+                        ")",
+                        "-alpha", "set",
+                        "-compose", "DstIn",
+                        "-composite",
+                        str(temporary),
+                    ]
+
+                    run_command(
+                        command,
+                        timeout=THUMB_TIMEOUT,
+                        stop_event=stop_event,
+                        pass_fds=(source.fileno(),),
+                    )
 
                 check_cancelled(stop_event)
 
