@@ -931,7 +931,7 @@ case "$MODE" in
             if [[ "$has_tot" == true && "$has_avail" == true ]] &&
                (( mem_tot > 0 && mem_avail >= 0 && mem_avail <= mem_tot )); then
                 ram_mb=$(( (mem_tot - mem_avail) / 1024 ))
-                send_osd "${ram_mb}MiB"
+                send_osd "${ram_mb}"
             else
                 send_osd "RAM: N/A"
             fi
