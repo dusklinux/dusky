@@ -6,8 +6,8 @@
 #              with ZSTD swap on first boot.
 # Context:     Arch Linux Install (Chrooted Environment)
 # Note:        Zero filesystem journaling is involved here; zram0 is pure swap.
-#              Secondary ephemeral storage (zram1) is delegated to script 206
-#              which applies journal-less ext4 (-O ^has_journal) or tmpfs.
+#              Secondary ephemeral storage (/mnt/zram1) is delegated to script 206
+#              which applies native high-performance Tmpfs (2x RAM ceiling, zero double-buffering).
 # ==============================================================================
 
 set -euo pipefail
@@ -21,7 +21,7 @@ readonly COMPRESSION_ALGORITHM="zstd(level=2)"
 readonly SWAP_PRIORITY=32767
 
 # ------------------------------------------------------------------------------
-# Memory Tier Detection (Matches 205_zram_configuration.sh)
+# Memory Tier Detection (Matches 205_zram_configuration.sh & Fable 5.1 Max)
 # ------------------------------------------------------------------------------
 declare -i RAM_KB=0
 if [[ $(< /proc/meminfo) =~ MemTotal:[[:space:]]+([0-9]+) ]]; then
@@ -34,21 +34,21 @@ declare -i RAM_MB=$(( RAM_KB / 1024 ))
 declare -i RAM_GB=$(( (RAM_MB + 512) / 1024 ))
 
 ZRAM_SIZE_EXPR="ram"
-ZRAM_RESIDENT_LIMIT_EXPR="ram * 0.8"
+ZRAM_RESIDENT_LIMIT_EXPR="ram / 2"
 TIER_DESC=""
 
 if (( RAM_MB <= 8704 )); then
     ZRAM_SIZE_EXPR="ram"
-    ZRAM_RESIDENT_LIMIT_EXPR="ram * 0.8"
-    TIER_DESC="<= 8GB RAM (${RAM_GB}GB detected) -> Size: 100% (1.0x), Resident Cap: 80% (0.8x)"
+    ZRAM_RESIDENT_LIMIT_EXPR="ram / 2"
+    TIER_DESC="<= 8GB RAM (${RAM_GB}GB detected) -> Size: 100% (1.0x), Resident Cap: 50% (0.5x)"
 elif (( RAM_MB < 31744 )); then
     ZRAM_SIZE_EXPR="ram"
-    ZRAM_RESIDENT_LIMIT_EXPR="ram * 0.5"
+    ZRAM_RESIDENT_LIMIT_EXPR="ram / 2"
     TIER_DESC="8GB - 32GB RAM (${RAM_GB}GB detected) -> Size: 100% (1.0x), Resident Cap: 50% (0.5x)"
 else
-    ZRAM_SIZE_EXPR="ram * 0.5"
-    ZRAM_RESIDENT_LIMIT_EXPR="ram * 0.2"
-    TIER_DESC=">= 32GB RAM (${RAM_GB}GB detected) -> Size: 50% (0.5x), Resident Cap: 20% (0.2x)"
+    ZRAM_SIZE_EXPR="ram / 2"
+    ZRAM_RESIDENT_LIMIT_EXPR="0"
+    TIER_DESC=">= 32GB RAM (${RAM_GB}GB detected) -> Size: 50% (0.5x), Resident Cap: Unlimited (0)"
 fi
 
 readonly ZRAM_SIZE_EXPR
@@ -97,7 +97,7 @@ main() {
     install -d -m 0755 /etc/tmpfiles.d
     cat > /etc/tmpfiles.d/00-disable-zswap.conf <<'EOF'
 # Disable zswap to prevent redundant double-compression with ZRAM
-w! /sys/module/zswap/parameters/enabled - - - - 0
+w-! /sys/module/zswap/parameters/enabled - - - - 0
 EOF
     log_success "ZSWAP disablement staged for first boot."
 
@@ -108,6 +108,7 @@ EOF
     # Clean up any legacy config names
     rm -f "${CONFIG_DIR}/99-elite-zram.conf" \
           "${CONFIG_DIR}/99-elite-zram0.conf" \
+          "${CONFIG_DIR}/99-elite-zram1.conf" \
           "${CONFIG_DIR}/99-memtune.conf"
 
     log_info "Drafting initial ZRAM swap configuration atomically..."
@@ -116,8 +117,9 @@ EOF
     tmp_config="$(umask 077 && mktemp)"
     trap 'rm -f -- "$tmp_config"' EXIT
 
-    # Note: [zram1] is intentionally omitted. Ephemeral /mnt/zram1 storage
-    # is configured post-install via user-space script 206 (journal-less ext4 or tmpfs).
+    # Note: [zram1] block device is intentionally omitted to prevent kernel page-cache
+    # double-buffering. Ephemeral /mnt/zram1 storage is configured post-install
+    # via user-space script 206 as native high-performance Tmpfs (2x RAM ceiling).
     cat >"$tmp_config" <<EOF
 # Managed by 160_zram_config.sh (Arch Linux ISO Installer)
 # Base topology primed for first boot (aligned with script 205).

@@ -2,11 +2,11 @@
 """
 Elite Arch Linux Hybrid Memory Mount Configurator (Kernel 7.2+, systemd 261+)
 Supports:
-  1) Native tmpfs (Pure RAM mapping)
-  2) Ext4 on compressed ZRAM block device (/dev/zram1 on /mnt/zram1)
-     - Formatted without journal (-O ^has_journal) via systemd-makefs override
+  1) Native tmpfs (Pure RAM mapping - Recommended: zero double-buffering, lowest idle RAM)
+  2) Ext2 on compressed ZRAM block device (/dev/zram1 on /mnt/zram1)
+     - Native zero-journal filesystem (clean upstream default, lower metadata)
      - 0% root reserved blocks (-m 0)
-     - Post-mount permission enforcer (mode 1777)
+     - Mode 1777 natively enforced via systemd X-mount.mode=1777
   3) Disable / clean up secondary RAM mounts
 """
 
@@ -46,13 +46,9 @@ def die(msg: str, code: int = 1) -> NoReturn:
     err(msg)
     sys.exit(code)
 
-parser = argparse.ArgumentParser(description="Elite Arch Linux Hybrid Memory Mount Configurator")
-group = parser.add_mutually_exclusive_group()
-group.add_argument("--tmpfs", action="store_true", help="Deploy pure high-performance tmpfs mapping on /mnt/zram1")
-group.add_argument("--zram", action="store_true", help="Deploy Ext4 on compressed ZRAM block device (/dev/zram1 on /mnt/zram1)")
-group.add_argument("--disable", "--none", dest="disable", action="store_true", help="Disable secondary RAM mount and clean up zram1/tmpfs")
-parser.add_argument("--size", "-s", type=str, default="", help="Size expression (e.g. '50%%', 'ram / 2', '8G', 'ram')")
-parser.add_argument("--resident-limit", "-r", type=str, default="", help="Resident limit for ZRAM block mapping (default: 0 / unlimited)")
+parser = argparse.ArgumentParser(description="Elite Arch Linux Autonomous Tmpfs Mount Configurator (/mnt/zram1)")
+parser.add_argument("--disable", "--none", dest="disable", action="store_true", help="Disable RAM disk and clean up /mnt/zram1")
+parser.add_argument("--size", "-s", type=str, default="", help="Size expression ceiling (e.g. '100%%', '50%%', '8G', 'ram')")
 parser.add_argument("--no-color", action="store_true", help="Disable ANSI color output")
 
 args = parser.parse_args()
@@ -115,14 +111,16 @@ def write_file_atomic(path: Path, content: str, mode: int = 0o644) -> None:
         Path(tmp).unlink(missing_ok=True)
         raise
 
-def parse_tmpfs_size_expression(raw: str, default: str = "50%") -> str:
-    s = raw.strip().lower()
+def parse_tmpfs_size_expression(raw: str, default: str = "200%") -> str:
+    s = raw.strip().lower().replace("x", "")
     if not s or s in ("auto", "default"):
         return default
     if s.endswith("%") or s.endswith("g") or s.endswith("m") or s.endswith("k"):
         return s
     if s == "ram":
         return "100%"
+    elif s in ("ram * 2", "ram*2", "2"):
+        return "200%"
     elif s in ("ram / 2", "ram/2", "0.5"):
         return "50%"
     elif s in ("ram / 4", "ram/4", "0.25"):
@@ -130,20 +128,24 @@ def parse_tmpfs_size_expression(raw: str, default: str = "50%") -> str:
     elif s.startswith("ram * ") or s.startswith("ram*"):
         try:
             val = float(s.replace("ram * ", "").replace("ram*", "").strip())
-            return f"{int(val * 100)}%"
+            return f"{int(round(val * 100))}%"
         except ValueError:
             pass
     elif s.startswith("ram / ") or s.startswith("ram/"):
         try:
             val = float(s.replace("ram / ", "").replace("ram/", "").strip())
             if val > 0:
-                return f"{int((1.0 / val) * 100)}%"
+                return f"{int(round((1.0 / val) * 100))}%"
         except ValueError:
             pass
     try:
         f = float(s)
         if 0.0 < f <= 1.0:
-            return f"{int(f * 100)}%"
+            return f"{int(round(f * 100))}%"
+        elif 1.0 < f <= 10.0:
+            return f"{int(round(f * 100))}%"
+        elif 10.0 < f <= 1000.0 and f.is_integer():
+            return f"{int(f)}%"
     except ValueError:
         pass
     return default
@@ -380,7 +382,7 @@ def restore_staged_files(stage_dir: Path | None, mount_point: Path = MOUNT_POINT
         warn(f"Failed to restore staged data: {e}")
 
 def configure_tmpfs(size_override: str = "") -> None:
-    size_expr = parse_tmpfs_size_expression(size_override) if size_override else "50%"
+    size_expr = parse_tmpfs_size_expression(size_override) if size_override else "200%"
     info(f"Initializing Native tmpfs Mount for: {C.BOLD}{MOUNT_POINT}{C.RST} (Size: {size_expr})")
     
     stage_dir = safely_unmount_and_stage()
@@ -397,6 +399,8 @@ def configure_tmpfs(size_override: str = "") -> None:
         PERMS_SERVICE_PATH.unlink()
     if PERMS_WANTS_SYMLINK.exists() or PERMS_WANTS_SYMLINK.is_symlink():
         PERMS_WANTS_SYMLINK.unlink()
+    if PERMS_WANTS_DIR.exists():
+        shutil.rmtree(PERMS_WANTS_DIR, ignore_errors=True)
 
     run_cmd(["zramctl", "--reset", "/dev/zram1"], ignore_errors=True)
     run_cmd(["systemctl", "daemon-reload"])
@@ -445,100 +449,6 @@ def get_system_ram_kb() -> int:
     except Exception:
         return 0
 
-def configure_zram(size_override: str = "", resident_override: str = "") -> None:
-    ram_kb = get_system_ram_kb()
-    default_size = "ram / 4" if (ram_kb and ram_kb < 14680064) else "ram / 2"
-    size_expr = parse_size_expression(size_override, default=default_size) if size_override else default_size
-    resident_expr = parse_size_expression(resident_override, default="0") if resident_override else "0"
-
-    info(f"Initializing Ext4 ZRAM Block Mount for: {C.BOLD}{MOUNT_POINT}{C.RST} (Size: {size_expr}, Resident Cap: {resident_expr})")
-    
-    stage_dir = safely_unmount_and_stage()
-
-    if TMPFS_MOUNT_UNIT_PATH.exists():
-        run_cmd(["systemctl", "disable", "--now", "mnt-zram1.mount"], ignore_errors=True)
-        TMPFS_MOUNT_UNIT_PATH.unlink(missing_ok=True)
-
-    if LEGACY_MAKEFS_OVERRIDE_DIR.exists():
-        shutil.rmtree(LEGACY_MAKEFS_OVERRIDE_DIR, ignore_errors=True)
-
-    # 1. zram-generator config for zram1
-    zram_content = f"""# Managed by 206_zram_tmpfs_mounts.py
-[zram1]
-zram-size = {size_expr}
-zram-resident-limit = {resident_expr}
-fs-type = ext4
-mount-point = {MOUNT_POINT}
-compression-algorithm = {COMPRESSION_ALGORITHM}
-options = {FS_OPTIONS}
-"""
-    write_file_atomic(ZRAM_CONF_FILE, zram_content)
-    if LEGACY_ZRAM_CONF_FILE.exists():
-        LEGACY_ZRAM_CONF_FILE.unlink()
-    ok(f"ZRAM pool configuration written to {ZRAM_CONF_FILE}")
-
-    # 2. Drop-in for systemd-zram-setup@zram1: strip journal via tune2fs right after creation
-    setup_override_content = """# Managed by 206_zram_tmpfs_mounts.py
-[Service]
-ExecStartPost=/usr/bin/tune2fs -O ^has_journal /dev/%i
-"""
-    SETUP_OVERRIDE_DIR.mkdir(parents=True, exist_ok=True)
-    write_file_atomic(SETUP_OVERRIDE_CONF, setup_override_content)
-    ok(f"Ext4 journal-less tune override written to {SETUP_OVERRIDE_CONF}")
-
-    # 3. Post-mount permissions service: guarantees mode 1777
-    perms_service_content = f"""# Managed by 206_zram_tmpfs_mounts.py
-[Unit]
-Description=Enforce Mode 1777 on {MOUNT_POINT}
-After=mnt-zram1.mount
-BindsTo=mnt-zram1.mount
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/chmod 1777 {MOUNT_POINT}
-RemainAfterExit=yes
-
-[Install]
-WantedBy=mnt-zram1.mount
-"""
-    write_file_atomic(PERMS_SERVICE_PATH, perms_service_content)
-    PERMS_WANTS_DIR.mkdir(parents=True, exist_ok=True)
-    if not PERMS_WANTS_SYMLINK.exists():
-        try:
-            PERMS_WANTS_SYMLINK.symlink_to(PERMS_SERVICE_PATH)
-        except Exception:
-            pass
-    ok(f"Post-mount permission enforcer installed to {PERMS_SERVICE_PATH}")
-
-    fix_mount_permissions()
-
-    info("Reloading systemd daemon & generator pipeline...")
-    run_cmd(["systemctl", "daemon-reload"])
-    
-    # Reset device to unblock recreation if disksize changed
-    if Path("/sys/block/zram1/reset").exists():
-        try:
-            Path("/sys/block/zram1/reset").write_text("1")
-        except Exception:
-            pass
-
-    run_cmd(["systemctl", "restart", "systemd-zram-setup@zram1.service"], ignore_errors=True)
-    run_cmd(["systemctl", "restart", "mnt-zram1.mount"], ignore_errors=True)
-    run_cmd(["mount", str(MOUNT_POINT)], ignore_errors=True)
-
-    for _ in range(10):
-        if get_mount_source() in ("/dev/zram1", "zram1"): break
-        time.sleep(0.3)
-
-    fix_mount_permissions()
-    restore_staged_files(stage_dir)
-    fix_mount_permissions()
-
-    if get_mount_source() in ("/dev/zram1", "zram1"):
-        ok(f"Live memory: Ext4 ZRAM block device attached to {MOUNT_POINT} (Mode: 1777, Journal: Disabled).")
-    else:
-        warn("ZRAM generator staged. Mount will activate automatically upon boot.")
-
 def configure_none() -> None:
     info(f"Disabling secondary RAM disk for {C.BOLD}{MOUNT_POINT}{C.RST} (Minimal RAM mode)...")
     safely_unmount_and_stage()
@@ -559,48 +469,17 @@ def configure_none() -> None:
     run_cmd(["systemctl", "daemon-reload"])
     ok(f"Secondary RAM disk ({MOUNT_POINT}) disabled cleanly (zero memory overhead).")
 
-def ask_backend() -> str:
-    current = get_mount_source()
-    tmpfs_tag = f"{C.GRN} [LIVE & ACTIVE]{C.RST}" if current == "tmpfs" else ""
-    
-    if current in ("/dev/zram1", "zram1"):
-        zram_tag = f"{C.GRN} [LIVE & ACTIVE]{C.RST}"
-    elif ZRAM_CONF_FILE.exists() and current != "tmpfs":
-        zram_tag = f"{C.YLW} [STAGED - PENDING BOOT]{C.RST}"
-    else:
-        zram_tag = ""
-
-    none_tag = f"{C.GRN} [CURRENTLY DISABLED]{C.RST}" if (not current and not ZRAM_CONF_FILE.exists() and not TMPFS_MOUNT_UNIT_PATH.exists()) else ""
-
-    print(f"\n  {C.CYN}[ Select backend for {MOUNT_POINT} ]{C.RST}")
-    print(f"   {C.BOLD}1{C.RST}) tmpfs   (Native Pure RAM Mapping){tmpfs_tag}")
-    print(f"   {C.BOLD}2{C.RST}) zram    (Ext4 Compressed Block Device /dev/zram1){zram_tag}")
-    print(f"   {C.BOLD}3{C.RST}) disable (No secondary RAM disk / Zero RAM overhead){none_tag}")
-    while True:
-        raw = input("  > ").strip().lower()
-        if raw in ("1", "tmpfs"): return "tmpfs"
-        if raw in ("2", "zram"): return "zram"
-        if raw in ("3", "none", "disable", "disabled", "off"): return "none"
-        if raw in ("q", "quit"): sys.exit(0)
-        print(f"  {C.RED}Invalid choice.{C.RST} Select 1, 2, or 3.")
-
 def main() -> None:
     pre_flight_checks()
-
-    match (args.tmpfs, args.zram, args.disable):
-        case (True, False, False): backend = "tmpfs"
-        case (False, True, False): backend = "zram"
-        case (False, False, True): backend = "none"
-        case _: backend = ask_backend()
 
     for cmd in ["systemctl", "findmnt", "umount"]:
         if shutil.which(cmd) is None:
             die(f"'{cmd}' is required but missing from system PATH.")
 
-    match backend:
-        case "tmpfs": configure_tmpfs(args.size)
-        case "zram": configure_zram(args.size, args.resident_limit)
-        case "none": configure_none()
+    if args.disable:
+        configure_none()
+    else:
+        configure_tmpfs(args.size)
             
     ok("Memory mount subsystem configured successfully.")
 
