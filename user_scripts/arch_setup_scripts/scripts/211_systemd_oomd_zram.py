@@ -53,45 +53,48 @@ except ImportError:
     console = None  # type: ignore
 
 PRESSURE_RULE: Final[str] = """[Rule]
-MemoryPressureAbove=70%
-LastingSec=20s
+MemoryPressureAbove=60%
+LastingSec=2s
 Action=kill-by-pgscan
 """
 
 SWAP_RULE: Final[str] = """[Rule]
+MemoryPressureAbove=30%
 SwapUsageMax=90%
-LastingSec=10s
-Action=kill-by-swap
+LastingSec=2s
+Action=kill-by-pgscan
 """
 
 OOMD_TUNE: Final[str] = """[OOM]
-DefaultMemoryPressureLimit=70%
-DefaultMemoryPressureDurationSec=20s
+DefaultMemoryPressureLimit=60%
+DefaultMemoryPressureDurationSec=2s
 SwapUsedLimit=90%
-PrekillHookTimeoutSec=5s
+PrekillHookTimeoutSec=0s
 """
 
 APP_SLICE: Final[str] = """[Slice]
 ManagedOOMMemoryPressure=kill
-ManagedOOMSwap=kill
-ManagedOOMMemoryPressureLimit=70%
+ManagedOOMMemoryPressureLimit=60%
+ManagedOOMMemoryPressureDurationSec=2s
+ManagedOOMSwap=auto
 ManagedOOMPreference=none
-OOMRules=30-desktop-pressure 30-desktop-swap
+OOMRules=30-dusky-pressure 30-dusky-swap
 MemoryAccounting=yes
 """
 
 BACKGROUND_SLICE: Final[str] = """[Slice]
 ManagedOOMMemoryPressure=kill
-ManagedOOMSwap=kill
-ManagedOOMMemoryPressureLimit=75%
+ManagedOOMMemoryPressureLimit=50%
+ManagedOOMMemoryPressureDurationSec=2s
+ManagedOOMSwap=auto
 ManagedOOMPreference=none
-OOMRules=30-desktop-pressure 30-desktop-swap
+OOMRules=30-dusky-pressure 30-dusky-swap
 MemoryAccounting=yes
 """
 
 SESSION_SLICE: Final[str] = """[Slice]
 ManagedOOMPreference=avoid
-MemoryMin=256M
+MemoryLow=512M
 MemoryAccounting=yes
 """
 
@@ -104,6 +107,7 @@ MemoryAccounting=yes
 USER_MANAGER_SCORE: Final[str] = """[Service]
 OOMScoreAdjust=-100
 OOMPolicy=continue
+MemoryLow=512M
 """
 
 USER_CONF: Final[str] = """[Manager]
@@ -136,7 +140,8 @@ fi
 if ! printf '%d\\n' 200 > /proc/self/oom_score_adj 2>/dev/null; then
   echo "dusky-run: warning: cannot set oom_score_adj" >&2
 fi
-exec systemd-run --user --scope --slice=app.slice --collect \\
+app_name="$(basename "${1}")"
+exec systemd-run --user --scope --slice=app.slice --unit="app-${app_name}-${RANDOM}" --collect \\
   --property=OOMPolicy=continue \\
   --property=ManagedOOMPreference=none \\
   --property=MemoryAccounting=yes \\
@@ -152,12 +157,12 @@ class FileSpec:
 
 def specs() -> list[FileSpec]:
     s: list[FileSpec] = [
-        FileSpec(dest=Path("/etc/systemd/oomd/rules.d/30-desktop-pressure.oomrule"), content=PRESSURE_RULE, desc="Pressure rule (kill-by-pgscan)"),
-        FileSpec(dest=Path("/etc/systemd/oomd/rules.d/30-desktop-swap.oomrule"), content=SWAP_RULE, desc="Swap rule (kill-by-swap @ 90%)"),
-        FileSpec(dest=Path("/etc/systemd/oomd.conf.d/10-desktop-tune.conf"), content=OOMD_TUNE, desc="oomd global tuning + PrekillHook"),
-        FileSpec(dest=Path("/etc/systemd/user/app.slice.d/90-desktop-oomd.conf"), content=APP_SLICE, desc="app.slice rules (unthrottled)"),
-        FileSpec(dest=Path("/etc/systemd/user/background.slice.d/90-desktop-oomd.conf"), content=BACKGROUND_SLICE, desc="background.slice rules (unthrottled)"),
-        FileSpec(dest=Path("/etc/systemd/user/session.slice.d/90-desktop-oomd.conf"), content=SESSION_SLICE, desc="session.slice protection"),
+        FileSpec(dest=Path("/etc/systemd/oomd/rules.d/30-dusky-pressure.oomrule"), content=PRESSURE_RULE, desc="Pressure rule (kill-by-pgscan @ 60% 2s)"),
+        FileSpec(dest=Path("/etc/systemd/oomd/rules.d/30-dusky-swap.oomrule"), content=SWAP_RULE, desc="Swap rule (kill-by-pgscan @ 90% + 30% pressure 2s)"),
+        FileSpec(dest=Path("/etc/systemd/oomd.conf.d/10-desktop-tune.conf"), content=OOMD_TUNE, desc="oomd global tuning + 0s prekill hook"),
+        FileSpec(dest=Path("/etc/systemd/user/app.slice.d/90-desktop-oomd.conf"), content=APP_SLICE, desc="app.slice rules (30-dusky-*)"),
+        FileSpec(dest=Path("/etc/systemd/user/background.slice.d/90-desktop-oomd.conf"), content=BACKGROUND_SLICE, desc="background.slice rules (30-dusky-*)"),
+        FileSpec(dest=Path("/etc/systemd/user/session.slice.d/90-desktop-oomd.conf"), content=SESSION_SLICE, desc="session.slice protection (MemoryLow=512M)"),
         FileSpec(dest=Path("/etc/systemd/system/session-.scope.d/90-desktop-oomd.conf"), content=COMPOSITOR_SCOPE, desc="session-*.scope compositor protect"),
         FileSpec(dest=Path("/etc/systemd/system/user@.service.d/90-desktop-oom-score.conf"), content=USER_MANAGER_SCORE, desc="user@ service -100"),
         FileSpec(dest=Path("/etc/systemd/user.conf.d/90-desktop-oom.conf"), content=USER_CONF, desc="DefaultOOMScoreAdjust 100"),
@@ -176,6 +181,8 @@ def obsolete_paths() -> tuple[Path, ...]:
         Path("/etc/systemd/system/session-.scope.d/10-compositor-protect.conf"),
         Path("/etc/systemd/system/user@.service.d/10-oom-score.conf"),
         Path("/etc/systemd/user.conf.d/10-oom-default.conf"),
+        Path("/etc/systemd/oomd/rules.d/30-desktop-pressure.oomrule"),
+        Path("/etc/systemd/oomd/rules.d/30-desktop-swap.oomrule"),
     ]
     for svc in CRITICAL_USER:
         paths.append(Path(f"/etc/systemd/user/{svc}.d/10-oom-shield.conf"))
@@ -328,16 +335,16 @@ def main() -> None:
         col = "green" if st == "updated" else "dim"
         console.print(f"[{col}]{st.upper():11}[/] {sp.dest} [dim]({sp.desc})[/]")
 
+    subprocess.run(["systemctl", "daemon-reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    reload_user_manager()
+
     cmds = [
-        ["systemctl", "daemon-reload"],
         ["systemctl", "unmask", "systemd-oomd"],
         ["systemctl", "enable", "--now", "systemd-oomd"],
         ["systemctl", "restart", "systemd-oomd"],
     ]
     for c in cmds:
         subprocess.run(c, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-
-    reload_user_manager()
 
     oomd_active = subprocess.run(
         ["systemctl", "is-active", "--quiet", "systemd-oomd"],
