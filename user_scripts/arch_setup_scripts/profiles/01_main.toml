@@ -136,7 +136,7 @@ scripts = [
     # "S | 430_btrfs_zstd_compression_stats.sh",
     "U | 434_wayclick_soundpacks_download.sh --auto",
     "U | 435_key_sound_wayclick_setup.sh --setup",
-    "U | dusky_keys.sh --setup",
+    # "U | dusky_keys.sh --setup", # remove exit code non zero if user not in input, instead add to groups and gracefully complete.
     "U | visualizer_daemon.py --setup",
     "U | 440_config_bat_notify.sh --default",
     "U | 455_hyprctl_reload.sh",
