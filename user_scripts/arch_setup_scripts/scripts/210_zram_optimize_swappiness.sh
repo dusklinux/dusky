@@ -126,7 +126,7 @@ if [[ "$MODE" == "PERFORMANCE" ]] || { [[ "$MODE" == "AUTO" ]] && (( SYSTEM_RAM_
     PROFILE_NAME="PERFORMANCE_LEAN (>=32GB class)"
     EXPECTED_SWAPPINESS=150
     EXPECTED_VFS_PRESSURE=50
-    EXPECTED_SCALE_FACTOR=10
+    EXPECTED_SCALE_FACTOR=30             # 30 = ~98MB (32GB) / ~196MB (64GB) kswapd headroom
     EXPECTED_DIRTY_BYTES=536870912       # 512MiB cap prevents massive multi-GB writeback stalls
     EXPECTED_DIRTY_BG_BYTES=134217728    # 128MiB background flush
     EXPECTED_MGLRU_TTL=0                 # 0ms prevents premature OOM under tight memory
