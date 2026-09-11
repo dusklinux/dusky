@@ -112,6 +112,7 @@ fi
 declare -i EXPECTED_SWAPPINESS
 declare -i EXPECTED_VFS_PRESSURE
 declare -i EXPECTED_SCALE_FACTOR
+declare -i EXPECTED_COMPACTION
 declare -i EXPECTED_DIRTY_BYTES
 declare -i EXPECTED_DIRTY_BG_BYTES
 declare -i EXPECTED_MGLRU_TTL
@@ -127,6 +128,7 @@ if [[ "$MODE" == "PERFORMANCE" ]] || { [[ "$MODE" == "AUTO" ]] && (( SYSTEM_RAM_
     EXPECTED_SWAPPINESS=150
     EXPECTED_VFS_PRESSURE=50
     EXPECTED_SCALE_FACTOR=30             # 30 = ~98MB (32GB) / ~196MB (64GB) kswapd headroom
+    EXPECTED_COMPACTION=10               # 10 provides gentle background compaction for hugepages/iGPU
     EXPECTED_DIRTY_BYTES=536870912       # 512MiB cap prevents massive multi-GB writeback stalls
     EXPECTED_DIRTY_BG_BYTES=134217728    # 128MiB background flush
     EXPECTED_MGLRU_TTL=0                 # 0ms prevents premature OOM under tight memory
@@ -135,14 +137,16 @@ elif (( SYSTEM_RAM_KB >= 14680064 )); then
     EXPECTED_SWAPPINESS=180
     EXPECTED_VFS_PRESSURE=125
     EXPECTED_SCALE_FACTOR=50             # 50 = ~80-140MB kswapd runway to prevent direct reclaim stalls
-    EXPECTED_DIRTY_BYTES=134217728       # 128MiB cap
-    EXPECTED_DIRTY_BG_BYTES=33554432     # 32MiB background flush
+    EXPECTED_COMPACTION=10               # 10 keeps order-4/order-9 blocks available
+    EXPECTED_DIRTY_BYTES=268435456       # 256MiB cap
+    EXPECTED_DIRTY_BG_BYTES=67108864     # 64MiB background flush
     EXPECTED_MGLRU_TTL=0
 elif (( SYSTEM_RAM_KB >= 7340032 )); then
     PROFILE_NAME="DYNAMIC_EFFICIENCY (8-12GB class)"
     EXPECTED_SWAPPINESS=180
     EXPECTED_VFS_PRESSURE=125
     EXPECTED_SCALE_FACTOR=75             # 75 = ~60-100MB kswapd runway
+    EXPECTED_COMPACTION=0                # 0 disables proactive compaction to conserve battery
     EXPECTED_DIRTY_BYTES=134217728       # 128MiB cap
     EXPECTED_DIRTY_BG_BYTES=33554432     # 32MiB background flush
     EXPECTED_MGLRU_TTL=0
@@ -151,6 +155,7 @@ else
     EXPECTED_SWAPPINESS=180
     EXPECTED_VFS_PRESSURE=125
     EXPECTED_SCALE_FACTOR=100            # 100 = 1% RAM runway (~40-70MB)
+    EXPECTED_COMPACTION=0                # 0 disables proactive compaction to conserve battery
     EXPECTED_DIRTY_BYTES=134217728       # 128MiB cap
     EXPECTED_DIRTY_BG_BYTES=33554432     # 32MiB background flush
     EXPECTED_MGLRU_TTL=0
@@ -158,8 +163,10 @@ fi
 
 readonly EXPECTED_PAGE_CLUSTER=0        # Disables swap readahead
 readonly EXPECTED_BOOST_FACTOR=0        # Disables watermark boosting
-readonly EXPECTED_COMPACTION=0          # Disables proactive background compaction
 readonly EXPECTED_MAX_MAP_COUNT=2147483642 # SteamOS & modern Proton/Wine standard
+readonly EXPECTED_DIRTY_WRITEBACK_CENTISECS=1500 # 15s flusher wakeups (fewer SSD/CPU wakeups on battery)
+readonly EXPECTED_DIRTY_EXPIRE_CENTISECS=3000    # 30s dirty expiration bounds unwritten data age
+readonly EXPECTED_STAT_INTERVAL=10               # 10s per-CPU vmstat fold-in cuts idle timer interrupts
 
 log_info "Initializing VM Swappiness & Paging Optimizer..."
 log_info "Detected RAM: ${C_BOLD}${SYSTEM_RAM_GB} GB${C_RESET} (${SYSTEM_RAM_KB} KiB)"
@@ -193,6 +200,11 @@ vm.compaction_proactiveness = ${EXPECTED_COMPACTION}
 # --- WRITEBACK (NVMe & SSD PROTECTION) ---
 vm.dirty_bytes = ${EXPECTED_DIRTY_BYTES}
 vm.dirty_background_bytes = ${EXPECTED_DIRTY_BG_BYTES}
+vm.dirty_writeback_centisecs = ${EXPECTED_DIRTY_WRITEBACK_CENTISECS}
+vm.dirty_expire_centisecs = ${EXPECTED_DIRTY_EXPIRE_CENTISECS}
+
+# --- STATS & POWER OPTIMIZATION ---
+vm.stat_interval = ${EXPECTED_STAT_INTERVAL}
 
 # --- APPLICATION COMPATIBILITY & GAMING ---
 vm.max_map_count = ${EXPECTED_MAX_MAP_COUNT}
@@ -253,9 +265,13 @@ verify_param "vm.swappiness" "$EXPECTED_SWAPPINESS"
 verify_param "vm.vfs_cache_pressure" "$EXPECTED_VFS_PRESSURE"
 verify_param "vm.watermark_scale_factor" "$EXPECTED_SCALE_FACTOR"
 verify_param "vm.watermark_boost_factor" "$EXPECTED_BOOST_FACTOR"
+verify_param "vm.compaction_proactiveness" "$EXPECTED_COMPACTION"
 verify_param "vm.page-cluster" "$EXPECTED_PAGE_CLUSTER"
 verify_param "vm.dirty_background_bytes" "$EXPECTED_DIRTY_BG_BYTES"
 verify_param "vm.dirty_bytes" "$EXPECTED_DIRTY_BYTES"
+verify_param "vm.dirty_writeback_centisecs" "$EXPECTED_DIRTY_WRITEBACK_CENTISECS"
+verify_param "vm.dirty_expire_centisecs" "$EXPECTED_DIRTY_EXPIRE_CENTISECS"
+verify_param "vm.stat_interval" "$EXPECTED_STAT_INTERVAL"
 verify_param "vm.max_map_count" "$EXPECTED_MAX_MAP_COUNT"
 
 if [[ -f "/sys/kernel/mm/lru_gen/min_ttl_ms" ]]; then
