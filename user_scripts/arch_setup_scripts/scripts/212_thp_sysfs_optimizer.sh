@@ -98,7 +98,7 @@ if [[ "$MODE" == "AGGRESSIVE" ]] || { [[ "$MODE" == "AUTO" ]] && (( SYSTEM_RAM_K
     IS_PERF_MODE=1
     EXPECTED_MODE="PERFORMANCE_LEAN (>=32GB class)"
     EXPECTED_MAX_PTES=450               # Aggressive collapse for large memory
-    EXPECTED_MAX_PTES_SWAP=64           # Default swap-in allowance
+    EXPECTED_MAX_PTES_SWAP=0            # Forbid swapping pages back IN from ZRAM
     EXPECTED_SCAN_SLEEP=15000
     EXPECTED_PAGES_TO_SCAN=4096
 elif (( SYSTEM_RAM_KB >= 14680064 )); then
@@ -125,7 +125,7 @@ else
 fi
 
 readonly EXPECTED_ENABLED="madvise"
-readonly EXPECTED_DEFRAG="defer+madvise"
+readonly EXPECTED_DEFRAG="defer"
 readonly EXPECTED_SHMEM="within_size"
 
 if [[ ! -d "$THP_BASE_DIR" && -d "/sys/kernel/mm" ]]; then
