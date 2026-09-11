@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#d: Reclaim boot-time memory to ZRAM/swap
+#d: Reclaim boot-time & periodic idle memory to ZRAM (MGLRU Engine)
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import shutil
 import sys
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import NoReturn
 
@@ -35,11 +36,28 @@ def die(msg: str, code: int = 1) -> NoReturn:
     err(msg)
     sys.exit(code)
 
-# --- Dynamic Page Size Resolution ---
-PAGE_SIZE = os.sysconf("SC_PAGESIZE") if hasattr(os, "sysconf") else 4096
+# --- Configuration & Tuning ---
+PAGE_SIZE: int = os.sysconf("SC_PAGESIZE") if hasattr(os, "sysconf") else 4096
+CHUNK_SIZE: int = 64 * 1024 * 1024       # 64 MiB write chunks for low latency
+PSI_SOME_THRESHOLD: float = 0.50         # Abort if some avg10 >= 0.50%
+
+def get_total_ram_bytes() -> int:
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    parts = line.split()
+                    return int(parts[1]) * 1024
+    except Exception:
+        pass
+    return 16 * 1024 * 1024 * 1024
+
+TOTAL_RAM: int = get_total_ram_bytes()
+# Dynamic run budget: at least 1 GiB, or 10% of total system RAM (e.g. 6.4 GiB on a 64 GiB system!)
+MAX_PER_RUN: int = max(1024 * 1024 * 1024, int(TOTAL_RAM * 0.10))
 
 # --- Argument Parsing (Executed BEFORE Privilege Escalation) ---
-parser = argparse.ArgumentParser(description="Elite Arch Linux Boot-Time Memory Reclaimer")
+parser = argparse.ArgumentParser(description="Elite Arch Linux MGLRU Boot & Periodic Memory Skimmer")
 group = parser.add_mutually_exclusive_group()
 group.add_argument("--run", action="store_true", help="Directly trigger the memory reclaim task")
 group.add_argument("--restore", action="store_true", help="Remove reclaimer binaries, systemd units and timer")
@@ -125,18 +143,62 @@ def is_cgroup2_mounted() -> bool:
         pass
     return Path("/sys/fs/cgroup/cgroup.controllers").exists()
 
-def parse_anon_bytes(stat_path: Path) -> int | None:
+def get_system_pressure() -> float:
+    try:
+        with open("/proc/pressure/memory", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("some "):
+                    # some avg10=0.00 avg60=0.00 avg300=0.00 total=...
+                    parts = line.split()
+                    for p in parts:
+                        if p.startswith("avg10="):
+                            return float(p.split("=")[1])
+    except Exception:
+        pass
+    return 0.0
+
+def get_mem_stats(stat_path: Path) -> dict[str, int]:
+    stats: dict[str, int] = {}
+    if not stat_path.exists():
+        return stats
     try:
         with stat_path.open("r", encoding="utf-8") as fh:
             for line in fh:
-                if line.startswith("anon "):
+                parts = line.split()
+                if len(parts) == 2:
                     try:
-                        return int(line.split()[1])
-                    except (IndexError, ValueError):
-                        return None
+                        stats[parts[0]] = int(parts[1])
+                    except ValueError:
+                        pass
     except OSError:
+        pass
+    return stats
+
+def get_cpu_usage_usec(cfile: Path) -> int | None:
+    if not cfile.exists():
         return None
+    try:
+        with cfile.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("usage_usec "):
+                    return int(line.split()[1])
+    except Exception:
+        pass
     return None
+
+def find_app_slices() -> list[Path]:
+    user_slice = Path("/sys/fs/cgroup/user.slice")
+    targets: list[Path] = []
+    if not user_slice.exists():
+        return targets
+    for user_sub in user_slice.glob("user-*.slice"):
+        name = user_sub.name
+        if name.startswith("user-") and name.endswith(".slice"):
+            uid_str = name[5:-6]
+            app_slice = user_sub / f"user@{uid_str}.service" / "app.slice"
+            if app_slice.exists():
+                targets.append(app_slice)
+    return targets
 
 def parse_proactive_reclaimed_bytes(stat_path: Path) -> int:
     try:
@@ -151,82 +213,144 @@ def parse_proactive_reclaimed_bytes(stat_path: Path) -> int:
         return 0
     return 0
 
+def reclaim_cgroup_chunked(cgroup_dir: Path, target_bytes: int, label: str) -> tuple[int, int]:
+    reclaim_file = cgroup_dir / "memory.reclaim"
+    stat_file = cgroup_dir / "memory.stat"
+    if not reclaim_file.exists():
+        return 0, 0
+
+    before_steal = parse_proactive_reclaimed_bytes(stat_file) if stat_file.exists() else 0
+    reclaimed_requested = 0
+
+    while reclaimed_requested < target_bytes:
+        # PSI pre-chunk check
+        psi_sys = get_system_pressure()
+        if psi_sys >= PSI_SOME_THRESHOLD:
+            warn(f"System memory pressure elevated ({psi_sys:.2f}% >= {PSI_SOME_THRESHOLD}%). Halting sweep.")
+            break
+
+        chunk = min(CHUNK_SIZE, target_bytes - reclaimed_requested)
+        try:
+            with reclaim_file.open("w", encoding="utf-8") as fh:
+                fh.write(f"{chunk} swappiness=max\n")
+            reclaimed_requested += chunk
+            time.sleep(0.005)  # Yield CPU briefly for foreground tasks
+        except OSError as e:
+            if e.errno == errno.EAGAIN:
+                # Kernel processed all colder pages available
+                reclaimed_requested += chunk
+                break
+            elif e.errno == errno.EINVAL:
+                # Fallback without swappiness=max
+                try:
+                    with reclaim_file.open("w", encoding="utf-8") as fh:
+                        fh.write(f"{chunk}\n")
+                    reclaimed_requested += chunk
+                    time.sleep(0.005)
+                except OSError as e2:
+                    if e2.errno == errno.EAGAIN:
+                        reclaimed_requested += chunk
+                    break
+            elif e.errno == errno.ENOENT:
+                break
+            else:
+                warn(f"Reclaim error on {label}: {e}")
+                break
+
+    after_steal = parse_proactive_reclaimed_bytes(stat_file) if stat_file.exists() else 0
+    actual_stolen = max(0, after_steal - before_steal)
+    return reclaimed_requested, actual_stolen
+
 def perform_reclaim() -> None:
-    info("Initiating targeted boot-time cold memory sweep...")
+    info("Initiating MGLRU proactive idle memory sweep...")
 
     if not is_cgroup2_mounted():
         die("cgroup v2 not mounted at /sys/fs/cgroup. Arch uses cgroup2 by default.")
 
     if not has_swap_or_zram():
-        warn("No active swap or ZRAM detected. swappiness=max requires swap; kernel will return EAGAIN.")
+        warn("No active swap or ZRAM detected. Kernel will reject anon reclaim.")
 
-    slices = ["user.slice", "system.slice"]
-    reclaimed_total_bytes = 0
+    # 1. Gate on system memory pressure
+    psi_sys = get_system_pressure()
+    if psi_sys >= PSI_SOME_THRESHOLD:
+        info(f"System memory pressure active (some avg10={psi_sys:.2f}% >= {PSI_SOME_THRESHOLD}%). Skipping sweep.")
+        return
 
-    for slice_name in slices:
-        cgroup_dir = Path("/sys/fs/cgroup") / slice_name
-        current_file = cgroup_dir / "memory.current"
-        reclaim_file = cgroup_dir / "memory.reclaim"
-        stat_file = cgroup_dir / "memory.stat"
+    start_time = time.perf_counter()
+    total_requested = 0
+    total_stolen = 0
 
-        if not current_file.exists() or not reclaim_file.exists() or not stat_file.exists():
-            info(f"Cgroup slice {slice_name} does not support memory reclaim. Skipping.")
-            continue
+    # 2. Target user application scopes (app.slice)
+    app_slices = find_app_slices()
+    for app_slice in app_slices:
+        if total_requested >= MAX_PER_RUN:
+            break
 
-        try:
-            anon_bytes = parse_anon_bytes(stat_file)
-            if anon_bytes is None:
-                info(f"Could not parse anonymous memory stats for {slice_name}. Skipping.")
+        leaf_cgroups = [
+            p for p in app_slice.iterdir()
+            if p.is_dir() and (p.name.startswith("app-") or p.name.endswith(".scope") or p.name.endswith(".service"))
+        ]
+
+        # First pass: check leaf cgroups for genuinely idle apps
+        for leaf in leaf_cgroups:
+            if total_requested >= MAX_PER_RUN:
+                break
+            stats = get_mem_stats(leaf / "memory.stat")
+            anon = stats.get("anon", 0)
+            if anon < 16 * 1024 * 1024:
                 continue
 
-            before_reclaimed = parse_proactive_reclaimed_bytes(stat_file)
+            # Detect CPU idleness over 50ms window
+            cpu_f = leaf / "cpu.stat"
+            u1 = get_cpu_usage_usec(cpu_f)
+            time.sleep(0.05)
+            u2 = get_cpu_usage_usec(cpu_f)
+            delta_cpu = (u2 - u1) if (u1 is not None and u2 is not None) else 0
 
-            target_reclaim = anon_bytes
-            if target_reclaim < 1024 * 1024:
-                if anon_bytes >= 1024 * 1024:
-                    target_reclaim = anon_bytes
-                else:
-                    info(f"No cold anonymous pages (anon={anon_bytes} B) in {slice_name}.")
-                    continue
+            # If CPU advanced less than 5ms over 50ms window, the app is idle
+            if delta_cpu < 5000:
+                target = min(int(anon * 0.8), MAX_PER_RUN - total_requested)
+                if target > 0:
+                    req, stl = reclaim_cgroup_chunked(leaf, target, leaf.name)
+                    total_requested += req
+                    total_stolen += stl
+                    if stl > 0:
+                        ok(f"Reclaimed {stl / (1024*1024):.1f} MB from idle app {leaf.name} (anon={anon/(1024*1024):.1f} MB)")
 
-            reclaim_command = f"{target_reclaim} swappiness=max"
+        # Second pass: reclaim remaining budget from app.slice general cold pool
+        if total_requested < MAX_PER_RUN:
+            remaining = MAX_PER_RUN - total_requested
+            req, stl = reclaim_cgroup_chunked(app_slice, remaining, "app.slice")
+            total_requested += req
+            total_stolen += stl
+            if stl > 0:
+                ok(f"Reclaimed {stl / (1024*1024):.1f} MB from app.slice pool")
 
-            try:
-                reclaim_file.write_text(reclaim_command, encoding="utf-8")
-            except OSError as e:
-                if e.errno == errno.EAGAIN:
-                    info(f"Kernel processed reclaim for {slice_name} (partial reclaim - EAGAIN returned).")
-                elif e.errno == errno.EINVAL:
-                    try:
-                        reclaim_file.write_text(str(target_reclaim), encoding="utf-8")
-                    except OSError as e2:
-                        if e2.errno == errno.EAGAIN:
-                            info(f"Kernel processed reclaim for {slice_name} (partial reclaim - EAGAIN returned).")
-                        else:
-                            err(f"Invalid reclaim command for {slice_name}: {target_reclaim} ({e2})")
-                            continue
-                elif e.errno == errno.ENOENT:
-                    info(f"Reclaim interface missing for {slice_name} (controller unmounted). Skipping.")
-                    continue
-                else:
-                    raise
+    # 3. Target system services cold pool (system.slice)
+    if total_requested < MAX_PER_RUN:
+        system_slice = Path("/sys/fs/cgroup/system.slice")
+        if system_slice.exists():
+            remaining = min(128 * 1024 * 1024, MAX_PER_RUN - total_requested)
+            req, stl = reclaim_cgroup_chunked(system_slice, remaining, "system.slice")
+            total_requested += req
+            total_stolen += stl
+            if stl > 0:
+                ok(f"Reclaimed {stl / (1024*1024):.1f} MB from system.slice cold pool")
 
-            after_reclaimed = parse_proactive_reclaimed_bytes(stat_file)
-            actual_reclaimed = after_reclaimed - before_reclaimed
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    zram_info = ""
+    try:
+        res = subprocess.run(["zramctl", "--output", "NAME,DATA,COMPR,TOTAL", "--noheadings"],
+                             capture_output=True, text=True, check=False)
+        if res.returncode == 0 and res.stdout.strip():
+            zram_info = f" | zRAM: {res.stdout.strip()}"
+    except Exception:
+        pass
 
-            if actual_reclaimed > 0:
-                reclaimed_total_bytes += actual_reclaimed
-                ok(f"Reclaimed {actual_reclaimed / (1024*1024):.1f} MB of cold memory from {slice_name} (anon={anon_bytes/(1024*1024):.1f} MB, requested={target_reclaim/(1024*1024):.1f} MB)")
-            else:
-                info(f"Kernel processed reclaim for {slice_name} (requested {target_reclaim/(1024*1024):.1f} MB). pgsteal_proactive delta {actual_reclaimed} B.")
-
-        except Exception as e:
-            info(f"Failed to reclaim memory from {slice_name}: {e}")
-
-    ok(f"Targeted cold memory sweep completed. Reclaimed ~{reclaimed_total_bytes / (1024*1024):.1f} MB of cold pages to swap/ZRAM.")
+    ok(f"Sweep finished in {elapsed_ms:.1f}ms. Stolen: {total_stolen / (1024*1024):.1f} MB to ZRAM{zram_info}")
 
 def deploy_systemd_units() -> None:
-    info("Deploying boot-time memory reclaim systemd units...")
+    info("Deploying MGLRU boot & periodic idle memory reclaim units...")
 
     install_path = Path("/usr/local/bin/dusky_boot_mem_reclaim")
     current_script = Path(__file__).resolve()
@@ -246,7 +370,7 @@ def deploy_systemd_units() -> None:
         python_bin = sys.executable
 
     service_content = f"""[Unit]
-Description=Boot-time Cold Memory Reclaimer (Kernel 7.1+ / systemd 261.1)
+Description=MGLRU Cold Memory Reclaimer & Idle Skimmer (Kernel 7.2+ / systemd 261+)
 Documentation=https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html
 After=multi-user.target local-fs.target
 ConditionPathExists=/sys/fs/cgroup
@@ -256,6 +380,10 @@ ConditionPathExists=/sys/fs/cgroup/system.slice
 Type=oneshot
 ExecStart={python_bin} {install_path} --run
 RemainAfterExit=no
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+CPUWeight=1
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -268,18 +396,19 @@ RestrictSUIDSGID=yes
 RestrictRealtime=yes
 MemoryDenyWriteExecute=no
 """
-
     write_file_atomic(service_path, service_content, mode=0o644)
     ok(f"Service unit written to {service_path}")
 
     timer_path = Path("/etc/systemd/system/dusky_boot_mem_reclaim.timer")
     timer_content = """[Unit]
-Description=Trigger Boot-time Cold Memory Reclaimer 45 seconds after boot
+Description=Trigger MGLRU Cold Memory Reclaimer at 45s Boot & 5min Periodic
 Documentation=https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html
 
 [Timer]
 OnBootSec=45s
-AccuracySec=1s
+OnUnitActiveSec=5min
+AccuracySec=5s
+RandomizedDelaySec=15s
 Persistent=false
 Unit=dusky_boot_mem_reclaim.service
 
@@ -301,7 +430,7 @@ WantedBy=timers.target
     except subprocess.CalledProcessError as e:
         die(f"Failed to enable timer: {e}")
 
-    ok("Boot-time reclaimer timer is active. Cold memory will be purged 45 seconds after boot (AccuracySec=1s).")
+    ok("MGLRU skimmer timer active: initial run at 45s after boot, recurring every 5min thereafter.")
     info("Verify with: systemctl status dusky_boot_mem_reclaim.timer && systemctl status dusky_boot_mem_reclaim.service && journalctl -u dusky_boot_mem_reclaim.service")
 
 def main() -> None:
@@ -311,15 +440,13 @@ def main() -> None:
     escalate_privileges()
 
     if args.restore:
-        # Stop and disable systemd units
         info("Stopping and disabling systemd timer and service...")
         for unit in ("dusky_boot_mem_reclaim.timer", "dusky_boot_mem_reclaim.service"):
             try:
                 subprocess.run(["systemctl", "disable", "--now", unit], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
                 pass
-        
-        # Remove files
+
         files_to_remove = [
             Path("/usr/local/bin/dusky_boot_mem_reclaim"),
             Path("/etc/systemd/system/dusky_boot_mem_reclaim.service"),
@@ -332,13 +459,13 @@ def main() -> None:
                     ok(f"Removed {f}")
                 except Exception as e:
                     warn(f"Failed to remove {f}: {e}")
-        
+
         info("Reloading systemd daemon...")
         try:
             subprocess.run(["systemctl", "daemon-reload"], check=True)
         except Exception as e:
             warn(f"systemctl daemon-reload failed: {e}")
-            
+
         ok("Restoration complete. Memory reclaimer uninstalled.")
         return
 
