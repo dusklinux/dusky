@@ -16,45 +16,114 @@ TMPFILES_FILE = Path("/etc/tmpfiles.d/99-damon-reclaim.conf")
 DAMON_PARAMS_DIR = Path("/sys/module/damon_reclaim/parameters")
 
 # Unified 4-Tier Memory Demarcation (MemTotal in GiB)
+# ==============================================================================
+# DAMON RECLAIM PARAMETER REFERENCE & TUNING GUIDE:
+# ------------------------------------------------------------------------------
+# sample_interval:
+#   Microseconds between sampling memory accesses for each tracked memory region.
+#   Default: 500,000 us (500 ms). Lower = higher accuracy but slightly more CPU.
+#
+# aggr_interval:
+#   Microseconds between aggregating access samples into region access counts.
+#   Default: 5,000,000 us (5 s). Must be >= sample_interval.
+#
+# min_age:
+#   Cold memory age threshold in microseconds.
+#   A memory region must remain unaccessed (idle) for at least this duration
+#   before DAMON considers it "cold" and pages it out to ZRAM.
+#   Examples: 60,000,000 us = 1 min | 120,000,000 us = 2 min | 180,000,000 us = 3 min.
+#
+# wmarks_interval:
+#   Microseconds between checking system free memory against the watermarks.
+#   Default: 5,000,000 us (5 s).
+#
+# WATERMARKS (Permil: parts per thousand, where 1000 = 100%, 700 = 70%, etc.):
+#   wmarks_high:
+#     Upper watermark. If system free RAM is ABOVE this value, the machine has
+#     plenty of headroom. DAMON completely goes to sleep (zero CPU, no swapping).
+#   wmarks_mid:
+#     Activation watermark. When free RAM falls BELOW this value, DAMON wakes up
+#     and actively scans for cold memory older than min_age to swap into ZRAM.
+#   wmarks_low:
+#     Emergency watermark. If free RAM falls BELOW this value, the system is in
+#     an acute memory crisis. DAMON deactivates and steps aside so kernel direct
+#     reclaim and systemd-oomd can handle the situation without interference.
+#
+# QUOTAS (Safety limits to prevent CPU or I/O thrashing):
+#   quota_ms:
+#     Maximum milliseconds of CPU time DAMON can spend reclaiming per cycle.
+#     Default: 100 ms per 1000 ms interval (10% CPU cap).
+#     To uncap / make more aggressive: set higher (e.g. 500) or 0 to disable time limit.
+#   quota_sz:
+#     Maximum bytes DAMON is allowed to reclaim per cycle.
+#     Current: 268435456 (256 MiB per second).
+#     To make more aggressive: increase to 1073741824 (1 GiB) or 2147483648 (2 GiB).
+#   quota_reset_interval_ms:
+#     Interval in milliseconds at which the time and size quotas reset (e.g. 1000 ms = 1s).
+#   quota_mem_pressure_us:
+#     PSI memory pressure stall threshold in microseconds.
+#     Set to 0 = DISABLED (upstream Linux kernel default).
+#     When > 0 (e.g. 1000 = 1ms), any memory pressure stall causes DAMON to throttle
+#     its quota down to near zero. Keeping this at 0 prevents DAMON from choking.
+#   quota_autotune_feedback:
+#     Feedback metric target for dynamic quota auto-tuning (0 = disabled / fixed quotas).
+#
+# BEHAVIOR & REGIONS:
+#   min_nr_regions / max_nr_regions:
+#     Adaptive memory region range. Default: 10 to 1000.
+#     To make more aggressive with complex apps (like browsers): increase max_nr_regions
+#     to 2000 or 4000 so cold pages inside apps can be isolated from active threads.
+#   skip_anon:
+#     "N" = Do NOT skip anonymous memory (i.e. DO reclaim/compress idle app memory into ZRAM).
+#     "Y" = Only reclaim page cache (file memory).
+#   addr_unit:
+#     Address unit size in bytes (1 = 1 byte).
+# ==============================================================================
+
 TIER_S_CONFIG: Dict[str, int | str] = {
-    "sample_interval": 500000,
-    "aggr_interval": 5000000,
-    "min_age": 60000000,         # 60s
-    "wmarks_high": 800,
-    "wmarks_mid": 700,
-    "wmarks_low": 50,
-    "wmarks_interval": 5000000,
-    "quota_ms": 100,
-    "quota_sz": 268435456,       # 256 MiB
-    "quota_reset_interval_ms": 1000,
-    "min_nr_regions": 10,
-    "max_nr_regions": 1000,
-    "skip_anon": "N",
-    "addr_unit": 1,
-    "quota_mem_pressure_us": 1000,
-    "quota_autotune_feedback": 0,
+    "sample_interval": 500000,          # 500 ms sampling
+    "aggr_interval": 5000000,           # 5 s aggregation (ages increment every 5s)
+    "min_age": 60000000,                # 60s idle threshold before cold memory is swapped
+    "wmarks_high": 800,                 # Sleep when free RAM > 80%
+    "wmarks_mid": 700,                  # Wake up and proactively swap when free RAM < 70%
+    "wmarks_low": 200,                  # Step aside for emergency reclaim when free RAM < 20%
+    "wmarks_interval": 5000000,         # Check watermarks every 5 seconds
+    "quota_ms": 100,                    # Max 100ms CPU per second (10% CPU cap)
+    "quota_sz": 268435456,              # Max 256 MiB reclaimed per second
+    "quota_reset_interval_ms": 1000,    # Reset quotas every 1 second
+    "min_nr_regions": 10,               # Min adaptive tracking regions
+    "max_nr_regions": 1000,             # Max adaptive tracking regions
+    "skip_anon": "N",                   # Do NOT skip app memory (swap cold pages to ZRAM)
+    "addr_unit": 1,                     # 1 byte address units
+    "quota_mem_pressure_us": 0,         # 0 = DISABLED (removes the 1ms PSI choke so it doesn't throttle)
+    "quota_autotune_feedback": 0,       # Static quota enforcement
 }
 
 TIER_M_CONFIG: Dict[str, int | str] = {
     **TIER_S_CONFIG,
-    "min_age": 120000000,        # 120s (2 min)
+    "min_age": 60000000,                # 60s idle threshold for 8-12GB class systems
+    "wmarks_high": 800,                 # Sleep when free RAM > 80%
+    "wmarks_mid": 700,                  # Wake up and proactively swap when free RAM < 70%
+    "wmarks_low": 200,                  # Step aside for emergency reclaim when free RAM < 20%
 }
 
 TIER_L_CONFIG: Dict[str, int | str] = {
     **TIER_S_CONFIG,
-    "min_age": 300000000,        # 300s (5 min)
-    "wmarks_high": 500,
-    "wmarks_mid": 400,
-    "quota_ms": 50,
+    "min_age": 120000000,               # 120s (2 minutes) idle threshold before cold memory is swapped
+    "wmarks_high": 500,                 # Sleep when free RAM > 50%
+    "wmarks_mid": 400,                  # Wake up and proactively swap when free RAM < 40%
+    "wmarks_low": 100,                  # Step aside for emergency reclaim when free RAM < 10%
+    "quota_ms": 50,                     # Max 50ms CPU per second (5% CPU cap)
 }
 
 TIER_XL_CONFIG: Dict[str, int | str] = {
     **TIER_S_CONFIG,
-    "sample_interval": 1000000,
-    "min_age": 600000000,        # 600s (10 min)
-    "wmarks_high": 400,
-    "wmarks_mid": 300,
-    "quota_ms": 50,
+    "sample_interval": 1000000,         # 1s sampling for massive memory spaces
+    "min_age": 180000000,               # 180s (3 minutes) idle threshold before cold memory is swapped
+    "wmarks_high": 300,                 # Sleep when free RAM > 30%
+    "wmarks_mid": 200,                  # Wake up and proactively swap when free RAM < 20%
+    "wmarks_low": 50,                   # Step aside for emergency reclaim when free RAM < 5%
+    "quota_ms": 50,                     # Max 50ms CPU per second (5% CPU cap)
 }
 
 class C:
@@ -214,17 +283,32 @@ def main(argv):
         py=sys.executable
         if not py or not Path(py).is_absolute(): die("sys.executable not absolute")
         os.execvp(sudo,[sudo,"--",py,str(Path(__file__).resolve()),*argv])
+    ram = detect_ram_gb()
+    info(f"Detected RAM: {C.BOLD}{ram:.2f} GiB{C.RST}")
     if not DAMON_PARAMS_DIR.is_dir():
-        info("DAMON Reclaim not found at /sys/module/damon_reclaim/parameters. Skipping."); return 0
-    ram=detect_ram_gb(); info(f"Detected RAM: {C.BOLD}{ram:.2f} GiB{C.RST}")
+        if args.dry_run:
+            warn(f"DAMON Reclaim module not loaded/supported on this kernel ({DAMON_PARAMS_DIR} missing).")
+            info("Showing calculated tier profile in dry-run mode anyway:")
+        else:
+            warn(f"DAMON Reclaim not found at {DAMON_PARAMS_DIR}. Current kernel does not support DAMON.")
+            info("Exiting cleanly (no changes made).")
+            return 0
     if ram < 7.0:
-        label="STRICT_RAM_SAVINGS (<8GB class)"; blurb="Aggressive: 500ms sample, 5s aggr, 60s cold age, reclaim when free <70% down to 5%"; cfg=TIER_S_CONFIG
+        label="STRICT_RAM_SAVINGS (<8GB class)"
+        blurb="Aggressive: 500ms sample, 5s aggr, 60s cold age, sleep >80%, reclaim <70% down to 20%"
+        cfg=TIER_S_CONFIG
     elif ram < 14.0:
-        label="DYNAMIC_EFFICIENCY (8-12GB class)"; blurb="Dynamic: 500ms sample, 5s aggr, 120s cold age, reclaim when free <70% down to 5%"; cfg=TIER_M_CONFIG
+        label="DYNAMIC_EFFICIENCY (8-12GB class)"
+        blurb="Dynamic: 500ms sample, 5s aggr, 60s cold age, sleep >80%, reclaim <70% down to 20%"
+        cfg=TIER_M_CONFIG
     elif ram < 28.0:
-        label="BALANCED_EFFICIENCY (16-24GB class)"; blurb="Balanced: 500ms sample, 5s aggr, 300s cold age, reclaim when free <40% down to 5%"; cfg=TIER_L_CONFIG
+        label="BALANCED_EFFICIENCY (16-24GB class)"
+        blurb="Balanced: 500ms sample, 5s aggr, 120s (2m) cold age, sleep >50%, reclaim <40% down to 10%"
+        cfg=TIER_L_CONFIG
     else:
-        label="PERFORMANCE_LEAN (>=32GB class)"; blurb="Conservative: 1s sample, 5s aggr, 600s cold age, reclaim when free <30% down to 5%"; cfg=TIER_XL_CONFIG
+        label="PERFORMANCE_LEAN (>=32GB class)"
+        blurb="Conservative: 1s sample, 5s aggr, 180s (3m) cold age, sleep >30%, reclaim <20% down to 5%"
+        cfg=TIER_XL_CONFIG
     validate_profile(cfg,label); info(f"Selected: {C.BOLD}{label}{C.RST} — {C.DIM}{blurb}{C.RST}")
     lines=[
         f"# Managed by {Path(__file__).name} - {label}",
