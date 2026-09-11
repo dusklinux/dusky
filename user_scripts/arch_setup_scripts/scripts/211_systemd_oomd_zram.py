@@ -53,29 +53,27 @@ except ImportError:
     console = None  # type: ignore
 
 PRESSURE_RULE: Final[str] = """[Rule]
-MemoryPressureAbove=60%
-LastingSec=2s
+MemoryPressureAbove=50%
+LastingSec=15s
 Action=kill-by-pgscan
 """
 
 SWAP_RULE: Final[str] = """[Rule]
-MemoryPressureAbove=30%
+MemoryPressureAbove=25%
 SwapUsageMax=90%
-LastingSec=2s
-Action=kill-by-pgscan
+LastingSec=10s
+Action=kill-by-swap
 """
 
 OOMD_TUNE: Final[str] = """[OOM]
-DefaultMemoryPressureLimit=60%
-DefaultMemoryPressureDurationSec=2s
+DefaultMemoryPressureLimit=50%
+DefaultMemoryPressureDurationSec=15s
 SwapUsedLimit=90%
 PrekillHookTimeoutSec=0s
 """
 
 APP_SLICE: Final[str] = """[Slice]
-ManagedOOMMemoryPressure=kill
-ManagedOOMMemoryPressureLimit=60%
-ManagedOOMMemoryPressureDurationSec=2s
+ManagedOOMMemoryPressure=auto
 ManagedOOMSwap=auto
 ManagedOOMPreference=none
 OOMRules=30-dusky-pressure 30-dusky-swap
@@ -83,13 +81,15 @@ MemoryAccounting=yes
 """
 
 BACKGROUND_SLICE: Final[str] = """[Slice]
-ManagedOOMMemoryPressure=kill
-ManagedOOMMemoryPressureLimit=50%
-ManagedOOMMemoryPressureDurationSec=2s
+ManagedOOMMemoryPressure=auto
 ManagedOOMSwap=auto
 ManagedOOMPreference=none
 OOMRules=30-dusky-pressure 30-dusky-swap
 MemoryAccounting=yes
+"""
+
+USER_SLICE_PROTECTION: Final[str] = """[Slice]
+MemoryLow=512M
 """
 
 SESSION_SLICE: Final[str] = """[Slice]
@@ -157,12 +157,14 @@ class FileSpec:
 
 def specs() -> list[FileSpec]:
     s: list[FileSpec] = [
-        FileSpec(dest=Path("/etc/systemd/oomd/rules.d/30-dusky-pressure.oomrule"), content=PRESSURE_RULE, desc="Pressure rule (kill-by-pgscan @ 60% 2s)"),
-        FileSpec(dest=Path("/etc/systemd/oomd/rules.d/30-dusky-swap.oomrule"), content=SWAP_RULE, desc="Swap rule (kill-by-pgscan @ 90% + 30% pressure 2s)"),
+        FileSpec(dest=Path("/etc/systemd/oomd/rules.d/30-dusky-pressure.oomrule"), content=PRESSURE_RULE, desc="Pressure rule (kill-by-pgscan @ 50% 15s)"),
+        FileSpec(dest=Path("/etc/systemd/oomd/rules.d/30-dusky-swap.oomrule"), content=SWAP_RULE, desc="Swap rule (kill-by-swap @ 90% + 25% pressure 10s)"),
         FileSpec(dest=Path("/etc/systemd/oomd.conf.d/10-desktop-tune.conf"), content=OOMD_TUNE, desc="oomd global tuning + 0s prekill hook"),
         FileSpec(dest=Path("/etc/systemd/user/app.slice.d/90-desktop-oomd.conf"), content=APP_SLICE, desc="app.slice rules (30-dusky-*)"),
         FileSpec(dest=Path("/etc/systemd/user/background.slice.d/90-desktop-oomd.conf"), content=BACKGROUND_SLICE, desc="background.slice rules (30-dusky-*)"),
         FileSpec(dest=Path("/etc/systemd/user/session.slice.d/90-desktop-oomd.conf"), content=SESSION_SLICE, desc="session.slice protection (MemoryLow=512M)"),
+        FileSpec(dest=Path("/etc/systemd/system/user.slice.d/90-desktop-protection.conf"), content=USER_SLICE_PROTECTION, desc="user.slice ancestor protection (MemoryLow=512M)"),
+        FileSpec(dest=Path("/etc/systemd/system/user-.slice.d/90-desktop-protection.conf"), content=USER_SLICE_PROTECTION, desc="user-.slice ancestor protection (MemoryLow=512M)"),
         FileSpec(dest=Path("/etc/systemd/system/session-.scope.d/90-desktop-oomd.conf"), content=COMPOSITOR_SCOPE, desc="session-*.scope compositor protect"),
         FileSpec(dest=Path("/etc/systemd/system/user@.service.d/90-desktop-oom-score.conf"), content=USER_MANAGER_SCORE, desc="user@ service -100"),
         FileSpec(dest=Path("/etc/systemd/user.conf.d/90-desktop-oom.conf"), content=USER_CONF, desc="DefaultOOMScoreAdjust 100"),
@@ -183,6 +185,7 @@ def obsolete_paths() -> tuple[Path, ...]:
         Path("/etc/systemd/user.conf.d/10-oom-default.conf"),
         Path("/etc/systemd/oomd/rules.d/30-desktop-pressure.oomrule"),
         Path("/etc/systemd/oomd/rules.d/30-desktop-swap.oomrule"),
+        Path("/etc/systemd/system.control/user.slice.d/50-ManagedOOMSwap.conf"),
     ]
     for svc in CRITICAL_USER:
         paths.append(Path(f"/etc/systemd/user/{svc}.d/10-oom-shield.conf"))
