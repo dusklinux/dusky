@@ -29,8 +29,8 @@ VALID_KEYS = [
 ]
 
 DESIRED_STATE: dict[str, str] = {
-    "DefaultMemoryAccounting": "no",
-    "DefaultTasksAccounting": "no",
+    "DefaultMemoryAccounting": "yes",
+    "DefaultTasksAccounting": "yes",
     "DefaultIOAccounting": "no",
     "DefaultIPAccounting": "no",
 }
@@ -154,13 +154,12 @@ def write_dropin_atomic(target: Path, content: str) -> None:
 def generate_payload() -> str:
     return """# Managed by 216_systemd_accounting_optimizer.py
 # Target: Arch Linux (Linux Kernel 7.2+, systemd 261+)
-# Scope: Disable global systemd default accounting to eliminate kernel cgroup bookkeeping across idle units.
-# Explicit slice configurations (e.g., app.slice.d/90-desktop-oomd.conf from 211_systemd_oomd_zram.py)
-# retain MemoryAccounting=yes to ensure unhindered systemd-oomd functionality.
+# Scope: Enable default Memory and Tasks accounting for systemd-oomd and MGLRU reclaim,
+# while leaving IO and IP accounting disabled to avoid unnecessary kernel overhead.
 
 [Manager]
-DefaultMemoryAccounting=no
-DefaultTasksAccounting=no
+DefaultMemoryAccounting=yes
+DefaultTasksAccounting=yes
 DefaultIOAccounting=no
 DefaultIPAccounting=no
 """
@@ -199,8 +198,8 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         prog="216_systemd_accounting_optimizer.py",
         description="Optimize systemd default accounting and task limits for Arch Linux (systemd 261+, Kernel 7.2+). "
-                    "Disables global manager accounting to eliminate kernel cgroup bookkeeping across idle units, "
-                    "relying on explicit slice accounting (from 211_systemd_oomd_zram.py) for systemd-oomd monitoring.",
+                    "Enables default Memory and Tasks accounting for systemd-oomd and MGLRU reclaim, "
+                    "while leaving IO and IP accounting disabled to avoid unnecessary kernel overhead.",
     )
     ap.add_argument("-n", "--dry-run", action="store_true", help="Preview configuration without applying")
     ap.add_argument("--status", action="store_true", help="Show current manager defaults and exit")
