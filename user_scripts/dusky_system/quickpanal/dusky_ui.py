@@ -711,10 +711,32 @@ button { transition: background-color 200ms ease, opacity 200ms ease, box-shadow
 box.weather-pill { padding: 4px 4px; }
 .weather-text { font-size: 12px; font-weight: 700; color: alpha(@theme_fg_color, 0.9); }
 
-button.power-header-btn {
-    min-width: 36px; min-height: 36px; border-radius: 18px; background-color: alpha(#ff453a, 0.6); color: white; border: 1px solid rgba(255, 255, 255, 0.05);
+button.power-header-btn,
+button.power-header-btn:hover,
+button.power-header-btn:active,
+button.power-header-btn:checked,
+button.power-header-btn:focus,
+button.power-header-btn:backdrop {
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0;
+    margin: 0;
+    border-radius: 9999px;
+    -gtk-outline-radius: 9999px;
+    background-image: none;
+    box-shadow: none;
+    -gtk-icon-effect: none;
+    outline: none;
 }
-button.power-header-btn:hover { background-color: #ff453a; color: white; }
+button.power-header-btn {
+    background-color: alpha(#ff453a, 0.6);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+button.power-header-btn:hover {
+    background-color: #ff453a;
+    color: white;
+}
 
 flowbox, flowboxchild, flowbox:focus, flowboxchild:focus {
     background: transparent;
@@ -724,10 +746,28 @@ flowbox, flowboxchild, flowbox:focus, flowboxchild:focus {
     box-shadow: none;
 }
 
+button.quick-icon-toggle,
+button.quick-icon-toggle:hover,
+button.quick-icon-toggle:active,
+button.quick-icon-toggle:checked,
+button.quick-icon-toggle:focus,
+button.quick-icon-toggle:backdrop {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    margin: 0;
+    border-radius: 9999px;
+    -gtk-outline-radius: 9999px;
+    background-image: none;
+    box-shadow: none;
+    -gtk-icon-effect: none;
+    outline: none;
+}
 button.quick-icon-toggle {
-    min-width: 44px; min-height: 44px; border-radius: 22px;
-    background-color: rgba(255, 255, 255, 0.06); background-image: none; border: 1px solid rgba(255, 255, 255, 0.05); padding: 0; box-shadow: none;
-    transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    transition: background-color 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+                border-color 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 button.quick-icon-toggle:hover { background-color: rgba(255, 255, 255, 0.12); }
 button.quick-icon-toggle.active { background-color: alpha(@theme_selected_bg_color, 0.3); border: 1px solid alpha(@theme_selected_bg_color, 0.5); }
@@ -752,7 +792,29 @@ eventbox.clickable-pill:hover box.metric-pill { background-color: rgba(255, 255,
 .power-label { font-size: 14px; font-weight: 600; color: @theme_fg_color; }
 .accent-icon { color: @theme_selected_bg_color; }
 
-button.power-ring-btn { border: 2px solid transparent; border-radius: 999px; min-width: 30px; min-height: 30px; padding: 0; margin: 0; background-color: transparent; color: alpha(@theme_fg_color, 0.7); }
+button.power-ring-btn,
+button.radio.power-ring-btn,
+button.power-ring-btn:hover,
+button.power-ring-btn:active,
+button.power-ring-btn:checked,
+button.power-ring-btn:not(:checked),
+button.power-ring-btn:focus,
+button.power-ring-btn:backdrop {
+    min-width: 30px;
+    min-height: 30px;
+    padding: 0;
+    margin: 0;
+    border-radius: 9999px;
+    -gtk-outline-radius: 9999px;
+    background-image: none;
+    -gtk-icon-effect: none;
+    outline: none;
+}
+button.power-ring-btn {
+    border: 2px solid transparent;
+    background-color: transparent;
+    color: alpha(@theme_fg_color, 0.7);
+}
 button.power-ring-btn:hover { background-color: rgba(255, 255, 255, 0.08); }
 button.power-ring-btn:checked { background-color: alpha(@theme_selected_bg_color, 0.15); border-color: @theme_selected_bg_color; color: @theme_selected_bg_color; box-shadow: 0 0 8px alpha(@theme_selected_bg_color, 0.25); }
 button.power-ring-btn.power-saver:checked { background-color: alpha(#a6e3a1, 0.15); border-color: #a6e3a1; color: #a6e3a1; box-shadow: 0 0 8px alpha(#a6e3a1, 0.25); }
@@ -842,7 +904,7 @@ switch.compact-switch:checked {
 switch.compact-switch slider {
     min-width: 18px;
     min-height: 18px;
-    border-radius: 50%;
+    border-radius: 9999px;
     background-color: #ffffff;
     border: none;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
