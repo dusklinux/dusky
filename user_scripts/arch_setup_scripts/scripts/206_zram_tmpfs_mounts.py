@@ -2,12 +2,8 @@
 """
 Elite Arch Linux Hybrid Memory Mount Configurator (Kernel 7.2+, systemd 261+)
 Supports:
-  1) Native tmpfs (Pure RAM mapping - Recommended: zero double-buffering, lowest idle RAM)
-  2) Ext2 on compressed ZRAM block device (/dev/zram1 on /mnt/zram1)
-     - Native zero-journal filesystem (clean upstream default, lower metadata)
-     - 0% root reserved blocks (-m 0)
-     - Mode 1777 natively enforced via systemd X-mount.mode=1777
-  3) Disable / clean up secondary RAM mounts
+  1) Native tmpfs (Pure RAM mapping - zero double-buffering, lowest idle RAM, huge=never)
+  2) Disable / clean up secondary RAM mounts
 """
 
 from __future__ import annotations
@@ -81,8 +77,6 @@ PERMS_SERVICE_PATH = Path("/etc/systemd/system/mnt-zram1-permissions.service")
 PERMS_WANTS_DIR = Path("/etc/systemd/system/mnt-zram1.mount.wants")
 PERMS_WANTS_SYMLINK = PERMS_WANTS_DIR / "mnt-zram1-permissions.service"
 
-COMPRESSION_ALGORITHM = "zstd(level=2)"
-FS_OPTIONS = "rw,nosuid,nodev,discard,noatime,lazytime,X-mount.mode=1777"
 CMD_TIMEOUT = 15
 
 def run_cmd(cmd: list[str], ignore_errors: bool = False) -> str:
@@ -111,7 +105,7 @@ def write_file_atomic(path: Path, content: str, mode: int = 0o644) -> None:
         Path(tmp).unlink(missing_ok=True)
         raise
 
-def parse_tmpfs_size_expression(raw: str, default: str = "200%") -> str:
+def parse_tmpfs_size_expression(raw: str, default: str = "100%") -> str:
     s = raw.strip().lower().replace("x", "")
     if not s or s in ("auto", "default"):
         return default
@@ -382,7 +376,7 @@ def restore_staged_files(stage_dir: Path | None, mount_point: Path = MOUNT_POINT
         warn(f"Failed to restore staged data: {e}")
 
 def configure_tmpfs(size_override: str = "") -> None:
-    size_expr = parse_tmpfs_size_expression(size_override) if size_override else "200%"
+    size_expr = parse_tmpfs_size_expression(size_override, default="100%")
     info(f"Initializing Native tmpfs Mount for: {C.BOLD}{MOUNT_POINT}{C.RST} (Size: {size_expr})")
     
     stage_dir = safely_unmount_and_stage()
@@ -414,7 +408,7 @@ Before=local-fs.target
 What=tmpfs
 Where={MOUNT_POINT}
 Type=tmpfs
-Options=rw,nosuid,nodev,noatime,size={size_expr},mode=1777
+Options=rw,nosuid,nodev,noatime,size={size_expr},huge=never,mode=1777
 
 [Install]
 WantedBy=local-fs.target
@@ -430,14 +424,14 @@ WantedBy=local-fs.target
         time.sleep(0.3)
 
     if get_mount_source() != "tmpfs":
-        run_cmd(["mount", "-t", "tmpfs", "-o", f"rw,nosuid,nodev,noatime,size={size_expr},mode=1777", "tmpfs", str(MOUNT_POINT)], ignore_errors=True)
+        run_cmd(["mount", "-t", "tmpfs", "-o", f"rw,nosuid,nodev,noatime,size={size_expr},huge=never,mode=1777", "tmpfs", str(MOUNT_POINT)], ignore_errors=True)
 
     fix_mount_permissions()
     restore_staged_files(stage_dir)
     fix_mount_permissions()
 
     if get_mount_source() == "tmpfs":
-        ok(f"Live memory: Native tmpfs attached to {MOUNT_POINT} (Mode: 1777, Size: {size_expr}).")
+        ok(f"Live memory: Native tmpfs attached to {MOUNT_POINT} (Mode: 1777, Size: {size_expr}, Huge: never).")
     else:
         die("Failed to mount tmpfs. Check `systemctl status mnt-zram1.mount`.")
 
