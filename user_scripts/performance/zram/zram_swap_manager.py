@@ -46,8 +46,8 @@ LEGACY_ZRAM0_CONFS = [
     ZRAM_CONF_DIR / "99-elite-zram0.conf",
     ZRAM_CONF_DIR / "99-memtune.conf",
 ]
+ZRAM1_CONF = ZRAM_CONF_DIR / "99-zram1.conf"
 LEGACY_ZRAM1_CONFS = [
-    ZRAM_CONF_DIR / "99-zram1.conf",
     ZRAM_CONF_DIR / "99-elite-zram1.conf",
 ]
 SWAPFILE_PATH = Path("/swap/swapfile")
@@ -284,9 +284,9 @@ def get_zram0_size() -> str:
                     return f"{int(round(factor * 100))}%"
                 if raw == "ram":
                     return "100%"
-                return raw
+                return format_clean_size(raw)
     total_ram = get_total_ram_gb()
-    return "100%" if total_ram < 31.5 else "50%"
+    return "150%" if total_ram < 28.0 else "50%"
 
 def get_zram1_status() -> str:
     try:
@@ -298,12 +298,25 @@ def get_zram1_status() -> str:
     except Exception:
         return "Disabled"
 
+def get_zram1_backend() -> str:
+    """Returns 'Ext4', 'Tmpfs', or 'Disabled' based on active mount topology."""
+    try:
+        source = run_cmd(["findmnt", "-rn", "-o", "SOURCE", "--mountpoint", "/mnt/zram1"], check=False)
+        fstype = run_cmd(["findmnt", "-rn", "-o", "FSTYPE", "--mountpoint", "/mnt/zram1"], check=False)
+        if source in ("/dev/zram1", "zram1") or source.startswith("/dev/zram1") or fstype == "ext4":
+            return "Ext4"
+        elif source == "tmpfs" or fstype == "tmpfs":
+            return "Tmpfs"
+        return "Disabled"
+    except Exception:
+        return "Disabled"
+
 def get_zram1_size() -> str:
     if TMPFS_MOUNT_UNIT.exists():
         match = re.search(r"size=([0-9]+%|[0-9]+[gmkGMKbB]*)", TMPFS_MOUNT_UNIT.read_text())
         if match:
             return match.group(1)
-    for conf in LEGACY_ZRAM1_CONFS:
+    for conf in [ZRAM1_CONF] + LEGACY_ZRAM1_CONFS:
         if conf.exists():
             match = re.search(r"zram-size\s*=\s*(.+)", conf.read_text())
             if match:
@@ -313,7 +326,7 @@ def get_zram1_size() -> str:
                     return f"{int(round(float(m.group(1)) * 100))}%"
                 if raw == "ram":
                     return "100%"
-                return raw
+                return format_clean_size(raw)
     return "200%"
 
 def get_disk_swap_status() -> str:
@@ -341,11 +354,26 @@ def get_disk_swap_size() -> str:
             pass
     return "4 GB"
 
+def get_proactive_swap_status() -> str:
+    try:
+        res = run_cmd(["systemctl", "is-active", "dusky_pro_active_zram_swap.timer"], check=False)
+        if res == "active":
+            return "Active (Timer Scheduled)"
+        srv = run_cmd(["systemctl", "is-active", "dusky_pro_active_zram_swap.service"], check=False)
+        if srv == "active":
+            return "Active (Running)"
+        return "Disabled"
+    except Exception:
+        return "Disabled"
+
 def print_full_status() -> None:
+    backend = get_zram1_backend()
+    backend_label = f" ({backend})" if backend != "Disabled" else ""
     print(f"\n{C.BOLD}=== DUSKY MEMORY & SWAP TOPOLOGY STATUS ==={C.RST}\n")
-    print(f"  {C.CYN}• ZRAM0 (Compressed Swap):{C.RST}     {get_zram0_status()}")
-    print(f"  {C.CYN}• ZRAM1 (/mnt/zram1 Tmpfs):{C.RST}    {get_zram1_status()}")
-    print(f"  {C.CYN}• Disk Swap (/swap/swapfile):{C.RST}  {get_disk_swap_status()}\n")
+    print(f"  {C.CYN}• ZRAM0 (Compressed Swap):{C.RST}     {get_zram0_status()} [Configured: {get_zram0_size()}]")
+    print(f"  {C.CYN}• ZRAM1 (/mnt/zram1{backend_label}):{C.RST}    {get_zram1_status()}")
+    print(f"  {C.CYN}• Disk Swap (/swap/swapfile):{C.RST}  {get_disk_swap_status()}")
+    print(f"  {C.CYN}• Proactive ZRAM Swap:{C.RST}       {get_proactive_swap_status()}\n")
     
     if Path("/proc/swaps").exists():
         print(f"{C.BOLD}[ Active Kernel Swaps (/proc/swaps) ]{C.RST}")
@@ -371,7 +399,7 @@ def ensure_zram_device(dev_name: str = "zram0") -> None:
 def parse_size_input(raw: str) -> str:
     val = raw.strip()
     total_ram = get_total_ram_gb()
-    default_expr = "ram" if total_ram < 31.5 else "ram / 2"
+    default_expr = "ram * 1.5" if total_ram < 28.0 else "ram / 2"
     if not val:
         return default_expr
     
@@ -463,17 +491,9 @@ def set_zram0_size(size_raw: str) -> None:
     size_expr = parse_size_input(size_raw)
     info(f"Configuring ZRAM0 size expression: {C.BOLD}{size_expr}{C.RST}")
 
-    # Determine intelligent resident limit (aligned with fable_5.1_max)
-    total_ram = get_total_ram_gb()
-    if total_ram >= 31.5:
-        res_limit = "0"
-    else:
-        res_limit = "ram / 2"
-    m = re.search(r"ram\s*\*\s*([0-9.]+)", size_expr)
-    if m:
-        factor = float(m.group(1))
-        if factor < 0.5:
-            res_limit = f"ram * {factor:.2f}".rstrip("0").rstrip(".")
+    # Determine intelligent resident limit (aligned with commit 37fe210e / 205_zram_configuration.sh)
+    # Unlimited resident cap (0) allows dynamic zRAM compression without artificial early choking
+    res_limit = "0"
 
     ZRAM_CONF_DIR.mkdir(parents=True, exist_ok=True)
     content = f"""# Managed by Dusky Memory & Swap Manager
@@ -661,17 +681,18 @@ def restore_staged_files(stage_dir: Path | None, mount_point: Path = MOUNT_POINT
         warn(f"Failed to restore some files from {stage_dir}: {e}")
 
 
-def set_zram1_size(size_raw: str) -> None:
+def set_zram1_tmpfs(size_raw: str = "") -> None:
     """Configures high-performance Tmpfs mount on /mnt/zram1 with the specified size ceiling."""
     escalate_root_if_needed()
-    size_expr = parse_tmpfs_size_expression(size_raw)
+    raw = size_raw or get_zram1_size() or "200%"
+    size_expr = parse_tmpfs_size_expression(raw)
     info(f"Configuring /mnt/zram1 Tmpfs size ceiling: {C.BOLD}{size_expr}{C.RST}")
 
     stage_dir = safely_unmount_and_stage("tmpfs")
 
-    # Purge any legacy block device generator configs and overrides
-    for leg in LEGACY_ZRAM1_CONFS:
-        leg.unlink(missing_ok=True)
+    # Purge any block device generator configs and overrides
+    for conf in [ZRAM1_CONF] + LEGACY_ZRAM1_CONFS:
+        conf.unlink(missing_ok=True)
     if OVERRIDE_DIR.exists():
         shutil.rmtree(OVERRIDE_DIR, ignore_errors=True)
     if LEGACY_MAKEFS_OVERRIDE_DIR.exists():
@@ -724,11 +745,92 @@ WantedBy=local-fs.target
     notify("Tmpfs Attached", f"/mnt/zram1 configured as Native Tmpfs RAM disk ({size_expr}).")
 
 
-def enable_zram1(size_raw: str = "") -> None:
-    """Autonomously enables high-performance Tmpfs on /mnt/zram1."""
+def set_zram1_ext4(size_raw: str = "") -> None:
+    """Configures Ext4 compressed ZRAM block device on /mnt/zram1."""
     escalate_root_if_needed()
-    size = size_raw or get_zram1_size() or "200%"
-    set_zram1_size(size)
+    raw = size_raw or get_zram1_size() or "100%"
+    size_expr = parse_size_input(raw)
+    info(f"Configuring ZRAM1 Ext4 disk size expression: {C.BOLD}{size_expr}{C.RST}")
+
+    stage_dir = safely_unmount_and_stage("ext4")
+
+    # If tmpfs mount unit was enabled, disable and remove it cleanly
+    if TMPFS_MOUNT_UNIT.exists():
+        run_cmd(["systemctl", "disable", "--now", "mnt-zram1.mount"], check=False)
+        TMPFS_MOUNT_UNIT.unlink(missing_ok=True)
+
+    for conf in [ZRAM1_CONF] + LEGACY_ZRAM1_CONFS:
+        conf.unlink(missing_ok=True)
+
+    content = f"""# Managed by Dusky Memory & Swap Manager
+[zram1]
+zram-size = {size_expr}
+zram-resident-limit = ram * 4 / 5
+fs-type = ext4
+mount-point = /mnt/zram1
+compression-algorithm = zstd(level=2)
+options = rw,nosuid,nodev,discard,noatime,lazytime,X-mount.mode=1777
+"""
+    write_file_atomic(ZRAM1_CONF, content)
+    fix_mount_permissions()
+
+    ensure_zram_device("zram1")
+    run_cmd(["systemctl", "daemon-reload"])
+    run_cmd(["systemctl", "restart", "systemd-zram-setup@zram1.service"], check=False)
+    run_cmd(["systemctl", "restart", "mnt-zram1.mount"], check=False)
+    run_cmd(["mount", "/mnt/zram1"], check=False)
+
+    # Wait for mount
+    for _ in range(10):
+        src = run_cmd(["findmnt", "-rn", "-o", "SOURCE", "--mountpoint", "/mnt/zram1"], check=False)
+        if src in ("/dev/zram1", "zram1") or src.startswith("/dev/zram1"):
+            break
+        time.sleep(0.3)
+
+    fix_mount_permissions()
+    restore_staged_files(stage_dir)
+    fix_mount_permissions()
+    ok(f"/mnt/zram1 configured as Ext4 Compressed RAM Block (Size: {size_expr}).")
+    notify("ZRAM1 Attached", f"/mnt/zram1 configured as Ext4 ZRAM Block device ({size_expr}).")
+
+
+def set_zram1_size(size_raw: str) -> None:
+    """Updates the size of /mnt/zram1 according to its active backend."""
+    current_backend = get_zram1_backend()
+    if current_backend == "Ext4":
+        set_zram1_ext4(size_raw)
+    else:
+        set_zram1_tmpfs(size_raw)
+
+
+def set_zram1_backend(backend: str) -> None:
+    """Switches the /mnt/zram1 backend mode (Ext4 ZRAM vs Native Tmpfs vs Disabled)."""
+    escalate_root_if_needed()
+    mode = backend.lower().strip()
+    match mode:
+        case "zram" | "ext4":
+            info("Switching /mnt/zram1 to Ext4 ZRAM Block Device...")
+            current_size = get_zram1_size()
+            set_zram1_ext4(current_size)
+        case "tmpfs" | "ram":
+            info("Switching /mnt/zram1 to Pure Tmpfs RAM Mount...")
+            current_size = get_zram1_size()
+            set_zram1_tmpfs(current_size)
+        case "disable" | "disabled" | "none" | "off":
+            disable_zram1()
+        case _:
+            die(f"Invalid backend: '{backend}'. Choose 'ext4', 'tmpfs', or 'disable'.")
+
+
+def enable_zram1(size_raw: str = "") -> None:
+    """Autonomously enables RAM disk on /mnt/zram1."""
+    escalate_root_if_needed()
+    current_backend = get_zram1_backend()
+    if current_backend == "Ext4":
+        set_zram1_ext4(size_raw)
+    else:
+        size = size_raw or get_zram1_size() or "200%"
+        set_zram1_tmpfs(size)
 
 
 def disable_zram1() -> None:
@@ -736,7 +838,7 @@ def disable_zram1() -> None:
     escalate_root_if_needed()
     info("Dismantling /mnt/zram1 RAM disk...")
     safely_unmount_and_stage("none")
-    for leg in LEGACY_ZRAM1_CONFS:
+    for leg in [ZRAM1_CONF] + LEGACY_ZRAM1_CONFS:
         leg.unlink(missing_ok=True)
     if TMPFS_MOUNT_UNIT.exists():
         run_cmd(["systemctl", "disable", "--now", "mnt-zram1.mount"], check=False)
@@ -896,6 +998,7 @@ def main() -> None:
     parser.add_argument("--zram0-size", action="store_true", help="Print ZRAM0 size expression")
     parser.add_argument("--zram1-status", action="store_true", help="Print ZRAM1 status string")
     parser.add_argument("--zram1-size", action="store_true", help="Print ZRAM1 size expression")
+    parser.add_argument("--zram1-backend", action="store_true", help="Print ZRAM1 backend mode (Ext4, Tmpfs, or Disabled)")
     parser.add_argument("--disk-swap-status", action="store_true", help="Print Disk Swap status string")
     parser.add_argument("--disk-swap-size", action="store_true", help="Print Disk Swap size string")
     
@@ -907,6 +1010,7 @@ def main() -> None:
     parser.add_argument("--enable-zram1", action="store_true", help="Autonomously deploy native high-performance Tmpfs on /mnt/zram1")
     parser.add_argument("--disable-zram1", action="store_true", help="Disable /mnt/zram1 Tmpfs mount")
     parser.add_argument("--set-zram1-size", metavar="EXPR", help="Set /mnt/zram1 Tmpfs size ceiling (e.g. '100%%', '50%%', '4G')")
+    parser.add_argument("--set-zram1-backend", choices=["zram", "tmpfs", "disable", "disabled", "ext4", "ram", "none", "off"], help="Switch /mnt/zram1 backend mode")
     
     parser.add_argument("--set-disk-swap-size", metavar="SIZE", help="Resize/create disk swapfile (e.g. '4G', '8G')")
     parser.add_argument("--disable-disk-swap", action="store_true", help="Disable disk swapfile")
@@ -927,6 +1031,9 @@ def main() -> None:
         return
     if args.zram1_size:
         print(get_zram1_size())
+        return
+    if args.zram1_backend:
+        print(get_zram1_backend())
         return
     if args.disk_swap_status:
         print(get_disk_swap_status())
@@ -953,6 +1060,8 @@ def main() -> None:
         enable_zram1()
     elif args.set_zram1_size:
         set_zram1_size(args.set_zram1_size)
+    elif args.set_zram1_backend:
+        set_zram1_backend(args.set_zram1_backend)
     elif args.disable_zram1:
         disable_zram1()
     elif args.set_disk_swap_size:
