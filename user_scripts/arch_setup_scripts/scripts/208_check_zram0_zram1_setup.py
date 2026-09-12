@@ -286,6 +286,32 @@ def main() -> int:
         else:
             info("tmpfs mounted with default kernel size (50% RAM).")
 
+        for req_opt in ["noatime", "nosuid", "nodev", "rw"]:
+            if req_opt in opts_list:
+                ok(f"tmpfs mount option '{req_opt}' active.")
+            else:
+                warn(f"tmpfs mount option '{req_opt}' not active (recommended for ephemeral tmpfs).")
+
+        # Audit transparent hugepages policy (huge=never is recommended per 206_zram_tmpfs_mounts.py)
+        mount_unit_path = Path("/etc/systemd/system/mnt-zram1.mount")
+        mount_unit_has_huge_never = False
+        if mount_unit_path.exists():
+            try:
+                mount_unit_has_huge_never = "huge=never" in mount_unit_path.read_text(encoding="utf-8")
+            except Exception:
+                pass
+
+        huge_opt = [o for o in opts_list if o.startswith("huge=")]
+        if huge_opt and huge_opt[0] != "huge=never":
+            warn(f"tmpfs transparent hugepages active: '{huge_opt[0]}' (huge=never recommended per 206_zram_tmpfs_mounts.py to prevent 2MB fragmentation/RAM bloat).")
+            audit_summary["mnt_zram1"]["huge"] = huge_opt[0]
+        elif mount_unit_has_huge_never or any(o == "huge=never" for o in opts_list):
+            ok("tmpfs hugepage policy verified: huge=never (lowest idle RAM, zero internal fragmentation).")
+            audit_summary["mnt_zram1"]["huge"] = "never"
+        else:
+            info("tmpfs mounted with kernel default hugepage policy.")
+            audit_summary["mnt_zram1"]["huge"] = "default"
+
         zram1_dir = Path("/mnt/zram1")
         try:
             dst = zram1_dir.stat()

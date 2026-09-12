@@ -327,7 +327,7 @@ def get_zram1_size() -> str:
                 if raw == "ram":
                     return "100%"
                 return format_clean_size(raw)
-    return "200%"
+    return "100%"
 
 def get_disk_swap_status() -> str:
     try:
@@ -446,7 +446,7 @@ def parse_size_input(raw: str) -> str:
     return val_formatted
 
 
-def parse_tmpfs_size_expression(raw: str, default: str = "200%") -> str:
+def parse_tmpfs_size_expression(raw: str, default: str = "100%") -> str:
     s = raw.strip().lower().replace("gib", "g").replace("mib", "m").replace("kib", "k").replace("x", "")
     if not s or s in ("auto", "default"):
         return default
@@ -688,8 +688,8 @@ def restore_staged_files(stage_dir: Path | None, mount_point: Path = MOUNT_POINT
 def set_zram1_tmpfs(size_raw: str = "") -> None:
     """Configures high-performance Tmpfs mount on /mnt/zram1 with the specified size ceiling."""
     escalate_root_if_needed()
-    raw = size_raw or get_zram1_size() or "200%"
-    size_expr = parse_tmpfs_size_expression(raw)
+    raw = size_raw or get_zram1_size() or "100%"
+    size_expr = parse_tmpfs_size_expression(raw, default="100%")
     info(f"Configuring /mnt/zram1 Tmpfs size ceiling: {C.BOLD}{size_expr}{C.RST}")
 
     # Zero-copy live in-place remount if already mounted as Tmpfs (Zero unmount, zero data copy, zero SSD wear)
@@ -705,16 +705,16 @@ ConditionPathExists=/mnt/zram1
 What=tmpfs
 Where=/mnt/zram1
 Type=tmpfs
-Options=rw,nosuid,nodev,noatime,size={size_expr},mode=1777
+Options=rw,nosuid,nodev,noatime,size={size_expr},huge=never,mode=1777
 
 [Install]
 WantedBy=local-fs.target
 """
         write_file_atomic(TMPFS_MOUNT_UNIT, tmpfs_content)
         run_cmd(["systemctl", "daemon-reload"])
-        run_cmd(["mount", "-o", f"remount,size={size_expr}", str(MOUNT_POINT)], check=False)
+        run_cmd(["mount", "-o", f"remount,size={size_expr},huge=never", str(MOUNT_POINT)], check=False)
         fix_mount_permissions()
-        ok(f"/mnt/zram1 resized in-place via live remount (Ceiling: {size_expr}, Zero SSD wear).")
+        ok(f"/mnt/zram1 resized in-place via live remount (Ceiling: {size_expr}, Huge: never, Zero SSD wear).")
         notify("Tmpfs Resized", f"/mnt/zram1 resized in-place to {size_expr} (Zero SSD wear).")
         return
 
@@ -750,7 +750,7 @@ ConditionPathExists=/mnt/zram1
 What=tmpfs
 Where=/mnt/zram1
 Type=tmpfs
-Options=rw,nosuid,nodev,noatime,size={size_expr},mode=1777
+Options=rw,nosuid,nodev,noatime,size={size_expr},huge=never,mode=1777
 
 [Install]
 WantedBy=local-fs.target
@@ -766,12 +766,12 @@ WantedBy=local-fs.target
         time.sleep(0.3)
 
     if run_cmd(["findmnt", "-rn", "-o", "SOURCE", "--mountpoint", "/mnt/zram1"], check=False) != "tmpfs":
-        run_cmd(["mount", "-t", "tmpfs", "-o", f"rw,nosuid,nodev,noatime,size={size_expr},mode=1777", "tmpfs", "/mnt/zram1"], check=False)
+        run_cmd(["mount", "-t", "tmpfs", "-o", f"rw,nosuid,nodev,noatime,size={size_expr},huge=never,mode=1777", "tmpfs", "/mnt/zram1"], check=False)
 
     fix_mount_permissions()
     restore_staged_files(stage_dir)
     fix_mount_permissions()
-    ok(f"/mnt/zram1 configured as Native Tmpfs RAM disk (Ceiling: {size_expr}).")
+    ok(f"/mnt/zram1 configured as Native Tmpfs RAM disk (Ceiling: {size_expr}, Huge: never).")
     notify("Tmpfs Attached", f"/mnt/zram1 configured as Native Tmpfs RAM disk ({size_expr}).")
 
 
