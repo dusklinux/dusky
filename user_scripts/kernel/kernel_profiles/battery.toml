@@ -281,7 +281,7 @@ acs_override = false
 # ==============================================================================
 [verify]
 strict = true                   # Fail build (exit 4) if any required symbol is dropped
-optional_symbols = []
+optional_symbols = ["VFIO_PCI_DMABUF"]
 require_ntsync = true
 require_btf = true              # Asserts BTF presence for sched_ext
 require_sched_ext = true        # Asserts CONFIG_SCHED_CLASS_EXT presence

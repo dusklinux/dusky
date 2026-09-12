@@ -5246,6 +5246,7 @@ VERIFY_HINTS: Final[dict[str, str]] = {
     "PER_VMA_LOCK": "def_bool driven by ARCH_SUPPORTS_PER_VMA_LOCK && SMP",
     "INIT_STACK_ALL_ZERO": "requires a compiler supporting -ftrivial-auto-var-init=zero",
     "KFENCE_SAMPLE_INTERVAL": "only visible when KFENCE=y",
+    "VFIO_PCI_DMABUF": "requires VFIO_PCI_CORE, PCI_P2PDMA (needs ZONE_DEVICE/MEMORY_HOTPLUG), and DMA_SHARED_BUFFER",
 }
 
 
@@ -5266,7 +5267,7 @@ def verify_config(tree: Path, p: KernelProfile, mx: Matrix, d: Derived) -> Verif
     if not cfg_file.is_file():
         raise VerifyError(".config does not exist after olddefconfig")
     cfg = parse_dotconfig(cfg_file.read_text(encoding="utf-8", errors="replace"))
-    extra_soft = set(p.g("verify", "optional_symbols"))
+    extra_soft = {str(s).removeprefix("CONFIG_") for s in p.g("verify", "optional_symbols")}
     hard: list[tuple[Op, str | None]] = []
     soft: list[tuple[Op, str | None]] = []
     for op in mx.ops:
