@@ -517,10 +517,10 @@ def main() -> None:
     parser.add_argument("--enable", action="store_true", help="Enable and start proactive swap timer")
     parser.add_argument("--disable", action="store_true", help="Disable and stop proactive swap timer")
     parser.add_argument("--run-now", action="store_true", help="Trigger an immediate memory sweep")
-    parser.add_argument("--set-ratio", metavar="PCT", help="Set per-app idle anon memory ratio (e.g. '40%%', '25%%')")
-    parser.add_argument("--set-max-budget", metavar="SIZE", help="Set max sweep budget ceiling (e.g. '256 MB', '512 MB')")
-    parser.add_argument("--set-interval", metavar="INTERVAL", help="Set periodic timer interval (e.g. '3min', '5min')")
-    parser.add_argument("--set-zram-limit", metavar="LIMIT", help="Set ZRAM abort fullness limit (e.g. '95%%')")
+    parser.add_argument("--set-ratio", nargs="+", metavar="PCT", help="Set per-app idle anon memory ratio (e.g. '40%%', '25%%')")
+    parser.add_argument("--set-max-budget", nargs="+", metavar="SIZE", help="Set max sweep budget ceiling (e.g. '256 MB', '512 MB')")
+    parser.add_argument("--set-interval", nargs="+", metavar="INTERVAL", help="Set periodic timer interval (e.g. '3min', '5min')")
+    parser.add_argument("--set-zram-limit", nargs="+", metavar="LIMIT", help="Set ZRAM abort fullness limit (e.g. '95%%')")
 
     args = parser.parse_args()
 
@@ -561,16 +561,16 @@ def main() -> None:
         run_now()
         return
     if args.set_ratio:
-        set_ratio(args.set_ratio)
+        set_ratio(" ".join(args.set_ratio) if isinstance(args.set_ratio, list) else str(args.set_ratio))
         return
     if args.set_max_budget:
-        set_max_budget(args.set_max_budget)
+        set_max_budget(" ".join(args.set_max_budget) if isinstance(args.set_max_budget, list) else str(args.set_max_budget))
         return
     if args.set_interval:
-        set_timer_interval(args.set_interval)
+        set_timer_interval(" ".join(args.set_interval) if isinstance(args.set_interval, list) else str(args.set_interval))
         return
     if args.set_zram_limit:
-        set_zram_limit(args.set_zram_limit)
+        set_zram_limit(" ".join(args.set_zram_limit) if isinstance(args.set_zram_limit, list) else str(args.set_zram_limit))
         return
 
     # Default fallback

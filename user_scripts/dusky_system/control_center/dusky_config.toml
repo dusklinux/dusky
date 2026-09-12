@@ -2285,7 +2285,7 @@ value_command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modif
 toast = "Per-app reclaim ratio set to {value}"
 [pages.layout.items.layout.items.layout.items.on_action]
 type = "exec"
-command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-ratio '{value}'"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-ratio {value}"
 terminal = false
 requires_root = true
 
@@ -2300,7 +2300,7 @@ value_command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modif
 toast = "Max sweep budget set to {value}"
 [pages.layout.items.layout.items.layout.items.on_action]
 type = "exec"
-command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-max-budget '{value}'"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-max-budget {value}"
 terminal = false
 requires_root = true
 
@@ -2356,7 +2356,7 @@ value_command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modif
 toast = "ZRAM safety limit set to {value}"
 [pages.layout.items.layout.items.layout.items.on_action]
 type = "exec"
-command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-zram-limit '{value}'"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-zram-limit {value}"
 terminal = false
 requires_root = true
 
