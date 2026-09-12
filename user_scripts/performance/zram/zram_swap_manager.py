@@ -595,7 +595,7 @@ def safely_unmount_and_stage(target_backend: str, mount_point: Path = MOUNT_POIN
                 du_out = run_cmd(["du", "-s", "-B1", "--exclude=lost+found", "--exclude=.Trash-1000", str(mount_point)], check=False)
                 allocated_bytes = int(du_out.split()[0]) if du_out and du_out.split()[0].isdigit() else 1024 * 1024 * 1024
 
-                candidate_dirs = [Path("/var/tmp"), Path("/tmp")]
+                candidate_dirs = [Path("/tmp"), Path("/var/tmp")]
                 for cand in candidate_dirs:
                     try:
                         st = os.statvfs(str(cand))
@@ -604,6 +604,10 @@ def safely_unmount_and_stage(target_backend: str, mount_point: Path = MOUNT_POIN
                             s_dir = cand / f".zram1_migration_{os.getpid()}_{int(time.time())}"
                             s_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
                             
+                            is_ram = str(cand).startswith("/tmp") and not str(cand).startswith("/var/tmp")
+                            dest_label = "RAM disk (/tmp - Zero NAND wear)" if is_ram else f"disk storage ({cand})"
+                            info(f"Staging {len(items)} item(s) ({allocated_bytes / (1024*1024):.1f} MB) to {dest_label}...")
+
                             # Prefer rsync with sparse and full Unix metadata preservation
                             if shutil.which("rsync"):
                                 res = subprocess.run(
@@ -687,6 +691,32 @@ def set_zram1_tmpfs(size_raw: str = "") -> None:
     raw = size_raw or get_zram1_size() or "200%"
     size_expr = parse_tmpfs_size_expression(raw)
     info(f"Configuring /mnt/zram1 Tmpfs size ceiling: {C.BOLD}{size_expr}{C.RST}")
+
+    # Zero-copy live in-place remount if already mounted as Tmpfs (Zero unmount, zero data copy, zero SSD wear)
+    if get_zram1_backend() == "Tmpfs":
+        info(f"Live in-place remounting /mnt/zram1 to {size_expr} (Zero copy, zero unmount, zero SSD wear)...")
+        tmpfs_content = f"""# Managed by Dusky Memory & Swap Manager
+[Unit]
+Description=High-Performance Native tmpfs on /mnt/zram1
+Before=local-fs.target
+ConditionPathExists=/mnt/zram1
+
+[Mount]
+What=tmpfs
+Where=/mnt/zram1
+Type=tmpfs
+Options=rw,nosuid,nodev,noatime,size={size_expr},mode=1777
+
+[Install]
+WantedBy=local-fs.target
+"""
+        write_file_atomic(TMPFS_MOUNT_UNIT, tmpfs_content)
+        run_cmd(["systemctl", "daemon-reload"])
+        run_cmd(["mount", "-o", f"remount,size={size_expr}", str(MOUNT_POINT)], check=False)
+        fix_mount_permissions()
+        ok(f"/mnt/zram1 resized in-place via live remount (Ceiling: {size_expr}, Zero SSD wear).")
+        notify("Tmpfs Resized", f"/mnt/zram1 resized in-place to {size_expr} (Zero SSD wear).")
+        return
 
     stage_dir = safely_unmount_and_stage("tmpfs")
 
