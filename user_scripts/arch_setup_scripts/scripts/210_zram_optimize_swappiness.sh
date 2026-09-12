@@ -167,6 +167,7 @@ readonly EXPECTED_MAX_MAP_COUNT=2147483642 # SteamOS & modern Proton/Wine standa
 readonly EXPECTED_DIRTY_WRITEBACK_CENTISECS=1500 # 15s flusher wakeups (fewer SSD/CPU wakeups on battery)
 readonly EXPECTED_DIRTY_EXPIRE_CENTISECS=3000    # 30s dirty expiration bounds unwritten data age
 readonly EXPECTED_STAT_INTERVAL=10               # 10s per-CPU vmstat fold-in cuts idle timer interrupts
+readonly EXPECTED_VFS_DENOM=100               # Linux 7.2+ explicit VFS cache pressure denominator
 
 log_info "Initializing VM Swappiness & Paging Optimizer..."
 log_info "Detected RAM: ${C_BOLD}${SYSTEM_RAM_GB} GB${C_RESET} (${SYSTEM_RAM_KB} KiB)"
@@ -191,6 +192,7 @@ vm.page-cluster = ${EXPECTED_PAGE_CLUSTER}
 
 # --- VFS & CACHE RECLAMATION ---
 vm.vfs_cache_pressure = ${EXPECTED_VFS_PRESSURE}
+vm.vfs_cache_pressure_denom = ${EXPECTED_VFS_DENOM}
 
 # --- WATERMARK HEADROOM & LATENCY ---
 vm.watermark_scale_factor = ${EXPECTED_SCALE_FACTOR}
@@ -263,6 +265,7 @@ verify_param() {
 log_info "Verifying applied kernel parameters:"
 verify_param "vm.swappiness" "$EXPECTED_SWAPPINESS"
 verify_param "vm.vfs_cache_pressure" "$EXPECTED_VFS_PRESSURE"
+verify_param "vm.vfs_cache_pressure_denom" "$EXPECTED_VFS_DENOM"
 verify_param "vm.watermark_scale_factor" "$EXPECTED_SCALE_FACTOR"
 verify_param "vm.watermark_boost_factor" "$EXPECTED_BOOST_FACTOR"
 verify_param "vm.compaction_proactiveness" "$EXPECTED_COMPACTION"

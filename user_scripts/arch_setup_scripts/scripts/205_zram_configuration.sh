@@ -177,7 +177,7 @@ fi
 install -d -m 0755 /etc/tmpfiles.d
 cat > /etc/tmpfiles.d/00-disable-zswap.conf <<'EOF'
 # Disable zswap to prevent redundant double-compression with ZRAM
-w-! /sys/module/zswap/parameters/enabled - - - - 0
+w- /sys/module/zswap/parameters/enabled - - - - 0
 EOF
 log_success "Persistence: Created /etc/tmpfiles.d/00-disable-zswap.conf (bootloader-agnostic)."
 
