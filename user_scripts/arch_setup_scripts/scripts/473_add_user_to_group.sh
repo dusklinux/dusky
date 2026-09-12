@@ -9,7 +9,7 @@ set -euo pipefail
 # Easily add or remove groups from this array.
 # Separate each group with a space.
 
-TARGET_GROUPS=(wheel input audio video storage optical network lp power games rfkill)
+TARGET_GROUPS=(wheel input audio video render storage optical network lp power games rfkill)
 
 AUTO_MODE=0
 
