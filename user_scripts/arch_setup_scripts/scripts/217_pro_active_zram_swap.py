@@ -62,7 +62,7 @@ CONF_PATH: Path = Path("/etc/dusky/dusky_pro_active_zram_swap.conf")
 
 def load_runtime_config() -> None:
     """Load dynamic overrides from /etc/dusky/dusky_pro_active_zram_swap.conf if present."""
-    global APP_IDLE_RECLAIM_RATIO, MAX_PER_RUN, ZRAM_MAX_USAGE_RATIO, PSI_SOME_THRESHOLD
+    global APP_IDLE_RECLAIM_RATIO, MAX_PER_RUN, ZRAM_MAX_USAGE_RATIO, PSI_SOME_THRESHOLD, CHUNK_SIZE
     if not CONF_PATH.exists():
         return
     try:
@@ -79,6 +79,9 @@ def load_runtime_config() -> None:
                     APP_IDLE_RECLAIM_RATIO = max(0.01, min(1.0, val))
                 elif k == "MAX_PER_RUN_MB":
                     MAX_PER_RUN = int(float(v) * 1024 * 1024)
+                elif k == "CHUNK_SIZE_MB":
+                    mb = int(float(v))
+                    CHUNK_SIZE = max(4, min(512, mb)) * 1024 * 1024
                 elif k == "ZRAM_MAX_USAGE_RATIO":
                     val = float(v.rstrip("%")) / 100.0 if "%" in v else float(v)
                     ZRAM_MAX_USAGE_RATIO = max(0.10, min(1.0, val))
@@ -325,7 +328,7 @@ def reclaim_cgroup_chunked(cgroup_dir: Path, target_bytes: int, label: str) -> t
 
 def perform_reclaim() -> None:
     load_runtime_config()
-    info(f"Initiating MGLRU proactive idle memory sweep (budget={MAX_PER_RUN // (1024*1024)}MB, ratio={int(APP_IDLE_RECLAIM_RATIO*100)}%, zram_limit={int(ZRAM_MAX_USAGE_RATIO*100)}%)...")
+    info(f"Initiating MGLRU proactive idle memory sweep (budget={MAX_PER_RUN // (1024*1024)}MB, chunk={CHUNK_SIZE // (1024*1024)}MB, ratio={int(APP_IDLE_RECLAIM_RATIO*100)}%, zram_limit={int(ZRAM_MAX_USAGE_RATIO*100)}%)...")
 
     if not is_cgroup2_mounted():
         die("cgroup v2 not mounted at /sys/fs/cgroup. Arch uses cgroup2 by default.")

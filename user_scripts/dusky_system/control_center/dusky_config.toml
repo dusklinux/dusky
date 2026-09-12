@@ -2305,6 +2305,21 @@ terminal = false
 requires_root = true
 
 [[pages.layout.items.layout.items.layout.items]]
+type = "entry"
+[pages.layout.items.layout.items.layout.items.properties]
+title = "Reclaim Chunk Size"
+description = "Kernel burst size per yield (e.g. 16 MB, 32 MB, 64 MB)"
+button_text = "Apply"
+icon = "edit-symbolic"
+value_command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --get-chunk-size"
+toast = "Reclaim chunk size set to {value}"
+[pages.layout.items.layout.items.layout.items.on_action]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-chunk-size {value}"
+terminal = false
+requires_root = true
+
+[[pages.layout.items.layout.items.layout.items]]
 type = "selection"
 [pages.layout.items.layout.items.layout.items.properties]
 title = "Sweep Frequency"

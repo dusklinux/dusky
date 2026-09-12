@@ -73,6 +73,7 @@ def get_setup_script_path() -> Path:
 
 DEFAULT_RATIO = 0.40        # 40% per idle app
 DEFAULT_BUDGET_MB = 256     # 256 MB per run
+DEFAULT_CHUNK_MB = 32       # 32 MB write chunks per yield
 DEFAULT_ZRAM_LIMIT = 0.95   # 95% full zram abort
 DEFAULT_INTERVAL = "3min"   # Periodic sweep interval
 
@@ -167,6 +168,7 @@ def read_config() -> dict[str, str]:
     config: dict[str, str] = {
         "APP_IDLE_RECLAIM_RATIO": str(DEFAULT_RATIO),
         "MAX_PER_RUN_MB": str(DEFAULT_BUDGET_MB),
+        "CHUNK_SIZE_MB": str(DEFAULT_CHUNK_MB),
         "ZRAM_MAX_USAGE_RATIO": str(DEFAULT_ZRAM_LIMIT),
         "TIMER_INTERVAL": DEFAULT_INTERVAL,
     }
@@ -189,6 +191,7 @@ def write_config(conf: dict[str, str]) -> None:
 # Dynamically consumed by /usr/local/bin/dusky_pro_active_zram_swap
 APP_IDLE_RECLAIM_RATIO={conf.get("APP_IDLE_RECLAIM_RATIO", str(DEFAULT_RATIO))}
 MAX_PER_RUN_MB={conf.get("MAX_PER_RUN_MB", str(DEFAULT_BUDGET_MB))}
+CHUNK_SIZE_MB={conf.get("CHUNK_SIZE_MB", str(DEFAULT_CHUNK_MB))}
 ZRAM_MAX_USAGE_RATIO={conf.get("ZRAM_MAX_USAGE_RATIO", str(DEFAULT_ZRAM_LIMIT))}
 TIMER_INTERVAL={conf.get("TIMER_INTERVAL", DEFAULT_INTERVAL)}
 """
@@ -322,6 +325,38 @@ def set_max_budget(val_str: str) -> None:
     ok(f"Max memory sweep budget set to {display}.")
     notify("Proactive Swap Budget", f"Sweep budget capped at {display}")
 
+# --- Reclaim Chunk Size Queries & Mutations ---
+def get_chunk_size_str() -> str:
+    conf = read_config()
+    try:
+        mb = int(conf.get("CHUNK_SIZE_MB", str(DEFAULT_CHUNK_MB)))
+        return f"{mb} MB"
+    except ValueError:
+        return f"{DEFAULT_CHUNK_MB} MB"
+
+def set_chunk_size(val_str: str) -> None:
+    escalate_root_if_needed()
+    sync_binary_if_needed()
+    val_clean = val_str.strip().strip("'\"").upper().replace(" ", "")
+    mb = DEFAULT_CHUNK_MB
+    try:
+        if val_clean.endswith("MB") or val_clean.endswith("M"):
+            num = re.sub(r"[A-Z]+$", "", val_clean)
+            mb = int(float(num))
+        elif val_clean.isdigit():
+            mb = int(val_clean)
+        else:
+            die(f"Invalid chunk size '{val_str}'. Examples: '16 MB', '32 MB', '64 MB'.")
+    except ValueError:
+        die(f"Invalid chunk size value '{val_str}'.")
+
+    mb = max(4, min(512, mb))
+    conf = read_config()
+    conf["CHUNK_SIZE_MB"] = str(mb)
+    write_config(conf)
+    ok(f"Reclaim chunk write size set to {mb} MB.")
+    notify("Proactive Swap Chunk Size", f"Kernel reclaim write chunk set to {mb} MB")
+
 # --- ZRAM Safety Limit ---
 def get_zram_limit_str() -> str:
     conf = read_config()
@@ -441,6 +476,7 @@ def print_full_status() -> None:
     interval = get_timer_interval()
     ratio = get_ratio_str()
     budget = get_max_budget_str()
+    chunk = get_chunk_size_str()
     zram_limit = get_zram_limit_str()
     last = get_last_sweep_summary()
     
@@ -454,6 +490,7 @@ def print_full_status() -> None:
     print(f"  {C.BOLD}Sweep Frequency:{C.RST}   {C.CYN}{interval}{C.RST}")
     print(f"  {C.BOLD}App Skim Limit:{C.RST}    {C.CYN}{ratio}{C.RST} anon memory per idle app")
     print(f"  {C.BOLD}Run Budget Cap:{C.RST}    {C.CYN}{budget}{C.RST} max per sweep")
+    print(f"  {C.BOLD}Burst Chunk Size:{C.RST}  {C.CYN}{chunk}{C.RST} per kernel reclaim yield")
     print(f"  {C.BOLD}ZRAM Safety Cap:{C.RST}   {C.CYN}{zram_limit}{C.RST} (aborts sweep if exceeded)")
     print(f"  {C.BOLD}Last Execution:{C.RST}    {last}\n")
 
@@ -509,6 +546,7 @@ def main() -> None:
     parser.add_argument("--is-active", action="store_true", help="Output 'on' or 'off' for GUI toggle switch")
     parser.add_argument("--get-ratio", action="store_true", help="Print per-app idle reclaim ratio percentage")
     parser.add_argument("--get-max-budget", action="store_true", help="Print max memory sweep budget")
+    parser.add_argument("--get-chunk-size", action="store_true", help="Print kernel memory reclaim write chunk size")
     parser.add_argument("--get-interval", action="store_true", help="Print periodic sweep timer interval")
     parser.add_argument("--get-zram-limit", action="store_true", help="Print ZRAM abort limit percentage")
     parser.add_argument("--last-sweep", action="store_true", help="Print last sweep summary")
@@ -519,6 +557,7 @@ def main() -> None:
     parser.add_argument("--run-now", action="store_true", help="Trigger an immediate memory sweep")
     parser.add_argument("--set-ratio", nargs="+", metavar="PCT", help="Set per-app idle anon memory ratio (e.g. '40%%', '25%%')")
     parser.add_argument("--set-max-budget", nargs="+", metavar="SIZE", help="Set max sweep budget ceiling (e.g. '256 MB', '512 MB', '1 GB')")
+    parser.add_argument("--set-chunk-size", nargs="+", metavar="SIZE", help="Set kernel memory reclaim write chunk size (e.g. '16 MB', '32 MB', '64 MB')")
     parser.add_argument("--set-interval", nargs="+", metavar="INTERVAL", help="Set periodic timer interval (e.g. '3min', '5min')")
     parser.add_argument("--set-zram-limit", nargs="+", metavar="LIMIT", help="Set ZRAM abort fullness limit (e.g. '95%%')")
 
@@ -539,6 +578,9 @@ def main() -> None:
         return
     if args.get_max_budget:
         print(get_max_budget_str())
+        return
+    if args.get_chunk_size:
+        print(get_chunk_size_str())
         return
     if args.get_interval:
         print(get_timer_interval())
@@ -565,6 +607,9 @@ def main() -> None:
         return
     if args.set_max_budget:
         set_max_budget(" ".join(args.set_max_budget) if isinstance(args.set_max_budget, list) else str(args.set_max_budget))
+        return
+    if args.set_chunk_size:
+        set_chunk_size(" ".join(args.set_chunk_size) if isinstance(args.set_chunk_size, list) else str(args.set_chunk_size))
         return
     if args.set_interval:
         set_timer_interval(" ".join(args.set_interval) if isinstance(args.set_interval, list) else str(args.set_interval))
