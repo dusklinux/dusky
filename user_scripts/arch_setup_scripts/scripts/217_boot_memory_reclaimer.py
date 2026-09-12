@@ -38,7 +38,7 @@ def die(msg: str, code: int = 1) -> NoReturn:
 
 # --- Configuration & Tuning ---
 PAGE_SIZE: int = os.sysconf("SC_PAGESIZE") if hasattr(os, "sysconf") else 4096
-CHUNK_SIZE: int = 64 * 1024 * 1024       # 64 MiB write chunks for low latency
+CHUNK_SIZE: int = 32 * 1024 * 1024       # 32 MiB write chunks for ultra-low latency
 PSI_SOME_THRESHOLD: float = 0.50         # Abort if some avg10 >= 0.50%
 
 def get_total_ram_bytes() -> int:
@@ -53,8 +53,8 @@ def get_total_ram_bytes() -> int:
     return 16 * 1024 * 1024 * 1024
 
 TOTAL_RAM: int = get_total_ram_bytes()
-# Dynamic run budget: at least 1 GiB, or 10% of total system RAM (e.g. 6.4 GiB on a 64 GiB system!)
-MAX_PER_RUN: int = max(1024 * 1024 * 1024, int(TOTAL_RAM * 0.10))
+# Dynamic run budget: capped at 1 GiB per sweep, or 10% of total system RAM on small systems
+MAX_PER_RUN: int = min(1024 * 1024 * 1024, max(256 * 1024 * 1024, int(TOTAL_RAM * 0.10)))
 
 # --- Argument Parsing (Executed BEFORE Privilege Escalation) ---
 parser = argparse.ArgumentParser(description="Elite Arch Linux MGLRU Boot & Periodic Memory Skimmer")
@@ -241,16 +241,8 @@ def reclaim_cgroup_chunked(cgroup_dir: Path, target_bytes: int, label: str) -> t
                 reclaimed_requested += chunk
                 break
             elif e.errno == errno.EINVAL:
-                # Fallback without swappiness=max
-                try:
-                    with reclaim_file.open("w", encoding="utf-8") as fh:
-                        fh.write(f"{chunk}\n")
-                    reclaimed_requested += chunk
-                    time.sleep(0.005)
-                except OSError as e2:
-                    if e2.errno == errno.EAGAIN:
-                        reclaimed_requested += chunk
-                    break
+                warn(f"swappiness=max unsupported or invalid parameter on {label}")
+                break
             elif e.errno == errno.ENOENT:
                 break
             else:
@@ -309,7 +301,7 @@ def perform_reclaim() -> None:
 
             # If CPU advanced less than 5ms over 50ms window, the app is idle
             if delta_cpu < 5000:
-                target = min(int(anon * 0.8), MAX_PER_RUN - total_requested)
+                target = min(int(anon * 0.40), MAX_PER_RUN - total_requested)
                 if target > 0:
                     req, stl = reclaim_cgroup_chunked(leaf, target, leaf.name)
                     total_requested += req
@@ -378,6 +370,7 @@ ConditionPathExists=/sys/fs/cgroup/system.slice
 
 [Service]
 Type=oneshot
+TimeoutStartSec=30s
 ExecStart={python_bin} {install_path} --run
 RemainAfterExit=no
 Nice=19
