@@ -2769,6 +2769,9 @@ class WallpaperApp:
             background-color: @theme_base_color;
             color: @theme_text_color;
         }
+        switch image {
+            -gtk-icon-transform: scale(0);
+        }
         """
 
         provider = Gtk.CssProvider()

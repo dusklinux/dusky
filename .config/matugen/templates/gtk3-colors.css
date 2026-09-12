@@ -369,6 +369,10 @@ switch:checked slider {
   background-color: @accent_fg_color;
 }
 
+switch image {
+  -gtk-icon-transform: scale(0);
+}
+
 scale trough {
   background-color: @card_bg_color;
   border-radius: 9999px;
