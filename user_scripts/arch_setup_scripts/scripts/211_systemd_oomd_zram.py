@@ -53,8 +53,8 @@ except ImportError:
     console = None  # type: ignore
 
 PRESSURE_RULE: Final[str] = """[Rule]
-MemoryPressureAbove=50%
-LastingSec=15s
+MemoryPressureAbove=35%
+LastingSec=8s
 Action=kill-by-pgscan
 """
 
@@ -157,7 +157,7 @@ class FileSpec:
 
 def specs() -> list[FileSpec]:
     s: list[FileSpec] = [
-        FileSpec(dest=Path("/etc/systemd/oomd/rules.d/30-dusky-pressure.oomrule"), content=PRESSURE_RULE, desc="Pressure rule (kill-by-pgscan @ 50% 15s)"),
+        FileSpec(dest=Path("/etc/systemd/oomd/rules.d/30-dusky-pressure.oomrule"), content=PRESSURE_RULE, desc="Pressure rule (kill-by-pgscan @ 35% 8s)"),
         FileSpec(dest=Path("/etc/systemd/oomd/rules.d/30-dusky-swap.oomrule"), content=SWAP_RULE, desc="Swap rule (kill-by-swap @ 90% + 25% pressure 10s)"),
         FileSpec(dest=Path("/etc/systemd/oomd.conf.d/10-desktop-tune.conf"), content=OOMD_TUNE, desc="oomd global tuning + 0s prekill hook"),
         FileSpec(dest=Path("/etc/systemd/user/app.slice.d/90-desktop-oomd.conf"), content=APP_SLICE, desc="app.slice rules (30-dusky-*)"),
