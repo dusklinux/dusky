@@ -444,6 +444,18 @@ def deploy_systemd_units() -> None:
         except OSError as e:
             die(f"Failed to install to {install_path}: {e}")
 
+    # Always reset runtime configuration to script defaults
+    conf_content = f"""# Dusky Proactive ZRAM Swap Runtime Configuration
+# Dynamically consumed by /usr/local/bin/dusky_pro_active_zram_swap
+APP_IDLE_RECLAIM_RATIO={APP_IDLE_RECLAIM_RATIO:.2f}
+MAX_PER_RUN_MB={MAX_PER_RUN // (1024*1024)}
+CHUNK_SIZE_MB={CHUNK_SIZE // (1024*1024)}
+ZRAM_MAX_USAGE_RATIO={ZRAM_MAX_USAGE_RATIO:.2f}
+TIMER_INTERVAL=3min
+"""
+    write_file_atomic(CONF_PATH, conf_content, mode=0o644)
+    ok(f"Runtime configuration reset to script defaults at {CONF_PATH}")
+
     service_path = Path("/etc/systemd/system/dusky_pro_active_zram_swap.service")
     python_bin = "/usr/bin/python3"
     if not Path(python_bin).exists():
@@ -532,6 +544,7 @@ def main() -> None:
             Path("/usr/local/bin/dusky_pro_active_zram_swap"),
             Path("/etc/systemd/system/dusky_pro_active_zram_swap.service"),
             Path("/etc/systemd/system/dusky_pro_active_zram_swap.timer"),
+            CONF_PATH,
         ]
         for f in files_to_remove:
             if f.exists():
