@@ -6,15 +6,19 @@ Hardware is explicit and auto-detected -- no hardcoded users or machines:
 
   --hardware auto    (default) detect nvidia > amd > cpu
   --hardware nvidia  NVIDIA dGPU via onnxruntime-gpu + CUDA 13 (D3cold capable)
-  --hardware amd     AMD GPU present; ASR runs on CPU reliably, tries
-                     MIGraphX/ROCM EPs opportunistically if installed
+  --hardware amd     AMD GPU via Arch's python-onnxruntime-rocm ([extra],
+                     exposed through a system-site-packages worker venv)
+                     when a usable ROCm stack is present (see detect_rocm);
+                     otherwise CPU onnxruntime (reliable fallback)
   --hardware cpu     CPU-only, always works
 
 Layout (username-agnostic, all under $HOME):
   APP_DIR = ~/.local/lib/dusky-stt
     .venv-main    CPU onnxruntime + numpy + sounddevice (daemon, never CUDA)
     .venv-worker  nvidia: onnxruntime-gpu + CUDA 13 + onnx-asr --no-deps
-                  cpu/amd: onnxruntime + onnx-asr (CPU, always works)
+                  amd+ROCm: system onnxruntime-rocm via --system-site-packages
+                            + onnx-asr --no-deps
+                  cpu/amd (no ROCm): onnxruntime + onnx-asr (CPU, always works)
 """
 
 import argparse
@@ -81,6 +85,31 @@ WORKER_CUDA_PACKAGES = (
 WORKER_NVIDIA_PACKAGES = ("onnxruntime-gpu==1.29.0", "numpy==2.5.2", "huggingface-hub>=0.34")
 WORKER_NVIDIA_NO_DEPS = ("onnx-asr==0.12.0",)
 WORKER_CPU_PACKAGES = ("onnxruntime==1.29.0", "numpy==2.5.2", "huggingface-hub>=0.34", "onnx-asr==0.12.0")
+
+# AMD path: Arch's own python-onnxruntime-rocm from [extra], exposed to the
+# worker through a --system-site-packages venv -- the same source Kokoro TTS
+# calls "--rocm-source arch". AMD's flat wheel index (repo.radeon.com) was
+# audited and deliberately NOT used: it stops at ROCm 7.0 / cp312 wheels
+# while Arch ships ROCm 7.2 / CPython 3.14, so it cannot serve current
+# systems. The [extra] package is built against exactly Arch's python and
+# ROCm, and this installer always builds venvs from sys.executable, so the
+# interpreters match by construction.
+ROCM_SYSTEM_PACKAGE = "python-onnxruntime-rocm"
+# onnx-asr must be --no-deps here too: its metadata would pull plain
+# onnxruntime (CPU) next to the system onnxruntime-rocm and collide on the
+# onnxruntime/ package directory.
+WORKER_ROCM_VENV_PKGS = ("numpy>=2.3", "huggingface-hub>=0.34")
+WORKER_ROCM_NO_DEPS = ("onnx-asr==0.12.0",)
+
+# Consumer gfx targets without native MIOpen/rocBLAS kernels map onto the
+# nearest supported architecture (same table as Kokoro TTS /
+# scripts/lib/gpu_detect.sh).
+HSA_OVERRIDE_MAP = {
+    "gfx1031": "10.3.0", "gfx1032": "10.3.0", "gfx1033": "10.3.0",
+    "gfx1034": "10.3.0", "gfx1035": "10.3.0", "gfx1036": "10.3.0",
+    "gfx1010": "10.3.0", "gfx1011": "10.3.0", "gfx1012": "10.3.0",
+    "gfx1101": "11.0.0", "gfx1102": "11.0.0", "gfx1103": "11.0.0",
+}
 
 SILERO_TAG = "v6.2.1"
 SILERO_URL = f"https://raw.githubusercontent.com/snakers4/silero-vad/{SILERO_TAG}/src/silero_vad/data/silero_vad.onnx"
@@ -182,6 +211,32 @@ def detect_hardware() -> tuple[str, JsonObject]:
     return "cpu", {}
 
 
+def detect_rocm() -> JsonObject | None:
+    """Probe a usable ROCm userspace for the amd worker path.
+
+    Returns {"release", "gfx", "hsa_override"} or None when ROCm is absent or
+    cannot run (no KFD). Mirrors the Kokoro TTS installer's contract.
+    """
+    version_file = Path("/opt/rocm/.info/version")
+    if not Path("/dev/kfd").exists():
+        return None  # amdgpu KFD node missing -> ROCm cannot execute
+    if not version_file.exists() and not shutil.which("rocm-smi"):
+        return None
+    release = ""
+    if version_file.exists():
+        try:
+            release = ".".join(version_file.read_text(encoding="utf-8").strip().split(".")[:2])
+        except OSError:
+            pass
+    gfx = ""
+    rocminfo = shutil.which("rocminfo")
+    if rocminfo:
+        res = run([rocminfo], timeout=60, check=False)
+        match = re.search(r"gfx[0-9a-f]+", res.stdout or "")
+        gfx = match.group(0) if match else ""
+    return {"release": release, "gfx": gfx, "hsa_override": HSA_OVERRIDE_MAP.get(gfx, "")}
+
+
 def query_nvidia_gpu(gpu_device: int) -> tuple[int, str]:
     """Return (total_mib, driver) for the requested NVIDIA index. Raises if missing."""
     smi = shutil.which("nvidia-smi")
@@ -271,7 +326,8 @@ def install_pacman_packages(packages: tuple[str, ...], skip: bool) -> None:
 
 
 # ------------------------------------------------------------------ venvs
-def install_python_environments(stage: Path, hardware: str) -> tuple[Path, Path]:
+def install_python_environments(stage: Path, hardware: str, worker_ort: str,
+                                rocm: JsonObject | None) -> tuple[Path, Path]:
     log_step(f"Provisioning venvs via uv (hardware={hardware})")
     uv = shutil.which("uv")
     if not uv:
@@ -291,28 +347,53 @@ def install_python_environments(stage: Path, hardware: str) -> tuple[Path, Path]
     worker_venv = stage / ".venv-worker"
     log_step("Creating .venv-main + .venv-worker")
     run([uv, "venv", "--python", sys.executable, "--python-preference", "only-system", str(main_venv)], env=env)
-    run([uv, "venv", "--python", sys.executable, "--python-preference", "only-system", str(worker_venv)], env=env)
+    # The rocm worker sees the system python-onnxruntime-rocm through
+    # system-site-packages; every other worker is fully isolated.
+    worker_ssp = ["--system-site-packages"] if worker_ort == "rocm" else []
+    run([uv, "venv", "--python", sys.executable, "--python-preference", "only-system", *worker_ssp, str(worker_venv)], env=env)
     main_py = main_venv / "bin" / "python"
     worker_py = worker_venv / "bin" / "python"
     log_step("Installing .venv-main packages (onnxruntime CPU, ~50 MiB)")
     run([uv, "pip", "install", "--python", str(main_py), *MAIN_PACKAGES], env=env, quiet=False, timeout=1800)
-    if hardware == "nvidia":
+    if worker_ort == "cuda":
         log_step("Installing CUDA 13 runtime wheels (~2.2 GiB -- expect several minutes, progress below)")
         run([uv, "pip", "install", "--python", str(worker_py), *WORKER_CUDA_PACKAGES], env=env, quiet=False, timeout=3600)
         log_step("Installing onnxruntime-gpu + deps")
         run([uv, "pip", "install", "--python", str(worker_py), *WORKER_NVIDIA_PACKAGES], env=env, quiet=False, timeout=1800)
         log_step("Installing onnx-asr --no-deps (protects CUDA namespace)")
         run([uv, "pip", "install", "--python", str(worker_py), "--no-deps", *WORKER_NVIDIA_NO_DEPS], env=env, quiet=False, timeout=600)
+    elif worker_ort == "rocm":
+        # onnxruntime-rocm itself comes from the system package; only the
+        # helper deps are installed into the venv.
+        if subprocess.run(["pacman", "-Qq", ROCM_SYSTEM_PACKAGE], capture_output=True).returncode != 0:
+            raise InstallError(
+                f"{ROCM_SYSTEM_PACKAGE} is not installed. The amd/ROCm worker reads it "
+                "through system-site-packages; install it with "
+                "'sudo pacman -S python-onnxruntime-rocm' (or 396_amd_rocm_stack.sh --python), "
+                "or re-run with --hardware cpu for the reliable CPU path.")
+        release = (rocm or {}).get("release", "")
+        log_step(f"Worker uses system {ROCM_SYSTEM_PACKAGE} (ROCm {release or '?'}) via system-site-packages")
+        log_step("Installing worker helper deps (numpy, huggingface-hub)")
+        run([uv, "pip", "install", "--python", str(worker_py), *WORKER_ROCM_VENV_PKGS], env=env, quiet=False, timeout=1800)
+        log_step("Installing onnx-asr --no-deps (protects the ROCm namespace)")
+        run([uv, "pip", "install", "--python", str(worker_py), "--no-deps", *WORKER_ROCM_NO_DEPS], env=env, quiet=False, timeout=600)
     else:
         log_step(f"Installing worker packages ({hardware}, CPU ORT)")
         run([uv, "pip", "install", "--python", str(worker_py), *WORKER_CPU_PACKAGES], env=env, quiet=False, timeout=1800)
     run([uv, "pip", "check", "--python", str(main_py)], env=env)
-    run([uv, "pip", "check", "--python", str(worker_py)], env=env)
+    # A system-site-packages venv also sees system dists, whose dependency
+    # state pacman (not pip) owns -- treat pip check as advisory there.
+    if worker_ort == "rocm":
+        res = run([uv, "pip", "check", "--python", str(worker_py)], env=env, check=False)
+        if res.returncode != 0 and (res.stdout or "").strip():
+            log_warn(f"uv pip check reported (system packages included): {(res.stdout or '').strip()[:300]}")
+    else:
+        run([uv, "pip", "check", "--python", str(worker_py)], env=env)
     log_ok("Virtual environments built.")
     return main_py, worker_py
 
 
-def verify_namespaces(main_py: Path, worker_py: Path, hardware: str) -> None:
+def verify_namespaces(main_py: Path, worker_py: Path, worker_ort: str) -> None:
     log_step("Asserting onnxruntime namespace exclusivity")
     probe = (
         "import importlib.metadata as m, sys; "
@@ -320,9 +401,14 @@ def verify_namespaces(main_py: Path, worker_py: Path, hardware: str) -> None:
         "assert owners == [sys.argv[1]], f'Namespace collision: {owners}'"
     )
     run([str(main_py), "-c", probe, "onnxruntime"], env={"CUDA_VISIBLE_DEVICES": "-1"})
-    expected = "onnxruntime-gpu" if hardware == "nvidia" else "onnxruntime"
+    # NOTE on the rocm path: Arch's python-onnxruntime-rocm package carries a
+    # distribution literally named "onnxruntime" (verified against its
+    # dist-info), so the probe expects the same name as the cpu path. The
+    # functional cpu/rocm distinction is the worker self-test's provider
+    # check, not this name.
+    expected = "onnxruntime-gpu" if worker_ort == "cuda" else "onnxruntime"
     run([str(worker_py), "-c", probe, expected],
-        env={"CUDA_VISIBLE_DEVICES": "0" if hardware == "nvidia" else "-1"})
+        env={"CUDA_VISIBLE_DEVICES": "0" if worker_ort == "cuda" else "-1"})
     log_ok("ORT namespaces partitioned.")
 
 
@@ -438,7 +524,8 @@ for f in ('libcuda.so', 'libcudart.so', 'libcublas', 'libcudnn', 'onnxruntime_pr
     log_ok("CPU VAD clean.")
 
 
-def verify_worker(worker_py: Path, stage: Path, hardware: str, gpu_device: int, config_path: Path) -> JsonObject:
+def verify_worker(worker_py: Path, stage: Path, hardware: str, gpu_device: int, config_path: Path,
+                  worker_ort: str = "cpu", hsa_override: str = "") -> JsonObject:
     log_step(f"Self-testing worker (hardware={hardware}) -- ~30-60s, silent while encoder loads")
     env = dict(os.environ)
     if hardware == "nvidia":
@@ -447,6 +534,10 @@ def verify_worker(worker_py: Path, stage: Path, hardware: str, gpu_device: int, 
         env["CUDA_MODULE_LOADING"] = "LAZY"
     else:
         env["CUDA_VISIBLE_DEVICES"] = "-1"
+    if hsa_override:
+        # Consumer gfx without native MIOpen/rocBLAS kernels must be mapped
+        # before libamdhip64 initializes (same contract as Kokoro TTS).
+        env["HSA_OVERRIDE_GFX_VERSION"] = hsa_override
     env["HF_HUB_OFFLINE"] = "1"
     res = run([str(worker_py), str(stage / "dusky_worker.py"), "--config", str(config_path), "--self-test"],
               env=env, cwd=stage, timeout=600, quiet=True)
@@ -457,6 +548,14 @@ def verify_worker(worker_py: Path, stage: Path, hardware: str, gpu_device: int, 
         report = {"ok": True, "raw": stdout[-500:]}
     if hardware == "nvidia" and not report.get("ok"):
         raise InstallError(f"CUDA self-test failed (no CUDA EP nodes): {report}")
+    if worker_ort == "rocm":
+        providers = [p for ps in (report.get("providers") or [])
+                     for p in (ps if isinstance(ps, list) else [])]
+        if not any(("ROCmExecutionProvider" in p) or ("MIGraphXExecutionProvider" in p) for p in providers):
+            raise InstallError(
+                "ROCm self-test failed: no ROCm/MIGraphX EP in session providers "
+                f"({providers}). The wheels linked but the runtime did not bind -- "
+                "check 'rocminfo' and the render group, or re-run with --hardware cpu.")
     log_ok(f"Worker self-test passed ({hardware}).")
     return report
 
@@ -478,7 +577,7 @@ def deploy_stage(stage: Path) -> Path | None:
     return backup
 
 
-def install_entrypoints() -> None:
+def install_entrypoints(hsa_override: str = "") -> None:
     log_step("Installing entry points and unit")
     BIN_DIR.mkdir(parents=True, exist_ok=True)
     UNIT_DIR.mkdir(parents=True, exist_ok=True)
@@ -494,6 +593,17 @@ def install_entrypoints() -> None:
     os.chmod(verify_dest, 0o755)
     unit_dest = UNIT_DIR / UNIT_NAME
     shutil.copyfile(APP_DIR / UNIT_NAME, unit_dest)
+    if hsa_override:
+        # Same mapping the self-test needed; the deployed service must set it
+        # before the worker imports libamdhip64.
+        unit_text = unit_dest.read_text(encoding="utf-8")
+        if "HSA_OVERRIDE_GFX_VERSION" not in unit_text and "[Service]" in unit_text:
+            unit_text = unit_text.replace(
+                "[Service]\n",
+                f"[Service]\n# Consumer gfx without native MIOpen/rocBLAS kernels (set by installer)\n"
+                f"Environment=HSA_OVERRIDE_GFX_VERSION={hsa_override}\n", 1)
+            unit_dest.write_text(unit_text, encoding="utf-8")
+            log_ok(f"HSA_OVERRIDE_GFX_VERSION={hsa_override} baked into {UNIT_NAME}")
     os.chmod(unit_dest, 0o644)
     run(["systemd-analyze", "--user", "verify", str(unit_dest)])
     run(["systemctl", "--user", "daemon-reload"])
@@ -546,7 +656,10 @@ def main(argv: list[str]) -> int:
     log_step(f"Hardware backend: {hardware} (auto-detected: {detected})")
 
     gpu_limit = 4096
+    worker_ort = "cpu"
+    rocm: JsonObject | None = None
     if hardware == "nvidia":
+        worker_ort = "cuda"
         total_mb, _driver = query_nvidia_gpu(args.gpu_device)
         # 2GB-VRAM guard: fp32 encoder alone is ~2.5 GB and can never fit;
         # fail fast with a clear message instead of a post-download OOM.
@@ -559,13 +672,22 @@ def main(argv: list[str]) -> int:
                      "context + activations): tight. Prefer --quantization int8.")
         gpu_limit = choose_vram_limit(total_mb, args.gpu_mem_limit_mb)
     elif hardware == "amd":
-        log_warn("AMD GPU acceleration via MIGraphX/ROCm is opportunistic; CPU fallback always works. "
-                 "For GPU EP install ROCm + MIGraphX system-side; otherwise CPU is used.")
+        rocm = detect_rocm()
+        if rocm:
+            worker_ort = "rocm"
+            note = f", HSA_OVERRIDE_GFX_VERSION={rocm['hsa_override']}" if rocm["hsa_override"] else ""
+            log_step(f"AMD ROCm path: release {rocm['release'] or '?'}, gfx {rocm['gfx'] or 'unknown'}{note}")
+            log_warn("python-onnxruntime-rocm pulls the full rocm-hip-sdk dependency chain (~30 GiB installed).")
+        else:
+            log_warn("AMD GPU present but no usable ROCm stack (/opt/rocm + /dev/kfd).")
+            log_warn("Worker will use CPUExecutionProvider (reliable). Run "
+                     "396_amd_rocm_stack.sh, reboot, then re-run this installer for the ROCm path.")
 
     packages = BASE_PACKAGES + (NVIDIA_PACKAGES if hardware == "nvidia" else ())
-    # Gentle AMD hint, never mandatory (keeps install reliable without ROCm).
-    if hardware == "amd" and not shutil.which("rocm-smi") and not Path("/dev/kfd").exists():
-        log_warn("No ROCm stack found; worker will use CPUExecutionProvider (reliable).")
+    if worker_ort == "rocm":
+        # The worker reads this through system-site-packages; installing it
+        # up front keeps the venv step's guard happy.
+        packages += (ROCM_SYSTEM_PACKAGE,)
 
     install_pacman_packages(packages, args.skip_pacman)
 
@@ -578,15 +700,16 @@ def main(argv: list[str]) -> int:
             shutil.copy2(SOURCE_DIR / name, stage / name)
         for name in ("dusky_main.py", "dusky_worker.py", "dusky_trigger.py", "dusky_rec_indicator.py", "dusky_verify.sh"):
             os.chmod(stage / name, 0o755)
-        main_py, worker_py = install_python_environments(stage, hardware)
+        main_py, worker_py = install_python_environments(stage, hardware, worker_ort, rocm)
         silero_hash = download_silero(stage, args.silero_sha256)
-        verify_namespaces(main_py, worker_py, hardware)
+        verify_namespaces(main_py, worker_py, worker_ort)
         verify_cpu_vad(main_py, stage / "models" / "silero_vad.onnx")
         model_dir = Path(args.model_dir).expanduser() if args.model_dir else DEFAULT_MODEL_ROOT / args.model
         prefetch_model(worker_py, args.model, model_dir, args.quantization)
         config: JsonObject = {
             "schema_version": SCHEMA_VERSION,
             "hardware": hardware,
+            "worker_ort": worker_ort,
             "model": args.model,
             "model_dir": str(model_dir),
             "quantization": None if args.quantization in ("none", "fp32") else args.quantization,
@@ -622,16 +745,18 @@ def main(argv: list[str]) -> int:
         cfg_path = stage / "config.json"
         cfg_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
         os.chmod(cfg_path, 0o600)
-        report = verify_worker(worker_py, stage, hardware, args.gpu_device, cfg_path)
+        report = verify_worker(worker_py, stage, hardware, args.gpu_device, cfg_path,
+                                   worker_ort, (rocm or {}).get("hsa_override", ""))
         manifest = {
             "schema_version": SCHEMA_VERSION, "hardware": hardware, "detected": detected,
+            "worker_ort": worker_ort, "rocm": rocm,
             "kernel": platform.release(), "python": sys.version.split()[0],
             "silero_sha256": silero_hash, "model": args.model,
             "self_test": report, "time": int(time.time()),
         }
         (stage / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         backup = deploy_stage(stage)
-        install_entrypoints()
+        install_entrypoints((rocm or {}).get("hsa_override", ""))
         if backup and backup.exists():
             shutil.rmtree(backup, ignore_errors=True)
         log_ok(f"Dusky STT installed ({hardware}) at {APP_DIR}.")
