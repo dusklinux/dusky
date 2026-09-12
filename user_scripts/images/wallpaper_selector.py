@@ -2302,6 +2302,7 @@ class WallpaperApp:
         self.favorites: set[str] = set()
         self.children: dict[str, Gtk.Widget] = {}
         self.current_selected_child = None
+        self.applied_path: str | None = None
 
         self.search_query = ""
         self.settings = DEFAULT_SETTINGS.copy()
@@ -2732,6 +2733,25 @@ class WallpaperApp:
         .wallpaper-tile:selected {
             border-color: @theme_selected_bg_color;
             background-color: alpha(@theme_selected_bg_color, 0.15);
+        }
+        .wallpaper-tile.applied-wallpaper {
+            border-color: @theme_selected_bg_color;
+            background-color: alpha(@theme_selected_bg_color, 0.18);
+            box-shadow: 0 0 12px 3px alpha(@theme_selected_bg_color, 0.7);
+        }
+        .wallpaper-tile.applied-wallpaper:selected {
+            border-color: shade(@theme_selected_bg_color, 1.15);
+            background-color: alpha(@theme_selected_bg_color, 0.28);
+            box-shadow: 0 0 16px 5px alpha(@theme_selected_bg_color, 0.85);
+        }
+        .applied-badge {
+            background-color: @theme_selected_bg_color;
+            color: @theme_selected_fg_color;
+            border-radius: 9999px;
+            padding: 2px 7px;
+            font-size: 0.72em;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
         }
         .thumbnail-placeholder {
             border-radius: 14px;
@@ -3185,6 +3205,8 @@ class WallpaperApp:
             self.favorites = favorites
 
         self.wallpapers = result.wallpapers
+        if current_path is not None:
+            self.applied_path = current_path
 
         if (
             self.initial_grid
@@ -3268,6 +3290,18 @@ class WallpaperApp:
         child.heart_label = heart
         overlay.add_overlay(heart)
         overlay.set_overlay_pass_through(heart, True)
+
+        applied_badge = Gtk.Label(label="✓ Active")
+        applied_badge.set_no_show_all(True)
+        applied_badge.get_style_context().add_class("applied-badge")
+        applied_badge.set_halign(Gtk.Align.START)
+        applied_badge.set_valign(Gtk.Align.START)
+        applied_badge.set_margin_top(6)
+        applied_badge.set_margin_start(8)
+
+        child.applied_badge = applied_badge
+        overlay.add_overlay(applied_badge)
+        overlay.set_overlay_pass_through(applied_badge, True)
 
         name_label = Gtk.Label(label=os.path.basename(rel_path))
         name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
@@ -3470,6 +3504,18 @@ class WallpaperApp:
         child.heart_label.set_visible(
             child.rel_path in self.favorites
         )
+
+        is_applied = (
+            self.applied_path is not None
+            and child.rel_path == self.applied_path
+        )
+        tile_context = child.get_style_context()
+        if is_applied:
+            tile_context.add_class("applied-wallpaper")
+            child.applied_badge.set_visible(True)
+        else:
+            tile_context.remove_class("applied-wallpaper")
+            child.applied_badge.set_visible(False)
 
         child.name_label.set_visible(
             child.rel_path == self.flowbox.selected_path()
@@ -3719,6 +3765,19 @@ class WallpaperApp:
 
         self._schedule_image_pump()
 
+    def set_applied_path(self, rel_path):
+        old_path = self.applied_path
+        if old_path == rel_path:
+            return
+
+        self.applied_path = rel_path
+
+        for path in (old_path, rel_path):
+            if path:
+                child = self.children.get(path)
+                if child is not None:
+                    self._render_child(child)
+
     def apply_wallpaper(self, rel_path, *, regen):
         if (
             not rel_path
@@ -3762,6 +3821,7 @@ class WallpaperApp:
                     success,
                     message,
                     should_close,
+                    rel_path,
                 )
 
         try:
@@ -3775,9 +3835,10 @@ class WallpaperApp:
                 False,
                 describe_error(error),
                 should_close,
+                rel_path,
             )
 
-    def _backend_complete(self, success, message, should_close):
+    def _backend_complete(self, success, message, should_close, rel_path=None):
         self.is_applying = False
 
         try:
@@ -3789,8 +3850,12 @@ class WallpaperApp:
                     "Wallpaper Application Failed",
                     message,
                 )
-            elif should_close and self.window is not None:
-                self.window.close()
+            else:
+                if rel_path:
+                    self.set_applied_path(rel_path)
+
+                if should_close and self.window is not None:
+                    self.window.close()
 
         finally:
             self.app.release()
