@@ -167,7 +167,7 @@ _ask_func() {
 alias ask='noglob _ask_func'
 
 # Memory Optimization
-alias mem_optimize='sudo systemctl start dusky_boot_mem_reclaim.service'
+alias mem_optimize='sudo systemctl start dusky_pro_active_zram_swap.service'
 
 # Networking
 alias iphone_vnc="$HOME/user_scripts/networking/iphone_vnc.sh"

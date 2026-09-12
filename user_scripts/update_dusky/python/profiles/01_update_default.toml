@@ -113,7 +113,7 @@ tasks = [
     "S | once | 212_thp_sysfs_optimizer.sh",
     "S | once | 213_systemd_journaling_optimizer.sh",
     "S | once | 216_systemd_accounting_optimizer.py --yes",
-    "S | once | 217_boot_memory_reclaimer.py",
+    "S | once | 217_pro_active_zram_swap.py",
     # "S | 215_powerkey_lid_close_behaviour.sh",
     "S | once | 220_logrotate_optimization.sh",
     "S | once | 225_faillock_timeout.py --preset lenient -y",
@@ -174,6 +174,7 @@ tasks = [
     "U | ignore-fail | update_counter.sh",
     # "U | once | system_update.sh --pacman",
     "S | once | fix_wayland_session.py",
+    "S | once | cleanup_stale_boot_mem_reclaim.py",
     "U | tui_starship.py --apply-state",
     "U | once | keylogger_installer.py",
     # ==============================================

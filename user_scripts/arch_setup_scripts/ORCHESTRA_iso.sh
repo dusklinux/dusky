@@ -102,7 +102,7 @@ INSTALL_SEQUENCE=(
     "S | 212_thp_sysfs_optimizer.sh"
     "S | 213_systemd_journaling_optimizer.sh"
     "S | 216_systemd_accounting_optimizer.py --yes"
-    "S | 217_boot_memory_reclaimer.py"
+    "S | 217_pro_active_zram_swap.py"
 #    "S | 215_powerkey_lid_close_behaviour.sh"
 
     "S | 220_logrotate_optimization.sh"

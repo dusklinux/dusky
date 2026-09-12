@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#d: Reclaim boot-time & periodic idle memory to ZRAM (MGLRU Engine)
+#d: Proactive idle memory reclaimer & ZRAM swapper (MGLRU Engine)
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ TOTAL_RAM: int = get_total_ram_bytes()
 MAX_PER_RUN: int = min(1024 * 1024 * 1024, max(256 * 1024 * 1024, int(TOTAL_RAM * 0.10)))
 
 # --- Argument Parsing (Executed BEFORE Privilege Escalation) ---
-parser = argparse.ArgumentParser(description="Elite Arch Linux MGLRU Boot & Periodic Memory Skimmer")
+parser = argparse.ArgumentParser(description="Elite Arch Linux MGLRU Proactive ZRAM Memory Skimmer")
 group = parser.add_mutually_exclusive_group()
 group.add_argument("--run", action="store_true", help="Directly trigger the memory reclaim task")
 group.add_argument("--restore", action="store_true", help="Remove reclaimer binaries, systemd units and timer")
@@ -396,9 +396,9 @@ def perform_reclaim() -> None:
     ok(f"Sweep finished in {elapsed_ms:.1f}ms. Stolen: {total_stolen / (1024*1024):.1f} MB to ZRAM{zram_info}")
 
 def deploy_systemd_units() -> None:
-    info("Deploying MGLRU boot & periodic idle memory reclaim units...")
+    info("Deploying MGLRU proactive ZRAM memory reclaim units...")
 
-    install_path = Path("/usr/local/bin/dusky_boot_mem_reclaim")
+    install_path = Path("/usr/local/bin/dusky_pro_active_zram_swap")
     current_script = Path(__file__).resolve()
 
     if current_script != install_path:
@@ -410,13 +410,13 @@ def deploy_systemd_units() -> None:
         except OSError as e:
             die(f"Failed to install to {install_path}: {e}")
 
-    service_path = Path("/etc/systemd/system/dusky_boot_mem_reclaim.service")
+    service_path = Path("/etc/systemd/system/dusky_pro_active_zram_swap.service")
     python_bin = "/usr/bin/python3"
     if not Path(python_bin).exists():
         python_bin = sys.executable
 
     service_content = f"""[Unit]
-Description=MGLRU Cold Memory Reclaimer & Idle Skimmer (Kernel 7.2+ / systemd 261+)
+Description=MGLRU Proactive Idle Memory Skimmer & ZRAM Swapper (Kernel 7.2+ / systemd 261+)
 Documentation=https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html
 After=multi-user.target local-fs.target
 ConditionPathExists=/sys/fs/cgroup
@@ -446,9 +446,9 @@ MemoryDenyWriteExecute=no
     write_file_atomic(service_path, service_content, mode=0o644)
     ok(f"Service unit written to {service_path}")
 
-    timer_path = Path("/etc/systemd/system/dusky_boot_mem_reclaim.timer")
+    timer_path = Path("/etc/systemd/system/dusky_pro_active_zram_swap.timer")
     timer_content = """[Unit]
-Description=Trigger MGLRU Cold Memory Reclaimer at 45s Boot & 3min Periodic
+Description=Trigger MGLRU Proactive ZRAM Swap at 45s Boot & 3min Periodic
 Documentation=https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html
 
 [Timer]
@@ -457,7 +457,7 @@ OnUnitActiveSec=3min
 AccuracySec=5s
 RandomizedDelaySec=15s
 Persistent=false
-Unit=dusky_boot_mem_reclaim.service
+Unit=dusky_pro_active_zram_swap.service
 
 [Install]
 WantedBy=timers.target
@@ -471,14 +471,14 @@ WantedBy=timers.target
     except subprocess.CalledProcessError as e:
         die(f"systemctl daemon-reload failed: {e}")
 
-    info("Enabling and starting dusky_boot_mem_reclaim.timer...")
+    info("Enabling and starting dusky_pro_active_zram_swap.timer...")
     try:
-        subprocess.run(["systemctl", "enable", "--now", "dusky_boot_mem_reclaim.timer"], check=True)
+        subprocess.run(["systemctl", "enable", "--now", "dusky_pro_active_zram_swap.timer"], check=True)
     except subprocess.CalledProcessError as e:
         die(f"Failed to enable timer: {e}")
 
     ok("MGLRU skimmer timer active: initial run at 45s after boot, recurring every 3min thereafter.")
-    info("Verify with: systemctl status dusky_boot_mem_reclaim.timer && systemctl status dusky_boot_mem_reclaim.service && journalctl -u dusky_boot_mem_reclaim.service")
+    info("Verify with: systemctl status dusky_pro_active_zram_swap.timer && systemctl status dusky_pro_active_zram_swap.service && journalctl -u dusky_pro_active_zram_swap.service")
 
 def main() -> None:
     if sys.version_info < (3, 14):
@@ -488,16 +488,16 @@ def main() -> None:
 
     if args.restore:
         info("Stopping and disabling systemd timer and service...")
-        for unit in ("dusky_boot_mem_reclaim.timer", "dusky_boot_mem_reclaim.service"):
+        for unit in ("dusky_pro_active_zram_swap.timer", "dusky_pro_active_zram_swap.service"):
             try:
                 subprocess.run(["systemctl", "disable", "--now", unit], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
                 pass
 
         files_to_remove = [
-            Path("/usr/local/bin/dusky_boot_mem_reclaim"),
-            Path("/etc/systemd/system/dusky_boot_mem_reclaim.service"),
-            Path("/etc/systemd/system/dusky_boot_mem_reclaim.timer"),
+            Path("/usr/local/bin/dusky_pro_active_zram_swap"),
+            Path("/etc/systemd/system/dusky_pro_active_zram_swap.service"),
+            Path("/etc/systemd/system/dusky_pro_active_zram_swap.timer"),
         ]
         for f in files_to_remove:
             if f.exists():

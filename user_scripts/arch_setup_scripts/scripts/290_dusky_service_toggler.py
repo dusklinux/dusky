@@ -69,6 +69,8 @@ SYSTEM_SERVICES: Final[list[ServiceConfig]] = [
     ServiceConfig("systemd-resolved.service", True, "Network Name Resolution manager"),
     ServiceConfig("snapper-cleanup.timer", True, "Btrfs Snapper snapshot cleanup timer"),
     ServiceConfig("snapper-cleanup.service", True, "Btrfs Snapper snapshot cleanup service"),
+    ServiceConfig("dusky_pro_active_zram_swap.timer", True, "Proactive ZRAM idle memory reclaimer timer"),
+    ServiceConfig("dusky_pro_active_zram_swap.service", True, "Proactive ZRAM idle memory reclaimer service"),
     # Optional / Disabled by Default:
     ServiceConfig("tlp.service", False, "Power management daemon (disabled by default)"),
     ServiceConfig("vsftpd.service", False, "FTP server daemon (disabled by default)"),
