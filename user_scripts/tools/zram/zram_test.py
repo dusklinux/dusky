@@ -1082,55 +1082,6 @@ class DuskyRAMAnalyzer(App):
         background: {BG};
     }}
 
-    #top_bar {{
-        dock: top;
-        width: 100%;
-        height: 1;
-        background: {BG};
-        padding: 0 1;
-        align-vertical: middle;
-    }}
-
-    #header_title {{
-        width: 1fr;
-        height: 1;
-        text-align: center;
-        text-style: bold;
-        color: {FG};
-    }}
-
-    #btn_top_help {{
-        height: 1;
-        min-width: 0;
-        width: auto;
-        border: none;
-        background: {ACCENT};
-        color: {BG};
-        text-style: bold;
-        padding: 0;
-        margin: 0;
-    }}
-    #btn_top_help:hover, #btn_top_help:focus {{
-        background: {SUCCESS};
-        color: {BG};
-    }}
-
-    #btn_top_quit {{
-        height: 1;
-        min-width: 0;
-        width: auto;
-        border: none;
-        background: {MUTED};
-        color: {ERROR};
-        text-style: bold;
-        padding: 0;
-        margin: 0;
-    }}
-    #btn_top_quit:hover, #btn_top_quit:focus {{
-        background: {ERROR};
-        color: {BG};
-    }}
-
     #main_container {{
         layout: horizontal;
         height: 1fr;
@@ -1157,15 +1108,21 @@ class DuskyRAMAnalyzer(App):
         layout: vertical;
         height: auto;
         background: {BG};
-        padding: 0 1;
+        padding: 0;
+        margin: 0;
     }}
 
     .btn-row {{
         layout: horizontal;
-        align: center middle;
         width: 100%;
         height: 1;
-        margin-top: 1;
+        margin: 0;
+        padding: 0 1;
+    }}
+
+    .spacer {{
+        width: 1fr;
+        height: 1;
     }}
 
     /* Tight modern buttons: zero extra padding, auto-fit width, cohesive theme hover */
@@ -1176,7 +1133,7 @@ class DuskyRAMAnalyzer(App):
         width: auto;
         border: none;
         padding: 0;
-        margin: 0 1;
+        margin: 0;
         text-style: bold;
     }}
 
@@ -1290,14 +1247,6 @@ class DuskyRAMAnalyzer(App):
         color: {BG};
     }}
 
-    #status_label {{
-        height: 1;
-        content-align: center middle;
-        text-style: bold;
-        color: {FG};
-        margin-top: 1;
-        margin-bottom: 1;
-    }}
 
     /* Shortcuts modal dialog styling */
     ShortcutsScreen {{
@@ -1383,7 +1332,16 @@ class DuskyRAMAnalyzer(App):
         self._proc_busy = False
         self._add_queue: list[str] = []
         self._worker_running = False
-        self._status_text = "[dim]Ready. Select category (1-5), press + to inject load, p to pageout to ZRAM, F1 for help.[/dim]"
+
+    def notify_status(self, message: str, severity: str = "information", timeout: float = 2.5) -> None:
+        """Non-intrusive floating toast notification; uses zero permanent screen space."""
+        clean = re.sub(r"\[/?.*?\]", "", message).strip()
+        if not clean:
+            return
+        if threading.current_thread() is threading.main_thread():
+            self.notify(clean, severity=severity, timeout=timeout)
+        else:
+            self.call_from_thread(self.notify, clean, severity=severity, timeout=timeout)
 
     def action_help(self) -> None:
         """Toggles the shortcuts and help modal dialog."""
@@ -1393,12 +1351,6 @@ class DuskyRAMAnalyzer(App):
             self.push_screen(ShortcutsScreen())
 
     def compose(self) -> ComposeResult:
-        uname = os.uname()
-        with Horizontal(id="top_bar"):
-            yield Button("󰌌 F1 Help", id="btn_top_help")
-            yield Label(f"DUSKY RAM ANALYZER & BALLOON BENCHMARK  •  Kernel: {uname.release}  •  Host: {uname.nodename}", id="header_title")
-            yield Button("q Quit", id="btn_top_quit")
-
         with Horizontal(id="main_container"):
             with VerticalScroll(classes="column"):
                 yield Static(id="p_mem", classes="panel")
@@ -1411,28 +1363,39 @@ class DuskyRAMAnalyzer(App):
 
         chunk = self.balloon.chunk_mb
         with Static(id="controls_container"):
-            # Row 1: Balloon Type Selection + F1 + Quit
+            # Row 1: Balloon Type Selection + F1 Help + Quit (spread evenly across row)
             with Horizontal(classes="btn-row"):
                 yield Button("1:Dormant", id="type_dormant", classes="type-btn active-type")
+                yield Static(classes="spacer")
                 yield Button("2:Active", id="type_active", classes="type-btn")
+                yield Static(classes="spacer")
                 yield Button("3:Clean", id="type_clean", classes="type-btn")
+                yield Static(classes="spacer")
                 yield Button("4:Dirty", id="type_dirty", classes="type-btn")
+                yield Static(classes="spacer")
                 yield Button("5:Shmem", id="type_shmem", classes="type-btn")
-                yield Button("󰌌 F1", id="btn_help")
+                yield Static(classes="spacer")
+                yield Button("󰌌 F1 Help", id="btn_help")
+                yield Static(classes="spacer")
                 yield Button("q Quit", id="btn_quit")
 
-            # Row 2: Actions
+            # Row 2: Actions (spread evenly across row)
             with Horizontal(classes="btn-row"):
                 yield Button(f"+ {chunk}M", id="btn_add")
+                yield Static(classes="spacer")
                 yield Button(f"- {chunk}M", id="btn_free")
+                yield Static(classes="spacer")
                 yield Button("p PageOut", id="btn_pageout")
+                yield Static(classes="spacer")
                 yield Button("s Sync", id="btn_sync")
+                yield Static(classes="spacer")
                 yield Button("d Drop", id="btn_drop")
+                yield Static(classes="spacer")
                 yield Button("k Compact", id="btn_compact")
+                yield Static(classes="spacer")
                 yield Button("c Clear", id="btn_clear")
+                yield Static(classes="spacer")
                 yield Button("r Ref", id="btn_refresh")
-
-            yield Label(self._status_text, id="status_label")
 
     def on_mount(self) -> None:
         self.w_mem = self.query_one("#p_mem", Static)
@@ -1441,7 +1404,6 @@ class DuskyRAMAnalyzer(App):
         self.w_zram = self.query_one("#p_zram", Static)
         self.w_vm = self.query_one("#p_vm", Static)
         self.w_balloon = self.query_one("#p_balloon", Static)
-        self.w_status = self.query_one("#status_label", Label)
 
         self.refresh_dashboards()
         self.scan_now()
@@ -1461,9 +1423,8 @@ class DuskyRAMAnalyzer(App):
             self.w_zram.update(panel_zram(snap))
             self.w_vm.update(panel_vm(snap))
             self.w_balloon.update(panel_balloon(self.balloon, self.active_category))
-            self.w_status.update(self._status_text)
         except Exception as exc:
-            self.w_status.update(f"[bold red]Refresh error:[/bold red] {escape(str(exc))}")
+            self.notify_status(f"Refresh error: {exc}", severity="error")
 
     # -- Background Workers --------------------------------------------------
     def scan_now(self) -> None:
@@ -1491,14 +1452,14 @@ class DuskyRAMAnalyzer(App):
                     btn.remove_class("active-type")
             except Exception:
                 pass
-        self._status_text = f"[bold cyan]Selected category: {cat.upper()}[/bold cyan]"
         self.refresh_dashboards()
+        self.notify_status(f"Category: {cat.upper()}", timeout=1.5)
 
     # -- Queued Balloon Actions (Background Threads) -------------------------
     def action_add_chunk(self) -> None:
         cat = self.active_category
         self._add_queue.append(cat)
-        self._status_text = f"[yellow]Queued +{self.balloon.chunk_mb} MiB of {cat.upper()} (queue: {len(self._add_queue)})...[/yellow]"
+        self.notify_status(f"Queued +{self.balloon.chunk_mb} MiB {cat.upper()}...", severity="warning", timeout=1.5)
         self.refresh_dashboards()
 
         if not self._worker_running:
@@ -1519,11 +1480,11 @@ class DuskyRAMAnalyzer(App):
                 success = fn() if fn else False
                 if success:
                     rem = len(self._add_queue)
-                    rem_str = f" [dim](remaining: {rem})[/dim]" if rem > 0 else ""
-                    self._status_text = f"[bold green]Added +{self.balloon.chunk_mb} MiB {cat.upper()}[/bold green]{rem_str} (Total: {self.balloon.total_mb} MiB)"
+                    rem_str = f" (remaining: {rem})" if rem > 0 else ""
+                    self.notify_status(f"Added +{self.balloon.chunk_mb} MiB {cat.upper()}{rem_str} (Total: {self.balloon.total_mb} MiB)")
                 else:
                     self._add_queue.clear()
-                    self._status_text = f"[bold red]Allocation refused for {cat.upper()} (MemoryError/OSError)[/bold red]"
+                    self.notify_status(f"Allocation refused for {cat.upper()} (MemoryError/OSError)", severity="error", timeout=4.0)
                     break
                 self.call_from_thread(self.refresh_dashboards)
         finally:
@@ -1540,56 +1501,56 @@ class DuskyRAMAnalyzer(App):
             "shmem": self.balloon.free_shmem,
         }.get(cat)
         if fn and fn():
-            self._status_text = f"[bold yellow]Freed -{self.balloon.chunk_mb} MiB {cat.upper()}[/bold yellow] (Total: {self.balloon.total_mb} MiB)"
+            self.notify_status(f"Freed -{self.balloon.chunk_mb} MiB {cat.upper()} (Total: {self.balloon.total_mb} MiB)")
         else:
-            self._status_text = f"[dim]No {cat.upper()} blocks to free.[/dim]"
+            self.notify_status(f"No {cat.upper()} blocks to free.", severity="warning")
         self.refresh_dashboards()
 
     def action_pageout_zram(self) -> None:
-        self._status_text = "[magenta]Paging out dormant memory to ZRAM (MADV_PAGEOUT)...[/magenta]"
+        self.notify_status("Paging out dormant memory to ZRAM (MADV_PAGEOUT)...", timeout=2.0)
         self.refresh_dashboards()
         self.run_worker(self._worker_pageout, thread=True, exit_on_error=False, group="balloon")
 
     def _worker_pageout(self) -> None:
         try:
             mb = self.balloon.pageout_dormant()
-            self._status_text = f"[bold magenta]Pushed {mb} MiB dormant memory into ZRAM![/bold magenta]"
+            self.notify_status(f"Pushed {mb} MiB dormant memory into ZRAM!")
         finally:
             self.call_from_thread(self.refresh_dashboards)
 
     def action_sync_dirty(self) -> None:
         mb = self.balloon.sync_dirty()
-        self._status_text = f"[bold sky_blue]Synced {mb} MiB dirty cache to disk.[/bold sky_blue]"
+        self.notify_status(f"Synced {mb} MiB dirty cache to disk.")
         self.refresh_dashboards()
 
     def action_drop_caches(self) -> None:
-        self._status_text = "[yellow]Dropping caches...[/yellow]"
+        self.notify_status("Dropping caches...", severity="warning", timeout=2.0)
         self.refresh_dashboards()
         self.run_worker(self._worker_drop, thread=True, exit_on_error=False, group="balloon")
 
     def _worker_drop(self) -> None:
         try:
             ok, msg = self.balloon.drop_caches()
-            self._status_text = f"[{'bold green' if ok else 'bold red'}]{msg}[/]"
+            self.notify_status(msg, severity="information" if ok else "error", timeout=3.5)
         finally:
             self.call_from_thread(self.refresh_dashboards)
 
     def action_compact_zram(self) -> None:
-        self._status_text = "[yellow]Compacting ZRAM memory...[/yellow]"
+        self.notify_status("Compacting ZRAM memory...", severity="warning", timeout=2.0)
         self.refresh_dashboards()
         self.run_worker(self._worker_compact, thread=True, exit_on_error=False, group="balloon")
 
     def _worker_compact(self) -> None:
         try:
             cnt, msg = self.balloon.compact_zram()
-            self._status_text = f"[{'bold green' if cnt > 0 else 'bold red'}]{msg}[/]"
+            self.notify_status(msg, severity="information" if cnt > 0 else "error", timeout=3.5)
         finally:
             self.call_from_thread(self.refresh_dashboards)
 
     def action_clear_all(self) -> None:
         self._add_queue.clear()
         self.balloon.clear()
-        self._status_text = "[bold red]All synthetic balloon blocks cleared.[/bold red]"
+        self.notify_status("All synthetic balloon blocks cleared.", severity="warning")
         self.refresh_dashboards()
 
     def action_refresh_now(self) -> None:
@@ -1606,9 +1567,9 @@ class DuskyRAMAnalyzer(App):
             self.action_set_type(bid[5:])
             return
         match bid:
-            case "btn_top_help" | "btn_help":
+            case "btn_help":
                 self.action_help()
-            case "btn_top_quit" | "btn_quit":
+            case "btn_quit":
                 self.action_bail_out()
             case "btn_add":
                 self.action_add_chunk()
