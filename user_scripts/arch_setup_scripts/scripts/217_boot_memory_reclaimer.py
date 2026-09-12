@@ -301,7 +301,7 @@ def perform_reclaim() -> None:
 
             # If CPU advanced less than 5ms over 50ms window, the app is idle
             if delta_cpu < 5000:
-                target = min(int(anon * 0.40), MAX_PER_RUN - total_requested)
+                target = min(int(anon * 0.60), MAX_PER_RUN - total_requested)
                 if target > 0:
                     req, stl = reclaim_cgroup_chunked(leaf, target, leaf.name)
                     total_requested += req
@@ -394,12 +394,12 @@ MemoryDenyWriteExecute=no
 
     timer_path = Path("/etc/systemd/system/dusky_boot_mem_reclaim.timer")
     timer_content = """[Unit]
-Description=Trigger MGLRU Cold Memory Reclaimer at 45s Boot & 5min Periodic
+Description=Trigger MGLRU Cold Memory Reclaimer at 45s Boot & 3min Periodic
 Documentation=https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html
 
 [Timer]
 OnBootSec=45s
-OnUnitActiveSec=5min
+OnUnitActiveSec=3min
 AccuracySec=5s
 RandomizedDelaySec=15s
 Persistent=false
@@ -423,7 +423,7 @@ WantedBy=timers.target
     except subprocess.CalledProcessError as e:
         die(f"Failed to enable timer: {e}")
 
-    ok("MGLRU skimmer timer active: initial run at 45s after boot, recurring every 5min thereafter.")
+    ok("MGLRU skimmer timer active: initial run at 45s after boot, recurring every 3min thereafter.")
     info("Verify with: systemctl status dusky_boot_mem_reclaim.timer && systemctl status dusky_boot_mem_reclaim.service && journalctl -u dusky_boot_mem_reclaim.service")
 
 def main() -> None:
