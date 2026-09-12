@@ -2797,26 +2797,49 @@ class WinePrefix:
             return 0
         linked = 0
 
-        def _find_runtime_dir(pattern: str, sub: str) -> Path | None:
-            p = Path(os.path.expanduser(pattern))
-            if not p.is_dir():
-                return None
-            dirs = sorted([d for d in p.iterdir() if d.is_dir()], reverse=True)
-            for d in dirs:
-                cand = d / sub if (d / sub).is_dir() else d
-                if cand.is_dir():
-                    return cand
+        def _find_translator_dir(tech: str, arch: str) -> Path | None:
+            # 1. Lutris runtimes (~/.local/share/lutris/runtime/<tech>/<ver>/<arch>)
+            lutris_base = Path(os.path.expanduser(f"~/.local/share/lutris/runtime/{tech}"))
+            if lutris_base.is_dir():
+                dirs = sorted([d for d in lutris_base.iterdir() if d.is_dir()], reverse=True)
+                for d in dirs:
+                    for sub in (arch, "x86" if arch == "x32" else "x64"):
+                        cand = d / sub
+                        if cand.is_dir():
+                            return cand
+
+            # 2. System-wide /usr/share paths (dxvk, vkd3d, vkd3d-proton)
+            sys_names = [tech]
+            if tech == "vkd3d":
+                sys_names.append("vkd3d-proton")
+            sub_names = [arch]
+            if arch == "x32":
+                sub_names.extend(["x86", "i386"])
+            for sname in sys_names:
+                for sub in sub_names:
+                    cand = Path(f"/usr/share/{sname}") / sub
+                    if cand.is_dir():
+                        return cand
+
+            # 3. Steam Proton / GE-Proton compatibility tools
+            steam_compat = Path(os.path.expanduser("~/.local/share/Steam/compatibilitytools.d"))
+            if steam_compat.is_dir():
+                proton_dirs = sorted([d for d in steam_compat.iterdir() if d.is_dir()], reverse=True)
+                proton_tech = "vkd3d-proton" if tech == "vkd3d" else tech
+                win_arch = "x86_64-windows" if arch == "x64" else "i386-windows"
+                for pd in proton_dirs:
+                    cand = pd / "files" / "lib" / "wine" / proton_tech / win_arch
+                    if cand.is_dir():
+                        return cand
+
             return None
 
         # 1. DXVK (D3D9, D3D10, D3D11, DXGI -> Vulkan)
         if want_dxvk:
-            for sub, target_dir in (("x64", sys32), ("x32", syswow if syswow.is_dir() else None)):
+            for arch, target_dir in (("x64", sys32), ("x32", syswow if syswow.is_dir() else None)):
                 if not target_dir:
                     continue
-                dxvk_src = (
-                    _find_runtime_dir("~/.local/share/lutris/runtime/dxvk", sub)
-                    or (Path("/usr/share/dxvk") / sub if (Path("/usr/share/dxvk") / sub).is_dir() else None)
-                )
+                dxvk_src = _find_translator_dir("dxvk", arch)
                 if dxvk_src:
                     for dll in ("d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d10core.dll", "d3d8.dll"):
                         src = dxvk_src / dll
@@ -2834,13 +2857,10 @@ class WinePrefix:
 
         # 2. VKD3D (D3D12 -> Vulkan)
         if want_vkd3d:
-            for sub, target_dir in (("x64", sys32), ("x32", syswow if syswow.is_dir() else None)):
+            for arch, target_dir in (("x64", sys32), ("x32", syswow if syswow.is_dir() else None)):
                 if not target_dir:
                     continue
-                vkd3d_src = (
-                    _find_runtime_dir("~/.local/share/lutris/runtime/vkd3d", sub)
-                    or (Path("/usr/share/vkd3d") / sub if (Path("/usr/share/vkd3d") / sub).is_dir() else None)
-                )
+                vkd3d_src = _find_translator_dir("vkd3d", arch)
                 if vkd3d_src:
                     for dll in ("d3d12.dll", "d3d12core.dll"):
                         src = vkd3d_src / dll
@@ -2858,10 +2878,10 @@ class WinePrefix:
 
         # 3. DXVK-NVAPI
         if want_nvapi:
-            for sub, target_dir in (("x64", sys32), ("x32", syswow if syswow.is_dir() else None)):
+            for arch, target_dir in (("x64", sys32), ("x32", syswow if syswow.is_dir() else None)):
                 if not target_dir:
                     continue
-                nvapi_src = _find_runtime_dir("~/.local/share/lutris/runtime/dxvk-nvapi", sub)
+                nvapi_src = _find_translator_dir("dxvk-nvapi", arch)
                 if nvapi_src:
                     for dll in ("nvapi64.dll", "nvofapi64.dll", "nvapi.dll"):
                         src = nvapi_src / dll

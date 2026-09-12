@@ -1044,6 +1044,41 @@ def configure_protonup(ctx: SetupContext):
     )
 
 
+def configure_dxvk_vkd3d(ctx: SetupContext):
+    """
+    Ensures Direct3D-to-Vulkan translation libraries (DXVK and VKD3D-Proton)
+    are installed on the system and appropriately linked for Wine runners.
+    """
+    aur_helper = next((h for h in ("paru", "yay") if shutil.which(h)), None)
+
+    missing = []
+    if not Path("/usr/share/dxvk/x64/d3d11.dll").is_file():
+        missing.append("dxvk-bin")
+    if not (Path("/usr/share/vkd3d/x64/d3d12.dll").is_file() or Path("/usr/share/vkd3d-proton/x64/d3d12.dll").is_file()):
+        missing.append("vkd3d-proton-bin")
+
+    if missing:
+        if aur_helper:
+            pkgs_str = " ".join(missing)
+            run_command(
+                ctx,
+                f"{aur_helper} -S --needed --noconfirm {pkgs_str}",
+                f"Install Direct3D-to-Vulkan translation libraries ({pkgs_str}) via AUR",
+                critical=False
+            )
+        else:
+            console.print(f"[yellow]Warning: Missing translation libraries ({', '.join(missing)}) but no AUR helper found.[/yellow]")
+    else:
+        console.print("[bold green]✔ Direct3D-to-Vulkan translation libraries (DXVK & VKD3D-Proton) are already installed.[/bold green]")
+
+    # Ensure compatibility symlinks (/usr/share/vkd3d -> /usr/share/vkd3d-proton and x32 -> x86)
+    if not ctx.dry_run and Path("/usr/share/vkd3d-proton").is_dir():
+        if not Path("/usr/share/vkd3d").exists():
+            subprocess.run(["sudo", "ln", "-s", "/usr/share/vkd3d-proton", "/usr/share/vkd3d"], capture_output=True)
+        if Path("/usr/share/vkd3d-proton/x86").is_dir() and not Path("/usr/share/vkd3d-proton/x32").exists():
+            subprocess.run(["sudo", "ln", "-s", "x86", "/usr/share/vkd3d-proton/x32"], capture_output=True)
+
+
 def configure_flatpak_ecosystem(ctx: SetupContext):
     """Configures Flathub remotes, installs gaming Flatpaks, Vulkan layers, and native Wayland sandbox overrides."""
     if not ctx.modules.flatpak_apps:
@@ -1251,6 +1286,8 @@ def check_system_installed_status() -> Dict[str, bool]:
     status["gamemode"] = shutil.which("gamemoded") is not None
     status["mangohud"] = shutil.which("mangohud") is not None
     status["dwarfs"] = shutil.which("dwarfs") is not None
+    status["dxvk"] = Path("/usr/share/dxvk/x64/d3d11.dll").is_file()
+    status["vkd3d"] = Path("/usr/share/vkd3d/x64/d3d12.dll").is_file() or Path("/usr/share/vkd3d-proton/x64/d3d12.dll").is_file()
 
     try:
         res = subprocess.run(["sysctl", "-n", "vm.max_map_count"], capture_output=True, text=True)
@@ -1285,6 +1322,7 @@ def run_interactive_menu() -> Tuple[str, SelectedModules]:
 
     table.add_row("Core Clients (Steam / Lutris)", "[green]✓ Installed[/green]" if (sys_status["steam"] and sys_status["lutris"]) else "[yellow]✗ Missing[/yellow]", "Essential")
     table.add_row("Wine-Staging & 32-bit Runtimes", "[green]✓ Installed[/green]" if sys_status["wine"] else "[yellow]✗ Missing[/yellow]", "Essential for Windows games")
+    table.add_row("Direct3D Vulkan Translators (DXVK/VKD3D)", "[green]✓ Installed[/green]" if (sys_status["dxvk"] and sys_status["vkd3d"]) else "[yellow]✗ Missing[/yellow]", "Essential for D3D9/11/12 Wine games")
     table.add_row("ProtonUp-Qt (GE-Proton Runner Manager)", "[green]✓ Installed[/green]" if (sys_status["protonup"] or sys_status["flatpak_pupgui"]) else "[yellow]✗ Missing[/yellow]", "Recommended for Lutris runners")
     table.add_row("Performance Tools (Gamescope/MangoHud)", "[green]✓ Installed[/green]" if sys_status["mangohud"] else "[yellow]✗ Missing[/yellow]", "Recommended for Wayland")
     table.add_row("Kernel 7.x Sysctl Optimizations", "[green]✓ Active[/green]" if sys_status["sysctl"] else "[yellow]✗ Inactive[/yellow]", "Crucial (prevents UE5 crashes)")
@@ -1543,6 +1581,11 @@ def main():
         if modules.protonup_mode != "skip":
             console.print("\n[bold cyan]Step 5b: ProtonUp-Qt Runner Manager[/bold cyan]")
             configure_protonup(ctx)
+
+        # Step 5c: Direct3D-to-Vulkan Translation Layers (DXVK & VKD3D-Proton)
+        if "wine_stack" in modules.categories or len(modules.categories) > 0:
+            console.print("\n[bold cyan]Step 5c: Direct3D-to-Vulkan Translation Layers (DXVK & VKD3D-Proton)[/bold cyan]")
+            configure_dxvk_vkd3d(ctx)
 
         # Step 6: Flatpak Ecosystem & Runtime Layers
         if modules.flatpak_apps:
