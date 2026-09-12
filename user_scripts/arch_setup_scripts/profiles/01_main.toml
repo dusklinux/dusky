@@ -128,6 +128,18 @@ scripts = [
     # "S | 385_waydroid_setup.sh",
     "U | 390_clipboard_persistance.py --ram --quiet",
     "S | 395_intel_media_sdk_check.sh --auto",
+    # --- ML/GPU stacks (opt-in: multi-GiB downloads; see arch_setup_scripts/ML_STACK.md) ---
+    # 398 edits mkinitcpio.conf and kernel command lines -- opt-in only, never
+    # run boot/system modifications a user did not explicitly enable.
+    # "S | 398_nvidia_boot_config.sh --auto",
+    # "U | 396_amd_rocm_stack.sh --auto",
+    # "U | 397_cuda_toolkit.sh --auto",
+    # "U | 399_ml_runtimes.sh --auto",
+    # "U | 400_ml_training_stack.sh --auto",
+    # "U | 401_ml_serving_stack.sh --auto",
+    # "U | 402_ml_notebook_lab.sh --auto",
+    # --- Apple Intel Macs only (standard x86 hardware + Wi-Fi/keyboard quirks) ---
+    # "S | 409_intel_mac_quirks.sh --auto",
     "U | dusky_sites_setup.py",
     # "U | optimize_firefox.py",
     "U | 410_waybar_swap_config.py --set waybar=15",

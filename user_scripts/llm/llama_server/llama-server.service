@@ -1,0 +1,31 @@
+# ~/.config/systemd/user/llama-server.service
+#
+# OpenAI-compatible local inference server backed by llama.cpp.
+# Installed by 399_ml_runtimes.sh; NOT auto-started (an inference server
+# pins VRAM while idle -- start it when you need it):
+#
+#   systemctl --user start   llama-server
+#   systemctl --user enable  llama-server     # autostart at login
+#
+#   endpoint: http://127.0.0.1:8081/v1
+#
+# Model and server options live in the EnvironmentFile written next to this
+# unit at install time (~/.config/dusky/llama_server/llama-server.env).
+[Unit]
+Description=Dusky llama.cpp server (OpenAI-compatible API on 127.0.0.1:8081)
+Documentation=https://github.com/ggml-org/llama.cpp
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+# sh -c is required: systemd does not expand $LLAMA_ARGS in ExecStart.
+ExecStart=/bin/sh -c 'exec /usr/bin/llama-server --host 127.0.0.1 --port 8081 $LLAMA_ARGS'
+EnvironmentFile=%h/.config/dusky/llama_server/llama-server.env
+Restart=on-failure
+RestartSec=2
+# GPU access (/dev/nvidia*, /dev/kfd, /dev/dri) lives in the user session.
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

@@ -36,7 +36,16 @@ log_ok "Systemd user service enabled."
 
 # 2. Check Dependencies & Ollama
 if ! command -v ollama &>/dev/null; then
-    log_warn "Ollama binary is not installed yet. You can install it via: sudo pacman -S ollama"
+    # Vendor-matched variant so inference lands on the GPU
+    # (installed properly by 399_ml_runtimes.sh; this is the fallback hint).
+    OLLAMA_PKG="ollama"
+    if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
+        OLLAMA_PKG="ollama-cuda"
+    elif [[ -e /dev/kfd ]]; then
+        OLLAMA_PKG="ollama-rocm"
+    fi
+    log_warn "Ollama binary is not installed yet."
+    log_warn "GPU-matched install: sudo pacman -S ${OLLAMA_PKG}   (or run 399_ml_runtimes.sh)"
 else
     log_info "Ollama binary detected."
     if ! systemctl is-active --quiet ollama.service 2>/dev/null; then

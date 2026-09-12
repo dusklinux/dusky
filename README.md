@@ -255,10 +255,30 @@ GUI keybind invokable sliders for:
 Speech to text 
 - Whisper - for cpu 
 or 
-- Parakeet - for nvidia gpus. might also work on Amd (not sure)
+- Parakeet - for nvidia gpus (CUDA) and amd gpus (ROCm, when the ROCm stack is installed)
 
 text to speech 
 - kokoro for both cpu and gpu
+
+**ml engineering stack (opt-in)**
+
+Dusky ships vendor-matched ML tooling for nvidia (CUDA), amd (ROCm) and cpu,
+installed through the same orchestra scripts -- all opt-in, hardware-gated and
+idempotent:
+
+- ollama with the **gpu variant** for your card (ollama-cuda / ollama-rocm)
+- llama.cpp with the vendor ggml backend (cuda/hip/vulkan, straight from the repos) + a `llama-server` user service (OpenAI-compatible API on 127.0.0.1:8081)
+- LM Studio (opt-in flag), vLLM serving, JupyterLab + VS Code + project template
+- training stack: PyTorch (vendor wheels) + HuggingFace (transformers/peft/trl) + Unsloth
+- a `dusky-ml-doctor` health check for all of the above
+- boot reliability: `398_nvidia_boot_config.sh` now automates the nvidia mkinitcpio/modeset steps that used to be manual
+
+See [`user_scripts/arch_setup_scripts/ML_STACK.md`](user_scripts/arch_setup_scripts/ML_STACK.md)
+for the full matrix, sizes and how to enable each piece in `profiles/01_main.toml`.
+
+Apple notes: Intel Macs (2012-2020) are standard x86 hardware and work
+(`409_intel_mac_quirks.sh` handles Wi-Fi/keyboard quirks); Apple Silicon
+(M1-M4) needs the Asahi/ARM port and has no CUDA/ROCm -- out of scope.
 
 - mechanical keypress sounds
 togglalble with a keybind or from rofi. 
