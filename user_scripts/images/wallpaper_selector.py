@@ -579,9 +579,12 @@ def scan_wallpapers(
         try:
             info = directory.stat()
         except OSError as error:
-            raise OSError(
-                f"Cannot inspect wallpaper directory {directory}: {error}"
-            ) from error
+            if directory == WALLPAPER_DIR:
+                raise OSError(
+                    f"Cannot inspect wallpaper directory {directory}: {error}"
+                ) from error
+            log_error(f"Cannot inspect wallpaper directory {directory}: {error}")
+            continue
 
         identity = (info.st_dev, info.st_ino)
         if identity in visited:
@@ -592,9 +595,12 @@ def scan_wallpapers(
             with os.scandir(directory) as iterator:
                 entries = sorted(iterator, key=lambda entry: entry.name)
         except OSError as error:
-            raise OSError(
-                f"Cannot read wallpaper directory {directory}: {error}"
-            ) from error
+            if directory == WALLPAPER_DIR:
+                raise OSError(
+                    f"Cannot read wallpaper directory {directory}: {error}"
+                ) from error
+            log_error(f"Cannot read wallpaper directory {directory}: {error}")
+            continue
 
         subdirectories = []
 
@@ -623,9 +629,8 @@ def scan_wallpapers(
                     wallpapers.append(relative)
 
             except OSError as error:
-                raise OSError(
-                    f"Cannot inspect wallpaper entry {path}: {error}"
-                ) from error
+                log_error(f"Skipping inaccessible wallpaper entry {path}: {error}")
+                continue
 
         # Deterministic depth-first traversal, with scandir already closed.
         pending.extend(reversed(subdirectories))
@@ -664,12 +669,55 @@ class CacheManager:
     @staticmethod
     def signature(info: os.stat_result) -> list[int]:
         return [
-            info.st_dev,
-            info.st_ino,
             info.st_size,
             info.st_mtime_ns,
-            info.st_ctime_ns,
         ]
+
+    @staticmethod
+    def source_matches(cached_source: object, current_stat: os.stat_result) -> bool:
+        """
+        Validate whether the source image matches the cached source metadata.
+        Supports both current [st_size, st_mtime_ns] format and legacy
+        [st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns] format.
+
+        Ignores st_dev, st_ino, and st_ctime_ns to prevent false cache
+        rebuilding across reboots, dynamic filesystem mounts (btrfs subvolumes,
+        LUKS/dm-crypt, zram, removable media), and system updates where ctime
+        changes upon metadata touch.
+        """
+        if not isinstance(cached_source, (list, tuple)):
+            return False
+        if len(cached_source) == 2:
+            return (
+                cached_source[0] == current_stat.st_size
+                and cached_source[1] == current_stat.st_mtime_ns
+            )
+        if len(cached_source) >= 4:
+            return (
+                cached_source[2] == current_stat.st_size
+                and cached_source[3] == current_stat.st_mtime_ns
+            )
+        return False
+
+    @staticmethod
+    def thumbnail_matches(cached_thumb: object, thumb_info: os.stat_result) -> bool:
+        """
+        Check that the thumbnail on disk is valid and non-empty.
+        If recorded thumbnail size is present, verifies size matches.
+        Ignores st_dev, st_ino, and st_ctime_ns of the thumbnail file.
+        """
+        if thumb_info.st_size == 0:
+            return False
+        if cached_thumb is None:
+            return True
+        if isinstance(cached_thumb, int):
+            return thumb_info.st_size == cached_thumb
+        if isinstance(cached_thumb, (list, tuple)):
+            if len(cached_thumb) == 2:
+                return thumb_info.st_size == cached_thumb[0]
+            if len(cached_thumb) >= 3:
+                return thumb_info.st_size == cached_thumb[2]
+        return True
 
     @staticmethod
     def read_metadata(path: Path) -> dict:
@@ -746,55 +794,89 @@ class CacheManager:
         )
 
         with source_path.open("rb") as source:
-            signature = CacheManager.signature(
-                os.fstat(source.fileno())
-            )
+            source_info = os.fstat(source.fileno())
+            signature = CacheManager.signature(source_info)
             metadata = CacheManager.read_metadata(metadata_path)
 
-            if not force and metadata.get("source") == signature:
-                if metadata.get("status") == "ok":
+            if not force:
+                if metadata:
+                    if CacheManager.source_matches(metadata.get("source"), source_info):
+                        if metadata.get("status") == "ok":
+                            try:
+                                thumb_info = thumb_path.stat()
+                            except OSError:
+                                pass
+                            else:
+                                if CacheManager.thumbnail_matches(
+                                    metadata.get("thumbnail"),
+                                    thumb_info,
+                                ):
+                                    if "path" not in metadata:
+                                        atomic_write(
+                                            metadata_path,
+                                            json.dumps({
+                                                "path": rel_path,
+                                                "source": signature,
+                                                "status": "ok",
+                                                "thumbnail": thumb_info.st_size,
+                                            }) + "\n",
+                                        )
+                                    return "cached"
+
+                        if metadata.get("status") == "bad":
+                            retry_at = metadata.get("retry_at")
+
+                            if (
+                                isinstance(retry_at, (int, float))
+                                and time.time() < retry_at
+                            ):
+                                reason = metadata.get("error")
+
+                                if not isinstance(reason, str) or not reason:
+                                    reason = (
+                                        "A previous conversion failed; "
+                                        "no detailed error was recorded."
+                                    )
+
+                                log_error(
+                                    f"Thumbnail temporarily unavailable for "
+                                    f"{rel_path!r}; automatic retry is deferred:\n"
+                                    f"{reason}"
+                                )
+                                return "failed"
+                else:
+                    # Fallback for existing valid thumbnails without JSON metadata
                     try:
                         thumb_info = thumb_path.stat()
                     except OSError:
                         pass
                     else:
                         if (
-                            metadata.get("thumbnail")
-                            == CacheManager.signature(thumb_info)
+                            thumb_info.st_size > 0
+                            and thumb_info.st_mtime >= source_info.st_mtime
                         ):
-                            return "cached"
-
-                if metadata.get("status") == "bad":
-                    retry_at = metadata.get("retry_at")
-
-                    if (
-                        isinstance(retry_at, (int, float))
-                        and time.time() < retry_at
-                    ):
-                        reason = metadata.get("error")
-
-                        if not isinstance(reason, str) or not reason:
-                            reason = (
-                                "A previous conversion failed; "
-                                "no detailed error was recorded."
+                            atomic_write(
+                                metadata_path,
+                                json.dumps({
+                                    "path": rel_path,
+                                    "source": signature,
+                                    "status": "ok",
+                                    "thumbnail": thumb_info.st_size,
+                                }) + "\n",
                             )
-
-                        log_error(
-                            f"Thumbnail temporarily unavailable for "
-                            f"{rel_path!r}; automatic retry is deferred:\n"
-                            f"{reason}"
-                        )
-                        return "failed"
+                            return "cached"
 
             def source_unchanged() -> bool:
                 try:
                     return (
-                        CacheManager.signature(
-                            os.fstat(source.fileno())
+                        CacheManager.source_matches(
+                            signature,
+                            os.fstat(source.fileno()),
                         )
-                        == signature
-                        and CacheManager.signature(source_path.stat())
-                        == signature
+                        and CacheManager.source_matches(
+                            signature,
+                            source_path.stat(),
+                        )
                     )
                 except OSError:
                     return False
@@ -806,6 +888,7 @@ class CacheManager:
                 atomic_write(
                     metadata_path,
                     json.dumps({
+                        "path": rel_path,
                         "source": signature,
                         "status": "bad",
                         "error": reason[:8000],
@@ -815,7 +898,7 @@ class CacheManager:
                     }) + "\n",
                 )
 
-            if signature[2] == 0:
+            if source_info.st_size == 0:
                 reason = "The source image is empty (0 bytes)."
 
                 log_error(
@@ -899,11 +982,10 @@ class CacheManager:
                 atomic_write(
                     metadata_path,
                     json.dumps({
+                        "path": rel_path,
                         "source": signature,
                         "status": "ok",
-                        "thumbnail": CacheManager.signature(
-                            thumb_path.stat()
-                        ),
+                        "thumbnail": thumb_path.stat().st_size,
                     }) + "\n",
                 )
                 return "generated"
@@ -940,6 +1022,9 @@ class CacheManager:
         may be removed without an arbitrary age threshold.
         """
         THUMB_DIR.mkdir(parents=True, exist_ok=True)
+        if not wallpapers:
+            return 0
+
         valid = {
             CacheManager.get_digest(path)
             for path in wallpapers
@@ -961,7 +1046,25 @@ class CacheManager:
                 recognized = suffix in {"png", "json", "bad", "lock"}
                 temporary = ".tmp." in entry.name
 
-                if temporary or (recognized and digest not in valid):
+                if temporary:
+                    try:
+                        os.unlink(entry.path)
+                        removed += 1
+                    except FileNotFoundError:
+                        pass
+                elif recognized and digest not in valid:
+                    # Protect thumbnails of temporarily unmounted directories:
+                    meta_path = THUMB_DIR / f"{digest}.json"
+                    meta = CacheManager.read_metadata(meta_path)
+                    cached_rel = meta.get("path")
+                    if cached_rel:
+                        try:
+                            source_path = WALLPAPER_DIR / validate_relative_id(cached_rel)
+                            if not source_path.parent.exists():
+                                continue
+                        except Exception:
+                            pass
+
                     try:
                         os.unlink(entry.path)
                         removed += 1
