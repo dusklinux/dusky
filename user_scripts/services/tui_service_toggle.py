@@ -166,10 +166,6 @@ CORE_SYSTEM_DEFS = {
         "Proactive ZRAM Swap Timer",
         "Proactive idle memory reclaimer timer. Triggers 45s after boot and every 3 minutes to compress cold idle memory into ZRAM swap, preventing disk swap wear and stutter.",
     ),
-    "dusky_pro_active_zram_swap.service": (
-        "Proactive ZRAM Swap Worker",
-        "MGLRU proactive idle memory skimmer service. Safely scans idle app slices and compresses cold memory into ZRAM swap.",
-    ),
     "ufw.service": (
         "Firewall (UFW)",
         "Uncomplicated Firewall. A user-friendly front-end for iptables to manage network access rules.",
