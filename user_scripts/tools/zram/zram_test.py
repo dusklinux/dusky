@@ -1120,6 +1120,12 @@ class DuskyRAMAnalyzer(App):
         padding: 0 1;
     }}
 
+    .btn-group {{
+        width: auto;
+        height: 1;
+        margin: 0;
+    }}
+
     .spacer {{
         width: 1fr;
         height: 1;
@@ -1133,18 +1139,21 @@ class DuskyRAMAnalyzer(App):
         width: auto;
         border: none;
         padding: 0;
-        margin: 0;
+        margin-right: 1;
         text-style: bold;
     }}
+    Button:last-child {{
+        margin-right: 0;
+    }}
 
-    /* Type selection buttons */
+    /* Row 1 - Left: Category Selector */
     .type-btn {{
-        background: #2b1f24;
-        color: #bbaab0;
+        background: #221c20;
+        color: #a89ba0;
     }}
     .type-btn:hover, .type-btn:focus {{
-        background: {ACCENT};
-        color: {BG};
+        background: #3b2d35;
+        color: {FG};
     }}
     .type-btn.active-type {{
         background: {ACCENT};
@@ -1156,19 +1165,29 @@ class DuskyRAMAnalyzer(App):
         color: {BG};
     }}
 
-    /* Action buttons */
+    /* Row 1 - Right: Navigation & Help */
     #btn_help {{
-        background: {ACCENT};
-        color: {BG};
+        background: #1e293b;
+        color: #38bdf8;
     }}
     #btn_help:hover, #btn_help:focus {{
-        background: {SUCCESS};
-        color: {BG};
+        background: #0284c7;
+        color: #ffffff;
     }}
 
+    #btn_quit {{
+        background: #3f1d24;
+        color: #fca5a5;
+    }}
+    #btn_quit:hover, #btn_quit:focus {{
+        background: #b91c1c;
+        color: #ffffff;
+    }}
+
+    /* Row 2 - Left: Load Adjustment */
     #btn_add {{
-        background: #1b4332;
-        color: #d1fae5;
+        background: #14532d;
+        color: #bbf7d0;
     }}
     #btn_add:hover, #btn_add:focus {{
         background: #22c55e;
@@ -1176,14 +1195,15 @@ class DuskyRAMAnalyzer(App):
     }}
 
     #btn_free {{
-        background: #78350f;
-        color: #fef3c7;
+        background: #713f12;
+        color: #fef08a;
     }}
     #btn_free:hover, #btn_free:focus {{
         background: #f59e0b;
         color: #000000;
     }}
 
+    /* Row 2 - Center: Kernel VM & ZRAM Pressure Actions */
     #btn_pageout {{
         background: #581c87;
         color: #f3e8ff;
@@ -1207,44 +1227,36 @@ class DuskyRAMAnalyzer(App):
         color: #ffedd5;
     }}
     #btn_drop:hover, #btn_drop:focus {{
-        background: #f97316;
-        color: #000000;
+        background: #ea580c;
+        color: #ffffff;
     }}
 
     #btn_compact {{
-        background: #065f46;
-        color: #d1fae5;
+        background: #064e3b;
+        color: #a7f3d0;
     }}
     #btn_compact:hover, #btn_compact:focus {{
         background: #10b981;
         color: #000000;
     }}
 
+    /* Row 2 - Right: Maintenance & Refresh */
     #btn_clear {{
-        background: #7f1d1d;
-        color: #fee2e2;
+        background: #881337;
+        color: #ffe4e6;
     }}
     #btn_clear:hover, #btn_clear:focus {{
-        background: #ef4444;
+        background: #f43f5e;
         color: #ffffff;
     }}
 
     #btn_refresh {{
-        background: #374151;
-        color: #f3f4f6;
+        background: #334155;
+        color: #cbd5e1;
     }}
     #btn_refresh:hover, #btn_refresh:focus {{
-        background: #94a3b8;
-        color: #000000;
-    }}
-
-    #btn_quit {{
-        background: {MUTED};
-        color: {ERROR};
-    }}
-    #btn_quit:hover, #btn_quit:focus {{
-        background: {ERROR};
-        color: {BG};
+        background: #64748b;
+        color: #ffffff;
     }}
 
 
@@ -1363,39 +1375,34 @@ class DuskyRAMAnalyzer(App):
 
         chunk = self.balloon.chunk_mb
         with Static(id="controls_container"):
-            # Row 1: Balloon Type Selection + F1 Help + Quit (spread evenly across row)
+            # Row 1: Category Selector (Left) <--- Spacer ---> Navigation & Help (Right)
             with Horizontal(classes="btn-row"):
-                yield Button("1:Dormant", id="type_dormant", classes="type-btn active-type")
+                with Horizontal(classes="btn-group"):
+                    yield Button("1:Dormant", id="type_dormant", classes="type-btn active-type")
+                    yield Button("2:Active", id="type_active", classes="type-btn")
+                    yield Button("3:Clean", id="type_clean", classes="type-btn")
+                    yield Button("4:Dirty", id="type_dirty", classes="type-btn")
+                    yield Button("5:Shmem", id="type_shmem", classes="type-btn")
                 yield Static(classes="spacer")
-                yield Button("2:Active", id="type_active", classes="type-btn")
-                yield Static(classes="spacer")
-                yield Button("3:Clean", id="type_clean", classes="type-btn")
-                yield Static(classes="spacer")
-                yield Button("4:Dirty", id="type_dirty", classes="type-btn")
-                yield Static(classes="spacer")
-                yield Button("5:Shmem", id="type_shmem", classes="type-btn")
-                yield Static(classes="spacer")
-                yield Button("󰌌 F1 Help", id="btn_help")
-                yield Static(classes="spacer")
-                yield Button("q Quit", id="btn_quit")
+                with Horizontal(classes="btn-group"):
+                    yield Button("󰌌 F1 Help", id="btn_help")
+                    yield Button("q Quit", id="btn_quit")
 
-            # Row 2: Actions (spread evenly across row)
+            # Row 2: Load Adjustment (Left) <--- Spacer ---> VM & ZRAM Actions (Center) <--- Spacer ---> Maintenance (Right)
             with Horizontal(classes="btn-row"):
-                yield Button(f"+ {chunk}M", id="btn_add")
+                with Horizontal(classes="btn-group"):
+                    yield Button(f"+ {chunk}M", id="btn_add")
+                    yield Button(f"- {chunk}M", id="btn_free")
                 yield Static(classes="spacer")
-                yield Button(f"- {chunk}M", id="btn_free")
+                with Horizontal(classes="btn-group"):
+                    yield Button("p PageOut", id="btn_pageout")
+                    yield Button("s Sync", id="btn_sync")
+                    yield Button("d Drop", id="btn_drop")
+                    yield Button("k Compact", id="btn_compact")
                 yield Static(classes="spacer")
-                yield Button("p PageOut", id="btn_pageout")
-                yield Static(classes="spacer")
-                yield Button("s Sync", id="btn_sync")
-                yield Static(classes="spacer")
-                yield Button("d Drop", id="btn_drop")
-                yield Static(classes="spacer")
-                yield Button("k Compact", id="btn_compact")
-                yield Static(classes="spacer")
-                yield Button("c Clear", id="btn_clear")
-                yield Static(classes="spacer")
-                yield Button("r Ref", id="btn_refresh")
+                with Horizontal(classes="btn-group"):
+                    yield Button("c Clear", id="btn_clear")
+                    yield Button("r Ref", id="btn_refresh")
 
     def on_mount(self) -> None:
         self.w_mem = self.query_one("#p_mem", Static)
