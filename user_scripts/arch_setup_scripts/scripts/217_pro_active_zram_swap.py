@@ -58,6 +58,35 @@ TOTAL_RAM: int = get_total_ram_bytes()
 # Run budget: capped at 256 MiB per sweep to eliminate background micro-stutter
 MAX_PER_RUN: int = min(256 * 1024 * 1024, max(128 * 1024 * 1024, int(TOTAL_RAM * 0.10)))
 
+CONF_PATH: Path = Path("/etc/dusky/dusky_pro_active_zram_swap.conf")
+
+def load_runtime_config() -> None:
+    """Load dynamic overrides from /etc/dusky/dusky_pro_active_zram_swap.conf if present."""
+    global APP_IDLE_RECLAIM_RATIO, MAX_PER_RUN, ZRAM_MAX_USAGE_RATIO, PSI_SOME_THRESHOLD
+    if not CONF_PATH.exists():
+        return
+    try:
+        with open(CONF_PATH, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip("\"'")
+                if k == "APP_IDLE_RECLAIM_RATIO":
+                    val = float(v.rstrip("%")) / 100.0 if "%" in v else float(v)
+                    APP_IDLE_RECLAIM_RATIO = max(0.01, min(1.0, val))
+                elif k == "MAX_PER_RUN_MB":
+                    MAX_PER_RUN = int(float(v) * 1024 * 1024)
+                elif k == "ZRAM_MAX_USAGE_RATIO":
+                    val = float(v.rstrip("%")) / 100.0 if "%" in v else float(v)
+                    ZRAM_MAX_USAGE_RATIO = max(0.10, min(1.0, val))
+                elif k == "PSI_SOME_THRESHOLD":
+                    PSI_SOME_THRESHOLD = float(v)
+    except Exception:
+        pass
+
 # --- Argument Parsing (Executed BEFORE Privilege Escalation) ---
 parser = argparse.ArgumentParser(description="Elite Arch Linux MGLRU Proactive ZRAM Memory Skimmer")
 group = parser.add_mutually_exclusive_group()
@@ -295,7 +324,8 @@ def reclaim_cgroup_chunked(cgroup_dir: Path, target_bytes: int, label: str) -> t
     return reclaimed_requested, actual_stolen
 
 def perform_reclaim() -> None:
-    info("Initiating MGLRU proactive idle memory sweep...")
+    load_runtime_config()
+    info(f"Initiating MGLRU proactive idle memory sweep (budget={MAX_PER_RUN // (1024*1024)}MB, ratio={int(APP_IDLE_RECLAIM_RATIO*100)}%, zram_limit={int(ZRAM_MAX_USAGE_RATIO*100)}%)...")
 
     if not is_cgroup2_mounted():
         die("cgroup v2 not mounted at /sys/fs/cgroup. Arch uses cgroup2 by default.")

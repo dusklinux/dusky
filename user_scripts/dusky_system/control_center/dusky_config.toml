@@ -2059,6 +2059,16 @@ interval = 3
 type = "exec"
 command = "$HOME/user_scripts/performance/zram/zram_swap_manager.py --disk-swap-status"
 
+[[pages.layout.items.layout.items]]
+type = "label"
+[pages.layout.items.layout.items.properties]
+title = "Proactive Swap"
+icon = "preferences-system-symbolic"
+interval = 3
+[pages.layout.items.layout.items.value]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --status"
+
 [[pages.layout.items.layout]]
 type = "section"
 [pages.layout.items.layout.properties]
@@ -2185,6 +2195,202 @@ type = "exec"
 command = "$HOME/user_scripts/performance/zram/zram_swap_manager.py --disable-disk-swap"
 terminal = false
 requires_root = true
+
+[[pages.layout.items.layout]]
+type = "section"
+[pages.layout.items.layout.properties]
+title = "Proactive Memory Reclaiming"
+icon = "power-profile-performance-symbolic"
+
+[[pages.layout.items.layout.items]]
+type = "navigation"
+[pages.layout.items.layout.items.properties]
+title = "Dusky Proactive Swap"
+description = "MGLRU proactive idle memory skimmer tuning (40% limit, 256 MB budget)"
+icon = "preferences-system-symbolic"
+
+[[pages.layout.items.layout.items.layout]]
+type = "section"
+[pages.layout.items.layout.items.layout.properties]
+title = "Subsystem Status & Controls"
+icon = "dialog-information-symbolic"
+
+[[pages.layout.items.layout.items.layout.items]]
+type = "label"
+[pages.layout.items.layout.items.layout.items.properties]
+title = "Daemon State"
+icon = "memory-symbolic"
+interval = 3
+[pages.layout.items.layout.items.layout.items.value]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --status"
+
+[[pages.layout.items.layout.items.layout.items]]
+type = "label"
+[pages.layout.items.layout.items.layout.items.properties]
+title = "Last Sweep"
+icon = "dialog-information-symbolic"
+interval = 5
+[pages.layout.items.layout.items.layout.items.value]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --last-sweep"
+
+[[pages.layout.items.layout.items.layout.items]]
+type = "toggle"
+[pages.layout.items.layout.items.layout.items.properties]
+title = "Proactive Sweep Timer"
+description = "Reclaim idle background memory into ZRAM"
+icon = "media-playback-start-symbolic"
+state_command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --is-active"
+interval = 3
+[pages.layout.items.layout.items.layout.items.on_toggle.enabled]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --enable"
+terminal = false
+requires_root = true
+[pages.layout.items.layout.items.layout.items.on_toggle.disabled]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --disable"
+terminal = false
+requires_root = true
+
+[[pages.layout.items.layout.items.layout.items]]
+type = "button"
+[pages.layout.items.layout.items.layout.items.properties]
+title = "Immediate Sweep"
+description = "Execute a proactive memory reclaim pass right now"
+button_text = "Sweep Now"
+icon = "system-run-symbolic"
+style = "suggested"
+[pages.layout.items.layout.items.layout.items.on_press]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --run-now"
+terminal = false
+requires_root = true
+
+[[pages.layout.items.layout.items.layout]]
+type = "section"
+[pages.layout.items.layout.items.layout.properties]
+title = "MGLRU Skimmer Dials"
+icon = "preferences-system-symbolic"
+
+[[pages.layout.items.layout.items.layout.items]]
+type = "entry"
+[pages.layout.items.layout.items.layout.items.properties]
+title = "Per-App Idle Anon Limit"
+description = "Percentage of anon memory reclaimed per idle app (e.g. 40%, 25%, 50%)"
+button_text = "Apply"
+icon = "edit-symbolic"
+value_command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --get-ratio"
+toast = "Per-app reclaim ratio set to {value}"
+[pages.layout.items.layout.items.layout.items.on_action]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-ratio '{value}'"
+terminal = false
+requires_root = true
+
+[[pages.layout.items.layout.items.layout.items]]
+type = "entry"
+[pages.layout.items.layout.items.layout.items.properties]
+title = "Max Sweep Budget"
+description = "Memory ceiling per sweep to prevent micro-stutters (e.g. 256 MB, 512 MB)"
+button_text = "Apply"
+icon = "edit-symbolic"
+value_command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --get-max-budget"
+toast = "Max sweep budget set to {value}"
+[pages.layout.items.layout.items.layout.items.on_action]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-max-budget '{value}'"
+terminal = false
+requires_root = true
+
+[[pages.layout.items.layout.items.layout.items]]
+type = "selection"
+[pages.layout.items.layout.items.layout.items.properties]
+title = "Sweep Frequency"
+description = "Periodic interval"
+icon = "alarm-symbolic"
+value_command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --get-interval"
+interval = 3
+options = ["1 min", "2 min", "3 min", "5 min", "10 min", "15 min"]
+options_map = { "1min" = "1 min", "2min" = "2 min", "3min" = "3 min", "5min" = "5 min", "10min" = "10 min", "15min" = "15 min" }
+[pages.layout.items.layout.items.layout.items.on_change."1 min"]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-interval 1min"
+terminal = false
+requires_root = true
+[pages.layout.items.layout.items.layout.items.on_change."2 min"]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-interval 2min"
+terminal = false
+requires_root = true
+[pages.layout.items.layout.items.layout.items.on_change."3 min"]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-interval 3min"
+terminal = false
+requires_root = true
+[pages.layout.items.layout.items.layout.items.on_change."5 min"]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-interval 5min"
+terminal = false
+requires_root = true
+[pages.layout.items.layout.items.layout.items.on_change."10 min"]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-interval 10min"
+terminal = false
+requires_root = true
+[pages.layout.items.layout.items.layout.items.on_change."15 min"]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-interval 15min"
+terminal = false
+requires_root = true
+
+[[pages.layout.items.layout.items.layout.items]]
+type = "entry"
+[pages.layout.items.layout.items.layout.items.properties]
+title = "ZRAM Abort Threshold"
+description = "Halt sweep if ZRAM is above this capacity"
+button_text = "Apply"
+icon = "security-high-symbolic"
+value_command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --get-zram-limit"
+toast = "ZRAM safety limit set to {value}"
+[pages.layout.items.layout.items.layout.items.on_action]
+type = "exec"
+command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --set-zram-limit '{value}'"
+terminal = false
+requires_root = true
+
+[[pages.layout.items.layout.items.layout]]
+type = "section"
+[pages.layout.items.layout.items.layout.properties]
+title = "Diagnostics & Live Telemetry"
+icon = "utilities-system-monitor-symbolic"
+
+[[pages.layout.items.layout.items.layout.items]]
+type = "button"
+[pages.layout.items.layout.items.layout.items.properties]
+title = "Sweep Journal Logs"
+description = "Monitor live background sweep activity and stolen memory"
+button_text = "View Logs"
+icon = "utilities-terminal-symbolic"
+style = "regular"
+[pages.layout.items.layout.items.layout.items.on_press]
+type = "exec"
+command = "kitty --class dusky_pro_active_logs --hold sh -c \"journalctl -u dusky_pro_active_zram_swap.service -n 50 -f\""
+terminal = false
+
+[[pages.layout.items.layout.items.layout.items]]
+type = "button"
+[pages.layout.items.layout.items.layout.items.properties]
+title = "Deep Subsystem Diagnostics"
+description = "View memory topology, timer schedule, and compression stats"
+button_text = "Inspect"
+icon = "dialog-information-symbolic"
+style = "suggested"
+[pages.layout.items.layout.items.layout.items.on_press]
+type = "exec"
+command = "kitty --class dusky_pro_active_diag --hold sh -c \"$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --status-full\""
+terminal = false
 
 [[pages.layout.items.layout]]
 type = "section"
