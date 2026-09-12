@@ -43,8 +43,8 @@ Configure high-efficiency ZRAM swap for Arch Linux (Linux 7.2+, systemd 261+).
 
 Options:
   --size, -s <expr>           ZRAM size expression (auto-detected if omitted)
-                              • < 32GB class  -> "ram"     (100% RAM - Expands tight memory)
-                              • >= 32GB class -> "ram / 2" (50% RAM - Massive headroom)
+                              • < 32GB class  -> "ram * 1.5" (150% RAM - Expands tight memory)
+                              • >= 32GB class -> "ram / 2"   (50% RAM - Massive headroom)
   --resident-limit, -r <expr> Resident memory limit expression (default: 0 / unlimited)
   --priority, -p <prio>       Swap priority (default: 32767 - Maximum priority over disk)
   --algorithm, -a <algo>      Compression algorithm (default: "zstd(level=2)")
@@ -71,9 +71,9 @@ TIER_DESC=""
 
 # Unified Tier Demarcation (28 GiB / 29,360,128 KiB accounts for 32GB systems with iGPU reservations)
 if (( RAM_KB < 29360128 )); then
-    AUTO_SIZE_EXPR="ram"
+    AUTO_SIZE_EXPR="ram * 1.5"
     AUTO_LIMIT_EXPR="0"
-    TIER_DESC="Standard (<32GB class, ${RAM_GB}GB detected) -> Size: 100% (1.0x RAM), Resident Cap: unlimited (0)"
+    TIER_DESC="Standard (<32GB class, ${RAM_GB}GB detected) -> Size: 150% (1.5x RAM), Resident Cap: unlimited (0)"
 else
     AUTO_SIZE_EXPR="ram / 2"
     AUTO_LIMIT_EXPR="0"

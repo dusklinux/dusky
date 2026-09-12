@@ -40,6 +40,7 @@ def die(msg: str, code: int = 1) -> NoReturn:
 PAGE_SIZE: int = os.sysconf("SC_PAGESIZE") if hasattr(os, "sysconf") else 4096
 CHUNK_SIZE: int = 32 * 1024 * 1024       # 32 MiB write chunks for ultra-low latency
 PSI_SOME_THRESHOLD: float = 0.50         # Abort if some avg10 >= 0.50%
+ZRAM_MAX_USAGE_RATIO: float = 0.95       # Abort sweep if zRAM swap is >= 95% full to protect disk swap
 
 def get_total_ram_bytes() -> int:
     try:
@@ -112,6 +113,31 @@ def write_file_atomic(path: Path, content: str, mode: int = 0o644) -> None:
     except BaseException:
         Path(tmp_path).unlink(missing_ok=True)
         raise
+
+def get_zram_swap_usage() -> tuple[int, int, float] | None:
+    """
+    Returns (used_bytes, size_bytes, usage_ratio) across all /dev/zram* swap devices in /proc/swaps.
+    Returns None if no /dev/zram devices are active as swap.
+    """
+    try:
+        with open("/proc/swaps", "r", encoding="utf-8") as fh:
+            lines = fh.read().strip().splitlines()
+        if len(lines) <= 1:
+            return None
+        used_total = 0
+        size_total = 0
+        found = False
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) >= 5 and parts[0].startswith("/dev/zram"):
+                size_total += int(parts[2]) * 1024
+                used_total += int(parts[3]) * 1024
+                found = True
+        if found and size_total > 0:
+            return used_total, size_total, (used_total / size_total)
+    except Exception:
+        pass
+    return None
 
 def has_swap_or_zram() -> bool:
     try:
@@ -223,7 +249,21 @@ def reclaim_cgroup_chunked(cgroup_dir: Path, target_bytes: int, label: str) -> t
     reclaimed_requested = 0
 
     while reclaimed_requested < target_bytes:
-        # PSI pre-chunk check
+        # 1. zRAM capacity check before each chunk
+        zram_stat = get_zram_swap_usage()
+        if zram_stat is None:
+            warn(f"No active zRAM swap device detected. Halting sweep on {label} to protect disk swap.")
+            break
+        used_b, size_b, ratio = zram_stat
+        if ratio >= ZRAM_MAX_USAGE_RATIO:
+            warn(
+                f"zRAM swap capacity reached {ratio * 100:.1f}% ({used_b / (1024*1024):.1f} MB / "
+                f"{size_b / (1024*1024):.1f} MB >= {ZRAM_MAX_USAGE_RATIO * 100:.0f}%). "
+                f"Halting sweep on {label} to protect disk swap."
+            )
+            break
+
+        # 2. PSI pre-chunk check
         psi_sys = get_system_pressure()
         if psi_sys >= PSI_SOME_THRESHOLD:
             warn(f"System memory pressure elevated ({psi_sys:.2f}% >= {PSI_SOME_THRESHOLD}%). Halting sweep.")
@@ -261,6 +301,20 @@ def perform_reclaim() -> None:
 
     if not has_swap_or_zram():
         warn("No active swap or ZRAM detected. Kernel will reject anon reclaim.")
+
+    # 0. Gate on zRAM presence and capacity: never spill cold pages to disk swap
+    zram_stat = get_zram_swap_usage()
+    if zram_stat is None:
+        warn("No active zRAM swap device detected in /proc/swaps. Skipping proactive sweep to avoid spilling pages to disk swap.")
+        return
+    used_b, size_b, ratio = zram_stat
+    if ratio >= ZRAM_MAX_USAGE_RATIO:
+        warn(
+            f"zRAM swap capacity at {ratio * 100:.1f}% ({used_b / (1024*1024):.1f} MB / "
+            f"{size_b / (1024*1024):.1f} MB >= {ZRAM_MAX_USAGE_RATIO * 100:.0f}%). "
+            "Skipping proactive sweep to avoid spilling pages to disk swap."
+        )
+        return
 
     # 1. Gate on system memory pressure
     psi_sys = get_system_pressure()
