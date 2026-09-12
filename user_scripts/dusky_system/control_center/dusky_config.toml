@@ -2293,7 +2293,7 @@ requires_root = true
 type = "entry"
 [pages.layout.items.layout.items.layout.items.properties]
 title = "Max Sweep Budget"
-description = "Memory ceiling per sweep to prevent micro-stutters (e.g. 256 MB, 512 MB)"
+description = "Memory ceiling per sweep to prevent micro-stutters (e.g. 256 MB, 512 MB, 1 GB, 2 GB)"
 button_text = "Apply"
 icon = "edit-symbolic"
 value_command = "$HOME/user_scripts/performance/zram/dusky_pro_active_swap_modifier_cc.py --get-max-budget"
