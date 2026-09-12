@@ -41,6 +41,7 @@ PAGE_SIZE: int = os.sysconf("SC_PAGESIZE") if hasattr(os, "sysconf") else 4096
 CHUNK_SIZE: int = 32 * 1024 * 1024       # 32 MiB write chunks for ultra-low latency
 PSI_SOME_THRESHOLD: float = 0.50         # Abort if some avg10 >= 0.50%
 ZRAM_MAX_USAGE_RATIO: float = 0.95       # Abort sweep if zRAM swap is >= 95% full to protect disk swap
+APP_IDLE_RECLAIM_RATIO: float = 0.40     # Reclaim up to 40% of idle app anon memory to protect warm UI buffers
 
 def get_total_ram_bytes() -> int:
     try:
@@ -54,8 +55,8 @@ def get_total_ram_bytes() -> int:
     return 16 * 1024 * 1024 * 1024
 
 TOTAL_RAM: int = get_total_ram_bytes()
-# Dynamic run budget: capped at 1 GiB per sweep, or 10% of total system RAM on small systems
-MAX_PER_RUN: int = min(1024 * 1024 * 1024, max(256 * 1024 * 1024, int(TOTAL_RAM * 0.10)))
+# Run budget: capped at 256 MiB per sweep to eliminate background micro-stutter
+MAX_PER_RUN: int = min(256 * 1024 * 1024, max(128 * 1024 * 1024, int(TOTAL_RAM * 0.10)))
 
 # --- Argument Parsing (Executed BEFORE Privilege Escalation) ---
 parser = argparse.ArgumentParser(description="Elite Arch Linux MGLRU Proactive ZRAM Memory Skimmer")
@@ -355,7 +356,7 @@ def perform_reclaim() -> None:
 
             # If CPU advanced less than 5ms over 50ms window, the app is idle
             if delta_cpu < 5000:
-                target = min(int(anon * 0.60), MAX_PER_RUN - total_requested)
+                target = min(int(anon * APP_IDLE_RECLAIM_RATIO), MAX_PER_RUN - total_requested)
                 if target > 0:
                     req, stl = reclaim_cgroup_chunked(leaf, target, leaf.name)
                     total_requested += req
