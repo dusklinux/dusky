@@ -27,7 +27,7 @@ arguments = []
 type = "native"
 
 [graphics]
-gpu = "auto"
+gpu = "integrated"
 wayland_native = true
 
 [graphics.gamescope]

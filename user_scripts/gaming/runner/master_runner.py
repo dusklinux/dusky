@@ -5274,7 +5274,8 @@ def cmd_init_config(force: bool) -> int:
 KNOWN_COMMANDS: Final = frozenset({
     "run", "menu", "tui", "fzf", "select", "list", "ls", "status", "mount",
     "unmount", "umount", "unmount-all", "validate", "init", "init-config",
-    "doctor", "desktop", "desktop-all", "env", "version", "help",
+    "doctor", "desktop", "desktop-all", "install-desktop", "install-all-desktops",
+    "env", "version", "help",
 })
 
 
@@ -5583,11 +5584,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             case "init-config":
                 return cmd_init_config(ns.force)
 
-            case "desktop":
+            case "desktop" | "install-desktop":
                 install_desktop(mgr, ns.profile)
                 return 0
 
-            case "desktop-all":
+            case "desktop-all" | "install-all-desktops":
                 for p in catalogue(mgr, show_all=ns.all):
                     with suppress(ConfigError, OSError):
                         install_desktop(mgr, p.pid)

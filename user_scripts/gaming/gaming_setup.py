@@ -523,7 +523,19 @@ def enable_multilib_and_optimizations(ctx: SetupContext) -> bool:
         run_command(ctx, f"{backup_cmd} && {apply_cmd}", "Configure pacman.conf (enable [multilib], Color, ParallelDownloads, & DisableDownloadTimeout)", show_command=False)
         return True
 
-    return True
+    return False
+
+
+def filter_missing_packages(pkgs: Sequence[str]) -> List[str]:
+    """Filters package list using pacman -Q to only return packages not installed."""
+    if not pkgs:
+        return []
+    try:
+        res = subprocess.run(["pacman", "-Q", *pkgs], capture_output=True, text=True)
+        installed = {line.split()[0] for line in res.stdout.splitlines() if line.strip()}
+        return [p for p in pkgs if p not in installed]
+    except Exception:
+        return list(pkgs)
 
 
 def detect_cpu_info() -> CPUInfo:
@@ -846,8 +858,12 @@ def configure_gpu_drivers(ctx: SetupContext):
         return
 
     if target_pkgs:
-        pkgs_str = " ".join(target_pkgs)
-        run_command(ctx, f"sudo pacman -S --needed --noconfirm {pkgs_str}", target_desc, retries=3)
+        missing_pkgs = filter_missing_packages(target_pkgs)
+        if missing_pkgs:
+            pkgs_str = " ".join(missing_pkgs)
+            run_command(ctx, f"sudo pacman -S --needed --noconfirm {pkgs_str}", f"{target_desc} ({len(missing_pkgs)} missing)", retries=3)
+        else:
+            console.print(f"[bold green]✔ All {len(target_pkgs)} required GPU driver packages are already installed.[/bold green]")
 
     # Validate NVIDIA DRM Modesetting on Wayland
     has_nvidia = any("nvidia" in g.vendor_name.lower() or g.vendor_id == "0x10de" for g in detected_gpus)
@@ -906,13 +922,17 @@ def install_native_gaming_stack(ctx: SetupContext):
         native_packages.update(ctx.modules.extra_packages)
 
     if native_packages:
-        pkgs_str = " ".join(sorted(list(native_packages)))
-        run_command(
-            ctx,
-            f"sudo pacman -S --needed --noconfirm {pkgs_str}",
-            "Install selected native gaming packages and runtime libraries.",
-            retries=3
-        )
+        missing_native = filter_missing_packages(sorted(list(native_packages)))
+        if missing_native:
+            pkgs_str = " ".join(missing_native)
+            run_command(
+                ctx,
+                f"sudo pacman -S --needed --noconfirm {pkgs_str}",
+                f"Install missing native gaming packages and runtime libraries ({len(missing_native)} missing).",
+                retries=3
+            )
+        else:
+            console.print(f"[bold green]✔ All {len(native_packages)} selected native gaming packages and runtime libraries are already installed.[/bold green]")
 
     # Ensure Lutris runner directory exists for ProtonUp-Qt / GE-Proton integration
     if not ctx.dry_run:
@@ -1039,22 +1059,30 @@ def configure_flatpak_ecosystem(ctx: SetupContext):
     )
 
     # 2. Install Flatpak apps from FLATPAK_APP_CATALOG
+    installed_apps = set(get_installed_flatpaks())
     for app in FLATPAK_APP_CATALOG:
-        run_command(
-            ctx,
-            f"sudo flatpak install --system -y --noninteractive --or-update flathub {app['id']}",
-            f"Install {app['name']} via Flatpak sandbox.",
-            critical=False
-        )
+        if app["id"] in installed_apps:
+            console.print(f"[bold green]✔ Flatpak application {app['name']} ({app['id']}) is already installed.[/bold green]")
+        else:
+            run_command(
+                ctx,
+                f"sudo flatpak install --system -y --noninteractive --or-update flathub {app['id']}",
+                f"Install {app['name']} via Flatpak sandbox.",
+                critical=False
+            )
 
     # 3. Install Flatpak MangoHud & Gamescope runtime layers
+    installed_runtimes = get_installed_flatpak_runtimes()
     for layer_id in FLATPAK_LAYER_CATALOG:
-        run_command(
-            ctx,
-            f"sudo flatpak install --system -y --noninteractive --or-update flathub {layer_id}",
-            f"Install Flatpak Vulkan Layer {layer_id}.",
-            critical=False
-        )
+        if layer_id in installed_runtimes:
+            console.print(f"[bold green]✔ Flatpak Vulkan Layer {layer_id} is already installed.[/bold green]")
+        else:
+            run_command(
+                ctx,
+                f"sudo flatpak install --system -y --noninteractive --or-update flathub {layer_id}",
+                f"Install Flatpak Vulkan Layer {layer_id}.",
+                critical=False
+            )
 
     # 4. Configure native Wayland sockets and host filesystem overrides for gaming Flatpaks
     wayland_overrides = []
@@ -1069,6 +1097,24 @@ def configure_flatpak_ecosystem(ctx: SetupContext):
             "Grant Flatpak games native Wayland sockets and host filesystem permissions.",
             critical=False
         )
+
+
+def get_installed_flatpak_runtimes() -> Set[str]:
+    """Dynamically fetches installed Flatpak runtime identifiers (e.g. app_id//branch)."""
+    runtimes: Set[str] = set()
+    for scope_flag in ["--system", "--user"]:
+        try:
+            res = subprocess.run(
+                ["flatpak", "list", scope_flag, "--runtime", "--columns=application,branch"],
+                capture_output=True, text=True
+            )
+            for line in res.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 2:
+                    runtimes.add(f"{parts[0]}//{parts[1]}")
+        except Exception:
+            pass
+    return runtimes
 
 
 def get_installed_flatpaks() -> List[str]:
@@ -1181,8 +1227,13 @@ def integrate_game_runner_shortcuts(ctx: SetupContext) -> None:
     if runner_script.exists():
         console.print("[cyan]Generating application launcher desktop shortcuts for all game profiles...[/cyan]")
         if not ctx.dry_run:
-            subprocess.run([sys.executable, str(runner_script), "install-all-desktops"], capture_output=True)
-            console.print("[bold green]✔ Game profile desktop shortcuts installed into ~/.local/share/applications/.[/bold green]")
+            res = subprocess.run([sys.executable, str(runner_script), "install-all-desktops"], capture_output=True, text=True)
+            if res.returncode != 0:
+                res = subprocess.run([sys.executable, str(runner_script), "desktop-all"], capture_output=True, text=True)
+            if res.returncode == 0:
+                console.print("[bold green]✔ Game profile desktop shortcuts installed into ~/.local/share/applications/.[/bold green]")
+            else:
+                console.print(f"[bold yellow]Warning: Could not install game desktop entries: {res.stderr.strip()}[/bold yellow]")
 
 
 # ==============================================================================
@@ -1445,14 +1496,28 @@ def main():
         # Step 1: Pacman configuration & [multilib] activation
         if modules.gpu_drivers or len(modules.categories) > 0 or modules.extra_packages:
             console.print("\n[bold cyan]Step 1: Synchronizing Pacman Repositories & [multilib][/bold cyan]")
-            enable_multilib_and_optimizations(ctx)
+            multilib_changed = enable_multilib_and_optimizations(ctx)
 
-            run_command(
-                ctx,
-                "sudo pacman -Syu --needed --noconfirm",
-                "Synchronize package databases and apply core system upgrades.",
-                retries=3
-            )
+            all_target_pkgs = set()
+            for cat_key in modules.categories:
+                if cat_key in PACKAGE_CATALOG:
+                    all_target_pkgs.update(PACKAGE_CATALOG[cat_key]["packages"])
+            all_target_pkgs.update(modules.extra_packages)
+            if modules.gpu_drivers:
+                gpus = detect_gpus()
+                gpu_pkgs, _ = get_gpu_packages(gpus)
+                all_target_pkgs.update(gpu_pkgs)
+
+            missing_any = bool(filter_missing_packages(list(all_target_pkgs)))
+            if multilib_changed or missing_any:
+                run_command(
+                    ctx,
+                    "sudo pacman -Sy",
+                    "Synchronize package databases and refresh repository metadata.",
+                    retries=3
+                )
+            else:
+                console.print("[bold green]✔ Package databases are synchronized and all required packages are present.[/bold green]")
 
         # Step 2: GPU Detection and Driver Installation
         if modules.gpu_drivers:
