@@ -15,6 +15,7 @@ import argparse
 import atexit
 import ctypes
 import ctypes.util
+import json
 import os
 import re
 import shutil
@@ -30,8 +31,12 @@ try:
     from rich.markup import escape
     from rich.panel import Panel
     from rich.table import Table
+    from rich.text import Text
+    from textual import events, on
     from textual.app import App, ComposeResult
-    from textual.containers import Horizontal, VerticalScroll
+    from textual.binding import Binding
+    from textual.containers import Container, Horizontal, VerticalScroll
+    from textual.screen import ModalScreen
     from textual.widgets import Button, Label, Static
 except ImportError as exc:
     raise SystemExit(
@@ -51,6 +56,41 @@ libc.madvise.restype = ctypes.c_int
 
 MADV_COLD = 20
 MADV_PAGEOUT = 21
+
+
+# ============================================================================
+#  Dynamic Matugen Theme Compiler
+# ============================================================================
+def load_theme() -> dict[str, str]:
+    """Loads the user's Matugen-generated theme with bulletproof fallback mechanisms."""
+    path = Path.home() / ".config" / "matugen" / "generated" / "dusky_tui.json"
+    defaults: dict[str, str] = {
+        "bg": "#191113",
+        "fg": "#efdfe1",
+        "accent": "#ffb1c8",
+        "error": "#ffb4ab",
+        "warning": "#e3bdc6",
+        "success": "#efbd94",
+        "muted": "#514347",
+    }
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                user_theme = json.load(f)
+                return {k: str(user_theme.get(k, defaults[k])) for k in defaults}
+        except Exception:
+            return defaults
+    return defaults
+
+
+THEME = load_theme()
+BG = THEME["bg"]
+FG = THEME["fg"]
+ACCENT = THEME["accent"]
+ERROR = THEME["error"]
+WARNING = THEME["warning"]
+SUCCESS = THEME["success"]
+MUTED = THEME["muted"]
 
 
 # --------------------------------------------------------------------------- #
@@ -135,14 +175,14 @@ def cell(value: str, style: str = "") -> str:
 def bar(fraction: float, width: int = 14) -> str:
     fraction = min(max(fraction, 0.0), 1.0)
     filled = int(round(fraction * width))
-    colour = "green" if fraction < 0.70 else "yellow" if fraction < 0.90 else "red"
-    return f"[{colour}]{'#' * filled}[/{colour}][grey35]{'-' * (width - filled)}[/grey35]"
+    colour = SUCCESS if fraction < 0.70 else WARNING if fraction < 0.90 else ERROR
+    return f"[{colour}]{'#' * filled}[/{colour}][{MUTED}]{'-' * (width - filled)}[/{MUTED}]"
 
 
 def new_table() -> Table:
     table = Table(expand=True, box=None, show_header=False, pad_edge=False)
-    table.add_column("k", style="bold white", ratio=1)
-    table.add_column("v", justify="right", style="green", ratio=1, no_wrap=True)
+    table.add_column("k", style=f"bold {FG}", ratio=1)
+    table.add_column("v", justify="right", style=f"{SUCCESS}", ratio=1, no_wrap=True)
     return table
 
 
@@ -783,7 +823,7 @@ def panel_memory(snap: dict) -> Panel:
     )
     table.add_row("  ↳ SwapCached", fmt_bytes(mem.get("SwapCached", 0)))
 
-    return Panel(table, title="[bold cyan]System Memory Topology", border_style="cyan", padding=(0, 1))
+    return Panel(table, title=f"[bold {ACCENT}]System Memory Topology", border_style=ACCENT, padding=(0, 1))
 
 
 def panel_pressure(snap: dict) -> Panel:
@@ -799,8 +839,8 @@ def panel_pressure(snap: dict) -> Panel:
         full60 = psi.get("full.avg60", 0.0)
         full300 = psi.get("full.avg300", 0.0)
 
-        some_st = "green" if some10 < 5.0 else "yellow" if some10 < 20.0 else "bold red"
-        full_st = "green" if full10 < 1.0 else "yellow" if full10 < 10.0 else "bold red"
+        some_st = SUCCESS if some10 < 5.0 else WARNING if some10 < 20.0 else f"bold {ERROR}"
+        full_st = SUCCESS if full10 < 1.0 else WARNING if full10 < 10.0 else f"bold {ERROR}"
 
         table.add_row("PSI Some [dim]10s/60s/300s[/dim]", f"[{some_st}]{some10:.2f}[/{some_st}] / {some60:.2f} / {some300:.2f}")
         table.add_row("PSI Full [dim]10s/60s/300s[/dim]", f"[{full_st}]{full10:.2f}[/{full_st}] / {full60:.2f} / {full300:.2f}")
@@ -811,35 +851,35 @@ def panel_pressure(snap: dict) -> Panel:
     swap_in = rates.get("pswpin", 0.0) * PAGE_SIZE
     swap_out = rates.get("pswpout", 0.0) * PAGE_SIZE
     table.add_row("Swap In Rate [dim](Decompr)[/dim]", f"{fmt_bytes(swap_in)}/s")
-    table.add_row("Swap Out Rate [dim](Compress)[/dim]", f"[bold magenta]{fmt_bytes(swap_out)}/s[/bold magenta]")
+    table.add_row("Swap Out Rate [dim](Compress)[/dim]", f"[bold {ACCENT}]{fmt_bytes(swap_out)}/s[/bold {ACCENT}]")
     table.add_row("Major Page Faults", f"{rates.get('pgmajfault', 0.0):.0f}/s")
 
     oom_kills = snap["vmstat"].get("oom_kill")
     table.add_row(
         "OOM Kills [dim](Since Boot)[/dim]",
-        "[dim]n/a[/dim]" if oom_kills is None else (f"[bold red]{oom_kills}[/bold red]" if oom_kills else "0"),
+        "[dim]n/a[/dim]" if oom_kills is None else (f"[bold {ERROR}]{oom_kills}[/bold {ERROR}]" if oom_kills else "0"),
     )
 
-    return Panel(table, title="[bold yellow]Memory Pressure (PSI) & Swap I/O Rates", border_style="yellow", padding=(0, 1))
+    return Panel(table, title=f"[bold {WARNING}]Memory Pressure (PSI) & Swap I/O Rates", border_style=WARNING, padding=(0, 1))
 
 
 def panel_processes(procs: list[tuple[int, int, int, str]], total_ram: int) -> Panel:
     table = Table(expand=True, box=None, pad_edge=False, header_style="bold dim", show_edge=False)
-    table.add_column("PID", style="dim cyan", ratio=1)
-    table.add_column("PROCESS", style="bold white", ratio=3)
-    table.add_column("RSS", justify="right", style="yellow", ratio=2)
-    table.add_column("SWAP", justify="right", style="magenta", ratio=2)
-    table.add_column("%", justify="right", style="red", ratio=1)
+    table.add_column("PID", style=f"dim {ACCENT}", ratio=1)
+    table.add_column("PROCESS", style=f"bold {FG}", ratio=3)
+    table.add_column("RSS", justify="right", style=f"{WARNING}", ratio=2)
+    table.add_column("SWAP", justify="right", style=f"{ACCENT}", ratio=2)
+    table.add_column("%", justify="right", style=f"{ERROR}", ratio=1)
 
     if not procs:
         table.add_row("", "[dim]scanning /proc...[/dim]", "", "", "")
     else:
         for rss, swap, pid, name in procs:
             share = (rss / total_ram * 100.0) if total_ram else 0.0
-            swp_str = f"[bold magenta]{fmt_bytes(swap)}[/bold magenta]" if swap > 0 else "[dim]-[/dim]"
+            swp_str = f"[bold {ACCENT}]{fmt_bytes(swap)}[/bold {ACCENT}]" if swap > 0 else "[dim]-[/dim]"
             table.add_row(str(pid), escape(name[:18]), fmt_bytes(rss), swp_str, f"{share:.1f}")
 
-    return Panel(table, title="[bold blue]Top Memory Consumers [dim](RSS & VmSwap)", border_style="blue", padding=(0, 1))
+    return Panel(table, title=f"[bold {ACCENT}]Top Memory Consumers [dim](RSS & VmSwap)[/dim]", border_style=MUTED, padding=(0, 1))
 
 
 def panel_zram(snap: dict) -> Panel:
@@ -850,38 +890,38 @@ def panel_zram(snap: dict) -> Panel:
         return Panel(
             "[dim]No ZRAM devices detected on system.\n"
             "Enable via: systemctl start systemd-zram-setup@zram0.service[/dim]",
-            title="[bold magenta]ZRAM Multi-Device Diagnostics",
-            border_style="magenta",
+            title=f"[bold {ACCENT}]ZRAM Multi-Device Diagnostics",
+            border_style=ACCENT,
         )
 
     # 1:1 ratio guarantees balanced columns without horizontal text clipping
     table = Table(expand=True, box=None, pad_edge=False, show_header=False)
-    table.add_column("k", style="bold white", ratio=1)
-    table.add_column("v", justify="right", style="green", ratio=1)
+    table.add_column("k", style=f"bold {FG}", ratio=1)
+    table.add_column("v", justify="right", style=f"{SUCCESS}", ratio=1)
 
     for i, d in enumerate(devices):
         if i > 0:
             table.add_section()
         role_label = escape(d["role"])
-        table.add_row(f"[bold magenta]/dev/{d['name']}[/bold magenta] [cyan]{role_label}[/cyan]", f"[dim]{escape(d['algo'])} • {fmt_bytes(d['disksize'])}[/dim]")
+        table.add_row(f"[bold {ACCENT}]/dev/{d['name']}[/bold {ACCENT}] [{WARNING}]{role_label}[/{WARNING}]", f"[dim]{escape(d['algo'])} • {fmt_bytes(d['disksize'])}[/dim]")
         codec_str = f"{d['codec_ratio']:.1f}x" if d["orig"] > 0 else "idle"
         table.add_row("  Data → Compr", f"{fmt_bytes(d['orig'])} → {fmt_bytes(d['compr'])} [dim]({codec_str})[/dim]")
         eff_str = f"{d['eff_ratio']:.2f}x" if d["orig"] > 0 else "idle"
         table.add_row("  RAM Actually Used", f"{fmt_bytes(d['used'])} [dim]({eff_str} eff)[/dim]")
         saved_str = fmt_bytes(d["saved"]) if d["orig"] > 0 else "0 B"
         extra = f" [dim]({fmt_bytes(d['same'])} dedup)[/dim]" if d["same"] > 0 else ""
-        table.add_row("  RAM Saved / Dedup", f"[bold cyan]+{saved_str}[/bold cyan]{extra}")
+        table.add_row("  RAM Saved / Dedup", f"[bold {SUCCESS}]+{saved_str}[/bold {SUCCESS}]{extra}")
 
     # Total Pool Summary
     if len(devices) > 1:
         table.add_section()
-        table.add_row("[bold]Total ZRAM Pool[/bold]", f"[bold white]{fmt_bytes(zdata['disksize_total'])} cap[/bold white]")
+        table.add_row("[bold]Total ZRAM Pool[/bold]", f"[bold {FG}]{fmt_bytes(zdata['disksize_total'])} cap[/bold {FG}]")
         table.add_row("  Total Stored → Compr", f"{fmt_bytes(zdata['orig_total'])} → {fmt_bytes(zdata['compr_total'])}")
         table.add_row("  Total RAM Consumed", f"[bold]{fmt_bytes(zdata['used_total'])}[/bold]")
         tot_eff_str = f"{zdata['eff_ratio']:.2f}x" if zdata["orig_total"] > 0 else "idle"
-        table.add_row("  Effective Ratio / Saved", f"[bold green]{tot_eff_str}[/bold green] ([bold cyan]+{fmt_bytes(zdata['saved_total'])}[/bold cyan])")
+        table.add_row("  Effective Ratio / Saved", f"[bold {SUCCESS}]{tot_eff_str}[/bold {SUCCESS}] ([bold {ACCENT}]+{fmt_bytes(zdata['saved_total'])}[/bold {ACCENT}])")
 
-    return Panel(table, title="[bold magenta]ZRAM Multi-Device Diagnostics", border_style="magenta", padding=(0, 1))
+    return Panel(table, title=f"[bold {ACCENT}]ZRAM Multi-Device Diagnostics", border_style=ACCENT, padding=(0, 1))
 
 
 def panel_vm(snap: dict) -> Panel:
@@ -898,7 +938,7 @@ def panel_vm(snap: dict) -> Panel:
     table.add_row("vm.swappiness", cell(swappiness))
     table.add_row(
         "vm.page-cluster [dim](0=opt)[/dim]",
-        cell(page_cluster, "bold green" if page_cluster == "0" else "bold yellow"),
+        cell(page_cluster, f"bold {SUCCESS}" if page_cluster == "0" else f"bold {WARNING}"),
     )
     table.add_row("vm.watermark_scale", cell(watermark))
     table.add_row("vm.vfs_cache_pressure", cell(vfs_pressure))
@@ -915,7 +955,7 @@ def panel_vm(snap: dict) -> Panel:
 
     table.add_row("", "")
     lru_en = read_str("/sys/kernel/mm/lru_gen/enabled")
-    table.add_row("mglru.enabled", cell(lru_en, "green" if lru_en != MISSING else ""))
+    table.add_row("mglru.enabled", cell(lru_en, f"{SUCCESS}" if lru_en != MISSING else ""))
     table.add_row("mglru.min_ttl_ms", cell(read_str("/sys/kernel/mm/lru_gen/min_ttl_ms")))
 
     thp_en = read_selected("/sys/kernel/mm/transparent_hugepage/enabled")
@@ -923,19 +963,19 @@ def panel_vm(snap: dict) -> Panel:
 
     zswap = read_str("/sys/module/zswap/parameters/enabled")
     if zswap not in (MISSING, DENIED) and zswap.upper().startswith("Y"):
-        table.add_row("zswap", "[bold yellow]on[/bold yellow] [bold red](conflicts with ZRAM!)[/bold red]")
+        table.add_row("zswap", f"[bold {WARNING}]on[/bold {WARNING}] [bold {ERROR}](conflicts with ZRAM!)[/bold {ERROR}]")
     else:
         table.add_row("zswap", cell(zswap) if zswap in (MISSING, DENIED) else "off [dim](clean)[/dim]")
 
-    return Panel(table, title="[bold green]Live Kernel VM Policies & Tunables", border_style="green", padding=(0, 1))
+    return Panel(table, title=f"[bold {SUCCESS}]Live Kernel VM Policies & Tunables", border_style=SUCCESS, padding=(0, 1))
 
 
 def panel_balloon(mgr: BalloonManager, active_category: str) -> Panel:
     counts = mgr.counts
     chunk = mgr.chunk_mb
     table = Table(expand=True, box=None, pad_edge=False, show_header=False)
-    table.add_column("cat", style="bold white", ratio=1)
-    table.add_column("stat", justify="right", style="yellow", ratio=1)
+    table.add_column("cat", style=f"bold {FG}", ratio=1)
+    table.add_column("stat", justify="right", style=f"{WARNING}", ratio=1)
 
     categories = [
         ("dormant", "[1] Dormant Anon", "Cold/Swap Candidate"),
@@ -950,8 +990,8 @@ def panel_balloon(mgr: BalloonManager, active_category: str) -> Panel:
         mb = cnt * chunk
         is_sel = (key == active_category)
         prefix = "▶ " if is_sel else "  "
-        title_style = "bold green" if is_sel else "white"
-        stat_str = f"{cnt} blocks [bold yellow]({mb} MiB)[/bold yellow]" if cnt > 0 else f"0 blocks [dim](0 MiB)[/dim]"
+        title_style = f"bold {SUCCESS}" if is_sel else f"{FG}"
+        stat_str = f"{cnt} blocks [bold {WARNING}]({mb} MiB)[/bold {WARNING}]" if cnt > 0 else f"0 blocks [dim](0 MiB)[/dim]"
         table.add_row(f"{prefix}[{title_style}]{name}[/{title_style}] [dim]({desc})[/dim]", stat_str)
 
     table.add_section()
@@ -959,7 +999,7 @@ def panel_balloon(mgr: BalloonManager, active_category: str) -> Panel:
     tot_mb = mgr.total_mb
     table.add_row(
         "[bold]Total Injected Load[/bold]",
-        f"[bold yellow]{tot_mb} MiB[/bold yellow] [dim]({tot_cnt} blocks)[/dim]",
+        f"[bold {WARNING}]{tot_mb} MiB[/bold {WARNING}] [dim]({tot_cnt} blocks)[/dim]",
     )
     table.add_row(
         "[dim]Quick Actions:[/dim]",
@@ -968,10 +1008,65 @@ def panel_balloon(mgr: BalloonManager, active_category: str) -> Panel:
 
     return Panel(
         table,
-        title=f"[bold green]RAM Ballooning Engine [dim](Selected: [{active_category.upper()}])[/dim]",
-        border_style="green",
+        title=f"[bold {SUCCESS}]RAM Ballooning Engine [dim](Selected: [{active_category.upper()}])[/dim]",
+        border_style=SUCCESS,
         padding=(0, 1),
     )
+
+
+# ============================================================================
+#  Shortcuts & Help Modal Dialog
+# ============================================================================
+class ShortcutsScreen(ModalScreen[None]):
+    BINDINGS = [
+        Binding("escape", "dismiss", "Dismiss", priority=True),
+        Binding("f1", "dismiss", "Dismiss", priority=True),
+        Binding("question_mark", "dismiss", "Dismiss", priority=True),
+        Binding("q", "dismiss", "Dismiss", priority=True),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Container(id="help_dialog"):
+            yield Static("󰌌 Dusky RAM Analyzer & ZRAM Benchmark Shortcuts", id="modal-title")
+
+            text = Text()
+            text.append("Synthetic Balloon Categories\n", style=f"bold {ACCENT}")
+            text.append("  1: Dormant Anon (Cold Swap)       2: Active Anon (Foreground LRU)\n")
+            text.append("  3: Clean Cache (Reclaimable)      4: Dirty Cache (Unwritten Disk)\n")
+            text.append("  5: Shmem / Tmpfs (/dev/shm)\n\n")
+
+            text.append("Memory Pressure Actions\n", style=f"bold {ACCENT}")
+            text.append("  + / =  Allocate +1 chunk          - / _  Free -1 chunk\n")
+            text.append("  p      PageOut (MADV_PAGEOUT)     s      Sync dirty cache to disk\n")
+            text.append("  d      Drop caches (root)         k      Compact ZRAM (root)\n")
+            text.append("  c      Clear all balloon memory\n\n")
+
+            text.append("Navigation & Controls\n", style=f"bold {ACCENT}")
+            text.append("  r      Immediate telemetry poll   F1 / ? Toggle this help modal\n")
+            text.append("  q/Esc  Clean up memory and quit")
+
+            yield Static(text, id="modal-text")
+
+            with Horizontal(id="modal_btn_container"):
+                yield Button("Close [F1 / Esc]", id="btn_modal_close")
+
+    def on_key(self, event: events.Key) -> None:
+        key = event.key.lower()
+        if key in ("escape", "f1", "question_mark", "q", "enter", "space", "?") or event.character in ("?", "q"):
+            self.dismiss(None)
+            event.stop()
+
+    @on(Button.Pressed, "#btn_modal_close")
+    def on_close_click(self) -> None:
+        self.dismiss(None)
+
+    @on(events.Click)
+    def on_background_click(self, event: events.Click) -> None:
+        if event.control is self:
+            self.dismiss(None)
+
+    def action_dismiss(self) -> None:
+        self.dismiss(None)
 
 
 # --------------------------------------------------------------------------- #
@@ -979,95 +1074,285 @@ def panel_balloon(mgr: BalloonManager, active_category: str) -> Panel:
 # --------------------------------------------------------------------------- #
 class DuskyRAMAnalyzer(App):
     TITLE = "DUSKY RAM ANALYZER & BALLOON BENCHMARK"
+    ENABLE_COMMAND_PALETTE = False
 
-    CSS = """
-    Screen {
+    CSS = f"""
+    Screen {{
         layout: vertical;
-        background: #0b0e14;
-    }
+        background: {BG};
+    }}
 
-    #custom_header {
+    #top_bar {{
         dock: top;
         width: 100%;
         height: 1;
-        background: #005f87;
-        color: white;
-        text-style: bold;
-        content-align: center middle;
-    }
+        background: {BG};
+        padding: 0 1;
+        align-vertical: middle;
+    }}
 
-    #main_container {
+    #header_title {{
+        width: 1fr;
+        height: 1;
+        text-align: center;
+        text-style: bold;
+        color: {FG};
+    }}
+
+    #btn_top_help {{
+        height: 1;
+        min-width: 0;
+        width: auto;
+        border: none;
+        background: {ACCENT};
+        color: {BG};
+        text-style: bold;
+        padding: 0;
+        margin: 0;
+    }}
+    #btn_top_help:hover, #btn_top_help:focus {{
+        background: {SUCCESS};
+        color: {BG};
+    }}
+
+    #btn_top_quit {{
+        height: 1;
+        min-width: 0;
+        width: auto;
+        border: none;
+        background: {MUTED};
+        color: {ERROR};
+        text-style: bold;
+        padding: 0;
+        margin: 0;
+    }}
+    #btn_top_quit:hover, #btn_top_quit:focus {{
+        background: {ERROR};
+        color: {BG};
+    }}
+
+    #main_container {{
         layout: horizontal;
         height: 1fr;
         padding: 0 1;
-    }
+    }}
 
-    .column {
+    .column {{
         width: 1fr;
         height: 100%;
         padding: 0 1;
-        scrollbar-size-vertical: 1;
-    }
+        scrollbar-size: 1 1;
+        scrollbar-background: {BG};
+        scrollbar-color: {MUTED};
+        scrollbar-color-hover: {ACCENT};
+    }}
 
-    .panel {
+    .panel {{
         height: auto;
         margin-bottom: 1;
-    }
+    }}
 
-    #controls_container {
+    #controls_container {{
         dock: bottom;
         layout: vertical;
         height: auto;
-        background: #0d1117;
-        padding: 0 1 1 1;
-    }
+        background: {BG};
+        padding: 0 1;
+    }}
 
-    .btn-row {
+    .btn-row {{
         layout: horizontal;
         align: center middle;
         width: 100%;
         height: 1;
         margin-top: 1;
-    }
+    }}
 
-    /* Flat modern buttons optimized for 80-col terminals */
-    .flat-button {
+    /* Tight modern buttons: zero extra padding, auto-fit width, cohesive theme hover */
+    Button {{
         height: 1;
         min-height: 1;
+        min-width: 0;
+        width: auto;
         border: none;
-        padding: 0 1;
+        padding: 0;
         margin: 0 1;
-        min-width: 6;
         text-style: bold;
-    }
-    .flat-button:hover { text-style: reverse bold; }
-    .flat-button:focus { text-style: bold underline; }
+    }}
 
-    /* Type buttons */
-    .type-btn { background: #1f2937; color: #9ca3af; }
-    .type-btn.active-type { background: #0284c7; color: white; text-style: bold; }
+    /* Type selection buttons */
+    .type-btn {{
+        background: #2b1f24;
+        color: #bbaab0;
+    }}
+    .type-btn:hover, .type-btn:focus {{
+        background: {ACCENT};
+        color: {BG};
+    }}
+    .type-btn.active-type {{
+        background: {ACCENT};
+        color: {BG};
+        text-style: bold;
+    }}
+    .type-btn.active-type:hover, .type-btn.active-type:focus {{
+        background: {SUCCESS};
+        color: {BG};
+    }}
 
     /* Action buttons */
-    #btn_add      { background: #166534; color: white; }
-    #btn_free     { background: #854d0e; color: white; }
-    #btn_pageout  { background: #7e22ce; color: white; }
-    #btn_sync     { background: #0369a1; color: white; }
-    #btn_drop     { background: #b45309; color: white; }
-    #btn_compact  { background: #047857; color: white; }
-    #btn_clear    { background: #991b1b; color: white; }
-    #btn_refresh  { background: #374151; color: white; }
-    #btn_quit     { background: #0f172a; color: #f87171; }
+    #btn_help {{
+        background: {ACCENT};
+        color: {BG};
+    }}
+    #btn_help:hover, #btn_help:focus {{
+        background: {SUCCESS};
+        color: {BG};
+    }}
 
-    #status_label {
+    #btn_add {{
+        background: #1b4332;
+        color: #d1fae5;
+    }}
+    #btn_add:hover, #btn_add:focus {{
+        background: #22c55e;
+        color: #000000;
+    }}
+
+    #btn_free {{
+        background: #78350f;
+        color: #fef3c7;
+    }}
+    #btn_free:hover, #btn_free:focus {{
+        background: #f59e0b;
+        color: #000000;
+    }}
+
+    #btn_pageout {{
+        background: #581c87;
+        color: #f3e8ff;
+    }}
+    #btn_pageout:hover, #btn_pageout:focus {{
+        background: #a855f7;
+        color: #ffffff;
+    }}
+
+    #btn_sync {{
+        background: #0369a1;
+        color: #e0f2fe;
+    }}
+    #btn_sync:hover, #btn_sync:focus {{
+        background: #38bdf8;
+        color: #000000;
+    }}
+
+    #btn_drop {{
+        background: #9a3412;
+        color: #ffedd5;
+    }}
+    #btn_drop:hover, #btn_drop:focus {{
+        background: #f97316;
+        color: #000000;
+    }}
+
+    #btn_compact {{
+        background: #065f46;
+        color: #d1fae5;
+    }}
+    #btn_compact:hover, #btn_compact:focus {{
+        background: #10b981;
+        color: #000000;
+    }}
+
+    #btn_clear {{
+        background: #7f1d1d;
+        color: #fee2e2;
+    }}
+    #btn_clear:hover, #btn_clear:focus {{
+        background: #ef4444;
+        color: #ffffff;
+    }}
+
+    #btn_refresh {{
+        background: #374151;
+        color: #f3f4f6;
+    }}
+    #btn_refresh:hover, #btn_refresh:focus {{
+        background: #94a3b8;
+        color: #000000;
+    }}
+
+    #btn_quit {{
+        background: {MUTED};
+        color: {ERROR};
+    }}
+    #btn_quit:hover, #btn_quit:focus {{
+        background: {ERROR};
+        color: {BG};
+    }}
+
+    #status_label {{
         height: 1;
         content-align: center middle;
         text-style: bold;
-        color: #e2e8f0;
+        color: {FG};
         margin-top: 1;
-    }
+        margin-bottom: 1;
+    }}
+
+    /* Shortcuts modal dialog styling */
+    ShortcutsScreen {{
+        align: center middle;
+    }}
+
+    #help_dialog {{
+        width: 76;
+        height: auto;
+        max-height: 95%;
+        overflow-y: auto;
+        background: {BG};
+        border: heavy {ACCENT};
+        padding: 0 1;
+    }}
+
+    #modal-title {{
+        color: {ACCENT};
+        text-style: bold;
+        text-align: center;
+        margin: 0;
+    }}
+
+    #modal-text {{
+        color: {FG};
+        margin: 0;
+    }}
+
+    #modal_btn_container {{
+        height: 1;
+        align-horizontal: center;
+        margin-top: 1;
+    }}
+
+    Button#btn_modal_close {{
+        height: 1;
+        width: auto;
+        min-width: 0;
+        border: none;
+        background: {ACCENT};
+        color: {BG};
+        text-style: bold;
+        padding: 0 1;
+        margin: 0;
+    }}
+
+    Button#btn_modal_close:hover, Button#btn_modal_close:focus {{
+        background: {SUCCESS};
+        color: {BG};
+    }}
     """
 
     BINDINGS = [
+        Binding("f1", "help", "Help", priority=True),
+        Binding("question_mark", "help", "Help", priority=True),
         ("1", "set_type('dormant')", "Dormant"),
         ("2", "set_type('active')", "Active"),
         ("3", "set_type('clean')", "Clean"),
@@ -1084,6 +1369,7 @@ class DuskyRAMAnalyzer(App):
         ("c", "clear_all", "Clear"),
         ("r", "refresh_now", "Refresh"),
         ("q", "bail_out", "Quit"),
+        Binding("escape", "bail_out", "Quit"),
     ]
 
     def __init__(self, interval: float = 1.0, chunk_mb: int = 250) -> None:
@@ -1097,12 +1383,21 @@ class DuskyRAMAnalyzer(App):
         self._proc_busy = False
         self._add_queue: list[str] = []
         self._worker_running = False
-        self._status_text = "[dim]Ready. Select category (1-5), press + to inject load, p to pageout to ZRAM.[/dim]"
+        self._status_text = "[dim]Ready. Select category (1-5), press + to inject load, p to pageout to ZRAM, F1 for help.[/dim]"
+
+    def action_help(self) -> None:
+        """Toggles the shortcuts and help modal dialog."""
+        if isinstance(self.screen, ModalScreen):
+            self.screen.dismiss(None)
+        else:
+            self.push_screen(ShortcutsScreen())
 
     def compose(self) -> ComposeResult:
         uname = os.uname()
-        header_text = f"DUSKY RAM ANALYZER & BALLOON BENCHMARK  •  Kernel: {uname.release}  •  Host: {uname.nodename}"
-        yield Label(header_text, id="custom_header")
+        with Horizontal(id="top_bar"):
+            yield Button("󰌌 F1 Help", id="btn_top_help")
+            yield Label(f"DUSKY RAM ANALYZER & BALLOON BENCHMARK  •  Kernel: {uname.release}  •  Host: {uname.nodename}", id="header_title")
+            yield Button("q Quit", id="btn_top_quit")
 
         with Horizontal(id="main_container"):
             with VerticalScroll(classes="column"):
@@ -1116,25 +1411,26 @@ class DuskyRAMAnalyzer(App):
 
         chunk = self.balloon.chunk_mb
         with Static(id="controls_container"):
-            # Row 1: Balloon Type Selection (Compact for 80-col terminals)
+            # Row 1: Balloon Type Selection + F1 + Quit
             with Horizontal(classes="btn-row"):
-                yield Button("1:Dormant", id="type_dormant", classes="flat-button type-btn active-type")
-                yield Button("2:Active", id="type_active", classes="flat-button type-btn")
-                yield Button("3:Clean", id="type_clean", classes="flat-button type-btn")
-                yield Button("4:Dirty", id="type_dirty", classes="flat-button type-btn")
-                yield Button("5:Shmem", id="type_shmem", classes="flat-button type-btn")
+                yield Button("1:Dormant", id="type_dormant", classes="type-btn active-type")
+                yield Button("2:Active", id="type_active", classes="type-btn")
+                yield Button("3:Clean", id="type_clean", classes="type-btn")
+                yield Button("4:Dirty", id="type_dirty", classes="type-btn")
+                yield Button("5:Shmem", id="type_shmem", classes="type-btn")
+                yield Button("󰌌 F1", id="btn_help")
+                yield Button("q Quit", id="btn_quit")
 
-            # Row 2: Actions (Compact for 80-col terminals)
+            # Row 2: Actions
             with Horizontal(classes="btn-row"):
-                yield Button(f"+ {chunk}M", id="btn_add", classes="flat-button")
-                yield Button(f"- {chunk}M", id="btn_free", classes="flat-button")
-                yield Button("p PageOut", id="btn_pageout", classes="flat-button")
-                yield Button("s Sync", id="btn_sync", classes="flat-button")
-                yield Button("d Drop", id="btn_drop", classes="flat-button")
-                yield Button("k Compact", id="btn_compact", classes="flat-button")
-                yield Button("c Clear", id="btn_clear", classes="flat-button")
-                yield Button("r Ref", id="btn_refresh", classes="flat-button")
-                yield Button("q Quit", id="btn_quit", classes="flat-button")
+                yield Button(f"+ {chunk}M", id="btn_add")
+                yield Button(f"- {chunk}M", id="btn_free")
+                yield Button("p PageOut", id="btn_pageout")
+                yield Button("s Sync", id="btn_sync")
+                yield Button("d Drop", id="btn_drop")
+                yield Button("k Compact", id="btn_compact")
+                yield Button("c Clear", id="btn_clear")
+                yield Button("r Ref", id="btn_refresh")
 
             yield Label(self._status_text, id="status_label")
 
@@ -1310,6 +1606,10 @@ class DuskyRAMAnalyzer(App):
             self.action_set_type(bid[5:])
             return
         match bid:
+            case "btn_top_help" | "btn_help":
+                self.action_help()
+            case "btn_top_quit" | "btn_quit":
+                self.action_bail_out()
             case "btn_add":
                 self.action_add_chunk()
             case "btn_free":
@@ -1326,8 +1626,6 @@ class DuskyRAMAnalyzer(App):
                 self.action_clear_all()
             case "btn_refresh":
                 self.action_refresh_now()
-            case "btn_quit":
-                self.action_bail_out()
 
 
 # --------------------------------------------------------------------------- #
