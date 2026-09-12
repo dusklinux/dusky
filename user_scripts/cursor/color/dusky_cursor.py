@@ -5,13 +5,13 @@ Builds a 'Dusky' XCursor theme by recoloring the installed
 Bibata-Modern-Classic bitmaps and applies it across every layer, on every
 matugen theme switch (wired via '[templates.dusky_cursor]' post_hook).
 
-Color model (mirrors Bibata's own variant system, cf. ful1e5/bibata
-'COLORS' - Amber is orange *fill* + white outline): the matugen accent
-becomes the cursor *fill*, with a fixed black outline:
+Color model: the primary matugen accent becomes the cursor *outline* (light
+accent border), and a deep dark version of the accent becomes the cursor
+*fill* (middle portion of the cursor):
 
-  regular shapes : dark pixels  -> ACCENT   (base fill)
-                   light pixels -> OUTLINE  (always black)
-  spinner shapes : dark pixels  -> WATCH_BG (matugen background)
+  regular shapes : dark pixels  -> DEEP_ACCENT (very dark accent fill)
+                   light pixels -> ACCENT      (primary accent outline)
+  spinner shapes : dark pixels  -> WATCH_BG    (matugen background)
   saturated pixels (watch hands) are copied byte-exact, never touched.
 
 Pixel math runs entirely in XCursor's native *premultiplied* ARGB32 space:
@@ -62,6 +62,7 @@ Usage:
 """
 
 import argparse
+import colorsys
 import contextlib
 import ctypes
 import fcntl
@@ -294,13 +295,22 @@ class Mode(StrEnum):
 @dataclass(frozen=True, slots=True)
 class Palette:
     accent: str
+    deep_accent: str
+    outline: str
     background: str
     mode: Mode
     origin: str
 
-    @property
-    def outline(self) -> str:
-        return "#000000"
+
+def derive_deep_accent(accent_hex: str) -> str:
+    """Derive a deep, very dark version of the accent color for the cursor middle fill."""
+    r, g, b = hex_to_rgb(accent_hex)
+    h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+    # Target a deep, very dark accent tone (L ~ 0.08 - 0.12) with rich saturation
+    target_l = max(0.06, min(0.12, l * 0.22)) if l > 0.15 else max(0.03, l * 0.4)
+    target_s = min(1.0, max(s * 1.3, 0.7)) if s > 0.05 else s
+    dr, dg, db = colorsys.hls_to_rgb(h, target_l, target_s)
+    return f"#{int(round(dr * 255)):02x}{int(round(dg * 255)):02x}{int(round(db * 255)):02x}"
 
 
 def valid_hex(value: object) -> str | None:
@@ -364,7 +374,18 @@ def load_palette() -> Palette:
             accent, origin = hx, f"dusky_tui.json ({MATUGEN_TUI_JSON})"
     accent = accent or FALLBACK_ACCENT
     background = background or FALLBACK_BACKGROUND
-    pal = Palette(accent, background, detect_mode(background), origin or "fallback defaults")
+    deep_accent = (
+        valid_hex(env.get("DUSKY_CURSOR_DEEP_ACCENT"))
+        or valid_hex(env.get("DUSKY_CURSOR_ACCENT_DARK"))
+        or valid_hex(os.environ.get("DUSKY_CURSOR_DEEP_ACCENT"))
+        or derive_deep_accent(accent)
+    )
+    outline = (
+        valid_hex(env.get("DUSKY_CURSOR_OUTLINE"))
+        or valid_hex(os.environ.get("DUSKY_CURSOR_OUTLINE"))
+        or accent
+    )
+    pal = Palette(accent, deep_accent, outline, background, detect_mode(background), origin or "fallback defaults")
     log.debug("palette %s", pal)
     return pal
 
@@ -590,6 +611,7 @@ def want_fingerprint(pal: Palette, source_name: str, source_digest: str) -> dict
     return {
         "version": FINGERPRINT_VERSION,
         "accent": pal.accent,
+        "deep_accent": pal.deep_accent,
         "outline": pal.outline,
         "watch_bg": pal.background,
         "mode": str(pal.mode),
@@ -605,7 +627,7 @@ def fingerprint_matches(stored: dict[str, object], want: dict[str, object]) -> b
 def theme_meta(pal: Palette, source_name: str) -> tuple[str, str]:
     index = ("[Icon Theme]\n"
              f"Name={THEME_NAME}\n"
-             f"Comment=Dusky Cursors - matugen accent {pal.accent}, black outline "
+             f"Comment=Dusky Cursors - matugen accent {pal.accent} outline, deep accent {pal.deep_accent} fill "
              f"(recolored {source_name})\n"
              f"Inherits={THEME_INHERITS}\n")
     cursor = f"[Icon Theme]\nName={THEME_NAME}\nInherits={THEME_NAME}\n"
@@ -621,14 +643,14 @@ def build_theme(src_cursors: Path, entries: list[Entry], pal: Palette,
         stage.chmod(0o755)
         cursors = stage / "cursors"
         cursors.mkdir(0o755)
-        accent = hex_to_rgb(pal.accent)
+        deep_accent = hex_to_rgb(pal.deep_accent)
         watch_bg = hex_to_rgb(pal.background)
         outline = hex_to_rgb(pal.outline)
         files = [e for e in entries if e.link is None]
         links = [e for e in entries if e.link is not None]
 
         def work(e: Entry) -> None:
-            fill = watch_bg if e.name in SPINNER_SHAPES else accent
+            fill = watch_bg if e.name in SPINNER_SHAPES else deep_accent
             recolor_shape(src_cursors / e.name, cursors, fill, outline)
 
         workers = max(1, min(8, os.process_cpu_count() or 1))
@@ -934,8 +956,8 @@ def _locate_source(source_name: str) -> Path | None:
 def do_apply(args: argparse.Namespace, source_name: str) -> int:
     pal = load_palette()
     size = args.size or detect_size()
-    log.info("Dusky Cursor: accent=%s outline=%s watch_bg=%s mode=%s size=%dpx (%s)",
-             pal.accent, pal.outline, pal.background, pal.mode, size, pal.origin)
+    log.info("Dusky Cursor: accent=%s (outline) deep_accent=%s (fill) watch_bg=%s mode=%s size=%dpx (%s)",
+             pal.accent, pal.deep_accent, pal.background, pal.mode, size, pal.origin)
 
     src_cursors = _locate_source(source_name)
     if src_cursors is None:
@@ -960,7 +982,7 @@ def do_apply(args: argparse.Namespace, source_name: str) -> int:
 
     if args.dry_run:
         print(f"would {'rebuild' if stale else 'keep'} {THEME_NAME} "
-              f"(accent={pal.accent}, outline={pal.outline}, watch_bg={pal.background}) "
+              f"(accent={pal.accent}, deep_accent={pal.deep_accent}, outline={pal.outline}, watch_bg={pal.background}) "
               f"and apply @ {size}px")
         return 0
 
@@ -1025,8 +1047,8 @@ def do_status(source_name: str) -> int:
     pal = load_palette()
     cur_theme, cur_size = current_state()
     print(f"theme:      {THEME_NAME} (source: {source_name})")
-    print(f"palette:    accent={pal.accent} outline={pal.outline} background={pal.background} "
-          f"mode={pal.mode} ({pal.origin})")
+    print(f"palette:    accent={pal.accent} (outline) deep_accent={pal.deep_accent} (fill) "
+          f"background={pal.background} mode={pal.mode} ({pal.origin})")
     print(f"gsettings:  theme={cur_theme} size={cur_size}")
     print(f"detected:   size={detect_size()}px  hyprland={'yes' if in_hyprland() else 'no'}")
     src_cursors = find_source_cursors(source_name)
@@ -1042,7 +1064,8 @@ def do_status(source_name: str) -> int:
             print(f"theme dir:  {THEME_ROOT} (source unusable: {e})")
     fp = read_fingerprint()
     print(f"built:      {fp.get('built_at', 'never')} accent={fp.get('accent', '-')} "
-          f"outline={fp.get('outline', '-')} watch_bg={fp.get('watch_bg', '-')}")
+          f"deep_accent={fp.get('deep_accent', '-')} outline={fp.get('outline', '-')} "
+          f"watch_bg={fp.get('watch_bg', '-')}")
     print(f"log:        {HOOK_LOG}")
     return 0
 
