@@ -83,50 +83,55 @@ declare -i IS_PERF_MODE=0
 
 declare -i EXPECTED_MAX_PTES
 declare -i EXPECTED_MAX_PTES_SWAP
+declare -i EXPECTED_MAX_PTES_SHARED
 declare -i EXPECTED_SCAN_SLEEP
 declare -i EXPECTED_PAGES_TO_SCAN
 readonly EXPECTED_ALLOC_SLEEP=60000
-readonly EXPECTED_KHUGEPAGED_DEFRAG=1
+readonly EXPECTED_KHUGEPAGED_DEFRAG=0
 
 # Unified 4-Tier THP Demarcation
-# S:  < 7 GiB       -> max_ptes_none = 128 (25% padding allowed, balanced baseline)
-# M:  7 - < 14 GiB  -> max_ptes_none = 256 (50% padding allowed)
-# L:  14 - < 28 GiB -> max_ptes_none = 450 (aggressive collapse for 16-24GB)
-# XL: >= 28 GiB     -> max_ptes_none = 450 (aggressive collapse for >=32GB)
+# S:  < 7 GiB       -> max_ptes_none = 0 (strict zero hole allocation, no padding bloat)
+# M:  7 - < 14 GiB  -> max_ptes_none = 0
+# L:  14 - < 28 GiB -> max_ptes_none = 0
+# XL: >= 28 GiB     -> max_ptes_none = 0
 
 if [[ "$MODE" == "AGGRESSIVE" ]] || { [[ "$MODE" == "AUTO" ]] && (( SYSTEM_RAM_KB >= THRESHOLD_KB )); }; then
     IS_PERF_MODE=1
     EXPECTED_MODE="PERFORMANCE_LEAN (>=32GB class)"
-    EXPECTED_MAX_PTES=450               # Aggressive collapse for large memory
+    EXPECTED_MAX_PTES=0                 # Zero hole allocation (prevents memory bloat)
     EXPECTED_MAX_PTES_SWAP=0            # Forbid swapping pages back IN from ZRAM
+    EXPECTED_MAX_PTES_SHARED=0          # Forbid shared mapping inflation
     EXPECTED_SCAN_SLEEP=15000
     EXPECTED_PAGES_TO_SCAN=4096
 elif (( SYSTEM_RAM_KB >= 14680064 )); then
     IS_PERF_MODE=1
     EXPECTED_MODE="BALANCED_PERFORMANCE (16-24GB class)"
-    EXPECTED_MAX_PTES=450               # Aggressive collapse for 16-24GB
+    EXPECTED_MAX_PTES=0                 # Zero hole allocation
     EXPECTED_MAX_PTES_SWAP=0            # Forbid swapping pages back IN from ZRAM
+    EXPECTED_MAX_PTES_SHARED=0          # Forbid shared mapping inflation
     EXPECTED_SCAN_SLEEP=30000
     EXPECTED_PAGES_TO_SCAN=2048
 elif (( SYSTEM_RAM_KB >= 7340032 )); then
     IS_PERF_MODE=0
     EXPECTED_MODE="DYNAMIC_EFFICIENCY (8-12GB class)"
-    EXPECTED_MAX_PTES=256               # 50% threshold collapse
+    EXPECTED_MAX_PTES=0                 # Zero hole allocation
     EXPECTED_MAX_PTES_SWAP=0            # Forbid swapping pages back IN from ZRAM
+    EXPECTED_MAX_PTES_SHARED=0          # Forbid shared mapping inflation
     EXPECTED_SCAN_SLEEP=60000
     EXPECTED_PAGES_TO_SCAN=1024
 else
     IS_PERF_MODE=0
     EXPECTED_MODE="COMPACT_EFFICIENCY (<8GB class)"
-    EXPECTED_MAX_PTES=128               # Base 128 threshold (25% padding allowed)
+    EXPECTED_MAX_PTES=0                 # Zero hole allocation
     EXPECTED_MAX_PTES_SWAP=0            # Forbid swapping pages back IN from ZRAM
+    EXPECTED_MAX_PTES_SHARED=0          # Forbid shared mapping inflation
     EXPECTED_SCAN_SLEEP=60000
     EXPECTED_PAGES_TO_SCAN=1024
 fi
 
 readonly EXPECTED_ENABLED="madvise"
 readonly EXPECTED_DEFRAG="defer"
-readonly EXPECTED_SHMEM="within_size"
+readonly EXPECTED_SHMEM="advise"
 
 if [[ ! -d "$THP_BASE_DIR" && -d "/sys/kernel/mm" ]]; then
     die "FATAL: Transparent HugePages (THP) are not supported or disabled in this kernel."
@@ -161,6 +166,7 @@ w- /sys/kernel/mm/transparent_hugepage/shrink_underused - - - - 1
 # --- KHUGEPAGED DAEMON TUNING ---
 w- /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none - - - - ${EXPECTED_MAX_PTES}
 w- /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_swap - - - - ${EXPECTED_MAX_PTES_SWAP}
+w- /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_shared - - - - ${EXPECTED_MAX_PTES_SHARED}
 w- /sys/kernel/mm/transparent_hugepage/khugepaged/scan_sleep_millisecs - - - - ${EXPECTED_SCAN_SLEEP}
 w- /sys/kernel/mm/transparent_hugepage/khugepaged/pages_to_scan - - - - ${EXPECTED_PAGES_TO_SCAN}
 w- /sys/kernel/mm/transparent_hugepage/khugepaged/defrag - - - - ${EXPECTED_KHUGEPAGED_DEFRAG}
@@ -181,14 +187,10 @@ done
 
 if (( ${#detected_sizes[@]} == 0 )); then
     log_info "THP hardware sysfs not populated (offline/chroot). Using standard x86_64 mTHP orders."
-    detected_sizes=(16 32 64 128 256 512 1024 2048)
+    detected_sizes=(8 16 32 64 128 256 512 1024 2048)
 fi
 
 for sz in "${detected_sizes[@]}"; do
-    if (( sz < 16 )); then
-        continue
-    fi
-
     target_enabled="never"
     target_shmem="never"
 
@@ -247,6 +249,7 @@ actual_defrag="$(< "${THP_BASE_DIR}/defrag")"
 actual_shmem="$(< "${THP_BASE_DIR}/shmem_enabled")"
 actual_ptes="$(< "${THP_BASE_DIR}/khugepaged/max_ptes_none")"
 actual_ptes_swap="$(< "${THP_BASE_DIR}/khugepaged/max_ptes_swap")"
+actual_ptes_shared="$(< "${THP_BASE_DIR}/khugepaged/max_ptes_shared")"
 actual_scan_sleep="$(< "${THP_BASE_DIR}/khugepaged/scan_sleep_millisecs")"
 actual_pages_to_scan="$(< "${THP_BASE_DIR}/khugepaged/pages_to_scan")"
 
@@ -255,6 +258,7 @@ actual_pages_to_scan="$(< "${THP_BASE_DIR}/khugepaged/pages_to_scan")"
 [[ "$actual_shmem" == *"[$EXPECTED_SHMEM]"* ]]     || die "Verification failed: THP 'shmem_enabled' is '${actual_shmem}', expected '[${EXPECTED_SHMEM}]'."
 [[ "$actual_ptes" == "$EXPECTED_MAX_PTES" ]]       || die "Verification failed: 'max_ptes_none' is '${actual_ptes}', expected '${EXPECTED_MAX_PTES}'."
 [[ "$actual_ptes_swap" == "$EXPECTED_MAX_PTES_SWAP" ]] || die "Verification failed: 'max_ptes_swap' is '${actual_ptes_swap}', expected '${EXPECTED_MAX_PTES_SWAP}'."
+[[ "$actual_ptes_shared" == "$EXPECTED_MAX_PTES_SHARED" ]] || die "Verification failed: 'max_ptes_shared' is '${actual_ptes_shared}', expected '${EXPECTED_MAX_PTES_SHARED}'."
 [[ "$actual_scan_sleep" == "$EXPECTED_SCAN_SLEEP" ]] || die "Verification failed: 'scan_sleep_millisecs' is '${actual_scan_sleep}', expected '${EXPECTED_SCAN_SLEEP}'."
 [[ "$actual_pages_to_scan" == "$EXPECTED_PAGES_TO_SCAN" ]] || die "Verification failed: 'pages_to_scan' is '${actual_pages_to_scan}', expected '${EXPECTED_PAGES_TO_SCAN}'."
 
@@ -267,7 +271,7 @@ if [[ -f "${THP_BASE_DIR}/shrink_underused" ]]; then
 fi
 
 if [[ -f "${THP_BASE_DIR}/khugepaged/defrag" ]]; then
-    [[ "$(< "${THP_BASE_DIR}/khugepaged/defrag")" == "1" ]] || die "Verification failed: 'khugepaged/defrag' is not 1."
+    [[ "$(< "${THP_BASE_DIR}/khugepaged/defrag")" == "$EXPECTED_KHUGEPAGED_DEFRAG" ]] || die "Verification failed: 'khugepaged/defrag' is not $EXPECTED_KHUGEPAGED_DEFRAG."
 fi
 
 if [[ -f "${THP_BASE_DIR}/khugepaged/alloc_sleep_millisecs" ]]; then
@@ -275,7 +279,6 @@ if [[ -f "${THP_BASE_DIR}/khugepaged/alloc_sleep_millisecs" ]]; then
 fi
 
 for sz in "${detected_sizes[@]}"; do
-    (( sz < 16 )) && continue
     size_dir="${THP_BASE_DIR}/hugepages-${sz}kB"
     [[ -d "$size_dir" ]] || continue
 
@@ -313,11 +316,12 @@ log_success "Verified live sysfs kernel values:"
 log_success "  enabled = [${EXPECTED_ENABLED}]"
 log_success "  defrag = [${EXPECTED_DEFRAG}]"
 log_success "  shmem_enabled = [${EXPECTED_SHMEM}]"
-log_success "  max_ptes_none = ${actual_ptes} (128=compact, 256=balanced, 450=perf collapse)"
+log_success "  max_ptes_none = ${actual_ptes} (0=strict zero hole allocation, no padding bloat)"
+log_success "  max_ptes_shared = ${actual_ptes_shared} (0=prevent shared page inflation)"
 log_success "  max_ptes_swap = ${actual_ptes_swap} (0=prevent swap-in uncompress)"
 log_success "  scan_sleep_millisecs = ${actual_scan_sleep} (idle sleep)"
 log_success "  pages_to_scan = ${actual_pages_to_scan}"
-log_success "  use_zero_page = 1, shrink_underused = 1, khugepaged/defrag = 1"
+log_success "  use_zero_page = 1, shrink_underused = 1, khugepaged/defrag = 0"
 log_success "  Active Profile: [${C_BOLD:-}${EXPECTED_MODE}${C_RESET:-}]"
 
 exit 0
