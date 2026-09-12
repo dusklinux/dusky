@@ -52,6 +52,7 @@ import tempfile
 import time
 import signal
 from dataclasses import dataclass, field
+from contextlib import suppress
 from pathlib import Path
 from typing import Final
 import pwd
@@ -419,6 +420,27 @@ program_options:
         console.rule("[bold cyan]Stage 8 — Enable greetd.service")
         if self.dry_run:
             console.print("[dim]would enable greetd.service[/dim]"); return
+
+        # Remove conflicting TTY1 autologin override and sync dusky setting
+        autologin_override = Path("/etc/systemd/system/getty@tty1.service.d/override.conf")
+        if autologin_override.exists():
+            try:
+                autologin_override.unlink()
+                with suppress(OSError):
+                    autologin_override.parent.rmdir()
+                console.print("[green]✔[/green] Removed conflicting TTY1 autologin override")
+            except OSError as e:
+                console.print(f"[yellow]Warning: Could not remove {autologin_override}: {e}[/yellow]")
+
+        state_file = self.home / ".config/dusky/settings/auto_login_tty"
+        if state_file.parent.exists():
+            try:
+                state_file.write_text("false\n", encoding="utf-8")
+                with suppress(Exception):
+                    shutil.chown(state_file, user=self.real_user, group=self.real_user)
+            except OSError:
+                pass
+
         is_chroot = subprocess.run(["systemd-detect-virt","-q","--chroot"], stdout=subprocess.DEVNULL).returncode==0
         if is_chroot:
             run(["systemctl","enable","greetd.service","--force"], check=False)

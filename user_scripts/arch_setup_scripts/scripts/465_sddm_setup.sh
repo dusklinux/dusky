@@ -123,6 +123,21 @@ check_conflicts() {
 }
 
 setup_sddm_service() {
+    # Remove conflicting TTY1 autologin override
+    local tty_override="/etc/systemd/system/getty@tty1.service.d/override.conf"
+    if [[ -f "${tty_override}" ]]; then
+        rm -f "${tty_override}"
+        rmdir --ignore-fail-on-non-empty "${tty_override%/*}" 2>/dev/null || true
+        log_info "Removed conflicting TTY1 autologin override."
+    fi
+    local target_user="${SUDO_USER:-${USER}}"
+    local user_home
+    user_home=$(getent passwd "${target_user}" 2>/dev/null | cut -d: -f6 || echo "")
+    if [[ -n "${user_home}" && -d "${user_home}/.config/dusky/settings" ]]; then
+        echo "false" > "${user_home}/.config/dusky/settings/auto_login_tty"
+        chown "${target_user}:" "${user_home}/.config/dusky/settings/auto_login_tty" 2>/dev/null || true
+    fi
+
     if systemctl is-enabled --quiet sddm.service 2>/dev/null; then
         log_success "SDDM service is already enabled."
         return

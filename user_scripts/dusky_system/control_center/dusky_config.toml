@@ -408,6 +408,8 @@ title = "TTY Auto Login"
 description = "Automatically login to TTY1 on boot"
 icon = "avatar-default-symbolic"
 key = "auto_login_tty"
+state_command = "$HOME/user_scripts/arch_setup_scripts/scripts/285_tty_autologin.sh --status"
+interval = 2
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
 command = "kitty --class 285_tty_autologin.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/285_tty_autologin.sh --auto\""

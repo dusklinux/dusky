@@ -17,6 +17,7 @@ readonly NC=$'\033[0m'
 # --- State Variables ---
 MODE_AUTO=false
 MODE_REVERT=false
+MODE_STATUS=false
 CONFIRMED=false
 TARGET_USER_OVERRIDE=""
 
@@ -32,13 +33,15 @@ parse_args() {
         case "$1" in
             -a|--auto)       MODE_AUTO=true ;;
             -r|--revert)     MODE_REVERT=true ;;
+            -s|--status)     MODE_STATUS=true ;;
             -u|--user)       TARGET_USER_OVERRIDE="$2"; shift ;;
             --_confirmed)    CONFIRMED=true ;; # Internal flag for sudo escalation
             -h|--help)
                 printf "Usage: %s [OPTIONS]\n" "${0##*/}"
                 printf "Options:\n"
                 printf "  -a, --auto        Run non-interactively (skip prompts)\n"
-                printf "  -r, --revert      Revert autologin and restore standard TTY/SDDM\n"
+                printf "  -r, --revert      Revert autologin and restore standard TTY/Greeter\n"
+                printf "  -s, --status      Check current autologin status (outputs 'true' or 'false')\n"
                 printf "  -u, --user <name> Explicitly set target user (Overrides auto-detection)\n"
                 printf "  -h, --help        Show this help message\n"
                 exit 0
@@ -54,14 +57,41 @@ parse_args() {
 
 # --- Environment Detection ---
 
-# Check if SDDM is installed by inspecting the unit file on disk.
+# Check if SDDM is installed
 sddm_is_installed() {
-    [[ -f "/usr/lib/systemd/system/sddm.service" ]]
+    [[ -f "/usr/lib/systemd/system/sddm.service" ]] || systemctl list-unit-files sddm.service &>/dev/null
 }
 
-# Check if greetd is installed by inspecting the unit file on disk.
+# Check if greetd is installed
 greetd_is_installed() {
-    [[ -f "/usr/lib/systemd/system/greetd.service" ]]
+    [[ -f "/usr/lib/systemd/system/greetd.service" ]] || systemctl list-unit-files greetd.service &>/dev/null
+}
+
+# Check if any display manager / greeter is currently enabled
+dm_is_enabled() {
+    local -a dms=("greetd.service" "sddm.service" "display-manager.service" "gdm.service" "lightdm.service" "lxdm.service" "ly.service")
+    for dm in "${dms[@]}"; do
+        if systemctl is-enabled --quiet "${dm}" 2>/dev/null; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Check if the override file exists and configures autologin
+autologin_override_is_active() {
+    [[ -f "${OVERRIDE_FILE}" ]] || return 1
+    grep -qE '^[[:space:]]*ExecStart=.*--autologin' "${OVERRIDE_FILE}" 2>/dev/null || return 1
+    return 0
+}
+
+# Determine overall TTY1 autologin status
+# Autologin is active ONLY IF no display manager is enabled AND the getty drop-in exists
+is_autologin_active() {
+    if dm_is_enabled; then
+        return 1
+    fi
+    autologin_override_is_active
 }
 
 # Determine if systemd is the active init system for THIS root namespace.
@@ -87,17 +117,30 @@ sync_state_file() {
     user_home=$(getent passwd "${user}" | cut -d: -f6)
     if [[ -z "${user_home}" ]]; then
         log_error "Could not determine home directory for user: ${user}"
-        exit 1
+        return 1
     fi
 
     local state_dir="${user_home}/.config/dusky/settings"
     local state_file="${state_dir}/auto_login_tty"
 
-    # Drop privileges to target user using 'su' instead of 'sudo'.
-    # This flawlessly mimics the old script's behavior but works natively 
-    # inside a raw arch-chroot before the sudo package is even installed.
-    su -s /bin/bash "${user}" -c "mkdir -p '${state_dir}'"
-    su -s /bin/bash "${user}" -c "echo '${state}' > '${state_file}'"
+    # Avoid redundant writes if already in desired state
+    if [[ -f "${state_file}" ]] && [[ "$(<"${state_file}")" == "${state}" ]]; then
+        return 0
+    fi
+
+    if [[ "${EUID}" -ne 0 && "${USER:-$(id -un)}" == "${user}" ]]; then
+        mkdir -p "${state_dir}"
+        printf "%s\n" "${state}" > "${state_file}"
+    elif [[ "${EUID}" -eq 0 ]]; then
+        if command -v runuser &>/dev/null; then
+            runuser -u "${user}" -- mkdir -p "${state_dir}"
+            runuser -u "${user}" -- sh -c "printf '%s\n' '${state}' > '${state_file}'"
+        else
+            su -s /bin/bash "${user}" -c "mkdir -p '${state_dir}' && printf '%s\n' '${state}' > '${state_file}'"
+        fi
+    else
+        return 1
+    fi
 
     log_info "Dusky state synced: ${state_file} -> [${state}]"
 }
@@ -129,20 +172,25 @@ do_setup() {
     local user="$1"
     log_info "Configuring TTY1 autologin for: ${user}"
 
-    if sddm_is_installed && systemctl is-enabled --quiet sddm.service 2>/dev/null; then
-        log_info "Disabling SDDM..."
-        systemctl disable sddm.service --quiet 2>/dev/null || true
-        log_success "SDDM disabled."
-    fi
+    local changed=false
 
-    if greetd_is_installed && systemctl is-enabled --quiet greetd.service 2>/dev/null; then
-        log_info "Disabling greetd..."
-        systemctl disable greetd.service --quiet 2>/dev/null || true
-        log_success "greetd disabled."
-    fi
+    # Disable conflicting display managers
+    local -a dms=("greetd.service" "sddm.service" "display-manager.service" "gdm.service" "lightdm.service" "lxdm.service" "ly.service")
+    for dm in "${dms[@]}"; do
+        if systemctl is-enabled --quiet "${dm}" 2>/dev/null; then
+            log_info "Disabling ${dm}..."
+            systemctl disable "${dm}" --quiet 2>/dev/null || true
+            changed=true
+            log_success "${dm} disabled."
+        fi
+    done
 
     local expected_exec="ExecStart=-/usr/bin/agetty --autologin ${user} --noclear --noissue %I \$TERM"
     if [[ -f "${OVERRIDE_FILE}" ]] && grep -qF -- "${expected_exec}" "${OVERRIDE_FILE}"; then
+        if [[ "${changed}" == true ]] && is_systemd_active; then
+            systemctl daemon-reload
+            log_info "systemd daemon reloaded."
+        fi
         sync_state_file "${user}" "true"
         log_success "Autologin is already correctly configured for ${user}. Nothing to do."
         return 0
@@ -195,6 +243,11 @@ do_revert() {
         systemctl enable sddm.service --quiet 2>/dev/null || true
         changed=true
         log_success "SDDM enabled."
+    elif systemctl list-unit-files display-manager.service &>/dev/null && ! systemctl is-enabled --quiet display-manager.service 2>/dev/null; then
+        log_info "Re-enabling display-manager..."
+        systemctl enable display-manager.service --quiet 2>/dev/null || true
+        changed=true
+        log_success "display-manager enabled."
     fi
 
     sync_state_file "${user}" "false"
@@ -236,9 +289,9 @@ main() {
             MODE_AUTO=true # Exactly one user found, silent execution
         else
             # Multiple users found in chroot
-            if [[ "${MODE_AUTO}" == true || "${CONFIRMED}" == true ]]; then
+            if [[ "${MODE_AUTO}" == true || "${CONFIRMED}" == true || "${MODE_STATUS}" == true ]]; then
                 target_user="${available_users[0]}"
-                log_warn "Multiple users detected in --auto mode. Autonomously defaulting to primary user: ${target_user}"
+                [[ "${MODE_STATUS}" != true ]] && log_warn "Multiple users detected in --auto mode. Autonomously defaulting to primary user: ${target_user}"
             else
                 printf "\n${YELLOW}Multiple standard users detected.${NC}\n"
                 PS3="Select the target user for TTY1 Autologin (1-${#available_users[@]}): "
@@ -261,12 +314,24 @@ main() {
         exit 1
     fi
 
-    # 3. State Resolution & Prompting (Will naturally skip due to MODE_AUTO=true in all valid paths)
+    # 3. Status Query Mode (Non-privileged, non-interactive, instant exit)
+    if [[ "${MODE_STATUS}" == true ]]; then
+        if is_autologin_active; then
+            printf "true\n"
+            sync_state_file "${target_user}" "true" &>/dev/null || true
+        else
+            printf "false\n"
+            sync_state_file "${target_user}" "false" &>/dev/null || true
+        fi
+        exit 0
+    fi
+
+    # 4. State Resolution & Prompting (Will naturally skip due to MODE_AUTO=true in all valid paths)
     local action_type="setup"
     [[ "${MODE_REVERT}" == true ]] && action_type="revert"
     prompt_user "${action_type}" "${target_user}"
 
-    # 4. Privilege Escalation
+    # 5. Privilege Escalation
     if [[ "${EUID}" -ne 0 ]]; then
         log_info "Escalating privileges..."
 
@@ -282,7 +347,7 @@ main() {
         exec sudo "$0" "${exec_args[@]}"
     fi
 
-    # 5. Execution Routine
+    # 6. Execution Routine
     if [[ "${MODE_REVERT}" == true ]]; then
         do_revert "${target_user}"
     else
