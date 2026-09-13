@@ -453,6 +453,8 @@ EXAMPLES:
         DEFERRED_LOAD = getattr(schema_module, "DEFERRED_LOAD", None)
         REQUIRE_ROOT = getattr(schema_module, "REQUIRE_ROOT", False)
         CUSTOM_VIEWS = getattr(schema_module, "CUSTOM_VIEWS", None)
+        APPLY_COMMAND = getattr(schema_module, "APPLY_COMMAND", None)
+        ROW_GATE = getattr(schema_module, "ROW_GATE", None)
 
         ENGINE_TYPE = schema_module.ENGINE_TYPE.lower()
 
@@ -920,7 +922,9 @@ EXAMPLES:
         global_popup=GLOBAL_POPUP,
         tab_notices=TAB_NOTICES,
         deferred_load=DEFERRED_LOAD,
-        custom_views=CUSTOM_VIEWS
+        custom_views=CUSTOM_VIEWS,
+        apply_command=APPLY_COMMAND,
+        row_gate=ROW_GATE
     )
 
     for engine in list(engine_pool.values()):

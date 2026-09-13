@@ -48,6 +48,8 @@ Optional module attributes:
 | `DEFERRED_LOAD` | `None` | Callable `() -> list[int] \| tuple[list[int], dict[int, list[ConfigItem]]]` run in a background thread after first paint. Return the tab indices to populate; optionally return `(indices, new_items)` to replace `SCHEMA[tab]` before state is re-loaded. Used for slow/dynamic tabs (systemd services, network scans). In headless mode the router just calls it for side-effects. |
 | `REQUIRE_ROOT` | `False` | Re-executes the whole router via `sudo`/`su` with real-user `HOME`/`XDG_*` reconstruction and `XDG_CONFIG_HOME` chown fix. |
 | `CUSTOM_VIEWS` | `None` | `{tab_index_or_name: view_spec}` — replaces that tab's `ConfigOptionList` with a custom renderable. `view_spec` may be a `Widget` subclass, a `Widget` instance, a callable `(app) -> renderable`, or `{"view": <above>, "interval": float_seconds}` for auto-refresh. `CustomRichTabWidget` handles `refresh_interval` and scroll bindings. See `tui_dusky_network.py` `render_network_dashboard_view`. |
+| `APPLY_COMMAND` | `None` | Shell command string run by the `[A] Apply` footer button and the `A` key. Shown only when set. Runs through the `action` path with status messages. Example: `APPLY_COMMAND = "python3 ~/user_scripts/cursor/color/dusky_cursor.py --apply"`. |
+| `ROW_GATE` | `None` | `{"watch_key": str, "allow": [values], "gated": [keys], "message": str}` or a list of such dicts. While the watched item holds a value outside `allow`, the gated rows render disabled and `message` shows once in the status bar. Silent when allowed. A rule without `message` gates silently. A rule with `"hide": true` removes the row instead of disabling it. |
 
 ---
 
@@ -75,6 +77,7 @@ Source of truth: `frontend/core_types.py`. All fields except `label`, `key`,
 | `warning_msg` | `str\|None` | | ⚠ marker in the row + warning block in the help panel. |
 | `popup_message` | `str\|None` | | 'OK' alert shown AFTER a value is applied (skipped on undo and in batch mode). |
 | `confirm_message` | `str\|None` | | Yes/No dialog BEFORE mutating (works on items, actions, presets). |
+| `tooltip` | `str\|None` | | Short hint shown in the bottom status bar while hovering the row. |
 | `target_file_override` | `str\|None` | | Routes this item to a different file (registers a second engine instance). |
 | `engine_type_override` | `str\|None` | | Routes this item to a different engine. |
 | `force_interactive` | `bool\|None` | | `action` only: `True` forces suspend-TTY execution, `False` forces async non-interactive — overrides command sniffing. |

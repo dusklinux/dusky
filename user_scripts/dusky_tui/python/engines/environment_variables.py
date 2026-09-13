@@ -194,8 +194,9 @@ class ShellEnvEngine(BaseEngine):
                         safe_val = val_str.replace("'", "'\\''")
                         out_lines.append(f"{ws}{export_str}{key}='{safe_val}'{comment_str}\n")
                     else:
-                        # Auto-quote securely if shell metacharacters or spaces are present
-                        if re.search(r'[ \t\n&|;<>()`"\'*?\[\]]', val_str):
+                        # Auto-quote securely if shell metacharacters, spaces, or a
+                        # leading hash (hex colors like #rrggbb) are present
+                        if re.search(r'[ \t\n&|;<>()`"\'*?\[\]#]', val_str):
                             safe_val = val_str.replace('\\', '\\\\').replace('"', '\\"')
                             out_lines.append(f"{ws}{export_str}{key}=\"{safe_val}\"{comment_str}\n")
                         else:
@@ -222,7 +223,7 @@ class ShellEnvEngine(BaseEngine):
             # Reconstruct the raw backend key string if it was an indexed duplicate UI binding
             clean_key = key.split(":")[0] if ":" in key else key
                 
-            if re.search(r'[ \t\n&|;<>()`"\'*?\[\]]', val_str):
+            if re.search(r'[ \t\n&|;<>()`"\'*?\[\]#]', val_str):
                 safe_val = val_str.replace('\\', '\\\\').replace('"', '\\"')
                 out_lines.append(f"{clean_key}=\"{safe_val}\"\n")
             else:

@@ -122,6 +122,7 @@ class ConfigItem:
     warning_msg: str | None = None
     popup_message: str | None = None
     confirm_message: str | None = None
+    tooltip: str | None = None
     target_file_override: str | None = None
     engine_type_override: str | None = None
     force_interactive: bool | None = None

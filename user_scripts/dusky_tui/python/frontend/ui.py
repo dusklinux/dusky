@@ -825,16 +825,30 @@ class HybridInputScreen(ModalScreen[str | None]):
         Binding("up,k", "focus_input", "Focus Input", priority=True),
     ]
 
-    def __init__(self, prompt: str, default: str, options: list[Any] | None = None) -> None:
+    def __init__(self, prompt: str, default: str, options: list[Any] | None = None, placeholder: str = "", swatches: bool = False) -> None:
         super().__init__()
         self.prompt_text = prompt
         self.default_text = default
         self.options = options or []
+        self.placeholder_text = placeholder
+        self.show_swatches = swatches
+
+    @staticmethod
+    def _swatch_option(label: str) -> Text:
+        """Preset color row with a swatch icon; plain text otherwise."""
+        txt = Text()
+        key = label.strip().lower()
+        is_hex = re.fullmatch(r"#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})", key) is not None
+        if is_hex or key in KNOWN_COLORS_LOWER:
+            r, g, b = color_to_rgb(key)
+            txt.append("⬤ ", style=f"bold #{r:02x}{g:02x}{b:02x}")
+        txt.append(label)
+        return txt
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-dialog"):
             yield Label(self.prompt_text, id="modal-title")
-            yield Input(value=self.default_text, id="modal-input")
+            yield Input(value=self.default_text, placeholder=self.placeholder_text, id="modal-input")
 
             if self.options:
                 yield Label(" Pre-configured Options:", id="modal-hint")
@@ -852,7 +866,10 @@ class HybridInputScreen(ModalScreen[str | None]):
         if self.options:
             ol = self.query_one(OptionList)
             for opt in self.options:
-                ol.add_option(Option(str(opt)))
+                if self.show_swatches:
+                    ol.add_option(Option(self._swatch_option(str(opt))))
+                else:
+                    ol.add_option(Option(str(opt)))
 
             # Try to highlight the current value if it matches an option.
             for idx, opt in enumerate(self.options):
@@ -868,7 +885,13 @@ class HybridInputScreen(ModalScreen[str | None]):
     @on(OptionList.OptionSelected)
     def handle_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        self.dismiss(str(event.option.prompt))
+        # Dismiss the raw option value, not the rendered prompt: prompts
+        # may carry decoration (e.g. color swatches) that must never be saved.
+        idx = event.option_index
+        if idx is not None and 0 <= idx < len(self.options):
+            self.dismiss(str(self.options[idx]))
+        else:
+            self.dismiss(str(event.option.prompt))
 
     def action_focus_list(self) -> None:
         if self.options:
@@ -1199,6 +1222,7 @@ class ShortcutsInfoScreen(ModalScreen[None]):
 
         bindings_info = [
             ("q, ctrl+c", "Quit the application"),
+            ("A", "Run the schema apply command (only shown when defined)"),
             ("f1", "Show this shortcuts page"),
             ("?", "Toggle item documentation panel"),
             ("ctrl+f", "Fuzzy search all options"),
@@ -1301,9 +1325,11 @@ class ConfigOptionList(OptionList):
         try:
             line_idx = int(self.scroll_y) + int(event.y)
             new_tooltip = None
+            hover_id = None
 
             if 0 <= line_idx < self.option_count:
                 opt = self.get_option_at_index(line_idx)
+                hover_id = opt.id
                 parsed = self.app._get_item_from_id(opt.id)
 
                 if parsed:
@@ -1323,6 +1349,28 @@ class ConfigOptionList(OptionList):
 
             if self.tooltip != new_tooltip:
                 self.tooltip = new_tooltip
+
+            # Row hover hint: show the item tooltip in the bottom status bar.
+            last_hover = getattr(self, "_hover_tip_id", None)
+            if hover_id != last_hover:
+                self._hover_tip_id = hover_id
+                app = self.app
+                try:
+                    footer = app.query_one(AppFooter)
+                    if getattr(self, "_hover_tip_text", None) and footer.status_msg == self._hover_tip_text:
+                        footer.status_msg = ""
+                    self._hover_tip_text = None
+                except Exception:
+                    pass
+                if hover_id is not None:
+                    try:
+                        parsed = app._get_item_from_id(hover_id)
+                        tip = parsed[2].tooltip if parsed else None
+                        if tip:
+                            self._hover_tip_text = tip
+                            app.notify_status(tip, level="info")
+                    except Exception:
+                        pass
 
         except Exception:
             if self.tooltip is not None:
@@ -1607,6 +1655,7 @@ class AppFooter(Vertical):
     def compose(self) -> ComposeResult:
         with FlowContainer(id="footer-shortcuts-container"):
             # --- ACTIVE SHORTCUTS ---
+            yield Shortcut("A", "Apply", "apply_command", id="shortcut-A")
             yield Shortcut("ctrl+s", "Batch Save", "save_batch", id="shortcut-ctrl-s")
             yield Shortcut("/", "Jump", "focus_local_search", id="shortcut-slash")
             yield Shortcut("ctrl+f", "Search", "search", id="shortcut-ctrl-f")
@@ -1630,6 +1679,14 @@ class AppFooter(Vertical):
             yield ModeButton(id="footer-legend", classes="mode-btn")
             yield Label("", id="pos-counter", classes="pos-counter-btn")
             yield Label("", id="status-bar")
+
+    def on_mount(self) -> None:
+        # The Apply shortcut only exists for schemas defining APPLY_COMMAND.
+        try:
+            if not getattr(self.app, "apply_command", None):
+                self.query_one("#shortcut-A").display = False
+        except Exception:
+            pass
 
     def on_resize(self, event: events.Resize) -> None:
         try:
@@ -2066,6 +2123,7 @@ Tooltip {
         Binding("R", "reset_all", "Reset Page", priority=True),
         Binding("?", "toggle_help", "Help", priority=False),
         Binding("/", "focus_local_search", "Search Inline", priority=False),
+        Binding("A", "apply_command", "Apply", priority=False),
 
         Binding("tab", "next_tab", "Next Tab", priority=True),
         Binding("shift+tab", "prev_tab", "Prev Tab", priority=True),
@@ -2098,9 +2156,20 @@ Tooltip {
         tab_notices: dict[int, dict | list[dict]] | None = None,
         deferred_load=None,
         custom_views: dict[int | str, Any] | None = None,
+        apply_command: str | None = None,
+        row_gate: dict | None = None,
         **kwargs
     ):
         super().__init__(**kwargs)
+
+        self.apply_command = (apply_command or "").strip() or None
+        # ROW_GATE = {"watch_key": str, "allow": [values], "gated": [keys],
+        #             "message": str} or a list of such dicts. While the
+        # watched item holds a value outside "allow", gated rows render
+        # disabled and the message shows once in the status bar.
+        raw_gate = row_gate or {}
+        self.row_gate = raw_gate if isinstance(raw_gate, list) else [raw_gate]
+        self._gate_notified_for: str | None = None
 
         self.deferred_load = deferred_load
         self.custom_views = custom_views or {}
@@ -2731,22 +2800,23 @@ Tooltip {
 
         val_str = str(item.value)
 
-        # Tail rendering.
+        # Tail rendering. Preset and action rows use a neutral bullet;
+        # the footer [A] Apply button is the only thing that applies settings.
         if item.type_ in ("action", "preset", "menu"):
             if item.type_ == "preset":
                 if is_active_preset:
                     txt.append("󰄬 Active", style=f"bold {self.theme_colors['success']}")
                 elif is_deviated_preset:
-                    txt.append("󰐊 Apply", style=f"bold {self.theme_colors['warning']}")
+                    txt.append("•", style=f"bold {self.theme_colors['warning']}")
                 else:
                     txt.append(
-                        "󰐊 Apply",
+                        "•",
                         style=f"bold {self.theme_colors['accent']}" if exists else f"{self.theme_colors['muted']} italic"
                     )
 
             elif item.type_ == "action":
                 txt.append(
-                    "󰐊 Run",
+                    "•",
                     style=f"bold {self.theme_colors['accent']}" if exists else f"{self.theme_colors['muted']} italic"
                 )
 
@@ -2810,7 +2880,7 @@ Tooltip {
                     r, g, b = color_to_rgb(resolved_color)
                     hex_color = f"#{r:02x}{g:02x}{b:02x}"
 
-                    if not is_theme_variable(val_str):
+                    if val_str != "" and not is_theme_variable(val_str):
                         txt.append("⬤ ", style=hex_color if exists else self.theme_colors["muted"])
 
                     if is_theme_variable(val_str):
@@ -2879,12 +2949,15 @@ Tooltip {
                         txt.append(display_name, style=accent)
 
                     else:
-                        color_name = get_color_name(r, g, b)
+                        if val_str == "":
+                            txt.append("(matugen)", style=f"italic {self.theme_colors['muted']}")
+                        else:
+                            color_name = get_color_name(r, g, b)
 
-                        if resolved_color != val_str:
-                            txt.append(f"[{val_str}] ", style=self.theme_colors["muted"])
+                            if resolved_color != val_str:
+                                txt.append(f"[{val_str}] ", style=self.theme_colors["muted"])
 
-                        txt.append(f"{color_name}", style=accent)
+                            txt.append(f"{color_name}", style=accent)
 
                 case _:
                     txt.append(val_str, style=fg)
@@ -3351,6 +3424,42 @@ Tooltip {
     # =========================================================================
     # TAB POPULATION / LAZY UI
     # =========================================================================
+    def _gate_state(self) -> tuple[set[str], set[str], str | None, bool]:
+        """Evaluate ROW_GATE rules against current item values.
+
+        Returns (gated_keys, hidden_keys, message, active). A key is
+        gated when any active rule lists it; rules with "hide" set hide
+        the row instead of disabling it. Message is the first set
+        message among active rules. Silent when nothing is gated.
+        """
+        gates = getattr(self, "row_gate", None) or []
+        if isinstance(gates, dict):
+            gates = [gates]
+        values: dict[str, str] = {}
+        for items in self.schema.values():
+            for item in items:
+                if item.key not in values:
+                    values[item.key] = str(item.value)
+        gated: set[str] = set()
+        hidden: set[str] = set()
+        message: str | None = None
+        for gate in gates:
+            watch_key = gate.get("watch_key")
+            if not watch_key:
+                continue
+            allow = {str(v) for v in (gate.get("allow") or [])}
+            current = values.get(watch_key)
+            if current is None or current in allow:
+                continue
+            keys = set(gate.get("gated") or [])
+            if gate.get("hide"):
+                hidden.update(keys)
+            else:
+                gated.update(keys)
+            if message is None and gate.get("message"):
+                message = gate.get("message")
+        return gated, hidden, message, bool(gated or hidden)
+
     def _populate_option_list(self, tab_idx: int, maintain_highlight_id: str | None = None) -> None:
         try:
             ol = self.query_one(f"#list-{tab_idx}", ConfigOptionList)
@@ -3390,6 +3499,10 @@ Tooltip {
         def traverse(node_idx: int, node_item: ConfigItem, is_last_sibling_list: list[bool]):
             nonlocal current_group, first_item_id
 
+            _, hidden_keys, _, gate_active = self._gate_state()
+            if gate_active and node_item.key in hidden_keys:
+                return
+
             if node_item.group and node_item.group != current_group:
                 current_group = node_item.group
                 header_txt = Text(f" {current_group.upper()}", style=f"bold {self.theme_colors['accent']}")
@@ -3417,10 +3530,14 @@ Tooltip {
 
             self._indent_cache[opt_id] = prefix
 
+            gated_keys, _, _, gate_active = self._gate_state()
+            is_gated = gate_active and node_item.key in gated_keys
+
             options.append(
                 Option(
                     self._build_option(node_item, is_highlighted=is_hl, indent_prefix=prefix, tab_idx=tab_idx),
-                    id=opt_id
+                    id=opt_id,
+                    disabled=is_gated,
                 )
             )
 
@@ -3435,6 +3552,19 @@ Tooltip {
         for i, (orig_idx, itm) in enumerate(root_items):
             is_last = (i == len(root_items) - 1)
             traverse(orig_idx, itm, [is_last])
+
+        # Drop group headers left dangling by hidden rows (a header
+        # followed by another header or by nothing has no visible rows).
+        pruned: list = []
+        for i, opt in enumerate(options):
+            opt_id = getattr(opt, "id", "") or ""
+            if opt_id.startswith(f"header_{tab_idx}_"):
+                nxt = options[i + 1] if i + 1 < len(options) else None
+                nxt_id = getattr(nxt, "id", "") or "" if nxt is not None else ""
+                if nxt is None or nxt_id.startswith(f"header_{tab_idx}_"):
+                    continue
+            pruned.append(opt)
+        options = pruned
 
         ol.clear_options()
         ol.add_options(options)
@@ -3459,6 +3589,27 @@ Tooltip {
 
         if tab_idx == self._current_tab_index():
             self._update_file_link()
+
+        # Gate message: show once per watched value, silent otherwise.
+        _, _, gate_message, gate_active = self._gate_state()
+        if gate_active and gate_message:
+            gates = self.row_gate if isinstance(self.row_gate, list) else [self.row_gate]
+            values: dict[str, str] = {}
+            for items in self.schema.values():
+                for item in items:
+                    if item.key not in values:
+                        values[item.key] = str(item.value)
+            active_gates = [
+                g for g in (gates or [])
+                if (g or {}).get("watch_key")
+                and values.get((g or {}).get("watch_key")) not in {str(v) for v in ((g or {}).get("allow") or [])}
+            ]
+            watch_val = "|".join(f"{g.get('watch_key')}={values.get(g.get('watch_key'))}" for g in active_gates)
+            if watch_val != self._gate_notified_for:
+                self._gate_notified_for = watch_val
+                self.notify_status(gate_message, level="warning")
+        elif not gate_active:
+            self._gate_notified_for = None
 
         self.call_after_refresh(self._update_scroll_indicators)
 
@@ -3531,6 +3682,14 @@ Tooltip {
     def _refresh_single_ui(self, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
         if tab_idx not in self._tab_populated:
             self._tab_dirty.add(tab_idx)
+            return
+
+        # A gate watch-key change re-evaluates row gating across the tab.
+        gates = getattr(self, "row_gate", None) or []
+        if isinstance(gates, dict):
+            gates = [gates]
+        if any((g or {}).get("watch_key") and item.key == (g or {}).get("watch_key") for g in gates):
+            self._populate_option_list(tab_idx, maintain_highlight_id=f"item_{tab_idx}_{item_idx}")
             return
 
         try:
@@ -4718,6 +4877,20 @@ Tooltip {
             )
         except Exception:
             pass
+
+    # =========================================================================
+    # SCHEMA APPLY COMMAND ([A] footer button)
+    # =========================================================================
+    def action_apply_command(self) -> None:
+        if not getattr(self, "apply_command", None):
+            self.notify_status("No apply command defined for this schema.", level="warning")
+            return
+        self.execute_action(ConfigItem(
+            label="Apply",
+            key="__footer_apply",
+            type_="action",
+            default=self.apply_command,
+        ))
 
     # =========================================================================
     # ASYNC BATCH SAVE
@@ -6111,7 +6284,9 @@ Tooltip {
             HybridInputScreen(
                 f"Enter new {item.label}:",
                 str(item.value),
-                item.options
+                item.options,
+                placeholder="#ababab" if item.type_ == "color" else "",
+                swatches=item.type_ == "color",
             ),
             check_reply
         )
