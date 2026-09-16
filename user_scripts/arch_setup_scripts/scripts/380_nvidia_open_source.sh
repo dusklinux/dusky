@@ -374,6 +374,9 @@ main() {
     log_info "--- Installation Complete ---"
     if [[ "$HAS_NVIDIA" -eq 1 ]]; then
         echo "  [NVIDIA SPECIFIC]"
+        echo "  398_nvidia_boot_config.sh now automates the boot requirements"
+        echo "  (mkinitcpio MODULES, mkinitcpio -P, nvidia_drm.modeset=1 for"
+        echo "  systemd-boot and GRUB). To apply manually instead:"
         echo "  1. Edit /etc/mkinitcpio.conf (Add 'nvidia nvidia_modeset nvidia_uvm nvidia_drm' to MODULES)"
         echo "  2. Run 'sudo mkinitcpio -P'"
         echo "  3. Add 'nvidia_drm.modeset=1' to your kernel boot parameters."

@@ -71,9 +71,10 @@ def fail(msg: str, code: int = 2) -> None:
 def assert_worker_namespace(hardware: str) -> None:
     owners = sorted(set(importlib.metadata.packages_distributions().get("onnxruntime", [])))
     expected = ["onnxruntime-gpu"] if hardware == "nvidia" else ["onnxruntime"]
-    # AMD experimental wheels (onnxruntime-migraphx/rocm) still export
-    # "onnxruntime", so accept them on amd but never on nvidia/cpu strict paths.
-    if hardware == "amd" and owners == ["onnxruntime"]:
+    # AMD paths: the plain CPU wheel ("onnxruntime") and AMD's ROCm wheels
+    # ("onnxruntime-rocm", from repo.radeon.com) both export the
+    # "onnxruntime" module -- accept either on amd, never on nvidia/cpu.
+    if hardware == "amd" and owners in (["onnxruntime"], ["onnxruntime-rocm"], ["onnxruntime-migraphx"]):
         return
     if owners != expected:
         fail(f"Worker ORT namespace must be {expected}, found {owners}")
