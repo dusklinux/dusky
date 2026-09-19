@@ -1116,7 +1116,21 @@ apply_solid_color() {
 
     log "Generating theme from solid color: $hex"
 
+    # Pure grays (black, white and everything between) carry no hue in HCT,
+    # so matugen invents one for the accents: #000000 comes out magenta under
+    # scheme-tonal-spot, #FFFFFF comes out cyan. scheme-monochrome is the only
+    # scheme that stays honest about a hueless source, so swap to it for this
+    # run only; the saved scheme is restored right after and stays in state.
+    local r g b saved_type="$MATUGEN_TYPE"
+    r=$((16#${hex:1:2})) g=$((16#${hex:3:2})) b=$((16#${hex:5:2}))
+    if (( r == g && g == b )) && [[ "$MATUGEN_TYPE" != "scheme-monochrome" ]]; then
+        log "Solid color $hex is achromatic, using scheme-monochrome for it"
+        MATUGEN_TYPE="scheme-monochrome"
+    fi
+
     build_matugen_command command
+    MATUGEN_TYPE="$saved_type"
+
     command+=(color hex "$hex")
 
     if ! output=$("${command[@]}" 2>&1); then
