@@ -215,24 +215,100 @@ function _gitdelta_matugen() {
 }
 
 # -----------------------------------------------------------------------------
-# 6. Commit renderer
+# 6. Diff/commit stream generator & renderer
 # -----------------------------------------------------------------------------
+function _gitdelta_render_stream() {
+    emulate -L zsh
+    setopt localoptions extendedglob
+
+    local target=${1-}
+    local -a stat_lines numstat_lines
+    local C_DIM=$'\e[38;5;242m' C_GREEN=$'\e[32m' C_RED=$'\e[31m' C_RESET=$'\e[0m'
+    local TAB=$'\t'
+
+    if [[ -n $target ]]; then
+        local header
+        header="$(git_dusky show --color=always --decorate=short \
+            --date=format-local:'%Y-%m-%d %H:%M' \
+            --format='%C(bold blue)󰏖 %h%C(reset) %C(bold green)%an%C(reset) %C(dim)%ad%C(reset)%d%n%C(bold yellow)%s%C(reset)' \
+            --no-patch "$target")"
+        stat_lines=( ${(f)"$(git_dusky show --color=always --stat-width=1000 --stat-name-width=1000 --stat-graph-width=20 --format='' "$target")"} )
+        numstat_lines=( ${(f)"$(git_dusky show --numstat --format='' "$target")"} )
+        if [[ $#stat_lines -eq 0 ]]; then
+            [[ -n $header ]] && print -r -- "$header"
+            return 0
+        fi
+        [[ -n $header ]] && print -r -- "$header"$'\n'
+    else
+        stat_lines=( ${(f)"$(git_dusky diff --color=always --stat-width=1000 --stat-name-width=1000 --stat-graph-width=20 HEAD)"} )
+        numstat_lines=( ${(f)"$(git_dusky diff --numstat HEAD)"} )
+        if [[ $#stat_lines -eq 0 ]]; then
+            return 0
+        fi
+    fi
+
+    typeset -A num_add num_del
+    local line a d p rest
+    for line in "${numstat_lines[@]}"; do
+        [[ -z $line ]] && continue
+        a=${line%%$TAB*}
+        rest=${line#*$TAB}
+        d=${rest%%$TAB*}
+        p=${rest#*$TAB}
+        num_add[$p]=$a
+        num_del[$p]=$d
+    done
+
+    integer max_w=0 vis pad
+    local stripped raw_p clean_p detail pad_str
+    for line in "${stat_lines[@]}"; do
+        if [[ $line == *"|"* ]]; then
+            stripped=${line//(#b)$'\e'\[[0-9;]#m/}
+            vis=${#stripped}
+            (( vis > max_w )) && max_w=$vis
+        fi
+    done
+
+    for line in "${stat_lines[@]}"; do
+        if [[ $line == *"|"* ]]; then
+            raw_p=${line%%|*}
+            clean_p=${${raw_p# }%% #}
+            clean_p=${clean_p//(#b)$'\e'\[[0-9;]#m/}
+            if [[ -n ${num_add[$clean_p]-} ]]; then
+                a=${num_add[$clean_p]}
+                d=${num_del[$clean_p]}
+                if [[ $a == "-" && $d == "-" ]]; then
+                    detail="${C_DIM}(binary)${C_RESET}"
+                else
+                    detail="${C_DIM}(${C_GREEN}+${a}${C_DIM}, ${C_RED}-${d}${C_DIM})${C_RESET}"
+                fi
+                stripped=${line//(#b)$'\e'\[[0-9;]#m/}
+                vis=${#stripped}
+                pad=$(( max_w - vis + 2 ))
+                pad_str=${(l:pad:: :)}
+                print -r -- "${line}${pad_str}${detail}"
+                continue
+            fi
+        fi
+        print -r -- "$line"
+    done
+    print -r -- ""
+
+    if [[ -n $target ]]; then
+        git_dusky show --patch --format="" "$target"
+    else
+        git_dusky diff --patch HEAD
+    fi
+}
+
 function _gitdelta_show() {
     emulate -L zsh
-    local -a fmt=(
-        --color=always
-        --decorate=short
-        --date=format-local:'%Y-%m-%d %H:%M'
-        --format='%C(bold blue)󰏖 %h%C(reset) %C(bold green)%an%C(reset) %C(dim)%ad%C(reset)%d%n%C(bold yellow)%s%C(reset)'
-        --stat
-        --patch
-    )
     if (( ! $+commands[delta] )); then
-        git_dusky show "${fmt[@]}" "$1"
+        _gitdelta_render_stream "$1"
     elif [[ -t 1 ]]; then
-        git_dusky show "${fmt[@]}" "$1" | delta
+        _gitdelta_render_stream "$1" | delta
     else
-        git_dusky show "${fmt[@]}" "$1" | delta --paging=never
+        _gitdelta_render_stream "$1" | delta --paging=never
     fi
 }
 
@@ -322,10 +398,12 @@ function gitdelta() {
             print -ru2 -- 'gitdelta: no commits yet — nothing to diff against HEAD.'
             return 1
         fi
-        if (( $+commands[delta] )); then
-            git_dusky diff --color=always --stat --patch HEAD | delta
+        if (( ! $+commands[delta] )); then
+            _gitdelta_render_stream
+        elif [[ -t 1 ]]; then
+            _gitdelta_render_stream | delta
         else
-            git_dusky diff --stat --patch HEAD
+            _gitdelta_render_stream | delta --paging=never
         fi
         return $?
     fi
