@@ -166,6 +166,64 @@ impl Drop for SingleInstanceGuard {
     }
 }
 
+fn hyprctl_json(command: &str) -> Option<serde_json::Value> {
+    let output = std::process::Command::new("hyprctl")
+        .args([command, "-j"])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| serde_json::from_slice(&output.stdout).ok())?
+}
+
+fn reveal_existing_window() -> Result<(), String> {
+    let workspace = hyprctl_json("activeworkspace")
+        .and_then(|value| value["name"].as_str().map(str::to_owned))
+        .ok_or("Could not determine the current Hyprland workspace")?;
+    let clients = hyprctl_json("clients").ok_or("Could not query Hyprland windows")?;
+    let window = clients
+        .as_array()
+        .and_then(|clients| {
+            clients
+                .iter()
+                .find(|client| client["class"].as_str() == Some("dusky-wallpaper-selector-rust"))
+        })
+        .ok_or("Could not find the running wallpaper selector window")?;
+    let address = window["address"]
+        .as_str()
+        .ok_or("Hyprland did not report a window address")?;
+    let window_address = format!("address:{address}");
+
+    if window["workspace"]["name"].as_str() != Some(workspace.as_str()) {
+        let expression = format!(
+            "hl.dsp.window.move({{ window = {}, workspace = {}, follow = false }})",
+            serde_json::to_string(&window_address).map_err(|e| e.to_string())?,
+            serde_json::to_string(&workspace).map_err(|e| e.to_string())?,
+        );
+        let result = std::process::Command::new("hyprctl")
+            .args(["dispatch", &expression])
+            .output()
+            .map_err(|e| format!("Could not move the selector: {e}"))?;
+        if !result.status.success() {
+            return Err(String::from_utf8_lossy(&result.stderr).trim().to_owned());
+        }
+    }
+
+    let expression = format!(
+        "hl.dsp.focus({{ window = {} }})",
+        serde_json::to_string(&window_address).map_err(|e| e.to_string())?,
+    );
+    let result = std::process::Command::new("hyprctl")
+        .args(["dispatch", &expression])
+        .output()
+        .map_err(|e| format!("Could not focus the selector: {e}"))?;
+    if !result.status.success() {
+        return Err(String::from_utf8_lossy(&result.stderr).trim().to_owned());
+    }
+    Ok(())
+}
+
 fn read_card_vendor_driver(card_name: &str) -> Option<(String, String)> {
     let sys_base = format!("/sys/class/drm/{card_name}/device");
     let vendor_path = format!("{sys_base}/vendor");
@@ -352,7 +410,9 @@ fn main() -> iced::Result {
     let _guard = match SingleInstanceGuard::acquire() {
         Some(g) => g,
         None => {
-            eprintln!("Wallpaper selector is already running.");
+            if let Err(error) = reveal_existing_window() {
+                eprintln!("Could not show the running wallpaper selector: {error}");
+            }
             return Ok(());
         }
     };

@@ -26,6 +26,7 @@ pub enum Message {
     JumpWallpapers(isize),
     ApplyRandom,
     RefreshList,
+    RefreshFinished(usize, usize, usize),
     EventOccurred(Event),
     Close,
 }
@@ -41,7 +42,9 @@ pub struct WallpaperSelectorApp {
     show_only_favorites: bool,
     selected_index: Option<usize>,
     applying: bool,
+    refreshing: bool,
     error_message: Option<String>,
+    refresh_status: Option<String>,
 }
 
 impl WallpaperSelectorApp {
@@ -68,7 +71,9 @@ impl WallpaperSelectorApp {
             show_only_favorites: false,
             selected_index: None,
             applying: false,
+            refreshing: false,
             error_message: None,
+            refresh_status: None,
         };
 
         app.refilter();
@@ -95,6 +100,9 @@ impl WallpaperSelectorApp {
     }
 
     fn prefetch_around_selected(&self) {
+        if self.refreshing {
+            return;
+        }
         if let Some(sel) = self.selected_index {
             let count = self.filtered_indices.len();
             if count == 0 {
@@ -159,6 +167,12 @@ impl WallpaperSelectorApp {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        if !matches!(
+            &message,
+            Message::RefreshList | Message::RefreshFinished(..) | Message::EventOccurred(_)
+        ) {
+            self.refresh_status = None;
+        }
         match message {
             Message::SearchChanged(query) => {
                 self.search_query = query;
@@ -289,6 +303,17 @@ impl WallpaperSelectorApp {
                 Task::none()
             }
             Message::RefreshList => {
+                if self.refreshing {
+                    return Task::none();
+                }
+                let selected = self.selected_index.and_then(|index| {
+                    self.filtered_indices
+                        .get(index)
+                        .and_then(|&item| self.all_wallpapers.get(item))
+                        .map(|item| item.relative.clone())
+                });
+                self.refreshing = true;
+                self.refresh_status = Some("Refreshing library…".to_owned());
                 self.theme = AppTheme::load();
                 self.favorites = crate::favorites::load_favorites(&self.config.fav_file);
                 self.active_wallpaper =
@@ -300,6 +325,36 @@ impl WallpaperSelectorApp {
                     self.active_wallpaper.as_deref(),
                 );
                 self.refilter();
+                if let Some(selected) = selected {
+                    if let Some(index) = self
+                        .filtered_indices
+                        .iter()
+                        .position(|&item| self.all_wallpapers[item].relative == selected)
+                    {
+                        self.selected_index = Some(index);
+                    }
+                }
+                let wallpapers = self.all_wallpapers.clone();
+                let total = wallpapers.len();
+                Task::perform(
+                    async move {
+                        let stats = crate::cache::batch_generate_thumbs(&wallpapers, false);
+                        (total, stats.generated, stats.failed)
+                    },
+                    |(total, generated, failed)| Message::RefreshFinished(total, generated, failed),
+                )
+            }
+            Message::RefreshFinished(total, generated, failed) => {
+                self.refreshing = false;
+                if failed > 0 {
+                    self.error_message =
+                        Some(format!("Could not update {failed} wallpaper previews"));
+                } else {
+                    self.error_message = None;
+                    self.refresh_status = Some(format!(
+                        "Library refreshed: {total} wallpapers, {generated} previews updated"
+                    ));
+                }
                 Task::none()
             }
             Message::Close => iced::exit(),
@@ -465,7 +520,7 @@ impl WallpaperSelectorApp {
             });
 
         // Search capsule
-        let search_input = text_input("Search wallpapers...", &self.search_query)
+        let search_input = text_input("dusky wallpapers", &self.search_query)
             .on_input(Message::SearchChanged)
             .padding([6, 14])
             .size(12)
@@ -541,13 +596,13 @@ impl WallpaperSelectorApp {
         });
 
         let refresh_btn = button(
-            text("↻")
-                .size(14)
+            text("↻ Refresh")
+                .size(11)
                 .align_x(Horizontal::Center)
                 .align_y(Vertical::Center),
         )
-        .padding([5, 10])
-        .on_press(Message::RefreshList)
+        .padding([6, 10])
+        .on_press_maybe((!self.refreshing).then_some(Message::RefreshList))
         .style(|_theme, status| button::Style {
             background: Some(Background::Color(if status == button::Status::Hovered {
                 Color::from_rgba8(255, 255, 255, 0.15)
@@ -624,6 +679,8 @@ impl WallpaperSelectorApp {
             error.as_str()
         } else if self.applying {
             "Applying wallpaper…"
+        } else if let Some(status) = &self.refresh_status {
+            status.as_str()
         } else {
             "← / →: Navigate  •  Click: Apply + colors  •  Right click: Wallpaper only  •  Middle click: Favorite  •  Esc: Close"
         })
