@@ -1,0 +1,3 @@
+package = "example-package"
+source = "user_scripts/path/to/source"
+tools = ["cargo"]

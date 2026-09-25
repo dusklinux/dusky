@@ -27,6 +27,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -527,7 +528,7 @@ def run(
     child via setgroups/setregid/setreuid (no runuser/PAM process per call)."""
     argv = [os.fspath(c) for c in cmd]
     creds: dict[str, object] = {}
-    if user is not None:
+    if user is not None and (user.uid != os.geteuid() or user.gid != os.getegid()):
         creds = {"user": user.uid, "group": user.gid, "extra_groups": list(user.groups)}
     log_fh = open(log, "ab", buffering=0) if log is not None else None
     try:
@@ -2017,6 +2018,88 @@ def inject_dotfiles(cfg: IsoConfig) -> None:
     ok(f"dotfiles injected ({len(perms)} executable(s) registered)")
 
 
+def build_local_packages(cfg: IsoConfig, user: RealUser) -> None:
+    """Build every recipe into an indexed, generic x86-64 repository for the ISO."""
+    skel = cfg.profile_dir / "airootfs" / "etc" / "skel"
+    recipes_dir = skel / "user_scripts" / "arch_iso_scripts" / "offline_iso" / "iso_maker" / "python" / "dusky_packages_compile"
+    local_dir = cfg.source_dir / "iso_maker" / "python" / "dusky_packages_compile"
+    local_recipes = sorted(p for p in local_dir.iterdir() if p.is_dir() and (p / "recipe.toml").is_file()) \
+        if local_dir.is_dir() else []
+    recipes = sorted(p for p in recipes_dir.iterdir() if p.is_dir() and (p / "recipe.toml").is_file()) \
+        if recipes_dir.is_dir() else []
+    if [p.name for p in local_recipes] != [p.name for p in recipes]:
+        die("local package recipes differ from the injected Git checkout; commit and push the recipes")
+    for local, staged in zip(local_recipes, recipes):
+        for filename in ("recipe.toml", "PKGBUILD"):
+            if not (local / filename).is_file() or not (staged / filename).is_file() \
+                    or (local / filename).read_bytes() != (staged / filename).read_bytes():
+                die(f"{local.name}/{filename} differs from the injected Git checkout; commit and push it")
+    names: list[str] = []
+    artifacts: list[tuple[str, str]] = []
+    if recipes:
+        require_tool("makepkg", "pacman")
+        require_tool("repo-add", "pacman-contrib")
+        info(f"Building {len(recipes)} local ISO package(s)")
+    repo = cfg.workspace / "local_repo"
+    for recipe in recipes:
+        if not (recipe / "PKGBUILD").is_file():
+            die(f"{recipe}: recipe.toml requires a PKGBUILD")
+        try:
+            spec = tomllib.loads((recipe / "recipe.toml").read_text(encoding="utf-8"))
+            name = spec["package"]
+            source_rel = Path(spec["source"])
+            tools = spec.get("tools", [])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            die(f"{recipe}: invalid recipe.toml ({exc})")
+        if (not isinstance(name, str) or not PKGNAME_RE.fullmatch(name)
+                or name in names or not isinstance(tools, list)
+                or not all(isinstance(tool, str) and re.fullmatch(r"[A-Za-z0-9._+-]+", tool) for tool in tools)
+                or source_rel.is_absolute() or ".." in source_rel.parts):
+            die(f"{recipe}: invalid package name, tools, or source path")
+        for tool in tools:
+            require_tool(tool, f"required by {name}")
+        source = (skel / source_rel).resolve()
+        if not source.is_dir() or not source.is_relative_to(skel.resolve()):
+            die(f"{recipe}: source {source_rel} is missing from the ISO dotfiles checkout")
+
+        work = make_tempdir(f"dusky-package-{name}-", owner=user)
+        shutil.copytree(source, work / "source", symlinks=False)
+        shutil.copytree(recipe, work / "recipe", symlinks=False)
+        for sub in ("packages", "build", "cargo-target"):
+            (work / sub).mkdir()
+        config = write_factory_makepkg_conf(work / "makepkg.conf")
+        restore_ownership(work, user)
+        env = makepkg_env(
+            user, DUSKY_PACKAGE_SOURCE=str(work / "source"), PKGDEST=str(work / "packages"),
+            BUILDDIR=str(work / "build"), CARGO_TARGET_DIR=str(work / "cargo-target"),
+        )
+        log = work / "build.log"
+        step(f"makepkg {name} (log: {log})")
+        result = run(
+            ["makepkg", "--config", config, "--nodeps", "--noconfirm", "--skippgpcheck", "--cleanbuild"],
+            user=user, env=env, cwd=work / "recipe", log=log, timeout=BUILD_TIMEOUT_S,
+        )
+        if result.returncode != 0:
+            die(f"makepkg {name} failed (exit {result.returncode}); tail of {log}:\n{tail_text(log)}")
+        built = [p for p in (work / "packages").iterdir()
+                 if (parsed := parse_pkg_filename(p.name)) is not None and parsed[0] == name
+                 and parsed[2] == "x86_64"]
+        if len(built) != 1:
+            die(f"{recipe}: expected one x86_64 package named {name}, found {len(built)}")
+        repo.mkdir(exist_ok=True)
+        with atomic_path(repo / built[0].name) as tmp:
+            shutil.copyfile(built[0], tmp)
+        names.append(name)
+        artifacts.append((name, built[0].name))
+        ok(f"local ISO package: {built[0].name}")
+        remove_tree(work)
+
+    manifest = cfg.profile_dir / "airootfs" / "root" / "arch_install" / "compiled_packages.txt"
+    manifest.write_text("".join(f"{name}\t{filename}\n" for name, filename in artifacts), encoding="utf-8")
+    if names:
+        update_repo_db(repo, set(package_files(repo)))
+
+
 _copy_buf = threading.local()
 
 
@@ -2053,7 +2136,7 @@ def _copy_verified_one(src: Path, dst: Path, entry: DbEntry) -> str | None:
 
 
 def stage_iso_repo(cfg: IsoConfig) -> dict[str, DbEntry]:
-    """Merge official + AUR DB entries (newest version wins, ties -> official), copy each winner
+    """Merge official, AUR, and locally compiled packages; copy each winner
     once into the workspace with inline SHA256 verification against its DB, write the merged DB
     from those entries (no repo-add, no re-hash) and check the result is self-contained."""
     info("Staging merged offline repository (verified single-pass copy)")
@@ -2066,6 +2149,12 @@ def stage_iso_repo(cfg: IsoConfig) -> dict[str, DbEntry]:
                 if cur is not None:
                     warn(f"{name}: AUR repo {entry.version} supersedes official {cur[0].version}")
                 merged[name] = (entry, cfg.aur_repo)
+    local_repo = cfg.workspace / "local_repo"
+    if (local_repo / FILES_NAME).is_file():
+        for name, entry in read_repo_db(local_repo / FILES_NAME).items():
+            if name in merged:
+                die(f"local ISO package {name} conflicts with an official or AUR package")
+            merged[name] = (entry, local_repo)
     if not merged:
         die("merged ISO repository is empty")
     total = sum(e.csize for e, _ in merged.values())
@@ -2234,6 +2323,7 @@ def iso_phase(cfg: IsoConfig, user: RealUser) -> tuple[Path, str]:
         stage_payloads(cfg)
         configure_live_hooks(cfg)
         inject_dotfiles(cfg)
+        build_local_packages(cfg, user)
         entries = stage_iso_repo(cfg)
         configure_iso_pacman_conf(cfg)
         sanitize_live_packages(cfg, entries)
