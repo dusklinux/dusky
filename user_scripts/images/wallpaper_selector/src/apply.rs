@@ -42,18 +42,3 @@ pub fn apply_wallpaper(
 
     Ok(())
 }
-
-pub fn notify_wallpaper(name: &str) {
-    let _ = Command::new("notify-send")
-        .args([
-            "-a",
-            "dusky-wallpaper",
-            "-i",
-            "preferences-desktop-wallpaper",
-            "-t",
-            "1800",
-            "Wallpaper Applied",
-            name,
-        ])
-        .spawn();
-}

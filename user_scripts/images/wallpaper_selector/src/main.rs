@@ -67,8 +67,6 @@ fn cycle_favorite(direction_next: bool, config: &Config) {
     let target = &fav_items[next_index];
     if let Err(e) = apply::apply_wallpaper(&target.path, &config.theme_ctl, true) {
         eprintln!("Failed to apply wallpaper: {e}");
-    } else {
-        apply::notify_wallpaper(&target.name);
     }
 }
 
@@ -95,8 +93,6 @@ fn apply_random(config: &Config) {
 
     if let Err(e) = apply::apply_wallpaper(&choice.path, &config.theme_ctl, true) {
         eprintln!("Failed to apply wallpaper: {e}");
-    } else {
-        apply::notify_wallpaper(&choice.name);
     }
 }
 

@@ -1,7 +1,9 @@
 use iced::alignment::{Horizontal, Vertical};
 use iced::keyboard::Key;
 use iced::keyboard::key::Named;
-use iced::widget::{Space, Stack, button, column, container, image, row, text, text_input};
+use iced::widget::{
+    Space, Stack, button, column, container, image, mouse_area, row, text, text_input,
+};
 use iced::{
     Background, Border, Color, ContentFit, Element, Event, Length, Shadow, Subscription, Task,
 };
@@ -16,8 +18,8 @@ pub enum Message {
     SearchChanged(String),
     ToggleFavoritesView(bool),
     SelectWallpaper(usize),
-    ApplyWallpaper(usize),
-    WallpaperApplied(Result<(String, String), String>),
+    ApplyWallpaper(usize, bool),
+    WallpaperApplied(Result<String, String>),
     ToggleFavorite(usize),
     NextWallpaper,
     PrevWallpaper,
@@ -210,11 +212,11 @@ impl WallpaperSelectorApp {
                         .map(|d| d.as_nanos() as usize)
                         .unwrap_or(42);
                     let random_idx = seed % self.filtered_indices.len();
-                    return self.update(Message::ApplyWallpaper(random_idx));
+                    return self.update(Message::ApplyWallpaper(random_idx, true));
                 }
                 Task::none()
             }
-            Message::ApplyWallpaper(filtered_idx) => {
+            Message::ApplyWallpaper(filtered_idx, regen) => {
                 if self.applying {
                     return Task::none();
                 }
@@ -222,14 +224,13 @@ impl WallpaperSelectorApp {
                     if let Some(item) = self.all_wallpapers.get(item_idx) {
                         let path = item.path.clone();
                         let theme_ctl = self.config.theme_ctl.clone();
-                        let name = item.name.clone();
                         let relative = item.relative.clone();
                         self.applying = true;
                         self.error_message = None;
                         return Task::perform(
                             async move {
-                                crate::apply::apply_wallpaper(&path, &theme_ctl, true)
-                                    .map(|()| (name, relative))
+                                crate::apply::apply_wallpaper(&path, &theme_ctl, regen)
+                                    .map(|()| relative)
                             },
                             Message::WallpaperApplied,
                         );
@@ -240,13 +241,12 @@ impl WallpaperSelectorApp {
             Message::WallpaperApplied(result) => {
                 self.applying = false;
                 match result {
-                    Ok((name, relative)) => {
-                        crate::apply::notify_wallpaper(&name);
+                    Ok(relative) => {
                         self.active_wallpaper = Some(relative.clone());
                         for w in &mut self.all_wallpapers {
                             w.is_active = w.relative == relative;
                         }
-                        iced::exit()
+                        Task::none()
                     }
                     Err(error) => {
                         self.error_message = Some(format!("Could not apply wallpaper: {error}"));
@@ -338,7 +338,7 @@ impl WallpaperSelectorApp {
                 }
                 Key::Named(Named::Enter) => {
                     if let Some(sel) = self.selected_index {
-                        return self.update(Message::ApplyWallpaper(sel));
+                        return self.update(Message::ApplyWallpaper(sel, true));
                     }
                     Task::none()
                 }
@@ -625,7 +625,7 @@ impl WallpaperSelectorApp {
         } else if self.applying {
             "Applying wallpaper…"
         } else {
-            "← / → or Scroll: Navigate  •  Enter or Click: Apply  •  F: Favorite  •  R: Random  •  Esc: Close"
+            "← / →: Navigate  •  Click: Apply + colors  •  Right click: Wallpaper only  •  Middle click: Favorite  •  Esc: Close"
         })
         .size(11)
         .color(if self.error_message.is_some() {
@@ -855,17 +855,21 @@ impl WallpaperSelectorApp {
             });
 
         // Clicking the center card also applies the wallpaper
-        button(card_container)
-            .padding(0)
-            .on_press(Message::ApplyWallpaper(filtered_idx))
-            .style(|_theme, _status| button::Style {
-                background: None,
-                text_color: Color::WHITE,
-                border: Border::default(),
-                shadow: Shadow::default(),
-                ..button::Style::default()
-            })
-            .into()
+        mouse_area(
+            button(card_container)
+                .padding(0)
+                .on_press(Message::ApplyWallpaper(filtered_idx, true))
+                .style(|_theme, _status| button::Style {
+                    background: None,
+                    text_color: Color::WHITE,
+                    border: Border::default(),
+                    shadow: Shadow::default(),
+                    ..button::Style::default()
+                }),
+        )
+        .on_right_press(Message::ApplyWallpaper(filtered_idx, false))
+        .on_middle_press(Message::ToggleFavorite(filtered_idx))
+        .into()
     }
 
     /// Slim flanking vertical slice card (matching skwd-wall Frame 1)
@@ -928,36 +932,40 @@ impl WallpaperSelectorApp {
                 ..container::Style::default()
             });
 
-        button(slice_container)
-            .padding(0)
-            .on_press(Message::SelectWallpaper(filtered_idx))
-            .style(move |_theme, status| {
-                let is_hovered = status == button::Status::Hovered;
-                button::Style {
-                    background: None,
-                    text_color: Color::WHITE,
-                    border: Border {
-                        radius: 12.0.into(),
-                        color: if is_hovered {
-                            Color { a: 0.8, ..accent }
-                        } else {
-                            Color::TRANSPARENT
+        mouse_area(
+            button(slice_container)
+                .padding(0)
+                .on_press(Message::SelectWallpaper(filtered_idx))
+                .style(move |_theme, status| {
+                    let is_hovered = status == button::Status::Hovered;
+                    button::Style {
+                        background: None,
+                        text_color: Color::WHITE,
+                        border: Border {
+                            radius: 12.0.into(),
+                            color: if is_hovered {
+                                Color { a: 0.8, ..accent }
+                            } else {
+                                Color::TRANSPARENT
+                            },
+                            width: if is_hovered { 1.5 } else { 0.0 },
                         },
-                        width: if is_hovered { 1.5 } else { 0.0 },
-                    },
-                    shadow: if is_hovered {
-                        Shadow {
-                            color: Color { a: 0.35, ..accent },
-                            offset: iced::Vector::ZERO,
-                            blur_radius: 12.0,
-                        }
-                    } else {
-                        Shadow::default()
-                    },
-                    ..button::Style::default()
-                }
-            })
-            .into()
+                        shadow: if is_hovered {
+                            Shadow {
+                                color: Color { a: 0.35, ..accent },
+                                offset: iced::Vector::ZERO,
+                                blur_radius: 12.0,
+                            }
+                        } else {
+                            Shadow::default()
+                        },
+                        ..button::Style::default()
+                    }
+                }),
+        )
+        .on_right_press(Message::ApplyWallpaper(filtered_idx, false))
+        .on_middle_press(Message::ToggleFavorite(filtered_idx))
+        .into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
