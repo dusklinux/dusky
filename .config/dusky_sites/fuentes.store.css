@@ -1,0 +1,5 @@
+@-moz-document domain("fuentes.store") {
+    /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
+    body { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fbody%1Fbg | bg: background */
+    /* <<< dusky:picks */
+}
