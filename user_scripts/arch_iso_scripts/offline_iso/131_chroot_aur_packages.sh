@@ -101,6 +101,8 @@ readonly HAS_TTY
 readonly PACMAN_DB_LOCK='/var/lib/pacman/db.lck'
 readonly PACMAN_LOCK_TIMEOUT=300
 readonly SCRIPT_LOCK_FILE='/run/lock/elite-system-installer.lock'
+readonly COMPILED_MANIFEST="$(dirname -- "${BASH_SOURCE[0]}")/compiled_packages.txt"
+readonly COMPILED_REPO='/offline_repo'
 
 declare -gi SCRIPT_LOCK_FD=-1
 declare -ga FAILED_GROUPS=()
@@ -250,6 +252,39 @@ ensure_keyring() {
   print_ok "Keyring initialized."
 }
 
+install_compiled_iso_packages() {
+  [[ -f $COMPILED_MANIFEST ]] || return 0
+
+  local pkg filename extra archive
+  local -a archives=() names=()
+  while IFS=$'\t' read -r pkg filename extra || [[ -n $pkg || -n $filename ]]; do
+    [[ -n $pkg || -n $filename || -n $extra ]] || continue
+    if [[ -n $extra || ! $pkg =~ ^[a-z0-9@_+][a-z0-9@._+-]*$ ||
+          $filename != "$pkg"-* || $filename != *-x86_64.pkg.tar.zst ||
+          $filename == */* || $filename == *..* ]]; then
+      die "Invalid compiled ISO package manifest entry: ${pkg} ${filename}"
+    fi
+
+    if pacman -Qq -- "$pkg" >/dev/null 2>&1; then
+      print_ok "Compiled ISO package already installed: $pkg"
+      continue
+    fi
+
+    archive="${COMPILED_REPO}/${filename}"
+    [[ -f $archive ]] || die "Compiled ISO package is missing from ${COMPILED_REPO}: $filename"
+    names+=("$pkg")
+    archives+=("$archive")
+  done < "$COMPILED_MANIFEST"
+
+  (( ${#archives[@]} > 0 )) || return 0
+  print_info "Installing ${#archives[@]} compiled ISO package(s) from ${COMPILED_REPO}"
+  run_pacman --upgrade --noconfirm -- "${archives[@]}" || die "Compiled ISO package installation failed."
+  for pkg in "${names[@]}"; do
+    pacman -Qq -- "$pkg" >/dev/null 2>&1 || die "Compiled ISO package was not installed: $pkg"
+  done
+  print_ok "Compiled ISO packages installed."
+}
+
 install_group() {
   local group_name="$1"
   local array_name="$2"
@@ -360,6 +395,7 @@ main() {
   validate_group_configuration
   acquire_script_lock
   ensure_keyring
+  install_compiled_iso_packages
 
   for i in "${!GROUP_LABELS[@]}"; do
     install_group "${GROUP_LABELS[i]}" "${GROUP_ARRAYS[i]}"

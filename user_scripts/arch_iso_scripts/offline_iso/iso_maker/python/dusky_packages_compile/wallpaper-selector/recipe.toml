@@ -1,0 +1,3 @@
+package = "dusky-wallpaper-selector"
+source = "user_scripts/images/wallpaper_selector"
+tools = ["cargo"]

@@ -167,6 +167,7 @@ tasks = [
     "U | update_checker.sh --num",
     # "U | cc_restart.sh --quiet",
     "U | ignore-fail | wallpaper_selector.py --build-cache",
+    "U | 151_wallpaper_selector_setup.py --update-cache",
     # "U | once | append_defaults_keybinds_edit_here.sh",
     "U | ignore-fail | tui_matugen.py --smart",
     "U | ignore-fail | hypr_anim.sh --current",

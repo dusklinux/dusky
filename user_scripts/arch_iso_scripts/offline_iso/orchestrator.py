@@ -1344,6 +1344,7 @@ def parse_args():
     parser.add_argument("--manual", "-m", action="store_true", help="Manual mode: prompt before each script")
     parser.add_argument("--stop-on-fail", action="store_true", help="Halt execution if any script fails")
     parser.add_argument("--auto", action="store_true", help="Non-interactive automatic mode")
+    parser.add_argument("--online", action="store_true", help="Select the online recovery profile")
     parser.add_argument("--profile", type=str, help="Specify profile TOML to execute")
     parser.add_argument("--list-profiles", action="store_true", help="List all available installer profiles and exit")
     parser.add_argument("--list-scripts", action="store_true", help="List all tasks in the selected profile and exit")
@@ -1354,7 +1355,12 @@ def parse_args():
     parser.add_argument("--task-timeout", type=float, default=None, help="Default per-task timeout in seconds (0 = no timeout)")
     parser.add_argument("--no-audio", action="store_true", help="Disable audio notifications")
     parser.add_argument("--no-notify", action="store_true", help="Disable desktop notifications")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.online:
+        if args.profile is not None:
+            parser.error("--online cannot be combined with --profile")
+        args.profile = "Online"
+    return args
 
 
 def _cleanup_lock(lock_file: Path):

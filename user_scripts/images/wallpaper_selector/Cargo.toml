@@ -1,0 +1,22 @@
+[package]
+name = "wallpaper_selector"
+version = "0.1.0"
+edition = "2024"
+authors = ["Dusk Linux"]
+description = "Fast, lightweight GPU-accelerated wallpaper selector for Arch Linux / Hyprland"
+
+[dependencies]
+iced = { version = "0.14", default-features = false, features = ["image", "wayland", "wgpu", "thread-pool"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+rayon = "1.10"
+sha2 = "0.10"
+walkdir = "2.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

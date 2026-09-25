@@ -87,6 +87,7 @@ INSTALL_SEQUENCE=(
 
     "U | 145_matugen_directories.py"
 #    "U | 150_wallpapers_download.sh"
+    "U | 151_wallpaper_selector_setup.py --update-cache"
     "U | 155_blur_shadow_opacity.sh"
     "U | 160_theme_ctl.py"
     "U | 165_qtct_config.sh"

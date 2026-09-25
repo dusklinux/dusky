@@ -42,7 +42,6 @@ scripts = [
     "U | ignore-fail | 120_mkinitcpio_optimizer.sh",
     "U | 135_plymouth_setup.py",
     "U | 130_chroot_package_installer.sh --auto",
-    "U | 131_chroot_aur_packages.sh --auto",
     "U | 149_snapper_isolation_subvolume.sh --auto",
     "U | 150_mkinitcpio_restore_and_generate.sh",
     "U | 151_systemd_bootloader.py",

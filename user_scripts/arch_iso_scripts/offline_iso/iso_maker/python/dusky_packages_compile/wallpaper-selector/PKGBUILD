@@ -1,0 +1,24 @@
+pkgname=dusky-wallpaper-selector
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Dusky Rust wallpaper selector for Hyprland'
+arch=('x86_64')
+license=('custom')
+depends=('glibc' 'gcc-libs' 'wayland' 'libxkbcommon' 'vulkan-icd-loader')
+makedepends=('cargo')
+source=()
+
+build() {
+  cp -a -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
+  cd "$srcdir/project"
+  export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=x86-64"
+  export CFLAGS='-march=x86-64 -mtune=generic -O2'
+  export CXXFLAGS="$CFLAGS"
+  cargo build --release --locked --target x86_64-unknown-linux-gnu
+}
+
+package() {
+  local target_dir="${CARGO_TARGET_DIR:-$srcdir/project/target}"
+  install -Dm755 "$target_dir/x86_64-unknown-linux-gnu/release/wallpaper_selector" \
+    "$pkgdir/usr/bin/dusky-wallpaper-selector"
+}

@@ -1505,7 +1505,7 @@ hl.window_rule({
 })
 
 
---- Dusky Wallpaper Selector---
+--- Dusky Wallpaper Selector (Legacy Python GTK) ---
 hl.window_rule({
     name = "wallpaper_selectorpy",
     match = {
@@ -1516,6 +1516,23 @@ hl.window_rule({
     -- size = {"monitor_w * 0.49", "monitor_h * 0.6144"},
 
     animation = "popin 60%",      -- scale in starting from 60% size
+})
+
+--- Dusky Wallpaper Selector (Rust Transparent Overlay) ---
+hl.window_rule({
+    name = "wallpaper_selector_rust",
+    match = {
+        class = "^(dusky-wallpaper-selector-rust)$",
+    },
+    float = true,
+    size = {"monitor_w", "monitor_h"},
+    move = {0, 0},
+    border_size = 0,
+    rounding = 0,
+    no_dim = true,
+    workspace = "unset",
+    focus_on_activate = true,
+    stay_focused = true
 })
 
 
