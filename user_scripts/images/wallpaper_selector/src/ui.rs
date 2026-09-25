@@ -2,14 +2,15 @@ use iced::alignment::{Horizontal, Vertical};
 use iced::keyboard::Key;
 use iced::keyboard::key::Named;
 use iced::widget::{
-    Space, Stack, button, column, container, image, mouse_area, row, text, text_input,
+    Float, Space, Stack, button, column, container, image, mouse_area, row, text, text_input,
 };
 use iced::{
     Background, Border, Color, ContentFit, Element, Event, Length, Shadow, Subscription, Task,
+    Vector,
 };
 use std::collections::HashSet;
 
-use crate::config::Config;
+use crate::config::{Config, Preferences};
 use crate::scanner::WallpaperItem;
 use crate::theme::AppTheme;
 
@@ -27,8 +28,47 @@ pub enum Message {
     ApplyRandom,
     RefreshList,
     RefreshFinished(usize, usize, usize),
+    ToggleAnimation,
+    AnimationFrame(iced::time::Instant),
     EventOccurred(Event),
     Close,
+}
+
+const SLICE_WIDTH: f32 = 120.0;
+const EXPANDED_WIDTH: f32 = 540.0;
+const CARD_HEIGHT: f32 = 337.5;
+const CARD_GAP: f32 = 10.0;
+
+struct CarouselAnimation {
+    target: f32,
+    velocity: f32,
+    last_tick: iced::time::Instant,
+}
+
+impl CarouselAnimation {
+    fn tick(&mut self, position: &mut f32, now: iced::time::Instant) -> bool {
+        let mut remaining = now
+            .saturating_duration_since(self.last_tick)
+            .as_secs_f32()
+            .min(0.05);
+        self.last_tick = now;
+        // A critically damped spring keeps velocity when navigation is retargeted.
+        let omega = 24.0_f32;
+        while remaining > 0.0 {
+            let step = remaining.min(1.0 / 240.0);
+            self.velocity +=
+                (-omega * omega * (*position - self.target) - 2.0 * omega * self.velocity) * step;
+            *position += self.velocity * step;
+            remaining -= step;
+        }
+        if (*position - self.target).abs() < 0.001 && self.velocity.abs() < 0.01 {
+            *position = self.target;
+            self.velocity = 0.0;
+            false
+        } else {
+            true
+        }
+    }
 }
 
 pub struct WallpaperSelectorApp {
@@ -45,10 +85,14 @@ pub struct WallpaperSelectorApp {
     refreshing: bool,
     error_message: Option<String>,
     refresh_status: Option<String>,
+    animate_carousel: bool,
+    animation: Option<CarouselAnimation>,
+    visual_position: f32,
 }
 
 impl WallpaperSelectorApp {
     pub fn new(config: Config) -> (Self, Task<Message>) {
+        let preferences = Preferences::load(&config.preferences_file);
         let theme = AppTheme::load();
         let favorites = crate::favorites::load_favorites(&config.fav_file);
         let active_wallpaper = crate::favorites::read_active_wallpaper(&config.theme_dir);
@@ -74,6 +118,9 @@ impl WallpaperSelectorApp {
             refreshing: false,
             error_message: None,
             refresh_status: None,
+            animate_carousel: preferences.animate_carousel,
+            animation: None,
+            visual_position: 0.0,
         };
 
         app.refilter();
@@ -93,6 +140,8 @@ impl WallpaperSelectorApp {
         if app.selected_index.is_none() && !app.filtered_indices.is_empty() {
             app.selected_index = Some(0);
         }
+
+        app.visual_position = app.selected_index.unwrap_or(0) as f32;
 
         app.prefetch_around_selected();
 
@@ -163,6 +212,30 @@ impl WallpaperSelectorApp {
             self.selected_index = Some(0);
         }
 
+        self.animation = None;
+        self.visual_position = self.selected_index.unwrap_or(0) as f32;
+        self.prefetch_around_selected();
+    }
+
+    fn select_wallpaper(&mut self, next: usize) {
+        if next >= self.filtered_indices.len() || self.selected_index == Some(next) {
+            return;
+        }
+        self.selected_index = Some(next);
+        if self.animate_carousel {
+            if let Some(animation) = &mut self.animation {
+                animation.target = next as f32;
+            } else {
+                self.animation = Some(CarouselAnimation {
+                    target: next as f32,
+                    velocity: 0.0,
+                    last_tick: iced::time::Instant::now(),
+                });
+            }
+        } else {
+            self.animation = None;
+            self.visual_position = next as f32;
+        }
         self.prefetch_around_selected();
     }
 
@@ -185,15 +258,13 @@ impl WallpaperSelectorApp {
                 Task::none()
             }
             Message::SelectWallpaper(filtered_idx) => {
-                self.selected_index = Some(filtered_idx);
-                self.prefetch_around_selected();
+                self.select_wallpaper(filtered_idx);
                 Task::none()
             }
             Message::NextWallpaper => {
                 if let Some(sel) = self.selected_index {
                     if sel + 1 < self.filtered_indices.len() {
-                        self.selected_index = Some(sel + 1);
-                        self.prefetch_around_selected();
+                        self.select_wallpaper(sel + 1);
                     }
                 }
                 Task::none()
@@ -201,8 +272,7 @@ impl WallpaperSelectorApp {
             Message::PrevWallpaper => {
                 if let Some(sel) = self.selected_index {
                     if sel > 0 {
-                        self.selected_index = Some(sel - 1);
-                        self.prefetch_around_selected();
+                        self.select_wallpaper(sel - 1);
                     }
                 }
                 Task::none()
@@ -212,8 +282,7 @@ impl WallpaperSelectorApp {
                     let count = self.filtered_indices.len();
                     if count > 0 {
                         let next = (sel as isize + delta).clamp(0, count as isize - 1) as usize;
-                        self.selected_index = Some(next);
-                        self.prefetch_around_selected();
+                        self.select_wallpaper(next);
                     }
                 }
                 Task::none()
@@ -334,6 +403,8 @@ impl WallpaperSelectorApp {
                         self.selected_index = Some(index);
                     }
                 }
+                self.visual_position = self.selected_index.unwrap_or(0) as f32;
+                self.prefetch_around_selected();
                 let wallpapers = self.all_wallpapers.clone();
                 let total = wallpapers.len();
                 Task::perform(
@@ -354,6 +425,35 @@ impl WallpaperSelectorApp {
                     self.refresh_status = Some(format!(
                         "Library refreshed: {total} wallpapers, {generated} previews updated"
                     ));
+                }
+                Task::none()
+            }
+            Message::ToggleAnimation => {
+                let enabled = !self.animate_carousel;
+                let preferences = Preferences {
+                    animate_carousel: enabled,
+                };
+                match preferences.save(&self.config.preferences_file) {
+                    Ok(()) => {
+                        self.animate_carousel = enabled;
+                        if !enabled {
+                            self.animation = None;
+                            self.visual_position = self.selected_index.unwrap_or(0) as f32;
+                        }
+                        self.error_message = None;
+                    }
+                    Err(error) => {
+                        self.error_message =
+                            Some(format!("Could not save animation preference: {error}"));
+                    }
+                }
+                Task::none()
+            }
+            Message::AnimationFrame(at) => {
+                if let Some(animation) = &mut self.animation {
+                    if !animation.tick(&mut self.visual_position, at) {
+                        self.animation = None;
+                    }
                 }
                 Task::none()
             }
@@ -402,14 +502,12 @@ impl WallpaperSelectorApp {
                 Key::Named(Named::PageDown) => self.update(Message::JumpWallpapers(5)),
                 Key::Named(Named::PageUp) => self.update(Message::JumpWallpapers(-5)),
                 Key::Named(Named::Home) => {
-                    self.selected_index = Some(0);
-                    self.prefetch_around_selected();
+                    self.select_wallpaper(0);
                     Task::none()
                 }
                 Key::Named(Named::End) => {
                     if !self.filtered_indices.is_empty() {
-                        self.selected_index = Some(self.filtered_indices.len() - 1);
-                        self.prefetch_around_selected();
+                        self.select_wallpaper(self.filtered_indices.len() - 1);
                     }
                     Task::none()
                 }
@@ -522,9 +620,9 @@ impl WallpaperSelectorApp {
         // Search capsule
         let search_input = text_input("dusky wallpapers", &self.search_query)
             .on_input(Message::SearchChanged)
-            .padding([6, 14])
+            .padding([6, 10])
             .size(12)
-            .width(Length::Fixed(220.0))
+            .width(Length::Fixed(120.0))
             .style(move |_theme, status| {
                 let is_focused = matches!(status, text_input::Status::Focused { .. });
                 text_input::Style {
@@ -569,6 +667,40 @@ impl WallpaperSelectorApp {
         });
 
         // Action buttons
+        let animation_enabled = self.animate_carousel;
+        let animation_btn = button(
+            text(if animation_enabled {
+                "Motion: On"
+            } else {
+                "Motion: Off"
+            })
+            .size(11)
+            .align_x(Horizontal::Center)
+            .align_y(Vertical::Center),
+        )
+        .padding([6, 12])
+        .on_press(Message::ToggleAnimation)
+        .style(move |_theme, status| button::Style {
+            background: Some(Background::Color(if animation_enabled {
+                Color { a: 0.22, ..accent }
+            } else if status == button::Status::Hovered {
+                Color::from_rgba8(255, 255, 255, 0.12)
+            } else {
+                Color::from_rgba8(20, 22, 30, 0.90)
+            })),
+            text_color: if animation_enabled {
+                accent
+            } else {
+                Color::from_rgb8(210, 215, 235)
+            },
+            border: Border {
+                radius: 14.0.into(),
+                color: Color::from_rgba8(255, 255, 255, 0.08),
+                width: 1.0,
+            },
+            ..button::Style::default()
+        });
+
         let random_btn = button(
             text("🎲 Random")
                 .size(11)
@@ -653,6 +785,7 @@ impl WallpaperSelectorApp {
             mode_pill,
             search_input,
             counter_pill,
+            animation_btn,
             random_btn,
             refresh_btn,
             close_btn,
@@ -748,7 +881,72 @@ impl WallpaperSelectorApp {
             .into();
         }
 
-        let current = self.selected_index.unwrap_or(0);
+        if self.animate_carousel {
+            return self.build_motion_carousel();
+        }
+
+        self.build_carousel_at(self.selected_index.unwrap_or(0))
+    }
+
+    fn motion_width(index: usize, position: f32) -> f32 {
+        SLICE_WIDTH
+            + (EXPANDED_WIDTH - SLICE_WIDTH) * (1.0 - (index as f32 - position).abs()).max(0.0)
+    }
+
+    fn motion_center(index: usize, position: f32) -> f32 {
+        let anchor = position.floor() as usize;
+        let mut center = 0.0;
+        if index > anchor {
+            for left in anchor..index {
+                center += (Self::motion_width(left, position)
+                    + Self::motion_width(left + 1, position))
+                    * 0.5
+                    + CARD_GAP;
+            }
+        } else if index < anchor {
+            for right in (index + 1)..=anchor {
+                center -= (Self::motion_width(right - 1, position)
+                    + Self::motion_width(right, position))
+                    * 0.5
+                    + CARD_GAP;
+            }
+        }
+        let fraction = position - anchor as f32;
+        let focus_step =
+            (Self::motion_width(anchor, position) + Self::motion_width(anchor + 1, position)) * 0.5
+                + CARD_GAP;
+        center - fraction * focus_step
+    }
+
+    fn build_motion_carousel(&self) -> Element<'_, Message> {
+        let total = self.filtered_indices.len();
+        let position = self.visual_position.clamp(0.0, (total - 1) as f32);
+        let start = (position.floor() as usize).saturating_sub(3);
+        let end = ((position.ceil() as usize) + 3).min(total - 1);
+        let mut indices: Vec<usize> = (start..=end).collect();
+        indices.sort_by(|a, b| {
+            (b.abs_diff(position.round() as usize)).cmp(&a.abs_diff(position.round() as usize))
+        });
+
+        let mut cards = Stack::new().width(Length::Fill).height(Length::Fill);
+        for index in indices {
+            let item = &self.all_wallpapers[self.filtered_indices[index]];
+            let distance = (index as f32 - position).abs();
+            let emphasis = (1.0 - distance).max(0.0);
+            let width = Self::motion_width(index, position);
+            let x = Self::motion_center(index, position);
+            let card = self.build_center_card(item, index, width, emphasis, distance);
+            cards = cards.push(Float::new(card).translate(move |bounds, viewport| {
+                Vector::new(
+                    viewport.x + viewport.width * 0.5 - bounds.x - bounds.width * 0.5 + x + 0.001,
+                    viewport.y + viewport.height * 0.5 - bounds.y - bounds.height * 0.5,
+                )
+            }));
+        }
+        cards.clip(true).into()
+    }
+
+    fn build_carousel_at(&self, current: usize) -> Element<'_, Message> {
         let total = self.filtered_indices.len();
         const SLICE_COUNT: usize = 2; // 2 left + 1 center + 2 right = 5 slices matching skwd-wall frame 1
 
@@ -766,7 +964,8 @@ impl WallpaperSelectorApp {
         // Expanded Center Card
         let center_item_idx = self.filtered_indices[current];
         let center_item = &self.all_wallpapers[center_item_idx];
-        row_items = row_items.push(self.build_center_card(center_item, current));
+        row_items =
+            row_items.push(self.build_center_card(center_item, current, EXPANDED_WIDTH, 1.0, 0.0));
 
         // Flanking Right Slices
         let right_end = (current + SLICE_COUNT).min(total.saturating_sub(1));
@@ -792,6 +991,9 @@ impl WallpaperSelectorApp {
         &'a self,
         item: &'a WallpaperItem,
         filtered_idx: usize,
+        width: f32,
+        emphasis: f32,
+        distance: f32,
     ) -> Element<'a, Message> {
         let accent = self.theme.accent;
 
@@ -825,15 +1027,16 @@ impl WallpaperSelectorApp {
         } else {
             name.into_owned()
         };
-        let mut top_left = row![
-            text(display_name)
-                .size(10)
-                .color(Color::from_rgba8(255, 255, 255, 0.85)),
-        ]
+        let mut top_left = row![text(display_name).size(10).color(Color::from_rgba8(
+            255,
+            255,
+            255,
+            0.85 * emphasis
+        )),]
         .spacing(8)
         .align_y(Vertical::Center);
 
-        if item.is_active {
+        if item.is_active && emphasis > 0.5 {
             top_left = top_left.push(
                 container(
                     text("● ACTIVE")
@@ -881,30 +1084,49 @@ impl WallpaperSelectorApp {
             ..button::Style::default()
         });
 
-        let top_container = container(
-            row![top_left, Space::new().width(Length::Fill), fav_btn,].align_y(Vertical::Center),
-        )
-        .padding([12, 16])
-        .width(Length::Fill);
+        let mut top_row =
+            row![top_left, Space::new().width(Length::Fill)].align_y(Vertical::Center);
+        if emphasis > 0.5 {
+            top_row = top_row.push(fav_btn);
+        }
+        let top_container = container(top_row).padding([12, 16]).width(Length::Fill);
 
         let overlay_column = column![top_container, Space::new().height(Length::Fill),]
             .width(Length::Fill)
             .height(Length::Fill);
 
-        let card_stack = Stack::new().push(img_layer).push(overlay_column).clip(true);
+        let dim_alpha = (distance * 0.35).min(0.6);
+        let dim_overlay = container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(Color::from_rgba8(0, 0, 0, dim_alpha))),
+                ..container::Style::default()
+            });
+        let card_stack = Stack::new()
+            .push(img_layer)
+            .push(dim_overlay)
+            .push(overlay_column)
+            .clip(true);
 
         let card_container = container(card_stack)
-            .width(Length::Fixed(540.0))
-            .height(Length::Fixed(337.5))
+            .width(Length::Fixed(width))
+            .height(Length::Fixed(CARD_HEIGHT))
             .style(move |_| container::Style {
                 background: Some(Background::Color(Color::from_rgb8(15, 17, 24))),
                 border: Border {
                     radius: 14.0.into(),
-                    color: accent,
-                    width: 1.5,
+                    color: Color {
+                        a: emphasis,
+                        ..accent
+                    },
+                    width: 1.5 * emphasis,
                 },
                 shadow: Shadow {
-                    color: Color { a: 0.30, ..accent },
+                    color: Color {
+                        a: 0.30 * emphasis,
+                        ..accent
+                    },
                     offset: iced::Vector::ZERO,
                     blur_radius: 16.0,
                 },
@@ -915,7 +1137,11 @@ impl WallpaperSelectorApp {
         mouse_area(
             button(card_container)
                 .padding(0)
-                .on_press(Message::ApplyWallpaper(filtered_idx, true))
+                .on_press(if emphasis > 0.5 {
+                    Message::ApplyWallpaper(filtered_idx, true)
+                } else {
+                    Message::SelectWallpaper(filtered_idx)
+                })
                 .style(|_theme, _status| button::Style {
                     background: None,
                     text_color: Color::WHITE,
@@ -1026,6 +1252,11 @@ impl WallpaperSelectorApp {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        iced::event::listen().map(Message::EventOccurred)
+        let events = iced::event::listen().map(Message::EventOccurred);
+        if self.animation.is_some() {
+            Subscription::batch([events, iced::window::frames().map(Message::AnimationFrame)])
+        } else {
+            events
+        }
     }
 }
