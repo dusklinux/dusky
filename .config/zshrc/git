@@ -247,8 +247,9 @@ function _gitdelta_render_stream() {
         fi
     fi
 
-    typeset -A num_add num_del
-    local line a d p rest
+    typeset -A num_add num_del det_map det_len
+    local line a d p rest det det_pad
+    integer max_det_w=0 w pad_det
     for line in "${numstat_lines[@]}"; do
         [[ -z $line ]] && continue
         a=${line%%$TAB*}
@@ -257,36 +258,45 @@ function _gitdelta_render_stream() {
         p=${rest#*$TAB}
         num_add[$p]=$a
         num_del[$p]=$d
-    done
-
-    integer max_w=0 vis pad
-    local stripped raw_p clean_p detail pad_str
-    for line in "${stat_lines[@]}"; do
-        if [[ $line == *"|"* ]]; then
-            stripped=${line//(#b)$'\e'\[[0-9;]#m/}
-            vis=${#stripped}
-            (( vis > max_w )) && max_w=$vis
+        if [[ $a == "-" && $d == "-" ]]; then
+            det="${C_DIM}(binary)${C_RESET}"
+            w=8
+        else
+            det="${C_DIM}(${C_GREEN}+${a}${C_DIM}, ${C_RED}-${d}${C_DIM})${C_RESET}"
+            w=$(( 6 + ${#a} + ${#d} ))
         fi
+        det_map[$p]=$det
+        det_len[$p]=$w
+        (( w > max_det_w )) && max_det_w=$w
     done
 
+    local raw_p clean_p after_pipe clean_after clean_after_trim cnt cnt_part gr
     for line in "${stat_lines[@]}"; do
         if [[ $line == *"|"* ]]; then
             raw_p=${line%%|*}
-            clean_p=${${raw_p# }%% #}
+            clean_p=${${raw_p## #}%% #}
             clean_p=${clean_p//(#b)$'\e'\[[0-9;]#m/}
-            if [[ -n ${num_add[$clean_p]-} ]]; then
-                a=${num_add[$clean_p]}
-                d=${num_del[$clean_p]}
-                if [[ $a == "-" && $d == "-" ]]; then
-                    detail="${C_DIM}(binary)${C_RESET}"
+            after_pipe=${line#*|}
+            clean_after=${after_pipe//(#b)$'\e'\[[0-9;]#m/}
+            clean_after_trim=${clean_after## #}
+            cnt=${clean_after_trim%% *}
+            if [[ -n ${det_map[$clean_p]-} ]]; then
+                det=${det_map[$clean_p]}
+                w=${det_len[$clean_p]}
+                pad_det=$(( max_det_w - w ))
+                det_pad=${(l:pad_det:: :)}
+                if [[ $cnt == <-> ]]; then
+                    cnt_part=${after_pipe%%${cnt}*}${cnt}
+                    gr=${after_pipe#*${cnt}}
+                    gr=${gr## #}
+                    if [[ -n $gr ]]; then
+                        print -r -- "${raw_p}|${cnt_part}  ${det}${det_pad}  ${gr}"
+                    else
+                        print -r -- "${raw_p}|${cnt_part}  ${det}"
+                    fi
                 else
-                    detail="${C_DIM}(${C_GREEN}+${a}${C_DIM}, ${C_RED}-${d}${C_DIM})${C_RESET}"
+                    print -r -- "${raw_p}|${after_pipe}  ${det}"
                 fi
-                stripped=${line//(#b)$'\e'\[[0-9;]#m/}
-                vis=${#stripped}
-                pad=$(( max_w - vis + 2 ))
-                pad_str=${(l:pad:: :)}
-                print -r -- "${line}${pad_str}${detail}"
                 continue
             fi
         fi
