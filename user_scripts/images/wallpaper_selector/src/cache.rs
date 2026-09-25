@@ -113,9 +113,21 @@ fn generate_thumb_with_mode(source_path: &Path, thumb_path: &Path, force: bool) 
         let _ = fs::create_dir_all(parent);
     }
 
-    let img = match image::open(source_path) {
+    let reader = match image::ImageReader::open(source_path)
+        .and_then(|reader| reader.with_guessed_format())
+    {
+        Ok(reader) => reader,
+        Err(error) => {
+            eprintln!("Could not read {}: {error}", source_path.display());
+            return ThumbStatus::Failed;
+        }
+    };
+    let img = match reader.decode() {
         Ok(img) => img,
-        Err(_) => return ThumbStatus::Failed,
+        Err(error) => {
+            eprintln!("Could not decode {}: {error}", source_path.display());
+            return ThumbStatus::Failed;
+        }
     };
 
     let thumb = img.resize_to_fill(
@@ -199,7 +211,13 @@ pub fn remove_previous_jpegs(
 pub fn batch_generate_thumbs(items: &[crate::scanner::WallpaperItem], force: bool) -> CacheStats {
     items
         .par_iter()
-        .map(|item| generate_thumb_with_mode(&item.path, &item.thumb_path, force))
+        .map(|item| {
+            let status = generate_thumb_with_mode(&item.path, &item.thumb_path, force);
+            if status == ThumbStatus::Failed {
+                eprintln!("Could not generate thumbnail for {}", item.path.display());
+            }
+            status
+        })
         .fold(CacheStats::default, |mut stats, status| {
             stats.add(status);
             stats

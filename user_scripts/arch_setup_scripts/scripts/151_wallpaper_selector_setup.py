@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -141,30 +142,51 @@ def build_base() -> tuple[Path, bool]:
     return disk_base, False
 
 
+def prepare_cargo_home(build_dir: Path) -> Path:
+    """Give Cargo a writable home even when a system setup owns ~/.cargo."""
+    cargo_home = build_dir / "cargo-home"
+    cargo_home.mkdir()
+    existing = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+    for subdir in ("registry", "git"):
+        source = existing / subdir
+        destination = cargo_home / subdir
+        if not source.is_dir():
+            continue
+        try:
+            # copyfile creates user-owned, writable files instead of preserving
+            # read-only permissions from a root-owned Cargo installation.
+            shutil.copytree(source, destination, copy_function=shutil.copyfile)
+        except (OSError, shutil.Error) as error:
+            for root, _, _ in os.walk(destination):
+                path = Path(root)
+                path.chmod(path.stat().st_mode | stat.S_IWUSR)
+            shutil.rmtree(destination, ignore_errors=True)
+            log("WARN", f"Could not reuse Cargo {subdir} cache ({error}); Cargo will download it")
+            continue
+        for root, _, _ in os.walk(destination):
+            path = Path(root)
+            path.chmod(path.stat().st_mode | stat.S_IWUSR)
+    for filename in ("config.toml", "config", "credentials.toml", "credentials"):
+        source = existing / filename
+        if source.is_file():
+            try:
+                shutil.copyfile(source, cargo_home / filename)
+            except OSError as error:
+                log("WARN", f"Could not copy Cargo {filename}: {error}")
+    return cargo_home
+
+
 def build_native(project: Path, binary: Path, manifest_path: Path) -> bool:
     cargo = shutil.which("cargo")
     if not cargo:
         log("ERR", "No usable ISO package and Cargo is not installed")
         return False
-    base, in_memory = build_base()
+    base, _ = build_base()
     with tempfile.TemporaryDirectory(prefix="dusky-wall-build-", dir=base) as temp:
         target_dir = Path(temp) / "target"
         env = os.environ.copy()
         env["CARGO_TARGET_DIR"] = str(target_dir)
-        if in_memory:
-            # Keep one-time dependency downloads and Cargo metadata off disk too.
-            temporary_cargo_home = Path(temp) / "cargo-home"
-            existing_cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
-            temporary_cargo_home.mkdir()
-            for subdir in ("registry", "git"):
-                source = existing_cargo_home / subdir
-                if source.is_dir():
-                    shutil.copytree(source, temporary_cargo_home / subdir)
-            for filename in ("config.toml", "config", "credentials.toml", "credentials"):
-                source = existing_cargo_home / filename
-                if source.is_file():
-                    shutil.copy2(source, temporary_cargo_home / filename)
-            env["CARGO_HOME"] = str(temporary_cargo_home)
+        env["CARGO_HOME"] = str(prepare_cargo_home(Path(temp)))
         env["RUSTFLAGS"] = "-C target-cpu=native"
         env.pop("CARGO_ENCODED_RUSTFLAGS", None)
         env["CFLAGS"] = "-march=native -mtune=native -O2"
