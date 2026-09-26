@@ -579,34 +579,34 @@ while true; do
                                                 "$DAEMON_SCRIPT" --world-clock "America/New_York" "NY" & disown
                                                 exit 0
                                                 ;;
-                                            *"Chicago"*)
-                                                save_recent "World Clock (Chicago)" "--world-clock America/Chicago Chicago"
-                                                "$DAEMON_SCRIPT" --world-clock "America/Chicago" "Chicago" & disown
+                                            *"Chicago"*|*"Chi"*)
+                                                save_recent "World Clock (Chi)" "--world-clock America/Chicago Chi"
+                                                "$DAEMON_SCRIPT" --world-clock "America/Chicago" "Chi" & disown
                                                 exit 0
                                                 ;;
-                                            *"Denver"*)
-                                                save_recent "World Clock (Denver)" "--world-clock America/Denver Denver"
-                                                "$DAEMON_SCRIPT" --world-clock "America/Denver" "Denver" & disown
+                                            *"Denver"*|*"Den"*)
+                                                save_recent "World Clock (Den)" "--world-clock America/Denver Den"
+                                                "$DAEMON_SCRIPT" --world-clock "America/Denver" "Den" & disown
                                                 exit 0
                                                 ;;
-                                            *"Los Angeles"*|*"California"*)
-                                                save_recent "World Clock (California)" "--world-clock America/Los_Angeles California"
-                                                "$DAEMON_SCRIPT" --world-clock "America/Los_Angeles" "California" & disown
+                                            *"Los Angeles"*|*"California"*|*"Cali"*)
+                                                save_recent "World Clock (Cali)" "--world-clock America/Los_Angeles Cali"
+                                                "$DAEMON_SCRIPT" --world-clock "America/Los_Angeles" "Cali" & disown
                                                 exit 0
                                                 ;;
-                                            *"London"*)
-                                                save_recent "World Clock (London)" "--world-clock Europe/London London"
-                                                "$DAEMON_SCRIPT" --world-clock "Europe/London" "London" & disown
+                                            *"London"*|*"Lon"*)
+                                                save_recent "World Clock (Lon)" "--world-clock Europe/London Lon"
+                                                "$DAEMON_SCRIPT" --world-clock "Europe/London" "Lon" & disown
                                                 exit 0
                                                 ;;
-                                            *"Beijing"*)
-                                                save_recent "World Clock (Beijing)" "--world-clock Asia/Shanghai Beijing"
-                                                "$DAEMON_SCRIPT" --world-clock "Asia/Shanghai" "Beijing" & disown
+                                            *"Beijing"*|*"BJ"*)
+                                                save_recent "World Clock (BJ)" "--world-clock Asia/Shanghai BJ"
+                                                "$DAEMON_SCRIPT" --world-clock "Asia/Shanghai" "BJ" & disown
                                                 exit 0
                                                 ;;
-                                            *"Sydney"*|*"Australia"*)
-                                                save_recent "World Clock (Sydney)" "--world-clock Australia/Sydney Sydney"
-                                                "$DAEMON_SCRIPT" --world-clock "Australia/Sydney" "Sydney" & disown
+                                            *"Sydney"*|*"Australia"*|*"Syd"*)
+                                                save_recent "World Clock (Syd)" "--world-clock Australia/Sydney Syd"
+                                                "$DAEMON_SCRIPT" --world-clock "Australia/Sydney" "Syd" & disown
                                                 exit 0
                                                 ;;
                                             *"Dubai"*)
@@ -614,9 +614,9 @@ while true; do
                                                 "$DAEMON_SCRIPT" --world-clock "Asia/Dubai" "Dubai" & disown
                                                 exit 0
                                                 ;;
-                                            *"Moscow"*)
-                                                save_recent "World Clock (Moscow)" "--world-clock Europe/Moscow Moscow"
-                                                "$DAEMON_SCRIPT" --world-clock "Europe/Moscow" "Moscow" & disown
+                                            *"Moscow"*|*"Mos"*)
+                                                save_recent "World Clock (Mos)" "--world-clock Europe/Moscow Mos"
+                                                "$DAEMON_SCRIPT" --world-clock "Europe/Moscow" "Mos" & disown
                                                 exit 0
                                                 ;;
                                             *"Tokyo"*|*"Japan"*)
@@ -624,9 +624,9 @@ while true; do
                                                 "$DAEMON_SCRIPT" --world-clock "Asia/Tokyo" "Tokyo" & disown
                                                 exit 0
                                                 ;;
-                                            *"Singapore"*)
-                                                save_recent "World Clock (Singapore)" "--world-clock Asia/Singapore Singapore"
-                                                "$DAEMON_SCRIPT" --world-clock "Asia/Singapore" "Singapore" & disown
+                                            *"Singapore"*|*"SG"*)
+                                                save_recent "World Clock (SG)" "--world-clock Asia/Singapore SG"
+                                                "$DAEMON_SCRIPT" --world-clock "Asia/Singapore" "SG" & disown
                                                 exit 0
                                                 ;;
                                         esac
