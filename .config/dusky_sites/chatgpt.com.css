@@ -4,9 +4,10 @@
     .size-token-button-composer { background-color: var(--on_primary) !important; } /* dusky key=sel%1F.size-token-button-composer%1Fbg | bg: on_primary */
     .bg-user-message { background-color: var(--primary_container) !important; color: var(--on_primary_container) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1F.bg-user-message%1Fbg | bg: primary_container */
     aside { background-color: var(--surface_container_low) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Faside%1Fbg | bg: surface_container_low */
-    #app-shell-sidebar > div > div { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1F%23app-shell-sidebar%20%3E%20div%20%3E%20div%1Fbg | bg: surface */
     div.relative.isolate.flex.max-h-full { background-color: var(--surface_container_lowest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.relative.isolate.flex.max-h-full%1Fbg | bg: surface_container_lowest */
     div.flex.flex-col.rounded-2xl.overflow-hidden { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.flex.flex-col.rounded-2xl.overflow-hidden%1Fbg | bg: surface */
     .scrollbar-stable { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1F.scrollbar-stable%1Fbg | bg: surface */
+    div.absolute.inset-0.flex.bg-surface { background-color: var(--surface_dim) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.absolute.inset-0.flex.bg-surface%1Fbg | bg: surface_dim */
+    .group\/sidebar-rail { background-color: var(--surface_container_low) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1F.group%5C%2Fsidebar-rail%1Fbg | bg: surface_container_low */
     /* <<< dusky:picks */
 }
