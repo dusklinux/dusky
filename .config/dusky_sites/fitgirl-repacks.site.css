@@ -1,0 +1,8 @@
+@-moz-document domain("fitgirl-repacks.site") {
+    /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
+    div { background-color: var(--surface_container_lowest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv%1Fbg | bg: surface_container_lowest */
+    .entry-header { background-color: var(--surface_container_lowest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1F.entry-header%1Fbg | bg: surface_container_lowest */
+    span { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fspan%1Fbg | bg: surface */
+    a { color: var(--on_surface) !important; } /* dusky key=sel%1Fa%1Ftext | text: on_surface */
+    /* <<< dusky:picks */
+}
