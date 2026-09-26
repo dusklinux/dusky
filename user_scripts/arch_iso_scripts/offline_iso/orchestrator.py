@@ -13,6 +13,9 @@ VERSION = "19.0.0"
 
 import os
 import sys
+if sys.version_info < (3, 14):
+    sys.stderr.write("[FATAL] Python 3.14+ is required.\n")
+    sys.exit(1)
 import subprocess
 import time
 import fcntl
@@ -22,6 +25,7 @@ import shlex
 import argparse
 import shutil
 import asyncio
+import errno
 import pty
 import termios
 import struct
@@ -32,10 +36,12 @@ import atexit
 import datetime
 import signal
 import json
+import math
 import sqlite3
 from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from importlib import metadata as importlib_metadata
 from typing import List, Dict, Optional, Tuple, Any
 from contextlib import suppress, contextmanager, nullcontext
 
@@ -57,6 +63,14 @@ except ImportError as exc:
     sys.stderr.write("Install: python-textual python-rich\n")
     sys.exit(8)
 
+try:
+    version_parts = tuple(int(part) for part in re.findall(r"\d+", importlib_metadata.version("textual"))[:3])
+    if version_parts < (8, 2, 8):
+        raise RuntimeError(f"Textual 8.2.8+ required; installed {importlib_metadata.version('textual')}")
+except (importlib_metadata.PackageNotFoundError, RuntimeError) as exc:
+    sys.stderr.write(f"[FATAL] {exc}\n")
+    sys.exit(8)
+
 # ==============================================================================
 # CONSTANTS & CONFIGURATION LOAD
 # ==============================================================================
@@ -73,12 +87,16 @@ def load_global_config() -> dict:
         try:
             with open(config_path, "rb") as f:
                 return tomllib.load(f)
-        except Exception as e:
-            sys.stderr.write(f"[WARN] Failed to parse global config: {e}\n")
+        except (OSError, tomllib.TOMLDecodeError) as e:
+            raise RuntimeError(f"Cannot load global config {config_path}: {e}") from e
     return {}
 
 
-GLOBAL_CONFIG = load_global_config()
+try:
+    GLOBAL_CONFIG = load_global_config()
+except RuntimeError as exc:
+    sys.stderr.write(f"[FATAL] {exc}\n")
+    sys.exit(2)
 
 ASCII_MODE = GLOBAL_CONFIG.get("ui", {}).get("ascii_mode", False)
 MAX_DEFER_PASSES = GLOBAL_CONFIG.get("execution", {}).get("max_defer_passes", 3)
@@ -224,6 +242,14 @@ def state_dir() -> Path:
     return _documents_subdir(GLOBAL_CONFIG.get("paths", {}).get("state_subdir", "state"))
 
 
+def state_dir_path() -> Path:
+    paths = GLOBAL_CONFIG.get("paths", {})
+    docs = Path(paths.get("documents_dir", "Documents")).expanduser()
+    root = docs if docs.is_absolute() else user_home() / docs
+    subdir = Path(paths.get("state_subdir", "state")).expanduser()
+    return subdir if subdir.is_absolute() else root / subdir
+
+
 def file_checksum(path: Path) -> str:
     try:
         h = hashlib.blake2b(digest_size=16)
@@ -325,6 +351,7 @@ class NotificationManager:
 # ==============================================================================
 class RunLogger:
     def __init__(self, profile_name: str, run_id: str):
+        self.failed_write = False
         log_config = GLOBAL_CONFIG.get("logging", {})
         self.enabled = log_config.get("enabled", True)
         self.write_task_logs = log_config.get("write_task_logs", True)
@@ -348,15 +375,19 @@ class RunLogger:
             self.system(f"Logging started for profile: {profile_name}")
             self.system(f"Run ID: {run_id}")
         except OSError as e:
-            sys.stderr.write(f"[WARN] Cannot create log directory under {logs_dir()}: {e}\n")
+            self.failed_write = True
+            sys.stderr.write(f"[ERROR] Cannot create log directory under {logs_dir()}: {e}\n")
             self.enabled = False
 
     def system(self, msg: str) -> None:
         if not self.enabled or self._main is None:
             return
-        with suppress(OSError):
+        try:
             self._main.write(f"[{now_ts()}] {msg}\n")
             self._main.flush()
+        except OSError as exc:
+            self.failed_write = True
+            sys.stderr.write(f"[ERROR] Main log write failed: {exc}\n")
 
     def task_log_path(self, task: Any) -> Path:
         if self.root is None:
@@ -366,7 +397,8 @@ class RunLogger:
     def open_task(self, task: Any, cmd: list[str]) -> None:
         if not self.enabled or not self.write_task_logs:
             return
-        with suppress(OSError):
+        f = None
+        try:
             f = open(self.task_log_path(task), "a", encoding="utf-8", errors="replace")
             f.write(f"[{now_ts()}] TASK START: {task.script_name}\n")
             f.write(f"[{now_ts()}] MODE: {task.mode}\n")
@@ -377,6 +409,12 @@ class RunLogger:
             f.write(f"[{now_ts()}] CONDITION: {task.condition or 'always'}\n")
             f.flush()
             self._task_files[task.state_key] = f
+        except OSError as exc:
+            self.failed_write = True
+            sys.stderr.write(f"[ERROR] Task log open failed: {exc}\n")
+            if f is not None:
+                with suppress(OSError):
+                    f.close()
 
     def write_task(self, task: Any, line: str) -> None:
         if not self.enabled or not self.write_task_logs:
@@ -384,9 +422,12 @@ class RunLogger:
         f = self._task_files.get(task.state_key)
         if f is None:
             return
-        with suppress(OSError):
+        try:
             f.write(line + "\n")
             f.flush()
+        except OSError as exc:
+            self.failed_write = True
+            sys.stderr.write(f"[ERROR] Task log write failed: {exc}\n")
 
     def close_task(self, task: Any, status: str = "", exit_code: int | None = None, duration: float = 0.0) -> None:
         if not self.enabled or not self.write_task_logs:
@@ -394,13 +435,18 @@ class RunLogger:
         f = self._task_files.pop(task.state_key, None)
         if f is None:
             return
-        with suppress(OSError):
+        try:
             f.write(f"\n[{now_ts()}] TASK END: {task.script_name}\n")
             f.write(f"[{now_ts()}] STATUS: {status}\n")
             f.write(f"[{now_ts()}] EXIT CODE: {exit_code}\n")
             f.write(f"[{now_ts()}] DURATION: {duration:.2f}s\n")
             f.flush()
-            f.close()
+        except OSError as exc:
+            self.failed_write = True
+            sys.stderr.write(f"[ERROR] Task log close failed: {exc}\n")
+        finally:
+            with suppress(OSError):
+                f.close()
 
     def write_report(
         self,
@@ -451,9 +497,12 @@ class RunLogger:
             })
             lines.append(f"| {t.index} | `{t.script_name}` | {st} | {t.mode} | `{t.condition or 'always'}` |")
 
-        with suppress(OSError):
+        try:
             (self.root / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
             (self.root / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as exc:
+            self.failed_write = True
+            sys.stderr.write(f"[ERROR] Report write failed: {exc}\n")
 
 
 # ==============================================================================
@@ -546,7 +595,7 @@ class ConditionEvaluator:
                     pass
             return False
 
-        return True
+        raise ValueError(f"Unsupported condition: {cond}")
 
 
 # ==============================================================================
@@ -603,6 +652,26 @@ class ProfileConfig:
 # ==============================================================================
 # PROFILE PARSER & ENGINE
 # ==============================================================================
+def validate_condition(condition: str | None) -> None:
+    if not condition:
+        return
+    for item in condition.split(","):
+        part = item.strip()
+        if not part:
+            raise ValueError(f"Empty condition in {condition!r}")
+        if part.lower().startswith("not:"):
+            validate_condition(part[4:])
+            continue
+        kind, sep, value = part.partition(":")
+        kind = kind.strip().lower()
+        if kind in ("always", "true", "yes", "never", "false", "no", "wayland", "x11", "graphical") and not sep:
+            continue
+        if kind in ("command", "cmd", "dir", "file", "path", "missing", "package", "pkg",
+                    "service_active", "service", "svc", "gpu") and sep and value.strip():
+            continue
+        raise ValueError(f"Unsupported condition: {part}")
+
+
 def parse_task_entry(raw_entry: str | dict, index: int = 1) -> OrchestratorTask:
     if isinstance(raw_entry, dict):
         return parse_task_table(raw_entry, index)
@@ -678,18 +747,24 @@ def parse_task_entry(raw_entry: str | dict, index: int = 1) -> OrchestratorTask:
             else:
                 condition = f"{condition},{cond_val}"
         elif f.startswith("timeout:"):
-            with suppress(ValueError):
-                timeout = float(flag.strip()[8:])
+            timeout = float(flag.strip()[8:])
+            if not math.isfinite(timeout) or timeout < 0:
+                raise ValueError(f"Invalid timeout flag: {flag}")
         elif f.startswith("retry:"):
-            with suppress(ValueError):
-                retry = max(0, int(flag.strip()[6:]))
+            retry = int(flag.strip()[6:])
+            if retry < 0:
+                raise ValueError(f"Invalid retry flag: {flag}")
         elif f.startswith("retry_delay:"):
-            with suppress(ValueError):
-                retry_delay = max(0.0, float(flag.strip()[12:]))
+            retry_delay = float(flag.strip()[12:])
+            if not math.isfinite(retry_delay) or retry_delay < 0:
+                raise ValueError(f"Invalid retry delay flag: {flag}")
         elif f.startswith("on_failure:"):
             val = flag.strip()[11:].lower()
-            if val in ("ask", "abort", "continue", "skip", "manual"):
-                on_failure = val
+            if val not in ("ask", "abort", "continue", "skip", "manual"):
+                raise ValueError(f"Invalid failure policy: {flag}")
+            on_failure = val
+        else:
+            raise ValueError(f"Unknown task flag: {flag}")
 
     cmd_tokens = shlex.split(cmd.strip())
     if not cmd_tokens:
@@ -701,6 +776,10 @@ def parse_task_entry(raw_entry: str | dict, index: int = 1) -> OrchestratorTask:
 
     if "--force" in cmd_tokens:
         force_flag = True
+
+    if mode.strip().upper() not in ("U", "S"):
+        raise ValueError(f"Invalid task mode: {mode}")
+    validate_condition(condition)
 
     return OrchestratorTask(
         index=index,
@@ -734,7 +813,9 @@ def parse_task_table(table: dict, index: int) -> OrchestratorTask:
     elif isinstance(args_raw, list):
         args = [str(x) for x in args_raw]
     else:
-        args = []
+        raise ValueError(f"Task {index}: args must be a string or array")
+    if isinstance(args_raw, list) and any(not isinstance(x, str) for x in args_raw):
+        raise ValueError(f"Task {index}: args must contain strings")
 
     if not args and " " in cmd:
         cmd_tokens = shlex.split(cmd)
@@ -742,8 +823,13 @@ def parse_task_table(table: dict, index: int) -> OrchestratorTask:
             cmd = cmd_tokens[0]
             args = cmd_tokens[1:]
 
-    flags = str(table.get("flags", ""))
-    ignore_fail = bool(table.get("ignore_fail", False))
+    if not isinstance(table.get("flags", ""), str):
+        raise ValueError(f"Task {index}: flags must be a string")
+    flags = table.get("flags", "")
+    for key in ("ignore_fail", "interactive", "force", "always", "once"):
+        if key in table and not isinstance(table[key], bool):
+            raise ValueError(f"Task {index}: {key} must be a boolean")
+    ignore_fail = table.get("ignore_fail", False)
 
     interactive_override: bool | None = None
     if "interactive" in table:
@@ -755,30 +841,29 @@ def parse_task_table(table: dict, index: int) -> OrchestratorTask:
     force_flag = bool(table.get("force", False))
     always = bool(table.get("always", False))
     condition = table.get("condition")
+    if condition is not None and not isinstance(condition, str):
+        raise ValueError(f"Task {index}: condition must be a string")
     timeout = table.get("timeout")
 
-    try:
-        retry = max(0, int(table.get("retry", 0)))
-    except Exception:
-        retry = 0
-
-    try:
-        retry_delay = max(0.0, float(table.get("retry_delay", 1.0)))
-    except Exception:
-        retry_delay = 1.0
+    retry = table.get("retry", 0)
+    if not isinstance(retry, int) or isinstance(retry, bool) or retry < 0:
+        raise ValueError(f"Task {index}: retry must be a nonnegative integer")
+    retry_delay = table.get("retry_delay", 1.0)
+    if not isinstance(retry_delay, (int, float)) or isinstance(retry_delay, bool) or not math.isfinite(retry_delay) or retry_delay < 0:
+        raise ValueError(f"Task {index}: retry_delay must be nonnegative and finite")
 
     on_failure = str(table.get("on_failure", "ask")).lower()
     if on_failure not in ("ask", "abort", "continue", "skip", "manual"):
-        on_failure = "ask"
+        raise ValueError(f"Task {index}: invalid on_failure policy")
 
     once = bool(table.get("once", False))
     once_mode = str(table.get("once_mode", "content")).lower()
     if once_mode not in ("content", "forever"):
-        once_mode = "content"
+        raise ValueError(f"Task {index}: invalid once_mode")
 
     once_scope = str(table.get("once_scope", "profile")).lower()
     if once_scope not in ("profile", "global"):
-        once_scope = "profile"
+        raise ValueError(f"Task {index}: invalid once_scope")
 
     for flag in flags.split(","):
         f = flag.strip().lower()
@@ -824,32 +909,37 @@ def parse_task_table(table: dict, index: int) -> OrchestratorTask:
             else:
                 condition = f"{condition},{cond_val}"
         elif f.startswith("timeout:"):
-            with suppress(ValueError):
-                timeout = float(flag.strip()[8:])
+            timeout = float(flag.strip()[8:])
         elif f.startswith("retry:"):
-            with suppress(ValueError):
-                retry = max(0, int(flag.strip()[6:]))
+            retry = int(flag.strip()[6:])
         elif f.startswith("retry_delay:"):
-            with suppress(ValueError):
-                retry_delay = max(0.0, float(flag.strip()[12:]))
+            retry_delay = float(flag.strip()[12:])
         elif f.startswith("on_failure:"):
             val = flag.strip()[11:].lower()
-            if val in ("ask", "abort", "continue", "skip", "manual"):
-                on_failure = val
+            if val not in ("ask", "abort", "continue", "skip", "manual"):
+                raise ValueError(f"Task {index}: invalid on_failure policy")
+            on_failure = val
+        else:
+            raise ValueError(f"Task {index}: unknown flag {flag}")
 
     if "--force" in args:
         force_flag = True
 
-    try:
-        timeout_value = float(timeout) if timeout is not None else None
-    except Exception:
-        timeout_value = None
+    timeout_value = float(timeout) if timeout is not None else None
+    if timeout_value is not None and (not math.isfinite(timeout_value) or timeout_value < 0):
+        raise ValueError(f"Task {index}: timeout must be nonnegative and finite")
+    if retry < 0 or retry_delay < 0 or not math.isfinite(retry_delay):
+        raise ValueError(f"Task {index}: invalid retry configuration")
+    mode = str(table.get("mode", "U")).strip().upper()
+    if mode not in ("U", "S"):
+        raise ValueError(f"Task {index}: invalid mode {mode}")
+    validate_condition(str(condition).strip() if condition else None)
 
     return OrchestratorTask(
         index=index,
         script_name=cmd,
         args=args,
-        mode=str(table.get("mode", "U")).strip().upper(),
+        mode=mode,
         ignore_fail=ignore_fail,
         interactive=interactive,
         interactive_override=interactive_override,
@@ -1004,12 +1094,32 @@ def load_profile(filepath: Path) -> ProfileConfig:
         else:
             raise err
 
+    for table_name in ("profile", "phase1", "phase2", "search_dirs", "conflict_resolutions", "policy"):
+        if not isinstance(data.get(table_name, {}), dict):
+            raise ValueError(f"{filepath.name}: [{table_name}] must be a table")
+    for phase in ("phase1", "phase2"):
+        scripts = data.get(phase, {}).get("scripts", [])
+        if not isinstance(scripts, list) or any(not isinstance(item, (str, dict)) for item in scripts):
+            raise ValueError(f"{filepath.name}: [{phase}].scripts must be an array of tasks")
+    dirs = data.get("search_dirs", {}).get("dirs", [])
+    if not isinstance(dirs, list) or any(not isinstance(item, str) or not item for item in dirs):
+        raise ValueError(f"{filepath.name}: [search_dirs].dirs must be an array of paths")
     p_data = data.get("profile", {})
     ph1_data = data.get("phase1", {})
     ph2_data = data.get("phase2", {})
     s_data = data.get("search_dirs", {})
     cr_data = data.get("conflict_resolutions", {})
     pol_data = data.get("policy", {})
+    for key in ("audio", "notify", "manual", "stop_on_fail", "force"):
+        if key in pol_data and not isinstance(pol_data[key], bool):
+            raise ValueError(f"{filepath.name}: [policy].{key} must be a boolean")
+    if "task_timeout" in pol_data and (
+        not isinstance(pol_data["task_timeout"], (int, float))
+        or isinstance(pol_data["task_timeout"], bool)
+        or not math.isfinite(pol_data["task_timeout"])
+        or pol_data["task_timeout"] < 0
+    ):
+        raise ValueError(f"{filepath.name}: [policy].task_timeout must be nonnegative and finite")
 
     conflict_resolutions: Dict[str, str] = {}
     for key, val in cr_data.items():
@@ -1040,16 +1150,14 @@ def load_profile(filepath: Path) -> ProfileConfig:
         try:
             p1_tasks.append(parse_task_entry(line, index=idx))
         except ValueError as e:
-            sys.stderr.write(f"Error parsing profile {filepath.name} [phase1]: {e}\n")
-            sys.exit(1)
+            raise ValueError(f"{filepath.name} [phase1] task {idx}: {e}") from e
 
     p2_tasks = []
     for idx, line in enumerate(ph2_data.get("scripts", []), start=1):
         try:
             p2_tasks.append(parse_task_entry(line, index=idx))
         except ValueError as e:
-            sys.stderr.write(f"Error parsing profile {filepath.name} [phase2]: {e}\n")
-            sys.exit(1)
+            raise ValueError(f"{filepath.name} [phase2] task {idx}: {e}") from e
 
     return ProfileConfig(
         filepath=filepath,
@@ -1067,13 +1175,16 @@ def discover_profiles() -> List[ProfileConfig]:
     if not PROFILES_DIR.exists():
         return []
     profiles = []
+    errors = []
     for f in sorted(PROFILES_DIR.glob("*.toml")):
         if f.parent.name == "settings":
             continue
         try:
             profiles.append(load_profile(f))
         except Exception as e:
-            sys.stderr.write(f"Warning: Failed to load profile {f.name}: {e}\n")
+            errors.append(f"{f.name}: {e}")
+    if errors:
+        raise ValueError("Invalid installer profile(s):\n  " + "\n  ".join(errors))
     return profiles
 
 
@@ -1204,14 +1315,22 @@ def verify_offline_repo_fast(repo_dir: Optional[str] = None) -> Tuple[bool, str]
 # ONCE-STORE (SQLITE)
 # ==============================================================================
 class OnceStore:
-    def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or (state_dir() / "once.db")
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, db_path: Optional[Path] = None, read_only: bool = False):
+        self.db_path = db_path or ((state_dir_path() if read_only else state_dir()) / "once.db")
         busy_timeout = int(GLOBAL_CONFIG.get("execution", {}).get("db_busy_timeout", 5000))
-        self.conn = sqlite3.connect(str(self.db_path))
+        if read_only and self.db_path.exists():
+            self.conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
+        elif read_only:
+            self.conn = sqlite3.connect(":memory:")
+        else:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self.conn = sqlite3.connect(str(self.db_path))
         self.conn.execute(f"PRAGMA busy_timeout = {max(busy_timeout, 0)}")
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
+        if not read_only:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+        if read_only and self.db_path.exists():
+            return
         self._create_tables()
 
     def _create_tables(self) -> None:
@@ -1240,8 +1359,11 @@ class OnceStore:
         )
         self.conn.commit()
 
-    def _make_key(self, scope: str, profile_part: str, mode: str, script_name: str, args_key: str) -> str:
+    def _make_key(self, scope: str, profile_part: str, mode: str, script_name: str,
+                  args_key: str, resolved_path: Path | None = None) -> str:
         material = f"once|{scope}|{profile_part}|{mode}|{script_name}|{args_key}"
+        if resolved_path is not None:
+            material += f"|{resolved_path.resolve()}"
         return hashlib.blake2b(material.encode("utf-8"), digest_size=16).hexdigest()
 
     def _scope_value(self, scope: str) -> str:
@@ -1258,13 +1380,20 @@ class OnceStore:
         scope = self._scope_value(task.once_scope)
         profile_part = self._profile_part(profile_name, scope)
         args_key = shlex.join(task.args)
-        key = self._make_key(scope, profile_part, task.mode, task.script_name, args_key)
+        key = self._make_key(scope, profile_part, task.mode, task.script_name, args_key,
+                             task.resolved_path)
         row = self.conn.execute(
             "SELECT mode, once_mode, checksum, resolved_path FROM once_markers WHERE marker_key = ?",
             (key,),
         ).fetchone()
         if row is None:
-            return False
+            legacy_key = self._make_key(scope, profile_part, task.mode, task.script_name, args_key)
+            row = self.conn.execute(
+                "SELECT mode, once_mode, checksum, resolved_path FROM once_markers WHERE marker_key = ?",
+                (legacy_key,),
+            ).fetchone()
+            if row is None or task.resolved_path is None or row[3] != str(task.resolved_path):
+                return False
         db_mode, db_once_mode, db_checksum, db_resolved = row
         if db_mode != task.mode:
             return False
@@ -1280,7 +1409,8 @@ class OnceStore:
         scope = self._scope_value(task.once_scope)
         profile_part = self._profile_part(profile_name, scope)
         args_key = shlex.join(task.args)
-        key = self._make_key(scope, profile_part, task.mode, task.script_name, args_key)
+        key = self._make_key(scope, profile_part, task.mode, task.script_name, args_key,
+                             task.resolved_path)
         now = time.time()
         checksum = task.checksum or file_checksum(task.resolved_path) if task.resolved_path else ""
         self.conn.execute(
@@ -1292,6 +1422,9 @@ class OnceStore:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(marker_key) DO UPDATE SET
                 exit_code = excluded.exit_code,
+                checksum = excluded.checksum,
+                resolved_path = excluded.resolved_path,
+                once_mode = excluded.once_mode,
                 run_id    = excluded.run_id,
                 version   = excluded.version,
                 updated   = excluded.updated
@@ -1339,7 +1472,7 @@ def parse_args():
     parser.add_argument("--phase1", action="store_true", help="Run Phase 1 (ISO Environment)")
     parser.add_argument("--phase2", action="store_true", help="Run Phase 2 (Chroot Environment)")
     parser.add_argument("--reset", action="store_true", help="Reset execution state for the current phase")
-    parser.add_argument("--dry-run", action="store_true", help="Dry run: validate scripts presence and exit")
+    parser.add_argument("--dry-run", "-d", action="store_true", help="Dry run: validate scripts presence and exit")
     parser.add_argument("--force", action="store_true", help="Pass --force flag to subscripts")
     parser.add_argument("--manual", "-m", action="store_true", help="Manual mode: prompt before each script")
     parser.add_argument("--stop-on-fail", action="store_true", help="Halt execution if any script fails")
@@ -1356,6 +1489,14 @@ def parse_args():
     parser.add_argument("--no-audio", action="store_true", help="Disable audio notifications")
     parser.add_argument("--no-notify", action="store_true", help="Disable desktop notifications")
     args = parser.parse_args()
+    if args.phase1 and args.phase2:
+        parser.error("--phase1 and --phase2 conflict")
+    inspection = [args.list_profiles, args.list_scripts, args.list_once, args.doctor,
+                  args.explain, args.dry_run, bool(args.forget_once)]
+    if sum(bool(item) for item in inspection) > 1 or (args.reset and any(inspection)):
+        parser.error("inspection modes cannot be combined with each other or --reset")
+    if args.task_timeout is not None and (not math.isfinite(args.task_timeout) or args.task_timeout < 0):
+        parser.error("--task-timeout must be nonnegative and finite")
     if args.online:
         if args.profile is not None:
             parser.error("--online cannot be combined with --profile")
@@ -1974,6 +2115,7 @@ class DuskyOrchestratorApp(App):
         self.force_flag = force
         self.task_timeout = max(task_timeout or 0.0, 0.0)
         self.once_store = once_store or OnceStore()
+        self.persistence_failed = False
         self.dry_run = dry_run
         self.start_time = time.monotonic()
 
@@ -2440,9 +2582,23 @@ class DuskyOrchestratorApp(App):
     def _suspend_ui(self):
         suspend = getattr(self, "suspend", None)
         if callable(suspend):
-            with suppress(Exception):
-                with suspend():
-                    yield
+            try:
+                context = suspend()
+                context.__enter__()
+            except Exception:
+                pass  # An inactive Textual driver cannot be suspended.
+            else:
+                try:
+                    try:
+                        yield
+                    except BaseException:
+                        context.__exit__(*sys.exc_info())
+                        raise
+                    else:
+                        context.__exit__(None, None, None)
+                finally:
+                    with suppress(Exception):
+                        self.screen.refresh(repaint=True, layout=True)
                 return
 
         driver = getattr(self, "driver", None)
@@ -2456,6 +2612,170 @@ class DuskyOrchestratorApp(App):
             if driver is not None and hasattr(driver, "start_application_mode"):
                 with suppress(Exception):
                     driver.start_application_mode()
+
+    @staticmethod
+    def _write_pty(fd: int, data: bytes) -> None:
+        while data:
+            written = os.write(fd, data)
+            if written <= 0:
+                raise OSError("PTY input made no progress")
+            data = data[written:]
+
+    @staticmethod
+    async def _stop_pty_child(proc: asyncio.subprocess.Process) -> None:
+        # A PTY child has its own session; its descendants may outlive the leader.
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGTERM)
+        try:
+            await asyncio.wait_for(proc.wait(), 2)
+        except TimeoutError:
+            pass
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        if proc.returncode is None:
+            with suppress(TimeoutError):
+                await asyncio.wait_for(proc.wait(), 2)
+
+    @staticmethod
+    def _interactive_tree(root_pid: int) -> None:
+        # Interactive tasks share our terminal process group, so signal PIDs.
+        members: dict[int, tuple[int, str]] = {}
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+                members[int(entry.name)] = (int(fields[1]), fields[19])
+            except (OSError, ValueError, IndexError):
+                continue
+        selected = {root_pid}
+        while True:
+            found = {pid for pid, (parent, _) in members.items() if parent in selected}
+            if found <= selected:
+                break
+            selected.update(found)
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            for pid in sorted(selected, reverse=True):
+                old = members.get(pid)
+                if old is None:
+                    continue
+                try:
+                    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+                    if (int(fields[1]), fields[19]) == old:
+                        os.kill(pid, sig)
+                except (OSError, ValueError, IndexError):
+                    pass
+            if sig == signal.SIGTERM:
+                time.sleep(0.3)
+
+    async def _run_interactive(self, cmd: list[str], timeout: float) -> int:
+        with self._suspend_ui():
+            proc = subprocess.Popen(cmd)
+            try:
+                return await asyncio.wait_for(asyncio.to_thread(proc.wait), timeout if timeout > 0 else None)
+            except (TimeoutError, asyncio.CancelledError):
+                await asyncio.to_thread(self._interactive_tree, proc.pid)
+                await asyncio.to_thread(proc.wait)
+                raise
+
+    async def _run_pty(self, task: OrchestratorTask, cmd: list[str], timeout: float) -> int:
+        master_fd, slave_fd = pty.openpty()
+        proc: asyncio.subprocess.Process | None = None
+        transport = None
+        file_obj = None
+        read_task: asyncio.Task | None = None
+        try:
+            self.current_pty_master = master_fd
+            self._set_pty_size(master_fd)
+            proc = await asyncio.create_subprocess_exec(*cmd, stdin=slave_fd, stdout=slave_fd,
+                                                        stderr=slave_fd, close_fds=True,
+                                                        start_new_session=True)
+            os.close(slave_fd)
+            slave_fd = -1
+            loop = asyncio.get_running_loop()
+            reader = asyncio.StreamReader(limit=1024 * 1024)
+            file_obj = os.fdopen(master_fd, "rb", buffering=0)
+            transport, _ = await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), file_obj)
+            line_buffer = ""
+            prompt_buffer = ""
+
+            async def read_output() -> None:
+                nonlocal line_buffer, prompt_buffer
+                while True:
+                    try:
+                        chunk = await reader.read(4096)
+                    except OSError as exc:
+                        if exc.errno != errno.EIO:
+                            raise
+                        chunk = b""
+                    if not chunk:
+                        break
+                    text = chunk.decode("utf-8", errors="replace")
+                    prompt_buffer = (prompt_buffer + ANSI_STRIP_REGEX.sub("", text))[-4096:]
+                    for _ in range(8):
+                        matches = [(match.start(), i, name, match, response)
+                                   for i, (name, pattern, response) in enumerate(PROMPT_RULES)
+                                   if (match := pattern.search(prompt_buffer)) is not None]
+                        if not matches:
+                            break
+                        _, _, name, match, response = min(matches, key=lambda item: item[:2])
+                        await asyncio.to_thread(self._write_pty, master_fd, response.encode("utf-8"))
+                        self.log_system(f"Auto-responded to prompt ({name})")
+                        prompt_buffer = prompt_buffer[match.end():]
+                    speed = SPEED_ETA_REGEX.search(text)
+                    pct = PCT_REGEX.search(text)
+                    if speed:
+                        self.update_telemetry(f"Running {task.script_name}",
+                                              f"{speed.group(1)} (ETA {speed.group(2)})")
+                    elif pct:
+                        self.update_telemetry(f"Running {task.script_name} ({pct.group(0)})")
+                    line_buffer += text
+                    while "\n" in line_buffer or "\r" in line_buffer:
+                        indices = [i for i in (line_buffer.find("\n"), line_buffer.find("\r")) if i >= 0]
+                        idx = min(indices)
+                        line, line_buffer = line_buffer[:idx], line_buffer[idx + 1:]
+                        if line.strip():
+                            self.log_task(line + "\n", task)
+                            self.logger.write_task(task, ANSI_STRIP_REGEX.sub("", line).strip())
+                    if len(line_buffer) > 32768:
+                        self.log_task(line_buffer, task)
+                        self.logger.write_task(task, ANSI_STRIP_REGEX.sub("", line_buffer))
+                        line_buffer = ""
+                if line_buffer.strip():
+                    self.log_task(line_buffer + "\n", task)
+                    self.logger.write_task(task, ANSI_STRIP_REGEX.sub("", line_buffer).strip())
+
+            read_task = asyncio.create_task(read_output())
+            async def wait_child() -> int:
+                proc_task = asyncio.create_task(proc.wait())
+                try:
+                    done, _ = await asyncio.wait((read_task, proc_task),
+                                                 return_when=asyncio.FIRST_COMPLETED)
+                    if read_task in done and read_task.exception() is not None:
+                        raise read_task.exception()
+                    code = await proc_task
+                    await asyncio.wait_for(read_task, 2)
+                    return code
+                finally:
+                    if not proc_task.done():
+                        proc_task.cancel()
+            return await asyncio.wait_for(wait_child(), timeout if timeout > 0 else None)
+        finally:
+            if proc is not None:
+                await self._stop_pty_child(proc)
+            if read_task is not None and not read_task.done():
+                read_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await read_task
+            self.current_pty_master = None
+            if transport is not None:
+                transport.close()
+            elif file_obj is not None:
+                file_obj.close()
+            else:
+                os.close(master_fd)
+            if slave_fd >= 0:
+                os.close(slave_fd)
 
     async def push_screen_wait(self, screen: Any) -> Any:
         future = asyncio.get_running_loop().create_future()
@@ -2497,7 +2817,7 @@ class DuskyOrchestratorApp(App):
                     self.task_skipped(task)
                     continue
                 else:
-                    self.exit(1)
+                    self.exit(return_code=1)
                     return
 
             await self.execute_task(task)
@@ -2512,7 +2832,7 @@ class DuskyOrchestratorApp(App):
 
         if not self.is_final_phase:
             # INTERMEDIATE PHASE (Phase 1: ISO) -> Automatically hand off to Phase 2
-            if failed_tasks and any(not t.ignore_fail for t in failed_tasks):
+            if failed_tasks or self.persistence_failed or self.logger.failed_write:
                 NotificationManager.play_sound("alert")
                 NotificationManager.send_desktop(
                     "Phase 1 Failed",
@@ -2520,7 +2840,7 @@ class DuskyOrchestratorApp(App):
                     urgency="critical",
                 )
                 await asyncio.sleep(1.0)
-                self.exit(1)
+                self.exit(return_code=1)
             else:
                 NotificationManager.play_sound("complete")
                 NotificationManager.send_desktop(
@@ -2528,11 +2848,11 @@ class DuskyOrchestratorApp(App):
                     f"Successfully completed {self.phase_title}. Continuing to Phase 2...",
                 )
                 await asyncio.sleep(0.5)
-                self.exit(0)
+                self.exit(return_code=0)
             return
 
         # FINAL PHASE (Phase 2: Chroot / Full Installation Complete)
-        if failed_tasks:
+        if failed_tasks or self.persistence_failed or self.logger.failed_write:
             NotificationManager.play_sound("alert")
             NotificationManager.send_desktop(
                 "Installation Finished with Warnings",
@@ -2567,9 +2887,9 @@ class DuskyOrchestratorApp(App):
 
         res = await self.push_screen_wait(
             CompletionDialog(
-                title="INSTALLATION FINISHED WITH WARNINGS" if failed_tasks else "INSTALLATION COMPLETE",
+                title="INSTALLATION FINISHED WITH WARNINGS" if failed_tasks or self.persistence_failed or self.logger.failed_write else "INSTALLATION COMPLETE",
                 message=summary_lines,
-                level="warning" if failed_tasks else "success",
+                level="warning" if failed_tasks or self.persistence_failed or self.logger.failed_write else "success",
             )
         )
         if res == "poweroff":
@@ -2586,7 +2906,7 @@ class DuskyOrchestratorApp(App):
         if self.stop_on_fail or task.on_failure == "abort":
             self.log_system("stop-on-fail/abort active. Terminating installer phase.")
             await asyncio.sleep(1.5)
-            self.exit(1)
+            self.exit(return_code=1)
             return
         if task.on_failure == "skip":
             self.task_skipped(task)
@@ -2603,7 +2923,7 @@ class DuskyOrchestratorApp(App):
         elif res == "skip":
             self.task_skipped(task)
         else:
-            self.exit(1)
+            self.exit(return_code=1)
 
     async def execute_task(self, task: OrchestratorTask):
         self.active_task = task
@@ -2614,7 +2934,7 @@ class DuskyOrchestratorApp(App):
         self.update_telemetry(f"Running {task.script_name}")
 
         args = list(task.args)
-        if self.force_flag and "--force" not in args:
+        if (self.force_flag or task.force_flag) and "--force" not in args:
             args.append("--force")
 
         cmd = [task.interpreter, str(task.resolved_path)] + args
@@ -2629,151 +2949,24 @@ class DuskyOrchestratorApp(App):
 
             try:
                 if task.interactive:
-                    # INTERACTIVE SUSPENSION: Delegate terminal directly to command with SIGINT protection
                     self.log_system(f"Delegating terminal to interactive process: {task.script_name}")
-                    await asyncio.sleep(0.3)
-
-                    try:
-                        with self._suspend_ui():
-                            rc = subprocess.run(cmd).returncode
-                    except KeyboardInterrupt:
-                        rc = 130
-                        
-                    await asyncio.sleep(0.2)
-
-                    dur = time.time() - start_t
-                    self.log_system(f"TUI Resumed. Script exited with code: {rc}")
-
+                    rc = await self._run_interactive(cmd, timeout or 0.0)
                     if rc in (130, -signal.SIGINT):
-                        self.log_system(f"Interactive task '{task.script_name}' cancelled by user (Ctrl+C). Aborting.")
-                        self.exit(130)
+                        self.exit(return_code=130)
                         return
-
-                    if rc != 0:
-                        error_msg = f"Exit code {rc}"
                 else:
-                    # NON-INTERACTIVE PTY EXECUTION
-                    master_fd, slave_fd = pty.openpty()
-                    self.current_pty_master = master_fd
-                    self._set_pty_size(master_fd)
-
-                    try:
-                        proc = await asyncio.create_subprocess_exec(
-                            *cmd,
-                            stdin=slave_fd,
-                            stdout=slave_fd,
-                            stderr=slave_fd,
-                            close_fds=True,
-                            start_new_session=True,
-                        )
-                        os.close(slave_fd)
-                        slave_fd = -1
-
-                        loop = asyncio.get_running_loop()
-                        reader = asyncio.StreamReader(limit=1024 * 1024)
-                        protocol = asyncio.StreamReaderProtocol(reader)
-                        file_obj = os.fdopen(master_fd, "rb", buffering=0)
-                        master_fd = -1
-
-                        transport, _ = await loop.connect_read_pipe(lambda: protocol, file_obj)
-
-                        line_buffer = ""
-                        async def read_loop():
-                            nonlocal line_buffer
-                            prompt_buf = ""
-                            while True:
-                                try:
-                                    chunk = await reader.read(4096)
-                                except Exception:
-                                    chunk = b""
-                                if not chunk:
-                                    if line_buffer:
-                                        self.log_task(line_buffer + "\n", task)
-                                        self.logger.write_task(task, ANSI_STRIP_REGEX.sub("", line_buffer).strip())
-                                        line_buffer = ""
-                                    break
-
-                                text = chunk.decode("utf-8", errors="replace")
-                                prompt_buf = (prompt_buf + text)[-4096:]
-                                prompt_tail = ANSI_STRIP_REGEX.sub("", prompt_buf)
-                                for p_name, rule_re, p_resp in PROMPT_RULES:
-                                    if rule_re.search(prompt_tail):
-                                        with suppress(Exception):
-                                            file_obj.write(p_resp.encode("utf-8"))
-                                            self.log_system(f"Auto-responded to prompt ({p_name})")
-                                            prompt_buf = ""
-                                        break
-
-                                speed_match = SPEED_ETA_REGEX.search(text)
-                                pct_match = PCT_REGEX.search(text)
-                                if speed_match:
-                                    self.update_telemetry(
-                                        f"Running {task.script_name}",
-                                        f"{speed_match.group(1)} (ETA {speed_match.group(2)})",
-                                    )
-                                elif pct_match:
-                                    self.update_telemetry(f"Running {task.script_name} ({pct_match.group(0)})")
-
-                                line_buffer += text
-                                while "\n" in line_buffer or "\r" in line_buffer:
-                                    r_idx = line_buffer.find("\r")
-                                    n_idx = line_buffer.find("\n")
-                                    if r_idx != -1 and (n_idx == -1 or r_idx < n_idx):
-                                        line, line_buffer = line_buffer[:r_idx], line_buffer[r_idx + 1 :]
-                                    else:
-                                        line, line_buffer = line_buffer[:n_idx], line_buffer[n_idx + 1 :]
-
-                                    stripped = ANSI_STRIP_REGEX.sub("", line).strip()
-                                    if not stripped:
-                                        continue
-
-                                    self.log_task(line + "\n", task)
-                                    self.logger.write_task(task, stripped)
-
-                        read_task = asyncio.create_task(read_loop())
-
-                        try:
-                            async with asyncio.timeout(timeout) if timeout and timeout > 0 else nullcontext():
-                                rc = await proc.wait()
-                                with suppress(Exception):
-                                    await asyncio.wait_for(asyncio.shield(read_task), timeout=2.0)
-                        except TimeoutError:
-                            error_msg = f"Timeout after {timeout:.0f}s"
-                            try:
-                                proc.kill()
-                            except ProcessLookupError:
-                                pass
-                            read_task.cancel()
-                            with suppress(asyncio.CancelledError, Exception):
-                                await read_task
-                            rc = await proc.wait()
-                        finally:
-                            read_task.cancel()
-                            with suppress(asyncio.CancelledError, Exception):
-                                await read_task
-                            with suppress(Exception):
-                                transport.close()
-                            with suppress(Exception):
-                                file_obj.close()
-                    finally:
-                        self.current_pty_master = None
-                        if slave_fd != -1:
-                            try:
-                                os.close(slave_fd)
-                            except OSError:
-                                pass
-                        if master_fd != -1:
-                            try:
-                                os.close(master_fd)
-                            except OSError:
-                                pass
-
-                    dur = time.time() - start_t
-                    if rc != 0 and not error_msg:
-                        error_msg = f"Process exited with status code {rc}"
-            except Exception as e:
-                dur = time.time() - start_t
-                error_msg = str(e)
+                    rc = await self._run_pty(task, cmd, timeout or 0.0)
+                if rc != 0:
+                    error_msg = f"Process exited with status code {rc}"
+            except TimeoutError:
+                rc = 124
+                error_msg = f"Timeout after {timeout}s"
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                rc = 127
+                error_msg = str(exc)
+            dur = time.time() - start_t
 
             if rc == 0:
                 self.logger.close_task(task, status="COMPLETED", exit_code=0, duration=dur)
@@ -2815,6 +3008,7 @@ class DuskyOrchestratorApp(App):
             with open(self.state_file, "a") as f:
                 f.write(task.state_key + "\n")
         except Exception as e:
+            self.persistence_failed = True
             self.log_system(f"Failed to record state: {e}")
 
         self.progress_bar.advance(1)
@@ -2848,7 +3042,7 @@ class DuskyOrchestratorApp(App):
         if self.stop_on_fail or task.on_failure == "abort":
             self.log_system("stop-on-fail/abort active. Terminating installer phase.")
             await asyncio.sleep(1.5)
-            self.exit(1)
+            self.exit(return_code=1)
         elif task.on_failure == "skip":
             self.task_skipped(task)
         elif task.on_failure == "continue":
@@ -2862,14 +3056,14 @@ class DuskyOrchestratorApp(App):
             elif res == "skip":
                 self.task_skipped(task)
             else:
-                self.exit(1)
+                self.exit(return_code=1)
 
     def action_quit_app(self):
         if self.current_idx >= len(self.tasks):
             failed_tasks = [t for t in self.tasks if self.task_statuses.get(t.state_key) == "FAILED"]
-            self.exit(1 if failed_tasks else 0)
+            self.exit(return_code=1 if failed_tasks or self.persistence_failed or self.logger.failed_write else 0)
         else:
-            self.exit(1)
+            self.exit(return_code=1)
 
     def action_toggle_manual(self):
         self.manual = not self.manual
@@ -2888,16 +3082,16 @@ class DuskyOrchestratorApp(App):
     def trigger_poweroff(self):
         set_auto_poweroff_marker()
         failed_tasks = [t for t in self.tasks if self.task_statuses.get(t.state_key) == "FAILED"]
-        exit_code = 1 if failed_tasks else 0
+        exit_code = 1 if failed_tasks or self.persistence_failed or self.logger.failed_write else 0
 
         if is_in_chroot():
-            self.exit(exit_code)
+            self.exit(return_code=exit_code)
             return
 
         with self._suspend_ui():
             print("\n[INFO] Flushing filesystem buffers and powering off system...")
             graceful_unmount_and_poweroff("/mnt")
-        self.exit(exit_code)
+        self.exit(return_code=exit_code)
 
 
 # ==============================================================================
@@ -2905,6 +3099,26 @@ class DuskyOrchestratorApp(App):
 # ==============================================================================
 def main():
     args = parse_args()
+
+    if args.list_once:
+        store = OnceStore(read_only=True)
+        try:
+            store.print_list()
+        finally:
+            store.close()
+        return
+
+    if args.forget_once:
+        lock_file = Path("/tmp/orchestrator_phase2.lock" if args.phase2 else "/tmp/orchestrator_phase1.lock")
+        if not acquire_lock(lock_file):
+            sys.exit(1)
+        store = OnceStore()
+        try:
+            count = store.forget(args.forget_once)
+            print(f"Forgot {count} once-marker(s) for '{args.forget_once}'.")
+        finally:
+            store.close()
+        return
 
     if args.list_profiles:
         print("Available Installer Profiles:")
@@ -2928,7 +3142,9 @@ def main():
 
     if args.profile:
         for p in profiles:
-            if p.filepath and (p.filepath.name == args.profile or p.name.lower() == args.profile.lower()):
+            if p.filepath and (p.filepath.name.lower() == args.profile.lower()
+                               or p.filepath.stem.lower() == args.profile.lower()
+                               or p.name.lower() == args.profile.lower()):
                 selected_profile = p
                 break
         if not selected_profile:
@@ -2940,7 +3156,8 @@ def main():
                     sys.stderr.write(f"Error loading profile '{args.profile}': {e}\n")
                     sys.exit(1)
 
-    repo_valid, repo_reason = verify_offline_repo_fast()
+    inspection = args.list_scripts or args.doctor or args.explain or args.dry_run
+    repo_valid, repo_reason = (True, "inspection") if inspection else verify_offline_repo_fast()
 
     if not selected_profile and not args.profile:
         for profile_check in [
@@ -3044,7 +3261,7 @@ def main():
         sys.stderr.write(f"Error: No valid installer profile found in '{PROFILES_DIR}'. Installation aborted.\n")
         sys.exit(1)
 
-    if selected_profile and selected_profile.filepath:
+    if not inspection and selected_profile and selected_profile.filepath:
         try:
             p_name = selected_profile.filepath.name
             Path("/tmp/dusky_selected_profile.txt").write_text(p_name)
@@ -3084,8 +3301,18 @@ def main():
         is_interactive = t.interactive
         if resolved_path:
             interpreter, file_interactive = resolve_interpreter(resolved_path)
-            if file_interactive:
+            if t.interactive_override is None and file_interactive:
                 is_interactive = True
+            if resolved_path.suffix.lower() == ".py":
+                try:
+                    compile(resolved_path.read_bytes(), str(resolved_path), "exec")
+                except (OSError, SyntaxError) as exc:
+                    raise RuntimeError(f"Invalid Python task {resolved_path}: {exc}") from exc
+            elif resolved_path.suffix.lower() == ".sh":
+                syntax = subprocess.run([interpreter, "-n", str(resolved_path)],
+                                        capture_output=True, text=True, timeout=30)
+                if syntax.returncode != 0:
+                    raise RuntimeError(f"Invalid shell task {resolved_path}: {syntax.stderr.strip()}")
 
         args_key = shlex.join(t.args)
         occ_key = f"{t.mode}|{t.script_name}|{args_key}"
@@ -3117,8 +3344,6 @@ def main():
         task.state_key = make_state_key(task, occurrence[occ_key])
         tasks.append(task)
 
-    once_store = OnceStore()
-
     if phase2:
         phase_title = "PHASE 2: CHROOT"
         state_file = Path("/root/.arch_install_phase2.state")
@@ -3127,6 +3352,13 @@ def main():
         phase_title = "PHASE 1: ISO"
         state_file = Path("/tmp/.arch_install_phase1.state")
         lock_file = Path("/tmp/orchestrator_phase1.lock")
+
+    if not inspection and not acquire_lock(lock_file):
+        sys.exit(1)
+    if not inspection and os.geteuid() != 0:
+        sys.stderr.write("Error: This installer orchestrator must be run as root.\n")
+        sys.exit(1)
+    once_store = OnceStore(read_only=inspection)
 
     if args.list_scripts:
         print(f"Profile: {profile_name} ({phase_title if phase1 or phase2 else 'all'})")
@@ -3146,17 +3378,6 @@ def main():
                 flags.append("ONCE")
             path = str(t.resolved_path) if t.resolved_path else "MISSING"
             print(f"  {t.index:2d}. [{t.mode}] {t.script_name} {' '.join(t.args)} ({', '.join(flags)}) -> {path}")
-        once_store.close()
-        sys.exit(0)
-
-    if args.list_once:
-        once_store.print_list()
-        once_store.close()
-        sys.exit(0)
-
-    if args.forget_once:
-        count = once_store.forget(args.forget_once)
-        print(f"Forgot {count} once-marker(s) for '{args.forget_once}'.")
         once_store.close()
         sys.exit(0)
 
@@ -3222,7 +3443,7 @@ def main():
                 f"  {i+1:2d}. {t.script_name} {' '.join(t.args)} [{'IGNORE_FAIL' if t.ignore_fail else 'STRICT'}] [{'INTERACTIVE' if t.interactive else 'NON-INT'}] -> {status} (using {t.interpreter})"
             )
         once_store.close()
-        sys.exit(0)
+        sys.exit(1 if any(not t.resolved_path for t in tasks) else 0)
 
     if args.reset:
         if state_file.exists():
@@ -3233,15 +3454,6 @@ def main():
                 sys.stderr.write(f"Failed to reset state: {e}\n")
         else:
             print(f"No state file found for {phase_title}")
-
-    if not acquire_lock(lock_file):
-        once_store.close()
-        sys.exit(1)
-
-    if os.geteuid() != 0:
-        sys.stderr.write("Error: This installer orchestrator must be run as root.\n")
-        once_store.close()
-        sys.exit(1)
 
     missing = [t.script_name for t in tasks if not t.resolved_path]
     if missing:
@@ -3264,11 +3476,15 @@ def main():
             once_store=once_store,
             is_final_phase=bool(phase2),
         )
-        exit_code = app.run()
-        sys.exit(exit_code if isinstance(exit_code, int) else 0)
+        app.run()
+        sys.exit(app.return_code if app.return_code is not None else 1)
     except KeyboardInterrupt:
         sys.exit(130)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ValueError, RuntimeError, subprocess.SubprocessError, OSError) as exc:
+        sys.stderr.write(f"[ERROR] {exc}\n")
+        sys.exit(1)

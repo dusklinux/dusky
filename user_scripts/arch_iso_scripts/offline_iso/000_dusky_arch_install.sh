@@ -38,7 +38,9 @@ cd "$SCRIPT_DIR"
 # Trap to ensure clean exit
 cleanup() {
     exec 9>&- 2>/dev/null || true
-    sleep 0.2
+    if [[ -n "${TARGET_TMP:-}" && -d "${TARGET_TMP}" ]]; then
+        rm -rf -- "${TARGET_TMP}" || true
+    fi
 }
 trap cleanup EXIT
 
@@ -77,7 +79,7 @@ declare -g STATE_FILE=""
 readonly ROOT_STAT="$(stat -c '%d:%i' / 2>/dev/null || true)"
 readonly INIT_ROOT_STAT="$(stat -c '%d:%i' /proc/1/root/. 2>/dev/null || true)"
 
-if [[ -n "$ROOT_STAT" && "$ROOT_STAT" != "$INIT_ROOT_STAT" ]]; then
+if [[ -n "$ROOT_STAT" && -n "$INIT_ROOT_STAT" && "$ROOT_STAT" != "$INIT_ROOT_STAT" ]]; then
     IN_CHROOT=1
     PHASE_FLAG="--phase2"
     STATE_FILE="/root/.arch_install_phase2.state"
@@ -105,31 +107,39 @@ log() {
     esac
 }
 
-# ==============================================================================
-#  4b. STATE RESET INTERCEPTOR
-# ==============================================================================
-declare -a clean_args=()
-declare -i reset_requested=0
+# Inspection and marker maintenance do not need package installation,
+# networking, or a chroot boundary crossing.
+declare -a phase_args=("$PHASE_FLAG")
 for arg in "$@"; do
-    if [[ "$arg" == "--reset" ]]; then
-        reset_requested=1
-    else
-        clean_args+=("$arg")
+    if [[ "$arg" == --phase1 || "$arg" == --phase2 ]]; then
+        phase_args=()
+        break
     fi
 done
-
-if (( reset_requested )); then
-    log "INFO" "Reset flag detected. Clearing previous installation state files..."
-    rm -f "/tmp/.arch_install_phase1.state" "/mnt/root/.arch_install_phase2.state" 2>/dev/null || true
-    set -- "${clean_args[@]}"
-fi
+for arg in "$@"; do
+    case "$arg" in
+        --help|-h|--list-profiles|--list-scripts|--list-once|--forget-once|--forget-once=*|--doctor|--explain|--dry-run|-d)
+            if ! command -v python3 >/dev/null 2>&1; then
+                log ERR "Python 3 is required for this command."
+                exit 1
+            fi
+            exec env PYTHONDONTWRITEBYTECODE=1 python3 "$ORCHESTRATOR_PY" "${phase_args[@]}" "$@"
+            ;;
+    esac
+done
 
 # ==============================================================================
 #  5. INTERNET CONNECTIVITY CHECK
 # ==============================================================================
 check_internet() {
-    if ping -q -c 1 -W 2 archlinux.org >/dev/null 2>&1 || ping -q -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
-        return 0
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS --connect-timeout 2 --max-time 5 https://archlinux.org >/dev/null 2>&1 && return 0
+    fi
+    if command -v wget >/dev/null 2>&1; then
+        wget -q --timeout=5 -O /dev/null https://archlinux.org >/dev/null 2>&1 && return 0
+    fi
+    if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+        log ERR "curl or wget is required to verify online connectivity."
     fi
     return 1
 }
@@ -168,38 +178,37 @@ fi
 # ==============================================================================
 log "INFO" "Verifying Python core and orchestrator UI dependencies..."
 
-# Clear stale pacman database lock if pacman process is not active
+# A lock may belong to an active transaction even if its process is hidden.
 if [[ -f /var/lib/pacman/db.lck ]]; then
-    if command -v pgrep >/dev/null 2>&1 && pgrep -x pacman >/dev/null 2>&1; then
-        log "ERR" "Another pacman process is currently running."
-        exit 1
-    fi
-    log "WARN" "Removing stale pacman lock file: /var/lib/pacman/db.lck"
-    rm -f /var/lib/pacman/db.lck
+    log ERR "Pacman lock exists at /var/lib/pacman/db.lck. Resolve it before retrying."
+    exit 1
 fi
 
-install_pkgs_with_retry() {
+install_pkgs() {
     local -a pkgs=("$@")
     if (( OFFLINE_MODE == 0 )); then
-        if ! pacman -Sy --noconfirm --needed "${pkgs[@]}"; then
-            log "WARN" "Pacman transaction failed. Attempting keyring recovery and retry..."
-            pacman -Sy --noconfirm --needed archlinux-keyring || true
-            pacman-key --init || true
-            pacman-key --populate archlinux || true
-            pacman -Syu --noconfirm --needed "${pkgs[@]}"
-        fi
+        pacman -Syu --noconfirm --needed "${pkgs[@]}"
     else
-        pacman -S --noconfirm --needed "${pkgs[@]}"
+        pacman -S --noconfirm "${pkgs[@]}"
     fi
 }
 
-if ! command -v python3 >/dev/null 2>&1; then
-    log "WARN" "Python interpreter not found. Installing python..."
-    install_pkgs_with_retry python || { log "ERR" "Failed to install Python."; exit 1; }
+python_ok() {
+    python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 14) else 1)' >/dev/null 2>&1
+}
+
+if ! command -v python3 >/dev/null 2>&1 || ! python_ok; then
+    log "WARN" "Python 3.14+ is required. Installing/upgrading python..."
+    install_pkgs python || { log "ERR" "Failed to install Python."; exit 1; }
+fi
+
+if ! python_ok; then
+    log ERR "Python 3.14+ is unavailable after package installation."
+    exit 1
 fi
 
 has_python_module() {
-    python3 -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('${1}') else 1)" 2>/dev/null
+    python3 -c "import ${1}" >/dev/null 2>&1
 }
 
 declare -a missing_pkgs=()
@@ -209,10 +218,24 @@ fi
 if ! has_python_module "rich"; then
     missing_pkgs+=("python-rich")
 fi
+if ! python3 -c 'from importlib.metadata import version; import re; assert tuple(int(x) for x in re.findall(r"\d+", version("textual"))[:3]) >= (8, 2, 8)' >/dev/null 2>&1; then
+    missing_pkgs+=("python-textual")
+fi
 
 if (( ${#missing_pkgs[@]} > 0 )); then
+    mapfile -t missing_pkgs < <(printf '%s\n' "${missing_pkgs[@]}" | sort -u)
     log "WARN" "Missing Python UI dependencies: ${missing_pkgs[*]}"
-    install_pkgs_with_retry "${missing_pkgs[@]}" || { log "ERR" "Failed to install UI dependencies."; exit 1; }
+    if (( OFFLINE_MODE == 0 )); then
+        pacman -Syu --noconfirm "${missing_pkgs[@]}" || { log ERR "Failed to repair UI dependencies."; exit 1; }
+    else
+        pacman -S --noconfirm "${missing_pkgs[@]}" || { log ERR "Failed to repair UI dependencies."; exit 1; }
+    fi
+fi
+
+if ! has_python_module textual || ! has_python_module rich ||
+   ! python3 -c 'from importlib.metadata import version; import re; assert tuple(int(x) for x in re.findall(r"\d+", version("textual"))[:3]) >= (8, 2, 8)' >/dev/null 2>&1; then
+    log ERR "Python UI dependencies are unusable after package installation."
+    exit 1
 fi
 
 log "OK" "Python and UI dependencies verified."
@@ -270,8 +293,9 @@ if (( IN_CHROOT == 0 )); then
     log "OK" "Phase 1 (ISO) completed successfully."
     log "INFO" "Initiating boundary crossing to Phase 2 (Chroot)..."
 
-    readonly TMP_DIR="/root/arch_install_tmp"
-    readonly TARGET_TMP="${CHROOT_MNT}${TMP_DIR}"
+    TARGET_TMP="$(mktemp -d "${CHROOT_MNT}/root/arch_install_tmp.XXXXXXXX")"
+    readonly TARGET_TMP
+    readonly TMP_DIR="/root/${TARGET_TMP##*/}"
 
     log "INFO" "Cloning orchestrator payload to Phase 2 environment..."
     mkdir -p "$TARGET_TMP"
@@ -308,8 +332,17 @@ if (( IN_CHROOT == 0 )); then
             --dry-run|-d) phase2_args+=(--dry-run) ;;
             --reset) phase2_args+=(--reset) ;;
             --manual|-m) phase2_args+=(--manual) ;;
+            --auto) phase2_args+=(--auto) ;;
+            --online) phase2_args+=(--online) ;;
             --stop-on-fail) phase2_args+=(--stop-on-fail) ;;
             --force) phase2_args+=(--force) ;;
+            --no-audio|--no-notify) phase2_args+=("$arg") ;;
+            --task-timeout)
+                next_idx=$((i+1))
+                phase2_args+=(--task-timeout "${!next_idx}")
+                skip_next=1
+                ;;
+            --task-timeout=*) phase2_args+=("$arg") ;;
             --profile)
                 next_idx=$((i+1))
                 profile_val="${!next_idx}"
@@ -325,7 +358,7 @@ if (( IN_CHROOT == 0 )); then
     # If --profile was not explicitly passed, inspect saved profile from Phase 1
     has_profile=0
     for p_arg in "${phase2_args[@]}"; do
-        if [[ "$p_arg" == --profile* ]]; then
+        if [[ "$p_arg" == --profile* || "$p_arg" == --online ]]; then
             has_profile=1
             break
         fi
@@ -364,7 +397,7 @@ if (( IN_CHROOT == 0 )); then
 
     log "INFO" "Phase 2 execution terminated (Exit Code: $chroot_exit)."
     log "INFO" "Scrubbing temporary payload and sensitive environment data..."
-    rm -rf "$TARGET_TMP"
+    rm -rf -- "$TARGET_TMP"
 
     if (( chroot_exit != 0 )); then
         log "ERR" "Phase 2 encountered a fatal error."
