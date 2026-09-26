@@ -257,7 +257,8 @@ function _gitdelta_render_stream() {
     typeset -A num_add num_del det_map det_len dir_color
     local line a d p rest det det_pad formatted
     integer max_det_w=0 w pad_det next_color_idx=0
-    local dir_p file_p lead trail c_dir
+    local base_dir sub_dir file_p lead trail c_base C_DIM_CODE=$'\e[2m'
+    local -a parts
     local -a dir_colors=(
         $'\e[38;5;111m' # sky blue
         $'\e[38;5;176m' # lavender
@@ -305,16 +306,30 @@ function _gitdelta_render_stream() {
             cnt=${clean_after_trim%% *}
             if [[ -n ${det_map[$clean_p]-} ]]; then
                 if [[ $clean_p == */* ]]; then
-                    dir_p=${clean_p%/*}/
-                    file_p=${clean_p##*/}
-                    if [[ -z ${dir_color[$dir_p]-} ]]; then
-                        next_color_idx=$(( next_color_idx + 1 ))
-                        dir_color[$dir_p]=${dir_colors[ (( (next_color_idx - 1) % #dir_colors ) + 1) ]}
+                    parts=( ${(s:/:)clean_p} )
+                    if (( $#parts <= 2 )); then
+                        base_dir="${clean_p%/*}/"
+                        sub_dir=""
+                        file_p="${clean_p##*/}"
+                    else
+                        base_dir="${parts[1]}/${parts[2]}/"
+                        file_p="${parts[-1]}"
+                        sub_dir="${clean_p#$base_dir}"
+                        sub_dir="${sub_dir%$file_p}"
                     fi
-                    c_dir=${dir_color[$dir_p]}
+
+                    if [[ -z ${dir_color[$base_dir]-} ]]; then
+                        next_color_idx=$(( next_color_idx + 1 ))
+                        dir_color[$base_dir]=${dir_colors[ (( (next_color_idx - 1) % #dir_colors ) + 1) ]}
+                    fi
+                    c_base=${dir_color[$base_dir]}
                     lead=${raw_p%%${clean_p}*}
                     trail=${raw_p#*${clean_p}}
-                    raw_p="${lead}${c_dir}${dir_p}${C_RESET}${file_p}${trail}"
+                    if [[ -n $sub_dir ]]; then
+                        raw_p="${lead}${c_base}${base_dir}${C_DIM_CODE}${sub_dir}${C_RESET}${file_p}${trail}"
+                    else
+                        raw_p="${lead}${c_base}${base_dir}${C_RESET}${file_p}${trail}"
+                    fi
                 fi
 
                 det=${det_map[$clean_p]}
@@ -411,8 +426,13 @@ function _gitdelta_browse() {
             --ellipsis='' \
             --no-sort \
             --tiebreak=index \
+            --highlight-line \
+            --scrollbar='│' \
+            --separator='─' \
+            --info=right \
             --prompt='󰏖 commits ❯ ' \
             --pointer='▶' \
+            --marker='▶' \
             --height=100% \
             --layout=reverse \
             --border=rounded \
@@ -422,11 +442,11 @@ function _gitdelta_browse() {
             --preview-label=' commit diff ' \
             --preview-label-pos=center \
             --preview="$preview" \
-            --header='[ENTER] full diff   [q/ESC] quit   [ctrl-/] toggle preview   filter by query' \
-            --bind='q:abort,ctrl-/:toggle-preview' \
+            --header='[ENTER] full diff   [ctrl-u/d] scroll preview   [alt-p] toggle layout   [ctrl-/] toggle preview   [q/ESC] quit' \
+            --bind='q:abort,ctrl-/:toggle-preview,ctrl-u:preview-page-up,ctrl-d:preview-page-down,alt-p:change-preview-window(down,50%,border-top|right,70%,border-left),alt-w:change-preview-window(down,50%,border-top|right,70%,border-left)' \
             --color="bg:$c_bg,bg+:$c_mut,fg:$c_fg,fg+:$c_fg" \
             --color="hl:$c_acc,hl+:$c_acc,pointer:$c_ok,marker:$c_ok" \
-            --color="prompt:$c_acc,info:$c_acc,border:$c_mut,label:$c_acc")
+            --color="prompt:$c_acc,info:$c_acc,border:$c_mut,label:$c_acc,scrollbar:$c_acc,separator:$c_mut")
     rc=$?
     (( rc == 0 )) || return 0            # 1 = no match, 130 = abort
     [[ -n $sel ]] || return 0
@@ -503,8 +523,13 @@ function _gitdelta_select() {
             --delimiter="$TAB" \
             --with-nth=2 \
             --expect='ctrl-e,enter' \
+            --highlight-line \
+            --scrollbar='│' \
+            --separator='─' \
+            --info=right \
             --prompt='󰏖 files ❯ ' \
             --pointer='▶' \
+            --marker='▶' \
             --height=100% \
             --layout=reverse \
             --border=rounded \
@@ -514,11 +539,11 @@ function _gitdelta_select() {
             --preview-label=' file diff ' \
             --preview-label-pos=center \
             --preview="$preview" \
-            --header='[ENTER] view diff   [ctrl-e] edit file   [ctrl-/] toggle preview   [q/ESC] quit' \
-            --bind='q:abort,ctrl-/:toggle-preview' \
+            --header='[ENTER] view diff   [ctrl-e] edit file   [ctrl-u/d] scroll preview   [alt-p] toggle layout   [ctrl-/] toggle preview   [q/ESC] quit' \
+            --bind='q:abort,ctrl-/:toggle-preview,ctrl-u:preview-page-up,ctrl-d:preview-page-down,alt-p:change-preview-window(down,50%,border-top|right,70%,border-left),alt-w:change-preview-window(down,50%,border-top|right,70%,border-left)' \
             --color="bg:$c_bg,bg+:$c_mut,fg:$c_fg,fg+:$c_fg" \
             --color="hl:$c_acc,hl+:$c_acc,pointer:$c_ok,marker:$c_ok" \
-            --color="prompt:$c_acc,info:$c_acc,border:$c_mut,label:$c_acc")
+            --color="prompt:$c_acc,info:$c_acc,border:$c_mut,label:$c_acc,scrollbar:$c_acc,separator:$c_mut")
     rc=$?
     (( rc == 0 )) || return 0
     [[ -n $sel ]] || return 0
@@ -542,12 +567,21 @@ function _gitdelta_select() {
         fi
         line_num=0
         local h match mbegin mend
-        for h in ${(f)"$(git_dusky diff -U0 HEAD -- "$file" 2>/dev/null)"}; do
-            if [[ $h == (#b)@@\ -[0-9]#(,[0-9]#)#\ \+([0-9]##)* ]]; then
-                line_num=$match[2]
-                break
-            fi
-        done
+        if [[ -n $target ]]; then
+            for h in ${(f)"$(git_dusky show -U0 --format='' "$target" -- "$file" 2>/dev/null)"}; do
+                if [[ $h == (#b)@@\ -[0-9]#(,[0-9]#)#\ \+([0-9]##)* ]]; then
+                    line_num=$match[2]
+                    break
+                fi
+            done
+        else
+            for h in ${(f)"$(git_dusky diff -U0 HEAD -- "$file" 2>/dev/null)"}; do
+                if [[ $h == (#b)@@\ -[0-9]#(,[0-9]#)#\ \+([0-9]##)* ]]; then
+                    line_num=$match[2]
+                    break
+                fi
+            done
+        fi
         if (( line_num > 0 )); then
             "$editor" "+$line_num" "$filepath"
         else
