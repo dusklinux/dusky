@@ -37,6 +37,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from collections.abc import Iterator, Mapping, Sequence
@@ -91,7 +92,7 @@ XDG_RUNTIME_DIR: Final = Path(
 # Configuration search order: $XDG_CONFIG_HOME/master-runner, then alongside the
 # script (portable / git-checkout mode). The first hit that actually contains a
 # config.toml wins; otherwise the XDG location is used and auto-created.
-_CONFIG_CANDIDATES: Final = (SELF_DIR, XDG_CONFIG_HOME / ENGINE_SLUG)
+_CONFIG_CANDIDATES: Final = (XDG_CONFIG_HOME / ENGINE_SLUG, SELF_DIR)
 
 
 def _resolve_root() -> Path:
@@ -101,7 +102,7 @@ def _resolve_root() -> Path:
     for cand in _CONFIG_CANDIDATES:
         if (cand / "config.toml").is_file() or (cand / "profiles").is_dir():
             return cand.resolve()
-    return _CONFIG_CANDIDATES[0]
+    return SELF_DIR
 
 
 ROOT_DIR: Final = _resolve_root()
@@ -109,7 +110,7 @@ GLOBAL_CONFIG_PATH: Final = ROOT_DIR / "config.toml"
 PRESETS_DIR: Final = ROOT_DIR / "presets"
 PROFILES_DIR: Final = ROOT_DIR / "profiles"
 DUSKY_SETTINGS_DIR: Final = XDG_CONFIG_HOME / "dusky" / "settings" / "dusky_game_runner"
-LIB_DIR: Final = ROOT_DIR / "lib"
+LIB_DIR: Final = SELF_DIR / "lib"
 RUNNER_SHIM_SRC: Final = LIB_DIR / "runner_shim.c"
 RUNNER_SHIM_BIN: Final = DUSKY_SETTINGS_DIR / "runner_shim.so"
 STATE_DIR: Final = XDG_STATE_HOME / ENGINE_SLUG
@@ -249,20 +250,48 @@ def run_cmd(
         return Ran(127, "", f"{argv[0]}: command not found")
     Log.trace("exec " + shlex.join(argv))
     try:
-        cp = subprocess.run(
-            list(argv),
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=timeout,
+        with subprocess.Popen(
+            list(argv), stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            errors="replace", start_new_session=True,
             env=dict(env) if env is not None else None,
             cwd=os.fspath(cwd) if cwd is not None else None,
-            input=stdin_data,
-            check=False,
-        )
-        return Ran(cp.returncode, cp.stdout or "", cp.stderr or "")
-    except subprocess.TimeoutExpired:
-        return Ran(124, "", f"timeout after {timeout}s: {argv[0]}")
+        ) as proc:
+            try:
+                out, err = proc.communicate(stdin_data, timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                with suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                try:
+                    out, err = proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # A child that escaped the process group may still hold a
+                    # captured pipe. Do not let that defeat our timeout.
+                    with suppress(OSError):
+                        proc.kill()
+                    for stream in (proc.stdout, proc.stderr):
+                        if stream is not None:
+                            stream.close()
+                    with suppress(subprocess.TimeoutExpired):
+                        proc.wait(timeout=5)
+                    out = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+                    err = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+                return Ran(124, out or "", (err or "") + f"\ntimeout after {timeout}s: {argv[0]}")
+            except BaseException:
+                # A Ctrl-C during wineboot, a hook or an installer must not
+                # leave its private subprocess session running in the prefix.
+                with suppress(OSError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                try:
+                    proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    for stream in (proc.stdout, proc.stderr):
+                        if stream is not None:
+                            stream.close()
+                    with suppress(subprocess.TimeoutExpired):
+                        proc.wait(timeout=5)
+                raise
+            return Ran(proc.returncode, out or "", err or "")
     except (OSError, ValueError) as exc:
         return Ran(127, "", f"{argv[0]}: {exc}")
 
@@ -273,23 +302,30 @@ def have(binary: str) -> bool:
 
 
 def ensure_runner_shim() -> Path | None:
-    """Ensure universal runner_shim.so is compiled and up-to-date."""
+    """Compile the optional shim without exposing a partial shared object."""
     if not RUNNER_SHIM_SRC.is_file():
         return RUNNER_SHIM_BIN if RUNNER_SHIM_BIN.is_file() else None
-    needs_compile = (
-        not RUNNER_SHIM_BIN.is_file()
-        or RUNNER_SHIM_SRC.stat().st_mtime > RUNNER_SHIM_BIN.stat().st_mtime
-    )
-    if needs_compile and have("gcc"):
-        DUSKY_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
-        cmd = [
-            "gcc", "-O3", "-fPIC", "-shared", "-Wall", "-Wextra",
-            str(RUNNER_SHIM_SRC), "-o", str(RUNNER_SHIM_BIN), "-ldl"
-        ]
-        res = subprocess.run(cmd, capture_output=True)
-        if res.returncode != 0:
-            Log.warn(f"failed to compile runner_shim: {res.stderr.decode(errors='ignore')}")
-            return None
+    with file_lock(RUNTIME_DIR / "runner-shim-build.lock"):
+        needs_compile = (
+            not RUNNER_SHIM_BIN.is_file()
+            or RUNNER_SHIM_SRC.stat().st_mtime > RUNNER_SHIM_BIN.stat().st_mtime
+        )
+        if needs_compile:
+            if not have("gcc"):
+                return None
+            DUSKY_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(prefix="runner_shim-", suffix=".so", dir=DUSKY_SETTINGS_DIR)
+            os.close(fd)
+            try:
+                cmd = ["gcc", "-O3", "-fPIC", "-shared", "-Wall", "-Wextra",
+                       str(RUNNER_SHIM_SRC), "-o", tmp, "-ldl"]
+                res = run_cmd(cmd, timeout=120)
+                if not res.ok:
+                    Log.warn(f"failed to compile runner_shim: {res.message}")
+                    return None
+                os.replace(tmp, RUNNER_SHIM_BIN)
+            finally:
+                Path(tmp).unlink(missing_ok=True)
     return RUNNER_SHIM_BIN if RUNNER_SHIM_BIN.is_file() else None
 
 
@@ -445,19 +481,28 @@ _MOUNT_TABLE: MountTable | None = None
 
 
 def fuse_alive(path: Path) -> bool:
-    """True when a FUSE mount point answers statfs.
+    """True when a FUSE mount point answers a bounded statfs probe.
 
     A crashed dwarfs/fuse-overlayfs daemon leaves the mount in the namespace but
     every syscall returns ENOTCONN ("Transport endpoint is not connected"). That
     is the canonical stale-mount signature and it must be recovered, not ignored.
+    A hung daemon is different: abort reconciliation without detaching its mount.
     """
     try:
-        os.statvfs(path)
-        return True
+        proc = subprocess.Popen(["stat", "-f", "--", str(path)],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError as exc:
-        if exc.errno in (errno.ENOTCONN, errno.ESTALE, errno.EIO, errno.EACCES):
-            return False
-        return True
+        raise ConfigError(f"cannot probe FUSE mount {path}: {exc}") from exc
+    try:
+        return proc.wait(timeout=3.0) == 0
+    except subprocess.TimeoutExpired as exc:
+        with suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        with suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=0.2)
+        raise ConfigError(f"FUSE mount {path} did not answer statfs within 3 seconds; "
+                          "leaving it mounted for investigation") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -786,11 +831,15 @@ class DBusConnection:
         self._serial = 0
         self.unique_name = ""
         self._sock = self._connect(address)
-        self._auth()
-        self.unique_name = self.call(
-            "org.freedesktop.DBus", "/org/freedesktop/DBus",
-            "org.freedesktop.DBus", "Hello", "", (), reply_sig="s",
-        )[0]
+        try:
+            self._auth()
+            self.unique_name = self.call(
+                "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                "org.freedesktop.DBus", "Hello", "", (), reply_sig="s",
+            )[0]
+        except Exception:
+            self._sock.close()
+            raise
 
     # -- construction -----------------------------------------------------
     @staticmethod
@@ -998,7 +1047,7 @@ class IdleInhibitor:
         what = "idle:sleep:handle-lid-switch" if block_sleep else "idle"
         try:
             conn = DBusConnection(system_bus_address())
-        except (DBusError, OSError) as exc:
+        except (DBusError, OSError, TimeoutError) as exc:
             Log.trace(f"logind unreachable: {exc}")
             return
         self._stack.callback(conn.close)
@@ -1008,7 +1057,7 @@ class IdleInhibitor:
                 "org.freedesktop.login1.Manager", "Inhibit", "ssss",
                 (what, who, why, "block"), reply_sig="h",
             )
-        except DBusError as exc:
+        except (DBusError, OSError, TimeoutError) as exc:
             Log.trace(f"logind Inhibit refused: {exc}")
             return
         if isinstance(fd, int) and fd >= 0:
@@ -1019,7 +1068,7 @@ class IdleInhibitor:
     def _screensaver(self, who: str, why: str) -> None:
         try:
             conn = DBusConnection(session_bus_address())
-        except (DBusError, OSError) as exc:
+        except (DBusError, OSError, TimeoutError) as exc:
             Log.trace(f"session bus unreachable: {exc}")
             return
         for dest, path in (
@@ -1031,7 +1080,7 @@ class IdleInhibitor:
                     dest, path, "org.freedesktop.ScreenSaver", "Inhibit",
                     "ss", (who, why), reply_sig="u",
                 )
-            except DBusError:
+            except (DBusError, OSError, TimeoutError):
                 continue
             # The connection MUST outlive the cookie -- this is the whole point.
             self._stack.callback(conn.close)
@@ -1242,7 +1291,7 @@ class Gpu:
         return ":".join(str(i.manifest) for i in self.icds(include_32bit=include_32bit))
 
     def describe(self) -> str:
-        role = "primary" if self.boot_vga else "offload"
+        role = "boot-vga" if self.boot_vga else "non-boot-vga"
         return f"{self.model} [{self.pci_addr} {self.driver} {role}]"
 
 
@@ -1432,9 +1481,8 @@ class GpuSelection(StrEnum):
 def enum_or[E: StrEnum](cls: type[E], raw: Any, fallback: E) -> E:
     """Value-lookup coercion for StrEnum.
 
-    `raw in set(SomeStrEnum)` does NOT work: `Enum.__hash__` hashes the member
-    *name*, so a lowercase value never lands in the same bucket as its member.
-    Constructing by value is the only correct membership test.
+    Constructing by value also handles non-string input and provides a single
+    explicit failure path for invalid configuration values.
     """
     try:
         return cls(str(raw))
@@ -1477,17 +1525,26 @@ def select_gpu(mode: str, *, prefer_vendor: str = "") -> Gpu | None:
         if 0 <= idx < len(devs):
             return devs[idx]
 
-    igpu = next((g for g in devs if g.boot_vga), devs[0])
-    dgpus = [g for g in devs if not g.boot_vga] or [
-        g for g in devs if g.is_nvidia and len(devs) > 1
-    ]
+    primary = next((g for g in devs if g.boot_vga), devs[0])
+    # boot_vga identifies the firmware's boot display, not the GPU's power
+    # class. A desktop with an NVIDIA boot display can still have an Intel iGPU.
+    integrated = next((g for g in devs if g.is_intel), None)
+    discrete = next((g for g in devs if g.is_nvidia), None)
+    if discrete is None and integrated is not None:
+        discrete = next((g for g in devs if g.is_amd), None)
+    if len(devs) == 1:
+        integrated = discrete = devs[0]
     match enum_or(GpuSelection, mode, GpuSelection.AUTO):
         case GpuSelection.PRIMARY:
-            return igpu
+            return primary
         case GpuSelection.INTEGRATED:
-            return igpu
+            if integrated is None:
+                Log.warn("integrated GPU requested but no identifiable integrated GPU was found")
+            return integrated
         case GpuSelection.DISCRETE:
-            return dgpus[0] if dgpus else igpu
+            if discrete is None:
+                Log.warn("discrete GPU requested but no identifiable discrete GPU was found")
+            return discrete
         case GpuSelection.NVIDIA:
             return next((g for g in devs if g.is_nvidia), None)
         case GpuSelection.AMD:
@@ -1499,9 +1556,8 @@ def select_gpu(mode: str, *, prefer_vendor: str = "") -> Gpu | None:
                 hit = next((g for g in devs if g.vendor == prefer_vendor), None)
                 if hit:
                     return hit
-            # AUTO: prefer the most capable renderer -- a dGPU if one exists,
-            # otherwise the boot VGA device.
-            return dgpus[0] if dgpus else igpu
+            # AUTO: prefer a known discrete renderer, then the boot display.
+            return discrete or primary
 
 
 def ntsync_available() -> bool:
@@ -1581,7 +1637,7 @@ def _outputs_hyprland() -> list[Output]:
                 scale=float(m.get("scale", 1) or 1),
                 focused=bool(m.get("focused")),
                 vrr=bool(m.get("vrr")),
-                hdr=bool((m.get("currentFormat") or "").upper().find("2101010") >= 0),
+                hdr="hdr" in str(m.get("colorManagementPreset") or "").lower(),
             )
         )
     return outs
@@ -1798,7 +1854,8 @@ inhibit_idle          = true
 inhibit_sleep         = true
 notifications         = true
 kill_grace_s          = 8.0       # SIGTERM -> SIGKILL escalation window
-enable_io_shim        = true      # preload runner_shim.so for DwarFS/Mono quirks
+enable_io_shim        = true      # preload runner_shim.so where needed
+shim_readonly_assets = false     # opt-in: O_RDWR opens of static asset names become read-only
 
 [storage]
 dwarfs_cache_percent  = 25        # percent of MemAvailable, clamped 64 MiB..8 GiB
@@ -1866,7 +1923,7 @@ scope_memory_high     = ""        # e.g. "24G"
 driver                = "pipewire"
 quantum               = 1024      # frames; 1024/48000 = 21.3 ms -- safe for games
 rate                  = 48000
-openal_driver         = "pipewire"
+openal_driver         = ""        # auto; bundled OpenAL may not support PipeWire directly
 
 [input]
 sdl_gamecontrollerconfig = ""
@@ -2142,6 +2199,85 @@ class ProfileManager:
         if overrides:
             cfg = deep_merge(cfg, overrides)
 
+        if cfg.get("schema") != 3:
+            raise ConfigError(f"[{pid}] unsupported schema {cfg.get('schema')!r}; expected 3")
+        if (runtime := (cfg.get("runtime") or {}).get("type", "native")) not in (
+            "native", "script", "wine", "proton", "umu"
+        ):
+            raise ConfigError(f"[{pid}] unsupported runtime.type {runtime!r}")
+        def check_types(node: Mapping[str, Any], defaults: Mapping[str, Any], prefix: str = "") -> None:
+            for key, value in node.items():
+                field_name = f"{prefix}.{key}" if prefix else key
+                if key not in defaults:
+                    if prefix == "runtime.wine.dll_overrides" or \
+                            (not prefix and key in ("extends", "meta", "paths", "env")):
+                        continue
+                    raise ConfigError(f"[{pid}] unknown configuration key {field_name}")
+                expected = defaults[key]
+                if isinstance(expected, Mapping):
+                    if not isinstance(value, Mapping):
+                        raise ConfigError(f"[{pid}] {field_name} must be a table")
+                    check_types(value, expected, field_name)
+                elif isinstance(expected, bool) and not isinstance(value, bool):
+                    raise ConfigError(f"[{pid}] {field_name} must be a boolean")
+                elif isinstance(expected, int) and not isinstance(expected, bool) and type(value) is not int:
+                    raise ConfigError(f"[{pid}] {field_name} must be an integer")
+                elif isinstance(expected, float) and not isinstance(value, (int, float)):
+                    raise ConfigError(f"[{pid}] {field_name} must be a number")
+                elif isinstance(expected, str) and not isinstance(value, str):
+                    raise ConfigError(f"[{pid}] {field_name} must be a string")
+                elif isinstance(expected, list) and not isinstance(value, list):
+                    raise ConfigError(f"[{pid}] {field_name} must be an array")
+        check_types(cfg, tomllib.loads(DEFAULT_CONFIG_TOML))
+        for section in ("meta", "paths", "env"):
+            if section in cfg and not isinstance(cfg[section], Mapping):
+                raise ConfigError(f"[{pid}] {section} must be a table")
+        path_cfg = cfg.get("paths") or {}
+        allowed_paths = {"game_dir", "executable", "dwarfs_image", "dwarfs_mount",
+                         "overlay_dir", "overlay_storage", "overlay_work",
+                         "working_dir", "arguments"}
+        if unknown := set(path_cfg) - allowed_paths:
+            raise ConfigError(f"[{pid}] unknown paths key(s): {', '.join(sorted(unknown))}")
+        for key in ("game_dir", "executable", "dwarfs_image", "dwarfs_mount",
+                    "overlay_dir", "overlay_storage", "overlay_work", "working_dir"):
+            value = path_cfg.get(key)
+            if value is not None and not isinstance(value, str):
+                raise ConfigError(f"[{pid}] paths.{key} must be a string")
+        for key in ("enabled", "hidden"):
+            value = (cfg.get("meta") or {}).get(key)
+            if value is not None and not isinstance(value, bool):
+                raise ConfigError(f"[{pid}] meta.{key} must be a boolean")
+        arguments = path_cfg.get("arguments", [])
+        if not isinstance(arguments, list) or not all(isinstance(x, str) for x in arguments):
+            raise ConfigError(f"[{pid}] paths.arguments must be an array of strings")
+        overrides_cfg = cfg.get("runtime", {}).get("wine", {}).get("dll_overrides", {})
+        if not isinstance(overrides_cfg, Mapping) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in overrides_cfg.items()
+        ):
+            raise ConfigError(f"[{pid}] runtime.wine.dll_overrides must map names to strings")
+        if str((cfg.get("runtime") or {}).get("wine", {}).get("sync_mode", "auto")) not in SyncMode._value2member_map_:
+            raise ConfigError(f"[{pid}] invalid runtime.wine.sync_mode")
+        for field_name, allowed in (
+            ("graphics.vsync", {"default", "on", "off"}),
+            ("graphics.gamescope.backend", {"wayland", "sdl", "drm", "headless"}),
+            ("graphics.gamescope.mode", {"borderless", "fullscreen", "windowed", "embedded", "nested"}),
+            ("runtime.wine.arch", {"win32", "win64"}),
+        ):
+            node: Any = cfg
+            for part in field_name.split("."):
+                node = node.get(part) if isinstance(node, Mapping) else None
+            if node is not None and node not in allowed:
+                raise ConfigError(f"[{pid}] invalid {field_name}: {node!r}")
+        gs_cfg = cfg.get("graphics", {}).get("gamescope", {})
+        if gs_cfg.get("immediate_flips") and gs_cfg.get("backend") != "drm":
+            raise ConfigError(f"[{pid}] gamescope immediate_flips requires backend='drm'")
+        for field_name in ("performance.fps_limit", "runner.kill_grace_s", "runner.mount_timeout_s"):
+            node: Any = cfg
+            for key in field_name.split("."):
+                node = node.get(key) if isinstance(node, Mapping) else None
+            if isinstance(node, (int, float)) and node < 0:
+                raise ConfigError(f"[{pid}] {field_name} cannot be negative")
+
         meta = dict(cfg.get("meta") or {})
         meta.setdefault("id", pid)
         meta.setdefault("name", pid.replace("_", " ").title())
@@ -2204,13 +2340,12 @@ class ProfileManager:
         }
         for key, overlay in when.items():
             if not isinstance(overlay, Mapping):
-                continue
+                raise ConfigError(f"[when.{key}] must be a table")
             negate = key.startswith("not_")
             probe = key[4:] if negate else key
             value = facts.get(probe)
             if value is None:
-                Log.debug(f"[when.{key}] unknown predicate -- ignored")
-                continue
+                raise ConfigError(f"unknown conditional predicate [when.{key}]")
             if bool(value) != negate:
                 cfg = deep_merge(cfg, overlay)
         return cfg
@@ -2233,7 +2368,7 @@ class GamePaths:
 
     @property
     def uses_dwarfs(self) -> bool:
-        return self.dwarfs_image is not None and self.dwarfs_image.is_file()
+        return self.dwarfs_image is not None
 
     @property
     def root(self) -> Path:
@@ -2267,7 +2402,7 @@ def resolve_paths(prof: Profile) -> GamePaths:
             image = matches[0] if matches else image
 
     wine_cfg = prof.sect("runtime", "wine")
-    return GamePaths(
+    paths = GamePaths(
         game_dir=game_dir,
         dwarfs_image=image,
         dwarfs_mount=under(pcfg.get("dwarfs_mount"), ".mnt/dwarfs"),
@@ -2278,6 +2413,25 @@ def resolve_paths(prof: Profile) -> GamePaths:
         executable=str(pcfg.get("executable") or "").strip(),
         working_dir=str(pcfg.get("working_dir") or "").strip(),
     )
+    if paths.dwarfs_image is not None:
+        work = paths.overlay_work.resolve()
+        game = paths.game_dir.resolve()
+        protected = (paths.game_dir.resolve(), paths.overlay_upper.resolve(),
+                     paths.overlay_dir.resolve(), paths.dwarfs_mount.resolve(),
+                     paths.prefix_dir.resolve())
+        cursor = paths.overlay_work
+        symlink_component = False
+        while cursor != cursor.parent:
+            if cursor.is_symlink():
+                symlink_component = True
+                break
+            cursor = cursor.parent
+        if (not paths.overlay_work.name.endswith("work")
+                or symlink_component
+                or not work.is_relative_to(game)
+                or any(work == p or work in p.parents for p in protected)):
+            raise ConfigError(f"unsafe overlay_work path: {paths.overlay_work}")
+    return paths
 
 
 def profile_installed(prof: Profile) -> bool:
@@ -2382,9 +2536,15 @@ class MountEngine:
         stale: list[Path] = []
         results: list[bool] = []
         for mp in (paths.dwarfs_mount, paths.overlay_dir):
-            if not tbl.is_mount(mp):
+            entry = tbl.get(mp)
+            if entry is None:
                 results.append(False)
                 continue
+            expected = MountEngine.FSTYPE_DWARFS if mp == paths.dwarfs_mount else MountEngine.FSTYPE_OVERLAY
+            if entry.fstype not in expected or (entry.fstype == "fuse" and
+                    not any(label in entry.source.lower() for label in
+                            (("dwarfs",) if mp == paths.dwarfs_mount else ("overlay",)))):
+                raise ConfigError(f"refusing foreign mount at {mp}: {entry.fstype} from {entry.source}")
             if fuse_alive(mp):
                 results.append(True)
             else:
@@ -2411,7 +2571,7 @@ class MountEngine:
         return False
 
     @classmethod
-    def _detach(cls, mp: Path, *, lazy: bool = True) -> bool:
+    def _detach(cls, mp: Path, *, lazy: bool = False) -> bool:
         if not mount_table(force=True).is_mount(mp):
             return True
         args = ["fusermount3", "-u"]
@@ -2422,7 +2582,7 @@ class MountEngine:
         if r.ok:
             return True
         # umount(8) works for FUSE mounts owned by the caller on modern util-linux.
-        r2 = run_cmd(["umount", "-l", str(mp)], timeout=10.0)
+        r2 = run_cmd(["umount", *(["-l"] if lazy else []), str(mp)], timeout=10.0)
         if r2.ok:
             return True
         Log.debug(f"detach {mp}: {r.message} / {r2.message}")
@@ -2439,9 +2599,12 @@ class MountEngine:
         bundled = paths.game_dir / "files" / "dwarfs-binary"
         argv: list[str]
         if bundled.is_file():
-            with suppress(OSError):
-                if not os.access(bundled, os.X_OK):
+            if not os.access(bundled, os.X_OK):
+                with suppress(OSError):
                     bundled.chmod(bundled.stat().st_mode | 0o111)
+                if not os.access(bundled, os.X_OK):
+                    Log.error(f"bundled DwarFS binary is not executable: {bundled}")
+                    return None
             argv = [str(bundled), "--tool=dwarfs"]
         elif have("dwarfs"):
             argv = ["dwarfs"]
@@ -2505,6 +2668,10 @@ class MountEngine:
         timeout = float(prof.get("runner.mount_timeout_s", 20.0) or 20.0)
         st = cls.status(paths, refresh=True)
 
+        if dry_run:
+            Log.info(f"[dry-run] mount {paths.dwarfs_image} at {paths.overlay_dir} (current: {st.state})")
+            return True
+
         if st.stale:
             Log.warn(
                 "stale FUSE endpoint(s) detected: "
@@ -2512,20 +2679,15 @@ class MountEngine:
                 + " -- recovering"
             )
             for mp in reversed(st.stale):
-                cls._detach(mp)
+                cls._detach(mp, lazy=True)
             st = cls.status(paths, refresh=True)
 
         if st.state is MountState.MOUNTED:
             Log.debug(f"[{prof.pid}] already mounted at {paths.overlay_dir}")
             return True
-
-        if dry_run:
-            Log.info(f"[dry-run] mkdir -p {paths.dwarfs_mount} {paths.overlay_upper} "
-                     f"{paths.overlay_work} {paths.overlay_dir}")
-            argv = cls._dwarfs_argv(paths, storage)
-            Log.info("[dry-run] " + (shlex.join(argv) if argv else "dwarfs: NOT FOUND"))
-            Log.info("[dry-run] " + shlex.join(cls._overlay_argv(paths)))
-            return True
+        if not paths.dwarfs_image.is_file():
+            Log.error(f"DwarFS image missing: {paths.dwarfs_image}")
+            return False
 
         for d in (paths.dwarfs_mount, paths.overlay_upper, paths.overlay_work,
                   paths.overlay_dir):
@@ -2534,6 +2696,8 @@ class MountEngine:
             except OSError as exc:
                 Log.error(f"cannot create {d}: {exc}")
                 return False
+
+        cls._claim_workdir(paths.overlay_work)
 
         # overlayfs requires upperdir and workdir on the SAME filesystem.
         try:
@@ -2618,12 +2782,48 @@ class MountEngine:
         return ok
 
     @staticmethod
+    def _work_marker(work: Path) -> Path:
+        return work.with_name(work.name + ".master-runner-owner")
+
+    @classmethod
+    def _claim_workdir(cls, work: Path) -> None:
+        """Claim an empty work directory before it can be purged automatically."""
+        marker = cls._work_marker(work)
+        identity = str(work.resolve()) + "\n"
+        if marker.is_symlink():
+            raise ConfigError(f"symlinked workdir ownership marker: {marker}")
+        if marker.exists():
+            if marker.read_text(encoding="utf-8") != identity:
+                raise ConfigError(f"workdir ownership marker does not match {work}")
+            return
+        if any(work.iterdir()):
+            raise ConfigError(f"unclaimed overlay workdir is not empty: {work}")
+        try:
+            with open(marker, "x", encoding="utf-8") as out:
+                out.write(identity)
+                out.flush()
+                os.fsync(out.fileno())
+        except FileExistsError:
+            if marker.read_text(encoding="utf-8") != identity:
+                raise ConfigError(f"workdir ownership marker does not match {work}")
+
+    @staticmethod
     def _purge_workdir(work: Path) -> None:
         """Remove the overlay workdir contents only -- never the mount point."""
+        # The caller must never be able to turn a cleanup path into the game root.
+        # A dedicated work directory is required even for manually written profiles.
+        if not work.name.endswith("work") or work.is_symlink():
+            raise ConfigError(f"unsafe overlay work directory: {work}")
         if not work.is_dir():
             return
-        if mount_table().is_mount(work):
-            Log.debug(f"refusing to purge {work}: it is itself a mount point")
+        marker = MountEngine._work_marker(work)
+        if marker.is_symlink() or not marker.is_file() or \
+                marker.read_text(encoding="utf-8") != str(work.resolve()) + "\n":
+            Log.warn(f"refusing to purge unclaimed overlay workdir: {work}")
+            return
+        table = mount_table(force=True)
+        if table.is_mount(work) or table.children_of(work):
+            Log.debug(f"refusing to purge {work}: it contains a mount point")
             return
         with suppress(OSError):
             for child in work.iterdir():
@@ -2669,8 +2869,8 @@ def file_lock(path: Path, *, timeout: float = 120.0) -> Iterator[None]:
                 if exc.errno not in (errno.EAGAIN, errno.EACCES):
                     raise
                 if time.monotonic() > deadline:
-                    raise TimeoutError(f"prefix lock held too long: {path}") from exc
-                Log.debug(f"waiting for prefix lock {path}")
+                    raise TimeoutError(f"storage or prefix is in use by another session: {path}") from exc
+                Log.debug(f"waiting for session lock {path}")
                 time.sleep(0.25)
         os.truncate(fd, 0)
         os.write(fd, f"{os.getpid()}\n".encode())
@@ -2749,7 +2949,9 @@ class WinePrefix:
         return env
 
     def serverwait(self, env: Mapping[str, str], timeout: float = 180.0) -> None:
-        run_cmd([self.server_bin, "-w"], env=env, timeout=timeout)
+        r = run_cmd([self.server_bin, "-w"], env=env, timeout=timeout)
+        if not r.ok:
+            raise ConfigError(f"wineserver wait failed: {r.message}")
 
     # -- repair -----------------------------------------------------------
     def prune_broken_symlinks(self) -> int:
@@ -2865,12 +3067,63 @@ class WinePrefix:
         if not sys32.is_dir():
             return 0
         linked = 0
+        manifest = self.path / ".master-runner-dlls.json"
+        managed: dict[str, str] = {}
+        with suppress(OSError, ValueError, TypeError):
+            managed = dict(json.loads(manifest.read_text(encoding="utf-8")))
+        previous_managed = dict(managed)
+
+        def install(src: Path, dst: Path) -> None:
+            nonlocal linked
+            key = str(dst)
+            source = str(src.resolve())
+            if dst.is_symlink() and os.path.realpath(dst) == source:
+                managed[key] = source
+                return
+            if dst.exists() or dst.is_symlink():
+                if key not in managed and not dst.is_symlink():
+                    backup = dst.with_name(dst.name + ".master-runner-orig")
+                    if backup.exists():
+                        raise ConfigError(f"DLL backup already exists; refusing to replace {dst}")
+                    dst.rename(backup)
+                elif key not in managed:
+                    old_target = Path(os.path.realpath(dst))
+                    known = (Path("/usr/share/dxvk"), Path("/usr/share/vkd3d"),
+                             Path("/usr/share/vkd3d-proton"),
+                             HOME / ".local/share/lutris/runtime",
+                             HOME / ".local/share/Steam/compatibilitytools.d",
+                             *NVIDIA_WINE_DIRS)
+                    if not any(old_target.is_relative_to(base) for base in known):
+                        raise ConfigError(f"unmanaged DLL symlink at {dst}; refusing to replace it")
+                    dst.unlink()
+                else:
+                    dst.unlink()
+            dst.symlink_to(src)
+            managed[key] = source
+            linked += 1
+
+        def disable(names: Sequence[str], directory: Path | None) -> None:
+            if directory is None:
+                return
+            for name in names:
+                dst = directory / name
+                key = str(dst)
+                if key not in managed:
+                    continue
+                if dst.is_symlink() and os.path.realpath(dst) == managed[key]:
+                    dst.unlink()
+                    backup = dst.with_name(dst.name + ".master-runner-orig")
+                    if backup.exists():
+                        backup.rename(dst)
+                    managed.pop(key, None)
 
         def _find_translator_dir(tech: str, arch: str) -> Path | None:
             # 1. Lutris runtimes (~/.local/share/lutris/runtime/<tech>/<ver>/<arch>)
             lutris_base = Path(os.path.expanduser(f"~/.local/share/lutris/runtime/{tech}"))
             if lutris_base.is_dir():
-                dirs = sorted([d for d in lutris_base.iterdir() if d.is_dir()], reverse=True)
+                dirs = sorted([d for d in lutris_base.iterdir() if d.is_dir()],
+                              key=lambda d: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", d.name)],
+                              reverse=True)
                 for d in dirs:
                     for sub in (arch, "x86" if arch == "x32" else "x64"):
                         cand = d / sub
@@ -2893,7 +3146,9 @@ class WinePrefix:
             # 3. Steam Proton / GE-Proton compatibility tools
             steam_compat = Path(os.path.expanduser("~/.local/share/Steam/compatibilitytools.d"))
             if steam_compat.is_dir():
-                proton_dirs = sorted([d for d in steam_compat.iterdir() if d.is_dir()], reverse=True)
+                proton_dirs = sorted([d for d in steam_compat.iterdir() if d.is_dir()],
+                                     key=lambda d: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", d.name)],
+                                     reverse=True)
                 proton_tech = "vkd3d-proton" if tech == "vkd3d" else tech
                 win_arch = "x86_64-windows" if arch == "x64" else "i386-windows"
                 for pd in proton_dirs:
@@ -2913,16 +3168,10 @@ class WinePrefix:
                     for dll in ("d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d10core.dll", "d3d8.dll"):
                         src = dxvk_src / dll
                         if src.is_file():
-                            dst = target_dir / dll
-                            with suppress(OSError):
-                                if dst.is_symlink():
-                                    if os.path.realpath(dst) == str(src.resolve()):
-                                        continue
-                                    dst.unlink()
-                                elif dst.exists():
-                                    dst.unlink()
-                                dst.symlink_to(src)
-                                linked += 1
+                            install(src, target_dir / dll)
+        else:
+            for directory in (sys32, syswow if syswow.is_dir() else None):
+                disable(("d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d10core.dll", "d3d8.dll"), directory)
 
         # 2. VKD3D (D3D12 -> Vulkan)
         if want_vkd3d:
@@ -2934,16 +3183,10 @@ class WinePrefix:
                     for dll in ("d3d12.dll", "d3d12core.dll"):
                         src = vkd3d_src / dll
                         if src.is_file():
-                            dst = target_dir / dll
-                            with suppress(OSError):
-                                if dst.is_symlink():
-                                    if os.path.realpath(dst) == str(src.resolve()):
-                                        continue
-                                    dst.unlink()
-                                elif dst.exists():
-                                    dst.unlink()
-                                dst.symlink_to(src)
-                                linked += 1
+                            install(src, target_dir / dll)
+        else:
+            for directory in (sys32, syswow if syswow.is_dir() else None):
+                disable(("d3d12.dll", "d3d12core.dll"), directory)
 
         # 3. DXVK-NVAPI
         if want_nvapi:
@@ -2955,16 +3198,10 @@ class WinePrefix:
                     for dll in ("nvapi64.dll", "nvofapi64.dll", "nvapi.dll"):
                         src = nvapi_src / dll
                         if src.is_file():
-                            dst = target_dir / dll
-                            with suppress(OSError):
-                                if dst.is_symlink():
-                                    if os.path.realpath(dst) == str(src.resolve()):
-                                        continue
-                                    dst.unlink()
-                                elif dst.exists():
-                                    dst.unlink()
-                                dst.symlink_to(src)
-                                linked += 1
+                            install(src, target_dir / dll)
+        else:
+            for directory in (sys32, syswow if syswow.is_dir() else None):
+                disable(("nvapi64.dll", "nvofapi64.dll", "nvapi.dll"), directory)
 
         # 4. NVIDIA DLSS (nvngx.dll / _nvngx.dll)
         if want_dlss:
@@ -2975,16 +3212,13 @@ class WinePrefix:
                 for dll in NVNGX_DLLS:
                     src = src_dir / dll
                     if src.is_file():
-                        dst = dst_dir / dll
-                        with suppress(OSError):
-                            if dst.is_symlink():
-                                if os.path.realpath(dst) == str(src.resolve()):
-                                    continue
-                                dst.unlink()
-                            elif dst.exists():
-                                dst.unlink()
-                            dst.symlink_to(src)
-                            linked += 1
+                        install(src, dst_dir / dll)
+        else:
+            for directory in (sys32, syswow if syswow.is_dir() else None):
+                disable(NVNGX_DLLS, directory)
+
+        if managed != previous_managed:
+            _write_atomic(manifest, json.dumps(managed, indent=2) + "\n")
 
         if linked:
             Log.debug(f"linked {linked} runtime translator libraries into the prefix")
@@ -3001,6 +3235,7 @@ class WinePrefix:
         root_dir: Path,
         redistributables: Sequence[str],
         winetricks: Sequence[str],
+        launch_env: Mapping[str, str] | None = None,
         want_dxvk: bool = True,
         want_vkd3d: bool = True,
         want_nvapi: bool = False,
@@ -3008,44 +3243,60 @@ class WinePrefix:
         force: bool = False,
         dry_run: bool = False,
     ) -> None:
+        def fingerprint(path: Path) -> tuple[str, int, int] | None:
+            with suppress(OSError):
+                info = path.stat()
+                return (str(path.resolve()), info.st_size, info.st_mtime_ns)
+            return None
+
+        wine_path = Path(shutil.which(self.wine_bin) or self.wine_bin)
+        redist_files: list[tuple[str, int, int] | None] = []
+        for rel in redistributables:
+            path = Path(rel) if os.path.isabs(rel) else root_dir / rel
+            if path.is_file():
+                redist_files.append(fingerprint(path))
+            elif not os.path.isabs(rel):
+                redist_files.extend(fingerprint(p) for p in sorted(root_dir.glob(rel)) if p.is_file())
         want_hash = hashlib.blake2b(
             json.dumps(
                 {
                     "redist": sorted(redistributables),
+                    "redist_files": sorted(x for x in redist_files if x is not None),
                     "verbs": sorted(winetricks),
                     "arch": self.arch,
                     "engine": ENGINE_VERSION,
+                    "wine": fingerprint(wine_path),
+                    "format": 2,
                 },
                 sort_keys=True,
             ).encode(),
             digest_size=16,
         ).hexdigest()
 
-        have_hash = ""
-        with suppress(OSError, ValueError):
-            raw = self.stamp.read_text(encoding="utf-8")
-            if raw.strip().startswith("{"):
-                have_hash = json.loads(raw).get("hash", "")
-
-        needs_boot = not self.initialised
-        needs_provision = force or have_hash != want_hash
-
         if dry_run:
-            if needs_boot:
+            if not self.initialised:
                 Log.info(f"[dry-run] wineboot -u in {self.path}")
-            if needs_provision:
-                Log.info(f"[dry-run] provision {len(redistributables)} redists, "
-                         f"{len(winetricks)} winetricks verbs")
+            Log.info(f"[dry-run] provision {len(redistributables)} redists, "
+                     f"{len(winetricks)} winetricks verbs if required")
             return
 
         with file_lock(RUNTIME_DIR / f"prefix-{_slug(str(self.path))}.lock"):
-            env = self.base_env()
+            have_hash = ""
+            with suppress(OSError, ValueError):
+                have_hash = str(json.loads(self.stamp.read_text(encoding="utf-8")).get("hash", ""))
+            needs_boot = not self.initialised
+            needs_provision = force or have_hash != want_hash
+            env = self.base_env(launch_env)
             self.path.mkdir(parents=True, exist_ok=True)
 
             if needs_boot:
                 Log.info(f"initialising Wine prefix at {self.path}")
-                run_cmd([self.wine_bin, "wineboot", "-u"], env=env, timeout=300.0)
+                boot = run_cmd([self.wine_bin, "wineboot", "-u"], env=env, timeout=300.0)
+                if not boot.ok:
+                    raise ConfigError(f"wineboot failed: {boot.message}")
                 self.serverwait(env)
+                if not self.initialised:
+                    raise ConfigError(f"wineboot did not initialize {self.path}")
 
             # Repair passes are cheap and idempotent -- always run them.
             pruned = self.prune_broken_symlinks()
@@ -3060,20 +3311,6 @@ class WinePrefix:
                 self._run_winetricks(env, root_dir, winetricks)
                 self.suppress_crash_dialogs(env)
                 self.serverwait(env)
-                with suppress(OSError):
-                    self.stamp.write_text(
-                        json.dumps(
-                            {
-                                "hash": want_hash,
-                                "engine": ENGINE_VERSION,
-                                "at": time.time(),
-                                "wine": self.wine_bin,
-                            },
-                            indent=1,
-                        ),
-                        encoding="utf-8",
-                    )
-                Log.ok("prefix provisioning complete")
 
             self.link_translators(
                 want_dxvk=want_dxvk,
@@ -3081,6 +3318,12 @@ class WinePrefix:
                 want_nvapi=want_nvapi,
                 want_dlss=want_dlss,
             )
+            if needs_provision:
+                _write_atomic(self.stamp, json.dumps({
+                    "hash": want_hash, "engine": ENGINE_VERSION,
+                    "at": time.time(), "wine": self.wine_bin,
+                }, indent=1) + "\n")
+                Log.ok("prefix provisioning complete")
 
     def _install_redists(self, env: Mapping[str, str], root: Path,
                          declared: Sequence[str]) -> None:
@@ -3088,24 +3331,36 @@ class WinePrefix:
         for rel in declared:
             cand = (root / rel) if not os.path.isabs(rel) else Path(rel)
             if cand.is_file():
-                seen.append(cand)
+                found = [cand]
             else:
-                matches = sorted(root.glob(rel))
+                matches = sorted(root.glob(rel)) if not os.path.isabs(rel) else []
                 if not matches and not os.path.isabs(rel):
                     matches = sorted(root.rglob(rel))
-                seen.extend(m for m in matches if m.is_file())
+                found = [m for m in matches if m.is_file()]
+            if not found:
+                raise ConfigError(f"required redistributable missing: {rel}")
+            seen.extend(found)
         for installer in dict.fromkeys(seen):
             low = installer.name.lower()
-            if "vc_redist" in low or "vcredist" in low or "windowsdesktop" in low:
+            if low.endswith(".msi"):
+                argv = [self.wine_bin, "msiexec", "/i", str(installer), "/qn", "/norestart"]
+            elif "vc_redist" in low or "vcredist" in low or "windowsdesktop" in low:
                 flags = ["/quiet", "/norestart"]
+                argv = [self.wine_bin, str(installer), *flags]
             elif "dxsetup" in low:
                 flags = ["/silent"]
+                argv = [self.wine_bin, str(installer), *flags]
             elif "oalinst" in low or "openal" in low:
                 flags = ["/silent"]
+                argv = [self.wine_bin, str(installer), *flags]
             else:
                 flags = ["/S"]
+                argv = [self.wine_bin, str(installer), *flags]
             Log.info(f"provisioning runtime: {installer.name}")
-            run_cmd([self.wine_bin, str(installer), *flags], env=env, timeout=900.0)
+            r = run_cmd(argv, env=env, timeout=900.0)
+            accepted = {0, 194, 105, 102} if "vc_redist" in low or "vcredist" in low else {0}
+            if r.rc not in accepted:
+                raise ConfigError(f"redistributable {installer.name} failed: {r.message}")
             self.serverwait(env)
 
     def _run_winetricks(self, env: Mapping[str, str], root: Path,
@@ -3119,17 +3374,30 @@ class WinePrefix:
         elif have("winetricks"):
             argv0 = ["winetricks"]
         else:
-            Log.warn(f"winetricks unavailable -- skipping verbs: {' '.join(verbs)}")
-            return
+            raise ConfigError(f"winetricks unavailable for required verbs: {' '.join(verbs)}")
         for verb in verbs:
             Log.info(f"winetricks: {verb}")
             r = run_cmd([*argv0, "-q", "--unattended", verb], env=env, timeout=1800.0)
             if not r.ok:
-                Log.warn(f"winetricks {verb} exited {r.rc}: {r.message}")
+                raise ConfigError(f"winetricks {verb} exited {r.rc}: {r.message}")
             self.serverwait(env)
 
     def shutdown(self) -> None:
         run_cmd([self.server_bin, "-k"], env=self.base_env(), timeout=15.0)
+
+    def set_graphics_driver(self, driver: str, env: Mapping[str, str]) -> None:
+        """Select Wine's GDI backend for this prefix when explicitly requested."""
+        key = r"HKCU\Software\Wine\Drivers"
+        query = run_cmd([self.wine_bin, "reg", "query", key, "/v", "Graphics"],
+                        env=env, timeout=30)
+        if query.ok and re.search(r"\bGraphics\s+REG_SZ\s+" + re.escape(driver) + r"\s*$",
+                                  query.out, re.MULTILINE):
+            return
+        result = run_cmd([self.wine_bin, "reg", "add", key, "/v", "Graphics",
+                          "/t", "REG_SZ", "/d", driver, "/f"], env=env, timeout=45)
+        if not result.ok:
+            raise ConfigError(f"could not select Wine {driver} graphics driver: {result.message}")
+        self.serverwait(env)
 
 
 def _slug(text: str) -> str:
@@ -3139,6 +3407,38 @@ def _slug(text: str) -> str:
 # ==============================================================================
 # SECTION 11 -- Environment matrix
 # ==============================================================================
+def host_x11_display(env: Mapping[str, str]) -> str:
+    """Find a live host X11 endpoint, including one published after this process started."""
+    def usable(display: str) -> bool:
+        local = re.fullmatch(r":(\d+)(?:\.\d+)?", display)
+        return bool(display and (local is None or
+                    Path(f"/tmp/.X11-unix/X{local.group(1)}").exists()))
+
+    inherited = env.get("DISPLAY", "")
+    if usable(inherited):
+        return inherited
+    # Compositors may start Xwayland after a terminal/launcher was created.
+    # The user manager receives the compositor's DISPLAY via environment import.
+    published = run_cmd(["systemctl", "--user", "show-environment"], timeout=2)
+    if published.ok:
+        for line in published.out.splitlines():
+            if line.startswith("DISPLAY="):
+                display = line.removeprefix("DISPLAY=")
+                if usable(display):
+                    return display
+    return ""
+
+
+def host_x11_problem(env: Mapping[str, str]) -> str:
+    """Return an actionable reason when the host has no usable X11 display."""
+    if host_x11_display(env):
+        return ""
+    display = env.get("DISPLAY", "")
+    if display:
+        return f"DISPLAY={display} has no usable X11 endpoint"
+    return "Xwayland requested but DISPLAY is unset; enable host Xwayland or use native Wayland"
+
+
 class EnvironmentBuilder:
     """Deterministic construction of the child environment.
 
@@ -3173,20 +3473,28 @@ class EnvironmentBuilder:
         return path
 
     # -- stages -----------------------------------------------------------
-    def stage_profile_env(self) -> None:
+    def stage_profile_env(self, *, final: bool = False) -> None:
         custom = self.p.sect("env")
         for key, raw in custom.items():
             value = expand_str(str(raw), self.env)
+            if final and key == "WINEDLLOVERRIDES":
+                # stage_wine merges and resolves this against translator policy.
+                continue
             if key == "LD_PRELOAD":
-                shim = Path(value).expanduser()
-                if not shim.exists():
-                    Log.warn(f"LD_PRELOAD shim missing, not injected: {shim}")
+                if final:
                     continue
-                cur = self.env.get("LD_PRELOAD", "")
-                self.env["LD_PRELOAD"] = f"{shim}:{cur}" if cur else str(shim)
-                Log.debug(f"LD_PRELOAD += {shim.name}")
+                libs = [s for s in value.replace(":", " ").split() if s]
+                valid = []
+                for lib in libs:
+                    if os.path.isabs(lib) and not Path(lib).exists():
+                        Log.warn(f"LD_PRELOAD library missing: {lib}")
+                        continue
+                    valid.append(lib)
+                current = [s for s in self.env.get("LD_PRELOAD", "").replace(":", " ").split() if s]
+                self.env["LD_PRELOAD"] = ":".join(dict.fromkeys([*valid, *current]))
             elif key in ("PATH", "LD_LIBRARY_PATH") and value.startswith(":"):
-                self.env[key] = self.env.get(key, "") + value
+                if not final:
+                    self.env[key] = self.env.get(key, "") + value
             else:
                 self.env[key] = value
 
@@ -3238,36 +3546,19 @@ class EnvironmentBuilder:
             self._set("GDK_BACKEND", "x11")
             self._set("QT_QPA_PLATFORM", "xcb")
             self._set("CLUTTER_BACKEND", "x11")
-            # Always ensure DISPLAY points to a live XWayland socket (not stale :0 after Hyprland reload moved to :2)
-            # Previous logic only set if not already set, which kept stale :0 from parent environ.
-            socks = sorted(
-                Path("/tmp/.X11-unix").glob("X[0-9]*"),
-                key=lambda p: int(p.name[1:]) if p.name[1:].isdigit() else 999,
-            ) if \
-                Path("/tmp/.X11-unix").is_dir() else []
-            # Filter to only sockets that actually exist and are live (check via displayfd or just existence)
-            # Prefer the Hyprland XWayland (parent is Hyprland) — pick the one with lowest display number that exists
-            # If current DISPLAY is stale (socket missing), override.
-            current_disp = self.env.get("DISPLAY", "")
-            # Check if current DISPLAY socket exists
-            need_update = True
-            if current_disp and current_disp.startswith(":"):
-                disp_num = current_disp[1:].split(".")[0]
-                if disp_num.isdigit():
-                    sock_path = Path(f"/tmp/.X11-unix/X{disp_num}")
-                    if sock_path.exists():
-                        need_update = False
-            if need_update:
-                if socks:
-                    # Prefer the one whose Xwayland parent is Hyprland (most recent)
-                    # Sort by display number, pick lowest existing
-                    self._set("DISPLAY", f":{socks[0].name[1:]}" if socks else ":0")
-                else:
-                    self._set("DISPLAY", ":0")
+            # DISPLAY is the compositor's authoritative X11 endpoint. Picking
+            # an arbitrary socket can attach a game to another Gamescope or an
+            # unrelated nested server; inventing :0 hides a missing Xwayland.
+            display = host_x11_display(self.env)
+            if not display:
+                raise ConfigError(f"[{self.p.pid}] {host_x11_problem(self.env)}")
+            self._set("DISPLAY", display)
             self._drop("PROTON_ENABLE_WAYLAND")
             self.notes["session"] = "xwayland"
         else:
-            self._set("SDL_VIDEODRIVER", "wayland,x11")
+            # Older bundled SDL builds treat a comma-separated value as one
+            # driver name, so select one backend explicitly.
+            self._set("SDL_VIDEODRIVER", "wayland")
             self._set("CLUTTER_BACKEND", "wayland")
             self._set("GDK_BACKEND", "wayland,x11")
             self._set("QT_QPA_PLATFORM", "wayland;xcb")
@@ -3299,8 +3590,11 @@ class EnvironmentBuilder:
         # heavy GPU load (256/48000 causes crackle on loaded systems).
         self._set("PIPEWIRE_LATENCY", f"{quantum}/{rate}")
         self._set("PIPEWIRE_RATE", f"1/{rate}")
-        self._set("SDL_AUDIODRIVER", "pipewire")
-        self._set("ALSOFT_DRIVERS", str(audio.get("openal_driver", "pipewire")))
+        # Bundled SDL/OpenAL builds do not necessarily contain native PipeWire
+        # clients. Let them choose a supported client (usually pipewire-pulse),
+        # unless the profile explicitly requests an OpenAL implementation.
+        if audio.get("openal_driver"):
+            self._set("ALSOFT_DRIVERS", str(audio["openal_driver"]))
         # PULSE_LATENCY_MSEC must stay coherent with the requested quantum,
         # otherwise pipewire-pulse and the native client fight over the graph.
         self._set("PULSE_LATENCY_MSEC", str(max(10, round(quantum * 1000 / rate))))
@@ -3403,8 +3697,10 @@ class EnvironmentBuilder:
                 self._set("__GL_SHADER_DISK_CACHE", "1")
                 self._set("__GL_SHADER_DISK_CACHE_SKIP_CLEANUP", "1")
                 self._set("NVD_BACKEND", "direct")        # NVDEC without VDPAU
-                if not str(gfx.get("vsync", "default")) == "on":
+                if str(gfx.get("vsync", "default")) == "off":
                     self._set("__GL_SYNC_TO_VBLANK", "0")
+                elif str(gfx.get("vsync", "default")) == "on":
+                    self._set("__GL_SYNC_TO_VBLANK", "1")
             case "amd":
                 # Prefer RADV when AMDVLK is co-installed (AMDVLK regresses in
                 # DXVK/VKD3D and has no ray-tracing parity on RDNA2/3).
@@ -3469,14 +3765,16 @@ class EnvironmentBuilder:
         self._set("VKD3D_SHADER_CACHE_PATH", str(self._mkcache(base / "vkd3d")))
         self._set("RADV_VIDEO_DECODE", "1")
 
-    def stage_wine(self, *, dry_run: bool) -> None:
+    def stage_wine(self, *, dry_run: bool, under_gamescope: bool) -> None:
         rt = str(self.p.get("runtime.type", "native"))
         if rt not in ("wine", "proton", "umu"):
             return
         wcfg = self.p.sect("runtime", "wine")
-        wine_bin = str(wcfg.get("wine_binary") or ("umu-run" if rt == "umu" else "wine"))
+        wine_bin = str(wcfg.get("wine_binary") or "wine")
+        if rt in ("proton", "umu") and wine_bin == "wine":
+            wine_bin = "umu-run"
         prefix = WinePrefix(self.paths.prefix_dir, wine_bin, str(wcfg.get("arch", "win64")))
-        self.prefix = prefix
+        self.prefix = prefix if rt == "wine" else None
 
         self._set("WINEPREFIX", str(prefix.path))
         self._set("WINEARCH", prefix.arch)
@@ -3513,14 +3811,17 @@ class EnvironmentBuilder:
                 # explicit opt-in for builds where it is gated, and Proton needs
                 # PROTON_USE_NTSYNC for versions < 11.
                 self._set("WINENTSYNC", "1")
+                self._drop("PROTON_NO_NTSYNC")
                 self._set("PROTON_USE_NTSYNC", "1")
                 self._set("PROTON_NO_FSYNC", "1")
                 self._set("PROTON_NO_ESYNC", "1")
             case SyncMode.FSYNC:
+                self._set("PROTON_NO_NTSYNC", "1")
                 self._set("WINEFSYNC", "1")
                 self._set("PROTON_NO_FSYNC", "0")
                 self._set("PROTON_NO_ESYNC", "1")
             case SyncMode.ESYNC:
+                self._set("PROTON_NO_NTSYNC", "1")
                 self._set("WINEESYNC", "1")
                 self._set("PROTON_NO_ESYNC", "0")
                 self._set("PROTON_NO_FSYNC", "1")
@@ -3529,13 +3830,14 @@ class EnvironmentBuilder:
                     Log.warn(f"esync with RLIMIT_NOFILE={soft} will hit `eventfd: "
                              "Too many open files` in heavy titles")
             case SyncMode.SERVER:
+                self._set("PROTON_NO_NTSYNC", "1")
                 self._set("PROTON_NO_FSYNC", "1")
                 self._set("PROTON_NO_ESYNC", "1")
         self.notes["sync"] = str(mode)
 
         # ---- DLL overrides (merged, never clobbered) ---------------------
         overrides: dict[str, str] = {}
-        inherited = os.environ.get("WINEDLLOVERRIDES", "")
+        inherited = self.env.get("WINEDLLOVERRIDES", "")
         for chunk in inherited.split(";"):
             if "=" in chunk:
                 k, _, v = chunk.partition("=")
@@ -3546,9 +3848,15 @@ class EnvironmentBuilder:
         if bool(wcfg.get("dxvk", True)):
             for dll in ("dxgi", "d3d11", "d3d9", "d3d10core"):
                 overrides.setdefault(dll, "n,b")
+        else:
+            for dll in ("dxgi", "d3d11", "d3d9", "d3d10core", "d3d8"):
+                overrides[dll] = "b"
         if bool(wcfg.get("vkd3d", True)):
             for dll in ("d3d12", "d3d12core"):
                 overrides.setdefault(dll, "n,b")
+        else:
+            for dll in ("d3d12", "d3d12core"):
+                overrides[dll] = "b"
         declared = wcfg.get("dll_overrides")
         if isinstance(declared, Mapping):
             for k, v in declared.items():
@@ -3556,6 +3864,12 @@ class EnvironmentBuilder:
                 if k_str in ("dxgi", "d3d9", "d3d10core", "d3d11", "d3d12", "d3d12core") and v_str == "n":
                     v_str = "n,b"
                 overrides[k_str] = v_str
+        # A disabled translator must win over inherited and declared overrides.
+        if not bool(wcfg.get("dxvk", True)):
+            overrides.update({dll: "b" for dll in
+                              ("dxgi", "d3d11", "d3d9", "d3d10core", "d3d8")})
+        if not bool(wcfg.get("vkd3d", True)):
+            overrides.update({dll: "b" for dll in ("d3d12", "d3d12core")})
         if bool(wcfg.get("dxvk_nvapi", False)):
             overrides.update({"nvapi": "n", "nvapi64": "n", "nvofapi64": "n"})
         if overrides:
@@ -3602,10 +3916,16 @@ class EnvironmentBuilder:
         # ---- prefix materialisation --------------------------------------
         redists = [str(x) for x in (wcfg.get("redistributables") or [])]
         verbs = [str(x) for x in (wcfg.get("winetricks") or [])]
+        if rt in ("proton", "umu"):
+            if not have(wine_bin):
+                raise ConfigError(f"[{self.p.pid}] {wine_bin} is required for {rt}")
+            return
+
         prefix.provision(
             root_dir=self.paths.root,
             redistributables=redists,
             winetricks=verbs,
+            launch_env=self.env,
             want_dxvk=bool(wcfg.get("dxvk", True)),
             want_vkd3d=bool(wcfg.get("vkd3d", True)),
             want_nvapi=bool(wcfg.get("dxvk_nvapi", False)),
@@ -3613,6 +3933,21 @@ class EnvironmentBuilder:
             force=bool(self.p.get("runtime.wine.reprovision", False)),
             dry_run=dry_run,
         )
+        if rt == "wine":
+            native_wayland = (bool(self.p.get("graphics.wayland_native", True)) and
+                              not bool(self.p.get("graphics.prefer_xwayland", False)) and
+                              not under_gamescope)
+            if native_wayland:
+                if not self.env.get("WAYLAND_DISPLAY"):
+                    raise ConfigError(f"[{self.p.pid}] native Wine Wayland requested without WAYLAND_DISPLAY")
+                self._drop("DISPLAY")
+                self.notes["wine display"] = "Wayland"
+                if not dry_run:
+                    prefix.set_graphics_driver("wayland", self.env)
+            else:
+                self.notes["wine display"] = "Xwayland"
+                if not dry_run:
+                    prefix.set_graphics_driver("x11", self.env)
 
     def stage_overlays(self, *, under_gamescope: bool) -> None:
         perf = self.p.sect("performance")
@@ -3632,6 +3967,10 @@ class EnvironmentBuilder:
                 bits.append(f"fps_limit={fps}")
             bits.append("vsync=0")
             self._set("MANGOHUD_CONFIG", ",".join(bits))
+        elif (fps > 0 and self.p.runtime == "native" and not under_gamescope
+              and have("mangohud")):
+            self._set("MANGOHUD", "1")
+            self._set("MANGOHUD_CONFIG", f"fps_limit={fps},no_display")
         else:
             # Setting MANGOHUD=1 *and* passing --mangoapp renders two overlays,
             # one of which reports the compositor's frame times rather than the
@@ -3646,12 +3985,14 @@ class EnvironmentBuilder:
         else:
             self._drop("DXVK_FRAME_RATE", "VKD3D_FRAME_RATE")
 
-        self._set("SteamGameId", self.env.get("GAMEID", self.p.pid))
-        self._set("SteamAppId", "0")
+        self.env.setdefault("SteamGameId", self.env.get("GAMEID", self.p.pid))
+        self.env.setdefault("SteamAppId", "0")
         self._set("MASTER_RUNNER_PROFILE", self.p.pid)
         self._set("MASTER_RUNNER_VERSION", ENGINE_VERSION)
         self._set("MASTER_RUNNER_GAME_DIR", str(self.paths.game_dir))
         self._set("MASTER_RUNNER_ROOT", str(self.paths.root))
+        self._set("MASTER_RUNNER_GAME_ROOT", str(self.paths.root))
+        self._set("MASTER_RUNNER_CONFIG_ROOT", str(self.p.path.parent.parent))
         self._set("MASTER_RUNNER_DIR", str(SELF_PATH.parent))
         self._set("MASTER_RUNNER_LIB_DIR", str(SELF_PATH.parent / "lib"))
         if self.paths.prefix_dir:
@@ -3661,10 +4002,15 @@ class EnvironmentBuilder:
     def stage_runtime_shims(self) -> None:
         if not bool(self.p.get("runner.enable_io_shim", True)):
             return
-        needs_shim = self.paths.uses_dwarfs or self._is_mono_game()
+        mono_game = self._is_mono_game()
+        needs_shim = self.paths.uses_dwarfs or mono_game
         if not needs_shim:
             return
-        shim = ensure_runner_shim()
+        if mono_game:
+            self._set("MASTER_RUNNER_SHIM_MONO_INODES", "1")
+        if bool(self.p.get("runner.shim_readonly_assets", False)):
+            self._set("MASTER_RUNNER_SHIM_READONLY_ASSETS", "1")
+        shim = (RUNNER_SHIM_BIN if RUNNER_SHIM_BIN.is_file() else None) if self.dry_run else ensure_runner_shim()
         if shim and shim.is_file():
             cur = self.env.get("LD_PRELOAD", "")
             if str(shim) not in cur.split(":"):
@@ -3691,13 +4037,11 @@ class EnvironmentBuilder:
         self.stage_input()
         self.stage_gpu(under_gamescope=under_gamescope)
         self.stage_shader_cache()
-        self.stage_wine(dry_run=self.dry_run)
+        self.stage_wine(dry_run=self.dry_run, under_gamescope=under_gamescope)
         self.stage_overlays(under_gamescope=under_gamescope)
         # Re-apply explicit profile [env] so user overrides always take final precedence:
-        self.stage_profile_env()
-        # Strip empty values: an empty DISPLAY is *not* the same as an unset one
-        # for SDL and Wine.
-        return {k: v for k, v in self.env.items() if v != ""}
+        self.stage_profile_env(final=True)
+        return dict(self.env)
 
 # ==============================================================================
 # SECTION 12 -- Command pipeline construction
@@ -3785,14 +4129,9 @@ class ConfigPatcher:
         w = int(env.get("MASTER_RUNNER_DISPLAY_WIDTH") or out.width or 1920)
         h = int(env.get("MASTER_RUNNER_DISPLAY_HEIGHT") or out.height or 1080)
         r = int(env.get("MASTER_RUNNER_DISPLAY_REFRESH") or round(out.refresh_hz) or 60)
-        gpu = str(env.get("DXVK_FILTER_DEVICE_NAME") or env.get("VKD3D_FILTER_DEVICE_NAME") or "")
-        if not gpu:
-            for g in gpus():
-                if g.is_discrete:
-                    gpu = g.name
-                    break
-        if not gpu:
-            gpu = gpus()[0].name if gpus() else "Unknown GPU"
+        selected = select_gpu(str(prof.get("graphics.gpu", "auto")))
+        gpu = str(env.get("DXVK_FILTER_DEVICE_NAME") or env.get("VKD3D_FILTER_DEVICE_NAME")
+                  or (selected.vulkan_name or selected.model if selected else "Unknown GPU"))
 
         mode_wayland = "Borderless" if under_gamescope else "Window"
         mode_wayland_lower = mode_wayland.lower()
@@ -3821,7 +4160,7 @@ class ConfigPatcher:
         if p.is_absolute():
             return [p]
 
-        prefix = paths.prefix_dir
+        prefix = WinePrefix(paths.prefix_dir).pfx
         if prefix and prefix.is_dir():
             users_dir = prefix / "drive_c" / "users"
             norm = pattern.replace("\\", "/")
@@ -3872,6 +4211,16 @@ class ConfigPatcher:
         fmt = str(patch.get("format") or "json").lower()
         set_map = patch.get("set") or {}
 
+        if file_pat and isinstance(set_map, Mapping):
+            targets = ConfigPatcher._resolve_targets(file_pat, paths)
+            for target in targets:
+                if fmt == "json":
+                    ConfigPatcher._patch_json(target, set_map, context, dry_run=dry_run)
+                elif fmt in ("ini", "cfg"):
+                    ConfigPatcher._patch_ini(target, set_map, context, dry_run=dry_run)
+                else:
+                    raise ConfigError(f"unsupported patch format {fmt!r}")
+
         del_patterns = patch.get("delete") or []
         if isinstance(del_patterns, str):
             del_patterns = [del_patterns]
@@ -3881,26 +4230,19 @@ class ConfigPatcher:
                     if dry_run:
                         Log.info(f"[dry-run] delete: {t}")
                     else:
-                        with suppress(OSError):
-                            t.unlink()
-                            Log.debug(f"deleted file: {t}")
-
-        if not file_pat or not isinstance(set_map, Mapping):
-            return
-
-        targets = ConfigPatcher._resolve_targets(file_pat, paths)
-        for target in targets:
-            if fmt == "json":
-                ConfigPatcher._patch_json(target, set_map, context, dry_run=dry_run)
-            elif fmt in ("ini", "cfg"):
-                ConfigPatcher._patch_ini(target, set_map, context, dry_run=dry_run)
+                        t.unlink()
+                        Log.debug(f"deleted file: {t}")
 
     @staticmethod
     def _patch_json(target: Path, set_map: Mapping[str, Any], context: dict[str, str], dry_run: bool) -> None:
         data: dict[str, Any] = {}
         if target.is_file():
-            with suppress(Exception):
+            try:
                 data = json.loads(target.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise ConfigError(f"cannot patch invalid JSON {target}: {exc}") from exc
+            if not isinstance(data, dict):
+                raise ConfigError(f"cannot patch non-object JSON {target}")
 
         for k, v in set_map.items():
             keys = k.split(".")
@@ -3919,17 +4261,20 @@ class ConfigPatcher:
         else:
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                _write_atomic(target, json.dumps(data, indent=2) + "\n")
                 Log.debug(f"patched json: {target}")
             except OSError as exc:
-                Log.warn(f"failed to patch {target}: {exc}")
+                raise ConfigError(f"failed to patch {target}: {exc}") from exc
 
     @staticmethod
     def _patch_ini(target: Path, set_map: Mapping[str, Any], context: dict[str, str], dry_run: bool) -> None:
-        cp = configparser.ConfigParser()
+        cp = configparser.ConfigParser(interpolation=None)
+        cp.optionxform = str
         if target.is_file():
-            with suppress(Exception):
+            try:
                 cp.read(target, encoding="utf-8")
+            except (OSError, configparser.Error) as exc:
+                raise ConfigError(f"cannot patch invalid INI {target}: {exc}") from exc
 
         for k, v in set_map.items():
             if "." in k:
@@ -3947,11 +4292,41 @@ class ConfigPatcher:
         else:
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                with open(target, "w", encoding="utf-8") as f:
-                    cp.write(f)
+                from io import StringIO
+                buffer = StringIO()
+                cp.write(buffer)
+                _write_atomic(target, buffer.getvalue())
                 Log.debug(f"patched ini: {target}")
             except OSError as exc:
-                Log.warn(f"failed to patch {target}: {exc}")
+                raise ConfigError(f"failed to patch {target}: {exc}") from exc
+
+
+def _write_atomic(target: Path, content: str) -> None:
+    """Replace a settings file without exposing a truncated intermediate file."""
+    if target.is_symlink():
+        raise ConfigError(f"refusing to replace symlinked settings file: {target}")
+    if target.is_file():
+        if target.read_text(encoding="utf-8") == content:
+            return
+        backup = target.with_name(target.name + ".master-runner.bak")
+        if not backup.exists():
+            with open(target, "rb") as src, open(backup, "xb") as dst:
+                shutil.copyfileobj(src, dst)
+                dst.flush()
+                os.fsync(dst.fileno())
+            backup.chmod(stat.S_IMODE(target.stat().st_mode))
+    fd, name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    try:
+        if target.exists():
+            os.fchmod(fd, stat.S_IMODE(target.stat().st_mode))
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(content)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(name, target)
+    finally:
+        with suppress(OSError):
+            os.unlink(name)
 
 
 class PipelineBuilder:
@@ -3967,8 +4342,7 @@ class PipelineBuilder:
     def gamescope_enabled(self) -> bool:
         want = bool(self.p.get("graphics.gamescope.enabled", False))
         if want and not have("gamescope"):
-            Log.warn("gamescope requested but not installed -- layer skipped")
-            return False
+            raise ConfigError(f"[{self.p.pid}] gamescope requested but not installed")
         return want
 
     def gamescope_argv(self) -> list[str]:
@@ -3976,6 +4350,8 @@ class PipelineBuilder:
         perf = self.p.sect("performance")
         out = active_output()
         backend = str(gs.get("backend", "wayland"))
+        if bool(gs.get("immediate_flips", False)) and backend != "drm":
+            raise ConfigError("gamescope immediate_flips requires the DRM backend")
 
         outw = _int0(gs.get("output_width")) or out.width or 1920
         outh = _int0(gs.get("output_height")) or out.height or 1080
@@ -4003,6 +4379,11 @@ class PipelineBuilder:
         if unfocused:
             argv += ["-o", str(unfocused)]
         if fps > 0:
+            divisor = max(1, round(rate / fps))
+            effective = rate / divisor
+            if abs(effective - fps) >= 1:
+                Log.warn(f"gamescope --framerate-limit={fps} on {rate} Hz may yield "
+                         f"approximately {effective:g} FPS (refresh-rate divisor)")
             argv += ["--framerate-limit", str(fps)]
 
         match str(gs.get("mode", "borderless")):
@@ -4040,7 +4421,7 @@ class PipelineBuilder:
         if bool(gs.get("hdr", False)) or bool(self.p.get("graphics.hdr", False)):
             argv.append("--hdr-enabled")
             if bool(gs.get("hdr_itm", False)):
-                argv.append("--hdr-itm-enable")
+                argv.append("--hdr-itm-enabled")
         xw = _int0(gs.get("xwayland_count"))
         if xw > 0:
             argv += ["--xwayland-count", str(xw)]
@@ -4082,8 +4463,21 @@ class PipelineBuilder:
             "--symlink", "usr/lib", "/lib64",
             "--symlink", "usr/bin", "/bin",
             "--symlink", "usr/bin", "/sbin",
-            "--bind", str(self.paths.game_dir), str(self.paths.game_dir),
         ]
+        if bool(sb.get("isolate_home", True)):
+            home = Path(str(sb.get("sandbox_home") or
+                            (XDG_DATA_HOME / "game-sandboxes" / self.p.pid))).expanduser()
+            if not self.dry_run:
+                home.mkdir(parents=True, exist_ok=True)
+            argv += ["--bind", str(home), str(HOME)]
+        else:
+            argv += ["--bind", str(HOME), str(HOME)]
+        # Home isolation must precede these binds or it hides their targets.
+        for required in (self.paths.game_dir, self.paths.prefix_dir,
+                         CACHE_DIR / "shaders" / self.p.pid):
+            if required.exists() and not required.is_relative_to(self.paths.game_dir):
+                argv += ["--bind", str(required), str(required)]
+        argv += ["--bind", str(self.paths.game_dir), str(self.paths.game_dir)]
         if self.paths.uses_dwarfs:
             argv += ["--bind", str(self.paths.overlay_dir), str(self.paths.overlay_dir)]
         if os.path.exists("/tmp/.X11-unix"):
@@ -4107,12 +4501,6 @@ class PipelineBuilder:
             argv += ["--ro-bind-try", f"/run/user/{uid}/bus", f"/run/user/{uid}/bus"]
         if not bool(sb.get("bind_network", False)):
             argv.append("--unshare-net")
-        if bool(sb.get("isolate_home", True)):
-            home = Path(
-                str(sb.get("sandbox_home") or (XDG_DATA_HOME / "game-sandboxes" / self.p.pid))
-            ).expanduser()
-            home.mkdir(parents=True, exist_ok=True)
-            argv += ["--bind", str(home), str(HOME)]
         argv += ["--chdir", str(workdir), "--"]
         return argv
 
@@ -4181,15 +4569,20 @@ class PipelineBuilder:
         inner: list[str]
         match rt:
             case "native":
-                with suppress(OSError):
-                    mode = exe.stat().st_mode
-                    if not mode & 0o111:
-                        exe.chmod(mode | 0o111)
+                if not self.dry_run and not os.access(exe, os.X_OK):
+                    try:
+                        exe.chmod(exe.stat().st_mode | 0o111)
+                    except OSError as exc:
+                        raise ConfigError(f"[{self.p.pid}] cannot mark executable {exe}: {exc}") from exc
                 inner = [str(exe), *args]
             case "script":
                 inner = ["bash", str(exe), *args]
             case "umu" | "proton":
                 launcher = str(self.p.get("runtime.wine.wine_binary") or "umu-run")
+                if launcher == "wine":
+                    launcher = "umu-run"
+                if not self.dry_run and not have(launcher):
+                    raise ConfigError(f"[{self.p.pid}] {launcher} is required for {rt}")
                 inner = [launcher, str(exe), *args]
             case "wine":
                 wine = str(self.p.get("runtime.wine.wine_binary") or "wine")
@@ -4209,7 +4602,8 @@ class PipelineBuilder:
 
         if under_gamescope:
             pipeline = [*self.gamescope_argv(), *pipeline]
-        elif bool(self.p.get("performance.mangohud", False)) and have("mangohud"):
+        elif (bool(self.p.get("performance.mangohud", False)) or
+              (rt == "native" and _int0(self.p.get("performance.fps_limit")) > 0)) and have("mangohud"):
             pipeline = ["mangohud", "--dlsym", *pipeline]
 
         if bool(self.p.get("performance.gamemode", True)) and have("gamemoderun"):
@@ -4219,7 +4613,7 @@ class PipelineBuilder:
             if have("bwrap"):
                 pipeline = [*self.bwrap_argv(workdir), *pipeline]
             else:
-                Log.warn("sandbox.enabled but bubblewrap is not installed")
+                raise ConfigError(f"[{self.p.pid}] sandbox requested but bubblewrap is not installed")
 
         scope = self.scope_argv()
         if scope:
@@ -4266,9 +4660,12 @@ class Supervisor:
     _own_cgroup: Path | None = None
     _child_cgroup: Path | None = None
     _cgroup_probed: bool = False
+    _pgid: int = -1
 
     def __post_init__(self) -> None:
         self._own_cgroup = cgroup_of(os.getpid())
+        with suppress(OSError):
+            self._pgid = os.getpgid(self.proc.pid)
 
     @property
     def cgroup(self) -> Path | None:
@@ -4291,9 +4688,27 @@ class Supervisor:
             else:
                 self._child_cgroup = None
                 Log.debug("child shares the launcher cgroup; using process groups")
-            if self.proc.poll() is None:
+            if self._child_cgroup is not None:
                 self._cgroup_probed = True
         return self._child_cgroup
+
+    def _workload_alive(self) -> bool:
+        """Observe the owned workload after the first launcher process exits."""
+        cg = self.cgroup
+        if cg is not None and cg.is_dir():
+            return any(_pid_running(pid) for pid in cgroup_pids(cg))
+        if self._pgid <= 0:
+            return self.proc.poll() is None
+        for entry in PROC.iterdir():
+            if not entry.name.isdecimal():
+                continue
+            raw = read_text(entry / "stat", 4096)
+            if ") " not in raw:
+                continue
+            fields = raw.rsplit(") ", 1)[1].split()
+            if len(fields) > 2 and fields[0] != "Z" and int(fields[2]) == self._pgid:
+                return True
+        return False
 
     def wait(self) -> int:
         """Block until the child exits or a fatal signal is received."""
@@ -4317,15 +4732,21 @@ class Supervisor:
             sel.register(pidfd, selectors.EVENT_READ, "child")
             sel.register(rpipe, selectors.EVENT_READ, "signal")
 
+            leader_exited = False
             while True:
-                for key, _ in sel.select(timeout=None):
+                for key, _ in sel.select(timeout=0.25):
                     if key.data == "child":
-                        return self._reap()
+                        self._reap()
+                        sel.unregister(pidfd)
+                        leader_exited = True
+                        continue
                     payload = os.read(rpipe, 512)
                     for raw in payload:
                         self._on_signal(raw)
                     if self.interrupted:
                         return self._teardown()
+                if leader_exited and not self._workload_alive():
+                    return self.proc.returncode or 0
         finally:
             sel.close()
             for sig, handler in prev_handlers.items():
@@ -4347,7 +4768,10 @@ class Supervisor:
 
     def _wait_plain(self) -> int:
         try:
-            return self.proc.wait()
+            rc = self.proc.wait()
+            while self._workload_alive():
+                time.sleep(0.1)
+            return rc
         except KeyboardInterrupt:
             self.interrupted = int(signal.SIGINT)
             return self._teardown()
@@ -4362,11 +4786,17 @@ class Supervisor:
         self.signal_tree(signal.SIGTERM)
         deadline = time.monotonic() + self.grace
         while time.monotonic() < deadline:
-            if self.proc.poll() is not None:
-                return self._reap()
+            if not self._workload_alive():
+                self._reap()
+                return 128 + (self.interrupted or int(signal.SIGTERM))
             time.sleep(0.05)
         Log.warn(f"grace period ({self.grace:g}s) expired -- escalating to SIGKILL")
         self._hard_kill()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and self._workload_alive():
+            time.sleep(0.05)
+        if self._workload_alive():
+            Log.error("owned workload is still alive after SIGKILL; cleanup may be incomplete")
         with suppress(Exception):
             self.proc.wait(timeout=5)
         return 128 + (self.interrupted or int(signal.SIGTERM))
@@ -4390,10 +4820,7 @@ class Supervisor:
                             with suppress(ProcessLookupError, PermissionError, OSError):
                                 os.kill(pid, signal.SIGCONT)
                 return
-        try:
-            pgid = os.getpgid(self.proc.pid)
-        except (ProcessLookupError, PermissionError, OSError):
-            pgid = -1
+        pgid = self._pgid
         if pgid > 0 and pgid != os.getpgid(0):
             with suppress(ProcessLookupError, PermissionError, OSError):
                 os.killpg(pgid, sig)
@@ -4408,9 +4835,19 @@ class Supervisor:
                     self.proc.send_signal(signal.SIGCONT)
 
     def kill_now(self) -> None:
-        if self.proc.poll() is not None:
-            return
-        self._hard_kill()
+        if self._workload_alive():
+            self._hard_kill()
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and self._workload_alive():
+                time.sleep(0.05)
+
+
+def _pid_running(pid: int) -> bool:
+    raw = read_text(PROC / str(pid) / "stat", 4096)
+    if ") " not in raw:
+        return False
+    fields = raw.rsplit(") ", 1)[1].split()
+    return bool(fields) and fields[0] not in ("Z", "X")
 
 
 def _noop_handler(signum: int, frame: Any) -> None:  # noqa: ARG001
@@ -4442,6 +4879,8 @@ class GameSession:
         self.opts = opts
         self.paths = resolve_paths(prof)
         self.stack = ExitStack()
+        self._stage = "startup"
+        self._recorded = False
 
     # -- hooks ------------------------------------------------------------
     def hooks(self, phase: str, env: Mapping[str, str] | None = None) -> None:
@@ -4454,20 +4893,26 @@ class GameSession:
             if self.opts.dry_run:
                 Log.info(f"[dry-run] hook[{phase}]: {cmd}")
                 continue
-            cp = subprocess.run(
-                ["bash", "-o", "pipefail", "-c", cmd],
-                cwd=str(self.paths.game_dir if self.paths.game_dir.is_dir() else HOME),
-                env=dict(env) if env else None,
-                capture_output=Log.level < Verbosity.VERBOSE,
-                text=True,
-                check=False,
-                timeout=600,
-            )
-            if cp.returncode != 0:
-                Log.warn(f"hook[{phase}] `{cmd}` exited {cp.returncode}")
+            result = run_cmd(["bash", "-o", "pipefail", "-c", cmd],
+                             cwd=self.paths.game_dir if self.paths.game_dir.is_dir() else HOME,
+                             env=env, timeout=600)
+            if result.rc != 0:
+                Log.warn(f"hook[{phase}] `{cmd}` exited {result.rc}: {result.message}")
 
     # -- main -------------------------------------------------------------
     def run(self) -> int:
+        try:
+            return self._run_impl()
+        except BaseException as exc:
+            if not self.opts.dry_run and not self._recorded:
+                rc = (130 if isinstance(exc, KeyboardInterrupt) else
+                      78 if isinstance(exc, ConfigError) else
+                      75 if isinstance(exc, TimeoutError) else 70)
+                self._record_session(rc, 0, stage=self._stage,
+                                     error=str(exc) or type(exc).__name__)
+            raise
+
+    def _run_impl(self) -> int:
         prof, opts = self.p, self.opts
         Log.info(f"launching {prof.name} [{prof.pid}] runtime={prof.runtime}")
 
@@ -4475,30 +4920,58 @@ class GameSession:
             prof.cfg.setdefault("runtime", {}).setdefault("wine", {})["reprovision"] = True
 
         with self.stack:
+            # Profiles can name the same image, overlay and prefix. Serialize
+            # ownership for the full launch, including teardown callbacks.
+            if not opts.dry_run:
+                self._stage = "lock"
+                lock_keys = ["game-" + _slug(str(self.paths.game_dir.resolve()))]
+                if self.paths.uses_dwarfs:
+                    lock_keys.append("mount-" + _slug(str(self.paths.overlay_dir.resolve())))
+                if prof.runtime in ("wine", "proton", "umu"):
+                    lock_keys.append("session-prefix-" + _slug(str(self.paths.prefix_dir.resolve())))
+                for key in sorted(lock_keys):
+                    self.stack.enter_context(file_lock(RUNTIME_DIR / f"{key}.lock", timeout=10))
+            self._stage = "pre-mount hook"
             self.hooks("pre_mount")
+            self._stage = "mount"
             if not opts.no_mount and bool(prof.get("runner.auto_mount", True)):
+                mount_was_ready = MountEngine.status(self.paths, refresh=True).state is MountState.MOUNTED
                 if not MountEngine.mount(prof, self.paths, dry_run=opts.dry_run):
                     Log.error("mount stage failed -- aborting")
+                    if not opts.dry_run:
+                        self._record_session(74, 0, stage="mount", error="mount stage failed")
                     return 74  # EX_IOERR
                 if bool(prof.get("runner.auto_unmount_on_exit", True)) and \
-                        not opts.keep_mounted and not opts.dry_run:
+                        not opts.keep_mounted and not opts.dry_run and not mount_was_ready:
                     self.stack.callback(
                         lambda: MountEngine.unmount(prof, self.paths, quiet=True)
                     )
+            self._stage = "post-mount hook"
             self.hooks("post_mount")
 
             pipe = PipelineBuilder(prof, self.paths, opts.extra_args, dry_run=opts.dry_run)
             under_gs = pipe.gamescope_enabled
 
             envb = EnvironmentBuilder(prof, self.paths, dry_run=opts.dry_run)
-            env = envb.build(under_gamescope=under_gs)
+            self._stage = "environment"
+            try:
+                env = envb.build(under_gamescope=under_gs)
+            except (Exception, KeyboardInterrupt) as exc:
+                if envb.prefix is not None and not opts.dry_run:
+                    envb.prefix.shutdown()
+                if not opts.dry_run:
+                    self._record_session(78, 0, stage="environment", error=str(exc))
+                raise
             if envb.prefix is not None and not opts.dry_run:
                 self.stack.callback(envb.prefix.shutdown)
 
+            self._stage = "pipeline"
             try:
                 argv, workdir = pipe.build(under_gamescope=under_gs)
             except ConfigError as exc:
                 Log.error(str(exc))
+                if not opts.dry_run:
+                    self._record_session(78, 0, stage="pipeline", error=str(exc))
                 return 78  # EX_CONFIG
 
             self._describe(argv, workdir, envb)
@@ -4506,31 +4979,40 @@ class GameSession:
             if envb.prefix is not None and not opts.dry_run:
                 envb.prefix.clean_stale_crash_markers()
 
-            ConfigPatcher.apply(
-                prof,
-                self.paths,
-                env=env,
-                under_gamescope=under_gs,
-                dry_run=opts.dry_run,
-            )
+            self._stage = "config patch"
+            try:
+                ConfigPatcher.apply(
+                    prof,
+                    self.paths,
+                    env=env,
+                    under_gamescope=under_gs,
+                    dry_run=opts.dry_run,
+                )
+            except Exception as exc:
+                if not opts.dry_run:
+                    self._record_session(78, 0, stage="config patch", error=str(exc))
+                raise
 
             if opts.dry_run:
                 Log.ok("dry-run complete; nothing was executed")
                 return 0
 
+            self._stage = "pre-launch hook"
             self.hooks("pre_launch", env)
 
+            self._stage = "idle inhibitor"
             if bool(prof.get("runner.inhibit_idle", True)):
                 inhibitor = IdleInhibitor()
+                self.stack.callback(inhibitor.release)
                 inhibitor.acquire(
                     ENGINE_NAME, f"Playing {prof.name}",
                     block_sleep=bool(prof.get("runner.inhibit_sleep", True)),
                 )
-                self.stack.callback(inhibitor.release)
 
             if bool(prof.get("runner.notifications", True)):
                 notify("Launching", prof.name, icon=prof.icon)
 
+            self._stage = "game"
             rc, elapsed = self._spawn(argv, workdir, env)
 
             mins, secs = divmod(int(elapsed), 60)
@@ -4548,8 +5030,10 @@ class GameSession:
                     icon=prof.icon,
                 )
             self._record_session(rc, elapsed)
+            self._stage = "post-launch hook"
             self.hooks("post_launch", env)
 
+        self._stage = "post-unmount hook"
         self.hooks("post_unmount")
         return rc
 
@@ -4599,6 +5083,7 @@ class GameSession:
                     k: v for k, v in envb.env.items()
                     if os.environ.get(k) != v
                 },
+                "env_removed": sorted(set(os.environ) - set(envb.env)),
             }, indent=2))
             return
         rows = [
@@ -4625,20 +5110,38 @@ class GameSession:
             for k, v in rows:
                 Log.info(f"{k:>10}: {v}")
 
-    def _record_session(self, rc: int, elapsed: float) -> None:
-        with suppress(OSError):
-            STATE_DIR.mkdir(parents=True, exist_ok=True)
+    def _record_session(self, rc: int, elapsed: float, *, stage: str = "game",
+                        error: str = "") -> None:
+        self._recorded = True
+        _append_session_record({
+            "t": time.time(),
+            "profile": self.p.pid,
+            "runtime": self.p.runtime,
+            "engine": ENGINE_VERSION,
+            "stage": stage,
+            "error": error[:512],
+            "rc": rc,
+            "seconds": round(elapsed, 1),
+        })
+
+
+def _append_session_record(row: Mapping[str, Any]) -> None:
+    """Keep an audit trail bounded without masking launch failures."""
+    with suppress(OSError):
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        with file_lock(RUNTIME_DIR / "sessions.lock", timeout=5):
             log = STATE_DIR / "sessions.jsonl"
             with open(log, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({
-                    "t": time.time(),
-                    "profile": self.p.pid,
-                    "rc": rc,
-                    "seconds": round(elapsed, 1),
-                }) + "\n")
+                fh.write(json.dumps(row) + "\n")
             if log.stat().st_size > 1 << 20:
                 tail = log.read_text(encoding="utf-8").splitlines()[-2000:]
-                log.write_text("\n".join(tail) + "\n", encoding="utf-8")
+                fd, tmp = tempfile.mkstemp(prefix=".sessions-", dir=STATE_DIR)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                        fh.write("\n".join(tail) + "\n")
+                    os.replace(tmp, log)
+                finally:
+                    Path(tmp).unlink(missing_ok=True)
 
 # ==============================================================================
 # SECTION 15 -- Doctor
@@ -4682,7 +5185,7 @@ OPTIONAL_TOOLS: Final = (
 TUNABLES: Final = (
     ("vm.max_map_count", 1048576, "DX12/UE5 map-heavy titles exhaust the default"),
     ("vm.swappiness", None, "informational"),
-    ("kernel.split_lock_mitigate", 0, "0 avoids 10-100x stalls on split-lock traps"),
+    ("kernel.split_lock_mitigate", None, "informational; change only after measuring a game"),
     ("fs.file-max", None, "informational"),
     ("kernel.sched_cfs_bandwidth_slice_us", None, "informational"),
 )
@@ -4790,12 +5293,10 @@ def collect_checks() -> list[Check]:
         ver_match = re.match(r"^(\d+)", ver_raw)
         has_card = any(g.is_nvidia and g.card.startswith("card") for g in devs)
         cmdline = read_first_line("/proc/cmdline")
-        modeset_active = (
-            modeset_raw in ("Y", "1")
-            or (ver_match and int(ver_match.group(1)) >= 560 and has_card)
-            or "nvidia-drm.modeset=1" in cmdline
-            or "nvidia_drm.modeset=1" in cmdline
-        )
+        modeset_active = (modeset_raw in ("Y", "1") if modeset_raw in ("Y", "1", "N", "0")
+                          else bool((ver_match and int(ver_match.group(1)) >= 560 and has_card)
+                                    or "nvidia-drm.modeset=1" in cmdline
+                                    or "nvidia_drm.modeset=1" in cmdline))
         is_secondary = any(g.boot_vga for g in devs if not g.is_nvidia)
         if modeset_active:
             modeset_status = Health.OK
@@ -4848,13 +5349,11 @@ def collect_checks() -> list[Check]:
 
 def doctor(*, fix: bool, as_json: bool) -> int:
     if fix:
-        Log.info("applying kernel tunables (requires sudo)")
-        for arg in (
-            "vm.max_map_count=1048576",
-            "kernel.split_lock_mitigate=0",
-        ):
-            r = run_cmd(["sudo", "-n", "sysctl", "-w", arg], timeout=15)
-            (Log.ok if r.ok else Log.warn)(f"sysctl {arg}: {r.message if not r.ok else 'ok'}")
+        current = sysctl_read("vm.max_map_count")
+        if current.isdecimal() and int(current) < 1048576:
+            Log.info("raising vm.max_map_count to the recommended minimum")
+            r = run_cmd(["sudo", "-n", "sysctl", "-w", "vm.max_map_count=1048576"], timeout=15)
+            (Log.ok if r.ok else Log.warn)(f"sysctl vm.max_map_count: {r.message if not r.ok else 'ok'}")
         if not os.path.exists("/dev/ntsync"):
             r = run_cmd(["sudo", "-n", "modprobe", "ntsync"], timeout=15)
             (Log.ok if r.ok else Log.warn)(
@@ -4938,25 +5437,45 @@ def validate(mgr: ProfileManager, targets: Sequence[str] | str | None, *, as_jso
                 "game_dir": str(paths.game_dir),
                 "game_dir_exists": paths.game_dir.is_dir(),
                 "dwarfs": str(paths.dwarfs_image) if paths.dwarfs_image else "",
-                "dwarfs_present": paths.uses_dwarfs,
+                "dwarfs_present": bool(paths.dwarfs_image and paths.dwarfs_image.is_file()),
                 "executable": paths.executable,
                 "mount": str(st.state),
                 "installed": profile_installed(prof),
+                "configuration": "valid",
                 "status": "valid",
             }
             problems: list[str] = []
             if not paths.game_dir.is_dir():
                 problems.append("game_dir missing")
-            if paths.dwarfs_image is not None and not paths.uses_dwarfs:
+            if paths.dwarfs_image is not None and not paths.dwarfs_image.is_file():
                 problems.append("dwarfs_image declared but absent")
             if not paths.executable and prof.runtime != "script":
                 problems.append("paths.executable unset")
+            elif paths.game_dir.is_dir() and (paths.dwarfs_image is None or paths.dwarfs_image.is_file()) and not profile_installed(prof):
+                problems.append("executable not found")
+            if prof.runtime in ("umu", "proton"):
+                launcher = str(prof.get("runtime.wine.wine_binary") or "umu-run")
+                if launcher == "wine":
+                    launcher = "umu-run"
+                if shutil.which(launcher) is None:
+                    problems.append(f"runtime launcher missing: {launcher}")
+            elif prof.runtime == "wine" and shutil.which(str(prof.get("runtime.wine.wine_binary") or "wine")) is None:
+                problems.append("Wine launcher missing")
+            if (not prof.get("graphics.gamescope.enabled", False) and
+                    (prof.get("graphics.prefer_xwayland", False) or
+                     prof.get("graphics.wayland_native", True) is False)):
+                if problem := host_x11_problem(os.environ):
+                    problems.append(problem)
+            if prof.get("graphics.gamescope.enabled", False) and not have("gamescope"):
+                problems.append("gamescope requested but not installed")
+            if prof.get("sandbox.enabled", False) and not have("bwrap"):
+                problems.append("sandbox requested but bubblewrap is not installed")
             ext = prof.cfg.get("extends")
             for name in ([ext] if isinstance(ext, str) else list(ext or [])):
                 if name and name not in mgr.discover_presets():
                     problems.append(f"unknown preset {name}")
             if problems:
-                row["status"] = "invalid"
+                row["status"] = "unavailable"
                 row["problems"] = problems
                 bad += 1
         except (ConfigError, OSError) as exc:
@@ -4971,7 +5490,7 @@ def validate(mgr: ProfileManager, targets: Sequence[str] | str | None, *, as_jso
     console = Log.console()
     if console is None:
         for r in rows:
-            mark = {"valid": "OK  ", "invalid": "WARN", "error": "FAIL"}[r["status"]]
+            mark = {"valid": "OK  ", "unavailable": "WARN", "error": "FAIL"}[r["status"]]
             print(f"{mark}  {r['id']:<24} {r.get('name', ''):<28} "
                   f"{r.get('mount', '-'):<10} {'; '.join(r.get('problems', []))}")
     else:
@@ -4983,7 +5502,7 @@ def validate(mgr: ProfileManager, targets: Sequence[str] | str | None, *, as_jso
         for col in ("id", "title", "preset", "runtime", "dwarfs", "mount", "state"):
             t.add_column(col, overflow="fold")
         for r in rows:
-            colour = {"valid": "green", "invalid": "yellow", "error": "red"}[r["status"]]
+            colour = {"valid": "green", "unavailable": "yellow", "error": "red"}[r["status"]]
             t.add_row(
                 r["id"], str(r.get("name", "")), str(r.get("extends", "") or "-"),
                 str(r.get("runtime", "-")),
@@ -5176,18 +5695,28 @@ def _toml_str(value: str) -> str:
 # ==============================================================================
 # SECTION 18 -- Desktop integration
 # ==============================================================================
+def _desktop_arg(value: str) -> str:
+    """Desktop Entry Exec quoting is distinct from shell quoting."""
+    escaped = value.replace("%", "%%")
+    for char in ("\\", '"', "`", "$"):
+        escaped = escaped.replace(char, "\\" + char)
+    return '"' + escaped + '"'
+
+
 def install_desktop(mgr: ProfileManager, pid: str) -> Path:
     prof = mgr.load(pid)
     apps = XDG_DATA_HOME / "applications"
     apps.mkdir(parents=True, exist_ok=True)
     target = apps / f"{ENGINE_SLUG}-{pid}.desktop"
-    exec_line = f"{shlex.quote(sys.executable)} {shlex.quote(str(SELF_PATH))} run {shlex.quote(pid)}"
+    prefix = " ".join(_desktop_arg(x) for x in
+                      (sys.executable, str(SELF_PATH), "--root", str(mgr.root)))
+    exec_line = f"{prefix} run {_desktop_arg(pid)}"
     prefers_dgpu = str(prof.get("graphics.gpu", "auto")) in ("discrete", "nvidia", "amd")
     body = [
         "[Desktop Entry]",
         "Type=Application",
-        f"Name={prof.name}",
-        f"Comment={prof.get('meta.description') or f'Launch {prof.name}'}",
+        f"Name={prof.name.replace(chr(10), ' ')}",
+        f"Comment={str(prof.get('meta.description') or f'Launch {prof.name}').replace(chr(10), ' ')}",
         f"Exec={exec_line}",
         f"TryExec={sys.executable}",
         f"Icon={prof.icon}",
@@ -5204,11 +5733,11 @@ def install_desktop(mgr: ProfileManager, pid: str) -> Path:
         "",
         "[Desktop Action Mount]",
         "Name=Mount game data",
-        f"Exec={shlex.quote(sys.executable)} {shlex.quote(str(SELF_PATH))} mount {shlex.quote(pid)}",
+        f"Exec={prefix} mount {_desktop_arg(pid)}",
         "",
         "[Desktop Action Unmount]",
         "Name=Unmount game data",
-        f"Exec={shlex.quote(sys.executable)} {shlex.quote(str(SELF_PATH))} unmount {shlex.quote(pid)}",
+        f"Exec={prefix} unmount {_desktop_arg(pid)}",
         "",
     ]
     target.write_text("\n".join(body), encoding="utf-8")
@@ -5352,6 +5881,7 @@ def dashboard(mgr: ProfileManager, *, show_all: bool) -> int:
     from rich.table import Table as _Table
 
     while True:
+        outputs.cache_clear()
         console.clear()
         console.print(Panel.fit(
             f"[bold cyan]{ENGINE_NAME}[/bold cyan] [dim]v{ENGINE_VERSION}[/dim]\n"
@@ -5440,18 +5970,14 @@ def dashboard(mgr: ProfileManager, *, show_all: bool) -> int:
             rest = choice[1:].strip()
             targets = resolve_targets([rest], pool) if rest else fzf_pick(
                 pool, multi=True, verb="mount")
-            for pid in targets:
-                p = mgr.load(pid)
-                MountEngine.mount(p, resolve_paths(p))
+            cmd_mount(mgr, targets, show_all=True, dry_run=False, unmount=False)
             Prompt.ask("\n[dim]enter to continue[/dim]", default="")
             continue
         if low == "u" or low.startswith("u "):
             rest = choice[1:].strip()
             targets = resolve_targets([rest], pool) if rest else fzf_pick(
                 pool, multi=True, verb="unmount")
-            for pid in targets:
-                p = mgr.load(pid)
-                MountEngine.unmount(p, resolve_paths(p))
+            cmd_mount(mgr, targets, show_all=True, dry_run=False, unmount=True)
             Prompt.ask("\n[dim]enter to continue[/dim]", default="")
             continue
         targets = resolve_targets([choice], pool)
@@ -5463,12 +5989,28 @@ def dashboard(mgr: ProfileManager, *, show_all: bool) -> int:
 def _launch_many(mgr: ProfileManager, pids: Sequence[str], opts: RunOptions) -> int:
     rc = 0
     for pid in pids:
+        session: GameSession | None = None
         try:
+            outputs.cache_clear()
+            gpus.cache_clear()
+            vulkan_icds.cache_clear()
             prof = mgr.load(pid, use_cache=False)
-            rc = GameSession(mgr, prof, opts).run() or rc
+            session = GameSession(mgr, prof, opts)
+            rc = session.run() or rc
         except ConfigError as exc:
             Log.error(str(exc))
+            if session is None and not opts.dry_run:
+                _append_session_record({"t": time.time(), "profile": pid,
+                                        "engine": ENGINE_VERSION, "stage": "profile",
+                                        "error": str(exc)[:512], "rc": 78, "seconds": 0})
             rc = 78
+        except TimeoutError as exc:
+            Log.error(str(exc))
+            if not opts.dry_run:
+                _append_session_record({"t": time.time(), "profile": pid,
+                                        "engine": ENGINE_VERSION, "stage": "lock",
+                                        "error": str(exc)[:512], "rc": 75, "seconds": 0})
+            rc = 75
         except Exception as exc:  # last-resort guard: never kill the dashboard
             Log.error(f"unhandled error running {pid}: {exc!r}")
             if Log.level >= Verbosity.VERBOSE:
@@ -5588,7 +6130,17 @@ def cmd_mount(mgr: ProfileManager, targets: Sequence[str], *, show_all: bool,
             rc = 78
             continue
         fn = MountEngine.unmount if unmount else MountEngine.mount
-        if not fn(p, paths, dry_run=dry_run):
+        lock = RUNTIME_DIR / f"mount-{_slug(str(paths.overlay_dir.resolve()))}.lock"
+        try:
+            if dry_run:
+                worked = fn(p, paths, dry_run=True)
+            else:
+                with file_lock(lock, timeout=10):
+                    worked = fn(p, paths)
+            if not worked:
+                rc = 74
+        except (ConfigError, TimeoutError) as exc:
+            Log.error(str(exc))
             rc = 74
     return rc
 
@@ -5596,40 +6148,56 @@ def cmd_mount(mgr: ProfileManager, targets: Sequence[str], *, show_all: bool,
 def cmd_unmount_all(mgr: ProfileManager, *, dry_run: bool) -> int:
     mount_table(force=True)
     n = 0
+    rc = 0
     for p in catalogue(mgr, show_all=True):
         try:
             paths = resolve_paths(p)
         except ConfigError:
             continue
-        st = MountEngine.status(paths)
-        if st.state is MountState.UNMOUNTED:
-            continue
-        Log.info(f"detaching {p.pid} ({st.state})")
-        MountEngine.unmount(p, paths, dry_run=dry_run)
-        n += 1
+        lock = RUNTIME_DIR / f"mount-{_slug(str(paths.overlay_dir.resolve()))}.lock"
+        try:
+            if dry_run:
+                st = MountEngine.status(paths, refresh=True)
+                if st.state is MountState.UNMOUNTED:
+                    continue
+                Log.info(f"detaching {p.pid} ({st.state})")
+                if not MountEngine.unmount(p, paths, dry_run=True):
+                    rc = 74
+            else:
+                with file_lock(lock, timeout=10):
+                    st = MountEngine.status(paths, refresh=True)
+                    if st.state is MountState.UNMOUNTED:
+                        continue
+                    Log.info(f"detaching {p.pid} ({st.state})")
+                    if not MountEngine.unmount(p, paths):
+                        rc = 74
+            n += 1
+        except (ConfigError, TimeoutError) as exc:
+            Log.error(str(exc))
+            rc = 74
     Log.ok(f"sweep complete; {n} profile(s) touched")
-    return 0
+    return rc
 
 
-def cmd_init_config(force: bool) -> int:
-    ROOT_DIR.mkdir(parents=True, exist_ok=True)
-    PROFILES_DIR.mkdir(parents=True, exist_ok=True)
-    PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+def cmd_init_config(mgr: ProfileManager, force: bool) -> int:
+    mgr.root.mkdir(parents=True, exist_ok=True)
+    mgr.profiles_dir.mkdir(parents=True, exist_ok=True)
+    mgr.presets_dir.mkdir(parents=True, exist_ok=True)
     for d in (STATE_DIR, CACHE_DIR, RUNTIME_DIR):
         d.mkdir(parents=True, exist_ok=True)
-    cfg = ROOT_DIR / "config.toml"
+    cfg = mgr.root / "config.toml"
     if cfg.exists() and not force:
         Log.warn(f"{cfg} exists (use --force to overwrite)")
     else:
         cfg.write_text(DEFAULT_CONFIG_TOML, encoding="utf-8")
         Log.ok(f"wrote {cfg}")
     for name, body in DEFAULT_PRESETS.items():
-        dst = PRESETS_DIR / f"{name}.toml"
+        dst = mgr.presets_dir / f"{name}.toml"
         if dst.exists() and not force:
             continue
         dst.write_text(body, encoding="utf-8")
         Log.ok(f"wrote {dst}")
-    Log.info(f"profiles directory: {PROFILES_DIR}")
+    Log.info(f"profiles directory: {mgr.profiles_dir}")
     return 0
 
 
@@ -5821,6 +6389,9 @@ def overrides_from_args(ns: argparse.Namespace) -> TomlDict:
     if getattr(ns, "mode", None):
         put("graphics.gamescope.mode", ns.mode)
         put("graphics.gamescope.enabled", True)
+    if getattr(ns, "tearing", False):
+        put("graphics.gamescope.immediate_flips", True)
+        put("graphics.gamescope.enabled", True)
     if getattr(ns, "fsr", False):
         put("graphics.gamescope.filter", "fsr")
         put("graphics.gamescope.enabled", True)
@@ -5860,13 +6431,16 @@ def cmd_env(mgr: ProfileManager, ns: argparse.Namespace) -> int:
     builder = EnvironmentBuilder(prof, paths, dry_run=True)
     env = builder.build(under_gamescope=under_gs)
     delta = {k: v for k, v in env.items() if os.environ.get(k) != v}
+    removed = sorted(set(os.environ) - set(env))
     argv: list[str] = []
     with suppress(ConfigError):
         argv, _ = pipe.build(under_gamescope=under_gs)
     if ns.as_json:
-        print(json.dumps({"env": delta, "notes": builder.notes, "argv": argv,
+        print(json.dumps({"env": delta, "unset": removed, "notes": builder.notes, "argv": argv,
                           "gpu": builder.gpu.describe() if builder.gpu else None}, indent=2))
     else:
+        for k in removed:
+            print(f"unset {k}")
         for k in sorted(delta):
             print(f"export {k}={shlex.quote(delta[k])}")
         if argv:
@@ -5897,10 +6471,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         Log._rich, Log._rich_probed = None, True
 
     raise_nofile()
-    for d in (STATE_DIR, CACHE_DIR, RUNTIME_DIR):
-        with suppress(OSError):
-            d.mkdir(parents=True, exist_ok=True)
-
     mgr = ProfileManager(ns.root.expanduser().resolve() if ns.root else ROOT_DIR)
 
     try:
@@ -5947,7 +6517,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 0
 
             case "init-config":
-                return cmd_init_config(ns.force)
+                return cmd_init_config(mgr, ns.force)
 
             case "desktop" | "install-desktop":
                 install_desktop(mgr, ns.profile)

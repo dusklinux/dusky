@@ -61,7 +61,7 @@ cpu_affinity = ""
 driver = "pipewire"
 quantum = 1024
 rate = 48000
-openal_driver = "pipewire"
+openal_driver = ""  # let bundled OpenAL choose a supported client
 
 [runtime.wine]
 wine_binary = "wine"

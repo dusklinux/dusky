@@ -211,7 +211,7 @@ scope_memory_high = ""                         # Memory throttle threshold, e.g.
 driver        = "pipewire"                     # "pipewire", "pulseaudio", "alsa"
 quantum       = 1024                           # Buffer size in frames (1024/48000 = 21.3 ms latency)
 rate          = 48000                          # Audio sample rate in Hz
-openal_driver = "pipewire"                     # OpenAL driver backend
+openal_driver = ""                             # auto; set only when supported by the game
 
 # ------------------------------------------------------------------------------
 # 9. Gamepad & Input Mapping [input]
@@ -251,6 +251,7 @@ inhibit_sleep        = true                    # Inhibit system sleep and lid su
 notifications        = true                    # Send desktop notifications via notify-send
 kill_grace_s         = 8.0                     # SIGTERM -> cgroup.kill atomic escalation timeout
 enable_io_shim       = true                    # Preload runner_shim.so for DwarFS / Mono / FNA runtime quirks
+shim_readonly_assets = false                   # Explicitly allow read-only demotion of static asset opens
 
 # ------------------------------------------------------------------------------
 # 12. Sandboxing & Bubblewrap Isolation [sandbox]

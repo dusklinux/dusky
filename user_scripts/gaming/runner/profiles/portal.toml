@@ -31,7 +31,6 @@ prefer_xwayland = true
 [graphics.gamescope]
 enabled = false
 mode = "embedded"
-allow_tearing = true
 
 [performance]
 gamemode = true

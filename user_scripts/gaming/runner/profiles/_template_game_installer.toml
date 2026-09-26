@@ -218,7 +218,7 @@ scope_memory_high = ""                             # e.g. "24G" - leave "" for i
 driver        = "pipewire"                         # "pipewire", "pulseaudio", "alsa"
 quantum       = 1024                               # 1024/48000 = 21.3 ms (master_runner.py:1829)
 rate          = 48000
-openal_driver = "pipewire"
+openal_driver = ""  # auto; set only when supported by the game
 
 # ------------------------------------------------------------------------------
 # 9. Gamepad & Input Mapping [input]

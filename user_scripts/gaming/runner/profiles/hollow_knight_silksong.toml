@@ -32,7 +32,6 @@ wayland_native = true
 
 [graphics.gamescope]
 enabled = false
-allow_tearing = true
 
 [performance]
 gamemode = true

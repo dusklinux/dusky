@@ -44,7 +44,6 @@ prefer_xwayland = true  # Unity 2017 X11-only, needs XWayland — system xwaylan
 [graphics.gamescope]
 enabled = false
 mode = "embedded"
-allow_tearing = true
 
 [performance]
 gamemode = true

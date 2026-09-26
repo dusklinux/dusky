@@ -25,7 +25,7 @@ working_dir = ""
 # No DwarFS - this is a loose FitGirl repack (fg-*.bin + setup.exe)
 # Do not set dwarfs_image / overlay_dir here
 
-[paths.arguments]
+arguments = []
 # FitGirl installer args are interactive; leave empty. Add "/SILENT" only for unattended testing.
 
 [runtime]

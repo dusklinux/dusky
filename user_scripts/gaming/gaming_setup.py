@@ -7,12 +7,11 @@ Design Principles:
 1. Declarative & Easily Configurable: All package lists, GPU drivers, Flatpaks, and tweaks
    are defined in clean catalogs at the top of the file for instant customization.
 2. Intelligent Hardware Auto-Detection: Automatically resolves GPU matrices (AMD, Intel, NVIDIA, Hybrid),
-   primary display adapter vs 3D render offload (boot_vga), virtualized GPUs (VirtIO/QEMU),
+   boot display adapter (boot_vga), virtualized GPUs (VirtIO/QEMU),
    and CPU microarchitecture tiers (x86-64-v3 / v4).
 3. Flexible Packaging: Instant pre-compiled binaries (-bin) OR Native CPU Build (-march=native -O3).
-4. Pure Wayland Pipeline: Zero legacy Xorg bloat, native Wayland sandbox sockets, Gamescope CAP_SYS_NICE setcap,
-   and NVIDIA DRM modesetting verification.
-5. High Performance: Kernel 7.x sysctl tuning (vm.max_map_count=2147483642, split-lock mitigation disabled).
+4. Wayland Pipeline: Native Wayland sandbox sockets, Gamescope, and NVIDIA DRM modesetting checks.
+5. Performance: Optional kernel sysctl tuning with a practical vm.max_map_count floor.
 6. Desktop Integration: Native desktop notifications (Wayland DBus session aware) & instant launcher icon bridging.
 """
 
@@ -20,22 +19,25 @@ import argparse
 import glob
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from contextlib import suppress
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 # ==============================================================================
 # 1. DECLARATIVE CONFIGURATION CATALOGS (Easily add / remove packages here)
 # ==============================================================================
 
 # Core Native Package Categories
-PACKAGE_CATALOG: Dict[str, Dict[str, any]] = {
+PACKAGE_CATALOG: Dict[str, Dict[str, Any]] = {
     "core_clients": {
         "title": "Core Gaming Clients",
         "description": "Native Steam, Lutris, and Flatpak package manager",
@@ -94,7 +96,7 @@ GPU_VENDOR_MAP: Dict[str, str] = {
 }
 
 # GPU Driver Packages Matrix
-GPU_DRIVER_CATALOG: Dict[str, Dict[str, any]] = {
+GPU_DRIVER_CATALOG: Dict[str, Dict[str, Any]] = {
     "amd": {
         "name": "AMD (Radeon)",
         "packages": [
@@ -153,7 +155,7 @@ GPU_DRIVER_CATALOG: Dict[str, Dict[str, any]] = {
 }
 
 # Flatpak Applications Catalog
-FLATPAK_APP_CATALOG: List[Dict[str, any]] = [
+FLATPAK_APP_CATALOG: List[Dict[str, Any]] = [
     {"name": "Bottles", "id": "com.usebottles.bottles", "wayland": True, "host_fs": True},
     {"name": "Flatseal", "id": "com.github.tchx84.Flatseal", "wayland": False, "host_fs": False},
     {"name": "ProtonPlus", "id": "com.vysp3r.ProtonPlus", "wayland": False, "host_fs": False},
@@ -162,20 +164,12 @@ FLATPAK_APP_CATALOG: List[Dict[str, any]] = [
 ]
 
 # Flatpak Vulkan Runtime Layers
-FLATPAK_LAYER_CATALOG: List[str] = [
-    "org.freedesktop.Platform.VulkanLayer.MangoHud//25.08",
-    "org.freedesktop.Platform.VulkanLayer.MangoHud//24.08",
-    "org.freedesktop.Platform.VulkanLayer.gamescope//25.08",
-    "org.freedesktop.Platform.VulkanLayer.gamescope//24.08"
-]
+FLATPAK_VULKAN_LAYERS = ("MangoHud", "gamescope")
 
 # Kernel & System Tuning Configuration
 SYSCTL_GAMING_CONF = """# Gaming performance & stability optimizations for Arch Linux / Kernel 7.x+
-# Memory mapping limit for 64-bit Wine/Proton games (prevents crashes in Star Citizen, UE5, Hogwarts Legacy)
-vm.max_map_count = 2147483642
-
-# Prevent micro-stuttering caused by kernel split-lock penalty mitigation in modern games
-kernel.split_lock_mitigate = 0
+# Minimum memory mapping limit for games with many mappings.
+vm.max_map_count = 1048576
 """
 
 LIMITS_GAMING_CONF = """# File descriptor limits for Wine/Proton ESYNC & FSYNC
@@ -195,24 +189,8 @@ try:
     from rich.table import Table
     from rich.text import Text
 except ImportError:
-    print("\n[INFO] Initializing setup environment: 'python-rich' is being loaded...")
-    if os.geteuid() != 0 and shutil.which("pacman") and shutil.which("sudo"):
-        try:
-            print("Installing python-rich for modern terminal interface...")
-            subprocess.run(["sudo", "pacman", "-S", "--needed", "--noconfirm", "python-rich"], check=True)
-            from rich.console import Console
-            from rich.panel import Panel
-            from rich.prompt import Confirm, Prompt
-            from rich.table import Table
-            from rich.text import Text
-        except Exception:
-            print("\n[CRITICAL ERROR] The 'rich' library is not installed.")
-            print("Please install it: sudo pacman -S python-rich")
-            sys.exit(1)
-    else:
-        print("\n[CRITICAL ERROR] The 'rich' library is not installed.")
-        print("Please install it: sudo pacman -S python-rich")
-        sys.exit(1)
+    print("The 'rich' library is required. Install it with: sudo pacman -Syu python-rich", file=sys.stderr)
+    sys.exit(1)
 
 console = Console()
 
@@ -224,7 +202,7 @@ class GPUInfo:
     vendor_id: str
     vendor_name: str
     device_name: str
-    boot_vga: int  # 1 = primary boot VGA / display controller, 0 = secondary / 3D render offload
+    boot_vga: int  # 1 = firmware boot display; 0 does not imply render-only
     driver: str
 
 
@@ -241,6 +219,7 @@ class SelectedModules:
     gpu_drivers: bool = True
     sysctl_tuning: bool = True
     dwarfs_mode: str = "bin"  # "bin", "native", "source", or "skip"
+    dwarfs_reinstall: bool = False
     protonup_mode: str = "bin"  # "bin", "source", "flatpak", or "skip"
     flatpak_apps: bool = True
     launcher_bridge: bool = True
@@ -259,6 +238,7 @@ class SetupContext:
         self.modules = modules or SelectedModules()
         self.stop_sudo_event = threading.Event()
         self.sudo_thread: Optional[threading.Thread] = None
+        self.failures: List[str] = []
 
 
 def send_notification(
@@ -311,14 +291,15 @@ def keep_sudo_alive(stop_event: threading.Event):
     """Refreshes sudo credential timestamp cache in the background every 90 seconds."""
     while not stop_event.is_set():
         try:
-            subprocess.run(["sudo", "-v"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "-n", "-v"], check=False, timeout=5,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
         stop_event.wait(90)
 
 
 def check_root_and_locks(ctx: SetupContext):
-    """Ensure non-root execution and intelligently check/manage pacman database locks."""
+    """Never remove pacman's lock while another process could acquire it."""
     if os.geteuid() == 0:
         console.print("[bold red]CRITICAL ERROR: Do not run this script as root.[/bold red]")
         console.print("Run it as your normal user. Sudo will be invoked securely with proper permissions.")
@@ -326,56 +307,25 @@ def check_root_and_locks(ctx: SetupContext):
 
     db_lck = Path("/var/lib/pacman/db.lck")
     if db_lck.exists():
-        console.print(f"[bold yellow]Notice: Pacman lock file exists at {db_lck}[/bold yellow]")
-        lock_holder = None
-        if shutil.which("fuser"):
-            try:
-                res = subprocess.run(["fuser", str(db_lck)], capture_output=True, text=True)
-                if res.stdout.strip():
-                    lock_holder = res.stdout.strip()
-            except Exception:
-                pass
-
-        active_mgrs = []
-        try:
-            res = subprocess.run(["pgrep", "-a", "pacman|yay|paru|pamac"], capture_output=True, text=True)
-            if res.stdout.strip():
-                active_mgrs = res.stdout.strip().splitlines()
-        except Exception:
-            pass
-
-        if lock_holder or active_mgrs:
-            console.print("[bold red]CRITICAL: Another package manager is actively running.[/bold red]")
-            if active_mgrs:
-                console.print(f"Active processes:\n[dim]{chr(10).join(active_mgrs)}[/dim]")
-            console.print("Please wait for ongoing package operations to finish before running this installer.")
-            sys.exit(1)
-        else:
-            console.print("[yellow]No active package manager detected. The lock appears to be stale.[/yellow]")
-            if ctx.auto_yes or Confirm.ask("[bold cyan]Remove stale pacman lock file and continue?[/bold cyan]", default=True):
-                if ctx.dry_run:
-                    console.print("[dim][DRY RUN] Would execute: sudo rm -f /var/lib/pacman/db.lck[/dim]")
-                else:
-                    subprocess.run(["sudo", "rm", "-f", str(db_lck)], check=True)
-                    console.print("[bold green]✔ Stale lock removed successfully.[/bold green]")
-            else:
-                console.print("[red]Aborted by user.[/red]")
-                sys.exit(1)
+        raise RuntimeError(f"Pacman database is locked at {db_lck}; inspect the owning package manager before retrying")
 
 
 def run_command(
     ctx: SetupContext,
-    command: str,
+    command: Sequence[str],
     description: str,
     critical: bool = True,
     show_command: bool = True,
     retries: int = 1,
     extra_env: Optional[Dict[str, str]] = None
 ) -> bool:
-    """Executes a shell command natively with rich output, dry-run simulation, and retry support."""
+    """Run an argument vector with dry-run simulation and retry support."""
+    if isinstance(command, (str, bytes)) or not command or \
+            not all(isinstance(part, str) for part in command):
+        raise TypeError("run_command requires a nonempty sequence of string arguments")
     console.print(f"\n[bold cyan]Task:[/bold cyan] {description}")
     if show_command:
-        console.print(f"[dim]{command}[/dim]")
+        console.print(f"[dim]{shlex.join(command)}[/dim]")
 
     if ctx.dry_run:
         console.print("[dim][DRY RUN] Skipped actual execution.[/dim]")
@@ -384,7 +334,10 @@ def run_command(
     if not ctx.auto_yes:
         if not Confirm.ask("[bold yellow]Execute this step?[/bold yellow]", default=True):
             console.print("[dim]Skipped by user.[/dim]")
-            return True
+            if critical:
+                raise RuntimeError(f"Required step was skipped: {description}")
+            ctx.failures.append(f"Skipped: {description}")
+            return False
 
     console.print("[dim]" + "─" * 60 + "[/dim]")
     env = os.environ.copy()
@@ -395,7 +348,7 @@ def run_command(
         try:
             if attempt > 1:
                 console.print(f"[yellow]Retrying task (attempt {attempt}/{retries})...[/yellow]")
-            result = subprocess.run(command, shell=True, env=env)
+            result = subprocess.run(list(command), env=env)
             console.print("[dim]" + "─" * 60 + "[/dim]")
 
             if result.returncode == 0:
@@ -410,6 +363,7 @@ def run_command(
                     console.print("[bold red]A critical step failed. Aborting installer to maintain system stability.[/bold red]")
                     send_notification("Gaming Setup Failed", f"Error executing: {description}", urgency="critical")
                     sys.exit(1)
+                ctx.failures.append(description)
                 return False
         except Exception as e:
             console.print(f"[bold red]✘ Execution error: {e}[/bold red]")
@@ -419,6 +373,7 @@ def run_command(
             if critical:
                 send_notification("Gaming Setup Error", f"Fatal error: {e}", urgency="critical")
                 sys.exit(1)
+            ctx.failures.append(description)
             return False
     return False
 
@@ -427,9 +382,10 @@ def run_command(
 # 3. PACMAN & HARDWARE DETECTION ENGINES
 # ==============================================================================
 
-def enable_multilib_and_optimizations(ctx: SetupContext) -> bool:
+def enable_multilib_and_optimizations(
+    ctx: SetupContext, pacman_conf: Path = Path("/etc/pacman.conf")
+) -> bool:
     """Idempotently configures /etc/pacman.conf with multilib, ParallelDownloads, and timeout protection."""
-    pacman_conf = Path("/etc/pacman.conf")
     if not pacman_conf.exists():
         console.print("[bold red]Critical system file /etc/pacman.conf not found![/bold red]")
         sys.exit(1)
@@ -505,22 +461,33 @@ def enable_multilib_and_optimizations(ctx: SetupContext) -> bool:
         new_lines.append(line)
 
     if options_passed and not has_disable_timeout:
-        new_lines.insert(3, "DisableDownloadTimeout")
+        option_index = next(i for i, line in enumerate(new_lines) if line.strip() == "[options]")
+        new_lines.insert(option_index + 1, "DisableDownloadTimeout")
         modified = True
 
     if not multilib_ready and not found_multilib_comment and not multilib_active:
         new_lines.extend(["", "[multilib]", "Include = /etc/pacman.d/mirrorlist"])
         modified = True
 
+    if multilib_active and not include_active:
+        start = new_lines.index("[multilib]")
+        end = next((i for i in range(start + 1, len(new_lines))
+                    if new_lines[i].strip().startswith("[")), len(new_lines))
+        new_lines.insert(end, "Include = /etc/pacman.d/mirrorlist")
+        modified = True
+
     if modified:
-        temp_conf = Path("/tmp/pacman_gaming.conf")
-        temp_conf.write_text("\n".join(new_lines) + "\n")
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_cmd = f"sudo cp /etc/pacman.conf /etc/pacman.conf.bak.{timestamp}"
-        apply_cmd = f"sudo install -m 644 {temp_conf} /etc/pacman.conf && rm -f {temp_conf}"
-
-        run_command(ctx, f"{backup_cmd} && {apply_cmd}", "Configure pacman.conf (enable [multilib], Color, ParallelDownloads, & DisableDownloadTimeout)", show_command=False)
+        if ctx.dry_run:
+            console.print("[dim][DRY RUN] Would update /etc/pacman.conf[/dim]")
+            return True
+        with tempfile.TemporaryDirectory(prefix="gaming-pacman-") as tmp:
+            temp_conf = Path(tmp) / "pacman.conf"
+            temp_conf.write_text("\n".join(new_lines) + "\n")
+            backup = f"/etc/pacman.conf.bak.{datetime.now():%Y%m%d_%H%M%S}"
+            run_command(ctx, ["sudo", "cp", "--", str(pacman_conf), backup],
+                        "Back up pacman.conf", show_command=False)
+            run_command(ctx, ["sudo", "install", "-m", "644", "--", str(temp_conf), str(pacman_conf)],
+                        "Configure pacman.conf", show_command=False)
         return True
 
     return False
@@ -542,22 +509,26 @@ def detect_cpu_info() -> CPUInfo:
     """Detects CPU model name, logical thread count, and x86-64 microarchitecture tier (v1-v4)."""
     cores = os.cpu_count() or 4
     model_name = "Generic x86-64 CPU"
-    x86_ver = 3
+    x86_ver = 1
 
     try:
         flags_txt = Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace")
-        flags: set[str] = set()
+        per_cpu_flags: List[Set[str]] = []
         for line in flags_txt.splitlines():
             if line.startswith("model name"):
                 model_name = line.split(":", 1)[1].strip()
             elif line.startswith("flags"):
-                flags.update(line.split(":", 1)[1].split())
+                per_cpu_flags.append(set(line.split(":", 1)[1].split()))
+
+        flags = set.intersection(*per_cpu_flags) if per_cpu_flags else set()
 
         v4_flags = {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}
-        v3_flags = {"avx2", "bmi1", "bmi2", "f16c", "fma", "movbe"}
-        v2_flags = {"sse4_2", "ssse3", "popcnt", "cx16"}
+        v2_flags = {"cx16", "lahf_lm", "popcnt", "sse4_1", "sse4_2", "ssse3"}
+        v3_flags = v2_flags | {"avx", "avx2", "bmi1", "bmi2", "f16c", "fma",
+                              "movbe", "xsave", "abm"}
+        v4_flags |= v3_flags
 
-        if v4_flags.issubset(flags):
+        if flags and v4_flags.issubset(flags):
             x86_ver = 4
         elif v3_flags.issubset(flags):
             x86_ver = 3
@@ -587,8 +558,8 @@ def nvidia_modeset_confirmed(cards: Optional[List[GPUInfo]] = None) -> bool:
     if p.exists():
         try:
             val = p.read_text().strip().lower()
-            if val in ("y", "1"):
-                return True
+            if val in ("y", "1", "n", "0"):
+                return val in ("y", "1")
         except PermissionError:
             try:
                 res = subprocess.run(["sudo", "-n", "cat", str(p)], capture_output=True, text=True)
@@ -625,7 +596,7 @@ def nvidia_modeset_confirmed(cards: Optional[List[GPUInfo]] = None) -> bool:
 def detect_gpus() -> List[GPUInfo]:
     """
     Intelligently auto-detects all GPUs present on the system via DRM card nodes and lspci.
-    Identifies vendor, PCI slot, boot_vga status (Primary Display vs 3D Offload), and active driver.
+    Identifies vendor, PCI slot, firmware boot display status, and active driver.
     """
     gpus: List[GPUInfo] = []
     seen_slots: Set[str] = set()
@@ -760,13 +731,7 @@ def get_gpu_packages(detected_gpus: List[GPUInfo]) -> Tuple[List[str], str]:
     has_nvidia = any("nvidia" in g.vendor_name.lower() or g.vendor_id == "0x10de" for g in detected_gpus)
     has_vm = any("(vm)" in g.vendor_name.lower() for g in detected_gpus)
 
-    if has_amd and has_nvidia:
-        pkgs.update(GPU_DRIVER_CATALOG["hybrid_nvidia_amd"]["packages"])
-        descriptions.append(GPU_DRIVER_CATALOG["hybrid_nvidia_amd"]["description"])
-    elif has_intel and has_nvidia:
-        pkgs.update(GPU_DRIVER_CATALOG["hybrid_nvidia_intel"]["packages"])
-        descriptions.append(GPU_DRIVER_CATALOG["hybrid_nvidia_intel"]["description"])
-    elif has_vm:
+    if has_vm and not (has_amd or has_intel or has_nvidia):
         pkgs.update(GPU_DRIVER_CATALOG["virtual"]["packages"])
         descriptions.append(GPU_DRIVER_CATALOG["virtual"]["description"])
     else:
@@ -779,6 +744,8 @@ def get_gpu_packages(detected_gpus: List[GPUInfo]) -> Tuple[List[str], str]:
         if has_nvidia:
             pkgs.update(GPU_DRIVER_CATALOG["nvidia"]["packages"])
             descriptions.append(GPU_DRIVER_CATALOG["nvidia"]["description"])
+        if has_nvidia and (has_amd or has_intel):
+            pkgs.add("nvidia-prime")
 
     return sorted(list(pkgs)), ", ".join(descriptions)
 
@@ -805,7 +772,7 @@ def configure_gpu_drivers(ctx: SetupContext):
 
     if detected_gpus:
         for g in detected_gpus:
-            role_badge = "[bold green]Primary Display (boot_vga)[/bold green]" if g.boot_vga == 1 else "[cyan]3D Render Offload[/cyan]"
+            role_badge = "[bold green]Boot VGA[/bold green]" if g.boot_vga == 1 else "[cyan]Other display GPU[/cyan]"
             table.add_row(g.dev_node, g.pci_slot, g.vendor_name, g.device_name[:45], role_badge, g.driver or "Unknown")
         console.print(table)
     else:
@@ -851,7 +818,10 @@ def configure_gpu_drivers(ctx: SetupContext):
         target_pkgs = GPU_DRIVER_CATALOG["intel"]["packages"]
         target_desc = GPU_DRIVER_CATALOG["intel"]["description"]
     elif gpu_choice == ("5" if (detected_gpus and auto_pkgs) else "4"):
-        target_pkgs = GPU_DRIVER_CATALOG["hybrid_nvidia_intel"]["packages"]
+        target_pkgs = GPU_DRIVER_CATALOG[
+            "hybrid_nvidia_amd" if any(g.vendor_id == "0x1002" for g in detected_gpus)
+            else "hybrid_nvidia_intel"
+        ]["packages"]
         target_desc = "Install Hybrid Multi-GPU drivers (Intel/AMD + NVIDIA + prime-run offload)"
     else:
         console.print("[dim]Skipping GPU driver installation.[/dim]")
@@ -861,7 +831,7 @@ def configure_gpu_drivers(ctx: SetupContext):
         missing_pkgs = filter_missing_packages(target_pkgs)
         if missing_pkgs:
             pkgs_str = " ".join(missing_pkgs)
-            run_command(ctx, f"sudo pacman -S --needed --noconfirm {pkgs_str}", f"{target_desc} ({len(missing_pkgs)} missing)", retries=3)
+            run_command(ctx, ["sudo", "pacman", "-S", "--needed", "--noconfirm", "--", *missing_pkgs], f"{target_desc} ({len(missing_pkgs)} missing)", retries=3)
         else:
             console.print(f"[bold green]✔ All {len(target_pkgs)} required GPU driver packages are already installed.[/bold green]")
 
@@ -877,7 +847,7 @@ def configure_gpu_drivers(ctx: SetupContext):
 
 
 def apply_kernel_and_sysctl_optimizations(ctx: SetupContext):
-    """Applies kernel 7.x gaming sysctl parameters (vm.max_map_count, split_lock_mitigate) and nofile limits."""
+    """Raise the mapping limit when needed and install login file limits."""
     if not ctx.modules.sysctl_tuning:
         console.print("[dim]Skipping kernel sysctl tweaks as configured.[/dim]")
         return
@@ -887,27 +857,23 @@ def apply_kernel_and_sysctl_optimizations(ctx: SetupContext):
     sysctl_file = Path("/etc/sysctl.d/99-gaming.conf")
     limits_file = Path("/etc/security/limits.d/99-gaming.conf")
 
-    temp_sysctl = Path("/tmp/99-gaming-sysctl.conf")
-    temp_limits = Path("/tmp/99-gaming-limits.conf")
-
-    temp_sysctl.write_text(SYSCTL_GAMING_CONF)
-    temp_limits.write_text(LIMITS_GAMING_CONF)
-
-    cmd = (
-        f"sudo install -m 644 {temp_sysctl} {sysctl_file} && "
-        f"sudo install -m 644 {temp_limits} {limits_file} && "
-        f"rm -f {temp_sysctl} {temp_limits} && "
-        f"sudo sysctl --system && "
-        f"sudo sysctl -p {sysctl_file}"
-    )
-
-    run_command(
-        ctx,
-        cmd,
-        "Apply gaming sysctl tweaks (vm.max_map_count=2147483642, split_lock_mitigate=0, and nofile limits)",
-        critical=False,
-        show_command=False
-    )
+    if ctx.dry_run:
+        console.print("[dim][DRY RUN] Would install sysctl and limits configuration.[/dim]")
+        return
+    with tempfile.TemporaryDirectory(prefix="gaming-tuning-") as tmp:
+        temp_sysctl = Path(tmp) / "sysctl.conf"
+        temp_limits = Path(tmp) / "limits.conf"
+        current_map = 0
+        with suppress(OSError, ValueError):
+            current_map = int(Path("/proc/sys/vm/max_map_count").read_text().strip())
+        temp_sysctl.write_text(SYSCTL_GAMING_CONF.replace("1048576", str(max(1048576, current_map))))
+        temp_limits.write_text(LIMITS_GAMING_CONF)
+        run_command(ctx, ["sudo", "install", "-m", "644", "--", str(temp_sysctl), str(sysctl_file)],
+                    "Install gaming sysctl settings")
+        run_command(ctx, ["sudo", "install", "-m", "644", "--", str(temp_limits), str(limits_file)],
+                    "Install gaming login limits")
+        run_command(ctx, ["sudo", "sysctl", "-p", str(sysctl_file)],
+                    "Apply gaming sysctl settings", critical=False)
 
 
 def install_native_gaming_stack(ctx: SetupContext):
@@ -927,7 +893,7 @@ def install_native_gaming_stack(ctx: SetupContext):
             pkgs_str = " ".join(missing_native)
             run_command(
                 ctx,
-                f"sudo pacman -S --needed --noconfirm {pkgs_str}",
+                ["sudo", "pacman", "-S", "--needed", "--noconfirm", "--", *missing_native],
                 f"Install missing native gaming packages and runtime libraries ({len(missing_native)} missing).",
                 retries=3
             )
@@ -943,19 +909,10 @@ def install_native_gaming_stack(ctx: SetupContext):
             pass
 
     if "performance_tools" in ctx.modules.categories:
-        # Enable Gamescope real-time scheduling capability (CAP_SYS_NICE) for low-latency Wayland frame pacing
-        if shutil.which("setcap") and Path("/usr/bin/gamescope").exists():
-            run_command(
-                ctx,
-                "sudo setcap 'CAP_SYS_NICE=eip' /usr/bin/gamescope",
-                "Grant Gamescope CAP_SYS_NICE capability for real-time frame pacing under Wayland",
-                critical=False
-            )
-
         # Enable GameMode daemon service for the current user session
         run_command(
             ctx,
-            "systemctl --user enable --now gamemoded.service",
+            ["systemctl", "--user", "enable", "--now", "gamemoded.service"],
             "Enable and start Feral GameMode user daemon",
             critical=False
         )
@@ -974,7 +931,7 @@ def configure_dwarfs(ctx: SetupContext):
         console.print("[dim]Skipping DwarFS installation.[/dim]")
         return
 
-    if shutil.which("dwarfs"):
+    if shutil.which("dwarfs") and mode == "bin" and not ctx.modules.dwarfs_reinstall:
         console.print("[bold green]✔ DwarFS is already installed on the system.[/bold green]")
         return
 
@@ -988,27 +945,32 @@ def configure_dwarfs(ctx: SetupContext):
     if mode == "bin":
         run_command(
             ctx,
-            f"{aur_helper} -S --needed --noconfirm dwarfs-bin || {aur_helper} -S --needed --noconfirm dwarfs",
+            [aur_helper, "-S", "--rebuild", "--noconfirm", "dwarfs-bin"],
             "Install pre-compiled DwarFS binary package (instant download, zero compile time)",
             critical=False
         )
     elif mode == "native":
-        march_flags = {
-            "CFLAGS": "-march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fcf-protection",
-            "CXXFLAGS": "-march=native -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fcf-protection",
-            "MAKEFLAGS": f"-j{cpu.cores}"
-        }
-        run_command(
-            ctx,
-            f"{aur_helper} -S --needed --noconfirm dwarfs",
-            f"Compile DwarFS targeting {cpu.model} (x86-64-v{cpu.x86_version}, -march=native -O3 on {cpu.cores} threads)",
-            critical=False,
-            extra_env=march_flags
-        )
+        if ctx.dry_run:
+            run_command(ctx, [aur_helper, "-S", "--rebuild", "--noconfirm", "dwarfs"],
+                        f"Rebuild DwarFS for {cpu.model} with a temporary makepkg configuration",
+                        critical=False)
+        else:
+            with tempfile.TemporaryDirectory(prefix="gaming-makepkg-") as td:
+                conf = Path(td) / "makepkg.conf"
+                conf.write_text(Path("/etc/makepkg.conf").read_text(encoding="utf-8") +
+                                '\nCFLAGS="$CFLAGS -march=native -O3"\n' +
+                                'CXXFLAGS="$CXXFLAGS -march=native -O3"\n' +
+                                f'MAKEFLAGS="-j{cpu.cores}"\n', encoding="utf-8")
+                helper_flags = (["--makepkgconf", str(conf)] if aur_helper == "yay"
+                                else ["--mflags", f"--config {conf}"])
+                run_command(ctx, [aur_helper, "-S", "--rebuild", "--noconfirm",
+                                  *helper_flags, "dwarfs"],
+                            f"Rebuild DwarFS for {cpu.model} using -march=native -O3",
+                            critical=False)
     else:
         run_command(
             ctx,
-            f"{aur_helper} -S --needed --noconfirm dwarfs",
+            [aur_helper, "-S", "--rebuild", "--noconfirm", "dwarfs"],
             "Compile DwarFS tools from AUR",
             critical=False
         )
@@ -1025,7 +987,16 @@ def configure_protonup(ctx: SetupContext):
     if mode == "skip":
         return
 
-    if shutil.which("protonup-qt") or shutil.which("pupgui2"):
+    if mode == "flatpak":
+        if "net.davidotek.pupgui2" in get_installed_flatpaks():
+            console.print("[bold green]✔ ProtonUp-Qt Flatpak is already installed.[/bold green]")
+            return
+        run_command(ctx, ["flatpak", "install", "--user", "-y", "--noninteractive",
+                          "flathub", "net.davidotek.pupgui2"],
+                    "Install ProtonUp-Qt Flatpak", critical=False)
+        return
+
+    if mode == "bin" and (shutil.which("protonup-qt") or shutil.which("pupgui2")):
         console.print("[bold green]✔ ProtonUp-Qt is already installed on the system.[/bold green]")
         return
 
@@ -1035,10 +1006,10 @@ def configure_protonup(ctx: SetupContext):
         return
 
     console.print("\n[bold cyan]Installing ProtonUp-Qt (GE-Proton & Wine-GE manager for Lutris)...[/bold cyan]")
-    # Explicitly target protonup-qt-bin to avoid interactive provider selection (3 providers in AUR)
+    target = "protonup-qt" if mode == "source" else "protonup-qt-bin"
     run_command(
         ctx,
-        f"{aur_helper} -S --needed --noconfirm protonup-qt-bin || {aur_helper} -S --needed --noconfirm protonup-qt",
+        [aur_helper, "-S", "--rebuild", "--noconfirm", target],
         "Install ProtonUp-Qt (Proton-GE / Lutris-GE runner downloader) via AUR",
         critical=False
     )
@@ -1062,7 +1033,7 @@ def configure_dxvk_vkd3d(ctx: SetupContext):
             pkgs_str = " ".join(missing)
             run_command(
                 ctx,
-                f"{aur_helper} -S --needed --noconfirm {pkgs_str}",
+                [aur_helper, "-S", "--needed", "--noconfirm", "--", *missing],
                 f"Install Direct3D-to-Vulkan translation libraries ({pkgs_str}) via AUR",
                 critical=False
             )
@@ -1071,14 +1042,6 @@ def configure_dxvk_vkd3d(ctx: SetupContext):
     else:
         console.print("[bold green]✔ Direct3D-to-Vulkan translation libraries (DXVK & VKD3D-Proton) are already installed.[/bold green]")
 
-    # Ensure compatibility symlinks (/usr/share/vkd3d -> /usr/share/vkd3d-proton and x32 -> x86)
-    if not ctx.dry_run and Path("/usr/share/vkd3d-proton").is_dir():
-        if not Path("/usr/share/vkd3d").exists():
-            subprocess.run(["sudo", "ln", "-s", "/usr/share/vkd3d-proton", "/usr/share/vkd3d"], capture_output=True)
-        if Path("/usr/share/vkd3d-proton/x86").is_dir() and not Path("/usr/share/vkd3d-proton/x32").exists():
-            subprocess.run(["sudo", "ln", "-s", "x86", "/usr/share/vkd3d-proton/x32"], capture_output=True)
-
-
 def configure_flatpak_ecosystem(ctx: SetupContext):
     """Configures Flathub remotes, installs gaming Flatpaks, Vulkan layers, and native Wayland sandbox overrides."""
     if not ctx.modules.flatpak_apps:
@@ -1086,93 +1049,128 @@ def configure_flatpak_ecosystem(ctx: SetupContext):
         return
 
     # 1. Add Flathub remotes for both user and system scope
-    run_command(
-        ctx,
-        "flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo && "
-        "sudo flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo",
-        "Initialize Flathub remote repositories (User & System scope)."
-    )
+    for scope in ("--user", "--system"):
+        run_command(ctx, (["sudo"] if scope == "--system" else []) +
+                    ["flatpak", "remote-add", scope, "--if-not-exists", "flathub",
+                     "https://dl.flathub.org/repo/flathub.flatpakrepo"],
+                    f"Initialize Flathub remote ({scope[2:]} scope)")
+
+    # Flatpak selects matching GL/GL32 driver extensions during an update.
+    for scope in ("--system", "--user"):
+        run_command(ctx, (["sudo"] if scope == "--system" else []) +
+                    ["flatpak", "update", scope, "-y", "--noninteractive"],
+                    f"Update {scope[2:]} Flatpak apps, runtimes, and graphics drivers",
+                    critical=False)
+    ensure_flatpak_graphics_drivers(ctx)
 
     # 2. Install Flatpak apps from FLATPAK_APP_CATALOG
-    installed_apps = set(get_installed_flatpaks())
+    installed_apps_by_scope = get_flatpak_inventory("--app")
+    installed_apps = set().union(*installed_apps_by_scope.values())
     for app in FLATPAK_APP_CATALOG:
         if app["id"] in installed_apps:
             console.print(f"[bold green]✔ Flatpak application {app['name']} ({app['id']}) is already installed.[/bold green]")
         else:
             run_command(
                 ctx,
-                f"sudo flatpak install --system -y --noninteractive --or-update flathub {app['id']}",
+                ["sudo", "flatpak", "install", "--system", "-y", "--noninteractive",
+                 "--or-update", "flathub", app["id"]],
                 f"Install {app['name']} via Flatpak sandbox.",
                 critical=False
             )
 
     # 3. Install Flatpak MangoHud & Gamescope runtime layers
-    installed_runtimes = get_installed_flatpak_runtimes()
-    for layer_id in FLATPAK_LAYER_CATALOG:
-        if layer_id in installed_runtimes:
-            console.print(f"[bold green]✔ Flatpak Vulkan Layer {layer_id} is already installed.[/bold green]")
-        else:
-            run_command(
-                ctx,
-                f"sudo flatpak install --system -y --noninteractive --or-update flathub {layer_id}",
-                f"Install Flatpak Vulkan Layer {layer_id}.",
-                critical=False
-            )
+    installed_runtimes = get_flatpak_inventory("--runtime")
+    for scope, refs in installed_runtimes.items():
+        branches = {ref.partition("//")[2] for ref in refs
+                    if ref.startswith("org.freedesktop.Platform//")}
+        for branch in sorted(branches):
+            for name in FLATPAK_VULKAN_LAYERS:
+                layer_id = f"org.freedesktop.Platform.VulkanLayer.{name}//{branch}"
+                if layer_id in refs:
+                    continue
+                run_command(ctx, (["sudo"] if scope == "--system" else []) +
+                            ["flatpak", "install", scope, "-y", "--noninteractive",
+                             "--or-update", "flathub", layer_id],
+                            f"Install {scope[2:]} Flatpak Vulkan Layer {layer_id}",
+                            critical=False)
 
     # 4. Configure native Wayland sockets and host filesystem overrides for gaming Flatpaks
-    wayland_overrides = []
     for app in FLATPAK_APP_CATALOG:
+        permissions = []
         if app.get("wayland"):
-            wayland_overrides.append(f"sudo flatpak override --system --socket=wayland --socket=fallback-x11 --filesystem=host {app['id']}")
+            permissions.extend(("--socket=wayland", "--socket=fallback-x11"))
+        if app.get("host_fs"):
+            permissions.append("--filesystem=host")
+        if not permissions:
+            continue
+        for scope, refs in installed_apps_by_scope.items():
+            if app["id"] not in refs and not (scope == "--system" and app["id"] not in installed_apps):
+                continue
+            run_command(ctx, (["sudo"] if scope == "--system" else []) +
+                        ["flatpak", "override", scope, *permissions, app["id"]],
+                        f"Set {scope[2:]} Flatpak permissions for {app['name']}",
+                        critical=False)
 
-    if wayland_overrides:
-        run_command(
-            ctx,
-            " && ".join(wayland_overrides),
-            "Grant Flatpak games native Wayland sockets and host filesystem permissions.",
-            critical=False
-        )
+
+def get_flatpak_inventory(kind: str) -> Dict[str, Set[str]]:
+    """Return installed refs by installation scope, preserving runtime branches."""
+    result: Dict[str, Set[str]] = {"--system": set(), "--user": set()}
+    for scope in result:
+        query = ["flatpak", "list", scope, kind,
+                 "--columns=application,branch" if kind == "--runtime" else "--columns=application"]
+        try:
+            cp = subprocess.run(query, capture_output=True, text=True, timeout=15, check=True)
+            for line in cp.stdout.splitlines():
+                parts = line.split()
+                if parts:
+                    result[scope].add(f"{parts[0]}//{parts[1]}" if kind == "--runtime" and len(parts) > 1
+                                      else parts[0])
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return result
+
+
+def ensure_flatpak_graphics_drivers(ctx: SetupContext) -> None:
+    """Install Flatpak NVIDIA GL extensions matching the active host driver."""
+    try:
+        cp = subprocess.run(["flatpak", "--gl-drivers"], capture_output=True,
+                            text=True, timeout=15, check=True)
+    except (OSError, subprocess.SubprocessError) as exc:
+        ctx.failures.append(f"Could not inspect Flatpak graphics drivers: {exc}")
+        return
+    active = next((line.strip() for line in cp.stdout.splitlines()
+                   if line.strip().startswith("nvidia-")), "")
+    if not active:
+        return
+    installed = get_flatpak_inventory("--runtime")
+    for prefix in ("org.freedesktop.Platform.GL", "org.freedesktop.Platform.GL32"):
+        ref = f"{prefix}.{active}"
+        if any(item.startswith(ref + "//") for item in installed["--system"]):
+            continue
+        run_command(ctx, ["sudo", "flatpak", "install", "--system", "-y",
+                          "--noninteractive", "--or-update", "flathub", ref],
+                    f"Install Flatpak {ref} for the active NVIDIA driver",
+                    critical=False)
 
 
 def get_installed_flatpak_runtimes() -> Set[str]:
     """Dynamically fetches installed Flatpak runtime identifiers (e.g. app_id//branch)."""
-    runtimes: Set[str] = set()
-    for scope_flag in ["--system", "--user"]:
-        try:
-            res = subprocess.run(
-                ["flatpak", "list", scope_flag, "--runtime", "--columns=application,branch"],
-                capture_output=True, text=True
-            )
-            for line in res.stdout.splitlines():
-                parts = line.split()
-                if len(parts) >= 2:
-                    runtimes.add(f"{parts[0]}//{parts[1]}")
-        except Exception:
-            pass
-    return runtimes
+    return set().union(*get_flatpak_inventory("--runtime").values())
 
 
 def get_installed_flatpaks() -> List[str]:
     """Dynamically fetches a list of all installed Flatpak Application IDs across system and user scopes."""
-    apps: Set[str] = set()
-    for scope_flag in ["--system", "--user"]:
-        try:
-            result = subprocess.run(
-                ["flatpak", "list", scope_flag, "--app", "--columns=application"],
-                capture_output=True, text=True, check=True
-            )
-            for line in result.stdout.splitlines():
-                if line.strip():
-                    apps.add(line.strip())
-        except Exception:
-            pass
-    return sorted(list(apps))
+    return sorted(set().union(*get_flatpak_inventory("--app").values()))
 
 
 def integrate_desktop_and_icons(ctx: SetupContext):
     """Bridges Flatpak .desktop files and hicolor application icons into user XDG directories for Wayland launchers."""
     if not ctx.modules.launcher_bridge:
         console.print("[dim]Skipping launcher icon integration as configured.[/dim]")
+        return
+
+    if ctx.dry_run:
+        console.print("[dim][DRY RUN] Would refresh Flatpak desktop entries and icons.[/dim]")
         return
 
     user_apps_dir = Path.home() / ".local/share/applications"
@@ -1291,7 +1289,7 @@ def check_system_installed_status() -> Dict[str, bool]:
 
     try:
         res = subprocess.run(["sysctl", "-n", "vm.max_map_count"], capture_output=True, text=True)
-        status["sysctl"] = int(res.stdout.strip()) >= 2147483642
+        status["sysctl"] = int(res.stdout.strip()) >= 1048576
     except Exception:
         status["sysctl"] = False
 
@@ -1335,7 +1333,7 @@ def run_interactive_menu() -> Tuple[str, SelectedModules]:
     console.print("1. [bold green]Recommended Full Setup[/bold green] (Auto-detects GPU + all gaming tools + fast binary packages)")
     console.print("2. [bold yellow]Custom Component Checklist[/bold yellow] (Select exactly what to install/skip via interactive toggles)")
     console.print("3. [bold cyan]Minimal Core[/bold cyan] (GPU Drivers + Steam + Wine + Kernel Sysctl only)")
-    console.print("4. [bold magenta]Performance Tuning Only[/bold magenta] (Sysctl vm.max_map_count, split-lock mitigate, & GameMode)")
+    console.print("4. [bold magenta]Performance Tuning Only[/bold magenta] (Sysctl vm.max_map_count & GameMode)")
     console.print("5. [bold blue]Maintenance / Icon Refresh[/bold blue] (Sync Flatpak desktop shortcuts, fix symlinks, update caches)")
     console.print("6. [red]Exit[/red]")
 
@@ -1366,7 +1364,7 @@ def run_interactive_menu() -> Tuple[str, SelectedModules]:
                 selected_cats.add(cat_key)
 
         modules.categories = selected_cats
-        modules.sysctl_tuning = Confirm.ask("Apply Kernel 7.x Sysctl Tweaks (vm.max_map_count & split_lock_mitigate)?", default=not sys_status["sysctl"])
+        modules.sysctl_tuning = Confirm.ask("Apply vm.max_map_count and file descriptor limits?", default=not sys_status["sysctl"])
 
         # ProtonUp-Qt handling
         if sys_status["protonup"] or sys_status["flatpak_pupgui"]:
@@ -1381,6 +1379,7 @@ def run_interactive_menu() -> Tuple[str, SelectedModules]:
         if sys_status["dwarfs"]:
             console.print("[dim]DwarFS is already installed.[/dim]")
             if Confirm.ask("Reinstall/Rebuild DwarFS?", default=False):
+                modules.dwarfs_reinstall = True
                 console.print("\n[bold cyan]DwarFS Packaging Mode:[/bold cyan]")
                 console.print("1. Fast Pre-compiled Binary (dwarfs-bin) - Instant download (~2 seconds)")
                 console.print(f"2. CPU Native Architecture Build (-march=native -O3) - Maximized performance on {cpu.cores} threads")
@@ -1416,7 +1415,7 @@ def run_interactive_menu() -> Tuple[str, SelectedModules]:
 
     elif choice == "4":
         modules.gpu_drivers = False
-        modules.categories = set()
+        modules.categories = {"performance_tools"}
         modules.sysctl_tuning = True
         modules.dwarfs_mode = "skip"
         modules.protonup_mode = "skip"
@@ -1447,8 +1446,9 @@ def parse_arguments() -> Tuple[argparse.Namespace, SelectedModules]:
     parser.add_argument("-y", "--yes", action="store_true", help="Non-interactive mode (automatically confirm all recommended steps with fast binary packages).")
     parser.add_argument("-i", "--interactive", action="store_true", help="Open interactive custom component checklist directly.")
     parser.add_argument("-n", "--dry-run", action="store_true", help="Dry run mode (simulate operations without modifying system).")
-    parser.add_argument("--bin", action="store_true", help="Prefer pre-compiled binary packages for AUR tools (e.g. protonup-qt-bin, dwarfs-bin).")
-    parser.add_argument("--native", action="store_true", help="Compile AUR packages from source with host CPU microarchitecture optimizations (-march=native -O3).")
+    build_mode = parser.add_mutually_exclusive_group()
+    build_mode.add_argument("--bin", action="store_true", help="Use pre-compiled DwarFS and ProtonUp-Qt AUR packages.")
+    build_mode.add_argument("--native", action="store_true", help="Build DwarFS for this CPU and ProtonUp-Qt from source.")
     parser.add_argument("--extra-pkgs", nargs="*", default=[], help="Specify additional pacman packages to install.")
     parser.add_argument("--skip-gpu", action="store_true", help="Skip GPU driver detection and installation.")
     parser.add_argument("--skip-wine", action="store_true", help="Skip Wine-staging and 32-bit compatibility runtimes.")
@@ -1484,6 +1484,8 @@ def parse_arguments() -> Tuple[argparse.Namespace, SelectedModules]:
 
     if args.skip_protonup:
         modules.protonup_mode = "skip"
+    elif args.native:
+        modules.protonup_mode = "source"
     else:
         # Default to bin unless explicitly skipped; respects --skip-protonup
         if modules.protonup_mode != "skip":
@@ -1506,8 +1508,34 @@ def main():
         border_style="magenta"
     ))
 
-    if not args.yes and not (args.skip_gpu and args.skip_flatpak and args.skip_sysctl and args.skip_dwarfs and args.skip_protonup):
+    cli_selected = bool(args.extra_pkgs or args.bin or args.native or args.skip_gpu
+                        or args.skip_wine or args.skip_perf or args.skip_flatpak
+                        or args.skip_sysctl or args.skip_dwarfs or args.skip_protonup)
+    if args.interactive or (not args.yes and not cli_selected):
         preset_name, modules = run_interactive_menu()
+        if args.skip_gpu:
+            modules.gpu_drivers = False
+        if args.skip_wine:
+            modules.categories.difference_update({"wine_stack", "runtime_32bit"})
+        if args.skip_perf:
+            modules.categories.discard("performance_tools")
+        if args.skip_flatpak:
+            modules.flatpak_apps = False
+        if args.skip_sysctl:
+            modules.sysctl_tuning = False
+        if args.skip_dwarfs:
+            modules.dwarfs_mode = "skip"
+        elif args.native:
+            modules.dwarfs_mode = "native"
+        elif args.bin:
+            modules.dwarfs_mode = "bin"
+        if args.skip_protonup:
+            modules.protonup_mode = "skip"
+        elif args.native:
+            modules.protonup_mode = "source"
+        elif args.bin:
+            modules.protonup_mode = "bin"
+        modules.extra_packages = args.extra_pkgs
     else:
         modules = cli_modules
 
@@ -1550,12 +1578,12 @@ def main():
             if multilib_changed or missing_any:
                 run_command(
                     ctx,
-                    "sudo pacman -Sy",
-                    "Synchronize package databases and refresh repository metadata.",
+                    ["sudo", "pacman", "-Syu", "--needed", "--noconfirm", "--", *sorted(filter_missing_packages(list(all_target_pkgs)))],
+                    "Upgrade Arch packages coherently and install missing gaming packages.",
                     retries=3
                 )
             else:
-                console.print("[bold green]✔ Package databases are synchronized and all required packages are present.[/bold green]")
+                console.print("[bold green]✔ All required packages are already installed.[/bold green]")
 
         # Step 2: GPU Detection and Driver Installation
         if modules.gpu_drivers:
@@ -1583,7 +1611,7 @@ def main():
             configure_protonup(ctx)
 
         # Step 5c: Direct3D-to-Vulkan Translation Layers (DXVK & VKD3D-Proton)
-        if "wine_stack" in modules.categories or len(modules.categories) > 0:
+        if "wine_stack" in modules.categories:
             console.print("\n[bold cyan]Step 5c: Direct3D-to-Vulkan Translation Layers (DXVK & VKD3D-Proton)[/bold cyan]")
             configure_dxvk_vkd3d(ctx)
 
@@ -1596,23 +1624,33 @@ def main():
         if modules.launcher_bridge:
             with console.status("[bold green]Bridging Flatpak desktop entries and application icons...[/bold green]", spinner="dots"):
                 integrate_desktop_and_icons(ctx)
-            console.print("[bold green]✔ Application launcher and icon integration complete![/bold green]")
+            if not ctx.dry_run:
+                console.print("[bold green]✔ Application launcher and icon integration complete![/bold green]")
 
         # Step 8: Master Game Runner Integration
         console.print("\n[bold cyan]Step 8: Master Game Runner Integration[/bold cyan]")
         integrate_game_runner_shortcuts(ctx)
         report_text = Text()
-        report_text.append("✔ Gaming Architecture Established!\n", style="bold green")
-        report_text.append("Your Arch Linux installation is fully configured for native games, Steam Proton, Lutris, and modern Windows repacks.\n\n", style="white")
+        if ctx.failures:
+            report_text.append("Gaming setup completed with failed or skipped steps.\n", style="bold yellow")
+            for failure in ctx.failures:
+                report_text.append(f"• {failure}\n", style="yellow")
+        else:
+            report_text.append("✔ Selected steps planned.\n" if ctx.dry_run else
+                               "✔ Selected steps completed.\n", style="bold green")
+        if ctx.dry_run:
+            report_text.append("Dry run complete; no installation steps were executed.\n\n", style="white")
+        elif not ctx.failures:
+            report_text.append("Selected installation steps completed successfully.\n\n", style="white")
         report_text.append("Configured Modules:\n", style="bold cyan")
         if modules.gpu_drivers:
             report_text.append("• Pure Wayland Graphics Pipeline: Vulkan 32/64-bit with Hybrid GPU support (prime-run)\n", style="white")
         if "wine_stack" in modules.categories:
             report_text.append("• Wine-Staging with Esync/Fsync and native Wayland staging driver\n", style="white")
         if "performance_tools" in modules.categories:
-            report_text.append("• Gamescope micro-compositor with CAP_SYS_NICE real-time frame pacing & Feral GameMode daemon\n", style="white")
+            report_text.append("• Gamescope, MangoHud, and Feral GameMode packages selected\n", style="white")
         if modules.sysctl_tuning:
-            report_text.append("• vm.max_map_count=2147483642 & kernel.split_lock_mitigate=0 tuned in /etc/sysctl.d/99-gaming.conf\n", style="white")
+            report_text.append("• vm.max_map_count floor and login file descriptor limits selected\n", style="white")
         if "runtime_32bit" in modules.categories:
             report_text.append("• 32-bit Audio/Video codec stack (libpng, libldap, vkd3d, libxtst) + innoextract/7zip/unrar\n", style="white")
         if modules.protonup_mode != "skip":
@@ -1628,16 +1666,18 @@ def main():
         report_text.append("3. FPS Limiting: Use `fps_limiter.py <fps> <command>` for universal low-latency frame capping.\n", style="white")
         report_text.append("4. Native Wayland Proton: Set `PROTON_ENABLE_WAYLAND=1` in Steam launch options for native Wayland surface presentation.\n", style="white")
 
-        console.print(Panel(report_text, title="[bold green]Installation Summary[/bold green]", border_style="green"))
+        console.print(Panel(report_text, title="Installation Summary", border_style="yellow" if ctx.failures else "green"))
 
         # Send completion desktop notification to Wayland/Hyprland session
-        if not ctx.dry_run:
+        if not ctx.dry_run and not ctx.failures:
             send_notification(
                 "Gaming Architecture Ready",
                 "Arch Linux gaming stack configured successfully.",
                 urgency="normal",
                 icon="applications-games"
             )
+        if ctx.failures:
+            raise SystemExit(1)
 
     finally:
         ctx.stop_sudo_event.set()

@@ -28,7 +28,7 @@ type = "native"
 
 [graphics]
 gpu = "auto"
-wayland_native = true
+wayland_native = false  # bundled SDL build supports X11 only
 
 [graphics.gamescope]
 enabled = false

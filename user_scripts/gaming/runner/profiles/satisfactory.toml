@@ -48,7 +48,6 @@ enabled = false
 gamemode = true
 mangohud = false
 fps_limit = 60
-cpu_governor = "performance"
 
 [env]
 VKD3D_DEBUG = "info"

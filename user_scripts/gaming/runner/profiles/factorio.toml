@@ -33,7 +33,6 @@ wayland_native = true
 [graphics.gamescope]
 enabled = false
 mode = "embedded"
-allow_tearing = true
 # Was enabled=true with wayland backend, but Factorio was running via gamescope nested (gamescope-0) with 198% CPU + 1715MiB GPU yet not visible as Hyprland client (only 5 clients, no factorio/gamescope).
 # Tested 2026-08-31: pure Wayland (prefer_xwayland=false, gamescope=false) with LD_PRELOAD Wayland fix correctly shows as com.factorio.Factorio on workspace 9, wayland driver, visible.
 

@@ -10,9 +10,10 @@
 #include <strings.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 
 /*
- * runner_shim: Universal Linux Game Runner I/O & Concurrency Shim
+ * runner_shim: opt-in game-specific I/O workarounds.
  * 
  * 1. Mono / .NET File Sharing Violation Fix:
  *    Many Linux native games built on Mono (FNA, XNA, MonoGame, Unity) call
@@ -20,14 +21,14 @@
  *    and FileShare.Read. When multiple threads stream assets simultaneously,
  *    Mono's internal file_share_table keyed by (dev, ino) raises a false
  *    sharing violation (ERROR_SHARING_VIOLATION 32), crashing the game.
- *    By providing a unique pseudo-inode to Mono's stat checks, each file
+ *    With MASTER_RUNNER_SHIM_MONO_INODES set, a descriptor-specific inode
  *    stream handle is isolated and concurrent reading never conflicts.
  *
  * 2. DwarFS / fuse-overlayfs Copy-Up Protection:
  *    When games run on compressed DwarFS with fuse-overlayfs, opening static
  *    read-only archives with write intent (e.g. .NET's default O_RDWR) tricks
  *    the overlay into copying up entire multi-gigabyte files to disk.
- *    This shim transparently demotes O_RDWR to O_RDONLY for static asset
+ *    With MASTER_RUNNER_SHIM_READONLY_ASSETS set, this demotes O_RDWR to O_RDONLY for static asset
  *    archives, saving gigabytes of disk writes, avoiding I/O stalls, and
  *    preventing file duplication.
  */
@@ -47,51 +48,60 @@ static int is_game_process(void) {
 }
 
 static int is_mono_runtime(void) {
-    static int cached = -1;
-    if (cached != -1) return cached;
-    if (!is_game_process()) {
-        cached = 0;
-        return 0;
-    }
+    /* This workaround changes inode identity and must be explicitly selected. */
+    if (!getenv("MASTER_RUNNER_SHIM_MONO_INODES") || !is_game_process()) return 0;
     if (dlsym(RTLD_DEFAULT, "mono_init") != NULL ||
         dlsym(RTLD_DEFAULT, "mono_w32file_create") != NULL ||
         dlsym(RTLD_DEFAULT, "mono_runtime_init") != NULL ||
         getenv("MONO_PATH") != NULL) {
-        cached = 1;
         return 1;
     }
-    cached = 0;
     return 0;
 }
 
-static uint64_t fake_ino = 1000000000ULL;
+static ino_t descriptor_inode(const struct stat *buf, int fd) {
+    /* Keep repeated queries stable for one descriptor while isolating opens. */
+    uint64_t x = (uint64_t)buf->st_ino ^ ((uint64_t)buf->st_dev << 32);
+    x ^= (uint64_t)(unsigned int)fd * 0x9e3779b97f4a7c15ULL;
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
+    return (ino_t)(x ^ (x >> 31));
+}
 
 /* Hook __fxstat: Mono specifically calls __fxstat(1, fd, buf) in mono_w32file_create */
 typedef int (*fxstat_fn)(int ver, int fd, struct stat *buf);
-static fxstat_fn real_fxstat = NULL;
+static _Atomic(fxstat_fn) real_fxstat = NULL;
 
 int __fxstat(int ver, int fd, struct stat *buf) {
-    if (!real_fxstat) {
-        real_fxstat = (fxstat_fn)dlsym(RTLD_NEXT, "__fxstat");
+    fxstat_fn fn = atomic_load(&real_fxstat);
+    if (!fn) {
+        fn = (fxstat_fn)dlsym(RTLD_NEXT, "__fxstat");
+        if (!fn) { errno = ENOSYS; return -1; }
+        atomic_store(&real_fxstat, fn);
     }
-    int res = real_fxstat(ver, fd, buf);
+    int res = fn(ver, fd, buf);
     if (res == 0 && buf && is_mono_runtime()) {
-        buf->st_ino = __atomic_fetch_add(&fake_ino, 1, __ATOMIC_RELAXED);
+        buf->st_ino = descriptor_inode(buf, fd);
     }
     return res;
 }
 
 /* Also hook fstat */
 typedef int (*fstat_fn)(int fd, struct stat *buf);
-static fstat_fn real_fstat = NULL;
+static _Atomic(fstat_fn) real_fstat = NULL;
 
 int fstat(int fd, struct stat *buf) {
-    if (!real_fstat) {
-        real_fstat = (fstat_fn)dlsym(RTLD_NEXT, "fstat");
+    fstat_fn fn = atomic_load(&real_fstat);
+    if (!fn) {
+        fn = (fstat_fn)dlsym(RTLD_NEXT, "fstat");
+        if (!fn) { errno = ENOSYS; return -1; }
+        atomic_store(&real_fstat, fn);
     }
-    int res = real_fstat(fd, buf);
-    if (res == 0 && buf && is_mono_runtime()) {
-        buf->st_ino = __atomic_fetch_add(&fake_ino, 1, __ATOMIC_RELAXED);
+    int res = fn(fd, buf);
+    if (res == 0 && is_mono_runtime()) {
+        buf->st_ino = descriptor_inode(buf, fd);
     }
     return res;
 }
@@ -99,9 +109,6 @@ int fstat(int fd, struct stat *buf) {
 /* Check if a file is an immutable game asset that should never trigger copy-up */
 static int is_static_asset(const char *path) {
     if (!path) return 0;
-    if (strstr(path, "/data/") || strstr(path, "data/textures") || strstr(path, "data/videos")) {
-        return 1;
-    }
     const char *ext = strrchr(path, '.');
     if (ext) {
         if (strcasecmp(ext, ".wem") == 0 || strcasecmp(ext, ".bnk") == 0 ||
@@ -117,43 +124,57 @@ static int is_static_asset(const char *path) {
     return 0;
 }
 
+static int needs_open_mode(int flags) {
+    return (flags & O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE);
+}
+
+static int readonly_asset_flags(const char *pathname, int flags) {
+    if (getenv("MASTER_RUNNER_SHIM_READONLY_ASSETS") && is_game_process() &&
+        (flags & O_ACCMODE) == O_RDWR &&
+        !(flags & (O_CREAT | O_TRUNC | O_APPEND)) &&
+        (flags & O_TMPFILE) != O_TMPFILE && is_static_asset(pathname)) {
+        return (flags & ~O_ACCMODE) | O_RDONLY;
+    }
+    return flags;
+}
+
 /* Hook open to prevent DwarFS / fuse-overlayfs copy-up of multi-gigabyte read-only assets */
 typedef int (*open_fn)(const char *pathname, int flags, ...);
-static open_fn real_open = NULL;
+static _Atomic(open_fn) real_open = NULL;
 
 int open(const char *pathname, int flags, ...) {
     mode_t mode = 0;
-    if (flags & O_CREAT) {
+    if (needs_open_mode(flags)) {
         va_list args;
         va_start(args, flags);
         mode = va_arg(args, mode_t);
         va_end(args);
     }
-    if (!real_open) {
-        real_open = (open_fn)dlsym(RTLD_NEXT, "open");
+    open_fn fn = atomic_load(&real_open);
+    if (!fn) {
+        fn = (open_fn)dlsym(RTLD_NEXT, "open");
+        if (!fn) { errno = ENOSYS; return -1; }
+        atomic_store(&real_open, fn);
     }
-    if (is_game_process() && (flags & O_ACCMODE) == O_RDWR && is_static_asset(pathname)) {
-        flags = (flags & ~O_ACCMODE) | O_RDONLY;
-    }
-    return real_open(pathname, flags, mode);
+    return fn(pathname, readonly_asset_flags(pathname, flags), mode);
 }
 
 typedef int (*open64_fn)(const char *pathname, int flags, ...);
-static open64_fn real_open64 = NULL;
+static _Atomic(open64_fn) real_open64 = NULL;
 
 int open64(const char *pathname, int flags, ...) {
     mode_t mode = 0;
-    if (flags & O_CREAT) {
+    if (needs_open_mode(flags)) {
         va_list args;
         va_start(args, flags);
         mode = va_arg(args, mode_t);
         va_end(args);
     }
-    if (!real_open64) {
-        real_open64 = (open64_fn)dlsym(RTLD_NEXT, "open64");
+    open64_fn fn = atomic_load(&real_open64);
+    if (!fn) {
+        fn = (open64_fn)dlsym(RTLD_NEXT, "open64");
+        if (!fn) { errno = ENOSYS; return -1; }
+        atomic_store(&real_open64, fn);
     }
-    if (is_game_process() && (flags & O_ACCMODE) == O_RDWR && is_static_asset(pathname)) {
-        flags = (flags & ~O_ACCMODE) | O_RDONLY;
-    }
-    return real_open64(pathname, flags, mode);
+    return fn(pathname, readonly_asset_flags(pathname, flags), mode);
 }
