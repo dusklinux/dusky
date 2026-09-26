@@ -247,9 +247,25 @@ function _gitdelta_render_stream() {
         fi
     fi
 
-    typeset -A num_add num_del det_map det_len
+    typeset -A num_add num_del det_map det_len dir_color
     local line a d p rest det det_pad
-    integer max_det_w=0 w pad_det
+    integer max_det_w=0 w pad_det next_color_idx=0
+    local dir_p file_p lead trail c_dir
+    local -a dir_colors=(
+        $'\e[38;5;111m' # sky blue
+        $'\e[38;5;176m' # lavender
+        $'\e[38;5;215m' # peach / orange
+        $'\e[38;5;114m' # sage green
+        $'\e[38;5;221m' # warm yellow
+        $'\e[38;5;116m' # mint teal
+        $'\e[38;5;211m' # soft rose
+        $'\e[38;5;147m' # periwinkle
+        $'\e[38;5;180m' # sand
+        $'\e[38;5;152m' # ice blue
+        $'\e[38;5;182m' # mauve
+        $'\e[38;5;186m' # light olive
+    )
+
     for line in "${numstat_lines[@]}"; do
         [[ -z $line ]] && continue
         a=${line%%$TAB*}
@@ -281,6 +297,19 @@ function _gitdelta_render_stream() {
             clean_after_trim=${clean_after## #}
             cnt=${clean_after_trim%% *}
             if [[ -n ${det_map[$clean_p]-} ]]; then
+                if [[ $clean_p == */* ]]; then
+                    dir_p=${clean_p%/*}/
+                    file_p=${clean_p##*/}
+                    if [[ -z ${dir_color[$dir_p]-} ]]; then
+                        next_color_idx=$(( next_color_idx + 1 ))
+                        dir_color[$dir_p]=${dir_colors[ (( (next_color_idx - 1) % #dir_colors ) + 1) ]}
+                    fi
+                    c_dir=${dir_color[$dir_p]}
+                    lead=${raw_p%%${clean_p}*}
+                    trail=${raw_p#*${clean_p}}
+                    raw_p="${lead}${c_dir}${dir_p}${C_RESET}${file_p}${trail}"
+                fi
+
                 det=${det_map[$clean_p]}
                 w=${det_len[$clean_p]}
                 pad_det=$(( max_det_w - w ))
@@ -290,19 +319,19 @@ function _gitdelta_render_stream() {
                     gr=${after_pipe#*${cnt}}
                     gr=${gr## #}
                     if [[ -n $gr ]]; then
-                        print -r -- "${raw_p}|${cnt_part}  ${det}${det_pad}  ${gr}"
+                        print -r -- "${raw_p}|${cnt_part}  ${det}${det_pad}  ${gr}" 2>/dev/null || break
                     else
-                        print -r -- "${raw_p}|${cnt_part}  ${det}"
+                        print -r -- "${raw_p}|${cnt_part}  ${det}" 2>/dev/null || break
                     fi
                 else
-                    print -r -- "${raw_p}|${after_pipe}  ${det}"
+                    print -r -- "${raw_p}|${after_pipe}  ${det}" 2>/dev/null || break
                 fi
                 continue
             fi
         fi
-        print -r -- "$line"
+        print -r -- "$line" 2>/dev/null || break
     done
-    print -r -- ""
+    print -r -- "" 2>/dev/null || true
 
     if [[ -n $target ]]; then
         git_dusky show --patch --format="" "$target"
