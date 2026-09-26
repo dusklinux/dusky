@@ -21,6 +21,7 @@ fn print_help() {
     println!("  --build-cache    Generate only missing or outdated thumbnails and exit");
     println!("  --update-cache   Alias for --build-cache");
     println!("  --rebuild-cache  Force-regenerate every thumbnail and exit");
+    println!("  --version, -v, -V Show version information and exit");
     println!("  --help, -h       Show this help message");
 }
 
@@ -378,6 +379,11 @@ fn main() -> iced::Result {
 
     if matches!(option, Some("--help" | "-h")) {
         print_help();
+        return Ok(());
+    }
+
+    if matches!(option, Some("--version" | "-v" | "-V")) {
+        println!("wallpaper_selector {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 

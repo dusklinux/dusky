@@ -57,6 +57,44 @@ def binary_runs(binary: Path) -> bool:
         return False
 
 
+def get_project_version(project: Path) -> str:
+    cargo_toml = project / "Cargo.toml"
+    if not cargo_toml.is_file():
+        return "1.0.0"
+    for line in cargo_toml.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("version"):
+            parts = line.split("=", 1)
+            if len(parts) == 2:
+                return parts[1].strip().strip('"').strip("'")
+    return "1.0.0"
+
+
+def parse_version(v: str | None) -> tuple[int, ...]:
+    if not v:
+        return (-1,)
+    cleaned = v.lstrip("vV").strip()
+    parts = []
+    for part in cleaned.split("."):
+        digits = "".join(ch for ch in part if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts) if parts else (-1,)
+
+
+def binary_version(binary: Path) -> str | None:
+    try:
+        result = subprocess.run(
+            [str(binary), "--version"], capture_output=True, text=True, timeout=10, check=False
+        )
+        if result.returncode == 0:
+            for token in result.stdout.strip().split():
+                if any(c.isdigit() for c in token):
+                    return token.lstrip("vV")
+        return None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
 def cpu_signature() -> str:
     """Invalidate a local native build if a home directory moves to another CPU."""
     text = Path("/proc/cpuinfo").read_text()
@@ -67,11 +105,15 @@ def cpu_signature() -> str:
     return hashlib.sha256(identity.encode()).hexdigest()
 
 
-def native_binary_valid(project: Path, binary: Path, manifest_path: Path) -> bool:
+def native_binary_valid(project: Path, binary: Path, manifest_path: Path, expected_version: str) -> bool:
     try:
+        b_ver = binary_version(binary)
+        if not b_ver or parse_version(b_ver) != parse_version(expected_version):
+            return False
         manifest = json.loads(manifest_path.read_text())
         return (
-            manifest.get("target") == TARGET
+            manifest.get("version") == expected_version
+            and manifest.get("target") == TARGET
             and manifest.get("target_cpu") == "native"
             and manifest.get("cpu_signature") == cpu_signature()
             and manifest.get("source_sha256") == source_digest(project)
@@ -176,7 +218,7 @@ def prepare_cargo_home(build_dir: Path) -> Path:
     return cargo_home
 
 
-def build_native(project: Path, binary: Path, manifest_path: Path) -> bool:
+def build_native(project: Path, binary: Path, manifest_path: Path, version: str) -> bool:
     cargo = shutil.which("cargo")
     if not cargo:
         log("ERR", "No usable ISO package and Cargo is not installed")
@@ -192,7 +234,7 @@ def build_native(project: Path, binary: Path, manifest_path: Path) -> bool:
         env["CFLAGS"] = "-march=native -mtune=native -O2"
         env["CXXFLAGS"] = env["CFLAGS"]
         env["CPPFLAGS"] = ""
-        log("INFO", "Compiling native release binary for this CPU")
+        log("INFO", f"Compiling native release binary for this CPU (v{version})")
         result = subprocess.run(
             [cargo, "build", "--release", "--locked", "--target", TARGET],
             cwd=project, env=env, capture_output=True, text=True, check=False,
@@ -210,6 +252,7 @@ def build_native(project: Path, binary: Path, manifest_path: Path) -> bool:
             temporary_binary.chmod(0o755)
             os.replace(temporary_binary, binary)
             manifest = {
+                "version": version,
                 "target": TARGET,
                 "target_cpu": "native",
                 "cpu_signature": cpu_signature(),
@@ -228,7 +271,16 @@ def build_native(project: Path, binary: Path, manifest_path: Path) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
+    home = Path.home()
+    project = home / "user_scripts/images/wallpaper_selector"
+    project_ver = get_project_version(project)
+
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--version", "-v", action="version",
+        version=f"wallpaper_selector_setup {project_ver}",
+        help="Show version information and exit",
+    )
     cache_group = parser.add_mutually_exclusive_group()
     cache_group.add_argument(
         "--build-cache", "--update-cache", action="store_true",
@@ -240,8 +292,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    home = Path.home()
-    project = home / "user_scripts/images/wallpaper_selector"
     install_dir = home / ".local/share/dusky/wallpaper_selector"
     binary = install_dir / "wallpaper_selector"
     manifest_path = install_dir / "binary_manifest.json"
@@ -261,8 +311,9 @@ def main(argv: list[str] | None = None) -> int:
     for directory in (thumb_dir, settings_dir, install_dir, local_bin.parent):
         directory.mkdir(parents=True, exist_ok=True)
 
-    if binary_runs(SYSTEM_BINARY):
-        log("OK", f"Using ISO package binary at {SYSTEM_BINARY}")
+    system_ver = binary_version(SYSTEM_BINARY) if binary_runs(SYSTEM_BINARY) else None
+    if system_ver and parse_version(system_ver) >= parse_version(project_ver):
+        log("OK", f"Using ISO package binary at {SYSTEM_BINARY} (v{system_ver})")
         temporary_binary = binary.with_name(f".{binary.name}.{os.getpid()}.tmp")
         try:
             temporary_binary.symlink_to(SYSTEM_BINARY)
@@ -272,27 +323,30 @@ def main(argv: list[str] | None = None) -> int:
             log("ERR", f"Could not link ISO package binary: {error}")
             return 1
         manifest_path.unlink(missing_ok=True)
-    elif native_binary_valid(project, binary, manifest_path):
-        log("OK", "Using verified native build for this CPU")
-    elif native_binary_valid(project, legacy_binary, legacy_manifest):
-        temporary_binary = binary.with_name(f".{binary.name}.{os.getpid()}.tmp")
-        temporary_manifest = manifest_path.with_name(f".{manifest_path.name}.{os.getpid()}.tmp")
-        try:
-            shutil.copy2(legacy_binary, temporary_binary)
-            shutil.copy2(legacy_manifest, temporary_manifest)
-            os.replace(temporary_binary, binary)
-            os.replace(temporary_manifest, manifest_path)
-        except OSError as error:
-            log("ERR", f"Could not migrate the verified native build: {error}")
-            return 1
-        finally:
-            temporary_binary.unlink(missing_ok=True)
-            temporary_manifest.unlink(missing_ok=True)
-        log("OK", "Moved verified native build out of the Git checkout")
-    elif not build_native(project, binary, manifest_path):
-        return 1
     else:
-        log("OK", "Installed newly built native binary")
+        if SYSTEM_BINARY.is_file():
+            log("INFO", f"System binary at {SYSTEM_BINARY} is outdated (v{system_ver or 'legacy'} < v{project_ver}); using native build")
+        if native_binary_valid(project, binary, manifest_path, project_ver):
+            log("OK", f"Using verified native build for this CPU (v{project_ver})")
+        elif native_binary_valid(project, legacy_binary, legacy_manifest, project_ver):
+            temporary_binary = binary.with_name(f".{binary.name}.{os.getpid()}.tmp")
+            temporary_manifest = manifest_path.with_name(f".{manifest_path.name}.{os.getpid()}.tmp")
+            try:
+                shutil.copy2(legacy_binary, temporary_binary)
+                shutil.copy2(legacy_manifest, temporary_manifest)
+                os.replace(temporary_binary, binary)
+                os.replace(temporary_manifest, manifest_path)
+            except OSError as error:
+                log("ERR", f"Could not migrate the verified native build: {error}")
+                return 1
+            finally:
+                temporary_binary.unlink(missing_ok=True)
+                temporary_manifest.unlink(missing_ok=True)
+            log("OK", f"Moved verified native build out of the Git checkout (v{project_ver})")
+        elif not build_native(project, binary, manifest_path, project_ver):
+            return 1
+        else:
+            log("OK", f"Installed newly built native binary (v{project_ver})")
 
     temporary_link = local_bin.with_name(f".{local_bin.name}.{os.getpid()}.tmp")
     try:
