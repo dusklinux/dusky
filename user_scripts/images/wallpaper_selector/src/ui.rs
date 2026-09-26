@@ -2,7 +2,8 @@ use iced::alignment::{Horizontal, Vertical};
 use iced::keyboard::Key;
 use iced::keyboard::key::Named;
 use iced::widget::{
-    Float, Space, Stack, button, column, container, image, mouse_area, row, text, text_input,
+    Float, Space, Stack, button, column, container, image, mouse_area, row, scrollable, text,
+    text_input,
 };
 use iced::{
     Background, Border, Color, ContentFit, Element, Event, Length, Shadow, Subscription, Task,
@@ -10,7 +11,7 @@ use iced::{
 };
 use std::collections::HashSet;
 
-use crate::config::{Config, Preferences};
+use crate::config::{Config, MotionProfile, Preferences, ViewLayout};
 use crate::scanner::WallpaperItem;
 use crate::theme::AppTheme;
 
@@ -20,6 +21,8 @@ pub enum Message {
     ToggleFavoritesView(bool),
     ToggleColorFilter(u8),
     CycleSortMode,
+    CycleMotionProfile,
+    ToggleViewLayout,
     SelectWallpaper(usize),
     ApplyWallpaper(usize, bool),
     WallpaperApplied(Result<String, String>),
@@ -45,6 +48,7 @@ struct CarouselAnimation {
     target: f32,
     velocity: f32,
     last_tick: iced::time::Instant,
+    profile: MotionProfile,
 }
 
 impl CarouselAnimation {
@@ -54,12 +58,16 @@ impl CarouselAnimation {
             .as_secs_f32()
             .min(0.05);
         self.last_tick = now;
-        // A critically damped spring keeps velocity when navigation is retargeted.
-        let omega = 24.0_f32;
+        let (omega, zeta) = self.profile.spring_params();
+        if omega <= 0.0 {
+            *position = self.target;
+            self.velocity = 0.0;
+            return false;
+        }
         while remaining > 0.0 {
             let step = remaining.min(1.0 / 240.0);
-            self.velocity +=
-                (-omega * omega * (*position - self.target) - 2.0 * omega * self.velocity) * step;
+            let accel = -omega * omega * (*position - self.target) - 2.0 * zeta * omega * self.velocity;
+            self.velocity += accel * step;
             *position += self.velocity * step;
             remaining -= step;
         }
@@ -84,6 +92,8 @@ pub struct WallpaperSelectorApp {
     show_only_favorites: bool,
     selected_color: Option<u8>,
     sort_mode: crate::config::SortMode,
+    motion_profile: MotionProfile,
+    view_layout: ViewLayout,
     random_seed: u64,
     selected_index: Option<usize>,
     applying: bool,
@@ -127,13 +137,15 @@ impl WallpaperSelectorApp {
             show_only_favorites: false,
             selected_color: None,
             sort_mode: preferences.sort_mode,
+            motion_profile: preferences.motion_profile,
+            view_layout: preferences.view_layout,
             random_seed: 42,
             selected_index: None,
             applying: false,
             refreshing: false,
             error_message: None,
             refresh_status: None,
-            animate_carousel: preferences.animate_carousel,
+            animate_carousel: preferences.motion_profile.is_enabled(),
             animation: None,
             visual_position: 0.0,
         };
@@ -280,14 +292,16 @@ impl WallpaperSelectorApp {
             return;
         }
         self.selected_index = Some(next);
-        if self.animate_carousel {
+        if self.motion_profile.is_enabled() {
             if let Some(animation) = &mut self.animation {
                 animation.target = next as f32;
+                animation.profile = self.motion_profile;
             } else {
                 self.animation = Some(CarouselAnimation {
                     target: next as f32,
                     velocity: 0.0,
                     last_tick: iced::time::Instant::now(),
+                    profile: self.motion_profile,
                 });
             }
         } else {
@@ -513,33 +527,45 @@ impl WallpaperSelectorApp {
                 let preferences = Preferences {
                     animate_carousel: self.animate_carousel,
                     sort_mode: self.sort_mode,
+                    motion_profile: self.motion_profile,
+                    view_layout: self.view_layout,
                 };
                 let _ = preferences.save(&self.config.preferences_file);
                 self.refilter();
                 Task::none()
             }
-            Message::ToggleAnimation => {
-                let enabled = !self.animate_carousel;
+            Message::CycleMotionProfile => {
+                let next_profile = self.motion_profile.next();
                 let preferences = Preferences {
-                    animate_carousel: enabled,
+                    animate_carousel: next_profile.is_enabled(),
                     sort_mode: self.sort_mode,
+                    motion_profile: next_profile,
+                    view_layout: self.view_layout,
                 };
-                match preferences.save(&self.config.preferences_file) {
-                    Ok(()) => {
-                        self.animate_carousel = enabled;
-                        if !enabled {
-                            self.animation = None;
-                            self.visual_position = self.selected_index.unwrap_or(0) as f32;
-                        }
-                        self.error_message = None;
-                    }
-                    Err(error) => {
-                        self.error_message =
-                            Some(format!("Could not save animation preference: {error}"));
-                    }
+                let _ = preferences.save(&self.config.preferences_file);
+                self.motion_profile = next_profile;
+                self.animate_carousel = next_profile.is_enabled();
+                if !self.animate_carousel {
+                    self.animation = None;
+                    self.visual_position = self.selected_index.unwrap_or(0) as f32;
+                } else if let Some(animation) = &mut self.animation {
+                    animation.profile = next_profile;
                 }
                 Task::none()
             }
+            Message::ToggleViewLayout => {
+                let next_layout = self.view_layout.toggle();
+                let preferences = Preferences {
+                    animate_carousel: self.animate_carousel,
+                    sort_mode: self.sort_mode,
+                    motion_profile: self.motion_profile,
+                    view_layout: next_layout,
+                };
+                let _ = preferences.save(&self.config.preferences_file);
+                self.view_layout = next_layout;
+                Task::none()
+            }
+            Message::ToggleAnimation => self.update(Message::CycleMotionProfile),
             Message::AnimationFrame(at) => {
                 if let Some(animation) = &mut self.animation {
                     if !animation.tick(&mut self.visual_position, at) {
@@ -578,10 +604,6 @@ impl WallpaperSelectorApp {
                         self.search_query.clear();
                         self.refilter();
                         Task::none()
-                    } else if self.selected_color.is_some() {
-                        self.selected_color = None;
-                        self.refilter();
-                        Task::none()
                     } else {
                         iced::exit()
                     }
@@ -617,6 +639,12 @@ impl WallpaperSelectorApp {
                 }
                 Key::Character(ref c) if (c == "s" || c == "S") && self.search_query.is_empty() => {
                     self.update(Message::CycleSortMode)
+                }
+                Key::Character(ref c) if (c == "m" || c == "M") && self.search_query.is_empty() => {
+                    self.update(Message::CycleMotionProfile)
+                }
+                Key::Character(ref c) if (c == "g" || c == "G") && self.search_query.is_empty() => {
+                    self.update(Message::ToggleViewLayout)
                 }
                 Key::Character(ref c) if (c == "c" || c == "C") && self.search_query.is_empty() => {
                     if self.selected_color.is_some() {
@@ -772,38 +800,64 @@ impl WallpaperSelectorApp {
         });
 
         // Action buttons
-        let animation_enabled = self.animate_carousel;
-        let animation_btn = button(
-            text(if animation_enabled {
-                "Motion: On"
-            } else {
-                "Motion: Off"
-            })
-            .size(11)
-            .align_x(Horizontal::Center)
-            .align_y(Vertical::Center),
+        let motion_profile = self.motion_profile;
+        let motion_btn = button(
+            text(motion_profile.label())
+                .size(11)
+                .align_x(Horizontal::Center)
+                .align_y(Vertical::Center),
         )
         .padding([6, 12])
-        .on_press(Message::ToggleAnimation)
-        .style(move |_theme, status| button::Style {
-            background: Some(Background::Color(if animation_enabled {
-                Color { a: 0.22, ..accent }
-            } else if status == button::Status::Hovered {
-                Color::from_rgba8(255, 255, 255, 0.12)
-            } else {
-                Color::from_rgba8(20, 22, 30, 0.90)
-            })),
-            text_color: if animation_enabled {
-                accent
-            } else {
-                Color::from_rgb8(210, 215, 235)
-            },
-            border: Border {
-                radius: 14.0.into(),
-                color: Color::from_rgba8(255, 255, 255, 0.08),
-                width: 1.0,
-            },
-            ..button::Style::default()
+        .on_press(Message::CycleMotionProfile)
+        .style(move |_theme, status| {
+            let is_active = motion_profile.is_enabled();
+            button::Style {
+                background: Some(Background::Color(if is_active {
+                    Color { a: 0.22, ..accent }
+                } else if status == button::Status::Hovered {
+                    Color::from_rgba8(255, 255, 255, 0.12)
+                } else {
+                    Color::from_rgba8(20, 22, 30, 0.90)
+                })),
+                text_color: if is_active {
+                    accent
+                } else {
+                    Color::from_rgb8(210, 215, 235)
+                },
+                border: Border {
+                    radius: 14.0.into(),
+                    color: Color::from_rgba8(255, 255, 255, 0.08),
+                    width: 1.0,
+                },
+                ..button::Style::default()
+            }
+        });
+
+        let view_layout = self.view_layout;
+        let view_btn = button(
+            text(view_layout.label())
+                .size(11)
+                .align_x(Horizontal::Center)
+                .align_y(Vertical::Center),
+        )
+        .padding([6, 12])
+        .on_press(Message::ToggleViewLayout)
+        .style(move |_theme, status| {
+            let is_hovered = status == button::Status::Hovered;
+            button::Style {
+                background: Some(Background::Color(if is_hovered {
+                    Color::from_rgba8(255, 255, 255, 0.12)
+                } else {
+                    Color::from_rgba8(20, 22, 30, 0.90)
+                })),
+                text_color: Color::from_rgb8(210, 215, 235),
+                border: Border {
+                    radius: 14.0.into(),
+                    color: Color::from_rgba8(255, 255, 255, 0.08),
+                    width: 1.0,
+                },
+                ..button::Style::default()
+            }
         });
 
         let random_btn = button(
@@ -886,6 +940,31 @@ impl WallpaperSelectorApp {
             ..button::Style::default()
         });
 
+        // Top capsule (Discovery & window actions)
+        let top_capsule = row![
+            mode_pill,
+            view_btn,
+            motion_btn,
+            search_input,
+            random_btn,
+            refresh_btn,
+            close_btn,
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center);
+
+        let top_bar = container(
+            row![
+                Space::new().width(Length::Fill),
+                top_capsule,
+                Space::new().width(Length::Fill),
+            ]
+            .align_y(Vertical::Center),
+        )
+        .padding([8, 16])
+        .width(Length::Fill);
+
+        // --- Bottom Refinement Capsule ---
         // Sort button
         let sort_label = self.sort_mode.label();
         let sort_btn = button(
@@ -985,89 +1064,18 @@ impl WallpaperSelectorApp {
                 ..container::Style::default()
             });
 
-        let top_capsule = row![
-            mode_pill,
+        // Bottom capsule (Sort, Color Swatches, Counter)
+        let bottom_capsule = row![
             sort_btn,
             color_pill,
-            search_input,
             counter_pill,
-            animation_btn,
-            random_btn,
-            refresh_btn,
-            close_btn,
         ]
         .spacing(8)
         .align_y(Vertical::Center);
 
-        let top_bar = container(
-            row![
-                Space::new().width(Length::Fill),
-                top_capsule,
-                Space::new().width(Length::Fill),
-            ]
-            .align_y(Vertical::Center),
-        )
-        .padding([8, 16])
-        .width(Length::Fill);
-
-        // --- Center Slices Carousel ---
-        let carousel_content = self.build_carousel();
-
-        // --- Bottom Micro Bar ---
-        let bottom_hint = text(if let Some(error) = &self.error_message {
-            error.as_str()
-        } else if self.applying {
-            "Applying wallpaper…"
-        } else if let Some(status) = &self.refresh_status {
-            status.as_str()
-        } else {
-            "← / →: Navigate  •  S: Sort  •  C: Clear color  •  Click: Apply + colors  •  Right click: Wallpaper only  •  Esc: Close"
-        })
-        .size(11)
-        .color(if self.error_message.is_some() {
-            Color::from_rgb8(252, 165, 165)
-        } else {
-            Color::from_rgba8(160, 170, 195, 0.7)
-        });
-
-        let bottom_bar = container(
-            row![
-                Space::new().width(Length::Fill),
-                bottom_hint,
-                Space::new().width(Length::Fill),
-            ]
-            .align_y(Vertical::Center),
-        )
-        .padding([4, 16])
-        .width(Length::Fill);
-
-        // --- Fullscreen Transparent Overlay (skwd-wall style) ---
-        container(
-            column![
-                Space::new().height(Length::Fixed(20.0)),
-                top_bar,
-                Space::new().height(Length::Fill),
-                carousel_content,
-                Space::new().height(Length::Fill),
-                bottom_bar,
-                Space::new().height(Length::Fixed(14.0)),
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(Horizontal::Center),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(|_| container::Style {
-            background: None,
-            ..container::Style::default()
-        })
-        .into()
-    }
-
-    fn build_carousel<'a>(&'a self) -> Element<'a, Message> {
-        if self.filtered_indices.is_empty() {
-            return container(
+        // Center Content (Carousel or Grid)
+        let main_content = if self.filtered_indices.is_empty() {
+            container(
                 column![
                     text("No wallpapers found")
                         .size(20)
@@ -1084,10 +1092,283 @@ impl WallpaperSelectorApp {
             .height(Length::Fill)
             .align_x(Horizontal::Center)
             .align_y(Vertical::Center)
-            .into();
+            .into()
+        } else {
+            match self.view_layout {
+                ViewLayout::Carousel => self.build_motion_carousel(),
+                ViewLayout::Grid => self.build_grid_view(),
+            }
+        };
+
+        // --- Bottom Micro Bar ---
+        let bottom_hint = text(if let Some(error) = &self.error_message {
+            error.as_str()
+        } else if self.applying {
+            "Applying wallpaper…"
+        } else if let Some(status) = &self.refresh_status {
+            status.as_str()
+        } else {
+            "← / →: Navigate  •  G: Grid / Slices  •  M: Motion  •  S: Sort  •  C: Clear color  •  Click: Apply  •  Esc: Close"
+        })
+        .size(11)
+        .color(if self.error_message.is_some() {
+            Color::from_rgb8(252, 165, 165)
+        } else {
+            Color::from_rgba8(160, 170, 195, 0.7)
+        });
+
+        let bottom_bar = container(
+            column![
+                row![
+                    Space::new().width(Length::Fill),
+                    bottom_capsule,
+                    Space::new().width(Length::Fill),
+                ]
+                .align_y(Vertical::Center),
+                Space::new().height(Length::Fixed(8.0)),
+                row![
+                    Space::new().width(Length::Fill),
+                    bottom_hint,
+                    Space::new().width(Length::Fill),
+                ]
+                .align_y(Vertical::Center),
+            ]
+            .align_x(Horizontal::Center),
+        )
+        .padding([4, 16])
+        .width(Length::Fill);
+
+        // --- Fullscreen Transparent Overlay (skwd-wall style) ---
+        let content_column = match self.view_layout {
+            ViewLayout::Carousel => column![
+                Space::new().height(Length::Fixed(16.0)),
+                top_bar,
+                Space::new().height(Length::Fill),
+                main_content,
+                Space::new().height(Length::Fill),
+                bottom_bar,
+                Space::new().height(Length::Fixed(12.0)),
+            ],
+            ViewLayout::Grid => column![
+                Space::new().height(Length::Fixed(16.0)),
+                top_bar,
+                Space::new().height(Length::Fixed(10.0)),
+                main_content,
+                Space::new().height(Length::Fixed(10.0)),
+                bottom_bar,
+                Space::new().height(Length::Fixed(12.0)),
+            ],
+        };
+
+        container(
+            content_column
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Horizontal::Center),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|_| container::Style {
+            background: None,
+            ..container::Style::default()
+        })
+        .into()
+    }
+
+    fn build_motion_carousel(&self) -> Element<'_, Message> {
+        let total = self.filtered_indices.len();
+        let position = self.visual_position.clamp(0.0, (total - 1) as f32);
+        let start = (position.floor() as usize).saturating_sub(4);
+        let end = ((position.ceil() as usize) + 4).min(total - 1);
+        let mut indices: Vec<usize> = (start..=end).collect();
+        indices.sort_by(|a, b| {
+            (b.abs_diff(position.round() as usize)).cmp(&a.abs_diff(position.round() as usize))
+        });
+
+        let mut cards = Stack::new().width(Length::Fill).height(Length::Fill);
+        for index in indices {
+            let item = &self.all_wallpapers[self.filtered_indices[index]];
+            let distance = (index as f32 - position).abs();
+            let emphasis = (1.0 - distance).max(0.0);
+            let width = Self::motion_width(index, position);
+            let x = Self::motion_center(index, position);
+
+            let card = self.build_center_card(item, index, width, emphasis, distance);
+            cards = cards.push(Float::new(card).translate(move |bounds, viewport| {
+                Vector::new(
+                    viewport.x + viewport.width * 0.5 - bounds.x - bounds.width * 0.5 + x + 0.001,
+                    viewport.y + viewport.height * 0.5 - bounds.y - bounds.height * 0.5,
+                )
+            }));
+        }
+        cards.clip(true).into()
+    }
+
+    fn build_grid_view(&self) -> Element<'_, Message> {
+        let accent = self.theme.accent;
+        let mut grid_col = column![].spacing(14).padding([12, 20]).align_x(Horizontal::Center);
+        let chunk_size = 5;
+
+        for chunk in self.filtered_indices.chunks(chunk_size) {
+            let mut r = row![].spacing(14).align_y(Vertical::Center);
+            for &item_idx in chunk {
+                let filtered_idx = self
+                    .filtered_indices
+                    .iter()
+                    .position(|&idx| idx == item_idx)
+                    .unwrap_or(0);
+                let item = &self.all_wallpapers[item_idx];
+                let is_selected = self.selected_index == Some(filtered_idx);
+
+                let card_radius = 10.0;
+                let img_layer: Element<'_, Message> = if item.thumb_path.exists() {
+                    image(item.thumb_path.clone())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .content_fit(ContentFit::Cover)
+                        .border_radius(card_radius)
+                        .into()
+                } else {
+                    container(Space::new())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .style(move |_| container::Style {
+                            background: Some(Background::Color(Color::from_rgb8(18, 20, 28))),
+                            border: Border {
+                                radius: card_radius.into(),
+                                ..Border::default()
+                            },
+                            ..container::Style::default()
+                        })
+                        .into()
+                };
+
+                let name = item
+                    .path
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy())
+                    .unwrap_or_else(|| item.name.as_str().into());
+                let display_name = if name.chars().count() > 24 {
+                    format!("{}…", name.chars().take(23).collect::<String>())
+                } else {
+                    name.into_owned()
+                };
+
+                let mut badge_row = row![text(display_name).size(10).color(Color::WHITE)]
+                    .spacing(6)
+                    .align_y(Vertical::Center);
+
+                if item.is_active {
+                    badge_row = badge_row.push(
+                        container(
+                            text("● ACTIVE")
+                                .size(8)
+                                .color(Color::from_rgb8(52, 211, 153)),
+                        )
+                        .padding([1, 5])
+                        .style(|_| container::Style {
+                            background: Some(Background::Color(Color::from_rgba8(16, 185, 129, 0.25))),
+                            border: Border {
+                                color: Color::from_rgba8(52, 211, 153, 0.6),
+                                width: 1.0,
+                                radius: 8.0.into(),
+                            },
+                            ..container::Style::default()
+                        }),
+                    );
+                }
+
+                if item.is_favorite {
+                    badge_row = badge_row.push(
+                        text("♥")
+                            .size(12)
+                            .color(Color::from_rgb8(243, 139, 168)),
+                    );
+                }
+
+                let bottom_badge = container(badge_row)
+                    .padding([4, 8])
+                    .style(|_| container::Style {
+                        background: Some(Background::Color(Color::from_rgba8(10, 12, 18, 0.75))),
+                        border: Border {
+                            radius: 8.0.into(),
+                            ..Border::default()
+                        },
+                        ..container::Style::default()
+                    });
+
+                let overlay_col = column![
+                    Space::new().height(Length::Fill),
+                    bottom_badge,
+                ]
+                .padding(6);
+
+                let card_stack = Stack::new().push(img_layer).push(overlay_col).clip(true);
+
+                let card_container = container(card_stack)
+                    .width(Length::Fixed(250.0))
+                    .height(Length::Fixed(140.0))
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(Color::from_rgb8(15, 17, 24))),
+                        border: Border {
+                            radius: card_radius.into(),
+                            color: if is_selected {
+                                accent
+                            } else {
+                                Color::from_rgba8(255, 255, 255, 0.08)
+                            },
+                            width: if is_selected { 2.0 } else { 1.0 },
+                        },
+                        shadow: Shadow {
+                            color: if is_selected {
+                                Color { a: 0.35, ..accent }
+                            } else {
+                                Color::TRANSPARENT
+                            },
+                            offset: iced::Vector::ZERO,
+                            blur_radius: 12.0,
+                        },
+                        ..container::Style::default()
+                    });
+
+                let card_btn = button(card_container)
+                    .padding(0)
+                    .on_press(if is_selected {
+                        Message::ApplyWallpaper(filtered_idx, true)
+                    } else {
+                        Message::SelectWallpaper(filtered_idx)
+                    })
+                    .style(move |_theme, status| {
+                        let is_hovered = status == button::Status::Hovered;
+                        button::Style {
+                            background: None,
+                            border: Border {
+                                radius: card_radius.into(),
+                                color: if is_hovered && !is_selected {
+                                    Color { a: 0.7, ..accent }
+                                } else {
+                                    Color::TRANSPARENT
+                                },
+                                width: 1.5,
+                            },
+                            ..button::Style::default()
+                        }
+                    });
+
+                r = r.push(card_btn);
+            }
+
+            grid_col = grid_col.push(r);
         }
 
-        self.build_motion_carousel()
+        let centered_grid = container(grid_col)
+            .width(Length::Fill)
+            .align_x(Horizontal::Center);
+
+        scrollable(centered_grid)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 
     fn motion_width(index: usize, position: f32) -> f32 {
@@ -1120,34 +1401,6 @@ impl WallpaperSelectorApp {
         center - fraction * focus_step
     }
 
-    fn build_motion_carousel(&self) -> Element<'_, Message> {
-        let total = self.filtered_indices.len();
-        let position = self.visual_position.clamp(0.0, (total - 1) as f32);
-        let start = (position.floor() as usize).saturating_sub(4);
-        let end = ((position.ceil() as usize) + 4).min(total - 1);
-        let mut indices: Vec<usize> = (start..=end).collect();
-        indices.sort_by(|a, b| {
-            (b.abs_diff(position.round() as usize)).cmp(&a.abs_diff(position.round() as usize))
-        });
-
-        let mut cards = Stack::new().width(Length::Fill).height(Length::Fill);
-        for index in indices {
-            let item = &self.all_wallpapers[self.filtered_indices[index]];
-            let distance = (index as f32 - position).abs();
-            let emphasis = (1.0 - distance).max(0.0);
-            let width = Self::motion_width(index, position);
-            let x = Self::motion_center(index, position);
-            let card = self.build_center_card(item, index, width, emphasis, distance);
-            cards = cards.push(Float::new(card).translate(move |bounds, viewport| {
-                Vector::new(
-                    viewport.x + viewport.width * 0.5 - bounds.x - bounds.width * 0.5 + x + 0.001,
-                    viewport.y + viewport.height * 0.5 - bounds.y - bounds.height * 0.5,
-                )
-            }));
-        }
-        cards.clip(true).into()
-    }
-
     /// Center expanded card matching skwd-wall Frame 1
     fn build_center_card<'a>(
         &'a self,
@@ -1160,6 +1413,13 @@ impl WallpaperSelectorApp {
         let accent = self.theme.accent;
         let card_radius = 12.0 + 2.0 * emphasis;
 
+        // Smoothly fade cards to transparent as they approach the viewport boundary (distance > 2.0 up to 4.0)
+        let edge_fade = if distance > 2.0 {
+            (1.0 - ((distance - 2.0) / 2.0).clamp(0.0, 1.0)).powf(1.5)
+        } else {
+            1.0
+        };
+
         // Image layer (reads thumbnail from disk; NEVER generates synchronously)
         let img_layer: Element<'_, Message> = if item.thumb_path.exists() {
             image(item.thumb_path.clone())
@@ -1167,13 +1427,14 @@ impl WallpaperSelectorApp {
                 .height(Length::Fill)
                 .content_fit(ContentFit::Cover)
                 .border_radius(card_radius)
+                .opacity(edge_fade)
                 .into()
         } else {
             container(Space::new())
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(move |_| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(18, 20, 28))),
+                    background: Some(Background::Color(Color::from_rgba8(18, 20, 28, edge_fade))),
                     border: Border {
                         radius: card_radius.into(),
                         ..Border::default()
@@ -1262,7 +1523,7 @@ impl WallpaperSelectorApp {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        let dim_alpha = (distance * 0.35).min(0.75);
+        let dim_alpha = (distance * 0.30).min(0.65) * edge_fade;
         let dim_overlay = container(Space::new())
             .width(Length::Fill)
             .height(Length::Fill)
@@ -1285,10 +1546,10 @@ impl WallpaperSelectorApp {
                 r: accent.r * emphasis + 1.0 * (1.0 - emphasis),
                 g: accent.g * emphasis + 1.0 * (1.0 - emphasis),
                 b: accent.b * emphasis + 1.0 * (1.0 - emphasis),
-                a: emphasis + (1.0 - emphasis) * 0.08,
+                a: (emphasis + (1.0 - emphasis) * 0.08) * edge_fade,
             }
         } else {
-            Color::from_rgba8(255, 255, 255, 0.08)
+            Color::from_rgba8(255, 255, 255, 0.08 * edge_fade)
         };
         let border_width = 1.0 + 0.5 * emphasis;
 
@@ -1299,7 +1560,7 @@ impl WallpaperSelectorApp {
                 background: Some(Background::Color(if emphasis > 0.5 {
                     Color::from_rgb8(15, 17, 24)
                 } else {
-                    Color::from_rgb8(14, 16, 22)
+                    Color::from_rgba8(14, 16, 22, 0.85 * edge_fade)
                 })),
                 border: Border {
                     radius: card_radius.into(),
@@ -1308,11 +1569,11 @@ impl WallpaperSelectorApp {
                 },
                 shadow: Shadow {
                     color: Color {
-                        a: 0.30 * emphasis,
+                        a: 0.30 * emphasis * edge_fade,
                         ..accent
                     },
                     offset: iced::Vector::ZERO,
-                    blur_radius: 16.0,
+                    blur_radius: 16.0 * edge_fade,
                 },
                 ..container::Style::default()
             });

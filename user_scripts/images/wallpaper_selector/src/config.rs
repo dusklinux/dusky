@@ -27,11 +27,79 @@ impl SortMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
+pub enum MotionProfile {
+    #[default]
+    Smooth,
+    Snappy,
+    Bouncy,
+    Off,
+}
+
+impl MotionProfile {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Smooth => Self::Snappy,
+            Self::Snappy => Self::Bouncy,
+            Self::Bouncy => Self::Off,
+            Self::Off => Self::Smooth,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Smooth => "Motion: Smooth",
+            Self::Snappy => "Motion: Snappy",
+            Self::Bouncy => "Motion: Bouncy",
+            Self::Off => "Motion: Off",
+        }
+    }
+
+    pub fn is_enabled(self) -> bool {
+        self != Self::Off
+    }
+
+    /// Returns (omega, zeta) for spring physics simulation
+    pub fn spring_params(self) -> (f32, f32) {
+        match self {
+            Self::Smooth => (22.0, 1.0),
+            Self::Snappy => (34.0, 1.0),
+            Self::Bouncy => (25.0, 0.80),
+            Self::Off => (0.0, 1.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
+pub enum ViewLayout {
+    #[default]
+    Carousel,
+    Grid,
+}
+
+impl ViewLayout {
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::Carousel => Self::Grid,
+            Self::Grid => Self::Carousel,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Carousel => "View: Slices",
+            Self::Grid => "View: Grid",
+        }
+    }
+}
+
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Preferences {
     pub animate_carousel: bool,
     pub sort_mode: SortMode,
+    pub motion_profile: MotionProfile,
+    pub view_layout: ViewLayout,
 }
 
 impl Default for Preferences {
@@ -39,16 +107,22 @@ impl Default for Preferences {
         Self {
             animate_carousel: true,
             sort_mode: SortMode::Name,
+            motion_profile: MotionProfile::Smooth,
+            view_layout: ViewLayout::Carousel,
         }
     }
 }
 
 impl Preferences {
     pub fn load(path: &std::path::Path) -> Self {
-        fs::read(path)
+        let mut prefs: Self = fs::read(path)
             .ok()
             .and_then(|data| serde_json::from_slice(&data).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if !prefs.animate_carousel && prefs.motion_profile.is_enabled() {
+            prefs.motion_profile = MotionProfile::Off;
+        }
+        prefs
     }
 
     pub fn save(&self, path: &std::path::Path) -> io::Result<()> {
