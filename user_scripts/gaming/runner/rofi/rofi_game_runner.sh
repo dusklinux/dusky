@@ -33,6 +33,10 @@ set -Eeuo pipefail
 shopt -s inherit_errexit
 shopt -s nullglob
 
+SCRIPT_DIR="$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")"
+readonly SCRIPT_DIR
+readonly DEFAULT_MASTER="$SCRIPT_DIR/../master_runner.py"
+
 # ------------------------------------------------------------------------------
 # Rofi custom modi provider (must run BEFORE locking)
 # Protocol: ROFI_RETV == 0 → initial list, 1 → selection (ROFI_INFO=pid),
@@ -40,7 +44,7 @@ shopt -s nullglob
 # This is invoked as: rofi -show games -modi "games:rofi_game_runner.sh --rofi-mode"
 # ------------------------------------------------------------------------------
 if [[ "${1:-}" == "--rofi-mode" ]]; then
-    _MASTER_MODI="${MASTER_RUNNER:-$HOME/user_scripts/gaming/runner/master_runner.py}"
+    _MASTER_MODI="${MASTER_RUNNER:-$DEFAULT_MASTER}"
     if [[ ! -f "$_MASTER_MODI" ]]; then
         echo -en "\0message\x1f<span color='#cc6666'>master_runner not found: $_MASTER_MODI</span>\n"
         exit 0
@@ -141,25 +145,22 @@ fi
 # --- LOCKING TO PREVENT CONCURRENT DMENU INSTANCES ---
 # FD 9 holds the lock; must be CLOEXEC so games launched via dusky-run/systemd-run don't inherit it
 # (otherwise the lock stays held while the game runs and the keybind appears dead)
-readonly LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/rofi_game_runner.lock"
+readonly LOCK_FILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/rofi_game_runner.lock"
+umask 077
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
     exit 0
 fi
 # Ensure lock is released on exit and not inherited by game children
-release_lock() { exec 9>&- 2>/dev/null || true; rm -f "$LOCK_FILE" 2>/dev/null || true; }
+release_lock() { exec 9>&- 2>/dev/null || true; }
 trap 'release_lock' EXIT
-# Mark FD 9 as close-on-exec so child processes (games) don't keep the lock
-if command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import fcntl, os; fcntl.fcntl(9, fcntl.F_SETFD, fcntl.FD_CLOEXEC)' 2>/dev/null || true
-fi
 
 # ------------------------------------------------------------------------------
 # Configuration
 # ------------------------------------------------------------------------------
-readonly MASTER_RUNNER="${MASTER_RUNNER:-$HOME/user_scripts/gaming/runner/master_runner.py}"
+readonly MASTER_RUNNER="${MASTER_RUNNER:-$DEFAULT_MASTER}"
 readonly ROFI_CONFIG="${ROFI_CONFIG:-$HOME/.config/rofi/config.rasi}"
-readonly MEMORY_FILE="${HOME}/.config/dusky/settings/rofi_game_runner/memory"
+readonly MEMORY_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/dusky/settings/rofi_game_runner/memory"
 readonly APP_NAME="game-runner"
 # Fixed height: 10 visible rows, scrollable + searchable (fuzzy). Prevents tall overflow beyond screen.
 readonly ROFI_THEME_STR='window { width: 720px; height: 500px; } listview { lines: 10; fixed-height: true; scrollbar: true; } element-text { markup: true; }'
@@ -441,7 +442,7 @@ PY
 #   0 → launch, 10 → mount, 11 → unmount, 12 → toggle filter, 1 → abort
 # ------------------------------------------------------------------------------
 pick_game() {
-    local show_all="$1"  # "true"/"false"
+    local show_all="$1" default_action="${2:-launch}"  # "true"/"false"
     local tmp_raw
     tmp_raw=$(mktemp)
     # shellcheck disable=SC2064
@@ -453,7 +454,9 @@ pick_game() {
         # shellcheck disable=SC2064
         trap "rm -f -- $tmp_raw 2>/dev/null" RETURN
         local json
-        json=$(python3 "$MASTER_RUNNER" list ${show_all:+--all} --json 2>/dev/null || echo "[]")
+        local -a list_args=(list --json)
+        [[ "$show_all" == "true" ]] && list_args+=(--all)
+        json=$(python3 "$MASTER_RUNNER" "${list_args[@]}" 2>/dev/null || echo "[]")
         if [[ -z "$json" || "$json" == "[]" ]]; then
             fatal "No profiles found" "No profiles discovered via $MASTER_RUNNER"
         fi
@@ -463,7 +466,7 @@ pick_game() {
             echo "$json" | python3 -c '
 import json, sys
 for p in json.load(sys.stdin):
-    print(f"{p.get(\"id\",\"\")}\x1f{p.get(\"name\",\"\")}\x1fapplications-games\x1f{p.get(\"runtime\",\"native\")}\x1fauto\x1f\x1funknown\x1f{1 if p.get(\"installed\") else 0}")
+    print("\x1f".join((str(p.get("id", "")), str(p.get("name", "")), "applications-games", str(p.get("runtime", "native")), "auto", "", "unknown", "1" if p.get("installed") else "0")))
 ' > "$tmp_raw" || fatal "Failed to generate fallback list"
         fi
     fi
@@ -471,7 +474,7 @@ for p in json.load(sys.stdin):
     if [[ ! -s "$tmp_raw" ]]; then
         if [[ "$show_all" == "false" ]]; then
             notify normal "No installed games" "Showing all profiles…"
-            pick_game "true"
+            pick_game "true" "$default_action"
             return $?
         fi
         fatal "No displayable profiles" "No profiles in $(dirname "$MASTER_RUNNER")/profiles"
@@ -602,7 +605,13 @@ for p in json.load(sys.stdin):
     case "$exit_code" in
         10)  _do_mount "$sel_pid" "$sel_name" "${icons[sel_idx]}" ;;
         11)  _do_unmount "$sel_pid" "$sel_name" "${icons[sel_idx]}" ;;
-        0|*) _do_launch "$sel_pid" "$sel_name" "${icons[sel_idx]}" "${runtimes[sel_idx]}" ;;
+        0)
+            case "$default_action" in
+                mount)   _do_mount "$sel_pid" "$sel_name" "${icons[sel_idx]}" ;;
+                unmount) _do_unmount "$sel_pid" "$sel_name" "${icons[sel_idx]}" ;;
+                *)       _do_launch "$sel_pid" "$sel_name" "${icons[sel_idx]}" "${runtimes[sel_idx]}" ;;
+            esac ;;
+        *) return 1 ;;
     esac
     return 0
 }
@@ -674,13 +683,10 @@ wizard_main() {
                 SHOW_ALL="false" pick_game "false" || true
                 ;;
             "💾  Mount Game Data")
-                SHOW_ALL="false" pick_game "false" || true
-                # pick_game already handles mount via Alt+m, but we force mount here
-                # If user pressed Enter we launched; for wizard we want mount: use mount flow
-                # So re-pick and force mount if needed — simplified: just notify
+                pick_game "false" "mount" || true
                 ;;
             "📤  Unmount Game Data")
-                SHOW_ALL="true" pick_game "true" || true
+                pick_game "true" "unmount" || true
                 ;;
             "🔍  Toggle Filter"*)
                 if [[ "$SHOW_ALL" == "true" ]]; then SHOW_ALL="false"; else SHOW_ALL="true"; fi
@@ -703,7 +709,7 @@ wizard_main() {
                 fi
                 ;;
             "📂  Open Profiles"*)
-                have_cmd xdg-open && xdg-open "$HOME/user_scripts/gaming/runner/profiles" >/dev/null 2>&1 & disown || true
+                have_cmd xdg-open && xdg-open "$SCRIPT_DIR/../profiles" >/dev/null 2>&1 & disown || true
                 ;;
             "🚪  Exit"* ) return 0 ;;
             *) return 0 ;;
@@ -762,4 +768,3 @@ main() {
 }
 
 main "$@"
-
