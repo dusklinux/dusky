@@ -33,6 +33,12 @@ typeset -g  DUSKY_GIT_DIR=${DUSKY_GIT_DIR:-$HOME/dusky}
 typeset -g  DUSKY_GIT_LIST=${DUSKY_GIT_LIST:-$HOME/.git_dusky_list}
 typeset -gA _DUSKY_MG_CACHE
 
+# Ctrl-T has its own fzf defaults (40% height), separate from the Dusky TUI.
+# Preserve existing picker options and make repeated sourcing idempotent.
+if [[ " ${FZF_CTRL_T_OPTS-} " != *" --no-height "* ]]; then
+    export FZF_CTRL_T_OPTS="${FZF_CTRL_T_OPTS:+$FZF_CTRL_T_OPTS }--no-height"
+fi
+
 # -----------------------------------------------------------------------------
 # 1. Base primitive — a function, so subshells, scripts and hooks can use it
 # -----------------------------------------------------------------------------
@@ -169,7 +175,7 @@ function _git_dusky_restore() {
             print -ru2 -- 'Refusing to hard-reset non-interactively. Pass -y to force.'
             return 1
         fi
-        if ! read -r "ans?Proceed? [Y/n] "; then
+        if ! vared -p "Proceed? [Y/n] " ans; then
             print
             print -ru2 -- 'Aborted.'
             return 1
@@ -736,10 +742,13 @@ function git_dusky_push() {
             (( $#others )) && print -ru2 -- \
                 "Note: ${#others} other path(s) are staged; this commit is scoped to '$rel' only."
 
-            print -nu2 -- "Commit message for '$rel': "
-            if ! read -r msg; then
-                print -u2
-                return 1
+            # vared uses ZLE, so cursor keys edit the line instead of printing
+            # escape sequences. Keep read for callers supplying stdin via a pipe.
+            if [[ -t 0 ]]; then
+                vared -p "Commit message for '$rel': " msg || return 1
+            else
+                print -nu2 -- "Commit message for '$rel': "
+                read -r msg || return 1
             fi
             if [[ -z ${msg//[[:space:]]/} ]]; then
                 print -ru2 -- 'Aborted: a commit message is required.'

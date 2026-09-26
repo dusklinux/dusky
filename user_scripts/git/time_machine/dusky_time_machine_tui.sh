@@ -64,6 +64,7 @@ _dusky_volatile_shift() {
         return 0
     fi
 
+    umask 077
     local current_path target_dir="" candidate
     current_path="$(readlink -f -- "${BASH_SOURCE[0]:-${0}}")"
 
@@ -75,8 +76,7 @@ _dusky_volatile_shift() {
     local wtest
     for candidate in "${candidates[@]}"; do
         [[ -d "$candidate" && -w "$candidate" ]] || continue
-        wtest="${candidate}/.dusky_tm_wtest_$$"
-        if : >"$wtest" 2>/dev/null; then
+        if wtest="$(mktemp "${candidate}/.dusky_tm_wtest.XXXXXXXXXX" 2>/dev/null)"; then
             rm -f -- "$wtest"
             target_dir="$candidate"
             break
@@ -88,10 +88,8 @@ _dusky_volatile_shift() {
         exit 2
     fi
 
-    local uid session_run_dir engine
-    uid="${UID:-$(id -u)}"
-    session_run_dir="${target_dir}/dusky-tm-${uid}/s$$"
-    mkdir -p -m 0700 "$session_run_dir" || exit 2
+    local session_run_dir engine
+    session_run_dir="$(mktemp -d "${target_dir}/dusky-tm.XXXXXXXXXX")" || exit 2
     engine="${session_run_dir}/engine.sh"
 
     cat -- "$current_path" >"$engine" || { rm -f -- "$engine"; exit 2; }
@@ -111,7 +109,7 @@ _dusky_volatile_shift() {
     exit 2
 }
 
-if [[ "${DUSKY_ROLE}" == "owner" ]]; then
+if [[ "${DUSKY_ROLE}" == "owner" && "${1:-}" != "--help" && "${1:-}" != "-h" && "${1:-}" != "--version" ]]; then
     _dusky_volatile_shift "$@"
 fi
 
@@ -125,13 +123,15 @@ umask 077
 
 unset BASH_ENV
 unset CDPATH
+unset GIT_PREFIX GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_ICASE_PATHSPECS
 unset FZF_DEFAULT_OPTS
 unset FZF_DEFAULT_OPTS_FILE
 
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 
-readonly DUSKY_TM_VERSION="11.0.0"
+readonly DUSKY_TM_VERSION="11.1.0"
 readonly DUSKY_TM_CODENAME="Chronos Aegis"
 
 _dusky_die() {
@@ -155,7 +155,7 @@ if [[ -z "${DUSKY_OWNER_PID:-}" ]]; then
         export DUSKY_OWNER_PID="${PPID}"
     fi
 fi
-export DUSKY_SESSION_ID="${DUSKY_SESSION_ID:-${DUSKY_OWNER_PID}}"
+export DUSKY_SESSION_ID="${DUSKY_SESSION_ID:-${EPOCHREALTIME//./}_${DUSKY_OWNER_PID}}"
 export DUSKY_TM_VERSION DUSKY_TM_CODENAME
 
 # -----------------------------------------------------------------------------
@@ -233,27 +233,26 @@ _dusky_owner_repo_init() {
     [[ -d "$GIT_DIR" ]] || _dusky_die "GIT_DIR ${GIT_DIR} does not exist"
     [[ "$(_gr config --bool core.bare 2>/dev/null || true)" == "true" ]] \
         || _dusky_die "${GIT_DIR} is not a bare repository"
+    _gr rev-parse --verify HEAD >/dev/null 2>&1 || _dusky_die "repository has no commit history yet"
 }
 
 # -----------------------------------------------------------------------------
 # 5. Persistence paths + exclusive work-tree lock (owner acquires)
 # -----------------------------------------------------------------------------
 _dusky_pick_persist_dir() {
-    local d
-    for d in "/var/tmp/dusky-tm-${UID:-$(id -u)}" "${XDG_RUNTIME_DIR:-}/dusky-tm-persist" "/tmp/dusky-tm-persist-${UID:-$(id -u)}"; do
-        [[ -n "$d" && "$d" != "/dusky-tm-persist" ]] || continue
-        if mkdir -p -m 0700 "$d" 2>/dev/null && [[ -w "$d" ]]; then
-            printf '%s\n' "$d"
-            return 0
-        fi
-    done
-    _dusky_die "cannot create persist directory"
+    local d="${GIT_DIR}/dusky-time-machine"
+    [[ ! -L "$d" ]] || _dusky_die "recovery directory must not be a symlink"
+    mkdir -p "$d" || _dusky_die "cannot create recovery directory"
+    [[ -O "$d" && -w "$d" ]] || _dusky_die "recovery directory is not owned and writable"
+    chmod 0700 "$d" || return 1
+    printf '%s\n' "$d"
 }
 
 _dusky_bind_paths() {
     if [[ -z "${DUSKY_PERSIST_DIR:-}" ]]; then
         DUSKY_PERSIST_DIR="$(_dusky_pick_persist_dir)"
     fi
+    mkdir -p "$DUSKY_PERSIST_DIR" || _dusky_die "cannot create recovery directory"
     export DUSKY_PERSIST_DIR
     export DUSKY_PRESENT_FILE="${DUSKY_PRESENT_FILE:-${DUSKY_PERSIST_DIR}/present.target}"
 
@@ -263,19 +262,19 @@ _dusky_bind_paths() {
     [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR}" ]] \
         || run_root="/dev/shm/dusky-tm-${uid}"
     export DUSKY_RUN_ROOT="${DUSKY_RUN_ROOT:-${run_root}}"
-    mkdir -p -m 0700 "$DUSKY_RUN_ROOT"
+    mkdir -p "$DUSKY_RUN_ROOT"
 
     export DUSKY_SESSION_DIR="${DUSKY_SESSION_DIR:-${DUSKY_RUN_ROOT}/s${DUSKY_OWNER_PID}}"
-    mkdir -p -m 0700 "$DUSKY_SESSION_DIR"
+    mkdir -p "$DUSKY_SESSION_DIR"
     export DUSKY_STATE_DIR="${DUSKY_STATE_DIR:-${DUSKY_SESSION_DIR}/state}"
-    mkdir -p -m 0700 "$DUSKY_STATE_DIR"
+    mkdir -p "$DUSKY_STATE_DIR"
 
     if [[ -z "${DUSKY_TM_ENGINE:-}" ]]; then
         export DUSKY_TM_ENGINE="${DUSKY_SESSION_DIR}/engine.sh"
     fi
 
-    export DUSKY_LOCK_FILE="${DUSKY_LOCK_FILE:-${DUSKY_RUN_ROOT}/worktree.lock}"
-    export DUSKY_LOCK_PID_FILE="${DUSKY_LOCK_PID_FILE:-${DUSKY_RUN_ROOT}/worktree.pid}"
+    export DUSKY_LOCK_FILE="${DUSKY_LOCK_FILE:-${DUSKY_PERSIST_DIR}/worktree.lock}"
+    export DUSKY_LOCK_PID_FILE="${DUSKY_LOCK_PID_FILE:-${DUSKY_PERSIST_DIR}/worktree.pid}"
     export DUSKY_JOURNAL="${DUSKY_JOURNAL:-${DUSKY_PERSIST_DIR}/journal}"
 }
 
@@ -291,7 +290,7 @@ _dusky_acquire_lock() {
     exec 9<>"$DUSKY_LOCK_FILE"
     if ! flock -n 9; then
         local holder
-        holder="$(<"$DUSKY_LOCK_PID_FILE" 2>/dev/null || true)"
+        holder="$(cat -- "$DUSKY_LOCK_PID_FILE" 2>/dev/null || true)"
         _dusky_die "another Time Machine instance holds the work-tree lock (pid ${holder:-unknown})" 3
     fi
     printf '%s\n' "$DUSKY_OWNER_PID" >"$DUSKY_LOCK_PID_FILE"
@@ -317,6 +316,7 @@ _dusky_load_present_target() {
     DUSKY_PRESENT_BRANCH=""
     DUSKY_PRESENT_SHA=""
     DUSKY_PRESENT_SHORT=""
+    export DUSKY_STASH_SESSION_ID="$DUSKY_SESSION_ID"
 
     if [[ -f "$DUSKY_PRESENT_FILE" ]]; then
         # shellcheck disable=SC1090
@@ -324,6 +324,7 @@ _dusky_load_present_target() {
         DUSKY_PRESENT_BRANCH="${DUSKY_TGT_BRANCH:-}"
         DUSKY_PRESENT_SHA="${DUSKY_TGT_SHA:-}"
         DUSKY_PRESENT_SHORT="${DUSKY_TGT_SHORT:-}"
+        export DUSKY_STASH_SESSION_ID="${DUSKY_TGT_STASH_SESSION:-$DUSKY_SESSION_ID}"
     fi
 
     if [[ -z "$DUSKY_PRESENT_SHA" ]]; then
@@ -336,11 +337,16 @@ _dusky_load_present_target() {
 }
 
 _dusky_save_present_target() {
-    cat >"$DUSKY_PRESENT_FILE" <<EOF
+    export DUSKY_STASH_SESSION_ID="${DUSKY_STASH_SESSION_ID:-$DUSKY_SESSION_ID}"
+    local tmp
+    tmp="$(mktemp "${DUSKY_PRESENT_FILE}.XXXXXXXXXX")" || return 1
+    cat >"$tmp" <<EOF
 DUSKY_TGT_BRANCH=${DUSKY_PRESENT_BRANCH@Q}
 DUSKY_TGT_SHA=${DUSKY_PRESENT_SHA@Q}
 DUSKY_TGT_SHORT=${DUSKY_PRESENT_SHORT@Q}
+DUSKY_TGT_STASH_SESSION=${DUSKY_STASH_SESSION_ID@Q}
 EOF
+    mv -f -- "$tmp" "$DUSKY_PRESENT_FILE"
 }
 
 _dusky_clear_present_target() {
@@ -445,7 +451,7 @@ _dusky_user_state_load() {
 }
 
 _dusky_user_state_save() {
-    mkdir -p -m 0700 "$DUSKY_SETTINGS_DIR" 2>/dev/null || return 0
+    mkdir -p "$DUSKY_SETTINGS_DIR" 2>/dev/null || return 0
     local tmp="${DUSKY_SETTINGS_DIR}/.tm_state_tmp_$$"
     cat >"$tmp" <<EOF
 # =============================================================================
@@ -510,7 +516,7 @@ _dusky_valid_hash() {
 _dusky_stash_ref_by_message() {
     local want="$1" gd gs
     while IFS=$'\t' read -r gd gs; do
-        if [[ "$gs" == *"$want"* ]]; then
+        if [[ "$gs" == *": $want" ]]; then
             printf '%s\n' "$gd"
             return 0
         fi
@@ -519,7 +525,7 @@ _dusky_stash_ref_by_message() {
 }
 
 _dusky_find_session_stash() {
-    _dusky_stash_ref_by_message "DUSKY_AUTO_STASH_${DUSKY_SESSION_ID}"
+    _dusky_stash_ref_by_message "DUSKY_AUTO_STASH_${DUSKY_STASH_SESSION_ID:-$DUSKY_SESSION_ID}"
 }
 
 _dusky_resolve_present_branch() {
@@ -527,21 +533,6 @@ _dusky_resolve_present_branch() {
         printf '%s\n' "$DUSKY_PRESENT_BRANCH"
         return 0
     fi
-
-    local remote_head b
-    remote_head="$(_gr symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)"
-    remote_head="${remote_head#refs/remotes/origin/}"
-    if [[ -n "$remote_head" ]] && _gr show-ref --verify --quiet "refs/heads/${remote_head}"; then
-        printf '%s\n' "$remote_head"
-        return 0
-    fi
-
-    for b in main master; do
-        if _gr show-ref --verify --quiet "refs/heads/${b}"; then
-            printf '%s\n' "$b"
-            return 0
-        fi
-    done
 
     if [[ -n "${DUSKY_PRESENT_SHA}" ]] && _gr cat-file -e "${DUSKY_PRESENT_SHA}^{commit}" 2>/dev/null; then
         printf '%s\n' "$DUSKY_PRESENT_SHA"
@@ -562,7 +553,7 @@ _dusky_apply_session_stash() {
         return 0
     fi
 
-    if _gw stash apply --quiet "$ref"; then
+    if _gw stash apply --index --quiet "$ref"; then
         _gw stash drop --quiet "$ref" || true
         _dusky_write stash "none"
         return 0
@@ -575,6 +566,7 @@ _dusky_apply_session_stash() {
 }
 
 _dusky_git_return() {
+    _dusky_load_present_target
     rm -f -- "${DUSKY_STATE_DIR}/confirm_wipe"
     rm -f -- "${DUSKY_STATE_DIR}/conflicts"
 
@@ -587,7 +579,7 @@ _dusky_git_return() {
         return 1
     fi
 
-    if [[ "$phase" == "present" && "$stay" != "1" ]]; then
+    if [[ "$phase" == "present" && "$stay" != "1" && "$(_dusky_read stash)" != "stashed" ]]; then
         _dusky_note "present" "already on present timeline"
         return 0
     fi
@@ -600,14 +592,18 @@ _dusky_git_return() {
     fi
 
     cd "$GIT_WORK_TREE" || return 1
+    if _dusky_worktree_dirty; then
+        _dusky_note "blocked" "save edits made while traveling before returning"
+        return 1
+    fi
 
-    if [[ "$target" =~ ^[0-9a-fA-F]{40}$ ]]; then
-        err="$(_gw switch --quiet --force --detach "$target" 2>&1)" || {
+    if [[ "$target" != "$DUSKY_PRESENT_BRANCH" ]]; then
+        err="$(_gw switch --quiet --no-overwrite-ignore --detach "$target" 2>&1)" || {
             _dusky_note "error" "failed to detach onto present SHA ${target:0:7}: ${err}"
             return 1
         }
     else
-        err="$(_gw switch --quiet --force "$target" 2>&1)" || {
+        err="$(_gw switch --quiet --no-overwrite-ignore "$target" 2>&1)" || {
             _dusky_note "error" "failed to switch to ${target}: ${err}"
             return 1
         }
@@ -639,14 +635,16 @@ _dusky_cleanup() {
 
     if [[ "$stay" == "1" ]]; then
         _dusky_write phase "stay"
-        _dusky_save_present_target
-    elif [[ "$phase" == "detached" ]]; then
-        _dusky_git_return >/dev/null 2>&1 || true
+        [[ -f "$DUSKY_PRESENT_FILE" ]] || _dusky_save_present_target
+    elif [[ "$phase" == "detached" || "$(_dusky_read stash)" == "stashed" ]]; then
+        if ! _dusky_git_return; then
+            printf 'dusky-tm: return failed; edits, stash and present ledger retained.\n' >&2
+        fi
     fi
 
     if [[ -n "${DUSKY_LOCK_PID_FILE:-}" && -f "${DUSKY_LOCK_PID_FILE}" ]]; then
         local holder
-        holder="$(<"$DUSKY_LOCK_PID_FILE" 2>/dev/null || true)"
+        holder="$(cat -- "$DUSKY_LOCK_PID_FILE" 2>/dev/null || true)"
         if [[ "$holder" == "$$" ]]; then
             rm -f -- "$DUSKY_LOCK_PID_FILE"
         fi
@@ -666,7 +664,10 @@ _dusky_cleanup() {
 _dusky_worktree_dirty() {
     # LAW: Tracked files only. --untracked-files=no is NON-NEGOTIABLE on $HOME.
     local out=""
-    out="$(_gr status --porcelain=v1 --untracked-files=no --ignore-submodules=all 2>/dev/null || true)"
+    if ! out="$(_gr status --porcelain=v1 --untracked-files=no --ignore-submodules=all 2>/dev/null)"; then
+        _dusky_note "error" "cannot read Git status; refusing to treat the work tree as clean"
+        return 0
+    fi
     [[ -n "$out" ]]
 }
 
@@ -709,6 +710,7 @@ _dusky_shield_present() {
         return 0
     fi
 
+    export DUSKY_STASH_SESSION_ID="$DUSKY_SESSION_ID"
     if _dusky_worktree_dirty; then
         # LAW: tracked files only. Never --include-untracked or --all.
         if _gw stash push --quiet --no-include-untracked -m "DUSKY_AUTO_STASH_${DUSKY_SESSION_ID}"; then
@@ -717,7 +719,7 @@ _dusky_shield_present() {
                 return 1
             fi
             _dusky_write stash "stashed"
-            _dusky_save_present_target
+            _dusky_save_present_target || return 1
             return 0
         fi
         _dusky_note "error" "stash failed — refusing to travel (index lock or hook)"
@@ -725,7 +727,7 @@ _dusky_shield_present() {
     fi
 
     _dusky_write stash "clean"
-    _dusky_save_present_target
+    _dusky_save_present_target || return 1
     return 0
 }
 
@@ -733,7 +735,7 @@ _dusky_shield_present() {
 # 11. Layout & Rendering Math — WHEN | GRAPH/REFS/MSG | AUTHOR | DATE
 # -----------------------------------------------------------------------------
 _dusky_compute_widths() {
-    local cols preview_pct list_cols cur_layout edge pct
+    local cols list_cols cur_layout edge pct
     cols="${FZF_COLUMNS:-${COLUMNS:-}}"
     if [[ ! "$cols" =~ ^[0-9]+$ || "$cols" -le 0 ]]; then
         cols="$(tput cols 2>/dev/null || printf '120')"
@@ -820,7 +822,7 @@ _dusky_git_list() {
         --date=format:'%m/%d'
     )
     if [[ "$scope" == "all" ]]; then
-        log_args+=(--branches --tags --remotes)
+        log_args+=(--branches --tags --remotes HEAD)
     fi
 
     _gr "${log_args[@]}" | gawk \
@@ -1083,51 +1085,32 @@ _dusky_changed_files_block() {
 
 _dusky_files_index_path() {
     local ord="$1"
-    sed -n "${ord}p" "${DUSKY_STATE_DIR}/files_index" 2>/dev/null || true
+    [[ "$ord" =~ ^[1-9][0-9]*$ ]] || return 1
+    sed -z -n "${ord}p" "${DUSKY_STATE_DIR}/files_index" 2>/dev/null
 }
 
 _dusky_git_list_files() {
-    local sha idx tmp
+    local sha idx tmp st path display color n=0
     sha="$(_dusky_read drill_sha)"
     idx="${DUSKY_STATE_DIR}/files_index"
-    tmp="${idx}.tmp.$$"
-    : >"$tmp"
-    if ! _dusky_valid_hash "$sha"; then
-        printf 'x0\x1f%s(no commit selected)%s\n' "$DUSKY_ANSI_DIM" "$DUSKY_ANSI_RESET"
-        mv -f -- "$tmp" "$idx" 2>/dev/null || true
-        return 0
+    tmp="$(mktemp "${idx}.XXXXXXXXXX")" || return 1
+    if _dusky_valid_hash "$sha" && ! _dusky_is_merge "$sha"; then
+        while IFS= read -r -d '' st && IFS= read -r -d '' path; do
+            ((n+=1))
+            color="$DUSKY_ANSI_FG"
+            case "$st" in
+                A) color="$DUSKY_ANSI_SUCCESS" ;;
+                D) color="$DUSKY_ANSI_ERROR" ;;
+                M|T) color="$DUSKY_ANSI_ACCENT" ;;
+            esac
+            printf -v display '%q' "$path"
+            printf 'x%d\x1f  %s%-2s%s %s\n' "$n" "$color" "$st" "$DUSKY_ANSI_RESET" "$display"
+            printf '%s\0' "$path" >>"$tmp"
+        done < <(_gr diff-tree --root --no-commit-id --no-renames --name-status -z -r "$sha")
     fi
-    if _dusky_is_merge "$sha"; then
-        printf 'x0\x1f%s(merge commit — per-file view unavailable)%s\n' "$DUSKY_ANSI_DIM" "$DUSKY_ANSI_RESET"
-        mv -f -- "$tmp" "$idx" 2>/dev/null || true
-        return 0
-    fi
-    _gr -c core.pager=cat diff-tree --root --no-commit-id --name-status -r "$sha" 2>/dev/null \
-        | gawk \
-            -v FS=$'\t' \
-            -v idx_file="$tmp" \
-            -v reset="${DUSKY_ANSI_RESET}" \
-            -v dim="${DUSKY_ANSI_DIM}" \
-            -v fg="${DUSKY_ANSI_FG}" \
-            -v acc="${DUSKY_ANSI_ACCENT}" \
-            -v ok="${DUSKY_ANSI_SUCCESS}" \
-            -v err="${DUSKY_ANSI_ERROR}" '
-        {
-            st = $1
-            path = $2
-            if (st == "" || path == "") next
-            if (path ~ /[[:cntrl:]]/) next
-            n++
-            c = fg
-            if (st == "A") c = ok
-            else if (st == "D") c = err
-            else if (st == "M" || st == "T") c = acc
-            printf "x%d\x1f  %s%-2s%s %s%s\n", n, c, st, reset, fg, path
-            print path > idx_file
-        }'
-    mv -f -- "$tmp" "$idx" 2>/dev/null || true
-    if [[ ! -s "$idx" ]]; then
-        printf 'x0\x1f%s(no file changes in this commit)%s\n' "$DUSKY_ANSI_DIM" "$DUSKY_ANSI_RESET"
+    mv -f -- "$tmp" "$idx" || return 1
+    if (( n == 0 )); then
+        printf 'x0\x1f%s(no per-file changes available)%s\n' "$DUSKY_ANSI_DIM" "$DUSKY_ANSI_RESET"
     fi
 }
 
@@ -1137,7 +1120,8 @@ _dusky_file_preview() {
     [[ "$ord" =~ ^[0-9]+$ ]] || { _dusky_ghost_preview; return 0; }
     sha="$(_dusky_read drill_sha)"
     short="$(_dusky_read drill_short)"
-    path="$(_dusky_files_index_path "$ord")"
+    path=""
+    IFS= read -r -d '' path < <(_dusky_files_index_path "$ord") || true
     width="${FZF_PREVIEW_COLUMNS:-120}"
 
     printf '%sΔ %s%s%s  %s%s%s\n' \
@@ -1152,9 +1136,9 @@ _dusky_file_preview() {
         return 0
     fi
 
-    diff_out="$(_gr -c core.pager=cat diff-tree --root -p --no-commit-id --color=always "$sha" -- "$path" 2>/dev/null || true)"
+    diff_out="$(_gr --literal-pathspecs -c core.pager=cat diff-tree --root -p --no-commit-id --color=always "$sha" -- "$path" 2>/dev/null || true)"
     if [[ -z "$diff_out" ]] && _dusky_is_merge "$sha"; then
-        diff_out="$(_gr -c core.pager=cat show --color=always --format= "$sha" -- "$path" 2>/dev/null || true)"
+        diff_out="$(_gr --literal-pathspecs -c core.pager=cat show --color=always --format= "$sha" -- "$path" 2>/dev/null || true)"
     fi
     if [[ -z "$diff_out" ]]; then
         printf '%s(no textual diff for this path)%s\n' "$DUSKY_ANSI_DIM" "$DUSKY_ANSI_RESET"
@@ -1263,13 +1247,29 @@ _dusky_git_checkout() {
         return 0
     fi
 
+    if [[ "$(_dusky_read phase)" == "conflict" ]]; then
+        _dusky_note "blocked" "resolve stash conflicts before traveling"
+        return 1
+    fi
+    if [[ "$(_dusky_read phase)" == "detached" ]] && _dusky_worktree_dirty; then
+        _dusky_note "blocked" "save edits made while traveling before switching"
+        return 1
+    fi
     if ! _dusky_shield_present; then
         return 1
     fi
 
     cd "$GIT_WORK_TREE" || return 1
     local err
-    err="$(_gw switch --quiet --force --detach "$target" 2>&1)" || {
+    err="$(_gw switch --quiet --no-overwrite-ignore --detach "$target" 2>&1)" || {
+        # A failed first trip must put the original staged/unstaged work back.
+        if [[ "$(_dusky_read phase)" == "present" ]]; then
+            if _dusky_apply_session_stash; then
+                _dusky_clear_present_target
+            else
+                return 1
+            fi
+        fi
         _dusky_note "error" "git switch --detach failed for ${hash}: ${err}"
         return 1
     }
@@ -1283,6 +1283,11 @@ _dusky_git_restore() {
     rm -f -- "${DUSKY_STATE_DIR}/confirm_wipe"
     cd "$GIT_WORK_TREE" || return 1
     local err
+    local collision=""
+    if IFS= read -r -d '' collision < <(_dusky_untracked_collisions HEAD); then
+        _dusky_note "blocked" "untracked path obstructs reset: ${collision}"
+        return 1
+    fi
     err="$(_gw reset --hard --quiet HEAD 2>&1)" || {
         _dusky_note "error" "hard reset failed: ${err}"
         return 1
@@ -1297,7 +1302,7 @@ _dusky_git_restore_interactive() {
         "$(_gr rev-parse --short=7 HEAD)" >/dev/tty
     printf '  Type YES to confirm: ' >/dev/tty
     local ans=""
-    read -r ans </dev/tty || true
+    read -er ans </dev/tty || true
     if [[ "$ans" != "YES" ]]; then
         _dusky_note "cancelled" "hard reset aborted"
         return 0
@@ -1463,10 +1468,10 @@ _dusky_apply_orphan() {
 
     local gd gs pid
     while IFS=$'\t' read -r gd gs; do
-        if [[ "$gs" == DUSKY_AUTO_STASH_* ]]; then
+        if [[ "$gs" == *": DUSKY_AUTO_STASH_"* ]]; then
             pid="${gs##*_}"
             if [[ "$pid" =~ ^[0-9]+$ ]] && ! kill -0 "$pid" 2>/dev/null; then
-                if _gw stash apply --quiet "$gd"; then
+                if _gw stash apply --index --quiet "$gd"; then
                     _gw stash drop --quiet "$gd" || true
                     _dusky_note "orphan" "applied and dropped ${gd}"
                     return 0
@@ -1532,7 +1537,7 @@ _dusky_footer_line() {
     orphans=0
     local gs pid
     while IFS=$'\t' read -r _ gs; do
-        if [[ "$gs" == DUSKY_AUTO_STASH_* ]]; then
+        if [[ "$gs" == *": DUSKY_AUTO_STASH_"* ]]; then
             pid="${gs##*_}"
             if [[ "$pid" =~ ^[0-9]+$ ]] && ! kill -0 "$pid" 2>/dev/null; then
                 ((orphans++)) || true
@@ -1673,7 +1678,7 @@ _dusky_act_return() {
 _dusky_orphan_report() {
     local gd gs pid
     while IFS=$'\t' read -r gd gs; do
-        if [[ "$gs" == DUSKY_AUTO_STASH_* ]]; then
+        if [[ "$gs" == *": DUSKY_AUTO_STASH_"* ]]; then
             pid="${gs##*_}"
             if [[ "$pid" =~ ^[0-9]+$ ]] && ! kill -0 "$pid" 2>/dev/null; then
                 printf '  %s  %s\n' "$gd" "$gs"
@@ -1972,9 +1977,9 @@ if [[ "${DUSKY_ROLE}" == "worker" ]]; then
     if [[ -z "${DUSKY_LIST_INNER:-}" ]]; then
         _dusky_compute_widths
     fi
-    if [[ -z "${DUSKY_PRESENT_SHA:-}" ]]; then
-        _dusky_load_present_target
-    fi
+    # Workers are separate processes: refresh the persisted stash identity after
+    # another worker returns or starts a new trip in the same owner session.
+    _dusky_load_present_target
     _dusky_worker_dispatch "$@"
     exit $?
 fi
@@ -2162,7 +2167,7 @@ _dusky_self_test() {
         _dusky_apply_session_stash || true
         rm -f -- "$secret"
         # restore tracked file if still dirty
-        _gw checkout -- -- "$tracked" 2>/dev/null || true
+        _gw restore --worktree -- "$tracked" 2>/dev/null || true
     fi
 
     # G. Owner-guard: a worker calling cleanup must be a no-op.
@@ -2230,6 +2235,12 @@ main() {
     _dusky_acquire_lock
     _dusky_state_init
     _dusky_load_present_target
+    if [[ -f "$DUSKY_PRESENT_FILE" ]]; then
+        _dusky_write phase "detached"
+        if _dusky_find_session_stash >/dev/null; then
+            _dusky_write stash "stashed"
+        fi
+    fi
 
     if [[ "${1:-}" == "--self-test" ]]; then
         _dusky_self_test
@@ -2274,7 +2285,7 @@ main() {
     with_shell="${DUSKY_BASH} --noprofile --norc -c"
     preview_cmd="${w} preview {1}"
 
-    fzf --ansi \
+    fzf --ansi --no-height \
         --sync \
         --style=full:rounded \
         --with-shell="${with_shell}" \
@@ -2356,10 +2367,18 @@ main() {
         --color="ghost:${MATUGEN_MUTED},gutter:${MATUGEN_BG},scrollbar:${MATUGEN_MUTED},preview-scrollbar:${MATUGEN_ACCENT}" \
         <"${DUSKY_STATE_DIR}/list"
 
+    local fzf_rc=$?
+    if (( fzf_rc != 0 && fzf_rc != 1 && fzf_rc != 130 )); then
+        printf 'dusky-tm: fzf failed (exit %s).\n' "$fzf_rc" >&2
+        return "$fzf_rc"
+    fi
     local stay
     stay="$(_dusky_read stay)"
     if [[ "$stay" != "1" ]]; then
-        _dusky_git_return >/dev/null 2>&1 || true
+        if ! _dusky_git_return; then
+            printf 'dusky-tm: could not return: %s\n' "$(_dusky_read last_detail)" >&2
+            return 1
+        fi
     fi
 
     local final_head final_br

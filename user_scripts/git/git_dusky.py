@@ -1,29 +1,12 @@
 #!/usr/bin/env python3
 """
-Dusky Dotfiles Manager - Obsidian Edition (Absolute Synchronous)
-Architecture: v13.0.0 "Obsidian Registry" · Arch Linux / Hyprland / Wayland
-Execution:   Python 3.12+ (targets 3.14) · Strict Synchronous I/O
-Bare-repo contract: GIT_DIR=$HOME/dusky  GIT_WORK_TREE=$HOME
+Dusky Dotfiles Manager — bare repository at $HOME/dusky, work tree at $HOME.
 
-v13 audit hardening (2026-08):
-  · Single-source ACTION registry generates dashboard, help table, CLI and
-    interactive dispatch - menu drift between the three views is impossible.
-  · Manifest edge cases: "." / "~" (whole-home) entries now match universally
-    instead of silently untracking EVERY tracked file (critical data-loss fix).
-  · Paths inside GIT_DIR (dusky/) are never staged, committed, or pruned.
-  · core.quotepath=false everywhere: non-ASCII filenames in the manifest now
-    match the index byte-exactly (silent-untrack fix).
-  · discard_local_changes respects manifest scope: scoped reset via
-    --pathspec-from-file when a manifest exists; global reset only when it
-    does not (previously a scoped-looking prompt wiped unlisted files).
-  · show_delta (option 5) is a pure view - it no longer mutates the index.
-  · create_stash verifies the stash actually landed (honest success/failure).
-  · Ctrl-D (EOF) exits gracefully instead of raising a raw traceback.
-  · Bare Enter at the dashboard re-prompts instead of firing Commit-All.
-  · checkout_pr switches straight to an existing pr/N branch instead of
-    failing on a non-fast-forward fetch into it.
-  · All dynamic strings are rich-markup-escaped; push failures report clearly
-    (with a set-upstream hint when no upstream is configured).
+Manifest entries scope commits and discards; they never implicitly untrack files.
+Selected commits include the current contents of selected paths, including both
+sides of renames, while preserving unrelated index entries. Missing manifests
+make Commit All update tracked files only; an empty manifest selects nothing.
+Interactive prompts use Readline; selectors use the full terminal.
 """
 
 import os
@@ -33,6 +16,9 @@ import json
 import shutil
 import fnmatch
 import subprocess
+import tempfile
+import fcntl
+import readline  # Enable cursor movement, Home/End and deletion in input().
 from dataclasses import dataclass
 from collections.abc import Callable
 from datetime import datetime
@@ -56,14 +42,12 @@ HOME: Path = Path.home()
 GIT_DIR: Path = HOME / "dusky"
 WORK_TREE: Path = HOME
 DOTFILES_LIST: Path = HOME / ".git_dusky_list"
-TIME_MACHINE_BIN: Path = HOME / "user_scripts" / "git" / "time_machine" / "dusky_time_machine_tui.sh"
+TIME_MACHINE_BIN: Path = Path(__file__).resolve().parent / "time_machine" / "dusky_time_machine_tui.sh"
 MATUGEN_JSON: Path = HOME / ".config" / "matugen" / "generated" / "dusky_tui.json"
 
-DUSKY_VERSION: str = "13.0.0"
+DUSKY_VERSION: str = "13.1.0"
 
 type GitResult = tuple[int, str, str]
-# Dictionary mapping the UI display string to a tuple of (new_path, old_path, status_code)
-type PathMap = dict[str, tuple[str, str | None, str]]
 
 ANSI_RE: re.Pattern[str] = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -88,8 +72,11 @@ def load_matugen_colors() -> dict[str, str]:
         try:
             data = json.loads(MATUGEN_JSON.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                return {**defaults, **{k: v for k, v in data.items() if isinstance(v, str)}}
-        except (json.JSONDecodeError, OSError):
+                valid = {k: v for k, v in data.items()
+                         if k in defaults and isinstance(v, str)
+                         and re.fullmatch(r"#[0-9a-fA-F]{6}", v)}
+                return defaults | valid
+        except (json.JSONDecodeError, UnicodeError, OSError):
             pass
     return defaults
 
@@ -134,7 +121,8 @@ def run_git(
     capture: bool = True,
     check: bool = False,
     input_data: bytes | None = None,
-    literal_pathspecs: bool = False
+    literal_pathspecs: bool = False,
+    index_file: Path | None = None,
 ) -> GitResult:
     """Executes Git with strict standard I/O synchronization and environment isolation."""
     git_env = os.environ.copy()
@@ -143,8 +131,17 @@ def run_git(
     git_env["GIT_WORK_TREE"] = str(WORK_TREE)
     git_env["GIT_DIR"] = str(GIT_DIR)
 
+    # Inherited alternate indexes/pathspec modes must not redirect these actions.
+    for key in ("GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX",
+                "GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS",
+                "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"):
+        git_env.pop(key, None)
     if literal_pathspecs:
         git_env["GIT_LITERAL_PATHSPECS"] = "1"
+
+    if index_file is not None:
+        git_env["GIT_INDEX_FILE"] = str(index_file)
 
     cmd = [
         "git",
@@ -169,7 +166,7 @@ def run_git(
         if capture and proc.stderr:
             console.print(
                 "[bold red]Git Internal Error:[/bold red]\n"
-                f"{proc.stderr.decode('utf-8', errors='replace').strip()}"
+                + escape(proc.stderr.decode("utf-8", errors="replace").strip())
             )
         raise subprocess.CalledProcessError(
             proc.returncode, cmd, output=proc.stdout, stderr=proc.stderr
@@ -177,15 +174,9 @@ def run_git(
 
     return (
         proc.returncode,
-        proc.stdout.decode("utf-8", errors="replace") if proc.stdout else "",
+        proc.stdout.decode("utf-8", errors="surrogateescape") if proc.stdout else "",
         proc.stderr.decode("utf-8", errors="replace") if proc.stderr else "",
     )
-
-
-def has_upstream() -> bool:
-    """True when the current branch tracks a remote branch."""
-    code, _, _ = run_git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
-    return code == 0
 
 
 def check_dependencies() -> None:
@@ -214,7 +205,7 @@ def git_dir_rel() -> str | None:
         rel = os.path.relpath(GIT_DIR, WORK_TREE)
     except ValueError:
         return None
-    return None if rel.startswith("..") else rel
+    return None if rel == ".." or rel.startswith("../") else rel
 
 
 def is_internal_gitdir(path: str) -> bool:
@@ -235,7 +226,7 @@ def matches_pathspec(path: str | None, valid_paths: list[str]) -> bool:
         return False
 
     # Explicitly ignore compiler cache folders/files
-    if "__pycache__" in path or path.endswith((".pyc", ".pyo", ".pyd")):
+    if "__pycache__" in Path(path).parts or path.endswith((".pyc", ".pyo", ".pyd")):
         return False
 
     for vp in valid_paths:
@@ -298,308 +289,99 @@ def get_list_pathspecs() -> list[str] | None:
     return valid_paths
 
 
-def prune_unlisted_tracked_files(verbose: bool = True) -> list[str]:
-    """Identifies and untracks files from Git index that are no longer in .git_dusky_list."""
-    valid_paths = get_list_pathspecs()
-    if not valid_paths:
-        return []
-
-    _, ls_out, _ = run_git("ls-files", "-z")
-    if not ls_out:
-        return []
-
-    tracked_files = [f for f in ls_out.split("\0") if f]
-    stale_files = [
-        f for f in tracked_files
-        if not is_internal_gitdir(f) and not matches_pathspec(f, valid_paths)
-    ]
-
-    if not stale_files:
-        return []
-
-    if verbose:
-        c_wrn = COLORS.get("warning", "yellow")
-        console.print(Panel.fit(
-            f"[bold {c_wrn}]⚠ Found {len(stale_files)} tracked file(s) no longer present in {escape(str(DOTFILES_LIST))}:[/bold {c_wrn}]\n" +
-            "\n".join(f"  [dim]➔ {escape(f)}[/dim]" for f in sorted(stale_files)),
-            title=f"[bold {c_wrn}]INDEX PRUNING[/bold {c_wrn}]",
-            border_style=c_wrn,
-            title_align="left",
-            box=box.ROUNDED
-        ))
-
-    payload = "\0".join(stale_files) + "\0"
-    try:
-        run_git(
-            "rm", "--cached", "-r", "--ignore-unmatch", "--quiet",
-            "--pathspec-from-file=-",
-            "--pathspec-file-nul",
-            input_data=payload.encode("utf-8"),
-            check=True,
-            literal_pathspecs=True
-        )
-        if verbose:
-            console.print("[bold green]✔[/bold green] Stale files successfully untracked from Git index (local files preserved on disk).")
-    except subprocess.CalledProcessError:
-        if verbose:
-            console.print("[bold red]✖ Failed to untrack stale files from Git index.[/bold red]")
-
-    return stale_files
-
-
-# --- 5. EXECUTION PAYLOADS ---
-def sync_all(local_only: bool = False) -> None:
-    """Smart-stages paths mathematically cross-referenced with fnmatch globs."""
-    prune_unlisted_tracked_files()
-    valid_paths = get_list_pathspecs()
-
-    if valid_paths is None:
-        console.print(f"[bold yellow]⚠ Warn:[/bold yellow] {escape(str(DOTFILES_LIST))} missing. Executing blanket tracked update (-u).")
-        try:
-            run_git("add", "-u", check=True)
-            console.print("[bold green]✔[/bold green] Blanket update successful.")
-            commit_and_push(local_only=local_only)
-        except subprocess.CalledProcessError:
-            console.print("[bold red]✖ Blanket stage aborted due to Git error.[/bold red]")
-        return
-
-    if not valid_paths:
-        console.print("[bold red]✖ Error:[/bold red] Zero valid file paths parsed.")
-        return
-
-    _, status_out, _ = run_git("status", "--porcelain=v1", "-z", "-u", "--", *valid_paths)
-    if not status_out:
-        console.print("[bold green]✔[/bold green] Working tree immaculate. No divergence detected.")
-        return
-
-    changed_paths: set[str] = set()
-    unstaged_paths: set[str] = set()
-    paths_to_remove: set[str] = set()
-
-    entries = status_out.split("\0")[:-1]
-    it = iter(entries)
-
-    for entry in it:
-        if len(entry) < 3:
-            continue
-        status_code = entry[:2]
-        path = entry[3:]
-
-        orig_path = next(it, None) if "R" in status_code or "C" in status_code else None
-
-        if is_internal_gitdir(path) or is_internal_gitdir(orig_path or ""):
-            continue
-
-        full_path = WORK_TREE / path
-        exists = full_path.exists() or full_path.is_symlink()
-
-        if exists:
-            changed_paths.add(path)
-            if orig_path:
-                changed_paths.add(orig_path)
-            # Stage only unstaged changes (avoids missing staged-deletion bounds crash)
-            if status_code[1] != " ":
-                unstaged_paths.add(path)
-                if orig_path:
-                    unstaged_paths.add(orig_path)
+def changed_entries(
+    *, tracked_only: bool = False, scope: list[str] | None = None,
+) -> list[tuple[str, str | None, str]]:
+    """Read NUL-delimited status, limiting filesystem scans to manifest roots."""
+    roots = set()
+    for pattern in scope or []:
+        # Scan a literal ancestor of a glob, then use one matching policy below.
+        wildcard = re.search(r"[?*\[]", pattern)
+        if wildcard:
+            prefix = pattern[:wildcard.start()]
+            root = prefix.rsplit("/", 1)[0] if "/" in prefix else "."
         else:
-            # File is deleted on disk
-            if status_code[0] == "A":
-                # Untracked staged file, now deleted on disk -> unstage/remove from index
-                paths_to_remove.add(path)
-            else:
-                # Tracked file, deleted on disk -> stage deletion and commit it
-                changed_paths.add(path)
-                paths_to_remove.add(path)
-                if orig_path:
-                    changed_paths.add(orig_path)
-                    paths_to_remove.add(orig_path)
+            root = pattern
+        roots.add(root or ".")
+    if "." in roots:
+        roots.clear()
+    paths = [f":(top,literal){root}" for root in sorted(roots)]
+    batches = [paths[i:i + 128] for i in range(0, len(paths), 128)] or [[]]
+    result = {}
+    for batch in batches:
+        _, out, _ = run_git(
+            "status", "--porcelain=v1", "-z",
+            "--untracked-files=no" if tracked_only else "--untracked-files=all",
+            "--", *batch, check=True,
+        )
+        entries = iter(out.split("\0"))
+        for entry in entries:
+            if not entry:
+                continue
+            status, path = entry[:2], entry[3:]
+            old = next(entries) if "R" in status or "C" in status else None
+            if is_internal_gitdir(path) or (old and is_internal_gitdir(old)):
+                continue
+            result[(path, old, status)] = None
+    return list(result)
 
-    paths_to_stage = [p for p in changed_paths if matches_pathspec(p, valid_paths)]
-    paths_to_add = [p for p in unstaged_paths if matches_pathspec(p, valid_paths)]
-    paths_to_rm = [p for p in paths_to_remove if matches_pathspec(p, valid_paths)]
 
-    if not paths_to_stage and not paths_to_rm:
-        console.print("[bold green]✔[/bold green] Working tree immaculate (no matching files changed).")
+def stage_entries(entries: list[tuple[str, str | None, str]], *, local_only: bool = False) -> None:
+    """Stage selected work-tree changes; leave unrelated staged files alone."""
+    if any(status in {"DD", "AU", "UD", "UA", "DU", "AA", "UU"} for _, _, status in entries):
+        console.print("[bold red]✖ Resolve merge conflicts before selecting files to commit.[/bold red]")
         return
+    selected: set[str] = set()
+    unstaged: set[str] = set()
+    for path, old, status in entries:
+        selected.add(path)
+        if old and "R" in status:
+            selected.add(old)
+        if status[1] != " ":
+            unstaged.add(path)
+            # Staged renames already removed the source from the index.
+            if old and status[1] == "R":
+                unstaged.add(old)
+    if unstaged:
+        payload = os.fsencode("\0".join(sorted(unstaged)) + "\0")
+        run_git("add", "--all", "--pathspec-from-file=-", "--pathspec-file-nul",
+                input_data=payload, literal_pathspecs=True, check=True)
+    if selected:
+        commit_and_push(sorted(selected), local_only=local_only)
+    else:
+        console.print("[green]No matching changes to commit.[/green]")
 
-    if paths_to_rm:
-        payload = "\0".join(paths_to_rm) + "\0"
-        try:
-            run_git(
-                "rm", "--cached", "-r", "--ignore-unmatch", "--quiet",
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-                input_data=payload.encode("utf-8"),
-                check=True,
-                literal_pathspecs=True
-            )
-        except subprocess.CalledProcessError:
-            pass
 
-    if paths_to_add:
-        payload = "\0".join(paths_to_add) + "\0"
-        try:
-            run_git(
-                "add",
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-                input_data=payload.encode("utf-8"),
-                check=True,
-                literal_pathspecs=True
-            )
-        except subprocess.CalledProcessError:
-            console.print("[bold red]✖ Stage operation aborted due to Git bounds error.[/bold red]")
-            return
+def scoped_entries(*, tracked_only: bool = False) -> list[tuple[str, str | None, str]]:
+    paths = get_list_pathspecs()
+    if paths == []:
+        console.print("[yellow]The manifest has no valid paths; nothing selected.[/yellow]")
+        return []
+    return [entry for entry in changed_entries(tracked_only=tracked_only, scope=paths)
+            if paths is None or matches_pathspec(entry[0], paths)
+            or matches_pathspec(entry[1], paths)]
 
-    if not paths_to_stage:
-        console.print("[bold green]✔[/bold green] Index synchronized. No changes left to commit.")
-        return
 
-    console.print("[bold green]✔[/bold green] Payload staged successfully:")
-    for p in sorted(paths_to_stage):
-        console.print(f"  [dim]➔ {escape(p)}[/dim]")
-
-    commit_and_push(paths_to_stage, local_only=local_only)
+def sync_all(local_only: bool = False) -> None:
+    """Commit matching changes without implicitly untracking other files."""
+    stage_entries(scoped_entries(tracked_only=not DOTFILES_LIST.is_file()), local_only=local_only)
 
 
 def sync_single() -> None:
-    """Interactive staging utilizing robust pattern mapping."""
-    valid_paths = get_list_pathspecs()
-    status_args = ["status", "--porcelain=v1", "-z", "-u"]
-    if valid_paths is not None:
-        if not valid_paths:
-            console.print("[bold red]✖ Error:[/bold red] Zero valid file paths parsed.")
-            return
-        status_args += ["--"] + valid_paths
-
-    _, status_out, _ = run_git(*status_args)
-    if not status_out:
-        console.print("[bold green]✔[/bold green] Working tree immaculate. No divergence detected.")
-        return
-
-    entries = status_out.split("\0")[:-1]
-
-    path_map: PathMap = {}
-    display_choices: list[str] = []
-    it = iter(entries)
-
-    for entry in it:
-        if len(entry) < 3:
-            continue
-
-        status_code = entry[:2]
-        path = entry[3:]
-
-        orig_path = next(it, None) if "R" in status_code or "C" in status_code else None
-
-        if is_internal_gitdir(path) or is_internal_gitdir(orig_path or ""):
-            continue
-
-        if valid_paths is not None:
-            # Block rendering if neither new nor old path matches defined tracked bounds
-            if not (matches_pathspec(path, valid_paths) or matches_pathspec(orig_path, valid_paths)):
-                continue
-
-        # PEP 634 Structural Pattern Matching
-        badge = format_status_badge(status_code)
-        match status_code:
-            case s if "R" in s or "C" in s:
-                display = f"{badge} {path} (from {orig_path})"
-            case _:
-                display = f"{badge} {path}"
-
-        plain_display = strip_ansi(display)
-        display_choices.append(display)
-        path_map[display] = (path, orig_path, status_code)
-        path_map[plain_display] = (path, orig_path, status_code)
-
-    if not path_map:
-        console.print("[bold yellow]⚠[/bold yellow] No changed files match .git_dusky_list.")
-        return
-
-    selected_lines = fzf_select(display_choices, prompt="Stage Files", multi=True)
-    if not selected_lines:
-        return
-
-    paths_to_stage: set[str] = set()
-    paths_to_add: set[str] = set()
-    paths_to_rm: set[str] = set()
-
-    # Flatten both new and old paths to ensure Git correctly registers atomic renames
-    for line in selected_lines:
-        clean_line = strip_ansi(line)
-        target_entry = path_map.get(line) or path_map.get(clean_line)
-        if target_entry:
-            p, op, sc = target_entry
-
-            full_path = WORK_TREE / p
-            exists = full_path.exists() or full_path.is_symlink()
-
-            if exists:
-                paths_to_stage.add(p)
-                if op:
-                    paths_to_stage.add(op)
-
-                # Only stage if there are unstaged changes (Y is not ' ')
-                if sc[1] != " ":
-                    paths_to_add.add(p)
-                    if op:
-                        paths_to_add.add(op)
-            else:
-                # File does not exist on disk
-                if sc[0] == "A":
-                    paths_to_rm.add(p)
-                else:
-                    paths_to_stage.add(p)
-                    paths_to_rm.add(p)
-                    if op:
-                        paths_to_stage.add(op)
-                        paths_to_rm.add(op)
-
-    if paths_to_rm:
-        payload = "\0".join(paths_to_rm) + "\0"
-        try:
-            run_git(
-                "rm", "--cached", "-r", "--ignore-unmatch", "--quiet",
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-                input_data=payload.encode("utf-8"),
-                check=True,
-                literal_pathspecs=True
-            )
-            console.print("[bold green]✔[/bold green] Removed/Unstaged files successfully:")
-            for p in sorted(paths_to_rm):
-                console.print(f"  [dim]➔ {escape(p)}[/dim]")
-        except subprocess.CalledProcessError:
-            pass
-
-    if paths_to_add:
-        payload = "\0".join(paths_to_add) + "\0"
-        try:
-            run_git(
-                "add",
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-                input_data=payload.encode("utf-8"),
-                check=True,
-                literal_pathspecs=True
-            )
-            console.print("[bold green]✔[/bold green] Staged files successfully:")
-            for p in sorted(paths_to_add):
-                console.print(f"  [dim]➔ {escape(p)}[/dim]")
-        except subprocess.CalledProcessError:
-            console.print("[bold red]✖ Individual stage aborted due to Git error.[/bold red]")
-            return
-    elif paths_to_stage:
-        console.print("[bold green]✔[/bold green] Selected files already staged:")
-        for p in sorted(paths_to_stage):
-            console.print(f"  [dim]➔ {escape(p)}[/dim]")
-
-    if paths_to_stage:
-        commit_and_push(list(paths_to_stage))
-    else:
-        console.print("[bold green]✔[/bold green] Index synchronized. No changes left to commit.")
+    """Select literal filenames, with escaped control characters for display."""
+    entries = scoped_entries()
+    choices = {}
+    displays = []
+    for number, entry in enumerate(entries, 1):
+        path, old, status = entry
+        display = f"{number}: {format_status_badge(status)} {repr(path)[1:-1]}"
+        if old:
+            display += f" (from {repr(old)[1:-1]})"
+        choices[strip_ansi(display)] = entry
+        displays.append(display)
+    selected = fzf_select(displays, prompt="Stage Files", multi=True)
+    if selected:
+        stage_entries([choices[strip_ansi(line)] for line in selected])
 
 
 def format_status_badge(code: str) -> str:
@@ -651,7 +433,7 @@ def fzf_select(
         "--pointer=❯ ",
         "--marker=✔ ",
         "--info=inline",
-        "--height=50%",
+        "--no-height",
         "--layout=reverse",
         "--border=rounded",
     ]
@@ -672,55 +454,74 @@ def fzf_select(
 
     payload = "\0".join(choices) + "\0"
 
+    fzf_env = os.environ.copy()
+    for key in ("FZF_DEFAULT_OPTS", "FZF_DEFAULT_OPTS_FILE", "FZF_DEFAULT_COMMAND"):
+        fzf_env.pop(key, None)
+    # Previews use POSIX commands even when the login shell is fish.
+    fzf_env["SHELL"] = "/bin/sh"
+    fzf_env["GIT_DIR"] = str(GIT_DIR)
+    fzf_env["GIT_WORK_TREE"] = str(WORK_TREE)
     proc = subprocess.run(
         fzf_cmd,
-        input=payload.encode("utf-8"),
+        input=payload.encode("utf-8", errors="surrogateescape"),
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=None,
+        env=fzf_env,
         cwd=str(WORK_TREE),
     )
 
+    if proc.returncode not in (0, 1, 130):
+        raise RuntimeError(f"fzf failed with exit status {proc.returncode}")
     if proc.returncode != 0:
         return []
 
-    return [line for line in proc.stdout.decode("utf-8").split("\0") if line]
+    return [line for line in proc.stdout.decode("utf-8", errors="surrogateescape").split("\0") if line]
+
+
+def commit_selected_index(files: list[str], message: str) -> None:
+    """Commit selected staged entries, including deletions whose files still exist."""
+    for state in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"):
+        if (GIT_DIR / state).exists():
+            raise RuntimeError("Finish the active merge/rebase/cherry-pick before committing selected files.")
+    _, stages, _ = run_git("ls-files", "--stage", "-z", check=True)
+    selected = set(files)
+    records = {}
+    for entry in stages.split("\0"):
+        if not entry:
+            continue
+        meta, path = entry.split("\t", 1)
+        if meta.split()[2] != "0":
+            raise RuntimeError("Resolve all index conflicts before committing selected files.")
+        if path in selected:
+            records[path] = entry
+    _, object_format, _ = run_git("rev-parse", "--show-object-format", check=True)
+    zero = "0" * (64 if object_format.strip() == "sha256" else 40)
+    updates = [f"0 {zero}\t{path}\0" for path in files]
+    updates += [entry + "\0" for entry in records.values()]
+    with tempfile.TemporaryDirectory(prefix="dusky-index-", dir=GIT_DIR) as temp:
+        index = Path(temp) / "index"
+        head_exists = run_git("rev-parse", "--verify", "HEAD")[0] == 0
+        run_git("read-tree", "HEAD" if head_exists else "--empty", index_file=index, check=True)
+        run_git("update-index", "-z", "--index-info", input_data=os.fsencode("".join(updates)),
+                index_file=index, check=True)
+        run_git("commit", "-m", message, index_file=index, check=True)
+    # Hooks may have rewritten selected entries. Update only those real index
+    # entries; all unrelated staged changes and all disk files remain intact.
+    try:
+        run_git("reset", "--quiet", "HEAD", "--pathspec-from-file=-", "--pathspec-file-nul",
+                input_data=os.fsencode("\0".join(files) + "\0"), literal_pathspecs=True, check=True)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError("Commit succeeded, but updating selected index entries failed; inspect git status before retrying.") from exc
 
 
 def commit_and_push(files: list[str] | None = None, local_only: bool = False) -> None:
-    """Atomic transaction logic enforcing strict ARG_MAX bounds via sets."""
-    commit_files: list[str] | None = None
-
-    if files:
-        _, staged_out, _ = run_git("diff", "--cached", "--name-status", "-z")
-        staged_entries = staged_out.split("\0")[:-1]
-
-        staged_paths: set[str] = set()
-        it = iter(staged_entries)
-        for status in it:
-            if not status:
-                continue
-            if status.startswith("R") or status.startswith("C"):
-                src = next(it, None)
-                dst = next(it, None)
-                if src and dst:
-                    if matches_pathspec(src, files) or matches_pathspec(dst, files):
-                        staged_paths.add(src)
-                        staged_paths.add(dst)
-            else:
-                path = next(it, None)
-                if path:
-                    if matches_pathspec(path, files):
-                        staged_paths.add(path)
-
-        if not staged_paths:
-            console.print("[bold yellow]⚠[/bold yellow] Index empty for specified files. Nothing to commit.")
-            return
-        commit_files = list(staged_paths)
-    else:
-        code, _, _ = run_git("diff", "--cached", "--quiet")
-        if code == 0:
-            console.print("[bold yellow]⚠[/bold yellow] Index empty. Nothing to commit.")
-            return
+    """Commit the selected staged paths and optionally push the resulting commit."""
+    _, staged_out, _ = run_git("diff", "--cached", "--name-only", "--no-renames", "-z", check=True)
+    staged = {path for path in staged_out.split("\0") if path}
+    commit_files = sorted(staged if files is None else staged.intersection(files))
+    if not commit_files:
+        console.print("[yellow]Nothing staged for the selected files.[/yellow]")
+        return
 
     console.print("\n[bold cyan]Commit Message (or type 'abort' to cancel)[/bold cyan]")
     while True:
@@ -734,18 +535,7 @@ def commit_and_push(files: list[str] | None = None, local_only: bool = False) ->
         break
 
     try:
-        commit_args = ["commit"]
-        payload = None
-
-        # Flawlessly routes `--only` via stdin payloads to prevent ARG_MAX kernel crashes
-        if commit_files:
-            commit_args.append("--only")
-            commit_args.extend(["--pathspec-from-file=-", "--pathspec-file-nul"])
-            payload = ("\0".join(commit_files) + "\0").encode("utf-8")
-
-        commit_args.extend(["-m", msg])
-
-        run_git(*commit_args, input_data=payload, check=True, literal_pathspecs=True)
+        commit_selected_index(commit_files, msg)
     except subprocess.CalledProcessError:
         console.print("[bold red]✖ Commit failed (Hooks/Formatting block).[/bold red]")
         return
@@ -754,250 +544,85 @@ def commit_and_push(files: list[str] | None = None, local_only: bool = False) ->
         console.print("[bold green]✔[/bold green] Committed changes locally.")
         return
 
-    if ask_yesno("Execute push to remote origin?", default=True):
+    if ask_yesno("Push to the configured upstream?", default=True):
         safe_push()
 
 
-def reconcile_upstream_changes(branch: str, remote_ref: str) -> None:
-    """Updates local disk files from upstream for files modified, added, or deleted in upstream PRs
-
-    that were NOT modified locally. Prevents upstream PR changes from being reverted during sync.
-    """
-    code_mb, mb_out, _ = run_git("merge-base", branch, remote_ref)
-    mb = mb_out.strip()
-    if code_mb != 0 or not mb:
-        return
-
-    # List files and OIDs in remote_ref
-    _, ls_remote, _ = run_git("ls-tree", "-r", "-z", remote_ref)
-    remote_files: dict[str, str] = {}
-    for entry in ls_remote.split('\0'):
-        if not entry or '\t' not in entry:
-            continue
-        meta, path = entry.split('\t', 1)
-        parts = meta.split()
-        if len(parts) >= 3:
-            remote_files[path] = parts[2]
-
-    # List files and OIDs in common merge base
-    _, ls_base, _ = run_git("ls-tree", "-r", "-z", mb)
-    base_files: dict[str, str] = {}
-    for entry in ls_base.split('\0'):
-        if not entry or '\t' not in entry:
-            continue
-        meta, path = entry.split('\t', 1)
-        parts = meta.split()
-        if len(parts) >= 3:
-            base_files[path] = parts[2]
-
-    files_to_checkout: list[str] = []
-    files_to_delete: list[str] = []
-
-    # 1. Handle updated or newly added files from remote PRs
-    for path, r_oid in remote_files.items():
-        b_oid = base_files.get(path, "")
-        if r_oid == b_oid:
-            continue  # Remote didn't touch this file
-
-        disk_path = WORK_TREE / path
-        if not (disk_path.exists() or disk_path.is_symlink()):
-            if b_oid == "":
-                # Brand new file added upstream in PR -> check it out
-                files_to_checkout.append(path)
-            continue
-
-        code_h, disk_oid, _ = run_git("hash-object", str(disk_path))
-        if code_h == 0 and disk_oid.strip() == b_oid:
-            # User never modified this file locally -> update from remote PR
-            files_to_checkout.append(path)
-
-    # 2. Handle files deleted upstream in PRs
-    for path, b_oid in base_files.items():
-        if path not in remote_files:
-            disk_path = WORK_TREE / path
-            if disk_path.exists() or disk_path.is_symlink():
-                code_h, disk_oid, _ = run_git("hash-object", str(disk_path))
-                if code_h == 0 and disk_oid.strip() == b_oid:
-                    files_to_delete.append(path)
-
-    if files_to_delete:
-        console.print(f"[bold yellow]Removing {len(files_to_delete)} file(s) deleted in upstream PRs...[/bold yellow]")
-        for p in files_to_delete:
-            dp = WORK_TREE / p
-            if dp.is_file() or dp.is_symlink():
-                dp.unlink(missing_ok=True)
-            elif dp.is_dir():
-                shutil.rmtree(dp, ignore_errors=True)
-
-    if files_to_checkout:
-        console.print(f"[bold blue]Applying {len(files_to_checkout)} upstream update(s) to local files (from merged PRs)...[/bold blue]")
-        payload = "\0".join(files_to_checkout) + "\0"
-        run_git("checkout", remote_ref, "--pathspec-from-file=-", "--pathspec-file-nul",
-                input_data=payload.encode("utf-8"), literal_pathspecs=True)
+def upstream_target(branch: str) -> tuple[str, str] | None:
+    """Return the actual configured remote and full destination branch ref."""
+    _, out, _ = run_git("for-each-ref", "--format=%(upstream:remotename)%00%(upstream:remoteref)",
+                        f"refs/heads/{branch}", check=True)
+    remote, _, ref = out.strip().partition("\0")
+    return (remote, ref) if remote and ref else None
 
 
 def safe_push(branch: str | None = None) -> bool:
-    """Bulletproof push engine with upstream auto-detection, divergence resolution & rebase."""
-    if not branch:
-        _, branch_out, _ = run_git("branch", "--show-current")
-        branch = branch_out.strip()
-        if not branch:
-            console.print("[bold red]✖ Error: Detached HEAD state detected. Cannot push.[/bold red]")
-            return False
-
-    console.print("[bold blue]Establishing connection to remote origin...[/bold blue]")
-
-    # 1. Check if upstream tracking is configured
-    if not has_upstream():
-        if ask_yesno(f"No upstream configured for branch '{branch}'. Push and set upstream to origin/{branch}?", default=True):
-            try:
-                run_git("push", "-u", "origin", branch, capture=False, check=True)
-                console.print(f"[bold green]✔[/bold green] Branch '{branch}' pushed and upstream established successfully.")
-                return True
-            except subprocess.CalledProcessError:
-                console.print(f"[bold red]✖ Failed to push and establish upstream on origin/{branch}.[/bold red]")
-                return False
-        else:
-            console.print("[bold yellow]⚠ Push cancelled by user.[/bold yellow]")
-            return False
-
-    # 2. Try regular push
-    try:
-        run_git("push", capture=False, check=True)
-        console.print("[bold green]✔[/bold green] Synchronization successful.")
-        return True
-    except subprocess.CalledProcessError:
-        pass
-
-    # 3. If push failed, fetch and inspect divergence
-    console.print("[bold blue]Fetching remote origin to inspect divergence...[/bold blue]")
-    run_git("config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
-    run_git("fetch", "--prune", "origin")
-
-    remote_ref = f"origin/{branch}"
-    code_rev, out_rev, _ = run_git("rev-list", "--left-right", "--count", f"{branch}...{remote_ref}")
-    ahead, behind = 0, 0
-    if code_rev == 0 and out_rev.strip():
-        parts = out_rev.split()
-        if len(parts) >= 2:
-            ahead, behind = int(parts[0]), int(parts[1])
-
-    if ahead > 0 and behind > 0:
-        c_wrn = COLORS.get("warning", "yellow")
-        console.print(Panel(
-            f"[bold {c_wrn}]⚠ DIVERGED HISTORY DETECTED[/bold {c_wrn}]\n"
-            f"GitHub has [bold cyan]{behind}[/bold cyan] newer commit(s) while your local repository has [bold cyan]{ahead}[/bold cyan] unpushed commit(s).\n\n"
-            f"[bold white]Choose how to reconcile your repository:[/bold white]\n\n"
-            f"  [bold cyan]1) Rebase Local Commits on top of GitHub (Recommended)[/bold cyan]\n"
-            f"     • Pulls GitHub's {behind} new commit(s) and replays your {ahead} local commit(s) on top\n"
-            f"     • Preserves all files and creates a clean linear history\n"
-            f"     • Automatically pushes to GitHub once rebased\n\n"
-            f"  [bold cyan]2) Safe Sync (Reset base to GitHub & commit local files)[/bold cyan]\n"
-            f"     • Keeps all current files on disk in $HOME (zero data loss)\n"
-            f"     • Aligns Git base with GitHub and creates a fresh sync commit on top\n\n"
-            f"  [bold yellow]3) Force Push (Overwrite GitHub)[/bold yellow]\n"
-            f"     • Overwrites GitHub with your {ahead} local commit(s)\n"
-            f"     • [bold red]Caution:[/bold red] Discards the {behind} newer commit(s) currently on GitHub\n\n"
-            f"  [bold red]4) Abort[/bold red]\n"
-            f"     • Cancels the push without changing anything",
-            title=f"[bold {c_wrn}]BRANCH DIVERGENCE RESOLUTION[/bold {c_wrn}]",
-            border_style=c_wrn,
-            box=box.ROUNDED
-        ))
-        choice = ask("Select option [1/2/3/4] (default: 1): ") or "1"
-        if choice == "1":
-            console.print(f"[bold blue]Rebasing local commits on top of {remote_ref}...[/bold blue]")
-            code_reb, _, _ = run_git("rebase", remote_ref)
-            if code_reb == 0:
-                console.print(f"[bold green]✔ Rebased successfully. Pushing to {remote_ref}...[/bold green]")
-                try:
-                    run_git("push", "-u", "origin", branch, capture=False, check=True)
-                    console.print("[bold green]✔ Synchronization successful.[/bold green]")
-                    return True
-                except subprocess.CalledProcessError:
-                    console.print("[bold red]✖ Push failed after rebase.[/bold red]")
-                    return False
-            else:
-                run_git("rebase", "--abort")
-                console.print("[bold red]✖ Rebase encountered unstaged changes or conflicts (rebase cleanly aborted).[/bold red]")
-                if ask_yesno("Perform Safe Sync instead (apply clean upstream changes and commit local disk state)?", default=True):
-                    reconcile_upstream_changes(branch, remote_ref)
-                    run_git("branch", "-f", branch, remote_ref)
-                    run_git("reset", "--mixed", "--quiet", "HEAD")
-                    sync_all()
-                    return True
-                return False
-        elif choice == "2":
-            console.print(f"[bold blue]Aligning base with {remote_ref} while keeping disk files...[/bold blue]")
-            reconcile_upstream_changes(branch, remote_ref)
-            run_git("branch", "-f", branch, remote_ref)
-            run_git("reset", "--mixed", "--quiet", "HEAD")
-            sync_all()
-            return True
-        elif choice == "3":
-            if ask_yesno(f"Are you SURE you want to force push and overwrite {remote_ref}?", default=False):
-                try:
-                    run_git("push", "--force-with-lease", "-u", "origin", branch, capture=False, check=True)
-                    console.print("[bold green]✔ Force push successful.[/bold green]")
-                    return True
-                except subprocess.CalledProcessError:
-                    console.print("[bold red]✖ Force push failed.[/bold red]")
-                    return False
-            else:
-                console.print("[bold yellow]⚠ Force push cancelled.[/bold yellow]")
-                return False
-        else:
-            console.print("[bold yellow]⚠ Operation cancelled by user.[/bold yellow]")
-            return False
-
-    elif ahead == 0 and behind > 0:
-        console.print(f"[bold yellow]⚠ Local branch is {behind} commit(s) behind remote.[/bold yellow]")
-        if ask_yesno(f"Fast-forward local branch '{branch}' to {remote_ref}?", default=True):
-            reconcile_upstream_changes(branch, remote_ref)
-            run_git("branch", "-f", branch, remote_ref)
-            run_git("reset", "--mixed", "--quiet", "HEAD")
-            console.print(f"[bold green]✔ Local branch '{branch}' fast-forwarded to {remote_ref}.[/bold green]")
-            return True
+    """Push to the configured upstream and check every recovery operation."""
+    _, current, _ = run_git("branch", "--show-current", check=True)
+    current = current.strip()
+    if not current or (branch is not None and branch != current):
+        console.print("[red]Push requires the active named branch.[/red]")
         return False
+    branch = current
+    target = upstream_target(branch)
+    if target is None:
+        if not ask_yesno(f"Set upstream to origin/{branch} and push?", default=True):
+            return False
+        remote, ref = "origin", f"refs/heads/{branch}"
     else:
-        console.print("[bold red]✖ Push failed due to remote connection error or branch protection.[/bold red]")
+        remote, ref = target
+    push_args = ["push", "--set-upstream", "--", remote, f"refs/heads/{branch}:{ref}"]
+    if run_git(*push_args, capture=False)[0] == 0:
+        console.print("[green]✔ Push successful.[/green]")
+        return True
+    if run_git("fetch", "--", remote, ref, capture=False)[0] != 0:
         return False
+    _, fetched, _ = run_git("rev-parse", "--verify", "FETCH_HEAD^{commit}", check=True)
+    fetched = fetched.strip()
+    _, counts, _ = run_git("rev-list", "--left-right", "--count", f"HEAD...{fetched}", check=True)
+    ahead, behind = map(int, counts.split())
+    if not behind:
+        console.print("[red]Push rejected; check remote permissions, hooks or branch protection.[/red]")
+        return False
+    if changed_entries(tracked_only=True):
+        console.print("[yellow]Commit or stash tracked edits before reconciling with upstream.[/yellow]")
+        return False
+    if not ahead:
+        if not ask_yesno(f"Fast-forward to {remote}/{ref.removeprefix('refs/heads/')}?", default=False):
+            return False
+        run_git("merge", "--ff-only", fetched, capture=False, check=True)
+        return True
+    console.print("1) Rebase local commits onto upstream\n2) Force push with lease\n3) Cancel")
+    choice = ask("Choose [1/2/3] (default 3): ") or "3"
+    if choice == "1":
+        # Do not auto-abort: an existing or newly conflicted rebase needs inspection.
+        if run_git("rebase", "--no-autostash", fetched, capture=False)[0]:
+            console.print("[yellow]Rebase stopped. Resolve it or run git rebase --abort before retrying.[/yellow]")
+            return False
+        run_git(*push_args, capture=False, check=True)
+    elif choice == "2" and ask_yesno(f"Overwrite {remote}/{ref} with local history?"):
+        run_git("push", f"--force-with-lease={ref}:{fetched}", "--", remote,
+                f"refs/heads/{branch}:{ref}", capture=False, check=True)
+    else:
+        return False
+    console.print("[green]✔ Push successful.[/green]")
+    return True
 
 
 def discard_local_changes() -> None:
     """Discards uncommitted changes (staged + unstaged), honoring manifest scope."""
     valid_paths = get_list_pathspecs()
-    if valid_paths is None:
-        status_args = ["status", "--porcelain=v1", "-z", "-u"]
-    else:
-        status_args = ["status", "--porcelain=v1", "-z", "-u", "--"] + valid_paths
-
-    code, status_out, _ = run_git(*status_args)
-    if code != 0:
-        console.print("[bold red]✖ Error: Failed to retrieve repository status.[/bold red]")
+    if valid_paths == []:
+        console.print("[yellow]Empty manifest: nothing to discard.[/yellow]")
         return
-
-    entries = status_out.split("\0")[:-1]
     changed_tracked: list[str] = []
     untracked_to_delete: list[str] = []
     tracked_scope: list[str] = []
-    it = iter(entries)
-
-    for entry in it:
-        if len(entry) < 3:
-            continue
-        status_code = entry[:2]
-        path = entry[3:]
-
-        orig_path = next(it, None) if "R" in status_code or "C" in status_code else None
-
+    for path, orig_path, status_code in scoped_entries():
         if status_code == "??":
             untracked_to_delete.append(path)
         else:
-            display = f"➔ {path}"
-            if orig_path:
-                display += f" (from {orig_path})"
-            changed_tracked.append(display)
+            changed_tracked.append(f"➔ {path}" + (f" (from {orig_path})" if orig_path else ""))
             tracked_scope.append(path)
             if orig_path:
                 tracked_scope.append(orig_path)
@@ -1042,27 +667,22 @@ def discard_local_changes() -> None:
         console.print("[bold yellow]⚠ Aborted: No changes were discarded.[/bold yellow]")
         return
 
-    try:
-        if revert_tracked:
-            code_head, _, _ = run_git("rev-parse", "--verify", "HEAD")
-            if code_head == 0:
-                if valid_paths is not None and tracked_scope:
-                    # Scoped revert: only the manifest-visible tracked paths.
-                    # (git reset --hard rejects pathspecs; git restore is the
-                    # purpose-built primitive and matches its semantics.)
-                    payload = "\0".join(dict.fromkeys(tracked_scope)) + "\0"
-                    run_git(
-                        "restore", "--source=HEAD", "--staged", "--worktree", "--quiet",
-                        "--pathspec-from-file=-",
-                        "--pathspec-file-nul",
-                        input_data=payload.encode("utf-8"),
-                        check=True,
-                        literal_pathspecs=True
-                    )
-                else:
-                    run_git("reset", "--hard", "HEAD", "--quiet", capture=False, check=True)
-            console.print("[bold green]✔[/bold green] Tracked files successfully reverted.")
+    # A staged deletion and an untracked replacement can share the same path.
+    # Respect the separate approval for deleting that replacement.
+    collisions = {tracked for tracked in tracked_scope for untracked in untracked_to_delete
+                  if tracked == untracked.rstrip("/")
+                  or tracked.startswith(untracked.rstrip("/") + "/")
+                  or untracked.startswith(tracked + "/")}
+    if revert_tracked and collisions and not delete_untracked:
+        console.print("[yellow]Restore blocked: untracked replacements would be overwritten. No files changed.[/yellow]")
+        return
+    if revert_tracked and run_git("rev-parse", "--verify", "HEAD")[0] != 0:
+        console.print("[red]No HEAD exists to restore. No files changed.[/red]")
+        return
 
+    try:
+        # Remove approved untracked files first, so we cannot delete a file that
+        # restore has just recreated from HEAD.
         if delete_untracked:
             for path in untracked_to_delete:
                 full_path = WORK_TREE / path
@@ -1070,9 +690,15 @@ def discard_local_changes() -> None:
                     full_path.unlink()
                 elif full_path.is_dir():
                     shutil.rmtree(full_path)
-            console.print("[bold green]✔[/bold green] Untracked files successfully deleted.")
+            console.print("[green]✔ Approved untracked files deleted.[/green]")
+        if revert_tracked:
+            payload = os.fsencode("\0".join(dict.fromkeys(tracked_scope)) + "\0")
+            run_git("restore", "--source=HEAD", "--staged", "--worktree", "--quiet",
+                    "--pathspec-from-file=-", "--pathspec-file-nul",
+                    input_data=payload, check=True, literal_pathspecs=True)
+            console.print("[green]✔ Tracked files restored.[/green]")
     except subprocess.CalledProcessError:
-        console.print("[bold red]✖ Operation failed.[/bold red]")
+        console.print("[red]✖ Discard failed; inspect Git status before retrying.[/red]")
 
 
 def reset_local_to_remote() -> None:
@@ -1093,12 +719,10 @@ def reset_local_to_remote() -> None:
     if ask_yesno(f"Reset local state and overwrite all files to match origin/{branch_out}?", default=False):
         try:
             console.print("[bold blue]Fetching latest state from GitHub...[/bold blue]")
-            # Ensure remote origin has the correct fetch refspec
-            run_git("config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
-            run_git("fetch", "origin", capture=False, check=True)
+            run_git("fetch", "origin", f"refs/heads/{branch_out}", capture=False, check=True)
 
             console.print(f"[bold blue]Hard resetting to origin/{branch_out}...[/bold blue]")
-            run_git("reset", "--hard", f"origin/{branch_out}", "--quiet", capture=False, check=True)
+            run_git("reset", "--hard", "FETCH_HEAD", "--quiet", capture=False, check=True)
             console.print("[bold green]✔[/bold green] Local state successfully synced with GitHub remote.")
         except subprocess.CalledProcessError:
             console.print("[bold red]✖ Sync operation failed.[/bold red]")
@@ -1131,7 +755,7 @@ def quick_step_back() -> None:
                 return
 
             console.print(f"[bold blue]Force-pushing to origin/{branch_out}...[/bold blue]")
-            run_git("push", "origin", f"+{branch_out}", capture=False, check=True)
+            run_git("push", "--force-with-lease", "origin", f"refs/heads/{branch_out}:refs/heads/{branch_out}", capture=False, check=True)
             console.print("[bold green]✔[/bold green] Step back 1 commit complete on remote.")
         except subprocess.CalledProcessError:
             console.print("[bold red]✖ Step back operation failed.[/bold red]")
@@ -1261,7 +885,7 @@ def nuclear_revert() -> None:
     if ask_yesno(f"Execute HARD RESET to {commit_hash}? (Wipes local tracked changes)", default=False):
         try:
             run_git("reset", "--hard", commit_hash, "--quiet", capture=False, check=True)
-            console.print(f"[bold green]✔[/bold green] Local state mathematically identical to {commit_hash}.")
+            console.print(f"[bold green]✔[/bold green] Tracked files restored to {commit_hash}.")
 
             if ask_yesno("FORCE PUSH to overwrite remote timeline?", default=False):
                 _, branch_out, _ = run_git("branch", "--show-current")
@@ -1271,7 +895,7 @@ def nuclear_revert() -> None:
                     console.print("[bold red]✖ Error: Detached HEAD state detected.[/bold red] Aborting force push.")
                     return
 
-                run_git("push", "origin", f"+{branch_out}", capture=False, check=True)
+                run_git("push", "--force-with-lease", "origin", f"refs/heads/{branch_out}:refs/heads/{branch_out}", capture=False, check=True)
                 console.print("[bold green]✔[/bold green] Remote repository obliteration complete.")
         except subprocess.CalledProcessError:
             console.print("[bold red]✖ Force reset operation interrupted by error.[/bold red]")
@@ -1281,7 +905,7 @@ def run_time_machine() -> None:
     """Handoff execution to the highly-optimized Ephemeral Bash TUI."""
     if TIME_MACHINE_BIN.is_file() and os.access(TIME_MACHINE_BIN, os.X_OK):
         console.print("[bold blue]Engaging ZRAM Ephemeral Time Machine...[/bold blue]")
-        subprocess.run([str(TIME_MACHINE_BIN)])
+        subprocess.run([str(TIME_MACHINE_BIN)], check=True)
     else:
         console.print(f"[bold red]✖ Error:[/bold red] Time machine binary not found or not executable at {escape(str(TIME_MACHINE_BIN))}")
 
@@ -1293,13 +917,13 @@ def checkout_pr() -> None:
         "Fetch a Pull Request locally for editing/testing without merging into main.",
         border_style="cyan"
     ))
-    console.print("[bold cyan]Enter GitHub PR URL or PR Number (e.g. 268 or https://github.com/dusklinux/dusky/pull/268)[/bold cyan]")
+    console.print("[bold cyan]Enter GitHub PR URL or PR Number (e.g. 268 or https://github.com/owner/repo/pull/268)[/bold cyan]")
     user_input = ask()
     if not user_input or user_input.lower() in ("q", "abort", "exit"):
         console.print("[bold yellow]⚠ Aborted PR checkout.[/bold yellow]")
         return
 
-    match = re.search(r"(?:pull/)?(\d+)", user_input)
+    match = re.fullmatch(r"(?:https://github\.com/[^/]+/[^/]+/pull/)?([1-9]\d*)/?", user_input)
     if not match:
         console.print(f"[bold red]✖ Error: Could not parse a valid PR number from '{escape(user_input)}'.[/bold red]")
         return
@@ -1342,6 +966,9 @@ def create_branch() -> None:
 
     clean_name = name.replace(" ", "-")
 
+    if clean_name.startswith("-") or run_git("check-ref-format", "--branch", clean_name)[0]:
+        console.print("[red]Invalid branch name.[/red]")
+        return
     checkout = ask_yesno(f"Switch to branch '{clean_name}' immediately?", default=True)
 
     try:
@@ -1476,7 +1103,7 @@ def delete_remote_branch() -> None:
     for line in refs_out.splitlines():
         b = line.strip()
         if b.startswith("origin/") and not b.endswith("/HEAD"):
-            remote_branches.append(b.replace("origin/", ""))
+            remote_branches.append(b.removeprefix("origin/"))
 
     if not remote_branches:
         console.print("[bold yellow]⚠ No remote branches found.[/bold yellow]")
@@ -1605,7 +1232,7 @@ def pop_or_apply_stash(action: str = "pop") -> None:
         console.print("[bold yellow]⚠ No stashes found in repository.[/bold yellow]")
         return
 
-    preview_cmd = "git --no-advice stash show -p {1}"
+    preview_cmd = "git --no-advice stash show -p $(printf %s {1} | cut -d: -f1)"
     prompt_text = f"Select Stash to {action.upper()}"
 
     selected = fzf_select(stashes, prompt=prompt_text, preview=preview_cmd)
@@ -1633,7 +1260,7 @@ def drop_stash() -> None:
         console.print("[bold yellow]⚠ No stashes found in repository.[/bold yellow]")
         return
 
-    preview_cmd = "git --no-advice stash show -p {1}"
+    preview_cmd = "git --no-advice stash show -p $(printf %s {1} | cut -d: -f1)"
     selected = fzf_select(stashes, prompt="Select Stash to DROP/DELETE", preview=preview_cmd)
     if not selected:
         return
@@ -1763,7 +1390,7 @@ def print_help() -> None:
             if action.category != idx:
                 continue
             mark = "[bold red]YES[/bold red]" if action.destructive else "[green]No[/green]"
-            table.add_row(f"[bold {c}]{action.key}[/bold {c}]", f"[{colorkey}]{escape(action.label)}[/{colorkey}]", mark)
+            table.add_row(f"[bold {c}]{action.key}[/bold {c}]", f"[{c}]{escape(action.label)}[/{c}]", mark)
         if idx < len(CATEGORIES) - 1:
             table.add_section()
 
@@ -1809,12 +1436,26 @@ def render_dashboard() -> None:
 # --- 8. MAIN ROUTING ENGINE ---
 def dispatch(choice: str) -> None:
     """Executes a registry action by key."""
-    ACTION_MAP[choice].handler()
+    try:
+        if choice == "16":
+            ACTION_MAP[choice].handler()
+            return
+        # Share the same advisory lock as Time Machine so our own tools cannot
+        # stage/reset the work tree while the other tool is switching snapshots.
+        lock_dir = GIT_DIR / "dusky-time-machine"
+        lock_dir.mkdir(mode=0o700, exist_ok=True)
+        with (lock_dir / "worktree.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                console.print("[yellow]Another Dusky operation is using this repository.[/yellow]")
+                return
+            ACTION_MAP[choice].handler()
+    except (subprocess.CalledProcessError, OSError, ValueError, RuntimeError) as exc:
+        console.print(f"[red]✖ Operation stopped: {escape(str(exc))}[/red]")
 
 
 def main() -> Never:
-    check_dependencies()
-
     if len(sys.argv) > 1:
         choice = sys.argv[1].strip()
         if choice in ("-h", "--help", "help", "h"):
@@ -1824,12 +1465,14 @@ def main() -> Never:
             console.print(f"dusky v{DUSKY_VERSION}")
             sys.exit(0)
         if choice in VALID_KEYS:
+            check_dependencies()
             dispatch(choice)
             sys.exit(0)
         console.print(f"[bold red]✖ Invalid choice argument '{escape(choice)}'.[/bold red]")
         print_help()
         sys.exit(1)
 
+    check_dependencies()
     while True:
         console.clear()
         render_dashboard()
