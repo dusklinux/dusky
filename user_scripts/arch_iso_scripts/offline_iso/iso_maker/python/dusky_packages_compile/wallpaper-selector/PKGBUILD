@@ -1,5 +1,5 @@
 pkgname=dusky-wallpaper-selector
-pkgver=0.1.0
+pkgver=1.0.0
 pkgrel=1
 pkgdesc='Dusky Rust wallpaper selector for Hyprland'
 arch=('x86_64')
