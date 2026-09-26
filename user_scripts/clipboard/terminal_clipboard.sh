@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #==============================================================================
-# FZF CLIPBOARD MANAGER — v4.0 "Bleeding Edge"            (Wayland / Hyprland)
+# FZF CLIPBOARD MANAGER — v4.1            (Wayland / Hyprland)
 #==============================================================================
 # HARD target stack. No legacy fallbacks, no shims, no X11, no version probes
 # for anything older than the following:
@@ -8,14 +8,14 @@
 #   Arch Linux rolling · kernel 7.1+ · systemd 257+
 #   bash      5.3+     (SRANDOM, ${var@Q}, printf -v, {fd} auto-alloc, nameref,
 #                       globskipdots, assoc arrays, ${var@U}, wait -p)
-#   fzf       0.73.1+  (transform / bg-transform, reload-sync, change-query,
+#   fzf       0.74.4+  (transform / bg-transform, reload-sync, change-query,
 #                       change-preview[-label], change-header, --id-nth,
 #                       --track, --scheme=history, wrap-word, disable-search,
 #                       FZF_PROMPT / FZF_PREVIEW_LABEL / FZF_INPUT_STATE)
 #   cliphist  0.6+     (-preview-width / CLIPHIST_PREVIEW_WIDTH, multi-line
 #                       stdin for `delete`)
 #   wl-clipboard latest · Hyprland latest · coreutils 9.x · util-linux (flock)
-#   file · gawk 5.4+ · bat · chafa 1.14+ · kitten (kitty 0.32+) · b2sum
+#   file · gawk 5.4+ · bat · chafa 1.18+ · kitten (kitty 0.49+) · b2sum
 #
 # Invocation interface (drop-in superset of v3.0 — every old mode preserved):
 #   <no args>           interactive menu
@@ -53,7 +53,7 @@ export LC_ALL=C.UTF-8
 #==============================================================================
 # CONSTANTS / PATHS
 #==============================================================================
-readonly VERSION='4.0'
+readonly VERSION='4.1'
 
 readonly XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 readonly XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
@@ -121,9 +121,9 @@ readonly SCRIPT_NAME="${SELF##*/}"
 # referencing it as a plain "$VAR" makes every binding string pure 7-bit ASCII
 # with zero metacharacters, and is correct in every POSIX-ish shell.
 export CLIPFZF_SELF="$SELF"
+# Expanded by fzf's child Bash, not while building the binding.
+# shellcheck disable=SC2016
 readonly SELF_REF='"$CLIPFZF_SELF"'
-
-readonly MODE="${1:-__main__}"
 
 declare -a _TMPFILES=()
 declare -A STATE=()
@@ -159,7 +159,7 @@ log_err() { printf '\e[31m[ERROR]\e[0m %s\n' "$*" >&2; }
 is_uint() { [[ ${1:-} == +([0-9]) ]]; }                 # extglob, no regex engine
 is_pin_hash() { [[ ${1:-} == +([[:xdigit:]]) && ${#1} -eq 16 ]]; }
 is_kitty() { [[ -n ${KITTY_PID:-}${KITTY_WINDOW_ID:-} || ${TERM:-} == *kitty* ]]; }
-kitty_purge() { printf '\e_Ga=d,d=A\e\\'; }
+kitty_purge() { printf '\033_Ga=d,d=A\033\134'; }
 
 notify() {
     local title="$1" msg="${2:-}" urgency="${3:-normal}"
@@ -171,24 +171,6 @@ notify() {
 }
 
 die() { notify "$1" "${2:-}" critical; exit 1; }
-
-# Pure-bash semantic version >=. v3.0 used ${1//[!0-9.]/} which silently fused
-# "0.73.1-2" into "0.73.12"; anchoring the strip at the first non-version byte
-# is the only correct reading of `fzf --version` style output.
-version_ge() {
-    local -a a=() b=()
-    local i x y
-    IFS='.' read -r -a a <<< "${1%%[!0-9.]*}"
-    IFS='.' read -r -a b <<< "${2%%[!0-9.]*}"
-    for ((i = 0; i < 3; i++)); do
-        x="${a[i]:-0}"; y="${b[i]:-0}"
-        is_uint "$x" || x=0
-        is_uint "$y" || y=0
-        (( 10#$x > 10#$y )) && return 0
-        (( 10#$x < 10#$y )) && return 1
-    done
-    return 0
-}
 
 #==============================================================================
 # SESSION / TEMP LIFECYCLE
@@ -204,7 +186,7 @@ ensure_private_dir() {
     # own (symlink / foreign-owned dir / regular file) — closes the classic
     # /tmp style symlink redirection attack even in $XDG_RUNTIME_DIR.
     [[ -e $1 || -L $1 ]] && return 1
-    mkdir -p -m 700 -- "$1" 2>/dev/null || return 1
+    mkdir -p -- "$1" 2>/dev/null || return 1
     [[ -d $1 && ! -L $1 && -O $1 ]]
 }
 
@@ -438,7 +420,7 @@ seed_state_file() {
             '# Keybinding mode: "false" = standard, "true" = vim normal mode' \
             "VIM_MODE=\"${STATE_DEFAULTS[VIM_MODE]}\"" \
             '' \
-            '# Consumed by external pruning units (see clipboard-prune.timer)' \
+            '# Reserved for external pruning; this menu does not enforce these limits' \
             "MAX_CLIP_ITEMS=\"${STATE_DEFAULTS[MAX_CLIP_ITEMS]}\"" \
             "MAX_CLIP_AGE_DAYS=\"${STATE_DEFAULTS[MAX_CLIP_AGE_DAYS]}\""
     } >"$tmp" || { remove_tmpfile "$tmp"; return 1; }
@@ -676,9 +658,9 @@ guess_language() {
     case $head in
         '#!'*bash*|'#!'*/sh*|'#!'*zsh*|'#!'*dash*) REPLY=bash ;;
         '#!'*python*)                              REPLY=python ;;
-        '{'*|'['{*|'['\"*)                         REPLY=json ;;
+        '{'*|'[{'*|'["'*)                         REPLY=json ;;
         '<?xml'*|'<!DOCTYPE'*|'<html'*|'<svg'*)    REPLY=xml ;;
-        'diff --git'*|'--- '*|'+++ '*|'@@ '*)      REPLY=diff ;;
+        'diff --git'*|'--- '*|'+++ '*|'@@ '*)      REPLY='diff' ;;
         '---'|'---'[[:space:]]*)                   REPLY=yaml ;;
         '['*']')                                   REPLY=ini ;;
         'SELECT '*|'select '*|'INSERT '*)          REPLY=sql ;;
@@ -803,14 +785,6 @@ find_cached_image() {
     return 1
 }
 
-remove_cached_files() {
-    is_uint "$1" || return 1
-    rm -f -- \
-        "$CACHE_DIR/$1.img" \
-        "$CACHE_DIR/$1.png" \
-        "$CACHE_DIR"/img-*-"$1".img 2>/dev/null
-}
-
 # cache_image ID -> $REPLY
 # If the database changes during decoding, return the valid temporary decode
 # without publishing it under an obsolete cache key.
@@ -859,36 +833,11 @@ cache_image() {
 #------------------------------------------------------------------------------
 # display_image IMG
 #------------------------------------------------------------------------------
-# WHY EVERY CAPABILITY HANDSHAKE IS FORBIDDEN HERE
-#   fzf runs the preview command with stdout on a PIPE (it reads the bytes and
-#   repaints them into the pane), so isatty(1) is false. Consequences, all
-#   verified against upstream docs rather than assumed:
-#
-#   * chafa(1): "-f, --format ... one of [iterm, kitty, sixels, symbols]. The
-#     default is iterm, kitty or sixels IF THE CONNECTED TERMINAL SUPPORTS one
-#     of these, falling back to symbols otherwise."  With a piped stdout chafa
-#     cannot confirm the terminal, so auto-detection degrades to `symbols`.
-#     Reproduced upstream from file managers (lf #2574: "chafa also fails to
-#     detect sixel support from the terminal and falls back to symbols").
-#   * `-f auto` IS NOT A VALID FORMAT — the enum has no `auto` member, and the
-#     sixel member is spelled `sixels` (plural). v4.0 passed `-f auto`, so chafa
-#     exited non-zero before emitting one byte and `2>/dev/null || return 1`
-#     swallowed the diagnostic. THAT is the blank pane in foot.
-#   * chafa 1.16+ `--probe=[auto|on|off]` with `--probe-mode=[any|ctty|stdio]`;
-#     `ctty` is documented as probing /dev/tty "useful when chafa is part of a
-#     pipeline". In an fzf preview that reads the DA/XTSMGRAPHICS reply out of
-#     the terminal behind fzf's back and corrupts fzf's own input stream. We
-#     pin `--probe off`: deterministic, and nothing can race fzf for /dev/tty.
-#   * `--polite` was NOT the problem: chafa(1) says it merely "inhibits escape
-#     sequences that on rare occasions may confuse the terminal", and it has
-#     defaulted to OFF since 1.14. We still force it ON, because smcup/rmcup and
-#     cursor-visibility games are exactly what must not leak out of a preview.
-#   * `kitten icat --scale-up=no` is malformed: `--scale-up` is a bool-set FLAG,
-#     not a valued option, so icat aborted on the command line. That is why the
-#     kitty path rendered nothing either — independent of --unicode-placeholder.
-#
-# SO: decide the protocol from the environment, then emit exactly one hard-coded
-# protocol, then degrade through a static chain. Never negotiate, never query.
+# fzf captures preview stdout. Never probe /dev/tty: a renderer could consume
+# keyboard input or terminal replies intended for fzf. Select the protocol from
+# the environment/ancestor process, then use a static fallback chain.
+# chafa requires an explicit format and --probe off; kitten --scale-up is a
+# boolean flag, so omitting it keeps its default. Preserve these tested paths.
 #------------------------------------------------------------------------------
 display_image() {
     local img="$1"
@@ -1013,7 +962,7 @@ display_image() {
                 # Retire images from the previous render. Sent unconditionally
                 # because cmd_preview's kitty_purge is gated on is_kitty(),
                 # which is false in every other kitty-protocol terminal.
-                printf '\e_Ga=d,d=A\e\\'
+                kitty_purge
                 # NOTE: no --scale-up. It is a bool-set flag; `--scale-up=no`
                 # made icat reject the command line outright in v4.0.
                 cmd=(kitten icat --clear --stdin=no --transfer-mode=memory)
@@ -1048,7 +997,7 @@ display_image() {
                 elif [[ -n ${STY:-} ]];  then cmd+=(--passthrough screen)
                 fi
                 case $proto in
-                    kitty)   printf '\e_Ga=d,d=A\e\\' ;;
+                    kitty)   kitty_purge ;;
                     symbols) case ${COLORTERM:-} in
                                  truecolor|24bit) cmd+=(--colors full) ;;
                                  *)               cmd+=(--colors 256)  ;;
@@ -1139,6 +1088,16 @@ cmd_copy_single() {
 cmd_batch_copy() {
     local item tmp='' part='' last_byte rc=0
     local n_text=0 n_other=0 last_t='' last_i=''
+
+    # The usual Enter action selects one item. Copy its original bytes directly
+    # rather than decoding, concatenating and deleting multiple temporary files.
+    if (( $# == 1 )); then
+        parse_item "$1" || return 0
+        case $P_TYPE in empty|error) return 0 ;; esac
+        cmd_copy_single "$P_TYPE" "$P_ID" && return 0
+        notify 'Copy failed' 'The clipboard could not be updated.' critical
+        return 1
+    fi
 
     new_tmp "$CACHE_DIR" batch || return 1
     tmp="$REPLY"
@@ -1248,7 +1207,7 @@ cmd_batch_copy() {
 # LIST GENERATION
 #==============================================================================
 cmd_list() {
-    local n=0 preview pins_tmp pins_rc pin hash content mtime
+    local n=0 preview pins_tmp pins_rc pin hash content _mtime
     local -a st=()
     local -a pin_paths=("$PINS_DIR"/*.pin)
 
@@ -1264,7 +1223,7 @@ cmd_list() {
         # Bash performs bounded reads only. All content substitutions happen
         # in one gawk process: never use Bash's pathological //+( )/ pattern.
         {
-            while IFS="$TAB" read -r -d '' mtime pin; do
+            while IFS="$TAB" read -r -d '' _mtime pin; do
                 [[ -f $pin && ! -L $pin && -r $pin ]] || continue
 
                 hash="${pin##*/}"
@@ -1648,23 +1607,8 @@ cmd_help_pane() {
 #==============================================================================
 # PREVIEW RENDERER
 #==============================================================================
-format_ts() {
-    local ts="${1:-}" now week day time date_s
-    is_uint "$ts" || { printf '[ 󰥔 Unknown ]'; return 1; }
-    printf -v now '%(%s)T' -1
-    (( week = now - 604800 ))
-    printf -v day  '%(%a)T' "$ts"
-    printf -v time '%(%-I:%M %p)T' "$ts"
-    if (( ts >= week )); then
-        printf '[ 󰥔 %s %s ]' "${day@U}" "$time"
-    else
-        printf -v date_s '%(%m/%d)T' "$ts"
-        printf '[ 󰥔 %s %s %s ]' "$date_s" "${day@U}" "$time"
-    fi
-}
-
 cmd_preview() {
-    local type="${1:-}" id="${2:-}" pin_file img info tmp mtime
+    local type="${1:-}" id="${2:-}" pin_file img info tmp
     write_preview_size
     is_kitty && kitty_purge
 
@@ -1780,8 +1724,9 @@ cmd_batch_pin() {
 
 cmd_batch_delete() {
     local file="${1:-}" line target
-    local removed=0 failed=0
-    local -A seen=()
+    local removed=0 failed=0 id path base
+    local -A seen=() history=()
+    local -a delete_ids=() cached=()
 
     [[ -f $file && -r $file ]] || return 1
 
@@ -1805,15 +1750,28 @@ cmd_batch_delete() {
                 [[ ! -v seen[hist:$P_ID] ]] || continue
                 seen["hist:$P_ID"]=1
 
-                if cliphist delete <<<"$P_ID$TAB" 2>/dev/null; then
-                    (( ++removed ))
-                    remove_cached_files "$P_ID" || :
-                else
-                    (( ++failed ))
-                fi
+                delete_ids+=("$P_ID$TAB")
+                history["$P_ID"]=1
                 ;;
         esac
     done <"$file"
+
+    # cliphist 0.7 accepts multiple ID lines in one transaction. This avoids
+    # a process, database lock and durable commit for every selected item.
+    if (( ${#delete_ids[@]} )); then
+        if printf '%s\n' "${delete_ids[@]}" | cliphist delete 2>/dev/null; then
+            (( removed += ${#delete_ids[@]} ))
+            for path in "$CACHE_DIR"/*.img "$CACHE_DIR"/*.png; do
+                base="${path##*/}"
+                id="${base%.*}"
+                id="${id##*-}"
+                is_uint "$id" && [[ -v history[$id] ]] && cached+=("$path")
+            done
+            (( ${#cached[@]} == 0 )) || rm -f -- "${cached[@]}"
+        else
+            (( failed += ${#delete_ids[@]} ))
+        fi
+    fi
 
     if (( failed )); then
         notify 'Some deletions failed' \
@@ -2082,19 +2040,16 @@ show_menu() {
         --with-shell='bash -c'
         --margin=0 --padding=0 --highlight-line --ellipsis=''
         --scrollbar='│┃'
-        --border=rounded --border-label="$border_main" --border-label-pos=bottom:3
+        --border=rounded --border-label="$border_main" --border-label-pos=3:bottom
         --info=hidden
         --pointer='▌' --marker='┃'
         --delimiter="$SEP" --with-nth=1 --nth=1
-        --track --id-nth=2,3
+        --track '--id-nth=2,3'
         --preview="$SELF_REF --preview {2} {3}"
         --preview-window="${STATE[PREVIEW_LAYOUT]}"
         --preview-label="$LABEL_PREVIEW" --preview-label-pos=3
         --color="label:bold,preview-scrollbar:${MATUGEN_ACCENT}"
 
-        # Mode bootstrap: one transform at `start` decides prompt + search
-        # state + keymap, so vim and standard mode share ONE fzf process.
-        --bind="start:transform:$SELF_REF --vim-init"
         --bind="alt-m:transform:$SELF_REF --toggle-vim"
         --bind="f1:transform:$SELF_REF --toggle-help"
         --bind="esc:transform:$SELF_REF --key-escape"
@@ -2126,8 +2081,8 @@ show_menu() {
         --bind="alt-d:execute-silent($SELF_REF --batch-delete {+f})+reload-sync($SELF_REF --list)+clear-multi"
         --bind="ctrl-r:reload-sync($SELF_REF --list)"
 
-        # Vim normal-mode keys are declared unconditionally and unbound at
-        # `start` when not in vim mode; `rebind` restores them verbatim. With
+        # Vim keys are declared once; standard mode unbinds them at start.
+        # `rebind` restores these definitions when Vim mode is enabled. With
         # search disabled fzf ignores every unbound printable key, so nothing
         # can leak into the query buffer and no ignore-list is needed.
         --bind='j:down' --bind='k:up' --bind='g:first' --bind='G:last'
@@ -2138,6 +2093,10 @@ show_menu() {
         --bind="/:change-prompt($PROMPT_SEARCH)+enable-search+unbind($VIM_KEYS)"
     )
 
+    # Keep the original mode bootstrap: direct initialization and --sync
+    # alternatives both measured slower in the installed Foot/fzf stack.
+    args+=(--bind="start:transform:$SELF_REF --vim-init")
+
     local output status=0
 
     # Run the list function in the pipeline's existing subshell, without
@@ -2147,6 +2106,7 @@ show_menu() {
     output=$(
         (
             _TMPFILES=()
+            producer_tmp=''
 
             trap '
                 for producer_tmp in "${_TMPFILES[@]}"; do
@@ -2189,18 +2149,18 @@ show_menu() {
 #==============================================================================
 # ENTRY POINT
 #==============================================================================
+# The supported stack is fixed above. Report versions in --doctor; do not
+# start a second fzf process solely to check its version on every menu opening.
 require_stack() {
     (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 3) )) ||
         die 'Bash 5.3+ required' "found $BASH_VERSION"
-    local v tool
+    local tool
     for tool in \
         fzf cliphist wl-copy gawk perl jq file flock b2sum find sort \
         stat mktemp realpath mkdir rm mv ln cp cat tail
     do
         have "$tool" || die "$tool not found" 'see --doctor'
     done
-    v=$(fzf --version); v="${v%% *}"
-    version_ge "$v" 0.73.1 || die 'fzf 0.73.1+ required' "found $v"
     [[ -n ${WAYLAND_DISPLAY:-} ]] || log_err 'WAYLAND_DISPLAY unset — wl-clipboard may fail'
     return 0
 }

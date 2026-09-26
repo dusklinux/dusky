@@ -1,233 +1,332 @@
 #!/usr/bin/env python3
 #d: Keep the clipboard persistent across reboots
+"""Switch the managed clipboard backend without reconnecting its watchers."""
 
-import os, sys, time, signal, argparse, subprocess, shutil, tempfile
+import argparse
+import contextlib
+import fcntl
+import json
+import os
 from pathlib import Path
+import re
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+
 os.umask(0o077)
+HOME = Path.home()
+STATE_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "dusky/settings"
+STATE_FILE = STATE_DIR / "clipboard_persistance"
+DB_ENV_FILE = STATE_DIR / "cliphist_db_env"
+LOCK_FILE = STATE_DIR / ".clipboard_backend.lock"
+DAEMON = Path(__file__).resolve().parents[2] / "clipboard/dusky_clipboard_daemon.sh"
+SERVICE = "dusky_clipboard.service"
+QUIET = False
 
-C_RESET="\033[0m"; C_RED="\033[0;31m"; C_GREEN="\033[0;32m"; C_BLUE="\033[0;34m"; C_YELLOW="\033[1;33m"; C_BOLD="\033[1m"
-HOME=Path.home()
-STATE_DIR=HOME/".config"/"dusky"/"settings"
-STATE_FILE=STATE_DIR/"clipboard_persistance"
-DB_ENV_FILE=STATE_DIR/"cliphist_db_env"
-QUIET=False
-def log_i(m): 
-    if not QUIET: print(f"{C_BLUE}[INFO]{C_RESET} {m}")
-def log_s(m):
-    if not QUIET: print(f"{C_GREEN}[SUCCESS]{C_RESET} {m}")
-def log_w(m):
-    if not QUIET: print(f"{C_YELLOW}[WARN]{C_RESET} {m}")
-def log_e(m): print(f"{C_RED}[ERROR]{C_RESET} {m}", file=sys.stderr)
 
-def write_atomic(p:Path,c:str):
-    p.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-    fd,tmp=tempfile.mkstemp(dir=str(p.parent),text=True)
+class SwitchError(RuntimeError):
+    pass
+
+
+def say(message):
+    if not QUIET:
+        print(message)
+
+
+def warn(message):
+    print(f"Warning: {message}", file=sys.stderr)
+
+
+def checked_path(value):
+    path = Path(value)
+    # These paths also appear in systemd EnvironmentFile and the menu's parser.
+    if not path.is_absolute() or any(c in str(path) for c in '\\"\r\n\x00'):
+        raise SwitchError(f"Unsupported clipboard path: {str(path)!r}")
+    return path
+
+
+def disk_db():
+    return checked_path(Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache") / "cliphist/db")
+
+
+def ram_db():
+    return checked_path(Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}") / "cliphist.db")
+
+
+def env_for(db):
+    env = os.environ.copy()
+    env["CLIPHIST_DB_PATH"] = str(db)
+    env["CLIPHIST_PREVIEW_WIDTH"] = "1"
+    return env
+
+
+def run(argv, *, env=None, timeout=5):
     try:
-        with os.fdopen(fd,'w',encoding='utf-8') as f:
-            f.write(c); f.flush(); os.fsync(f.fileno())
-        os.chmod(tmp,0o600); os.replace(tmp,p)
-    except:
-        if os.path.exists(tmp):
-            try: os.remove(tmp)
-            except: pass
-        raise
+        result = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL,
+                                capture_output=True, timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SwitchError(f"{argv[0]} failed: {exc}") from exc
+    if result.returncode:
+        detail = result.stderr.decode(errors="replace").strip()[:600]
+        raise SwitchError(f"{' '.join(map(str, argv[:3]))} exited {result.returncode}: {detail}")
+    return result
 
-def get_runtime(): return os.environ.get("XDG_RUNTIME_DIR",f"/run/user/{os.getuid()}")
-def env_for(db): 
-    e=os.environ.copy(); e["CLIPHIST_DB_PATH"]=db
-    if "XDG_RUNTIME_DIR" not in e: e["XDG_RUNTIME_DIR"]=get_runtime()
-    return e
 
-def update_config(mode,migrate=False):
-    rt=get_runtime(); cache=os.environ.get("XDG_CACHE_HOME",str(HOME/".cache"))
-    if mode=="ephemeral":
-        db=f"{rt}/cliphist.db"; write_atomic(STATE_FILE,"false\n"); write_atomic(DB_ENV_FILE,f'CLIPHIST_DB_PATH="{db}"\n'); log_s(f"Set to Ephemeral (RAM) -> {db}")
-    else:
-        td=Path(cache)/"cliphist"; td.mkdir(parents=True,exist_ok=True,mode=0o700)
-        db=str(td/"db"); write_atomic(STATE_FILE,"true\n"); write_atomic(DB_ENV_FILE,f'CLIPHIST_DB_PATH="{db}"\n'); log_s(f"Set to Persistent (Disk) -> {db}")
-    p=Path(db); p.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-    if p.exists():
-        try: os.chmod(p,0o600)
-        except: pass
-    if migrate:
-        other=f"{cache}/cliphist/db" if mode=="ephemeral" else f"{rt}/cliphist.db"
-        op=Path(other)
-        if op.exists() and op.resolve()!=p.resolve():
-            try: shutil.copy2(op,p); log_i(f"Migrated {other} -> {db}")
-            except Exception as e: log_w(f"Migration failed: {e}")
+def regular_file(path):
     try:
-        flag=Path(get_runtime())/"cliphist.skip-store"
-        if flag.exists(): flag.unlink(); log_w(f"Removed stale flag {flag}")
-    except: pass
-    return db
+        info = path.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+        raise SwitchError(f"Expected an owned regular file: {path}")
+    return True
 
-def get_systemd_pids():
-    pids = set()
+
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     try:
-        r = subprocess.run(["systemctl", "--user", "show", "-p", "MainPID", "--value", "dusky_clipboard.service"], capture_output=True, text=True, timeout=2, check=False)
-        val = r.stdout.strip()
-        if val.isdigit() and int(val) > 0:
-            main_pid = int(val)
-            pids.add(main_pid)
-            cr = subprocess.run(["pgrep", "-P", str(main_pid)], capture_output=True, text=True, timeout=2, check=False)
-            for c in cr.stdout.split():
-                if c.isdigit():
-                    pids.add(int(c))
-    except: pass
-    return pids
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
-def _cmdline(pid:int)->str:
-    try: raw=Path(f"/proc/{pid}/cmdline").read_bytes()
-    except: return ""
-    return raw.replace(b"\x00",b" ").decode(errors="replace")
 
-def kill_watchers(exclude_managed=False):
-    managed = get_systemd_pids() if exclude_managed else set()
-    v=set()
+def write_atomic(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, name = tempfile.mkstemp(prefix=".clipboard-", dir=path.parent)
+    temp = Path(name)
     try:
-        r=subprocess.run(["pgrep","-x","wl-paste"],capture_output=True,text=True,check=False)
-        for t in r.stdout.split():
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+        sync_directory(path.parent)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+@contextlib.contextmanager
+def locked(path, operation=fcntl.LOCK_EX, timeout=15, *, create=True):
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    flags = (os.O_RDWR | os.O_CREAT) if create else os.O_RDONLY
+    fd = os.open(path, flags | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise SwitchError(f"Unsafe lock file: {path}")
+        deadline = time.monotonic() + timeout
+        while True:
             try:
-                pid = int(t)
-                if pid not in managed: v.add(pid)
-            except: pass
-    except FileNotFoundError: pass
+                fcntl.flock(fd, operation | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise SwitchError(f"Timed out waiting for clipboard lock: {path}") from None
+                time.sleep(0.02)
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def current_db():
+    if not regular_file(DB_ENV_FILE):
+        return disk_db()
+    value = None
+    for line in DB_ENV_FILE.read_text().splitlines():
+        match = re.fullmatch(r'\s*(?:export\s+)?CLIPHIST_DB_PATH\s*=\s*(.*?)\s*', line)
+        if match:
+            text = match[1]
+            if text.startswith(('"', "'")):
+                quote = text[0]
+                end = text.find(quote, 1)
+                if end < 0:
+                    raise SwitchError("Malformed clipboard database configuration")
+                value = text[1:end]
+            else:
+                value = text.split()[0] if text else None
+    if not value:
+        raise SwitchError("No valid CLIPHIST_DB_PATH in clipboard configuration")
+    return checked_path(value)
+
+
+def validate_db(db):
+    if regular_file(db):
+        # Ignore cliphist's personal config for this read-only integrity check.
+        run(["cliphist", "-config-path", "/dev/null", "-db-path", str(db),
+             "-preview-width", "1", "list"],
+            env=env_for(db) | {"CLIPHIST_CONFIG_PATH": "/dev/null"}, timeout=5)
+
+
+def service_state():
+    output = run(["systemctl", "--user", "show", SERVICE,
+                  "--property=LoadState,ActiveState,MainPID"]).stdout.decode()
+    values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+    if values.get("LoadState") != "loaded":
+        raise SwitchError(f"{SERVICE} is not installed")
+    if values.get("ActiveState") in {"inactive", "failed"} and values.get("MainPID") == "0":
+        return None
+    if values.get("ActiveState") != "active":
+        raise SwitchError(f"{SERVICE} is changing state; try again when it settles")
     try:
-        r=subprocess.run(["pgrep","-x","sh"],capture_output=True,text=True,check=False)
-        for t in r.stdout.split():
-            try: pid=int(t)
-            except: continue
-            if pid in managed: continue
-            c=_cmdline(pid)
-            if "wl-paste" in c and "cliphist" in c: v.add(pid)
-    except FileNotFoundError: pass
-    for pid in sorted(v):
-        try: os.kill(pid,signal.SIGTERM)
-        except: pass
-    dl=time.time()+1.0
-    while time.time()<dl and v:
-        alive=[p for p in v if Path(f"/proc/{p}").exists()]
-        if not alive: break
-        time.sleep(0.05); v=set(alive)
-    for pid in list(v):
-        if Path(f"/proc/{pid}").exists():
-            try: os.kill(pid,signal.SIGKILL)
-            except: pass
-    time.sleep(0.1)
+        pid = int(values["MainPID"])
+        children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
+        watchers = {}
+        persistence = []
+        for child in children:
+            args = Path(f"/proc/{child}/cmdline").read_bytes().rstrip(b"\0").split(b"\0")
+            if not args:
+                continue
+            name = Path(os.fsdecode(args[0])).name
+            if name == "wl-paste" and b"--type" in args:
+                kind = os.fsdecode(args[args.index(b"--type") + 1])
+                expected = [b"--watch", os.fsencode(DAEMON), b"--store"]
+                if args[-3:] != expected:
+                    raise SwitchError(
+                        "The running clipboard daemon needs a one-time update. Run "
+                        f"'systemctl --user restart {SERVICE}' before switching storage.")
+                if kind in watchers:
+                    raise SwitchError(f"Duplicate managed {kind} watchers")
+                watchers[kind] = int(child)
+            elif name == "wl-clip-persist":
+                persistence.append(int(child))
+        if set(watchers) != {"text", "image"} or len(persistence) != 1:
+            raise SwitchError("Clipboard service does not have its expected three children")
+        return pid, watchers["text"], watchers["image"], persistence[0]
+    except (OSError, ValueError, KeyError, IndexError) as exc:
+        raise SwitchError("Clipboard service changed while checking its children; try again") from exc
 
-def update_session_env(db):
-    try: subprocess.run(["systemctl","--user","set-environment",f"CLIPHIST_DB_PATH={db}"],timeout=5,check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    except FileNotFoundError: log_w("systemctl not found")
-    try: subprocess.run(["dbus-update-activation-environment","--systemd","CLIPHIST_DB_PATH"],env=env_for(db),timeout=5,check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    except FileNotFoundError: pass
-    hc=shutil.which("hyprctl")
-    if not hc: return
-    lp=db.replace("\\","\\\\").replace("'","\\'")
-    for cmd in ([hc,"setenv","CLIPHIST_DB_PATH",db],[hc,"eval",f"hl.env('CLIPHIST_DB_PATH','{lp}')"]):
-        try:
-            r=subprocess.run(cmd,timeout=3,check=False,capture_output=True,text=True)
-            if r.returncode==0: log_i(f"Hyprland live env updated via: {' '.join(cmd[:2])}"); return
-        except: continue
 
-def _bin(): return shutil.which("cliphist")
-def list_ids(db):
-    b=_bin()
-    if not b: return set()
-    try: r=subprocess.run([b,"list"],env=env_for(db),capture_output=True,text=True,timeout=3,check=False)
-    except: return set()
-    s=set()
-    for line in r.stdout.splitlines():
-        if not line.strip(): continue
-        first=line.split("\t")[0].split()[0] if line else ""
-        try: s.add(int(first))
-        except: continue
-    return s
-
-def del_ids(db,ids):
-    if not ids: return 0
-    b=_bin()
-    if not b: return 0
-    e=env_for(db); d=0
-    for i in sorted(ids):
-        try:
-            r=subprocess.run([b,"delete"],input=f"{i}\t\n",env=e,capture_output=True,text=True,timeout=3,check=False)
-            if r.returncode==0: d+=1
-        except: continue
-    return d
-
-def reload(db):
-    log_i("Live-reloading clipboard daemons...")
-    wp=shutil.which("wl-paste"); cb=_bin()
-    if not wp or not cb: log_e("wl-paste or cliphist not in PATH"); sys.exit(1)
-    
-    ids_before=list_ids(db)
-    update_session_env(db)
-    kill_watchers(exclude_managed=True)
-    
-    sysd_ok = False
+def migrate_snapshot(source, destination):
+    # Never overwrite an existing destination, including an empty Bolt database.
+    if destination.exists() or destination.is_symlink():
+        raise SwitchError("Migration refused: destination already exists. Use a normal switch to preserve both histories.")
+    if not regular_file(source):
+        raise SwitchError(f"Migration source does not exist: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, name = tempfile.mkstemp(prefix=".clipboard-migrate-", dir=destination.parent)
+    temp = Path(name)
     try:
-        # First attempt hot reload (sends SIGHUP to dusky_clipboard_daemon.sh)
-        # This instantaneously updates CLIPHIST_DB_PATH for watchers WITHOUT stopping wl-clip-persist,
-        # preserving the in-flight clipboard selection across mode switches!
-        r = subprocess.run(["systemctl", "--user", "reload", "dusky_clipboard.service"], timeout=3, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if r.returncode == 0:
-            sysd_ok = True
-        else:
-            r = subprocess.run(["systemctl", "--user", "restart", "dusky_clipboard.service"], timeout=5, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if r.returncode == 0:
-                sysd_ok = True
-    except: pass
-    
-    if not sysd_ok:
-        kill_watchers(exclude_managed=False)
-        denv = env_for(db)
-        cmd_t = ["sh", "-c", 'exec wl-paste --type text --watch sh -c "[ \\\"\\$CLIPBOARD_STATE\\\" = data ] && cliphist store"']
-        cmd_i = ["sh", "-c", 'exec wl-paste --type image --watch sh -c "[ \\\"\\$CLIPBOARD_STATE\\\" = data ] && cliphist store"']
-        try:
-            subprocess.Popen(cmd_t,env=denv,start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-            subprocess.Popen(cmd_i,env=denv,start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        except Exception as e: log_e(f"Failed start watchers: {e}"); sys.exit(1)
-    
-    time.sleep(0.7)
-    
-    ids_after=list_ids(db)
-    leaked=ids_after-ids_before
-    missing=ids_before-ids_after
-    
-    if leaked:
-        # If an ID is missing, cliphist deduplicated an existing entry into the new 'leaked' ID.
-        # We must keep the leaked ID to prevent destroying the user's data.
-        if missing:
-            log_i(f"Deduplication detected: cliphist replaced old entry {missing} with {leaked}. Keeping new entry.")
-        else:
-            n=del_ids(db,leaked)
-            if n: log_i(f"Dropped {n} auto-imported entr(y/ies) from OS clipboard (isolation)")
-            
-    log_s("Daemons reloaded. New mode is active immediately (no reboot needed).")
+        # Bolt uses flock too. Holding its shared file lock prevents a torn copy
+        # even if an external cliphist writer does not use our backend lock.
+        with os.fdopen(fd, "wb") as output, locked(source, fcntl.LOCK_SH, timeout=5, create=False) as source_fd:
+            with os.fdopen(os.dup(source_fd), "rb") as input_file:
+                shutil.copyfileobj(input_file, output)
+            output.flush()
+            os.fsync(output.fileno())
+        validate_db(temp)
+        os.link(temp, destination)  # Atomic publication, fails if someone created it.
+        sync_directory(destination.parent)
+    finally:
+        temp.unlink(missing_ok=True)
 
-def menu():
-    sys.stdout.write("\033[2J\033[H"); sys.stdout.flush()
-    print(f"{C_BOLD}Clipboard Persistence Manager (FIXED v2.2){C_RESET}\nTarget: {DB_ENV_FILE}\n")
-    print(f"{C_BOLD}1) Ephemeral (RAM){C_RESET}\n   - $XDG_RUNTIME_DIR/cliphist.db\n   - {C_RED}Lost on reboot{C_RESET}\n")
-    print(f"{C_BOLD}2) Persistent (Disk){C_RESET}\n   - $XDG_CACHE_HOME/cliphist/db\n   - {C_GREEN}Survives reboot{C_RESET}\n")
-    try: ch=input("Select [1/2] (default 1): ").strip()
-    except: print(); sys.exit(130)
-    return "ephemeral" if ch in ("","1") else "persistent" if ch=="2" else ""
+
+def update_launch_environments(db):
+    # Supplementary propagation only; the daemon and menu read the authoritative
+    # config for every operation. Failure here cannot roll back a completed switch.
+    commands = []
+    if shutil.which("dbus-update-activation-environment"):
+        commands.append(["dbus-update-activation-environment", "CLIPHIST_DB_PATH"])
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") and shutil.which("hyprctl"):
+        commands.append(["hyprctl", "eval", f"hl.env('CLIPHIST_DB_PATH', {json.dumps(str(db), ensure_ascii=False)})"])
+    for command in commands:
+        try:
+            run(command, env=env_for(db), timeout=3)
+        except SwitchError as exc:
+            warn(f"Storage switched, but a launch environment was not updated: {exc}")
+
+
+def switch(mode, migrate=False):
+    checked_path(STATE_DIR)
+    target = ram_db() if mode == "ram" else disk_db()
+    desired_state = b"false\n" if mode == "ram" else b"true\n"
+    desired_env = f'CLIPHIST_DB_PATH="{target}"\n'.encode()
+    with locked(LOCK_FILE):
+        before = service_state()
+        previous = current_db()
+        old_files = {p: p.read_bytes() if regular_file(p) else None for p in (DB_ENV_FILE, STATE_FILE)}
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        validate_db(target)
+        if migrate:
+            source = disk_db() if mode == "ram" else ram_db()
+            if source == target:
+                raise SwitchError("Migration source and destination are the same path")
+            migrate_snapshot(source, target)
+        if regular_file(target):
+            target.chmod(0o600)
+        try:
+            # Readers choose either the complete old path or complete new path.
+            # Store callbacks hold the same lock shared until their DB commit.
+            write_atomic(DB_ENV_FILE, desired_env)
+            write_atomic(STATE_FILE, desired_state)
+            run(["systemctl", "--user", "set-environment", f"CLIPHIST_DB_PATH={target}"])
+            if service_state() != before:
+                raise SwitchError("Clipboard service changed during the switch")
+        except (OSError, SwitchError, KeyboardInterrupt) as exc:
+            failures = []
+            for path, data in old_files.items():
+                try:
+                    if data is None:
+                        path.unlink(missing_ok=True)
+                        sync_directory(path.parent)
+                    else:
+                        write_atomic(path, data)
+                except OSError as restore_error:
+                    failures.append(str(restore_error))
+            try:
+                run(["systemctl", "--user", "set-environment", f"CLIPHIST_DB_PATH={previous}"])
+            except SwitchError as restore_error:
+                failures.append(str(restore_error))
+            if failures:
+                raise SwitchError(f"Switch failed ({exc}); rollback needs attention: {'; '.join(failures)}") from exc
+            raise SwitchError(f"Switch failed; previous configuration restored: {exc}") from exc
+        # Keep supplementary propagation serialized as well, so two concurrent
+        # callers cannot publish their session environments in reverse order.
+        update_launch_environments(target)
+    suffix = "" if before else " (clipboard service is stopped; applies when it starts)"
+    say(f"Clipboard storage: {'RAM' if mode == 'ram' else 'disk'} → {target}{suffix}")
+    return target
+
 
 def main():
     global QUIET
-    if os.geteuid()==0: log_e("Do NOT run as root"); sys.exit(1)
-    ap=argparse.ArgumentParser(description="Clipboard Persistence Manager (fixed v2.2)")
-    g=ap.add_mutually_exclusive_group(); g.add_argument('--ram',action='store_true'); g.add_argument('--disk',action='store_true')
-    ap.add_argument('--quiet',action='store_true'); ap.add_argument('--migrate',action='store_true'); a=ap.parse_args(); QUIET=a.quiet
-    mode=""
-    if a.ram: mode="ephemeral"
-    elif a.disk: mode="persistent"
-    if not mode:
-        if not sys.stdin.isatty(): log_e("Use --ram or --disk for non-tty"); sys.exit(1)
-        mode=menu()
-        if not mode: log_e("Invalid"); sys.exit(1)
-    else: log_i(f"Applying {mode}...")
-    db=update_config(mode,migrate=a.migrate); reload(db)
+    def interrupted(_signum, _frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, interrupted)
+    parser = argparse.ArgumentParser(description=__doc__)
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--ram", action="store_true")
+    group.add_argument("--disk", action="store_true")
+    parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--migrate", action="store_true", help="copy the other history only if the destination does not exist")
+    args = parser.parse_args()
+    QUIET = args.quiet
+    if os.geteuid() == 0:
+        parser.error("Run as your desktop user, not root")
+    mode = "ram" if args.ram else "disk" if args.disk else None
+    if mode is None:
+        if not sys.stdin.isatty():
+            parser.error("Use --ram or --disk outside an interactive terminal")
+        print("Clipboard storage\n1) RAM — lost on reboot\n2) Disk — retained across reboots")
+        try:
+            choice = input("Select [1/2] (default 1): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return 130
+        if choice not in {"", "1", "2"}:
+            parser.error("Select 1 or 2")
+        mode = "disk" if choice == "2" else "ram"
+    try:
+        switch(mode, args.migrate)
+    except (OSError, ValueError, SwitchError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+    return 0
 
-if __name__=="__main__": main()
+
+if __name__ == "__main__":
+    sys.exit(main())
