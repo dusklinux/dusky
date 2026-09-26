@@ -107,12 +107,19 @@ def cpu_signature() -> str:
 
 def native_binary_valid(project: Path, binary: Path, manifest_path: Path, expected_version: str) -> bool:
     try:
-        if not binary.is_file() or not binary_runs(binary):
-            return False
         b_ver = binary_version(binary)
         if not b_ver or parse_version(b_ver) != parse_version(expected_version):
             return False
-        return True
+        manifest = json.loads(manifest_path.read_text())
+        return (
+            manifest.get("version") == expected_version
+            and manifest.get("target") == TARGET
+            and manifest.get("target_cpu") == "native"
+            and manifest.get("cpu_signature") == cpu_signature()
+            and manifest.get("source_sha256") == source_digest(project)
+            and manifest.get("binary_sha256") == sha256(binary)
+            and binary_runs(binary)
+        )
     except (OSError, ValueError):
         return False
 
