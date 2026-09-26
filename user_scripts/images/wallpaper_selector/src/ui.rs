@@ -1,13 +1,14 @@
 use iced::alignment::{Horizontal, Vertical};
 use iced::keyboard::Key;
 use iced::keyboard::key::Named;
+use iced::widget::scrollable::AbsoluteOffset;
 use iced::widget::{
     Float, Space, Stack, button, column, container, image, mouse_area, row, scrollable, text,
     text_input,
 };
 use iced::{
-    Background, Border, Color, ContentFit, Element, Event, Length, Shadow, Subscription, Task,
-    Vector,
+    Background, Border, Color, ContentFit, Element, Event, Length, Padding, Shadow, Subscription,
+    Task, Vector,
 };
 use std::collections::HashSet;
 
@@ -23,6 +24,7 @@ pub enum Message {
     CycleSortMode,
     CycleMotionProfile,
     ToggleViewLayout,
+    GridScroll(f32),
     SelectWallpaper(usize),
     ApplyWallpaper(usize, bool),
     WallpaperApplied(Result<String, String>),
@@ -103,6 +105,9 @@ pub struct WallpaperSelectorApp {
     animate_carousel: bool,
     animation: Option<CarouselAnimation>,
     visual_position: f32,
+    grid_scroll_offset: f32,
+    grid_scroll_target: f32,
+    grid_animation: Option<CarouselAnimation>,
 }
 
 impl WallpaperSelectorApp {
@@ -148,6 +153,9 @@ impl WallpaperSelectorApp {
             animate_carousel: preferences.motion_profile.is_enabled(),
             animation: None,
             visual_position: 0.0,
+            grid_scroll_offset: 0.0,
+            grid_scroll_target: 0.0,
+            grid_animation: None,
         };
 
         app.refilter();
@@ -284,12 +292,15 @@ impl WallpaperSelectorApp {
 
         self.animation = None;
         self.visual_position = self.selected_index.unwrap_or(0) as f32;
+        self.grid_scroll_offset = 0.0;
+        self.grid_scroll_target = 0.0;
+        self.grid_animation = None;
         self.prefetch_around_selected();
     }
 
-    fn select_wallpaper(&mut self, next: usize) {
+    fn select_wallpaper(&mut self, next: usize) -> Task<Message> {
         if next >= self.filtered_indices.len() || self.selected_index == Some(next) {
-            return;
+            return Task::none();
         }
         self.selected_index = Some(next);
         if self.motion_profile.is_enabled() {
@@ -308,7 +319,35 @@ impl WallpaperSelectorApp {
             self.animation = None;
             self.visual_position = next as f32;
         }
+
         self.prefetch_around_selected();
+
+        if self.view_layout == ViewLayout::Grid {
+            let row = next / 5;
+            let row_top = row as f32 * 154.0;
+            let row_bottom = row_top + 154.0;
+            let visible_height = 700.0;
+            if row_top < self.grid_scroll_offset {
+                return iced::widget::operation::scroll_to(
+                    iced::widget::Id::new("grid_scroll"),
+                    AbsoluteOffset {
+                        x: None,
+                        y: Some(row_top),
+                    },
+                );
+            } else if row_bottom > self.grid_scroll_offset + visible_height {
+                let target = (row_bottom - visible_height).max(0.0);
+                return iced::widget::operation::scroll_to(
+                    iced::widget::Id::new("grid_scroll"),
+                    AbsoluteOffset {
+                        x: None,
+                        y: Some(target),
+                    },
+                );
+            }
+        }
+
+        Task::none()
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -330,13 +369,12 @@ impl WallpaperSelectorApp {
                 Task::none()
             }
             Message::SelectWallpaper(filtered_idx) => {
-                self.select_wallpaper(filtered_idx);
-                Task::none()
+                self.select_wallpaper(filtered_idx)
             }
             Message::NextWallpaper => {
                 if let Some(sel) = self.selected_index {
                     if sel + 1 < self.filtered_indices.len() {
-                        self.select_wallpaper(sel + 1);
+                        return self.select_wallpaper(sel + 1);
                     }
                 }
                 Task::none()
@@ -344,7 +382,7 @@ impl WallpaperSelectorApp {
             Message::PrevWallpaper => {
                 if let Some(sel) = self.selected_index {
                     if sel > 0 {
-                        self.select_wallpaper(sel - 1);
+                        return self.select_wallpaper(sel - 1);
                     }
                 }
                 Task::none()
@@ -354,7 +392,7 @@ impl WallpaperSelectorApp {
                     let count = self.filtered_indices.len();
                     if count > 0 {
                         let next = (sel as isize + delta).clamp(0, count as isize - 1) as usize;
-                        self.select_wallpaper(next);
+                        return self.select_wallpaper(next);
                     }
                 }
                 Task::none()
@@ -563,6 +601,23 @@ impl WallpaperSelectorApp {
                 };
                 let _ = preferences.save(&self.config.preferences_file);
                 self.view_layout = next_layout;
+                if next_layout == ViewLayout::Grid {
+                    if let Some(sel) = self.selected_index {
+                        let row = sel / 5;
+                        let target = (row as f32 * 154.0 - 154.0).max(0.0);
+                        return iced::widget::operation::scroll_to(
+                            iced::widget::Id::new("grid_scroll"),
+                            AbsoluteOffset {
+                                x: None,
+                                y: Some(target),
+                            },
+                        );
+                    }
+                }
+                Task::none()
+            }
+            Message::GridScroll(y) => {
+                self.grid_scroll_offset = y;
                 Task::none()
             }
             Message::ToggleAnimation => self.update(Message::CycleMotionProfile),
@@ -576,23 +631,28 @@ impl WallpaperSelectorApp {
             }
             Message::Close => iced::exit(),
             Message::EventOccurred(Event::Mouse(iced::mouse::Event::WheelScrolled { delta })) => {
-                match delta {
-                    iced::mouse::ScrollDelta::Lines { x, y } => {
-                        if y < 0.0 || x > 0.0 {
-                            return self.update(Message::NextWallpaper);
-                        } else if y > 0.0 || x < 0.0 {
-                            return self.update(Message::PrevWallpaper);
+                if self.view_layout == ViewLayout::Grid {
+                    // Let scrollable handle wheel scrolling natively
+                    Task::none()
+                } else {
+                    match delta {
+                        iced::mouse::ScrollDelta::Lines { x, y } => {
+                            if y < 0.0 || x > 0.0 {
+                                return self.update(Message::NextWallpaper);
+                            } else if y > 0.0 || x < 0.0 {
+                                return self.update(Message::PrevWallpaper);
+                            }
+                        }
+                        iced::mouse::ScrollDelta::Pixels { x, y } => {
+                            if y < 0.0 || x > 0.0 {
+                                return self.update(Message::NextWallpaper);
+                            } else if y > 0.0 || x < 0.0 {
+                                return self.update(Message::PrevWallpaper);
+                            }
                         }
                     }
-                    iced::mouse::ScrollDelta::Pixels { x, y } => {
-                        if y < 0.0 || x > 0.0 {
-                            return self.update(Message::NextWallpaper);
-                        } else if y > 0.0 || x < 0.0 {
-                            return self.update(Message::PrevWallpaper);
-                        }
-                    }
+                    Task::none()
                 }
-                Task::none()
             }
             Message::EventOccurred(Event::Keyboard(iced::keyboard::Event::KeyPressed {
                 key,
@@ -616,17 +676,29 @@ impl WallpaperSelectorApp {
                 }
                 Key::Named(Named::ArrowRight) => self.update(Message::NextWallpaper),
                 Key::Named(Named::ArrowLeft) => self.update(Message::PrevWallpaper),
+                Key::Named(Named::ArrowUp) => {
+                    if self.view_layout == ViewLayout::Grid {
+                        self.update(Message::JumpWallpapers(-5))
+                    } else {
+                        Task::none()
+                    }
+                }
+                Key::Named(Named::ArrowDown) => {
+                    if self.view_layout == ViewLayout::Grid {
+                        self.update(Message::JumpWallpapers(5))
+                    } else {
+                        Task::none()
+                    }
+                }
                 Key::Named(Named::PageDown) => self.update(Message::JumpWallpapers(5)),
                 Key::Named(Named::PageUp) => self.update(Message::JumpWallpapers(-5)),
-                Key::Named(Named::Home) => {
-                    self.select_wallpaper(0);
-                    Task::none()
-                }
+                Key::Named(Named::Home) => self.select_wallpaper(0),
                 Key::Named(Named::End) => {
                     if !self.filtered_indices.is_empty() {
-                        self.select_wallpaper(self.filtered_indices.len() - 1);
+                        self.select_wallpaper(self.filtered_indices.len() - 1)
+                    } else {
+                        Task::none()
                     }
-                    Task::none()
                 }
                 Key::Character(ref c) if (c == "f" || c == "F") && self.search_query.is_empty() => {
                     if let Some(sel) = self.selected_index {
@@ -861,7 +933,7 @@ impl WallpaperSelectorApp {
         });
 
         let random_btn = button(
-            text("🎲 Random")
+            text("⇄ Random")
                 .size(11)
                 .align_x(Horizontal::Center)
                 .align_y(Vertical::Center),
@@ -940,24 +1012,20 @@ impl WallpaperSelectorApp {
             ..button::Style::default()
         });
 
-        // Top capsule (Discovery & window actions)
-        let top_capsule = row![
-            mode_pill,
-            view_btn,
-            motion_btn,
-            search_input,
-            random_btn,
-            refresh_btn,
-            close_btn,
-        ]
-        .spacing(8)
-        .align_y(Vertical::Center);
-
+        // Top Bar: Centered mode toggle with refresh & view layout on left, motion & close on right
         let top_bar = container(
             row![
-                Space::new().width(Length::Fill),
-                top_capsule,
-                Space::new().width(Length::Fill),
+                row![Space::new().width(Length::Fill), refresh_btn, view_btn]
+                    .width(Length::Fill)
+                    .spacing(8)
+                    .align_y(Vertical::Center),
+                Space::new().width(Length::Fixed(10.0)),
+                mode_pill,
+                Space::new().width(Length::Fixed(10.0)),
+                row![motion_btn, close_btn, Space::new().width(Length::Fill)]
+                    .width(Length::Fill)
+                    .spacing(8)
+                    .align_y(Vertical::Center),
             ]
             .align_y(Vertical::Center),
         )
@@ -1064,10 +1132,12 @@ impl WallpaperSelectorApp {
                 ..container::Style::default()
             });
 
-        // Bottom capsule (Sort, Color Swatches, Counter)
+        // Bottom capsule (Sort & Random on far left, Colors & Search in middle, Counter on right)
         let bottom_capsule = row![
             sort_btn,
+            random_btn,
             color_pill,
+            search_input,
             counter_pill,
         ]
         .spacing(8)
@@ -1138,41 +1208,57 @@ impl WallpaperSelectorApp {
         .padding([4, 16])
         .width(Length::Fill);
 
-        // --- Fullscreen Transparent Overlay (skwd-wall style) ---
-        let content_column = match self.view_layout {
-            ViewLayout::Carousel => column![
-                Space::new().height(Length::Fixed(16.0)),
-                top_bar,
-                Space::new().height(Length::Fill),
-                main_content,
-                Space::new().height(Length::Fill),
-                bottom_bar,
-                Space::new().height(Length::Fixed(12.0)),
-            ],
-            ViewLayout::Grid => column![
-                Space::new().height(Length::Fixed(16.0)),
-                top_bar,
-                Space::new().height(Length::Fixed(10.0)),
-                main_content,
-                Space::new().height(Length::Fixed(10.0)),
-                bottom_bar,
-                Space::new().height(Length::Fixed(12.0)),
-            ],
-        };
-
-        container(
-            content_column
+        // --- Layered HUD & Content (Prevents grid cards from intercepting HUD clicks) ---
+        match self.view_layout {
+            ViewLayout::Carousel => {
+                let hud_layer = column![
+                    Space::new().height(Length::Fixed(16.0)),
+                    top_bar,
+                    Space::new().height(Length::Fill),
+                    bottom_bar,
+                    Space::new().height(Length::Fixed(12.0)),
+                ]
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .align_x(Horizontal::Center),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(|_| container::Style {
-            background: None,
-            ..container::Style::default()
-        })
-        .into()
+                .align_x(Horizontal::Center);
+
+                let carousel_layer = container(main_content)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(Padding {
+                        top: 75.0,
+                        right: 0.0,
+                        bottom: 95.0,
+                        left: 0.0,
+                    });
+
+                Stack::new()
+                    .push(carousel_layer)
+                    .push(hud_layer)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            }
+            ViewLayout::Grid => {
+                let content_column = column![
+                    Space::new().height(Length::Fixed(16.0)),
+                    top_bar,
+                    Space::new().height(Length::Fixed(10.0)),
+                    main_content,
+                    Space::new().height(Length::Fixed(10.0)),
+                    bottom_bar,
+                    Space::new().height(Length::Fixed(12.0)),
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Horizontal::Center);
+
+                container(content_column)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            }
+        }
     }
 
     fn build_motion_carousel(&self) -> Element<'_, Message> {
@@ -1206,17 +1292,36 @@ impl WallpaperSelectorApp {
 
     fn build_grid_view(&self) -> Element<'_, Message> {
         let accent = self.theme.accent;
-        let mut grid_col = column![].spacing(14).padding([12, 20]).align_x(Horizontal::Center);
-        let chunk_size = 5;
+        let total_items = self.filtered_indices.len();
+        if total_items == 0 {
+            return container(Space::new()).into();
+        }
 
-        for chunk in self.filtered_indices.chunks(chunk_size) {
-            let mut r = row![].spacing(14).align_y(Vertical::Center);
-            for &item_idx in chunk {
-                let filtered_idx = self
-                    .filtered_indices
-                    .iter()
-                    .position(|&idx| idx == item_idx)
-                    .unwrap_or(0);
+        let chunk_size = 5;
+        let row_height = 154.0_f32;
+        let total_rows = (total_items + chunk_size - 1) / chunk_size;
+
+        let scroll = self.grid_scroll_offset;
+        let start_row = (scroll / row_height).floor().max(0.0) as usize;
+        let start_row = start_row.saturating_sub(1);
+        let end_row = (start_row + 9).min(total_rows);
+
+        let top_spacer = start_row as f32 * row_height;
+        let bottom_spacer = (total_rows - end_row) as f32 * row_height;
+
+        let mut grid_col = column![].spacing(14).align_x(Horizontal::Center);
+
+        if top_spacer > 0.0 {
+            grid_col = grid_col.push(Space::new().height(Length::Fixed(top_spacer)));
+        }
+
+        for r in start_row..end_row {
+            let start_idx = r * chunk_size;
+            let end_idx = (start_idx + chunk_size).min(total_items);
+            let mut row_cards = row![].spacing(14).align_y(Vertical::Center);
+
+            for filtered_idx in start_idx..end_idx {
+                let item_idx = self.filtered_indices[filtered_idx];
                 let item = &self.all_wallpapers[item_idx];
                 let is_selected = self.selected_index == Some(filtered_idx);
 
@@ -1355,10 +1460,19 @@ impl WallpaperSelectorApp {
                         }
                     });
 
-                r = r.push(card_btn);
+                let card_area = mouse_area(card_btn)
+                    .on_right_press(Message::ApplyWallpaper(filtered_idx, false))
+                    .on_middle_press(Message::ToggleFavorite(filtered_idx));
+
+                row_cards = row_cards.push(card_area);
             }
 
-            grid_col = grid_col.push(r);
+            let row_container = container(row_cards).width(Length::Fixed(1306.0));
+            grid_col = grid_col.push(row_container);
+        }
+
+        if bottom_spacer > 0.0 {
+            grid_col = grid_col.push(Space::new().height(Length::Fixed(bottom_spacer)));
         }
 
         let centered_grid = container(grid_col)
@@ -1366,6 +1480,8 @@ impl WallpaperSelectorApp {
             .align_x(Horizontal::Center);
 
         scrollable(centered_grid)
+            .id(iced::widget::Id::new("grid_scroll"))
+            .on_scroll(|vp| Message::GridScroll(vp.absolute_offset().y))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -1622,7 +1738,7 @@ impl WallpaperSelectorApp {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let events = iced::event::listen().map(Message::EventOccurred);
-        if self.animation.is_some() {
+        if self.animation.is_some() || self.grid_animation.is_some() {
             Subscription::batch([events, iced::window::frames().map(Message::AnimationFrame)])
         } else {
             events
