@@ -255,6 +255,27 @@ def execute_command(
         return False
 
 
+def execute_argv(argv: list[str]) -> bool:
+    """Launch a configured argument vector without interpreting its data as shell code."""
+    if not argv or not all(isinstance(arg, str) for arg in argv):
+        return False
+    expanded = [
+        str(Path.home() / arg[2:]) if arg.startswith("~/") else
+        str(Path.home() / arg[6:]) if arg.startswith("$HOME/") else arg
+        for arg in argv
+    ]
+    if shutil.which(expanded[0]) is None and not Path(expanded[0]).is_file():
+        log.error("Executable not found: %s", expanded[0])
+        return False
+    command = ["dusky-run", *expanded] if shutil.which("dusky-run") and expanded[0] != "dusky-run" else expanded
+    try:
+        GLib.spawn_async(command, flags=GLib.SpawnFlags.SEARCH_PATH)
+        return True
+    except GLib.Error as error:
+        log.error("Could not launch %s: %s", expanded[0], error.message)
+        return False
+
+
 def _normalize_command(cmd_string: str) -> str:
     cmd = cmd_string.strip()
     # Expand a leading executable path without requiring an extra shell.
@@ -541,11 +562,14 @@ def _validate_settings_path(key: str) -> Path | None:
     target = base / key
 
     try:
-        if target.exists():
-            return target.resolve(strict=True)
-        return target.parent.resolve(strict=True) / target.name
-    except OSError:
-        return target
+        resolved = target.resolve(strict=False)
+    except (OSError, RuntimeError) as error:
+        log.warning("Invalid settings path %r: %s", key, error)
+        return None
+    if resolved == base or not resolved.is_relative_to(base):
+        log.warning("Settings path escapes settings directory: %r", key)
+        return None
+    return resolved
 
 
 def _write_to_disk_atomic(target: Path, value: str) -> bool:

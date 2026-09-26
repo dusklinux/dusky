@@ -71,7 +71,7 @@ def _sanitize_unit(raw: object) -> str | None:
     if not isinstance(raw, str):
         return None
     name = raw.strip()
-    if not name:
+    if not name or name.startswith("-"):
         return None
     # Reject path traversal / shell injection vectors
     if "/" in name or "\\" in name or "\0" in name:
@@ -227,6 +227,43 @@ def _run_argv_async(
 class ServiceSpec:
     unit: str
     scope: Scope
+
+
+@dataclass(slots=True, frozen=True)
+class UnitStatus:
+    load_state: str
+    active_state: str
+    sub_state: str
+    unit_file_state: str
+
+
+def check_unit_status_async(
+    scope: Scope,
+    unit: str,
+    timeout: int = TIMEOUT_IS_ACTIVE,
+    on_result: Callable[[UnitStatus | None], None] | None = None,
+) -> _ServiceCommandHandle | None:
+    """Read runtime and startup states in one current-systemd show query."""
+    sanitized = _sanitize_unit(unit)
+    if sanitized is None or scope not in VALID_SCOPES:
+        if on_result:
+            GLib.idle_add(lambda: (on_result(None), GLib.SOURCE_REMOVE)[1])
+        return None
+    argv = [SYSTEMCTL_PATH]
+    if scope == "user":
+        argv.append("--user")
+    argv += ["show", "--no-pager", "--property=LoadState,ActiveState,SubState,UnitFileState", "--", sanitized]
+
+    def complete(stdout: str | None, _stderr: str | None, success: bool, _status: int | None) -> None:
+        result: UnitStatus | None = None
+        if success and stdout:
+            fields = dict(line.split("=", 1) for line in stdout.splitlines() if "=" in line)
+            if all(key in fields for key in ("LoadState", "ActiveState", "SubState", "UnitFileState")):
+                result = UnitStatus(fields["LoadState"], fields["ActiveState"], fields["SubState"], fields["UnitFileState"])
+        if on_result:
+            on_result(result)
+
+    return _run_argv_async(argv, timeout, complete)
 
 
 def normalize_service_spec(raw_unit: object, raw_scope: object = "system") -> ServiceSpec | None:

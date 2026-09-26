@@ -13,7 +13,7 @@ type = "toggle_card"
 [pages.layout.items.properties]
 title = "Bluetooth"
 icon = "bluetooth-active-symbolic"
-state_command = "rfkill list bluetooth | grep -q 'Soft blocked: no' && echo yes"
+state_command = "$HOME/user_scripts/dusky_system/control_center/lib/radio_status.py bluetooth"
 interval = 5
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
@@ -29,7 +29,7 @@ type = "toggle_card"
 [pages.layout.items.properties]
 title = "Wi-Fi"
 icon = "network-wireless-symbolic"
-state_command = "rfkill list wifi | grep -q 'Soft blocked: no' && echo yes"
+state_command = "$HOME/user_scripts/dusky_system/control_center/lib/radio_status.py wlan"
 interval = 5
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
@@ -47,6 +47,7 @@ type = "toggle_card"
 title = "Dark Mode"
 icon = "weather-clear-night-symbolic"
 key = "dusky_theme/state"
+persistence = "action"
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
 command = "$HOME/user_scripts/theme_matugen/theme_ctl.sh set --mode dark"
@@ -408,15 +409,18 @@ title = "TTY Auto Login"
 description = "Automatically login to TTY1 on boot"
 icon = "avatar-default-symbolic"
 key = "auto_login_tty"
+persistence = "action"
 state_command = "$HOME/user_scripts/arch_setup_scripts/scripts/285_tty_autologin.sh --status"
 interval = 2
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
 command = "kitty --class 285_tty_autologin.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/285_tty_autologin.sh --auto\""
+mode = "launch"
 terminal = false
 [pages.layout.items.on_toggle.disabled]
 type = "exec"
 command = "kitty --class 285_tty_autologin.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/285_tty_autologin.sh --revert --auto\""
+mode = "launch"
 terminal = false
 
 [[pages.layout]]
@@ -752,6 +756,7 @@ toast = "Disk swap allocated: {value}"
 [pages.layout.items.layout.items.on_action]
 type = "exec"
 command = "$HOME/user_scripts/performance/zram/zram_swap_manager.py --set-disk-swap-size {value}"
+timeout = 600
 terminal = false
 requires_root = true
 
@@ -1155,6 +1160,7 @@ title = "File Manager Switch"
 description = "Choose Default: thunar (GUI) vs Yazi (TUI)"
 icon = "system-file-manager-symbolic"
 key = "filemanager_switch"
+persistence = "action"
 options = ["Yazi", "thunar"]
 options_map = { "false" = "thunar", "true" = "Yazi" }
 [pages.layout.items.on_change.Yazi]
@@ -1248,6 +1254,7 @@ type = "toggle_card"
 title = "Warp"
 icon = "security-high-symbolic"
 key = "warp_state"
+persistence = "action"
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
 command = "$HOME/user_scripts/networking/warp_toggle.py --connect"
@@ -1262,7 +1269,7 @@ type = "toggle_card"
 [pages.layout.items.properties]
 title = "Bluetooth"
 icon = "bluetooth-active-symbolic"
-state_command = "rfkill list bluetooth | grep -q 'Soft blocked: no' && echo yes"
+state_command = "$HOME/user_scripts/dusky_system/control_center/lib/radio_status.py bluetooth"
 interval = 5
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
@@ -1278,7 +1285,7 @@ type = "toggle_card"
 [pages.layout.items.properties]
 title = "Wi-Fi"
 icon = "network-wireless-symbolic"
-state_command = "rfkill list wifi | grep -q 'Soft blocked: no' && echo yes"
+state_command = "$HOME/user_scripts/dusky_system/control_center/lib/radio_status.py wlan"
 interval = 5
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
@@ -1462,15 +1469,15 @@ type = "toggle"
 title = "Enable Tunnel"
 description = "Bring tunnel up or down"
 icon = "network-vpn-symbolic"
-state_command = "[ -d /sys/class/net/{name} ] && echo yes || echo no"
+state_command = "$HOME/user_scripts/dusky_system/control_center/lib/wireguard_status.py {name}"
 interval = 5
 [pages.layout.items.layout.items.item_template.items.on_toggle.enabled]
 type = "exec"
-command = "sudo wg-quick up {path}"
+argv = ["sudo", "-n", "wg-quick", "up", "{path}"]
 terminal = false
 [pages.layout.items.layout.items.item_template.items.on_toggle.disabled]
 type = "exec"
-command = "sudo wg-quick down {path}"
+argv = ["sudo", "-n", "wg-quick", "down", "{path}"]
 terminal = false
 
 [[pages.layout.items.layout.items.item_template.items]]
@@ -1481,7 +1488,7 @@ description = "{path}"
 icon = "document-edit-symbolic"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "kitty --class dusky_wg_edit --hold sh -c 'sudo $EDITOR {path}'"
+argv = ["kitty", "--class", "dusky_wg_edit", "--hold", "sh", "-c", "sudoedit -- \"$1\"", "dusky-wg", "{path}"]
 terminal = false
 
 [[pages.layout.items.layout.items.item_template.items]]
@@ -1492,7 +1499,7 @@ description = "Open wg show {name} in terminal"
 icon = "utilities-terminal-symbolic"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "kitty --class dusky_wg_status --hold sh -c 'sudo wg show {name} 2>/dev/null || echo Inactive; echo; printf \"Press Enter to close...\"; read'"
+argv = ["kitty", "--class", "dusky_wg_status", "--hold", "sh", "-c", "sudo -n wg show \"$1\" 2>/dev/null || echo Inactive; echo; printf 'Press Enter to close...'; read -r", "dusky-wg", "{name}"]
 terminal = false
 
 [[pages.layout.items.layout.items.item_template.items]]
@@ -1503,7 +1510,7 @@ description = "Permanently remove {relpath}"
 icon = "list-remove-symbolic"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "kitty --class dusky_wg_delete --hold sh -c 'printf \"\\e[1;31mDelete {relpath}?\\e[0m [y/N] \"; read c; case $c in [Yy]) sudo rm {path} && echo \"Deleted {relpath}.\" || echo \"Failed.\";; *) echo \"Aborted.\";; esac; echo; printf \"Press Enter to close...\"; read'"
+argv = ["kitty", "--class", "dusky_wg_delete", "--hold", "sh", "-c", "printf 'Delete %s? [y/N] ' \"$2\"; read -r c; case $c in [Yy]) sudo rm -- \"$1\" && printf 'Deleted %s.\\n' \"$2\" || echo Failed;; *) echo Aborted;; esac; printf 'Press Enter to close...'; read -r", "dusky-wg", "{path}", "{relpath}"]
 terminal = false
 
 [[pages.layout.items.layout]]
@@ -1671,13 +1678,16 @@ title = "Dusky Power Saver"
 icon = "battery-level-80-symbolic"
 description = "Optimize for battery life (TUI)"
 key = "power_saver_state"
+persistence = "action"
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
 command = "foot --app-id=power_saver.sh --title \"Enable Power Saver\" sh -c \"$HOME/user_scripts/battery/power_saver.sh -e\""
+mode = "launch"
 terminal = false
 [pages.layout.items.on_toggle.disabled]
 type = "exec"
 command = "kitty --class power_saver_off.sh --title \"Disable Power Saver\" sh -c \"$HOME/user_scripts/battery/power_saver.sh -d\""
+mode = "launch"
 terminal = false
 
 [[pages.layout.items]]
@@ -1707,6 +1717,7 @@ title = "Left-Handed Mouse"
 icon = "input-mouse-symbolic"
 description = "Enable/Disable Left-Handed Mode"
 key = "left_handed_mouse"
+persistence = "app"
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
 command = "$HOME/user_scripts/arch_setup_scripts/scripts/265_mouse_button_reverse.sh --left"
@@ -1923,6 +1934,7 @@ type = "toggle_card"
 title = "Mono Audio"
 icon = "audio-card-symbolic"
 key = "mono_audio"
+persistence = "action"
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
 command = "$HOME/user_scripts/audio/mono_audio_pipewire.py"
@@ -1948,13 +1960,16 @@ type = "toggle_card"
 title = "Wayclick"
 icon = "input-keyboard-symbolic"
 key = "wayclick"
+persistence = "action"
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
 command = "$HOME/user_scripts/wayclick/dusky_wayclick.sh"
+mode = "launch"
 terminal = false
 [pages.layout.items.on_toggle.disabled]
 type = "exec"
 command = "$HOME/user_scripts/wayclick/dusky_wayclick.sh"
+mode = "launch"
 terminal = false
 
 [[pages.layout.items]]
@@ -2186,6 +2201,7 @@ type = "toggle_card"
 title = "Dark Mode"
 icon = "weather-clear-night-symbolic"
 key = "dusky_theme/state"
+persistence = "action"
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
 command = "$HOME/user_scripts/theme_matugen/theme_ctl.sh set --mode dark"
@@ -2211,6 +2227,7 @@ type = "toggle_card"
 title = "Blur"
 icon = "view-reveal-symbolic"
 key = "opacity_blur"
+persistence = "action"
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
 command = "$HOME/user_scripts/hypr/hypr_blur_opacity_shadow_toggle.sh"
@@ -2463,15 +2480,18 @@ title = "Clipboard Persistence"
 description = "Configure clipboard history storage"
 icon = "edit-paste-symbolic"
 key = "clipboard_persistance"
+persistence = "action"
 options = ["RAM", "Disk"]
 options_map = { "false" = "RAM", "true" = "Disk" }
 [pages.layout.items.on_change.RAM]
 type = "exec"
 command = "kitty --class 390_clipboard_persistance.py --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/390_clipboard_persistance.py --ram\""
+mode = "launch"
 terminal = false
 [pages.layout.items.on_change.Disk]
 type = "exec"
 command = "kitty --class 390_clipboard_persistance.py --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/390_clipboard_persistance.py --disk\""
+mode = "launch"
 terminal = false
 
 [[pages.layout.items]]
@@ -2481,15 +2501,18 @@ title = "Clipboard Interface"
 description = "Toggle between Rofi and Terminal clipboards"
 icon = "edit-paste-symbolic"
 key = "clipboard_state"
+persistence = "action"
 options = ["Rofi", "Terminal"]
 options_map = { "false" = "Rofi", "true" = "Terminal" }
 [pages.layout.items.on_change.Rofi]
 type = "exec"
 command = "kitty --class 460_switch_clipboard.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/460_switch_clipboard.sh --rofi\""
+mode = "launch"
 terminal = false
 [pages.layout.items.on_change.Terminal]
 type = "exec"
 command = "kitty --class 460_switch_clipboard.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/460_switch_clipboard.sh --terminal\""
+mode = "launch"
 terminal = false
 
 [[pages.layout]]
@@ -2506,6 +2529,7 @@ title = "24-Hour Clock"
 description = "Toggle between 12hr (AM/PM) and 24hr format"
 icon = "preferences-system-time-symbolic"
 key = "time_format"
+persistence = "action"
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
 command = "~/user_scripts/waybar/toggle_time.sh --24"
@@ -3277,26 +3301,6 @@ icon = "document-edit-symbolic"
 type = "exec"
 command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/edit_here/source/environment_variables.lua\""
 
-[[pages.layout.items.layout.items]]
-type = "button"
-[pages.layout.items.layout.items.properties]
-title = "Environment Global"
-description = "~/.config/hypr/conf/environment.conf"
-icon = "document-edit-symbolic"
-[pages.layout.items.layout.items.on_press]
-type = "exec"
-command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/conf/environment.conf\""
-
-[[pages.layout.items.layout.items]]
-type = "button"
-[pages.layout.items.layout.items.properties]
-title = "Environment Hyprland"
-description = "~/.config/hypr/conf/environment-hyprland.conf"
-icon = "document-edit-symbolic"
-[pages.layout.items.layout.items.on_press]
-type = "exec"
-command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/conf/environment-hyprland.conf\""
-
 [[pages.layout.items]]
 type = "navigation"
 [pages.layout.items.properties]
@@ -3540,7 +3544,7 @@ description = "config.jsonc"
 icon = "preferences-system-symbolic"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"{path}/config.jsonc\""
+argv = ["$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py", "{path}/config.jsonc"]
 terminal = false
 
 [[pages.layout.items.layout.items.item_template.items]]
@@ -3551,7 +3555,7 @@ description = "style.css"
 icon = "document-edit-symbolic"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"{path}/style.css\""
+argv = ["$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py", "{path}/style.css"]
 terminal = false
 
 [[pages.layout.items]]
@@ -3693,7 +3697,7 @@ description = "hyprlock.conf"
 icon = "preferences-system-symbolic"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"{path}/hyprlock.conf\""
+argv = ["$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py", "{path}/hyprlock.conf"]
 terminal = false
 
 [[pages.layout.items.layout.items.item_template.items]]
@@ -3704,7 +3708,7 @@ description = "theme.json"
 icon = "document-edit-symbolic"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"{path}/theme.json\""
+argv = ["$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py", "{path}/theme.json"]
 terminal = false
 
 [[pages.layout.items]]

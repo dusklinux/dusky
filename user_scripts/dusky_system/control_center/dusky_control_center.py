@@ -1,24 +1,13 @@
 #!/usr/bin/env python3
 """
-Dusky Control Center (Production Build)
-
-A GTK4/Libadwaita configuration launcher for the Dusky Dotfiles.
-Fully UWSM-compliant for Arch Linux/Hyprland environments.
-
-Validated Production Improvements:
-- Match/Case Structural Pattern Matching for hyper-fast config validation.
-- Extensive domain widgets: Colors, Secrets, Keybinds, Paths, and Multi-line text.
-- Error UI: Config structure/type errors are surfaced via Adw.StatusPage.
-- Grid Isolation: Malformed grid cards fallback to error rows without breaking the FlowBox.
-- Hot Reload: Reload requests are coalesced; failed rebuilds roll back UI/CSS.
-- Search Performance: Directory generators are cached per loaded config.
-- Resource Safety: CSS provider lifecycle is fully guarded against leaks.
-- UX: Hot reload preserves selection; search restore behavior is deterministic.
+Dusky Control Center: a GTK4/Libadwaita launcher for Dusky settings.
 """
 
 from __future__ import annotations
 
 import logging
+import re
+import shlex
 import signal
 import sys
 import threading
@@ -40,6 +29,19 @@ from typing import (
 # =============================================================================
 # Safe check to prevent systemd service restart loops when running headless
 import os
+if "--validate" in sys.argv:
+    from lib.config_schema import validate_file
+
+    try:
+        position = sys.argv.index("--validate")
+        config_file = Path(sys.argv[position + 1]) if position + 1 < len(sys.argv) else Path(__file__).with_name("dusky_config.toml")
+        validate_file(config_file)
+    except (OSError, UnicodeError, ValueError, TypeError) as error:
+        sys.stderr.write(f"dusky-control-center: invalid config: {error}\n")
+        sys.exit(2)
+    print(f"Valid configuration: {config_file}")
+    sys.exit(0)
+
 if not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
     sys.stderr.write("dusky-control-center: error: WAYLAND_DISPLAY and DISPLAY are not set. Cannot run GUI application.\n")
     sys.exit(5)
@@ -80,15 +82,18 @@ _setup_cache()
 # =============================================================================
 # IMPORTS & PRE-FLIGHT
 # =============================================================================
+try:
+    import gi
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    gi.require_version("GLibUnix", "2.0")
+except (ImportError, ValueError) as error:
+    sys.exit(f"dusky-control-center: GTK4/libadwaita Python bindings unavailable: {error}")
+
 import lib.utility as utility
+from lib.config_schema import validate_config
 
 utility.preflight_check()
-
-import gi
-
-gi.require_version("Gtk", "4.0")
-gi.require_version("Adw", "1")
-gi.require_version("GLibUnix", "2.0")
 from gi.repository import Adw, Gdk, Gio, GLib, GLibUnix, Gtk, Pango
 
 import lib.rows as rows
@@ -239,6 +244,7 @@ class RowContext(TypedDict):
     toast_overlay: Adw.ToastOverlay | None
     nav_view: Adw.NavigationView | None
     builder_func: Callable[..., Adw.NavigationPage] | None
+    row_builder: Callable[..., Adw.PreferencesRow] | None
     path: list[str]
 
 
@@ -400,7 +406,12 @@ class DuskyControlCenter(Adw.Application):
             ConfigLoadResult with config, css, success status, and any error message.
         """
         config, config_error = self._do_load_config()
-        css = self._do_load_css()
+        try:
+            css = self._do_load_css()
+        except (OSError, UnicodeError) as error:
+            log.warning("Cannot load CSS: %s", error)
+            css = ""
+            config_error = config_error or f"CSS read error: {error}"
 
         return {
             "success": config_error is None,
@@ -408,52 +419,6 @@ class DuskyControlCenter(Adw.Application):
             "css": css,
             "error": config_error,
         }
-
-    def _validate_config_node(self, value: Any, where: str, seen: set[int] | None = None) -> None:
-        """Deep validation utilizing blazing-fast structural pattern matching."""
-        if seen is None:
-            seen = set()
-            
-        vid = id(value)
-        if vid in seen:
-            raise ValueError(f"{where} contains a recursive reference")
-        seen.add(vid)
-
-        try:
-            match value:
-                case dict():
-                    for key, val in value.items():
-                        match key, val:
-                            case "item_template", dict():
-                                self._validate_config_node(val, f"{where}.{key}", seen)
-                            case "properties", dict():
-                                pass
-                            case "properties" | "item_template", _:
-                                raise TypeError(f"{where}.{key} must be a dictionary")
-                            case "layout" | "items", list() as lst:
-                                lst_id = id(lst)
-                                if lst_id in seen:
-                                    raise ValueError(f"{where}.{key} contains a recursive reference")
-                                seen.add(lst_id)
-                                try:
-                                    for i, child in enumerate(lst):
-                                        self._validate_config_node(child, f"{where}.{key}[{i}]", seen)
-                                finally:
-                                    seen.remove(lst_id)
-                            case "layout" | "items", _:
-                                raise TypeError(f"{where}.{key} must be a list")
-                            case "on_press" | "on_toggle" | "on_change" | "on_action", dict() | None:
-                                pass
-                            case "on_press" | "on_toggle" | "on_change" | "on_action", _:
-                                raise TypeError(f"{where}.{key} must be a dictionary or null")
-                            case "value", dict() | str() | None:
-                                pass
-                            case "value", _:
-                                raise TypeError(f"{where}.value must be a dictionary, string, or null")
-                case _:
-                    raise TypeError(f"{where} must be a dictionary")
-        finally:
-            seen.remove(vid)
 
     def _do_load_config(self) -> tuple[AppConfig, str | None]:
         """
@@ -467,16 +432,8 @@ class DuskyControlCenter(Adw.Application):
         try:
             loaded = utility.load_config(config_path)
             match loaded:
-                case {"pages": list() as pages}:
-                    for idx, page in enumerate(pages):
-                        match page:
-                            case {"title": title_val}:
-                                page["title"] = str(title_val)
-                                self._validate_config_node(page, f"pages[{idx}]")
-                            case dict():
-                                return {"pages": []}, f"Page {idx} missing required 'title' key"
-                            case _:
-                                return {"pages": []}, f"Page {idx} is not a dictionary"
+                case {"pages": list()}:
+                    validate_config(loaded)
                     return loaded, None # type: ignore
                 case {"pages": _}:
                     return {"pages": []}, "'pages' must be a list"
@@ -493,7 +450,7 @@ class DuskyControlCenter(Adw.Application):
 
     def _do_load_css(self) -> str:
         """
-        Safely load the CSS stylesheet.
+        Load CSS. A missing optional stylesheet is empty; other read errors fail reload.
 
         Returns:
             CSS content string, or empty string on failure.
@@ -503,12 +460,6 @@ class DuskyControlCenter(Adw.Application):
             return css_path.read_text(encoding="utf-8")
         except FileNotFoundError:
             log.info("No custom CSS file found at: %s", css_path)
-            return ""
-        except UnicodeDecodeError as e:
-            log.warning("CSS file is not valid UTF-8: %s (%s)", css_path, e)
-            return ""
-        except OSError as e:
-            log.warning("Failed to read CSS file: %s", e)
             return ""
 
     def _apply_css(self) -> None:
@@ -572,6 +523,7 @@ class DuskyControlCenter(Adw.Application):
             "toast_overlay": self._toast_overlay,
             "nav_view": nav_view,
             "builder_func": builder_func,
+            "row_builder": self._build_item_row,
             "path": path or [],
         }
 
@@ -676,6 +628,8 @@ class DuskyControlCenter(Adw.Application):
         log.info("Hot Reload Initiated...")
 
         current_page = self._get_current_page_index()
+        old_pages = self._state.config.get("pages", [])
+        current_page_id = old_pages[current_page].get("id") if current_page is not None and current_page < len(old_pages) else None
         old_config = self._state.config
         old_css = self._state.css_content
         old_error = self._state.config_error
@@ -697,7 +651,7 @@ class DuskyControlCenter(Adw.Application):
             try:
                 if error is not None:
                     log.error("Reload thread error: %s", error, exc_info=True)
-                    self._toast("Reload Failed: Internal error", 3)
+                    self._toast(f"Reload Failed: {error}", 4)
                     return
 
                 if result is None:
@@ -713,7 +667,9 @@ class DuskyControlCenter(Adw.Application):
                 self._state.config_error = result["error"]
 
                 self._apply_css()
-                self._clear_and_rebuild_ui(current_page)
+                new_pages = self._state.config.get("pages", [])
+                restore_index = next((i for i, page in enumerate(new_pages) if page.get("id") == current_page_id), current_page)
+                self._clear_and_rebuild_ui(restore_index)
 
                 if result["error"]:
                     self._toast(f"Config Error: {result['error'][:50]}...", 4)
@@ -1777,14 +1733,14 @@ class DuskyControlCenter(Adw.Application):
     def _inject_variables(self, item: Any, vars: dict[str, str]) -> Any:
         """Recursively replace variables in strings."""
         if isinstance(item, str):
-            res = item
-            for k, v in vars.items():
-                res = res.replace(f"{{{k}}}", v)
-            return res
+            return re.sub(r"\{(name|filename|path|name_pretty|relpath|subdir)\}", lambda match: vars[match.group(1)], item)
         if isinstance(item, list):
             return [self._inject_variables(x, vars) for x in item]
         if isinstance(item, dict):
-            return {k: self._inject_variables(v, vars) for k, v in item.items()}
+            return {
+                k: self._inject_variables(v, {name: shlex.quote(value) for name, value in vars.items()} if k == "state_command" else vars)
+                for k, v in item.items()
+            }
         return item
 
     def _build_item_row(
