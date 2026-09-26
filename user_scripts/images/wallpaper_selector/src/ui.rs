@@ -108,6 +108,7 @@ pub struct WallpaperSelectorApp {
     grid_scroll_offset: f32,
     grid_scroll_target: f32,
     grid_animation: Option<CarouselAnimation>,
+    launch_instant: iced::time::Instant,
 }
 
 impl WallpaperSelectorApp {
@@ -156,6 +157,7 @@ impl WallpaperSelectorApp {
             grid_scroll_offset: 0.0,
             grid_scroll_target: 0.0,
             grid_animation: None,
+            launch_instant: iced::time::Instant::now(),
         };
 
         app.refilter();
@@ -732,6 +734,13 @@ impl WallpaperSelectorApp {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
+        if self.launch_instant.elapsed().as_secs_f32() < 0.015 {
+            return container(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+        }
+
         let accent = self.theme.accent;
 
         // --- Top Bar: Floating HUD Capsule (skwd-wall style) ---
@@ -1291,6 +1300,7 @@ impl WallpaperSelectorApp {
     }
 
     fn build_grid_view(&self) -> Element<'_, Message> {
+        let entrance = self.entrance_progress();
         let accent = self.theme.accent;
         let total_items = self.filtered_indices.len();
         if total_items == 0 {
@@ -1332,13 +1342,14 @@ impl WallpaperSelectorApp {
                         .height(Length::Fill)
                         .content_fit(ContentFit::Cover)
                         .border_radius(card_radius)
+                        .opacity(entrance)
                         .into()
                 } else {
                     container(Space::new())
                         .width(Length::Fill)
                         .height(Length::Fill)
                         .style(move |_| container::Style {
-                            background: Some(Background::Color(Color::from_rgb8(18, 20, 28))),
+                            background: Some(Background::Color(Color::from_rgba8(18, 20, 28, entrance))),
                             border: Border {
                                 radius: card_radius.into(),
                                 ..Border::default()
@@ -1414,24 +1425,24 @@ impl WallpaperSelectorApp {
                     .width(Length::Fixed(250.0))
                     .height(Length::Fixed(140.0))
                     .style(move |_| container::Style {
-                        background: Some(Background::Color(Color::from_rgb8(15, 17, 24))),
+                        background: Some(Background::Color(Color::from_rgba8(15, 17, 24, entrance))),
                         border: Border {
                             radius: card_radius.into(),
                             color: if is_selected {
-                                accent
+                                Color { a: entrance, ..accent }
                             } else {
-                                Color::from_rgba8(255, 255, 255, 0.08)
+                                Color::from_rgba8(255, 255, 255, 0.08 * entrance)
                             },
                             width: if is_selected { 2.0 } else { 1.0 },
                         },
                         shadow: Shadow {
                             color: if is_selected {
-                                Color { a: 0.35, ..accent }
+                                Color { a: 0.35 * entrance, ..accent }
                             } else {
                                 Color::TRANSPARENT
                             },
                             offset: iced::Vector::ZERO,
-                            blur_radius: 12.0,
+                            blur_radius: 12.0 * entrance,
                         },
                         ..container::Style::default()
                     });
@@ -1526,15 +1537,16 @@ impl WallpaperSelectorApp {
         emphasis: f32,
         distance: f32,
     ) -> Element<'a, Message> {
+        let entrance = self.entrance_progress();
         let accent = self.theme.accent;
         let card_radius = 12.0 + 2.0 * emphasis;
 
         // Smoothly fade cards to transparent as they approach the viewport boundary (distance > 2.0 up to 4.0)
-        let edge_fade = if distance > 2.0 {
+        let edge_fade = (if distance > 2.0 {
             (1.0 - ((distance - 2.0) / 2.0).clamp(0.0, 1.0)).powf(1.5)
         } else {
             1.0
-        };
+        }) * entrance;
 
         // Image layer (reads thumbnail from disk; NEVER generates synchronously)
         let img_layer: Element<'_, Message> = if item.thumb_path.exists() {
@@ -1674,7 +1686,7 @@ impl WallpaperSelectorApp {
             .height(Length::Fixed(CARD_HEIGHT))
             .style(move |_| container::Style {
                 background: Some(Background::Color(if emphasis > 0.5 {
-                    Color::from_rgb8(15, 17, 24)
+                    Color::from_rgba8(15, 17, 24, entrance)
                 } else {
                     Color::from_rgba8(14, 16, 22, 0.85 * edge_fade)
                 })),
@@ -1736,9 +1748,21 @@ impl WallpaperSelectorApp {
         .into()
     }
 
+    fn entrance_progress(&self) -> f32 {
+        let elapsed = self.launch_instant.elapsed().as_secs_f32();
+        if elapsed < 0.015 {
+            0.0
+        } else {
+            ((elapsed - 0.015) / 0.065).clamp(0.0, 1.0)
+        }
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         let events = iced::event::listen().map(Message::EventOccurred);
-        if self.animation.is_some() || self.grid_animation.is_some() {
+        let animating = self.animation.is_some()
+            || self.grid_animation.is_some()
+            || self.launch_instant.elapsed().as_secs_f32() < 0.08;
+        if animating {
             Subscription::batch([events, iced::window::frames().map(Message::AnimationFrame)])
         } else {
             events
