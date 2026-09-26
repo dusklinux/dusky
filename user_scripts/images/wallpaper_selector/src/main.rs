@@ -1,5 +1,6 @@
 mod apply;
 mod cache;
+mod color;
 mod config;
 mod favorites;
 mod scanner;
@@ -124,6 +125,9 @@ fn build_cache(config: &Config, force: bool) -> bool {
             Err(error) => eprintln!("Could not remove legacy thumbnails: {error}"),
             _ => {}
         }
+        println!("Indexing wallpaper colors...");
+        let colors = color::ensure_color_cache(&all, &config.colors_file);
+        println!("Color index ready: {} wallpapers indexed", colors.len());
         println!("Cache generation complete!");
         true
     }

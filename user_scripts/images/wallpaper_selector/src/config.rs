@@ -1,16 +1,44 @@
 use std::path::PathBuf;
 use std::{fs, io};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
+pub enum SortMode {
+    #[default]
+    Name,
+    Newest,
+    Random,
+}
+
+impl SortMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Name => Self::Newest,
+            Self::Newest => Self::Random,
+            Self::Random => Self::Name,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Name => "Sort: A-Z",
+            Self::Newest => "Sort: Newest",
+            Self::Random => "Sort: Random",
+        }
+    }
+}
+
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Preferences {
     pub animate_carousel: bool,
+    pub sort_mode: SortMode,
 }
 
 impl Default for Preferences {
     fn default() -> Self {
         Self {
             animate_carousel: true,
+            sort_mode: SortMode::Name,
         }
     }
 }
@@ -45,6 +73,7 @@ pub struct Config {
     pub wallpaper_dir: PathBuf,
     pub cache_dir: PathBuf,
     pub thumb_dir: PathBuf,
+    pub colors_file: PathBuf,
     pub theme_dir: PathBuf,
     pub fav_file: PathBuf,
     pub fav_state_file: PathBuf,
@@ -65,6 +94,7 @@ impl Config {
         let wallpaper_dir = home.join("Pictures/wallpapers");
         let cache_dir = home.join(".cache/dusky_images/wallpaper_selector_rust");
         let thumb_dir = cache_dir.join("thumbs");
+        let colors_file = cache_dir.join("colors.json");
         let theme_dir = home.join(".config/dusky/settings/dusky_theme");
         let fav_file = theme_dir.join("wal_fav_list");
         let fav_state_file = theme_dir.join("current_fav");
@@ -79,6 +109,7 @@ impl Config {
             wallpaper_dir,
             cache_dir,
             thumb_dir,
+            colors_file,
             theme_dir,
             fav_file,
             fav_state_file,

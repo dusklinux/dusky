@@ -11,6 +11,8 @@ pub struct WallpaperItem {
     pub thumb_path: PathBuf,
     pub is_favorite: bool,
     pub is_active: bool,
+    pub mtime: std::time::SystemTime,
+    pub color_bucket: u8,
 }
 
 pub fn is_supported_image(path: &Path) -> bool {
@@ -115,6 +117,11 @@ pub fn scan_wallpapers(
             });
 
             let thumb_path = crate::cache::thumb_path_for(&relative, thumb_dir);
+            let mtime = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
             items.push(WallpaperItem {
                 path: path.to_path_buf(),
@@ -123,6 +130,8 @@ pub fn scan_wallpapers(
                 thumb_path,
                 is_favorite: is_fav,
                 is_active: is_act,
+                mtime,
+                color_bucket: 12,
             });
         }
     }

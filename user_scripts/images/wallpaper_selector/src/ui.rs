@@ -18,6 +18,8 @@ use crate::theme::AppTheme;
 pub enum Message {
     SearchChanged(String),
     ToggleFavoritesView(bool),
+    ToggleColorFilter(u8),
+    CycleSortMode,
     SelectWallpaper(usize),
     ApplyWallpaper(usize, bool),
     WallpaperApplied(Result<String, String>),
@@ -80,6 +82,9 @@ pub struct WallpaperSelectorApp {
     active_wallpaper: Option<String>,
     search_query: String,
     show_only_favorites: bool,
+    selected_color: Option<u8>,
+    sort_mode: crate::config::SortMode,
+    random_seed: u64,
     selected_index: Option<usize>,
     applying: bool,
     refreshing: bool,
@@ -97,12 +102,19 @@ impl WallpaperSelectorApp {
         let favorites = crate::favorites::load_favorites(&config.fav_file);
         let active_wallpaper = crate::favorites::read_active_wallpaper(&config.theme_dir);
 
-        let all_wallpapers = crate::scanner::scan_wallpapers(
+        let mut all_wallpapers = crate::scanner::scan_wallpapers(
             &config.wallpaper_dir,
             &config.thumb_dir,
             &favorites,
             active_wallpaper.as_deref(),
         );
+
+        let colors = crate::color::ensure_color_cache(&all_wallpapers, &config.colors_file);
+        for item in &mut all_wallpapers {
+            if let Some(&b) = colors.get(&item.relative) {
+                item.color_bucket = b;
+            }
+        }
 
         let mut app = Self {
             config,
@@ -113,6 +125,9 @@ impl WallpaperSelectorApp {
             active_wallpaper,
             search_query: String::new(),
             show_only_favorites: false,
+            selected_color: None,
+            sort_mode: preferences.sort_mode,
+            random_seed: 42,
             selected_index: None,
             applying: false,
             refreshing: false,
@@ -180,16 +195,28 @@ impl WallpaperSelectorApp {
     }
 
     fn refilter(&mut self) {
+        let prev_selected_relative = self
+            .selected_index
+            .and_then(|idx| self.filtered_indices.get(idx))
+            .and_then(|&item_idx| self.all_wallpapers.get(item_idx))
+            .map(|item| item.relative.clone());
+
         let query = self.search_query.trim().to_lowercase();
         let show_favs = self.show_only_favorites;
+        let selected_color = self.selected_color;
 
-        self.filtered_indices = self
+        let mut filtered: Vec<usize> = self
             .all_wallpapers
             .iter()
             .enumerate()
             .filter(|(_, item)| {
                 if show_favs && !item.is_favorite {
                     return false;
+                }
+                if let Some(color_bucket) = selected_color {
+                    if item.color_bucket != color_bucket {
+                        return false;
+                    }
                 }
                 if query.is_empty() {
                     return true;
@@ -200,15 +227,46 @@ impl WallpaperSelectorApp {
             .map(|(idx, _)| idx)
             .collect();
 
-        if let Some(sel) = self.selected_index {
-            if sel >= self.filtered_indices.len() {
-                self.selected_index = if self.filtered_indices.is_empty() {
-                    None
-                } else {
-                    Some(self.filtered_indices.len() - 1)
-                };
+        // Apply sorting
+        match self.sort_mode {
+            crate::config::SortMode::Name => {
+                filtered.sort_by(|&a, &b| {
+                    self.all_wallpapers[a]
+                        .name
+                        .to_lowercase()
+                        .cmp(&self.all_wallpapers[b].name.to_lowercase())
+                });
             }
-        } else if !self.filtered_indices.is_empty() {
+            crate::config::SortMode::Newest => {
+                filtered.sort_by(|&a, &b| {
+                    self.all_wallpapers[b]
+                        .mtime
+                        .cmp(&self.all_wallpapers[a].mtime)
+                });
+            }
+            crate::config::SortMode::Random => {
+                let mut seed = self.random_seed;
+                for i in (1..filtered.len()).rev() {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    let j = (seed as usize) % (i + 1);
+                    filtered.swap(i, j);
+                }
+            }
+        }
+
+        self.filtered_indices = filtered;
+
+        // Retain the previously selected wallpaper if present in the new set
+        if let Some(ref rel) = prev_selected_relative {
+            self.selected_index = self
+                .filtered_indices
+                .iter()
+                .position(|&item_idx| self.all_wallpapers[item_idx].relative == *rel);
+        }
+
+        if self.selected_index.is_none() && !self.filtered_indices.is_empty() {
             self.selected_index = Some(0);
         }
 
@@ -393,6 +451,12 @@ impl WallpaperSelectorApp {
                     &self.favorites,
                     self.active_wallpaper.as_deref(),
                 );
+                let colors = crate::color::ensure_color_cache(&self.all_wallpapers, &self.config.colors_file);
+                for item in &mut self.all_wallpapers {
+                    if let Some(&b) = colors.get(&item.relative) {
+                        item.color_bucket = b;
+                    }
+                }
                 self.refilter();
                 if let Some(selected) = selected {
                     if let Some(index) = self
@@ -428,10 +492,37 @@ impl WallpaperSelectorApp {
                 }
                 Task::none()
             }
+            Message::ToggleColorFilter(bucket) => {
+                if self.selected_color == Some(bucket) {
+                    self.selected_color = None;
+                } else {
+                    self.selected_color = Some(bucket);
+                }
+                self.refilter();
+                Task::none()
+            }
+            Message::CycleSortMode => {
+                self.sort_mode = self.sort_mode.next();
+                if self.sort_mode == crate::config::SortMode::Random {
+                    use std::time::SystemTime;
+                    self.random_seed = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_nanos() as u64)
+                        .unwrap_or(42);
+                }
+                let preferences = Preferences {
+                    animate_carousel: self.animate_carousel,
+                    sort_mode: self.sort_mode,
+                };
+                let _ = preferences.save(&self.config.preferences_file);
+                self.refilter();
+                Task::none()
+            }
             Message::ToggleAnimation => {
                 let enabled = !self.animate_carousel;
                 let preferences = Preferences {
                     animate_carousel: enabled,
+                    sort_mode: self.sort_mode,
                 };
                 match preferences.save(&self.config.preferences_file) {
                     Ok(()) => {
@@ -487,6 +578,10 @@ impl WallpaperSelectorApp {
                         self.search_query.clear();
                         self.refilter();
                         Task::none()
+                    } else if self.selected_color.is_some() {
+                        self.selected_color = None;
+                        self.refilter();
+                        Task::none()
                     } else {
                         iced::exit()
                     }
@@ -519,6 +614,16 @@ impl WallpaperSelectorApp {
                 }
                 Key::Character(ref c) if (c == "r" || c == "R") && self.search_query.is_empty() => {
                     self.update(Message::ApplyRandom)
+                }
+                Key::Character(ref c) if (c == "s" || c == "S") && self.search_query.is_empty() => {
+                    self.update(Message::CycleSortMode)
+                }
+                Key::Character(ref c) if (c == "c" || c == "C") && self.search_query.is_empty() => {
+                    if self.selected_color.is_some() {
+                        self.selected_color = None;
+                        self.refilter();
+                    }
+                    Task::none()
                 }
                 _ => Task::none(),
             },
@@ -781,8 +886,109 @@ impl WallpaperSelectorApp {
             ..button::Style::default()
         });
 
+        // Sort button
+        let sort_label = self.sort_mode.label();
+        let sort_btn = button(
+            text(sort_label)
+                .size(11)
+                .align_x(Horizontal::Center)
+                .align_y(Vertical::Center),
+        )
+        .padding([6, 12])
+        .on_press(Message::CycleSortMode)
+        .style(move |_theme, status| {
+            let is_hovered = status == button::Status::Hovered;
+            button::Style {
+                background: Some(Background::Color(if is_hovered {
+                    Color::from_rgba8(255, 255, 255, 0.12)
+                } else {
+                    Color::from_rgba8(20, 22, 30, 0.90)
+                })),
+                text_color: Color::from_rgb8(210, 215, 235),
+                border: Border {
+                    radius: 14.0.into(),
+                    color: Color::from_rgba8(255, 255, 255, 0.08),
+                    width: 1.0,
+                },
+                ..button::Style::default()
+            }
+        });
+
+        // Color palette filter pill
+        let mut swatches_row = row![].spacing(3).align_y(Vertical::Center);
+        for bucket in 0..crate::color::COLOR_BUCKET_COUNT as u8 {
+            let is_selected = self.selected_color == Some(bucket);
+            let col = crate::color::swatch_color(bucket, is_selected);
+            let btn = button(Space::new().width(Length::Fixed(11.0)).height(Length::Fixed(11.0)))
+                .padding(2)
+                .on_press(Message::ToggleColorFilter(bucket))
+                .style(move |_theme, status| {
+                    let is_hovered = status == button::Status::Hovered;
+                    button::Style {
+                        background: Some(Background::Color(if is_hovered {
+                            crate::color::swatch_color(bucket, true)
+                        } else {
+                            col
+                        })),
+                        border: Border {
+                            radius: 8.0.into(),
+                            color: if is_selected {
+                                Color::WHITE
+                            } else if is_hovered {
+                                Color::from_rgba8(255, 255, 255, 0.7)
+                            } else {
+                                Color::from_rgba8(0, 0, 0, 0.4)
+                            },
+                            width: if is_selected { 2.0 } else { 1.0 },
+                        },
+                        ..button::Style::default()
+                    }
+                });
+            swatches_row = swatches_row.push(btn);
+        }
+
+        if let Some(active_bucket) = self.selected_color {
+            let clear_btn = button(
+                text("✕")
+                    .size(9)
+                    .align_x(Horizontal::Center)
+                    .align_y(Vertical::Center),
+            )
+            .padding([1, 4])
+            .on_press(Message::ToggleColorFilter(active_bucket))
+            .style(|_theme, status| button::Style {
+                background: Some(Background::Color(if status == button::Status::Hovered {
+                    Color::from_rgba8(239, 68, 68, 0.4)
+                } else {
+                    Color::TRANSPARENT
+                })),
+                text_color: Color::from_rgb8(210, 215, 235),
+                border: Border {
+                    radius: 8.0.into(),
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                },
+                ..button::Style::default()
+            });
+            swatches_row = swatches_row.push(clear_btn);
+        }
+
+        let color_pill = container(swatches_row)
+            .padding([4, 8])
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color::from_rgba8(20, 22, 30, 0.90))),
+                border: Border {
+                    radius: 16.0.into(),
+                    color: Color::from_rgba8(255, 255, 255, 0.08),
+                    width: 1.0,
+                },
+                ..container::Style::default()
+            });
+
         let top_capsule = row![
             mode_pill,
+            sort_btn,
+            color_pill,
             search_input,
             counter_pill,
             animation_btn,
@@ -790,7 +996,7 @@ impl WallpaperSelectorApp {
             refresh_btn,
             close_btn,
         ]
-        .spacing(10)
+        .spacing(8)
         .align_y(Vertical::Center);
 
         let top_bar = container(
@@ -815,7 +1021,7 @@ impl WallpaperSelectorApp {
         } else if let Some(status) = &self.refresh_status {
             status.as_str()
         } else {
-            "← / →: Navigate  •  Click: Apply + colors  •  Right click: Wallpaper only  •  Middle click: Favorite  •  Esc: Close"
+            "← / →: Navigate  •  S: Sort  •  C: Clear color  •  Click: Apply + colors  •  Right click: Wallpaper only  •  Esc: Close"
         })
         .size(11)
         .color(if self.error_message.is_some() {
