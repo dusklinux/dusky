@@ -18,9 +18,11 @@ import atexit
 import base64
 import codecs
 import datetime
+import errno
 import fcntl
 import functools
 import hashlib
+import math
 import json
 import os
 import pty
@@ -31,6 +33,7 @@ import shlex
 import shutil
 import signal
 import sqlite3
+import stat
 import struct
 import subprocess
 import tempfile
@@ -45,6 +48,66 @@ from enum import Enum
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Literal
+
+VERSION = "19.0.0"
+
+def parse_command_line() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Dusky Arch Linux Orchestrator",
+        epilog="Example: ./orchestrator.py --profile 01_main",
+    )
+
+    parser.add_argument(
+        "--profile",
+        "-p",
+        help="Execute specific profile (name, stem, filename, or number)",
+    )
+    parser.add_argument("--list", action="store_true", help="List all available profiles and exit")
+    parser.add_argument("--list-scripts", action="store_true", help="List sequence of selected profile and exit")
+    parser.add_argument("--reset", action="store_true", help="Reset state for selected profile and exit")
+    parser.add_argument("--reset-and-run", action="store_true", help="Reset state for selected profile, then run")
+    parser.add_argument("--list-once", action="store_true", help="List persistent once markers and exit")
+    parser.add_argument(
+        "--forget-once",
+        action="append",
+        default=[],
+        metavar="SCRIPT",
+        help="Forget persistent once marker(s) for a script name or path. Can be repeated.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Validate everything but do not execute scripts")
+    parser.add_argument("--explain", action="store_true", help="Explain run decisions and exit")
+    parser.add_argument("--force", action="store_true", help="Export DUSKY_FORCE=1 and pass --force to scripts")
+    parser.add_argument("--manual", "-m", action="store_true", help="Prompt before executing every script")
+    parser.add_argument("--stop-on-fail", action="store_true", help="Halt execution immediately if a script fails")
+    parser.add_argument("--no-git-update", action="store_true", help="Skip git self-update")
+    parser.add_argument("--git-update-only", action="store_true", help="Run git self-update and exit")
+    parser.add_argument("--offline", action="store_true", help="Skip network-dependent git update")
+    parser.add_argument("--yes", "-y", action="store_true", help="Assume yes for destructive git update prompts")
+    parser.add_argument("--sudo-password", help="Provide sudo password non-interactively")
+    parser.add_argument("--sudo-password-file", help="Read sudo password from file")
+    parser.add_argument("--task-timeout", type=float, default=0.0, help="Per-task timeout in seconds (0 disables)")
+    parser.add_argument("--allow-root", action="store_true", help="Allow running as root (not recommended)")
+    parser.add_argument("--ascii", action="store_true", help="Use ASCII symbols instead of Unicode")
+    parser.add_argument("--no-audio", action="store_true", help="Disable audio notifications")
+    parser.add_argument("--no-notify", action="store_true", help="Disable desktop notifications")
+    parser.add_argument("--no-inhibit", action="store_true", help="Do not inhibit sleep/idle")
+    parser.add_argument("--doctor", action="store_true", help="Run environment diagnostics and exit")
+    parser.add_argument("--version", action="version", version=f"Dusky Orchestrator {VERSION}")
+
+    return parser.parse_args()
+
+
+EARLY_ARGS = parse_command_line()
+_control_modes = [(name, enabled) for name, enabled in (
+    ("--list", EARLY_ARGS.list), ("--list-scripts", EARLY_ARGS.list_scripts),
+    ("--reset", EARLY_ARGS.reset), ("--reset-and-run", EARLY_ARGS.reset_and_run),
+    ("--list-once", EARLY_ARGS.list_once), ("--forget-once", bool(EARLY_ARGS.forget_once)),
+    ("--dry-run", EARLY_ARGS.dry_run), ("--explain", EARLY_ARGS.explain),
+    ("--git-update-only", EARLY_ARGS.git_update_only), ("--doctor", EARLY_ARGS.doctor),
+) if enabled]
+if len(_control_modes) > 1:
+    raise SystemExit(f"[ERROR] Conflicting modes: {', '.join(name for name, _ in _control_modes)}")
+
 
 try:
     from rich.console import Console
@@ -73,7 +136,6 @@ except ImportError as exc:
     sys.stderr.write("Install: python-textual python-rich\n")
     sys.exit(8)
 
-VERSION = "19.0.0"
 SCRIPT_DIR: Path = Path(__file__).resolve().parent
 PROFILES_DIR: Path = Path(
     os.environ.get("DUSKY_PROFILES_DIR", SCRIPT_DIR / "profiles")
@@ -86,12 +148,78 @@ def load_global_config() -> dict:
         try:
             with open(config_path, "rb") as f:
                 return tomllib.load(f)
-        except Exception as e:
-            sys.stderr.write(f"[WARN] Failed to parse global config: {e}\n")
+        except (OSError, tomllib.TOMLDecodeError) as e:
+            raise RuntimeError(f"Cannot load global config {config_path}: {e}") from e
     return {}
 
 
-GLOBAL_CONFIG = load_global_config()
+def normalize_global_config(raw: dict) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("Global config must be a TOML table")
+    table_names = ("ui", "paths", "logging", "execution", "conditions", "notifications", "sudo", "git", "prompts")
+    for name in table_names:
+        table = raw.get(name, {})
+        if not isinstance(table, dict):
+            raise ValueError(f"[{name}] must be a table")
+    specs = {
+        "ui": {"ascii_mode": bool, "left_pane_width": int, "max_log_lines": int, "max_deque_lines": int},
+        "paths": {"documents_dir": str, "namespace": str, "lock_file": str, "askpass_prefix": str,
+                  "state_subdir": str, "logs_subdir": str, "backups_subdir": str},
+        "logging": {"enabled": bool, "write_task_logs": bool, "write_reports": bool},
+        "execution": {"max_defer_passes": int, "disk_space_reserve_bytes": int,
+                      "db_busy_timeout": int, "default_interpreter": str,
+                      "validate_subscript_syntax": bool},
+        "sudo": {"heartbeat_interval": int, "timestamp_timeout": int, "sudoers_dir": str,
+                 "dropin_prefix": str},
+        "git": {"upstream_branch": str, "upstream_ref": str, "default_repo_url": str,
+                "fetch_max_attempts": int, "timeout_fetch": int, "backup_retention": int},
+        "prompts": {"cooldown": (int, float), "allow_insecure_password_autofeed": bool},
+    }
+    positive = {"left_pane_width", "max_log_lines", "max_deque_lines", "max_defer_passes",
+                "db_busy_timeout", "heartbeat_interval", "fetch_max_attempts", "timeout_fetch",
+                "backup_retention"}
+    for table_name, keys in specs.items():
+        for key, typ in keys.items():
+            value = raw.get(table_name, {}).get(key)
+            if value is None:
+                continue
+            if not isinstance(value, typ) or (typ is int and isinstance(value, bool)):
+                raise ValueError(f"[{table_name}].{key} has the wrong type")
+            if isinstance(value, str) and (not value or "\0" in value):
+                raise ValueError(f"[{table_name}].{key} must be a nonempty string without NUL")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                if not math.isfinite(value) or (key in positive and value <= 0) or value < 0:
+                    raise ValueError(f"[{table_name}].{key} is out of range")
+    for table, names in {
+        "conditions": ("package_check_cmd", "service_active_cmd", "user_service_active_cmd"),
+        "sudo": ("env_keep",), "git": ("env_strip",),
+        "notifications": ("audio_players",), "ui": ("theme_paths",),
+    }.items():
+        for name in names:
+            val = raw.get(table, {}).get(name)
+            if val is not None and (not isinstance(val, list) or any(not isinstance(v, str) or not v for v in val)):
+                raise ValueError(f"[{table}].{name} must be a list of nonempty strings")
+    for table, names in {"ui": ("default_palette", "unicode_symbols", "ascii_symbols"),
+                         "execution": ("extension_interpreters",),
+                         "conditions": ("gpu_vendor_map",), "notifications": ("sound_map",),
+                         "git": ("env_inject",)}.items():
+        for name in names:
+            val = raw.get(table, {}).get(name)
+            if val is not None and (not isinstance(val, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in val.items())):
+                raise ValueError(f"[{table}].{name} must be a string table")
+    rules = raw.get("prompts", {}).get("rules", [])
+    if not isinstance(rules, list) or any(not isinstance(r, dict) or
+        not all(isinstance(r.get(k), str) for k in ("name", "pattern", "kind")) or
+        r["kind"] not in ("password", "yes", "no", "enter") for r in rules):
+        raise ValueError("[prompts].rules contains an invalid prompt rule")
+    return raw
+
+
+try:
+    GLOBAL_CONFIG = normalize_global_config(load_global_config())
+except (RuntimeError, ValueError) as exc:
+    sys.stderr.write(f"[FATAL] {exc}\n")
+    sys.exit(2)
 
 ASCII_MODE = GLOBAL_CONFIG.get("ui", {}).get("ascii_mode", False)
 MAX_DEFER_PASSES = GLOBAL_CONFIG.get("execution", {}).get("max_defer_passes", 3)
@@ -163,8 +291,9 @@ def check_runtime_versions() -> None:
                 f"[FATAL] Textual 8.2.8+ is required. Installed: {textual_version}\n"
             )
             sys.exit(1)
-    except Exception:
-        pass
+    except importlib_metadata.PackageNotFoundError:
+        sys.stderr.write("[FATAL] Textual is not installed.\n")
+        sys.exit(1)
 
 
 def ensure_not_root(allow_root: bool) -> None:
@@ -300,6 +429,15 @@ def state_dir() -> Path:
     return _documents_subdir(GLOBAL_CONFIG.get("paths", {}).get("state_subdir", "state"))
 
 
+def state_dir_path() -> Path:
+    """Find persistent state without creating directories during inspection."""
+    paths = GLOBAL_CONFIG.get("paths", {})
+    docs = Path(paths.get("documents_dir", "Documents")).expanduser()
+    docs = docs if docs.is_absolute() else user_home() / docs
+    sub = Path(paths.get("state_subdir", "state")).expanduser()
+    return sub if sub.is_absolute() else docs / sub
+
+
 @functools.cache
 def logs_dir() -> Path:
     return _documents_subdir(GLOBAL_CONFIG.get("paths", {}).get("logs_subdir", "logs"))
@@ -406,8 +544,10 @@ class OrchestratorTask:
     resolved_path: Path | None = None
     description: str = ""
     interpreter: str = "bash"
+    interpreter_args: list[str] = field(default_factory=list)
     checksum: str = ""
     state_key: str = ""
+    legacy_state_key: str = ""
     status: TaskStatus = TaskStatus.PENDING
     error_msg: str | None = None
     duration: float = 0.0
@@ -457,6 +597,13 @@ def safe_filename(name: str) -> str:
     return cleaned or "unnamed"
 
 
+def profile_state_path(profile: ProfileConfig, create: bool = False) -> Path:
+    ident = str(profile.filepath.resolve())
+    suffix = hashlib.blake2b(ident.encode("utf-8"), digest_size=5).hexdigest()
+    base = state_dir() if create else state_dir_path()
+    return base / f"{safe_filename(profile.name)}_{suffix}.db"
+
+
 def now_iso() -> str:
     return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -476,7 +623,7 @@ def file_checksum(path: Path) -> str:
         return ""
 
 
-def make_state_key(task: OrchestratorTask, occurrence: int) -> str:
+def make_state_key(task: OrchestratorTask, occurrence: int, *, legacy: bool = False) -> str:
     args_key = shlex.join(task.args)
     timeout_repr = "" if task.timeout is None else str(task.timeout)
     material = "|".join(
@@ -495,6 +642,7 @@ def make_state_key(task: OrchestratorTask, occurrence: int) -> str:
             str(int(task.once)),
             task.once_mode,
             task.once_scope,
+            *(([str(task.resolved_path.resolve())] if task.resolved_path else ["<unresolved>"]) if not legacy else []),
         ]
     ).encode("utf-8")
     return hashlib.blake2b(material, digest_size=16).hexdigest()
@@ -512,12 +660,49 @@ class StateStore:
         "completed_once",
     }
 
-    def __init__(self, profile: ProfileConfig):
-        self.path = state_dir() / f"{safe_filename(profile.name)}.db"
+    def __init__(self, profile: ProfileConfig, read_only: bool = False):
+        self.profile = profile
+        self.read_only = read_only
+        self.path = profile_state_path(profile, create=not read_only)
+        legacy_path = state_dir_path() / f"{safe_filename(profile.name)}.db"
+        if not self.path.exists() and legacy_path.exists():
+            # A sanitized display name was the old identity. Migrate it only
+            # when that name identifies one profile, leaving the old DB intact.
+            peers = []
+            for candidate in PROFILES_DIR.glob("*.toml"):
+                try:
+                    with candidate.open("rb") as fh:
+                        data = tomllib.load(fh)
+                    if safe_filename(str(data.get("profile", {}).get("name", candidate.stem)).strip()) == safe_filename(profile.name):
+                        peers.append(candidate)
+                except (OSError, tomllib.TOMLDecodeError, AttributeError):
+                    peers.append(candidate)
+            if len(peers) != 1:
+                raise RuntimeError(f"Legacy state {legacy_path} has ambiguous profile ownership")
+            if read_only:
+                self.path = legacy_path
+            else:
+                src = sqlite3.connect(f"file:{legacy_path}?mode=ro", uri=True)
+                try:
+                    dest = sqlite3.connect(self.path)
+                    try:
+                        src.backup(dest)
+                    finally:
+                        dest.close()
+                finally:
+                    src.close()
         busy_timeout = GLOBAL_CONFIG.get("execution", {}).get("db_busy_timeout", 5000)
-        self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=busy_timeout / 1000.0)
-        self.conn.execute("PRAGMA journal_mode=WAL;")
-        self.conn.execute("PRAGMA synchronous=NORMAL;")
+        if read_only and not self.path.exists():
+            self.conn = sqlite3.connect(":memory:", check_same_thread=False)
+        elif read_only:
+            self.conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, check_same_thread=False,
+                                        timeout=busy_timeout / 1000.0)
+        else:
+            self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=busy_timeout / 1000.0)
+            self.conn.execute("PRAGMA journal_mode=WAL;")
+            self.conn.execute("PRAGMA synchronous=NORMAL;")
+        if read_only and self.path.exists():
+            return
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS state (
@@ -539,21 +724,29 @@ class StateStore:
         self.conn.commit()
 
     def statuses(self) -> dict[str, str]:
-        try:
-            cur = self.conn.execute("SELECT state_key, status FROM state")
-            return {str(k): str(v) for k, v in cur.fetchall()}
-        except sqlite3.OperationalError:
-            return {}
+        cur = self.conn.execute("SELECT state_key, status FROM state")
+        result = {str(k): str(v) for k, v in cur.fetchall()}
+        legacy_counts: dict[str, int] = {}
+        for task in self.profile.tasks:
+            if task.legacy_state_key:
+                legacy_counts[task.legacy_state_key] = legacy_counts.get(task.legacy_state_key, 0) + 1
+        for task in self.profile.tasks:
+            if task.state_key and task.legacy_state_key in result and task.state_key not in result:
+                if legacy_counts[task.legacy_state_key] != 1:
+                    raise RuntimeError(f"Ambiguous legacy task state for {task.script_name}")
+                result[task.state_key] = result[task.legacy_state_key]
+        return result
 
     def durations(self) -> dict[str, float]:
-        try:
-            cur = self.conn.execute("PRAGMA table_info(state);")
-            if "duration" not in [row[1] for row in cur.fetchall()]:
-                return {}
-            cur = self.conn.execute("SELECT state_key, duration FROM state")
-            return {str(k): float(v or 0.0) for k, v in cur.fetchall()}
-        except sqlite3.OperationalError:
+        cur = self.conn.execute("PRAGMA table_info(state);")
+        if "duration" not in [row[1] for row in cur.fetchall()]:
             return {}
+        cur = self.conn.execute("SELECT state_key, duration FROM state")
+        result = {str(k): float(v or 0.0) for k, v in cur.fetchall()}
+        for task in self.profile.tasks:
+            if task.state_key and task.legacy_state_key in result and task.state_key not in result:
+                result[task.state_key] = result[task.legacy_state_key]
+        return result
 
     @classmethod
     def is_done(cls, status: str | None) -> bool:
@@ -597,19 +790,43 @@ class StateStore:
 
 
 def reset_state_for_profile(profile: ProfileConfig) -> None:
-    base_path = state_dir() / f"{safe_filename(profile.name)}.db"
+    base_path = profile_state_path(profile, create=True)
     for suffix in ("", "-wal", "-shm"):
         Path(f"{base_path}{suffix}").unlink(missing_ok=True)
+    legacy_path = state_dir_path() / f"{safe_filename(profile.name)}.db"
+    peers = []
+    for candidate in PROFILES_DIR.glob("*.toml"):
+        try:
+            with candidate.open("rb") as fh:
+                data = tomllib.load(fh)
+            if safe_filename(str(data.get("profile", {}).get("name", candidate.stem)).strip()) == safe_filename(profile.name):
+                peers.append(candidate)
+        except (OSError, tomllib.TOMLDecodeError, AttributeError):
+            peers.append(candidate)
+    if len(peers) == 1:
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{legacy_path}{suffix}").unlink(missing_ok=True)
     print(f"Reset state for {profile.name} at {base_path}")
 
 
 class OnceStore:
-    def __init__(self) -> None:
-        self.path = state_dir() / "once.db"
+    def __init__(self, read_only: bool = False) -> None:
+        self.read_only = read_only
+        self.path = (state_dir_path() if read_only else state_dir()) / "once.db"
         busy_timeout = GLOBAL_CONFIG.get("execution", {}).get("db_busy_timeout", 5000)
-        self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=busy_timeout / 1000.0)
-        self.conn.execute("PRAGMA journal_mode=WAL;")
-        self.conn.execute("PRAGMA synchronous=NORMAL;")
+        if read_only and not self.path.exists():
+            self.conn = sqlite3.connect(":memory:", check_same_thread=False)
+        elif read_only:
+            self.conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, check_same_thread=False,
+                                        timeout=busy_timeout / 1000.0)
+        else:
+            self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=busy_timeout / 1000.0)
+            self.conn.execute("PRAGMA journal_mode=WAL;")
+            self.conn.execute("PRAGMA synchronous=NORMAL;")
+        if read_only and self.path.exists():
+            columns = {row[1] for row in self.conn.execute("PRAGMA table_info(once_markers)")}
+            self._notified_select = "notified_checksum" if "notified_checksum" in columns else "'' AS notified_checksum"
+            return
         self.conn.execute(
             """
 CREATE TABLE IF NOT EXISTS once_markers (
@@ -637,9 +854,10 @@ CREATE TABLE IF NOT EXISTS once_markers (
             "CREATE INDEX IF NOT EXISTS idx_once_script ON once_markers(script_name);"
         )
         self.conn.commit()
+        self._notified_select = "notified_checksum"
 
     @staticmethod
-    def make_key(task: OrchestratorTask, profile_name: str) -> str:
+    def make_key(task: OrchestratorTask, profile_name: str, *, legacy: bool = False) -> str:
         scope = task.once_scope if task.once_scope in ("profile", "global") else "profile"
         profile_part = "__global__" if scope == "global" else profile_name
         material = "|".join(
@@ -650,6 +868,7 @@ CREATE TABLE IF NOT EXISTS once_markers (
                 task.mode,
                 task.script_name,
                 shlex.join(task.args),
+                *(([str(task.resolved_path.resolve())] if task.resolved_path else ["<unresolved>"]) if not legacy else []),
             ]
         ).encode("utf-8")
         return hashlib.blake2b(material, digest_size=16).hexdigest()
@@ -657,18 +876,27 @@ CREATE TABLE IF NOT EXISTS once_markers (
     def marker_valid(self, task: OrchestratorTask, profile_name: str) -> bool:
         return self.check_marker_status(task, profile_name) == "skip"
 
-    def check_marker_status(self, task: OrchestratorTask, profile_name: str) -> Literal["run", "skip", "notify_sealed"]:
+    def check_marker_status(self, task: OrchestratorTask, profile_name: str) -> Literal["run", "skip", "notify_sealed", "error"]:
         if not task.once:
             return "run"
 
         key = self.make_key(task, profile_name)
         cur = self.conn.execute(
-            "SELECT checksum, once_mode, notified_checksum FROM once_markers WHERE marker_key = ?",
+            f"SELECT checksum, once_mode, {self._notified_select} FROM once_markers WHERE marker_key = ?",
             (key,),
         )
         row = cur.fetchone()
         if row is None:
-            return "run"
+            old_key = self.make_key(task, profile_name, legacy=True)
+            old = self.conn.execute(
+                f"SELECT checksum, once_mode, {self._notified_select}, resolved_path FROM once_markers WHERE marker_key = ?",
+                (old_key,),
+            ).fetchone()
+            if old is None:
+                return "run"
+            if task.resolved_path is None or old[3] != str(task.resolved_path):
+                return "error"
+            row = old[:3]
 
         stored_checksum, stored_mode, notified_checksum = row
 
@@ -688,9 +916,11 @@ CREATE TABLE IF NOT EXISTS once_markers (
 
     def mark_sealed_notified(self, task: OrchestratorTask, profile_name: str) -> None:
         key = self.make_key(task, profile_name)
+        if self.conn.execute("SELECT 1 FROM once_markers WHERE marker_key = ?", (key,)).fetchone() is None:
+            key = self.make_key(task, profile_name, legacy=True)
         self.conn.execute(
-            "UPDATE once_markers SET notified_checksum = ?, checksum = ?, updated = ? WHERE marker_key = ?",
-            (task.checksum, task.checksum, now_iso(), key),
+            "UPDATE once_markers SET notified_checksum = ?, updated = ? WHERE marker_key = ?",
+            (task.checksum, now_iso(), key),
         )
         self.conn.commit()
 
@@ -763,14 +993,15 @@ ON CONFLICT(marker_key) DO UPDATE SET
         if not script:
             return 0
 
+        escaped = script.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         cur = self.conn.execute(
             """
 DELETE FROM once_markers
 WHERE script_name = ?
    OR resolved_path = ?
-   OR script_name LIKE ?
+   OR script_name LIKE ? ESCAPE '\\'
 """,
-            (script, script, f"%/{script}"),
+            (script, script, f"%/{escaped}"),
         )
         self.conn.commit()
         return cur.rowcount
@@ -855,6 +1086,7 @@ class RunLogger:
         self._task_files: dict[str, object] = {}
         self._task_counts: dict[str, int] = {}
         self.run_id = run_id
+        self.failed_write = False
 
         if not self.enabled:
             return
@@ -874,9 +1106,12 @@ class RunLogger:
     def system(self, msg: str) -> None:
         if not self.enabled or self._main is None:
             return
-        with suppress(OSError):
+        try:
             self._main.write(f"[{now_ts()}] {msg}\n")
             self._main.flush()
+        except OSError as exc:
+            self.failed_write = True
+            sys.stderr.write(f"[WARN] Main log write failed: {exc}\n")
 
     def task_log_path(self, task: OrchestratorTask) -> Path:
         if self.root is None:
@@ -891,7 +1126,7 @@ class RunLogger:
             self.write_task(task, f"[{now_ts()}] RETRY")
             return
 
-        with suppress(OSError):
+        try:
             f = open(self.task_log_path(task), "a", encoding="utf-8", errors="replace")
             f.write(f"[{now_ts()}] TASK START: {task.script_name}\n")
             f.write(f"[{now_ts()}] MODE: {task.mode}\n")
@@ -909,6 +1144,9 @@ class RunLogger:
             f.flush()
             self._task_files[task.state_key] = f
             self._task_counts[task.state_key] = 0
+        except OSError as exc:
+            self.failed_write = True
+            sys.stderr.write(f"[WARN] Task log open failed: {exc}\n")
 
     def write_task(self, task: OrchestratorTask, line: str) -> None:
         if not self.enabled or not self.write_task_logs:
@@ -916,12 +1154,15 @@ class RunLogger:
         f = self._task_files.get(task.state_key)
         if f is None:
             return
-        with suppress(OSError):
+        try:
             f.write(line + "\n")
             count = self._task_counts.get(task.state_key, 0) + 1
             self._task_counts[task.state_key] = count
             if count % 25 == 0:
                 f.flush()
+        except OSError as exc:
+            self.failed_write = True
+            sys.stderr.write(f"[WARN] Task log write failed: {exc}\n")
 
     def close_task(
         self,
@@ -935,13 +1176,18 @@ class RunLogger:
         f = self._task_files.pop(task.state_key, None)
         if f is None:
             return
-        with suppress(OSError):
+        try:
             f.write(f"\n[{now_ts()}] TASK END: {task.script_name}\n")
             f.write(f"[{now_ts()}] STATUS: {status}\n")
             f.write(f"[{now_ts()}] EXIT CODE: {exit_code}\n")
             f.write(f"[{now_ts()}] DURATION: {duration:.2f}s\n")
             f.flush()
-            f.close()
+        except OSError as exc:
+            self.failed_write = True
+            sys.stderr.write(f"[WARN] Task log close failed: {exc}\n")
+        finally:
+            with suppress(OSError):
+                f.close()
 
     def write_report(
         self,
@@ -1010,12 +1256,15 @@ class RunLogger:
                 f"{task.index:03d}. [{task.mode}] {task.script_name} -> {status} ({task.duration:.2f}s)"
             )
 
-        with suppress(OSError):
+        try:
             (self.root / "report.json").write_text(
                 json.dumps(report, indent=2, default=str),
                 encoding="utf-8",
             )
             (self.root / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as exc:
+            self.failed_write = True
+            sys.stderr.write(f"[WARN] Report write failed: {exc}\n")
 
     def close_all(self) -> None:
         if not self.enabled:
@@ -1231,6 +1480,26 @@ def _cleanup_lock() -> None:
 
 def acquire_lock() -> bool:
     global _LOCK_FD
+    if _LOCK_FD is not None:
+        return True
+    inherited = os.environ.pop("DUSKY_ORCH_LOCK_FD", "")
+    if inherited:
+        try:
+            fd = int(inherited)
+            if fd < 3 or not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise ValueError("invalid inherited lock descriptor")
+            if (os.fstat(fd).st_dev, os.fstat(fd).st_ino) != (
+                lock_path().stat().st_dev, lock_path().stat().st_ino
+            ):
+                raise ValueError("inherited lock does not match configured path")
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.set_inheritable(fd, False)
+            _LOCK_FD = fd
+            atexit.register(_cleanup_lock)
+            return True
+        except (OSError, ValueError) as exc:
+            sys.stderr.write(f"[ERROR] Could not adopt update lock: {exc}\n")
+            return False
     lp = lock_path()
 
     with suppress(OSError):
@@ -1270,6 +1539,39 @@ def acquire_lock() -> bool:
 
 def release_lock() -> None:
     _cleanup_lock()
+
+
+def restart_with_updated_sources(wrapper_path: Path, my_path: Path,
+                                 profile: ProfileConfig, preserve_profile: bool,
+                                 update_only: bool) -> None:
+    """Restart without a lock gap or plaintext sudo password in argv."""
+    args: list[str] = []
+    skip_next = False
+    for arg in sys.argv[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--sudo-password":
+            skip_next = True
+            continue
+        if arg.startswith("--sudo-password="):
+            continue
+        args.append(arg)
+    if "--no-git-update" not in args:
+        args.append("--no-git-update")
+    if update_only and "--git-update-only" not in args:
+        args.append("--git-update-only")
+    if preserve_profile and not any(a == "--profile" or a.startswith("--profile=") or a == "-p" for a in args):
+        args.extend(["--profile", profile.filepath.stem])
+    os.environ.pop("DUSKY_SUDO_PASSWORD", None)
+    if _LOCK_FD is not None:
+        os.set_inheritable(_LOCK_FD, True)
+        os.environ["DUSKY_ORCH_LOCK_FD"] = str(_LOCK_FD)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if wrapper_path.is_file():
+        os.execv("/usr/bin/bash", ["bash", str(wrapper_path), *args])
+    os.execv(sys.executable, [sys.executable, str(my_path), *args])
 
 
 # ==============================================================================
@@ -1342,14 +1644,6 @@ class SudoEngine:
         return cls._mode
 
     @classmethod
-    def _remove_stale_askpass_files(cls) -> None:
-        prefix = GLOBAL_CONFIG.get("paths", {}).get("askpass_prefix", ".dusky_askpass_")
-        with suppress(OSError):
-            for p in askpass_dir().glob(f"{prefix}*"):
-                with suppress(OSError):
-                    p.unlink(missing_ok=True)
-
-    @classmethod
     def cleanup(cls) -> None:
         if cls._sudoers_path is not None:
             env = os.environ.copy()
@@ -1376,12 +1670,16 @@ class SudoEngine:
 
         if cls._askpass_path is not None:
             with suppress(OSError):
-                cls._askpass_path.unlink(missing_ok=True)
+                st = cls._askpass_path.lstat()
+                if stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid():
+                    cls._askpass_path.unlink(missing_ok=True)
 
         cls._askpass_path = None
         cls._sudoers_path = None
         cls._password = None
         cls._mode = "none"
+        os.environ.pop("SUDO_ASKPASS", None)
+        os.environ.pop("DUSKY_SUDO_PASSWORD", None)
 
     @classmethod
     def _write_askpass(cls, password: str) -> Path:
@@ -1406,8 +1704,12 @@ class SudoEngine:
     def _remove_stale_sudoers_files(cls, env: dict[str, str]) -> None:
         prefix = GLOBAL_CONFIG.get("sudo", {}).get("dropin_prefix", "99_dusky_")
         sudoers_dir = GLOBAL_CONFIG.get("sudo", {}).get("sudoers_dir", "/etc/sudoers.d")
+        if not isinstance(prefix, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", prefix):
+            return
+        if not isinstance(sudoers_dir, str) or not sudoers_dir.startswith("/") or "\0" in sudoers_dir:
+            return
         script = f"""
-for f in {sudoers_dir}/{prefix}*; do
+for f in {shlex.quote(sudoers_dir + '/' + prefix)}*; do
     [ -f "$f" ] || continue
     pid=$(sed -n 's/^# pid=\\([0-9]*\\).*/\\1/p' "$f" | head -n1)
     expected_st=$(sed -n 's/.*starttime=\\([0-9]*\\).*/\\1/p' "$f" | head -n1)
@@ -1415,7 +1717,7 @@ for f in {sudoers_dir}/{prefix}*; do
         if ! kill -0 "$pid" 2>/dev/null; then
             rm -f "$f"
         elif [ -n "$expected_st" ] && [ -f "/proc/$pid/stat" ]; then
-            real_st=$(awk '{{print $22}}' "/proc/$pid/stat" 2>/dev/null)
+            real_st=$(sed -E 's/^.*\\) //' "/proc/$pid/stat" 2>/dev/null | awk '{{print $20}}')
             if [ "$real_st" != "$expected_st" ]; then
                 rm -f "$f"
             fi
@@ -1431,7 +1733,6 @@ done
                 input=script,
                 text=True,
                 env=env,
-                stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=10,
@@ -1440,11 +1741,20 @@ done
     @classmethod
     def _write_sudoers_dropin(cls, env: dict[str, str]) -> None:
         username = target_user_pw().pw_name
-        safe_user = re.sub(r"[^A-Za-z0-9._-]", "_", username)
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", username):
+            return
         prefix = GLOBAL_CONFIG.get("sudo", {}).get("dropin_prefix", "99_dusky_")
         sudoers_dir = GLOBAL_CONFIG.get("sudo", {}).get("sudoers_dir", "/etc/sudoers.d")
-        path = Path(f"{sudoers_dir}/{prefix}{safe_user}_{os.getpid()}")
-        env_vars = " ".join(cls.ENV_KEEP)
+        if not isinstance(prefix, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", prefix):
+            return
+        if not isinstance(sudoers_dir, str) or not sudoers_dir.startswith("/") or "\0" in sudoers_dir:
+            return
+        path = Path(sudoers_dir) / f"{prefix}{username}_{os.getpid()}"
+        temp_path = path.with_name(path.name + ".tmp")
+        keep = [v for v in cls.ENV_KEEP if isinstance(v, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*", v)]
+        env_vars = " ".join(keep)
+        if len(keep) != len(cls.ENV_KEEP):
+            return
 
         start_time = "0"
         with suppress(OSError, IndexError):
@@ -1460,53 +1770,42 @@ done
             f"Defaults:{username} env_keep += \"{env_vars} DUSKY_*\"\n"
         )
 
-        shell_cmd = (
-            f"mkdir -p {sudoers_dir} && "
-            f"umask 077 && cat > {shlex.quote(str(path))} && "
-            f"chmod 0440 {shlex.quote(str(path))}"
-        )
-
+        staged: Path | None = None
         try:
-            proc = subprocess.run(
-                ["sudo", "-A", "sh", "-c", shell_cmd],
-                input=content,
-                text=True,
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                timeout=10,
-            )
-            if proc.returncode != 0:
+            fd, name = tempfile.mkstemp(prefix="sudoers_stage_", dir=str(runtime_dir()))
+            staged = Path(name)
+            with os.fdopen(fd, "w", encoding="utf-8") as out:
+                out.write(content)
+                out.flush()
+                os.fsync(out.fileno())
+            def sudo_check(cmd: list[str]) -> bool:
+                return subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL,
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                      timeout=10).returncode == 0
+            if not sudo_check(["sudo", "-A", "visudo", "-c", "-q", "-f", str(staged)]):
                 return
-
-            check = subprocess.run(
-                ["sudo", "-A", "visudo", "-c", "-f", str(path)],
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=10,
-            )
-
-            if check.returncode == 0:
-                cls._sudoers_path = path
-            else:
-                with suppress(Exception):
-                    subprocess.run(
-                        ["sudo", "-A", "rm", "-f", str(path)],
-                        env=env,
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        timeout=5,
-                    )
-        except Exception:
+            if not sudo_check(["sudo", "-A", "install", "-m", "0440", "--", str(staged), str(temp_path)]):
+                return
+            if not sudo_check(["sudo", "-A", "visudo", "-c", "-q", "-f", str(temp_path)]):
+                return
+            if not sudo_check(["sudo", "-A", "mv", "--", str(temp_path), str(path)]):
+                return
+            cls._sudoers_path = path
+        except (OSError, subprocess.SubprocessError):
             return
+        finally:
+            if staged is not None:
+                with suppress(OSError):
+                    staged.unlink(missing_ok=True)
+            if cls._sudoers_path != path:
+                with suppress(Exception):
+                    subprocess.run(["sudo", "-A", "rm", "-f", "--", str(temp_path), str(path)],
+                                   env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, timeout=5)
 
     @classmethod
     def set_password(cls, password: str) -> tuple[bool, str]:
         cls.cleanup()
-        cls._remove_stale_askpass_files()
 
         try:
             askpass = cls._write_askpass(password)
@@ -2168,6 +2467,51 @@ OptionList {{
 # ==============================================================================
 # PROFILE PARSER
 # ==============================================================================
+def _validate_task_flags(flags: str) -> None:
+    bare = {"true", "ignore", "ignore-fail", "interactive", "tui", "prompt", "fullscreen",
+            "tty", "suspend", "no-interactive", "noninteractive", "inline", "embedded",
+            "force", "--force", "always", "always_run", "once", "run_once", "sticky"}
+    on_failure = {"ask", "abort", "continue", "skip", "manual"}
+    once_values = {"content", "hash", "forever", "exact", "permanent", "sealed", "locked",
+                   "profile", "local", "global", "machine"}
+    for raw_flag in flags.split(","):
+        flag = raw_flag.strip()
+        if not flag:
+            continue
+        key, separator, value = flag.partition(":")
+        key = key.lower()
+        if not separator and key in bare:
+            continue
+        if key == "once" and value.lower() in once_values:
+            continue
+        if key == "if" and ConditionEvaluator.is_known(value):
+            continue
+        if key == "on_failure" and value.lower() in on_failure:
+            continue
+        if key in ("timeout", "retry_delay"):
+            try:
+                number = float(value)
+            except ValueError:
+                number = float("nan")
+            if math.isfinite(number) and (number > 0 if key == "timeout" else number >= 0):
+                continue
+        if key == "retry":
+            try:
+                number_int = int(value)
+            except ValueError:
+                number_int = -1
+            if 0 <= number_int <= 100:
+                continue
+        raise ValueError(f"Invalid task flag: {flag}")
+
+
+def _table_bool(table: dict, name: str, default: bool = False) -> bool:
+    value = table.get(name, default)
+    if not isinstance(value, bool):
+        raise ValueError(f"Task field '{name}' must be a boolean")
+    return value
+
+
 def parse_task_entry(raw_entry: str, index: int) -> OrchestratorTask:
     raw = raw_entry.strip()
     parts = [p.strip() for p in raw.split("|", 2)]
@@ -2181,6 +2525,9 @@ def parse_task_entry(raw_entry: str, index: int) -> OrchestratorTask:
         mode, flags, cmd = parts
     else:
         raise ValueError(f"Malformed entry: {raw_entry}")
+    if mode.strip().upper() not in ("U", "S"):
+        raise ValueError(f"Invalid task mode: {mode}")
+    _validate_task_flags(flags)
 
     ignore_fail = False
     interactive = False
@@ -2291,10 +2638,10 @@ def parse_task_table(table: dict, index: int) -> OrchestratorTask:
     args_raw = table.get("args", [])
     if isinstance(args_raw, str):
         args = shlex.split(args_raw)
-    elif isinstance(args_raw, list):
-        args = [str(x) for x in args_raw]
+    elif isinstance(args_raw, list) and all(isinstance(x, str) for x in args_raw):
+        args = list(args_raw)
     else:
-        args = []
+        raise ValueError("Task args must be a string or list of strings")
 
     if not args and " " in cmd:
         cmd_tokens = shlex.split(cmd)
@@ -2303,44 +2650,45 @@ def parse_task_table(table: dict, index: int) -> OrchestratorTask:
             args = cmd_tokens[1:]
 
     flags = str(table.get("flags", ""))
-    ignore_fail = bool(table.get("ignore_fail", False))
+    _validate_task_flags(flags)
+    mode = str(table.get("mode", "U")).strip().upper()
+    if mode not in ("U", "S"):
+        raise ValueError(f"Invalid task mode: {mode}")
+    ignore_fail = _table_bool(table, "ignore_fail")
 
     interactive_override: bool | None = None
     if "interactive" in table:
-        interactive = bool(table.get("interactive"))
+        interactive = _table_bool(table, "interactive")
         interactive_override = interactive
     else:
         interactive = False
 
-    force_flag = bool(table.get("force", False))
-    always = bool(table.get("always", False))
+    force_flag = _table_bool(table, "force")
+    always = _table_bool(table, "always")
     condition = table.get("condition")
     timeout = table.get("timeout")
 
-    try:
-        retry = max(0, int(table.get("retry", 0)))
-    except Exception:
-        retry = 0
-
-    try:
-        retry_delay = max(0.0, float(table.get("retry_delay", 1.0)))
-    except Exception:
-        retry_delay = 1.0
+    retry = table.get("retry", 0)
+    if type(retry) is not int or not 0 <= retry <= 100:
+        raise ValueError("Task retry must be an integer from 0 to 100")
+    retry_delay = table.get("retry_delay", 1.0)
+    if isinstance(retry_delay, bool) or not isinstance(retry_delay, (int, float)) or not math.isfinite(retry_delay) or retry_delay < 0:
+        raise ValueError("Task retry_delay must be a finite nonnegative number")
 
     on_failure = str(table.get("on_failure", "ask")).lower()
     if on_failure not in ("ask", "abort", "continue", "skip", "manual"):
-        on_failure = "ask"
+        raise ValueError(f"Invalid on_failure policy: {on_failure}")
 
-    once = bool(table.get("once", False))
+    once = _table_bool(table, "once")
     once_mode = str(table.get("once_mode", "content")).lower()
     if once_mode not in ("content", "forever", "sealed", "locked"):
-        once_mode = "content"
+        raise ValueError(f"Invalid once_mode: {once_mode}")
     if once_mode == "locked":
         once_mode = "sealed"
 
     once_scope = str(table.get("once_scope", "profile")).lower()
     if once_scope not in ("profile", "global"):
-        once_scope = "profile"
+        raise ValueError(f"Invalid once_scope: {once_scope}")
 
     for flag in flags.split(","):
         f = flag.strip().lower()
@@ -2401,12 +2749,16 @@ def parse_task_table(table: dict, index: int) -> OrchestratorTask:
 
     try:
         timeout_value = float(timeout) if timeout is not None else None
-    except Exception:
-        timeout_value = None
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"Invalid task timeout: {timeout}") from exc
+    if timeout_value is not None and (not math.isfinite(timeout_value) or timeout_value <= 0):
+        raise ValueError(f"Invalid task timeout: {timeout}")
+    if condition and not ConditionEvaluator.is_known(str(condition)):
+        raise ValueError(f"Invalid task condition: {condition}")
 
     return OrchestratorTask(
         raw_entry=json.dumps(table, default=str),
-        mode=str(table.get("mode", "U")).strip().upper(),
+        mode=mode,
         script_name=cmd,
         args=args,
         ignore_fail=ignore_fail,
@@ -2585,17 +2937,13 @@ def load_profile(filepath: Path) -> ProfileConfig:
             data = tomllib.loads(repaired)
         except tomllib.TOMLDecodeError:
             raise raw_err
-        try:
-            filepath.write_text(repaired, encoding="utf-8")
-            sys.stderr.write(
-                f"[WARN] Inserted {fixes} missing comma(s) in '{filepath}' -- "
-                f"auto-repaired. Fix them properly in git!\n"
-            )
-        except OSError as write_err:
-            sys.stderr.write(
-                f"[WARN] Inserted {fixes} missing comma(s) in '{filepath}' (in-memory "
-                f"repair only, could not save: {write_err}). Fix them in git!\n"
-            )
+        sys.stderr.write(f"[WARN] Parsed '{filepath}' with {fixes} missing comma(s) repaired in memory. Fix the file in Git.\n")
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Profile {filepath} must be a table")
+    for table_name in ("profile", "git", "search_dirs", "conflict_resolutions", "sequence", "policy"):
+        if not isinstance(data.get(table_name, {}), dict):
+            raise ValueError(f"Profile {filepath}: [{table_name}] must be a table")
 
     p_data = data.get("profile", {})
     g_data = data.get("git", {})
@@ -2603,6 +2951,14 @@ def load_profile(filepath: Path) -> ProfileConfig:
     c_data = data.get("conflict_resolutions", {})
     seq_data = data.get("sequence", {})
     policy_data = data.get("policy", {})
+    if not isinstance(seq_data.get("scripts", []), list) or any(not isinstance(x, str) for x in seq_data.get("scripts", [])):
+        raise ValueError(f"Profile {filepath}: sequence.scripts must be an array of strings")
+    if not isinstance(seq_data.get("tasks", []), list) or any(not isinstance(x, dict) for x in seq_data.get("tasks", [])):
+        raise ValueError(f"Profile {filepath}: sequence.tasks must be an array of tables")
+    if not isinstance(s_data.get("dirs", []), list) or any(not isinstance(x, str) for x in s_data.get("dirs", [])):
+        raise ValueError(f"Profile {filepath}: search_dirs.dirs must be an array of strings")
+    if not isinstance(g_data.get("enabled", False), bool):
+        raise ValueError(f"Profile {filepath}: git.enabled must be a boolean")
 
     tasks: list[OrchestratorTask] = []
 
@@ -2619,8 +2975,10 @@ def load_profile(filepath: Path) -> ProfileConfig:
 
     try:
         post_delay = int(p_data.get("post_script_delay", 0))
-    except Exception:
-        post_delay = 0
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"Profile {filepath}: invalid post_script_delay") from exc
+    if post_delay < 0:
+        raise ValueError(f"Profile {filepath}: post_script_delay must be nonnegative")
 
     search_dirs: list[str] = []
     seen: set[str] = set()
@@ -2670,11 +3028,15 @@ def discover_profiles() -> list[ProfileConfig]:
         sys.exit(1)
 
     profiles: list[ProfileConfig] = []
+    errors: list[str] = []
     for f in sorted(PROFILES_DIR.glob("*.toml")):
         try:
             profiles.append(load_profile(f))
         except Exception as e:
-            sys.stderr.write(f"[ERROR] Failed to load profile {f.name}: {e}\n")
+            errors.append(f"{f.name}: {e}")
+
+    if errors:
+        raise ValueError("Invalid profile(s):\n  " + "\n  ".join(errors))
 
     return profiles
 
@@ -2733,7 +3095,7 @@ def _script_description(path: Path) -> str:
 
 
 
-def _interpreter_from_shebang(first_line: str) -> str | None:
+def _interpreter_from_shebang(first_line: str) -> tuple[str, list[str]] | None:
     if not first_line.startswith("#!"):
         return None
 
@@ -2751,18 +3113,34 @@ def _interpreter_from_shebang(first_line: str) -> str | None:
 
     if parts[0].endswith("/env") and len(parts) > 1:
         parts = parts[1:]
-        while parts and parts[0].startswith("-"):
+        if parts and parts[0] == "-S":
             parts = parts[1:]
+        elif parts and (parts[0].startswith("-") or "=" in parts[0]):
+            # An env invocation with options or assignments needs env itself
+            # to preserve its exact meaning when a script is not executable.
+            return "env", parts
 
     if not parts:
         return None
 
     prog = Path(parts[0]).name
-    if "python" in prog:
-        return "python"
-    if prog in ("bash", "sh", "zsh", "dash", "fish"):
-        return prog
-    return prog
+    if prog.startswith("python") or prog in ("bash", "sh", "zsh", "dash", "fish"):
+        return parts[0], parts[1:]
+    return parts[0], parts[1:]
+
+
+def _script_syntax_error(path: Path, shebang_interpreter: str | None) -> str | None:
+    try:
+        if path.suffix.lower() == ".py":
+            compile(path.read_bytes(), str(path), "exec")
+        elif path.suffix.lower() == ".sh" and shebang_interpreter in ("bash", "sh", "dash", "zsh"):
+            subprocess.run([shebang_interpreter, "-n", str(path)], capture_output=True,
+                           text=True, timeout=60, check=True)
+    except subprocess.CalledProcessError as exc:
+        return (exc.stderr or str(exc)).strip()
+    except (OSError, SyntaxError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    return None
 
 
 def resolve_and_validate_manifest(profile: ProfileConfig) -> bool:
@@ -2771,6 +3149,7 @@ def resolve_and_validate_manifest(profile: ProfileConfig) -> bool:
     occurrence: dict[tuple[str, str, str], int] = {}
 
     for task in profile.tasks:
+        task.resolved_path = None
         args_key = shlex.join(task.args)
         key_tuple = (task.mode, task.script_name, args_key)
         occ = occurrence.get(key_tuple, 0)
@@ -2787,6 +3166,7 @@ def resolve_and_validate_manifest(profile: ProfileConfig) -> bool:
 
         if task.resolved_path is None:
             matches: list[Path] = []
+            seen_inodes: set[tuple[int, int]] = set()
             for d in profile.search_dirs:
                 p = Path(d) / task.script_name
                 key = str(p)
@@ -2795,7 +3175,13 @@ def resolve_and_validate_manifest(profile: ProfileConfig) -> bool:
                     exists = p.is_file()
                     search_dir_cache[key] = exists
                 if exists:
-                    matches.append(p)
+                    try:
+                        identity = (p.stat().st_dev, p.stat().st_ino)
+                    except OSError:
+                        continue
+                    if identity not in seen_inodes:
+                        seen_inodes.add(identity)
+                        matches.append(p)
 
             if len(matches) == 1:
                 task.resolved_path = matches[0]
@@ -2817,10 +3203,14 @@ def resolve_and_validate_manifest(profile: ProfileConfig) -> bool:
             sys.stderr.write(f"[MISSING] Could not find {task.script_name} in search dirs.\n")
             success = False
             task.checksum = ""
+            task.legacy_state_key = make_state_key(task, occ, legacy=True)
             task.state_key = make_state_key(task, occ)
             continue
 
         task.checksum = file_checksum(task.resolved_path)
+        if not task.checksum or not os.access(task.resolved_path, os.R_OK):
+            sys.stderr.write(f"[ERROR] Cannot read/checksum script: {task.resolved_path}\n")
+            success = False
         is_elf, first_line, full_head = _script_metadata(task.resolved_path)
         task.description = _script_description(task.resolved_path)
 
@@ -2835,21 +3225,29 @@ def resolve_and_validate_manifest(profile: ProfileConfig) -> bool:
         else:
             task.interactive = metadata_interactive
 
-        shebang_interp = _interpreter_from_shebang(first_line)
+        shebang_command = _interpreter_from_shebang(first_line)
+        shebang_interp = Path(shebang_command[0]).name if shebang_command else None
+        task.interpreter_args = []
+        if GLOBAL_CONFIG.get("execution", {}).get("validate_subscript_syntax", True):
+            syntax_error = _script_syntax_error(task.resolved_path, shebang_interp)
+            if syntax_error:
+                sys.stderr.write(f"[SYNTAX] {task.script_name}: {syntax_error}\n")
+                success = False
         executable = os.access(task.resolved_path, os.X_OK)
 
         if is_elf:
             task.interpreter = ""
         elif shebang_interp:
-            if executable and shebang_interp in ("bash", "sh", "zsh", "dash", "fish", "python"):
+            if executable:
                 task.interpreter = ""
             else:
-                if shebang_interp == "python":
+                task.interpreter_args = shebang_command[1]
+                if shebang_command[0] in ("python", "python3"):
                     task.interpreter = sys.executable
-                elif shebang_interp in ("bash", "sh", "zsh", "dash", "fish"):
+                elif shebang_command[0] in ("bash", "sh", "zsh", "dash", "fish"):
                     task.interpreter = shutil.which(shebang_interp) or shebang_interp
                 else:
-                    task.interpreter = shebang_interp
+                    task.interpreter = shebang_command[0]
         else:
             suffix = task.resolved_path.suffix.lower()
             ext_map = GLOBAL_CONFIG.get(
@@ -2886,6 +3284,7 @@ def resolve_and_validate_manifest(profile: ProfileConfig) -> bool:
                     sys.stderr.write(f"[INTERPRETER] Missing interpreter '{interp}' for {task.script_name}\n")
                     success = False
 
+        task.legacy_state_key = make_state_key(task, occ, legacy=True)
         task.state_key = make_state_key(task, occ)
 
     return success
@@ -2909,6 +3308,29 @@ class ConditionEvaluator:
         "group",
         "env",
     }
+
+    @staticmethod
+    def is_known(condition: str | None) -> bool:
+        if not isinstance(condition, str) or not condition.strip():
+            return False
+        parts = [part.strip() for part in condition.split(",")]
+        if any(not part for part in parts):
+            return False
+        bare = {"always", "true", "yes", "never", "false", "no", "wayland", "x11",
+                "graphical", "ssh", "desktop", "battery", "btrfs", "vm", "baremetal"}
+        valued = {"command", "cmd", "path", "missing", "file", "dir", "package", "pkg",
+                  "group", "gpu", "service_active", "service", "svc", "user_service_active",
+                  "user_service", "user_svc", "env"}
+        for part in parts:
+            kind, sep, value = part.partition(":")
+            if not sep and kind.lower() in bare:
+                continue
+            if sep and kind.lower() == "not" and ConditionEvaluator.is_known(value):
+                continue
+            if sep and kind.lower() in valued and value.strip():
+                continue
+            return False
+        return True
 
     def __init__(self):
         self.cache: dict[str, bool] = {}
@@ -3273,7 +3695,7 @@ def _proc_holds_file(path: Path) -> bool:
 
 def _delete_path(target: Path) -> None:
     if target.is_dir() and not target.is_symlink():
-        shutil.rmtree(target, ignore_errors=True)
+        shutil.rmtree(target)
     else:
         target.unlink(missing_ok=True)
 
@@ -3301,39 +3723,15 @@ def _clear_stale_git_locks(git_dir: Path) -> bool:
     for lock_file in _iter_git_lock_files(git_dir):
         if not lock_file.exists():
             continue
-
-        if _proc_holds_file(lock_file):
-            sys.stderr.write(
-                f"[ERROR] Git lock {lock_file} is open by a live process. Aborting git update.\n"
-            )
-            return False
-
         try:
-            age = time.time() - lock_file.stat().st_mtime
+            info = lock_file.lstat()
         except OSError as e:
             sys.stderr.write(f"[ERROR] Cannot stat Git lock {lock_file}: {e}\n")
             return False
-
-        if age <= 60:
-            sys.stderr.write(
-                f"[ERROR] Git lock {lock_file} is too recent to safely auto-clear. Aborting.\n"
-            )
-            return False
-
-        try:
-            if lock_file.is_dir() and not lock_file.is_symlink():
-                shutil.rmtree(lock_file, ignore_errors=True)
-            else:
-                lock_file.unlink(missing_ok=True)
-        except OSError as e:
-            sys.stderr.write(f"[ERROR] Failed to remove stale Git lock {lock_file}: {e}\n")
-            return False
-
-        if lock_file.exists():
-            sys.stderr.write(f"[ERROR] Failed to remove stale Git lock {lock_file}.\n")
-            return False
-
-        sys.stdout.write(f"[GIT] Cleared stale Git lock: {lock_file.name}\n")
+        sys.stderr.write(f"[ERROR] Git lock exists: {lock_file} (uid={info.st_uid}, "
+                         f"mtime={datetime.datetime.fromtimestamp(info.st_mtime).isoformat()}). "
+                         "Resolve it manually before updating.\n")
+        return False
 
     return True
 
@@ -3386,6 +3784,8 @@ def _git_repo_status(base_cmd: list[str], git_dir: Path, work_tree: Path) -> str
 
     try:
         _git_check(base_cmd + ["rev-parse", "--git-dir"], timeout=20)
+        if _git_check(["git", f"--git-dir={git_dir}", "rev-parse", "--is-bare-repository"], timeout=20) != "true":
+            raise RuntimeError("configured Git directory is not bare")
     except Exception:
         sys.stderr.write(f"[ERROR] Git repository metadata is invalid or corrupted: {git_dir}\n")
         return "invalid"
@@ -3448,8 +3848,25 @@ def _path_copy_size(path: Path) -> int:
 
 
 def _write_text_file(path: Path, text: str) -> None:
-    with suppress(OSError):
-        path.write_text(text, encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(text)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp_name, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        Path(tmp_name).unlink(missing_ok=True)
+
+
+def _write_json_file(path: Path, value: object) -> None:
+    _write_text_file(path, json.dumps(value, ensure_ascii=True, indent=2) + "\n")
 
 
 def _write_backup_info(info_path: Path, lines: list[str]) -> None:
@@ -3459,9 +3876,12 @@ def _write_backup_info(info_path: Path, lines: list[str]) -> None:
 def _move_to_backup(src: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
 
+    if dest.exists() or dest.is_symlink():
+        raise FileExistsError(f"Backup destination already exists: {dest}")
+
     if src.is_dir() and not src.is_symlink():
-        shutil.copytree(src, dest, symlinks=True, dirs_exist_ok=True)
-        shutil.rmtree(src, ignore_errors=True)
+        shutil.copytree(src, dest, symlinks=True)
+        shutil.rmtree(src)
     else:
         shutil.move(src, dest)
 
@@ -3477,33 +3897,60 @@ def _copy_path_to_backup(src: Path, dest: Path) -> None:
 
 def _atomic_copy_file(src: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-
+    tmp = target.parent / f".{target.name}.dusky_tmp_{uuid.uuid4().hex}"
     if src.is_dir() and not src.is_symlink():
+        shutil.copytree(src, tmp, symlinks=True)
+    else:
+        shutil.copy2(src, tmp, follow_symlinks=False)
+    try:
         if target.is_dir() and not target.is_symlink():
-            shutil.rmtree(target, ignore_errors=True)
-        elif target.exists() or target.is_symlink():
-            target.unlink(missing_ok=True)
-
-        shutil.copytree(src, target, symlinks=True, dirs_exist_ok=True)
-        return
-
-    tmp = target.parent / f".{target.name}.dusky_tmp"
-
-    if tmp.is_dir() and not tmp.is_symlink():
-        shutil.rmtree(tmp, ignore_errors=True)
-    elif tmp.exists() or tmp.is_symlink():
-        tmp.unlink(missing_ok=True)
-
-    shutil.copy2(src, tmp, follow_symlinks=False)
-
-    if target.is_dir() and not target.is_symlink():
-        shutil.rmtree(target, ignore_errors=True)
-
-    os.replace(tmp, target)
+            shutil.rmtree(target)
+        os.replace(tmp, target)
+    finally:
+        if tmp.exists() or tmp.is_symlink():
+            _delete_path(tmp)
 
 
 def _is_null_oid(oid: str) -> bool:
     return not oid or oid.strip("0") == ""
+
+
+def _literal_pathspec(path: str) -> str:
+    return f":(top,literal){path}"
+
+
+def _backup_staged_index(base_cmd: list[str], backup_root: Path) -> Path | None:
+    names = _git_check(base_cmd + ["diff", "--cached", "--name-only", "--no-renames",
+                                   "-z", "HEAD", "--"], timeout=60)
+    paths = [p for p in names.split("\0") if p]
+    if not paths:
+        return None
+    root = backup_root / "staged_index"
+    ensure_dir(root, 0o700)
+    records: list[dict[str, str]] = []
+    for path in paths:
+        entries = _git_check(base_cmd + ["ls-files", "-s", "-z", "--", _literal_pathspec(path)], timeout=30)
+        matching = [e for e in entries.split("\0") if e and e.split("\t", 1)[-1] == path]
+        stage_zero = next((e for e in matching if e.split("\t", 1)[0].split()[-1] == "0"), None)
+        record = {"path": path, "status": "deleted" if stage_zero is None else "staged"}
+        if stage_zero is not None:
+            mode, oid, _stage = stage_zero.split("\t", 1)[0].split()
+            if mode == "160000":
+                raise RuntimeError(f"Cannot preserve staged submodule {path!r} safely")
+            proc = subprocess.run(base_cmd + ["cat-file", "blob", oid], env=_git_env(),
+                                  capture_output=True, timeout=60)
+            if proc.returncode != 0:
+                raise RuntimeError(f"Cannot read staged blob for {path!r}: {proc.stderr!r}")
+            blob_name = hashlib.blake2b(path.encode("utf-8", "surrogateescape"), digest_size=16).hexdigest() + ".blob"
+            blob_path = root / blob_name
+            with blob_path.open("xb") as out:
+                out.write(proc.stdout)
+                out.flush()
+                os.fsync(out.fileno())
+            record.update({"mode": mode, "oid": oid, "blob": blob_name})
+        records.append(record)
+        _write_json_file(root / "manifest.json", records)
+    return root
 
 
 def _clean_old_backups(base: Path, keep: int = 10) -> None:
@@ -3516,29 +3963,39 @@ def _clean_old_backups(base: Path, keep: int = 10) -> None:
     )
 
     for old in entries[keep:]:
-        with suppress(OSError):
-            shutil.rmtree(old, ignore_errors=True)
+        if (old / "staged_index" / "manifest.json").exists():
+            continue
+        merge_dir = old / "needs_merge"
+        if merge_dir.is_dir() and any(merge_dir.rglob("*")):
+            continue
+        try:
+            shutil.rmtree(old)
+        except OSError as exc:
+            sys.stderr.write(f"[WARN] Could not prune old backup {old}: {exc}\n")
 
 
-def _collect_incoming_collisions(base_cmd: list[str], remote_ref: str, work_tree: Path) -> list[str]:
-    tracked: set[str] = set()
-    incoming: set[str] = set()
-
-    with suppress(Exception):
-        tracked_out = _git_check(base_cmd + ["ls-files", "-z"], timeout=60)
-        tracked = {x for x in tracked_out.split("\0") if x}
-
-    with suppress(Exception):
-        incoming_out = _git_check(base_cmd + ["ls-tree", "-r", "-z", "--name-only", remote_ref], timeout=60)
-        incoming = {x for x in incoming_out.split("\0") if x}
+def _collect_incoming_collisions(base_cmd: list[str], remote_ref: str, work_tree: Path,
+                                 *, honor_head: bool = True) -> list[str]:
+    tracked_out = _git_check(base_cmd + ["ls-files", "-z"], timeout=60)
+    tracked = {x for x in tracked_out.split("\0") if x}
+    if honor_head:
+        head_out = _git_check(base_cmd + ["ls-tree", "-r", "-z", "--name-only", "HEAD"], timeout=60)
+        tracked.update(x for x in head_out.split("\0") if x)
+    incoming_out = _git_check(base_cmd + ["ls-tree", "-r", "-z", "--name-only", remote_ref], timeout=60)
+    incoming = {x for x in incoming_out.split("\0") if x}
 
     candidates: set[str] = set()
 
     for inc in incoming:
         target = work_tree / inc
 
-        if (target.exists() or target.is_symlink()) and inc not in tracked:
-            candidates.add(inc)
+        if target.exists() or target.is_symlink():
+            if target.is_dir() and not target.is_symlink():
+                if any(item.startswith(inc + "/") for item in tracked):
+                    raise RuntimeError(f"Incoming file conflicts with tracked directory: {inc}")
+                candidates.add(inc)
+            elif inc not in tracked:
+                candidates.add(inc)
 
         for parent in Path(inc).parents:
             rel = str(parent)
@@ -3548,7 +4005,7 @@ def _collect_incoming_collisions(base_cmd: list[str], remote_ref: str, work_tree
             ancestor = work_tree / rel
             if (
                 (ancestor.exists() or ancestor.is_symlink())
-                and not ancestor.is_dir()
+                and (ancestor.is_symlink() or not ancestor.is_dir())
                 and rel not in tracked
             ):
                 candidates.add(rel)
@@ -3563,6 +4020,26 @@ def _collect_incoming_collisions(base_cmd: list[str], remote_ref: str, work_tree
     return sorted(roots)
 
 
+def _reject_protected_incoming(base_cmd: list[str], remote_ref: str, work_tree: Path,
+                               git_dir: Path) -> None:
+    protected: set[str] = set()
+    for path in (git_dir, backups_dir(), logs_dir(), state_dir(), runtime_dir(), askpass_dir()):
+        for candidate, root in ((path.absolute(), work_tree.absolute()),
+                                (path.resolve(), work_tree.resolve())):
+            try:
+                rel = candidate.relative_to(root)
+            except ValueError:
+                continue
+            if str(rel) != ".":
+                protected.add(rel.as_posix())
+    if not protected:
+        return
+    tree = _git_check(base_cmd + ["ls-tree", "-r", "-z", "--name-only", remote_ref], timeout=60)
+    for path in (p for p in tree.split("\0") if p):
+        if any(path == p or path.startswith(p + "/") or p.startswith(path + "/") for p in protected):
+            raise RuntimeError(f"Incoming path {path!r} overlaps protected storage")
+
+
 def _backup_collision_roots(work_tree: Path, roots: list[str], collision_dir: Path) -> Path | None:
     if not roots:
         return None
@@ -3574,16 +4051,20 @@ def _backup_collision_roots(work_tree: Path, roots: list[str], collision_dir: Pa
         raise RuntimeError("Not enough disk space for collision backup")
 
     moved: list[str] = []
-
-    for rel in roots:
-        src = work_tree / rel
-        dest = collision_dir / rel
-
-        if not (src.exists() or src.is_symlink()):
-            continue
-
-        _move_to_backup(src, dest)
-        moved.append(rel)
+    manifest = collision_dir.parent / "untracked_collisions.json"
+    _write_json_file(manifest, {"work_tree": str(work_tree), "moved": moved})
+    try:
+        for rel in roots:
+            src = work_tree / rel
+            dest = collision_dir / rel
+            if not (src.exists() or src.is_symlink()):
+                continue
+            moved.append(rel)
+            _write_json_file(manifest, {"work_tree": str(work_tree), "moved": moved})
+            _move_to_backup(src, dest)
+    except Exception:
+        _restore_collision_dir(collision_dir, work_tree)
+        raise
 
     _write_backup_info(
         collision_dir.with_name("untracked_collisions_INFO.txt"),
@@ -3603,23 +4084,28 @@ def _backup_collision_roots(work_tree: Path, roots: list[str], collision_dir: Pa
     return collision_dir
 
 
-def _restore_collision_dir(collision_dir: Path | None, work_tree: Path) -> None:
+def _restore_collision_dir(collision_dir: Path | None, work_tree: Path,
+                           quarantine_dir: Path | None = None) -> None:
     if collision_dir is None or not collision_dir.exists():
         return
-
-    for src in collision_dir.rglob("*"):
-        if not (src.is_file() or src.is_symlink()):
-            continue
-
-        rel = src.relative_to(collision_dir)
+    manifest = collision_dir.parent / "untracked_collisions.json"
+    record = json.loads(manifest.read_text(encoding="utf-8"))
+    if record.get("work_tree") != str(work_tree):
+        raise RuntimeError(f"Collision manifest belongs to another work tree: {manifest}")
+    for rel in record["moved"]:
+        src = collision_dir / rel
         dest = work_tree / rel
-
+        if not (src.exists() or src.is_symlink()):
+            if dest.exists() or dest.is_symlink():
+                continue  # transfer did not complete
+            raise RuntimeError(f"Collision backup is missing: {src}")
         if dest.exists() or dest.is_symlink():
-            continue
-
-        with suppress(OSError):
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest, follow_symlinks=False)
+            if quarantine_dir is None:
+                raise RuntimeError(f"Cannot restore {rel}: destination exists; backup retained at {src}")
+            quarantine = quarantine_dir / rel
+            _move_to_backup(dest, quarantine)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        _copy_path_to_backup(src, dest)
 
 
 def _capture_tracked_changes(base_cmd: list[str]) -> dict[str, dict[str, str]]:
@@ -3667,14 +4153,13 @@ def _capture_tracked_changes(base_cmd: list[str]) -> dict[str, dict[str, str]]:
 
 
 def _git_head_path_meta(base_cmd: list[str], path: str) -> tuple[str, str]:
-    with suppress(Exception):
-        out = _git_check(base_cmd + ["ls-tree", "-z", "HEAD", "--", path], timeout=30)
-        if out:
-            record = out.split("\0", 1)[0]
-            meta = record.split("\t", 1)[0]
-            tokens = meta.split()
-            if len(tokens) >= 3:
-                return tokens[0], tokens[2]
+    out = _git_check(base_cmd + ["ls-tree", "-z", "HEAD", "--", _literal_pathspec(path)], timeout=30)
+    if out:
+        record = out.split("\0", 1)[0]
+        meta = record.split("\t", 1)[0]
+        tokens = meta.split()
+        if len(tokens) >= 3:
+            return tokens[0], tokens[2]
 
     return "", ""
 
@@ -3702,7 +4187,7 @@ def _backup_user_mods(
     if not _ensure_free_space(backup_root.parent, required, "modified-files backup"):
         raise RuntimeError("Not enough disk space for modified-files backup")
 
-    manifest: list[str] = []
+    manifest: list[dict[str, object]] = []
 
     for path, info in changes.items():
         src = work_tree / path
@@ -3713,13 +4198,8 @@ def _backup_user_mods(
             _copy_path_to_backup(src, dest)
             has_copy = True
 
-        manifest.append(
-            f"status={info['status']} "
-            f"old_mode={info['old_mode']} "
-            f"old_oid={info['old_oid']} "
-            f"has_copy={1 if has_copy else 0} "
-            f"path={path}"
-        )
+        manifest.append({"status": info["status"], "old_mode": info["old_mode"],
+                         "old_oid": info["old_oid"], "has_copy": has_copy, "path": path})
 
     _write_backup_info(
         user_mods_dir.with_name("user_mods_INFO.txt"),
@@ -3731,10 +4211,7 @@ def _backup_user_mods(
         ],
     )
 
-    _write_text_file(
-        user_mods_dir.with_name("user_mods_MANIFEST.txt"),
-        "\n".join(manifest) + "\n",
-    )
+    _write_json_file(user_mods_dir.with_name("user_mods_MANIFEST.json"), manifest)
 
     return user_mods_dir
 
@@ -3817,24 +4294,17 @@ def _restore_user_mods(
                 continue
 
             if old_valid and same_meta:
-                with suppress(OSError):
-                    _delete_path(target)
+                _delete_path(target)
                 deleted += 1
             else:
                 ensure_dir(needs_merge_dir, 0o700)
                 marker = needs_merge_dir / f"{path}.dusky_deleted"
 
-                with suppress(OSError):
-                    marker.parent.mkdir(parents=True, exist_ok=True)
-                    marker.write_text(
-                        "Tracked deletion requires manual review.\n"
-                        f"path: {path}\n"
-                        f"old_mode: {old_mode}\n"
-                        f"old_oid: {old_oid}\n"
-                        f"new_mode: {new_mode or '<absent>'}\n"
-                        f"new_oid: {new_oid or '<absent>'}\n",
-                        encoding="utf-8",
-                    )
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                _write_json_file(marker.with_suffix(marker.suffix + ".json"), {
+                    "path": path, "old_mode": old_mode, "old_oid": old_oid,
+                    "new_mode": new_mode, "new_oid": new_oid,
+                })
 
                 merged += 1
 
@@ -3858,42 +4328,15 @@ def _restore_user_mods(
             except OSError:
                 ensure_dir(needs_merge_dir, 0o700)
                 dest = needs_merge_dir / path
-                with suppress(OSError):
-                    _copy_path_to_backup(backup_file, dest)
+                _copy_path_to_backup(backup_file, dest)
                 merged += 1
         else:
             ensure_dir(needs_merge_dir, 0o700)
             dest = needs_merge_dir / path
-            with suppress(OSError):
-                _copy_path_to_backup(backup_file, dest)
+            _copy_path_to_backup(backup_file, dest)
             merged += 1
 
     return restored, merged, deleted
-
-
-def _move_all_to_needs_merge(src_dir: Path | None, needs_merge_dir: Path) -> int:
-    if src_dir is None or not src_dir.exists():
-        return 0
-
-    ensure_dir(needs_merge_dir, 0o700)
-
-    count = 0
-
-    for src in src_dir.rglob("*"):
-        if not (src.is_file() or src.is_symlink()):
-            continue
-
-        rel = src.relative_to(src_dir)
-        dest = needs_merge_dir / rel
-
-        try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            _copy_path_to_backup(src, dest)
-            count += 1
-        except OSError:
-            pass
-
-    return count
 
 
 def _print_update_preview(base_cmd: list[str], local_head: str, remote_head: str) -> None:
@@ -3972,17 +4415,20 @@ def _fetch_upstream_main(base_cmd: list[str], remote: str) -> str:
 
 def validate_updated_sources(my_path: Path, wrapper_path: Path) -> None:
     compile(my_path.read_bytes(), str(my_path), "exec")
-
-    if wrapper_path.is_file():
-        subprocess.run(
-            ["bash", "-n", str(wrapper_path)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=30,
-            check=True,
-        )
+    if not wrapper_path.is_file():
+        raise RuntimeError(f"Updated wrapper is missing: {wrapper_path}")
+    subprocess.run(
+        ["bash", "-n", str(wrapper_path)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+        check=True,
+    )
 
     if PROFILES_DIR.exists():
+        settings = PROFILES_DIR / "settings" / "orchestrator.toml"
+        if settings.exists():
+            normalize_global_config(tomllib.loads(settings.read_text(encoding="utf-8")))
         for profile_file in PROFILES_DIR.glob("*.toml"):
             text = profile_file.read_text(encoding="utf-8")
             try:
@@ -3995,10 +4441,35 @@ def validate_updated_sources(my_path: Path, wrapper_path: Path) -> None:
                     tomllib.loads(repaired)
                 except tomllib.TOMLDecodeError:
                     raise raw_err
-                profile_file.write_text(repaired, encoding="utf-8")
-                sys.stderr.write(
-                    f"[WARN] Inserted {fixes} missing comma(s) in '{profile_file}' -- auto-repaired.\n"
-                )
+            load_profile(profile_file)
+
+
+def _safe_clone_parent(git_dir: Path) -> None:
+    cursor = git_dir.parent
+    while not cursor.exists() and not cursor.is_symlink():
+        cursor = cursor.parent
+    info = cursor.lstat()
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid():
+        raise RuntimeError(f"Unsafe bare-repository parent: {cursor}")
+
+
+def _pending_update_path() -> Path:
+    return backups_dir() / "orchestrator_git_update_pending.json"
+
+
+def _rollback_git_update(base_cmd: list[str], local_head: str, work_tree: Path,
+                         collision_dir: Path | None, changes: dict[str, dict[str, str]],
+                         user_mods_dir: Path | None, needs_merge_dir: Path) -> None:
+    if local_head:
+        _git_check(base_cmd + ["reset", "--hard", local_head], timeout=180)
+    _restore_collision_dir(collision_dir, work_tree)
+    if changes:
+        restored, merged, deleted = _restore_user_mods(
+            base_cmd, work_tree, changes, user_mods_dir, needs_merge_dir
+        )
+        if merged:
+            raise RuntimeError(f"{merged} local edits require manual recovery from {needs_merge_dir}")
+        sys.stderr.write(f"[GIT] Rollback restored {restored} edits and {deleted} deletions.\n")
 
 
 def run_git_self_update(
@@ -4007,382 +4478,200 @@ def run_git_self_update(
     offline: bool = False,
     assume_yes: bool = False,
     preserve_profile: bool = False,
-) -> bool:
-    if offline or not profile.git_enabled:
-        return False
-
+) -> Literal["unchanged", "updated", "failed", "halt"]:
+    if not profile.git_enabled or (offline and update_only):
+        return "unchanged"
+    if _LOCK_FD is None:
+        raise RuntimeError("Git update requires the orchestrator lock")
     if not shutil.which("git"):
-        sys.stdout.write("[WARN] git not installed. Skipping self-update.\n")
-        return False
+        sys.stderr.write("[ERROR] Git is unavailable.\n")
+        return "failed"
 
     git_dir = resolve_home(profile.git_dir)
     work_tree = resolve_home(profile.git_work_tree)
-    base_cmd = [
-        "git",
-        "--no-optional-locks",
-        "--no-advice",
-        f"--git-dir={git_dir}",
-        f"--work-tree={work_tree}",
-    ]
+    my_path = Path(__file__).resolve()
+    wrapper_path = my_path.with_name("orchestrator.sh")
+    if not my_path.is_relative_to(work_tree) or not work_tree.is_dir():
+        sys.stderr.write(f"[ERROR] Running orchestrator is outside work tree {work_tree}.\n")
+        return "halt"
+    pending = _pending_update_path()
+    if pending.exists():
+        sys.stderr.write(f"[ERROR] An earlier Git update needs review: {pending}\n")
+        return "halt"
 
+    base_cmd = ["git", "--no-optional-locks", "--no-advice",
+                f"--git-dir={git_dir}", f"--work-tree={work_tree}"]
+    backup_root: Path | None = None
+    collision_dir: Path | None = None
+    user_mods_dir: Path | None = None
+    needs_merge_dir: Path | None = None
+    changes: dict[str, dict[str, str]] = {}
+    local_head = ""
+    checkout_started = False
     try:
         repo_state = _git_repo_status(base_cmd, git_dir, work_tree)
-    except Exception as e:
-        sys.stderr.write(f"[WARN] Git repository check failed: {e}\n")
-        return False
+        if repo_state == "invalid":
+            return "halt"
+        if repo_state == "absent":
+            if offline:
+                sys.stderr.write("[ERROR] Cannot initialize the Git work tree in offline mode.\n")
+                return "halt"
+            _safe_clone_parent(git_dir)
+            clone = subprocess.run(
+                ["git", "clone", "--bare", "--branch", GIT_UPSTREAM_BRANCH,
+                 profile.git_repo_url, str(git_dir)],
+                env=_git_env(), capture_output=True, text=True, timeout=180,
+            )
+            if clone.returncode != 0:
+                sys.stderr.write(f"[ERROR] Bare clone failed: {clone.stderr}\n")
+                return "failed"
+            if _git_repo_status(base_cmd, git_dir, work_tree) != "valid":
+                return "halt"
+            _git_check(["git", f"--git-dir={git_dir}", "config", "remote.origin.fetch",
+                        "+refs/heads/*:refs/remotes/origin/*"], timeout=20)
+            remote_ref = f"refs/heads/{GIT_UPSTREAM_BRANCH}"
+            remote_head = _git_check(base_cmd + ["rev-parse", remote_ref])
+            first_checkout = True
+        else:
+            first_checkout = False
+            with suppress(subprocess.CalledProcessError):
+                local_head = _git_check(base_cmd + ["rev-parse", "HEAD"])
+            if offline:
+                if not local_head:
+                    return "halt"
+                remote_ref, remote_head = "HEAD", local_head
+            else:
+                try:
+                    remote_ref = _fetch_upstream_main(base_cmd, profile.git_remote)
+                    remote_head = _git_check(base_cmd + ["rev-parse", remote_ref])
+                except Exception as exc:
+                    sys.stderr.write(f"[WARN] Git fetch failed: {exc}\n")
+                    if update_only:
+                        return "failed"
+                    if not local_head:
+                        return "halt"
+                    sys.stderr.write("[GIT] Repairing the local HEAD before running scripts.\n")
+                    remote_ref, remote_head = "HEAD", local_head
+            if update_only and local_head == remote_head:
+                sys.stdout.write("[GIT] Already up to date.\n")
+                return "unchanged"
 
-    if repo_state == "absent":
-        sys.stdout.write(f"[GIT] Bare repository not found at: {git_dir}\n")
-        repo_url = profile.git_repo_url or "https://github.com/dusklinux/dusky"
-        if not repo_url:
-            repo_url = "https://github.com/dusklinux/dusky"
+        _reject_protected_incoming(base_cmd, remote_ref, work_tree, git_dir)
+        destructive = False
+        if local_head:
+            with suppress(subprocess.CalledProcessError):
+                merge_base = _git_check(base_cmd + ["merge-base", "HEAD", remote_head])
+            if "merge_base" not in locals():
+                merge_base = ""
+            if merge_base == remote_head and local_head != remote_head:
+                if update_only:
+                    sys.stdout.write("[GIT] Local commits are ahead of upstream; keeping them.\n")
+                    return "unchanged"
+                sys.stdout.write("[GIT] Local commits are ahead of upstream; repairing the local HEAD.\n")
+                remote_ref, remote_head = "HEAD", local_head
+                merge_base = local_head
+            destructive = merge_base != local_head
+            if destructive:
+                _print_update_preview(base_cmd, local_head, remote_head)
+                choice = _prompt_choice(
+                    ["\n[DIVERGED OR UNRELATED HISTORY]\n",
+                     "  1) Keep local repository [DEFAULT]\n",
+                     "  2) Back up and reset to upstream\n",
+                     "Choice [1-2] (default: 1): "],
+                    default="1", assume_yes=assume_yes, yes_choice="2",
+                )
+                if choice != "2":
+                    return "halt"
 
-        sys.stdout.write(f"[GIT] Cloning bare repository from {repo_url}...\n")
-        try:
-            ensure_dir(git_dir.parent, 0o700)
-            clone_cmd = ["git", "clone", "--bare", "--branch", GIT_UPSTREAM_BRANCH, repo_url, str(git_dir)]
-            clone_proc = subprocess.run(clone_cmd, capture_output=True, text=True, timeout=180)
-            if clone_proc.returncode != 0:
-                sys.stderr.write(f"[ERROR] Bare clone failed: {clone_proc.stderr}\n")
-                return False
+        repair_local_head = bool(local_head and local_head == remote_head)
 
-            fetch_cfg = ["git", f"--git-dir={git_dir}", "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]
-            subprocess.run(fetch_cfg, check=False)
-
-            sys.stdout.write("[GIT] Checking out repository to work tree...\n")
-            collision_roots = _collect_incoming_collisions(base_cmd, f"refs/heads/{GIT_UPSTREAM_BRANCH}", work_tree)
-            if collision_roots:
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_root = backups_dir() / f"dusky_backup_{timestamp}_initial"
-                collision_dir = backup_root / "untracked_collisions"
-                _backup_collision_roots(work_tree, collision_roots, collision_dir)
-
-            checkout_proc = subprocess.run(base_cmd + ["checkout", "-f", GIT_UPSTREAM_BRANCH], capture_output=True, text=True, timeout=120)
-            if checkout_proc.returncode != 0:
-                sys.stderr.write(f"[ERROR] Checkout failed: {checkout_proc.stderr}\n")
-                return False
-
-            sys.stdout.write("[GIT] First-time setup complete! Restarting orchestrator with updated code from GitHub...\n")
-            sys.stdout.flush()
-            sys.stderr.flush()
-
-            SudoEngine.cleanup()
-
-            my_path = Path(__file__).resolve()
-            wrapper_path = my_path.with_suffix(".sh")
-            if not wrapper_path.is_file():
-                wrapper_path = my_path.with_name("orchestrator.sh")
-
-            args = [a for a in sys.argv[1:] if a != "--git-update-only"]
-            if "--no-git-update" not in args:
-                args.append("--no-git-update")
-            if preserve_profile and profile and not any(a == "--profile" or a.startswith("--profile=") or a == "-p" for a in args):
-                args.extend(["--profile", profile.filepath.stem])
-
-            release_lock()
-            if wrapper_path.is_file():
-                with suppress(OSError):
-                    os.chmod(wrapper_path, 0o755)
-                with suppress(OSError):
-                    os.execv(str(wrapper_path), [str(wrapper_path)] + args)
-
-            try:
-                os.execv(sys.executable, [sys.executable, str(my_path)] + args)
-            except OSError as e:
-                sys.stderr.write(f"[FATAL] Failed to restart orchestrator: {e}\n")
-                sys.exit(1)
-
-            return True
-        except Exception as e:
-            sys.stderr.write(f"[ERROR] Initial clone failed: {e}\n")
-            return False
-
-    if repo_state != "valid":
-        sys.stderr.write("[WARN] Git repository is not healthy. Skipping self-update.\n")
-        return False
-
-    my_path = Path(__file__).resolve()
-
-    wrapper_path = my_path.with_suffix(".sh")
-    if not wrapper_path.is_file():
-        wrapper_path = my_path.with_name("orchestrator.sh")
-
-    if not my_path.is_relative_to(work_tree):
-        sys.stderr.write(
-            f"[ERROR] Running orchestrator is outside git work tree ({work_tree}). "
-            "Skipping self-update.\n"
-        )
-        return False
-
-    sys.stdout.write("[GIT] Fetching upstream updates...\n")
-
-    try:
-        remote_ref = _fetch_upstream_main(base_cmd, profile.git_remote)
-        remote_head = _git_check(base_cmd + ["rev-parse", remote_ref])
-    except Exception as e:
-        sys.stderr.write(f"[ERROR] Git fetch failed: {e}\n")
-        sys.stderr.write("[ERROR] Continuing without update.\n")
-        return False
-
-    try:
-        local_head = ""
-        with suppress(subprocess.CalledProcessError):
-            local_head = _git_check(base_cmd + ["rev-parse", "HEAD"])
-
-        if local_head and local_head == remote_head:
+        roots = _collect_incoming_collisions(base_cmd, remote_ref, work_tree,
+                                            honor_head=bool(local_head))
+        if not local_head and roots:
+            choice = _prompt_choice(
+                ["\n[UNBORN REPOSITORY]\n",
+                 f"  {len(roots)} incoming path collision(s).\n",
+                 "  1) Keep local work tree [DEFAULT]\n",
+                 "  2) Back up collisions and initialize\n",
+                 "Choice [1-2] (default: 1): "],
+                default="1", assume_yes=assume_yes, yes_choice="2",
+            )
+            if choice != "2":
+                return "halt"
+        if local_head:
             changes = _capture_tracked_changes(base_cmd)
-            if not changes:
-                sys.stdout.write("[GIT] Orchestrator is up to date.\n")
-                return False
-            sys.stdout.write(f"[GIT] Origin matched, but work-tree has {len(changes)} tracked change(s). Processing...\n")
-
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_root = backups_dir() / f"dusky_backup_{timestamp}_{remote_head[:7]}"
-        retention = GLOBAL_CONFIG.get("git", {}).get("backup_retention", 10)
-        _clean_old_backups(backups_dir(), keep=retention)
-
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_root = backups_dir() / f"dusky_backup_{stamp}_{remote_head[:7]}_{uuid.uuid4().hex[:8]}"
+        backup_root.mkdir(mode=0o700)
         collision_dir = backup_root / "untracked_collisions"
         needs_merge_dir = backup_root / "needs_merge"
-
-        user_mods_dir: Path | None = None
-        full_dir: Path | None = None
-        changes: dict[str, dict[str, str]] = {}
-        destructive = False
-
-        if not local_head:
-            sys.stdout.write("[GIT] Local repository has no commits. Initializing from upstream...\n")
-
-            collision_roots = _collect_incoming_collisions(base_cmd, remote_ref, work_tree)
-
-            if collision_roots:
-                choice = _prompt_choice(
-                    [
-                        "\n[UNBORN REPOSITORY]\n",
-                        f"  This will initialize the work tree from {remote_ref}.\n",
-                        f"  Untracked incoming collisions: {len(collision_roots)}\n",
-                        "  1) Abort [DEFAULT]\n",
-                        "  2) Backup collisions and initialize from upstream\n",
-                        "Choice [1-2] (default: 1): ",
-                    ],
-                    default="1",
-                    assume_yes=assume_yes,
-                    yes_choice="2",
-                )
-
-                if choice != "2":
-                    sys.stdout.write("Aborting update by user request.\n")
-                    return False
-
-            try:
-                _backup_collision_roots(work_tree, collision_roots, collision_dir)
-
-                with suppress(Exception):
-                    _git_check(
-                        base_cmd + ["symbolic-ref", "HEAD", f"refs/heads/{GIT_UPSTREAM_BRANCH}"],
-                        timeout=30,
-                    )
-
-                _git_check(base_cmd + ["reset", "--hard", remote_head], timeout=180)
-            except Exception:
-                _restore_collision_dir(collision_dir, work_tree)
-                raise
-
-            try:
-                validate_updated_sources(my_path, wrapper_path)
-            except Exception as e:
-                sys.stderr.write(f"[ERROR] Initialized orchestrator failed validation: {e}\n")
-                _restore_collision_dir(collision_dir, work_tree)
-                return False
-
-        else:
-            try:
-                merge_base = _git_check(base_cmd + ["merge-base", "HEAD", remote_head])
-            except Exception:
-                merge_base = ""
-
-            if merge_base == "":
-                _print_update_preview(base_cmd, local_head, remote_head)
-
-                choice = _prompt_choice(
-                    [
-                        "\n[UNRELATED HISTORY]\n",
-                        "  Local repository does not share history with upstream.\n",
-                        "  1) Abort (keep current state) [DEFAULT]\n",
-                        "  2) Replace local repo contents with upstream [RECOMMENDED]\n",
-                        "Choice [1-2] (default: 1): ",
-                    ],
-                    default="1",
-                    assume_yes=assume_yes,
-                    yes_choice="2",
-                )
-
-                if choice != "2":
-                    sys.stdout.write("Aborting update by user request.\n")
-                    return False
-
-                destructive = True
-
-            elif merge_base == remote_head:
-                sys.stdout.write("[GIT] Local repository is ahead of upstream. Keeping local commits.\n")
-                return False
-
-            elif merge_base != local_head:
-                _print_update_preview(base_cmd, local_head, remote_head)
-
-                choice = _prompt_choice(
-                    [
-                        "\n[DIVERGED HISTORY]\n",
-                        "  Local history diverges from upstream.\n",
-                        "  1) Abort (keep current state) [DEFAULT]\n",
-                        "  2) Reset to upstream [RECOMMENDED]\n",
-                        "Choice [1-2] (default: 1): ",
-                    ],
-                    default="1",
-                    assume_yes=assume_yes,
-                    yes_choice="2",
-                )
-
-                if choice != "2":
-                    sys.stdout.write("Aborting update by user request.\n")
-                    return False
-
-                destructive = True
-
-            collision_roots = _collect_incoming_collisions(base_cmd, remote_ref, work_tree)
-            changes = _capture_tracked_changes(base_cmd)
-
-            if (collision_roots or changes):
-                sys.stdout.write(
-                    f"[GIT] Local changes detected ({len(changes)} modified file(s), {len(collision_roots)} collision(s)). "
-                    "Backing up and applying updates...\n"
-                )
-
-            try:
-                _backup_collision_roots(work_tree, collision_roots, collision_dir)
-                user_mods_dir = _backup_user_mods(work_tree, changes, backup_root)
-
-                if destructive:
-                    full_dir = _backup_full_tracked_tree(base_cmd, work_tree, backup_root)
-            except Exception:
-                _restore_collision_dir(collision_dir, work_tree)
-                raise
-
-            with suppress(Exception):
-                _git_check(base_cmd + ["branch", f"dusky/backup/{timestamp}", local_head], timeout=30)
-
-            orch_backup = backup_root / "orchestrator.py"
-            with suppress(OSError):
-                shutil.copy2(my_path, orch_backup)
-
-            sys.stdout.write(f"[GIT] Updating from {local_head[:7]} to {remote_head[:7]}...\n")
-
-            try:
-                _git_check(base_cmd + ["reset", "--hard", remote_head], timeout=180)
-            except Exception:
-                _restore_collision_dir(collision_dir, work_tree)
-                _restore_user_mods(base_cmd, work_tree, changes, user_mods_dir, needs_merge_dir)
-                raise
-
-            try:
-                validate_updated_sources(my_path, wrapper_path)
-            except Exception as e:
-                sys.stderr.write(f"[ERROR] Updated orchestrator failed validation: {e}\n")
-                sys.stdout.write("[GIT] Rolling back to previous HEAD...\n")
-
-                with suppress(Exception):
-                    _git_check(base_cmd + ["reset", "--hard", local_head], timeout=180)
-
-                if orch_backup.exists():
-                    with suppress(OSError):
-                        shutil.copy2(orch_backup, my_path)
-
-                _restore_collision_dir(collision_dir, work_tree)
-                _restore_user_mods(base_cmd, work_tree, changes, user_mods_dir, needs_merge_dir)
-
-                return False
-
-            if changes:
-                restored, merged, deleted = _restore_user_mods(
-                    base_cmd,
-                    work_tree,
-                    changes,
-                    user_mods_dir,
-                    needs_merge_dir,
-                )
-
-                if restored:
-                    sys.stdout.write(f"[GIT] Restored {restored} safe local edits.\n")
-
-                if deleted:
-                    sys.stdout.write(f"[GIT] Preserved {deleted} tracked deletion(s).\n")
-
-                if merged:
-                    sys.stdout.write(
-                        f"[WARN] {merged} local edit(s) need manual merge. Saved in: {needs_merge_dir}\n"
-                    )
-
-                try:
-                    validate_updated_sources(my_path, wrapper_path)
-                except Exception as e:
-                    sys.stderr.write(f"[WARN] Restored local edits broke validation: {e}\n")
-                    sys.stdout.write("[GIT] Keeping pristine upstream and isolating local edits...\n")
-
-                    _git_check(base_cmd + ["reset", "--hard", remote_head], timeout=180)
-
-                    isolated = _move_all_to_needs_merge(user_mods_dir, needs_merge_dir)
-                    sys.stdout.write(f"[WARN] Isolated {isolated} local edit file(s) in: {needs_merge_dir}\n")
-
-                    validate_updated_sources(my_path, wrapper_path)
-
-        if full_dir:
-            sys.stdout.write(f"[GIT] Full tracked-tree backup saved in: {full_dir}\n")
-
-        sys.stdout.write("[GIT] Update applied. Restarting orchestrator...\n")
-        sys.stdout.flush()
-        sys.stderr.flush()
-
-        SudoEngine.cleanup()
-
-        args = [a for a in sys.argv[1:] if a != "--git-update-only"]
-        if "--no-git-update" not in args:
-            args.append("--no-git-update")
-        if preserve_profile and profile and not any(a == "--profile" or a.startswith("--profile=") or a == "-p" for a in args):
-            args.extend(["--profile", profile.filepath.stem])
-
-        release_lock()
-        if wrapper_path.is_file():
-            with suppress(OSError):
-                os.chmod(wrapper_path, 0o755)
-            with suppress(OSError):
-                os.execv(str(wrapper_path), [str(wrapper_path)] + args)
-
+        _write_json_file(pending, {"work_tree": str(work_tree), "git_dir": str(git_dir),
+                                   "old_head": local_head, "new_head": remote_head,
+                                   "backup": str(backup_root), "phase": "backing_up"})
+        _backup_collision_roots(work_tree, roots, collision_dir)
+        user_mods_dir = _backup_user_mods(work_tree, changes, backup_root)
+        staged_dir = _backup_staged_index(base_cmd, backup_root) if local_head else None
+        if destructive:
+            full_dir = _backup_full_tracked_tree(base_cmd, work_tree, backup_root)
+            if full_dir:
+                sys.stdout.write(f"[GIT] Full tracked tree saved at {full_dir}\n")
+        if staged_dir:
+            sys.stdout.write(f"[GIT] Staged index content saved at {staged_dir}\n")
+        _write_json_file(pending, {"work_tree": str(work_tree), "git_dir": str(git_dir),
+                                   "old_head": local_head, "new_head": remote_head,
+                                   "backup": str(backup_root), "phase": "applying"})
+        checkout_started = True
         try:
-            os.execv(sys.executable, [sys.executable, str(my_path)] + args)
-        except OSError as e:
-            sys.stderr.write(f"[FATAL] Failed to restart orchestrator after update: {e}\n")
-            sys.exit(1)
+            if first_checkout:
+                _git_check(base_cmd + ["checkout", "-f", GIT_UPSTREAM_BRANCH], timeout=180)
+            else:
+                if not local_head:
+                    _git_check(base_cmd + ["symbolic-ref", "HEAD", f"refs/heads/{GIT_UPSTREAM_BRANCH}"], timeout=30)
+                _git_check(base_cmd + ["reset", "--hard", remote_head], timeout=180)
+            validate_updated_sources(my_path, wrapper_path)
+        except Exception as exc:
+            sys.stderr.write(f"[ERROR] Update validation/application failed: {exc}\n")
+            try:
+                if first_checkout:
+                    assert needs_merge_dir is not None
+                    _restore_collision_dir(collision_dir, work_tree,
+                                           needs_merge_dir / "failed_checkout_incoming")
+                else:
+                    _rollback_git_update(base_cmd, local_head, work_tree, collision_dir,
+                                         changes, user_mods_dir, needs_merge_dir)
+            except Exception as rollback_exc:
+                sys.stderr.write(f"[ERROR] Recovery incomplete: {rollback_exc}; see {pending}\n")
+            return "halt"
 
-        return True
+        if changes or roots:
+            assert needs_merge_dir is not None
+            ensure_dir(needs_merge_dir, 0o700)
+            _write_json_file(needs_merge_dir / "worktree_reset.json", {
+                "reason": "Local changes backed up before resetting tracked files",
+                "tracked_changes": list(changes), "incoming_collisions": roots,
+                "user_mods": str(user_mods_dir) if user_mods_dir else None,
+                "staged_index": str(staged_dir) if staged_dir else None,
+                "untracked_collisions": str(collision_dir) if roots else None,
+            })
+            sys.stdout.write(f"[GIT] Local changes were backed up at {backup_root}; "
+                             f"tracked files now match {'HEAD' if repair_local_head else 'upstream'}.\n")
 
-    except subprocess.CalledProcessError as e:
-        stderr = ""
-        if e.stderr:
-            stderr = str(e.stderr).strip()
-
-        sys.stderr.write(f"[WARN] Git operation failed: {e}\n")
-
-        if stderr:
-            sys.stderr.write(stderr + "\n")
-
-        return False
-
-    except Exception as e:
-        sys.stderr.write(f"[WARN] Git update failed: {e}\n")
-        return False
+        pending.unlink()
+        _clean_old_backups(backups_dir(), keep=GLOBAL_CONFIG.get("git", {}).get("backup_retention", 10))
+        sys.stdout.write("[GIT] Work tree synchronized. Restarting orchestrator...\n")
+        SudoEngine.cleanup()
+        restart_with_updated_sources(wrapper_path, my_path, profile, preserve_profile, update_only)
+        return "updated"
+    except Exception as exc:
+        sys.stderr.write(f"[ERROR] Git update failed: {exc}\n")
+        if pending.exists():
+            sys.stderr.write(f"[ERROR] Recovery data retained at {pending}.\n")
+            return "halt"
+        return "halt" if checkout_started else "failed"
 
 
 # ==============================================================================
-# UI HELPERS
+# # UI HELPERS
 # ==============================================================================
 def _status_badge(status: TaskStatus) -> Text:
     match status:
@@ -5042,18 +5331,18 @@ class ProfileSelectorApp(App):
 
         if idx is not None and 0 <= idx < len(self.profiles):
             self.selected_profile = self.profiles[idx]
-            self.exit(0)
+            self.exit(return_code=0)
 
     def on_key(self, event: events.Key) -> None:
         if event.key == "escape":
-            self.exit(1)
+            self.exit(return_code=1)
             return
 
         if event.character and event.character in "123456789":
             idx = int(event.character) - 1
             if 0 <= idx < len(self.profiles):
                 self.selected_profile = self.profiles[idx]
-                self.exit(0)
+                self.exit(return_code=0)
 
 
 # ==============================================================================
@@ -5118,6 +5407,8 @@ class DuskyOrchestratorApp(App):
 
         self.active_child_pid: int | None = None
         self.active_child_group: bool = False
+        self._active_pty_proc: asyncio.subprocess.Process | None = None
+        self._active_interactive_proc: subprocess.Popen | None = None
         self.current_pty_master: int | None = None
         self.active_task: OrchestratorTask | None = None
         self.sudo_task: asyncio.Task | None = None
@@ -5167,6 +5458,13 @@ class DuskyOrchestratorApp(App):
         self._prompt_counts: dict[str, int] = {}
         self._prompt_last: dict[str, float] = {}
         self._prompt_buffer: str = ""
+        self._prompt_retry_task: asyncio.Task | None = None
+        self._pty_write_queue: deque[bytes] = deque()
+        self._pty_write_event: asyncio.Event | None = None
+        self._pty_writer_task: asyncio.Task | None = None
+        self._pty_write_bytes = 0
+        self.final_exit_code = 0
+        self._persistence_failed = False
 
         self._durations: list[float] = []
         self._always_handled: set[str] = set()
@@ -5449,6 +5747,9 @@ class DuskyOrchestratorApp(App):
         self._is_dragging_pane = False
 
     def action_request_quit(self) -> None:
+        if self.finished_time is not None and self.active_task is None and not isinstance(self.screen, ModalScreen):
+            self.exit(return_code=self.final_exit_code)
+            return
         if isinstance(self.screen, HelpScreen):
             self.screen.dismiss(None)
             return
@@ -5479,7 +5780,7 @@ class DuskyOrchestratorApp(App):
             if result == "abort":
                 self.log_system("User requested sequence termination.", is_err=True)
                 await self._kill_active_child_async()
-                self.exit(0)
+                self.exit(return_code=130)
 
         self.push_screen(ConfirmQuitScreen(), on_quit_decision)
 
@@ -5494,7 +5795,7 @@ class DuskyOrchestratorApp(App):
 
     def _on_completion_reply(self, quit_now: bool | None) -> None:
         if quit_now:
-            self.exit()
+            self.exit(return_code=self.final_exit_code)
         else:
             self.current_log_key = "report"
             self._update_details(None)
@@ -5663,14 +5964,13 @@ class DuskyOrchestratorApp(App):
 
             if event.key == "ctrl+q":
                 self.log_system("Emergency abort requested from PTY session.", is_err=True)
-                self.exit(1)
+                self.exit(return_code=1)
                 event.stop()
                 return
 
             data = self._pty_key_bytes(event)
             if data:
-                with suppress(OSError):
-                    os.write(self.current_pty_master, data)
+                self._enqueue_pty_input(data)
                 event.stop()
 
     def _pty_key_bytes(self, event: events.Key) -> bytes:
@@ -5972,56 +6272,107 @@ class DuskyOrchestratorApp(App):
         self.logger.system(msg)
         self._queue_ui(text, self.active_task.state_key if self.active_task else None)
 
+    def _enqueue_pty_input(self, data: bytes) -> None:
+        if self.current_pty_master is None or not data:
+            return
+        if self._pty_write_bytes + len(data) > 1024 * 1024:
+            self.log_system("PTY input queue is full; input was not sent.", is_err=True)
+            return
+        self._pty_write_queue.append(data)
+        self._pty_write_bytes += len(data)
+        if self._pty_write_event is not None:
+            self._pty_write_event.set()
+
+    async def _pty_writer(self, fd: int) -> None:
+        loop = asyncio.get_running_loop()
+        event = self._pty_write_event
+        if event is None:
+            return
+        while self.current_pty_master == fd:
+            await event.wait()
+            while self._pty_write_queue:
+                chunk = self._pty_write_queue[0]
+                try:
+                    count = os.write(fd, chunk)
+                except BlockingIOError:
+                    ready = loop.create_future()
+                    loop.add_writer(fd, lambda: not ready.done() and ready.set_result(None))
+                    try:
+                        await ready
+                    finally:
+                        loop.remove_writer(fd)
+                    continue
+                except OSError as exc:
+                    self.log_system(f"PTY input failed: {exc}", is_err=True)
+                    return
+                if count <= 0:
+                    self.log_system("PTY input stopped making progress.", is_err=True)
+                    return
+                self._pty_write_bytes -= count
+                if count == len(chunk):
+                    self._pty_write_queue.popleft()
+                else:
+                    self._pty_write_queue[0] = chunk[count:]
+            event.clear()
+
+    async def _retry_prompt_after(self, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+            self._maybe_respond_prompt("")
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._prompt_retry_task = None
+
     def _maybe_respond_prompt(self, text: str) -> None:
         if self.current_pty_master is None:
             return
         if self.active_task is None or self.active_task.interactive:
             return
 
-        self._prompt_buffer = (getattr(self, "_prompt_buffer", "") + text)[-4096:]
-        tail = ANSI_STRIP_REGEX.sub("", self._prompt_buffer)
-
-        for name, pattern, kind in PROMPT_RULES:
-            if not pattern.search(tail):
-                continue
-
+        self._prompt_buffer = (self._prompt_buffer + ANSI_STRIP_REGEX.sub("", text))[-8192:]
+        for _ in range(8):
+            matches = [(found.start(), index, name, found, kind)
+                       for index, (name, pattern, kind) in enumerate(PROMPT_RULES)
+                       if (found := pattern.search(self._prompt_buffer)) is not None]
+            if not matches:
+                return
+            _, _, name, match, kind = min(matches, key=lambda item: item[:2])
             count = self._prompt_counts.get(name, 0)
             max_count = 5 if name == "sudo_password" else 500
             if count >= max_count:
+                self._prompt_buffer = self._prompt_buffer[match.end():]
                 continue
-
             now = time.monotonic()
             last = self._prompt_last.get(name, 0.0)
             cooldown = GLOBAL_CONFIG.get("prompts", {}).get("cooldown", 0.35)
-            if now - last < cooldown:
-                continue
+            remaining = cooldown - (now - last)
+            if remaining > 0:
+                if self._prompt_retry_task is None or self._prompt_retry_task.done():
+                    self._prompt_retry_task = asyncio.create_task(self._retry_prompt_after(remaining))
+                return
 
             response: bytes | None = None
 
             if kind == "password":
-                if SudoEngine._password:
+                if GLOBAL_CONFIG.get("prompts", {}).get("allow_insecure_password_autofeed", False) and SudoEngine._password:
                     response = SudoEngine._password.encode("utf-8") + b"\r"
                 else:
-                    self.log_system("Sudo password prompt detected, but no cached password is available.", is_err=True)
-                    continue
+                    self.log_system("Password prompt needs manual input.")
             elif kind == "yes":
                 response = b"y\r"
-            else:
+            elif kind == "no":
+                response = b"n\r"
+            elif kind == "enter":
                 response = b"\r"
-
-            with suppress(OSError):
-                os.write(self.current_pty_master, response)
-
+            if response is not None:
+                self._enqueue_pty_input(response)
             self._prompt_counts[name] = count + 1
             self._prompt_last[name] = now
-            self._prompt_buffer = ""
+            self._prompt_buffer = self._prompt_buffer[match.end():]
 
-            if name == "sudo_password" and count < 5:
-                self.log_system("Auto-responded with cached sudo credentials.")
-            elif name != "sudo_password" and count < 5:
+            if response is not None and name != "sudo_password" and count < 5:
                 self.log_system(f"Auto-responded to prompt: {name}")
-
-            break
 
     def handle_pty_line(self, line: str, last_lines: deque | None = None) -> None:
         clean = line.strip("\r\n")
@@ -6078,24 +6429,34 @@ class DuskyOrchestratorApp(App):
                 fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
 
     async def _kill_proc(self, proc: asyncio.subprocess.Process | None) -> None:
-        if proc is None or proc.returncode is not None:
+        if proc is None:
             return
-
+        pid = proc.pid
         with suppress(ProcessLookupError, PermissionError, OSError):
-            os.killpg(proc.pid, signal.SIGTERM)
-
-        with suppress(Exception):
-            await asyncio.wait_for(proc.wait(), timeout=2.0)
-
-        if proc.returncode is None:
+            os.killpg(pid, signal.SIGTERM)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if proc.returncode is None:
+                with suppress(TimeoutError, OSError):
+                    await asyncio.wait_for(proc.wait(), timeout=0.1)
+            try:
+                os.killpg(pid, 0)
+            except ProcessLookupError:
+                break
+            await asyncio.sleep(0.05)
+        else:
             with suppress(ProcessLookupError, PermissionError, OSError):
-                os.killpg(proc.pid, signal.SIGKILL)
+                os.killpg(pid, signal.SIGKILL)
+        if proc.returncode is None:
             with suppress(Exception):
-                await asyncio.wait_for(proc.wait(), timeout=1.0)
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
 
     def _kill_active_child_sync(self) -> None:
         pid = self.active_child_pid
         if pid is None:
+            return
+        if not self.active_child_group:
+            self._terminate_interactive_tree(pid)
             return
 
         if self.active_child_group:
@@ -6115,6 +6476,12 @@ class DuskyOrchestratorApp(App):
         pid = self.active_child_pid
         if pid is None:
             return
+        if self._active_pty_proc is not None:
+            await self._kill_proc(self._active_pty_proc)
+            return
+        if not self.active_child_group:
+            await asyncio.to_thread(self._terminate_interactive_tree, pid)
+            return
 
         if self.active_child_group:
             with suppress(ProcessLookupError, PermissionError, OSError):
@@ -6131,6 +6498,7 @@ class DuskyOrchestratorApp(App):
 
     def _task_env(self, task: OrchestratorTask) -> dict[str, str]:
         env = os.environ.copy()
+        env.pop("DUSKY_SUDO_PASSWORD", None)
 
         for k in (
             "LD_PRELOAD",
@@ -6217,9 +6585,9 @@ class DuskyOrchestratorApp(App):
                 interp = shutil.which(interp) or interp
 
             if Path(interp).name in ("python", "python3", "bash", "sh", "zsh", "dash"):
-                inner = [interp, "--", str(task.resolved_path)] + args
+                inner = [interp] + task.interpreter_args + ["--", str(task.resolved_path)] + args
             else:
-                inner = [interp, str(task.resolved_path)] + args
+                inner = [interp] + task.interpreter_args + [str(task.resolved_path)] + args
         else:
             inner = [str(task.resolved_path)] + args
 
@@ -6273,7 +6641,7 @@ class DuskyOrchestratorApp(App):
         env_pairs = [f"{k}={full_env[k]}" for k in critical_keys if k in full_env]
 
         for k, v in full_env.items():
-            if k.startswith("DUSKY_"):
+            if k.startswith("DUSKY_") and not any(secret in k.upper() for secret in ("PASSWORD", "TOKEN", "SECRET")):
                 env_pairs.append(f"{k}={v}")
 
         if task.mode == "S":
@@ -6303,9 +6671,9 @@ class DuskyOrchestratorApp(App):
                 interp = shutil.which(interp) or interp
 
             if Path(interp).name in ("python", "python3", "bash", "sh", "zsh", "dash"):
-                parts.extend([interp, "--", str(task.resolved_path)])
+                parts.extend([interp] + task.interpreter_args + ["--", str(task.resolved_path)])
             else:
-                parts.extend([interp, str(task.resolved_path)])
+                parts.extend([interp] + task.interpreter_args + [str(task.resolved_path)])
         else:
             parts.append(str(task.resolved_path))
 
@@ -6325,6 +6693,13 @@ class DuskyOrchestratorApp(App):
             return False, None, "PTY allocation failed"
 
         self.current_pty_master = master_fd
+        os.set_blocking(master_fd, False)
+        self._pty_write_queue.clear()
+        self._pty_write_bytes = 0
+        self._pty_write_event = asyncio.Event()
+        self._prompt_buffer = ""
+        self._prompt_counts.clear()
+        self._prompt_last.clear()
         self._set_pty_size(slave_fd)
 
         transport: asyncio.Transport | None = None
@@ -6341,6 +6716,7 @@ class DuskyOrchestratorApp(App):
                 stdout=slave_fd,
                 stderr=slave_fd,
                 env=env,
+                cwd=str(user_home()),
                 close_fds=True,
                 start_new_session=True,
             )
@@ -6351,6 +6727,8 @@ class DuskyOrchestratorApp(App):
 
             self.active_child_pid = proc.pid
             self.active_child_group = True
+            self._active_pty_proc = proc
+            self._pty_writer_task = asyncio.create_task(self._pty_writer(master_fd))
 
             loop = asyncio.get_running_loop()
             reader = asyncio.StreamReader(limit=1024 * 1024)
@@ -6367,15 +6745,19 @@ class DuskyOrchestratorApp(App):
                 while True:
                     try:
                         chunk = await reader.read(4096)
-                    except Exception:
-                        chunk = b""
+                    except OSError as exc:
+                        if exc.errno == errno.EIO:
+                            chunk = b""  # Linux PTY master reports EIO at normal slave EOF.
+                        else:
+                            raise RuntimeError(f"PTY output reader failed: {exc}") from exc
+                    except Exception as exc:
+                        raise RuntimeError(f"PTY output reader failed: {exc}") from exc
 
                     if not chunk:
                         if line_buffer:
                             for line in BRACKET_NEWLINE_RE.split(line_buffer):
                                 if line:
-                                    with suppress(Exception):
-                                        self.handle_pty_line(line, last_lines)
+                                    self.handle_pty_line(line, last_lines)
                             line_buffer = ""
                         break
 
@@ -6390,8 +6772,7 @@ class DuskyOrchestratorApp(App):
                     line_buffer += text
 
                     if len(line_buffer) > 32768:
-                        with suppress(Exception):
-                            self.handle_pty_line(line_buffer[:32768], last_lines)
+                        self.handle_pty_line(line_buffer[:32768], last_lines)
                         line_buffer = line_buffer[-4096:]
 
                     while True:
@@ -6402,10 +6783,14 @@ class DuskyOrchestratorApp(App):
                         line = line_buffer[:idx]
                         line_buffer = line_buffer[idx + 1:]
                         if line:
-                            with suppress(Exception):
-                                self.handle_pty_line(line, last_lines)
+                            self.handle_pty_line(line, last_lines)
 
             read_task = asyncio.create_task(read_loop())
+            def reader_finished(future: asyncio.Task) -> None:
+                if not future.cancelled() and future.exception() is not None and proc is not None:
+                    with suppress(OSError):
+                        os.killpg(proc.pid, signal.SIGTERM)
+            read_task.add_done_callback(reader_finished)
 
             try:
                 async with asyncio.timeout(timeout if timeout > 0 else None):
@@ -6416,8 +6801,8 @@ class DuskyOrchestratorApp(App):
                         read_task.cancel()
                         with suppress(asyncio.CancelledError, Exception):
                             await read_task
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        raise RuntimeError(f"PTY output processing failed: {exc}") from exc
 
                     self._flush_ui()
                     return code == 0, code, "\n".join(last_lines)
@@ -6428,7 +6813,7 @@ class DuskyOrchestratorApp(App):
                 with suppress(asyncio.CancelledError, Exception):
                     await read_task
                 self._flush_ui()
-                return False, None, "\n".join(last_lines)
+                return False, 124, "\n".join(last_lines)
 
             except asyncio.CancelledError:
                 await self._kill_proc(proc)
@@ -6449,12 +6834,27 @@ class DuskyOrchestratorApp(App):
 
         except Exception as e:
             self.log_system(f"PTY execution exception: {e}", is_err=True)
-            return False, None, "\n".join(last_lines)
+            await self._kill_proc(proc)
+            return False, 127, "\n".join(last_lines)
 
         finally:
+            if proc is not None:
+                await self._kill_proc(proc)
+            if self._pty_writer_task is not None:
+                self._pty_writer_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await self._pty_writer_task
+            self._pty_writer_task = None
+            if self._prompt_retry_task is not None:
+                self._prompt_retry_task.cancel()
+                self._prompt_retry_task = None
+            self._pty_write_queue.clear()
+            self._pty_write_bytes = 0
+            self._pty_write_event = None
             self.current_pty_master = None
             self.active_child_pid = None
             self.active_child_group = False
+            self._active_pty_proc = None
 
             if transport is not None:
                 with suppress(Exception):
@@ -6474,88 +6874,120 @@ class DuskyOrchestratorApp(App):
     def _suspend_ui(self):
         suspend = getattr(self, "suspend", None)
         if callable(suspend):
-            with suppress(Exception):
+            try:
                 with suspend():
                     yield
-                return
-
+            finally:
+                with suppress(Exception):
+                    self.screen.refresh(repaint=True, layout=True)
+            return
         driver = getattr(self, "driver", None)
         if driver is not None and hasattr(driver, "stop_application_mode"):
-            with suppress(Exception):
-                driver.stop_application_mode()
-
+            driver.stop_application_mode()
         try:
             yield
         finally:
             if driver is not None and hasattr(driver, "start_application_mode"):
-                with suppress(Exception):
-                    driver.start_application_mode()
+                driver.start_application_mode()
+
+    @staticmethod
+    def _interactive_proc_identity(pid: int) -> tuple[int, str] | None:
+        try:
+            raw = Path(f"/proc/{pid}/stat").read_text(encoding="ascii", errors="replace")
+            parts = raw.rsplit(")", 1)[1].split()
+            return int(parts[1]), parts[19]
+        except (OSError, ValueError, IndexError):
+            return None
+
+    @classmethod
+    def _terminate_interactive_tree(cls, root_pid: int) -> None:
+        # Interactive children share the terminal process group; signal PIDs
+        # only after checking their /proc start time to avoid recycled PIDs.
+        members: dict[int, tuple[int, str]] = {}
+        for name in os.listdir("/proc"):
+            if name.isdigit():
+                ident = cls._interactive_proc_identity(int(name))
+                if ident is not None:
+                    members[int(name)] = ident
+        selected = {root_pid}
+        changed = True
+        while changed:
+            changed = False
+            for pid, (parent, _start) in members.items():
+                if parent in selected and pid not in selected:
+                    selected.add(pid)
+                    changed = True
+        def send(sig: int) -> None:
+            for pid in sorted(selected, reverse=True):
+                ident = members.get(pid)
+                if ident and cls._interactive_proc_identity(pid) == ident:
+                    with suppress(OSError):
+                        os.kill(pid, sig)
+        send(signal.SIGTERM)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if all(cls._interactive_proc_identity(pid) != members.get(pid) for pid in selected):
+                return
+            time.sleep(0.05)
+        send(signal.SIGKILL)
 
     async def _execute_suspended(
-        self,
-        task: OrchestratorTask,
-        cmd: list[str],
-        env: dict[str, str],
+        self, task: OrchestratorTask, cmd: list[str], env: dict[str, str],
+        timeout: float | None = None,
     ) -> tuple[bool, int | None, str]:
         self.log_system(f"Suspending TUI for interactive workflow: {task.script_name}...")
-
+        limit = timeout if timeout is not None else (task.timeout if task.timeout is not None else self.task_timeout)
         with self._suspend_ui():
             sys.stdout.flush()
             sys.stderr.flush()
-
+            tty_fd = None
             old_attr = None
-            old_pgrp = None
-            stdin_fd = None
-            new_group = False
-
-            if sys.stdin.isatty():
-                stdin_fd = sys.stdin.fileno()
-                with suppress(termios.error, OSError):
-                    old_attr = termios.tcgetattr(stdin_fd)
-                with suppress(OSError):
-                    old_pgrp = os.tcgetpgrp(stdin_fd)
-
+            proc: subprocess.Popen | None = None
             try:
-                sys.stdout.write("\x1b[2J\x1b[H")
-                sys.stdout.flush()
-
-                clean_cmd = self._task_display_command(task)
+                if sys.stdin.isatty():
+                    tty_fd = sys.stdin.fileno()
+                    with suppress(OSError, termios.error):
+                        old_attr = termios.tcgetattr(tty_fd)
                 print(f"\n--- INTERACTIVE WORKFLOW: {task.script_name} ---")
-                print(f"Executing: {clean_cmd}\n")
-                sys.stdout.flush()
-
+                print(f"Executing: {self._task_display_command(task)}\n", flush=True)
+                proc = subprocess.Popen(cmd, env=env, cwd=str(user_home()), close_fds=True,
+                                        restore_signals=True, start_new_session=False)
+                self.active_child_pid = proc.pid
+                self.active_child_group = False
+                self._active_interactive_proc = proc
+                wait_task = asyncio.create_task(asyncio.to_thread(proc.wait))
                 try:
-                    res = subprocess.run(cmd, env=env)
-                    code = res.returncode
-                    if code == -signal.SIGINT or code == 130:
-                        return False, 130, "interactive session interrupted by user"
-                    
-                    # Short delay to allow UI to catch up after resuming
-                    await asyncio.sleep(0.2)
-                    
-                    return code == 0, code, "interactive session"
-                except KeyboardInterrupt:
+                    code = await asyncio.wait_for(asyncio.shield(wait_task),
+                                                  timeout=limit if limit and limit > 0 else None)
+                except TimeoutError:
+                    await asyncio.to_thread(self._terminate_interactive_tree, proc.pid)
+                    with suppress(Exception):
+                        await asyncio.wait_for(wait_task, timeout=3)
+                    return False, 124, "interactive task timed out"
+                except asyncio.CancelledError:
+                    await asyncio.to_thread(self._terminate_interactive_tree, proc.pid)
+                    with suppress(Exception):
+                        await asyncio.wait_for(wait_task, timeout=3)
+                    raise
+                if code in (-signal.SIGINT, 130):
                     return False, 130, "interactive session interrupted by user"
-
-            except Exception as e:
-                return False, None, str(e)
-
+                return code == 0, code, "interactive session"
+            except KeyboardInterrupt:
+                if proc is not None:
+                    await asyncio.to_thread(self._terminate_interactive_tree, proc.pid)
+                return False, 130, "interactive session interrupted by user"
+            except Exception as exc:
+                if proc is not None and proc.poll() is None:
+                    await asyncio.to_thread(self._terminate_interactive_tree, proc.pid)
+                return False, 127, str(exc)
             finally:
-                sys.stdout.write("\x1b[2J\x1b[H")
-                sys.stdout.flush()
-
-                if stdin_fd is not None and old_pgrp is not None:
-                    with suppress(OSError):
-                        os.tcsetpgrp(stdin_fd, old_pgrp)
-
-                if old_attr is not None and stdin_fd is not None:
-                    with suppress(termios.error, OSError):
-                        termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_attr)
-
+                if old_attr is not None and tty_fd is not None:
+                    with suppress(OSError, termios.error):
+                        termios.tcsetattr(tty_fd, termios.TCSADRAIN, old_attr)
                 self.active_child_pid = None
                 self.active_child_group = False
+                self._active_interactive_proc = None
 
-                await asyncio.sleep(0.4)
 
     async def _ensure_sudo(self) -> bool:
         ok = SudoEngine.refresh_sync()
@@ -6588,10 +7020,9 @@ class DuskyOrchestratorApp(App):
         cmd: list[str],
         env: dict[str, str],
     ) -> tuple[bool, int | None, str]:
-        if task.interactive:
-            return await self._execute_suspended(task, cmd, env)
-
         timeout = task.timeout if task.timeout is not None else self.task_timeout
+        if task.interactive:
+            return await self._execute_suspended(task, cmd, env, timeout=timeout)
         return await self.execute_pty_command(cmd, env, timeout=timeout)
 
     def finish_task(
@@ -6611,9 +7042,14 @@ class DuskyOrchestratorApp(App):
                 )
             except Exception as e:
                 self.log_system(f"Failed to write persistent once marker: {e}", is_err=True)
+                self._persistence_failed = True
 
-        self.state.mark(task, status, exit_code, note)
         self.statuses[task.state_key] = status
+        try:
+            self.state.mark(task, status, exit_code, note)
+        except (OSError, sqlite3.DatabaseError) as exc:
+            self._persistence_failed = True
+            self.log_system(f"State write failed after task outcome: {exc}", is_err=True)
 
         if status in ("completed", "ignored", "manual", "completed_once"):
             self.update_task_node_by_key(task.state_key, TaskStatus.COMPLETED)
@@ -6647,7 +7083,7 @@ class DuskyOrchestratorApp(App):
 
             if self.stop_on_fail or task.on_failure == "abort":
                 self.log_system("stop-on-fail/abort active. Aborting pipeline.", is_err=True)
-                self.exit(1)
+                self.exit(return_code=1)
                 return "abort"
 
             if task.on_failure == "skip":
@@ -6672,7 +7108,7 @@ class DuskyOrchestratorApp(App):
                 return "skipped"
 
             self.log_system("User aborted execution sequence.", is_err=True)
-            self.exit(1)
+            self.exit(return_code=1)
             return "abort"
 
         if self.manual:
@@ -6686,7 +7122,7 @@ class DuskyOrchestratorApp(App):
 
             if action == "quit":
                 self.log_system("Manual override: aborting pipeline.", is_err=True)
-                self.exit(1)
+                self.exit(return_code=1)
                 return "abort"
 
         if task.mode == "S" and not await self._ensure_sudo():
@@ -6694,7 +7130,7 @@ class DuskyOrchestratorApp(App):
             self.log_system("Sudo authentication unavailable.", is_err=True)
 
             if self.stop_on_fail or task.on_failure == "abort":
-                self.exit(1)
+                self.exit(return_code=1)
                 return "abort"
 
             if task.on_failure == "skip":
@@ -6718,7 +7154,7 @@ class DuskyOrchestratorApp(App):
                 self.finish_task(task, "skipped", None, "sudo unavailable")
                 return "skipped"
 
-            self.exit(1)
+            self.exit(return_code=1)
             return "abort"
 
         self.active_task = task
@@ -6767,13 +7203,13 @@ class DuskyOrchestratorApp(App):
                 continue
 
             policy = task.on_failure
-            if self.stop_on_fail and policy == "ask":
+            if self.stop_on_fail:
                 policy = "abort"
 
             if policy == "abort":
                 self.finish_task(task, "failed", code, last)
                 self.log_system("Failure policy: abort.", is_err=True)
-                self.exit(1)
+                self.exit(return_code=1)
                 self.active_task = None
                 return "abort"
 
@@ -6861,7 +7297,7 @@ class DuskyOrchestratorApp(App):
 
                     case _:
                         self.log_system("User aborted execution sequence.", is_err=True)
-                        self.exit(1)
+                        self.exit(return_code=1)
                         self.active_task = None
                         return "abort"
 
@@ -6888,7 +7324,16 @@ class DuskyOrchestratorApp(App):
                             continue
 
                         if task.once and self.once_store:
-                            once_status = self.once_store.check_marker_status(task, self.profile.name)
+                            try:
+                                once_status = self.once_store.check_marker_status(task, self.profile.name)
+                            except (OSError, sqlite3.DatabaseError) as exc:
+                                self.log_system(f"Once-state read failed: {exc}", is_err=True)
+                                once_status = "error"
+                            if once_status == "error":
+                                self._persistence_failed = True
+                                self.finish_task(task, "skipped", 1, "once-state unavailable or ambiguous")
+                                handled.add(key)
+                                continue
                             if once_status == "notify_sealed":
                                 self.log_system(
                                     f"Run-once:sealed script modified since last run; not re-running: {task.script_name}"
@@ -6970,6 +7415,7 @@ class DuskyOrchestratorApp(App):
                 failed_tasks = [
                     t for t in self.tasks if self.statuses.get(t.state_key) == "failed"
                 ]
+                self.final_exit_code = 1 if failed_tasks or self._persistence_failed or self.logger.failed_write else 0
 
                 if failed_tasks:
                     AudioNotifier.play("alert")
@@ -7038,52 +7484,6 @@ class DuskyOrchestratorApp(App):
 # ==============================================================================
 # CLI
 # ==============================================================================
-def parse_command_line() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Dusky Arch Linux Orchestrator",
-        epilog="Example: ./orchestrator.py --profile 01_main",
-    )
-
-    parser.add_argument(
-        "--profile",
-        "-p",
-        help="Execute specific profile (name, stem, filename, or number)",
-    )
-    parser.add_argument("--list", action="store_true", help="List all available profiles and exit")
-    parser.add_argument("--list-scripts", action="store_true", help="List sequence of selected profile and exit")
-    parser.add_argument("--reset", action="store_true", help="Reset state for selected profile and exit")
-    parser.add_argument("--reset-and-run", action="store_true", help="Reset state for selected profile, then run")
-    parser.add_argument("--list-once", action="store_true", help="List persistent once markers and exit")
-    parser.add_argument(
-        "--forget-once",
-        action="append",
-        default=[],
-        metavar="SCRIPT",
-        help="Forget persistent once marker(s) for a script name or path. Can be repeated.",
-    )
-    parser.add_argument("--dry-run", action="store_true", help="Validate everything but do not execute scripts")
-    parser.add_argument("--explain", action="store_true", help="Explain run decisions and exit")
-    parser.add_argument("--force", action="store_true", help="Export DUSKY_FORCE=1 and pass --force to scripts")
-    parser.add_argument("--manual", "-m", action="store_true", help="Prompt before executing every script")
-    parser.add_argument("--stop-on-fail", action="store_true", help="Halt execution immediately if a script fails")
-    parser.add_argument("--no-git-update", action="store_true", help="Skip git self-update")
-    parser.add_argument("--git-update-only", action="store_true", help="Run git self-update and exit")
-    parser.add_argument("--offline", action="store_true", help="Skip network-dependent git update")
-    parser.add_argument("--yes", "-y", action="store_true", help="Assume yes for destructive git update prompts")
-    parser.add_argument("--sudo-password", help="Provide sudo password non-interactively")
-    parser.add_argument("--sudo-password-file", help="Read sudo password from file")
-    parser.add_argument("--task-timeout", type=float, default=0.0, help="Per-task timeout in seconds (0 disables)")
-    parser.add_argument("--allow-root", action="store_true", help="Allow running as root (not recommended)")
-    parser.add_argument("--ascii", action="store_true", help="Use ASCII symbols instead of Unicode")
-    parser.add_argument("--no-audio", action="store_true", help="Disable audio notifications")
-    parser.add_argument("--no-notify", action="store_true", help="Disable desktop notifications")
-    parser.add_argument("--no-inhibit", action="store_true", help="Do not inhibit sleep/idle")
-    parser.add_argument("--doctor", action="store_true", help="Run environment diagnostics and exit")
-    parser.add_argument("--version", action="version", version=f"Dusky Orchestrator {VERSION}")
-
-    return parser.parse_args()
-
-
 def run_doctor() -> None:
     print("Dusky Orchestrator Doctor")
     print("=========================")
@@ -7093,11 +7493,14 @@ def run_doctor() -> None:
     print(f"UID/EUID:       {os.getuid()}/{os.geteuid()}")
     print(f"Target user:    {target_user_pw().pw_name}")
     print(f"Home:           {user_home()}")
-    print(f"State dir:      {state_dir()}")
-    print(f"Logs dir:       {logs_dir()}")
-    print(f"Backups dir:    {backups_dir()}")
-    print(f"Cache dir:      {cache_dir()}")
-    print(f"Runtime dir:    {runtime_dir()}")
+    print(f"State dir:      {state_dir_path()}")
+    paths = GLOBAL_CONFIG.get("paths", {})
+    docs = Path(paths.get("documents_dir", "Documents")).expanduser()
+    docs = docs if docs.is_absolute() else user_home() / docs
+    print(f"Logs dir:       {docs / paths.get('logs_subdir', 'logs')}")
+    print(f"Backups dir:    {docs / paths.get('backups_subdir', 'dusky_backups')}")
+    print(f"Cache dir:      {xdg_cache_home() / paths.get('namespace', 'dusky')}")
+    print(f"Runtime dir:    {os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{target_user_pw().pw_uid}')}")
     print(f"Profiles dir:   {PROFILES_DIR}")
 
     try:
@@ -7144,11 +7547,11 @@ def run_doctor() -> None:
 
 
 def print_explain(profile: ProfileConfig) -> None:
-    temp_state = StateStore(profile)
+    temp_state = StateStore(profile, read_only=True)
     statuses = temp_state.statuses()
     temp_state.close()
 
-    once_store = OnceStore()
+    once_store = OnceStore(read_only=True)
     cond = ConditionEvaluator()
 
     print(f"Execution plan for {profile.name}:\n")
@@ -7195,7 +7598,7 @@ def print_explain(profile: ProfileConfig) -> None:
 
 
 def main() -> None:
-    args = parse_command_line()
+    args = EARLY_ARGS
 
     global ASCII_MODE
     if args.ascii:
@@ -7208,34 +7611,34 @@ def main() -> None:
     check_runtime_versions()
     ensure_not_root(args.allow_root)
 
+    if args.list_once:
+        store = OnceStore(read_only=True)
+        try:
+            store.print_list()
+        finally:
+            store.close()
+        return
+
+    if args.forget_once:
+        if not acquire_lock():
+            sys.exit(1)
+        store = OnceStore()
+        try:
+            for script in args.forget_once:
+                count = store.forget(script)
+                print(f"Forgot {count} once marker(s) for: {script}")
+        finally:
+            store.close()
+        return
+
     profiles = discover_profiles()
     if not profiles:
         Console(stderr=True).print("[bold yellow]:: No profiles found in profiles/ directory.[/bold yellow]")
         sys.exit(1)
 
-    palette = PALETTE
-    ProfileSelectorApp.CSS = build_selector_css(palette)
-
     if args.list:
         for i, p in enumerate(profiles, start=1):
             print(f"{i:2d}. {p.filepath.stem}: {p.name} ({p.description})")
-        sys.exit(0)
-
-    if args.list_once:
-        store = OnceStore()
-        store.print_list()
-        store.close()
-        sys.exit(0)
-
-    if args.forget_once:
-        if not acquire_lock():
-            sys.exit(1)
-
-        store = OnceStore()
-        for script in args.forget_once:
-            count = store.forget(script)
-            print(f"Forgot {count} once marker(s) for: {script}")
-        store.close()
         sys.exit(0)
 
     profile_query = (args.profile or os.environ.get("DUSKY_PROFILE", "")).strip()
@@ -7248,71 +7651,85 @@ def main() -> None:
             if 0 <= idx < len(profiles):
                 return profiles[idx]
         q_lower = query.lower()
-        # 1. Exact match (case-insensitive) on name, stem, or filename
-        for p in profiles:
-            if (
+        exact = [p for p in profiles if (
                 p.filepath.stem.lower() == q_lower
                 or p.name.lower() == q_lower
                 or p.filepath.name.lower() == q_lower
-            ):
-                return p
-        # 2. Substring / prefix match (e.g. 'iso' matches '02_iso' or 'ISO Setup')
-        for p in profiles:
-            if (
+            )]
+        if len(exact) > 1:
+            raise ValueError(f"Ambiguous profile '{query}': {', '.join(p.filepath.name for p in exact)}")
+        if exact:
+            return exact[0]
+        partial = [p for p in profiles if (
                 q_lower in p.filepath.stem.lower()
                 or q_lower in p.name.lower()
-                or p.filepath.stem.lower().startswith(q_lower)
-            ):
-                return p
+            )]
+        if len(partial) > 1:
+            raise ValueError(f"Ambiguous profile '{query}': {', '.join(p.filepath.name for p in partial)}")
+        if partial:
+            return partial[0]
         return None
 
-    git_check_profile: ProfileConfig | None = None
-    if profile_query:
-        git_check_profile = resolve_profile(profile_query)
-    else:
-        for p in profiles:
-            if p.git_enabled:
-                git_check_profile = p
-                break
-        if git_check_profile is None and profiles:
-            git_check_profile = profiles[0]
+    selected_profile = resolve_profile(profile_query) if profile_query else None
+    if profile_query and selected_profile is None:
+        raise ValueError(f"Profile '{profile_query}' not found")
+    inspection = args.dry_run or args.explain or args.list_scripts or args.reset
+    if inspection and selected_profile is None:
+        if len(profiles) == 1:
+            selected_profile = profiles[0]
+        else:
+            raise ValueError("Specify --profile for this inspection command")
 
-    if args.git_update_only:
-        if git_check_profile:
-            run_git_self_update(
-                git_check_profile,
-                update_only=True,
-                offline=args.offline,
-                assume_yes=args.yes,
-                preserve_profile=bool(profile_query),
-            )
-        sys.exit(0)
-
-    if not args.no_git_update and not args.offline:
-        if git_check_profile and run_git_self_update(
-            git_check_profile,
-            update_only=False,
-            offline=False,
-            assume_yes=args.yes,
-            preserve_profile=bool(profile_query),
-        ):
-            sys.exit(0)
-
-    selected_profile: ProfileConfig | None = None
-
-    if profile_query:
-        selected_profile = resolve_profile(profile_query)
-        if selected_profile is None:
-            Console(stderr=True).print(f"[bold red]Profile '{profile_query}' not found.[/bold red]")
-            sys.exit(1)
-    else:
+    palette = PALETTE
+    if selected_profile is None and not args.git_update_only:
+        ProfileSelectorApp.CSS = build_selector_css(palette)
         selector = ProfileSelectorApp(profiles)
         selector.run()
         selected_profile = selector.selected_profile
         if selected_profile is None:
             sys.exit(1)
 
+    git_check_profile = selected_profile or next((p for p in profiles if p.git_enabled), None)
+
+    if args.list_scripts:
+        assert selected_profile is not None
+        print(f"Sequence for {selected_profile.name}:")
+        for t in selected_profile.tasks:
+            print(f"{t.index:3d}. [{t.mode}] {t.script_name} {shlex.join(t.args)}".rstrip())
+        return
+
+    if args.explain or args.dry_run:
+        assert selected_profile is not None
+        if not resolve_and_validate_manifest(selected_profile):
+            raise RuntimeError("Manifest validation failed")
+        if args.explain:
+            print_explain(selected_profile)
+            return
+
     locked = False
+    if not inspection or args.reset:
+        if not acquire_lock():
+            sys.exit(1)
+        locked = True
+
+    if args.git_update_only:
+        if args.no_git_update:
+            return  # post-update restart; never start installation
+        if git_check_profile is None or not git_check_profile.git_enabled:
+            raise RuntimeError("Selected profile has no Git update enabled")
+        result = run_git_self_update(git_check_profile, update_only=True, offline=args.offline,
+                                     assume_yes=args.yes, preserve_profile=bool(profile_query))
+        if result not in ("unchanged", "updated"):
+            sys.exit(1)
+        return
+
+    if not inspection and not args.no_git_update and git_check_profile:
+        result = run_git_self_update(git_check_profile, update_only=False, offline=args.offline,
+                                     assume_yes=args.yes, preserve_profile=bool(profile_query))
+        if result not in ("unchanged", "updated"):
+            sys.exit(1)
+
+    assert selected_profile is not None
 
     if args.reset or args.reset_and_run:
         if not locked:
@@ -7323,31 +7740,21 @@ def main() -> None:
         if args.reset and not args.reset_and_run:
             sys.exit(0)
 
-    if args.list_scripts:
-        print(f"Sequence for {selected_profile.name}:")
-        for t in selected_profile.tasks:
-            print(f"{t.index:3d}. [{t.mode}] {t.script_name} {shlex.join(t.args)}".rstrip())
-        sys.exit(0)
-
-    if not locked:
+    if not locked and not inspection:
         if not acquire_lock():
             sys.exit(1)
         locked = True
 
-    if not resolve_and_validate_manifest(selected_profile):
+    if not inspection and not resolve_and_validate_manifest(selected_profile):
         Console(stderr=True).print("[bold red]Manifest validation failed.[/bold red]")
         sys.exit(1)
 
-    if args.explain:
-        print_explain(selected_profile)
-        sys.exit(0)
-
     if args.dry_run:
-        temp_state = StateStore(selected_profile)
+        temp_state = StateStore(selected_profile, read_only=True)
         statuses = temp_state.statuses()
         temp_state.close()
 
-        once_store = OnceStore()
+        once_store = OnceStore(read_only=True)
 
         print("Dry-run validation complete.\n")
         for t in selected_profile.tasks:
@@ -7436,7 +7843,7 @@ def main() -> None:
         )
 
         app.run()
-        sys.exit(app.return_code or 0)
+        sys.exit(app.return_code if app.return_code is not None else app.final_exit_code)
 
     except KeyboardInterrupt:
         Console(stderr=True).print("\n[bold red]:: Interrupted by user.[/]")

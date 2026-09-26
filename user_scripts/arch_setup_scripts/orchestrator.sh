@@ -53,28 +53,12 @@ bootstrap_packages() {
 }
 
 check_internet() {
-    # 1. Native NM connectivity check if available
-    if command -v nmcli >/dev/null 2>&1; then
-        local nm_state
-        nm_state="$(nmcli -t networking connectivity 2>/dev/null || true)"
-        if [[ "$nm_state" == "full" ]]; then
-            return 0
-        fi
-    fi
-
-    # 2. Fast ICMP ping check (1.1.1.1, 8.8.8.8)
-    if command -v ping >/dev/null 2>&1; then
-        if ping -n -q -c 1 -W 1 1.1.1.1 >/dev/null 2>&1 || ping -n -q -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; then
-            return 0
-        fi
-    fi
-
-    # 3. HTTP / DNS checks with short timeouts
+    # Require an HTTP response; a working network interface or DNS alone
+    # does not prove that package mirrors are reachable.
     local url
     local -a urls=(
         "https://archlinux.org"
         "https://geo.mirror.pkgbuild.com"
-        "http://cpcheck.gstatic.com/generate_204"
     )
 
     if command -v curl >/dev/null 2>&1; then
@@ -85,10 +69,16 @@ check_internet() {
         done
     fi
 
-    if command -v getent >/dev/null 2>&1; then
-        if timeout 2 getent hosts archlinux.org >/dev/null 2>&1; then
-            return 0
-        fi
+    if command -v wget >/dev/null 2>&1; then
+        for url in "${urls[@]}"; do
+            if wget -q --timeout=3 -O /dev/null "$url" >/dev/null 2>&1; then
+                return 0
+            fi
+        done
+    fi
+
+    if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+        return 2
     fi
 
     return 1
@@ -101,6 +91,12 @@ require_internet() {
         if check_internet; then
             log SUCCESS "Internet connection verified."
             return 0
+        else
+            local probe_status=$?
+            if (( probe_status == 2 )); then
+                log WARN "No HTTP probe tool is installed; pacman will verify connectivity."
+                return 0
+            fi
         fi
         if (( attempt == 1 )); then
             log INFO "Waiting for network connectivity to initialize..."
@@ -154,6 +150,26 @@ main() {
         exit 1
     fi
 
+    local offline=0 info_only=0 arg
+    for arg in "$@"; do
+        case "$arg" in
+            --offline) offline=1 ;;
+            --help|-h|--version|--doctor|--list|--list-once|--list-scripts|--dry-run|--explain|--reset)
+                info_only=1 ;;
+        esac
+    done
+
+    # Inspection commands must not bootstrap packages or probe the network.
+    if (( info_only )); then
+        local info_python
+        if ! info_python="$(choose_python)"; then
+            log ERROR "Python 3.14+ is required for this command."
+            exit 1
+        fi
+        exec env PYTHONUNBUFFERED=1 PYTHONUTF8=1 PYTHONDONTWRITEBYTECODE=1 \
+            "$info_python" "$ORCHESTRATOR_PY" "$@"
+    fi
+
     local -a sudo_cmd=()
     if (( EUID != 0 )); then
         if ! command -v sudo >/dev/null 2>&1; then
@@ -171,12 +187,19 @@ main() {
     for pkg in "${bootstrap_pkgs[@]}"; do
         pkg_installed "$pkg" || missing_pkgs+=("$pkg")
     done
+    if ! choose_python >/dev/null 2>&1 && pkg_installed python; then
+        missing_pkgs+=(python)
+    fi
 
     if (( EUID == 0 )) && ! pkg_installed sudo; then
         missing_pkgs+=("sudo")
     fi
 
     if (( ${#missing_pkgs[@]} > 0 )); then
+        if (( offline )); then
+            log ERROR "Missing packages in offline mode: ${missing_pkgs[*]}"
+            exit 1
+        fi
         require_internet
 
         if (( ${#sudo_cmd[@]} > 0 )); then
@@ -188,22 +211,12 @@ main() {
         fi
 
         if [[ -f /var/lib/pacman/db.lck ]]; then
-            if command -v pgrep >/dev/null 2>&1 && pgrep -x pacman >/dev/null 2>&1; then
-                log ERROR "Another pacman process is currently running."
-                exit 1
-            fi
-            log WARN "Removing stale pacman lock file: /var/lib/pacman/db.lck"
-            "${sudo_cmd[@]}" rm -f /var/lib/pacman/db.lck
+            log ERROR "Pacman lock exists at /var/lib/pacman/db.lck. Resolve it before retrying."
+            exit 1
         fi
 
         log RUN "Installing missing packages: ${missing_pkgs[*]}"
-        if ! "${sudo_cmd[@]}" pacman -Syu --needed --noconfirm "${missing_pkgs[@]}"; then
-            log WARN "Initial pacman transaction failed. Attempting keyring recovery and retry..."
-            "${sudo_cmd[@]}" pacman -Sy --needed --noconfirm archlinux-keyring || true
-            "${sudo_cmd[@]}" pacman-key --init || true
-            "${sudo_cmd[@]}" pacman-key --populate archlinux || true
-            "${sudo_cmd[@]}" pacman -Syu --needed --noconfirm "${missing_pkgs[@]}"
-        fi
+        "${sudo_cmd[@]}" pacman -Syu --needed --noconfirm "${missing_pkgs[@]}"
 
         log SUCCESS "All dependencies satisfied."
     else
@@ -216,14 +229,18 @@ main() {
         exit 1
     fi
 
-    if ! "$PYTHON_BIN" -c 'import textual, rich, tomllib' >/dev/null 2>&1; then
-        log WARN "Python runtime imports failed. Attempting package refresh..."
+    if ! "$PYTHON_BIN" -c 'import rich, textual, tomllib; from importlib.metadata import version; import re; assert tuple(int(x) for x in re.findall(r"\d+", version("textual"))[:3]) >= (8, 2, 8)' >/dev/null 2>&1; then
+        log WARN "Python runtime imports or Textual version check failed. Repairing packages..."
         if (( ${#sudo_cmd[@]} > 0 )); then
             sudo -v || true
         fi
+        if (( offline )); then
+            log ERROR "Python dependencies are unusable in offline mode."
+            exit 1
+        fi
         require_internet
-        "${sudo_cmd[@]}" pacman -Syu --needed --noconfirm python-textual python-rich || true
-        if ! "$PYTHON_BIN" -c 'import textual, rich, tomllib' >/dev/null 2>&1; then
+        "${sudo_cmd[@]}" pacman -Syu --noconfirm python-textual python-rich
+        if ! "$PYTHON_BIN" -c 'import rich, textual, tomllib; from importlib.metadata import version; import re; assert tuple(int(x) for x in re.findall(r"\d+", version("textual"))[:3]) >= (8, 2, 8)' >/dev/null 2>&1; then
             log ERROR "Python dependencies are still unusable."
             exit 1
         fi
@@ -236,7 +253,9 @@ main() {
 
     # Guarantee connectivity before handing off to the Python orchestrator.
     # The network helper script runs only when the system is offline.
-    require_internet
+    if (( ! offline )); then
+        require_internet
+    fi
 
     local has_allow_root=0
     local arg
