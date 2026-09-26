@@ -881,11 +881,7 @@ impl WallpaperSelectorApp {
             .into();
         }
 
-        if self.animate_carousel {
-            return self.build_motion_carousel();
-        }
-
-        self.build_carousel_at(self.selected_index.unwrap_or(0))
+        self.build_motion_carousel()
     }
 
     fn motion_width(index: usize, position: f32) -> f32 {
@@ -921,8 +917,8 @@ impl WallpaperSelectorApp {
     fn build_motion_carousel(&self) -> Element<'_, Message> {
         let total = self.filtered_indices.len();
         let position = self.visual_position.clamp(0.0, (total - 1) as f32);
-        let start = (position.floor() as usize).saturating_sub(3);
-        let end = ((position.ceil() as usize) + 3).min(total - 1);
+        let start = (position.floor() as usize).saturating_sub(4);
+        let end = ((position.ceil() as usize) + 4).min(total - 1);
         let mut indices: Vec<usize> = (start..=end).collect();
         indices.sort_by(|a, b| {
             (b.abs_diff(position.round() as usize)).cmp(&a.abs_diff(position.round() as usize))
@@ -946,46 +942,6 @@ impl WallpaperSelectorApp {
         cards.clip(true).into()
     }
 
-    fn build_carousel_at(&self, current: usize) -> Element<'_, Message> {
-        let total = self.filtered_indices.len();
-        const SLICE_COUNT: usize = 2; // 2 left + 1 center + 2 right = 5 slices matching skwd-wall frame 1
-
-        let mut row_items = row![].spacing(10).align_y(Vertical::Center);
-
-        // Flanking Left Slices
-        let left_start = current.saturating_sub(SLICE_COUNT);
-        for idx in left_start..current {
-            let dist = current - idx;
-            let item_idx = self.filtered_indices[idx];
-            let item = &self.all_wallpapers[item_idx];
-            row_items = row_items.push(self.build_slice_card(item, idx, dist));
-        }
-
-        // Expanded Center Card
-        let center_item_idx = self.filtered_indices[current];
-        let center_item = &self.all_wallpapers[center_item_idx];
-        row_items =
-            row_items.push(self.build_center_card(center_item, current, EXPANDED_WIDTH, 1.0, 0.0));
-
-        // Flanking Right Slices
-        let right_end = (current + SLICE_COUNT).min(total.saturating_sub(1));
-        if current < total {
-            for idx in (current + 1)..=right_end {
-                let dist = idx - current;
-                let item_idx = self.filtered_indices[idx];
-                let item = &self.all_wallpapers[item_idx];
-                row_items = row_items.push(self.build_slice_card(item, idx, dist));
-            }
-        }
-
-        container(row_items)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(Horizontal::Center)
-            .align_y(Vertical::Center)
-            .into()
-    }
-
     /// Center expanded card matching skwd-wall Frame 1
     fn build_center_card<'a>(
         &'a self,
@@ -996,6 +952,7 @@ impl WallpaperSelectorApp {
         distance: f32,
     ) -> Element<'a, Message> {
         let accent = self.theme.accent;
+        let card_radius = 12.0 + 2.0 * emphasis;
 
         // Image layer (reads thumbnail from disk; NEVER generates synchronously)
         let img_layer: Element<'_, Message> = if item.thumb_path.exists() {
@@ -1003,14 +960,18 @@ impl WallpaperSelectorApp {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .content_fit(ContentFit::Cover)
-                .border_radius(14.0)
+                .border_radius(card_radius)
                 .into()
         } else {
             container(Space::new())
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|_| container::Style {
+                .style(move |_| container::Style {
                     background: Some(Background::Color(Color::from_rgb8(18, 20, 28))),
+                    border: Border {
+                        radius: card_radius.into(),
+                        ..Border::default()
+                    },
                     ..container::Style::default()
                 })
                 .into()
@@ -1095,12 +1056,16 @@ impl WallpaperSelectorApp {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        let dim_alpha = (distance * 0.35).min(0.6);
+        let dim_alpha = (distance * 0.35).min(0.75);
         let dim_overlay = container(Space::new())
             .width(Length::Fill)
             .height(Length::Fill)
             .style(move |_| container::Style {
                 background: Some(Background::Color(Color::from_rgba8(0, 0, 0, dim_alpha))),
+                border: Border {
+                    radius: card_radius.into(),
+                    ..Border::default()
+                },
                 ..container::Style::default()
             });
         let card_stack = Stack::new()
@@ -1109,18 +1074,31 @@ impl WallpaperSelectorApp {
             .push(overlay_column)
             .clip(true);
 
+        let border_color = if emphasis > 0.0 {
+            Color {
+                r: accent.r * emphasis + 1.0 * (1.0 - emphasis),
+                g: accent.g * emphasis + 1.0 * (1.0 - emphasis),
+                b: accent.b * emphasis + 1.0 * (1.0 - emphasis),
+                a: emphasis + (1.0 - emphasis) * 0.08,
+            }
+        } else {
+            Color::from_rgba8(255, 255, 255, 0.08)
+        };
+        let border_width = 1.0 + 0.5 * emphasis;
+
         let card_container = container(card_stack)
             .width(Length::Fixed(width))
             .height(Length::Fixed(CARD_HEIGHT))
             .style(move |_| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(15, 17, 24))),
+                background: Some(Background::Color(if emphasis > 0.5 {
+                    Color::from_rgb8(15, 17, 24)
+                } else {
+                    Color::from_rgb8(14, 16, 22)
+                })),
                 border: Border {
-                    radius: 14.0.into(),
-                    color: Color {
-                        a: emphasis,
-                        ..accent
-                    },
-                    width: 1.5 * emphasis,
+                    radius: card_radius.into(),
+                    color: border_color,
+                    width: border_width,
                 },
                 shadow: Shadow {
                     color: Color {
@@ -1134,6 +1112,7 @@ impl WallpaperSelectorApp {
             });
 
         // Clicking the center card also applies the wallpaper
+        let is_flanking = emphasis <= 0.5;
         mouse_area(
             button(card_container)
                 .padding(0)
@@ -1142,90 +1121,13 @@ impl WallpaperSelectorApp {
                 } else {
                     Message::SelectWallpaper(filtered_idx)
                 })
-                .style(|_theme, _status| button::Style {
-                    background: None,
-                    text_color: Color::WHITE,
-                    border: Border::default(),
-                    shadow: Shadow::default(),
-                    ..button::Style::default()
-                }),
-        )
-        .on_right_press(Message::ApplyWallpaper(filtered_idx, false))
-        .on_middle_press(Message::ToggleFavorite(filtered_idx))
-        .into()
-    }
-
-    /// Slim flanking vertical slice card (matching skwd-wall Frame 1)
-    fn build_slice_card<'a>(
-        &'a self,
-        item: &'a WallpaperItem,
-        filtered_idx: usize,
-        dist: usize,
-    ) -> Element<'a, Message> {
-        let accent = self.theme.accent;
-
-        let img_layer: Element<'_, Message> = if item.thumb_path.exists() {
-            image(item.thumb_path.clone())
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .content_fit(ContentFit::Cover)
-                .border_radius(12.0)
-                .into()
-        } else {
-            container(Space::new())
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(|_| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(18, 20, 28))),
-                    ..container::Style::default()
-                })
-                .into()
-        };
-
-        let dim_alpha = match dist {
-            1 => 0.35,
-            2 => 0.60,
-            _ => 0.75,
-        };
-
-        let dim_overlay = container(Space::new())
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(Color::from_rgba8(0, 0, 0, dim_alpha))),
-                border: Border {
-                    radius: 12.0.into(),
-                    ..Border::default()
-                },
-                ..container::Style::default()
-            });
-
-        let slice_stack = Stack::new().push(img_layer).push(dim_overlay).clip(true);
-
-        let slice_container = container(slice_stack)
-            .width(Length::Fixed(120.0))
-            .height(Length::Fixed(337.5))
-            .style(move |_| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(14, 16, 22))),
-                border: Border {
-                    radius: 12.0.into(),
-                    color: Color::from_rgba8(255, 255, 255, 0.08),
-                    width: 1.0,
-                },
-                ..container::Style::default()
-            });
-
-        mouse_area(
-            button(slice_container)
-                .padding(0)
-                .on_press(Message::SelectWallpaper(filtered_idx))
                 .style(move |_theme, status| {
-                    let is_hovered = status == button::Status::Hovered;
+                    let is_hovered = is_flanking && status == button::Status::Hovered;
                     button::Style {
                         background: None,
                         text_color: Color::WHITE,
                         border: Border {
-                            radius: 12.0.into(),
+                            radius: card_radius.into(),
                             color: if is_hovered {
                                 Color { a: 0.8, ..accent }
                             } else {
