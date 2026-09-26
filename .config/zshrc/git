@@ -221,34 +221,41 @@ function _gitdelta_render_stream() {
     emulate -L zsh
     setopt localoptions extendedglob
 
-    local target=${1-}
+    local target=${1-} mode=${2-}
+    shift 2 2>/dev/null || shift $#
+    local -a file_filters=( "$@" )
+    local -a filter_arg=()
+    (( $#file_filters )) && filter_arg=( -- "${file_filters[@]}" )
+
     local -a stat_lines numstat_lines
     local C_DIM=$'\e[38;5;242m' C_GREEN=$'\e[32m' C_RED=$'\e[31m' C_RESET=$'\e[0m'
     local TAB=$'\t'
 
     if [[ -n $target ]]; then
         local header
-        header="$(git_dusky show --color=always --decorate=short \
-            --date=format-local:'%Y-%m-%d %H:%M' \
-            --format='%C(bold blue)󰏖 %h%C(reset) %C(bold green)%an%C(reset) %C(dim)%ad%C(reset)%d%n%C(bold yellow)%s%C(reset)' \
-            --no-patch "$target")"
-        stat_lines=( ${(f)"$(git_dusky show --color=always --stat-width=1000 --stat-name-width=1000 --stat-graph-width=20 --format='' "$target")"} )
-        numstat_lines=( ${(f)"$(git_dusky show --numstat --format='' "$target")"} )
+        if [[ $mode != "fzf_items" ]]; then
+            header="$(git_dusky show --color=always --decorate=short \
+                --date=format-local:'%Y-%m-%d %H:%M' \
+                --format='%C(bold blue)󰏖 %h%C(reset) %C(bold green)%an%C(reset) %C(dim)%ad%C(reset)%d%n%C(bold yellow)%s%C(reset)' \
+                --no-patch "$target")"
+        fi
+        stat_lines=( ${(f)"$(git_dusky show --color=always --stat-width=1000 --stat-name-width=1000 --stat-graph-width=20 --format='' "$target" "${filter_arg[@]}")"} )
+        numstat_lines=( ${(f)"$(git_dusky show --numstat --format='' "$target" "${filter_arg[@]}")"} )
         if [[ $#stat_lines -eq 0 ]]; then
             [[ -n $header ]] && print -r -- "$header"
             return 0
         fi
         [[ -n $header ]] && print -r -- "$header"$'\n'
     else
-        stat_lines=( ${(f)"$(git_dusky diff --color=always --stat-width=1000 --stat-name-width=1000 --stat-graph-width=20 HEAD)"} )
-        numstat_lines=( ${(f)"$(git_dusky diff --numstat HEAD)"} )
+        stat_lines=( ${(f)"$(git_dusky diff --color=always --stat-width=1000 --stat-name-width=1000 --stat-graph-width=20 HEAD "${filter_arg[@]}")"} )
+        numstat_lines=( ${(f)"$(git_dusky diff --numstat HEAD "${filter_arg[@]}")"} )
         if [[ $#stat_lines -eq 0 ]]; then
             return 0
         fi
     fi
 
     typeset -A num_add num_del det_map det_len dir_color
-    local line a d p rest det det_pad
+    local line a d p rest det det_pad formatted
     integer max_det_w=0 w pad_det next_color_idx=0
     local dir_p file_p lead trail c_dir
     local -a dir_colors=(
@@ -319,35 +326,46 @@ function _gitdelta_render_stream() {
                     gr=${after_pipe#*${cnt}}
                     gr=${gr## #}
                     if [[ -n $gr ]]; then
-                        print -r -- "${raw_p}|${cnt_part}  ${det}${det_pad}  ${gr}" 2>/dev/null || break
+                        formatted="${raw_p}|${cnt_part}  ${det}${det_pad}  ${gr}"
                     else
-                        print -r -- "${raw_p}|${cnt_part}  ${det}" 2>/dev/null || break
+                        formatted="${raw_p}|${cnt_part}  ${det}"
                     fi
                 else
-                    print -r -- "${raw_p}|${after_pipe}  ${det}" 2>/dev/null || break
+                    formatted="${raw_p}|${after_pipe}  ${det}"
+                fi
+
+                if [[ $mode == "fzf_items" ]]; then
+                    print -r -- "${clean_p}${TAB}${formatted}" 2>/dev/null || break
+                else
+                    print -r -- "${formatted}" 2>/dev/null || break
                 fi
                 continue
             fi
         fi
-        print -r -- "$line" 2>/dev/null || break
+        [[ $mode != "fzf_items" ]] && print -r -- "$line" 2>/dev/null || break
     done
+
+    [[ $mode == "fzf_items" ]] && return 0
+
     print -r -- "" 2>/dev/null || true
 
     if [[ -n $target ]]; then
-        git_dusky show --patch --format="" "$target"
+        git_dusky show --patch --format="" "$target" "${filter_arg[@]}"
     else
-        git_dusky diff --patch HEAD
+        git_dusky diff --patch HEAD "${filter_arg[@]}"
     fi
 }
 
 function _gitdelta_show() {
     emulate -L zsh
+    local target=${1-} mode=${2-}
+    shift 2 2>/dev/null || shift $#
     if (( ! $+commands[delta] )); then
-        _gitdelta_render_stream "$1"
+        _gitdelta_render_stream "$target" "$mode" "$@"
     elif [[ -t 1 ]]; then
-        _gitdelta_render_stream "$1" | delta
+        _gitdelta_render_stream "$target" "$mode" "$@" | delta
     else
-        _gitdelta_render_stream "$1" | delta --paging=never
+        _gitdelta_render_stream "$target" "$mode" "$@" | delta --paging=never
     fi
 }
 
@@ -424,12 +442,130 @@ function _gitdelta_browse() {
 }
 
 # -----------------------------------------------------------------------------
-# 8. gitdelta router
+# 8. fzf file diff browser
+# -----------------------------------------------------------------------------
+function _gitdelta_select() {
+    emulate -L zsh
+    setopt localoptions extendedglob
+    local c_bg c_fg c_acc c_mut c_ok sel key file target line_num REPLY TAB=$'\t'
+    local -a sel_lines lines
+    local -i rc=0
+
+    if (( ! $+commands[fzf] )); then
+        print -ru2 -- "gitdelta: fzf is required for 'gitdelta select'."
+        return 1
+    fi
+
+    # Support optional commit number: gitdelta select [N]
+    if [[ -n ${1-} ]]; then
+        local n=$1
+        if [[ $n != <1-> ]]; then
+            print -ru2 -- 'Usage: gitdelta select [N]  —  N = Nth-last commit (default: uncommitted changes)'
+            return 1
+        fi
+        if ! git_dusky rev-parse --verify --quiet "HEAD~$(( n - 1 ))" >/dev/null 2>&1; then
+            print -ru2 -- "No commit that far back — history is shorter than ${n}."
+            return 1
+        fi
+        target="HEAD~$(( n - 1 ))"
+    else
+        git_dusky_add_list || return $?
+        if ! _git_dusky_have_head; then
+            print -ru2 -- 'gitdelta: no commits yet — nothing to diff against HEAD.'
+            return 1
+        fi
+        target=""
+    fi
+
+    _gitdelta_matugen bg      '#1d100a'; c_bg=$REPLY
+    _gitdelta_matugen fg      '#f8ddd2'; c_fg=$REPLY
+    _gitdelta_matugen accent  '#ffb694'; c_acc=$REPLY
+    _gitdelta_matugen muted   '#55433b'; c_mut=$REPLY
+    _gitdelta_matugen success '#f0be79'; c_ok=$REPLY
+
+    local preview
+    preview="/usr/bin/git --git-dir=${(q)DUSKY_GIT_DIR} --work-tree=${(q)HOME}"
+    if [[ -n $target ]]; then
+        preview+=" show --color=always --patch --format='' ${(q)target} -- {1}"
+    else
+        preview+=" diff --color=always --patch HEAD -- {1}"
+    fi
+    (( $+commands[delta] )) && preview+=' | delta --paging=never --width=$FZF_PREVIEW_COLUMNS'
+
+    lines=( ${(f)"$(_gitdelta_render_stream "$target" "fzf_items")"} )
+    if (( $#lines == 0 )); then
+        print -ru2 -- 'gitdelta: no changed files to select.'
+        return 0
+    fi
+
+    sel=$(printf '%s\n' "${lines[@]}" \
+        | fzf --ansi \
+            --delimiter="$TAB" \
+            --with-nth=2 \
+            --expect='ctrl-e,enter' \
+            --prompt='󰏖 files ❯ ' \
+            --pointer='▶' \
+            --height=100% \
+            --layout=reverse \
+            --border=rounded \
+            --border-label=' 󰏖 dusky file diff browser ' \
+            --border-label-pos=2 \
+            --preview-window='right,70%,border-left,wrap' \
+            --preview-label=' file diff ' \
+            --preview-label-pos=center \
+            --preview="$preview" \
+            --header='[ENTER] view diff   [ctrl-e] edit file   [ctrl-/] toggle preview   [q/ESC] quit' \
+            --bind='q:abort,ctrl-/:toggle-preview' \
+            --color="bg:$c_bg,bg+:$c_mut,fg:$c_fg,fg+:$c_fg" \
+            --color="hl:$c_acc,hl+:$c_acc,pointer:$c_ok,marker:$c_ok" \
+            --color="prompt:$c_acc,info:$c_acc,border:$c_mut,label:$c_acc")
+    rc=$?
+    (( rc == 0 )) || return 0
+    [[ -n $sel ]] || return 0
+
+    sel_lines=( ${(f)sel} )
+    if (( $#sel_lines >= 2 )); then
+        key=${sel_lines[1]}
+        file=${sel_lines[2]%%$TAB*}
+    elif (( $#sel_lines == 1 )); then
+        key=""
+        file=${sel_lines[1]%%$TAB*}
+    fi
+    [[ -n $file ]] || return 0
+
+    if [[ $key == 'ctrl-e' ]]; then
+        local editor=${EDITOR:-nvim}
+        local filepath="$HOME/$file"
+        if [[ ! -f $filepath ]]; then
+            print -ru2 -- "gitdelta: cannot edit '$filepath' (file not found on disk)."
+            return 1
+        fi
+        line_num=0
+        local h match mbegin mend
+        for h in ${(f)"$(git_dusky diff -U0 HEAD -- "$file" 2>/dev/null)"}; do
+            if [[ $h == (#b)@@\ -[0-9]#(,[0-9]#)#\ \+([0-9]##)* ]]; then
+                line_num=$match[2]
+                break
+            fi
+        done
+        if (( line_num > 0 )); then
+            "$editor" "+$line_num" "$filepath"
+        else
+            "$editor" "$filepath"
+        fi
+        return $?
+    fi
+
+    _gitdelta_show "$target" "" "$file"
+}
+
+# -----------------------------------------------------------------------------
+# 9. gitdelta router
 # -----------------------------------------------------------------------------
 function gitdelta() {
     emulate -L zsh
     setopt localoptions extendedglob
-    local n
+    local n target
 
     if (( $# == 0 )); then
         git_dusky_add_list || return $?
@@ -450,25 +586,76 @@ function gitdelta() {
     case $1 in
         -h|--help)
             print -rl -- \
-                'gitdelta          uncommitted work-tree changes vs HEAD (stages the manifest first)' \
-                'gitdelta N        Nth most recent commit, 1 = HEAD' \
-                'gitdelta list     fzf commit browser with live delta preview'
+                'gitdelta            uncommitted work-tree changes vs HEAD (stages the manifest first)' \
+                'gitdelta select [N] interactive fzf file diff browser (N = optional commit number)' \
+                'gitdelta FILE       show diff for a specific file (full path or partial name)' \
+                'gitdelta N          Nth most recent commit, 1 = HEAD' \
+                'gitdelta N FILE     show diff for FILE in Nth commit' \
+                'gitdelta list       fzf commit browser with live delta preview'
             return 0 ;;
         list)
             _gitdelta_browse
             return $? ;;
+        select|pick)
+            shift
+            _gitdelta_select "$@"
+            return $? ;;
     esac
 
     n=$1
-    if [[ $n != <1-> ]]; then     # native numeric glob: no regex, no $MATCH leak
-        print -ru2 -- 'Usage: gitdelta [N|list]  —  no arg: uncommitted changes · N = Nth-last commit · list = fzf browser'
-        return 1
+    if [[ $n == <1-> ]]; then
+        if ! git_dusky rev-parse --verify --quiet "HEAD~$(( n - 1 ))" >/dev/null 2>&1; then
+            print -ru2 -- "No commit that far back — history is shorter than ${n}."
+            return 1
+        fi
+        target="HEAD~$(( n - 1 ))"
+        shift
+        if (( $# == 0 )); then
+            _gitdelta_show "$target"
+            return $?
+        fi
+    else
+        target=""
     fi
-    if ! git_dusky rev-parse --verify --quiet "HEAD~$(( n - 1 ))" >/dev/null 2>&1; then
-        print -ru2 -- "No commit that far back — history is shorter than ${n}."
-        return 1
+
+    # Handle file path or pattern arguments
+    local query=$1
+    local -a changed_files matches
+    if [[ -n $target ]]; then
+        changed_files=( ${(f)"$(git_dusky show --name-only --format='' "$target")"} )
+    else
+        changed_files=( ${(f)"$(git_dusky diff --name-only HEAD)"} )
     fi
-    _gitdelta_show "HEAD~$(( n - 1 ))"
+    if (( $#changed_files == 0 )); then
+        print -ru2 -- 'gitdelta: no changed files.'
+        return 0
+    fi
+
+    # 1. Exact match
+    if (( ${changed_files[(I)$query]} )); then
+        _gitdelta_show "$target" "" "$query"
+        return $?
+    fi
+
+    # 2. Path relative to $HOME
+    local abs REPLY
+    abs=${query:a}
+    if _git_dusky_relpath "$abs"; then
+        if (( ${changed_files[(I)$REPLY]} )); then
+            _gitdelta_show "$target" "" "$REPLY"
+            return $?
+        fi
+    fi
+
+    # 3. Substring / pattern match against changed files
+    matches=( ${(M)changed_files:#*$query*} )
+    if (( $#matches >= 1 )); then
+        _gitdelta_show "$target" "" "${matches[@]}"
+        return $?
+    fi
+
+    print -ru2 -- "gitdelta: no changed file matching '$query'."
+    return 1
 }
 
 # -----------------------------------------------------------------------------
