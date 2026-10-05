@@ -208,6 +208,15 @@ post_hook   = '''
   pkill -SIGUSR1 -x kitty || :
 '''
 
+[templates.ghostty]
+input_path  = '~/.config/matugen/templates/ghostty'
+output_path = '~/.config/matugen/generated/Matugen.ghostty'
+post_hook   = '''
+  mkdir -p "$HOME/.config/ghostty/themes"
+  ln -nfs "$HOME/.config/matugen/generated/Matugen.ghostty" "$HOME/.config/ghostty/themes/Matugen"
+  pkill -SIGUSR2 -x ghostty || :
+'''
+
 [templates.dusky_tui]
 input_path  = '~/.config/matugen/templates/dusky_tui.json'
 output_path = '~/.config/matugen/generated/dusky_tui.json'
