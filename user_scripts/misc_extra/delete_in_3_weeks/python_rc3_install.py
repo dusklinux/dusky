@@ -3,15 +3,16 @@
 
 Run with the distro Python 3.14+; /usr/bin/python* is never modified.
     python_rc3_install.py [check]
-    python_rc3_install.py install [--reinstall] [--no-default]
-    python_rc3_install.py --undo
+    python_rc3_install.py install [--reinstall] [--no-default] [--force] [--tarball PATH]
+    python_rc3_install.py --undo [--purge]
 
 Installation shadows python and python3 in /usr/local/bin. That directory
 must precede /usr/bin in users' PATH for /usr/bin/env python3 shebangs.
 After upgrading the distro Python to stable 3.15+, run --undo.
 Undo removes recorded files and restores prior shadow symlinks; files added
-later (including installed packages) are retained. Recreate 3.14 virtual
-environments with 3.15; their interpreters and packages are not migrated.
+later (including installed packages) are retained unless --purge is specified.
+Recreate 3.14 virtual environments with 3.15; their interpreters and packages
+are not migrated.
 """
 
 import argparse
@@ -23,6 +24,7 @@ import json
 import logging
 import os
 import platform
+import pwd
 import re
 import shutil
 import subprocess
@@ -323,21 +325,58 @@ def cmd_install(args: argparse.Namespace) -> int:
             check_path()
         log.info("Already installed; default links updated.")
         return 0
+    allow_force = bool(getattr(args, "reinstall", False) or getattr(args, "force", False))
     if marker is None and exists(WANT_BIN):
-        die(f"Unmanaged {WANT_BIN}; move the existing build aside first.")
+        if not allow_force:
+            die(f"Unmanaged {WANT_BIN}; pass --force (or --reinstall) to replace, or move the existing build aside first.")
+        log.warning("Unmanaged %s detected; replacing under --force.", WANT_BIN)
 
     # Stage on the destination filesystem, not /tmp (often a small tmpfs).
     with tempfile.TemporaryDirectory(prefix=".dusky-python-stage-", dir=PREFIX) as temporary:
         work = Path(temporary)
-        url = f"{args.base_url.rstrip('/')}/{args.repo}/releases/download/{args.tag}/{ASSET}"
-        expected = args.checksum or fetch_checksum(url)
-        if not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
-            die("Expected SHA-256 must contain exactly 64 hexadecimal digits.")
         tarball = work / ASSET
-        download(url, tarball)
-        actual = sha256_of(tarball)
-        if actual != expected.lower():
-            die(f"Checksum mismatch: expected {expected}, got {actual}")
+        local_src = None
+        user = os.environ.get("SUDO_USER")
+        try:
+            user_home = Path(pwd.getpwnam(user).pw_dir) if user else Path.home()
+        except (KeyError, ValueError):
+            user_home = Path.home()
+
+        if getattr(args, "tarball", None):
+            local_src = Path(args.tarball).resolve()
+            if not local_src.is_file():
+                die(f"Specified tarball not found: {args.tarball}")
+        elif (Path.cwd() / ASSET).is_file():
+            local_src = Path.cwd() / ASSET
+        elif (user_home / ".cache/dusky-python-build" / ASSET).is_file():
+            local_src = user_home / ".cache/dusky-python-build" / ASSET
+        elif (Path.home() / ".cache/dusky-python-build" / ASSET).is_file():
+            local_src = Path.home() / ".cache/dusky-python-build" / ASSET
+
+        if local_src is not None:
+            log.info("Using local archive: %s", local_src)
+            shutil.copy2(local_src, tarball)
+            expected = args.checksum or ""
+            if not expected:
+                sha_file = local_src.with_suffix(local_src.suffix + ".sha256")
+                if not sha_file.is_file():
+                    sha_file = local_src.with_name(local_src.name + ".sha256")
+                if sha_file.is_file():
+                    fields = sha_file.read_text().split()
+                    if fields:
+                        expected = fields[0]
+            actual = sha256_of(tarball)
+            if expected and actual.lower() != expected.lower():
+                die(f"Checksum mismatch: expected {expected}, got {actual}")
+        else:
+            url = f"{args.base_url.rstrip('/')}/{args.repo}/releases/download/{args.tag}/{ASSET}"
+            expected = args.checksum or fetch_checksum(url)
+            if not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
+                die("Expected SHA-256 must contain exactly 64 hexadecimal digits.")
+            download(url, tarball)
+            actual = sha256_of(tarball)
+            if actual.lower() != expected.lower():
+                die(f"Checksum mismatch: expected {expected}, got {actual}")
         stage = work / "stage"
         with tarfile.open(tarball, "r:gz") as archive:
             expanded = sum(member.size for member in archive if member.isfile())
@@ -358,7 +397,8 @@ def cmd_install(args: argparse.Namespace) -> int:
                 if exists(dest) and (not dest.is_dir() or (dest.is_symlink() and rel not in SHARED_DIRS)):
                     die(f"Directory conflict: {dest}")
             elif exists(dest) and rel not in old_files:
-                die(f"Refusing to overwrite unmanaged file: {dest}")
+                if not allow_force:
+                    die(f"Refusing to overwrite unmanaged file: {dest}. Pass --force to replace.")
         new_marker = {
             "version": VERSION, "arch": ARCH_TAG, "repo": args.repo,
             "tag": args.tag, "asset": ASSET, "asset_sha256": actual,
@@ -392,13 +432,31 @@ def cmd_install(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_uninstall(_args: argparse.Namespace) -> int:
+def cmd_uninstall(args: argparse.Namespace) -> int:
     if probe_bin(SYSTEM_PYTHON) is None:
         die("Distro Python is missing or broken; cannot undo.")
     marker = read_marker()
+    allow_force = bool(getattr(args, "force", False))
+    purge = bool(getattr(args, "purge", False) or allow_force)
     if marker is None:
         if exists(WANT_BIN):
-            die("No installation marker; refusing to guess which files belong to this build.")
+            if not allow_force:
+                die("No installation marker; refusing to guess which files belong to this build. Pass --force to clean known trees.")
+            with transaction() as tx:
+                for name, target in SHADOW_LINKS.items():
+                    link = PREFIX / "bin" / name
+                    if link.is_symlink() and os.readlink(link) == target:
+                        tx.save(link)
+                for rel in OWNED_FILES:
+                    path = PREFIX / rel
+                    if exists(path) and (path.is_symlink() or not path.is_dir()):
+                        tx.save(path)
+                for tree in OWNED_TREES:
+                    path = PREFIX / tree
+                    if path.is_dir() and not path.is_symlink():
+                        shutil.rmtree(path, ignore_errors=True)
+            log.info("Force undo complete. Distro Python untouched.")
+            return 0
         log.info("No managed installation. Nothing to undo.")
         return 0
     with transaction() as tx:
@@ -414,8 +472,13 @@ def cmd_uninstall(_args: argparse.Namespace) -> int:
             die("Distro Python failed verification during undo.")
     prune_dirs(marker["files"])
     for tree in OWNED_TREES:
-        if (PREFIX / tree).exists():
-            log.info("Retained unrecorded files under %s.", PREFIX / tree)
+        t_path = PREFIX / tree
+        if t_path.exists():
+            if purge:
+                shutil.rmtree(t_path, ignore_errors=True)
+                log.info("Purged %s.", t_path)
+            else:
+                log.info("Retained unrecorded files under %s (pass --purge to remove).", t_path)
     log.info("Undo complete. Distro Python untouched.")
     return 0
 
@@ -444,6 +507,9 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--checksum", help="Expected SHA-256; otherwise fetch asset.sha256.")
     common.add_argument("-v", "--verbose", action="store_true")
     common.add_argument("--undo", action="store_true", help="Same as uninstall.")
+    common.add_argument("--force", action="store_true", help="Force action on unmanaged files.")
+    common.add_argument("--purge", action="store_true", help="Purge all files under owned trees on undo.")
+    common.add_argument("--tarball", help="Use local archive instead of downloading.")
     # Parent arguments must be attached before creating subparsers.
     parser = argparse.ArgumentParser(description=__doc__, parents=[common], allow_abbrev=False,
                                     formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -458,8 +524,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    defaults = {"repo": REPO, "tag": TAG, "base_url": BASE_URL, "checksum": "",
-                "verbose": False, "undo": False}
+    defaults = {
+        "repo": REPO, "tag": TAG, "base_url": BASE_URL, "checksum": "",
+        "verbose": False, "undo": False, "force": False, "purge": False,
+        "tarball": None, "reinstall": False, "no_default": False,
+    }
     for name, value in defaults.items():
         if not hasattr(args, name):
             setattr(args, name, value)
