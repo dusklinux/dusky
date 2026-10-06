@@ -104,7 +104,7 @@ CORE_USER_DEFS = {
     ),
     "update_checker.timer": (
         "Automatic Update Checker",
-        "Periodically checks your package manager for system updates and caches the result for your status bar.",
+        "Checks local main against origin/main, then refreshes cached Pacman, AUR, and Dusky commit counts for the panels and status bar. Runs 10 minutes after the user manager starts, then every 6 hours after completion, with up to 10 minutes of jitter. Toggle this timer; its static companion service is started by the timer.",
     ),
     "hypridle.service": (
         "Hyprland Idle Daemon",
@@ -182,6 +182,10 @@ CORE_USER_DEFS = {
 }
 
 CORE_SYSTEM_DEFS = {
+    "docker.service": (
+        "Docker Engine",
+        "Runs and manages Docker containers. The switch controls daemon startup enablement and starts or stops the service.",
+    ),
     "vsftpd.service": (
         "FTP Server (vsftpd)",
         "Very Secure FTP Daemon. Manages the FTP server for file transfers. Only enable this if you actively need to host an FTP server.",
@@ -374,6 +378,9 @@ CORE_USER_SECTIONS = (
 )
 
 CORE_SYSTEM_SECTIONS = (
+    ("Containers", (
+        "docker.service",
+    )),
     ("Power & Hardware", (
         "tlp.service", "battery-charge-limit.service", "dusky_cpu.service",
         "dusky_kbd_backlight.service", "ghelper-gpu-boot.service",

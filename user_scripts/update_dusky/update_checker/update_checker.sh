@@ -2,14 +2,13 @@
 # -----------------------------------------------------------------------------
 # Dusky Git Checker & TUI Viewer
 # -----------------------------------------------------------------------------
-# Target: Arch Linux (latest) / Bash 5.3.9 / Bare Git Repo
-# Requires: git, coreutils (sleep, timeout, mktemp, mv, rm), util-linux (flock, stty), openssh
+# Target: Arch Linux (latest) / Bash 5.3.20+ / Bare Git Repo
+# Requires: git, coreutils, util-linux (setsid, flock, stty); openssh for SSH remotes
 # Optional: notify-send
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
 export LC_NUMERIC=C LC_COLLATE=C
-shopt -s extglob
 
 # =============================================================================
 # CONFIGURATION
@@ -21,14 +20,16 @@ declare -r STATE_FILE="${HOME}/.config/dusky/settings/dusky_update_behind_commit
 declare -r STATE_DIR="${STATE_FILE%/*}"
 
 declare -ri NOTIFY_THRESHOLD=30
-declare -ri TIMEOUT_SEC=15
+declare -ri TIMEOUT_SEC=30
 declare -ri TIMEOUT_KILL_SEC=2
-# Covers the worst-case lock hold time: primary fetch + HTTPS fallback fetch.
-declare -ri LOCK_WAIT_SEC=$(( (TIMEOUT_SEC + TIMEOUT_KILL_SEC) * 2 + 1 ))
-# Interactive TUI should not block 35s on a stale lock held by a background job.
-declare -ri LOCK_WAIT_TUI_SEC=3
-declare -ri OFFLINE_CHECK_SEC=3
-declare -r LOCK_BASENAME="dusky_git_fetch.${UID}.lock"
+# One deadline covers the entire background worker, including Git helpers.
+declare -r LOCK_FILE="${STATE_DIR}/.dusky_update_check.lock"
+declare -r STATE_LOCK_FILE="${STATE_DIR}/.dusky_update_state.lock"
+declare -r GENERATION_FILE="${STATE_DIR}/.dusky_update_generation"
+# A private ref avoids interfering with remote tracking or the updater's refs.
+declare -r UPSTREAM_REF='refs/dusky-checker/upstream/main'
+declare -r FETCH_REFSPEC="+refs/heads/main:${UPSTREAM_REF}"
+declare MODE=background WAIT=0 WORKER=0
 
 # TUI settings
 declare -r APP_TITLE="Dusky Updates"
@@ -44,15 +45,11 @@ declare -ri MIN_TERM_ROWS=$(( MAX_DISPLAY_ROWS + 9 ))
 declare _debug_env="${DEBUG:-0}"
 declare -i DEBUG=0
 if [[ $_debug_env =~ ^[1-9][0-9]*$ ]]; then
-    DEBUG=$_debug_env
+    DEBUG=1
 fi
 unset _debug_env
 
-# Default refspec for --fix-config
-declare -r FETCH_REFSPEC='+refs/heads/*:refs/remotes/origin/*'
-
-# Git command with safe.directory override to prevent dubious ownership halts
-declare -ra GIT_CMD=(/usr/bin/git -c "safe.directory=*" --git-dir="$GIT_DIR" --work-tree="$WORK_TREE")
+declare -ra GIT_CMD=(/usr/bin/git --git-dir="$GIT_DIR" --work-tree="$WORK_TREE")
 
 # ANSI ESCAPE CODES
 declare _hbuf=''
@@ -82,6 +79,7 @@ declare ORIGINAL_STTY="" FETCH_STATUS="OK" FETCH_INFO=""
 # CLEANUP & TRAPS (Registered early so ANY failure is caught and exits 0)
 # =============================================================================
 
+# shellcheck disable=SC2329 # Invoked by EXIT/signal traps.
 cleanup() {
     # Disable traps to avoid recursion during shutdown
     trap - ERR EXIT INT TERM HUP 2>/dev/null || true
@@ -117,46 +115,6 @@ _debug() {
 _sleep() {
     /usr/bin/sleep "${1:-1}" 2>/dev/null || true
     return 0
-}
-
-# Fast offline probe: checks routing table first (0ms), then raw IP TCP ping (30ms).
-# Returns 0 if online, 1 if definitively offline.
-_has_network() {
-    # 1. Immediate kernel route table check (~0ms, no network packets)
-    local ip_cmd
-    ip_cmd=$(command -v /usr/bin/ip || command -v ip || true)
-    if [[ -n "$ip_cmd" ]]; then
-        if ! "$ip_cmd" route show default 2>/dev/null | grep -q default && \
-           ! "$ip_cmd" route get 1.1.1.1 &>/dev/null; then
-            _debug "No network route found via ip route"
-            return 1
-        fi
-    fi
-
-    # 2. Proxy environment variable check
-    if [[ -n ${http_proxy:-} || -n ${https_proxy:-} || -n ${HTTP_PROXY:-} || -n ${HTTPS_PROXY:-} || -n ${ALL_PROXY:-} ]]; then
-        _debug "Proxy environment detected, assuming online"
-        return 0
-    fi
-
-    # 3. Direct TCP probes to high-availability DNS root IPs (bypasses DNS resolution)
-    if /usr/bin/timeout 2 bash -c 'exec 3<>/dev/tcp/1.1.1.1/53' 2>/dev/null || \
-       /usr/bin/timeout 2 bash -c 'exec 3<>/dev/tcp/8.8.8.8/53' 2>/dev/null || \
-       /usr/bin/timeout 2 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443' 2>/dev/null; then
-        return 0
-    fi
-
-    # 4. Host probe fallback
-    if /usr/bin/timeout 3 bash -c 'exec 3<>/dev/tcp/github.com/443' 2>/dev/null; then
-        return 0
-    fi
-
-    # 5. ICMP probe fallback
-    if /usr/bin/timeout 2 /usr/bin/ping -q -c1 -W1 1.1.1.1 >/dev/null 2>&1; then
-        return 0
-    fi
-
-    return 1
 }
 
 _strip_ansi() {
@@ -201,83 +159,24 @@ _ellipsize() {
     return 0
 }
 
-_redact_url() {
-    local url=$1
-    local -n _out_ref=$2
-
-    _out_ref=$url
-    if [[ $url =~ ^([[:alpha:]][[:alnum:]+.-]*://)[^/@]+@(.+)$ ]]; then
-        _out_ref="${BASH_REMATCH[1]}***@${BASH_REMATCH[2]}"
-    elif [[ $url =~ ^[^/@]+@([^:]+:.+)$ ]]; then
-        _out_ref="***@${BASH_REMATCH[1]}"
-    fi
-    return 0
-}
-
-origin_to_https_url() {
-    local origin_url=$1
-    local -n _out_ref=$2
-
-    _out_ref=''
-
-    if [[ $origin_url =~ ^https?://.+$ ]]; then
-        _out_ref=$origin_url
-        return 0
-    fi
-
-    if [[ $origin_url =~ ^git://([^/]+)/(.+)$ ]]; then
-        _out_ref="https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-        return 0
-    fi
-
-    if [[ $origin_url =~ ^ssh://([^@/]+@)?([^/:]+)(:[0-9]+)?/(.+)$ ]]; then
-        _out_ref="https://${BASH_REMATCH[2]}/${BASH_REMATCH[4]}"
-        return 0
-    fi
-
-    if [[ $origin_url =~ ^([^@/]+@)?([^:]+):(.+)$ ]]; then
-        _out_ref="https://${BASH_REMATCH[2]}/${BASH_REMATCH[3]}"
-        return 0
-    fi
-
-    return 1
-}
-
-get_lock_file() {
-    local lock_dir=''
-
-    if [[ -n ${XDG_RUNTIME_DIR:-} && -d ${XDG_RUNTIME_DIR:-} && -w ${XDG_RUNTIME_DIR:-} ]]; then
-        lock_dir=$XDG_RUNTIME_DIR
-    elif [[ -d $STATE_DIR && -w $STATE_DIR ]] || mkdir -p -m 700 -- "$STATE_DIR" 2>/dev/null; then
-        lock_dir=$STATE_DIR
-    else
-        lock_dir="/tmp"
-    fi
-
-    printf '%s/%s' "$lock_dir" "$LOCK_BASENAME"
-    return 0
-}
-
 git_fetch() {
-    local ssh_cmd="/usr/bin/ssh -oBatchMode=yes -oStrictHostKeyChecking=accept-new -oConnectTimeout=${TIMEOUT_SEC}"
-
-    if GIT_TERMINAL_PROMPT=0 \
-       GIT_ASKPASS="" \
-       SSH_ASKPASS="" \
-       GIT_SSH_COMMAND="$ssh_cmd" \
-       /usr/bin/timeout --kill-after="$TIMEOUT_KILL_SEC" "$TIMEOUT_SEC" \
-       "${GIT_CMD[@]}" \
-       -c credential.interactive=never \
-       fetch \
-       --quiet \
-       --prune \
-       --no-write-fetch-head \
-       --no-auto-gc \
-       "$@" \
-       2>/dev/null; then
-        return 0
+    local source=''
+    source=$("${GIT_CMD[@]}" remote get-url origin 2>/dev/null) || return 1
+    # Public GitHub reads need no SSH key, agent, host prompt, or fallback retry.
+    case $source in
+        git@github.com:*) source="https://github.com/${source#git@github.com:}" ;;
+        ssh://git@github.com/*) source="https://github.com/${source#ssh://git@github.com/}" ;;
+    esac
+    local -a deadline=()
+    if [[ $MODE == tui ]]; then
+        deadline=(/usr/bin/timeout --kill-after="$TIMEOUT_KILL_SEC" 15)
     fi
-    return 1
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/usr/bin/false SSH_ASKPASS=/usr/bin/false \
+    GIT_SSH_COMMAND='/usr/bin/ssh -oBatchMode=yes -oConnectTimeout=10' \
+        "${deadline[@]}" "${GIT_CMD[@]}" -c credential.interactive=false \
+        fetch --quiet --no-tags --no-prune --no-prune-tags --refmap= \
+        --no-recurse-submodules --no-write-fetch-head --no-auto-maintenance \
+        --no-write-commit-graph -- "$source" "$FETCH_REFSPEC" 2>/dev/null
 }
 
 _git_rev_count() {
@@ -301,15 +200,13 @@ write_state_file() {
     [[ -d "$STATE_DIR" ]] || mkdir -p "$STATE_DIR" 2>/dev/null || true
 
     if tmp=$(/usr/bin/mktemp --tmpdir="$STATE_DIR" '.dusky_update_behind_commit.XXXXXX' 2>/dev/null); then
-        if printf '%s\n' "$value" > "$tmp" 2>/dev/null && /usr/bin/mv -f -- "$tmp" "$STATE_FILE" 2>/dev/null; then
+        if printf '%s\n' "$value" > "$tmp" 2>/dev/null && /usr/bin/mv --force --no-target-directory -- "$tmp" "$STATE_FILE" 2>/dev/null; then
             return 0
         fi
         /usr/bin/rm -f -- "$tmp" 2>/dev/null || true
     fi
 
-    # Fallback to direct write if mktemp fails
-    printf '%s\n' "$value" > "$STATE_FILE" 2>/dev/null || return 1
-    return 0
+    return 1
 }
 
 read_state_value() {
@@ -317,7 +214,7 @@ read_state_value() {
 
     [[ -r "$STATE_FILE" ]] || return 1
     IFS= read -r value < "$STATE_FILE" 2>/dev/null || return 1
-    [[ $value =~ ^-?[0-9]+$ ]] || return 1
+    [[ $value =~ ^(0|[1-9][0-9]{0,17})$ ]] || return 1
 
     printf '%s' "$value"
     return 0
@@ -348,20 +245,6 @@ terminal_fits_ui() {
 # =============================================================================
 
 validate_environment() {
-    local cmd=''
-
-    if (( BASH_VERSINFO[0] < 5 )); then
-        printf 'ERROR: Bash 5.0+ required (found %s)\n' "$BASH_VERSION" >&2
-        return 1
-    fi
-
-    for cmd in git timeout flock mktemp mv rm sleep ssh; do
-        if ! command -v "$cmd" &>/dev/null && ! [[ -x "/usr/bin/$cmd" ]]; then
-            printf 'ERROR: Required command not found: %s\n' "$cmd" >&2
-            return 1
-        fi
-    done
-
     [[ -d "$WORK_TREE" ]] || {
         printf 'ERROR: Work tree not found: %s\n' "$WORK_TREE" >&2
         return 1
@@ -386,7 +269,7 @@ validate_environment() {
 }
 
 validate_terminal() {
-    if ! command -v /usr/bin/stty &>/dev/null && ! command -v stty &>/dev/null; then
+    if [[ ! -x /usr/bin/stty ]]; then
         printf 'ERROR: Required command not found: stty\n' >&2
         return 1
     fi
@@ -410,311 +293,126 @@ validate_terminal() {
 # ROBUST FETCH LOGIC
 # =============================================================================
 
-get_fetch_remote() {
-    local head_branch='' remote=''
-
-    if head_branch=$("${GIT_CMD[@]}" symbolic-ref --quiet --short HEAD 2>/dev/null) &&
-       [[ -n $head_branch ]] &&
-       remote=$("${GIT_CMD[@]}" config --get "branch.${head_branch}.remote" 2>/dev/null) &&
-       [[ -n $remote ]]; then
-        printf '%s' "$remote"
-        return 0
-    fi
-
-    if "${GIT_CMD[@]}" remote get-url origin &>/dev/null; then
-        printf 'origin'
-        return 0
-    fi
-
-    local -a remotes=()
-    mapfile -t remotes < <("${GIT_CMD[@]}" remote 2>/dev/null)
-    if (( ${#remotes[@]} == 1 )) && [[ -n ${remotes[0]:-} ]]; then
-        printf '%s' "${remotes[0]}"
-        return 0
-    fi
-
-    return 1
-}
-
 robust_fetch() {
-    FETCH_INFO=""
-
-    local lock_file='' remote_url='' https_url='' redacted_url='' fetch_remote='' fetch_refspec=''
-    local lock_fd=-1
-    local -i rc=1
-    local _fetch_mode="bg"
-    if [[ ${1:-} == "--tui" ]]; then
-        _fetch_mode="tui"
-        shift
-    fi
-
-    # Fast offline check
-    if ! _has_network; then
-        FETCH_INFO="Network unavailable (offline)"
-        _debug "Offline probe failed - skipping fetch"
+    mkdir -p -- "$STATE_DIR" 2>/dev/null || return 1
+    exec {GLOBAL_LOCK_FD}> "$LOCK_FILE" || return 1
+    if ! /usr/bin/flock --nonblocking "$GLOBAL_LOCK_FD"; then
+        FETCH_INFO='Another update check is running'
         return 1
     fi
-
-    if ! fetch_remote=$(get_fetch_remote); then
-        FETCH_INFO="No suitable remote configured"
-        _debug "No fetch remote found"
-        return 1
-    fi
-
-    fetch_refspec="+refs/heads/*:refs/remotes/${fetch_remote}/*"
-
-    if ! remote_url=$("${GIT_CMD[@]}" remote get-url "$fetch_remote" 2>/dev/null); then
-        FETCH_INFO="Remote '${fetch_remote}' is not configured"
-        _debug "Failed to resolve remote URL for: $fetch_remote"
-        return 1
-    fi
-
-    _redact_url "$remote_url" redacted_url
-    _debug "Fetch remote: $fetch_remote"
-    _debug "Remote URL: $redacted_url"
-
-    if ! lock_file=$(get_lock_file); then
-        FETCH_INFO="Cannot determine fetch lock file"
-        _debug "Failed to determine fetch lock file"
-        return 1
-    fi
-
-    if ! exec {lock_fd}> "$lock_file" 2>/dev/null; then
-        FETCH_INFO="Cannot open fetch lock file"
-        _debug "Failed to open fetch lock: $lock_file"
-        return 1
-    fi
-    GLOBAL_LOCK_FD=$lock_fd
-
-    local -i _lock_wait=$LOCK_WAIT_SEC
-    if [[ $_fetch_mode == "tui" ]] || [[ -t 0 && -t 1 ]]; then
-        _lock_wait=$LOCK_WAIT_TUI_SEC
-    fi
-    _debug "Lock wait: ${_lock_wait}s (mode=${_fetch_mode})"
-
-    if ! /usr/bin/flock -w "$_lock_wait" "$lock_fd"; then
-        FETCH_INFO="Another update check is already running"
-        _debug "Could not acquire fetch lock: $lock_file"
-        if (( GLOBAL_LOCK_FD >= 0 )); then
-            exec {GLOBAL_LOCK_FD}>&- 2>/dev/null || true
-            GLOBAL_LOCK_FD=-1
-        fi
-        return 1
-    fi
-
-    _debug "Trying: git fetch ${fetch_remote} with refspec ${fetch_refspec}"
-    if git_fetch "$fetch_remote" "$fetch_refspec"; then
-        FETCH_INFO="Fetched via ${fetch_remote}"
-        _debug "Fetch succeeded"
-        rc=0
-    else
-        _debug "Primary fetch failed, attempting HTTPS fallback"
-        if ! origin_to_https_url "$remote_url" https_url; then
-            FETCH_INFO="Primary fetch failed and no HTTPS fallback is available"
-            _debug "URL format not recognized"
-        elif [[ $https_url == "$remote_url" ]]; then
-            FETCH_INFO="Primary fetch failed"
-            _debug "HTTPS fallback identical to primary URL - skipped"
-        else
-            _redact_url "$https_url" redacted_url
-            _debug "HTTPS URL: $redacted_url"
-            if git_fetch "$https_url" "$fetch_refspec"; then
-                FETCH_INFO="Fetched via HTTPS fallback"
-                _debug "HTTPS fetch succeeded"
-                rc=0
-            else
-                FETCH_INFO="All fetch methods failed"
-                _debug "All fetch attempts exhausted"
-            fi
-        fi
-    fi
-
-    if (( GLOBAL_LOCK_FD >= 0 )); then
-        exec {GLOBAL_LOCK_FD}>&- 2>/dev/null || true
-        GLOBAL_LOCK_FD=-1
-    fi
-    return "$rc"
-}
-
-# =============================================================================
-# UPSTREAM DETECTION
-# =============================================================================
-
-get_upstream_ref() {
-    local tracking='' head_branch='' remote=''
-
-    # 1. Explicit upstream tracking branch
-    if tracking=$("${GIT_CMD[@]}" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null) &&
-       [[ -n $tracking && $tracking != '@{upstream}' ]]; then
-        printf '%s' "$tracking"
+    if git_fetch; then
+        FETCH_INFO='Fetched main'
         return 0
     fi
-
-    # 2. Remote tracking HEAD symbolic ref
-    if tracking=$("${GIT_CMD[@]}" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) &&
-       [[ -n $tracking ]]; then
-        printf '%s' "$tracking"
-        return 0
-    fi
-
-    # 3. Detect current branch and probe matching remote branch
-    head_branch=$("${GIT_CMD[@]}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-    if [[ -n $head_branch ]]; then
-        for remote in origin "$("${GIT_CMD[@]}" remote 2>/dev/null | head -n 1 || true)"; do
-            [[ -n $remote ]] || continue
-            if "${GIT_CMD[@]}" rev-parse --verify --quiet "refs/remotes/${remote}/${head_branch}" &>/dev/null || \
-               "${GIT_CMD[@]}" rev-parse --verify --quiet "${remote}/${head_branch}" &>/dev/null; then
-                printf '%s/%s' "$remote" "$head_branch"
-                return 0
-            fi
-        done
-    fi
-
-    # 4. Probe common main/master branches on origin
-    local ref=''
-    for ref in origin/main origin/master; do
-        if "${GIT_CMD[@]}" rev-parse --verify --quiet "$ref" &>/dev/null; then
-            printf '%s' "$ref"
-            return 0
-        fi
-    done
-
-    # 5. Single-remote repos whose remote isn't named 'origin'
-    local -a remotes=()
-    mapfile -t remotes < <("${GIT_CMD[@]}" remote 2>/dev/null)
-    if (( ${#remotes[@]} == 1 )) && [[ -n ${remotes[0]:-} ]]; then
-        local single=${remotes[0]}
-        if tracking=$("${GIT_CMD[@]}" symbolic-ref -q --short "refs/remotes/${single}/HEAD" 2>/dev/null) &&
-           [[ -n $tracking ]]; then
-            printf '%s' "$tracking"
-            return 0
-        fi
-        for ref in "${single}/main" "${single}/master"; do
-            if "${GIT_CMD[@]}" rev-parse --verify --quiet "$ref" &>/dev/null; then
-                printf '%s' "$ref"
-                return 0
-            fi
-        done
-    fi
-
+    FETCH_INFO='Fetch failed; keeping the last known count'
     return 1
 }
 
-# =============================================================================
-# BACKGROUND MODE (--num)
-# =============================================================================
+# State locks are held only for local reads/writes, never during network I/O.
+# The generation token stops an older worker from undoing an updater reset.
+read_generation() {
+    local value=''
+    if [[ -f $GENERATION_FILE ]]; then
+        IFS= read -r value < "$GENERATION_FILE" || return 1
+    fi
+    printf '%s' "$value"
+}
+
+reset_commits() {
+    local fd
+    mkdir -p -- "$STATE_DIR" || return 0
+    exec {fd}> "$STATE_LOCK_FILE" || return 0
+    /usr/bin/flock --wait 1 "$fd" || return 0
+    printf '%s\n' "$EPOCHREALTIME-$BASHPID-$RANDOM" > "$GENERATION_FILE" || return 0
+    write_state_file 0 || true
+    _debug 'Commit count reset without network access'
+    exec {fd}>&-
+}
 
 run_background_check() {
-    local previous_state=''
-    local -i have_previous_state=0
-    local -i previous_count=0
-    local upstream=''
+    local generation='' current_generation='' previous_state='' fd
     local -i count=0
+    mkdir -p -- "$STATE_DIR" || return 0
+    exec {fd}> "$STATE_LOCK_FILE" || return 0
+    /usr/bin/flock --wait 1 "$fd" || return 0
+    generation=$(read_generation) || return 0
+    exec {fd}>&-
 
-    if previous_state=$(read_state_value 2>/dev/null); then
-        previous_count=$previous_state
-        have_previous_state=1
-    fi
+    validate_environment || { _debug 'Invalid repository; preserving state'; return 0; }
+    robust_fetch || { _debug "$FETCH_INFO"; return 0; }
+    # Compare local main even when a developer has another branch checked out.
+    _git_rev_count count "refs/heads/main..${UPSTREAM_REF}" || {
+        _debug 'Cannot compare local main; preserving state'
+        return 0
+    }
 
-    if ! validate_environment; then
-        _debug "validate_environment failed"
-        if (( ! have_previous_state )); then
-            write_state_file 0 || true
-        fi
-        exit 0
-    fi
+    exec {fd}> "$STATE_LOCK_FILE" || return 0
+    /usr/bin/flock --wait 1 "$fd" || return 0
+    current_generation=$(read_generation) || return 0
+    [[ $generation == "$current_generation" ]] || {
+        _debug 'Reset superseded this check; discarding result'
+        return 0
+    }
+    previous_state=$(read_state_value) || previous_state=0
+    write_state_file "$count" || return 0
+    _debug "main is $count commits behind"
+    exec {fd}>&-
 
-    if ! robust_fetch; then
-        _debug "Fetch failed: $FETCH_INFO"
-        if (( ! have_previous_state )); then
-            if upstream=$(get_upstream_ref 2>/dev/null) && _git_rev_count count "HEAD..${upstream}" 2>/dev/null; then
-                write_state_file "$count" || true
-            else
-                write_state_file 0 || true
-            fi
-        fi
-        exit 0
-    fi
-
-    if ! upstream=$(get_upstream_ref); then
-        _debug "No upstream found"
-        if (( ! have_previous_state )); then
-            write_state_file 0 || true
-        fi
-        exit 0
-    fi
-    _debug "Upstream: $upstream"
-
-    if ! _git_rev_count count "HEAD..${upstream}"; then
-        _debug "Failed to count commits behind"
-        if (( ! have_previous_state )); then
-            write_state_file 0 || true
-        fi
-        exit 0
-    fi
-    _debug "Commits behind: $count"
-
-    write_state_file "$count" || true
-
-    # Desktop notification on threshold crossing
-    if (( count >= NOTIFY_THRESHOLD )) &&
-       (( ! have_previous_state || previous_count < NOTIFY_THRESHOLD )) &&
+    if (( count >= NOTIFY_THRESHOLD && previous_state < NOTIFY_THRESHOLD )) &&
        [[ -x /usr/bin/notify-send ]]; then
-        /usr/bin/timeout --kill-after=1 2 \
-            /usr/bin/notify-send -u normal -t 5000 -i software-update-available \
-            "Dusky Dotfiles" \
-            "Update Available: Your system is ${count} commits behind." \
-            >/dev/null 2>&1 || _debug "notify-send failed"
+        /usr/bin/notify-send -u normal -t 5000 -i software-update-available \
+            'Dusky Dotfiles' "Update available: main is ${count} commits behind." \
+            >/dev/null 2>&1 || true
     fi
-
-    exit 0
 }
 
-# =============================================================================
-# ARGUMENT PARSING
-# =============================================================================
-
 parse_arguments() {
-    if (( $# == 0 )); then
-        return 0
-    fi
-
-    while (( $# > 0 )); do
-        case "$1" in
-            --num)
-                run_background_check
-                exit 0
-                ;;
-            --debug)
-                DEBUG=1
-                _debug "Debug mode enabled"
-                shift
-                ;;
-            --fix-config)
-                if validate_environment; then
-                    printf 'Setting fetch refspec in git config...\n'
-                    "${GIT_CMD[@]}" config --replace-all remote.origin.fetch "$FETCH_REFSPEC" 2>/dev/null || true
-                    printf 'Done. Current value:\n'
-                    "${GIT_CMD[@]}" config --get-all remote.origin.fetch 2>/dev/null || true
-                else
-                    printf 'ERROR: Cannot fix config, environment invalid.\n' >&2
-                fi
-                exit 0
-                ;;
+    local arg
+    for arg in "$@"; do
+        case $arg in
+            --num) ;; # Compatibility alias for the default background check.
+            --reset-commits) MODE=reset ;;
+            --tui) MODE=tui ;;
+            --wait) WAIT=1 ;;
+            --worker) WORKER=1 ;; # Internal entry point, supervised by timeout.
+            --debug) DEBUG=1 ;;
             --help|-h)
-                printf 'Usage: %s [OPTIONS]\n\n' "${0##*/}"
-                printf 'Options:\n'
-                printf '  --num        Output commit count to state file (for Waybar)\n'
-                printf '  --debug      Enable debug output\n'
-                printf '  --fix-config Set the fetch refspec in git config\n'
-                exit 0
-                ;;
-            *)
-                printf 'Unknown option: %s (ignoring)\n' "$1" >&2
-                shift
-                ;;
+                printf '%s\n' \
+                    "Usage: ${0##*/} [--num | --reset-commits | --tui] [--wait] [--debug]" \
+                    'Default / --num: detach and check origin/main; exit 0 immediately.' \
+                    '--reset-commits: detach and atomically write 0; no Git/network calls.' \
+                    '--tui: open the interactive main-branch commit viewer.' \
+                    '--wait: wait for the bounded worker (for systemd ordering).' \
+                    '--debug: print diagnostics with --wait or --tui.' \
+                    'Background workers have a 30-second hard deadline; failures preserve state.'
+                exit 0 ;;
+            *) printf 'Unknown option: %s\n' "$arg" >&2; exit 0 ;;
         esac
     done
+}
+
+launch_worker() {
+    local -a args=(--worker)
+    [[ $MODE == reset ]] && args+=(--reset-commits)
+    (( DEBUG )) && args+=(--debug)
+    if (( WAIT )); then
+        /usr/bin/timeout --signal=KILL "$TIMEOUT_SEC" \
+            /usr/bin/bash -- "${BASH_SOURCE[0]}" "${args[@]}" </dev/null || true
+    else
+        (
+            trap '' HUP
+            # Do not keep callers' pipes, flock descriptors, or PTYs alive.
+            local path fd
+            for path in /proc/"$BASHPID"/fd/*; do
+                fd=${path##*/}
+                if (( fd > 2 && fd != 255 )); then
+                    exec {fd}>&- || true
+                fi
+            done
+            exec /usr/bin/setsid --fork /usr/bin/timeout --signal=KILL "$TIMEOUT_SEC" \
+                /usr/bin/bash -- "${BASH_SOURCE[0]}" "${args[@]}"
+        ) </dev/null >/dev/null 2>&1 &
+    fi
     return 0
 }
 
@@ -730,7 +428,7 @@ load_commits() {
     LOCAL_REV=0
     REMOTE_REV=0
 
-    if ! _git_rev_count LOCAL_REV HEAD; then
+    if ! _git_rev_count LOCAL_REV refs/heads/main; then
         COMMIT_HASHES=("ERR")
         COMMIT_MSGS=("Failed to read local revision count")
         TOTAL_COMMITS=1
@@ -748,15 +446,7 @@ load_commits() {
         return 0
     fi
 
-    local upstream=''
-    if ! upstream=$(get_upstream_ref); then
-        COMMIT_HASHES=("ERR")
-        COMMIT_MSGS=("No upstream branch found (try: git branch -u origin/main)")
-        TOTAL_COMMITS=1
-        FETCH_STATUS="NO_UPSTREAM"
-        REMOTE_REV=0
-        return 0
-    fi
+    local upstream=$UPSTREAM_REF
 
     if ! _git_rev_count REMOTE_REV "$upstream"; then
         COMMIT_HASHES=("ERR")
@@ -768,9 +458,9 @@ load_commits() {
     fi
 
     local -i count=0
-    if ! _git_rev_count count "HEAD..${upstream}"; then
+    if ! _git_rev_count count "refs/heads/main..${upstream}"; then
         COMMIT_HASHES=("ERR")
-        COMMIT_MSGS=("Failed to compare HEAD against ${upstream}")
+        COMMIT_MSGS=("Failed to compare local main against ${upstream}")
         TOTAL_COMMITS=1
         FETCH_STATUS="GIT_ERROR"
         return 0
@@ -792,7 +482,7 @@ load_commits() {
 
     # Fetch up to 500 behind commits so scrolling works smoothly without clipping at 14
     mapfile -t raw_commits < <(
-        "${GIT_CMD[@]}" --no-pager log --max-count=500 "HEAD..${upstream}" \
+        "${GIT_CMD[@]}" --no-pager log --max-count=500 "refs/heads/main..${upstream}" \
             --no-color --pretty=format:'%h|%s' 2>/dev/null
     ) || true
 
@@ -864,10 +554,6 @@ draw_ui() {
         FAIL)
             stats="${C_RED}Fetch Failed: ${FETCH_INFO:0:45}${C_RESET}"
             plain_stats="Fetch Failed: ${FETCH_INFO:0:45}"
-            ;;
-        NO_UPSTREAM)
-            stats="${C_RED}Status: No Upstream Branch${C_RESET}"
-            plain_stats="Status: No Upstream Branch"
             ;;
         GIT_ERROR)
             stats="${C_RED}Status: Git Error${C_RESET}"
@@ -1031,6 +717,18 @@ handle_mouse() {
 
 main() {
     parse_arguments "$@"
+    if (( WORKER )); then
+        if [[ $MODE == reset ]]; then
+            reset_commits
+        else
+            run_background_check
+        fi
+        exit 0
+    fi
+    if [[ $MODE != tui ]]; then
+        launch_worker
+        exit 0
+    fi
 
     if ! validate_environment; then
         _debug "validate_environment failed in main"
@@ -1044,7 +742,7 @@ main() {
 
     printf '\n%sFetching updates...%s\n' "$C_CYAN" "$C_RESET"
 
-    if ! robust_fetch --tui; then
+    if ! robust_fetch; then
         printf '%s[WARNING] Fetch failed: %s%s\n' "$C_YELLOW" "$FETCH_INFO" "$C_RESET"
         FETCH_STATUS="FAIL"
         _sleep 0.5
@@ -1054,8 +752,13 @@ main() {
     fi
 
     load_commits
+    if (( GLOBAL_LOCK_FD >= 0 )); then
+        exec {GLOBAL_LOCK_FD}>&-
+        GLOBAL_LOCK_FD=-1
+    fi
 
-    ORIGINAL_STTY=$(/usr/bin/stty -g 2>/dev/null) || true
+    ORIGINAL_STTY=$(/usr/bin/stty -g 2>/dev/null) || exit 0
+    /usr/bin/stty -icanon -echo || exit 0
     printf '%s%s%s%s' "$MOUSE_ON" "$CUR_HIDE" "$CLR_SCREEN" "$CUR_HOME"
     TUI_ACTIVE=1
 

@@ -74,7 +74,37 @@ PGREP: Final[str | None] = shutil.which("pgrep")
 SYSTEMCTL: Final[str | None] = shutil.which("systemctl")
 
 _RE_MAKO_BADGE: Final[re.Pattern[str]] = re.compile(r"\d+")
-_RE_UPDATES_TOTAL: Final[re.Pattern[str]] = re.compile(r"Total:\s*(\d+)")
+
+def read_update_state(state_dir: Path) -> dict[str, Any]:
+    """Combine cached package counts with the checker's current commit file."""
+    counts: dict[str, int | None] = dict.fromkeys(('pacman', 'aur', 'dusky'))
+    try:
+        data = json.loads((state_dir / 'waybar_update_counter_h').read_text(encoding='utf-8'))
+        cached = data.get('counts') if isinstance(data, dict) else None
+        if isinstance(cached, dict):
+            for category in ('pacman', 'aur'):
+                value = cached.get(category)
+                if type(value) is int and 0 <= value < 10**18:
+                    counts[category] = value
+    except (OSError, UnicodeError, ValueError):
+        pass
+    try:
+        raw = (state_dir / 'dusky_update_behind_commit').read_text(encoding='utf-8').strip()
+        if raw.isascii() and raw.isdecimal() and len(raw) <= 18:
+            counts['dusky'] = int(raw)
+    except (OSError, UnicodeError):
+        pass
+    total = sum(value for value in counts.values() if value is not None)
+    unknown = any(value is None for value in counts.values())
+    details = '\n'.join(
+        f"{name}: {value if value is not None else 'unknown'}"
+        for name, value in zip(('Pacman', 'AUR', 'Dusky commits (main)'), counts.values())
+    )
+    return {
+        'badge': str(total) if total else '?' if unknown else '',
+        'tooltip': f"Cached update counts\n{details}",
+    }
+
 
 # Return unused heap pages to the allocator's backing OS.
 try:

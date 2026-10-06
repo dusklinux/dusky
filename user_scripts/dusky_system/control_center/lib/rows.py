@@ -1302,6 +1302,12 @@ class BaseActionRow(DynamicIconMixin, HyprlandIPCMixin, Adw.ActionRow):
 # =============================================================================
 # ROW IMPLEMENTATIONS
 # =============================================================================
+def _normalize_count_text(value: str | None) -> str | None:
+    if value is not None and value.isascii() and value.isdecimal() and len(value) <= 18:
+        return str(int(value))
+    return None
+
+
 class ButtonRow(BaseActionRow):
     __gtype_name__ = "DuskyButtonRow"
 
@@ -1351,6 +1357,7 @@ class ButtonRow(BaseActionRow):
             self.add_suffix(box)
         else:
             b_label = str(properties.get("button_text", "Run"))
+            self.base_button_text = b_label
             button_icon = properties.get("button_icon")
             show_label = properties.get("show_label")
 
@@ -1374,6 +1381,11 @@ class ButtonRow(BaseActionRow):
             self._apply_base_style(self.base_style)
 
             self.text_file = properties.get("button_text_file")
+            badge_file = properties.get("badge_file")
+            self._shared_badge_state = bool(
+                badge_file and self.text_file
+                and _expand_path(str(badge_file)) == _expand_path(str(self.text_file))
+            )
             if self.text_file:
                 self.text_map = properties.get("button_text_map", {})
                 self.style_map = properties.get("style_map", {})
@@ -1456,17 +1468,19 @@ class ButtonRow(BaseActionRow):
             if self._state.is_destroyed or self._state.misc.generation != generation:
                 return GLib.SOURCE_REMOVE
 
-        if value is None:
-            return GLib.SOURCE_REMOVE
+        if self._shared_badge_state:
+            value = _normalize_count_text(value)
 
         text_map = self.text_map if isinstance(self.text_map, dict) else {}
         style_map = self.style_map if isinstance(self.style_map, dict) else {}
 
-        new_label = text_map.get(value, text_map.get("default", self.btn.get_label()))
+        new_label = text_map.get(value, text_map.get("default", self.base_button_text)) if value is not None else self.base_button_text
+        if self._shared_badge_state and value is not None and int(value) > 0:
+            new_label = f"{new_label} ({value})"
         if self.btn.get_label() != new_label:
             self.btn.set_label(new_label)
 
-        new_style = style_map.get(value, style_map.get("default", self.base_style))
+        new_style = style_map.get(value, style_map.get("default", self.base_style)) if value is not None else self.base_style
         self._apply_base_style(str(new_style).lower())
 
         return GLib.SOURCE_REMOVE
@@ -3595,6 +3609,11 @@ class GridCard(DynamicIconMixin, HyprlandIPCMixin, GridCardBase):
 
         self.badge_label: Gtk.Label | None = None
         badge_path = properties.get("badge_file")
+        self.text_file: str | None = properties.get("button_text_file")
+        self._shared_badge_state = bool(
+            badge_path and self.text_file
+            and _expand_path(str(badge_path)) == _expand_path(self.text_file)
+        )
 
         if badge_path:
             overlay = Gtk.Overlay()
@@ -3618,7 +3637,6 @@ class GridCard(DynamicIconMixin, HyprlandIPCMixin, GridCardBase):
         if _is_dynamic_icon(icon_conf) and isinstance(icon_conf, dict):
             self._start_icon_update_loop(icon_conf)
 
-        self.text_file: str | None = properties.get("button_text_file")
         self.text_map: dict[str, str] = properties.get("button_text_map") or {}
         self.style_map: dict[str, str] = properties.get("style_map") or {}
         self.base_title = str(properties.get("title", "Unnamed"))
@@ -3651,7 +3669,7 @@ class GridCard(DynamicIconMixin, HyprlandIPCMixin, GridCardBase):
     def force_refresh(self) -> None:
         super().force_refresh()
         if self.get_mapped():
-            if self.properties.get("badge_file"):
+            if self.properties.get("badge_file") and not self._shared_badge_state:
                 self._queue_badge_fetch(str(self.properties.get("badge_file")))
             if self.text_file:
                 self._queue_dynamic_state_fetch()
@@ -3719,18 +3737,26 @@ class GridCard(DynamicIconMixin, HyprlandIPCMixin, GridCardBase):
             if self._state.is_destroyed or self._state.value.generation != generation:
                 return GLib.SOURCE_REMOVE
 
-        if val is not None:
-            new_label = self.text_map.get(val, self.text_map.get("default", self.base_title))
-            if self.title_label and self.title_label.get_label() != new_label:
-                self.title_label.set_label(new_label)
+        # Shared count tiles use one read and one GTK callback for badge,
+        # title and style. Missing/invalid counts restore the neutral title.
+        if self._shared_badge_state:
+            val = _normalize_count_text(val)
+            if self.badge_label:
+                show_badge = val is not None and int(val) > 0
+                if show_badge:
+                    self.badge_label.set_label(val)
+                self.badge_label.set_visible(show_badge)
 
-            new_style = self.style_map.get(val, self.style_map.get("default", self.base_style))
-            self._apply_base_style(new_style)
+        new_label = self.text_map.get(val, self.text_map.get("default", self.base_title)) if val is not None else self.base_title
+        if self.title_label and self.title_label.get_label() != new_label:
+            self.title_label.set_label(new_label)
+        new_style = self.style_map.get(val, self.style_map.get("default", self.base_style)) if val is not None else self.base_style
+        self._apply_base_style(new_style)
 
         return GLib.SOURCE_REMOVE
 
     def _start_badge_monitor(self, path_str: str) -> None:
-        if not self.get_mapped():
+        if self._shared_badge_state or not self.get_mapped():
             return
         self._check_badge_tick(path_str)
 

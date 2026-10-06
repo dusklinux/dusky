@@ -78,9 +78,8 @@ button_text_file = "~/.config/dusky/settings/dusky_update_behind_commit"
 button_text_map = { "0" = "Updated", "default" = "Available" }
 style_map = { "0" = "default", "default" = "suggested" }
 [pages.layout.items.on_press]
-type = "exec"
-command = "dusky-run kitty --class update_dusky.py --title \"System Updater\" --hold sh -c \"$HOME/user_scripts/update_dusky/python/update_dusky_supervisor.py\""
-terminal = false
+type = "argv"
+argv = ["dusky-run", "kitty", "--class", "update_dusky.py", "--title", "Dusky Updater", "--hold", "$HOME/user_scripts/update_dusky/python/update_dusky_supervisor.py"]
 
 [[pages.layout.items]]
 type = "grid_card"
@@ -298,6 +297,7 @@ title = "System Updates"
 type = "button"
 [pages.layout.items.layout.items.properties]
 title = "Dusky Updater"
+button_text = "Unknown"
 description = "Update Dusky specific configuration files"
 icon = "software-update-available-symbolic"
 badge_file = "~/.config/dusky/settings/dusky_update_behind_commit"
@@ -305,9 +305,8 @@ button_text_file = "~/.config/dusky/settings/dusky_update_behind_commit"
 button_text_map = { "0" = "Updated", "default" = "Available" }
 style_map = { "0" = "normal", "default" = "suggested" }
 [pages.layout.items.layout.items.on_press]
-type = "exec"
-command = "dusky-run kitty --class update_dusky.py --title \"System Updater\" --hold sh -c \"$HOME/user_scripts/update_dusky/python/update_dusky_supervisor.py\""
-terminal = false
+type = "argv"
+argv = ["dusky-run", "kitty", "--class", "update_dusky.py", "--title", "Dusky Updater", "--hold", "$HOME/user_scripts/update_dusky/python/update_dusky_supervisor.py"]
 
 [[pages.layout.items.layout.items]]
 type = "button"

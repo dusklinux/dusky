@@ -32,7 +32,7 @@ from dusky_backend import (
     LatestValueWorker, RefreshPool, HyprsunsetController, LOG, start_thread, gi_object_c_pointer,
     HAS_VOLUME, HAS_BRIGHTNESS, HAS_LOCAL_BRIGHTNESS, HAS_SUNSET, DDC_MANAGER,
     get_volume, apply_volume, get_brightness, apply_local_brightness, 
-    get_hyprsunset_state, is_hyprsunset_service_enabled, _RE_MAKO_BADGE, _RE_UPDATES_TOTAL,
+    get_hyprsunset_state, is_hyprsunset_service_enabled, _RE_MAKO_BADGE, read_update_state,
     invalidate_service_enabled_cache,
     BRIGHTNESS_POST_SUBMIT_REFRESH_GRACE_SECONDS
 )
@@ -55,7 +55,7 @@ except (OSError, AttributeError, ImportError):
     LIBGRAB = None
 CONFIG_DIR: Final[Path] = Path(HOME) / '.config' / 'dusky' / 'quickpanal'
 CONFIG_FILE: Final[Path] = CONFIG_DIR / 'config.toml'
-DEFAULT_TOML_CONFIG: Final[str] = '[layout]\nshow_weather = true\nshow_metrics = true\nshow_quick_toggles = true\nshow_power_profiles = true\nshow_sliders = true\nshow_notifications = true\nshow_media = false\n\n[[toggles]]\nid = "wifi"\nicon = "network-wireless-symbolic"\nlabel = "Wi-Fi"\ntooltip = "Wi-Fi\\nLMB: Network Manager"\non_left = "foot --app-id=dusky_tui python ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/network_manager/tui_dusky_network.py"\n\n[[toggles]]\nid = "idle"\nicon = "timer-symbolic"\nlabel = "Hypridle"\ntooltip = "Hypridle\\nLMB: Toggle | RMB: Lock Screen"\non_left = "~/user_scripts/waybar/toggle_hypridle.sh"\non_right = "~/user_scripts/hyprlock/lock.sh"\n\n[[toggles]]\nid = "blur"\nicon = "preferences-desktop-appearance-symbolic"\nlabel = "Visuals"\ntooltip = "Visuals\\nLMB: Toggle Blur/Shadow"\non_left = "~/user_scripts/hypr/hypr_blur_opacity_shadow_toggle.sh toggle"\n\n[[toggles]]\nid = "updates"\nicon = "folder-download-symbolic"\nlabel = "Updates"\ntooltip = "Updates\\nLMB: System Update | RMB: Dusky Update"\non_left = "dusky-run kitty --class system_update.sh --hold sh -c \'~/user_scripts/update_dusky/system_update.sh --all\'"\non_right = "dusky-run kitty --class update_dusky.py --hold sh -c \'~/user_scripts/update_dusky/python/update_dusky_supervisor.py\'"\n\n[[toggles]]\nid = "audio"\nicon = "audio-input-microphone-symbolic"\nlabel = "Voice DSP"\ntooltip = "Voice DSP & Noise Cancellation\\nLMB: Open Studio | RMB: Toggle ON/OFF"\non_left = "python3 ~/user_scripts/audio/dusky_audio_studio/dusky_audio_studio.py --gui-only"\non_right = "python3 ~/user_scripts/audio/dusky_audio_studio/dusky_audio_studio.py --toggle"\n'
+DEFAULT_TOML_CONFIG: Final[str] = '[layout]\nshow_weather = true\nshow_metrics = true\nshow_quick_toggles = true\nshow_power_profiles = true\nshow_sliders = true\nshow_notifications = true\nshow_media = false\n\n[[toggles]]\nid = "wifi"\nicon = "network-wireless-symbolic"\nlabel = "Wi-Fi"\ntooltip = "Wi-Fi\\nLMB: Network Manager"\non_left = "foot --app-id=dusky_tui python ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/network_manager/tui_dusky_network.py"\n\n[[toggles]]\nid = "idle"\nicon = "timer-symbolic"\nlabel = "Hypridle"\ntooltip = "Hypridle\\nLMB: Toggle | RMB: Lock Screen"\non_left = "~/user_scripts/waybar/toggle_hypridle.sh"\non_right = "~/user_scripts/hyprlock/lock.sh"\n\n[[toggles]]\nid = "blur"\nicon = "preferences-desktop-appearance-symbolic"\nlabel = "Visuals"\ntooltip = "Visuals\\nLMB: Toggle Blur/Shadow"\non_left = "~/user_scripts/hypr/hypr_blur_opacity_shadow_toggle.sh toggle"\n\n[[toggles]]\nid = "updates"\nicon = "folder-download-symbolic"\nlabel = "Updates"\ntooltip = "Updates\\nLMB: System Update | RMB: Dusky Update"\non_left = "dusky-run kitty --class system_update.sh --hold \\"$HOME/user_scripts/update_dusky/system_update.sh\\" --all"\non_right = "dusky-run kitty --class update_dusky.py --hold \\"$HOME/user_scripts/update_dusky/python/update_dusky_supervisor.py\\""\n\n[[toggles]]\nid = "audio"\nicon = "audio-input-microphone-symbolic"\nlabel = "Voice DSP"\ntooltip = "Voice DSP & Noise Cancellation\\nLMB: Open Studio | RMB: Toggle ON/OFF"\non_left = "python3 ~/user_scripts/audio/dusky_audio_studio/dusky_audio_studio.py --gui-only"\non_right = "python3 ~/user_scripts/audio/dusky_audio_studio/dusky_audio_studio.py --toggle"\n'
 
 def load_or_create_config() -> dict[str, Any]:
     if not CONFIG_FILE.exists() and not atomic_write_text(CONFIG_FILE, DEFAULT_TOML_CONFIG):
@@ -793,24 +793,15 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
     def _fetch_updates(self) -> None:
         if not self.dynamic_toggles.get('updates') or not self._visible:
             return
-        try:
-            with open(f'{HOME}/.config/dusky/settings/waybar_update_counter_h', 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            GLib.idle_add(self._apply_updates, data)
-        except Exception:
-            pass
+        data = read_update_state(Path(HOME) / '.config' / 'dusky' / 'settings')
+        GLib.idle_add(self._apply_updates, data)
 
     def _apply_updates(self, data: dict[str, Any]) -> None:
         tg = self.dynamic_toggles.get('updates')
-        if not tg:
+        if not tg or not self._visible:
             return
-        css = data.get('class', 'updated')
-        final_tt = f"{data.get('tooltip', 'Updates')}\n\nLMB: System Update | RMB: Dusky Update"
-        if css == 'pending':
-            match = _RE_UPDATES_TOTAL.search(data.get('tooltip', ''))
-            tg.update_state(icon='folder-download-symbolic', css_class='normal', tooltip=final_tt, badge=match.group(1) if match else '!')
-        else:
-            tg.update_state(icon='folder-download-symbolic', css_class='normal', tooltip=final_tt, badge='')
+        final_tt = f"{data['tooltip']}\n\nLMB: System Update | RMB: Dusky Update"
+        tg.update_state(icon='folder-download-symbolic', css_class='normal', tooltip=final_tt, badge=data['badge'])
 
     def _on_map(self, *args: Any) -> None:
         self.request_reposition()

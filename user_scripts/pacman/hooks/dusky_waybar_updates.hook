@@ -6,6 +6,6 @@ Type = Package
 Target = *
 
 [Action]
-Description = Triggering Dusky Update Checker Service for active sessions...
+Description = Scheduling Dusky Update Checker for active user managers...
 When = PostTransaction
-Exec = /usr/bin/bash -c 'shopt -s nullglob; for dir in /home/*/; do user="$(basename "$dir")"; uid=$(id -u "$user" 2>/dev/null) || continue; [[ -d "/run/user/$uid" ]] && runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user start update_checker.service; done'
+Exec = /usr/bin/bash -c 'shopt -s nullglob; for dir in /run/user/[0-9]*; do [[ -d "$dir" ]] || continue; IFS=: read -r user _ < <(getent passwd "${dir##*/}" 2>/dev/null) || continue; runuser -u "$user" -- env XDG_RUNTIME_DIR="$dir" systemctl --user --no-block start update_checker.service || true; done; exit 0'

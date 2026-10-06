@@ -7,14 +7,10 @@ Description=Dusky Update Checker Timer (Every 6H)
 OnStartupSec=10min
 
 # Run 6 hours after the last run finished
-OnUnitActiveSec=6h
+OnUnitInactiveSec=6h
 
 # Adds a random delay of 0-10 minutes to avoid synchronized requests
 RandomizedDelaySec=600
-
-# If a scheduled run was missed while the timer was inactive,
-# trigger once when it becomes active again
-Persistent=true
 
 [Install]
 WantedBy=timers.target

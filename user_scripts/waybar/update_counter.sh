@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Execution constraints for ultimate reliability and safety
+# Cached Pacman, AUR and Dusky counts for Waybar and the quick panel.
 
 # FOR Horizontal WAYBARS
 
@@ -47,87 +47,69 @@ for arg in "$@"; do
             SHOW_DUSKY=1 
             ;;
         -h|--help)
-            printf "Usage: %s [--pacman] [--aur] [--dusky]\n" "${0##*/}"
+            printf "Usage: %s [--pacman] [--aur] [--dusky] (default: all)\n" "${0##*/}"
             exit 0
             ;;
     esac
 done
 
-mkdir -p "$STATE_DIR"
-
-# ---------------------------------------------------------
-# Fail-Fast Dependency & Network Verification
-# ---------------------------------------------------------
-if ! command -v jq >/dev/null 2>&1; then
-    err_json='{"text":"err","tooltip":"jq dependency missing","class":"critical"}\n'
-    printf '%s' "$err_json" > "$STATE_DIR/waybar_update_counter_h"
-    printf '%s' "$err_json" > "$STATE_DIR/waybar_update_counter_v"
-    exit 1
+# The updater invokes this without flags; check all categories by default.
+if (( ${#MODULE_ORDER[@]} == 0 )); then
+    SHOW_PACMAN=1 SHOW_AUR=1 SHOW_DUSKY=1
+    MODULE_ORDER=(pacman aur dusky)
 fi
 
-# Hard timeout prevents DNS resolution blackholes from bypassing the ping reply timeout
-if ! timeout 3 ping -q -c 1 -W 2 archlinux.org >/dev/null 2>&1; then
-    off_json='{"text":"󰸞 ?","tooltip":"Offline. Last state unknown.","class":"updated"}\n'
-    printf '%s' "$off_json" > "$STATE_DIR/waybar_update_counter_h"
-    printf '%s' "$off_json" > "$STATE_DIR/waybar_update_counter_v"
-    exit 0
-fi
+mkdir -p -- "$STATE_DIR"
+# Missing dependencies must not replace a useful cache with malformed JSON.
+command -v jq >/dev/null 2>&1 || exit 0
+exec {lock_fd}> "$STATE_DIR/.waybar_update_counter.lock"
+flock --nonblocking "$lock_fd" || exit 0
+TMP_DIR=$(mktemp -d "$STATE_DIR/.dusky_updates.XXXXXX")
+cleanup() {
+    local -a pids=()
+    mapfile -t pids < <(jobs -pr)
+    if (( ${#pids[@]} )); then
+        kill -- "${pids[@]}" 2>/dev/null || true
+        wait "${pids[@]}" 2>/dev/null || true
+    fi
+    rm -rf -- "$TMP_DIR"
+}
+trap cleanup EXIT
+trap 'exit 0' HUP INT TERM
 
-# ---------------------------------------------------------
-# Secure Ephemeral Storage & Bulletproof Trap Handling
-# ---------------------------------------------------------
-TMP_DIR=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/dusky_updates.XXXXXX")
+# Query the real services, without unrelated ICMP probes. A failed/partial
+# query is unknown, never evidence of zero pending packages.
+fetch_package_count() {
+    local name=$1 rc=0
+    shift
+    if timeout --kill-after=3 "$TIMEOUT_SEC" "$@" > "$TMP_DIR/$name.output" 2> "$TMP_DIR/$name.error"; then
+        wc -l < "$TMP_DIR/$name.output" > "$TMP_DIR/$name"
+    else
+        rc=$?
+        if [[ $name == pac && $rc == 2 ]] ||
+           [[ $name == aur && $rc == 1 && ! -s $TMP_DIR/$name.output && ! -s $TMP_DIR/$name.error ]]; then
+            # checkupdates uses 2 for no updates; paru -Qua uses 1 with no
+            # output. A reported error or partial output remains unknown.
+            printf '0\n' > "$TMP_DIR/$name"
+        else
+            printf 'null\n' > "$TMP_DIR/$name"
+        fi
+    fi
+}
 
-trap 'set +e; pids=$(jobs -p); [[ -n "$pids" ]] && kill $pids 2>/dev/null; wait 2>/dev/null; [[ -n "${TMP_DIR:-}" ]] && rm -rf "$TMP_DIR"; rm -f "$STATE_DIR"/waybar_update_counter_*.tmp 2>/dev/null' EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-# ---------------------------------------------------------
-# Concurrent, Sandboxed Data Fetching
-# ---------------------------------------------------------
 if (( SHOW_PACMAN )); then
-    (
-        if command -v checkupdates >/dev/null 2>&1; then
-            # Capture gracefully to prevent pipefail from causing redundant file writes
-            count=$(timeout -k 3 "$TIMEOUT_SEC" checkupdates 2>/dev/null | wc -l || true)
-            echo "${count:-0}" > "$TMP_DIR/pac"
-        else
-            echo "0" > "$TMP_DIR/pac"
-        fi
-    ) &
+    fetch_package_count pac checkupdates --nocolor &
 fi
-
 if (( SHOW_AUR )); then
-    (
-        if command -v paru >/dev/null 2>&1; then
-            # Unified optimization: Capture gracefully to prevent duplicate writes
-            count=$(timeout -k 3 "$TIMEOUT_SEC" paru -Qua 2>/dev/null | wc -l || true)
-            echo "${count:-0}" > "$TMP_DIR/aur"
-        else
-            echo "0" > "$TMP_DIR/aur"
-        fi
-    ) &
+    fetch_package_count aur paru -Qua &
 fi
-
 if (( SHOW_DUSKY )); then
-    (
-        DSK_FILE="$STATE_DIR/dusky_update_behind_commit"
-        if [[ -r "$DSK_FILE" && -f "$DSK_FILE" && ! -p "$DSK_FILE" ]]; then
-            val=""
-            # Execute read and ignore EOF errors to safely handle files missing a trailing newline
-            read -t 1 -r val < "$DSK_FILE" 2>/dev/null || true
-            if [[ -n "${val:-}" ]]; then
-                echo "$val" > "$TMP_DIR/dsk"
-            else
-                echo "0" > "$TMP_DIR/dsk"
-            fi
-        else
-            echo "0" > "$TMP_DIR/dsk"
-        fi
-    ) &
+    val=''
+    if [[ -f "$STATE_DIR/dusky_update_behind_commit" ]]; then
+        IFS= read -r val < "$STATE_DIR/dusky_update_behind_commit" || true
+    fi
+    printf '%s\n' "$val" > "$TMP_DIR/dsk"
 fi
-
 wait
 
 # ---------------------------------------------------------
@@ -136,12 +118,13 @@ wait
 sanitize_count() {
     local file="$1"
     local -n ref_var="$2"
-    ref_var="0"
+    ref_var="null"
     
     if [[ -s "$file" ]]; then
         local raw=""
         read -r raw < "$file" || true
-        if [[ "$raw" =~ ^[0-9]+$ ]]; then
+        if [[ "$raw" =~ ^[0-9]{1,18}$ ]]; then
+            # shellcheck disable=SC2034 # Writes through the caller's nameref.
             ref_var=$(( 10#$raw ))
         fi
     fi
@@ -179,12 +162,22 @@ render_axis() {
         
         "󰣇" as $pac_icon | "󰏔" as $aur_icon | "D" as $dsk_icon | "󰸞" as $check_icon |
 
-        ($pac_c + $aur_c + $dsk_c) as $total |
+        ($order | split(" ")) as $selected |
+        {pacman: $pac_c, aur: $aur_c, dusky: $dsk_c} |
+        with_entries(.key as $key | select($selected | index($key))) as $counts |
+        ([$counts[] | . // 0] | add) as $total |
+        ([$counts | to_entries[] | select(.value == null) | .key] | join(", ")) as $unknown |
 
-        if $total == 0 then
+        if $total == 0 and $unknown != "" then
+            {
+                "text": "󰸞 ?",
+                "tooltip": "Update counts unavailable: \($unknown).",
+                "class": "unknown"
+            }
+        elif $total == 0 then
             {
                 "text": (if $mode == "vertical" then ("0" | pad3) + "\n" + ($check_icon | pad3) else "\($check_icon) 0" end),
-                "tooltip": "System is completely up to date.",
+                "tooltip": "No pending updates in the checked categories.",
                 "class": "updated"
             }
         else
@@ -208,15 +201,15 @@ render_axis() {
 
             {
                 "text": $text,
-                "tooltip": "Pending System Updates (Total: \($total))\n────────────────────────────\n\($tooltip_details)",
+                "tooltip": ("Pending System Updates (Total: \($total))\n────────────────────────────\n\($tooltip_details)" + if $unknown != "" then "\n\nCounts unavailable: \($unknown)." else "" end),
                 "class": "pending"
             }
-        end
-    ' > "${file}.tmp"
+        end | . + {counts: $counts}
+    ' > "$TMP_DIR/axis_${suffix}"
 
-    mv "${file}.tmp" "$file"
+    mv --force --no-target-directory -- "$TMP_DIR/axis_${suffix}" "$file"
 }
 
-# Generate both axes simultaneously
+# Publish each axis with an atomic rename
 render_axis "horizontal" "h"
 render_axis "vertical" "v"

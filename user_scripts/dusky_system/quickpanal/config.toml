@@ -38,8 +38,8 @@ id = "updates"
 icon = "folder-download-symbolic"
 label = "Updates"
 tooltip = "Updates\nLMB: System Update | RMB: Dusky Update"
-on_left = "dusky-run kitty --class system_update.sh --hold sh -c '~/user_scripts/update_dusky/system_update.sh --all'"
-on_right = "dusky-run kitty --class update_dusky.py --hold sh -c '~/user_scripts/update_dusky/python/update_dusky_supervisor.py'"
+on_left = "dusky-run kitty --class system_update.sh --hold \"$HOME/user_scripts/update_dusky/system_update.sh\" --all"
+on_right = "dusky-run kitty --class update_dusky.py --hold \"$HOME/user_scripts/update_dusky/python/update_dusky_supervisor.py\""
 
 [[toggles]]
 id = "audio"
