@@ -212,6 +212,45 @@ class UITests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app._action_tasks)
             self.assertFalse(app._action_procs)
 
+    async def test_notification_sound_is_reaped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            player = Path(directory) / 'player'
+            player.write_text('#!/usr/bin/env python3\n')
+            player.chmod(0o755)
+            app = app_for()
+            async with app.run_test() as pilot:
+                await self.boot(app, pilot)
+                with patch.object(ui, '_AUDIO_PLAYER_CACHE', str(player)), patch.object(ui.Path, 'exists', return_value=True):
+                    ui.DuskyTUI.play_reset_sound(app)
+                for _ in range(100):
+                    await pilot.pause(0.02)
+                    if not app._action_tasks and not app._action_cleanup_tasks:
+                        break
+                self.assertFalse(app._action_tasks)
+                self.assertFalse(app._action_cleanup_tasks)
+                self.assertFalse(app._action_procs)
+
+    async def test_notification_sound_is_stopped_on_quit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            player = Path(directory) / 'player'
+            player.write_text('#!/usr/bin/env python3\nimport time\ntime.sleep(60)\n')
+            player.chmod(0o755)
+            app = app_for()
+            async with app.run_test() as pilot:
+                await self.boot(app, pilot)
+                with patch.object(ui, '_AUDIO_PLAYER_CACHE', str(player)), patch.object(ui.Path, 'exists', return_value=True):
+                    ui.DuskyTUI.play_reset_sound(app)
+                for _ in range(100):
+                    await pilot.pause(0.02)
+                    if app._action_procs:
+                        break
+                self.assertTrue(app._action_procs)
+                processes = list(app._action_procs)
+            self.assertTrue(all(process.returncode is not None for process in processes))
+            self.assertFalse(app._action_tasks)
+            self.assertFalse(app._action_cleanup_tasks)
+            self.assertFalse(app._action_procs)
+
     async def test_sparse_tab_indices(self):
         app = app_for({3: [item()]})
         async with app.run_test() as pilot:
@@ -568,6 +607,63 @@ class UITests(unittest.IsolatedAsyncioTestCase):
                 os.utime(target, (old - 10, old - 10))
                 await app.watch_theme_file()
                 self.assertEqual(app.theme_colors['accent'], '#abcdef')
+
+    async def test_external_reload_hides_removed_setting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'config'
+            target.write_text('initial')
+            engine = Engine({'x': 1})
+            engine.target_path = str(target)
+            app = app_for(engine=engine, hide_missing_items=True)
+            async with app.run_test() as pilot:
+                await self.boot(app, pilot)
+                await app.watch_target_file()
+                target.write_text('changed')
+                engine.state.clear()
+                await app.watch_target_file()
+                self.assertFalse(app.schema[0][0].exists_in_target)
+                self.assertEqual(app.current_option_list.option_count, 0)
+
+    async def test_named_custom_view_respects_option_groups(self):
+        app = app_for({0: [item('visible', group='Visible'), item('hidden', group='Hidden')]},
+                      custom_views={'Tab 0': {'view': 'Content', 'show_options': True,
+                                              'option_groups': ['Visible']}})
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            ids = {option.id for option in app.current_option_list.options}
+            self.assertIn('item_0_0', ids)
+            self.assertNotIn('item_0_1', ids)
+
+    async def test_help_mounts_once_on_demand_and_tracks_selection(self):
+        app = app_for({0: [item('first', extended_help='First documentation'),
+                           item('second', extended_help='Second documentation')]})
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            self.assertFalse(app.query('#help-markdown'))
+            await app.action_toggle_help()
+            await pilot.pause()
+            markdown = app.query_one('#help-markdown', ui.Markdown)
+            self.assertEqual(markdown._dusky_help_text, 'First documentation')
+            app.current_option_list.highlighted = 1
+            await pilot.pause()
+            self.assertEqual(markdown._dusky_help_text, 'Second documentation')
+            await app.action_toggle_help()
+            await app.action_toggle_help()
+            self.assertEqual(len(app.query('#help-markdown')), 1)
+
+    async def test_null_state_is_present_during_boot_and_refresh(self):
+        setting = item('nullable', type_='string', default='default')
+        engine = Engine({'nullable': None})
+        app = app_for({0: [setting]}, engine=engine, hide_missing_items=True)
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            self.assertTrue(setting.exists_in_target)
+            self.assertIsNone(setting.value)
+            app._apply_refreshed_states({app.default_engine_key: {}})
+            self.assertFalse(setting.exists_in_target)
+            app._apply_refreshed_states({app.default_engine_key: {'nullable': None}})
+            self.assertTrue(setting.exists_in_target)
+            self.assertIsNone(setting.value)
 
     async def test_large_decimal_input_is_exact(self):
         app = app_for()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import re
-import copy
-import math
+lazy import copy
+lazy import math
 from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -37,13 +37,13 @@ def _get_css_named() -> frozenset[str]:
             import webcolors
             _css_named_cache = frozenset(webcolors.names(webcolors.CSS3)) | {"rebeccapurple", "transparent"}
         except ImportError:
-            _css_named_cache = _LOWER_KNOWN_COLORS
+            _css_named_cache = _LOWER_KNOWN_COLORS | {"rebeccapurple", "transparent"}
     return _css_named_cache
 
 # Pre-compiled, strictly lower-cased regexes for zero-overhead validation loops
 _RE_THEME_VAR = re.compile(r"(\$|@|var\(|\{\{)")
 _RE_HEX = re.compile(r"^#?(?:[a-f0-9]{3}|[a-f0-9]{4}|[a-f0-9]{6}|[a-f0-9]{8})$")
-_RE_HEX_LOWER = re.compile(r"^0x[a-f0-9]{6,8}$")
+_RE_HEX_LOWER = re.compile(r"0x(?:[a-f0-9]{6}|[a-f0-9]{8})")
 _RE_CSS_FUNC = re.compile(r"^(?:rgba?|hsla?|oklch)\s*\(")
 
 @lru_cache(maxsize=2048)
@@ -57,11 +57,11 @@ def is_theme_variable(val: str) -> bool:
     
     if _RE_THEME_VAR.search(val_lower):
         return True
-    if _RE_HEX.match(val_lower) or _RE_HEX_LOWER.match(val_lower):
+    if _RE_HEX.fullmatch(val_lower) or _RE_HEX_LOWER.fullmatch(val_lower):
         return False
-    if _RE_CSS_FUNC.match(val_lower):
+    if _RE_CSS_FUNC.prefixmatch(val_lower):
         return False
-    if val_lower in _get_css_named():
+    if val_lower in _LOWER_KNOWN_COLORS or val_lower in _get_css_named():
         return False
         
     return True
@@ -83,18 +83,22 @@ def is_trigger_item(item: Any) -> bool:
 type ConfigType = Literal["bool", "int", "float", "string", "cycle", "action", "menu", "picker", "color", "preset"]
 
 def clone_value(v: Any) -> Any:
-    """Structural clone; avoids deepcopy overhead on scalars and standard structures."""
-    match v:
-        case None | bool() | int() | float() | str():
-            return v
-        case list():
-            return [clone_value(x) for x in v]
-        case dict():
-            return {k: clone_value(x) for k, x in v.items()}
-        case tuple():
-            return tuple(clone_value(x) for x in v)
-        case _:
-            return copy.deepcopy(v)
+    """Clone acyclic config values; preserve custom types through deepcopy."""
+    if v is None:
+        return v
+    value_type = type(v)
+    if value_type in _SCALAR_TYPES:
+        return v
+    if value_type is list:
+        return [clone_value(x) for x in v]
+    if value_type is dict:
+        return {k: clone_value(x) for k, x in v.items()}
+    if value_type is tuple:
+        return tuple(clone_value(x) for x in v)
+    return copy.deepcopy(v)
+
+
+_SCALAR_TYPES = frozenset({bool, int, float, str, bytes})
 
 @dataclass(kw_only=True, slots=True)
 class ConfigItem:
@@ -175,7 +179,7 @@ class ConfigItem:
             case "string" | "picker" | "cycle" | "color" if isinstance(raw_val, str):
                 if raw_val.startswith("__VAR__"):
                     return raw_val[7:]
-                if raw_val.startswith('"') and raw_val.endswith('"'):
+                if len(raw_val) >= 2 and raw_val.startswith('"') and raw_val.endswith('"'):
                     return raw_val[1:-1]
         return raw_val
 

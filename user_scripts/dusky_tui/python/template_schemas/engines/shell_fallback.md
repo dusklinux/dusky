@@ -22,14 +22,10 @@ readonly ENABLE_DEBUG="${ENABLE_DEBUG:-false}"
 
 ## Types & value handling
 
-- `bool`: values are coerced to lowercase `true`/`false` according to the schema
-  item type.
-- Strings are written as a double-quoted default word inside the `:-` fallback
-  slot, with shell metacharacters escaped. They round-trip as literal text.
-- Numeric values are written inline. Leading whitespace and trailing comments
-  are preserved.
-- Values must be single-line text without NUL characters. Missing keys or scopes
-  other than `DEFAULT` return an error before any file is changed.
+- `bool`: if the current fallback is `true`/`false`, the new value is coerced
+  to lowercase `true`/`false`.
+- Other values are written inline into the `:-` fallback slot, preserving the
+  leading whitespace and trailing comment.
 
 ## Quirks
 

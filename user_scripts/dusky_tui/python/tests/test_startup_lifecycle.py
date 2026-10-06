@@ -310,18 +310,21 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RuleSnapshotTests(unittest.TestCase):
-    def test_load_reads_rules_once_and_preserves_service_classification(self):
+    def test_load_reads_stored_rules_once_and_preserves_service_classification(self):
         engine = UfwEngine(config_path="/tmp/dusky-test-ufw-snapshot")
-        rules = [RuleRecord(number=1, to_addr="22/tcp", action="ALLOW IN", from_addr="Anywhere")]
+        commands = [["allow", "22/tcp", "comment", "dusky:service:ssh"]]
         with patch.object(engine, "_run_cmd", return_value=subprocess.CompletedProcess([], 0, "", "")), \
              patch.object(engine, "_read_domain_registry", return_value={}), \
-             patch.object(engine, "get_numbered_rules", return_value=rules) as read:
-            expected = {name: "true" if engine.is_service_allowed(name, rules=rules) else "false"
+             patch.object(engine, "get_waydroid_nat", return_value=False), \
+             patch.object(engine, "get_docker_mitigation", return_value=False), \
+             patch.object(engine, "get_icmp_ping_stealth", return_value=False), \
+             patch.object(engine, "_stored_rule_commands", return_value=commands) as read:
+            expected = {name: "true" if engine.is_service_allowed(name, commands=commands) else "false"
                         for name in COMMON_SERVICES}
             state = engine.load_state()
             read.assert_called_once_with()
             self.assertEqual({name: state[f"services/{name}"] for name in COMMON_SERVICES}, expected)
-            self.assertFalse(engine.is_service_allowed("ssh", rules=[]))
+            self.assertFalse(engine.is_service_allowed("ssh", commands=[]))
             read.assert_called_once_with()
 
     def test_banned_ip_classification_reuses_explicit_rules_even_when_empty(self):
@@ -347,6 +350,7 @@ class UfwViewTests(unittest.TestCase):
         schema = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(schema)
         engine = Mock()
+        engine.cache = {}
         engine.get_status_verbose.return_value = {}
         engine.get_numbered_rules.return_value = []
         engine.detect_wan_interface.return_value = None

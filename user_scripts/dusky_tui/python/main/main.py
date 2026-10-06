@@ -2,25 +2,22 @@
 import sys
 import os
 
-# Enable bytecode caching for faster startup.
-sys.dont_write_bytecode = False
-os.environ.pop("PYTHONDONTWRITEBYTECODE", None)
-
 import argparse
-import importlib.util
-import json
-import shutil
-import logging
-import hashlib
-import pwd
-import shlex
-import atexit
-import tempfile
-import re
-from datetime import datetime
+lazy import importlib.util
+lazy import json
+lazy import shutil
+lazy import logging
+lazy import hashlib
+lazy import pwd
+lazy import shlex
+lazy import atexit
+lazy import tempfile
+lazy import re
+lazy from datetime import datetime
 from pathlib import Path
 from functools import lru_cache
-from threading import get_ident
+from collections.abc import MutableMapping
+lazy from threading import get_ident, RLock
 
 
 # =============================================================================
@@ -46,10 +43,10 @@ if os.geteuid() == 0:
             _pw = pwd.getpwuid(int(_pkexec_uid))
             _real_uid = _pw.pw_uid
             _real_gid = _pw.pw_gid
-        except Exception:
+        except (KeyError, ValueError):
             pass
 
-    if _real_uid and _real_gid:
+    if _real_uid is not None and _real_uid != 0 and _real_gid is not None:
         try:
             _pw = pwd.getpwuid(_real_uid)
 
@@ -121,6 +118,8 @@ if os.geteuid() == 0:
 # CACHE & IOC SETUP
 # =============================================================================
 def _setup_cache() -> None:
+    if sys.pycache_prefix is not None or sys.dont_write_bytecode:
+        return
     try:
         xdg_cache_env = os.environ.get("XDG_CACHE_HOME", "").strip()
         xdg_cache = (
@@ -172,7 +171,7 @@ def setup_logging(module_name: str, enable_logging: bool) -> logging.Logger:
         logger.addHandler(fh)
         handler = fh
 
-        print(f"[*] Logging enabled: {log_file}")
+        print(f"[*] Logging enabled: {log_file}", file=sys.stderr)
 
     else:
         handler = logging.NullHandler()
@@ -229,7 +228,7 @@ def manage_backup(target_file: Path, action: str, logger: logging.Logger) -> boo
     match action:
         case "check_restore":
             if not latest_link.exists():
-                print(f"[-] Missing backup for: {resolved.name}")
+                print(f"[-] Missing backup for: {resolved.name}", file=sys.stderr)
                 return False
             return True
 
@@ -238,7 +237,7 @@ def manage_backup(target_file: Path, action: str, logger: logging.Logger) -> boo
                 return False
             actual = latest_link.resolve(strict=True)
             atomic_copy(actual, resolved)
-            print(f"[+] Restored: {resolved} from {actual.name}")
+            print(f"[+] Restored: {resolved} from {actual.name}", file=sys.stderr)
             logger.info("Restored %s from %s", resolved, actual)
             return True
 
@@ -251,7 +250,7 @@ def manage_backup(target_file: Path, action: str, logger: logging.Logger) -> boo
                 tmp_link.unlink()
             tmp_link.symlink_to(backup_path.resolve())
             os.replace(tmp_link, latest_link)
-            print(f"[+] Backup created: {backup_path.name}")
+            print(f"[+] Backup created: {backup_path.name}", file=sys.stderr)
             logger.info("Created backup for %s at %s", resolved, backup_path)
             return True
 
@@ -262,23 +261,23 @@ def manage_backup(target_file: Path, action: str, logger: logging.Logger) -> boo
 # =============================================================================
 # LAZY ENGINE POOL FACTORY
 # =============================================================================
-class LazyEnginePool(dict):
-    """
-    Lazy initialization factory dict. Engines are instantiated ONLY on active lookup.
-    """
+class LazyEnginePool(MutableMapping):
+    """Registered engine mapping; construct each engine once on active lookup."""
     def __init__(self, factory_func):
-        super().__init__()
         self._factory = factory_func
         self._registered_keys: dict[tuple[str, str], None] = {}
+        self._engines = {}
+        self._bound_keys = set()
+        self._factory_lock = RLock()
         self._app = None
         self._owner_thread = get_ident()
 
     def bind_app(self, app) -> None:
         self._app = app
         self._owner_thread = get_ident()
-        for engine in super().values():
-            if hasattr(engine, "set_app"):
-                engine.set_app(app)
+        self._bound_keys.clear()
+        for key in tuple(self._engines):
+            self._bind_engine(key)
 
     def register(self, e_type: str, config_path: str) -> tuple[str, str]:
         key = (e_type, config_path)
@@ -286,40 +285,66 @@ class LazyEnginePool(dict):
         return key
 
     def __getitem__(self, key: tuple[str, str]):
-        if not super().__contains__(key):
-            engine = self._factory(key[0], key[1])
-            if self._app is not None and hasattr(engine, "set_app"):
-                if get_ident() != self._owner_thread and self._app.is_running:
-                    self._app.call_from_thread(engine.set_app, self._app)
-                else:
-                    engine.set_app(self._app)
-            self[key] = engine
-        return super().__getitem__(key)
+        if key not in self._registered_keys:
+            raise KeyError(key)
+        if key not in self._engines:
+            with self._factory_lock:
+                if key not in self._engines:
+                    self._engines[key] = self._factory(*key)
+        # Release the factory lock before waiting on the UI. A simultaneous
+        # UI lookup can bind the published instance itself without deadlocking.
+        # Slow imports/constructors stay on the requesting worker thread.
+        if self._app is not None and key not in self._bound_keys:
+            if self._app.is_running and get_ident() != self._owner_thread:
+                self._app.call_from_thread(self._bind_engine, key)
+            else:
+                self._bind_engine(key)
+        return self._engines[key]
 
-    def get(self, key: tuple[str, str], default=None):
-        if super().__contains__(key):
-            return super().__getitem__(key)
-        if key in self._registered_keys:
-            return self[key]
-        return default
+    def _bind_engine(self, key) -> None:
+        with self._factory_lock:
+            if key in self._bound_keys:
+                return
+            self._bound_keys.add(key)
+            try:
+                if hasattr(engine := self._engines[key], "set_app"):
+                    engine.set_app(self._app)
+            except BaseException:
+                self._bound_keys.discard(key)
+                raise
+
+    def __setitem__(self, key, engine) -> None:
+        self._registered_keys[key] = None
+        self._engines[key] = engine
+        self._bound_keys.discard(key)
+
+    def __delitem__(self, key) -> None:
+        del self._registered_keys[key]
+        self._engines.pop(key, None)
+        self._bound_keys.discard(key)
 
     def __contains__(self, key: object) -> bool:
-        return super().__contains__(key) or key in self._registered_keys
+        return key in self._registered_keys
 
-    def values(self):
-        return (self[key] for key in self)
-
-    def items(self):
-        return ((key, self[key]) for key in self)
-
-    def keys(self):
-        return (self._registered_keys | dict.fromkeys(super().keys())).keys()
+    def get(self, key: tuple[str, str], default=None):
+        # Missing registrations use the default; constructor/binding errors
+        # for registered engines must reach the caller rather than be masked.
+        return self[key] if key in self._registered_keys else default
 
     def __iter__(self):
-        return iter(self.keys())
+        return iter(self._registered_keys)
 
     def __len__(self):
-        return len(self.keys())
+        return len(self._registered_keys)
+
+    def clear(self) -> None:
+        self._registered_keys.clear()
+        self._engines.clear()
+        self._bound_keys.clear()
+
+    def initialized_values(self):
+        """Inspect or shut down engines without constructing unused backends."""
+        return self._engines.values()
 
 
 @lru_cache(maxsize=1024)
@@ -337,16 +362,16 @@ if __name__ == "__main__":
     help_epilog = """
 EXAMPLES:
   1. Launch the TUI normally:
-     python main.py hypr.input_tui
+     python3 main.py hypr.input_tui
 
   2. Headlessly restore all default values (with a backup first):
-     python main.py hypr.input_tui --backup --default
+     python3 main.py hypr.input_tui --backup --default
 
   3. Headlessly change a specific setting (use scope.key if ambiguous):
-     python main.py hypr.input_tui --set border_size=3
+     python3 main.py hypr.input_tui --set border_size=3
 
   4. Generate Markdown documentation for a schema:
-     python main.py hypr.input_tui --export-docs > docs.md
+     python3 main.py hypr.input_tui --export-docs > docs.md
     """
 
     parser = argparse.ArgumentParser(
@@ -497,14 +522,14 @@ EXAMPLES:
     # --- 1.5 DYNAMIC PRIVILEGE ESCALATION BLOCK ---
     # =========================================================================
     if REQUIRE_ROOT and os.geteuid() != 0:
-        print(f"[*] '{APP_TITLE}' requires root privileges. Escalating...")
+        print(f"[*] '{APP_TITLE}' requires root privileges. Escalating...", file=sys.stderr)
         logger.info("Elevating privileges via sudo.")
 
         preserve_vars = [
             "HOME", "USER",
             "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
-            "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "DISPLAY", "TERM", "COLORTERM",
-            "DBUS_SESSION_BUS_ADDRESS", "XAUTHORITY", "LANG", "LC_ALL", "PATH",
+            "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "TERM", "COLORTERM",
+            "DBUS_SESSION_BUS_ADDRESS", "LANG", "LC_ALL", "PATH",
             "PYTHONPATH", "PYTHONPYCACHEPREFIX", "VIRTUAL_ENV", "SUDO_USER", "PKEXEC_UID"
         ]
 
@@ -694,7 +719,10 @@ EXAMPLES:
                 engine_pool.register(override_etype, override_tfile)
 
     # --- 3. PRE-FLIGHT CHECKS (Backups / Restores) ---
-    is_headless = any([args.default, args.reset_key, args.set, args.export_state, args.export_docs])
+    is_headless = (
+        args.default or args.reset_key is not None or args.set is not None
+        or args.export_state or args.export_docs
+    )
 
     unique_targets = {TARGET_FILE}
 
@@ -767,7 +795,7 @@ EXAMPLES:
             print(f"# Configuration Reference: {APP_TITLE}\n")
 
             for tab_idx, items in SCHEMA.items():
-                tab_name = TABS[tab_idx] if isinstance(TABS, dict) else TABS[tab_idx]
+                tab_name = TABS[tab_idx]
                 print(f"## {tab_name}")
 
                 for item in items:
@@ -813,7 +841,7 @@ EXAMPLES:
                         if setting_identity(previous) != setting_identity(item):
                             flat_schema[lookup_key] = None
 
-        if args.set:
+        if args.set is not None:
             if "=" not in args.set:
                 print("[-] Format error: Use --set key=value")
                 sys.exit(1)
@@ -864,7 +892,7 @@ EXAMPLES:
             print(f"[{'OK' if success else 'FAIL'}] {msg}")
             sys.exit(0 if success else 1)
 
-        if args.reset_key:
+        if args.reset_key is not None:
             if args.reset_key not in flat_schema:
                 print(f"[-] Key '{args.reset_key}' not found in schema.")
                 sys.exit(1)
@@ -920,9 +948,10 @@ EXAMPLES:
 
             for ekey, indexed_changes in changes_by_engine.items():
                 changes = list(indexed_changes.values())
-                engine_pool[ekey].load_state()
-                if hasattr(engine_pool[ekey], "write_batch_results"):
-                    results = engine_pool[ekey].write_batch_results(changes)
+                engine = engine_pool[ekey]
+                engine.load_state()
+                if hasattr(engine, "write_batch_results"):
+                    results = engine.write_batch_results(changes)
                     failures = [result.message for result in results.values() if not result.ok]
                     if failures:
                         all_success = False
@@ -930,26 +959,15 @@ EXAMPLES:
                     else:
                         print(f"[*] Restoration Complete for {ekey[0]} backend. Reset {len(results)} items successfully.")
                     continue
-                success, msg, _ = engine_pool[ekey].write_batch(changes)
+                success, msg, _ = engine.write_batch(changes)
 
                 if success:
                     print(f"[*] Restoration Complete for {ekey[0]} backend. Reset {len(changes)} items successfully.")
                 else:
-                    success_count, skip_count = 0, 0
-
-                    for key, scope, val, itype in changes:
-                        ok, _, _ = engine_pool[ekey].write_value(key, scope, val, item_type=itype)
-
-                        if ok:
-                            success_count += 1
-                        else:
-                            skip_count += 1
-
-                    if skip_count == 0:
-                        print(f"[*] Restoration Complete for {ekey[0]} backend via fallback. Reset {success_count} items successfully.")
-                    else:
-                        print(f"[*] Partial Restoration Complete for {ekey[0]} backend. Reset: {success_count} | Skipped: {skip_count}")
-                        all_success = False
+                    # A failed batch may already have applied some writes.
+                    # Replaying it can duplicate side effects or conceal errors.
+                    print(f"[-] Default restoration failed for {ekey[0]} backend: {msg}")
+                    all_success = False
 
             sys.exit(0 if all_success else 1)
 

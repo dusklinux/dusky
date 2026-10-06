@@ -206,7 +206,7 @@ class NetworkUiTests(unittest.IsolatedAsyncioTestCase):
         )
         async with app.run_test(size=(80, 18)) as pilot:
             await pilot.pause()
-            app.action_toggle_help()
+            await app.action_toggle_help()
             shown = []
             original = app._update_help_panel
 

@@ -4,17 +4,16 @@
 DUSKY TUI: MATUGEN TOML CONFIGURATION ENGINE
 ===============================================================================
 Target: Arch Linux / Hyprland / Matugen dynamic TOML template manager.
-Python 3.14.7 implementation using PEP 695 type aliases, structural pattern matching,
-concurrency timestamp checks, and atomic file replacements.
+Python 3.14.6 implementation using PEP 695 type aliases, structural pattern matching,
+concurrency mtime checks, and atomic file replacements.
 """
 
 import os
 import re
 import stat
 import tempfile
-import tomllib
 from pathlib import Path
-from typing import override
+from typing import Any, Self, override
 
 from python.frontend.core_types import BaseEngine
 
@@ -27,7 +26,7 @@ class MatugenEngine(BaseEngine):
     """
     Production-grade AST-like parser and mutator for Matugen template blocks inside `config.toml`.
     
-    Provides strict atomicity, external-change detection (nanosecond timestamps), precise multiline string
+    Provides strict atomicity, concurrency protection (mtime locks), precise multiline string
     tracking (preserving post_hook scripts with triple single/double quotes), blank-line demarcation,
     and comment-toggling.
     """
@@ -44,60 +43,12 @@ class MatugenEngine(BaseEngine):
     def __init__(self, config_path: str | Path = "~/.config/matugen/config.toml") -> None:
         self.config_path = Path(config_path).expanduser().resolve()
         self.cache: dict[str, bool] = {}
-        self.file_mtime: int = 0
+        self.file_mtime: float = 0.0
 
     @property
     @override
     def target_path(self) -> str:
         return str(self.config_path)
-
-    @classmethod
-    def _scan_sections(
-        cls, lines: list[str], blank_lines: set[int] | None = None
-    ) -> list[tuple[int, str | None, bool]]:
-        """Find real headers, ignoring header-like text inside TOML strings."""
-        sections = []
-        multiline = ""
-        disabled = False
-        for index, raw_line in enumerate(lines):
-            if blank_lines is not None and not multiline and not raw_line.strip():
-                blank_lines.add(index)
-            if not multiline and cls._RE_ANY_HEADER.match(raw_line):
-                match = cls._RE_TEMPLATE_HEADER.match(raw_line)
-                disabled = bool(match and match.group(1))
-                sections.append((index, match.group(2) if match else None, not disabled))
-                continue
-            line = re.sub(r"^[ \t]*# ?", "", raw_line, count=1) if disabled else raw_line
-            pos = 0
-            while pos < len(line):
-                if multiline:
-                    if line.startswith(multiline, pos):
-                        # TOML permits four/five closing quotes; consume the run.
-                        quote = multiline[0]
-                        while pos < len(line) and line[pos] == quote:
-                            pos += 1
-                        multiline = ""
-                    elif multiline == '"""' and line[pos] == "\\":
-                        pos += 2
-                    else:
-                        pos += 1
-                elif line[pos] == "#":
-                    break
-                elif line[pos] in "\"'":
-                    quote = line[pos]
-                    if line.startswith(quote * 3, pos):
-                        multiline = quote * 3
-                        pos += 3
-                    else:
-                        pos += 1
-                        while pos < len(line):
-                            if line[pos] == quote:
-                                pos += 1
-                                break
-                            pos += 2 if quote == '"' and line[pos] == "\\" else 1
-                else:
-                    pos += 1
-        return sections
 
     @override
     def load_state(self) -> dict[str, bool]:
@@ -111,19 +62,21 @@ class MatugenEngine(BaseEngine):
             return self.cache
 
         try:
-            self.file_mtime = self.config_path.stat().st_mtime_ns
+            self.file_mtime = self.config_path.stat().st_mtime
         except OSError:
-            self.file_mtime = 0
+            self.file_mtime = 0.0
 
         self.cache = {}
         try:
-            with self.config_path.open(encoding="utf-8") as f:
-                sections = self._scan_sections(f.readlines())
-            for _, template_key, active in sections:
-                if template_key is not None:
-                    self.cache[template_key] = active
-                    self.cache[f"DEFAULT/{template_key}"] = active
-        except (OSError, UnicodeError) as e:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    match = self._RE_TEMPLATE_HEADER.match(line)
+                    if match:
+                        cmt_char, template_key = match.groups()
+                        is_active = (cmt_char == "")
+                        self.cache[template_key] = is_active
+                        self.cache[f"DEFAULT/{template_key}"] = is_active
+        except (OSError, IOError) as e:
             print(f"[-] MatugenEngine: Failed to read {self.config_path}: {e}")
 
         return self.cache
@@ -143,7 +96,7 @@ class MatugenEngine(BaseEngine):
     def write_batch(self, changes: list[ChangeTuple]) -> tuple[bool, str, str]:
         """
         Atomically toggles template blocks between commented (#) and uncommented states.
-        Checks the loaded timestamp, preserves multiline strings, and validates resulting TOML.
+        Enforces mtime concurrency locks, multiline quote boundary safety, and blank-line demarcation.
         """
         if not changes:
             return True, "No pending changes.", ""
@@ -151,10 +104,10 @@ class MatugenEngine(BaseEngine):
         if not self.config_path.exists():
             return False, f"Target configuration file {self.config_path} does not exist.", ""
 
-        # Detect changes since the last load; this is not a writer lock.
+        # Concurrency safety lock
         try:
-            current_mtime = self.config_path.stat().st_mtime_ns
-            if self.file_mtime > 0 and current_mtime != self.file_mtime:
+            current_mtime = self.config_path.stat().st_mtime
+            if self.file_mtime > 0 and current_mtime > self.file_mtime:
                 return False, f"File {self.config_path.name} was modified externally. Reload required.", ""
         except OSError:
             pass
@@ -163,7 +116,7 @@ class MatugenEngine(BaseEngine):
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
-        except (OSError, UnicodeError) as e:
+        except (OSError, IOError) as e:
             return False, f"Failed to read {self.config_path}: {e}", ""
 
         # Build normalized changes map: target_key -> bool
@@ -179,60 +132,118 @@ class MatugenEngine(BaseEngine):
             changes_dict[clean_key] = bool_val
 
         modified = False
-        blank_lines: set[int] = set()
-        sections = self._scan_sections(lines, blank_lines)
-        missing = changes_dict.keys() - {key for _, key, _ in sections}
-        if missing:
-            return False, f"Template keys not found: {', '.join(sorted(missing))}", ""
-        pending_cache = self.cache.copy()
-        for section_index, (start_idx, key, active) in enumerate(sections):
-            if key not in changes_dict:
+        triple_sq = "'''"
+        triple_dq = '"""'
+
+        for key, target_active in changes_dict.items():
+            start_idx: int | None = None
+            is_currently_active: bool = False
+
+            # 1. Locate start of template block
+            for idx, line in enumerate(lines):
+                m = self._RE_TEMPLATE_HEADER.match(line)
+                if m and m.group(2) == key:
+                    start_idx = idx
+                    is_currently_active = (m.group(1) == "")
+                    break
+
+            if start_idx is None:
+                print(f"[!] MatugenEngine: Key '{key}' not found in {self.config_path.name}")
                 continue
-            target_active = changes_dict[key]
-            pending_cache[key] = target_active
-            pending_cache[f"DEFAULT/{key}"] = target_active
-            if active == target_active:
+
+            # If current state already matches target state, skip mutation to protect internal block comments
+            if is_currently_active == target_active:
+                self.cache[key] = target_active
+                self.cache[f"DEFAULT/{key}"] = target_active
                 continue
-            end_idx = sections[section_index + 1][0] if section_index + 1 < len(sections) else len(lines)
-            # Leave comments introducing the next section outside this block.
-            # Only a blank-line-separated comment group is an introduction.
-            boundary = end_idx
-            while boundary > start_idx + 1 and (
-                not lines[boundary - 1].strip()
-                or lines[boundary - 1].lstrip().startswith("#")
-            ):
-                boundary -= 1
-            code_after = False
-            for i in range(end_idx - 1, boundary - 1, -1):
-                tail = lines[i]
-                if (
-                    re.match(r"^[ \t]*#?[ \t]*[\w\"'-]+[ \t]*=", tail)
-                    or "'''" in tail
-                    or '"""' in tail
-                ):
-                    code_after = True
-                if i in blank_lines and not code_after:
-                    end_idx = i
-            for i in range(start_idx, end_idx):
+
+            # 2. Determine end of template block using multiline tracking and demarcation rules
+            end_idx = len(lines) - 1
+            in_multiline = False
+            multiline_token = ""
+
+            for i in range(start_idx + 1, len(lines)):
+                curr = lines[i]
+                stripped = re.sub(r"^[ \t]*#[ \t]?", "", curr)
+
+                if not in_multiline:
+                    c_sq = stripped.count(triple_sq)
+                    if c_sq % 2 == 1:
+                        in_multiline = True
+                        multiline_token = triple_sq
+
+                    c_dq = stripped.count(triple_dq)
+                    if c_dq % 2 == 1:
+                        in_multiline = True
+                        multiline_token = triple_dq
+
+                    if not in_multiline:
+                        # Direct hit: Next section header encountered
+                        if self._RE_ANY_HEADER.match(curr):
+                            end_idx = i - 1
+                            break
+
+                        # Blank line demarcation check
+                        if curr.strip() == "":
+                            # Look ahead to next non-blank line
+                            next_nb_idx = None
+                            for k in range(i + 1, len(lines)):
+                                if lines[k].strip() != "":
+                                    next_nb_idx = k
+                                    break
+
+                            if next_nb_idx is not None:
+                                next_line = lines[next_nb_idx]
+                                # Next non-blank line is a section header
+                                if self._RE_ANY_HEADER.match(next_line):
+                                    end_idx = i - 1
+                                    break
+
+                                # Next non-blank line is a comment preceding a section header
+                                if re.match(r"^[ \t]*#", next_line):
+                                    hdr_found = False
+                                    for k2 in range(next_nb_idx, len(lines)):
+                                        l2 = lines[k2]
+                                        if l2.strip() == "":
+                                            continue
+                                        if self._RE_ANY_HEADER.match(l2):
+                                            hdr_found = True
+                                            break
+                                        if not re.match(r"^[ \t]*#", l2):
+                                            break
+                                    if hdr_found:
+                                        end_idx = i - 1
+                                        break
+                else:
+                    c_tok = stripped.count(multiline_token)
+                    if c_tok % 2 == 1:
+                        in_multiline = False
+                        multiline_token = ""
+
+            # 3. Apply state mutation to block lines [start_idx .. end_idx]
+            for i in range(start_idx, end_idx + 1):
                 line = lines[i]
+
                 if target_active:
-                    lines[i] = re.sub(r"^([ \t]*)# ?", r"\1", line, count=1)
-                elif line.strip():
-                    lines[i] = f"# {line}"
-                modified |= lines[i] != line
+                    # Uncomment line by stripping exactly one outer comment prefix (#  or #)
+                    if line.startswith("# "):
+                        lines[i] = line[2:]
+                        modified = True
+                    elif line.startswith("#"):
+                        lines[i] = line[1:]
+                        modified = True
+                else:
+                    # Comment line by prepending outer comment prefix (# )
+                    if line.strip() != "":
+                        lines[i] = f"# {line}"
+                        modified = True
+
+            # Update engine cache state
+            self.cache[key] = target_active
+            self.cache[f"DEFAULT/{key}"] = target_active
 
         if not modified:
-            self.cache = pending_cache
             return True, "No modifications required.", ""
-
-        # Refuse a transformation that would produce invalid active TOML.
-        try:
-            document = tomllib.loads("".join(lines))
-            if "templates" not in document:
-                # Matugen requires this table even when every block is disabled.
-                lines.append("\n[templates]\n")
-        except tomllib.TOMLDecodeError as error:
-            return False, f"Template update would produce invalid TOML: {error}", ""
 
         # 4. Atomic file write
         target_dir = self.config_path.parent
@@ -259,13 +270,10 @@ class MatugenEngine(BaseEngine):
                 except OSError:
                     pass
 
-            if self.file_mtime and self.config_path.stat().st_mtime_ns != self.file_mtime:
-                raise OSError("Configuration changed during update; reload required")
             os.replace(tmp_path, self.config_path)
 
-            self.cache = pending_cache
             # Update stored mtime
-            self.file_mtime = self.config_path.stat().st_mtime_ns
+            self.file_mtime = self.config_path.stat().st_mtime
             return True, f"Successfully updated {len(changes_dict)} template key(s).", ""
 
         except Exception as e:

@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 import os
 import re
-import json
-import subprocess
-import colorsys
-import shlex
-import shutil
+lazy import json
+lazy import subprocess
+lazy import colorsys
+lazy import shlex
+lazy import shutil
 import asyncio
-import math
+lazy import math
 import sys
-import signal
-import tempfile
+lazy import signal
+lazy import tempfile
 import logging
-import termios
+lazy import termios
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, override
 from collections import deque, defaultdict
+from collections.abc import Mapping
 from functools import lru_cache
 
 from textual import on, events, work
@@ -27,7 +28,7 @@ from textual.containers import Vertical, Horizontal, VerticalScroll
 from textual.css.query import NoMatches
 from textual.geometry import Size, Region, Offset, Spacing
 from textual.layout import Layout, WidgetPlacement
-from textual.widgets import Label, Input, Tabs, Tab, ContentSwitcher, OptionList, Markdown, Static
+lazy from textual.widgets import Label, Input, Tabs, Tab, ContentSwitcher, OptionList, Markdown, Static
 from textual.widgets.option_list import Option, OptionDoesNotExist
 from textual.screen import ModalScreen
 from textual.reactive import reactive
@@ -41,6 +42,7 @@ from rich.cells import cell_len
 
 LOGGER = logging.getLogger(__name__)
 _TARGET_UNREADABLE = object()
+_STATE_MISSING = object()
 
 from python.frontend.core_types import (
     ConfigItem,
@@ -423,7 +425,7 @@ def parse_color_format(val: str) -> str:
     if val.startswith("#"):
         return "hex"
 
-    if _RE_HYPR_HEX.match(val):
+    if _RE_HYPR_HEX.prefixmatch(val):
         return "hypr_hex"
 
     if val.startswith("rgba"):
@@ -474,7 +476,7 @@ def color_to_rgb(val: str) -> tuple[int, int, int]:
                 pass
 
     # Hyprland-style rgb/rgba hex.
-    if hypr_m := _RE_HYPR_HEX.match(val):
+    if hypr_m := _RE_HYPR_HEX.prefixmatch(val):
         v = hypr_m.group(1)
         if len(v) >= 6:
             try:
@@ -483,19 +485,22 @@ def color_to_rgb(val: str) -> tuple[int, int, int]:
                 pass
 
     # Functional rgb/rgba.
-    if m_rgb := _RE_RGB.match(val):
-        return tuple(min(255, int(component)) for component in m_rgb.groups())
+    if m_rgb := _RE_RGB.prefixmatch(val):
+        return tuple(int(min(255, float(component))) for component in m_rgb.groups())
 
     # Functional hsl/hsla.
-    if m_hsl := _RE_HSL.match(val):
-        h = (float(m_hsl.group(1)) % 360.0) / 360.0
-        s = max(0.0, min(1.0, float(m_hsl.group(2)) / 100.0))
-        l_ = max(0.0, min(1.0, float(m_hsl.group(3)) / 100.0))
+    if m_hsl := _RE_HSL.prefixmatch(val):
+        hue, saturation, lightness = map(float, m_hsl.groups())
+        if not all(map(math.isfinite, (hue, saturation, lightness))):
+            return (128, 128, 128)
+        h = (hue % 360.0) / 360.0
+        s = max(0.0, min(1.0, saturation / 100.0))
+        l_ = max(0.0, min(1.0, lightness / 100.0))
         r, g, b = colorsys.hls_to_rgb(h, l_, s)
         return (int(r * 255), int(g * 255), int(b * 255))
 
     # OKLCH.
-    if m_oklch := _RE_OKLCH.match(val):
+    if m_oklch := _RE_OKLCH.prefixmatch(val):
         lightness = float(m_oklch.group(1)) / (100 if m_oklch.group(2) else 1)
         chroma, hue = float(m_oklch.group(3)), float(m_oklch.group(4))
         if not all(map(math.isfinite, (lightness, chroma, hue))):
@@ -530,7 +535,7 @@ def format_rgb(color_name: str, fmt: str, original_val: str) -> str:
 
     if fmt == "hypr_hex":
         alpha = "ff"
-        hypr_m = re.match(r"rgba?\([0-9a-fA-F]{6}([0-9a-fA-F]{2})?\)", original_val.strip())
+        hypr_m = re.prefixmatch(r"rgba?\([0-9a-fA-F]{6}([0-9a-fA-F]{2})?\)", original_val.strip())
         if hypr_m and hypr_m.group(1):
             alpha = hypr_m.group(1)
 
@@ -2262,7 +2267,7 @@ Tooltip {
 
     def __init__(
         self,
-        engine_pool: dict[tuple[str, str], BaseEngine],
+        engine_pool: Mapping[tuple[str, str], BaseEngine],
         default_engine_key: tuple[str, str],
         schema: dict[int, list[ConfigItem]],
         tabs: list[str],
@@ -2609,8 +2614,7 @@ Tooltip {
                             if eager_notices:
                                 yield from self._notice_widgets(i, bottom=True)
 
-                with Vertical(id="help-panel"):
-                    yield Markdown("Select an item to view documentation.", id="help-markdown")
+                yield Vertical(id="help-panel")
 
             with Vertical(id="bottom-dock"):
                 yield Input(id="local-search", placeholder=" Jump to option... (Enter/Esc to close)")
@@ -2742,7 +2746,7 @@ Tooltip {
           - key
         """
         if not state:
-            return None
+            return _STATE_MISSING
 
         scope = item.scope or "DEFAULT"
         candidates = (
@@ -2757,7 +2761,7 @@ Tooltip {
             if candidate in state:
                 return state[candidate]
 
-        return None
+        return _STATE_MISSING
 
     def _get_schema_item(self, tab_idx: int, item_idx: int) -> ConfigItem | None:
         try:
@@ -2777,6 +2781,7 @@ Tooltip {
         self._children_by_parent.clear()
         self._configurable_items.clear()
         self._preset_items.clear()
+        register_engine = getattr(self.engine_pool, "register", None)
 
         for t_idx, items in self.schema.items():
             for i_idx, item in enumerate(items):
@@ -2795,6 +2800,8 @@ Tooltip {
                     ekey = self.default_engine_key
 
                 self._items_by_engine.setdefault(ekey, []).append((t_idx, i_idx, item))
+                if callable(register_engine):
+                    register_engine(*ekey)
 
                 if item.type_ not in ("action", "preset", "menu") and not item.read_only:
                     self._configurable_items.append((t_idx, i_idx, item))
@@ -2937,6 +2944,7 @@ Tooltip {
                 indent_prefix,
                 item.expanded,
                 bool(item.warning_msg),
+                item.read_only,
                 item.is_parent,
                 ratio_bucket,
                 self.auto_save,
@@ -3168,7 +3176,7 @@ Tooltip {
                                 if prefix_match:
                                     extracted_name = prefix_match.group(1)
 
-                                elif re.match(r"^[a-zA-Z0-9_-]+$", norm_val):
+                                elif re.fullmatch(r"[a-zA-Z0-9_-]+", norm_val):
                                     extracted_name = norm_val
 
                             if extracted_name:
@@ -3323,7 +3331,7 @@ Tooltip {
         self._schema_dirty_counter += 1
 
     def _load_user_presets(self) -> None:
-        """Synchronous compatibility wrapper for already UI-bound callers."""
+        """Reload preset records for callers already on the UI thread."""
         self._apply_user_presets(self._read_user_presets())
 
     # =========================================================================
@@ -3338,11 +3346,12 @@ Tooltip {
         expanded_path = Path(file_path).expanduser().resolve()
 
         if touch_first:
-            expanded_path.parent.mkdir(parents=True, exist_ok=True)
             try:
+                expanded_path.parent.mkdir(parents=True, exist_ok=True)
                 expanded_path.touch(exist_ok=True)
             except OSError:
-                pass
+                self.notify_status("Unable to create file for external editing.", level="error")
+                return
 
         if not expanded_path.exists():
             self.notify_status("File does not exist on disk.", level="warning")
@@ -3367,9 +3376,19 @@ Tooltip {
                 else:
                     self.notify_status("No suitable external editor found (xdg-open or mousepad).", level="warning")
 
+            elif button == 3:
+                editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+                if editor:
+                    editor_cmd = shlex.split(editor)
+                else:
+                    executable = shutil.which("nvim") or shutil.which("nano")
+                    editor_cmd = [executable] if executable else []
+                if not editor_cmd:
+                    self.notify_status("Set VISUAL or EDITOR, or install nvim/nano.", level="warning")
+                    return
                 self.run_suspended_interactive([*editor_cmd, str(expanded_path)])
 
-        except (FileNotFoundError, OSError):
+        except (OSError, ValueError):
             self.notify_status("Error resolving path or launching external editor.", level="error")
 
     def run_suspended_interactive(self, cmd: list[str] | str, shell: bool = False) -> subprocess.CompletedProcess:
@@ -3488,18 +3507,6 @@ Tooltip {
         self._tab_data_ready: set[int] = set()
         self._boot_complete: bool = False
 
-        self._all_user_units: list[str] = []
-        self._all_sys_units: list[str] = []
-        for tab_items in self.schema.values():
-            for item in tab_items:
-                if item.type_ in ("action", "preset", "menu"):
-                    continue
-                match item.scope:
-                    case "user":
-                        self._all_user_units.append(item.key)
-                    case "system":
-                        self._all_sys_units.append(item.key)
-
     def _engines_for_tab(self, tab_idx: int) -> set[tuple[str, str]]:
         keys: set[tuple[str, str]] = set()
         if self._custom_spec(tab_idx) is not None:
@@ -3513,7 +3520,12 @@ Tooltip {
     def _load_one_engine_sync(self, ekey: tuple[str, str]) -> Any:
         eng = self.engine_pool[ekey]
         if self.deferred_load and hasattr(eng, "load_state_for_units"):
-            return eng.load_state_for_units(self._all_user_units, self._all_sys_units)
+            items = [item for _tab, _index, item in self._items_by_engine.get(ekey, ())
+                     if item.type_ not in ("menu", "action", "preset")]
+            return eng.load_state_for_units(
+                [item.key for item in items if item.scope == "user"],
+                [item.key for item in items if item.scope == "system"],
+            )
         return eng.load_state()
 
     def _load_engines_batch_sync(
@@ -3548,7 +3560,7 @@ Tooltip {
             state = states.get(engine_key, self._states.get(engine_key, {}))
             raw = self._lookup_state(state, item)
 
-            if raw is not None:
+            if raw is not _STATE_MISSING:
                 item.exists_in_target = True
                 new_val = item.deserialize(raw)
             else:
@@ -3621,32 +3633,54 @@ Tooltip {
             else:
                 updated_tabs, new_items = result, None
                 default_state = None
-            async with self._save_lock:
-                # A schema can return the state collected during discovery.
-                # Re-read it if an edit happened while discovery was running.
-                use_prefetched = default_state is not None and self._write_generation == writes_before
-                def load_one(key, engine):
-                    if use_prefetched and key == self.default_engine_key:
-                        return default_state
-                    if key == self.default_engine_key and new_items and hasattr(engine, "load_state_for_units"):
-                        discovered = [item for rows in new_items.values() for item in rows if item.type_ not in ("menu", "action", "preset")]
-                        return engine.load_state_for_units(
-                            [item.key for item in discovered if item.scope == "user"],
-                            [item.key for item in discovered if item.scope == "system"],
+            # Discovery can introduce a backend or target absent from the
+            # original schema. Register it before collecting its first state.
+            if new_items and callable(register := getattr(self.engine_pool, "register", None)):
+                for rows in new_items.values():
+                    for item in rows:
+                        register(*self._get_item_engine_info(item))
+            while True:
+                # Save callbacks hold positional row references. Finish them
+                # before reading/replacing rows or publishing discovery state.
+                while new_items and (self._save_tasks or self._save_timers or self._save_auth_pending):
+                    await asyncio.sleep(0.05)
+                async with self._save_lock:
+                    # A schema can return the state collected during discovery.
+                    # Re-read it if an edit happened while discovery was running.
+                    use_prefetched = default_state is not None and self._write_generation == writes_before
+                    prospective_schema = self.schema | (new_items or {})
+                    def load_one(key, engine):
+                        if use_prefetched and key == self.default_engine_key:
+                            return default_state
+                        if new_items and hasattr(engine, "load_state_for_units"):
+                            items = [item for rows in prospective_schema.values() for item in rows
+                                     if item.type_ not in ("menu", "action", "preset")
+                                     and self._get_item_engine_info(item) == key]
+                            return engine.load_state_for_units(
+                                [item.key for item in items if item.scope == "user"],
+                                [item.key for item in items if item.scope == "system"],
+                            )
+                        return engine.load_state()
+                    def load_states():
+                        return {
+                            key: load_one(key, engine)
+                            for key, engine in self.engine_pool.items()
+                        }
+                    states = await self._run_save_io(load_states)
+                    if use_prefetched and self._write_generation != writes_before:
+                        use_prefetched = False
+                        states[self.default_engine_key] = await self._run_save_io(
+                            load_one, self.default_engine_key, self.engine_pool[self.default_engine_key]
                         )
-                    return engine.load_state()
-                def load_states():
-                    return {
-                        key: load_one(key, engine)
-                        for key, engine in self.engine_pool.items()
-                    }
-                states = await self._run_save_io(load_states)
-                if use_prefetched and self._write_generation != writes_before:
-                    use_prefetched = False
-                    states[self.default_engine_key] = await self._run_save_io(
-                        load_one, self.default_engine_key, self.engine_pool[self.default_engine_key]
-                    )
+                if not new_items or not (self._save_tasks or self._save_timers or self._save_auth_pending):
+                    break
             self._apply_deferred_tabs(updated_tabs, states, new_items)
+            self._states.update(states)
+            self._loaded_engines.update(states)
+            for key in states:
+                self._failed_engines.pop(key, None)
+            self._mark_boot_complete_if_done()
+            self._activate_custom_views()
             if manual_refresh:
                 self._apply_refreshed_states(states)
                 self._refresh_custom_views()
@@ -3707,7 +3741,7 @@ Tooltip {
                 if self._has_pending_save_for_key(uid):
                     continue
                 raw = self._lookup_state(state, item)
-                if raw is not None:
+                if raw is not _STATE_MISSING:
                     value = item.deserialize(raw)
                     exists = True
                 else:
@@ -3897,6 +3931,8 @@ Tooltip {
                     pass
 
             items = self.schema.get(tab_idx, [])
+            custom_spec = self._custom_spec(tab_idx)
+            option_groups = custom_spec.get("option_groups") if isinstance(custom_spec, dict) else None
             option_keys = {
                 f"item_{tab_idx}_{idx}": (item.scope, item.key, item.parent_ref)
                 for idx, item in enumerate(items)
@@ -3912,9 +3948,7 @@ Tooltip {
             visible = {
                 idx for idx, item in enumerate(items)
                 if (
-                    not isinstance(self.custom_views.get(tab_idx), dict)
-                    or not self.custom_views[tab_idx].get("option_groups")
-                    or item.group in self.custom_views[tab_idx]["option_groups"]
+                    not option_groups or item.group in option_groups
                 ) and (
                     item.type_ in ("menu", "action", "preset")
                     or not self.hide_missing_items
@@ -4161,7 +4195,7 @@ Tooltip {
 
                 if item.type_ in ("action", "preset", "menu"):
                     item.exists_in_target = True
-                elif raw is not None:
+                elif raw is not _STATE_MISSING:
                     item.exists_in_target = True
                     item.value = item.deserialize(raw)
                 else:
@@ -4603,11 +4637,11 @@ Tooltip {
                     group_changed = False
                     for _t_idx, _i_idx, item in grouped_items:
                         raw = self._lookup_state(new_state, item)
-                        if raw is not None:
+                        if raw is not _STATE_MISSING:
                             new_val = item.deserialize(raw)
                             expected_exists = True
                         else:
-                            expected_exists = item.default != "nil"
+                            expected_exists = not self.hide_missing_items and item.default != "nil"
                             new_val = item.default if expected_exists else item.value
 
                         value_changed = item.serialize(item.value) != item.serialize(new_val)
@@ -6229,12 +6263,15 @@ Tooltip {
 
         self._apply_transaction(transaction, action_type="redo", success_msg=msg)
 
-    def action_toggle_help(self) -> None:
+    async def action_toggle_help(self) -> None:
         content_area = self.query_one("#content-area")
         content_area.toggle_class("-show-help")
         self.toggle_shortcut_active("help", content_area.has_class("-show-help"))
 
         if content_area.has_class("-show-help"):
+            panel = self.query_one("#help-panel")
+            if not panel.query(Markdown):
+                await panel.mount(Markdown("Select an item to view documentation.", id="help-markdown"))
             self._update_current_help_panel()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -7433,10 +7470,8 @@ Tooltip {
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        engines = (
-            dict.values(self.engine_pool) if isinstance(self.engine_pool, dict)
-            else self.engine_pool.values()
-        )
+        initialized_values = getattr(self.engine_pool, "initialized_values", None)
+        engines = initialized_values() if callable(initialized_values) else self.engine_pool.values()
         for engine in engines:
             if callable(shutdown := getattr(engine, "shutdown", None)):
                 shutdown()
