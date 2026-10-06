@@ -46,16 +46,18 @@ PREFIX = Path("/usr/local")
 MARKER = PREFIX / "lib/dusky-python.json"
 LOCKFILE = Path("/run/lock/dusky-python-install.lock")
 SYSTEM_PYTHON = Path("/usr/bin/python3")
-WANT_BIN = PREFIX / "bin/python3.15"
-SHADOW_LINKS = {"python": "python3.15", "python3": "python3.15"}
-OWNED_TREES = (Path("lib/python3.15"), Path("include/python3.15"))
+PY_XY = ".".join(VERSION.split(".")[:2])
+WANT_BIN = PREFIX / f"bin/python{PY_XY}"
+SHADOW_LINKS = {"python": f"python{PY_XY}", "python3": f"python{PY_XY}"}
+OWNED_TREES = (Path(f"lib/python{PY_XY}"), Path(f"include/python{PY_XY}"))
 OWNED_FILES = {
-    "bin/python3.15", "bin/python3.15-config", "bin/idle3.15", "bin/pydoc3.15",
-    "lib/libpython3.15.a", "lib/libpython3.15.so", "lib/libpython3.15.so.1.0",
-    "lib/pkgconfig/python-3.15.pc", "lib/pkgconfig/python-3.15-embed.pc",
-    "share/man/man1/python3.15.1",
+    f"bin/python{PY_XY}", f"bin/python{PY_XY}-config", f"bin/idle{PY_XY}", f"bin/pydoc{PY_XY}",
+    f"lib/libpython{PY_XY}.a", f"lib/libpython{PY_XY}.so", f"lib/libpython{PY_XY}.so.1.0",
+    f"lib/pkgconfig/python-{PY_XY}.pc", f"lib/pkgconfig/python-{PY_XY}-embed.pc",
+    f"share/man/man1/python{PY_XY}.1",
 }
 SHARED_DIRS = {"bin", "lib", "include", "lib/pkgconfig", "share", "share/man", "share/man/man1"}
+REQUIRED_PACKAGES = ("pycairo", "PyGObject")
 log = logging.getLogger("dusky-python")
 
 
@@ -125,6 +127,26 @@ def probe_bin(path: Path = WANT_BIN) -> str | None:
         return None
 
 
+def ensure_packages(path: Path = WANT_BIN) -> None:
+    """Ensure essential packages (e.g. PyGObject) are available in the testing runtime."""
+    try:
+        run_python(path, "import gi, cairo; gi.require_version('Gtk', '4.0')")
+        return
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    log.info("Installing essential packages (%s) into %s...", ", ".join(REQUIRED_PACKAGES), path)
+    try:
+        subprocess.run(
+            [str(path), "-m", "pip", "install", "--upgrade", *REQUIRED_PACKAGES],
+            check=True, timeout=180, capture_output=True, text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        log.warning("Failed to install packages via pip: %s\n%s", exc, exc.stderr.strip() if exc.stderr else "")
+    except Exception as exc:
+        log.warning("Could not bootstrap packages: %s", exc)
+
+
 def verify_runtime() -> None:
     if probe_bin(WANT_BIN) != VERSION:
         die(f"Installed interpreter does not report {VERSION}.")
@@ -135,6 +157,8 @@ def verify_runtime() -> None:
                "sqlite3.connect(':memory:').execute('select 1').fetchone()")
     if probe_bin(SYSTEM_PYTHON) is None:
         die("Distro Python failed verification.")
+    ensure_packages(WANT_BIN)
+    run_python(WANT_BIN, "import gi, cairo")
 
 
 def check_path() -> None:
@@ -324,6 +348,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         if not args.no_default:
             check_path()
         log.info("Already installed; default links updated.")
+        log.info("Note: Restart your user session or reboot if running services need to pick up changes.")
         return 0
     allow_force = bool(getattr(args, "reinstall", False) or getattr(args, "force", False))
     if marker is None and exists(WANT_BIN):
@@ -429,6 +454,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     if not args.no_default:
         check_path()
     log.info("Installed %s. Distro Python untouched.", VERSION)
+    log.info("Note: Restart your user session or reboot so running services and apps use the new Python runtime.")
     return 0
 
 
@@ -456,6 +482,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
                     if path.is_dir() and not path.is_symlink():
                         shutil.rmtree(path, ignore_errors=True)
             log.info("Force undo complete. Distro Python untouched.")
+            log.info("Note: Restart your user session or reboot so running services pick up changes.")
             return 0
         log.info("No managed installation. Nothing to undo.")
         return 0
@@ -480,6 +507,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
             else:
                 log.info("Retained unrecorded files under %s (pass --purge to remove).", t_path)
     log.info("Undo complete. Distro Python untouched.")
+    log.info("Note: Restart your user session or reboot so running services pick up changes.")
     return 0
 
 
@@ -487,13 +515,21 @@ def cmd_check(_args: argparse.Namespace) -> int:
     marker = read_marker()
     print(f"system_python: {probe_bin(SYSTEM_PYTHON) or 'unavailable'} ({SYSTEM_PYTHON})")
     version = probe_bin(WANT_BIN)
-    print(f"python3.15: {version or 'unavailable'}")
+    print(f"python{PY_XY}: {version or 'unavailable'}")
     print(f"marker: {'present' if marker is not None else 'absent'}")
     print(f"wanted: {VERSION} ({ARCH_TAG})")
     print(f"installed: {bool(marker and marker.get('version') == VERSION and marker.get('arch') == ARCH_TAG and version == VERSION)}")
     for name in SHADOW_LINKS:
         path = shutil.which(name)
         print(f"PATH {name}: {path or 'not found'} ({probe_bin(Path(path)) if path else 'unavailable'})")
+    gi_status = "unavailable"
+    target_bin = WANT_BIN if exists(WANT_BIN) else SYSTEM_PYTHON
+    try:
+        gi_ver = run_python(target_bin, "import gi; print(gi.__version__)")
+        gi_status = f"available (PyGObject {gi_ver})"
+    except Exception:
+        gi_status = "missing"
+    print(f"desktop_gi: {gi_status}")
     return 0
 
 
