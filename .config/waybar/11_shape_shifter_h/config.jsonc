@@ -146,8 +146,8 @@
 
   "custom/weather": {
     "format": "{}",
-    "exec": "python3 ~/user_scripts/waybar/weather.py",
-    "interval": 1800,
+    "exec": "python3 \"$HOME/user_scripts/waybar/weather.py\"",
+    "interval": 600,
     "return-type": "json"
   },
 

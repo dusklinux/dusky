@@ -101,9 +101,9 @@
   },
   "custom/weather": {
     "format": "{}",
-    "exec": "python3 ~/user_scripts/waybar/weather.py",
+    "exec": "python3 \"$HOME/user_scripts/waybar/weather.py\"",
     "return-type": "json",
-    "interval": 1800,
+    "interval": 600,
     "tooltip": true
   },
   "network": {

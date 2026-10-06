@@ -2,21 +2,19 @@
 
 import argparse
 import datetime
-import http.client
+import fcntl
 import json
 import math
 import os
 import sys
 import time
 import urllib.parse
-import urllib.request
 import subprocess
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Self
-from urllib.error import URLError
 
 # Consolidated WMO weather code lookup.
 WEATHER_CODES: dict[int, tuple[str, str]] = {
@@ -106,10 +104,11 @@ WWO_TO_WMO: dict[int, int] = {
 IMPERIAL_COUNTRIES = {"US", "LR", "MM"}
 STATE_FILE = Path.home() / ".config" / "dusky" / "settings" / "waybar_weather"
 TIME_STATE_FILE = Path.home() / ".config" / "dusky" / "settings" / "waybar_weather_time"
-IS_BACKGROUND = False
+FETCH_DEADLINE = 30
+RETRY_INTERVAL = 60
 
 HTTP_HEADERS = {
-    "User-Agent": "waybar-weather/2.0 (Arch Linux; Python 3.14)",
+    "User-Agent": "dusky-waybar-weather/2.0",
     "Accept": "application/json",
 }
 
@@ -140,11 +139,13 @@ class RequestKey:
         lat = raw.get("lat")
         lon = raw.get("lon")
 
+        if not isinstance(source, str) or not isinstance(unit_pref, str):
+            return None
         if source not in {"manual", "ip"} or unit_pref not in {"auto", "celsius", "fahrenheit"}:
             return None
 
         if source == "manual":
-            if not is_finite_number(lat) or not is_finite_number(lon):
+            if not valid_coordinates(lat, lon):
                 return None
             return cls(source=source, unit_pref=unit_pref, lat=float(lat), lon=float(lon))
 
@@ -174,7 +175,14 @@ class StateRecord:
 
 
 def is_finite_number(value: object) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+    try:
+        return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def valid_coordinates(lat: object, lon: object) -> bool:
+    return is_finite_number(lat) and is_finite_number(lon) and -90 <= lat <= 90 and -180 <= lon <= 180
 
 
 def parse_latitude(value: str) -> float:
@@ -254,22 +262,6 @@ def emit_payload(payload: JsonDict) -> None:
     print(json_dumps(payload), flush=True)
 
 
-def fail_gracefully(message: str, tooltip: str = "") -> None:
-    if IS_BACKGROUND:
-        current_time = time.time()
-        _, last_success = load_time_state(None)
-        write_time_state(current_time, last_success)
-        sys.exit(0)
-
-    emit_payload({
-        "text": "󰖐 Err",
-        "alt": "Error",
-        "tooltip": tooltip or message,
-        "class": "error",
-    })
-    raise SystemExit(0)
-
-
 def make_offline_payload(payload: JsonDict) -> JsonDict:
     cached = dict(payload)
 
@@ -288,7 +280,7 @@ def make_offline_payload(payload: JsonDict) -> JsonDict:
     if not isinstance(tooltip, str):
         tooltip = ""
 
-    offline_note = "⚠ Offline — showing cached weather"
+    offline_note = "⚠ Cached weather — refresh pending or unavailable"
     if offline_note not in tooltip:
         tooltip = f"{tooltip.rstrip()}\n\n<span color='#ff6b6b'>{offline_note}</span>".lstrip()
 
@@ -297,35 +289,32 @@ def make_offline_payload(payload: JsonDict) -> JsonDict:
     return cached
 
 
-def emit_cached_or_fail(state: StateRecord | None, error_tooltip: str) -> None:
-    if IS_BACKGROUND:
-        current_time = time.time()
-        _, last_success = load_time_state(state)
-        write_time_state(current_time, last_success)
-        sys.exit(0)
-
-    if state is not None:
-        emit_payload(make_offline_payload(state.payload))
-        raise SystemExit(0)
-
-    fail_gracefully("Network Offline", error_tooltip)
-
-
-def load_time_state(state: StateRecord | None) -> tuple[float, float]:
+def load_time_state(state: StateRecord | None, request_key: RequestKey | None = None) -> tuple[float, float]:
     try:
         raw_text = TIME_STATE_FILE.read_text(encoding="utf-8")
         data = json.loads(raw_text)
-        return float(data.get("last_attempt", 0.0)), float(data.get("last_success", 0.0))
-    except Exception:
-        if state is not None:
+        if not isinstance(data, dict):
+            raise ValueError("Invalid weather timing state")
+        stored_key = RequestKey.from_json(data.get("request_key"))
+        if request_key is not None and stored_key != request_key:
+            timestamp = state.saved_at if state and 0 <= state.saved_at <= time.time() else 0.0
+            return timestamp, timestamp
+        attempt, success = data.get("last_attempt", 0), data.get("last_success", 0)
+        if not is_finite_number(attempt) or not is_finite_number(success):
+            raise ValueError("Invalid weather timestamps")
+        now = time.time()
+        return float(attempt) if 0 <= attempt <= now else 0.0, float(success) if 0 <= success <= now else 0.0
+    except (OSError, UnicodeError, ValueError, TypeError):
+        if state is not None and 0 <= state.saved_at <= time.time():
             return state.saved_at, state.saved_at
         return 0.0, 0.0
 
 
-def write_time_state(last_attempt: float, last_success: float) -> None:
+def write_time_state(last_attempt: float, last_success: float, request_key: RequestKey | None = None) -> None:
     data = {
         "last_attempt": last_attempt,
         "last_success": last_success,
+        "request_key": request_key.to_json() if request_key else None,
     }
     temp_path: Path | None = None
     try:
@@ -348,35 +337,43 @@ def write_time_state(last_attempt: float, last_success: float) -> None:
                 temp_path.unlink(missing_ok=True)
 
 
-def spawn_background_fetch(args: argparse.Namespace) -> None:
+def spawn_background_fetch(args: argparse.Namespace) -> bool:
     script_path = os.path.abspath(__file__)
-    args_to_pass = [arg for arg in sys.argv[1:] if arg != "--background-fetch"]
+    args_to_pass = ["--interval", str(args.interval)]
+    if args.lat is not None:
+        args_to_pass += ["--lat", str(args.lat), "--lon", str(args.lon)]
+    if args.fahrenheit:
+        args_to_pass.append("--fahrenheit")
+    elif args.celsius:
+        args_to_pass.append("--celsius")
     try:
         subprocess.Popen(
-            [sys.executable, script_path, "--background-fetch"] + args_to_pass,
+            ["/usr/bin/timeout", "--signal=KILL", str(FETCH_DEADLINE),
+             sys.executable, script_path, "--background-fetch", *args_to_pass],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
-    except Exception:
-        pass
+        return True
+    except OSError:
+        return False
 
 
 def is_state_fresh(state: StateRecord, ttl_seconds: int) -> bool:
-    return (time.time() - state.saved_at) < ttl_seconds
+    return 0 <= (time.time() - state.saved_at) < ttl_seconds
 
 
 def load_state() -> StateRecord | None:
     try:
         raw_text = STATE_FILE.read_text(encoding="utf-8")
         mtime = STATE_FILE.stat().st_mtime
-    except OSError:
+    except (OSError, UnicodeError):
         return None
 
     try:
         raw = json.loads(raw_text)
-    except json.JSONDecodeError:
+    except ValueError:
         return None
 
     # New wrapped state format.
@@ -392,7 +389,7 @@ def load_state() -> StateRecord | None:
         request_key = RequestKey.from_json(raw.get("request_key"))
 
         effective_unit = raw.get("effective_unit")
-        if effective_unit not in {"metric", "imperial"}:
+        if not isinstance(effective_unit, str) or effective_unit not in {"metric", "imperial"}:
             effective_unit = None
 
         cached_lat = raw.get("lat")
@@ -405,8 +402,8 @@ def load_state() -> StateRecord | None:
             effective_unit=effective_unit,
             country_code=normalize_country_code(raw.get("country_code")),
             city=normalize_city(raw.get("city")),
-            lat=float(cached_lat) if is_finite_number(cached_lat) else None,
-            lon=float(cached_lon) if is_finite_number(cached_lon) else None,
+            lat=float(cached_lat) if valid_coordinates(cached_lat, cached_lon) else None,
+            lon=float(cached_lon) if valid_coordinates(cached_lat, cached_lon) else None,
         )
 
     # Legacy plain payload support.
@@ -457,6 +454,9 @@ def write_state(record: StateRecord) -> None:
 
 
 def fetch_json(url: str, params: dict[str, object] | None = None, timeout: float = 5.0) -> JsonDict | None:
+    # Cache-only queries do not need the HTTP/TLS stack.
+    import urllib.request
+
     if params:
         query = urllib.parse.urlencode(params)
         url = f"{url}?{query}"
@@ -484,7 +484,7 @@ def extract_ipwho_location(data: JsonDict | None) -> IpLocationResult:
 
     lat = data.get("latitude")
     lon = data.get("longitude")
-    if not is_finite_number(lat) or not is_finite_number(lon):
+    if not valid_coordinates(lat, lon):
         return None, None, "", "", "", ""
 
     tz = data.get("timezone", {})
@@ -502,7 +502,7 @@ def extract_ipapi_location(data: JsonDict | None) -> IpLocationResult:
 
     lat = data.get("latitude")
     lon = data.get("longitude")
-    if not is_finite_number(lat) or not is_finite_number(lon):
+    if not valid_coordinates(lat, lon):
         return None, None, "", "", "", ""
 
     utc_offset = data.get("utc_offset", "")
@@ -531,7 +531,7 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
-    return R * 2 * math.asin(math.sqrt(a))
+    return R * 2 * math.asin(math.sqrt(min(1.0, max(0.0, a))))
 
 
 def get_system_utc_offset_str() -> str:
@@ -746,7 +746,7 @@ def parse_wttr_data(wttr_data: JsonDict, unit: str) -> tuple[int, int, int, int,
     # Get weather code
     wwo_code_str = current.get("weatherCode")
     wwo_code = int(wwo_code_str) if wwo_code_str is not None else 0
-    weather_code = WWO_TO_WMO.get(wwo_code, 0) # Fallback to 0 (Clear)
+    weather_code = WWO_TO_WMO.get(wwo_code, -1)
 
     # Get max/min temps
     max_key = "maxtempF" if unit == "imperial" else "maxtempC"
@@ -803,8 +803,115 @@ def build_weather_payload(
     }
 
 
+def refresh_weather(args: argparse.Namespace, request_key: RequestKey, state: StateRecord | None) -> None:
+    """Fetch under the caller's lock; failures preserve the last valid cache."""
+    matching_state = state if state and state.request_key == request_key else None
+    current_time = time.time()
+    _, last_success = load_time_state(matching_state, request_key)
+    if matching_state and is_state_fresh(matching_state, args.interval):
+        return
+    write_time_state(current_time, last_success, request_key)
+    # Worker mode: do the actual network requests
+    lat: float
+    lon: float
+    country_code = ""
+    city = ""
+
+    if args.lat is None:
+        ip_lat, ip_lon, country_code, city, ip_utc_offset, ip_isp = get_ip_location()
+        if ip_lat is None or ip_lon is None:
+            # A location-service outage need not block the weather provider.
+            if not matching_state or matching_state.lat is None or matching_state.lon is None:
+                return
+            lat, lon = matching_state.lat, matching_state.lon
+            country_code, city = matching_state.country_code, matching_state.city
+        # VPN/proxy detection: prefer cached location when VPN is likely.
+        elif is_vpn_likely(ip_lat, ip_lon, ip_utc_offset, ip_isp, state):
+            if state and state.lat is not None and state.lon is not None:
+                lat, lon = state.lat, state.lon
+                country_code = state.country_code or country_code
+                city = state.city or city
+            else:
+                lat, lon = ip_lat, ip_lon
+        else:
+            lat, lon = ip_lat, ip_lon
+    else:
+        lat, lon = args.lat, args.lon
+        if not args.celsius and not args.fahrenheit:
+            country_code, city = reverse_geocode(lat, lon)
+            if not country_code and matching_state:
+                country_code = matching_state.country_code
+                city = city or matching_state.city
+        elif matching_state:
+            city = matching_state.city
+
+    unit = resolve_unit(args, country_code, matching_state)
+    temp_unit = "fahrenheit" if unit == "imperial" else "celsius"
+
+    weather_data = fetch_json(
+        "https://api.open-meteo.com/v1/forecast",
+        params={
+            "latitude": lat,
+            "longitude": lon,
+            "current": "temperature_2m,weather_code",
+            "temperature_unit": temp_unit,
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+            "timezone": "auto",
+            "forecast_days": 1,
+        },
+        timeout=10.0,
+    )
+
+    result = None
+    if weather_data and not weather_data.get("error"):
+        try:
+            result = parse_weather_data(weather_data)
+        except (TypeError, ValueError, OverflowError, IndexError, AttributeError):
+            pass
+
+    if result is None:
+        wttr_data = fetch_json(
+            f"https://wttr.in/{lat},{lon}",
+            params={"format": "j1"},
+            timeout=10.0,
+        )
+        if wttr_data and not wttr_data.get("error"):
+            try:
+                result = parse_wttr_data(wttr_data, unit)
+            except (TypeError, ValueError, OverflowError, IndexError, AttributeError):
+                pass
+
+    if result is None:
+        return
+    temp, weather_code, temp_max, temp_min, precip_prob = result
+
+    payload = build_weather_payload(
+        temp=temp,
+        weather_code=weather_code,
+        temp_max=temp_max,
+        temp_min=temp_min,
+        precip_prob=precip_prob,
+        unit=unit,
+        city=city,
+    )
+
+    completed_at = time.time()
+    write_state(
+        StateRecord(
+            payload=payload,
+            saved_at=completed_at,
+            request_key=request_key,
+            effective_unit=unit,
+            country_code=country_code,
+            city=city,
+            lat=lat,
+            lon=lon,
+        )
+    )
+    write_time_state(completed_at, completed_at, request_key)
+
+
 def main() -> None:
-    global IS_BACKGROUND
     parser = argparse.ArgumentParser(description="Waybar weather module")
     parser.add_argument("--lat", type=parse_latitude, help="Latitude override")
     parser.add_argument("--lon", type=parse_longitude, help="Longitude override")
@@ -830,148 +937,48 @@ def main() -> None:
     if (args.lat is None) != (args.lon is None):
         parser.error("Arguments --lat and --lon must be provided together.")
 
-    if args.background_fetch:
-        IS_BACKGROUND = True
-
     request_key = RequestKey.from_args(args)
+    if args.background_fetch:
+        try:
+            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with STATE_FILE.with_name('.waybar_weather.lock').open('a') as worker_lock:
+                fcntl.flock(worker_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                refresh_weather(args, request_key, load_state())
+        except OSError:
+            pass
+        return
+
     state = load_state()
     matching_state = state if state and state.request_key == request_key else None
 
     current_time = time.time()
-    last_attempt, last_success = load_time_state(matching_state)
+    last_attempt, last_success = load_time_state(matching_state, request_key)
 
-    if args.background_fetch:
-        # Worker mode: do the actual network requests
-        lat: float
-        lon: float
-        country_code = ""
-        city = ""
+    # Query mode: print cache and potentially spawn background worker
+    is_fresh = matching_state and is_state_fresh(matching_state, args.interval)
 
-        if args.lat is None:
-            ip_lat, ip_lon, country_code, city, ip_utc_offset, ip_isp = get_ip_location()
-            if ip_lat is None or ip_lon is None:
-                emit_cached_or_fail(state, "Failed to determine location and no cached weather is available.")
-
-            # VPN/proxy detection: prefer cached location when VPN is likely.
-            if is_vpn_likely(ip_lat, ip_lon, ip_utc_offset, ip_isp, state):
-                if state and state.lat is not None and state.lon is not None:
-                    lat, lon = state.lat, state.lon
-                    country_code = state.country_code or country_code
-                    city = state.city or city
-                else:
-                    lat, lon = ip_lat, ip_lon
-            else:
-                lat, lon = ip_lat, ip_lon
-        else:
-            lat, lon = args.lat, args.lon
-            if not args.celsius and not args.fahrenheit:
-                country_code, city = reverse_geocode(lat, lon)
-                if not country_code and matching_state:
-                    country_code = matching_state.country_code
-                    city = city or matching_state.city
-            elif matching_state:
-                city = matching_state.city
-
-        unit = resolve_unit(args, country_code, matching_state)
-        temp_unit = "fahrenheit" if unit == "imperial" else "celsius"
-
-        weather_data = fetch_json(
-            "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": lat,
-                "longitude": lon,
-                "current": "temperature_2m,weather_code",
-                "temperature_unit": temp_unit,
-                "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-                "timezone": "auto",
-                "forecast_days": 1,
-            },
-            timeout=10.0,
-        )
-
-        success = False
-        reason = None
-        if weather_data and not weather_data.get("error"):
-            try:
-                temp, weather_code, temp_max, temp_min, precip_prob = parse_weather_data(weather_data)
-                success = True
-            except (TypeError, ValueError, IndexError, AttributeError):
-                reason = "Malformed response from Open-Meteo."
-        else:
-            reason = weather_data.get("reason") if isinstance(weather_data, dict) else "Failed to fetch weather from Open-Meteo."
-
-        if not success:
-            # Try wttr.in fallback
-            wttr_data = fetch_json(
-                f"https://wttr.in/{lat},{lon}",
-                params={"format": "j1"},
-                timeout=10.0,
-            )
-            if wttr_data and not wttr_data.get("error"):
-                try:
-                    temp, weather_code, temp_max, temp_min, precip_prob = parse_wttr_data(wttr_data, unit)
-                    success = True
-                except (TypeError, ValueError, IndexError, AttributeError) as exc:
-                    reason = f"Malformed response from wttr.in: {exc}"
-            else:
-                wttr_reason = wttr_data.get("reason") if isinstance(wttr_data, dict) else "Failed to fetch weather from wttr.in."
-                reason = f"Open-Meteo failed ({reason}) and wttr.in failed ({wttr_reason})"
-
-        if not success:
-            emit_cached_or_fail(state, reason or "Failed to fetch weather and no cached weather is available.")
-
-
-        payload = build_weather_payload(
-            temp=temp,
-            weather_code=weather_code,
-            temp_max=temp_max,
-            temp_min=temp_min,
-            precip_prob=precip_prob,
-            unit=unit,
-            city=city,
-        )
-
-        write_state(
-            StateRecord(
-                payload=payload,
-                saved_at=current_time,
-                request_key=request_key,
-                effective_unit=unit,
-                country_code=country_code,
-                city=city,
-                lat=lat,
-                lon=lon,
-            )
-        )
-        write_time_state(current_time, current_time)
+    if is_fresh:
+        emit_payload(matching_state.payload)
         return
 
+    # Cache is stale or missing/unmatched
+    # Retry failed/missing requests briefly; successful data keeps its full TTL.
+    if current_time - last_attempt >= min(args.interval, RETRY_INTERVAL):
+        # Debounce launches; the worker lock prevents duplicate network requests.
+        write_time_state(current_time, last_success, request_key)
+        if not spawn_background_fetch(args):
+            write_time_state(0, last_success, request_key)
+
+    if matching_state:
+        # Emit offline/stale payload
+        emit_payload(make_offline_payload(matching_state.payload))
     else:
-        # Query mode: print cache and potentially spawn background worker
-        is_fresh = matching_state and (current_time - last_success < args.interval)
-
-        if is_fresh:
-            emit_payload(matching_state.payload)
-            return
-
-        # Cache is stale or missing/unmatched
-        # Trigger background fetch if we haven't attempted recently or if config changed
-        config_changed = (state is not None) and (matching_state is None)
-        if config_changed or (current_time - last_attempt > args.interval):
-            # Optimistically write last_attempt before spawning to block multiple spawns
-            write_time_state(current_time, last_success)
-            spawn_background_fetch(args)
-
-        if matching_state:
-            # Emit offline/stale payload
-            emit_payload(make_offline_payload(matching_state.payload))
-        else:
-            emit_payload({
-                "text": "󰖐 Loading...",
-                "alt": "Loading",
-                "tooltip": "Fetching weather in background...",
-                "class": "weather",
-            })
+        emit_payload({
+            "text": "󰖐 Loading...",
+            "alt": "Loading",
+            "tooltip": "Fetching weather in background...",
+            "class": "weather",
+        })
 
 
 if __name__ == "__main__":

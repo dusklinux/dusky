@@ -394,27 +394,38 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
     def _fetch_weather(self) -> None:
         if not self.layout_cfg.get('show_weather', True) or not self._visible:
             return
+        data = None
         try:
             weather_file = Path(HOME) / '.config' / 'dusky' / 'settings' / 'waybar_weather'
             if weather_file.exists():
                 with open(weather_file, 'r', encoding='utf-8') as f:
                     raw = json.load(f)
                 data = raw.get('payload') if isinstance(raw, dict) and raw.get('version') == 2 else raw
-                if data and data.get('text'):
-                    GLib.idle_add(self._apply_weather, data.get('text').strip())
-                    return
-            if time.monotonic() < self._weather_retry_after:
-                return
+        except (OSError, UnicodeError, ValueError):
+            pass
+        # Let the weather script schedule stale/missing-cache refreshes even
+        # when the selected Waybar layout has no weather module.
+        if time.monotonic() >= self._weather_retry_after:
             self._weather_retry_after = time.monotonic() + 60.0
-            data = fetch_json_output(f'python3 {HOME}/user_scripts/waybar/weather.py')
-            if data and data.get('text'):
-                GLib.idle_add(self._apply_weather, data.get('text').strip())
-            else:
-                GLib.idle_add(self.weather_box.hide)
-        except Exception:
+            result = run_command(
+                [sys.executable, str(Path(HOME) / 'user_scripts/waybar/weather.py')],
+                timeout=1.2, capture_stdout=True,
+            )
+            if result is not None and result.returncode == 0:
+                try:
+                    refreshed = json.loads(result.stdout)
+                    if isinstance(refreshed, dict):
+                        data = refreshed
+                except ValueError:
+                    pass
+        if isinstance(data, dict) and isinstance(data.get('text'), str) and data['text']:
+            GLib.idle_add(self._apply_weather, data['text'].strip())
+        else:
             GLib.idle_add(self.weather_box.hide)
 
     def _apply_weather(self, text: str) -> None:
+        if not self._visible:
+            return
         self.weather_lbl.set_label(text)
         self.weather_icon.show()
         self.weather_lbl.show()
