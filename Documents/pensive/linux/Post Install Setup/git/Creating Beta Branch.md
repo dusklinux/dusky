@@ -37,6 +37,11 @@ both names at the same commit; subsequent commits advance only the active
 branch. Uncommitted changes are work-tree/index state, not permanently attached
 to a branch. **Creating a branch does not save those changes; committing does.**
 
+If you ran bare `gitdelta` while on `main`, it may already have staged your
+changes. That does not put them into `main`'s committed history. Creating
+`future` at the same starting commit carries the staged changes across; a
+subsequent commit on `future` saves them there, leaving `main` unchanged.
+
 ## Create and publish a future branch
 
 First inspect the current branch, pending changes, and upstream:
@@ -89,7 +94,30 @@ People updating from `main` do not receive commits exclusive to `future`.
 
 ## Daily development
 
-Keep the active branch on `future`:
+**Both your existing `dusky` script and your usual command chain work unchanged.**
+They use the active branch; neither automatically switches to `main`. With
+`future` active and tracking `origin/future`, commits go onto `future` and
+ordinary pushes go to GitHub's `future` branch.
+
+Check the active branch and upstream:
+
+```zsh
+git_dusky branch -vv
+```
+
+Look for `* future` and `[origin/future]`. The `*` marks the active branch.
+As long as that configuration remains in place, use your familiar command:
+
+```zsh
+git_dusky_add_list && git_dusky commit -m "commit text description" && git_dusky push
+```
+
+The `&&` chain runs each next command only if the preceding command succeeds.
+If there is nothing to commit, the commit command fails and the push is
+skipped. To publish previously created local commits, run `git_dusky push`
+separately or use `dusky 4`.
+
+For a step-by-step workflow with a staging review and an explicit push target:
 
 ```zsh
 git_dusky branch --show-current
@@ -114,6 +142,21 @@ Your existing manager also works with this branch:
 | `git_dusky_push FILE` | Commit that file and immediately push the active branch |
 
 Check the active branch and upstream before using commit/push helpers.
+The script's `safe_push()` reads the active branch's configured upstream;
+for this setup its destination is `origin`, `refs/heads/future`. `dusky 3`
+still leaves the new commit local until you push it later. If you deliberately
+switch to another branch, both workflows will commit on that branch instead.
+
+To confirm the destination without sending any updates:
+
+```zsh
+git_dusky push --dry-run --porcelain
+```
+
+For this setup, the output should show
+`refs/heads/future:refs/heads/future`. This checks the push destination, without
+staging or committing files.
+
 `dusky_backup_manager.py --new` recreates repository metadata; `--relink` can
 reset the index, reconcile history, prune tracking according to the manifest,
 commit, and push. Neither is needed for ordinary branch development.
@@ -141,6 +184,14 @@ fi
 
 Untracked new files still require separate inspection.
 
+### GitHub notices after pushing future
+
+“future had recent pushes” and **Compare & pull request** offer to open a pull
+request. They do not merge anything automatically; you can leave the offer
+alone until release. “Your main branch isn't protected” suggests optional
+branch rules. It does not mean the branch is damaged or that your changes
+were committed to `main`; protection is not required for this workflow.
+
 ## Merge the release into main, preserving every commit
 
 When release day arrives, finish and commit development work first. Confirm
@@ -157,9 +208,11 @@ git_dusky log --oneline main..future
 git_dusky diff --stat main..future
 ```
 
-After the announcement and waiting period, release with:
+After the announcement and waiting period, fetch again so the remote branch
+references are current, then release with:
 
 ```zsh
+git_dusky fetch origin
 git_dusky switch main
 git_dusky merge --ff-only origin/main
 git_dusky merge --ff-only future
@@ -213,6 +266,15 @@ Immediately after the intended fast-forward, `main` and `future` should resolve
 to the same commit, and GitHub should show that commit for both branches. Keep
 `future` for the next development cycle; deleting it is unnecessary. When
 starting that cycle, switch back to `future` before committing new work.
+
+```zsh
+git_dusky switch future
+git_dusky branch -vv
+```
+
+The usual `dusky` commands and command chain then continue publishing to
+`origin/future` for the next cycle. Keep the two branches; there is no need to
+delete or recreate `future` after a release.
 
 ## Updater and installation branch selection
 
