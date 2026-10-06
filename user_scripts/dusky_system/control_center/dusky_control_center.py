@@ -360,7 +360,6 @@ class DuskyControlCenter(Adw.Application):
         self._build_ui()
 
         if self._window:
-            self._window.realize()
             self._window.set_visible(False)
 
     def do_activate(self) -> None:
@@ -371,6 +370,7 @@ class DuskyControlCenter(Adw.Application):
         if self._window:
             if self._window.get_visible():
                 self._window.set_visible(False)
+                self._window.unrealize()
             else:
                 self._window.present()
 
@@ -584,6 +584,7 @@ class DuskyControlCenter(Adw.Application):
         Hide window and suspend all background activity to achieve zero-CPU idle.
         """
         window.set_visible(False)
+        window.unrealize()
         return True
 
     def _on_key_pressed(
