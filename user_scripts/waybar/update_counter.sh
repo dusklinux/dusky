@@ -103,6 +103,10 @@ fi
 if (( SHOW_AUR )); then
     fetch_package_count aur paru -Qua &
 fi
+wait
+
+# Read the commit snapshot after package queries so resets/checks completed
+# during network I/O are reflected in the cache we are about to publish.
 if (( SHOW_DUSKY )); then
     val=''
     if [[ -f "$STATE_DIR/dusky_update_behind_commit" ]]; then
@@ -110,7 +114,6 @@ if (( SHOW_DUSKY )); then
     fi
     printf '%s\n' "$val" > "$TMP_DIR/dsk"
 fi
-wait
 
 # ---------------------------------------------------------
 # Data Sanitization
