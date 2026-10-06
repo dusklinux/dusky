@@ -189,7 +189,7 @@ class HyprlandLuaEngine(BaseEngine):
         end
 
         -- SECURE WALK FUNCTION: Preserves data types for Python JSON loader
-        local function walk(t, scope, seen) 
+        local function walk(t, scope, seen, is_record)
             seen = seen or {}
             if seen[t] then return end
             seen[t] = true
@@ -204,14 +204,14 @@ class HyprlandLuaEngine(BaseEngine):
                         if id then str_k = tostring(id) end
                     end
 
-                    if type(k) == "string" and (k == "name" or k == "output" or k == "workspace" or k == "_bind_key") then
+                    if is_record and type(k) == "string" and (k == "name" or k == "output" or k == "workspace" or k == "_bind_key") then
                         is_ident_key = true
                     end
 
                     if not is_ident_key then
                         local new_scope = scope == "" and str_k or (scope .. "/" .. str_k)
                         if type(v) == "table" then 
-                            walk(v, new_scope, seen) 
+                            walk(v, new_scope, seen, type(k) == "number")
                         else 
                             local val_str
                             if type(v) == "string" then val_str = escape_str(v)

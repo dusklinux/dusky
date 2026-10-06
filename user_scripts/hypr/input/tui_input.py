@@ -46,7 +46,9 @@ TABS = [
     "Pointer",
     "Touch",
     "Keyboard",
-    "Profiles"
+    "Profiles",
+    "Cursor",
+    "Tablet"
 ]
 
 # =============================================================================
@@ -128,8 +130,6 @@ SCHEMA = {
             group="Scrolling",
             extended_help="**Scroll Factor**\n\nMultiplier added to scroll movement for external mice. Higher values make the scroll wheel move content faster."
         ),
-        
-        # --- HYBRID FOCUS MENU ---
         ConfigItem(
             label="Window Focus Behavior",
             key="follow_mouse",
@@ -149,7 +149,7 @@ SCHEMA = {
             type_="int",
             default=0,
             min_val=0,
-            max_val=50,
+            max_val=300,
             step=1,
             parent_ref="input.follow_mouse",
             extended_help="**Focus Hitbox Shrink**\n\nShrinks the inactive window hitboxes used for focus detection by the specified pixels. Creates a dead zone in gaps where moving the cursor won't change focus (Only applies if Follow Mouse is 1)."
@@ -174,56 +174,97 @@ SCHEMA = {
             extended_help="**Float Switch Override**\n\nFocus behavior when changing tiled-to-floating.\n- 0: Disabled.\n- 1: Focus changes to window under cursor on tiled/float swap.\n- 2: Focus also follows mouse on float-to-float switches."
         ),
         ConfigItem(
-            label="Hide Cursor on Key Press",
-            key="hide_on_key_press",
-            scope="cursor",
-            type_="bool",
+            label='Pointer Rotation',
+            key='rotation',
+            scope='input',
+            type_='int',
+            default=0,
+            group='Sensor',
+            min_val=0,
+            max_val=359,
+            step=1,
+            extended_help='Clockwise rotation in degrees for pointer devices.'
+        ),
+        ConfigItem(
+            label='Scroll Button',
+            key='scroll_button',
+            scope='input',
+            type_='int',
+            default=0,
+            group='Scrolling',
+            min_val=0,
+            max_val=300,
+            step=1,
+            extended_help='Button code for on_button_down scrolling; 0 uses the device default.'
+        ),
+        ConfigItem(
+            label='Latch Scroll Button',
+            key='scroll_button_lock',
+            scope='input',
+            type_='bool',
             default=False,
-            group="Cursor",
-            extended_help="**Hide on Typing**\n\nAutomatically hides the mouse cursor when you press any keyboard key, preventing it from obscuring text. It reappears instantly upon moving the mouse."
+            group='Scrolling',
+            extended_help='Toggle scrolling with a press/release instead of holding the scroll button.'
         ),
         ConfigItem(
-            label="Cursor Inactivity Timeout",
-            key="inactive_timeout",
-            scope="cursor",
-            type_="float",
-            default=0.0,
-            min_val=0.0,
-            max_val=60.0,
-            step=1.0,
-            group="Cursor",
-            extended_help="**Inactivity Timeout**\n\nIn seconds, defines how long to wait during cursor inactivity before completely hiding it. Set to 0.0 to disable hiding."
-        ),
-        ConfigItem(
-            label="Hardware Cursors",
-            key="no_hardware_cursors",
-            scope="cursor",
-            type_="int",
-            default=2,
+            label='Discrete Scroll Emulation',
+            key='emulate_discrete_scroll',
+            scope='input',
+            type_='int',
+            default=1,
+            group='Scrolling',
             options=[0, 1, 2],
-            group="Cursor",
-            extended_help="**Hardware Cursors**\n\nControls hardware cursor usage.\n- 0: Force Hardware\n- 1: Force Software (Fixes invisible cursors on some Nvidia cards)\n- 2: Auto"
+            extended_help='0 disables emulation, 1 handles nonstandard events, 2 handles all scroll events.'
         ),
         ConfigItem(
-            label="Cursor Zoom Factor",
-            key="zoom_factor",
-            scope="cursor",
-            type_="float",
-            default=1.0,
-            min_val=1.0,
-            max_val=5.0,
-            step=0.1,
-            group="Cursor",
-            extended_help="**Cursor Zoom Factor**\n\nThe factor to zoom by around the cursor, functioning like a magnifying glass. Minimum 1.0 (meaning no zoom)."
+            label='Custom Scroll Curve',
+            key='scroll_points',
+            scope='input',
+            type_='string',
+            default='',
+            group='Scrolling',
+            extended_help='Custom acceleration profile: <step> <points>. Used with custom acceleration; empty gives a flat scroll curve.'
         ),
         ConfigItem(
-            label="Enable Hyprcursor Integration",
-            key="enable_hyprcursor",
-            scope="cursor",
-            type_="bool",
-            default=True,
-            group="Cursor",
-            extended_help="**Hyprcursor Support**\n\nToggles native rendering capabilities for advanced cursor themes using the Hyprcursor standard."
+            label='Focus Movement Threshold',
+            key='follow_mouse_threshold',
+            scope='input',
+            type_='float',
+            default=0.0,
+            group='Focus',
+            min_val=0,
+            max_val=100,
+            step=0.5,
+            extended_help='Minimum logical pixel movement before hover focus changes; applies when Follow Mouse is 1.'
+        ),
+        ConfigItem(
+            label='Focus After Close',
+            key='focus_on_close',
+            scope='input',
+            type_='int',
+            default=0,
+            group='Focus',
+            options=[0, 1, 2],
+            extended_help='0 next candidate, 1 under cursor, 2 most recently active window.'
+        ),
+        ConfigItem(
+            label='Focus Through Floating Scratchpad',
+            key='special_fallthrough',
+            scope='input',
+            type_='bool',
+            default=False,
+            group='Focus',
+            extended_help='Allow focusing regular workspace windows when a special workspace contains only floating windows.'
+        ),
+        ConfigItem(
+            label='Scroll Outside Focused Window',
+            key='off_window_axis_events',
+            scope='input',
+            type_='int',
+            default=1,
+            group='Scrolling',
+            options=[0, 1, 2, 3],
+            extended_help='0 ignore, 1 send out-of-bounds coordinates, 2 clamp to window, 3 warp cursor into window.'
         ),
     ],
 
@@ -288,8 +329,6 @@ SCHEMA = {
             group="Touchpad",
             extended_help="**Middle Button Emulation**\n\nSending Left Mouse Button and Right Mouse Button simultaneously will be interpreted as a middle click."
         ),
-        
-        # --- HYBRID DRAG MENU ---
         ConfigItem(
             label="Tap and Drag",
             key="tap_and_drag",
@@ -319,6 +358,65 @@ SCHEMA = {
             default=True,
             group="Touchscreen",
             extended_help="**Enable Touchscreen**\n\nGlobally enables or disables direct touchscreen inputs on your displays."
+        ),
+        ConfigItem(
+            label='Tap Button Mapping',
+            key='tap_button_map',
+            scope='input/touchpad',
+            type_='cycle',
+            default='lrm',
+            group='Touchpad',
+            options=['lrm', 'lmr'],
+            extended_help='lrm maps 1/2/3 fingers to left/right/middle; lmr maps them to left/middle/right.'
+        ),
+        ConfigItem(
+            label='Three/Four Finger Drag',
+            key='drag_3fg',
+            scope='input/touchpad',
+            type_='int',
+            default=0,
+            group='Touchpad',
+            options=[0, 1, 2],
+            extended_help='0 disabled, 1 three-finger drag, 2 four-finger drag. Can compete with gestures using the same fingers.'
+        ),
+        ConfigItem(
+            label='Invert Touchpad X',
+            key='flip_x',
+            scope='input/touchpad',
+            type_='bool',
+            default=False,
+            group='Touchpad',
+            extended_help='Invert horizontal touchpad movement.'
+        ),
+        ConfigItem(
+            label='Invert Touchpad Y',
+            key='flip_y',
+            scope='input/touchpad',
+            type_='bool',
+            default=False,
+            group='Touchpad',
+            extended_help='Invert vertical touchpad movement.'
+        ),
+        ConfigItem(
+            label='Touchscreen Transform',
+            key='transform',
+            scope='input/touchdevice',
+            type_='int',
+            default=0,
+            group='Touchscreen',
+            min_val=0,
+            max_val=6,
+            step=1,
+            extended_help='Wayland input transform: 0 normal, 1/2/3 rotation by 90/180/270 degrees, 4 flipped, 5 flipped 90, 6 flipped 180. This build accepts 0–6.'
+        ),
+        ConfigItem(
+            label='Touchscreen Output',
+            key='output',
+            scope='input/touchdevice',
+            type_='string',
+            default='[[Auto]]',
+            group='Touchscreen',
+            extended_help='Output name or description to map touch input; [[Auto]] enables compositor mapping.'
         ),
     ],
 
@@ -369,8 +467,8 @@ SCHEMA = {
             scope="input",
             type_="int",
             default=35,
-            min_val=10,
-            max_val=100,
+            min_val=0,
+            max_val=200,
             step=5,
             group="Behavior",
             extended_help="**Repeat Rate**\n\nThe rate at which held-down keys repeat, measured in repeats per second. Higher values make the cursor or character repeat faster when holding a key."
@@ -381,8 +479,8 @@ SCHEMA = {
             scope="input",
             type_="int",
             default=250,
-            min_val=100,
-            max_val=1000,
+            min_val=0,
+            max_val=2000,
             step=50,
             group="Behavior",
             extended_help="**Repeat Delay**\n\nThe delay before a held-down key starts repeating, in milliseconds. Lower values make repeat behavior kick in faster."
@@ -404,6 +502,33 @@ SCHEMA = {
             default=False,
             group="Behavior",
             extended_help="**Resolve Binds by Symbol**\n\nDetermines how keybinds act when multiple layouts are used. If enabled, keybinds specified by symbols are activated when you type the respective symbol with the current layout."
+        ),
+        ConfigItem(
+            label='Keyboard Model',
+            key='kb_model',
+            scope='input',
+            type_='string',
+            default='',
+            group='Layout',
+            extended_help='XKB kb_model setting; empty uses the normal layout path. A custom file takes precedence over layout parameters.'
+        ),
+        ConfigItem(
+            label='Keyboard Rules',
+            key='kb_rules',
+            scope='input',
+            type_='string',
+            default='',
+            group='Layout',
+            extended_help='XKB kb_rules setting; empty uses the normal layout path. A custom file takes precedence over layout parameters.'
+        ),
+        ConfigItem(
+            label='Custom XKB File',
+            key='kb_file',
+            scope='input',
+            type_='string',
+            default='',
+            group='Layout',
+            extended_help='XKB kb_file setting; empty uses the normal layout path. A custom file takes precedence over layout parameters.'
         ),
     ],
 
@@ -443,7 +568,381 @@ SCHEMA = {
             },
             extended_help="**Raw Gaming Input**\n\nOptimizes mouse settings for FPS gaming by flattening the acceleration curve to ensure 1:1 raw mouse movement input without artificial acceleration."
         ),
-    ]
+    ],
+    4: [
+        ConfigItem(
+            label='Disable Cursor Warps',
+            key='no_warps',
+            scope='cursor',
+            type_='bool',
+            default=False,
+            group='Warping',
+            extended_help='Suppress automatic cursor warps when changing focus.'
+        ),
+        ConfigItem(
+            label='Remember Cursor Position',
+            key='persistent_warps',
+            scope='cursor',
+            type_='bool',
+            default=False,
+            group='Warping',
+            extended_help='Restore cursor position relative to a refocused window.'
+        ),
+        ConfigItem(
+            label='Warp on Workspace Change',
+            key='warp_on_change_workspace',
+            scope='cursor',
+            type_='int',
+            default=0,
+            group='Warping',
+            options=[0, 1, 2],
+            extended_help='0 disabled, 1 enabled, 2 force despite Disable Cursor Warps.'
+        ),
+        ConfigItem(
+            label='Warp on Scratchpad Toggle',
+            key='warp_on_toggle_special',
+            scope='cursor',
+            type_='int',
+            default=0,
+            group='Warping',
+            options=[0, 1, 2],
+            extended_help='0 disabled, 1 enabled, 2 force despite Disable Cursor Warps.'
+        ),
+        ConfigItem(
+            label='Warp on Monitor Change',
+            key='warp_on_monitor_change',
+            scope='cursor',
+            type_='int',
+            default=-1,
+            group='Warping',
+            options=[-1, 0, 1, 2],
+            extended_help='-1 follows workspace warp mode, 0 disabled, 1 enabled, 2 forced.'
+        ),
+        ConfigItem(
+            label='Restore Cursor After Other Input',
+            key='warp_back_after_non_mouse_input',
+            scope='cursor',
+            type_='bool',
+            default=False,
+            group='Warping',
+            extended_help='Restore cursor position when returning to mouse input after another input device.'
+        ),
+        ConfigItem(
+            label='Hide Cursor on Touch',
+            key='hide_on_touch',
+            scope='cursor',
+            type_='bool',
+            default=True,
+            group='Rendering',
+            extended_help='Hide the cursor until mouse input after using a touchscreen.'
+        ),
+        ConfigItem(
+            label='Hide Cursor on Tablet Input',
+            key='hide_on_tablet',
+            scope='cursor',
+            type_='bool',
+            default=True,
+            group='Rendering',
+            extended_help='Hide the cursor until mouse input after using a tablet.'
+        ),
+        ConfigItem(
+            label='Center Zoom on Cursor',
+            key='zoom_rigid',
+            scope='cursor',
+            type_='bool',
+            default=False,
+            group='Zoom',
+            extended_help='Keep the cursor centered when zooming instead of following loosely.'
+        ),
+        ConfigItem(
+            label='Detached Zoom Camera',
+            key='zoom_detached_camera',
+            scope='cursor',
+            type_='bool',
+            default=True,
+            group='Zoom',
+            extended_help='Move the zoomed camera only when the pointer approaches its edge.'
+        ),
+        ConfigItem(
+            label='Pixelated Zoom',
+            key='zoom_disable_aa',
+            scope='cursor',
+            type_='bool',
+            default=False,
+            group='Zoom',
+            extended_help='Disable antialiasing when zooming for crisp pixel edges.'
+        ),
+        ConfigItem(
+            label='Sync Cursor Theme with GTK',
+            key='sync_gsettings_theme',
+            scope='cursor',
+            type_='bool',
+            default=True,
+            group='Rendering',
+            extended_help='Sync cursor theme and size to GSettings for GTK client decorations.'
+        ),
+        ConfigItem(
+            label='Avoid Cursor VRR Frame Spikes',
+            key='no_break_fs_vrr',
+            scope='cursor',
+            type_='int',
+            default=2,
+            group='Rendering',
+            options=[0, 1, 2],
+            extended_help='0 disabled, 1 enabled, 2 enabled for game content; controls scheduling on cursor movement.'
+        ),
+        ConfigItem(
+            label='CPU Hardware Cursor Buffer',
+            key='use_cpu_buffer',
+            scope='cursor',
+            type_='int',
+            default=2,
+            group='Rendering',
+            options=[0, 1, 2],
+            extended_help='0 disabled, 1 enabled, 2 automatic on NVIDIA. Useful for hardware cursor compatibility.'
+        ),
+        ConfigItem(
+            label='Minimum Cursor Refresh Rate',
+            key='min_refresh_rate',
+            scope='cursor',
+            type_='int',
+            default=24,
+            group='Rendering',
+            min_val=10,
+            max_val=500,
+            step=1,
+            extended_help='Minimum refresh rate while avoiding fullscreen VRR frame spikes; choose a rate supported by the display.'
+        ),
+        ConfigItem(
+            label="Hide Cursor on Key Press",
+            key="hide_on_key_press",
+            scope="cursor",
+            type_="bool",
+            default=False,
+            group="Cursor",
+            extended_help="**Hide on Typing**\n\nAutomatically hides the mouse cursor when you press any keyboard key, preventing it from obscuring text. It reappears instantly upon moving the mouse."
+        ),
+        ConfigItem(
+            label="Cursor Inactivity Timeout",
+            key="inactive_timeout",
+            scope="cursor",
+            type_="float",
+            default=0.0,
+            min_val=0.0,
+            max_val=20.0,
+            step=1.0,
+            group="Cursor",
+            extended_help="**Inactivity Timeout**\n\nIn seconds, defines how long to wait during cursor inactivity before completely hiding it. Set to 0.0 to disable hiding."
+        ),
+        ConfigItem(
+            label="Hardware Cursors",
+            key="no_hardware_cursors",
+            scope="cursor",
+            type_="int",
+            default=2,
+            options=[0, 1, 2],
+            group="Cursor",
+            extended_help="**Hardware Cursors**\n\nControls hardware cursor usage.\n- 0: Force Hardware\n- 1: Force Software (Fixes invisible cursors on some Nvidia cards)\n- 2: Auto"
+        ),
+        ConfigItem(
+            label="Cursor Zoom Factor",
+            key="zoom_factor",
+            scope="cursor",
+            type_="float",
+            default=1.0,
+            min_val=1.0,
+            max_val=10.0,
+            step=0.1,
+            group="Cursor",
+            extended_help="**Cursor Zoom Factor**\n\nThe factor to zoom by around the cursor, functioning like a magnifying glass. Minimum 1.0 (meaning no zoom)."
+        ),
+        ConfigItem(
+            label="Enable Hyprcursor Integration",
+            key="enable_hyprcursor",
+            scope="cursor",
+            type_="bool",
+            default=True,
+            group="Cursor",
+            extended_help="**Hyprcursor Support**\n\nToggles native rendering capabilities for advanced cursor themes using the Hyprcursor standard."
+        ),
+    ],
+    5: [
+        ConfigItem(
+            label='Enable Tablet',
+            key='enabled',
+            scope='input/tablet',
+            type_='bool',
+            default=True,
+            group='Mapping',
+            extended_help='Enable tablet input.'
+        ),
+        ConfigItem(
+            label='Tablet Transform',
+            key='transform',
+            scope='input/tablet',
+            type_='int',
+            default=0,
+            group='Mapping',
+            options=[0, 1, 2, 3, 4, 5, 6],
+            extended_help='Normal/rotated/flipped Wayland transform; installed Git build accepts 0–6.'
+        ),
+        ConfigItem(
+            label='Tablet Output',
+            key='output',
+            scope='input/tablet',
+            type_='string',
+            default='',
+            group='Mapping',
+            extended_help='Output name or description; empty maps across all monitors.'
+        ),
+        ConfigItem(
+            label='Relative Tablet Input',
+            key='relative_input',
+            scope='input/tablet',
+            type_='bool',
+            default=False,
+            group='Mapping',
+            extended_help='Use relative tablet movement instead of absolute positioning.'
+        ),
+        ConfigItem(
+            label='Left Handed Tablet',
+            key='left_handed',
+            scope='input/tablet',
+            type_='bool',
+            default=False,
+            group='Mapping',
+            extended_help='Rotate the tablet by 180 degrees.'
+        ),
+        ConfigItem(
+            label='Absolute Mapping Position',
+            key='absolute_region_position',
+            scope='input/tablet',
+            type_='bool',
+            default=False,
+            group='Mapping',
+            extended_help='Treat the mapped region position as absolute monitor layout coordinates.'
+        ),
+        ConfigItem(
+            label='Mapped Position X',
+            key='1',
+            scope='input/tablet/region_position',
+            type_='float',
+            default=0.0,
+            group='Mapping',
+            min_val=-20000,
+            max_val=20000,
+            step=1,
+            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+        ),
+        ConfigItem(
+            label='Mapped Position Y',
+            key='2',
+            scope='input/tablet/region_position',
+            type_='float',
+            default=0.0,
+            group='Mapping',
+            min_val=-20000,
+            max_val=20000,
+            step=1,
+            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+        ),
+        ConfigItem(
+            label='Mapped Size X',
+            key='1',
+            scope='input/tablet/region_size',
+            type_='float',
+            default=0.0,
+            group='Mapping',
+            min_val=-100,
+            max_val=4000,
+            step=1,
+            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+        ),
+        ConfigItem(
+            label='Mapped Size Y',
+            key='2',
+            scope='input/tablet/region_size',
+            type_='float',
+            default=0.0,
+            group='Mapping',
+            min_val=-100,
+            max_val=4000,
+            step=1,
+            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+        ),
+        ConfigItem(
+            label='Active Area Position X',
+            key='1',
+            scope='input/tablet/active_area_position',
+            type_='float',
+            default=0.0,
+            group='Mapping',
+            min_val=0,
+            max_val=500,
+            step=1,
+            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+        ),
+        ConfigItem(
+            label='Active Area Position Y',
+            key='2',
+            scope='input/tablet/active_area_position',
+            type_='float',
+            default=0.0,
+            group='Mapping',
+            min_val=0,
+            max_val=500,
+            step=1,
+            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+        ),
+        ConfigItem(
+            label='Active Area Size X',
+            key='1',
+            scope='input/tablet/active_area_size',
+            type_='float',
+            default=0.0,
+            group='Mapping',
+            min_val=0,
+            max_val=500,
+            step=1,
+            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+        ),
+        ConfigItem(
+            label='Active Area Size Y',
+            key='2',
+            scope='input/tablet/active_area_size',
+            type_='float',
+            default=0.0,
+            group='Mapping',
+            min_val=0,
+            max_val=500,
+            step=1,
+            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+        ),
+        ConfigItem(
+            label='Minimum Pen Pressure',
+            key='pressure_range_min',
+            scope='input/tablettool',
+            type_='float',
+            default=-1.0,
+            group='Pen',
+            min_val=-1,
+            max_val=1,
+            step=0.05,
+            extended_help='Any negative value uses the device pressure range; otherwise set a normalized value between 0 and 1.'
+        ),
+        ConfigItem(
+            label='Maximum Pen Pressure',
+            key='pressure_range_max',
+            scope='input/tablettool',
+            type_='float',
+            default=-1.0,
+            group='Pen',
+            min_val=-1,
+            max_val=1,
+            step=0.05,
+            extended_help='Any negative value uses the device pressure range; otherwise set a normalized value between 0 and 1.'
+        ),
+    ],
 }
 
 # =============================================================================

@@ -90,3 +90,15 @@ hl.config({
         close_max_timeout                  = 1000, -- Max ms a 1:1 gesture window has to close, in ms.
     },
 })
+
+-- Additional TUI controls; existing configuration layers keep their load order.
+hl.config({
+    gestures = {
+        workspace_swipe_touch = false,
+        workspace_swipe_touch_invert = false,
+        scrolling = {
+            move_snap_to_grid = true,
+            move_snap_cursor = true,
+        },
+    },
+})

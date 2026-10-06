@@ -10,13 +10,6 @@ Engine: lua
 import sys
 from pathlib import Path
 
-_dusky_root = Path.home() / "user_scripts" / "dusky_tui"
-if str(_dusky_root) not in sys.path:
-    sys.path.insert(0, str(_dusky_root))
-
-import sys
-from pathlib import Path
-
 _DUSKY_TUI_ROOT = Path.home() / "user_scripts" / "dusky_tui"
 if str(_DUSKY_TUI_ROOT) not in sys.path:
     sys.path.insert(0, str(_DUSKY_TUI_ROOT))
@@ -40,15 +33,20 @@ THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"
 # 3. TABS DEFINITION
 # =============================================================================
 TABS = [
-    "Presets",
-    "Layout",
-    "Colors",
-    "Interactions",
-    "Styling",
-    "Effects",
-    "Smart",
-    "Special",
-    "Grouping"
+    'Presets',
+    'Layout',
+    'Borders',
+    'Windows',
+    'Blur',
+    'Variants',
+    'Lighting',
+    'Motion',
+    'Smart',
+    'Special',
+    'Groups',
+    'Desktop',
+    'Rendering',
+    'Interactions',
 ]
 
 # =============================================================================
@@ -58,7 +56,7 @@ COLOR_ALIASES = [
     # Matugen dynamic variables
     "primary", "secondary", "tertiary", "error", "background", 
     "surface", "surface_variant", "outline", "inverse_on_surface", 
-    "on_surface", "primary_container", "secondary_container", "tertiary_container",
+    "on_surface", "on_tertiary", "on_tertiary_container", "primary_container", "secondary_container", "tertiary_container",
     
     # Core system transparencies
     "rgba(1a1a1aee)", "rgba(ffffff11)", "rgba(00000000)",
@@ -82,9 +80,7 @@ COLOR_ALIASES = [
 # 4. SCHEMA DEFINITION
 # =============================================================================
 SCHEMA = {
-    # -------------------------------------------------------------------------
-    # TAB 0: PRESETS
-    # -------------------------------------------------------------------------
+    # Presets
     0: [
         ConfigItem(
             label="Paper Texture",
@@ -94,6 +90,9 @@ SCHEMA = {
             default=None,
             group="Presets",
             preset_payload={
+                "decoration/blur.variant": "kawase",
+                "decoration/motion_blur.enabled": False,
+                "decoration/wobble.enabled": False,
                 "general.border_size": 1,
                 "general.gaps_in": 6,
                 "general.gaps_out": 10,
@@ -170,6 +169,9 @@ SCHEMA = {
             default=None,
             group="Presets",
             preset_payload={
+                "decoration/blur.variant": "kawase",
+                "decoration/motion_blur.enabled": False,
+                "decoration/wobble.enabled": False,
                 "general.border_size": 1,
                 "general.gaps_in": 4,
                 "general.gaps_out": 6,
@@ -254,6 +256,9 @@ SCHEMA = {
             default=None,
             group="Presets",
             preset_payload={
+                "decoration/blur.variant": "kawase",
+                "decoration/motion_blur.enabled": False,
+                "decoration/wobble.enabled": False,
                 "general.border_size": 1,
                 "general.gaps_in": 2,
                 "general.gaps_out": 2,
@@ -330,6 +335,9 @@ SCHEMA = {
             default=None,
             group="Presets",
             preset_payload={
+                "decoration/blur.variant": "kawase",
+                "decoration/motion_blur.enabled": False,
+                "decoration/wobble.enabled": False,
                 "general.border_size": 1,
                 "general.gaps_in": 4,
                 "general.gaps_out": 8,
@@ -406,6 +414,9 @@ SCHEMA = {
             default=None,
             group="Presets",
             preset_payload={
+                "decoration/blur.variant": "kawase",
+                "decoration/motion_blur.enabled": False,
+                "decoration/wobble.enabled": False,
                 "general.border_size": 0,
                 "general.gaps_in": 4,
                 "general.gaps_out": 10,
@@ -482,6 +493,9 @@ SCHEMA = {
             default=None,
             group="Presets",
             preset_payload={
+                "decoration/blur.variant": "kawase",
+                "decoration/motion_blur.enabled": False,
+                "decoration/wobble.enabled": False,
                 "general.border_size": 0,
                 "general.gaps_in": 1,
                 "general.gaps_out": 0,
@@ -558,6 +572,9 @@ SCHEMA = {
             default=None,
             group="Presets",
             preset_payload={
+                "decoration/blur.variant": "kawase",
+                "decoration/motion_blur.enabled": False,
+                "decoration/wobble.enabled": False,
                 "general.border_size": 1,
                 "general.gaps_in": 0,
                 "general.gaps_out": 0,
@@ -634,6 +651,9 @@ SCHEMA = {
             default=None,
             group="Presets",
             preset_payload={
+                "decoration/blur.variant": "kawase",
+                "decoration/motion_blur.enabled": False,
+                "decoration/wobble.enabled": False,
                 "decoration.active_opacity": 0.75,
                 "decoration.inactive_opacity": 0.65,
                 "decoration/blur.passes": 3,
@@ -653,6 +673,9 @@ SCHEMA = {
             default=None,
             group="Presets",
             preset_payload={
+                "decoration/blur.variant": "kawase",
+                "decoration/motion_blur.enabled": False,
+                "decoration/wobble.enabled": False,
                 "general.border_size": 2,
                 "general.gaps_in": 3,
                 "general.gaps_out": 6,
@@ -683,6 +706,9 @@ SCHEMA = {
             default=None,
             group="Presets",
             preset_payload={
+                "decoration/blur.variant": "kawase",
+                "decoration/motion_blur.enabled": False,
+                "decoration/wobble.enabled": False,
                 "general.border_size": 1,
                 "general.gaps_in": 3,
                 "general.gaps_out": 6,
@@ -720,6 +746,9 @@ SCHEMA = {
             default=None,
             group="Presets",
             preset_payload={
+                "decoration/blur.variant": "kawase",
+                "decoration/motion_blur.enabled": False,
+                "decoration/wobble.enabled": False,
                 "general.border_size": 2,
                 "general.gaps_in": 8,
                 "general.gaps_out": 14,
@@ -748,6 +777,9 @@ SCHEMA = {
             default=None,
             group="Presets",
             preset_payload={
+                "decoration/blur.variant": "kawase",
+                "decoration/motion_blur.enabled": False,
+                "decoration/wobble.enabled": False,
                 "general.border_size": 0,
                 "general.gaps_in": 4,
                 "general.gaps_out": 6,
@@ -817,10 +849,7 @@ SCHEMA = {
             extended_help="**Aura Farm**\n\nA visually striking configuration focusing on high vibrancy, intense contrast, and a distinct primary-colored inner glow. Features zero borders and sharp layout styling."
         ),
     ],
-
-    # -------------------------------------------------------------------------
-    # TAB 1: LAYOUT
-    # -------------------------------------------------------------------------
+    # Layout
     1: [
         ConfigItem(
             label="Border Size",
@@ -883,10 +912,7 @@ SCHEMA = {
             extended_help="**Workspace Gaps**\n\nAdds horizontal gap padding specifically between adjacent workspaces during transition animations."
         ),
     ],
-
-    # -------------------------------------------------------------------------
-    # TAB 2: COLORS
-    # -------------------------------------------------------------------------
+    # Borders
     2: [
         ConfigItem(
             label="Active Border",
@@ -929,68 +955,8 @@ SCHEMA = {
             extended_help="**No-Group Inactive Border**\n\nSpecialized inactive border color for windows that explicitly deny being added to a tabbed group layout."
         ),
     ],
-
-    # -------------------------------------------------------------------------
-    # TAB 3: INTERACTIONS
-    # -------------------------------------------------------------------------
+    # Windows
     3: [
-        ConfigItem(
-            label="Resize on Border",
-            key="resize_on_border",
-            scope="general",
-            type_="bool",
-            default=True,
-            group="Mouse",
-            extended_help="**Resize on Border**\n\nAllows you to dynamically resize windows by clicking and dragging directly on their borders or gap areas."
-        ),
-        ConfigItem(
-            label="Extend Border Grab Area",
-            key="extend_border_grab_area",
-            scope="general",
-            type_="int",
-            default=15,
-            min_val=0,
-            max_val=50,
-            step=1,
-            group="Mouse",
-            extended_help="**Extend Grab Area**\n\nExtends the invisible clickable area around window borders. Higher values make it easier to grab."
-        ),
-        ConfigItem(
-            label="Hover Icon on Border",
-            key="hover_icon_on_border",
-            scope="general",
-            type_="bool",
-            default=True,
-            group="Mouse",
-            extended_help="**Hover Icon**\n\nAutomatically changes your cursor to a directional resize arrow when hovering over an interactive border area."
-        ),
-        ConfigItem(
-            label="Resize Corner",
-            key="resize_corner",
-            scope="general",
-            type_="int",
-            default=0,
-            min_val=0,
-            max_val=4,
-            step=1,
-            group="Behavior",
-            extended_help="**Resize Corner**\n\nForces floating windows to strictly scale from a specific corner (1-4). Set to 0 to disable."
-        ),
-        ConfigItem(
-            label="Allow Tearing",
-            key="allow_tearing",
-            scope="general",
-            type_="bool",
-            default=True,
-            group="Behavior",
-            extended_help="**Allow Tearing**\n\nMaster switch to allow screen tearing for immediate frame delivery, beneficial for minimizing input latency."
-        ),
-    ],
-
-    # -------------------------------------------------------------------------
-    # TAB 4: STYLING
-    # -------------------------------------------------------------------------
-    4: [
         ConfigItem(
             label="Rounding",
             key="rounding",
@@ -998,7 +964,7 @@ SCHEMA = {
             type_="int",
             default=2,
             min_val=0,
-            max_val=50,
+            max_val=100,
             step=1,
             group="Corners",
             extended_help="**Rounding**\n\nThe layout pixel radius for window corners. Set to 0 for sharp corners."
@@ -1009,8 +975,8 @@ SCHEMA = {
             scope="decoration",
             type_="float",
             default=2.0,
-            min_val=1.0,
-            max_val=4.0,
+            min_val=1,
+            max_val=10,
             step=0.1,
             group="Corners",
             extended_help="**Rounding Power**\n\nAdjusts the mathematical curve used to clip corners. 2.0 is circular, 4.0 is squircle, 1.0 is triangular."
@@ -1070,16 +1036,6 @@ SCHEMA = {
             extended_help="**Screen Shader**\n\nPath to a custom fragment shader file applied at the very end of the rendering pipeline."
         ),
         ConfigItem(
-            label="XWayland Force Zero Scaling",
-            key="force_zero_scaling",
-            scope="xwayland",
-            type_="bool",
-            default=True,
-            group="Pipeline",
-            extended_help="**XWayland Scaling**\n\nForces zero scaling for XWayland applications. This global tweak prevents older X11 apps from becoming blurry on fractional scaled Wayland monitors."
-        ),
-
-        ConfigItem(
             label="Dim Inactive",
             key="dim_inactive",
             scope="decoration",
@@ -1122,12 +1078,8 @@ SCHEMA = {
             extended_help="**Dim Modal**\n\nWhen a modal appears, this darkens the main application window beneath it."
         ),
     ],
-
-    # -------------------------------------------------------------------------
-    # TAB 5: EFFECTS
-    # -------------------------------------------------------------------------
-    5: [
-        # --- BLUR HYBRID FOLDER ---
+    # Blur
+    4: [
         ConfigItem(
             label="Blur Settings",
             key="enabled",
@@ -1145,8 +1097,8 @@ SCHEMA = {
             scope="decoration/blur",
             type_="int",
             default=6,
-            min_val=1,
-            max_val=30,
+            min_val=0,
+            max_val=100,
             step=1,
             parent_ref="decoration/blur.enabled",
             extended_help="**Blur Size**\n\nThe distance of the blur effect."
@@ -1157,7 +1109,7 @@ SCHEMA = {
             scope="decoration/blur",
             type_="int",
             default=2,
-            min_val=1,
+            min_val=0,
             max_val=10,
             step=1,
             parent_ref="decoration/blur.enabled",
@@ -1255,7 +1207,7 @@ SCHEMA = {
             key="popups",
             scope="decoration/blur",
             type_="bool",
-            default=False,
+            default=True,
             parent_ref="decoration/blur.enabled",
             extended_help="**Popups**\n\nForces background blur behind context menus and tooltips."
         ),
@@ -1292,8 +1244,398 @@ SCHEMA = {
             parent_ref="decoration/blur.enabled",
             extended_help="**Input Methods Ignore Alpha**\n\nIf input method pixel opacity is lower than this value, the blur engine ignores it."
         ),
-
-        # --- SHADOW HYBRID FOLDER ---
+        ConfigItem(
+            label='Blur Variant',
+            key='variant',
+            scope='decoration/blur',
+            type_='cycle',
+            default='kawase',
+            options=['kawase', 'acrylic', 'aurora', 'drops', 'fluid_jar', 'frost', 'haze', 'heat_shimmer', 'prism', 'ripple', 'water'],
+            parent_ref='decoration/blur.enabled',
+            extended_help='Select the blur pattern. Variant tuning is in Variants. Animated and simulation variants can substantially increase GPU/CPU usage.'
+        ),
+    ],
+    # Variants
+    5: [
+        ConfigItem(
+            label='Aberration',
+            key='aberration',
+            scope='decoration/blur/acrylic',
+            type_='float',
+            default=0.025,
+            min_val=0.0,
+            max_val=0.25,
+            step=0.01,
+            group='Acrylic',
+            extended_help='Relative chromatic separation in the acrylic lens. Used by the acrylic blur variant.'
+        ),
+        ConfigItem(
+            label='Bulb',
+            key='bulb',
+            scope='decoration/blur/acrylic',
+            type_='float',
+            default=48.0,
+            min_val=4.0,
+            max_val=256.0,
+            step=1,
+            group='Acrylic',
+            extended_help='Width of the curved acrylic edge in pixels. Used by the acrylic blur variant.'
+        ),
+        ConfigItem(
+            label='Clarity',
+            key='clarity',
+            scope='decoration/blur/acrylic',
+            type_='float',
+            default=0.82,
+            min_val=0.0,
+            max_val=1.0,
+            step=0.01,
+            group='Acrylic',
+            extended_help='Amount of sharp backdrop passing through the acrylic surface. Used by the acrylic blur variant.'
+        ),
+        ConfigItem(
+            label='Refraction',
+            key='refraction',
+            scope='decoration/blur/acrylic',
+            type_='float',
+            default=24.0,
+            min_val=0.0,
+            max_val=48.0,
+            step=0.1,
+            group='Acrylic',
+            extended_help='Maximum acrylic lens displacement in pixels. Used by the acrylic blur variant.'
+        ),
+        ConfigItem(
+            label='Tint',
+            key='tint',
+            scope='decoration/blur/acrylic',
+            type_='color',
+            default='rgba(eef5ff14)',
+            options=COLOR_ALIASES,
+            group='Acrylic',
+            extended_help='Acrylic tint color. Alpha channel controls optical absorption. Used by the acrylic blur variant.'
+        ),
+        ConfigItem(
+            label='Color1',
+            key='color1',
+            scope='decoration/blur/aurora',
+            type_='color',
+            default='rgba(f0a0ff29)',
+            options=COLOR_ALIASES,
+            group='Aurora',
+            extended_help='First aurora curtain color. Alpha controls its contribution. Used by the aurora blur variant.'
+        ),
+        ConfigItem(
+            label='Color2',
+            key='color2',
+            scope='decoration/blur/aurora',
+            type_='color',
+            default='rgba(4dffff7a)',
+            options=COLOR_ALIASES,
+            group='Aurora',
+            extended_help='Second aurora curtain color. Alpha controls its contribution. Used by the aurora blur variant.'
+        ),
+        ConfigItem(
+            label='Intensity',
+            key='intensity',
+            scope='decoration/blur/aurora',
+            type_='float',
+            default=0.35,
+            min_val=0.0,
+            max_val=1.0,
+            step=0.01,
+            group='Aurora',
+            extended_help='Strength of the aurora color contribution. Used by the aurora blur variant.'
+        ),
+        ConfigItem(
+            label='Speed',
+            key='speed',
+            scope='decoration/blur/aurora',
+            type_='float',
+            default=1.0,
+            min_val=0.0,
+            max_val=10.0,
+            step=0.1,
+            group='Aurora',
+            extended_help='Animation speed. 0 freezes the animation. Used by the aurora blur variant.'
+        ),
+        ConfigItem(
+            label='Speed',
+            key='speed',
+            scope='decoration/blur/drops',
+            type_='float',
+            default=3.0,
+            min_val=0.0,
+            max_val=10.0,
+            step=0.1,
+            group='Drops',
+            extended_help='Animation speed. 0 disables the animation. Used by the drops blur variant.'
+        ),
+        ConfigItem(
+            label='Color',
+            key='color',
+            scope='decoration/blur/fluid_jar',
+            type_='color',
+            default='rgba(3399ffcc)',
+            options=COLOR_ALIASES,
+            group='Fluid Jar',
+            extended_help='Fluid color. Used by the fluid_jar blur variant.'
+        ),
+        ConfigItem(
+            label='Distortion',
+            key='distortion',
+            scope='decoration/blur/fluid_jar',
+            type_='float',
+            default=8.0,
+            min_val=0.0,
+            max_val=10.0,
+            step=0.1,
+            group='Fluid Jar',
+            extended_help='Fluid refraction distortion multiplier. Used by the fluid_jar blur variant.'
+        ),
+        ConfigItem(
+            label='Fill Amount',
+            key='fill_amount',
+            scope='decoration/blur/fluid_jar',
+            type_='float',
+            default=0.5,
+            min_val=0.0,
+            max_val=1.0,
+            step=0.01,
+            group='Fluid Jar',
+            extended_help='Fill level for of the fluid. Used by the fluid_jar blur variant.'
+        ),
+        ConfigItem(
+            label='Mass',
+            key='mass',
+            scope='decoration/blur/fluid_jar',
+            type_='float',
+            default=1.4,
+            min_val=0.1,
+            max_val=10.0,
+            step=0.1,
+            group='Fluid Jar',
+            extended_help="Fluid's Inertial mass. Used by the fluid_jar blur variant."
+        ),
+        ConfigItem(
+            label='Precision',
+            key='precision',
+            scope='decoration/blur/fluid_jar',
+            type_='float',
+            default=2.0,
+            min_val=0.5,
+            max_val=8.0,
+            step=0.1,
+            group='Fluid Jar',
+            extended_help='Fluid simulation precision multiplier. 2x is a good compromise. 4x is expensive. 8x is extreme and unnecessary. Used by the fluid_jar blur variant.'
+        ),
+        ConfigItem(
+            label='Speed',
+            key='speed',
+            scope='decoration/blur/fluid_jar',
+            type_='float',
+            default=3.7,
+            min_val=0.0,
+            max_val=10.0,
+            step=0.1,
+            group='Fluid Jar',
+            extended_help='Animation speed. Used by the fluid_jar blur variant.'
+        ),
+        ConfigItem(
+            label='Turbulence',
+            key='turbulence',
+            scope='decoration/blur/fluid_jar',
+            type_='float',
+            default=1.2,
+            min_val=0.0,
+            max_val=5.0,
+            step=0.1,
+            group='Fluid Jar',
+            extended_help='Interior fluid turbulence multiplier. Used by the fluid_jar blur variant.'
+        ),
+        ConfigItem(
+            label='Refraction',
+            key='refraction',
+            scope='decoration/blur/glass',
+            type_='float',
+            default=20.0,
+            min_val=0.0,
+            max_val=20.0,
+            step=0.1,
+            group='Glass',
+            extended_help='Maximum refraction displacement for glass blur types in pixels. Used by the glass blur variants (aurora, drops, heat_shimmer, prism).'
+        ),
+        ConfigItem(
+            label='Roughness',
+            key='roughness',
+            scope='decoration/blur/glass',
+            type_='float',
+            default=1.0,
+            min_val=0.0,
+            max_val=1.0,
+            step=0.01,
+            group='Glass',
+            extended_help='Strength of the glass relief shading. Used by the glass blur variants (aurora, drops, heat_shimmer, prism).'
+        ),
+        ConfigItem(
+            label='Size',
+            key='size',
+            scope='decoration/blur/glass',
+            type_='float',
+            default=40.0,
+            min_val=4.0,
+            max_val=512.0,
+            step=1,
+            group='Glass',
+            extended_help='Pattern size for glass blur types in pixels. Used by the glass blur variants (aurora, drops, heat_shimmer, prism).'
+        ),
+        ConfigItem(
+            label='Intensity',
+            key='intensity',
+            scope='decoration/blur/haze',
+            type_='float',
+            default=0.35,
+            min_val=0.0,
+            max_val=1.0,
+            step=0.01,
+            group='Haze',
+            extended_help='Strength of the haze pearlescent sheen. Used by the haze blur variant.'
+        ),
+        ConfigItem(
+            label='Iridescence',
+            key='iridescence',
+            scope='decoration/blur/haze',
+            type_='float',
+            default=0.7,
+            min_val=0.0,
+            max_val=1.0,
+            step=0.01,
+            group='Haze',
+            extended_help='Strength of the haze pearlescent color shift. Used by the haze blur variant.'
+        ),
+        ConfigItem(
+            label='Speed',
+            key='speed',
+            scope='decoration/blur/heat_shimmer',
+            type_='float',
+            default=1.0,
+            min_val=0.0,
+            max_val=10.0,
+            step=0.1,
+            group='Heat Shimmer',
+            extended_help='Animation speed. 0 disables the animation. Used by the heat_shimmer blur variant.'
+        ),
+        ConfigItem(
+            label='Duration',
+            key='duration',
+            scope='decoration/blur/ripple',
+            type_='float',
+            default=0.45,
+            min_val=0.05,
+            max_val=5.0,
+            step=0.1,
+            group='Ripple',
+            extended_help='Duration in seconds. Used by the ripple blur variant.'
+        ),
+        ConfigItem(
+            label='Radius',
+            key='radius',
+            scope='decoration/blur/ripple',
+            type_='float',
+            default=400.0,
+            min_val=1.0,
+            max_val=1000.0,
+            step=1,
+            group='Ripple',
+            extended_help='Maximum radius in pixels. Used by the ripple blur variant.'
+        ),
+        ConfigItem(
+            label='Strength',
+            key='strength',
+            scope='decoration/blur/ripple',
+            type_='float',
+            default=30.0,
+            min_val=0.0,
+            max_val=32.0,
+            step=0.1,
+            group='Ripple',
+            extended_help='Maximum refraction displacement in pixels. Used by the ripple blur variant.'
+        ),
+        ConfigItem(
+            label='Width',
+            key='width',
+            scope='decoration/blur/ripple',
+            type_='float',
+            default=32.0,
+            min_val=1.0,
+            max_val=200.0,
+            step=1,
+            group='Ripple',
+            extended_help='Width of waves in pixels. Used by the ripple blur variant.'
+        ),
+        ConfigItem(
+            label='Damping',
+            key='damping',
+            scope='decoration/blur/water',
+            type_='float',
+            default=0.95,
+            min_val=0.0,
+            max_val=1.0,
+            step=0.01,
+            group='Water',
+            extended_help='Decay damping. Used by the water blur variant.'
+        ),
+        ConfigItem(
+            label='Duration',
+            key='duration',
+            scope='decoration/blur/water',
+            type_='float',
+            default=12.0,
+            min_val=0.5,
+            max_val=60.0,
+            step=0.1,
+            group='Water',
+            extended_help='Maximum duration in seconds. Used by the water blur variant.'
+        ),
+        ConfigItem(
+            label='Radius',
+            key='radius',
+            scope='decoration/blur/water',
+            type_='float',
+            default=20.0,
+            min_val=1.0,
+            max_val=1000.0,
+            step=1,
+            group='Water',
+            extended_help='Pointer radius in pixels. Used by the water blur variant.'
+        ),
+        ConfigItem(
+            label='Speed',
+            key='speed',
+            scope='decoration/blur/water',
+            type_='float',
+            default=0.76,
+            min_val=0.0,
+            max_val=10.0,
+            step=0.1,
+            group='Water',
+            extended_help='Propagation speed. Used by the water blur variant.'
+        ),
+        ConfigItem(
+            label='Strength',
+            key='strength',
+            scope='decoration/blur/water',
+            type_='float',
+            default=32.0,
+            min_val=0.0,
+            max_val=32.0,
+            step=0.1,
+            group='Water',
+            extended_help='Maximum refraction displacement and injection strength in pixels. Used by the water blur variant.'
+        ),
+    ],
+    # Lighting
+    6: [
         ConfigItem(
             label="Shadow Settings",
             key="enabled",
@@ -1311,8 +1653,8 @@ SCHEMA = {
             scope="decoration/shadow",
             type_="int",
             default=6,
-            min_val=1,
-            max_val=50,
+            min_val=0,
+            max_val=100,
             step=1,
             parent_ref="decoration/shadow.enabled",
             extended_help="**Range**\n\nThe physical distance in pixels that the shadow extends outward."
@@ -1354,14 +1696,12 @@ SCHEMA = {
             scope="decoration/shadow",
             type_="float",
             default=1.0,
-            min_val=0.0,
-            max_val=1.0,
+            min_val=0.05,
+            max_val=2.0,
             step=0.1,
             parent_ref="decoration/shadow.enabled",
             extended_help="**Scale**\n\nMultiplies the physical size footprint of the shadow geometry."
         ),
-
-        # --- GLOW HYBRID FOLDER ---
         ConfigItem(
             label="Glow Settings",
             key="enabled",
@@ -1379,8 +1719,8 @@ SCHEMA = {
             scope="decoration/glow",
             type_="int",
             default=10,
-            min_val=1,
-            max_val=50,
+            min_val=0,
+            max_val=100,
             step=1,
             parent_ref="decoration/glow.enabled",
             extended_help="**Range**\n\nThe physical distance in pixels that the glow lighting bleeds outward."
@@ -1407,13 +1747,174 @@ SCHEMA = {
             parent_ref="decoration/glow.enabled",
             extended_help="**Color**\n\nThe distinct color of the glow emission."
         ),
+        ConfigItem(
+            label='Inactive Color',
+            key='color_inactive',
+            scope='decoration/shadow',
+            type_='color',
+            default='nil',
+            options=["nil"] + COLOR_ALIASES,
+            parent_ref='decoration/shadow.enabled',
+            extended_help='Inactive color; select nil to inherit the active color.'
+        ),
+        ConfigItem(
+            label='Inactive Color',
+            key='color_inactive',
+            scope='decoration/glow',
+            type_='color',
+            default='nil',
+            options=["nil"] + COLOR_ALIASES,
+            parent_ref='decoration/glow.enabled',
+            extended_help='Inactive color; select nil to inherit the active color.'
+        ),
+        ConfigItem(
+            label='Offset X',
+            key='1',
+            scope='decoration/shadow/offset',
+            type_='float',
+            default=0.0,
+            min_val=-250,
+            max_val=250,
+            step=1,
+            parent_ref='decoration/shadow.enabled',
+            extended_help='Shadow offset in layout pixels; negative values move left/up.'
+        ),
+        ConfigItem(
+            label='Offset Y',
+            key='2',
+            scope='decoration/shadow/offset',
+            type_='float',
+            default=0.0,
+            min_val=-250,
+            max_val=250,
+            step=1,
+            parent_ref='decoration/shadow.enabled',
+            extended_help='Shadow offset in layout pixels; negative values move left/up.'
+        ),
     ],
-
-    # -------------------------------------------------------------------------
-    # TAB 6: SMART (Contextual Overrides)
-    # -------------------------------------------------------------------------
-    6: [
-        # --- SINGLE WINDOW EXCLUSIONS ---
+    # Motion
+    7: [
+        ConfigItem(
+            label='Motion Blur',
+            key='enabled',
+            scope='decoration/motion_blur',
+            type_='bool',
+            default=False,
+            group='Motion Blur',
+            is_parent=True,
+            expanded=False,
+            extended_help='enable motion blur on moving/resizing windows. Independent decoration effect; the Rofi animation switcher continues to manage animation curves and the animation master switch.'
+        ),
+        ConfigItem(
+            label='Samples',
+            key='samples',
+            scope='decoration/motion_blur',
+            type_='int',
+            default=7,
+            min_val=1,
+            max_val=64,
+            step=1,
+            parent_ref='decoration/motion_blur.enabled',
+            extended_help='The amount of samples to render. More will mean clearer blur, at the cost of more compute. Independent decoration effect; the Rofi animation switcher continues to manage animation curves and the animation master switch.'
+        ),
+        ConfigItem(
+            label='Wobble',
+            key='enabled',
+            scope='decoration/wobble',
+            type_='bool',
+            default=False,
+            group='Wobble',
+            is_parent=True,
+            expanded=False,
+            extended_help='enable wobble on moving/resizing windows. Independent decoration effect; the Rofi animation switcher continues to manage animation curves and the animation master switch.'
+        ),
+        ConfigItem(
+            label='Mesh',
+            key='mesh',
+            scope='decoration/wobble',
+            type_='int',
+            default=12,
+            min_val=2,
+            max_val=32,
+            step=1,
+            parent_ref='decoration/wobble.enabled',
+            extended_help='amount of wobble mesh vertices per edge. Independent decoration effect; the Rofi animation switcher continues to manage animation curves and the animation master switch.'
+        ),
+        ConfigItem(
+            label='Stiffness',
+            key='stiffness',
+            scope='decoration/wobble',
+            type_='float',
+            default=200.0,
+            min_val=0.0001,
+            max_val=1000.0,
+            step=1,
+            parent_ref='decoration/wobble.enabled',
+            extended_help='spring stiffness for wobble deformation. Independent decoration effect; the Rofi animation switcher continues to manage animation curves and the animation master switch.'
+        ),
+        ConfigItem(
+            label='Damping',
+            key='damping',
+            scope='decoration/wobble',
+            type_='float',
+            default=12.0,
+            min_val=0.0,
+            max_val=1000.0,
+            step=1,
+            parent_ref='decoration/wobble.enabled',
+            extended_help='spring damping for wobble deformation. Independent decoration effect; the Rofi animation switcher continues to manage animation curves and the animation master switch.'
+        ),
+        ConfigItem(
+            label='Mass',
+            key='mass',
+            scope='decoration/wobble',
+            type_='float',
+            default=1.0,
+            min_val=0.0001,
+            max_val=1000.0,
+            step=1,
+            parent_ref='decoration/wobble.enabled',
+            extended_help='spring mass for wobble deformation. Independent decoration effect; the Rofi animation switcher continues to manage animation curves and the animation master switch.'
+        ),
+        ConfigItem(
+            label='Intensity',
+            key='intensity',
+            scope='decoration/wobble',
+            type_='float',
+            default=0.2,
+            min_val=0.0,
+            max_val=2.0,
+            step=0.1,
+            parent_ref='decoration/wobble.enabled',
+            extended_help='wobble deformation impulse multiplier. Independent decoration effect; the Rofi animation switcher continues to manage animation curves and the animation master switch.'
+        ),
+        ConfigItem(
+            label='Value Epsilon',
+            key='value_epsilon',
+            scope='decoration/wobble',
+            type_='float',
+            default=0.25,
+            min_val=0.0,
+            max_val=100.0,
+            step=1,
+            parent_ref='decoration/wobble.enabled',
+            extended_help='position epsilon below which wobble is considered stable. Independent decoration effect; the Rofi animation switcher continues to manage animation curves and the animation master switch.'
+        ),
+        ConfigItem(
+            label='Velocity Epsilon',
+            key='velocity_epsilon',
+            scope='decoration/wobble',
+            type_='float',
+            default=2.0,
+            min_val=0.0,
+            max_val=1000.0,
+            step=1,
+            parent_ref='decoration/wobble.enabled',
+            extended_help='velocity epsilon below which wobble is considered stable. Independent decoration effect; the Rofi animation switcher continues to manage animation curves and the animation master switch.'
+        ),
+    ],
+    # Smart
+    8: [
         ConfigItem(
             label="Single Border Size",
             key="border_size",
@@ -1475,7 +1976,7 @@ SCHEMA = {
             extended_help="**Single Rounding Power**\n\nOverrides the mathematical curve used for rounding corners specifically for single windows. 2.0 is circular, 4.0 is squircle, 1.0 is triangular."
         ),
         ConfigItem(
-            label="Single Opacity Override",
+            label="Single Opacity Multiplier",
             key="opacity",
             scope="window_rule/single_window_style",
             type_="float",
@@ -1484,7 +1985,7 @@ SCHEMA = {
             max_val=1.0,
             step=0.05,
             group="Single",
-            extended_help="**Single Opacity Override**\n\nAbsolute opacity rules applied to a single window."
+            extended_help="**Single Opacity Multiplier**\n\nMultiplies global opacity; 1.0 inherits it."
         ),
         ConfigItem(
             label="Single Disable Blur",
@@ -1495,8 +1996,6 @@ SCHEMA = {
             group="Single",
             extended_help="**Single Disable Blur**\n\nDisables the background blur effect for the window when it is the only one on the screen to save GPU resources."
         ),
-
-        # --- MAXIMIZED EXCLUSIONS ---
         ConfigItem(
             label="Maximized Border Size",
             key="border_size",
@@ -1555,7 +2054,7 @@ SCHEMA = {
             max_val=1.0,
             step=0.05,
             group="Maximized",
-            extended_help="**Maximized Opacity**\n\nForces a specific transparency level whenever a window enters a floating maximized state."
+            extended_help="**Maximized Opacity**\n\nMultiplies global opacity for floating windows on a maximized workspace."
         ),
         ConfigItem(
             label="Maximized Disable Blur",
@@ -1567,12 +2066,8 @@ SCHEMA = {
             extended_help="**Maximized Disable Blur**\n\nDisables the background blur effect entirely for maximized windows to maximize performance."
         ),
     ],
-
-    # -------------------------------------------------------------------------
-    # TAB 7: SPECIAL WORKSPACE
-    # -------------------------------------------------------------------------
-    7: [
-        # --- BACKGROUND ---
+    # Special
+    9: [
         ConfigItem(
             label="Dim Background",
             key="dim_special",
@@ -1594,8 +2089,6 @@ SCHEMA = {
             group="Background",
             extended_help="**Special Workspace Blur**\n\nForces kawase blur behind the entire screen when a special scratchpad workspace is open."
         ),
-
-        # --- GEOMETRY ---
         ConfigItem(
             label="Border Size",
             key="border_size",
@@ -1632,8 +2125,6 @@ SCHEMA = {
             group="Geometry",
             extended_help="**Magic Gaps Out**\n\nDefines the large outer margin around the magic scratchpad, making it feel centered and floating."
         ),
-
-        # --- STYLING ---
         ConfigItem(
             label="Border Color",
             key="border_color",
@@ -1678,7 +2169,7 @@ SCHEMA = {
             max_val=1.0,
             step=0.05,
             group="Styling",
-            extended_help="**Magic Opacity**\n\nThe transparency level for magic scratchpad windows."
+            extended_help="**Magic Opacity**\n\nMultiplies global opacity for magic scratchpad windows."
         ),
         ConfigItem(
             label="Disable Blur",
@@ -1690,12 +2181,8 @@ SCHEMA = {
             extended_help="**Magic Disable Blur**\n\nDisables the kawase background blur effect strictly for magic scratchpad windows."
         ),
     ],
-
-    # -------------------------------------------------------------------------
-    # TAB 8: GROUPING
-    # -------------------------------------------------------------------------
-    8: [
-        # --- Groupbar Controls ---
+    # Groups
+    10: [
         ConfigItem(
             label="Enable Groupbars",
             key="enabled",
@@ -1735,8 +2222,6 @@ SCHEMA = {
             group="Groupbar",
             extended_help="**Decoration Priority**\n\nSets the decoration priority for groupbars relative to other window decorations [0 - 6]."
         ),
-
-        # --- Typography ---
         ConfigItem(
             label="Font Size",
             key="font_size",
@@ -1778,8 +2263,6 @@ SCHEMA = {
             group="Typography",
             extended_help="**Font Family**\n\nFont used to display groupbar titles. Leave empty to fall back to misc.font_family."
         ),
-
-        # --- Geometry & Pills ---
         ConfigItem(
             label="Height",
             key="height",
@@ -1873,8 +2356,6 @@ SCHEMA = {
             group="Geometry",
             extended_help="**Keep Upper Gap**\n\nWhether to preserve the upper window gap above the groupbar."
         ),
-
-        # --- Shapes & Gradients ---
         ConfigItem(
             label="Enable Gradients",
             key="gradients",
@@ -1926,8 +2407,6 @@ SCHEMA = {
             group="Pills",
             extended_help="**Blur Pills**\n\nApplies kawase background blur behind groupbar indicators and gradient pills."
         ),
-
-        # --- Pill Colors ---
         ConfigItem(
             label="Active Pill Color",
             key="col.active",
@@ -1968,8 +2447,6 @@ SCHEMA = {
             group="Pill Colors",
             extended_help="**Locked Inactive Pill Color**\n\nBackground fill color for inactive tabs when the group is locked."
         ),
-
-        # --- Text Colors ---
         ConfigItem(
             label="Active Text Color",
             key="text_color",
@@ -2010,8 +2487,6 @@ SCHEMA = {
             group="Text Colors",
             extended_help="**Locked Inactive Title Text Color**\n\nColor of inactive tab titles when the group is locked."
         ),
-
-        # --- Window Group Borders ---
         ConfigItem(
             label="Active Group Border",
             key="col.border_active",
@@ -2052,7 +2527,502 @@ SCHEMA = {
             group="Group Borders",
             extended_help="**Locked Inactive Group Border Color**\n\nBorder color around inactive windows when the group is locked."
         ),
-    ]
+        ConfigItem(
+            label='Hide Single Tab',
+            key='disable_when_only',
+            scope='group/groupbar',
+            type_='bool',
+            default=False,
+            group='Groupbar',
+            extended_help='Hide Single Tab for groupbar decorations.'
+        ),
+        ConfigItem(
+            label='Middle Click Closes',
+            key='middle_click_close',
+            scope='group/groupbar',
+            type_='bool',
+            default=True,
+            group='Interaction',
+            extended_help='Middle Click Closes for groupbar decorations.'
+        ),
+        ConfigItem(
+            label='Scroll Changes Tab',
+            key='scrolling',
+            scope='group/groupbar',
+            type_='bool',
+            default=True,
+            group='Interaction',
+            extended_help='Scroll Changes Tab for groupbar decorations.'
+        ),
+        ConfigItem(
+            label='Indicator Rounding',
+            key='rounding',
+            scope='group/groupbar',
+            type_='int',
+            default=10,
+            min_val=0,
+            max_val=40,
+            step=1,
+            group='Indicator',
+            extended_help='Indicator Rounding for groupbar decorations.'
+        ),
+        ConfigItem(
+            label='Indicator Rounding Power',
+            key='rounding_power',
+            scope='group/groupbar',
+            type_='float',
+            default=4.0,
+            min_val=1,
+            max_val=10,
+            step=0.1,
+            group='Indicator',
+            extended_help='Indicator Rounding Power for groupbar decorations.'
+        ),
+        ConfigItem(
+            label='Round Indicator Edges Only',
+            key='round_only_edges',
+            scope='group/groupbar',
+            type_='bool',
+            default=False,
+            group='Indicator',
+            extended_help='Round Indicator Edges Only for groupbar decorations.'
+        ),
+    ],
+    # Desktop
+    11: [
+        ConfigItem(
+            label='Hide Default Logo',
+            key='disable_hyprland_logo',
+            scope='misc',
+            type_='bool',
+            default=True,
+            group='Background & Text',
+            extended_help='Hide Default Logo.'
+        ),
+        ConfigItem(
+            label='Hide Splash Text',
+            key='disable_splash_rendering',
+            scope='misc',
+            type_='bool',
+            default=True,
+            group='Background & Text',
+            extended_help='Requires a monitor reload; config-only reload is insufficient.'
+        ),
+        ConfigItem(
+            label='Default Wallpaper',
+            key='force_default_wallpaper',
+            scope='misc',
+            type_='int',
+            default=1,
+            min_val=-1,
+            max_val=2,
+            step=1,
+            group='Background & Text',
+            extended_help='-1 random, 0/1 disable anime, 2 enables anime.'
+        ),
+        ConfigItem(
+            label='Background Color',
+            key='background_color',
+            scope='misc',
+            type_='color',
+            default='background',
+            options=COLOR_ALIASES,
+            group='Background & Text',
+            extended_help='Visible when the default Hyprland logo is disabled; a wallpaper layer may cover it.'
+        ),
+        ConfigItem(
+            label='Default Font',
+            key='font_family',
+            scope='misc',
+            type_='string',
+            default='Sans',
+            group='Background & Text',
+            extended_help='Default Font.'
+        ),
+        ConfigItem(
+            label='Splash Font',
+            key='splash_font_family',
+            scope='misc',
+            type_='string',
+            default='',
+            group='Background & Text',
+            extended_help='Requires a monitor reload. Empty inherits the default font.'
+        ),
+        ConfigItem(
+            label='App Not Responding Dialog',
+            key='enable_anr_dialog',
+            scope='misc',
+            type_='bool',
+            default=True,
+            group='Dialogs',
+            extended_help='App Not Responding Dialog.'
+        ),
+        ConfigItem(
+            label='ANR Missed Pings',
+            key='anr_missed_pings',
+            scope='misc',
+            type_='int',
+            default=5,
+            min_val=1,
+            max_val=20,
+            step=1,
+            group='Dialogs',
+            extended_help='ANR Missed Pings.'
+        ),
+        ConfigItem(
+            label='Render Below Lock Screen',
+            key='session_lock_xray',
+            scope='misc',
+            type_='bool',
+            default=False,
+            group='Lock Screen',
+            extended_help='Keep rendering workspaces below the lock screen.'
+        ),
+        ConfigItem(
+            label='Lock Screen Blur',
+            key='session_lock_blur',
+            scope='misc',
+            type_='bool',
+            default=False,
+            group='Lock Screen',
+            extended_help='Blur beneath the lock screen; requires Render Below Lock Screen.'
+        ),
+        ConfigItem(
+            label='Splash Text Color',
+            key='splash',
+            scope='misc/col',
+            type_='color',
+            default='rgba(ffffff55)',
+            options=COLOR_ALIASES,
+            group='Background & Text',
+            extended_help='Color of splash text; requires a monitor reload.'
+        ),
+    ],
+    # Rendering
+    12: [
+        ConfigItem(
+            label='Async Commit',
+            key='async_commit',
+            scope='render',
+            type_='bool',
+            default=False,
+            group='Pipeline',
+            extended_help='Send DRM commits asynchronously when possible, reducing hw cursor latency.'
+        ),
+        ConfigItem(
+            label='Cm Auto Hdr',
+            key='cm_auto_hdr',
+            scope='render',
+            type_='int',
+            default=1,
+            min_val=0,
+            max_val=2,
+            step=1,
+            group='Color Management',
+            extended_help='Auto-switch to HDR in fullscreen when needed. `0` - disabled, `1` - switch to `hdr`, `2` - switch to `hdredid`.'
+        ),
+        ConfigItem(
+            label='Cm Enabled',
+            key='cm_enabled',
+            scope='render',
+            type_='bool',
+            default=True,
+            group='Color Management',
+            extended_help='Whether the color management pipeline should be enabled or not. Requires restart.'
+        ),
+        ConfigItem(
+            label='Cm Sdr Eotf',
+            key='cm_sdr_eotf',
+            scope='render',
+            type_='cycle',
+            default='default',
+            options=['default', 'gamma22', 'gamma22force', 'srgb'],
+            group='Color Management',
+            extended_help='Default transfer function for displaying SDR apps. `default` - Use default value (sRGB), `gamma22` - treat unspecified as Gamma 2.2, `gamma22force` - treat unspecified and sRGB as Gamma 2.2, `srgb` - treat unspecified as sRGB. Options: `"default"`/`"gamma22"`/`"gamma22force"`/`"srgb"`.'
+        ),
+        ConfigItem(
+            label='Ctm Animation',
+            key='ctm_animation',
+            scope='render',
+            type_='int',
+            default=2,
+            min_val=0,
+            max_val=2,
+            step=1,
+            group='Pipeline',
+            extended_help='Whether to enable a fade animation for CTM changes (hyprsunset). 2 means "auto" which disables them on NVIDIA.'
+        ),
+        ConfigItem(
+            label='Commit Timing Enabled',
+            key='commit_timing_enabled',
+            scope='render',
+            type_='bool',
+            default=True,
+            group='Pipeline',
+            extended_help='Enable commit timing proto. Requires restart.'
+        ),
+        ConfigItem(
+            label='Direct Scanout',
+            key='direct_scanout',
+            scope='render',
+            type_='int',
+            default=0,
+            min_val=0,
+            max_val=2,
+            step=1,
+            group='Pipeline',
+            extended_help="Enables direct scanout. Direct scanout attempts to reduce lag when there is only one fullscreen application on a screen (game). It is also recommended to set this to false if the fullscreen application shows graphical glitches. `0` - disabled, `1` - enabled, `2` - auto (enabled with content type 'game')."
+        ),
+        ConfigItem(
+            label='Expand Undersized Textures',
+            key='expand_undersized_textures',
+            scope='render',
+            type_='bool',
+            default=True,
+            group='Pipeline',
+            extended_help='Whether to expand undersized textures along the edge, or rather stretch the entire texture.'
+        ),
+        ConfigItem(
+            label='Fp16 Sdr Tf',
+            key='fp16_sdr_tf',
+            scope='render',
+            type_='int',
+            default=0,
+            min_val=0,
+            max_val=1,
+            step=1,
+            group='Color Management',
+            extended_help='Internal workbuffer transfer function for fp16 in SDR mode. 0 - monitor, 1 - linear.'
+        ),
+        ConfigItem(
+            label='Icc Vcgt Enabled',
+            key='icc_vcgt_enabled',
+            scope='render',
+            type_='bool',
+            default=True,
+            group='Color Management',
+            extended_help='Enable sending VCGT ramps to KMS with ICC profiles.'
+        ),
+        ConfigItem(
+            label='Keep Unmodified Copy',
+            key='keep_unmodified_copy',
+            scope='render',
+            type_='int',
+            default=2,
+            min_val=0,
+            max_val=2,
+            step=1,
+            group='Pipeline',
+            extended_help='Keep unmodified SDR frame copy for screensharing. `0` - disabled, `1` - enabled, `2` - auto (enabled in HDR with SDR modifiers). Set to 1 if screenshots are transparent.'
+        ),
+        ConfigItem(
+            label='New Render Scheduling',
+            key='new_render_scheduling',
+            scope='render',
+            type_='bool',
+            default=False,
+            group='Pipeline',
+            extended_help='Automatically uses triple buffering when needed, improves FPS on underpowered devices.'
+        ),
+        ConfigItem(
+            label='Not Shown Fifo Lock',
+            key='not_shown_fifo_lock',
+            scope='render',
+            type_='int',
+            default=0,
+            min_val=0,
+            max_val=2,
+            step=1,
+            group='Pipeline',
+            extended_help='Control fifo locking for not shown surfaces. always - use fifo lock for any surface, ignore_unfocused - ignore render_unfocused windows, never - skip locking invisible surfaces.'
+        ),
+        ConfigItem(
+            label='Non Shader Cm',
+            key='non_shader_cm',
+            scope='render',
+            type_='int',
+            default=3,
+            min_val=0,
+            max_val=3,
+            step=1,
+            group='Color Management',
+            extended_help='Enable CM without shader. `0` - disable, `1` - whenever possible, `2` - DS and passthrough only, `3` - disable and ignore CM issues. Options: [0 - 3].'
+        ),
+        ConfigItem(
+            label='Non Shader Cm Interop',
+            key='non_shader_cm_interop',
+            scope='render',
+            type_='int',
+            default=2,
+            min_val=0,
+            max_val=2,
+            step=1,
+            group='Color Management',
+            extended_help='`0` - external ctm (hyprsunset, etc.) is disabled in fullscreen, `1` - external ctm is enabled in fullscreen, `2` - external ctm is disabled for fullscreen photo/video/game content types.'
+        ),
+        ConfigItem(
+            label='Send Content Type',
+            key='send_content_type',
+            scope='render',
+            type_='bool',
+            default=True,
+            group='Color Management',
+            extended_help='Report content type to allow monitor profile autoswitch (may result in a black screen during the switch).'
+        ),
+        ConfigItem(
+            label='Use Fp16',
+            key='use_fp16',
+            scope='render',
+            type_='int',
+            default=2,
+            min_val=0,
+            max_val=2,
+            step=1,
+            group='Color Management',
+            extended_help='Use FP16 buffers internally. `0` - disabled, `1` - enabled, `2` - enabled in HDR mode.'
+        ),
+        ConfigItem(
+            label='Use Shader Blur Blend',
+            key='use_shader_blur_blend',
+            scope='render',
+            type_='bool',
+            default=False,
+            group='Pipeline',
+            extended_help='Use experimental blurred bg blending (glitched on rotated screens). Set to `true` if blur is missing with fp16 or `keep_unmodified_copy`.'
+        ),
+        ConfigItem(
+            label='Xp Mode',
+            key='xp_mode',
+            scope='render',
+            type_='bool',
+            default=False,
+            group='Pipeline',
+            extended_help='Disables back buffer and bottom layer rendering.'
+        ),
+        ConfigItem(
+            label='Unfocused FPS Limit',
+            key='render_unfocused_fps',
+            scope='misc',
+            type_='int',
+            default=5,
+            min_val=1,
+            max_val=120,
+            step=1,
+            group='Pipeline',
+            extended_help='Maximum FPS for windows with the render_unfocused rule; not a global cap on all background windows.'
+        ),
+        ConfigItem(
+            label='Variable Refresh Rate',
+            key='vrr',
+            scope='misc',
+            type_='int',
+            default=0,
+            min_val=0,
+            max_val=3,
+            step=1,
+            group='Pipeline',
+            extended_help='0 off, 1 on, 2 fullscreen, 3 fullscreen video/game. Requires a VRR capable display.'
+        ),
+        ConfigItem(
+            label='NVIDIA Anti Flicker',
+            key='nvidia_anti_flicker',
+            scope='opengl',
+            type_='bool',
+            default=True,
+            group='Pipeline',
+            extended_help='Reduces NVIDIA flicker at the cost of possible frame drops; ignored on other GPUs.'
+        ),
+        ConfigItem(
+            label='Overlay',
+            key='overlay',
+            scope='debug',
+            type_='bool',
+            default=False,
+            group='Diagnostics',
+            extended_help='Performance overlay; VFR must be disabled for accurate results.'
+        ),
+        ConfigItem(
+            label='Damage Blink',
+            key='damage_blink',
+            scope='debug',
+            type_='bool',
+            default=False,
+            group='Diagnostics',
+            extended_help='Flash damaged screen regions. Produces flashing visuals.'
+        ),
+        ConfigItem(
+            label='Colored Stdout Logs',
+            key='colored_stdout_logs',
+            scope='debug',
+            type_='bool',
+            default=True,
+            group='Diagnostics',
+            extended_help='Use colors in compositor stdout logs.'
+        ),
+        ConfigItem(
+            label='Vfr',
+            key='vfr',
+            scope='debug',
+            type_='bool',
+            default=True,
+            group='Diagnostics',
+            extended_help='Render only when needed to conserve resources.'
+        ),
+    ],
+    # Interactions
+    13: [
+        ConfigItem(
+            label="Resize on Border",
+            key="resize_on_border",
+            scope="general",
+            type_="bool",
+            default=True,
+            group="Mouse",
+            extended_help="**Resize on Border**\n\nAllows you to dynamically resize windows by clicking and dragging directly on their borders or gap areas."
+        ),
+        ConfigItem(
+            label="Extend Border Grab Area",
+            key="extend_border_grab_area",
+            scope="general",
+            type_="int",
+            default=15,
+            min_val=0,
+            max_val=50,
+            step=1,
+            group="Mouse",
+            extended_help="**Extend Grab Area**\n\nExtends the invisible clickable area around window borders. Higher values make it easier to grab."
+        ),
+        ConfigItem(
+            label="Hover Icon on Border",
+            key="hover_icon_on_border",
+            scope="general",
+            type_="bool",
+            default=True,
+            group="Mouse",
+            extended_help="**Hover Icon**\n\nAutomatically changes your cursor to a directional resize arrow when hovering over an interactive border area."
+        ),
+        ConfigItem(
+            label="Resize Corner",
+            key="resize_corner",
+            scope="general",
+            type_="int",
+            default=0,
+            min_val=0,
+            max_val=4,
+            step=1,
+            group="Behavior",
+            extended_help="**Resize Corner**\n\nForces floating windows to strictly scale from a specific corner (1-4). Set to 0 to disable."
+        ),
+        ConfigItem(
+            label="Allow Tearing",
+            key="allow_tearing",
+            scope="general",
+            type_="bool",
+            default=True,
+            group="Behavior",
+            extended_help="**Allow Tearing**\n\nMaster switch to allow screen tearing for immediate frame delivery, beneficial for minimizing input latency."
+        ),
+    ],
 }
 
 # =============================================================================

@@ -57,7 +57,7 @@ hl.config({
             natural_scroll = true,           -- Inverts scrolling direction. Scrolling moves content directly.
             scroll_factor = 1.0,             -- Multiplier applied to the amount of scroll movement.
             middle_button_emulation = false, -- Sending LMB and RMB simultaneously will be interpreted as a middle click.
-            tap_button_map = "",             -- Sets the tap button mapping for touchpad button emulation (lrm or lmr).
+            tap_button_map = "lrm", -- 1/2/3-finger tap = left/right/middle.
             clickfinger_behavior = false,    -- Button presses with 1, 2, or 3 fingers will be mapped to LMB, RMB, and MMB respectively.
             tap_to_click = true,             -- Tapping on the touchpad with 1, 2, or 3 fingers will send LMB, RMB, and MMB respectively.
             drag_lock = 0,                   -- Lifting the finger off while dragging will not drop item (0: disabled, 1: timeout, 2: sticky).
@@ -69,14 +69,14 @@ hl.config({
 
         -- --- Touchdevice (Subcategory of Input) ---
         touchdevice = {
-            transform = -1,                  -- Transform the input from touchdevices. -1 means it’s unset.
+            transform = 0, -- Normal input transform.
             output = "[[Auto]]",             -- The monitor to bind touch devices. The default is auto-detection.
             enabled = true                   -- Whether input is enabled for touch devices.
         },
 
         -- --- Tablet (Subcategory of Input) ---
         tablet = {
-            transform = -1,                  -- Transform the input from tablets. -1 means it’s unset.
+            transform = 0, -- Normal input transform.
             output = "",                     -- The monitor to bind tablets. Leave empty to map across all monitors.
             region_position = { 0, 0 },      -- Position of the mapped region in monitor layout relative to top left.
             absolute_region_position = false,-- Whether to treat the region_position as an absolute position in monitor layout.
@@ -139,4 +139,20 @@ hl.config({
         workspace_swipe_use_r = false,               -- If enabled, swiping will use the r prefix instead of the m prefix for finding workspaces.
         close_max_timeout = 1000                     -- The timeout for a window to close when using a 1:1 gesture, in ms.
     }
+})
+
+-- Additional TUI controls; existing configuration layers keep their load order.
+hl.config({
+    input = {
+        tablet = {
+            enabled = true,
+        },
+        tablettool = {
+            pressure_range_min = -1.0,
+            pressure_range_max = -1.0,
+        },
+    },
+    cursor = {
+        warp_on_monitor_change = -1,
+    },
 })

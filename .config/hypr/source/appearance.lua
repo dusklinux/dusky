@@ -294,3 +294,119 @@ hl.window_rule({
 
 -- Sourcing active animations
 require("source.animations.active.active")
+
+-- Additional appearance controls; defaults keep costly effects disabled.
+-- Hyprland Git options verified against commit 19fb395d4 (2026-10-04).
+-- Animation curves and animations.enabled remain in the active animation file.
+hl.config({
+    decoration = {
+        blur = {
+            variant = "kawase",
+            acrylic = {
+                aberration = 0.025,
+                bulb = 48.0,
+                clarity = 0.82,
+                refraction = 24.0,
+                tint = "rgba(eef5ff14)",
+            },
+            aurora = {
+                color1 = "rgba(f0a0ff29)",
+                color2 = "rgba(4dffff7a)",
+                intensity = 0.35,
+                speed = 1.0,
+            },
+            drops = {
+                speed = 3.0,
+            },
+            fluid_jar = {
+                color = "rgba(3399ffcc)",
+                distortion = 8.0,
+                fill_amount = 0.5,
+                mass = 1.4,
+                precision = 2.0,
+                speed = 3.7,
+                turbulence = 1.2,
+            },
+            glass = {
+                refraction = 20.0,
+                roughness = 1.0,
+                size = 40.0,
+            },
+            haze = {
+                intensity = 0.35,
+                iridescence = 0.7,
+            },
+            heat_shimmer = {
+                speed = 1.0,
+            },
+            ripple = {
+                duration = 0.45,
+                radius = 400.0,
+                strength = 30.0,
+                width = 32.0,
+            },
+            water = {
+                damping = 0.95,
+                duration = 12.0,
+                radius = 20.0,
+                speed = 0.76,
+                strength = 32.0,
+            },
+        },
+        shadow = {
+            color_inactive = nil, -- Inherit the active color.
+        },
+        glow = {
+            color_inactive = nil, -- Inherit the active color.
+        },
+        motion_blur = {
+            enabled = false,
+            samples = 7,
+        },
+        wobble = {
+            enabled = false,
+            mesh = 12,
+            stiffness = 200.0,
+            damping = 12.0,
+            mass = 1.0,
+            intensity = 0.2,
+            value_epsilon = 0.25,
+            velocity_epsilon = 2.0,
+        },
+    },
+    group = {
+        groupbar = {
+            disable_when_only = false,
+            middle_click_close = true,
+            scrolling = true,
+        },
+    },
+    misc = {
+        anr_missed_pings = 5,
+        session_lock_xray = false,
+        session_lock_blur = false,
+        col = {
+            splash = "rgba(ffffff55)",
+        },
+        vrr = 0,
+    },
+    render = {
+        async_commit = false,
+        cm_auto_hdr = 1,
+        cm_enabled = true,
+        cm_sdr_eotf = "default",
+        commit_timing_enabled = true,
+        fp16_sdr_tf = 0,
+        icc_vcgt_enabled = true,
+        keep_unmodified_copy = 2,
+        new_render_scheduling = false,
+        not_shown_fifo_lock = 0,
+        non_shader_cm = 3,
+        non_shader_cm_interop = 2,
+        send_content_type = true,
+        use_fp16 = 2,
+    },
+    debug = {
+        vfr = true,
+    },
+})

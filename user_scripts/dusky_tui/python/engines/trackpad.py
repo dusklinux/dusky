@@ -26,11 +26,22 @@ ACTION_MAP = {
     "Media: Volume Down (-10%)": 'function()\n        hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-down 10")\n    end',
     "Screen: Brightness Up (+10%)": 'function()\n        hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --bright-up 10")\n    end',
     "Screen: Brightness Down (-10%)": 'function()\n        hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --bright-down 10")\n    end',
+    'Native Tape Scroll': '"scroll_move"',
+    'Move Window': '"move"',
+    'Resize Window': '"resize"',
+    'Toggle Floating': '"float"',
+    'Toggle Fullscreen': '"fullscreen"',
+    'Close Window': '"close"',
     "Disabled / Unbound": '__DELETE__'
 }
 
 def get_friendly_name(block_str: str) -> str:
     """Safely extracts the UI label by scanning the raw Lua block for keywords."""
+    native = re.search(r'action\s*=\s*[\"\']([a-z_]+)[\"\']', block_str)
+    if native:
+        for label, code in ACTION_MAP.items():
+            if code == '"' + native[1] + '"':
+                return label
     if '"workspace"' in block_str or "'workspace'" in block_str: return "Native Workspace Swipe"
     if "org.dusky.quickpanal" in block_str: return "Toggle Dusky QuickPanel"
     if "waybar_toggle.sh" in block_str: return "Toggle Waybar"

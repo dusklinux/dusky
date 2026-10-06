@@ -78,7 +78,45 @@ for i in range(1, 11):
             default=(i == 10),
             parent_ref=f"ws_{i}_menu",
             extended_help=f"**Workspace {i} Persistence**\n\nKeeps workspace {i} alive in bars and pagers even when all windows inside it are closed."
-        )
+        ),
+    ])
+    WORKSPACE_ITEMS.extend([
+        ConfigItem(
+            label='Monitor Binding',
+            key='monitor',
+            scope=f"workspace_rule/{i}",
+            type_='string',
+            default='',
+            parent_ref=f"ws_{i}_menu",
+            extended_help='Output name or desc:description; empty leaves the workspace unbound.'
+        ),
+        ConfigItem(
+            label='Default on Monitor',
+            key='default',
+            scope=f"workspace_rule/{i}",
+            type_='bool',
+            default=False,
+            parent_ref=f"ws_{i}_menu",
+            extended_help='Make this the default workspace on its bound monitor.'
+        ),
+        ConfigItem(
+            label='Workspace Name',
+            key='default_name',
+            scope=f"workspace_rule/{i}",
+            type_='string',
+            default='',
+            parent_ref=f"ws_{i}_menu",
+            extended_help='Default display name; empty keeps the numbered name.'
+        ),
+        ConfigItem(
+            label='Launch on Empty Creation',
+            key='on_created_empty',
+            scope=f"workspace_rule/{i}",
+            type_='string',
+            default='',
+            parent_ref=f"ws_{i}_menu",
+            extended_help='Command to run when this workspace is created empty; empty launches nothing.'
+        ),
     ])
 
 
@@ -100,8 +138,6 @@ SCHEMA = {
             group="General Layout",
             extended_help="**Layout Override**\n\nSets the global default tiling layout for workspaces without specific overrides."
         ),
-        
-        # --- FOCUS & BEHAVIOR FOLDER ---
         ConfigItem(
             label="Focus & Miscellaneous",
             key="misc_menu_id",
@@ -137,9 +173,9 @@ SCHEMA = {
             type_="int",
             default=2,
             options=[0, 1, 2],
-            hints=["0: Keep behind", "1: Unfullscreen current", "2: Swap fullscreen to new"],
+            hints=["0: Keep behind", "1: Take over", "2: Unfullscreen/unmaximize"],
             parent_ref="misc_menu_id",
-            extended_help="**Focus Under Fullscreen**\n\nBehaviour when a window is focused while another is fullscreen:\n- 0 = Do nothing (new window stays behind)\n- 1 = New window takes over (unfullscreens current)\n- 2 = Swap (unfullscreen current, fullscreen the new one)"
+            extended_help="**Focus Under Fullscreen**\n\nBehaviour when a window is focused while another is fullscreen:\n- 0 = Do nothing (new window stays behind)\n- 1 = Focused window takes over\n- 2 = Exit fullscreen/maximized state"
         ),
         ConfigItem(
             label="Workspace Tracking",
@@ -148,12 +184,10 @@ SCHEMA = {
             type_="int",
             default=1,
             options=[0, 1, 2],
-            hints=["0: Disabled", "1: Track invocation workspace", "2: Strict tracking"],
+            hints=["0: Disabled", "1: Single-shot", "2: Persistent (children too)"],
             parent_ref="misc_menu_id",
-            extended_help="**Workspace Tracking**\n\nForces new windows to spawn on the workspace they were invoked from:\n- 0 = Disabled\n- 1 = Standard tracking (invoked workspace)\n- 2 = Strict tracking"
+            extended_help="**Workspace Tracking**\n\nForces new windows to spawn on the workspace they were invoked from:\n- 0 = Disabled\n- 1 = Single-shot tracking of the invocation workspace\n- 2 = Persistent tracking, including child windows"
         ),
-
-        # --- NAVIGATION FOLDER ---
         ConfigItem(
             label="Navigation & Binds",
             key="binds_menu_id",
@@ -177,8 +211,10 @@ SCHEMA = {
             label="Workspace Back and Forth",
             key="workspace_back_and_forth",
             scope="binds",
-            type_="bool",
-            default=False,
+            type_="int",
+            default=0,
+            options=[0, 1, 2],
+            hints=["0: Disabled", "1: All monitors", "2: Per monitor"],
             parent_ref="binds_menu_id",
             extended_help="**Back and Forth**\n\nRe-dispatching to the active workspace switches back to the previously active one."
         ),
@@ -189,7 +225,7 @@ SCHEMA = {
             type_="bool",
             default=False,
             parent_ref="binds_menu_id",
-            extended_help="**Allow Cycles**\n\nCycling past workspace 1 wraps to the highest-numbered, and vice versa."
+            extended_help="**Allow Cycles**\n\nWorkspaces remember their previous workspace, allowing repeated previous-workspace navigation to form cycles."
         ),
         ConfigItem(
             label="Workspace Center On",
@@ -197,10 +233,10 @@ SCHEMA = {
             scope="binds",
             type_="int",
             default=0,
-            options=[0, 1, 2],
-            hints=["0: Cursor stays", "1: Move to window", "2: Move to monitor"],
+            options=[0, 1],
+            hints=["0: Workspace center", "1: Last active window"],
             parent_ref="binds_menu_id",
-            extended_help="**Workspace Center On**\n\nCursor behavior on workspace switch:\n- 0 = Cursor stays in place\n- 1 = Moves to center of new window\n- 2 = Moves to center of monitor"
+            extended_help="**Workspace Center On**\n\nWhere to center the cursor on a workspace switch: 0 centers on the workspace, 1 on its last active window. Cursor warp settings determine whether a warp occurs."
         ),
         ConfigItem(
             label="Hide Special on Change",
@@ -228,6 +264,176 @@ SCHEMA = {
             default=True,
             parent_ref="binds_menu_id",
             extended_help="**Monitor Fallback**\n\nMoving a window past the edge of a monitor moves it to the adjacent monitor."
+        ),
+        ConfigItem(
+            label='Directional Focus Preference',
+            key='focus_preferred_method',
+            scope='binds',
+            type_='int',
+            default=0,
+            options=[0, 1],
+            parent_ref='binds_menu_id',
+            extended_help='0 most recently used window, 1 longest shared edge.'
+        ),
+        ConfigItem(
+            label='Cycle Group Tabs Before Leaving',
+            key='movefocus_cycles_groupfirst',
+            scope='binds',
+            type_='bool',
+            default=False,
+            parent_ref='binds_menu_id',
+            extended_help='Visit group tabs first during directional focus, then other windows.'
+        ),
+        ConfigItem(
+            label='Dispatchers Ignore Group Lock',
+            key='ignore_group_lock',
+            scope='binds',
+            type_='bool',
+            default=False,
+            parent_ref='binds_menu_id',
+            extended_help='Allow group movement dispatchers to ignore individual group locks.'
+        ),
+        ConfigItem(
+            label='Workspace Tracking Timeout',
+            key='initial_workspace_token_timeout',
+            scope='misc',
+            type_='int',
+            default=10,
+            min_val=1,
+            max_val=3600,
+            step=1,
+            parent_ref='misc_menu_id',
+            extended_help='Seconds an invoked window has to open before its workspace token expires.'
+        ),
+        ConfigItem(
+            label='Retain Fullscreen After Close',
+            key='exit_window_retains_fullscreen',
+            scope='misc',
+            type_='int',
+            default=0,
+            options=[0, 1, 2, 3],
+            parent_ref='misc_menu_id',
+            extended_help='0 disabled, 1 enabled, 2 only grouped, 3 only ungrouped windows.'
+        ),
+        ConfigItem(
+            label='Keep Floating Windows Onscreen',
+            key='float_force_onscreen',
+            scope='misc',
+            type_='int',
+            default=0,
+            options=[0, 1, 2],
+            parent_ref='misc_menu_id',
+            extended_help='0 unconstrained, 1 partially visible, 2 fully visible.'
+        ),
+        ConfigItem(
+            label='New Floating Windows Onscreen',
+            key='new_float_force_onscreen',
+            scope='misc',
+            type_='int',
+            default=2,
+            options=[0, 1, 2],
+            parent_ref='misc_menu_id',
+            extended_help='0 unconstrained, 1 partially visible, 2 fully visible.'
+        ),
+        ConfigItem(
+            label='Respect Tiled Window Size Limits',
+            key='size_limits_tiled',
+            scope='misc',
+            type_='bool',
+            default=False,
+            parent_ref='misc_menu_id',
+            extended_help='Apply min_size and max_size rules to tiled windows.'
+        ),
+        ConfigItem(
+            label='Block Modal Parent Input',
+            key='modal_parent_blocking',
+            scope='general',
+            type_='bool',
+            default=True,
+            group='General Layout',
+            extended_help='Prevent interaction with a parent window while its modal dialog is open.'
+        ),
+        ConfigItem(
+            label='Disable Empty Direction Focus Fallback',
+            key='no_focus_fallback',
+            scope='general',
+            type_='bool',
+            default=False,
+            group='General Layout',
+            extended_help='Do not focus another candidate when directional focus finds no window.'
+        ),
+        ConfigItem(
+            label='Single Window Aspect Width',
+            key='1',
+            scope='layout/single_window_aspect_ratio',
+            type_='float',
+            default=0.0,
+            group='Single Window Geometry',
+            min_val=0,
+            max_val=1000,
+            step=1,
+            extended_help='Aspect ratio for a lone window, e.g. 4 and 3. Zero disables extra aspect padding.'
+        ),
+        ConfigItem(
+            label='Single Window Aspect Height',
+            key='2',
+            scope='layout/single_window_aspect_ratio',
+            type_='float',
+            default=0.0,
+            group='Single Window Geometry',
+            min_val=0,
+            max_val=1000,
+            step=1,
+            extended_help='Aspect ratio for a lone window, e.g. 4 and 3. Zero disables extra aspect padding.'
+        ),
+        ConfigItem(
+            label='Aspect Padding Tolerance',
+            key='single_window_aspect_ratio_tolerance',
+            scope='layout',
+            type_='float',
+            default=0.1,
+            group='Single Window Geometry',
+            min_val=0,
+            max_val=1,
+            step=0.01,
+            extended_help='Ignore aspect padding smaller than this fraction of screen width or height.'
+        ),
+        ConfigItem(
+            label='Automatically Group New Windows',
+            key='auto_group',
+            scope='group',
+            type_='bool',
+            default=True,
+            group='Window Group Behavior',
+            extended_help='New windows join the focused unlocked group.'
+        ),
+        ConfigItem(
+            label='Drag Into Groups',
+            key='drag_into_group',
+            scope='group',
+            type_='int',
+            default=1,
+            group='Window Group Behavior',
+            options=[0, 1, 2],
+            extended_help='0 disabled, 1 enabled, 2 only through the groupbar.'
+        ),
+        ConfigItem(
+            label='Group on Workspace Move',
+            key='group_on_movetoworkspace',
+            scope='group',
+            type_='bool',
+            default=False,
+            group='Window Group Behavior',
+            extended_help='Moving a window into a workspace merges it with a solitary unlocked group.'
+        ),
+        ConfigItem(
+            label='Insert Group Tab After Current',
+            key='insert_after_current',
+            scope='group',
+            type_='bool',
+            default=True,
+            group='Window Group Behavior',
+            extended_help='Insert new group tabs after the active tab instead of at the end.'
         ),
     ],
 

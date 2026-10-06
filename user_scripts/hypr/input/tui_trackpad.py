@@ -59,6 +59,12 @@ GESTURE_OPTIONS = [
     "Media: Volume Down (-10%)",
     "Screen: Brightness Up (+10%)",
     "Screen: Brightness Down (-10%)",
+    'Native Tape Scroll',
+    'Move Window',
+    'Resize Window',
+    'Toggle Floating',
+    'Toggle Fullscreen',
+    'Close Window',
     "Disabled / Unbound"
 ]
 
@@ -72,6 +78,12 @@ GESTURE_HINTS = [
     "Decreases volume by 10%",
     "Increases brightness by 10%",
     "Decreases brightness by 10%",
+    'Scroll columns continuously in the Scrolling layout',
+    'Move the active window continuously',
+    'Resize the active window continuously',
+    'Toggle floating with a continuous gesture',
+    'Toggle fullscreen with a continuous gesture',
+    'Close the active window with a gesture',
     "Removes action mapping"
 ]
 
@@ -89,8 +101,8 @@ SCHEMA = {
             scope="gestures",
             type_="int",
             default=300,
-            min_val=50,
-            max_val=1500,
+            min_val=0,
+            max_val=2000,
             step=50,
             group="Distance",
             extended_help="**Swipe Distance**\n\nMaximum swipe travel distance in pixels required to trigger a full workspace transition."
@@ -125,8 +137,8 @@ SCHEMA = {
             scope="gestures",
             type_="int",
             default=1000,
-            min_val=0,
-            max_val=5000,
+            min_val=10,
+            max_val=2000,
             step=100,
             group="Timing",
             extended_help="**Close Max Timeout**\n\nMaximum time in milliseconds a 1:1 gesture window has to close."
@@ -191,8 +203,6 @@ SCHEMA = {
             group="Touchscreen",
             extended_help="**Invert Touchscreen Direction**\n\nInverts the direction of workspace swipes performed directly on a touchscreen."
         ),
-        
-        # --- HYBRID LOCK MENU ---
         ConfigItem(
             label="Lock Swipe Direction",
             key="workspace_swipe_direction_lock",
@@ -211,10 +221,28 @@ SCHEMA = {
             type_="int",
             default=10,
             min_val=0,
-            max_val=100,
+            max_val=200,
             step=2,
             parent_ref="gestures.workspace_swipe_direction_lock",
             extended_help="**Lock Threshold**\n\nDistance in pixels the swipe must travel before the direction lock fully engages."
+        ),
+        ConfigItem(
+            label='Snap Tape to Grid',
+            key='move_snap_to_grid',
+            scope='gestures/scrolling',
+            type_='bool',
+            default=True,
+            group='Scrolling Layout',
+            extended_help='Snap the scrolling layout to columns when a scroll_move gesture finishes.'
+        ),
+        ConfigItem(
+            label='Snap Cursor After Tape Move',
+            key='move_snap_cursor',
+            scope='gestures/scrolling',
+            type_='bool',
+            default=True,
+            group='Scrolling Layout',
+            extended_help='Move the cursor to the newly focused window when a scroll_move gesture finishes.'
         ),
     ],
 
@@ -282,7 +310,7 @@ SCHEMA = {
             key="action",
             scope="gesture/4/left",
             type_="picker",
-            default="Media: Volume Down (-10%)",
+            default="Screen: Brightness Down (-10%)",
             options=GESTURE_OPTIONS,
             hints=GESTURE_HINTS,
             group="Quad",
@@ -293,7 +321,7 @@ SCHEMA = {
             key="action",
             scope="gesture/4/right",
             type_="picker",
-            default="Media: Volume Up (+10%)",
+            default="Screen: Brightness Up (+10%)",
             options=GESTURE_OPTIONS,
             hints=GESTURE_HINTS,
             group="Quad",
@@ -304,7 +332,7 @@ SCHEMA = {
             key="action",
             scope="gesture/4/up",
             type_="picker",
-            default="Screen: Brightness Up (+10%)",
+            default="Media: Volume Up (+10%)",
             options=GESTURE_OPTIONS,
             hints=GESTURE_HINTS,
             group="Quad",
@@ -315,11 +343,22 @@ SCHEMA = {
             key="action",
             scope="gesture/4/down",
             type_="picker",
-            default="Screen: Brightness Down (-10%)",
+            default="Media: Volume Down (-10%)",
             options=GESTURE_OPTIONS,
             hints=GESTURE_HINTS,
             group="Quad",
             extended_help="**4-Finger Swipe Down**\n\nAssigns an executable script or action to the downward swipe gesture using four fingers."
+        ),
+        ConfigItem(
+            label='4-Finger Swipe (Horizontal 1:1)',
+            key='action',
+            scope='gesture/4/horizontal',
+            type_='picker',
+            default='Disabled / Unbound',
+            group='Quad',
+            options=GESTURE_OPTIONS,
+            hints=GESTURE_HINTS,
+            extended_help='Optional continuous horizontal gesture. Disable discrete left/right actions when using it.'
         ),
     ],
 

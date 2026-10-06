@@ -47,7 +47,7 @@ hl.config({
             natural_scroll          = true,  -- Invert scroll direction.
             scroll_factor           = 1.0,   -- Touchpad scroll speed multiplier.
             middle_button_emulation = false, -- LMB + RMB simultaneously = middle click.
-            tap_button_map          = "",    -- Tap button mapping: "" | "lrm" | "lmr".
+            tap_button_map          = "lrm", -- 1/2/3-finger tap = left/right/middle.
             clickfinger_behavior    = false, -- 1/2/3-finger click = LMB/RMB/MMB.
             tap_to_click            = true,  -- 1/2/3-finger tap = LMB/RMB/MMB.
             drag_lock               = 0,     -- Lift-and-continue drag: 0=off 1=timeout 2=sticky.
@@ -59,14 +59,14 @@ hl.config({
 
         -- --- Touch Device ---
         touchdevice = {
-            transform = -1,           -- Input transform; -1 = unset.
+            transform = 0, -- Normal input transform.
             output    = "[[Auto]]",   -- Monitor to bind touch device to.
             enabled   = true,         -- Enable or disable touch input.
         },
 
         -- --- Tablet ---
         tablet = {
-            transform                = -1,          -- Input transform; -1 = unset.
+            transform                = 0, -- Normal input transform.
             output                   = "",           -- Monitor to bind tablet to (empty = all monitors).
             region_position          = { 0, 0 },     -- Mapped region position relative to top-left.
             absolute_region_position = false,        -- Treat region_position as absolute monitor coords.
@@ -112,5 +112,21 @@ hl.config({
         hide_on_tablet               = true,   -- Hide cursor when last input was tablet.
         use_cpu_buffer               = 2,      -- Use CPU buffer for HW cursors (required on Nvidia): 0=no 1=yes 2=auto.
         warp_back_after_non_mouse_input = false, -- Warp cursor back after keyboard/tablet input.
+    },
+})
+
+-- Additional TUI controls; existing configuration layers keep their load order.
+hl.config({
+    input = {
+        tablet = {
+            enabled = true,
+        },
+        tablettool = {
+            pressure_range_min = -1.0,
+            pressure_range_max = -1.0,
+        },
+    },
+    cursor = {
+        warp_on_monitor_change = -1,
     },
 })

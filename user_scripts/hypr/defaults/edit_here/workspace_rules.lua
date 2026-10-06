@@ -55,16 +55,16 @@
 --   no_shadow       (bool)    -- Disable window shadows on this workspace.
 --   animation       (string)  -- Override workspace switch animation style.
 -- ==============================================================================
-hl.workspace_rule({ workspace = "1", layout = nil, persistent = false })
-hl.workspace_rule({ workspace = "2", layout = nil, persistent = false })
-hl.workspace_rule({ workspace = "3", layout = nil, persistent = false })
-hl.workspace_rule({ workspace = "4", layout = nil, persistent = false })
-hl.workspace_rule({ workspace = "5", layout = nil, persistent = false })
-hl.workspace_rule({ workspace = "6", layout = nil, persistent = false })
-hl.workspace_rule({ workspace = "7", layout = nil, persistent = false })
-hl.workspace_rule({ workspace = "8", layout = nil, persistent = false })
-hl.workspace_rule({ workspace = "9", layout = nil, persistent = false })
-hl.workspace_rule({ workspace = "10", layout = nil, persistent = false })
+hl.workspace_rule({ workspace = "1", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
+hl.workspace_rule({ workspace = "2", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
+hl.workspace_rule({ workspace = "3", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
+hl.workspace_rule({ workspace = "4", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
+hl.workspace_rule({ workspace = "5", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
+hl.workspace_rule({ workspace = "6", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
+hl.workspace_rule({ workspace = "7", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
+hl.workspace_rule({ workspace = "8", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
+hl.workspace_rule({ workspace = "9", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
+hl.workspace_rule({ workspace = "10", layout = "scrolling", persistent = true, monitor = "", default = false, default_name = "", on_created_empty = "" })
 
 
 -- ==============================================================================
@@ -303,10 +303,10 @@ hl.config({
         -- allow pinned windows to go fullscreen
         allow_pin_fullscreen              = true,
         -- toggle back on re-dispatch
-        workspace_back_and_forth          = false,
+        workspace_back_and_forth          = 0,
         -- wrap around at ends
         allow_workspace_cycles            = false,
-        -- 0 = cursor stays in place, 1 = move to window, 2 = move to monitor
+        -- 0 = center on workspace, 1 = center on last active window
         workspace_center_on               = 0,
         -- keep scratchpad visible on switch
         hide_special_on_workspace_change  = false,
@@ -316,3 +316,35 @@ hl.config({
         window_direction_monitor_fallback = true,
     },
 })
+
+-- Additional TUI controls; existing configuration layers keep their load order.
+hl.config({
+    binds = {
+        focus_preferred_method = 0,
+        movefocus_cycles_groupfirst = false,
+        ignore_group_lock = false,
+    },
+    misc = {
+        initial_workspace_token_timeout = 10,
+        exit_window_retains_fullscreen = 0,
+        float_force_onscreen = 0,
+        new_float_force_onscreen = 2,
+        size_limits_tiled = false,
+    },
+    general = {
+        modal_parent_blocking = true,
+        no_focus_fallback = false,
+    },
+    layout = {
+        single_window_aspect_ratio_tolerance = 0.1,
+    },
+    group = {
+        auto_group = true,
+        drag_into_group = 1,
+        group_on_movetoworkspace = false,
+        insert_after_current = true,
+    },
+})
+
+-- Zero disables the optional aspect-ratio padding for a single window.
+hl.config({ layout = { single_window_aspect_ratio = {0, 0} } })
