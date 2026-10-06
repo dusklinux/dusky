@@ -82,7 +82,7 @@ SCHEMA = {
             type_="bool",
             default=True,
             group="Formatting",
-            extended_help="**Compact Symbols Mode**\n\nUses compact Unicode glyphs for modifier keys (❖, ⌃, ⌥, ⇧) and special keys (⇥, ⏎, ⌫, Esc). Highly recommended to fit key combos into compact OSD bars."
+            extended_help="**Compact Symbols Mode**\n\nDisplays physical key labels using the US key map. Uses compact Unicode glyphs for modifier keys (❖, ⌃, ⌥, ⇧) and special keys (⇥, ⏎, ⌫, Esc). Highly recommended to fit key combos into compact OSD bars."
         ),
         ConfigItem(
             label="Use Pango HTML Markup",
@@ -91,7 +91,7 @@ SCHEMA = {
             type_="bool",
             default=False,
             group="Formatting",
-            extended_help="**Pango Markup**\n\nWraps key chords in Pango HTML tags (`<b>❖S</b>`). Leave **disabled** if your Mako notification daemon displays literal `<b>` tags."
+            extended_help="**Pango Markup**\n\nAdds escaped bold text to the notification body. Mako must have `markup=true` and a format containing `%b`; the default Dusky Keys rule uses `%s` and shows plain text."
         ),
         ConfigItem(
             label="Item Delimiter Separator",
@@ -279,18 +279,20 @@ SCHEMA = {
             key="action_restart_engine",
             scope="DEFAULT",
             type_="action",
-            default="bash ~/user_scripts/mako_osd/dusky_keys/dusky_keys.sh",
+            default='systemd-run --user --collect --quiet -- bash "$HOME/user_scripts/mako_osd/dusky_keys/dusky_keys.sh" --restart',
+            force_interactive=False,
             group="Engine Daemon",
-            extended_help="**Restart Engine**\n\nToggles/restarts the Dusky Keys background engine daemon to reload any configuration changes."
+            extended_help="**Restart Engine**\n\nRequests a restart in a transient user service, so the visualizer survives closing this TUI. Loads configuration changes and starts the engine if it was disabled."
         ),
         ConfigItem(
-            label="Rebuild Virtual Environment",
+            label="Install / Repair Environment",
             key="action_rebuild_env",
             scope="DEFAULT",
             type_="action",
-            default="bash ~/user_scripts/mako_osd/dusky_keys/dusky_keys.sh --setup",
+            default='bash "$HOME/user_scripts/mako_osd/dusky_keys/dusky_keys.sh" --setup',
+            force_interactive=True,
             group="Engine Daemon",
-            extended_help="**Rebuild Environment**\n\nRecompiles `evdev` and `uvloop` native C-extensions with CPU native optimization flags (`-march=native -O3`)."
+            extended_help="**Install / Repair Environment**\n\nInstalls missing Arch dependencies and prepares the native Python 3.15 UV environment. Repairs corrupted packages using portable compiler defaults. Stop the engine before running setup; sudo may require authentication."
         ),
         ConfigItem(
             label="Apply Compact Minimal Preset",
