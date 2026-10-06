@@ -1,0 +1,103 @@
+# Edit this file to configure targets; the Python engine needs no changes.
+# --auto stops active defaults. Interactive mode shows defaults preselected plus
+# optional targets. --list and --auto --dry-run never stop anything.
+# Validate edits with: python3 ~/user_scripts/performance/services_and_process_terminator/terminator.py --check-config
+# Empty/omitted arrays are valid. Unknown keys, duplicate names, invalid values,
+# and process comm names longer than the Linux 15-byte limit are rejected.
+
+[settings]
+timeout = 2.0          # Grace period for process signals, in seconds.
+kill_timeout = 1.0     # Wait for exit after SIGKILL; zombies count as exited.
+force = true           # Escalate survivors to SIGKILL after timeout.
+unit_timeout = 45.0    # Timeout per systemctl call; a timed-out stop may continue.
+uid = "current"        # Process owner: "current", "all", or numeric UID.
+shell_after = true     # Preserve an interactive shell after a real stop.
+
+# Exact Linux comm names, NOT regexes or executable paths. For longer names,
+# use match="exe" or match="argv" in [[targets]] below.
+[processes]
+default = ["hyprsunset", "osd_lock", "awww-daemon", "waybar", "blueman-manager"]
+optional = ["inotifywait", "wl-paste", "wl-copy", "firefox", "discord"]
+
+# Exact Python/Bash/sh/dash/zsh script entry points: basename, absolute path, or
+# ~/ path. Relative script paths are resolved against the process's own cwd.
+# This does NOT match an editor's file arguments or python -c/-m text.
+# Other interpreters and unusual wrappers can use explicit argv selectors.
+[scripts]
+default = ["dusky_main.py", "dusky_stt_main.py"]
+optional = []
+
+# Exact systemd unit names; omitted suffix means .service. Any unit type is
+# supported, including timer/socket/path/scope/target and transient units.
+# Stopping a unit does not disable/mask it. A service may be reactivated by its
+# timer/socket/path: put ALL members in a grouped target when that is intended.
+[system_units]
+default = ["firewalld", "warp-svc", "ufw", "vsftpd", "waydroid-container", "logrotate.timer", "sshd"]
+optional = ["udisks2", "NetworkManager"]
+
+[user_units]
+default = ["battery_notify", "blueman-applet", "gvfs-daemon", "waybar", "blueman-manager", "gvfs-metadata", "network_meter", "dusky_quickpanal", "dusky"]
+optional = ["gnome-keyring-daemon", "hypridle", "dusky_polkit"]
+
+# The old script listed update_checker.timer as a process, which could not match.
+# Stop both the timer and any check already running in one systemd transaction.
+[[targets]]
+name = "Update checker"
+kind = "user"
+units = ["update_checker.timer", "update_checker.service"]
+
+# Service targets prevent Restart= from fighting direct process termination.
+# These known services also cover dusky_main.py launched under either venv.
+[[targets]]
+name = "Dusky speech engines"
+kind = "user"
+units = ["dusky_kokoro.service", "dusky_stt.service"]
+
+[[targets]]
+name = "Audio stack"
+kind = "user"
+default = false
+units = ["pipewire-pulse.socket", "pipewire-pulse.service", "pipewire.socket", "pipewire.service", "wireplumber.service"]
+
+# Add any number of [[targets]]. name is the picker/report label and must be
+# unique within its kind. default=false makes a target interactive-only.
+# Process target options: match, value, uid, signal (e.g. TERM/INT/KILL), timeout,
+# force. Omitted options inherit settings. All selectors are literal matches.
+# An argv array matches a CONTIGUOUS sequence of whole arguments; it is not a
+# substring search, shell command, regex, or glob. All matching processes are
+# stopped. Matching new/respawned processes after the stop is reported as failure;
+# they are never pursued forever. Direct selectors stop matching PIDs only;
+# use the owning unit for supervised daemons and their entire process trees.
+# Overlapping selectors must agree on signal/timeout/force or that PID is skipped
+# with a failure. The current process and its ancestors are always excluded.
+# Process signals are not sudo-elevated: other-user targets require permissions.
+# --auto uses sudo -n for system units: arrange credentials before unattended use.
+
+# [[targets]]
+# name = "Long executable name"
+# kind = "process"
+# match = "exe"
+# value = "~/bin/my-long-daemon-name"  # Canonical executable path from /proc/PID/exe.
+# default = false
+
+# [[targets]]
+# name = "Custom background task"
+# kind = "process"
+# match = "argv"
+# value = ["-m", "mypackage.worker"]
+# signal = "INT"
+# timeout = 5.0
+# force = true
+# uid = "current"
+
+# [[targets]]
+# name = "Specific script"
+# kind = "process"
+# match = "script"
+# value = "~/user_scripts/my task.py"  # Spaces are preserved as one argument.
+
+# [[targets]]
+# name = "Custom system daemon and activation units"
+# kind = "system"
+# units = ["example.socket", "example.path", "example.timer", "example.service"]
+# default = false

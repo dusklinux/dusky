@@ -338,7 +338,7 @@ hl.bind(
 
 hl.bind(
     "SUPER + semicolon",
-    hl.dsp.exec_cmd(terminal .. " --class performance.sh -e " .. dusky_scripts .. "performance/services_and_process_terminator.sh"),
+    hl.dsp.exec_cmd(terminal .. " --class performance.sh -e python3 \"" .. dusky_scripts .. "performance/services_and_process_terminator/terminator.py\""),
     { description = "Kill Process" }
 )
 

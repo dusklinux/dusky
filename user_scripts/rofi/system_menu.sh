@@ -632,7 +632,7 @@ show_performance_menu() {
                 run_term_hold "sysbench_benchmark" "$SCRIPTS_DIR/performance/sysbench_benchmark.py"
                 ;;
             '  Process Terminator')
-                run_term_hold "process_terminator" "$SCRIPTS_DIR/performance/services_and_process_terminator.sh"
+                run_term_hold "process_terminator" python3 "$SCRIPTS_DIR/performance/services_and_process_terminator/terminator.py"
                 ;;
             '  Screentime Stats')
                 run_term_hold "dusky_screentime" python3 "$SCRIPTS_DIR/screentime/screentime_tui.py"

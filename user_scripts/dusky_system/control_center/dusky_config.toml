@@ -3272,7 +3272,7 @@ description = "Halt all background services for current session"
 icon = "process-stop-symbolic"
 [pages.layout.items.on_press]
 type = "exec"
-command = "kitty --class performance.sh --hold sh -c \"$HOME/user_scripts/performance/services_and_process_terminator.sh\""
+command = "kitty --class performance.sh --hold sh -c 'exec python3 \"$HOME/user_scripts/performance/services_and_process_terminator/terminator.py\"'"
 terminal = false
 
 [[pages.layout]]
