@@ -14,6 +14,7 @@ readonly STATE_FILE="${SETTINGS_DIR}/wayclick_soundpack_git"
 # --- Argument Parsing --------------------------------------------------------
 AUTO_MODE=0
 FORCE_MODE=0
+REQUESTED_PACK=""
 
 while (($#)); do
 	case "$1" in
@@ -23,8 +24,13 @@ while (($#)); do
 	--force)
 		FORCE_MODE=1
 		;;
+	--pack)
+		(( $# >= 2 )) && [[ -n $2 ]] || { printf 'Missing pack name.\n' >&2; exit 1; }
+		REQUESTED_PACK=$2
+		shift
+		;;
 	*)
-		echo "Usage: $0 [--auto] [--force]"
+		echo "Usage: $0 [--auto] [--force] [--pack NAME]"
 		exit 1
 		;;
 	esac
@@ -95,7 +101,7 @@ trap cleanup EXIT
 check_deps() {
 	local -a missing=()
 	local dep
-	for dep in curl unzip; do
+	for dep in curl unzip flock; do
 		command -v "${dep}" &>/dev/null || missing+=("${dep}")
 	done
 
@@ -171,7 +177,7 @@ find_extracted_root() {
 # --- Install Soundpacks ------------------------------------------------------
 install_soundpacks() {
 	local -r src="$1"
-	local count=0
+	local count=0 failed=0
 
 	log_info "Installing soundpacks..."
 
@@ -185,18 +191,27 @@ install_soundpacks() {
 	fi
 
 	for sp in "${soundpacks[@]}"; do
-		local name
-		name=$(basename "${sp}")
-		if mv -T -- "${sp}" "${TARGET_DIR}/${name}"; then
+		local name destination
+		name=${sp%/}
+		name=${name##*/}
+		[[ -z $REQUESTED_PACK || $name == "$REQUESTED_PACK" ]] || continue
+		destination="${TARGET_DIR}/${name}"
+		local update_mode=none
+		(( ! FORCE_MODE )) || update_mode=all
+		mkdir -p -- "$destination"
+		# Preserve custom files and install missing assets; --force replaces only
+		# files present in the archive, without deleting unrelated soundpacks.
+		if cp -a --update="$update_mode" -- "${sp}." "$destination/"; then
 			log_ok "Installed: ${name}"
 			count=$((count + 1))
 		else
 			log_warn "Failed to install: ${name}"
+			failed=$((failed + 1))
 		fi
 	done
 
-	if ((count == 0)); then
-		log_error "No soundpacks were installed."
+	if ((count == 0 || failed > 0)); then
+		log_error "Soundpack installation incomplete (installed: $count, failed: $failed)."
 		return 1
 	fi
 	return 0
@@ -225,10 +240,14 @@ main() {
 	fi
 
 	if ((AUTO_MODE && !FORCE_MODE)); then
-		if [[ -f "${STATE_FILE}" ]]; then
+		if [[ -n $REQUESTED_PACK && -r $TARGET_DIR/$REQUESTED_PACK/config.json ]]; then
+			log_ok "Requested soundpack is already installed."
+			return 0
+		fi
+		if [[ -z $REQUESTED_PACK && -f "${STATE_FILE}" ]]; then
 			local state
-			state=$(cat "${STATE_FILE}" | tr -d ' ')
-			if [[ "${state}" == "1" ]]; then
+			state=$(<"${STATE_FILE}")
+			if [[ "${state//[[:space:]]/}" == "1" ]]; then
 				log_ok "Soundpacks already installed successfully. Skipping."
 				return 0
 			fi
@@ -237,27 +256,16 @@ main() {
 
 	check_deps
 	mkdir -p -- "${SETTINGS_DIR}" "${TARGET_DIR}" "${CACHE_DIR}"
+	# Serialize cache extraction and copies with standalone/TUI invocations.
+	local lock_fd
+	exec {lock_fd}> "$TARGET_DIR/.soundpacks.lock"
+	flock -w 30 "$lock_fd" || { log_error "Another soundpack installation is still running."; return 1; }
 
 	write_state() {
 		printf '%s' "$1" >"${STATE_FILE}"
 	}
 
 	write_state "0"
-
-	status_begin "Removing old soundpack directories"
-	local -a old_packs=()
-	shopt -s nullglob
-	old_packs=("${TARGET_DIR}"/*/)
-	shopt -u nullglob
-
-	if ((${#old_packs[@]} > 0)); then
-		if ! rm -rf -- "${TARGET_DIR}"/*/; then
-			status_end 1
-			log_error "Failed to remove old directories."
-			return 1
-		fi
-	fi
-	status_end 0
 
 	download_archive
 	extract_archive
@@ -266,9 +274,10 @@ main() {
 	extracted_root=$(find_extracted_root)
 	install_soundpacks "${extracted_root}"
 
-	rm -rf -- "${CACHE_DIR}"
+	rm -rf -- "${extracted_root}"
+	# Retain the validated archive for later/offline installs.
 
-	write_state "1"
+	[[ -n $REQUESTED_PACK ]] || write_state "1"
 
 	log_ok "Installation complete."
 	log_info "Location: ${TARGET_DIR/#"${HOME}"/\~}"
