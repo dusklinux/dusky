@@ -182,6 +182,7 @@ class HyprlandLuaEngine(BaseEngine):
         if chunk then pcall(chunk) end
         
         local out_state = {}
+        local seen_keys = {}
         local function escape_str(s) 
             s = s:gsub('\\', '\\\\'):gsub('"', '\\"'):gsub('\n', '\\n'):gsub('\r', '\\r'):gsub('\t', '\\t')
             s = s:gsub('[%c]', function(c) return string.format('\\u%04x', string.byte(c)) end)
@@ -213,6 +214,7 @@ class HyprlandLuaEngine(BaseEngine):
                         if type(v) == "table" then 
                             walk(v, new_scope, seen, type(k) == "number")
                         else 
+                            seen_keys[new_scope] = true
                             local val_str
                             if type(v) == "string" then val_str = escape_str(v)
                             elseif type(v) == "boolean" then val_str = tostring(v)
@@ -225,6 +227,158 @@ class HyprlandLuaEngine(BaseEngine):
             end 
         end
         walk(config_root, "")
+
+        -- SCANNER FOR EXPLICIT NIL ASSIGNMENTS (Lua runtime omits nil keys from tables)
+        local function tokenize(text)
+            local len = #text
+            local tokens = {}
+            local pos = 1
+            local function is_alpha(c) return c:match("^[A-Za-z_]$") ~= nil end
+            local function is_alnum(c) return c:match("^[A-Za-z0-9_]$") ~= nil end
+            local function is_space(c) return c == " " or c == "\t" or c == "\r" or c == "\n" or c == "\v" or c == "\f" end
+            local function add(tp, val, s, e) tokens[#tokens + 1] = { type = tp, val = val, s = s, e = e } end
+
+            local function long_bracket_end_at(p)
+                if text:sub(p, p) ~= "[" then return nil end
+                local q = p + 1
+                while q <= len and text:sub(q, q) == "=" do q = q + 1 end
+                if text:sub(q, q) ~= "[" then return nil end
+                local eqs = text:sub(p + 1, q - 1)
+                local close = "]" .. eqs .. "]"
+                local found = text:find(close, q + 1, true)
+                return found and (found + #close - 1) or nil
+            end
+
+            while pos <= len do
+                local c = text:sub(pos, pos)
+                if is_space(c) then pos = pos + 1
+                elseif c == "-" and text:sub(pos + 1, pos + 1) == "-" then
+                    pos = pos + 2
+                    local lb_end = long_bracket_end_at(pos)
+                    if lb_end then pos = lb_end + 1
+                    else
+                        local nl = text:find("\n", pos, true)
+                        if nl then pos = nl + 1 else pos = len + 1 end
+                    end
+                elseif c == "'" or c == '"' then
+                    local quote = c; local s = pos; pos = pos + 1
+                    while pos <= len do
+                        local ch = text:sub(pos, pos)
+                        if ch == "\\" then pos = pos + 2
+                        elseif ch == quote then pos = pos + 1; break
+                        else pos = pos + 1 end
+                    end
+                    add("STRING", text:sub(s, pos - 1), s, pos - 1)
+                elseif c == "[" then
+                    local lb_end = long_bracket_end_at(pos)
+                    if lb_end then add("STRING", text:sub(pos, lb_end), pos, lb_end); pos = lb_end + 1
+                    else add("LBRACK", c, pos, pos); pos = pos + 1 end
+                elseif is_alpha(c) then
+                    local s = pos; pos = pos + 1
+                    while pos <= len and is_alnum(text:sub(pos, pos)) do pos = pos + 1 end
+                    add("IDENT", text:sub(s, pos - 1), s, pos - 1)
+                elseif c:match("^[0-9]$") or (c == "." and text:sub(pos + 1, pos + 1):match("^[0-9]$")) then
+                    local s = pos; pos = pos + 1
+                    while pos <= len do
+                        local nc = text:sub(pos, pos)
+                        if nc:match("^[A-Za-z0-9_%.]$") then pos = pos + 1
+                        elseif (nc == "+" or nc == "-") and text:sub(pos - 1, pos - 1):match("^[eEpP]$") then pos = pos + 1
+                        else break end
+                    end
+                    add("NUMBER", text:sub(s, pos - 1), s, pos - 1)
+                else
+                    local map = { ["{"]="LBRACE", ["}"]="RBRACE", ["("]="LPAREN", [")"]="RPAREN", ["["]="LBRACK", ["]"]="RBRACK", ["="]="EQUALS", [","]="COMMA", [";"]="SEMI", ["."]="DOT", [":"]="COLON" }
+                    add(map[c] or "OTHER", c, pos, pos); pos = pos + 1
+                end
+            end
+            return tokens
+        end
+
+        local function key_at(tokens, i)
+            local tok = tokens[i]
+            if not tok then return nil, i end
+            if tok.type == "IDENT" and tokens[i + 1] and tokens[i + 1].type == "EQUALS" then 
+                return tok.val, i + 2 
+            end
+            if tok.type == "LBRACK" and tokens[i + 1] and tokens[i + 1].type == "STRING" and tokens[i + 2] and tokens[i + 2].type == "RBRACK" and tokens[i + 3] and tokens[i + 3].type == "EQUALS" then
+                local str_val = tokens[i + 1].val
+                local clean_key = str_val:match("^['\"](.-)['\"]$")
+                if not clean_key then clean_key = str_val:match("^%[=*%[(.-)%]=*%]$") end
+                return clean_key or str_val, i + 4
+            end
+            return nil, i
+        end
+
+        local function find_rhs_end(tokens, i)
+            local j = i; local depth = 0; local block_depth = 0; local rhs_end = i
+            while j <= #tokens do
+                local tp = tokens[j].type; local val = tokens[j].val
+                local prev_tp = j > 1 and tokens[j-1].type or nil
+                if tp == "IDENT" and prev_tp ~= "DOT" then
+                    if (val == "function" or val == "if" or val == "do" or val == "repeat") then block_depth = block_depth + 1
+                    elseif (val == "end" or val == "until") and block_depth > 0 then block_depth = block_depth - 1 end
+                end
+                if block_depth == 0 then
+                    if tp == "LBRACE" or tp == "LPAREN" or tp == "LBRACK" then depth = depth + 1
+                    elseif tp == "RBRACE" or tp == "RPAREN" or tp == "RBRACK" then 
+                        if depth == 0 then break end
+                        depth = depth - 1 
+                    elseif depth == 0 and (tp == "COMMA" or tp == "SEMI") then break end
+                end
+                rhs_end = j; j = j + 1
+            end
+            return rhs_end, j
+        end
+
+        local function scan_table(tokens, text, i, scope_parts)
+            if not tokens[i] or tokens[i].type ~= "LBRACE" then return i end
+            i = i + 1
+            while i <= #tokens do
+                if tokens[i].type == "RBRACE" then return i + 1 end
+                if tokens[i].type == "COMMA" or tokens[i].type == "SEMI" then 
+                    i = i + 1
+                else
+                    local key, rhs = key_at(tokens, i)
+                    if key then
+                        if tokens[rhs] and tokens[rhs].type == "LBRACE" then
+                            scope_parts[#scope_parts + 1] = key
+                            local next_i = scan_table(tokens, text, rhs, scope_parts)
+                            scope_parts[#scope_parts] = nil
+                            i = next_i
+                        else
+                            local rhs_end, next_i = find_rhs_end(tokens, rhs)
+                            local curr_scope = table.concat(scope_parts, "/")
+                            local raw = text:sub(tokens[rhs].s, tokens[rhs_end].e):gsub("^%s+", ""):gsub("%s+$", "")
+                            if raw == "nil" then
+                                local full_k = curr_scope == "" and key or (curr_scope .. "/" .. key)
+                                if not seen_keys[full_k] then
+                                    seen_keys[full_k] = true
+                                    table.insert(out_state, escape_str(full_k) .. ':"nil"')
+                                end
+                            end
+                            i = next_i
+                        end
+                    else
+                        local rhs_end, next_i = find_rhs_end(tokens, i)
+                        i = next_i
+                    end
+                end
+            end
+            return i
+        end
+
+        for _, fpath in ipairs(loaded_files) do
+            local f = io.open(fpath, "rb")
+            if f then
+                local text = f:read("*a"); f:close()
+                local tokens = tokenize(text)
+                for i = 1, #tokens - 4 do
+                    if tokens[i].val == "hl" and tokens[i+1].type == "DOT" and tokens[i+2].val == "config" and tokens[i+3].type == "LPAREN" and tokens[i+4].type == "LBRACE" then
+                        scan_table(tokens, text, i+4, {})
+                    end
+                end
+            end
+        end
         
         local out_files = {}
         for _, f in ipairs(loaded_files) do table.insert(out_files, escape_str(f)) end

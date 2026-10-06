@@ -1703,6 +1703,40 @@ SCHEMA = {
             extended_help="**Scale**\n\nMultiplies the physical size footprint of the shadow geometry."
         ),
         ConfigItem(
+            label='Inactive Color',
+            key='color_inactive',
+            scope='decoration/shadow',
+            type_='color',
+            default='nil',
+            options=["nil"] + COLOR_ALIASES,
+            parent_ref='decoration/shadow.enabled',
+            extended_help='Inactive color; select nil to inherit the active color.'
+        ),
+        ConfigItem(
+            label='Offset X',
+            key='1',
+            scope='decoration/shadow/offset',
+            type_='float',
+            default=0.0,
+            min_val=-250,
+            max_val=250,
+            step=1,
+            parent_ref='decoration/shadow.enabled',
+            extended_help='Shadow offset in layout pixels; negative values move left/up.'
+        ),
+        ConfigItem(
+            label='Offset Y',
+            key='2',
+            scope='decoration/shadow/offset',
+            type_='float',
+            default=0.0,
+            min_val=-250,
+            max_val=250,
+            step=1,
+            parent_ref='decoration/shadow.enabled',
+            extended_help='Shadow offset in layout pixels; negative values move left/up.'
+        ),
+        ConfigItem(
             label="Glow Settings",
             key="enabled",
             scope="decoration/glow",
@@ -1750,46 +1784,12 @@ SCHEMA = {
         ConfigItem(
             label='Inactive Color',
             key='color_inactive',
-            scope='decoration/shadow',
-            type_='color',
-            default='nil',
-            options=["nil"] + COLOR_ALIASES,
-            parent_ref='decoration/shadow.enabled',
-            extended_help='Inactive color; select nil to inherit the active color.'
-        ),
-        ConfigItem(
-            label='Inactive Color',
-            key='color_inactive',
             scope='decoration/glow',
             type_='color',
             default='nil',
             options=["nil"] + COLOR_ALIASES,
             parent_ref='decoration/glow.enabled',
             extended_help='Inactive color; select nil to inherit the active color.'
-        ),
-        ConfigItem(
-            label='Offset X',
-            key='1',
-            scope='decoration/shadow/offset',
-            type_='float',
-            default=0.0,
-            min_val=-250,
-            max_val=250,
-            step=1,
-            parent_ref='decoration/shadow.enabled',
-            extended_help='Shadow offset in layout pixels; negative values move left/up.'
-        ),
-        ConfigItem(
-            label='Offset Y',
-            key='2',
-            scope='decoration/shadow/offset',
-            type_='float',
-            default=0.0,
-            min_val=-250,
-            max_val=250,
-            step=1,
-            parent_ref='decoration/shadow.enabled',
-            extended_help='Shadow offset in layout pixels; negative values move left/up.'
         ),
     ],
     # Motion
