@@ -535,11 +535,57 @@ class Saver:
 
     def load(self):
         if self.path.exists():
-            self.state = json.loads(self.path.read_text(encoding='utf-8'))
-            if (not isinstance(self.state, dict) or self.state.get('version') != 1 or
-                    self.state.get('phase') not in ('enabling', 'enabled', 'restoring') or
-                    not isinstance(self.state.get('records'), list)):
+            state = json.loads(self.path.read_text(encoding='utf-8'))
+            if (not isinstance(state, dict) or type(state.get('version')) is not int or state['version'] != 1 or
+                    state.get('phase') not in ('enabling', 'enabled', 'restoring') or
+                    not isinstance(state.get('records'), list) or
+                    any(not isinstance(state.get(key), str) for key in ('boot', 'session'))):
                 raise Error('Unsupported or malformed restore snapshot; left untouched')
+            hooks = state.get('hooks')
+            table(hooks, {'pre_enable', 'post_enable', 'pre_disable', 'post_disable'}, 'restore hooks')
+            for name in ('pre_enable', 'post_enable', 'pre_disable', 'post_disable'):
+                strings(hooks.get(name), 'restore hooks.' + name)
+            # Validate the saved execution data before a transition can rewrite it.
+            for record in state['records']:
+                if (not isinstance(record, dict) or record.get('kind') not in ('command', 'process') or
+                        not isinstance(record.get('label'), str) or type(record.get('priority')) is not int or
+                        type(record.get('touched')) is not bool):
+                    raise Error('Malformed restore record; snapshot left untouched')
+                for flag in ('root', 'needs_sudo', 'session', 'persistent'):
+                    if flag in record and type(record[flag]) is not bool:
+                        raise Error(f'Malformed restore record {flag}; snapshot left untouched')
+                if record['kind'] == 'process':
+                    proc = record.get('process')
+                    if (not isinstance(proc, dict) or not isinstance(record.get('unit'), str) or
+                            any(type(proc.get(key)) is not int or proc[key] < 0 for key in ('pid', 'start')) or
+                            not isinstance(proc.get('cwd'), str) or not isinstance(proc.get('env'), dict) or
+                            any(not isinstance(k, str) or not isinstance(v, str) for k, v in proc['env'].items())):
+                        raise Error('Malformed process restore data; snapshot left untouched')
+                    unit_name(record['unit'])
+                    commands = [proc.get('argv')]
+                else:
+                    if type(record.get('root')) is not bool:
+                        raise Error('Malformed command restore privileges; snapshot left untouched')
+                    subtype = record.get('kind_override')
+                    if subtype not in (None, 'audio', 'radio'):
+                        raise Error('Unknown restore record kind; snapshot left untouched')
+                    required = ('node', 'serial', 'previous', 'cap') if subtype == 'audio' else (
+                        ('device', 'radio_type') if subtype == 'radio' else ())
+                    if any(not isinstance(record.get(key), str) or not record[key] for key in required):
+                        raise Error('Malformed hardware restore data; snapshot left untouched')
+                    if 'manager' in record:
+                        if record['manager'] not in ('user', 'system'):
+                            raise Error('Unknown restore service manager; snapshot left untouched')
+                        for key in ('names', 'stop_names'):
+                            for name in strings(record.get(key), 'restore ' + key):
+                                unit_name(name)
+                    commands = [record.get('enable'), record.get('restore')]
+                for command in commands:
+                    if (not isinstance(command, list) or
+                            any(not isinstance(arg, str) or '\0' in arg for arg in command) or
+                            (not record.get('kind_override') and (not command or not command[0]))):
+                        raise Error('Malformed restore arguments; snapshot left untouched')
+            self.state = state
             return True
         if any(self.directory.glob('*.state')):
             raise Error('Legacy Bash snapshot found; restore it with the previous Bash version before migrating')
