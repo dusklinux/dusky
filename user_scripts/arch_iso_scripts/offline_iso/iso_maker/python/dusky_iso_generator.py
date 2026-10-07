@@ -358,7 +358,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "releng ISO (x86_64 only). Re-executes itself as root through sudo.",
         epilog=f"actions:\n{actions}\n\n"
         "environment:\n"
-        "  DUSKY_DOTFILES_PIN   commit/ref of github.com/dusklinux/dusky to inject into /etc/skel\n"
+        "  DUSKY_DOTFILES_PIN   commit/ref of github.com/dusklinux/dusky to inject into /etc/skel (default: main)\n"
         "  DUSKY_DOTFILES_SHA   expected dotfiles HEAD (full sha or prefix); mismatch aborts\n\n"
         f"version {VERSION}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -2080,12 +2080,17 @@ def inject_dotfiles(cfg: IsoConfig) -> None:
     tmp = make_tempdir("dusky-dots-")
     repo = tmp / "dusky"
     git_env = os.environ | {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never", "GIT_ASKPASS": "/bin/true"}
+    pin = os.environ.get("DUSKY_DOTFILES_PIN", "").strip()
+    expect_sha = os.environ.get("DUSKY_DOTFILES_SHA", "").strip().lower()
+    is_sha = bool(re.fullmatch(r"[0-9a-fA-F]{7,64}", pin))
+    clone_branch = pin if (pin and not is_sha) else "main"
     try:
         detail = ""
         for attempt in range(1, CLONE_ATTEMPTS + 1):
             remove_tree(repo)
             try:
-                r = run(["git", "clone", "--quiet", "--depth", "1", "https://github.com/dusklinux/dusky", repo],
+                r = run(["git", "clone", "--quiet", "--depth", "1", "--branch", clone_branch,
+                         "https://github.com/dusklinux/dusky", repo],
                         env=git_env, capture=True, merge=True, timeout=CLONE_TIMEOUT_S)
                 if r.returncode == 0:
                     break
@@ -2096,9 +2101,7 @@ def inject_dotfiles(cfg: IsoConfig) -> None:
                 backoff(attempt)
         else:
             die(f"git clone dusky failed: {detail}")
-        pin = os.environ.get("DUSKY_DOTFILES_PIN", "").strip()
-        expect_sha = os.environ.get("DUSKY_DOTFILES_SHA", "").strip().lower()
-        if pin:
+        if pin and is_sha:
             run(["git", "-C", repo, "fetch", "--quiet", "--depth", "1", "origin", pin],
                 env=git_env, capture=True, check=True, timeout=CLONE_TIMEOUT_S)
             run(["git", "-C", repo, "checkout", "--quiet", "--detach", "FETCH_HEAD"],
@@ -2108,7 +2111,8 @@ def inject_dotfiles(cfg: IsoConfig) -> None:
         if expect_sha and not head_sha.startswith(expect_sha):
             die(f"dotfiles SHA mismatch: got {head_sha}, expected {expect_sha}")
         if head_sha:
-            step(f"dotfiles HEAD {head_sha[:12]}")
+            ref_label = f"pin '{pin}'" if (pin and is_sha) else f"branch '{clone_branch}'"
+            step(f"dotfiles {ref_label} (HEAD {head_sha[:12]})")
 
         repo_real = repo.resolve()
         for item in repo.iterdir():
