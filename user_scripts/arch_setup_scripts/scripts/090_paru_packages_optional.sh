@@ -598,7 +598,7 @@ draw_ui() {
                 
                 # Right Arrow
                 tab_line+="${C_YELLOW}» ${C_RESET}"
-                RIGHT_ARROW_ZONE="$current_col:$(( BOX_INNER_WIDTH ))"
+                RIGHT_ARROW_ZONE="$current_col:$(( BOX_INNER_WIDTH + 1 ))"
                 used_len=$(( used_len + 2 ))
                 break
             fi
