@@ -1274,7 +1274,7 @@ draw_main_view() {
         
         if (( TAB_SCROLL_START > 0 )); then
             tab_line+="${C_YELLOW}«${C_RESET} "
-            LEFT_ARROW_ZONE="$current_col:$(( current_col + 1 ))"
+            LEFT_ARROW_ZONE="2:$(( current_col + 1 ))"
         else
             tab_line+="  "
         fi
@@ -1319,13 +1319,13 @@ draw_main_view() {
                     used_len=$(( used_len + chunk_len )); current_col=$(( current_col + chunk_len ))
                     if (( ! is_last )); then
                         tab_line+="${C_YELLOW}» ${C_RESET}"
-                        RIGHT_ARROW_ZONE="$current_col:$(( current_col + 1 ))"
+                        RIGHT_ARROW_ZONE="$current_col:$(( BOX_INNER_WIDTH + 1 ))"
                         used_len=$(( used_len + 2 ))
                     fi
                     break
                 fi
                 tab_line+="${C_YELLOW}» ${C_RESET}"
-                RIGHT_ARROW_ZONE="$current_col:$(( current_col + 1 ))"
+                RIGHT_ARROW_ZONE="$current_col:$(( BOX_INNER_WIDTH + 1 ))"
                 used_len=$(( used_len + 2 ))
                 break
             fi
@@ -1731,8 +1731,14 @@ handle_mouse() {
     fi
     classify_mouse_event "$button" "$x" "$y" "$terminator" || return 0
     button=$REPLY
-    if (( button == 64 )); then navigate -1; return 0; fi
-    if (( button == 65 )); then navigate 1; return 0; fi
+    if (( button == 64 )); then
+        if (( y == TAB_ROW && CURRENT_VIEW == 0 )); then switch_tab -1; else navigate -1; fi
+        return 0
+    fi
+    if (( button == 65 )); then
+        if (( y == TAB_ROW && CURRENT_VIEW == 0 )); then switch_tab 1; else navigate 1; fi
+        return 0
+    fi
     if (( button != 0 && button != 2 && button != 32 )); then return 0; fi
 
     if (( y == TAB_ROW )); then
