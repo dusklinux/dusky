@@ -336,48 +336,6 @@ fn apply_logind_brightness(device: &BacklightDevice, value: i32) -> bool {
     let Some(bus) = which("busctl") else {
         return false;
     };
-    static SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    let path = if let Some(path) = SESSION.get() {
-        path.clone()
-    } else {
-        let Ok(id) = std::env::var("XDG_SESSION_ID") else {
-            return false;
-        };
-        let Some(out) = run_command(
-            &[
-                bus.clone(),
-                "--system".into(),
-                "--json=short".into(),
-                "call".into(),
-                "org.freedesktop.login1".into(),
-                "/org/freedesktop/login1".into(),
-                "org.freedesktop.login1.Manager".into(),
-                "GetSession".into(),
-                "s".into(),
-                id,
-            ],
-            Duration::from_millis(800),
-            true,
-        ) else {
-            return false;
-        };
-        if !out.status {
-            return false;
-        }
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&out.stdout) else {
-            return false;
-        };
-        let Some(path) = json
-            .get("data")
-            .and_then(|v| v.get(0))
-            .and_then(|v| v.as_str())
-        else {
-            return false;
-        };
-        let path = path.to_owned();
-        let _ = SESSION.set(path.clone());
-        path
-    };
     let raw = ((value as f64 / 100.0) * device.max as f64).round() as i64;
     run_command(
         &[
@@ -385,7 +343,9 @@ fn apply_logind_brightness(device: &BacklightDevice, value: i32) -> bool {
             "--system".into(),
             "call".into(),
             "org.freedesktop.login1".into(),
-            path,
+            // Resolve the caller's session (or display session for user services).
+            // No environment session ID, cached object path, or extra lookup.
+            "/org/freedesktop/login1/session/auto".into(),
             "org.freedesktop.login1.Session".into(),
             "SetBrightness".into(),
             "ssu".into(),
@@ -1268,6 +1228,64 @@ pub fn toggle_dnd() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn logind_auto_session_works_without_environment_id() {
+        const LOG: &str = "DUSKY_TRAY_TEST_LOGIND_LOG";
+        const EXIT: &str = "DUSKY_TRAY_TEST_LOGIND_EXIT";
+        if std::env::var_os(LOG).is_some() {
+            assert!(std::env::var_os("XDG_SESSION_ID").is_none());
+            let device = BacklightDevice {
+                name: "fixture-backlight".into(),
+                max: 200,
+                path: PathBuf::new(),
+            };
+            assert_eq!(
+                apply_logind_brightness(&device, 37),
+                std::env::var(EXIT).unwrap() == "0",
+            );
+            return;
+        }
+        // Run in a child test process so PATH/environment changes cannot race
+        // the other tests. A failing logind method must preserve the fallback.
+        use std::os::unix::fs::PermissionsExt;
+        let directory = runtime_dir().join(format!("logind-test-{}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        let bus = directory.join("busctl");
+        std::fs::write(
+            &bus,
+            concat!(
+                "#!/usr/bin/bash\n",
+                "printf '%s\\n' \"$*\" >> \"$DUSKY_TRAY_TEST_LOGIND_LOG\"\n",
+                "exit \"$DUSKY_TRAY_TEST_LOGIND_EXIT\"\n",
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bus, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let log = directory.join("calls");
+        for exit in ["0", "1"] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "backend::system::tests::logind_auto_session_works_without_environment_id",
+                ])
+                .env_remove("XDG_SESSION_ID")
+                .env("PATH", &directory)
+                .env(LOG, &log)
+                .env(EXIT, exit)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+        let calls = std::fs::read_to_string(&log).unwrap();
+        std::fs::remove_dir_all(&directory).unwrap();
+        let expected = "--system call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session SetBrightness ssu backlight fixture-backlight 74\n";
+        assert_eq!(calls, expected.repeat(2));
+    }
 
     #[test]
     fn wifi_connection_distinguishes_radio_enabled_from_connected() {

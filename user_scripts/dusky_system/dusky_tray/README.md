@@ -186,6 +186,11 @@ Linux parent-death cleanup. Application launchers use separate systemd scopes.
 
 Backlight devices and Bluetooth adapters are discovered at runtime. Local
 brightness uses writable sysfs, then logind SetBrightness, then brightnessctl.
+The logind fallback uses its automatic session object, so it works without
+`XDG_SESSION_ID` and avoids a separate session lookup. Animated panel clipping
+also passes the visible viewport to children, avoiding drawing clipped content
+below the current panel height; 
+the tray retains its existing backlight ranking and DDC support.
 External
 DDC brightness discovery is cached for 45 seconds; brightness is scaled using
 that monitor's actual VCP maximum. The running Hyprsunset temperature is queried

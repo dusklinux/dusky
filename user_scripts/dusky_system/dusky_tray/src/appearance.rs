@@ -180,6 +180,14 @@ impl<Message> Widget<Message, Theme, Renderer> for Reveal<'_, Message> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
+        let visible = if self.animate_height {
+            let Some(visible) = layout.bounds().intersection(viewport) else {
+                return;
+            };
+            visible
+        } else {
+            *viewport
+        };
         let draw = |renderer: &mut Renderer| {
             renderer.with_opacity(self.opacity, |renderer| {
                 self.content.as_widget().draw(
@@ -189,13 +197,13 @@ impl<Message> Widget<Message, Theme, Renderer> for Reveal<'_, Message> {
                     style,
                     layout.children().next().unwrap(),
                     cursor,
-                    viewport,
+                    &visible,
                 );
             });
         };
         if self.animate_height {
             use iced_core::Renderer as _;
-            renderer.with_layer(layout.bounds(), draw);
+            renderer.with_layer(visible, draw);
         } else {
             draw(renderer);
         }
