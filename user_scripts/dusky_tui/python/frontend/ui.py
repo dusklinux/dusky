@@ -2539,6 +2539,33 @@ Tooltip {
                 for index, notice in enumerate(notices)
                 if (notice.get("position", "top") == "bottom") == bottom]
 
+    def _option_list_widgets(self, tab_idx: int) -> list[Widget]:
+        return [ConfigOptionList(id=f"list-{tab_idx}"),
+                Vertical(ScrollIndicator("", id=f"indicator-{tab_idx}"), classes="indicator-column")]
+
+    async def _ensure_option_list(self, tab_idx: int) -> None:
+        """Mount a hidden list on demand, sharing concurrent activation requests."""
+        if task := self._option_mount_tasks.get(tab_idx):
+            await asyncio.shield(task)
+            return
+        wrappers = self.query(f"#list-wrapper-{tab_idx}")
+        if not wrappers or wrappers.first().query(ConfigOptionList):
+            return
+        async def mount_list():
+            nodes = []
+            try:
+                nodes.extend(self._option_list_widgets(tab_idx))
+                await wrappers.first().mount(*nodes)
+            except BaseException:
+                for node in nodes:
+                    if node.parent is not None:
+                        await node.remove()
+                raise
+            finally:
+                self._option_mount_tasks.pop(tab_idx, None)
+        task = self._option_mount_tasks[tab_idx] = asyncio.create_task(mount_list())
+        await asyncio.shield(task)
+
     async def _ensure_custom_body(self, tab_idx: int) -> None:
         if self._custom_spec(tab_idx) is None or tab_idx in self._mounted_tabs:
             return
@@ -2608,10 +2635,9 @@ Tooltip {
                                     self._mounted_tabs.add(i)
                                 yield Vertical(*body, id=f"custom-body-{i}", classes="custom-body-with-options" if settings.get("show_options") else "custom-body")
                             if custom_view is None or settings.get("show_options", False):
-                                with Horizontal(classes="list-wrapper custom-options" if custom_view is not None else "list-wrapper"):
-                                    yield ConfigOptionList(id=f"list-{i}")
-                                    with Vertical(classes="indicator-column"):
-                                        yield ScrollIndicator("", id=f"indicator-{i}")
+                                with Horizontal(id=f"list-wrapper-{i}", classes="list-wrapper custom-options" if custom_view is not None else "list-wrapper"):
+                                    if i == self._initial_tab:
+                                        yield from self._option_list_widgets(i)
 
                             if eager_notices:
                                 yield from self._notice_widgets(i, bottom=True)
@@ -3497,6 +3523,7 @@ Tooltip {
         self._mounted_tabs: set[int] = set()
         self._populated_tabs = self._tab_populated
         self._custom_mount_tasks: dict[int, asyncio.Task] = {}
+        self._option_mount_tasks: dict[int, asyncio.Task] = {}
         self._custom_refresh_tasks: set[asyncio.Task] = set()
         self._pending_search_target: tuple[int, int] | None = None
         self._tab_data_ready: set[int] = set()
@@ -4835,6 +4862,7 @@ Tooltip {
     async def handle_tab_activated(self, event: Tabs.TabActivated) -> None:
         try:
             idx = int(event.tab.id.split("-")[-1])
+            await self._ensure_option_list(idx)
             await self._ensure_custom_body(idx)
             if self.query_one(Tabs).active != event.tab.id:
                 return
@@ -7485,7 +7513,8 @@ Tooltip {
         if callable(detach := getattr(self.engine_pool, "detach_app", None)):
             detach()
         # Blocking collectors drain before engine resources are shut down.
-        tasks = [*self._custom_refresh_tasks, *self._custom_mount_tasks.values()]
+        tasks = [*self._custom_refresh_tasks, *self._custom_mount_tasks.values(),
+                 *self._option_mount_tasks.values()]
         for task in tasks:
             task.cancel()
         if tasks:
