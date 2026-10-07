@@ -577,10 +577,10 @@ echo "\`\`\`text"
 df -h -t tmpfs 2>&1 || echo 'Tmpfs mount usage unavailable.'
 echo "\`\`\`"
 echo ""
-echo "### /dev/shm Contents (Top 20: logical bytes, allocated 512-byte blocks, name)"
+echo "### /dev/shm Contents (Top 20: disk usage)"
 echo ""
 echo "\`\`\`text"
-find /dev/shm -mindepth 1 -maxdepth 1 -printf '%s\t%b\t%f\n' 2>/dev/null | sort -nr | sed -n '1,20p' || true
+find /dev/shm -mindepth 1 -maxdepth 1 -exec du -sh {} + 2>/dev/null | sort -hr | head -n 20 || true
 echo "\`\`\`"
 echo '> **Note:** High tmpfs/PSS usage warrants checking ownership and growth over time; neither proves a Wayland leak.'
 echo ""
