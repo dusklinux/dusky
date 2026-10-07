@@ -162,10 +162,10 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(RuntimeError, "List fixture"):
                     await app._ensure_option_list(1)
             self.assertFalse(app._option_mount_tasks)
-            host = app.query_one("#list-wrapper-1")
+            host = app.query_one("#tab-1")
             mount = host.mount
-            async def failed_mount(*nodes):
-                await mount(*nodes)
+            async def failed_mount(*nodes, **kwargs):
+                await mount(*nodes, **kwargs)
                 raise RuntimeError("Partial mount fixture")
             with patch.object(host, "mount", side_effect=failed_mount):
                 with self.assertRaisesRegex(RuntimeError, "Partial mount fixture"):
@@ -177,6 +177,20 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(len(app.query("#list-1")), 1)
             self.assertFalse(app._option_mount_tasks)
+
+    async def test_lazy_list_mount_keeps_notices_in_order(self):
+        key = ("fixture", "")
+        app = DuskyTUI(engine_pool={key: Engine()}, default_engine_key=key,
+                       schema={0: [], 1: []}, tabs=["First", "Hidden"],
+                       enable_user_presets=False,
+                       tab_notices={1: [{"message": "Top"}, {"message": "Bottom", "position": "bottom"}]})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.assertFalse(app.query("#list-wrapper-1"))
+            app.action_switch_tab(1)
+            await self.activated(app, pilot, 1)
+            self.assertEqual([child.id for child in app.query_one("#tab-1").children],
+                             ["notice-1-0", "list-wrapper-1", "notice-1-1-bot"])
 
     async def activated(self, app, pilot, tab):
         async with asyncio.timeout(15):

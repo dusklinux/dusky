@@ -267,6 +267,7 @@ class LazyEnginePool(MutableMapping):
         self._engines = {}
         self._bound_keys = set()
         self._factory_lock = RLock()
+        self._construction_locks = {}
         self._app = None
         self._owner_thread = get_ident()
 
@@ -291,8 +292,16 @@ class LazyEnginePool(MutableMapping):
             raise KeyError(key)
         if key not in self._engines:
             with self._factory_lock:
+                if key not in self._construction_locks:
+                    self._construction_locks[key] = RLock()
+                construction_lock = self._construction_locks[key]
+            # Imports and constructors for unrelated targets can overlap.
+            # Only callers requesting the same engine share a construction lock.
+            with construction_lock:
                 if key not in self._engines:
-                    self._engines[key] = self._factory(*key)
+                    engine = self._factory(*key)
+                    with self._factory_lock:
+                        self._engines[key] = engine
         # Release the factory lock before waiting on the UI. A simultaneous
         # UI lookup can bind the published instance itself without deadlocking.
         # Slow imports/constructors stay on the requesting worker thread.
@@ -350,14 +359,17 @@ class LazyEnginePool(MutableMapping):
         self._registered_keys.clear()
         self._engines.clear()
         self._bound_keys.clear()
+        self._construction_locks.clear()
 
     def initialized_values(self):
         """Inspect or shut down engines without constructing unused backends."""
-        return self._engines.values()
+        with self._factory_lock:
+            return tuple(self._engines.values())
 
     def initialized_items(self):
         """Snapshot published engines without constructing unused backends."""
-        return tuple(self._engines.items())
+        with self._factory_lock:
+            return tuple(self._engines.items())
 
 
 @lru_cache(maxsize=1024)

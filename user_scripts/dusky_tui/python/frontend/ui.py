@@ -2548,14 +2548,22 @@ Tooltip {
         if task := self._option_mount_tasks.get(tab_idx):
             await asyncio.shield(task)
             return
-        wrappers = self.query(f"#list-wrapper-{tab_idx}")
-        if not wrappers or wrappers.first().query(ConfigOptionList):
+        spec = self._custom_spec(tab_idx)
+        if spec is not None and not (isinstance(spec, dict) and spec.get("show_options", False)):
+            return
+        if self.query(f"#list-{tab_idx}"):
             return
         async def mount_list():
             nodes = []
             try:
-                nodes.extend(self._option_list_widgets(tab_idx))
-                await wrappers.first().mount(*nodes)
+                pane = self.query_one(f"#tab-{tab_idx}")
+                wrapper = Horizontal(*self._option_list_widgets(tab_idx), id=f"list-wrapper-{tab_idx}",
+                                     classes="list-wrapper custom-options" if spec is not None else "list-wrapper")
+                nodes.append(wrapper)
+                bottom = next((child for child in pane.children
+                               if child.id and child.id.startswith(f"notice-{tab_idx}-")
+                               and child.id.endswith("-bot")), None)
+                await pane.mount(wrapper, before=bottom)
             except BaseException:
                 for node in nodes:
                     if node.parent is not None:
@@ -2634,10 +2642,9 @@ Tooltip {
                                 if initial:
                                     self._mounted_tabs.add(i)
                                 yield Vertical(*body, id=f"custom-body-{i}", classes="custom-body-with-options" if settings.get("show_options") else "custom-body")
-                            if custom_view is None or settings.get("show_options", False):
+                            if i == self._initial_tab and (custom_view is None or settings.get("show_options", False)):
                                 with Horizontal(id=f"list-wrapper-{i}", classes="list-wrapper custom-options" if custom_view is not None else "list-wrapper"):
-                                    if i == self._initial_tab:
-                                        yield from self._option_list_widgets(i)
+                                    yield from self._option_list_widgets(i)
 
                             if eager_notices:
                                 yield from self._notice_widgets(i, bottom=True)
@@ -3550,16 +3557,27 @@ Tooltip {
             )
         return eng.load_state()
 
-    def _load_engines_batch_sync(
-        self, keys: set[tuple[str, str]]
+    async def _load_engine_states(
+        self, keys: set[tuple[str, str]], loader: Any = None
     ) -> tuple[dict[tuple[str, str], Any], dict[tuple[str, str], str]]:
         states: dict[tuple[str, str], Any] = {}
         errors: dict[tuple[str, str], str] = {}
-        for ekey in keys:
+        if not keys:
+            return states, errors
+        loader = self._load_one_engine_sync if loader is None else loader
+        async def load(ekey):
             try:
-                states[ekey] = self._load_one_engine_sync(ekey)
+                states[ekey] = await self._run_save_io(loader, ekey)
             except Exception as exc:
                 errors[ekey] = f"{type(exc).__name__}: {exc}"
+        if len(keys) == 1:
+            await load(next(iter(keys)))
+        else:
+            # The default executor sizes its bounded pool from available CPUs.
+            # TaskGroup waits for cancellation to drain every blocking read.
+            async with asyncio.TaskGroup() as group:
+                for ekey in keys:
+                    group.create_task(load(ekey))
         return states, errors
 
     def _apply_states_to_tab(
@@ -3690,12 +3708,11 @@ Tooltip {
                                 [item.key for item in items if item.scope == "system"],
                             )
                         return engine.load_state()
-                    def load_states():
-                        return {
-                            key: load_one(key, engine)
-                            for key, engine in self.engine_pool.items()
-                        }
-                    states = await self._run_save_io(load_states)
+                    states, errors = await self._load_engine_states(
+                        set(self.engine_pool), lambda key: load_one(key, self.engine_pool[key])
+                    )
+                    if errors:
+                        raise RuntimeError(f"Deferred engine reads failed: {errors}")
                     if use_prefetched and self._write_generation != writes_before:
                         use_prefetched = False
                         states[self.default_engine_key] = await self._run_save_io(
@@ -3733,9 +3750,7 @@ Tooltip {
     async def _run_state_refresh(self) -> None:
         try:
             async with self._save_lock:
-                states, errors = await self._run_save_io(
-                    self._load_engines_batch_sync, set(self.engine_pool)
-                )
+                states, errors = await self._load_engine_states(set(self.engine_pool))
             for key, error in errors.items():
                 self.notify_status(f"Failed to refresh {key}: {error}", level="error")
             self._apply_refreshed_states(states)
@@ -3821,34 +3836,35 @@ Tooltip {
         need_now = self._engines_for_tab(initial_tab) if self.tabs else set()
         deferred = set(self.engine_pool) - need_now
 
-        for ekey in need_now:
-            try:
-                self._states[ekey] = await self._run_save_io(self._load_one_engine_sync, ekey)
-                self._loaded_engines.add(ekey)
-            except Exception as exc:
-                self._failed_engines[ekey] = f"{type(exc).__name__}: {exc}"
-                self.notify_status(f"Failed to load {ekey}: {exc}", level="error")
+        self._pending_engine_loads |= deferred
+        async with asyncio.TaskGroup() as group:
+            # Submit visible-tab work first; other targets need not wait for it.
+            initial = group.create_task(self._load_engine_states(need_now))
+            if deferred:
+                group.create_task(self._load_engines_async(deferred))
+            states, errors = await initial
+            self._states.update(states)
+            self._loaded_engines.update(states)
+            self._failed_engines.update(errors)
+            for ekey, error in errors.items():
+                self.notify_status(f"Failed to load {ekey}: {error}", level="error")
 
-        if initial_tab in self.tabs and self._engines_for_tab(initial_tab).issubset(self._loaded_engines):
-            self._apply_states_to_tab(initial_tab, self._states)
+            if initial_tab in self.tabs and self._engines_for_tab(initial_tab).issubset(self._loaded_engines):
+                self._apply_states_to_tab(initial_tab, self._states)
 
-        if self.tabs:
-            await asyncio.sleep(0)
-            self._populate_option_list(initial_tab)
-            self._populated_tabs.add(initial_tab)
-            self._activate_custom_views()
-            self.call_after_refresh(self._queue_ready_tabs_for_warmup)
+            if self.tabs:
+                await asyncio.sleep(0)
+                self._populate_option_list(initial_tab)
+                self._populated_tabs.add(initial_tab)
+                self._activate_custom_views()
+                self.call_after_refresh(self._queue_ready_tabs_for_warmup)
 
-        if deferred:
-            self._pending_engine_loads |= set(deferred)
-            await self._load_engines_async(deferred)
-        else:
             self._mark_boot_complete_if_done()
 
     async def _load_engines_async(self, engine_keys: set[tuple[str, str]]) -> None:
         if not engine_keys:
             return
-        states, errors = await self._run_save_io(self._load_engines_batch_sync, engine_keys)
+        states, errors = await self._load_engine_states(engine_keys)
         self.post_message(
             EnginesLoaded(states=states, attempted=engine_keys, errors=errors)
         )

@@ -31,6 +31,19 @@ spec.loader.exec_module(router)
 
 
 class PoolTests(unittest.TestCase):
+    def test_different_engines_construct_concurrently(self):
+        rendezvous = threading.Barrier(2, timeout=5)
+        def factory(*_):
+            rendezvous.wait()
+            return object()
+        pool = router.LazyEnginePool(factory)
+        keys = [pool.register("fixture", path) for path in ("/first", "/second")]
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(pool.__getitem__, key) for key in keys]
+            engines = [future.result(10) for future in futures]
+        self.assertIsNot(engines[0], engines[1])
+        self.assertEqual(len(list(pool.initialized_values())), 2)
+
     def test_detachment_during_worker_binding_does_not_access_a_cleared_app(self):
         engine = object()
         pool = router.LazyEnginePool(lambda *_: engine)
@@ -115,6 +128,95 @@ class PoolTests(unittest.TestCase):
 
 
 class PoolLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_initial_and_hidden_engines_overlap_without_delaying_visible_data(self):
+        starts = [threading.Event(), threading.Event()]
+        releases = [threading.Event(), threading.Event()]
+        class Engine:
+            target_path = ""
+            def __init__(self, index):
+                self.index = index
+            def load_state(self):
+                starts[self.index].set()
+                if not releases[self.index].wait(10):
+                    raise TimeoutError("boot read was never released")
+                return {"x": str(self.index + 1)}
+        pool = router.LazyEnginePool(lambda _kind, path: Engine(int(Path(path).name)))
+        key = pool.register("fixture", "/fixture/0")
+        pool.register("fixture", "/fixture/1")
+        visible = ConfigItem(label="Visible", key="x", type_="int", default=0)
+        hidden = ConfigItem(label="Hidden", key="x", type_="int", default=0,
+                            target_file_override="/fixture/1")
+        app = ui.DuskyTUI(pool, key, {0: [visible], 1: [hidden]}, ["Initial", "Hidden"],
+                          enable_user_presets=False)
+        pool.bind_app(app)
+        async with app.run_test() as pilot:
+            try:
+                async with asyncio.timeout(5):
+                    while not all(event.is_set() for event in starts):
+                        await pilot.pause(.01)
+                releases[0].set()
+                async with asyncio.timeout(5):
+                    while not visible._initial_loaded:
+                        await pilot.pause(.01)
+                self.assertEqual(visible.value, 1)
+                self.assertFalse(app._boot_complete)
+                self.assertFalse(app.query("#list-1"))
+            finally:
+                for event in releases:
+                    event.set()
+            async with asyncio.timeout(5):
+                while not app._boot_complete:
+                    await pilot.pause(.01)
+            self.assertEqual(hidden.value, 2)
+
+    async def test_parallel_engine_reads_isolate_failure_and_drain_cancellation(self):
+        starts = [threading.Event(), threading.Event()]
+        release = threading.Event()
+        finished = []
+        class Engine:
+            target_path = ""
+            def __init__(self, index):
+                self.index = index
+            def load_state(self):
+                starts[self.index].set()
+                if not release.wait(10):
+                    raise TimeoutError("parallel reads were never released")
+                finished.append(self.index)
+                if self.index:
+                    raise ValueError("read fixture")
+                return {"x": "7"}
+        keys = [("fixture", "/first"), ("fixture", "/second")]
+        app = ui.DuskyTUI(dict(zip(keys, [Engine(0), Engine(1)])), keys[0],
+                          {0: []}, ["Initial"], enable_user_presets=False)
+        for cancel in (False, True):
+            for event in starts:
+                event.clear()
+            release.clear()
+            finished.clear()
+            task = asyncio.create_task(app._load_engine_states(set(keys)))
+            try:
+                async with asyncio.timeout(5):
+                    while not all(event.is_set() for event in starts):
+                        await asyncio.sleep(.01)
+                if cancel:
+                    task.cancel()
+                    await asyncio.sleep(.01)
+                    task.cancel()
+                    await asyncio.sleep(.01)
+                    self.assertFalse(task.done())
+                    self.assertEqual(len(app._io_workers), 2)
+            finally:
+                release.set()
+            if cancel:
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            else:
+                states, errors = await task
+                self.assertEqual(states, {keys[0]: {"x": "7"}})
+                self.assertIn("read fixture", errors[keys[1]])
+            self.assertEqual(sorted(finished), [0, 1])
+            self.assertFalse(app._io_workers)
+
     async def test_discovered_unit_reads_include_retained_rows_and_isolate_targets(self):
         class Engine:
             target_path = ""
