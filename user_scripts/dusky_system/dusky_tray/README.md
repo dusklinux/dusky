@@ -113,9 +113,16 @@ The notification timestamp daemon runs independently.
 - Power saver's tooltip uses two lines: `Power saver` and `RMB: Powertop auto-tune`.
 - The power button uses muted red (`#812824`) regardless of the wallpaper accent.
   Network metrics use the whole module width without an up/down icon.
-- Initial data loads before the panel appears; the complete, stable layout
-  fades in over 180 ms using compositor frame events. The frame subscription
-  stops when the reveal finishes; subsequent polling remains every two seconds.
+- The panel appears on the first rendered frame with its current clock and
+  available controls; hardware and notification queries never gate visibility.
+  Loading and empty notification labels share a fixed 56 px slot, so an empty
+  result only changes the label. Sliders still appear only when available.
+  The `dusky_tray_entrance` layer rule in Hyprland's `window_rules.lua`
+  uses `slide bottom`, independently of the app's live blur rule. Panel
+  height changes use a short, retargetable critically damped spring inspired by
+  `skwd-wall-2`, keeping the bottom edge anchored while new content arrives.
+  Only size changes request animation frames; a settled panel returns to the
+  existing two-second polling cadence. No prewarm process or new service is used.
 
 ## Opacity, blur, and live themes
 
@@ -212,6 +219,8 @@ For a first-frame submission timestamp without verbose Wayland logging:
 DUSKY_TRAY_TRACE=1 ~/.local/bin/dusky-tray
 ```
 
+The first submitted frame now contains the visible panel. Query completion
+phases identify slow background work separately from `first-present`.
 This measures GPU frame submission, not the time at which the display scans
 out a frame. No result here promises identical latency on different hardware
 or after a disk-cold boot.

@@ -35,7 +35,6 @@ type Element<'a, Message> =
 #[derive(Debug, Clone)]
 pub enum Message {
     Tick,
-    OpeningFrame(Instant),
     BlurConfigured,
     BlurRegion(bool),
     ClockLoaded((String, String)),
@@ -137,8 +136,8 @@ pub struct TrayApp {
     hovered_notification: Option<String>,
     fade_bottom: bool,
     refresh_pending: usize,
-    opening_started: Option<Instant>,
-    opening_progress: f32,
+    initial_refresh: bool,
+    notifications_loaded: bool,
     slider_busy: HashSet<SliderKind>,
     slider_pending: HashMap<SliderKind, f32>,
     slider_changed_at: HashMap<SliderKind, Instant>,
@@ -148,12 +147,13 @@ pub struct TrayApp {
 
 impl TrayApp {
     pub fn new(config: AppConfig) -> (Self, Task<Message>) {
+        let (time_text, date_text) = sys::current_time_date();
         let app = Self {
             config,
             appearance: Appearance::load().unwrap_or_default(),
             theme: AppTheme::load(),
-            time_text: "--:--".into(),
-            date_text: String::new(),
+            time_text,
+            date_text,
             weather: None,
             cpu_text: "--".into(),
             ram_text: "--".into(),
@@ -178,8 +178,8 @@ impl TrayApp {
             hovered_notification: None,
             fade_bottom: false,
             refresh_pending: 0,
-            opening_started: None,
-            opening_progress: 0.0,
+            initial_refresh: true,
+            notifications_loaded: false,
             slider_busy: HashSet::new(),
             slider_pending: HashMap::new(),
             slider_changed_at: HashMap::new(),
@@ -264,33 +264,23 @@ impl TrayApp {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        if matches!(
-            &message,
-            Message::ClockLoaded(_)
-                | Message::WeatherLoaded(_)
-                | Message::MetricsLoaded(_)
-                | Message::TogglesLoaded(_)
-                | Message::RadioLoaded(_)
-                | Message::PowerLoaded(_)
-                | Message::SlidersLoaded(_, _)
-        ) {
-            self.refresh_pending = self.refresh_pending.saturating_sub(1);
-            self.begin_reveal_if_ready();
+        let phase = match &message {
+            Message::ClockLoaded(_) => Some("clock-ready"),
+            Message::WeatherLoaded(_) => Some("weather-ready"),
+            Message::MetricsLoaded(_) => Some("metrics-ready"),
+            Message::TogglesLoaded(_) => Some("toggles-ready"),
+            Message::RadioLoaded(_) => Some("radios-ready"),
+            Message::PowerLoaded(_) => Some("power-ready"),
+            Message::SlidersLoaded(_, _) => Some("sliders-ready"),
+            _ => None,
+        };
+        if let Some(phase) = phase {
+            self.finish_refresh(phase);
         }
         // Notification refreshes also occur after actions, independently of the
         // periodic batch; their completion must not release a batch slot.
         match message {
             Message::BlurConfigured | Message::BlurRegion(_) => {}
-            Message::OpeningFrame(at) => {
-                if let Some(start) = self.opening_started {
-                    let was_opening = self.opening_progress < 1.0;
-                    self.opening_progress =
-                        (at.saturating_duration_since(start).as_secs_f32() / 0.18).min(1.0);
-                    if was_opening && self.opening_progress == 1.0 {
-                        crate::renderer::trace_phase("reveal-complete");
-                    }
-                }
-            }
             Message::Tick => {
                 let mut blur_change = Task::none();
                 if let Some(appearance) = Appearance::load() {
@@ -362,11 +352,11 @@ impl TrayApp {
                 self.sunset_available = s.sunset_available;
             }
             Message::NotifsRefreshed(result) => {
-                self.refresh_pending = self.refresh_pending.saturating_sub(1);
-                self.begin_reveal_if_ready();
+                self.finish_refresh("notifications-ready");
                 return self.update(Message::NotifsLoaded(result));
             }
             Message::NotifsLoaded((notifs, dnd)) => {
+                self.notifications_loaded = true;
                 if !self.notifications.iter().map(|n| n.id).eq(notifs
                     .iter()
                     .filter(|n| !self.dismissed.contains(&n.id))
@@ -655,6 +645,17 @@ impl TrayApp {
         Task::none()
     }
 
+    fn finish_refresh(&mut self, phase: &str) {
+        self.refresh_pending = self.refresh_pending.saturating_sub(1);
+        if self.initial_refresh {
+            crate::renderer::trace_phase(phase);
+            if self.refresh_pending == 0 {
+                self.initial_refresh = false;
+                crate::renderer::trace_phase("snapshot-ready");
+            }
+        }
+    }
+
     fn configure_blur(enabled: bool) -> Task<Message> {
         Task::batch([
             Task::done(Message::BlurRegion(enabled)),
@@ -665,13 +666,6 @@ impl TrayApp {
                 |_| Message::BlurConfigured,
             ),
         ])
-    }
-
-    fn begin_reveal_if_ready(&mut self) {
-        if self.opening_started.is_none() && self.refresh_pending == 0 {
-            self.opening_started = Some(Instant::now());
-            crate::renderer::trace_phase("snapshot-ready");
-        }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -686,11 +680,7 @@ impl TrayApp {
             (iced_core::event::Status::Ignored, _) => Some(Message::EventOccurred(event)),
             _ => None,
         });
-        let mut subscriptions = vec![events, Subscription::run(Self::ticks)];
-        if self.opening_started.is_some() && self.opening_progress < 1.0 {
-            subscriptions.push(iced_runtime::window::frames().map(Message::OpeningFrame));
-        }
-        Subscription::batch(subscriptions)
+        Subscription::batch([events, Subscription::run(Self::ticks)])
     }
 
     fn ticks() -> impl iced_futures::futures::Stream<Item = Message> {
@@ -1125,12 +1115,6 @@ impl TrayApp {
     }
 
     fn view_at(&self, size: iced_core::Size) -> Element<'_, Message> {
-        if self.opening_started.is_none() {
-            return mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-                .on_press(Message::BackdropPressed)
-                .on_right_press(Message::BackdropPressed)
-                .into();
-        }
         let theme = self.theme;
         // The clock occupies the whole header width. Side controls occupy a
         // separate row over it; neither can push the clock off its true center.
@@ -1406,7 +1390,9 @@ impl TrayApp {
             if self.notifications.is_empty() {
                 notifs = notifs.push(
                     container(
-                        text(if dnd {
+                        text(if !self.notifications_loaded {
+                            "Loading notifications…"
+                        } else if dnd {
                             "Do Not Disturb is on"
                         } else {
                             "You're all caught up"
@@ -1414,7 +1400,8 @@ impl TrayApp {
                         .size(12)
                         .color(theme.muted),
                     )
-                    .padding([20, 0])
+                    .height(56)
+                    .align_y(Vertical::Center)
                     .center_x(Length::Fill),
                 );
             } else {
@@ -1542,7 +1529,7 @@ impl TrayApp {
                 .align_y(Vertical::Bottom),
             );
         }
-        let panel = container(body)
+        let panel = container(crate::appearance::smooth_height(body.into()))
             .width(Length::Fixed(320.0_f32.min((size.width - 40.0).max(1.0))))
             .max_height((size.height * 0.85).min(size.height - 40.0).max(1.0))
             .style(move |_| {
@@ -1564,7 +1551,7 @@ impl TrayApp {
                 catcher(),
                 container(crate::appearance::reveal(
                     panel.into(),
-                    (1.0 - (1.0 - self.opening_progress).powi(3)) * self.appearance.opacity
+                    self.appearance.opacity
                 ))
                 .padding(iced_core::Padding {
                     right: 20.0,
@@ -1685,40 +1672,18 @@ mod tests {
         TrayApp::new(AppConfig::parse(AppConfig::default_toml())).0
     }
     #[test]
-    fn first_reveal_waits_for_complete_snapshot_and_then_stops_animating() {
+    fn panel_is_visible_while_initial_queries_are_pending() {
         let mut app = app();
+        assert_ne!(app.time_text, "--:--");
         let _ = app.update(Message::Tick);
-        for message in [
-            Message::ClockLoaded(("03:39".into(), "Wednesday".into())),
-            Message::WeatherLoaded(None),
-            Message::MetricsLoaded(("6%".into(), "27 GB".into(), Default::default())),
-            Message::TogglesLoaded(Default::default()),
-            Message::RadioLoaded((Some(true), Some(true))),
-            Message::PowerLoaded(Some("balanced".into())),
-            Message::SlidersLoaded(
-                0,
-                SliderSnapshot {
-                    brightness: Some(60.0),
-                    ..Default::default()
-                },
-            ),
-        ] {
-            let _ = app.update(message);
-            assert!(app.opening_started.is_none());
-        }
-        let _ = app.update(Message::NotifsLoaded((vec![], None)));
-        assert!(app.opening_started.is_none());
+        assert_eq!(app.refresh_pending, 8);
+        assert!(!app.notifications_loaded);
+        let view = app.view_at(iced_core::Size::new(1920.0, 1080.0));
+        assert!(!view.as_widget().children().is_empty());
+        drop(view);
         let _ = app.update(Message::NotifsRefreshed((vec![], None)));
-        let start = app.opening_started.unwrap();
-        assert_eq!(app.time_text, "03:39");
-        assert_eq!(app.brightness, Some(60.0));
-        let _ = app.update(Message::OpeningFrame(start + Duration::from_millis(90)));
-        assert!((app.opening_progress - 0.5).abs() < 0.01);
-        let _ = app.update(Message::OpeningFrame(start + Duration::from_millis(250)));
-        assert_eq!(app.opening_progress, 1.0);
-        let _ = app.update(Message::Tick);
-        assert_eq!(app.opening_started, Some(start));
-        assert_eq!(app.opening_progress, 1.0);
+        assert!(app.notifications_loaded);
+        assert_eq!(app.refresh_pending, 7);
     }
 
     #[test]

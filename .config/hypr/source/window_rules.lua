@@ -1811,6 +1811,14 @@ hl.layer_rule({
     -- animation = "slide down"
 })
 
+-- Dusky Tray is a layer surface. Keep its entrance separate from the
+-- application's named blur rule, which is replaced during live theme updates.
+hl.layer_rule({
+    name = "dusky_tray_entrance",
+    match = { namespace = "^dusky-tray$" },
+    animation = "slide bottom"
+})
+
 --mako rule
 hl.layer_rule({
     name = "mako",
