@@ -7,7 +7,7 @@ Native PipeWire capture with a real audio-level meter, SongRec recognition,
 Rich presentation, persistent history, and optional desktop integrations.
 
 Required:
-    Python 3.14+
+    Python 3.15+
     python-rich
     songrec
     pw-record
@@ -39,53 +39,52 @@ Exit codes:
 Mako placement is configured in Mako, not by this script.
 """
 
-from __future__ import annotations
-
 import sys
 
-if sys.version_info < (3, 14):
-    sys.stderr.write("Python 3.14+ is required.\n")
+if sys.version_info < (3, 15):
+    sys.stderr.write("Python 3.15+ is required.\n")
     raise SystemExit(1)
 
 import argparse
-import csv
+lazy import csv
 import fcntl
-import hashlib
-import html
-import io
+lazy import hashlib
+lazy import html
+lazy import http.client
+lazy import io
 import json
 import logging
 import math
 import os
 import re
 import select
-import shlex
+lazy import shlex
 import shutil
 import signal
 import subprocess
 import tempfile
 import termios
 import time
-import tty
+lazy import tty
 import urllib.parse
-import urllib.request
-import wave
+lazy import urllib.request
+lazy import wave
 
 from array import array
 from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, field, fields
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+lazy from threading import Thread
 from typing import Any
 
 try:
     from rich import box
     from rich.align import Align
     from rich.console import Console
-    from rich.live import Live
     from rich.panel import Panel
     from rich.style import Style
     from rich.table import Table
@@ -97,6 +96,8 @@ except ImportError:
         "Install: sudo pacman -S --needed python-rich\n"
     )
     raise SystemExit(1)
+
+lazy from rich.live import Live
 
 
 VERSION = "2.2.0"
@@ -200,13 +201,24 @@ def reject_nonfinite(value: str) -> Any:
     raise ValueError(f"Invalid non-finite JSON number: {value}")
 
 
+def finite_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        reject_nonfinite(value)
+    return number
+
+
 def parse_json(value: str) -> Any:
-    return json.loads(value, parse_constant=reject_nonfinite)
+    return json.loads(
+        value, parse_constant=reject_nonfinite, parse_float=finite_float,
+    )
 
 
 def read_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as stream:
-        return json.load(stream, parse_constant=reject_nonfinite)
+        return json.load(
+            stream, parse_constant=reject_nonfinite, parse_float=finite_float,
+        )
 
 
 def emit_json(value: Any) -> None:
@@ -452,7 +464,7 @@ class Song:
 
         if (
             type(song.epoch) not in (int, float)
-            or not math.isfinite(song.epoch)
+            or (type(song.epoch) is float and not math.isfinite(song.epoch))
             or song.epoch < 0
         ):
             raise ValueError("Song epoch must be finite and nonnegative.")
@@ -684,6 +696,7 @@ def stop_child(
     proc: subprocess.Popen[Any],
     *,
     recorder: bool = False,
+    drain: bool = False,
 ) -> None:
     if proc.poll() is not None:
         return
@@ -694,13 +707,19 @@ def stop_child(
         pass
 
     try:
-        proc.wait(timeout=CHILD_STOP_TIMEOUT)
+        if drain:
+            proc.communicate(timeout=CHILD_STOP_TIMEOUT)
+        else:
+            proc.wait(timeout=CHILD_STOP_TIMEOUT)
     except subprocess.TimeoutExpired:
         try:
             proc.kill()
         except ProcessLookupError:
             pass
-        proc.wait()
+        if drain:
+            proc.communicate()
+        else:
+            proc.wait()
 
 
 def run_command(
@@ -728,7 +747,7 @@ def run_command(
         )
     finally:
         if proc.poll() is None:
-            stop_child(proc)
+            stop_child(proc, drain=True)
         if proc.stdout is not None:
             proc.stdout.close()
         if proc.stderr is not None:
@@ -757,19 +776,25 @@ def copy_text(value: str) -> bool:
         return False
 
 
+def launch_background(command: list[str]) -> None:
+    """Launch an independent task and reap it without delaying the UI or exit."""
+    proc = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        close_fds=True,
+    )
+    Thread(target=proc.wait, daemon=True).start()
+
+
 def open_url(url: str) -> bool:
     if not url or not shutil.which("xdg-open"):
         return False
 
     try:
-        subprocess.Popen(
-            ["xdg-open", url],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            close_fds=True,
-        )
+        launch_background(["xdg-open", url])
         return True
     except OSError as exc:
         logger.warning("Browser launch failed: %s", exc)
@@ -782,6 +807,7 @@ def open_url(url: str) -> bool:
 
 NOTIFICATION_HELPER = r"""
 import json
+import os
 import subprocess
 import sys
 
@@ -804,13 +830,7 @@ if result.returncode == 0:
     url = payload["actions"].get(result.stdout.strip())
     if url:
         try:
-            subprocess.Popen(
-                ["xdg-open", url],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+            os.execlp("xdg-open", "xdg-open", url)
         except OSError:
             pass
 """
@@ -877,7 +897,7 @@ class Notifier:
 
         try:
             if actions:
-                subprocess.Popen(
+                launch_background(
                     [
                         sys.executable,
                         "-c",
@@ -887,11 +907,6 @@ class Notifier:
                             "actions": actions,
                         }),
                     ],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                    close_fds=True,
                 )
             else:
                 run_command(command, timeout=3)
@@ -911,6 +926,9 @@ def download_cover(song: Song) -> str:
     destination = COVERS_DIR / f"{key}.jpg"
 
     try:
+        if urllib.parse.urlsplit(song.cover_url).scheme not in ("http", "https"):
+            raise ValueError("Cover URL must use HTTP or HTTPS.")
+
         if destination.is_file():
             if 0 < destination.stat().st_size <= MAX_COVER_BYTES:
                 return str(destination)
@@ -930,6 +948,10 @@ def download_cover(song: Song) -> str:
                 raise ValueError(f"HTTP status {response.status}")
             if not response.headers.get_content_type().startswith("image/"):
                 raise ValueError("Cover response is not an image.")
+            length = response.headers.get("Content-Length")
+            expected_bytes = int(length) if length is not None else None
+            if expected_bytes is not None and not 0 < expected_bytes <= MAX_COVER_BYTES:
+                raise ValueError("Invalid cover size or cover exceeds 5 MiB.")
 
             while True:
                 if time.monotonic() >= deadline:
@@ -945,11 +967,13 @@ def download_cover(song: Song) -> str:
 
         if not payload:
             raise ValueError("Empty cover image.")
+        if expected_bytes is not None and len(payload) != expected_bytes:
+            raise ValueError("Incomplete cover image.")
 
-        atomic_write(destination, bytes(payload))
+        atomic_write(destination, payload.take_bytes())
         return str(destination)
 
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, http.client.HTTPException) as exc:
         logger.warning("Cover download failed: %s", exc)
         return ""
 
@@ -1104,7 +1128,8 @@ class AudioEngine:
 
         missing = [
             option for option in (
-                "--raw", "--format", "--rate", "--channels", "--target"
+                "--raw", "--format", "--rate", "--channels", "--target",
+                "--properties",
             )
             if option not in help_text
         ]
@@ -1124,7 +1149,10 @@ class AudioEngine:
     @staticmethod
     def default_source(kind: str) -> str:
         try:
-            result = run_command(["pw-dump"], timeout=DISCOVERY_TIMEOUT)
+            result = run_command(
+                ["pw-dump", "--no-colors", "--indent", "0"],
+                timeout=DISCOVERY_TIMEOUT,
+            )
         except subprocess.TimeoutExpired as exc:
             raise AppError("PipeWire source discovery timed out.") from exc
 
@@ -1219,7 +1247,7 @@ class AudioEngine:
             "--format", "s16",
         ]
         if monitor:
-            command.extend(["-P", "{ stream.capture.sink = true }"])
+            command.extend(["--properties", "{ stream.capture.sink = true }"])
         command.append("-")
 
         logger.info("Capture command: %s", shlex.join(command))
@@ -1374,8 +1402,7 @@ class AudioEngine:
                         if not usable:
                             continue
 
-                        block = bytes(pending[:usable])
-                        del pending[:usable]
+                        block = pending.take_bytes(usable)
 
                         count, squares, peak = sample_statistics(block)
                         sample_count += count
@@ -1387,9 +1414,10 @@ class AudioEngine:
                         output.writeframesraw(block)
                         written += len(block)
 
-                        meter_window.extend(block)
-                        if len(meter_window) > METER_WINDOW_BYTES:
-                            del meter_window[:-METER_WINDOW_BYTES]
+                        if callback is not None:
+                            meter_window.extend(block)
+                            if len(meter_window) > METER_WINDOW_BYTES:
+                                del meter_window[:-METER_WINDOW_BYTES]
 
                     update(time.monotonic())
 
@@ -1558,6 +1586,11 @@ class RecognitionEngine:
             except ValueError:
                 continue
 
+            # Shazam also returns Apple Music links wrapped as Android intents.
+            if parsed.scheme == "intent" and host == "music.apple.com":
+                apple = parsed._replace(scheme="https", fragment="").geturl()
+                continue
+
             if parsed.scheme not in ("http", "https"):
                 continue
             if host == "open.spotify.com":
@@ -1565,7 +1598,7 @@ class RecognitionEngine:
             elif host == "music.apple.com":
                 apple = uri
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         query = f"{title} {artist}".strip()
 
         return Song(
