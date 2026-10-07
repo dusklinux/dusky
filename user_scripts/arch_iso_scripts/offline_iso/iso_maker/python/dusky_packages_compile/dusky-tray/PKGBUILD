@@ -1,6 +1,6 @@
 pkgname=dusky-tray
 pkgver=1.0.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Dusky Tray control center for Hyprland'
 arch=('x86_64')
 license=('custom')
@@ -42,6 +42,8 @@ package() {
     "$pkgdir/usr/share/dusky-tray/appearance.toml"
   install -Dm644 "$build_dir/project/ignored_apps.toml" \
     "$pkgdir/usr/share/dusky-tray/ignored_apps.toml"
+  install -Dm644 "$build_dir/project/config.toml" \
+    "$pkgdir/usr/share/dusky-tray/config.toml"
   python - "$build_dir/project" > "$pkgdir/usr/share/dusky-tray/source.sha256" <<'PY'
 import hashlib
 import sys

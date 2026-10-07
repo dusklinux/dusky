@@ -1,8 +1,8 @@
 //! Panel configuration: layout flags + quick-toggle grid.
 //!
-//! Mirrors `user_scripts/dusky_system/quickpanal/config.toml` and the
-//! `DEFAULT_TOML_CONFIG` fallback embedded in `dusky_quickpanal.py`.
-//! All persistent config lives on SSD (`~/.config/dusky/quickpanal/`).
+//! Mirrors the tray configuration and the
+//! embedded default layout.
+//! All persistent config lives on SSD (`~/.config/dusky/tray/`).
 //! All *runtime* caches live on tmpfs via [`crate::backend::runtime_dir`].
 
 use std::fs;
@@ -156,7 +156,7 @@ impl AppConfig {
             .filter(|p| !p.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".config"))
-            .join("dusky/quickpanal");
+            .join("dusky/tray");
         let file = dir.join("config.toml");
         (dir, file)
     }

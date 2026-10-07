@@ -166,8 +166,8 @@ applications can still use Python or GTK; the panel itself does not.
 
 ## Configuration and runtime
 
-Configuration is read from `$XDG_CONFIG_HOME/dusky/quickpanal/config.toml`, or
-`$HOME/.config/dusky/quickpanal/config.toml`. Existing GTK toggle commands and
+Configuration is read from `$XDG_CONFIG_HOME/dusky/tray/config.toml`, or
+`$HOME/.config/dusky/tray/config.toml`. Existing GTK toggle commands and
 layout keys are reused. An absent file receives embedded defaults. Empty
 `toggles=[]` is respected. `show_media` remains a reserved, unimplemented key.
 

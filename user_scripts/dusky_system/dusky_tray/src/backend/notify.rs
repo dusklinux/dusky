@@ -21,13 +21,17 @@ pub struct Notification {
 }
 
 pub fn ignored_apps_file() -> PathBuf {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
+        })
+        .join("dusky/tray/ignored_apps.toml");
+    if config.is_file() {
+        return config;
+    }
     if let Ok(home) = std::env::var("HOME") {
-        let p = PathBuf::from(format!(
-            "{home}/user_scripts/dusky_system/quickpanal/ignored_apps.toml"
-        ));
-        if p.is_file() {
-            return p;
-        }
         let local = PathBuf::from(home).join(".local/share/dusky/dusky_tray/ignored_apps.toml");
         if local.is_file() {
             return local;

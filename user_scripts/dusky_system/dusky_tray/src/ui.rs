@@ -1,4 +1,4 @@
-//! Iced layer-shell tray: layout mirrors GTK3 `dusky_quickpanal.py`.
+//! Iced layer-shell tray: layout mirrors the original compact panel.
 //!
 //! Sections (top → bottom): header (weather / clock / power), metrics,
 //! quick-toggle grid (5), power row (wifi+bt switches + TLP radios),

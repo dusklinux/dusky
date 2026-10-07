@@ -1,4 +1,4 @@
-# Dusky Quick Panal Configuration (~/.config/dusky/quickpanal/config.toml)
+# Dusky Tray Configuration (~/.config/dusky/tray/config.toml)
 [layout]
 show_weather = true
 show_metrics = true

@@ -1,6 +1,6 @@
 //! dusky-tray: Rust-native control center (Iced + layer-shell).
 //!
-//! Layout parity with GTK3 `dusky_quickpanal.py`. Build + runtime caches stay
+//! Layout parity with the original compact panel. Build + runtime caches stay
 //! on tmpfs (see `scripts/build-on-tmpfs.sh` and `backend::system::runtime_dir`)
 //! to avoid SSD write amplification.
 

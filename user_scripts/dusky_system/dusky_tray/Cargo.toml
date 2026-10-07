@@ -3,7 +3,7 @@ name = "dusky-tray"
 version = "1.0.0"
 edition = "2024"
 authors = ["Dusk Linux"]
-description = "Dusky Tray: Rust-native control center for Arch Linux / Hyprland (Iced + layer-shell). Mirrors the GTK3 quickpanal layout."
+description = "Dusky Tray: Rust-native control center for Arch Linux / Hyprland (Iced + layer-shell). Mirrors the compact tray layout."
 
 [dependencies]
 iced_core = "0.14.0"
