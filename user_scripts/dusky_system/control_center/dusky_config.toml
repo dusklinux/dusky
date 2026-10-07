@@ -2131,12 +2131,12 @@ key = "power_saver_state"
 persistence = "action"
 [pages.layout.items.on_toggle.enabled]
 type = "exec"
-command = "foot --app-id=power_saver.sh --title \"Enable Power Saver\" sh -c \"$HOME/user_scripts/battery/power_saver.sh -e\""
+command = '''foot --app-id=power_saver.sh --title "Enable Power Saver" sh -c 'exec "$HOME/user_scripts/battery/power_saver/power_saver.py" -e' '''
 mode = "launch"
 terminal = false
 [pages.layout.items.on_toggle.disabled]
 type = "exec"
-command = "kitty --class power_saver_off.sh --title \"Disable Power Saver\" sh -c \"$HOME/user_scripts/battery/power_saver.sh -d\""
+command = '''kitty --class power_saver_off.sh --title "Disable Power Saver" sh -c 'exec "$HOME/user_scripts/battery/power_saver/power_saver.py" -d' '''
 mode = "launch"
 terminal = false
 

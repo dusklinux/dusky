@@ -3,7 +3,7 @@ Type=Application
 Name=Power Saver Mode
 GenericName=Battery Saver
 Comment=Enable Power Saving Mode (Prompt)
-Exec=foot --app-id=dusky_tui /home/dusk/user_scripts/battery/power_saver.sh -e
+Exec=foot --app-id=dusky_tui "/home/dusk/user_scripts/battery/power_saver/power_saver.py" -e
 Terminal=false
 Categories=System;Settings;
 Keywords=battery;power;save;energy;

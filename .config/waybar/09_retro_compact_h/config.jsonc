@@ -307,7 +307,7 @@
       "warning": 30,
       "critical": 15
     },
-    "on-click": "dusky-run kitty --class power_saver.sh --hold -e $HOME/user_scripts/battery/power_saver.sh --interactive",
+    "on-click": "dusky-run kitty --class power_saver.sh --hold -e \"$HOME/user_scripts/battery/power_saver/power_saver.py\" --interactive",
     "on-click-right": "dusky-run kitty --class dusky_tui -e python3 $HOME/user_scripts/hypridle/tui_dusky_hypridle.py",
     "format": "{icon} {capacity}%",
     "format-charging": "󰂄 {capacity}%",

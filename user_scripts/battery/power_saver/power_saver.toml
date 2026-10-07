@@ -1,0 +1,42 @@
+# Python 3.15+, systemd 262+, Linux 7.3+, Hyprland/Wayland.
+# Run --check-config to validate, --dry-run -e to inspect without changing anything.
+# Restore snapshots live in ~/.config/dusky/settings/power_saver/state.json.
+# Repeated enable is a no-op. Disable retries failed restores; it needs no flags.
+# Manual TLP ac/bat mode must be exited via the TLP toggle auto command first.
+# After a reboot, disable restores persistent visuals/theme and discards runtime state.
+
+[settings]
+command_timeout = 45.0
+process_timeout = 2.0
+kill_timeout = 1.0
+brightness_percent = 1
+external_brightness_percent = 1
+volume_cap_percent = 50      # All audio sinks; includes fallback outputs.
+bluetooth = true
+wifi = false                 # --wifi also requests Wi-Fi blocking.
+theme = false                # --theme also requests light mode; prior mode is restored.
+pause_media = true           # Playback stays paused on restore, as in the Bash script.
+ddc = true                   # Synchronous: completion includes DDC read/write verification.
+
+[targets]
+# Stop activation units alongside services so timers cannot immediately restart them.
+system_units = ["firewalld", "vsftpd", "waydroid-container", "logrotate.timer", "logrotate.service", "sshd", "ufw", "warp-svc"]
+user_units = ["battery_notify", "update_checker.timer", "update_checker.service", "osd_lock", "blueman-applet", "gvfs-daemon", "gvfs-metadata", "network_meter", "dusky_quickpanal", "dusky", "waybar", "blueman-manager", "dusky_kokoro.socket", "dusky_kokoro", "dusky_stt"]
+# Exact comm names, current user's processes only. Unit-owned processes must be
+# managed through user_units instead. Standalone instances retain argv/cwd/env.
+# btop/nvtop are deliberately omitted: their terminal sessions cannot be recreated.
+processes = ["hyprsunset", "awww-daemon", "waybar", "blueman-manager"]
+scripts = ["dusky_main.py", "dusky_stt_main.py"]  # Exact Python/shell entry-point basenames.
+
+[integrations]
+tlp_script = "~/user_scripts/battery/tlp/tlp_mode_toggle.sh"
+visuals_script = "~/user_scripts/hypr/hypr_blur_opacity_shadow_toggle.sh"
+theme_script = "~/user_scripts/theme_matugen/theme_ctl.sh"
+
+[hooks]
+# Trusted Bash code. Runs with errexit/pipefail, without eval; failures are reported.
+# Hooks must be idempotent: interrupted/failed transitions can be retried.
+pre_enable = []
+post_enable = []
+pre_disable = []
+post_disable = []

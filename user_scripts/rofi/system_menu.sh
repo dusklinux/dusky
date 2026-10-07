@@ -679,10 +679,10 @@ show_power_menu() {
                 run_app "$SCRIPTS_DIR/battery/tlp/tlp_mode_toggle.sh" power-saver
                 ;;
             '  Saver On')
-                run_term_hold "power_saver_on" "$SCRIPTS_DIR/battery/power_saver.sh" -e
+                run_term_hold "power_saver_on" "$SCRIPTS_DIR/battery/power_saver/power_saver.py" -e
                 ;;
             '  Saver Off')
-                run_term_hold "power_saver_off" "$SCRIPTS_DIR/battery/power_saver.sh" -d
+                run_term_hold "power_saver_off" "$SCRIPTS_DIR/battery/power_saver/power_saver.py" -d
                 ;;
             '  Power Manager')
                 run_term_hold "dusky_tui" python3 "$SCRIPTS_DIR/power/tui_power.py"
