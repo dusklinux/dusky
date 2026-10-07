@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Build offline on verified RAM storage; copy only the runnable executable here.
+# Install a native binary outside the source tree, or run checks on RAM.
 set -euo pipefail
 readonly PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 mode="${1:---release}"
 case "$mode" in
     --check|--test|--clippy) ;;
-    --release|--install) profile=release; build_args=(--release) ;;
-    --dev) profile=debug; build_args=() ;;
-    *) printf 'Usage: %s [--release|--dev|--check|--test|--clippy|--install]\n' "$0" >&2; exit 2 ;;
+    --release|--install) exec python3 "$PROJECT_DIR/../../arch_setup_scripts/scripts/152_dusky_tray_setup.py" ;;
+    --force-rebuild) exec python3 "$PROJECT_DIR/../../arch_setup_scripts/scripts/152_dusky_tray_setup.py" --force-rebuild ;;
+    *) printf 'Usage: %s [--release|--force-rebuild|--check|--test|--clippy|--install]\n' "$0" >&2; exit 2 ;;
 esac
 CARGO_TARGET_DIR="$(realpath -m -- "${CARGO_TARGET_DIR:-/tmp/dusky-tray-target-$UID}")"
 export CARGO_TARGET_DIR
@@ -31,11 +31,3 @@ case "$mode" in
     --test) exec cargo test --locked --offline ;;
     --clippy) exec cargo clippy --locked --offline --all-targets -- -D warnings ;;
 esac
-cargo build --locked --offline "${build_args[@]}"
-mkdir -p -- "$PROJECT_DIR/bin"
-install -m 0755 -- "$CARGO_TARGET_DIR/$profile/dusky-tray" "$PROJECT_DIR/bin/dusky-tray"
-printf 'Built: %s/bin/dusky-tray\n' "$PROJECT_DIR"
-if [[ "$mode" == --install ]]; then
-    mkdir -p -- "$HOME/.local/bin"
-    install -m 0755 -- "$PROJECT_DIR/bin/dusky-tray" "$HOME/.local/bin/dusky-tray"
-fi

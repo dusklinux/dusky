@@ -29,13 +29,15 @@ pub fn ignored_apps_file() -> PathBuf {
             return p;
         }
     }
-    // Fallback to the copy shipped with this repo (SSD source, read-only).
+    // Installed defaults live beside the binary; source-tree builds used bin/.
     if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent().and_then(|p| p.parent())
+        && let Some(directory) = exe.parent()
     {
-        let p = dir.join("ignored_apps.toml");
-        if p.is_file() {
-            return p;
+        for base in [Some(directory), directory.parent()].into_iter().flatten() {
+            let p = base.join("ignored_apps.toml");
+            if p.is_file() {
+                return p;
+            }
         }
     }
     PathBuf::from("ignored_apps.toml")

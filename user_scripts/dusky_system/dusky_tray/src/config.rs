@@ -74,13 +74,15 @@ impl Appearance {
         if xdg.is_file() {
             return xdg;
         }
-        // Keep the test project's settings alongside its binary's bin/ directory.
+        // Installed defaults live beside the binary; source-tree builds used bin/.
         if let Ok(exe) = std::env::current_exe()
-            && let Some(project) = exe.parent().and_then(|bin| bin.parent())
+            && let Some(directory) = exe.parent()
         {
-            let local = project.join("appearance.toml");
-            if local.is_file() {
-                return local;
+            for base in [Some(directory), directory.parent()].into_iter().flatten() {
+                let local = base.join("appearance.toml");
+                if local.is_file() {
+                    return local;
+                }
             }
         }
         xdg

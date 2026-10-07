@@ -4,50 +4,59 @@ An on-demand Rust control center for Linux / Hyprland / Wayland, using Iced
 and layer-shell. Escape or a click outside the panel exits the process. Nothing
 is kept running to prewarm the panel. No GTK GUI dependency is used.
 
-The project and runnable test binary stay in this directory. The GTK scripts,
-installed launcher and desktop keybinds are not replaced. The notification-time
-service can run independently of the GTK panel.
+Sources stay in this directory. The executable lives at
+`~/.local/share/dusky/dusky_tray/dusky-tray`, with a launcher symlink at
+`~/.local/bin/dusky-tray`, matching Dusky Papers. GTK launchers and desktop
+keybinds are not replaced.
 
 ## Run and rebuild
 
 ```sh
+python3 ~/user_scripts/arch_setup_scripts/scripts/152_dusky_tray_setup.py
 ./scripts/reload_tray.sh
+~/.local/bin/dusky-tray
 
-# Offline builds; compiler intermediates stay on RAM.
-./scripts/build-on-tmpfs.sh --release
-./scripts/build-on-tmpfs.sh --check
+./scripts/build-on-tmpfs.sh --force-rebuild
 ./scripts/build-on-tmpfs.sh --test
-
-# The binary can also be invoked directly.
-./bin/dusky-tray
+./scripts/build-on-tmpfs.sh --clippy
 ```
 
-The build script uses `/tmp/dusky-tray-target-$UID` for compiler artifacts,
-intermediates, and temporary files. It checks that output lives on tmpfs and
-outside this project, including `CARGO_TARGET_DIR` overrides. If `/tmp` is not
-tmpfs on a target system, select a verified RAM mount explicitly, for example
-`CARGO_TARGET_DIR=/dev/shm/dusky-tray-target-$UID ./scripts/build-on-tmpfs.sh`.
-Only the final executable is copied to `bin/`. `--install` also copies it to
-`$HOME/.local/bin`; installation remains an explicit step.
+`--release` (the default) and `--install` both run setup. Native release builds
+use `-C target-cpu=native` and native C/C++ flags. The manifest records source
+and binary SHA256 values, version, target, and CPU identity. Unchanged builds
+are reused; changed sources (even without a version bump), or a different CPU,
+trigger compilation. All three setup profiles run this after Dusky Papers.
 
-Project `.cargo/config.toml` directs ordinary Cargo commands run **from this
-project** to `/tmp/dusky-tray-target`. The build script adds per-user cache
-isolation and mount verification, and works from any working directory. Use it
-for builds; a Cargo `--manifest-path` argument alone does not load the project's
-configuration when invoked from elsewhere. Cargo flags/environment can override
-its defaults. No source-directory `target/` tree is needed.
+Native compiler output and temporary files live on executable `/tmp` or
+`/dev/shm` tmpfs and are removed afterward. There is no disk build fallback.
+Dependencies are checked offline first; missing crates may be fetched with a
+bounded timeout unless `CARGO_NET_OFFLINE=true`. Compilation is frozen/offline.
+The smoke-tested binary atomically replaces the old executable, followed by
+its manifest and launcher. Failed builds retain a verified older native binary,
+or use the generic `/usr/bin/dusky-tray` package. Rerun setup to retry a build.
 
-The reload script replaces only a running binary from this project's `bin/`
-directory, including a replaced executable still running after a rebuild.
-Direct invocation is protected by a per-user file lock. Other builds of this
-revision share that lock. The optional service file is on-demand, has no login
-autostart section, and does not restart the panel after it closes.
-`service/dusky_tray.service` is an optional systemd launcher for the installed
-`$HOME/.local/bin/dusky-tray`; direct launches and the reload script do not need it.
+Editable appearance and ignored-app defaults are copied beside the installed
+binary only when absent, preserving user edits. The obsolete source-directory
+executable is removed after successful installation.
 
-The Cargo registry sources and lockfile must already be present for an offline
-build. Compilation on RAM does not make the compiler or the registry cache
-independent of disk.
+The separate ISO recipe lives at
+`user_scripts/arch_iso_scripts/offline_iso/iso_maker/python/dusky_packages_compile/dusky-tray/`.
+The factory discovers it automatically. It builds a generic x86-64 pacman
+package with `target-cpu=x86-64` and generic C/C++ flags, regardless of the
+builder's CPU. Compiler output stays on `/tmp` tmpfs; the package contains the
+executable and defaults. Installed systems prefer native compilation even when
+the generic package matches their sources.
+
+Check modes use `/tmp/dusky-tray-target-$UID`, verify tmpfs and reject output
+inside the project. Ordinary Cargo commands run from this project default to
+`/tmp/dusky-tray-target`; use the wrapper for mount verification. Neither creates
+a source-directory `target/` tree. The Cargo registry cache is separate.
+
+The reload script restarts this user's installed tray, including an old inode
+after an atomic update. A per-user lock prevents concurrent panels.
+`service/dusky_tray.service` optionally launches `~/.local/bin/dusky-tray` through
+systemd; it has no login autostart section and does not restart a closed panel.
+The notification timestamp daemon runs independently.
 
 ## Appearance and controls
 
@@ -200,7 +209,7 @@ cargo fmt --check
 For a first-frame submission timestamp without verbose Wayland logging:
 
 ```sh
-DUSKY_TRAY_TRACE=1 ./bin/dusky-tray
+DUSKY_TRAY_TRACE=1 ~/.local/bin/dusky-tray
 ```
 
 This measures GPU frame submission, not the time at which the display scans

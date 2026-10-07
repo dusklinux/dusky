@@ -1,0 +1,70 @@
+pkgname=dusky-tray
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Dusky Tray control center for Hyprland'
+arch=('x86_64')
+license=('custom')
+depends=('glibc' 'gcc-libs' 'wayland' 'libxkbcommon' 'vulkan-icd-loader' 'mesa' 'libglvnd')
+makedepends=('cargo' 'python' 'util-linux')
+source=()
+
+build() {
+  # Override the factory's target directory: tray compilation always stays on RAM.
+  [[ "$(findmnt -n -o FSTYPE -T /tmp)" == tmpfs ]] || {
+    printf 'Dusky Tray ISO builds require /tmp on tmpfs.\n' >&2
+    return 1
+  }
+  local build_dir
+  build_dir="$(mktemp -d /tmp/dusky-tray-iso.XXXXXXXX)"
+  printf '%s\n' "$build_dir" > "$srcdir/tray-build-path"
+  # Keep successful output for package(); remove it if compilation fails.
+  trap "status=\$?; if ((status != 0)); then rm -rf -- '$build_dir'; fi" EXIT
+  cp -a -- "$DUSKY_PACKAGE_SOURCE" "$build_dir/project"
+  cd "$build_dir/project"
+  unset CARGO_ENCODED_RUSTFLAGS
+  export RUSTFLAGS='-C target-cpu=x86-64'
+  export CFLAGS='-march=x86-64 -mtune=generic -O2'
+  export CXXFLAGS="$CFLAGS"
+  export CPPFLAGS=''
+  export CARGO_TARGET_DIR="$build_dir/target"
+  export CARGO_BUILD_BUILD_DIR="$CARGO_TARGET_DIR"
+  export TMPDIR="$build_dir"
+  cargo build --release --locked --target x86_64-unknown-linux-gnu
+}
+
+package() {
+  local build_dir
+  build_dir="$(cat "$srcdir/tray-build-path")"
+  trap "rm -rf -- '$build_dir'" EXIT
+  install -Dm755 "$build_dir/target/x86_64-unknown-linux-gnu/release/dusky-tray" \
+    "$pkgdir/usr/bin/dusky-tray"
+  install -Dm644 "$build_dir/project/appearance.toml" \
+    "$pkgdir/usr/share/dusky-tray/appearance.toml"
+  install -Dm644 "$build_dir/project/ignored_apps.toml" \
+    "$pkgdir/usr/share/dusky-tray/ignored_apps.toml"
+  python - "$build_dir/project" > "$pkgdir/usr/share/dusky-tray/source.sha256" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+project = Path(sys.argv[1])
+files = [project / "Cargo.toml", project / "Cargo.lock"]
+for relative in (
+    "build.rs", "rust-toolchain", "rust-toolchain.toml",
+    ".cargo/config", ".cargo/config.toml",
+):
+    path = project / relative
+    if path.is_file():
+        files.append(path)
+if (project / "src").is_dir():
+    files.extend(sorted(path for path in (project / "src").rglob("*") if path.is_file()))
+
+# Same inputs and recipe marker as 152_dusky_tray_setup.py.
+digest = hashlib.sha256(b"tray-native-v1-frozen-tmpfs\0")
+for path in files:
+    digest.update(str(path.relative_to(project)).encode())
+    digest.update(b"\0")
+    digest.update(hashlib.sha256(path.read_bytes()).digest())
+print(digest.hexdigest())
+PY
+}
