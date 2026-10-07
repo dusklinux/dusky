@@ -5,7 +5,7 @@ Everything you need to write, edit, and debug updater `.toml` profiles.
 > Run `python3 update_dusky.py --doctor` to verify your system and see resolved paths.
 > Requires Python 3.14+.
 > The canonical entry point is `python/update_dusky.py` (the control center and
-> quick panel launch it directly). The `update_dusky.sh` bash file in the parent
+> Dusky Tray launch it directly). The `update_dusky.sh` bash file in the parent
 > directory is the **legacy v8 engine** — ignore it.
 > Git-sync internals (the 5 GIT tasks) are documented separately in
 > [`UPDATE_SYNC_BEHAVIOR.md`](../UPDATE_SYNC_BEHAVIOR.md).

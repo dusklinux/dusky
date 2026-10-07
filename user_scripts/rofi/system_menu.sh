@@ -434,7 +434,7 @@ show_display_menu() {
                 run_app "$SCRIPTS_DIR/hypr/hypr_blur_opacity_shadow_toggle.sh"
                 ;;
             '  Night Light')
-                run_app "$SCRIPTS_DIR/dusky_system/quickpanal/dusky_quickpanal.py"
+                run_app "$HOME/.local/bin/dusky-tray"
                 ;;
             '  Waybar Select')
                 run_term "waybar_tui" python3 "$SCRIPTS_DIR/waybar/tui_waybars.py"

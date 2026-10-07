@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Dusky Tray
+GenericName=System Controls
+Comment=Adjust Various Settings
+Exec=dusky-tray
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=dusky;tray;sliders;brightness;nightlight;hyprsunset;display;volume;sound;audio;control;
+Icon=preferences-system
+StartupNotify=false

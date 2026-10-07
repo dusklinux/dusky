@@ -2257,7 +2257,7 @@ icon = "preferences-color-symbolic"
 style = "suggested"
 [pages.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py"
+command = "$HOME/.local/bin/dusky-tray"
 
 [[pages.layout]]
 type = "section"
@@ -3186,15 +3186,6 @@ type = "section"
 [pages.layout.items.layout.properties]
 title = "Background Services"
 description = "enable --now / disable --now"
-
-[[pages.layout.items.layout.items]]
-type = "service"
-[pages.layout.items.layout.items.properties]
-title = "Quick Panel"
-description = "Dusky quick access overlay"
-icon = "view-grid-symbolic"
-service = "dusky_quickpanal.service"
-scope = "user"
 
 [[pages.layout.items.layout.items]]
 type = "service"

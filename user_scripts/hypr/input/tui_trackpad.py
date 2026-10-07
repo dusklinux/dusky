@@ -51,7 +51,7 @@ TABS = [
 # =============================================================================
 GESTURE_OPTIONS = [
     "Native Workspace Swipe",
-    "Toggle Dusky QuickPanel",
+    "Open Dusky Tray",
     "Toggle Waybar",
     "Toggle Blur & Opacity",
     "Media: Play / Pause",
@@ -70,7 +70,7 @@ GESTURE_OPTIONS = [
 
 GESTURE_HINTS = [
     "Smooth 1:1 workspace switching",
-    "Opens the custom quick panel",
+    "Opens Dusky Tray",
     "Toggles the Waybar panel",
     "Toggles Hyprland visual effects",
     "Play/Pause current media",
@@ -288,7 +288,7 @@ SCHEMA = {
             key="action",
             scope="gesture/3/up",
             type_="picker",
-            default="Toggle Dusky QuickPanel",
+            default="Open Dusky Tray",
             options=GESTURE_OPTIONS,
             hints=GESTURE_HINTS,
             group="Trio",

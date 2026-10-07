@@ -10,7 +10,7 @@ HISTORY=$(makoctl history -j 2>/dev/null || echo "[]")
 BLACKLIST_FILE="${XDG_RUNTIME_DIR:-/tmp}/mako_rofi_blacklist"
 BLACKLIST_RAW=$(cat "$BLACKLIST_FILE" 2>/dev/null || echo "")
 
-IGNORED_APPS_TOML="${HOME}/user_scripts/dusky_system/quickpanal/ignored_apps.toml"
+IGNORED_APPS_TOML="${XDG_CONFIG_HOME:-$HOME/.config}/dusky/tray/ignored_apps.toml"
 
 IGNORED_JSON=$(python3 -c '
 import tomllib, json, sys, os

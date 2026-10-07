@@ -8,7 +8,7 @@
 -- NOTE: Gestures fire once per recognized swipe, not continuously.
 --       Volume/brightness step is 5% per swipe — do multiple quick swipes for larger changes.
 --       Tap gestures are not supported by Hyprland natively (as of 0.55).
---       For your 3-finger tap QuickPanel: use ALT+V (already bound in keybinds).
+--       For your 3-finger tap Dusky Tray: use ALT+V (already bound in keybinds).
 
 -- ── 3-Finger Gestures ────────────────────────────────────────────────────────────────────────────
 
@@ -23,7 +23,7 @@ hl.gesture({
     fingers   = 3,
     direction = "up",
     action    = function()
-        hl.exec_cmd([[gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate "{}"]])
+        hl.exec_cmd([["$HOME/.local/bin/dusky-tray"]])
     end,
 })
 

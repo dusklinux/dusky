@@ -91,7 +91,6 @@ USER_MIGRATIONS: list[MigrationRule] = [
     MigrationRule("dusky-oom-shield.service", "dusky_oom_shield.service"),
     # Hyphenated variants of other standard user units
     MigrationRule("dusky-visualizer.service", "dusky_visualizer.service"),
-    MigrationRule("dusky-quickpanal.service", "dusky_quickpanal.service"),
     MigrationRule("dusky-clipboard.service", "dusky_clipboard.service"),
     MigrationRule("dusky-battery.service", "dusky_battery.service"),
     MigrationRule("dusky-polkit.service", "dusky_polkit.service"),

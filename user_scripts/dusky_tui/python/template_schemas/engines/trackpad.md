@@ -35,7 +35,7 @@ Lua action blocks; `"Disabled / Unbound"` deletes the block):
 
 ```
 Native Workspace Swipe
-Toggle Dusky QuickPanel
+Open Dusky Tray
 Toggle Waybar
 Toggle Blur & Opacity
 Media: Play / Pause
@@ -61,7 +61,7 @@ ConfigItem(label="Swipe Distance", key="workspace_swipe_distance", scope="gestur
            type_="int", default=300, min_val=0, max_val=2000, step=50, group="Swipe"),
 ConfigItem(label="3-Finger Left Action", key="action", scope="gesture/3/left",
            type_="cycle", default="Toggle Waybar",
-           options=["Native Workspace Swipe", "Toggle Dusky QuickPanel", "Toggle Waybar",
+           options=["Native Workspace Swipe", "Open Dusky Tray", "Toggle Waybar",
                     "Toggle Blur & Opacity", "Media: Play / Pause", "Media: Volume Up (+10%)",
                     "Media: Volume Down (-10%)", "Screen: Brightness Up (+10%)",
                     "Screen: Brightness Down (-10%)", "Disabled / Unbound"],

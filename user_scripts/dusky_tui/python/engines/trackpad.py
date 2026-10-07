@@ -18,7 +18,7 @@ from python.engines.lua import HyprlandLuaEngine
 # -----------------------------------------------------------------------------
 ACTION_MAP = {
     "Native Workspace Swipe": '"workspace"',
-    "Toggle Dusky QuickPanel": 'function()\n        hl.exec_cmd([[gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate ""]])\n    end',
+    "Open Dusky Tray": 'function()\n        hl.exec_cmd([["$HOME/.local/bin/dusky-tray"]])\n    end',
     "Toggle Waybar": 'function()\n        hl.exec_cmd(dusky_scripts .. "waybar/waybar_toggle.sh")\n    end',
     "Toggle Blur & Opacity": 'function()\n        hl.exec_cmd(dusky_scripts .. "hypr_blur_opacity_shadow_toggle.sh")\n    end',
     "Media: Play / Pause": 'function()\n        hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --play-pause")\n    end',
@@ -43,7 +43,7 @@ def get_friendly_name(block_str: str) -> str:
             if code == '"' + native[1] + '"':
                 return label
     if '"workspace"' in block_str or "'workspace'" in block_str: return "Native Workspace Swipe"
-    if "org.dusky.quickpanal" in block_str: return "Toggle Dusky QuickPanel"
+    if "dusky-tray" in block_str: return "Open Dusky Tray"
     if "waybar_toggle.sh" in block_str: return "Toggle Waybar"
     if "hypr_blur_opacity_shadow_toggle.sh" in block_str: return "Toggle Blur & Opacity"
     if "--play-pause" in block_str: return "Media: Play / Pause"

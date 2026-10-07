@@ -1200,22 +1200,6 @@ hl.window_rule({
     focus_on_activate = true
 })
 
---- Dusky_QuickPanal Script ---
-hl.window_rule({
-    name = "dusky_quickpanalpy",
-    match = {
-        class = "^(dusky_quickpanal\\.py)$",
-    },
-    float = true,
-    animation = "slide right",
-    no_dim = true,
-    rounding = 20,
-    move = {"(monitor_w-window_w-20)", "(monitor_h-window_h-20)"},
-    border_size = 0,
-    workspace = "unset",
-    focus_on_activate = true
-})
-
 --- Audio Router Popup ---
 hl.window_rule({
     name = "audiorouter-popup",

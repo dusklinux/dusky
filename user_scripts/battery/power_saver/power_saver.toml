@@ -21,7 +21,7 @@ ddc = true                   # Synchronous: completion includes DDC read/write v
 [targets]
 # Stop activation units alongside services so timers cannot immediately restart them.
 system_units = ["firewalld", "vsftpd", "waydroid-container", "logrotate.timer", "logrotate.service", "sshd", "ufw", "warp-svc"]
-user_units = ["battery_notify", "update_checker.timer", "update_checker.service", "osd_lock", "blueman-applet", "gvfs-daemon", "gvfs-metadata", "network_meter", "dusky_quickpanal", "dusky", "waybar", "blueman-manager", "dusky_kokoro.socket", "dusky_kokoro", "dusky_stt"]
+user_units = ["battery_notify", "update_checker.timer", "update_checker.service", "osd_lock", "blueman-applet", "gvfs-daemon", "gvfs-metadata", "network_meter", "dusky", "waybar", "blueman-manager", "dusky_kokoro.socket", "dusky_kokoro", "dusky_stt"]
 # Exact comm names, current user's processes only. Unit-owned processes must be
 # managed through user_units instead. Standalone instances retain argv/cwd/env.
 # btop/nvtop are deliberately omitted: their terminal sessions cannot be recreated.

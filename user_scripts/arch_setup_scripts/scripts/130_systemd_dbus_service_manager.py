@@ -56,8 +56,6 @@ USER_SERVICES: list[ServiceConfig] = [
     # Dusky Update Checker (Default: Disable)
     ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.service", "disable"),
     ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.timer", "disable"),
-    # Dusky Quickpanel (Default: Disable)
-    ServiceConfig("$HOME/user_scripts/dusky_system/quickpanal/service/dusky_quickpanal.service", "disable"),
     # Dusky OSD Router (Default: Disable)
     ServiceConfig("$HOME/user_scripts/mako_osd/osd_router/osd_lock.service", "disable"),
     # Dusky RAM Monitor (Default: Enable)
@@ -67,8 +65,8 @@ USER_SERVICES: list[ServiceConfig] = [
     # Dusky Screentime Tracker (Default: Disable)
     ServiceConfig("$HOME/user_scripts/screentime/dusky_screentime.service", "disable"),
 
-    # Dusky Notification Time Tracker Daemon (Default: Disable)
-    ServiceConfig("$HOME/user_scripts/dusky_system/quickpanal/service/notification_time_service/dusky_notif_time.service", "disable"),
+    # Dusky Notification Time Tracker Daemon (Default: Enable)
+    ServiceConfig("$HOME/user_scripts/dusky_system/dusky_tray/service/notification_time_service/dusky_notif_time.service", "enable"),
 
     # Dusky Wayland Clipboard Manager (History & Persistence) (Default: Enable)
     ServiceConfig("$HOME/user_scripts/clipboard/service/dusky_clipboard.service", "enable"),
@@ -82,11 +80,6 @@ DBUS_SYMLINKS: list[SymlinkConfig] = [
     SymlinkConfig(
         "$HOME/user_scripts/dusky_system/control_center/service/com.github.dusky.controlcenter.service",
         "$XDG_DATA_HOME/dbus-1/services/com.github.dusky.controlcenter.service",
-    ),
-    # Dusky Quickpanel DBus Activation
-    SymlinkConfig(
-        "$HOME/user_scripts/dusky_system/quickpanal/service/org.dusky.quickpanal.service",
-        "$XDG_DATA_HOME/dbus-1/services/org.dusky.quickpanal.service",
     ),
 ]
 

@@ -147,7 +147,7 @@
         "tooltip": true,
         "tooltip-format": "Control Center",
         "on-click": "gdbus call --session --dest com.github.dusky.controlcenter --object-path /com/github/dusky/controlcenter --method org.freedesktop.Application.Activate '{}'",
-        "on-click-right": "gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate '{}'"
+        "on-click-right": "\"$HOME/.local/bin/dusky-tray\""
     },
 
     "custom/inhibit-suspend": {
@@ -294,7 +294,7 @@
         "device": "intel_backlight",
         "format": "{icon} {percent}%",
         "format-icons": [" ", " "],
-        "on-click": "dusky-run ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
+        "on-click": "\"$HOME/.local/bin/dusky-tray\"",
         "on-scroll-up": "brightnessctl s +5%",
         "on-scroll-down": "brightnessctl s 5%-",
         "tooltip-format": "Brightness: {percent}%"

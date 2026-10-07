@@ -320,8 +320,8 @@ hl.bind(
 
 cond_bind(
     "ALT + V",
-    hl.dsp.exec_cmd([[gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate "{}"]]),
-    { description = "Dusky QuickPanal" }
+    hl.dsp.exec_cmd([["$HOME/.local/bin/dusky-tray"]]),
+    { description = "Dusky Tray" }
 )
 
 hl.bind(

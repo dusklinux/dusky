@@ -102,9 +102,7 @@ SETUP_COMMANDS: list[FleetCommand] = [
         'gcc -shared -fPIC -o "$TARGET/libwaylandgrab.so" "$TARGET/dusky.c" "$TARGET/hyprland-focus-grab-v1-client-protocol.c" -lwayland-client -lpthread -ldl',
         "Compile Wayland Click-Away Shared Library"
     ),
-    FleetCommand(Mode.USER, 'systemctl --user daemon-reload && systemctl --user restart dusky_quickpanal.service || true', "Reload & Restart Quickpanel Service"),
     FleetCommand(Mode.USER, '"$HOME/user_scripts/dusky_system/reload_cc/cc_restart.sh" --quiet >/dev/null 2>&1 < /dev/null &', "Background Restart Control Center"),
-    FleetCommand(Mode.USER, '"$HOME/user_scripts/dusky_system/quickpanals/reload_quickpanal.sh/" --quiet >/dev/null 2>&1 < /dev/null &', "Background Reload Quickpanel"),
     FleetCommand(Mode.USER, 'update-desktop-database "$HOME/.local/share/applications" || true', "Update Desktop Entry Database Cache"),
     # --- System Services ---
     # FleetCommand(Mode.USER, 'systemctl --user disable dusky.service || true', "Disable Legacy Dusky Service"),
@@ -157,9 +155,7 @@ AFTER_COMMANDS: list[FleetCommand] = [
         'gcc -shared -fPIC -o "$TARGET/libwaylandgrab.so" "$TARGET/dusky.c" "$TARGET/hyprland-focus-grab-v1-client-protocol.c" -lwayland-client -lpthread -ldl',
         "Recompile Wayland Click-Away Shared Library"
     ),
-    FleetCommand(Mode.USER, 'systemctl --user enable --now dusky_quickpanal.service || true', "Enable & Start Dusky Quickpanel Service"),
     FleetCommand(Mode.USER, 'systemctl --user daemon-reload || true', "Reload Systemd User Daemon"),
-    FleetCommand(Mode.USER, 'systemctl --user restart dusky_quickpanal.service || true', "Restart Dusky Quickpanel Service"),
     FleetCommand(Mode.USER, 'systemctl --user restart osd_lock.service || true', "Restart OSD Lock Service"),
     FleetCommand(Mode.USER, 'update-desktop-database "$HOME/.local/share/applications" || true', "Update Desktop Entry Database Cache"),
 ]

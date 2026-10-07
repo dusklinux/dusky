@@ -36,7 +36,7 @@ default = ["firewalld", "warp-svc", "ufw", "vsftpd", "waydroid-container", "logr
 optional = ["udisks2", "NetworkManager"]
 
 [user_units]
-default = ["battery_notify", "blueman-applet", "gvfs-daemon", "waybar", "blueman-manager", "gvfs-metadata", "network_meter", "dusky_quickpanal", "dusky"]
+default = ["battery_notify", "blueman-applet", "gvfs-daemon", "waybar", "blueman-manager", "gvfs-metadata", "network_meter", "dusky"]
 optional = ["gnome-keyring-daemon", "hypridle", "dusky_polkit"]
 
 # The old script listed update_checker.timer as a process, which could not match.

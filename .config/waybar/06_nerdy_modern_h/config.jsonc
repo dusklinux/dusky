@@ -135,9 +135,9 @@
     // ===================================================================
     "custom/launcher": {
         "format": "󰌽",
-        "tooltip-format": "App Launcher\n\nLMB: Control Center\nMMB: Quick Panel\nRMB: Application Launcher",
+        "tooltip-format": "App Launcher\n\nLMB: Control Center\nMMB: Dusky Tray\nRMB: Application Launcher",
         "on-click-right": "dusky-run rofi -show drun",
-        "on-click-middle": "gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate '{}'",
+        "on-click-middle": "\"$HOME/.local/bin/dusky-tray\"",
         "on-click": "python3 ~/user_scripts/dusky_system/control_center/dusky_control_center.py"
     },
 
@@ -319,8 +319,8 @@
         "format": "{icon} {percent}%",
         "format-icons": ["󰃞", "󰃟", "󰃠"],
         "tooltip-format": "Brightness: {percent}%\n\nLMB: Brightness Slider\nRMB: Hyprsunset Slider\nMMB: Shader Menu\nScroll: Adjust",
-        "on-click": "dusky-run ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
-        "on-click-right": "dusky-run ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
+        "on-click": "\"$HOME/.local/bin/dusky-tray\"",
+        "on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
         "on-click-middle": "dusky-run ~/user_scripts/rofi/shader_menu.sh",
         "on-scroll-up": "brightnessctl set +5%",
         "on-scroll-down": "brightnessctl set 5%-",

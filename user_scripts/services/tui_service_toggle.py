@@ -98,10 +98,6 @@ CORE_USER_DEFS = {
         "Control Center Preload",
         "Autostarts Control center to open it faster on the first invocation, second invocation is always the same",
     ),
-    "dusky_quickpanal.service": (
-        "Dusky QuickPanal Preload",
-        "Autostarts Quick panel service to open it faster on the first Invocation, second invoke is the same regardless.",
-    ),
     "update_checker.timer": (
         "Automatic Update Checker",
         "Checks local main against origin/main, then refreshes cached Pacman, AUR, and Dusky commit counts for the panels and status bar. Runs 10 minutes after the user manager starts, then every 6 hours after completion, with up to 10 minutes of jitter. Toggle this timer; its static companion service is started by the timer.",
@@ -141,7 +137,7 @@ CORE_USER_DEFS = {
 
     "dusky_notif_time.service": (
         "Notification Timestamps",
-        "Background daemon that tracks exact arrival timestamps for Mako desktop notifications and caches them for QuickPanel and Rofi displays.",
+        "Background daemon that records first-observed timestamps for Mako desktop notifications and caches them for Dusky Tray and Rofi displays.",
     ),
     "modprobed-db.service": (
         "Hardware Profiler",
@@ -358,7 +354,7 @@ CORE_USER_SECTIONS = (
         "dusky_moonlight_display.service", "app-dev.lizardbyte.app.Sunshine.service",
     )),
     ("Panels & Integration", (
-        "dusky.service", "dusky_quickpanal.service", "network_meter.service",
+        "dusky.service", "network_meter.service",
         "dusky_notif_time.service", "dusky_visualizer.service", "dusky_screentime.service",
         "gamemoded.service",
     )),

@@ -85,7 +85,7 @@
   "custom/launcher": {
     "format": "󰌽",
     "on-click": "python3 ~/user_scripts/dusky_system/control_center/dusky_control_center.py",
-    "on-click-right": "gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate '{}'",
+    "on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
     "tooltip-format": "Control Center"
   },
 
@@ -273,8 +273,8 @@
   "backlight": {
     "format": "{icon} {percent}",
     "tooltip-format": "Brightness: {percent}%\n\n LMB  Brightness\n RMB  Night Light\n MMB  Shaders",
-    "on-click": "dusky-run ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
-    "on-click-right": "dusky-run ~/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py",
+    "on-click": "\"$HOME/.local/bin/dusky-tray\"",
+    "on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
     "on-click-middle": "dusky-run ~/user_scripts/rofi/shader_menu.sh",
     "on-scroll-up": "brightnessctl set +5%",
     "on-scroll-down": "brightnessctl set 5%-",

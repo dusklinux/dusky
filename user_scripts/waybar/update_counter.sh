@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cached Pacman, AUR and Dusky counts for Waybar and the quick panel.
+# Cached Pacman, AUR and Dusky counts for Waybar and the Dusky Tray.
 
 # FOR Horizontal WAYBARS
 

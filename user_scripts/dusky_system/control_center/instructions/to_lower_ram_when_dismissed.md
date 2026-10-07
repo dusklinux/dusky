@@ -8,7 +8,7 @@ Here is the comprehensive, architect-level breakdown of our journey, formatted e
 **Date:** May 2026
 
 ## The Core Problem
-When building background UI daemons (like a Quick Panel or Control Center) using Python and GTK4, developers typically use a "Persistent Window" architecture. The script runs continuously, and the UI is simply hidden using `self.set_visible(False)`. 
+GTK control overlays often use a persistent window. The script runs continuously, and the UI is simply hidden using `self.set_visible(False)`.
 
 The expectation is that the daemon sits at a tiny memory footprint while idle. The reality? **It hoards 140MB+ of RAM permanently.**
 

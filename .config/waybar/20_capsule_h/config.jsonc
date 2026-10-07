@@ -244,8 +244,8 @@
       "",
       ""
     ],
-    "on-click": "dusky-run \"$HOME/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py\"",
-    "on-click-right": "dusky-run \"$HOME/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py\"",
+    "on-click": "\"$HOME/.local/bin/dusky-tray\"",
+    "on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
     "on-click-middle": "dusky-run \"$HOME/user_scripts/rofi/shader_menu.sh\""
   },
   "tray": {

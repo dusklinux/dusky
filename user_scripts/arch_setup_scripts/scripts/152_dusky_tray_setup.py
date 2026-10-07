@@ -423,6 +423,15 @@ def install_defaults(project: Path, install_dir: Path) -> None:
             source = Path("/usr/share/dusky-tray") / filename
         if source.is_file() and not destination.exists():
             shutil.copyfile(source, destination)
+    config_dir = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "dusky/tray"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    for filename in ("config.toml", "ignored_apps.toml"):
+        destination = config_dir / filename
+        source = project / filename
+        if not source.is_file():
+            source = Path("/usr/share/dusky-tray") / filename
+        if source.is_file() and not destination.exists():
+            shutil.copyfile(source, destination)
 
 
 def setup(project: Path, install_dir: Path, force: bool) -> int:
@@ -494,4 +503,3 @@ if __name__ == "__main__":
     except (OSError, ValueError, KeyError, tomllib.TOMLDecodeError) as error:
         log("ERR", f"Dusky Tray setup failed: {error}")
         sys.exit(1)
-

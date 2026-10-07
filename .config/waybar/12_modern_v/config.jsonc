@@ -180,12 +180,12 @@
         "format": "{icon}\n{volume}",
         "format-muted": "󰖁",
         "on-click": "dusky-run pavucontrol",
-        "on-click-right": "dusky-run \"$HOME/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py\"",
+        "on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
         "on-click-middle": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
         "on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
         "on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%",
         "format-icons": ["󰖁", "", ""],
-        "tooltip-format": "Volume: {volume}%\nLMB: pavucontrol\nRMB: Quick Panel\nMMB: Mute"
+        "tooltip-format": "Volume: {volume}%\nLMB: pavucontrol\nRMB: Dusky Tray\nMMB: Mute"
     },
 
     "backlight": {
@@ -195,7 +195,7 @@
         "format-icons": ["","","","","","","","","","","","","","",""],
         "tooltip": true,
         "tooltip-format": "Brightness: {percent}%",
-        "on-click": "dusky-run \"$HOME/user_scripts/dusky_system/quickpanal/dusky_quickpanal.py\"",
+        "on-click": "\"$HOME/.local/bin/dusky-tray\"",
         "on-scroll-up": "brightnessctl set +5%",
         "on-scroll-down": "brightnessctl set 5%-",
         "min-length": 4,
