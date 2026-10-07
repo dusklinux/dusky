@@ -275,7 +275,7 @@ PROMPT_STYLE='window { width: 340px; x-offset: -20px; y-offset: 20px; padding: 2
 # This maps Row 1 Col 1 to Index 0, and Row 1 Col 2 to Index 6.
 declare -a MENU_OPTIONS=(
     "󰜺  Stop / Clear"      # Index 0 (Col 1 Row 1)
-    "󰸉  Edit"              # Index 1 (Col 1 Row 2)
+    "󰸉  TUI"              # Index 1 (Col 1 Row 2)
     "  CPU"               # Index 2 (Col 1 Row 3)
     "󰢮  GPU"               # Index 3 (Col 1 Row 4)
     "󰋊  Disk Usage"        # Index 4 (Col 1 Row 5)
@@ -1084,7 +1084,7 @@ while true; do
             exit 0
             ;;
 
-        '󰸉  Edit')
+        '󰸉  TUI')
             foot --app-id=dusky_tui python ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/mako_osd/dusky_glance/tui_glance_mako.py & disown
             exit 0
             ;;

@@ -113,8 +113,74 @@ TABS = [
     "Hardware",
     "Storage",
     "Status",
+    "Autostart",
     "Profiles"
 ]
+
+# Autostart target mirrors ~/user_scripts/hypr/misc/tui_autostart.py (reference only).
+AUTOSTART_TARGET = "~/.config/hypr/edit_here/source/autostart.lua"
+
+
+def build_autostart_toggle(label_name, autostart_key, help_text, group_name):
+    """Single autostart bool routed to the Hyprland autostart.lua via override."""
+    return ConfigItem(
+        label=label_name,
+        key=autostart_key,
+        scope="autostart",
+        type_="bool",
+        default=False,
+        group=group_name,
+        target_file_override=AUTOSTART_TARGET,
+        engine_type_override="autostart",
+        extended_help=help_text,
+    )
+
+
+def build_autostart_tab():
+    """All 37 Glance autostart toggles. Groups must stay contiguous."""
+    return [
+        # --- Time & Focus ---
+        build_autostart_toggle("Clock & Calendar", "glance_clock", "**Clock Glance Autostart**\n\nLaunches clock and calendar overlay at startup.", "Time & Focus"),
+        build_autostart_toggle("Compact Clock", "glance_clock_short", "**Compact Clock Glance Autostart**\n\nLaunches minimal clock overlay at startup.", "Time & Focus"),
+        build_autostart_toggle("Live Stopwatch", "glance_stopwatch", "**Stopwatch Glance Autostart**\n\nLaunches live stopwatch counter at startup.", "Time & Focus"),
+        build_autostart_toggle("Countdown Timer (15m)", "glance_timer", "**Timer Glance Autostart**\n\nLaunches 15-minute countdown timer overlay at startup.", "Time & Focus"),
+        # --- Hardware ---
+        build_autostart_toggle("CPU Usage", "glance_cpu", "**CPU Glance Autostart**\n\nLaunches Rofi CPU monitoring overlay at startup.", "Hardware"),
+        build_autostart_toggle("CPU Power Draw", "glance_cpu_power", "**CPU Power Glance Autostart**\n\nLaunches CPU power consumption overlay at startup.", "Hardware"),
+        build_autostart_toggle("Memory (RAM)", "glance_ram", "**RAM Glance Autostart**\n\nLaunches RAM usage overlay at startup.", "Hardware"),
+        build_autostart_toggle("RAM Temperature", "glance_ram_temp", "**RAM Temp Glance Autostart**\n\nLaunches memory temperature overlay at startup.", "Hardware"),
+        build_autostart_toggle("ZRAM Usage", "glance_zram", "**ZRAM Glance Autostart**\n\nLaunches ZRAM compression overlay at startup.", "Hardware"),
+        build_autostart_toggle("Temperatures", "glance_temp", "**Temperature Glance Autostart**\n\nLaunches CPU/GPU thermal overlay at startup.", "Hardware"),
+        build_autostart_toggle("Battery Status", "glance_battery", "**Battery Glance Autostart**\n\nLaunches battery status overlay at startup.", "Hardware"),
+        build_autostart_toggle("Battery Percent", "glance_battery_percent", "**Battery Percent Glance Autostart**\n\nLaunches battery percentage overlay at startup.", "Hardware"),
+        build_autostart_toggle("Battery Power Draw", "glance_battery_watts", "**Battery Power Draw Autostart**\n\nLaunches battery power draw overlay at startup.", "Hardware"),
+        build_autostart_toggle("Battery Time Remaining", "glance_battery_time", "**Battery Time Remaining Autostart**\n\nLaunches battery time remaining overlay at startup.", "Hardware"),
+        build_autostart_toggle("GPU Power Draw", "glance_gpu_power", "**GPU Power Draw Autostart**\n\nLaunches GPU power draw overlay at startup.", "Hardware"),
+        build_autostart_toggle("GPU Usage", "glance_gpu_usage", "**GPU Usage Autostart**\n\nLaunches GPU utilization overlay at startup.", "Hardware"),
+        build_autostart_toggle("GPU Memory", "glance_gpu_mem", "**GPU Memory Autostart**\n\nLaunches GPU VRAM usage overlay at startup.", "Hardware"),
+        build_autostart_toggle("GPU HUD Overlay", "glance_hud", "**GPU HUD Autostart**\n\nLaunches GPU HUD overlay at startup.", "Hardware"),
+        # --- Storage ---
+        build_autostart_toggle("Disk Usage", "glance_disk", "**Disk Glance Autostart**\n\nLaunches disk usage overlay at startup.", "Storage"),
+        build_autostart_toggle("Disk Read Activity", "glance_disk_read", "**Disk Read Autostart**\n\nLaunches disk read activity overlay at startup.", "Storage"),
+        build_autostart_toggle("Disk Write Activity", "glance_disk_write", "**Disk Write Autostart**\n\nLaunches disk write activity overlay at startup.", "Storage"),
+        build_autostart_toggle("Disk Temperature", "glance_disk_temp", "**Disk Temp Autostart**\n\nLaunches disk temperature overlay at startup.", "Storage"),
+        # --- Network & Status ---
+        build_autostart_toggle("Network Bandwidth", "glance_network", "**Network Glance Autostart**\n\nLaunches network bandwidth overlay at startup.", "Network & Status"),
+        build_autostart_toggle("Network Download Speed", "glance_network_down", "**Network Download Glance Autostart**\n\nLaunches live download speed overlay at startup.", "Network & Status"),
+        build_autostart_toggle("Network Upload Speed", "glance_network_up", "**Network Upload Glance Autostart**\n\nLaunches live upload speed overlay at startup.", "Network & Status"),
+        build_autostart_toggle("Network Combined Speed", "glance_network_combined", "**Network Combined Glance Autostart**\n\nLaunches combined network speed overlay at startup.", "Network & Status"),
+        build_autostart_toggle("Session Downloaded Data", "glance_network_down_session", "**Session Download Glance Autostart**\n\nLaunches session downloaded data overlay at startup.", "Network & Status"),
+        build_autostart_toggle("Session Uploaded Data", "glance_network_up_session", "**Session Upload Glance Autostart**\n\nLaunches session uploaded data overlay at startup.", "Network & Status"),
+        build_autostart_toggle("Session Total Traffic", "glance_network_session", "**Session Total Traffic Glance Autostart**\n\nLaunches session total traffic overlay at startup.", "Network & Status"),
+        build_autostart_toggle("Boot Total Downloaded", "glance_network_boot_down", "**Boot Total Download Glance Autostart**\n\nLaunches boot total downloaded data overlay at startup.", "Network & Status"),
+        build_autostart_toggle("Boot Total Uploaded", "glance_network_boot_up", "**Boot Total Upload Glance Autostart**\n\nLaunches boot total uploaded data overlay at startup.", "Network & Status"),
+        build_autostart_toggle("Boot Total Traffic", "glance_network_boot", "**Boot Total Traffic Glance Autostart**\n\nLaunches boot total traffic overlay at startup.", "Network & Status"),
+        build_autostart_toggle("System Uptime", "glance_uptime", "**Uptime Glance Autostart**\n\nLaunches system uptime overlay at startup.", "Network & Status"),
+        build_autostart_toggle("Workspace Overview", "glance_workspace", "**Workspace Glance Autostart**\n\nLaunches workspace overview overlay at startup.", "Network & Status"),
+        build_autostart_toggle("World Clock (New York)", "glance_world_ny", "**World Clock NY Autostart**\n\nLaunches New York world clock overlay at startup.", "Network & Status"),
+        build_autostart_toggle("World Clock (Tokyo)", "glance_world_tokyo", "**World Clock Tokyo Autostart**\n\nLaunches Tokyo world clock overlay at startup.", "Network & Status"),
+        build_autostart_toggle("World Clock (London)", "glance_world_london", "**World Clock London Autostart**\n\nLaunches London world clock overlay at startup.", "Network & Status"),
+    ]
 
 # =============================================================================
 # 5. DYNAMIC COMPONENT GENERATORS
@@ -650,8 +716,11 @@ SCHEMA = {
        build_standard_glance("uptime", "Uptime", "Status") +
        build_standard_glance("workspace", "Workspace", "Status"),
 
-    # --- TAB 6: Profiles & Execution Hooks ---
-    6: [
+    # --- TAB 6: Autostart on Login ---
+    6: build_autostart_tab(),
+
+    # --- TAB 7: Profiles & Execution Hooks ---
+    7: [
         ConfigItem(
             label="Regenerate",
             key="action_reload_mako", 
