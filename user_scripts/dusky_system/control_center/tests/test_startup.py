@@ -98,6 +98,74 @@ else:
             app._window.destroy()
             app.release()
 
+    def test_service_defers_window_and_builds_it_only_once(self):
+        app = cc.DuskyControlCenter()
+        app.set_application_id(cc.APP_ID + '.lazy_service_test')
+        app.set_flags(cc.Gio.ApplicationFlags.NON_UNIQUE | cc.Gio.ApplicationFlags.IS_SERVICE)
+        build = app._build_ui
+        with patch.object(app, '_build_ui', wraps=build) as builds, patch.object(app, '_trim_startup_heap') as trim:
+            app.register(None)
+            try:
+                self.assertIsNone(app._window)
+                self.assertIsNone(app._stack)
+                self.assertIsNone(app._search_index)
+                self.assertIsNone(app._state.config_error)
+                builds.assert_not_called()
+                trim.assert_called_once_with()
+                app.do_activate()
+                drain_until(app._window.get_mapped)
+                window = app._window
+                app.do_activate()
+                self.assertFalse(window.get_visible())
+                app.do_activate()
+                drain_until(window.get_mapped)
+                self.assertIs(app._window, window)
+                builds.assert_called_once_with()
+            finally:
+                if app._window:
+                    app._window.destroy()
+                app._remove_css_provider()
+                app.release()
+
+    def test_unopened_service_shutdown_flushes_pending_settings(self):
+        app = cc.DuskyControlCenter()
+        app.set_application_id(cc.APP_ID + '.unused_service_test')
+        app.set_flags(cc.Gio.ApplicationFlags.NON_UNIQUE | cc.Gio.ApplicationFlags.IS_SERVICE)
+        app.register(None)
+        self.assertIsNone(app._window)
+        with patch.object(utility, 'flush_settings') as flush:
+            cc.GLib.idle_add(app.quit)
+            app.run([])
+            flush.assert_called_once_with()
+        self.assertIsNone(app._css_provider)
+
+    def test_service_heap_trim_uses_available_process_allocator(self):
+        with patch.object(cc.ctypes, 'CDLL') as library:
+            cc.DuskyControlCenter._trim_startup_heap()
+            library.assert_called_once_with(None)
+            library.return_value.malloc_trim.assert_called_once_with(0)
+        with patch.object(cc.ctypes, 'CDLL', side_effect=OSError('Allocator unavailable')):
+            cc.DuskyControlCenter._trim_startup_heap()
+        with patch.object(cc.ctypes, 'CDLL', return_value=object()):
+            cc.DuskyControlCenter._trim_startup_heap()
+
+    def test_service_row_dependencies_stay_unloaded_before_activation(self):
+        code = '''import sys
+import dusky_control_center as c
+a = c.DuskyControlCenter()
+a.set_flags(c.Gio.ApplicationFlags.NON_UNIQUE | c.Gio.ApplicationFlags.IS_SERVICE)
+a.register(None)
+assert a._window is None
+assert "lib.rows" not in sys.modules
+assert "lib.service_manager" not in sys.modules
+assert "lib.actions" not in sys.modules
+assert a._state.config["pages"]
+a.release()
+'''
+        result = subprocess.run([sys.executable, '-c', code], cwd=cc.SCRIPT_DIR,
+            capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_expander_materializes_once_and_preserves_edits(self):
         item = {'type': 'entry', 'properties': {'title': 'Child'}}
         built = []
@@ -188,8 +256,17 @@ else:
             drain_until(app._window.get_mapped)
             hit = next(app._iter_matching_items('deep target'))
             app._execute_search('deep target')
+            # A hidden/slowly mapped page must not lose its highlight to a
+            # fixed startup timeout. Wait longer than the former 150 ms delay.
+            app._window.close()
             app._navigate_from_search(hit)
             page = app._stack.get_visible_child().get_visible_page()
+            deadline = time.monotonic() + .25
+            while time.monotonic() < deadline:
+                while cc.GLib.MainContext.default().pending():
+                    cc.GLib.MainContext.default().iteration(False)
+                time.sleep(.005)
+            app._window.present()
             def highlighted():
                 # Observe without invoking the helper that materializes children.
                 pending = [page]

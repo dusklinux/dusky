@@ -6,6 +6,7 @@ Dusky Control Center: a GTK4/Libadwaita launcher for Dusky settings.
 from __future__ import annotations
 
 import logging
+lazy import ctypes
 import re
 lazy import shlex
 import signal
@@ -340,7 +341,7 @@ class DuskyControlCenter(Adw.Application):
     def do_startup(self) -> None:
         """
         GTK Startup hook.
-        Load resources and build Home hidden for subsequent activation.
+        Prepare GTK/configuration; service windows wait for first activation.
         """
         # Only file I/O, TOML parsing and pure validation run in the worker.
         # Overlap them with native GTK startup; GTK remains on its main thread.
@@ -361,16 +362,31 @@ class DuskyControlCenter(Adw.Application):
             self._apply_css()
         except ValueError as error:
             log.error("%s", error)
-        self._build_ui()
+        if self.get_flags() & Gio.ApplicationFlags.IS_SERVICE:
+            # Keep native startup warm without retaining unused widgets/rows.
+            # Return temporary native startup allocations once, not on a timer.
+            self._trim_startup_heap()
+        else:
+            self._build_ui()
 
-        if self._window:
-            self._window.set_visible(False)
+    @staticmethod
+    def _trim_startup_heap() -> None:
+        """Return free glibc pages while preserving live GTK/configuration caches."""
+        try:
+            trim = ctypes.CDLL(None).malloc_trim
+        except (OSError, AttributeError):
+            return
+        trim.argtypes = [ctypes.c_size_t]
+        trim.restype = ctypes.c_int
+        trim(0)
 
     def do_activate(self) -> None:
         """
         Application entry point.
-        DAEMON LOGIC: Window is pre-built in do_startup. Toggle visibility.
+        Build the service window once, then toggle visibility.
         """
+        if self._window is None:
+            self._build_ui()
         if self._window:
             if self._window.get_visible():
                 self._window.set_visible(False)
@@ -1083,7 +1099,12 @@ class DuskyControlCenter(Adw.Application):
                         target_page = page
 
         if target_page:
-            GLib.timeout_add(150, self._highlight_widget_by_id, target_page, hit.unique_id)
+            # A widget-owned, one-shot frame callback waits for mapping without
+            # a startup timeout or a signal retaining a discarded page.
+            def highlight_when_ready(page: Gtk.Widget, _clock: Gdk.FrameClock) -> bool:
+                self._highlight_widget_by_id(page, hit.unique_id)
+                return GLib.SOURCE_REMOVE
+            target_page.add_tick_callback(highlight_when_ready)
 
     def _extract_icon_name(self, props: dict[str, Any]) -> str:
         icon_config = props.get("icon", ICON_DEFAULT)
