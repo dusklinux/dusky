@@ -76,8 +76,10 @@ apply_animation() {
     local tmp_file
     tmp_file="$(mktemp "${LINK_DIR}/.active.XXXXXX.tmp")"
 
-    # Ensure cleanup of the temporary file if script exits unexpectedly
-    trap 'rm -f "$tmp_file"' EXIT
+    # Capture the quoted path now; function locals may be out of scope at EXIT.
+    local cleanup_command
+    printf -v cleanup_command 'rm -f -- %q' "$tmp_file"
+    trap "$cleanup_command" EXIT
 
     # V3 CRITICAL FIX: Standardize permissions (mktemp defaults to 0600)
     chmod 644 "$tmp_file"
