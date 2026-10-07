@@ -16,6 +16,11 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from python.frontend import core_types, ui
 from python.frontend.core_types import ConfigItem
+lazy from python.engines.json_engine import JsonEngine
+lazy from python.engines.toml import TomlEngine
+lazy from python.engines import cpu_core, pkg_throttle
+lazy import json
+lazy import tomllib
 from textual.app import App
 
 LAUNCHER = Path(__file__).resolve().parents[1] / "main/main.py"
@@ -454,6 +459,193 @@ class UtilityTests(unittest.TestCase):
                 result = subprocess.run([sys.executable, str(LAUNCHER), str(schema), flag, ""],
                                         capture_output=True, text=True, timeout=5)
                 self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+
+
+class HardwareEngineLifecycleTests(unittest.TestCase):
+    def test_cpu_atomic_write_resolves_deferred_dependencies_on_first_use(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nested/config"
+            cpu_core.atomic_write(path, "fixture\n")
+            self.assertEqual(path.read_text(encoding="utf-8"), "fixture\n")
+            self.assertEqual(list(path.parent.iterdir()), [path])
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o644)
+
+    def test_shutdown_closes_energy_descriptors_while_engine_remains_referenced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "energy_uj"
+            path.write_text("12345\n", encoding="utf-8")
+            for module, cls in ((cpu_core, cpu_core.CpuCoreEngine),
+                                (pkg_throttle, pkg_throttle.PkgThrottleEngine)):
+                with self.subTest(engine=cls.__name__):
+                    engine = cls.__new__(cls)
+                    engine.reader = module.FastEnergyReader(path)
+                    descriptor = engine.reader.fd
+                    self.assertIsNotNone(descriptor)
+                    self.assertEqual(engine.reader.read(), 12345)
+                    try:
+                        engine.shutdown()
+                        with self.assertRaises(OSError):
+                            os.fstat(descriptor)
+                        engine.shutdown()
+                        self.assertIsNone(engine.reader.fd)
+                    finally:
+                        engine.reader.close()
+
+
+class FileEngineTests(unittest.TestCase):
+    def test_real_file_engines_round_trip_through_headless_launcher(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for kind in ("json", "toml"):
+                with self.subTest(engine=kind):
+                    target = root / f"config.{kind}"
+                    schema = root / f"schema_{kind}.py"
+                    schema.write_text(
+                        "from python.frontend.core_types import ConfigItem\n"
+                        f"TARGET_FILE={str(target)!r}\nENGINE_TYPE={kind!r}\nTABS=['Values']\n"
+                        "ENABLE_USER_PRESETS=False\n"
+                        "SCHEMA={0:[ConfigItem(label='Large',key='large',type_='int',default=0)]}\n",
+                        encoding="utf-8",
+                    )
+                    for args in (("--set", "large=9007199254740993"), ("--export-state",)):
+                        result = subprocess.run([sys.executable, str(LAUNCHER), str(schema), *args],
+                                                capture_output=True, text=True, encoding="utf-8", timeout=10)
+                        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                    self.assertEqual(json.loads(result.stdout)["large"], 9007199254740993)
+                    original = target.read_bytes()
+                    result = subprocess.run([sys.executable, str(LAUNCHER), str(schema), "--set", "large=invalid"],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=10)
+                    self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+                    self.assertEqual(target.read_bytes(), original)
+
+    def test_importing_file_and_hardware_engines_defers_unused_dependencies(self):
+        expected = {
+            "json_engine": ("json", "tempfile"),
+            "toml": ("json", "tempfile", "tomllib"),
+            "cpu_core": ("json", "tempfile", "subprocess"),
+            "pkg_throttle": ("json", "math", "python.engines.cpu_core"),
+        }
+        code = (
+            "import importlib,sys\n"
+            "from python.frontend import core_types\n"
+            "before=set(sys.modules)\n"
+            "module=importlib.import_module('python.engines.'+sys.argv[1])\n"
+            "assert not (set(sys.argv[2:]) & (set(sys.modules)-before))\n"
+            "class MissingDependency:\n"
+            " def find_spec(self,name,*args):\n"
+            "  if name==sys.argv[2]: raise ModuleNotFoundError('deferred fixture')\n"
+            "sys.meta_path.insert(0,MissingDependency())\n"
+            "name=sys.argv[2].split('.')[-1]\n"
+            "try: getattr(getattr(module,name),'loads' if name=='json' else 'flock')\n"
+            "except ModuleNotFoundError as error: assert str(error)=='deferred fixture'\n"
+            "else: raise AssertionError('Dependency failure did not occur at first use')\n"
+        )
+        for module, dependencies in expected.items():
+            with self.subTest(module=module):
+                result = subprocess.run([sys.executable, "-c", code, module, *dependencies],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_failed_json_commit_closes_temporary_file_and_keeps_original(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text('{"x": 1}', encoding="utf-8")
+            files = []
+            original_factory = tempfile.NamedTemporaryFile
+
+            def track_file(*args, **kwargs):
+                stream = original_factory(*args, **kwargs)
+                files.append(stream)
+                return stream
+
+            with patch("python.engines.json_engine.tempfile.NamedTemporaryFile", side_effect=track_file), \
+                 patch("python.engines.json_engine.json.dump", side_effect=TypeError("serialization fixture")):
+                self.assertFalse(JsonEngine(str(path)).write_value("x", "DEFAULT", "2", "int")[0])
+            self.assertTrue(files[0].closed)
+            self.assertEqual(path.read_text(encoding="utf-8"), '{"x": 1}')
+            self.assertEqual(list(path.parent.iterdir()), [path])
+
+    def test_jsonc_preserves_strings_while_removing_comments_and_trailing_commas(self):
+        expected = {"message": 'comma,} and comma,] and "quoted" // text',
+                    "escaped": '\\" // text', "url": "https://example.com/a/*b*/", "values": [1, 2]}
+        encoded = json.dumps(expected)
+        content = "/* header */ " + encoded[:-1] + ", // trailing\n}\n"
+        self.assertEqual(json.loads(JsonEngine._strip_json_comments(content)), expected)
+        self.assertEqual(json.loads(JsonEngine._strip_json_comments('{"values": [1, 2, /* note */ ],}')),
+                         {"values": [1, 2]})
+        with self.assertRaises(json.JSONDecodeError):
+            json.loads(JsonEngine._strip_json_comments('{"value": 1/* note */2}'))
+
+    def test_json_write_keeps_an_unparseable_or_nonobject_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            engine = JsonEngine(str(path))
+            for content in ('{"broken":', '[1, 2]', 'null'):
+                with self.subTest(content=content):
+                    path.write_text(content, encoding="utf-8")
+                    self.assertFalse(engine.write_value("x", "DEFAULT", "1", "int")[0])
+                    self.assertEqual(path.read_text(encoding="utf-8"), content)
+
+    def test_file_engines_reject_invalid_numbers_without_applying_any_batch_edit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for cls, suffix, content in ((JsonEngine, "json", '{"x": 1}'), (TomlEngine, "toml", "x = 1\n")):
+                path = Path(directory) / f"config.{suffix}"
+                engine = cls(str(path))
+                for value, kind in (("invalid", "int"), ("inf", "int"), ("invalid", "float")):
+                    with self.subTest(engine=cls.__name__, value=value, kind=kind):
+                        path.write_text(content, encoding="utf-8")
+                        result = engine.write_batch([("x", "DEFAULT", "2", "int"),
+                                                     ("y", "DEFAULT", value, kind)])
+                        self.assertFalse(result[0])
+                        self.assertEqual(path.read_text(encoding="utf-8"), content)
+
+    def test_file_engines_keep_large_integers_exact_and_accept_decimal_integer_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for cls, suffix in ((JsonEngine, "json"), (TomlEngine, "toml")):
+                with self.subTest(engine=cls.__name__):
+                    engine = cls(str(Path(directory) / f"config.{suffix}"))
+                    result = engine.write_batch([("large", "DEFAULT", "9007199254740993", "int"),
+                                                 ("decimal", "DEFAULT", "3.0", "int")])
+                    self.assertTrue(result[0], result[1])
+                    state = engine.load_state()
+                    self.assertEqual(state["large"], 9007199254740993)
+                    self.assertEqual(state["decimal"], 3)
+
+    def test_toml_round_trip_preserves_unicode_keys_values_dates_arrays_and_empty_tables(self):
+        import datetime
+        data = {"emoji😀": "😀", "bad\n": "value", "empty": {}, "parent": {"leaf": {}},
+                "date": datetime.date(2026, 10, 7), "items": [{"emoji😀": "😀"}, {}],
+                "nested": {"x": 1}, "controls": "\b\t\n\f\r\x00"}
+        self.assertEqual(tomllib.loads(TomlEngine._dump_toml(data)), data)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text('[empty]\n[parent.leaf]\n', encoding="utf-8")
+            engine = TomlEngine(str(path))
+            self.assertTrue(engine.write_value("message", "DEFAULT", "😀")[0])
+            self.assertEqual(tomllib.loads(path.read_text(encoding="utf-8")),
+                             {"message": "😀", "empty": {}, "parent": {"leaf": {}}})
+
+    def test_file_engines_report_read_errors_and_leave_targets_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for cls, suffix, content in ((JsonEngine, "json", '{"x": 1}'), (TomlEngine, "toml", "x = 1\n")):
+                with self.subTest(engine=cls.__name__):
+                    path = Path(directory) / f"config.{suffix}"
+                    path.write_text(content, encoding="utf-8")
+                    engine = cls(str(path))
+                    with patch("builtins.open", side_effect=PermissionError("read fixture")):
+                        self.assertFalse(engine.write_value("x", "DEFAULT", "2", "int")[0])
+                    self.assertEqual(path.read_text(encoding="utf-8"), content)
+                    path.write_bytes(b'x = "\xff"\n')
+                    self.assertFalse(engine.write_value("x", "DEFAULT", "2", "int")[0])
+                    self.assertEqual(path.read_bytes(), b'x = "\xff"\n')
+
+    def test_toml_conflicting_table_path_returns_failure_without_overwriting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text("x = 1\n", encoding="utf-8")
+            result = TomlEngine(str(path)).write_value("y", "x", "2", "int")
+            self.assertFalse(result[0])
+            self.assertEqual(path.read_text(encoding="utf-8"), "x = 1\n")
 
 
 class _StartupEngine:
