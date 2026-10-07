@@ -568,7 +568,7 @@ draw_ui() {
         # Left Arrow
         if (( TAB_SCROLL_START > 0 )); then
             tab_line+="${C_YELLOW}«${C_RESET} "
-            LEFT_ARROW_ZONE="$current_col:$(( current_col + 1 ))" 
+            LEFT_ARROW_ZONE="2:$(( current_col + 1 ))" 
             used_len=$(( used_len + 2 ))
             current_col=$(( current_col + 2 ))
         else
@@ -598,7 +598,7 @@ draw_ui() {
                 
                 # Right Arrow
                 tab_line+="${C_YELLOW}» ${C_RESET}"
-                RIGHT_ARROW_ZONE="$current_col:$(( current_col + 1 ))"
+                RIGHT_ARROW_ZONE="$current_col:$(( BOX_INNER_WIDTH ))"
                 used_len=$(( used_len + 2 ))
                 break
             fi
