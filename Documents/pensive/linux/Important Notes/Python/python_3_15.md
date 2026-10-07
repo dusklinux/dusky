@@ -1,16 +1,18 @@
-# Python 3.15 reference for script maintenance
+# Python 3.15 new features and modernization reference
 
-Target CPython 3.15+ on the Linux ISO. Use this note to identify worthwhile changes; consult the linked API documentation for details before editing.
+Target CPython 3.15+ on the Linux ISO. Use the latest documented syntax, standard-library APIs, and implementation methods wherever they fit the script being updated. This is a feature reference for modernization, performance, and efficiency.
 
-**Reviewed twice against upstream documentation, 2026-10-07:** the local interpreter and online documentation are **3.15.0rc3**, not a final 3.15 release. Recheck the final ISO interpreter, dependencies, and build features before relying on them. This note does not certify future 3.15+ behavior.
+**Deployment baseline:** treat CPython **3.15.0rc3** and its documented 3.15 feature set as the final modernization target for this project, as instructed. Use these features now; do not defer adoption because of the rc label or add compatibility paths for older Python. Build-dependent capabilities such as JIT/free threading and filesystem support still depend on the actual target environment.
 
-## Choose work that pays off
+Primary references: [What's New in Python 3.15](https://docs.python.org/3.15/whatsnew/3.15.html), [3.15 changelog](https://docs.python.org/3.15/whatsnew/changelog.html#changelog).
+
+## Instructions for the modernization agent
 
 - Prioritize frequently launched commands, interactive startup, long-running services, hot loops, and significant memory or data-copy costs. Consider execution frequency, user-visible latency, and total resource use.
 - Skip speculative performance refactors of one-time installation scripts and rarely used cheap tools. Still fix relevant compatibility failures and concrete reliability problems.
-- New syntax alone is not a reason to edit. Leave working code alone when the benefit is negligible. Algorithmic improvements, fewer subprocesses, less I/O, and fewer allocations often matter more than version-specific features.
-- Fix actual 3.15 incompatibilities first. Optimize a demonstrated bottleneck next. Fold small clarity improvements into related edits rather than running a repository-wide style migration.
-- Follow `AGENTS.md`, preserve intended behavior, and target the confirmed minimum version without older-Python compatibility branches. Inspect only the requested scripts and directly relevant callers/dependencies.
+- In scripts selected for modernization, adopt every applicable current syntax/API improvement. Prefer explicit `lazy import`, built-in `sentinel`/`frozendict`, unpacking comprehensions, `math.integer`, `re.prefixmatch`, and current typing syntax over older equivalent patterns. Clearer, simpler code is a valid benefit even without a speedup; performance claims require measurements.
+- Fix 3.15 incompatibilities, replace outdated patterns with current equivalents, and optimize consequential costs. Preserve semantics: choose a feature because it fits the operation, and keep necessary initialization, mutation, ownership, and concurrency behavior.
+- Follow `AGENTS.md` and the requested scope. Inspect the selected scripts and directly relevant callers/dependencies. Distinguish source-level modernization from interpreter gains that already occur without edits.
 
 ## Check and measure only what matters
 
@@ -25,11 +27,11 @@ For a startup candidate, use `python3 -X importtime script.py` and repeated fres
 
 Useful targeted checks: `python3 -X dev -W default script.py` for runtime warnings, and `python3 -X warn_default_encoding script.py` for implicit encodings. Run only safe, representative invocations; syntax-checking does not validate behavior.
 
-Keep a performance change when the improvement exceeds measurement noise and important behavior remains correct. Record the workload, interpreter/build, before/after result, and relevant functional checks. Report unmeasured benefits as unverified.
+Validate syntax/API modernization with appropriate functional checks; it does not require a speedup to be useful. For performance changes, measure representative workloads and retain improvements beyond measurement noise. Record before/after results and report unmeasured performance claims as unverified.
 
-## Source changes with plausible performance value
+## New language features and efficient data handling
 
-### Lazy imports: optional expensive dependencies
+### Explicit lazy imports (PEP 810)
 
 Python 3.15 supports explicit module-level imports:
 
@@ -38,13 +40,21 @@ lazy import json
 lazy from pathlib import Path
 ```
 
-Loading happens on first use. Consider this when a frequent command imports a costly module used only by an optional subcommand, export format, or GUI path. If every invocation immediately uses it, laziness mostly shifts the same work and may add overhead. A one-time installer is not a worthwhile lazy-import optimization target.
+Loading happens on first use. Prefer explicit top-level `lazy import`/`lazy from` for dependencies needed only on deferred execution paths. Replace function-local imports or custom lazy-loader scaffolding whose sole purpose is delayed initialization with this syntax. This is particularly useful for frequent commands with optional subcommands, export formats, or GUI paths. If every invocation immediately uses it, laziness mostly shifts the same work and may add overhead. A one-time installer is not a worthwhile lazy-import optimization target.
 
 Preserve eager imports for required early dependency checks, import-time registration/configuration, and dependencies first needed during finalization or shutdown. Loading and errors occur later; changes to environment or import paths before first use can affect behavior. Test an unused path, first use, failure timing, and relevant initialization/cleanup. Measure end-to-end latency too: faster startup can hide a slower first action. Lazy reification cycles can raise `ImportCycleError` (an `ImportError` subclass).
 
-Explicit lazy imports are forbidden inside functions, classes, and `try`/`except`/`finally` blocks, and cannot use wildcard or `__future__` imports. Keep function-local imports when conditional loading or local error handling is intentional; do not move them merely to adopt new syntax. Keep genuinely type-only imports under `TYPE_CHECKING` when runtime loading is unnecessary. Runtime annotation inspection (including `typing.get_type_hints()`) can force lazy imports; check reflection-dependent callers and tool support for the new syntax.
+Explicit lazy imports are forbidden inside functions, classes, and `try`/`except`/`finally` blocks, and cannot use wildcard or `__future__` imports. Keep function-local imports where genuinely dynamic selection or local import-error handling requires them. Keep genuinely type-only imports under `TYPE_CHECKING` when runtime loading is unnecessary. Runtime annotation inspection (including `typing.get_type_hints()`) can force lazy imports; check reflection-dependent callers and tool support for the new syntax.
 
-Process modes are `normal` and `all`; `python3 -X lazy_imports=all script.py` can explore candidates but changes import semantics broadly. Prefer selective source edits. Libraries should not set application-wide lazy policy. `sys.lazy_modules` is diagnostic metadata, not a definitive loading oracle.
+Process modes are `normal` (honors explicit lazy imports) and `all` (makes eligible ordinary imports lazy). `python3 -X lazy_imports=all script.py` or `PYTHON_LAZY_IMPORTS=all` selects the latter. Applications can use `sys.set_lazy_imports()` and `sys.set_lazy_imports_filter(callback)` to choose eager boundaries; the callback receives `(importing_module, imported_module, fromlist)` and returns `True` to allow laziness or `False` to force eager loading. Libraries should express their own lazy imports without changing application-wide policy. `sys.lazy_modules` is diagnostic metadata; `types.LazyImportType.resolve()` explicitly resolves a proxy when tooling or a warmup boundary needs it.
+
+```python
+# Replace an import inside export_report() used solely to defer startup cost:
+lazy from report_backend import render
+
+def export_report(data):
+    return render(data)
+```
 
 Sources: [import statement](https://docs.python.org/3.15/reference/simple_stmts.html#the-import-statement), [runtime controls](https://docs.python.org/3.15/library/sys.html#sys.set_lazy_imports).
 
@@ -71,16 +81,16 @@ Source: [bytearray.take_bytes](https://docs.python.org/3.15/builtins/stdtypes.ht
 
 Source: [zlib](https://docs.python.org/3.15/library/zlib.html).
 
-## Useful API changes when related code is already being edited
+## Preferred current syntax and APIs
 
-These are semantic tools, not guaranteed speedups:
+Use these wherever their semantics fit a script selected for modernization. Clarity and reduced boilerplate count as improvements; do not label them speedups without measurement:
 
 | Feature | Appropriate use and limitation |
 |---|---|
-| `frozendict(...)` | Immutable mapping or cache key. Shallow immutability; hashable only if its contents are hashable. Not a `dict` subclass. Preserve callers' mutation/type-check contracts. |
+| `frozendict(...)` | Prefer the built-in for immutable mappings, snapshots, and hashable mapping keys. Replace equivalent custom frozen-mapping helpers. Shallow immutability; contents must be hashable for hashing. It is not a `dict` subclass or a live view of a mutable mapping. |
 | `json.loads(..., object_pairs_hook=frozendict, array_hook=tuple)` | Immutable JSON object/array structure when consumers do not mutate it. |
-| `MISSING = sentinel("MISSING")` | Clear missing-value marker with identity comparison (`is`). Define once; module-global matching name supports pickling. No reason to replace a simple private `object()` marker for speed. |
-| `[*items for items in groups]`, `{**d for d in mappings}` | Concise flattening/merging. Later duplicate keys win. Do not assume faster execution than existing comprehensions or `itertools.chain`. |
+| `MISSING = sentinel("MISSING")` | Clear missing-value marker with identity comparison (`is`). Define once; module-global matching name supports pickling. Prefer this built-in over ad-hoc sentinel objects/classes for clear representation, typing, and identity-preserving copying. |
+| `[*items for items in groups]`, `{*items for items in groups}`, `{**d for d in mappings}`, `(*items for items in groups)` | Prefer unpacking comprehensions/generator expressions for direct flattening and merging. Later duplicate dict keys win; the generator form stays lazy. Measure hot paths rather than assuming a speedup. |
 | `asyncio.TaskGroup.cancel()` | Normal early group termination without injecting a synthetic exception. Cancels unfinished children and the group body; group exit suppresses its internal cancellation, not unrelated failures. Test cleanup and external cancellation. |
 | `threading.serialize_iterator(iterable)` | Serialize advancement of a shared iterator; items are distributed among consumers. Adds synchronization overhead. |
 | `@threading.synchronized_iterator` | Make an iterator-producing callable return serialized iterators. |
@@ -93,15 +103,53 @@ Sources: [built-in types](https://docs.python.org/3.15/builtins/stdtypes.html), 
 | API | Use when it replaces existing work or clarifies an actual contract |
 |---|---|
 | [`os.makedirs(..., parent_mode=...)`](https://docs.python.org/3.15/library/os.html#os.makedirs), [`Path.mkdir(..., parents=True, parent_mode=...)`](https://docs.python.org/3.15/library/pathlib.html#pathlib.Path.mkdir) | Set modes for newly created intermediate directories without a separate walk or changing the process-wide umask. The umask still applies; existing directory modes stay unchanged. Do not replace chmod logic requiring exact final modes. |
-| [`os.path.realpath(..., strict=...)`](https://docs.python.org/3.15/library/os.path.html#os.path.realpath) | `ALLOW_MISSING` allows missing components; `ALL_BUT_LAST` allows only the last component to be missing. Both resolve symlinks and raise other errors. Useful for paths to be created; no blanket replacement of working path handling. |
-| [`os.statx()`](https://docs.python.org/3.15/library/os.html#os.statx) | Linux metadata such as birth time or mount ID. Requested fields are not guaranteed: inspect `stx_mask` and handle unavailable fields (`None`). Verify build/filesystem support; ordinary `stat()` need not change. |
+| [`os.path.realpath(..., strict=...)`](https://docs.python.org/3.15/library/os.path.html#os.path.realpath) | `ALLOW_MISSING` allows missing components; `ALL_BUT_LAST` allows only the last component to be missing. Both resolve symlinks and raise other errors. Prefer the matching mode over manual partial-resolution scaffolding for paths to be created. |
+| [`os.statx()`](https://docs.python.org/3.15/library/os.html#os.statx) | Linux metadata such as birth time or mount ID. Requested fields are not guaranteed: inspect `stx_mask` and handle unavailable fields (`None`). Verify build/filesystem support; use ordinary `stat()` when its fields are sufficient. |
 | [`tomllib`](https://docs.python.org/3.15/library/tomllib.html) | Now parses TOML 1.1, including multiline inline tables. Can replace a third-party parser used only for reading supported TOML. It does not write TOML or preserve formatting; preserve stricter format requirements of other consumers. |
 | [`urllib.parse`](https://docs.python.org/3.15/library/urllib.parse.html) | `missing_as_none=True` distinguishes absent from empty URI components; `keep_empty=True` can preserve empty delimiters when rebuilding. Adopt only where these distinctions matter to round trips or a protocol. |
 | [`dbm` reorganize](https://docs.python.org/3.15/library/dbm.html), [`shelve`](https://docs.python.org/3.15/library/shelve.html) | `dbm.dumb`/`dbm.sqlite3` and shelves gain compaction; schedule it after significant deletions, not every write. Check backend support, I/O cost, and required free space. Shelve custom serializers can replace wrappers: supply both `serializer(value, protocol)` and `deserializer(bytes)`, preserving the stored format. |
 
-Other specialized candidates: [`unicodedata.iter_graphemes()`](https://docs.python.org/3.15/library/unicodedata.html#unicodedata.iter_graphemes) for user-perceived characters (not code-point counts or display-column widths); packed `array`/`memoryview` formats for binary data; IEEE-754 helpers such as `math.signbit()` for signed-zero-sensitive logic. Inspect these only when the data path is relevant.
+### Additional 3.15 facilities
 
-`math.integer` holds exact integer helpers (`comb`, `factorial`, `gcd`, `isqrt`, `lcm`, `perm`). `re.prefixmatch()` names beginning-of-string matching explicitly. Existing `math` aliases and `re.match()` are soft-deprecated, with no required immediate migration. New typing features (`TypedDict` closed/extra items, `TypeForm`, `disjoint_base`) improve static expressiveness, not runtime validation or speed. Avoid unrelated churn; verify type-checker support when adopting them.
+| Feature | Modern use |
+|---|---|
+| `unicodedata.iter_graphemes(text)` | Replace custom grapheme splitting for user-perceived characters; graphemes differ from code points and terminal display columns. Unicode data is updated to 17.0.0. |
+| `math.isnormal`, `issubnormal`, `fmax`, `fmin`, `signbit` | Replace equivalent IEEE-754 helpers; preserve NaN and signed-zero semantics. |
+| `array`/`memoryview` formats | Use `Zf`/`Zd` for complex float/double data; `array` also supports half-float `e`. `struct` prefers `Zf`/`Zd` over soft-deprecated `F`/`D`. |
+| `Counter` symmetric difference | Use `a ^ b` for the multiset symmetric difference instead of equivalent manual count logic. |
+| `bytes.replace(..., count=n)` | Use the supported keyword to make the replacement limit explicit. |
+| Expanded `__slots__`; generic `slice` | 3.15 permits more slot configurations, including tuple-derived classes, and `slice` subscription for typing. Adopt where the class/API contract benefits; slotting changes attribute and inheritance behavior. |
+| `mmap.mmap.set_name()` | Name anonymous Linux mappings when memory attribution is useful. |
+| `wave` floating-point WAVE | Use stdlib IEEE float WAVE support and format getters/setters where they replace equivalent custom handling. |
+| `ssl` group/ciphersuite/signature APIs | Use the current API for existing TLS configuration needs; available operations depend on the linked OpenSSL version. |
+
+Sources: [unicodedata](https://docs.python.org/3.15/library/unicodedata.html), [math](https://docs.python.org/3.15/library/math.html), [array](https://docs.python.org/3.15/library/array.html), [struct](https://docs.python.org/3.15/library/struct.html), [Counter](https://docs.python.org/3.15/library/collections.html#collections.Counter), [wave](https://docs.python.org/3.15/library/wave.html), [ssl](https://docs.python.org/3.15/library/ssl.html).
+
+### Integer math, regex, and typing
+
+Prefer `from math.integer import comb, factorial, gcd, isqrt, lcm, perm` for exact integer operations. Prefer `re.prefixmatch()`/`Pattern.prefixmatch()` for beginning-of-string matching. These are the current names; retaining old aliases is unnecessary for this 3.15-only target. Their soft deprecation is not a runtime performance difference.
+
+Use new `TypedDict` schemas and `TypeForm` where they describe the actual API:
+
+```python
+from typing import Any, TypeForm, TypedDict
+
+class Point(TypedDict, closed=True):
+    x: int
+    y: int
+
+class Metrics(TypedDict, extra_items=float):
+    name: str
+
+def deserialize[T](target: TypeForm[T], value: Any) -> T:
+    ...  # existing conversion implementation
+```
+
+`closed=True` rejects additional keys statically; `extra_items` describes their value type. `TypeForm[T]` accepts evaluated type expressions, including unions and parameterized types. These do not provide runtime validation. `@typing.disjoint_base` expresses disjoint class hierarchies. `TypeVarTuple` accepts bound/variance keywords, but specification/tool support must match the semantics being used.
+
+Also use modern syntax already available at this baseline: `list[T]` and `T | None`, `type Alias = ...`, and `def f[T](...)`/`class C[T]` in place of equivalent legacy typing boilerplate. These predate 3.15; preserve runtime alias/reflection behavior when converting.
+
+Sources: [math.integer](https://docs.python.org/3.15/library/math.integer.html), [re](https://docs.python.org/3.15/library/re.html), [typing](https://docs.python.org/3.15/library/typing.html).
 
 ## Gains that normally need no source edit
 
@@ -136,11 +184,11 @@ Sources: [3.15 optimizations](https://docs.python.org/3.15/whatsnew/3.15.html#op
 
 Sources: [porting/removals](https://docs.python.org/3.15/whatsnew/3.15.html#removed), [datetime](https://docs.python.org/3.15/library/datetime.html), [sqlite3](https://docs.python.org/3.15/library/sqlite3.html), [base64](https://docs.python.org/3.15/library/base64.html), [contextlib](https://docs.python.org/3.15/library/contextlib.html), [gzip](https://docs.python.org/3.15/library/gzip.html), [tarfile](https://docs.python.org/3.15/library/tarfile.html), [import metadata](https://docs.python.org/3.15/library/importlib.metadata.html), [resource](https://docs.python.org/3.15/library/resource.html), [unittest](https://docs.python.org/3.15/library/unittest.html), [color controls](https://docs.python.org/3.15/using/cmdline.html#controlling-color).
 
-For deprecations, fix actual warnings and relevant uses while touching code. Common near-term candidates: `asyncio` event-loop policies → `asyncio.run()`/`Runner` with `loop_factory`; `asyncio.iscoroutinefunction()` → `inspect.iscoroutinefunction()` (both removals scheduled for 3.16); `ByteString` → `collections.abc.Buffer` or the concrete types the API accepts (3.17). Also replace `os.path.commonprefix()` with `commonpath()` only for filesystem path prefixes, preserving intentional string-prefix behavior. Soft deprecation does not mean removal. Do not run a blanket future-removal sweep before useful performance work.
+For deprecations, fix actual warnings and relevant uses while touching code. Common near-term candidates: `asyncio` event-loop policies → `asyncio.run()`/`Runner` with `loop_factory`; `asyncio.iscoroutinefunction()` → `inspect.iscoroutinefunction()` (both removals scheduled for 3.16); `ByteString` → `collections.abc.Buffer` or the concrete types the API accepts (3.17). Also replace `os.path.commonprefix()` with `commonpath()` only for filesystem path prefixes, preserving intentional string-prefix behavior. Use current replacements in the selected scripts. Distinguish scheduled removals from soft deprecations, and preserve the operation's semantics when replacing it.
 
 Packaging only: `.start` files contain UTF-8 `pkg.mod:callable` entries called eagerly during `site` initialization. A matching `.start` suppresses executable imports in its corresponding `.pth`; static path entries remain. Executable `.pth` lines are silently deprecated in 3.15. Consult [site](https://docs.python.org/3.15/library/site.html) for the transition schedule. Do not add startup hooks for optional application work or edit third-party installations just to modernize them.
 
-## Profiling and optional runtime experiments
+## New profiling and runtime facilities
 
 Use these only for consequential workloads:
 
@@ -170,7 +218,7 @@ print("GIL enabled now:", sys._is_gil_enabled())
 - **Free threading:** requires a suitable build and compatible dependencies; extensions can re-enable the GIL. Evaluate only for actual parallel CPU work. Keep required synchronization and benchmark scaling against overhead.
 - **Multiprocessing:** when porting pre-3.14 code, account for the Linux default `forkserver` start method (changed in 3.14), main-entry guarding, and picklable worker inputs. In 3.15 all `-X` options propagate to spawned workers, including `lazy_imports`; retest worker initialization after import-policy changes. `set_forkserver_preload(..., on_error=...)` adds control over preload failures; useful only for an existing forkserver workload.
 - **GC:** 3.15 uses the restored generational collector, not the incremental collector from early 3.14. `gc.get_stats()` and stop callbacks expose `duration` (seconds) and `candidates`. Use these for demonstrated GC costs; do not disable collection or retune thresholds from old advice.
-- **Native/build features:** `abi3t`, new C APIs, allocator/build flags, and huge pages concern locally maintained native code or interpreter packaging. Skip them during ordinary script maintenance unless a measured problem requires that work.
+- **Native/build features:** when native code or interpreter packaging is in scope, use the 3.15 `PyBytesWriter` API for bytes construction, `PySlot`/`PyModExport_*` for suitable new extension definitions, interpreter guard/view APIs for finalization-safe attachment, and `abi3t` for the free-threaded Stable ABI. Preserve frame-pointer build flags. Huge pages are a separate measured build/runtime choice. Pure Python scripts need no C-API edits.
 
 Sources: [sys JIT API](https://docs.python.org/3.15/library/sys.html#sys._jit), [free-threading HOWTO](https://docs.python.org/3.15/howto/free-threading-python.html), [multiprocessing](https://docs.python.org/3.15/library/multiprocessing.html), [gc](https://docs.python.org/3.15/library/gc.html).
 
@@ -180,4 +228,4 @@ Use current 3.15 language/library documentation for interface contracts, the [Wh
 
 Look up changelog entries only for APIs or workarounds relevant to the touched path. The changelog includes older release history and superseded development changes; confirm the release section, later reversions, and installed patch level before assuming a fix or feature applies. If sources conflict, verify the documented interface against the deployed runtime and report the discrepancy rather than guessing. Reproduce an old bug before removing its workaround.
 
-Finish each edit by reviewing its diff, running appropriate syntax and functional checks, and remeasuring the targeted cost. State what improved, what stayed unchanged, and any unverified claim. **Leaving a script unchanged is a valid successful outcome.**
+Finish each edit by reviewing its diff and testing the applicable behavior. For performance changes, remeasure the targeted cost. State which current features were adopted, why they fit, and what was verified. **Use all applicable modern features within the selected script; keep required semantics and skip low-value optimization work outside that scope.**
