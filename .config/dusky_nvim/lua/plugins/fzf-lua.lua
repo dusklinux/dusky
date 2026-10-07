@@ -44,7 +44,6 @@ return {
 			end,
 			desc = "FZF Keymaps (Search Bindings)",
 		},
-        -- Removed LSP-related keymaps (diagnostics, symbols)
 	},
 
 	opts = {},
