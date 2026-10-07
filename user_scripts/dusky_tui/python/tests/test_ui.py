@@ -671,13 +671,19 @@ class UITests(unittest.IsolatedAsyncioTestCase):
             target = Path(directory) / 'theme.json'
             target.write_text('{"accent": "#123456"}')
             app = app_for(theme_path=str(target))
+            self.assertEqual(app.current_theme.primary, '#123456')
+            initial_theme = app.theme
             async with app.run_test() as pilot:
                 await self.boot(app, pilot)
+                self.assertEqual(app.theme, initial_theme)
+                self.assertEqual(app.current_theme.primary, '#123456')
                 old = target.stat().st_mtime
                 target.write_text('{"accent": "#abcdef"}')
                 os.utime(target, (old - 10, old - 10))
                 await app.watch_theme_file()
                 self.assertEqual(app.theme_colors['accent'], '#abcdef')
+                self.assertEqual(app.current_theme.primary, '#abcdef')
+                self.assertNotEqual(app.theme, initial_theme)
 
     async def test_external_reload_hides_removed_setting(self):
         with tempfile.TemporaryDirectory() as directory:

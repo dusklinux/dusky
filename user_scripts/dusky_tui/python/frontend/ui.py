@@ -2440,6 +2440,8 @@ Tooltip {
         self._engine_info_cache: dict[tuple[str | None, str | None], tuple[str, str]] = {}
         self._init_boot_state()
         self._rebuild_indexes()
+        # Select the palette before widgets receive their initial CSS.
+        self.apply_theme_to_engine()
 
     # =========================================================================
     # QUIT / MODAL GUARDS
@@ -3468,7 +3470,6 @@ Tooltip {
         self._save_lock = asyncio.Lock()
 
         self.query_one("#main-box").border_title = f" {self.editor_title} "
-        self.apply_theme_to_engine()
 
         self._cached_tab_bar = self.query_one("#tab-bar", Horizontal)
         self._cached_tabs_container = self.query_one("#tabs-container", Horizontal)
