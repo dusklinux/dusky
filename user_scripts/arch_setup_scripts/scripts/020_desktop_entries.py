@@ -215,7 +215,12 @@ def load_state() -> dict:
         try:
             state = json.loads(STATE_FILE.read_text(encoding='utf-8'))
             if isinstance(state, dict):
-                return state
+                tracked = state.get("tracked_files", {})
+                if isinstance(tracked, dict) and all(
+                    isinstance(name, str) and isinstance(digest, str)
+                    for name, digest in tracked.items()
+                ):
+                    return state
         except (json.JSONDecodeError, UnicodeDecodeError, OSError):
             pass  # Fallthrough to reset if corrupted, unreadable, or scrambled
     return {"tracked_files": {}}
@@ -296,6 +301,8 @@ def main():
             print(f"{C_RED}✖ Pruned Orphan:{C_RESET}    {orphan}")
             removed_count += 1
         except OSError as e:
+            # Retain failed deletions so the next deployment retries them.
+            new_tracked_files[orphan] = old_tracked_files[orphan]
             print(f"{C_RED}✖ Critical Error removing {orphan}: {e}{C_RESET}", file=sys.stderr)
 
     # --- Phase 3: Commit State ---
