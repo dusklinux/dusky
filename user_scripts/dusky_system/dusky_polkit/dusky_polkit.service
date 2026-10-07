@@ -6,8 +6,10 @@ ConditionEnvironment=WAYLAND_DISPLAY
 
 [Service]
 Environment=PYTHONUNBUFFERED=1 PYTHONOPTIMIZE=2 MALLOC_ARENA_MAX=1
-ExecStart=/usr/bin/python -S %h/user_scripts/dusky_system/dusky_polkit/dusky_polkit
+ExecStart=/usr/bin/env python3 -S %h/user_scripts/dusky_system/dusky_polkit/dusky_polkit
 Slice=session.slice
+RuntimeDirectory=dusky-polkit
+RuntimeDirectoryMode=0700
 Restart=on-failure
 RestartSec=1
 TimeoutStopSec=5
