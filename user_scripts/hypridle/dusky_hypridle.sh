@@ -234,7 +234,7 @@ cleanup() {
         systemctl --user reset-failed hypridle.service 2>/dev/null || :
 
         # 2. Kill any manual instances to prevent duplicates.
-        killall hypridle 2>/dev/null || :
+        killall hypridle 2>/dev/null || pkill -x hypridle 2>/dev/null || :
 
         # 3. Attempt systemd restart.
         if systemctl --user restart hypridle.service 2>/dev/null; then
@@ -250,7 +250,7 @@ cleanup() {
         printf "%s[WARN]%s Systemd refused start. Falling back to manual process...\n" "$C_YELLOW" "$C_RESET" || :
         systemctl --user reset-failed hypridle.service 2>/dev/null || :
 
-        if hypridle >/dev/null 2>&1 & disown 2>/dev/null; then
+        if command -v hypridle >/dev/null 2>&1 && (hypridle >/dev/null 2>&1 & disown 2>/dev/null); then
             printf "%s[OK]%s Manual fallback active.\n" "$C_GREEN" "$C_RESET" || :
         else
             printf "%s[FAIL]%s Could not start hypridle manually.\n" "$C_RED" "$C_RESET" || :
@@ -819,6 +819,14 @@ write_value_to_file() {
                 }
             }
 
+            # Count closing braces on the cleaned line.
+            n = gsub(/\}/, "}", clean)
+            # Insert a missing key just inside the end of its target block.
+            if (!global_mode && in_target && depth == target_depth && !done && !do_replace && !deleting && n > 0) {
+                print "    " key " = " val
+                done = 1
+            }
+
             if (do_replace) {
                 done = 1
                 if (!deleting) {
@@ -834,13 +842,6 @@ write_value_to_file() {
                 print line
             }
 
-            # Count closing braces on the cleaned line.
-            n = gsub(/\}/, "}", clean)
-            # Insert a missing key just inside the end of its target block.
-            if (!global_mode && in_target && depth == target_depth && !done && !deleting && n > 0) {
-                print "    " key " = " val
-                done = 1
-            }
             while (n > 0 && depth > 0) {
                 if (!global_mode && in_target && depth == target_depth) {
                     in_target = 0
@@ -1423,7 +1424,7 @@ draw_main_view() {
 
         if (( TAB_SCROLL_START > 0 )); then
             tab_line+="${C_YELLOW}«${C_RESET} "
-            LEFT_ARROW_ZONE="$current_col:$(( current_col + 1 ))"
+            LEFT_ARROW_ZONE="2:$(( current_col + 1 ))"
         else
             tab_line+="  "
         fi
@@ -1468,13 +1469,13 @@ draw_main_view() {
                     used_len=$(( used_len + chunk_len )); current_col=$(( current_col + chunk_len ))
                     if (( ! is_last )); then
                         tab_line+="${C_YELLOW}» ${C_RESET}"
-                        RIGHT_ARROW_ZONE="$current_col:$(( current_col + 1 ))"
+                        RIGHT_ARROW_ZONE="$current_col:$(( BOX_INNER_WIDTH + 1 ))"
                         used_len=$(( used_len + 2 ))
                     fi
                     break
                 fi
                 tab_line+="${C_YELLOW}» ${C_RESET}"
-                RIGHT_ARROW_ZONE="$current_col:$(( current_col + 1 ))"
+                RIGHT_ARROW_ZONE="$current_col:$(( BOX_INNER_WIDTH + 1 ))"
                 used_len=$(( used_len + 2 ))
                 break
             fi
@@ -1828,7 +1829,9 @@ go_back() {
 
 # Return a selection-only event for left press/motion, and a click only when
 # release matches a press with no intervening motion or view change. Basic
-# click-only terminals still provide press/release pairs; no mode ACK is needed.
+# click-only terminals with SGR still provide pairs; no mode ACK is needed.
+# SGR preserves the released button: left release is 0m. The generic release
+# code 3 belongs to legacy mouse encodings, not the SGR format parsed here.
 classify_mouse_event() {
     local code=$1 x=$2 y=$3 terminator=$4
     local context="${CURRENT_VIEW}:${CURRENT_TAB}:${CURRENT_MENU_ID}"
@@ -1882,8 +1885,14 @@ handle_mouse() {
     fi
     classify_mouse_event "$button" "$x" "$y" "$terminator" || return 0
     button=$REPLY
-    if (( button == 64 )); then navigate -1; return 0; fi
-    if (( button == 65 )); then navigate 1; return 0; fi
+    if (( button == 64 )); then
+        if (( y == TAB_ROW && CURRENT_VIEW == 0 )); then switch_tab -1; else navigate -1; fi
+        return 0
+    fi
+    if (( button == 65 )); then
+        if (( y == TAB_ROW && CURRENT_VIEW == 0 )); then switch_tab 1; else navigate 1; fi
+        return 0
+    fi
     if (( button != 0 && button != 2 && button != 32 )); then return 0; fi
 
     if (( y == TAB_ROW )); then
