@@ -493,7 +493,7 @@ show_audio_menu() {
                 run_term_hold "dusky_tui" python3 "$SCRIPTS_DIR/dusky_recorder/tui_dusky_recorder.py"
                 ;;
             '  GIF Converter')
-                run_term_hold "hypergif" "$SCRIPTS_DIR/media_converter/video_to_gif_converter.sh"
+                run_term_hold "hypergif" python3 "$SCRIPTS_DIR/media_converter/dusky_converter.py" gif
                 ;;
             '  Wayclick Toggle')
                 run_app "$SCRIPTS_DIR/wayclick/dusky_wayclick.sh"

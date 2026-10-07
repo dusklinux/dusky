@@ -4461,7 +4461,7 @@ icon = "video-x-generic-symbolic"
 style = "suggested"
 [pages.layout.items.on_press]
 type = "exec"
-command = "kitty --class hypergif --title \"Video to GIF Converter\" --hold $HOME/user_scripts/media_converter/video_to_gif_converter.sh"
+command = "kitty --class hypergif --title \"Video to GIF Converter\" --hold python3 \"$HOME/user_scripts/media_converter/dusky_converter.py\" gif"
 
 [[pages.layout.items]]
 type = "button"
