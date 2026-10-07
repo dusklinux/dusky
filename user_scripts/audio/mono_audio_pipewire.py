@@ -3,13 +3,14 @@
 System-wide mono toggle for PipeWire + pipewire-pulse on Arch Linux.
 
 Audio path when enabled:
-    application sink-inputs -> 1ch null sink -> loopback -> previous default sink
+    application sink-inputs -> stereo null sink -> mono loopback -> previous default sink
 
 Key properties:
     - single-instance lock
     - atomic JSON state file in XDG_RUNTIME_DIR
     - exact module ID tracking
-    - stale resource cleanup
+    - routing restoration before stale resource cleanup
+    - read-only status
     - readiness waits for sink, monitor source, and loopback stream
     - rollback on failure
 """
@@ -19,14 +20,13 @@ import contextlib
 import fcntl
 import json
 import os
-import re
-import shlex
+lazy import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
+lazy import tempfile
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -39,11 +39,14 @@ from typing import Any
 MONO_SINK_NAME = "mono_global_downmix"
 MONO_MONITOR_NAME = f"{MONO_SINK_NAME}.monitor"
 
-RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
 STATE_FILE = RUNTIME_DIR / f"mono_audio_state_{os.getuid()}"
 LOCK_FILE = RUNTIME_DIR / f"mono_audio_lock_{os.getuid()}"
 
-INDICATOR_FILE = Path.home() / ".config/dusky/settings/mono_audio"
+INDICATOR_FILE = (
+    Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    / "dusky/settings/mono_audio"
+)
 
 STATE_VERSION = 1
 
@@ -55,8 +58,6 @@ WAIT_STEP = 0.05
 NOTIFY_TIMEOUT_MS = 2000
 
 PULSEAPP_OWNER_MODULE_IDS = {4294967295, 18446744073709551615}
-
-SINK_INPUT_HEADER_RE = re.compile(r"^\s*Sink Input #(\d+)$")
 
 type SinkRow = tuple[int, str]
 type SourceRow = tuple[int, str]
@@ -219,9 +220,7 @@ def ensure_audio_server() -> None:
 
 
 def fsync_directory(path: Path) -> None:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        flags |= os.O_DIRECTORY
+    flags = os.O_RDONLY | os.O_DIRECTORY
 
     try:
         fd = os.open(path, flags)
@@ -241,8 +240,8 @@ def atomic_write_text(path: Path, text: str, mode: int = 0o600) -> None:
 
     fd, temp_path = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent, text=True)
     try:
-        os.fchmod(fd, mode)
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            os.fchmod(handle.fileno(), mode)
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
@@ -287,9 +286,7 @@ def load_state() -> MonoState | None:
             raise TypeError("state file root is not an object")
     except FileNotFoundError:
         return None
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
-        with contextlib.suppress(OSError):
-            STATE_FILE.unlink()
+    except (OSError, UnicodeDecodeError, ValueError, TypeError):
         return None
 
     try:
@@ -297,14 +294,11 @@ def load_state() -> MonoState | None:
         if version != STATE_VERSION:
             raise ValueError(f"unsupported state version: {version}")
 
-        phase_raw = str(data.get("phase", Phase.ACTIVE.value))
-        try:
-            phase = Phase(phase_raw)
-        except ValueError:
-            phase = Phase.ACTIVE
-
-        previous_default_sink = str(data.get("previous_default_sink", ""))
-        target_sink = str(data.get("target_sink", ""))
+        phase = Phase(data.get("phase", Phase.ACTIVE.value))
+        previous_default_sink = data.get("previous_default_sink", "")
+        target_sink = data.get("target_sink", "")
+        if not isinstance(previous_default_sink, str) or not isinstance(target_sink, str):
+            raise TypeError("state sink names must be strings")
         null_module_id = _as_int(data.get("null_module_id"))
         loopback_module_id = _as_int(data.get("loopback_module_id"))
         created_at = float(data.get("created_at", time.time()))
@@ -318,9 +312,7 @@ def load_state() -> MonoState | None:
             if not isinstance(key, str) or not isinstance(value, str):
                 raise TypeError("restore_inputs contains non-string entries")
             restore_inputs[key] = value
-    except (TypeError, ValueError):
-        with contextlib.suppress(OSError):
-            STATE_FILE.unlink()
+    except (TypeError, ValueError, OverflowError):
         return None
 
     return MonoState(
@@ -336,8 +328,10 @@ def load_state() -> MonoState | None:
 
 
 def clear_state() -> None:
-    with contextlib.suppress(OSError):
-        STATE_FILE.unlink()
+    try:
+        STATE_FILE.unlink(missing_ok=True)
+    except OSError as exc:
+        raise MonoToggleError(f"Failed to remove state file: {exc}") from exc
 
 
 # -----------------------------------------------------------------------------
@@ -356,8 +350,10 @@ def instance_lock() -> Iterator[None]:
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
+        except BlockingIOError as exc:
             raise MonoToggleError("Another mono toggle instance is already running.") from exc
+        except OSError as exc:
+            raise MonoToggleError(f"Failed to acquire mono toggle lock: {exc}") from exc
         yield
     finally:
         with contextlib.suppress(OSError):
@@ -374,7 +370,7 @@ def instance_lock() -> Iterator[None]:
 def _as_int(value: Any) -> int | None:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -382,17 +378,6 @@ def split_short_table_line(line: str, maxsplit: int) -> list[str]:
     if "\t" in line:
         return [part.strip() for part in line.split("\t", maxsplit)]
     return line.strip().split(None, maxsplit)
-
-
-def unique_ids(values: Iterable[int]) -> list[int]:
-    seen: set[int] = set()
-    result: list[int] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        result.append(value)
-    return result
 
 
 def parse_module_args(module_args: str) -> dict[str, str]:
@@ -419,7 +404,7 @@ def parse_module_args(module_args: str) -> dict[str, str]:
 
 def list_sinks() -> list[SinkRow]:
     output = require_success(
-        run_command("pactl", "list", "sinks", "short"),
+        run_command("pactl", "list", "short", "sinks"),
         "Failed to list sinks",
     )
     sinks: list[SinkRow] = []
@@ -436,7 +421,7 @@ def list_sinks() -> list[SinkRow]:
 
 def list_sources() -> list[SourceRow]:
     output = require_success(
-        run_command("pactl", "list", "sources", "short"),
+        run_command("pactl", "list", "short", "sources"),
         "Failed to list sources",
     )
     sources: list[SourceRow] = []
@@ -453,7 +438,7 @@ def list_sources() -> list[SourceRow]:
 
 def list_modules() -> list[ModuleRow]:
     output = require_success(
-        run_command("pactl", "list", "modules", "short"),
+        run_command("pactl", "list", "short", "modules"),
         "Failed to list modules",
     )
     modules: list[ModuleRow] = []
@@ -471,33 +456,19 @@ def list_modules() -> list[ModuleRow]:
 
 def list_sink_inputs() -> list[SinkInputInfo]:
     output = require_success(
-        run_command("pactl", "list", "sink-inputs"),
+        run_command("pactl", "--format=json", "list", "sink-inputs"),
         "Failed to list sink inputs",
     )
-    sink_inputs: list[SinkInputInfo] = []
-    current: SinkInputInfo | None = None
-
-    for line in output.splitlines():
-        match = SINK_INPUT_HEADER_RE.match(line)
-        if match:
-            if current is not None:
-                sink_inputs.append(current)
-            current = SinkInputInfo(input_id=int(match.group(1)))
-            continue
-
-        if current is None:
-            continue
-
-        stripped = line.strip()
-        if stripped.startswith("Owner Module:"):
-            current.owner_module = _as_int(stripped.split(":", 1)[1].strip())
-        elif stripped.startswith("Sink:"):
-            current.sink_id = _as_int(stripped.split(":", 1)[1].strip())
-
-    if current is not None:
-        sink_inputs.append(current)
-
-    return sink_inputs
+    try:
+        rows = json.loads(output)
+        if not isinstance(rows, list):
+            raise ValueError("expected an array of objects")
+        return [
+            SinkInputInfo(row["index"], row["sink"], _as_int(row.get("owner_module")))
+            for row in rows
+        ]
+    except (ValueError, TypeError, KeyError) as exc:
+        raise MonoToggleError(f"Invalid pactl sink-inputs JSON: {exc}") from exc
 
 
 def get_default_sink() -> str:
@@ -505,6 +476,18 @@ def get_default_sink() -> str:
     if result.returncode != 0 or result.timed_out or result.error:
         return ""
     return result.stdout.strip()
+
+
+def set_default_sink(sink_name: str) -> None:
+    require_success(
+        run_command("pactl", "set-default-sink", sink_name, timeout=3.0),
+        f"Failed to set default sink to {sink_name}",
+    )
+    # The configured default is acknowledged before WirePlumber selects the effective one.
+    try:
+        wait_until(lambda: get_default_sink() == sink_name, timeout=WAIT_TIMEOUT)
+    except WaitTimeoutError as exc:
+        raise MonoToggleError(f"Timed out waiting for default sink: {sink_name}") from exc
 
 
 def get_sink_id(sink_name: str) -> int | None:
@@ -527,6 +510,8 @@ def discover_mono_modules() -> tuple[list[int], list[int]]:
     loopback_ids: list[int] = []
 
     for module_id, module_name, module_args in list_modules():
+        if module_name not in {"module-null-sink", "module-loopback"}:
+            continue
         args = parse_module_args(module_args)
         if module_name == "module-null-sink" and args.get("sink_name") == MONO_SINK_NAME:
             null_ids.append(module_id)
@@ -536,18 +521,6 @@ def discover_mono_modules() -> tuple[list[int], list[int]]:
     return null_ids, loopback_ids
 
 
-def loopback_stream_exists(loopback_module_ids: set[int]) -> bool:
-    if not loopback_module_ids:
-        return False
-
-    for sink_input in list_sink_inputs():
-        owner_module = sink_input.owner_module
-        if owner_module is not None and owner_module in loopback_module_ids:
-            return True
-
-    return False
-
-
 def mono_artifacts_present() -> bool:
     mono_present = sink_exists(MONO_SINK_NAME)
     null_ids, loopback_ids = discover_mono_modules()
@@ -555,13 +528,18 @@ def mono_artifacts_present() -> bool:
 
 
 def runtime_mono_status() -> tuple[bool, bool, list[int], list[int]]:
-    mono_present = sink_exists(MONO_SINK_NAME)
+    sinks = dict(list_sinks())
+    mono_sink_id = next((index for index, name in sinks.items() if name == MONO_SINK_NAME), None)
     null_ids, loopback_ids = discover_mono_modules()
-    stream_present = loopback_stream_exists(set(loopback_ids)) if loopback_ids else False
+    stream_present = bool(loopback_ids) and any(
+        stream.owner_module in loopback_ids
+        and stream.sink_id in sinks
+        and stream.sink_id != mono_sink_id
+        for stream in list_sink_inputs()
+    )
 
-    active = mono_present and bool(null_ids) and bool(loopback_ids) and stream_present
-    any_artifacts = mono_present or bool(null_ids) or bool(loopback_ids)
-
+    active = mono_sink_id is not None and bool(null_ids) and stream_present
+    any_artifacts = mono_sink_id is not None or bool(null_ids) or bool(loopback_ids)
     return active, any_artifacts, null_ids, loopback_ids
 
 
@@ -579,7 +557,7 @@ def wait_until(predicate: Callable[[], bool], *, timeout: float, step: float = W
             if predicate():
                 return
             last_error = None
-        except Exception as exc:
+        except MonoToggleError as exc:
             last_error = exc
 
         remaining = deadline - time.monotonic()
@@ -653,15 +631,9 @@ def load_module(module_name: str, *module_args: str) -> int:
     return module_id
 
 
-def cleanup_mono_resources(
-    *,
-    extra_null_ids: Iterable[int] = (),
-    extra_loopback_ids: Iterable[int] = (),
-) -> None:
-    discovered_null_ids, discovered_loopback_ids = discover_mono_modules()
-
-    loopback_ids = unique_ids([*discovered_loopback_ids, *extra_loopback_ids])
-    null_ids = unique_ids([*discovered_null_ids, *extra_null_ids])
+def cleanup_mono_resources() -> None:
+    # Discover ownership now: saved numeric IDs can be reused after a server restart.
+    null_ids, loopback_ids = discover_mono_modules()
 
     unload_errors: list[str] = []
 
@@ -720,6 +692,55 @@ def capture_restore_inputs() -> dict[str, str]:
     return restore_map
 
 
+def verify_input_moves(
+    targets: dict[int, str],
+    attempt_errors: dict[int, str],
+    *,
+    context: str,
+) -> int:
+    if not targets:
+        return 0
+
+    moved = 0
+    settled = 0
+    failures: list[str] = []
+
+    def ready() -> bool:
+        nonlocal moved, settled
+        sinks = dict(list_sinks())
+        inputs = {stream.input_id: stream for stream in list_sink_inputs()}
+        moved = 0
+        failures.clear()
+        for input_id, target in targets.items():
+            current = inputs.get(input_id)
+            if current is None:
+                continue  # The application closed while moving.
+            if sinks.get(current.sink_id) == target:
+                moved += 1
+            else:
+                # A pending WirePlumber update can override an acknowledged move.
+                # Reapply only accepted requests, bounded by the readiness deadline.
+                if input_id not in attempt_errors:
+                    result = run_command(
+                        "pactl", "move-sink-input", str(input_id), target, timeout=3.0,
+                    )
+                    if result.returncode != 0 and not is_no_such_entity_error(result):
+                        attempt_errors[input_id] = command_error(result)
+                detail = attempt_errors.get(input_id, "routing has not settled")
+                failures.append(f"{input_id} -> {target}: {detail}")
+        settled = settled + 1 if not failures else 0
+        return settled >= 2
+
+    # Confirm consecutive snapshots before unloading the sink: pending policy updates
+    # can arrive after pactl first publishes the requested route.
+    try:
+        wait_until(ready, timeout=WAIT_TIMEOUT)
+    except WaitTimeoutError as exc:
+        detail = "; ".join(failures) or "routing could not be verified"
+        raise MonoToggleError(f"Failed to {context}: {detail}{wait_timeout_detail(exc)}") from exc
+    return moved
+
+
 def move_application_inputs_to_sink(
     target_sink: str,
     *,
@@ -729,7 +750,7 @@ def move_application_inputs_to_sink(
     if target_sink_id is None:
         raise MonoToggleError(f"Target sink not found: {target_sink}")
 
-    candidates: list[int] = []
+    targets: dict[int, str] = {}
     attempt_errors: dict[int, str] = {}
 
     for sink_input in list_sink_inputs():
@@ -738,7 +759,7 @@ def move_application_inputs_to_sink(
         if sink_input.sink_id == target_sink_id:
             continue
 
-        candidates.append(sink_input.input_id)
+        targets[sink_input.input_id] = target_sink
 
         result = run_command(
             "pactl",
@@ -750,55 +771,33 @@ def move_application_inputs_to_sink(
         if result.returncode != 0 and not is_no_such_entity_error(result):
             attempt_errors[sink_input.input_id] = command_error(result)
 
-    current_target_sink_id = get_sink_id(target_sink)
-    if current_target_sink_id is None:
-        raise MonoToggleError(f"Target sink vanished: {target_sink}")
-
-    current_inputs = {sink_input.input_id: sink_input for sink_input in list_sink_inputs()}
-
-    failed_ids: list[str] = []
-    moved = 0
-
-    for input_id in candidates:
-        current = current_inputs.get(input_id)
-        if current is None:
-            continue
-        if current.sink_id == current_target_sink_id:
-            moved += 1
-            continue
-
-        error_text = attempt_errors.get(input_id)
-        failed_ids.append(f"{input_id} ({error_text})" if error_text else str(input_id))
-
-    if failed_ids:
-        raise MonoToggleError(
-            "Failed to move application sink inputs to mono sink: " + ", ".join(failed_ids)
-        )
-
-    return moved
+    return verify_input_moves(
+        targets, attempt_errors, context=f"move application streams to {target_sink}"
+    )
 
 
-def restore_inputs_from_mono(
+def restore_audio_routing(
     restore_inputs: dict[str, str],
     *,
-    fallback_sink: str | None,
+    fallback_sink: str,
     skip_owner_modules: set[int],
 ) -> int:
     mono_sink_id = get_sink_id(MONO_SINK_NAME)
-    if mono_sink_id is None:
-        return 0
 
     available_sinks = {name for _, name in list_sinks()}
     fallback_available = (
-        fallback_sink is not None
-        and fallback_sink != MONO_SINK_NAME
+        fallback_sink != MONO_SINK_NAME
         and fallback_sink in available_sinks
     )
 
-    moved = 0
+    targets: dict[int, str] = {}
+    attempt_errors: dict[int, str] = {}
 
     for sink_input in list_sink_inputs():
-        if sink_input.sink_id != mono_sink_id:
+        if (
+            (mono_sink_id is None or sink_input.sink_id != mono_sink_id)
+            and str(sink_input.input_id) not in restore_inputs
+        ):
             continue
         if not is_moveable_application_input(sink_input, skip_owner_modules=skip_owner_modules):
             continue
@@ -808,23 +807,26 @@ def restore_inputs_from_mono(
 
         if preferred_sink and preferred_sink != MONO_SINK_NAME and preferred_sink in available_sinks:
             target_sink = preferred_sink
-        elif fallback_available and fallback_sink is not None:
+        elif fallback_available:
             target_sink = fallback_sink
 
         if not target_sink:
-            continue
+            raise MonoToggleError(f"No output sink available to restore stream {sink_input.input_id}")
 
+        targets[sink_input.input_id] = target_sink
+
+    # Snapshot destinations before changing the default: WirePlumber may move streams
+    # automatically. Saved streams are included even on retry after such a move.
+    # Then restore explicit routes against the new default.
+    set_default_sink(fallback_sink)
+    for input_id, target_sink in targets.items():
         result = run_command(
-            "pactl",
-            "move-sink-input",
-            str(sink_input.input_id),
-            target_sink,
-            timeout=3.0,
+            "pactl", "move-sink-input", str(input_id), target_sink, timeout=3.0,
         )
-        if result.returncode == 0:
-            moved += 1
+        if result.returncode != 0 and not is_no_such_entity_error(result):
+            attempt_errors[input_id] = command_error(result)
 
-    return moved
+    return verify_input_moves(targets, attempt_errors, context="restore application streams")
 
 
 # -----------------------------------------------------------------------------
@@ -845,32 +847,21 @@ def choose_initial_target_sink() -> str:
 
 
 def choose_restore_sink(state: MonoState | None) -> str | None:
-    available_sinks = [sink_name for _, sink_name in list_sinks() if sink_name != MONO_SINK_NAME]
-    available_set = set(available_sinks)
+    available_sinks = [name for _, name in list_sinks() if name != MONO_SINK_NAME]
+    candidates = [state.previous_default_sink, state.target_sink] if state is not None else []
+    candidates.append(get_default_sink())
+    for name in candidates:
+        if name in available_sinks:
+            return name
 
-    candidates: list[str] = []
-    seen: set[str] = set()
-
-    def add(name: str) -> None:
-        if not name or name == MONO_SINK_NAME or name in seen:
-            return
-        seen.add(name)
-        candidates.append(name)
-
-    if state is not None:
-        add(state.previous_default_sink)
-        add(state.target_sink)
-
-    add(get_default_sink())
-
-    for sink_name in available_sinks:
-        add(sink_name)
-
-    for sink_name in candidates:
-        if sink_name in available_set:
-            return sink_name
-
-    return None
+    # Recover the original output from the live loopback when the state file was lost.
+    for _, module_name, module_args in list_modules():
+        if module_name != "module-loopback":
+            continue
+        args = parse_module_args(module_args)
+        if args.get("source") == MONO_MONITOR_NAME and args.get("sink") in available_sinks:
+            return args["sink"]
+    return available_sinks[0] if available_sinks else None
 
 
 # -----------------------------------------------------------------------------
@@ -900,45 +891,29 @@ def notify(summary: str, body: str, *, urgency: str = "low", timeout_ms: int = N
 # -----------------------------------------------------------------------------
 
 
-def normalize_stale_state() -> MonoState | None:
+def mono_is_active() -> tuple[bool, MonoState | None]:
+    """Normalize stale resources once, only for operations that change audio."""
     state = load_state()
     active, any_artifacts, null_ids, loopback_ids = runtime_mono_status()
+    if state is not None and (
+        (null_ids and state.null_module_id is not None and state.null_module_id not in null_ids)
+        or (
+            loopback_ids
+            and state.loopback_module_id is not None
+            and state.loopback_module_id not in loopback_ids
+        )
+    ):
+        state = None  # The server restarted or these resources belong to another run.
 
-    if active:
-        if state is not None:
-            state_matches_runtime = True
-
-            if state.null_module_id is not None and state.null_module_id not in null_ids:
-                state_matches_runtime = False
-            if state.loopback_module_id is not None and state.loopback_module_id not in loopback_ids:
-                state_matches_runtime = False
-
-            if not state_matches_runtime:
-                clear_state()
-                state = None
-            elif state.phase is Phase.ENABLING:
-                state.phase = Phase.ACTIVE
-                with contextlib.suppress(MonoToggleError):
-                    write_state(state)
-
-        set_indicator_state(True)
-        return state
+    if any_artifacts and (not active or (state is not None and state.phase is Phase.ENABLING)):
+        rollback_failed_enable(state or MonoState())
+        return False, None
 
     if not any_artifacts:
-        if state is not None:
-            clear_state()
-        set_indicator_state(False)
-        return None
-
-    cleanup_mono_resources()
-    clear_state()
-    set_indicator_state(False)
-    return None
-
-
-def mono_is_active() -> tuple[bool, MonoState | None]:
-    state = normalize_stale_state()
-    active, _, _, _ = runtime_mono_status()
+        state = None
+    if state is None:
+        clear_state()
+    set_indicator_state(active)
     return active, state
 
 
@@ -948,32 +923,32 @@ def mono_is_active() -> tuple[bool, MonoState | None]:
 
 
 def rollback_failed_enable(state: MonoState) -> None:
-    restore_sink = choose_restore_sink(state)
-    skip_modules: set[int] = set()
-    if state.loopback_module_id is not None:
-        skip_modules.add(state.loopback_module_id)
+    errors: list[str] = []
+    restore_sink = None
+    try:
+        restore_sink = choose_restore_sink(state)
+        if restore_sink:
+            _, loopback_ids = discover_mono_modules()
+            restore_audio_routing(
+                state.restore_inputs,
+                fallback_sink=restore_sink,
+                skip_owner_modules=set(loopback_ids),
+            )
+    except MonoToggleError as exc:
+        errors.append(str(exc))
 
-    if restore_sink:
-        run_command("pactl", "set-default-sink", restore_sink, timeout=3.0)
-        restore_inputs_from_mono(
-            state.restore_inputs,
-            fallback_sink=restore_sink,
-            skip_owner_modules=skip_modules,
-        )
-
-    cleanup_mono_resources(
-        extra_null_ids=[state.null_module_id] if state.null_module_id is not None else [],
-        extra_loopback_ids=[state.loopback_module_id] if state.loopback_module_id is not None else [],
-    )
+    # Attempt cleanup even when routing restoration failed. Retain state if unload fails.
+    try:
+        cleanup_mono_resources()
+    except MonoToggleError as exc:
+        raise MonoToggleError("; ".join([*errors, str(exc)])) from exc
     clear_state()
     set_indicator_state(False)
+    if errors:
+        raise MonoToggleError("Rollback routing failed: " + "; ".join(errors))
 
 
 def enable_mono() -> None:
-    active, _ = mono_is_active()
-    if active:
-        return
-
     target_sink = choose_initial_target_sink()
     state = MonoState(
         phase=Phase.ENABLING,
@@ -984,12 +959,14 @@ def enable_mono() -> None:
     write_state(state)
 
     try:
+        # Keep application ports stereo; downmix in the loopback so newly opened
+        # streams can return to stereo without changing their output channel count.
         state.null_module_id = load_module(
             "module-null-sink",
             f"sink_name={MONO_SINK_NAME}",
             "sink_properties=device.description=Mono_Global_Downmix",
-            "channels=1",
-            "channel_map=mono",
+            "channels=2",
+            "channel_map=front-left,front-right",
         )
         write_state(state)
 
@@ -999,7 +976,9 @@ def enable_mono() -> None:
         state.loopback_module_id = load_module(
             "module-loopback",
             f"source={MONO_MONITOR_NAME}",
-            f"sink={target_sink}",
+            f"sink={shlex.quote(target_sink)}",
+            "channels=1",
+            "channel_map=mono",
             "source_dont_move=true",
             "sink_dont_move=true",
             "latency_msec=10",
@@ -1008,10 +987,7 @@ def enable_mono() -> None:
 
         wait_for_loopback_stream(state.loopback_module_id, target_sink)
 
-        require_success(
-            run_command("pactl", "set-default-sink", MONO_SINK_NAME, timeout=3.0),
-            "Failed to set mono sink as default",
-        )
+        set_default_sink(MONO_SINK_NAME)
 
         move_application_inputs_to_sink(
             MONO_SINK_NAME,
@@ -1022,14 +998,15 @@ def enable_mono() -> None:
         write_state(state)
         set_indicator_state(True)
         notify("Audio", "Switched to Mono 🔊")
-    except Exception:
-        with contextlib.suppress(Exception):
+    except (Exception, KeyboardInterrupt) as exc:
+        try:
             rollback_failed_enable(state)
+        except MonoToggleError as rollback_error:
+            raise MonoToggleError(f"Enable failed: {exc}; rollback failed: {rollback_error}") from exc
         raise
 
 
-def disable_mono() -> None:
-    active, state = mono_is_active()
+def disable_mono(active: bool, state: MonoState | None) -> None:
     if not active:
         clear_state()
         set_indicator_state(False)
@@ -1041,12 +1018,7 @@ def disable_mono() -> None:
     restore_sink = choose_restore_sink(state)
 
     if restore_sink:
-        require_success(
-            run_command("pactl", "set-default-sink", restore_sink, timeout=3.0),
-            f"Failed to restore default sink to {restore_sink}",
-        )
-
-        restore_inputs_from_mono(
+        restore_audio_routing(
             state.restore_inputs if state is not None else {},
             fallback_sink=restore_sink,
             skip_owner_modules=loopback_skip_modules,
@@ -1063,11 +1035,11 @@ def disable_mono() -> None:
 
 
 def status_text() -> str:
-    active, state = mono_is_active()
-    null_ids, loopback_ids = discover_mono_modules()
+    active, any_artifacts, null_ids, loopback_ids = runtime_mono_status()
+    state = load_state()
 
-    if not active:
-        return "disabled"
+    if not active or (state is not None and state.phase is Phase.ENABLING):
+        return "incomplete" if any_artifacts else "disabled"
 
     parts = ["enabled"]
     if state is not None and state.previous_default_sink:
@@ -1105,19 +1077,17 @@ def main() -> int:
         ensure_audio_server()
 
         with instance_lock():
-            match args.action:
-                case "toggle":
-                    active, _ = mono_is_active()
-                    if active:
-                        disable_mono()
-                    else:
-                        enable_mono()
-                case "enable":
+            if args.action == "status":
+                print(status_text())
+            else:
+                active, state = mono_is_active()
+                action = args.action
+                if action == "toggle":
+                    action = "disable" if active else "enable"
+                if action == "disable":
+                    disable_mono(active, state)
+                elif not active:
                     enable_mono()
-                case "disable":
-                    disable_mono()
-                case "status":
-                    print(status_text())
 
         return 0
     except MonoToggleError as exc:
