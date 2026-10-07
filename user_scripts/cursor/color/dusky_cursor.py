@@ -165,28 +165,41 @@ REQUIRED_PACKAGES = (
 
 
 def ensure_packages() -> None:
-    query = subprocess.run(
-        ["pacman", "--query", "--quiet", "--", *REQUIRED_PACKAGES],
+    # Fast path: if all required CLI binaries exist and Pillow is imported,
+    # skip pacman queries completely on theme reloads.
+    if Image is not None and all(
+        shutil.which(cmd) for cmd in (
+            "hyprctl", "gsettings", "dconf", "dbus-update-activation-environment"
+        )
+    ):
+        return
+
+    res = subprocess.run(
+        ["pacman", "-T", "--", *REQUIRED_PACKAGES],
         capture_output=True, text=True,
     )
-    if query.returncode not in (0, 1):
-        raise RuntimeError(f"Cannot query installed packages: {query.stderr.strip()}")
-    installed = set(query.stdout.splitlines())
-    missing = [package for package in REQUIRED_PACKAGES if package not in installed]
-    if not missing:
-        if query.returncode:
-            raise RuntimeError(f"Cannot query installed packages: {query.stderr.strip()}")
+    if res.returncode == 0:
         return
-    log.info("Required packages: %s", ", ".join(missing))
+    if res.returncode != 127:
+        raise RuntimeError(f"Cannot query installed packages: {res.stderr.strip()}")
+
+    missing = [pkg.strip() for pkg in res.stdout.splitlines() if pkg.strip()]
+    if not missing:
+        return
+
+    log.info("Required packages missing: %s", ", ".join(missing))
     command = ["pacman", "--sync", "--needed", "--noconfirm", "--", *missing]
     if os.geteuid() != 0:
-        # The orchestrator supplies a PTY in a new session without a
-        # controlling terminal. Read authentication from its input stream.
-        command = ["sudo", "--stdin", "--", *command]
+        if sys.stdin.isatty():
+            command = ["sudo", "--", *command]
+        else:
+            # The orchestrator supplies a PTY in a new session without a
+            # controlling terminal. Read authentication from its input stream.
+            command = ["sudo", "--stdin", "--", *command]
     # Use the installer's existing repository databases and cached packages;
     # no isolated database refresh or unrelated system upgrade here.
     subprocess.run(command, check=True)
-    subprocess.run(["pacman", "--query", "--quiet", "--", *REQUIRED_PACKAGES],
+    subprocess.run(["pacman", "-T", "--", *REQUIRED_PACKAGES],
                    check=True, stdout=subprocess.DEVNULL)
 
 
