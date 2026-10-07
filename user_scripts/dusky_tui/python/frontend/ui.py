@@ -13,6 +13,7 @@ lazy import signal
 lazy import tempfile
 import logging
 lazy import termios
+lazy import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, override
@@ -41,8 +42,8 @@ from rich.cells import cell_len
 
 
 LOGGER = logging.getLogger(__name__)
-_TARGET_UNREADABLE = object()
-_STATE_MISSING = object()
+_TARGET_UNREADABLE = sentinel("_TARGET_UNREADABLE")
+_STATE_MISSING = sentinel("_STATE_MISSING")
 
 from python.frontend.core_types import (
     ConfigItem,
@@ -1914,7 +1915,6 @@ class CustomRichTabWidget(Static):
             return factory
 
         if factory is not self._factory_source:
-            import inspect
             try:
                 parameters = inspect.signature(factory).parameters.values()
             except (TypeError, ValueError):
@@ -2395,6 +2395,7 @@ Tooltip {
         # External target modification tracking.
         self.last_target_mtimes: dict[tuple[str, str], tuple[int, int, int] | None] = {}
         self._initial_target_mtimes_set: bool = False
+        self.telemetry_engine: BaseEngine | None = None
 
         # Lazy tab population state.
         self._tab_populated: set[int] = set()
@@ -2415,6 +2416,7 @@ Tooltip {
         self._write_generation: dict[str, int] = {}
         self._active_save_count = 0
         self._save_tasks: set[asyncio.Task[Any]] = set()
+        self._io_workers: set[asyncio.Task[Any]] = set()
         self._save_task_keys: dict[asyncio.Task[Any], set[str]] = {}
         self._save_auth_pending = 0
         self._save_failure_pending = False
@@ -3435,9 +3437,6 @@ Tooltip {
         self.query_one("#main-box").border_title = f" {self.editor_title} "
         self.apply_theme_to_engine()
 
-        first_engine = self.engine_pool[self.default_engine_key]
-        self.query_one("#file-link", FileLink).path = first_engine.target_path
-
         self._cached_tab_bar = self.query_one("#tab-bar", Horizontal)
         self._cached_tabs_container = self.query_one("#tabs-container", Horizontal)
         self._cached_tab_left = self.query_one("#tab-left", Label)
@@ -3449,17 +3448,13 @@ Tooltip {
         except Exception:
             pass
 
+        # Engine imports and constructors belong to the background boot path;
+        # mounting must not wait for a backend before the first frame.
         self.run_deferred_boot(initial_tab=self._initial_tab)
 
         if first_ol := self.current_option_list:
             first_ol.focus()
             self._update_pagination(first_ol)
-
-        self.telemetry_engine = first_engine if hasattr(first_engine, "get_telemetry") else None
-        if self.telemetry_engine is not None:
-            banner = self.query_one("#telemetry-banner", Label)
-            banner.update("Loading telemetry…")
-            banner.display = True
 
         if self.theme_path:
             self.set_interval(1.0, self.watch_theme_file)
@@ -3540,7 +3535,9 @@ Tooltip {
                 errors[ekey] = f"{type(exc).__name__}: {exc}"
         return states, errors
 
-    def _apply_states_to_tab(self, tab_idx: int, states: dict[tuple[str, str], Any]) -> None:
+    def _apply_states_to_tab(
+        self, tab_idx: int, states: dict[tuple[str, str], Any], *, update_presets: bool = True
+    ) -> None:
         items = self.schema.get(tab_idx, [])
         freshly: list[ConfigItem] = []
 
@@ -3575,7 +3572,7 @@ Tooltip {
                 freshly.append(item)
 
         self._tab_data_ready.add(tab_idx)
-        if freshly and hasattr(self, "_preset_matrix"):
+        if update_presets and freshly and hasattr(self, "_preset_matrix"):
             try:
                 global_fresh = [it for it in freshly if self._get_item_engine_info(it) == self.default_engine_key]
             except Exception:
@@ -3591,17 +3588,22 @@ Tooltip {
                 self._loaded_engines | set(self._failed_engines)
             )
         )
-        if self._boot_complete and hasattr(self, "_preset_matrix"):
+        if self._boot_complete and not was_complete:
+            # Boot readiness concerns the model, not which tabs were painted.
+            # Global presets must see cached values in hidden tabs immediately.
+            # Rebuild the preset matrix once after all ready models are loaded.
+            for tab_idx in self.tabs:
+                if tab_idx not in self._tab_data_ready and self._engines_for_tab(tab_idx).issubset(self._loaded_engines):
+                    self._apply_states_to_tab(tab_idx, self._states, update_presets=False)
             try:
                 global_cfg = [c for c in self._configurable_items if self._get_item_engine_info(c[2]) == self.default_engine_key]
             except Exception:
                 global_cfg = self._configurable_items
             self._preset_matrix.rebuild(global_cfg + self._preset_items)
-            if hasattr(self, "_option_cache"):
-                self._option_cache.invalidate_presets()
+            self._option_cache.invalidate_presets()
             self._schema_dirty_counter += 1
             self._refresh_presets_ui()
-        if self._boot_complete and not was_complete:
+            self._update_file_link()
             for ekey in self.engine_pool:
                 if ekey not in self._loaded_engines:
                     continue
@@ -3640,9 +3642,9 @@ Tooltip {
                     for item in rows:
                         register(*self._get_item_engine_info(item))
             while True:
-                # Save callbacks hold positional row references. Finish them
+                # Save and modal callbacks hold positional row references. Finish them
                 # before reading/replacing rows or publishing discovery state.
-                while new_items and (self._save_tasks or self._save_timers or self._save_auth_pending):
+                while new_items and (self._save_tasks or self._save_timers or self._save_auth_pending or self._modal_active()):
                     await asyncio.sleep(0.05)
                 async with self._save_lock:
                     # A schema can return the state collected during discovery.
@@ -3672,7 +3674,7 @@ Tooltip {
                         states[self.default_engine_key] = await self._run_save_io(
                             load_one, self.default_engine_key, self.engine_pool[self.default_engine_key]
                         )
-                if not new_items or not (self._save_tasks or self._save_timers or self._save_auth_pending):
+                if not new_items or not (self._save_tasks or self._save_timers or self._save_auth_pending or self._modal_active()):
                     break
             self._apply_deferred_tabs(updated_tabs, states, new_items)
             self._states.update(states)
@@ -3794,7 +3796,7 @@ Tooltip {
 
         for ekey in need_now:
             try:
-                self._states[ekey] = await asyncio.to_thread(self._load_one_engine_sync, ekey)
+                self._states[ekey] = await self._run_save_io(self._load_one_engine_sync, ekey)
                 self._loaded_engines.add(ekey)
             except Exception as exc:
                 self._failed_engines[ekey] = f"{type(exc).__name__}: {exc}"
@@ -3819,7 +3821,7 @@ Tooltip {
     async def _load_engines_async(self, engine_keys: set[tuple[str, str]]) -> None:
         if not engine_keys:
             return
-        states, errors = await asyncio.to_thread(self._load_engines_batch_sync, engine_keys)
+        states, errors = await self._run_save_io(self._load_engines_batch_sync, engine_keys)
         self.post_message(
             EnginesLoaded(states=states, attempted=engine_keys, errors=errors)
         )
@@ -4122,8 +4124,8 @@ Tooltip {
         states: dict,
         new_items: dict[int, list[ConfigItem]] | None = None
     ) -> None:
-        if new_items and (self._save_tasks or self._save_timers or self._save_auth_pending):
-            # Save callbacks hold positional references. Finish them before
+        if new_items and (self._save_tasks or self._save_timers or self._save_auth_pending or self._modal_active()):
+            # Save and modal callbacks hold positional references. Finish them before
             # replacing lists; ordinary batch edits can be remapped below.
             self.set_timer(0.1, lambda: self._apply_deferred_tabs(tab_indices, states, new_items))
             return
@@ -4539,7 +4541,7 @@ Tooltip {
     # WATCHERS
     # =========================================================================
     @staticmethod
-    def _target_fingerprint(path: Path) -> tuple[int, int, int] | None | object:
+    def _target_fingerprint(path: Path) -> tuple[int, int, int] | None | _TARGET_UNREADABLE:
         """Return a replacement-safe file identity for external-change polling."""
         try:
             stat = path.stat()
@@ -4677,7 +4679,7 @@ Tooltip {
     async def update_telemetry(self) -> None:
         if self.telemetry_engine:
             try:
-                msg = await asyncio.to_thread(self.telemetry_engine.get_telemetry)
+                msg = await self._run_save_io(self.telemetry_engine.get_telemetry)
                 banner = self.query_one("#telemetry-banner", Label)
                 banner.update(msg)
             except Exception:
@@ -4688,6 +4690,7 @@ Tooltip {
             not self._boot_complete
             or not self.enable_user_presets
             or not hasattr(self, "user_presets_dir")
+            or self._modal_active()
         ):
             return
 
@@ -4717,6 +4720,8 @@ Tooltip {
 
             if changed_any or not getattr(self, "_initial_presets_mtime_set", False):
                 preset_records = await asyncio.to_thread(self._read_user_presets)
+                if self._modal_active():
+                    return
                 self._apply_user_presets(preset_records)
                 self._rebuild_indexes()
                 self._preset_mtimes = current_mtimes
@@ -4815,9 +4820,11 @@ Tooltip {
                         if items:
                             item = items[0]
 
-            if item is not None:
-                engine = self._get_engine_for_item(item)
-                self.query_one("#file-link", FileLink).path = engine.target_path
+            engine_key = self._get_item_engine_info(item) if item is not None else self.default_engine_key
+            # Tab activation can precede boot. Never construct a backend on
+            # the UI thread just to display its file link.
+            path = self.engine_pool[engine_key].target_path if engine_key in self._loaded_engines else ""
+            self.query_one("#file-link", FileLink).path = path
         except Exception:
             pass
 
@@ -5585,8 +5592,10 @@ Tooltip {
                 self._save_failure_pending = True
             # Some engines select a record or normalize dependent values on save.
             # Refresh once this task no longer marks its own setting as pending.
+            initialized_items = getattr(self.engine_pool, "initialized_items", None)
+            engines = initialized_items() if callable(initialized_items) else self.engine_pool.items()
             states = {
-                key: engine.cache for key, engine in self.engine_pool.items()
+                key: engine.cache for key, engine in engines
                 if getattr(engine, "refresh_after_write", False)
             }
             if states:
@@ -5594,8 +5603,13 @@ Tooltip {
         self._maybe_finish_quit()
 
     async def _run_save_io(self, func: Any, /, *args: Any, **kwargs: Any) -> Any:
-        """Run blocking save/auth I/O while draining the worker on cancellation."""
+        """Run blocking backend I/O; drain it on cancellation and before shutdown."""
         worker = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+        workers = getattr(self, "_io_workers", None)
+        if workers is None:
+            workers = self._io_workers = set()
+        workers.add(worker)
+        worker.add_done_callback(workers.discard)
         try:
             await asyncio.wait({worker})
             return worker.result()
@@ -5964,7 +5978,11 @@ Tooltip {
                         identity = (change[0], change[1])
                         result = results.get(identity)
                         if result is None:
-                            continue  # Unknown outcome remains pending; never repeat it blindly.
+                            # Unknown outcome remains pending; never repeat it
+                            # blindly or report the batch as fully successful.
+                            final_success = False
+                            error_msgs.append(f"Missing write result for {identity[1]}.{identity[0]}")
+                            continue
                         if result.ok:
                             if mark_success(key, frozen_str, frozen_val, itm):
                                 success_count += 1
@@ -7254,7 +7272,7 @@ Tooltip {
             raise
         except Exception:
             pass
-        return bytes(buf)
+        return buf.take_bytes()
 
     def _kill_action_tree(self, proc: asyncio.subprocess.Process) -> None:
         # Actions start in their own Linux session, so pgid == pid.
@@ -7464,12 +7482,18 @@ Tooltip {
         if self._sudo_keepalive:
             self._sudo_keepalive.stop()
             self._sudo_keepalive = None
+        if callable(detach := getattr(self.engine_pool, "detach_app", None)):
+            detach()
         # Blocking collectors drain before engine resources are shut down.
-        tasks = list(self._custom_refresh_tasks) + list(self._custom_mount_tasks.values())
+        tasks = [*self._custom_refresh_tasks, *self._custom_mount_tasks.values()]
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        # A cancelled boot/save coroutine cannot stop its executor thread.
+        # Let constructors and reads/writes finish before closing their engines.
+        if self._io_workers:
+            await asyncio.wait(tuple(self._io_workers))
         initialized_values = getattr(self.engine_pool, "initialized_values", None)
         engines = initialized_values() if callable(initialized_values) else self.engine_pool.values()
         for engine in engines:

@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 # =============================================================================
 # CORE UTILITIES & CONSTANTS
 # =============================================================================
-KNOWN_COLORS = {
+KNOWN_COLORS = frozendict({
     "Red": (255, 0, 0), "Green": (0, 128, 0), "Lime": (0, 255, 0),
     "Blue": (0, 0, 255), "Yellow": (255, 255, 0), "Cyan": (0, 255, 255),
     "Magenta": (255, 0, 255), "White": (255, 255, 255), "Black": (0, 0, 0),
@@ -22,10 +22,10 @@ KNOWN_COLORS = {
     "Khaki": (240, 230, 140), "Plum": (221, 160, 221), "Turquoise": (64, 224, 208),
     "Crimson": (220, 20, 60), "Azure": (240, 255, 255), "Beige": (245, 245, 220),
     "Chocolate": (210, 105, 30), "Tomato": (255, 99, 71), "Lavender": (230, 230, 250)
-}
+})
 
-KNOWN_COLORS_LOWER = {k.lower(): v for k, v in KNOWN_COLORS.items()}
-_LOWER_KNOWN_COLORS = frozenset(k.lower() for k in KNOWN_COLORS)
+KNOWN_COLORS_LOWER = frozendict({k.lower(): v for k, v in KNOWN_COLORS.items()})
+_LOWER_KNOWN_COLORS = frozenset(KNOWN_COLORS_LOWER)
 
 # Lazy-loaded CSS cache to eliminate import-time module freezing
 _css_named_cache: frozenset[str] | None = None
@@ -98,7 +98,7 @@ def clone_value(v: Any) -> Any:
     return copy.deepcopy(v)
 
 
-_SCALAR_TYPES = frozenset({bool, int, float, str, bytes})
+_SCALAR_TYPES = frozenset((bool, int, float, str, bytes))
 
 @dataclass(kw_only=True, slots=True)
 class ConfigItem:

@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -24,6 +26,34 @@ spec.loader.exec_module(router)
 
 
 class PoolTests(unittest.TestCase):
+    def test_detachment_during_worker_binding_does_not_access_a_cleared_app(self):
+        engine = object()
+        pool = router.LazyEnginePool(lambda *_: engine)
+        key = pool.register("fixture", "")
+
+        class ClosingApp:
+            @property
+            def is_running(self):
+                pool.detach_app()
+                return True
+
+            def call_from_thread(self, *args):
+                raise RuntimeError("App is not running")
+
+        pool._app = ClosingApp()
+        pool._owner_thread = -1
+        self.assertIs(pool[key], engine)
+        self.assertEqual(list(pool.initialized_values()), [engine])
+
+    def test_worker_binding_errors_are_not_suppressed_for_an_attached_app(self):
+        pool = router.LazyEnginePool(lambda *_: object())
+        key = pool.register("fixture", "")
+        app = SimpleNamespace(is_running=True, call_from_thread=Mock(side_effect=RuntimeError("binding fixture")))
+        pool._app = app
+        pool._owner_thread = -1
+        with self.assertRaisesRegex(RuntimeError, "binding fixture"):
+            pool[key]
+
     def test_get_propagates_registered_factory_errors_and_allows_retry(self):
         instance = object()
         factory = Mock(side_effect=[KeyError("broken engine configuration"), instance])
@@ -225,6 +255,40 @@ class PoolLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
 
 class UtilityTests(unittest.TestCase):
+    def test_frozen_default_values_still_isolate_mutable_children(self):
+        default = frozendict(nested=[1])
+        item = ConfigItem(label="Frozen", key="frozen", type_="string", default=default)
+        item.value["nested"].append(2)
+        self.assertEqual(default["nested"], [1])
+        self.assertEqual(item.value["nested"], [1, 2])
+
+    def test_missing_state_sentinel_keeps_identity_when_cloned(self):
+        self.assertIs(core_types.clone_value(ui._STATE_MISSING), ui._STATE_MISSING)
+        self.assertIs(core_types.clone_value(ui._TARGET_UNREADABLE), ui._TARGET_UNREADABLE)
+
+    def test_router_import_defers_ui_parser_and_cache_setup(self):
+        code = (
+            "import importlib.util,sys\n"
+            "spec=importlib.util.spec_from_file_location('router_probe',sys.argv[1])\n"
+            "module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module\n"
+            "before=sys.pycache_prefix\n"
+            "spec.loader.exec_module(module)\n"
+            "assert sys.pycache_prefix==before\n"
+            "assert 'argparse' not in sys.modules\n"
+            "assert 'textual' not in sys.modules\n"
+            "assert 'python.frontend.ui' not in sys.modules\n"
+            "class MissingUI:\n"
+            " def find_spec(self,name,*args):\n"
+            "  if name=='python.frontend.ui': raise ModuleNotFoundError('UI fixture')\n"
+            "sys.meta_path.insert(0,MissingUI())\n"
+            "try: module.DuskyTUI()\n"
+            "except ModuleNotFoundError as error: assert str(error)=='UI fixture'\n"
+            "else: raise AssertionError('Missing UI did not fail on first use')\n"
+        )
+        result = subprocess.run([sys.executable, "-c", code, str(LAUNCHER)],
+                                capture_output=True, text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_clone_preserves_custom_container_and_scalar_types(self):
         class CustomList(list):
             pass
@@ -390,3 +454,303 @@ class UtilityTests(unittest.TestCase):
                 result = subprocess.run([sys.executable, str(LAUNCHER), str(schema), flag, ""],
                                         capture_output=True, text=True, timeout=5)
                 self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+
+
+class _StartupEngine:
+    target_path = ""
+
+    def load_state(self):
+        return {"x": "1"}
+
+class PoolStartupTests(unittest.IsolatedAsyncioTestCase):
+    async def boot(self, app, pilot):
+        async with asyncio.timeout(5):
+            while not app._boot_complete:
+                await pilot.pause(.01)
+
+    async def test_shutdown_drains_cancelled_telemetry_before_closing_backend(self):
+        started, release = threading.Event(), threading.Event()
+        calls = []
+
+        class TelemetryEngine(_StartupEngine):
+            def get_telemetry(self):
+                started.set()
+                if not release.wait(5):
+                    raise TimeoutError("telemetry fixture was not released")
+                calls.append("telemetry finished")
+                return "Fixture telemetry"
+
+            def shutdown(self):
+                calls.append("shutdown")
+
+        pool = router.LazyEnginePool(lambda *_: TelemetryEngine())
+        key = pool.register("fixture", "")
+        app = ui.DuskyTUI(pool, key, {0: []}, ["Values"], enable_user_presets=False)
+        pool.bind_app(app)
+        telemetry_task = None
+        try:
+            async with asyncio.timeout(8):
+                async with app.run_test() as pilot:
+                    await self.boot(app, pilot)
+                    telemetry_task = asyncio.create_task(app.update_telemetry())
+                    while not started.is_set():
+                        await pilot.pause(.005)
+                    telemetry_task.cancel()
+                    app.exit()
+
+                    async def finish_telemetry():
+                        await asyncio.sleep(.05)
+                        release.set()
+
+                    asyncio.create_task(finish_telemetry())
+                await asyncio.gather(telemetry_task, return_exceptions=True)
+                self.assertEqual(calls, ["telemetry finished", "shutdown"])
+                self.assertFalse(app._io_workers)
+        finally:
+            release.set()
+            if telemetry_task is not None:
+                await asyncio.gather(telemetry_task, return_exceptions=True)
+
+    async def test_initial_constructor_runs_on_worker_and_binding_on_ui(self):
+        owner = threading.get_ident()
+        calls = []
+
+        class BoundEngine(_StartupEngine):
+            def set_app(self, app):
+                calls.append(("bind", threading.get_ident()))
+
+        def factory(*_):
+            calls.append(("create", threading.get_ident()))
+            time.sleep(.05)
+            return BoundEngine()
+
+        pool = router.LazyEnginePool(factory)
+        key = pool.register("fixture", "")
+        item = ConfigItem(label="X", key="x", type_="int", default=0)
+        app = ui.DuskyTUI(pool, key, {0: [item]}, ["Values"], enable_user_presets=False)
+        pool.bind_app(app)
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            self.assertEqual(item.value, 1)
+        self.assertEqual([name for name, _ in calls], ["create", "bind"])
+        self.assertNotEqual(calls[0][1], owner)
+        self.assertEqual(calls[1][1], owner)
+
+    async def test_initial_constructor_failure_is_reported_without_crashing_ui(self):
+        pool = router.LazyEnginePool(Mock(side_effect=RuntimeError("constructor fixture")))
+        key = pool.register("fixture", "")
+        item = ConfigItem(label="X", key="x", type_="int", default=0)
+        app = ui.DuskyTUI(pool, key, {0: [item]}, ["Values"], enable_user_presets=False)
+        pool.bind_app(app)
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            self.assertIn("constructor fixture", app._failed_engines[key])
+            self.assertFalse(app.require_boot_complete())
+            self.assertFalse(app.query_one(ui.FileLink).path)
+            self.assertEqual(list(pool.initialized_values()), [])
+
+    async def test_custom_only_tab_uses_loaded_engine_target_and_telemetry(self):
+        class TelemetryEngine(_StartupEngine):
+            target_path = "/fixture/actual-target"
+
+            def get_telemetry(self):
+                return "Fixture telemetry"
+
+        pool = router.LazyEnginePool(lambda *_: TelemetryEngine())
+        key = pool.register("fixture", "/fixture/registered-target")
+        app = ui.DuskyTUI(pool, key, {0: []}, ["Custom"], enable_user_presets=False,
+                       custom_views={0: lambda: "Fixture view"})
+        pool.bind_app(app)
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            self.assertEqual(app.query_one(ui.FileLink).path, "/fixture/actual-target")
+            self.assertIs(app.telemetry_engine, pool[key])
+            await app.update_telemetry()
+            self.assertTrue(app.query_one("#telemetry-banner").display)
+
+    async def test_file_link_does_not_construct_an_unloaded_engine(self):
+        factory = Mock(return_value=_StartupEngine())
+        pool = router.LazyEnginePool(factory)
+        key = pool.register("fixture", "")
+        app = ui.DuskyTUI(pool, key, {0: []}, ["Values"], enable_user_presets=False)
+        link = SimpleNamespace(path="old target")
+        app.query_one = lambda *_: link
+        app._update_file_link()
+        factory.assert_not_called()
+        self.assertEqual(link.path, "")
+
+    async def test_quit_during_construction_drains_and_shuts_down_backend(self):
+        started, release = threading.Event(), threading.Event()
+        calls = []
+
+        class ClosingEngine(_StartupEngine):
+            def set_app(self, app):
+                calls.append("bind")
+
+            def shutdown(self):
+                calls.append("shutdown")
+
+        def factory(*_):
+            started.set()
+            if not release.wait(5):
+                raise TimeoutError("constructor fixture was not released")
+            calls.append("constructed")
+            return ClosingEngine()
+
+        pool = router.LazyEnginePool(factory)
+        key = pool.register("fixture", "")
+        item = ConfigItem(label="X", key="x", type_="int", default=0)
+        app = ui.DuskyTUI(pool, key, {0: [item]}, ["Values"], enable_user_presets=False)
+        pool.bind_app(app)
+        async with asyncio.timeout(8):
+            async with app.run_test() as pilot:
+                while not started.is_set():
+                    await pilot.pause(.005)
+                app.exit()
+
+                async def finish_constructor():
+                    await asyncio.sleep(.05)
+                    release.set()
+
+                asyncio.create_task(finish_constructor())
+            self.assertEqual(calls[-1], "shutdown")
+            self.assertEqual(calls.count("shutdown"), 1)
+            self.assertFalse(app._io_workers)
+
+    async def test_save_completion_refreshes_only_initialized_backends(self):
+        engine = _StartupEngine()
+        engine.refresh_after_write = True
+        engine.cache = {"x": "2"}
+        factory = Mock(return_value=engine)
+        pool = router.LazyEnginePool(factory)
+        key = pool.register("fixture", "")
+        pool[key]
+        pool.register("unused", "/fixture")
+        app = ui.DuskyTUI(pool, key, {0: []}, ["Values"], enable_user_presets=False)
+        app._apply_refreshed_states = Mock()
+        task = asyncio.create_task(asyncio.sleep(0))
+        await task
+        app._on_save_task_done(task)
+        factory.assert_called_once_with(*key)
+        app._apply_refreshed_states.assert_called_once_with({key: engine.cache})
+
+    async def test_missing_batch_result_stays_pending_and_reports_failure(self):
+        class PartialEngine(_StartupEngine):
+            write_value = Mock(side_effect=AssertionError("must not replay"))
+
+            def write_batch_results(self, changes):
+                return {("x", "DEFAULT"): SimpleNamespace(ok=True, message="", actual="2")}
+
+        key = ("fixture", "")
+        rows = [ConfigItem(label=name, key=name, type_="int", default=1) for name in ("x", "y")]
+        app = ui.DuskyTUI({key: PartialEngine()}, key, {0: rows}, ["Values"],
+                       enable_user_presets=False, default_mode="batch")
+        app._save_lock = asyncio.Lock()
+        app.notify_status = Mock()
+        app.play_reset_sound = Mock()
+        app._refresh_all_ui = Mock()
+        app._refresh_presets_ui = Mock()
+        for row in rows:
+            row.value = 2
+        app.pending_commits = {(0, 0), (0, 1)}
+        completed = []
+        await app._save_batch_async(completed.append)
+        self.assertEqual(completed, [False])
+        self.assertEqual(app.pending_commits, {(0, 1)})
+        self.assertTrue(app._save_failure_pending)
+        self.assertIn("Missing write result", app.notify_status.call_args.args[0])
+        app.engine_pool[key].write_value.assert_not_called()
+
+class HeadlessRoutingTests(unittest.TestCase):
+    def test_schema_search_paths_keep_order_and_expand_home_on_demand(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            locations = (home / "user_scripts", home / ".config/dusky_schema", home / "Documents/schemas")
+            paths = []
+            for index, location in enumerate(locations):
+                path = location / "pkg/fixture.py"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    "SCHEMA={0:[]}\nTABS=['Values']\nTARGET_FILE=''\nENGINE_TYPE='ini'\n"
+                    f"APP_TITLE='Search fixture {index}'\n", encoding="utf-8",
+                )
+                paths.append(path)
+            env = {**os.environ, "HOME": str(home), "XDG_CACHE_HOME": str(home / "cache")}
+            for index, path in enumerate(paths):
+                with self.subTest(location=index):
+                    argument = "pkg.fixture" if index != 1 else "pkg/fixture.py"
+                    result = subprocess.run([sys.executable, str(LAUNCHER), argument, "--export-docs"],
+                                            env=env, capture_output=True, text=True, encoding="utf-8", timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(f"Search fixture {index}", result.stdout)
+                    path.unlink()
+            result = subprocess.run([sys.executable, str(LAUNCHER), "pkg.fixture", "--export-docs"],
+                                    env=env, capture_output=True, text=True, encoding="utf-8", timeout=10)
+            self.assertEqual(result.returncode, 1)
+            for location in locations:
+                self.assertIn(str(location), result.stdout)
+
+    def invoke(self, rows, *args, batch="none"):
+        with tempfile.TemporaryDirectory() as directory:
+            schema = Path(directory) / "schema.py"
+            schema.write_text(
+                "import sys, types\n"
+                "from python.frontend.core_types import ConfigItem\n"
+                "from types import SimpleNamespace\n"
+                "TARGET_FILE=''\nENGINE_TYPE='ini'\nTABS=['Values']\n"
+                f"SCHEMA={{0:[{rows}]}}\n"
+                "class Engine:\n"
+                " def __init__(self,**kwargs): print('CONSTRUCTED')\n"
+                " def load_state(self): return {}\n"
+                " def write_value(self,key,scope,value,**kwargs):\n"
+                "  print('WROTE',key,scope,value)\n"
+                "  return True,'written',''\n"
+                " def write_batch_results(self,changes):\n"
+                "  print('BATCH')\n"
+                f"  selected=changes if {batch!r}=='complete' else changes[:1] if {batch!r}=='partial' else []\n"
+                "  return {(k,s):SimpleNamespace(ok=True,message='',actual=v) for k,s,v,t in selected}\n"
+                "module=types.ModuleType('python.engines.ini')\n"
+                "module.IniConfigEngine=Engine\nsys.modules[module.__name__]=module\n",
+                encoding="utf-8",
+            )
+            return subprocess.run([sys.executable, str(LAUNCHER), str(schema), *args],
+                                  capture_output=True, text=True, encoding="utf-8", timeout=10)
+
+    def test_read_only_single_key_operations_reject_before_backend_construction(self):
+        rows = "ConfigItem(label='Read only',key='readonly',type_='int',default=0,read_only=True)"
+        for args in (("--set", "readonly=9"), ("--reset-key", "readonly")):
+            with self.subTest(args=args):
+                result = self.invoke(rows, *args)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("read only", result.stdout)
+                self.assertNotIn("CONSTRUCTED", result.stdout)
+                self.assertNotIn("WROTE", result.stdout)
+
+    def test_longest_ambiguous_key_never_selects_a_shorter_key(self):
+        rows = ("ConfigItem(label='Short',key='x',type_='string',default=''),"
+                "ConfigItem(label='A',key='x=y',scope='a',type_='string',default=''),"
+                "ConfigItem(label='B',key='x=y',scope='b',type_='string',default='')")
+        result = self.invoke(rows, "--set", "x=y=value")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("ambiguous", result.stdout)
+        self.assertNotIn("WROTE", result.stdout)
+        for argument, expected in (("a.x=y=value", "WROTE x=y a value"),
+                                   ("x=a=b", "WROTE x DEFAULT a=b")):
+            with self.subTest(argument=argument):
+                result = self.invoke(rows, "--set", argument)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(expected, result.stdout)
+
+    def test_missing_headless_batch_results_return_failure_without_replaying(self):
+        rows = ",".join(f"ConfigItem(label='{k}',key='{k}',type_='int',default=1)" for k in ("x", "y"))
+        for batch, applied in (("none", 0), ("partial", 1)):
+            with self.subTest(batch=batch):
+                result = self.invoke(rows, "--default", batch=batch)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(f"{applied} applied", result.stdout)
+                self.assertIn("Missing write result", result.stdout)
+                self.assertEqual(result.stdout.count("BATCH"), 1)
+                self.assertNotIn("WROTE", result.stdout)
+        result = self.invoke(rows, "--default", batch="complete")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Reset 2 items successfully", result.stdout)

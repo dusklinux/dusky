@@ -2,7 +2,7 @@
 import sys
 import os
 
-import argparse
+lazy import argparse
 lazy import importlib.util
 lazy import json
 lazy import shutil
@@ -18,6 +18,7 @@ from pathlib import Path
 from functools import lru_cache
 from collections.abc import MutableMapping
 lazy from threading import get_ident, RLock
+lazy from python.frontend.ui import DuskyTUI
 
 
 # =============================================================================
@@ -137,19 +138,16 @@ def _setup_cache() -> None:
         pass
 
 
-_setup_cache()
-
-
 PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-SCHEMA_SEARCH_PATHS = [
-    Path("~/user_scripts").expanduser().resolve(),
-    Path("~/.config/dusky_schema").expanduser().resolve(),
-    Path("~/Documents/schemas").expanduser().resolve(),
-]
+SCHEMA_SEARCH_PATHS = (
+    "~/user_scripts",
+    "~/.config/dusky_schema",
+    "~/Documents/schemas",
+)
 
 
 # =============================================================================
@@ -279,6 +277,10 @@ class LazyEnginePool(MutableMapping):
         for key in tuple(self._engines):
             self._bind_engine(key)
 
+    def detach_app(self) -> None:
+        """Prevent in-flight constructors from binding to a closing UI."""
+        self._app = None
+
     def register(self, e_type: str, config_path: str) -> tuple[str, str]:
         key = (e_type, config_path)
         self._registered_keys[key] = None
@@ -294,16 +296,23 @@ class LazyEnginePool(MutableMapping):
         # Release the factory lock before waiting on the UI. A simultaneous
         # UI lookup can bind the published instance itself without deadlocking.
         # Slow imports/constructors stay on the requesting worker thread.
-        if self._app is not None and key not in self._bound_keys:
-            if self._app.is_running and get_ident() != self._owner_thread:
-                self._app.call_from_thread(self._bind_engine, key)
+        app = self._app
+        if app is not None and key not in self._bound_keys:
+            if app.is_running and get_ident() != self._owner_thread:
+                try:
+                    app.call_from_thread(self._bind_engine, key)
+                except RuntimeError:
+                    # Detachment may race with Textual closing its event loop.
+                    # Preserve binding errors while this app still owns the pool.
+                    if self._app is app:
+                        raise
             else:
                 self._bind_engine(key)
         return self._engines[key]
 
     def _bind_engine(self, key) -> None:
         with self._factory_lock:
-            if key in self._bound_keys:
+            if self._app is None or key in self._bound_keys:
                 return
             self._bound_keys.add(key)
             try:
@@ -345,6 +354,10 @@ class LazyEnginePool(MutableMapping):
     def initialized_values(self):
         """Inspect or shut down engines without constructing unused backends."""
         return self._engines.values()
+
+    def initialized_items(self):
+        """Snapshot published engines without constructing unused backends."""
+        return tuple(self._engines.items())
 
 
 @lru_cache(maxsize=1024)
@@ -436,6 +449,7 @@ EXAMPLES:
     )
 
     args = parser.parse_args()
+    _setup_cache()
 
     # --- 1. SMART SCHEMA PATH RESOLUTION ---
     target_arg = args.module
@@ -452,7 +466,7 @@ EXAMPLES:
         clean_arg = clean_arg.lstrip("/") + ".py"
 
         for base_dir in SCHEMA_SEARCH_PATHS:
-            potential_path = base_dir / clean_arg
+            potential_path = Path(base_dir).expanduser().resolve() / clean_arg
 
             if potential_path.exists() and potential_path.is_file():
                 schema_path = potential_path
@@ -463,7 +477,7 @@ EXAMPLES:
         print("[i] Checked direct path and the following directories:")
 
         for p in SCHEMA_SEARCH_PATHS:
-            print(f"    - {p}")
+            print(f"    - {Path(p).expanduser().resolve()}")
 
         sys.exit(1)
 
@@ -846,14 +860,13 @@ EXAMPLES:
                 print("[-] Format error: Use --set key=value")
                 sys.exit(1)
 
-            # Schema-driven key extraction to guarantee ZERO regressions:
-            # Matches against all known schema keys (sorted by length descending) so that 
-            # keys containing '=' (e.g. app-name="foo".key) OR values containing '=' (e.g. key=exec foo=bar)
-            # are both parsed with 100% precision.
+            # Match the longest schema key, including ambiguous entries, before
+            # splitting the value. Otherwise an ambiguous key containing '='
+            # could silently select a shorter, different setting.
             matched_key = None
             val_str = None
             
-            sorted_keys = sorted([k for k in flat_schema.keys() if flat_schema[k] is not None], key=len, reverse=True)
+            sorted_keys = sorted(flat_schema, key=len, reverse=True)
             for k in sorted_keys:
                 prefix = f"{k}="
                 if args.set.startswith(prefix):
@@ -872,6 +885,10 @@ EXAMPLES:
 
             if item is None:
                 print(f"[-] Key '{matched_key}' is ambiguous across scopes or target files. Use an unambiguous schema key.")
+                sys.exit(1)
+
+            if item.read_only:
+                print(f"[-] Key '{matched_key}' is read only.")
                 sys.exit(1)
 
             e_type = (item.engine_type_override or ENGINE_TYPE).lower()
@@ -901,6 +918,10 @@ EXAMPLES:
 
             if item is None:
                 print(f"[-] Key '{args.reset_key}' is ambiguous across scopes or target files. Use an unambiguous schema key.")
+                sys.exit(1)
+
+            if item.read_only:
+                print(f"[-] Key '{args.reset_key}' is read only.")
                 sys.exit(1)
 
             e_type = (item.engine_type_override or ENGINE_TYPE).lower()
@@ -952,12 +973,18 @@ EXAMPLES:
                 engine.load_state()
                 if hasattr(engine, "write_batch_results"):
                     results = engine.write_batch_results(changes)
-                    failures = [result.message for result in results.values() if not result.ok]
+                    failures = []
+                    for key, scope, _value, _kind in changes:
+                        result = results.get((key, scope))
+                        if result is None:
+                            failures.append(f"Missing write result for {scope}.{key}")
+                        elif not result.ok:
+                            failures.append(result.message)
                     if failures:
                         all_success = False
-                        print(f"[-] {ekey[0]} reset: {len(results) - len(failures)} applied; {len(failures)} failed. First error: {failures[0]}")
+                        print(f"[-] {ekey[0]} reset: {len(changes) - len(failures)} applied; {len(failures)} failed. First error: {failures[0]}")
                     else:
-                        print(f"[*] Restoration Complete for {ekey[0]} backend. Reset {len(results)} items successfully.")
+                        print(f"[*] Restoration Complete for {ekey[0]} backend. Reset {len(changes)} items successfully.")
                     continue
                 success, msg, _ = engine.write_batch(changes)
 
@@ -973,9 +1000,6 @@ EXAMPLES:
 
     # --- 5. INTERACTIVE TUI EXECUTION ---
     logger.info("Launching TUI")
-
-    # DEFERRED IMPORT: Prevents UI dependencies from crashing the headless CLI 
-    from python.frontend.ui import DuskyTUI
 
     app = DuskyTUI(
         engine_pool=engine_pool,

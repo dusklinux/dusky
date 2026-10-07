@@ -70,6 +70,69 @@ def app_for(schema=None, *, mode='batch', engine=None, **kwargs):
 
 
 class UITests(unittest.IsolatedAsyncioTestCase):
+    async def test_preset_poll_keeps_search_references_stable_until_dialog_closes(self):
+        app = app_for()
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            with tempfile.TemporaryDirectory() as directory:
+                app.user_presets_dir = Path(directory)
+                app.enable_user_presets = True
+                (app.user_presets_dir / 'preset.json').write_text('{"x": 1}', encoding='utf-8')
+                app._load_user_presets()
+                app._rebuild_indexes()
+                app._refresh_all_ui()
+                app.action_search()
+                await pilot.pause()
+                rows = tuple(app.schema[0])
+                (app.user_presets_dir / 'a.json').write_text('{"x": 2}', encoding='utf-8')
+                await app.watch_presets_dir()
+                self.assertEqual(len(app.schema[0]), len(rows))
+                self.assertTrue(all(before is after for before, after in zip(rows, app.schema[0])))
+                app.screen.dismiss(None)
+                await pilot.pause()
+                await app.watch_presets_dir()
+                self.assertEqual({row.label for row in app.schema[0] if row.key.startswith('__user_preset_')},
+                                 {'User: a', 'User: preset'})
+
+    async def test_discovery_waits_for_input_callback_before_replacing_rows(self):
+        setting = item('x')
+        app = app_for({0: [setting]}, engine=Engine({'x': '1'}))
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            app.prompt_string(0, 0, setting)
+            await pilot.pause()
+            replacement = [item('y'), item('x')]
+            app._apply_deferred_tabs([0], {app.default_engine_key: {'x': '1', 'y': '2'}},
+                                     {0: replacement})
+            self.assertIs(app.schema[0][0], setting)
+            app.screen.query_one(Input).value = '5'
+            await pilot.press('enter')
+            await pilot.pause(.2)
+            self.assertEqual([row.key for row in app.schema[0]], ['y', 'x'])
+            self.assertEqual(app.schema[0][1].value, 5)
+            self.assertEqual(app.schema[0][1].initial_value, 1)
+            self.assertEqual(app.pending_commits, {(0, 1)})
+            self.assertEqual(app.undo_stack[-1][0][:2], (0, 1))
+            self.assertFalse(app.engine_pool[app.default_engine_key].writes)
+
+    async def test_action_drain_preserves_bounded_output_and_cancellation(self):
+        payload = bytes(range(256)) * 80
+        for limit in (0, 1, 4096, 8192, len(payload), len(payload) + 1):
+            with self.subTest(limit=limit):
+                stream = asyncio.StreamReader()
+                stream.feed_data(payload)
+                stream.feed_eof()
+                output = await ui.DuskyTUI._drain_action_stream(stream, limit)
+                self.assertEqual(output, payload[:limit])
+                self.assertIs(type(output), bytes)
+                self.assertTrue(stream.at_eof())
+        stream = asyncio.StreamReader()
+        task = asyncio.create_task(ui.DuskyTUI._drain_action_stream(stream, 8192))
+        await asyncio.sleep(0)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
     async def boot(self, app, pilot):
         for _ in range(100):
             await pilot.pause(0.01)
@@ -759,6 +822,33 @@ class UITests(unittest.IsolatedAsyncioTestCase):
 
 
 class UtilityTests(unittest.TestCase):
+    def test_boot_readiness_initializes_hidden_model_before_lazy_rendering(self):
+        visible, hidden = item('x'), item('hidden')
+        preset = item('preset', type_='preset', default=None, preset_payload={'x': 1, 'hidden': 9})
+        app = app_for({0: [visible, preset], 1: [hidden]})
+        app.telemetry_engine = None
+        app._states[app.default_engine_key] = {'x': '1', 'hidden': '7'}
+        app._loaded_engines.add(app.default_engine_key)
+        app._apply_states_to_tab(0, app._states)
+        original_rebuild = ui.PresetMatchMatrix.rebuild
+        with patch.object(ui.PresetMatchMatrix, 'rebuild', autospec=True,
+                          side_effect=original_rebuild) as rebuild:
+            app._mark_boot_complete_if_done()
+            app._mark_boot_complete_if_done()
+        self.assertTrue(app._boot_complete)
+        self.assertEqual(app._tab_data_ready, {0, 1})
+        self.assertNotIn(1, app._tab_populated)
+        self.assertEqual(hidden.value, 7)
+        self.assertEqual(hidden.initial_value, 7)
+        self.assertEqual(app._committed[(1, 0)], 7)
+        self.assertTrue(hidden.exists_in_target)
+        self.assertEqual(app._get_preset_match_ratio(preset), .5)
+        self.assertEqual(rebuild.call_count, 1)
+        app.apply_preset(preset)
+        self.assertEqual(hidden.value, 9)
+        self.assertEqual(hidden.initial_value, 7)
+        self.assertIn((1, 0), app.pending_commits)
+
     def test_color_malformed_does_not_raise(self):
         self.assertEqual(ui.color_to_rgb('hsl(.., 50%, 50%)'), (128, 128, 128))
 
