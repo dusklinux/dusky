@@ -590,18 +590,6 @@ SCHEMA = {
             extended_help="**Permanent Direction Override**\n\nIf enabled, makes a preselected direction persist until turned off or a non-direction is specified."
         ),
         ConfigItem(
-            label="Special Workspace Scale",
-            key="special_scale_factor",
-            scope="dwindle",
-            type_="float",
-            default=1.0,
-            min_val=0.1,
-            max_val=1.0,
-            step=0.1,
-            group="Dwindle Layout Settings",
-            extended_help="**Special Scale Factor**\n\nScale factor for windows located on special workspaces (scratchpads)."
-        ),
-        ConfigItem(
             label="Split Width Multiplier",
             key="split_width_multiplier",
             scope="dwindle",
@@ -786,18 +774,6 @@ SCHEMA = {
             default=False,
             group="Master Layout Settings",
             extended_help="**Focus Master on Close**\n\nWhen enabled, closing any window automatically moves focus to the master window."
-        ),
-        ConfigItem(
-            label="Special Workspace Scale",
-            key="special_scale_factor",
-            scope="master",
-            type_="float",
-            default=1.0,
-            min_val=0.1,
-            max_val=1.0,
-            step=0.1,
-            group="Master Layout Settings",
-            extended_help="**Special Scale Factor**\n\nScale factor for windows on special (scratchpad) workspaces when using the master layout."
         ),
     ],
 

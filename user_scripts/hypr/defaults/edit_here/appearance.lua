@@ -189,9 +189,8 @@ hl.config({
 -- Applied when exactly one tiled window is on screen (w[tv1]), or when
 -- a window is maximized (f[1]). Excludes special/scratchpad workspaces (s[false]).
 --
--- WHAT CANNOT BE SET HERE (window rules don't support these — global hl.config() only):
---   • rounding_power  → decoration.rounding_power in hl.config()
---   • no_shadow / no_dim → no per-window shadow or dim suppression in 0.55 window rules
+-- SETTINGS THAT BELONG IN WORKSPACE RULES OR GLOBAL hl.config():
+--   • no_shadow → use hl.workspace_rule({ workspace = ..., no_shadow = true })
 --   • blur sub-options (size, passes, etc.) → decoration.blur in hl.config()
 --   • border_size → must live in hl.workspace_rule(), not hl.window_rule()
 -- -------------------------------------------------------------------------------------------------
@@ -211,11 +210,8 @@ hl.window_rule({
     rounding      = 6,
     rounding_power = 2.0,
     -- OPACITY
-    -- format: "active [override] inactive [override] fullscreen [override]"
-    -- "override" makes it absolute instead of multiplicative with other rules
-    -- your global active_opacity and inactive_opacity are both 0.85
-    -- using override here so it doesn't compound with the global value
-    -- opacity       = "0.85 override 0.85 override 1.0 override",
+    -- Numeric opacity multiplies the global active/inactive/fullscreen opacity.
+    -- 1.0 leaves the global opacity unchanged.
     opacity       = 1.0,
 
     -- BLUR
@@ -245,7 +241,7 @@ hl.window_rule({
     match = { float = true, workspace = "f[1]s[false]" },
 
     rounding      = 10,
-    opacity       = 1.0, -- override 0.85 override 1.0 override"
+    opacity       = 1.0, -- Inherit the global opacity.
     no_blur       = true,
 
     -- border_color = "rgb(ffffff) rgb(000000) 45deg",

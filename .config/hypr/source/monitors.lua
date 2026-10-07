@@ -137,7 +137,7 @@ hl.monitor({
 --     mode   = "preferred",
 --     position = "0x0",
 --     scale  = 2,
---     icc    = "/home/USERNAME/.config/hypr/icc/your_panel.icm",
+--     icc    = os.getenv("HOME") .. "/.config/hypr/icc/your_panel.icm",
 -- })
 
 -- ── 2d. Laptop panel — custom SDR transfer function ───────────────────────
@@ -366,21 +366,15 @@ hl.config({
     render = {
         -- ── Global SDR EOTF (transfer function for SDR/sRGB content) ─────
         -- Applied to every monitor whose per-monitor sdr_eotf is "default".
-        --   "auto"    Hyprland decides (recommended)
+        --   "default" follows the default sRGB handling
         --   "srgb"    piecewise sRGB curve  (best colour accuracy on most panels)
         --   "gamma22" traditional Gamma 2.2
-        -- cm_sdr_eotf = "auto",
+        -- cm_sdr_eotf = "default",
 
-        -- ── Fullscreen HDR passthrough ────────────────────────────────────
-        -- When true, fullscreen apps that output HDR signals bypass Hyprland's
-        -- colour pipeline entirely for zero-overhead HDR gaming.
-        -- Alternative to setting cm = "hdr" per-monitor.
-        -- cm_fs_passthrough = false,
-
-        -- ── Automatic HDR ─────────────────────────────────────────────────
-        -- Experimental: automatically promote SDR content to HDR where possible.
-        -- Requires --target-colorspace-hint-mode=source in mpv ≥ 0.41.
-        -- cm_auto_hdr = false,
+        -- ── Automatic fullscreen HDR ────────────────────────────────────
+        -- Switch to HDR for fullscreen HDR content on an HDR-capable display.
+        -- 0 = disabled, 1 = use "hdr", 2 = use "hdredid".
+        -- cm_auto_hdr = 1,
     },
 
 })

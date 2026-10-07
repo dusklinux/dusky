@@ -43,7 +43,7 @@ notify_user() {
 
 reload_hyprland() {
     if command -v hyprctl &>/dev/null; then
-        hyprctl reload &>/dev/null
+        hyprctl reload config-only &>/dev/null
     fi
 }
 

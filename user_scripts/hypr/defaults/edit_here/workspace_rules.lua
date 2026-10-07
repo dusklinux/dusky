@@ -81,12 +81,14 @@ hl.workspace_rule({ workspace = "10", layout = "scrolling", persistent = true, m
 -- §4  SPECIAL WORKSPACES / SCRATCHPADS
 -- Special workspaces float over any monitor and can be toggled on/off.
 -- They are identified by the "special:" prefix.
--- Toggle them with: hl.dsp.workspace.toggle_special({ name = "scratchpad" })
+-- Toggle them with: hl.dispatch(hl.dsp.workspace.toggle_special("scratchpad"))
 --
 -- Notes:
---   • Each monitor gets its own independent instance of a special workspace.
+--   • Only one special workspace can be visible on a monitor at a time.
 --   • `misc.close_special_on_empty` (§10e) controls auto-close behaviour.
 --   • `on_created_empty` launches an app the first time the workspace is shown.
+--   • Use gaps_out in hl.workspace_rule() for scratchpad margins.
+--     The magic scratchpad geometry is managed in appearance.lua (Appearance TUI → Special).
 -- ==============================================================================
 local special_workspaces = {
     -- { name = "scratchpad", on_created_empty = "kitty" },
@@ -108,7 +110,7 @@ end
 -- §5  NAMED / PROJECT WORKSPACES
 -- Use "name:foo" identifiers for semantic, project-specific workspaces.
 -- These can coexist alongside numbered workspaces.
--- You can navigate to them with: hl.dsp.workspace.name("coding")
+-- Navigate with: hl.dispatch(hl.dsp.focus({ workspace = "name:coding" }))
 -- ==============================================================================
 local named_workspaces = {
     -- { name = "coding",  monitor = "DP-1",  on_created_empty = "kitty",
@@ -237,7 +239,6 @@ hl.config({
         -- resize the smaller side on manual resize
         smart_resizing               = true,
         permanent_direction_override = false,
-        special_scale_factor         = 1.0,
         split_width_multiplier       = 1.0,
         use_active_for_splits        = true,
         default_split_ratio          = 1.0,
@@ -265,8 +266,6 @@ hl.config({
         drop_at_cursor                = true,
         always_keep_position          = false,
         focus_master_on_close         = false,
-        -- scale of windows in special workspaces
-        special_scale_factor          = 1.0,
     },
 
     -- §10d Scrolling layout
