@@ -16,16 +16,16 @@ GTK4/Libadwaita compatible with proper lifecycle management via `do_unroot`.
 from __future__ import annotations
 
 import atexit
-import json
+lazy import json
 import logging
 import math
 import os
 import shlex
 import signal
-import subprocess
+lazy import subprocess
 import threading
 import weakref
-from concurrent.futures import ThreadPoolExecutor
+lazy from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -37,7 +37,6 @@ from typing import (
     Final,
     NotRequired,
     Protocol,
-    TypeAlias,
     TypedDict,
     runtime_checkable,
 )
@@ -50,8 +49,8 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
 
 import lib.utility as utility
-import lib.service_manager as svc_mgr
-from lib import actions
+lazy import lib.service_manager as svc_mgr
+lazy from lib import actions
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -79,8 +78,8 @@ SUBPROCESS_TIMEOUT_LONG: Final[int] = 5
 ICON_PIXEL_SIZE: Final[int] = 20
 LABEL_MAX_WIDTH_CHARS: Final[int] = 12
 
-# Bumped to 12 to prevent thread starvation on map storms
-EXECUTOR_MAX_WORKERS: Final[int] = 12
+# Match the stdlib I/O pool policy using CPUs available to this process.
+EXECUTOR_MAX_WORKERS: Final[int] = min(32, (os.process_cpu_count() or 1) + 4)
 
 LABEL_PLACEHOLDER: Final[str] = "..."
 LABEL_NA: Final[str] = "N/A"
@@ -160,7 +159,7 @@ class IconConfigStatic(TypedDict):
     name: str
 
 
-IconConfig: TypeAlias = str | IconConfigExec | IconConfigFile | IconConfigStatic
+type IconConfig = str | IconConfigExec | IconConfigFile | IconConfigStatic
 
 
 class ActionExec(TypedDict, total=False):
@@ -181,7 +180,7 @@ class ActionToggle(TypedDict, total=False):
     disabled: ActionExec
 
 
-ActionConfig: TypeAlias = ActionExec | ActionRedirect | ActionToggle | dict[str, object]
+type ActionConfig = ActionExec | ActionRedirect | ActionToggle | dict[str, object]
 
 
 class ValueConfigExec(TypedDict):
@@ -204,7 +203,7 @@ class ValueConfigSystem(TypedDict):
     key: str
 
 
-ValueConfig: TypeAlias = (
+type ValueConfig = (
     str | ValueConfigExec | ValueConfigStatic | ValueConfigFile | ValueConfigSystem
 )
 
@@ -2901,7 +2900,8 @@ class ExpanderRow(DynamicIconMixin, HyprlandIPCMixin, Adw.ExpanderRow):
         self.icon_widget = self._create_icon_widget(icon_config)
         self.add_prefix(self.icon_widget)
 
-        self._build_child_rows()
+        self._children_built = False
+        _connect_owned(self, self, "notify::expanded", self._on_expanded)
 
         if _is_dynamic_icon(icon_config) and isinstance(icon_config, dict):
             self._start_icon_update_loop(icon_config)
@@ -2922,7 +2922,28 @@ class ExpanderRow(DynamicIconMixin, HyprlandIPCMixin, Adw.ExpanderRow):
         img.add_css_class("action-row-prefix-icon")
         return img
 
+    def _on_expanded(self, _row: Adw.ExpanderRow, _param: GObject.ParamSpec) -> None:
+        if self.get_expanded():
+            self._build_child_rows()
+
+    def reveal_item(self, unique_id: str) -> None:
+        """Materialize only the expander ancestors needed for a search hit."""
+        def contains(items: list[object]) -> bool:
+            return any(
+                isinstance(item, dict) and (
+                    f"cfg_{id(item):x}" == unique_id
+                    or contains(item.get("items", []))
+                )
+                for item in items
+            )
+
+        if not self._children_built and not self._state.is_destroyed and contains(self.items_data):
+            self.set_expanded(True)
+
     def _build_child_rows(self) -> None:
+        if self._children_built or self._state.is_destroyed:
+            return
+        self._children_built = True
         for item in self.items_data:
             if not isinstance(item, dict):
                 continue

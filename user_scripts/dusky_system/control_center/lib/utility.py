@@ -10,17 +10,18 @@ import atexit
 import logging
 import os
 import re
-import shlex
-import shutil
-import subprocess
+lazy import shlex
+lazy import shutil
+lazy import subprocess
 import sys
+# A pending write may first flush during atexit; initialize this dependency now.
 import tempfile
 import threading
-import tomllib
+lazy import tomllib
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+lazy from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Final, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Final, overload
 
 from gi.repository import GLib
 
@@ -44,7 +45,6 @@ __all__ = [
 
 log: logging.Logger = logging.getLogger(__name__)
 
-_T = TypeVar("_T")
 
 # =============================================================================
 # CONSTANTS & PATHS
@@ -150,7 +150,7 @@ class _ComputeOnceCache:
         self._cache: dict[str, object] = {}
         self._in_flight: dict[str, threading.Condition] = {}
 
-    def get_or_compute(self, key: str, compute_fn: Callable[[], _T]) -> _T:
+    def get_or_compute[T](self, key: str, compute_fn: Callable[[], T]) -> T:
         with self._lock:
             while key in self._in_flight:
                 cond = self._in_flight[key]
@@ -713,11 +713,12 @@ def load_setting(
         return default
 
     # Always check the dirty buffer first to prevent stale reads mid-flush
-    buffer_inst = _SettingsWriteBuffer()
-    with buffer_inst._lock:
-        if target in buffer_inst._pending:
-            raw = buffer_inst._pending[target][0]
-            return _coerce_type(raw if preserve_whitespace else raw.strip(), default)
+    buffer_inst = _SettingsWriteBuffer._instance
+    if buffer_inst is not None:
+        with buffer_inst._lock:
+            if target in buffer_inst._pending:
+                raw = buffer_inst._pending[target][0]
+                return _coerce_type(raw if preserve_whitespace else raw.strip(), default)
 
     try:
         raw = target.read_text(encoding="utf-8")

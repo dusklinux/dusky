@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import logging
 import re
-import shlex
+lazy import shlex
 import signal
 import sys
-import threading
-import traceback
+lazy import threading
+lazy import traceback
 from collections.abc import Callable, Iterator
+lazy from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import lru_cache
@@ -43,12 +44,12 @@ if "--validate" in sys.argv:
     print(f"Valid configuration: {config_file}")
     sys.exit(0)
 
-if not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
-    sys.stderr.write("dusky-control-center: error: WAYLAND_DISPLAY and DISPLAY are not set. Cannot run GUI application.\n")
+if not os.environ.get("WAYLAND_DISPLAY"):
+    sys.stderr.write("dusky-control-center: error: WAYLAND_DISPLAY is not set. Cannot run GUI application.\n")
     sys.exit(5)
 
-if sys.version_info < (3, 14, 5):
-    sys.exit("[FATAL] Python 3.14.5+ is required.")
+if sys.version_info < (3, 15):
+    sys.exit("[FATAL] Python 3.15+ is required.")
 
 # =============================================================================
 # LOGGING CONFIGURATION
@@ -66,11 +67,11 @@ log = logging.getLogger(__name__)
 # =============================================================================
 def _setup_cache() -> None:
     """Configure pycache directory following XDG spec."""
-    import os
-
     try:
         xdg_cache_env = os.environ.get("XDG_CACHE_HOME", "").strip()
         xdg_cache = Path(xdg_cache_env) if xdg_cache_env else Path.home() / ".cache"
+        if not xdg_cache.is_absolute():
+            xdg_cache = Path.home() / ".cache"
         cache_dir = xdg_cache / "duskycc"
         cache_dir.mkdir(parents=True, exist_ok=True)
         sys.pycache_prefix = str(cache_dir)
@@ -94,10 +95,9 @@ except (ImportError, ValueError) as error:
 import lib.utility as utility
 from lib.config_schema import validate_config
 
-utility.preflight_check()
 from gi.repository import Adw, Gdk, Gio, GLib, GLibUnix, Gtk, Pango
 
-import lib.rows as rows
+lazy import lib.rows as rows
 
 
 # =============================================================================
@@ -340,15 +340,19 @@ class DuskyControlCenter(Adw.Application):
     def do_startup(self) -> None:
         """
         GTK Startup hook.
-        PRE-LOAD LOGIC: Initialize resources and build UI hidden to ensure instant startup.
+        Load resources and build Home hidden for subsequent activation.
         """
-        Adw.Application.do_startup(self)
+        # Only file I/O, TOML parsing and pure validation run in the worker.
+        # Overlap them with native GTK startup; GTK remains on its main thread.
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="dusky-config") as loader:
+            pending_config = loader.submit(self._load_config_and_css_sync)
+            Adw.Application.do_startup(self)
+            result = pending_config.result()
         Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.DEFAULT)
 
         self.hold()
         GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, lambda *_: self.quit())
 
-        result = self._load_config_and_css_sync()
         self._state.config = result["config"]
         self._state.css_content = result["css"]
         self._state.config_error = result["error"]
@@ -569,8 +573,6 @@ class DuskyControlCenter(Adw.Application):
         self._toast_overlay.set_child(self._split_view)
         self._window.set_content(self._toast_overlay)
 
-        self._create_search_page()
-
         if self._state.config_error:
             self._show_error_state(self._state.config_error)
         elif not self._state.config.get("pages"):
@@ -581,7 +583,7 @@ class DuskyControlCenter(Adw.Application):
     def _on_close_request(self, window: Adw.Window) -> bool:
         """
         Intercept window close. Return True to prevent destruction.
-        Hide window and suspend all background activity to achieve zero-CPU idle.
+        Hide the window and suspend mapped-row observations.
         """
         window.set_visible(False)
         window.unrealize()
@@ -761,8 +763,6 @@ class DuskyControlCenter(Adw.Application):
         self._clear_sidebar()
         self._clear_stack()
 
-        self._create_search_page()
-
         if self._state.config_error:
             self._show_error_state(self._state.config_error)
         elif not self._state.config.get("pages"):
@@ -815,6 +815,8 @@ class DuskyControlCenter(Adw.Application):
         """Recursively scan the GTK widget tree for a specific name."""
         if parent.get_name() == name:
             return parent
+        if isinstance(parent, rows.ExpanderRow):
+            parent.reveal_item(name)
         child = parent.get_first_child()
         while child is not None:
             found = self._find_widget_by_name(child, name)
@@ -908,7 +910,7 @@ class DuskyControlCenter(Adw.Application):
         """
         self._state.debounce_source_id = 0
 
-        if self._stack is None or self._search_results_group is None:
+        if self._stack is None:
             return GLib.SOURCE_REMOVE
 
         display_query = query.strip()
@@ -919,6 +921,9 @@ class DuskyControlCenter(Adw.Application):
             if self._state.last_visible_page:
                 self._stack.set_visible_child_name(self._state.last_visible_page)
             return GLib.SOURCE_REMOVE
+
+        if self._search_page is None:
+            self._create_search_page()
 
         if self._state.last_visible_page is None:
             current = self._stack.get_visible_child_name()
