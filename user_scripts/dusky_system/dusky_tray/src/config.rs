@@ -74,6 +74,14 @@ impl Appearance {
         if xdg.is_file() {
             return xdg;
         }
+        // A generic package symlink resolves to /usr/bin, so look up the user's
+        // installed defaults independently of the executable's real location.
+        if let Some(home) = std::env::var_os("HOME") {
+            let local = PathBuf::from(home).join(".local/share/dusky/dusky_tray/appearance.toml");
+            if local.is_file() {
+                return local;
+            }
+        }
         // Installed defaults live beside the binary; source-tree builds used bin/.
         if let Ok(exe) = std::env::current_exe()
             && let Some(directory) = exe.parent()
@@ -85,7 +93,8 @@ impl Appearance {
                 }
             }
         }
-        xdg
+        let packaged = PathBuf::from("/usr/share/dusky-tray/appearance.toml");
+        if packaged.is_file() { packaged } else { xdg }
     }
 
     pub fn load() -> Option<Self> {

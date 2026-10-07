@@ -28,6 +28,10 @@ pub fn ignored_apps_file() -> PathBuf {
         if p.is_file() {
             return p;
         }
+        let local = PathBuf::from(home).join(".local/share/dusky/dusky_tray/ignored_apps.toml");
+        if local.is_file() {
+            return local;
+        }
     }
     // Installed defaults live beside the binary; source-tree builds used bin/.
     if let Ok(exe) = std::env::current_exe()
@@ -40,7 +44,12 @@ pub fn ignored_apps_file() -> PathBuf {
             }
         }
     }
-    PathBuf::from("ignored_apps.toml")
+    let packaged = PathBuf::from("/usr/share/dusky-tray/ignored_apps.toml");
+    if packaged.is_file() {
+        packaged
+    } else {
+        PathBuf::from("ignored_apps.toml")
+    }
 }
 
 pub fn load_ignored_apps() -> HashSet<String> {
