@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import os
-import json
-import fcntl
-import math
-from python.engines.cpu_core import atomic_write
+lazy import pwd
+lazy import json
+lazy import fcntl
+lazy import math
+lazy from python.engines.cpu_core import atomic_write
 import time
 from pathlib import Path
-from typing import Any
+lazy from typing import Any
 from python.frontend.core_types import BaseEngine
 
 RAPL_BASE = Path("/sys/class/powercap")
@@ -117,7 +118,6 @@ def get_real_user() -> tuple[str, int, int, Path]:
     pkexec_uid = os.environ.get("PKEXEC_UID")
     if pkexec_uid:
         try:
-            import pwd
             pw = pwd.getpwuid(int(pkexec_uid))
             return pw.pw_name, pw.pw_uid, pw.pw_gid, Path(pw.pw_dir)
         except (KeyError, ValueError):
@@ -125,7 +125,6 @@ def get_real_user() -> tuple[str, int, int, Path]:
     sudo_user = os.environ.get("SUDO_USER")
     if sudo_user and sudo_user != "root":
         try:
-            import pwd
             pw = pwd.getpwnam(sudo_user)
             return pw.pw_name, pw.pw_uid, pw.pw_gid, Path(pw.pw_dir)
         except (KeyError, ImportError):
@@ -135,7 +134,6 @@ def get_real_user() -> tuple[str, int, int, Path]:
     gid = os.getgid()
     if uid != 0:
         try:
-            import pwd
             pw = pwd.getpwuid(uid)
             return pw.pw_name, pw.pw_uid, pw.pw_gid, Path(pw.pw_dir)
         except (KeyError, ImportError):
@@ -145,7 +143,6 @@ def get_real_user() -> tuple[str, int, int, Path]:
     if home_env and home_env != "/root" and Path(home_env).is_dir():
         home_path = Path(home_env)
         try:
-            import pwd
             st = home_path.stat()
             pw = pwd.getpwuid(st.st_uid)
             return pw.pw_name, pw.pw_uid, pw.pw_gid, home_path
@@ -158,7 +155,6 @@ def get_real_user() -> tuple[str, int, int, Path]:
         if len(candidates) == 1:
             u_name = candidates[0].name
             try:
-                import pwd
                 pw = pwd.getpwnam(u_name)
                 return pw.pw_name, pw.pw_uid, pw.pw_gid, candidates[0]
             except (KeyError, ImportError):
@@ -264,6 +260,11 @@ class PkgThrottleEngine(BaseEngine):
 
     def __del__(self) -> None:
         if hasattr(self, "reader") and self.reader:
+            self.reader.close()
+
+    def shutdown(self) -> None:
+        """Close telemetry resources after the frontend drains pending reads."""
+        if self.reader is not None:
             self.reader.close()
 
     def find_package_domain(self) -> Path | None:

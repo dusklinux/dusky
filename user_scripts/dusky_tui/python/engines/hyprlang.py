@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 import os
 import re
-import stat
-import tempfile
-import subprocess
-from pathlib import Path
-from typing import Any
+lazy import stat
+lazy import tempfile
+lazy import subprocess
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 

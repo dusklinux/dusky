@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 import os
-import stat
-import json
-import subprocess
-import tempfile
-import shutil
-from pathlib import Path
-from typing import Any
+lazy import stat
+lazy import json
+lazy import subprocess
+lazy import tempfile
+lazy import shutil
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 

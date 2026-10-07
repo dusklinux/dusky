@@ -1,9 +1,9 @@
 """Systemd unit-file discovery and enablement for the service TUI."""
 
 import os
-import subprocess
+lazy import subprocess
 from dataclasses import dataclass
-from typing import Any
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 

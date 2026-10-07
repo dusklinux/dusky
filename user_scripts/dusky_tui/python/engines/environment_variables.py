@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 import os
 import re
-import stat
-import shutil
-import subprocess
-import tempfile
-from pathlib import Path
-from typing import Any
+lazy import stat
+lazy import shutil
+lazy import subprocess
+lazy import tempfile
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 
@@ -80,7 +80,7 @@ class ShellEnvEngine(BaseEngine):
                     if not clean_line.strip() or clean_line.lstrip().startswith('#'):
                         continue
                         
-                    match = self._RE_ENV.match(clean_line)
+                    match = self._RE_ENV.prefixmatch(clean_line)
                     if match:
                         _, _, key, raw_val = match.groups()
                         
@@ -144,7 +144,7 @@ class ShellEnvEngine(BaseEngine):
                 out_lines.append(line)
                 continue
                 
-            match = self._RE_ENV.match(clean_line)
+            match = self._RE_ENV.prefixmatch(clean_line)
             if match:
                 ws, export_prefix, key, raw_val = match.groups()
                 export_str = export_prefix if export_prefix else ""

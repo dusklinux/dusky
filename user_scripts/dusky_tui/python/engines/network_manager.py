@@ -1,27 +1,34 @@
 import os
 import sys
 import time
-import math
-import json
+lazy import math
+lazy import json
 import re
-import secrets
-import uuid as uuid_module
-import shutil
+lazy import secrets
+lazy import uuid as uuid_module
+lazy import shutil
 import logging
-import subprocess
-import threading
-import tempfile
-import select
-import termios
-import tty
-import urllib.parse
-import concurrent.futures
-from collections import Counter
+lazy import subprocess
+lazy import threading
+lazy import tempfile
+lazy import select
+lazy import termios
+lazy import tty
+lazy import urllib.parse
+lazy import concurrent.futures
+lazy from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine, ConfigItem
+
+lazy from rich.console import Console
+lazy from rich.live import Live
+lazy from rich.text import Text
+lazy from rich.table import Table
+lazy from rich.panel import Panel
+lazy from rich.align import Align
 
 logger = logging.getLogger("dusky_network_engine")
 HOTSPOT_PROFILE = "Dusky Hotspot"
@@ -556,12 +563,6 @@ def _read_qr_keypress() -> str | None:
 
 def show_wifi_qr_interactive(ssid: str, password: str = "", security: str = "WPA", hidden: bool = False, interactive: bool = True) -> None:
     """Renders the interactive QR code viewer directly using Rich."""
-    from rich.console import Console
-    from rich.live import Live
-    from rich.text import Text
-    from rich.table import Table
-    from rich.panel import Panel
-    from rich.align import Align
 
     console = Console()
     payload = build_wifi_payload(ssid, password, security, hidden)
@@ -3014,7 +3015,7 @@ class NetworkManagerEngine(BaseEngine):
 
     @staticmethod
     def _is_uuid(s: str) -> bool:
-        return bool(re.match(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', s, re.IGNORECASE))
+        return bool(re.prefixmatch(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', s, re.IGNORECASE))
 
     @staticmethod
     def _signal_bar(signal: int) -> str:

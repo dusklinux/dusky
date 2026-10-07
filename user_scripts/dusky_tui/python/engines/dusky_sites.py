@@ -7,12 +7,12 @@ templates in ~/.config/dusky_sites/ and ~/.config/dusky/settings/dusky_sites/con
 """
 
 import os
-import json
+lazy import json
 import re
-import tempfile
-import threading
-from pathlib import Path
-from typing import Any
+lazy import tempfile
+lazy import threading
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 
@@ -49,7 +49,7 @@ class DuskySitesEngine(BaseEngine):
     def target_path(self) -> str:
         return str(self.config_path)
 
-    def _read_config_json(self) -> dict[str, Any]:
+    def _read_config_json(self, *, strict: bool = False) -> dict[str, Any]:
         if not self.config_path.exists():
             return {
                 "colorsPath": "~/.config/matugen/generated/dusky_sites.css",
@@ -60,9 +60,13 @@ class DuskySitesEngine(BaseEngine):
         try:
             content = self.config_path.read_text(encoding="utf-8")
             if content.strip():
-                return json.loads(content)
-        except Exception:
-            pass
+                data = json.loads(content)
+                if not isinstance(data, dict):
+                    raise ValueError("Target JSON must contain an object.")
+                return data
+        except (OSError, ValueError):
+            if strict:
+                raise
         return {}
 
     def _write_config_json(self, data: dict[str, Any]) -> bool:
@@ -70,13 +74,11 @@ class DuskySitesEngine(BaseEngine):
             parent_dir = self.config_path.parent
             parent_dir.mkdir(parents=True, exist_ok=True)
 
-            tmp_file = tempfile.NamedTemporaryFile("w", dir=parent_dir, delete=False, encoding="utf-8")
-            tmp_path = Path(tmp_file.name)
-
-            json.dump(data, tmp_file, indent=4, ensure_ascii=False)
-            tmp_file.flush()
-            os.fsync(tmp_file.fileno())
-            tmp_file.close()
+            with tempfile.NamedTemporaryFile("w", dir=parent_dir, delete=False, encoding="utf-8") as tmp_file:
+                tmp_path = Path(tmp_file.name)
+                json.dump(data, tmp_file, indent=4, ensure_ascii=False)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
 
             os.replace(tmp_path, self.config_path)
             return True
@@ -153,7 +155,10 @@ class DuskySitesEngine(BaseEngine):
             return True, "No changes pending.", ""
 
         with self._lock:
-            data = self._read_config_json()
+            try:
+                data = self._read_config_json(strict=True)
+            except (OSError, ValueError) as exc:
+                return False, f"Refusing to write: Cannot read target JSON ({exc}).", ""
             disabled_list = [str(s).strip().lower() for s in data.get("disabledSites", []) if s]
             disabled_set = set(disabled_list)
 

@@ -9,12 +9,13 @@ relative spatial positioning geometry, hardware enrichment, and workspace planni
 ensuring exact integer logical pixel coordinates and zero compositor scaling warnings.
 """
 
-import math
-import json
+lazy import math
+lazy from math.integer import gcd
+lazy import json
 import re
-import subprocess
-from pathlib import Path
-from typing import Any
+lazy import subprocess
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.engines.lua import HyprlandLuaEngine
 
@@ -74,7 +75,7 @@ def clean_scale(width: int, height: int, requested: float) -> float:
     """
     if width <= 0 or height <= 0 or requested <= 0:
         return 1.0
-    divisor = math.gcd(width * HYPRLAND_SCALE_STEPS, height * HYPRLAND_SCALE_STEPS)
+    divisor = gcd(width * HYPRLAND_SCALE_STEPS, height * HYPRLAND_SCALE_STEPS)
     units = int(round(requested * HYPRLAND_SCALE_STEPS))
     if units > divisor:
         units = divisor

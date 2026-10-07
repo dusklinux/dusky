@@ -150,6 +150,34 @@ class CollectorTests(unittest.IsolatedAsyncioTestCase):
 
 
 class LifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_lazy_list_creation_is_retryable(self):
+        key = ("fixture", "")
+        app = DuskyTUI(engine_pool={key: Engine()}, default_engine_key=key,
+                       schema={0: [], 1: []}, tabs=["First", "Hidden"],
+                       enable_user_presets=False)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.assertFalse(app.query("#list-1"))
+            with patch.object(app, "_option_list_widgets", side_effect=RuntimeError("List fixture")):
+                with self.assertRaisesRegex(RuntimeError, "List fixture"):
+                    await app._ensure_option_list(1)
+            self.assertFalse(app._option_mount_tasks)
+            host = app.query_one("#list-wrapper-1")
+            mount = host.mount
+            async def failed_mount(*nodes):
+                await mount(*nodes)
+                raise RuntimeError("Partial mount fixture")
+            with patch.object(host, "mount", side_effect=failed_mount):
+                with self.assertRaisesRegex(RuntimeError, "Partial mount fixture"):
+                    await app._ensure_option_list(1)
+            self.assertFalse(host.children)
+            self.assertFalse(app._option_mount_tasks)
+            await asyncio.gather(app._ensure_option_list(1), app._ensure_option_list(1))
+            app.action_switch_tab(1)
+            await pilot.pause()
+            self.assertEqual(len(app.query("#list-1")), 1)
+            self.assertFalse(app._option_mount_tasks)
+
     async def activated(self, app, pilot, tab):
         async with asyncio.timeout(15):
             while app._current_tab_index() != tab:

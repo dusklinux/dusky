@@ -6,22 +6,24 @@ rendering a clean, unbordered live speed gauge, sparkline graph, and metrics.
 """
 
 import sys
+lazy import urllib.request
+lazy import json
 import os
-import math
+lazy import math
 import time
-import subprocess
-import shutil
-import select
-import signal
-import termios
-import tty
-from pathlib import Path
+lazy import subprocess
+lazy import shutil
+lazy import select
+lazy import signal
+lazy import termios
+lazy import tty
+lazy from pathlib import Path
 
 from rich.console import Console
-from rich.live import Live
-from rich.text import Text
-from rich.table import Table
-from rich.align import Align
+lazy from rich.live import Live
+lazy from rich.text import Text
+lazy from rich.table import Table
+lazy from rich.align import Align
 
 console = Console()
 
@@ -232,7 +234,6 @@ def run_phase(direction: str, script_path: str, live: Live) -> tuple[float | Non
     return final_val, False
 
 def run_phase_native(direction: str, live: Live) -> tuple[float | None, bool]:
-    import urllib.request
     label = "DOWNLOAD" if direction == "down" else "UPLOAD"
     color = "cyan" if direction == "down" else "magenta"
 
@@ -483,7 +484,6 @@ def main():
     measured = {"down": down_res, "up": up_res}
     status = "cancelled" if was_cancelled else "complete" if all(measured.get(part) is not None for part in expected) else "failed"
     result_path.parent.mkdir(parents=True, exist_ok=True)
-    import json
     replacement = result_path.with_name(result_path.name + ".tmp")
     replacement.write_text(json.dumps({"down": down_res, "up": up_res, "status": status, "time": time.time()}), encoding="utf-8")
     replacement.replace(result_path)

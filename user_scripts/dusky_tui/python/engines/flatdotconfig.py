@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import os
-import stat
-import shutil
-import tempfile
-from pathlib import Path
-from typing import Any
+lazy import stat
+lazy import shutil
+lazy import tempfile
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 

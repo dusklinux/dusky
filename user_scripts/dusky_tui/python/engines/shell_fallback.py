@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import os
 import re
-import shutil
-import tempfile
-from pathlib import Path
-from typing import Any
+lazy import shutil
+lazy import tempfile
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 
@@ -42,7 +42,7 @@ class ShellFallbackEngine(BaseEngine):
                 self.file_mtime_ns = os.fstat(f.fileno()).st_mtime_ns
                 for line in f:
                     clean_line = line.rstrip('\r\n')
-                    match = self._RE_FALLBACK.match(clean_line)
+                    match = self._RE_FALLBACK.prefixmatch(clean_line)
                     if match:
                         _, key, val, _ = match.groups()
                         self.cache[f"DEFAULT/{key}"] = val
@@ -76,7 +76,7 @@ class ShellFallbackEngine(BaseEngine):
 
         for line in lines:
             clean_line = line.rstrip('\r\n')
-            match = self._RE_FALLBACK.match(clean_line)
+            match = self._RE_FALLBACK.prefixmatch(clean_line)
             if match:
                 ws, key, old_val, comment = match.groups()
                 if key in changes_dict:

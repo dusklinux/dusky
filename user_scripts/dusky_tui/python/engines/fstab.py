@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Edit one fstab record while preserving other records and unexposed options."""
 
-import fcntl
+lazy import fcntl
 import logging
 import os
-import pwd
+lazy import pwd
 import re
-import stat
-import tempfile
+lazy import stat
+lazy import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 

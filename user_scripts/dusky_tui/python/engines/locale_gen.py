@@ -13,11 +13,11 @@ Features:
 """
 import os
 import re
-import tempfile
-import threading
-import subprocess
-from pathlib import Path
-from typing import Any
+lazy import tempfile
+lazy import threading
+lazy import subprocess
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 

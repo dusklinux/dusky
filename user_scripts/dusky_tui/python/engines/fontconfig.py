@@ -1,18 +1,18 @@
-import ast
+lazy import ast
 from contextlib import ExitStack, contextmanager
-import fcntl
-import xml.etree.ElementTree as ET
-from xml.dom import minidom
+lazy import fcntl
+lazy import xml.etree.ElementTree as ET
+lazy from xml.dom import minidom
 from pathlib import Path
-from typing import Any
-import subprocess
-import shutil
-import math
+lazy from typing import Any
+lazy import subprocess
+lazy import shutil
+lazy import math
 import os
 import re
 import sys
-import threading
-import tempfile
+lazy import threading
+lazy import tempfile
 import time
 
 # Make standalone execution (python3 python/engines/fontconfig.py) resolve

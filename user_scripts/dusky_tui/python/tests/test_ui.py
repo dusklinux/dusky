@@ -321,39 +321,47 @@ class UITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app._current_tab_index(), 3)
             self.assertEqual(app.current_option_list.option_count, 1)
 
-    async def test_ready_tabs_are_warmed_before_switch(self):
+    async def test_hidden_lists_mount_once_on_first_switch(self):
         app = app_for({0: [item('first')], 1: [item('second')], 2: [item('third')]},
                       engine=Engine({'first': '1', 'second': '2', 'third': '3'}))
         async with app.run_test() as pilot:
             await self.boot(app, pilot)
-            for _ in range(100):
-                if {1, 2}.issubset(app._populated_tabs):
-                    break
-                await pilot.pause(0.01)
-            self.assertTrue({1, 2}.issubset(app._populated_tabs))
+            self.assertFalse(app.query('#list-1'))
+            self.assertFalse(app.query('#list-2'))
             self.assertEqual(app.schema[1][0].value, 2)
             app._refresh_all_ui()
+            self.assertFalse(app.query('#list-1'))
+            await asyncio.gather(app._ensure_option_list(1), app._ensure_option_list(1))
+            self.assertEqual(len(app.query('#list-1')), 1)
+            app.action_switch_tab(1)
+            await pilot.pause()
+            self.assertEqual(app.current_option_list.option_count, 1)
+            app.action_switch_tab(0)
+            await pilot.pause()
+            app._refresh_all_ui()
             for _ in range(100):
-                if not ({1, 2} & app._tab_dirty):
+                if 1 not in app._tab_dirty:
                     break
                 await pilot.pause(0.01)
-            self.assertFalse({1, 2} & app._tab_dirty)
+            self.assertNotIn(1, app._tab_dirty)
+            self.assertFalse(app.query('#list-2'))
             with patch.object(app, '_populate_option_list', wraps=app._populate_option_list) as populate:
                 app.action_switch_tab(1)
                 await pilot.pause()
                 self.assertFalse(any(call.args[0] == 1 for call in populate.call_args_list))
 
-    async def test_discovered_tab_is_warmed_after_deferred_load(self):
+    async def test_discovered_tab_renders_on_first_visit(self):
         app = app_for({0: [item('first')], 1: []})
         async with app.run_test() as pilot:
             await self.boot(app, pilot)
             self.assertNotIn(1, app._populated_tabs)
             app._apply_deferred_tabs([1], {app.default_engine_key: {'second': '4'}},
                                      {1: [item('second')]})
-            for _ in range(100):
-                if 1 in app._populated_tabs:
-                    break
-                await pilot.pause(0.01)
+            self.assertNotIn(1, app._populated_tabs)
+            self.assertFalse(app.query('#list-1'))
+            self.assertEqual(app.schema[1][0].value, 4)
+            app.action_switch_tab(1)
+            await pilot.pause()
             self.assertIn(1, app._populated_tabs)
             self.assertEqual(app.query_one('#list-1', ui.ConfigOptionList).option_count, 1)
             self.assertEqual(app.schema[1][0].value, 4)
@@ -374,10 +382,10 @@ class UITests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await self.boot(app, pilot)
             for _ in range(100):
-                if 1 in app._populated_tabs:
+                if app.schema[1] and app.schema[1][0]._initial_loaded:
                     break
                 await pilot.pause(0.01)
-            self.assertIn(1, app._populated_tabs)
+            self.assertFalse(app.query('#list-1'))
             self.assertEqual(app.schema[1][0].value, 4)
             self.assertEqual(engine.reads, 1)
 
@@ -405,10 +413,10 @@ class UITests(unittest.IsolatedAsyncioTestCase):
             finally:
                 release.set()
             for _ in range(100):
-                if 1 in app._populated_tabs:
+                if app.schema[1] and app.schema[1][0]._initial_loaded:
                     break
                 await pilot.pause(0.01)
-            self.assertIn(1, app._populated_tabs)
+            self.assertFalse(app.query('#list-1'))
             self.assertEqual(app.schema[1][0].value, 5)
             self.assertEqual(engine.reads, 2)
 

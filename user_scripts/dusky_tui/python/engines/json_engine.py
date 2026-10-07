@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 import os
 import re
-import json
-import tempfile
-import threading
-from pathlib import Path
-from typing import Any
+lazy import json
+lazy import tempfile
+lazy import threading
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
+
+_RE_JSONC_COMMENTS = re.compile(r'("(?:\\.|[^"\\])*")|//[^\r\n]*|/\*.*?\*/', re.DOTALL)
+_RE_JSONC_TRAILING_COMMAS = re.compile(r'("(?:\\.|[^"\\])*")|,\s*(?=[}\]])')
 
 class JsonEngine(BaseEngine):
     """
@@ -18,7 +21,7 @@ class JsonEngine(BaseEngine):
     - Recursive nested dictionary flattening for O(1) TUI scope & key lookups.
     - Deep nested dictionary insertion & mutation for scoped keys (e.g. scope='display', key='border').
     - Atomic crash-proof file writes via temporary file replacement + fsync.
-    - Thread-safe operations with re-entrant locking.
+    - Thread-safe loading and writes.
     """
 
     def __init__(self, config_path: str = ""):
@@ -34,14 +37,10 @@ class JsonEngine(BaseEngine):
     @staticmethod
     def _strip_json_comments(text: str) -> str:
         """Strips single-line // comments, block /* */ comments, and trailing commas from JSON/JSONC."""
-        pattern = r"(\"(?:\\\\.|[^\"\\\\])*\")|//.*?$|/\*.*?\*/"
-        def replace(match):
-            if match.group(1):
-                return match.group(1) # Preserve string literals
-            return ""
-        clean = re.sub(pattern, replace, text, flags=re.DOTALL | re.MULTILINE)
-        clean = re.sub(r",\s*([\]}])", r"\1", clean)
-        return clean
+        # Match strings before comments or commas so their contents stay intact.
+        # Whitespace prevents a comment from joining otherwise invalid tokens.
+        clean = _RE_JSONC_COMMENTS.sub(lambda match: match.group(1) or " ", text)
+        return _RE_JSONC_TRAILING_COMMAS.sub(lambda match: match.group(1) or "", clean)
 
     def load_state(self) -> dict[str, Any]:
         with self._lock:
@@ -67,10 +66,10 @@ class JsonEngine(BaseEngine):
                     return self.cache
 
                 # Flatten nested state into scope.key, scope/key, and unique key entries
-                def _flatten(d: dict, prefix: str = ""):
+                def _flatten(d: dict, prefix: str = "", slash_prefix: str = ""):
                     for k, v in d.items():
                         full_key = f"{prefix}.{k}" if prefix else k
-                        slash_key = f"{prefix}/{k}" if prefix else k
+                        slash_key = f"{slash_prefix}/{k}" if slash_prefix else k
 
                         if full_key not in self.cache:
                             self.cache[full_key] = v
@@ -82,7 +81,7 @@ class JsonEngine(BaseEngine):
                             self.cache[k] = v
 
                         if isinstance(v, dict):
-                            _flatten(v, full_key)
+                            _flatten(v, full_key, slash_key)
 
                 _flatten(data)
 
@@ -100,22 +99,23 @@ class JsonEngine(BaseEngine):
 
         with self._lock:
             data = {}
-            if self.config_path.exists():
-                try:
-                    with open(self.config_path, "r", encoding="utf-8") as f:
-                        self.file_mtime_ns = os.fstat(f.fileno()).st_mtime_ns
-                        content = f.read()
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    self.file_mtime_ns = os.fstat(f.fileno()).st_mtime_ns
+                    content = f.read()
 
-                    if content.strip():
-                        try:
-                            data = json.loads(content)
-                        except json.JSONDecodeError:
-                            data = json.loads(self._strip_json_comments(content))
-                except Exception:
-                    data = {}
+                if content.strip():
+                    try:
+                        data = json.loads(content)
+                    except json.JSONDecodeError:
+                        data = json.loads(self._strip_json_comments(content))
+            except FileNotFoundError:
+                pass
+            except (OSError, ValueError) as exc:
+                return False, f"Refusing to write: Cannot read target JSON/JSONC ({exc}).", ""
 
             if not isinstance(data, dict):
-                data = {}
+                return False, "Refusing to write: Target JSON must contain an object.", ""
 
             for key, scope, val, itype in changes:
                 if val is None or val == "nil":
@@ -127,9 +127,15 @@ class JsonEngine(BaseEngine):
                         parsed_val = bool(val)
                 elif itype in ("int", "float"):
                     try:
-                        parsed_val = float(val) if itype == "float" else int(float(val))
-                    except (ValueError, TypeError):
-                        continue
+                        if itype == "float":
+                            parsed_val = float(val)
+                        else:
+                            try:
+                                parsed_val = int(val)
+                            except (ValueError, TypeError):
+                                parsed_val = int(float(val))
+                    except (ValueError, TypeError, OverflowError) as exc:
+                        return False, f"Invalid {itype} value for {scope}.{key}: {exc}", ""
                 elif isinstance(val, str) and ((val.startswith("[") and val.endswith("]")) or (val.startswith("{") and val.endswith("}"))):
                     try:
                         parsed_val = json.loads(val)
@@ -151,9 +157,9 @@ class JsonEngine(BaseEngine):
                 # Traverse/instantiate nested dictionary hierarchy
                 curr = data
                 for part in path_parts[:-1]:
-                    if part not in curr or not isinstance(curr[part], dict):
-                        curr[part] = {}
-                    curr = curr[part]
+                    curr = curr.setdefault(part, {})
+                    if not isinstance(curr, dict):
+                        return False, f"Cannot write {scope}.{key}: {part!r} is not a JSON object.", ""
 
                 target_prop = path_parts[-1]
                 if parsed_val is None:
@@ -166,13 +172,11 @@ class JsonEngine(BaseEngine):
                 parent_dir = self.config_path.parent
                 parent_dir.mkdir(parents=True, exist_ok=True)
 
-                tmp_file = tempfile.NamedTemporaryFile("w", dir=parent_dir, delete=False, encoding="utf-8")
-                tmp_path = Path(tmp_file.name)
-
-                json.dump(data, tmp_file, indent=4, ensure_ascii=False)
-                tmp_file.flush()
-                os.fsync(tmp_file.fileno())
-                tmp_file.close()
+                with tempfile.NamedTemporaryFile("w", dir=parent_dir, delete=False, encoding="utf-8") as tmp_file:
+                    tmp_path = Path(tmp_file.name)
+                    json.dump(data, tmp_file, indent=4, ensure_ascii=False)
+                    tmp_file.flush()
+                    os.fsync(tmp_file.fileno())
 
                 if self.config_path.exists():
                     try:

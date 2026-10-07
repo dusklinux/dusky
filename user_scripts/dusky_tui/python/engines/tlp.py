@@ -2,10 +2,10 @@
 
 import os
 import re
-import stat
-import subprocess
-import tempfile
-from pathlib import Path
+lazy import stat
+lazy import subprocess
+lazy import tempfile
+lazy from pathlib import Path
 
 from python.frontend.core_types import BaseEngine
 

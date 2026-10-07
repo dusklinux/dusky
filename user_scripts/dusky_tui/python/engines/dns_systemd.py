@@ -6,12 +6,12 @@ Features: True POSIX Atomicity, Transactional Rollbacks, and Pre-flight Socket C
 
 import os
 import re
-import shutil
-import stat
-import subprocess
-import tempfile
-from pathlib import Path
-from typing import Any
+lazy import shutil
+lazy import stat
+lazy import subprocess
+lazy import tempfile
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 

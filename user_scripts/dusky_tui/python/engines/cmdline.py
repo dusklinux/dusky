@@ -1,15 +1,15 @@
 import os
 import re
-import stat
-import subprocess
-import tempfile
-from pathlib import Path
-from typing import Any
+lazy import stat
+lazy import subprocess
+lazy import tempfile
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 
 # Sentinel object to safely detect omitted defaults in overridden dict methods
-_sentinel = object()
+_sentinel = sentinel("_sentinel")
 
 class BridgedStateDict(dict):
     """

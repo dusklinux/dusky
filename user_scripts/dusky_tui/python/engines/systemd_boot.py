@@ -5,17 +5,17 @@ Implements dynamic boot entry discovery, bidirectional clean kernel name transla
 multi-entry metadata management and direct renaming, atomic loader/entry updates,
 and full systemd-boot EFI maintenance capabilities.
 """
-import json
+lazy import json
 import os
 import re
-import stat
-import subprocess
-import tempfile
+lazy import stat
+lazy import subprocess
+lazy import tempfile
 from pathlib import Path
 from typing import Any, Self
 
 from python.frontend.core_types import BaseEngine
-from python.engines.cmdline import BridgedStateDict
+lazy from python.engines.cmdline import BridgedStateDict
 
 # PEP 695 Bleeding-Edge Type Aliases
 type KernelMeta = dict[str, Any]
@@ -61,7 +61,7 @@ def clean_kernel_name(raw: str) -> str:
         if re.search(r"fallback|recovery", inner, flags=re.IGNORECASE):
             is_fallback = True
             s = re.sub(r"\s*\([^)]*\)", "", s).strip()
-        elif not re.match(r"^(?:linux|default|x86_64|amd64)$", inner, flags=re.IGNORECASE):
+        elif not re.prefixmatch(r"^(?:linux|default|x86_64|amd64)$", inner, flags=re.IGNORECASE):
             s = inner
         else:
             s = re.sub(r"\s*\([^)]*\)", "", s).strip()
@@ -91,7 +91,7 @@ def clean_kernel_name(raw: str) -> str:
     match sl:
         case "" | "arch" | "arch1" | "archlinux" | "linux" | "default":
             title = "Arch Linux"
-        case _ if re.match(r"^arch\d*(?:-\d+)?$", sl):
+        case _ if re.prefixmatch(r"^arch\d*(?:-\d+)?$", sl):
             title = "Arch Linux"
         case _ if sl.startswith(("dusky-", "dusky_")):
             sub = sl[6:].replace("-", " ").replace("_", " ").strip().title()
@@ -286,7 +286,7 @@ def discover_all_kernels_and_entries() -> EntryMap:
         is_fallback = bool(re.search(r"fallback|recovery", f"{title_raw} {entry_file} {kver}", flags=re.IGNORECASE))
 
         # Derive clean display name
-        if title_raw and not re.match(r"^(?:arch linux|linux)$", title_raw.strip(), flags=re.IGNORECASE):
+        if title_raw and not re.prefixmatch(r"^(?:arch linux|linux)$", title_raw.strip(), flags=re.IGNORECASE):
             clean = clean_kernel_name(title_raw)
         else:
             clean = clean_kernel_name(entry_file or kver or title_raw)
@@ -703,7 +703,7 @@ class SystemdBootEngine(BaseEngine):
                     if not line_clean or line_clean.startswith("#"):
                         continue
 
-                    if match := re.match(r"^([ \t]*)options([ \t]+)(.*)$", line):
+                    if match := re.prefixmatch(r"^([ \t]*)options([ \t]+)(.*)$", line):
                         tokens = re.split(r'((?:[^\s"\']|"[^"]*"|\'[^\']*\')+)', match.group(3))
                         args = [t for t in tokens if t.strip()]
                         counts: dict[str, int] = {}
@@ -924,7 +924,7 @@ class SystemdBootEngine(BaseEngine):
                         continue
 
             # Handle options line (DEFAULT scope)
-            if match := re.match(r"^([ \t]*)options([ \t]+)(.*)$", line):
+            if match := re.prefixmatch(r"^([ \t]*)options([ \t]+)(.*)$", line):
                 options_found = True
                 leading_space, spacing, options_val = match.groups()
                 tokens = re.split(r'((?:[^\s"\']|"[^"]*"|\'[^\']*\')+)', options_val)

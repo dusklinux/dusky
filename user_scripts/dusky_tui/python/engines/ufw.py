@@ -10,22 +10,22 @@ from __future__ import annotations
 
 import os
 import re
-import json
-import socket
+lazy import json
+lazy import socket
 import sys
-import ipaddress
-import shlex
-import stat
-from datetime import datetime, timezone
-from functools import wraps
+lazy import ipaddress
+lazy import shlex
+lazy import stat
+lazy from datetime import datetime, timezone
+lazy from functools import wraps
 import logging
-import tempfile
-import threading
-import subprocess
+lazy import tempfile
+lazy import threading
+lazy import subprocess
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
-from concurrent.futures import ThreadPoolExecutor
+lazy from concurrent.futures import ThreadPoolExecutor
 
 from python.frontend.core_types import BaseEngine
 
@@ -343,7 +343,7 @@ class UfwEngine(BaseEngine):
 
         for line in res.stdout.splitlines():
             line_str = line.strip()
-            num_match = re.match(r"^\[\s*(\d+)\]\s+(.*)$", line_str)
+            num_match = re.prefixmatch(r"^\[\s*(\d+)\]\s+(.*)$", line_str)
             if not num_match:
                 continue
 
@@ -711,7 +711,7 @@ class UfwEngine(BaseEngine):
         # builtin NAT jumps would accumulate. Hooks install one jump and remove
         # owned jumps/chains on stop, including after disabling the firewall.
         original = UFW_AFTER_INIT.read_text(encoding="utf-8") if UFW_AFTER_INIT.exists() else "#!/bin/sh\n"
-        if not re.match(r"^#![^\n]*(?:/sh|/bash|env (?:sh|bash))(?:\s|$)", original):
+        if not re.prefixmatch(r"^#![^\n]*(?:/sh|/bash|env (?:sh|bash))(?:\s|$)", original):
             raise ValueError("after.init must be a sh/bash script to integrate Dusky hooks")
         begin, end = "# BEGIN DUSKY HOOKS", "# END DUSKY HOOKS"
         original = re.sub(rf"^{begin}\n.*?^{end}\n?", "", original, flags=re.MULTILINE | re.DOTALL)
@@ -865,7 +865,7 @@ class UfwEngine(BaseEngine):
                 current_proto = s.rstrip(":")
                 continue
 
-            match_entry = re.match(r"^(\d+)\s+([^\s]+)\s+\(([^)]+)\)$", s)
+            match_entry = re.prefixmatch(r"^(\d+)\s+([^\s]+)\s+\(([^)]+)\)$", s)
             if match_entry:
                 if current_item:
                     items.append(current_item)

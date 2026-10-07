@@ -543,7 +543,7 @@ class FileEngineTests(unittest.TestCase):
         for module, dependencies in expected.items():
             with self.subTest(module=module):
                 result = subprocess.run([sys.executable, "-c", code, module, *dependencies],
-                                        capture_output=True, text=True, encoding="utf-8", timeout=10)
+                                        cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True, encoding="utf-8", timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_failed_json_commit_closes_temporary_file_and_keeps_original(self):

@@ -10,16 +10,17 @@ Target: Any standard TOML file (e.g. ~/.config/dusky/settings/dusky_keys/config.
 
 import os
 import re
-import json
-import tempfile
-import threading
-import tomllib
-import datetime
-from pathlib import Path
-from typing import Any
+lazy import json
+lazy import tempfile
+lazy import threading
+lazy import tomllib
+lazy import datetime
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 
+_RE_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
 class TomlEngine(BaseEngine):
     """
@@ -63,10 +64,10 @@ class TomlEngine(BaseEngine):
                     return self.cache
 
                 # Flatten nested TOML data into scope.key, scope/key, and bare key lookups
-                def _flatten(d: dict[str, Any], prefix: str = ""):
+                def _flatten(d: dict[str, Any], prefix: str = "", slash_prefix: str = ""):
                     for k, v in d.items():
                         full_key = f"{prefix}.{k}" if prefix else k
-                        slash_key = f"{prefix}/{k}" if prefix else k
+                        slash_key = f"{slash_prefix}/{k}" if slash_prefix else k
 
                         # Cache all permutation formats for robust UI binding
                         if full_key not in self.cache:
@@ -77,11 +78,11 @@ class TomlEngine(BaseEngine):
                             self.cache[k] = v
 
                         if isinstance(v, dict):
-                            _flatten(v, full_key)
+                            _flatten(v, full_key, slash_key)
 
                 _flatten(data)
 
-            except OSError as e:
+            except (OSError, UnicodeError) as e:
                 print(f"[TomlEngine] Disk I/O error reading ({self.config_path.name}): {e}")
             except tomllib.TOMLDecodeError as e:
                 print(f"[TomlEngine] TOML syntax error in ({self.config_path.name}): {e}")
@@ -97,16 +98,15 @@ class TomlEngine(BaseEngine):
 
         with self._lock:
             data: dict[str, Any] = {}
-            if self.config_path.exists():
-                try:
-                    with open(self.config_path, "rb") as f:
-                        data = tomllib.load(f)
-                except tomllib.TOMLDecodeError as e:
-                    # STRICT ANTI-CLOBBER: Never nuke an existing file just because it has a typo.
-                    return False, f"Refusing to write: Target file has a syntax error ({e}).", ""
-                except OSError:
-                    # Only initialize a virgin dictionary if the file physically cannot be read/found
-                    data = {}
+            try:
+                with open(self.config_path, "rb") as f:
+                    data = tomllib.load(f)
+            except FileNotFoundError:
+                pass
+            except tomllib.TOMLDecodeError as e:
+                return False, f"Refusing to write: Target file has a syntax error ({e}).", ""
+            except (OSError, UnicodeError) as e:
+                return False, f"Refusing to write: Cannot read target TOML ({e}).", ""
 
             if not isinstance(data, dict):
                 data = {}
@@ -120,9 +120,15 @@ class TomlEngine(BaseEngine):
                         parsed_val = val.lower() in {"true", "1", "yes", "on", "t", "y"} if isinstance(val, str) else bool(val)
                     case _ if itype in {"int", "float"}:
                         try:
-                            parsed_val = float(val) if itype == "float" else int(float(val))
-                        except (ValueError, TypeError):
-                            continue
+                            if itype == "float":
+                                parsed_val = float(val)
+                            else:
+                                try:
+                                    parsed_val = int(val)
+                                except (ValueError, TypeError):
+                                    parsed_val = int(float(val))
+                        except (ValueError, TypeError, OverflowError) as exc:
+                            return False, f"Invalid {itype} value for {scope}.{key}: {exc}", ""
                     case _:
                         parsed_val = str(val)
 
@@ -137,6 +143,8 @@ class TomlEngine(BaseEngine):
                 curr = data
                 for part in path_parts[:-1]:
                     curr = curr.setdefault(part, {})
+                    if not isinstance(curr, dict):
+                        return False, f"Cannot write {scope}.{key}: {part!r} is not a TOML table.", ""
 
                 target_prop = path_parts[-1]
                 if parsed_val is None:
@@ -183,7 +191,7 @@ class TomlEngine(BaseEngine):
                 # Refresh nanosecond precision internal state immediately
                 self.file_mtime_ns = self.config_path.stat().st_mtime_ns
 
-            except OSError as e:
+            except (OSError, UnicodeError) as e:
                 if 'tmp_path' in locals() and tmp_path.exists():
                     tmp_path.unlink(missing_ok=True)
                 return False, f"Atomic commit failed: {e}", ""
@@ -196,8 +204,8 @@ class TomlEngine(BaseEngine):
         Dynamically wraps keys in quotes if they contain spaces or special characters,
         as mandated by the TOML v1.0.0 specification for bare keys.
         """
-        if not key or not re.match(r"^[A-Za-z0-9_-]+$", key):
-            return json.dumps(key)
+        if not _RE_BARE_KEY.fullmatch(key):
+            return json.dumps(key, ensure_ascii=False).replace("\x7f", "\\u007f")
         return key
 
     @staticmethod
@@ -225,7 +233,7 @@ class TomlEngine(BaseEngine):
             # intermediate tables (only subtables, no direct keys) are
             # implied by their children (e.g. [runtime.wine] implies
             # [runtime]) and an empty [runtime] header would be redundant.
-            if scalars:
+            if scalars or not tables:
                 lines.append(f"[{header}]")
 
         # Print inline key-value pairs
@@ -259,7 +267,7 @@ class TomlEngine(BaseEngine):
                 return v.isoformat()
             case str():
                 # Exploit JSON's C-level serializer for perfect unicode and control-character escaping
-                return json.dumps(v) 
+                return json.dumps(v, ensure_ascii=False).replace("\x7f", "\\u007f")
             case list() | tuple():
                 items = [TomlEngine._format_val(x) for x in v]
                 return f"[{', '.join(items)}]"
@@ -268,4 +276,4 @@ class TomlEngine(BaseEngine):
                 items = [f"{TomlEngine._quote_key(k)} = {TomlEngine._format_val(val)}" for k, val in v.items()]
                 return f"{{{', '.join(items)}}}"
             case _:
-                return json.dumps(str(v))
+                return json.dumps(str(v), ensure_ascii=False).replace("\x7f", "\\u007f")

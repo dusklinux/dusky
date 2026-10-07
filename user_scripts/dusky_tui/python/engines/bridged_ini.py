@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from typing import Any
+lazy from typing import Any
 from python.engines.ini import IniConfigEngine
 
 class BridgedIniEngine(IniConfigEngine):
@@ -31,12 +31,12 @@ class BridgedIniEngine(IniConfigEngine):
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 for line in f:
-                    sec_match = self._RE_SECTION.match(line)
+                    sec_match = self._RE_SECTION.prefixmatch(line)
                     if sec_match:
                         current_scope = sec_match.group(1).strip()
                         continue
                         
-                    match = self._RE_KEY.match(line.rstrip('\n'))
+                    match = self._RE_KEY.prefixmatch(line.rstrip('\n'))
                     if match:
                         ws1, cmt, ws2, key, assign_op, val = match.groups()
                         full_key = f"{current_scope}/{key}"

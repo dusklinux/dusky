@@ -15,14 +15,14 @@ Inherits from TomlEngine, adding:
 ===============================================================================
 """
 
-import math
+lazy import math
 import os
 import re
-import socket
-import shutil
-import subprocess
-from pathlib import Path
-from typing import Any
+lazy import socket
+lazy import shutil
+lazy import subprocess
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.engines.toml import TomlEngine
 

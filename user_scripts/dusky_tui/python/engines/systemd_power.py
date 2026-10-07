@@ -17,11 +17,11 @@ Features:
 
 import os
 import re
-import stat
-import subprocess
-import tempfile
-from pathlib import Path
-from typing import Any
+lazy import stat
+lazy import subprocess
+lazy import tempfile
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.engines.bridged_ini import BridgedIniEngine
 
@@ -88,12 +88,12 @@ class SystemdPowerEngine(BridgedIniEngine):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 for line in f:
-                    sec_match = self._RE_SECTION.match(line)
+                    sec_match = self._RE_SECTION.prefixmatch(line)
                     if sec_match:
                         current_scope = sec_match.group(1).strip()
                         continue
 
-                    match = self._RE_KEY.match(line.rstrip("\n"))
+                    match = self._RE_KEY.prefixmatch(line.rstrip("\n"))
                     if match:
                         ws1, cmt, ws2, key, assign_op, val = match.groups()
                         full_key = f"{current_scope}/{key}"

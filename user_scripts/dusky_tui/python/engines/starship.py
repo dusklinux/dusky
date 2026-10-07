@@ -22,13 +22,13 @@ following the same pattern as the Waybar engine.
 ===============================================================================
 """
 
-import hashlib
-import json
+lazy import hashlib
+lazy import json
 import os
 import re
-import tempfile
-from pathlib import Path
-from typing import Any
+lazy import tempfile
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 

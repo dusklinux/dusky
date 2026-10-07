@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 import os
-import json
+lazy import json
 import time
 import re
-import asyncio
-import subprocess
-import fcntl
-import signal
-import shutil
-from pathlib import Path
-from typing import Any
+lazy import asyncio
+lazy import subprocess
+lazy import fcntl
+lazy import signal
+lazy import shutil
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 

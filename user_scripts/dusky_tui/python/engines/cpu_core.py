@@ -4,14 +4,14 @@ Dusky CPU Core Engine
 High-Performance Core Hotplug and Systemd CPU Affinity Manager for Arch Linux (Kernel 7.3+)
 """
 import os
-import pwd
-import json
+lazy import pwd
+lazy import json
 import re
-import tempfile
-import subprocess
+lazy import tempfile
+lazy import subprocess
 import time
 from pathlib import Path
-from typing import Any
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 
@@ -426,6 +426,10 @@ class CpuCoreEngine(BaseEngine):
         self.last_t = time.perf_counter()
         energy_range = safe_read(self.domain / "max_energy_range_uj") if self.domain else ""
         self.max_energy = int(energy_range) if energy_range.isdigit() else 0
+
+    def shutdown(self) -> None:
+        """Close telemetry resources after the frontend drains pending reads."""
+        self.reader.close()
 
     @property
     def target_path(self) -> str:

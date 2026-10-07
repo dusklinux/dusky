@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 import os
+lazy from collections import defaultdict
 import re
-import stat
-import tempfile
-import subprocess
-from pathlib import Path
-from typing import Any
+lazy import stat
+lazy import tempfile
+lazy import subprocess
+lazy from pathlib import Path
+lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 
@@ -51,12 +52,12 @@ class IniConfigEngine(BaseEngine):
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 for line in f:
-                    sec_match = self._RE_SECTION.match(line)
+                    sec_match = self._RE_SECTION.prefixmatch(line)
                     if sec_match:
                         current_scope = sec_match.group(1).strip()
                         continue
                         
-                    match = self._RE_KEY.match(line.rstrip('\n'))
+                    match = self._RE_KEY.prefixmatch(line.rstrip('\n'))
                     if match:
                         ws1, cmt, ws2, key, assign_op, val = match.groups()
                         
@@ -143,13 +144,13 @@ class IniConfigEngine(BaseEngine):
         
         # --- PASS 1: Inline Replacement & Singularity Enforcement ---
         for line in lines:
-            sec_match = self._RE_SECTION.match(line)
+            sec_match = self._RE_SECTION.prefixmatch(line)
             if sec_match:
                 current_scope = sec_match.group(1).strip()
                 out_lines.append(line)
                 continue
                 
-            match = self._RE_KEY.match(line.rstrip('\n'))
+            match = self._RE_KEY.prefixmatch(line.rstrip('\n'))
             if match:
                 ws1, cmt, ws2, key, assign_op, old_val = match.groups()
                 
@@ -218,7 +219,6 @@ class IniConfigEngine(BaseEngine):
         # --- PASS 2: Append Missing Keys ---
         missing_changes = [k for k in changes_dict if k not in applied_commits]
         if missing_changes:
-            from collections import defaultdict
             missing_by_scope = defaultdict(list)
             for scope, key in missing_changes:
                 missing_by_scope[scope].append(key)
@@ -227,9 +227,9 @@ class IniConfigEngine(BaseEngine):
             scope_end_indices = {}
             active_scope = "DEFAULT"
             for i, line in enumerate(out_lines):
-                if self._RE_SECTION.match(line):
+                if section := self._RE_SECTION.prefixmatch(line):
                     scope_end_indices[active_scope] = i
-                    active_scope = self._RE_SECTION.match(line).group(1).strip()
+                    active_scope = section.group(1).strip()
             scope_end_indices[active_scope] = len(out_lines)
             
             # Insert bottom-up to prevent array shifting

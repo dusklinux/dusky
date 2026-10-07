@@ -10,9 +10,9 @@ concurrency mtime checks, and atomic file replacements.
 
 import os
 import re
-import stat
-import tempfile
-from pathlib import Path
+lazy import stat
+lazy import tempfile
+lazy from pathlib import Path
 from typing import Any, Self, override
 
 from python.frontend.core_types import BaseEngine
@@ -70,7 +70,7 @@ class MatugenEngine(BaseEngine):
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
                 for line in f:
-                    match = self._RE_TEMPLATE_HEADER.match(line)
+                    match = self._RE_TEMPLATE_HEADER.prefixmatch(line)
                     if match:
                         cmt_char, template_key = match.groups()
                         is_active = (cmt_char == "")
@@ -141,7 +141,7 @@ class MatugenEngine(BaseEngine):
 
             # 1. Locate start of template block
             for idx, line in enumerate(lines):
-                m = self._RE_TEMPLATE_HEADER.match(line)
+                m = self._RE_TEMPLATE_HEADER.prefixmatch(line)
                 if m and m.group(2) == key:
                     start_idx = idx
                     is_currently_active = (m.group(1) == "")
@@ -179,7 +179,7 @@ class MatugenEngine(BaseEngine):
 
                     if not in_multiline:
                         # Direct hit: Next section header encountered
-                        if self._RE_ANY_HEADER.match(curr):
+                        if self._RE_ANY_HEADER.prefixmatch(curr):
                             end_idx = i - 1
                             break
 
@@ -195,21 +195,21 @@ class MatugenEngine(BaseEngine):
                             if next_nb_idx is not None:
                                 next_line = lines[next_nb_idx]
                                 # Next non-blank line is a section header
-                                if self._RE_ANY_HEADER.match(next_line):
+                                if self._RE_ANY_HEADER.prefixmatch(next_line):
                                     end_idx = i - 1
                                     break
 
                                 # Next non-blank line is a comment preceding a section header
-                                if re.match(r"^[ \t]*#", next_line):
+                                if re.prefixmatch(r"^[ \t]*#", next_line):
                                     hdr_found = False
                                     for k2 in range(next_nb_idx, len(lines)):
                                         l2 = lines[k2]
                                         if l2.strip() == "":
                                             continue
-                                        if self._RE_ANY_HEADER.match(l2):
+                                        if self._RE_ANY_HEADER.prefixmatch(l2):
                                             hdr_found = True
                                             break
-                                        if not re.match(r"^[ \t]*#", l2):
+                                        if not re.prefixmatch(r"^[ \t]*#", l2):
                                             break
                                     if hdr_found:
                                         end_idx = i - 1

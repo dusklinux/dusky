@@ -9,8 +9,8 @@ while strictly handling `hl.gesture()` function blocks via AST-bracket mapping.
 """
 
 import re
-from pathlib import Path
-from typing import Any
+lazy from pathlib import Path
+lazy from typing import Any
 from python.engines.lua import HyprlandLuaEngine
 
 # -----------------------------------------------------------------------------
@@ -53,67 +53,55 @@ def get_friendly_name(block_str: str) -> str:
     if "--bright-down" in block_str: return "Screen: Brightness Down (-10%)"
     return "Disabled / Unbound"
 
+# Tokenize once so comments, escaped quotes, and Lua long strings cannot be
+# mistaken for executable gestures or table braces.
+_RE_LUA_TOKEN = re.compile(
+    r'--\[(?P<comment_eq>=*)\[.*?\](?P=comment_eq)\]|--[^\r\n]*'
+    r'|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
+    r'|\[(?P<string_eq>=*)\[.*?\](?P=string_eq)\]'
+    r'|(?P<gesture>\bhl\.gesture\s*\(\s*\{)'
+    r'|(?P<fingers>\bfingers\s*=\s*(?P<count>\d+))'
+    r'|(?P<direction>\bdirection\s*=\s*(?P<quote>["\'])(?P<value>[^"\']+)(?P=quote))'
+    r'|(?P<scope>\b(?:function|if|do|repeat|end|until)\b)'
+    r'|(?P<brace>[{}])',
+    re.DOTALL,
+)
+_RE_LUA_SPACE = re.compile(r'\s+|--\[(=*)\[.*?\]\1\]|--[^\r\n]*', re.DOTALL)
+
+
 def find_gesture_blocks(content: str) -> list[tuple[int, int, str, str, str]]:
-    """
-    Bulletproof structural parser. Uses deterministic bracket counting while safely 
-    ignoring braces trapped inside Lua strings (quotes and multi-line brackets).
-    """
+    """Find executable gesture tables while retaining their source offsets."""
     blocks = []
-    idx = 0
-    while True:
-        # Robustly locate the start of a gesture block regardless of spacing
-        match = re.search(r'hl\.gesture\s*\(\s*\{', content[idx:])
-        if not match: break
-        
-        start = idx + match.start()
-        brace_start = idx + match.end() - 1 # Index of the opening '{'
-        
-        brace_count = 0
-        end = -1
-        in_str_double = False
-        in_str_single = False
-        in_multi = False
-        
-        i = brace_start
-        while i < len(content):
-            char = content[i]
-            prev = content[i-1] if i > 0 else ''
-            
-            # String boundary tracking
-            if not in_multi and not in_str_single and char == '"' and prev != '\\':
-                in_str_double = not in_str_double
-            elif not in_multi and not in_str_double and char == "'" and prev != '\\':
-                in_str_single = not in_str_single
-            elif not in_str_double and not in_str_single:
-                if not in_multi and content[i:i+2] == '[[':
-                    in_multi = True
-                    i += 1
-                elif in_multi and content[i:i+2] == ']]':
-                    in_multi = False
-                    i += 1
-                    
-            # Only count braces if we are strictly outside of any string formats
-            if not (in_str_double or in_str_single or in_multi):
-                if char == '{':
-                    brace_count += 1
-                elif char == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        paren_idx = content.find(")", i)
-                        end = paren_idx + 1 if paren_idx != -1 else i + 1
-                        break
-            i += 1
-                    
-        if end != -1:
-            block_str = content[start:end]
-            f_m = re.search(r'fingers\s*=\s*(\d+)', block_str)
-            d_m = re.search(r'direction\s*=\s*"([^"]+)"', block_str)
-            if f_m and d_m:
-                blocks.append((start, end, block_str, f_m.group(1), d_m.group(1)))
-            idx = end
-        else:
-            idx = start + match.end()
-            
+    tokens = iter(_RE_LUA_TOKEN.finditer(content))
+    for token in tokens:
+        if token.lastgroup != "gesture":
+            continue
+        start = token.start()
+        depth = 1
+        scope_depth = 0
+        fingers = direction = None
+        for inner in tokens:
+            if inner.lastgroup == "gesture":
+                depth += 1
+            elif inner.lastgroup == "brace":
+                depth += 1 if inner.group() == "{" else -1
+            elif inner.lastgroup == "scope":
+                scope_depth += -1 if inner.group() in ("end", "until") else 1
+            elif depth == 1 and scope_depth == 0 and inner.lastgroup == "fingers":
+                fingers = inner["count"]
+            elif depth == 1 and scope_depth == 0 and inner.lastgroup == "direction":
+                direction = inner["value"]
+            if depth == 0:
+                end = inner.end()
+                while space := _RE_LUA_SPACE.prefixmatch(content, end):
+                    end = space.end()
+                if end == len(content) or content[end] != ")":
+                    break
+                end += 1
+                block = content[start:end]
+                if fingers and direction:
+                    blocks.append((start, end, block, fingers, direction))
+                break
     return blocks
 
 # -----------------------------------------------------------------------------
