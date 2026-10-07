@@ -208,6 +208,11 @@ post_hook   = '''
   pkill -SIGUSR1 -x kitty || :
 '''
 
+# Rust dusky tray: one complete palette, reloaded while the panel is visible.
+[templates.dusky_tray]
+input_path = '~/.config/matugen/templates/dusky_tray.json'
+output_path = '~/.config/matugen/generated/dusky_tray.json'
+
 [templates.dusky_tui]
 input_path  = '~/.config/matugen/templates/dusky_tui.json'
 output_path = '~/.config/matugen/generated/dusky_tui.json'

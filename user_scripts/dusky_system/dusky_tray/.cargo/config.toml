@@ -1,0 +1,3 @@
+[build]
+# Direct Cargo commands run from this project also keep artifacts on /tmp.
+target-dir = "/tmp/dusky-tray-target"

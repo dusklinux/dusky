@@ -1,0 +1,11 @@
+{
+  "bg": "{{ colors.surface_container_lowest.dark.hex }}",
+  "fg": "{{ colors.on_surface.dark.hex }}",
+  "accent": "{{ colors.primary.dark.hex }}",
+  "accent_hover": "{{ colors.primary_fixed.dark.hex }}",
+  "secondary": "{{ colors.secondary.dark.hex }}",
+  "tertiary": "{{ colors.tertiary.dark.hex }}",
+  "profile_green": "{{ "#a6e3a1" | to_color | blend: {{ colors.primary.dark.hex }}, 0.12 }}",
+  "profile_blue": "{{ "#89b4fa" | to_color | blend: {{ colors.primary.dark.hex }}, 0.12 }}",
+  "profile_red": "{{ "#f38ba8" | to_color | blend: {{ colors.primary.dark.hex }}, 0.12 }}"
+}
