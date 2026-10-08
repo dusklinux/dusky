@@ -1555,7 +1555,8 @@ impl CenterApp {
                     weight: Weight::Bold,
                     ..Default::default()
                 })
-                .color(text_fg),
+                .color(text_fg)
+                .align_x(Horizontal::Center),
         ]
         .spacing(5)
         .align_x(Horizontal::Center);
@@ -1564,6 +1565,7 @@ impl CenterApp {
             let detail = self.service_statuses.get(&service_key).map(|s| format!("{} • {}", if s.enabled() { "On" } else { "Off" }, s.startup))
                 .unwrap_or_else(|| "Checking…".into());
             card_content = card_content.push(text(detail).size(9)
+                .align_x(Horizontal::Center)
                 .color(if is_enabled { palette.accent_fg } else { mix(palette.card_bg, palette.fg, 0.46) }));
         }
 
@@ -1599,12 +1601,13 @@ impl CenterApp {
         // Uniform 62px fixed height guarantees all rows have the exact same size!
         let mut card = button(
             container(card_content)
-                .padding([6, 6])
+                .padding([0, 6])
                 .width(Length::Fill)
                 .height(Length::Fixed(62.0))
                 .align_x(Horizontal::Center)
                 .align_y(Vertical::Center),
         )
+        .padding(0)
         .style(move |_, status| {
             let (bg, b_color) = if is_enabled {
                 if status == button::Status::Hovered {
@@ -1881,13 +1884,23 @@ impl CenterApp {
                 .width(28)
                 .align_x(Horizontal::Right);
 
-            let ctrl_row = row![
-                icon_badge,
+            let control_name = text(&item.properties.title)
+                .size(12)
+                .color(mix(palette.card_bg, palette.fg, 0.86));
+            let identity = row![icon_badge, control_name]
+                .spacing(12)
+                .align_y(Vertical::Center)
+                .width(Length::FillPortion(2));
+            let adjustment = row![
                 container(s).width(Length::Fill).padding([0, 4]),
                 val_label,
             ]
             .spacing(12)
-            .align_y(Vertical::Center);
+            .align_y(Vertical::Center)
+            .width(Length::FillPortion(3));
+            let ctrl_row = row![identity, adjustment]
+                .spacing(16)
+                .align_y(Vertical::Center);
 
             let key_enter = key.clone();
             let key_exit = key.clone();
