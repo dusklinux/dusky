@@ -7,17 +7,60 @@ page or closing the window exits the process; there is no background UI daemon.
 ## Build and install
 
 ```bash
-./scripts/build-on-tmpfs.sh --check
-./scripts/build-on-tmpfs.sh --test
-./scripts/build-on-tmpfs.sh --clippy
-./scripts/build-on-tmpfs.sh --release
 ./scripts/install.sh
 ~/.local/bin/dusky-center
+# Deliberately rebuild for this CPU:
+./scripts/install.sh --force-rebuild
 ```
 
 The build script verifies tmpfs and defaults to `/tmp/dusky-center-target-$UID`.
-The installer copies the release binary into `~/.local/share/dusky/dusky_center`
+The installer delegates to `153_dusky_center_setup.py`, also included after the
+tray step in the main, ISO and personal setup profiles. It never launches the
+app or enables a service. It installs into `~/.local/share/dusky/dusky_center`
 and creates the `~/.local/bin/dusky-center` launcher.
+
+A matching generic ISO package is reused without compiling. With changed source,
+or `./scripts/install.sh --force-rebuild`, it builds a release for the current
+CPU (`target-cpu=native`, plus native C/C++ flags) on executable tmpfs. CPU,
+source and binary fingerprints avoid repeated compilation and reject native
+builds carried over from another CPU. If compilation fails, a previously
+verified native binary or the generic package remains available. Cached Cargo
+dependencies are preferred; only missing dependencies are fetched, and the
+build itself is frozen/offline. The installer bounds fetch/build time and
+limits jobs using available memory and the process CPU affinity. Native binaries
+use the existing optimized release profile; CPU tuning does not imply a measured
+application speedup.
+
+Editable defaults are seeded at `$XDG_CONFIG_HOME/dusky/dusky_config.toml`
+(normally `~/.config/dusky/dusky_config.toml`) and beside the local binary.
+Existing TOML files are preserved. Defaults are published only after a complete
+copy and only if the destination remains absent. Configuration edits do not
+trigger a binary rebuild. Change the canonical XDG file after setup.
+
+The ISO recipe lives at
+`user_scripts/arch_iso_scripts/offline_iso/iso_maker/python/dusky_packages_compile/dusky-center`.
+The factory discovers it automatically and builds one generic x86-64 pacman
+package, with `/usr/bin/dusky-center`, packaged TOML defaults and a source
+fingerprint. It explicitly overrides native Rust/C/C++ flags; local updates
+never replace that generic system binary.
+
+For development checks, use `./scripts/build-on-tmpfs.sh --check`, `--test`,
+`--clippy` or `--release`. These use a reusable tmpfs target directory;
+installation selects its own verified package/native binary. Installer tests:
+`python3 -X dev -m unittest discover -s tests`.
+
+The installer suite has 27 passing checks, including eight simultaneous CLI
+runs producing one compilation, compiler failures and invalid ELF outputs,
+SIGTERM cancellation while building or waiting for the lock, resistant child
+processes, offline fetch failures, write failures, interrupted/default-copy
+races, CPU mismatch, affinity limits, and paths containing spaces/apostrophes.
+Twenty consecutive timeouts produce no unclosed-pipe resource warnings;
+3 MB on each output pipe drains without deadlock. Compiler faults use isolated
+homes and deterministic compiler fixtures, rather than rebuilding all Rust
+dependencies for every failure. An actual generic package was separately
+installed and reused offline without Cargo, preserving edited TOML. The real
+native build and generic package were compiled in the preceding verification.
+No full ISO installation or power-loss recovery test was performed.
 
 ## Configuration and colors
 
