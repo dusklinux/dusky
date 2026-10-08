@@ -206,6 +206,8 @@ pub enum ActionConfig {
         #[serde(default)]
         command: String,
         #[serde(default)]
+        argv: Vec<String>,
+        #[serde(default)]
         terminal: bool,
         #[serde(default)]
         requires_root: bool,

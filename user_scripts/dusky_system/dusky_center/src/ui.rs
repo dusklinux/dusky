@@ -23,6 +23,7 @@ use iced::widget::{
 use iced::{Border, Color, Event, Length, Padding, Subscription, Task, mouse};
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::backend::cmd::{execute_detached, execute_shell_detached};
@@ -126,10 +127,11 @@ pub struct CenterApp {
 
 impl CenterApp {
     pub fn new(
-        config: AppConfig,
+        mut config: AppConfig,
         initial_page: Option<String>,
         initial_hover: Option<String>,
     ) -> (Self, Task<Message>) {
+        expand_app_config_generators(&mut config);
         let (cpu, ram) = sys::cpu_ram();
         let start_page = if let Some(ref target) = initial_page {
             let target_lower = target.to_lowercase();
@@ -427,7 +429,8 @@ impl CenterApp {
 
             Message::ReloadConfig => {
                 self.theme = AppTheme::load();
-                if let Ok(cfg) = AppConfig::load() {
+                if let Ok(mut cfg) = AppConfig::load() {
+                    expand_app_config_generators(&mut cfg);
                     self.config = cfg;
                     self.loaded_pages.clear();
                     self.lazy_load_page(0);
@@ -475,18 +478,32 @@ impl CenterApp {
         match action {
             ActionConfig::Exec {
                 command,
+                argv,
                 terminal,
                 requires_root,
                 ..
             } => {
-                let mut cmd = command.clone();
-                if *requires_root && !cmd.starts_with("pkexec") {
-                    cmd = format!("pkexec {cmd}");
+                if !argv.is_empty() {
+                    let mut final_argv = argv.clone();
+                    if *requires_root {
+                        final_argv.insert(0, "pkexec".into());
+                    }
+                    let full = final_argv.join(" ");
+                    if *terminal {
+                        execute_shell_detached(&format!("kitty -e bash -c '{full}'"));
+                    } else {
+                        execute_detached(&full);
+                    }
+                } else {
+                    let mut cmd = command.clone();
+                    if *requires_root && !cmd.starts_with("pkexec") {
+                        cmd = format!("pkexec {cmd}");
+                    }
+                    if *terminal {
+                        cmd = format!("kitty -e bash -c '{cmd}'");
+                    }
+                    execute_shell_detached(&cmd);
                 }
-                if *terminal {
-                    cmd = format!("kitty -e bash -c '{cmd}'");
-                }
-                execute_shell_detached(&cmd);
             }
             ActionConfig::Argv {
                 argv,
@@ -513,12 +530,21 @@ impl CenterApp {
 
     fn dispatch_action_with_value(&self, action: &ActionConfig, value: f32) {
         match action {
-            ActionConfig::Exec { command, .. } => {
+            ActionConfig::Exec { command, argv, .. } => {
                 let val_str = format!("{}", value.round() as i64);
-                let substituted = command
-                    .replace("{value}", &val_str)
-                    .replace("$VALUE", &val_str);
-                execute_shell_detached(&substituted);
+                if !argv.is_empty() {
+                    let substituted: Vec<String> = argv
+                        .iter()
+                        .map(|a| a.replace("{value}", &val_str).replace("$VALUE", &val_str))
+                        .collect();
+                    let full = substituted.join(" ");
+                    execute_detached(&full);
+                } else {
+                    let substituted = command
+                        .replace("{value}", &val_str)
+                        .replace("$VALUE", &val_str);
+                    execute_shell_detached(&substituted);
+                }
             }
             ActionConfig::Argv { argv, .. } => {
                 let val_str = format!("{}", value.round() as i64);
@@ -673,6 +699,21 @@ impl CenterApp {
             .spacing(9)
             .align_y(Vertical::Center);
 
+            let shadow = if is_active {
+                iced::Shadow {
+                    color: Color::from_rgba(
+                        palette.accent.r,
+                        palette.accent.g,
+                        palette.accent.b,
+                        0.031,
+                    ),
+                    offset: iced::Vector::new(0.0, 1.5),
+                    blur_radius: 6.5,
+                }
+            } else {
+                iced::Shadow::default()
+            };
+
             let btn = button(container(row_content).padding([5, 8]).width(Length::Fill))
                 .on_press(Message::SelectPage(idx))
                 .style(move |_, status| {
@@ -689,6 +730,7 @@ impl CenterApp {
                             radius: 8.0.into(),
                             ..Default::default()
                         },
+                        shadow,
                         ..Default::default()
                     }
                 });
@@ -1208,7 +1250,7 @@ impl CenterApp {
                 .into();
         }
 
-        // Avoid rendering an empty container card if a section has 0 items
+        // Avoid rendering an empty container card if a section has 0 items (e.g. unprivileged / empty generator)
         if section.items.is_empty() {
             return column![].into();
         }
@@ -1395,10 +1437,10 @@ impl CenterApp {
                     palette.accent.r,
                     palette.accent.g,
                     palette.accent.b,
-                    0.028,
+                    0.031,
                 ),
                 offset: iced::Vector::new(0.0, 1.5),
-                blur_radius: 6.0,
+                blur_radius: 6.5,
             }
         } else {
             iced::Shadow::default()
@@ -1865,9 +1907,9 @@ impl CenterApp {
             palette.fg
         };
         let desc_color = if is_row_hovered {
-            Color::from_rgb(0.80, 0.82, 0.88)
+            Color::from_rgba(palette.fg.r, palette.fg.g, palette.fg.b, 0.72)
         } else {
-            palette.fg_muted
+            Color::from_rgba(palette.fg.r, palette.fg.g, palette.fg.b, 0.52)
         };
 
         // Left info container with title and description
@@ -1900,7 +1942,15 @@ impl CenterApp {
         .align_y(Vertical::Center)];
 
         if !desc.is_empty() {
-            info_col = info_col.push(text(desc).size(11).color(desc_color));
+            info_col = info_col.push(
+                text(desc)
+                    .size(11)
+                    .font(iced::Font {
+                        weight: Weight::Normal,
+                        ..Default::default()
+                    })
+                    .color(desc_color),
+            );
         }
 
         // Icon badge lights up subtly with gentle glow on hover
@@ -1942,44 +1992,147 @@ impl CenterApp {
         // Helper action buttons (e.g. edit config, reset, launch tool)
         let mut buttons_row = row![].spacing(6).align_y(Vertical::Center);
         for b in &item.properties.buttons {
-            let btn_icon = if !b.icon.is_empty() {
+            let b_title = &b.title;
+            let is_destructive = b.style == "destructive"
+                || matches!(
+                    b_title.as_str(),
+                    "Deploy" | "Orchestra" | "Delete" | "Purge" | "Reset" | "Diagnose"
+                )
+                || b_title.contains("Deploy")
+                || b_title.contains("Reset")
+                || b_title.contains("Purge");
+            let is_suggested = !is_destructive
+                && (b.style == "suggested"
+                    || matches!(
+                        b_title.as_str(),
+                        "Apply" | "Allocate" | "Save" | "Open" | "Setup" | "Install" | "Convert" | "Update" | "Sync" | "Format"
+                    )
+                    || b.style.is_empty());
+
+            let icon_idle = if is_destructive {
+                palette.danger
+            } else {
+                palette.accent
+            };
+
+            let has_icon = !b.icon.is_empty();
+            let has_title = !b.title.is_empty();
+
+            let icon_name = if has_icon {
                 &b.icon
             } else {
                 "settings"
             };
-            let is_suggested = b.style == "suggested";
-            let mut btn = button(render_icon(
-                btn_icon,
-                14.0,
-                if is_suggested {
-                    palette.accent
-                } else {
-                    palette.fg
-                },
-            ))
-            .padding([5, 8])
-            .style(move |_, status| button::Style {
-                background: Some(
-                    if status == button::Status::Hovered {
-                        palette.card_hover
+
+            let btn_content: Element<'a, Message> = if has_icon && has_title {
+                row![
+                    render_icon(icon_name, 13.0, icon_idle),
+                    text(&b.title).size(11).font(iced::Font {
+                        weight: Weight::Semibold,
+                        ..Default::default()
+                    }),
+                ]
+                .spacing(5)
+                .align_y(Vertical::Center)
+                .into()
+            } else if has_icon {
+                render_icon(icon_name, 14.0, icon_idle)
+            } else {
+                text(&b.title)
+                    .size(11)
+                    .font(iced::Font {
+                        weight: Weight::Semibold,
+                        ..Default::default()
+                    })
+                    .into()
+            };
+
+            let mut btn = button(btn_content)
+                .padding(if has_title { [5, 12] } else { [5, 8] })
+                .style(move |_, status| {
+                    let is_hovered = status == button::Status::Hovered;
+                    if is_destructive {
+                        if is_hovered {
+                            button::Style {
+                                background: Some(palette.danger.into()),
+                                text_color: Color::from_rgb8(105, 0, 5),
+                                border: Border {
+                                    color: palette.danger,
+                                    width: 1.0,
+                                    radius: 6.0.into(),
+                                },
+                                shadow: iced::Shadow {
+                                    color: Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.28),
+                                    offset: iced::Vector::new(0.0, 2.0),
+                                    blur_radius: 6.0,
+                                },
+                                ..Default::default()
+                            }
+                        } else {
+                            button::Style {
+                                background: Some(Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.08).into()),
+                                text_color: palette.danger,
+                                border: Border {
+                                    color: Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.28),
+                                    width: 1.0,
+                                    radius: 6.0.into(),
+                                },
+                                ..Default::default()
+                            }
+                        }
                     } else if is_suggested {
-                        Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12)
+                        if is_hovered {
+                            button::Style {
+                                background: Some(palette.accent.into()),
+                                text_color: palette.accent_fg,
+                                border: Border {
+                                    color: palette.accent,
+                                    width: 1.0,
+                                    radius: 6.0.into(),
+                                },
+                                shadow: iced::Shadow {
+                                    color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.25),
+                                    offset: iced::Vector::new(0.0, 2.0),
+                                    blur_radius: 6.0,
+                                },
+                                ..Default::default()
+                            }
+                        } else {
+                            button::Style {
+                                background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10).into()),
+                                text_color: palette.accent,
+                                border: Border {
+                                    color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.28),
+                                    width: 1.0,
+                                    radius: 6.0.into(),
+                                },
+                                ..Default::default()
+                            }
+                        }
+                    } else if is_hovered {
+                        button::Style {
+                            background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20).into()),
+                            text_color: palette.accent,
+                            border: Border {
+                                color: palette.accent,
+                                width: 1.0,
+                                radius: 6.0.into(),
+                            },
+                            ..Default::default()
+                        }
                     } else {
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.05)
+                        button::Style {
+                            background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.08).into()),
+                            text_color: palette.accent,
+                            border: Border {
+                                color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
+                                width: 1.0,
+                                radius: 6.0.into(),
+                            },
+                            ..Default::default()
+                        }
                     }
-                    .into(),
-                ),
-                border: Border {
-                    color: if is_suggested {
-                        palette.accent
-                    } else {
-                        palette.border
-                    },
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..Default::default()
-            });
+                });
 
             if let Some(action) = &b.on_press {
                 btn = btn.on_press(Message::ExecuteAction(action.clone()));
@@ -2244,38 +2397,30 @@ impl CenterApp {
             }
 
             "navigation" => {
-                let sub_sections = item.layout.clone();
-                let sub_title = title.clone();
+                let icon_color = if is_row_hovered {
+                    palette.fg
+                } else {
+                    Color::from_rgba(palette.fg.r, palette.fg.g, palette.fg.b, 0.45)
+                };
+                container(render_icon("chevron_right", 16.0, icon_color))
+                    .padding([4, 6])
+                    .align_y(Vertical::Center)
+                    .into()
+            }
 
-                button(
-                    row![
-                        text("Open").size(11).color(palette.accent),
-                        render_icon("chevron_right", 14.0, palette.accent),
-                    ]
-                    .spacing(4)
-                    .align_y(Vertical::Center),
-                )
-                .on_press(Message::PushSubPage {
-                    title: sub_title,
-                    sections: sub_sections,
-                })
-                .padding([5, 10])
-                .style(move |_, status| button::Style {
-                    background: Some(
-                        if status == button::Status::Hovered {
-                            Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.2)
-                        } else {
-                            Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.08)
-                        }
-                        .into(),
-                    ),
-                    border: Border {
-                        radius: 6.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                })
-                .into()
+            "expander" => {
+                let expander_key = format!("expander:{}", key);
+                let is_expanded = self.toggle_states.get(&expander_key).copied().unwrap_or(false);
+                let chevron_icon = if is_expanded { "chevron_down" } else { "chevron_right" };
+                let icon_color = if is_row_hovered {
+                    palette.fg
+                } else {
+                    Color::from_rgba(palette.fg.r, palette.fg.g, palette.fg.b, 0.45)
+                };
+                container(render_icon(chevron_icon, 16.0, icon_color))
+                    .padding([4, 6])
+                    .align_y(Vertical::Center)
+                    .into()
             }
 
             "service" => {
@@ -2329,37 +2474,157 @@ impl CenterApp {
             }
 
             _ => {
-                if let Some(action) = &item.on_press {
+                let opt_action = item.on_press.as_ref().or(item.on_action.as_ref());
+                if let Some(action) = opt_action {
                     let act = action.clone();
-                    button(text("Run").size(11).color(palette.fg))
-                        .on_press(Message::ExecuteAction(act))
-                        .padding([5, 14])
-                        .style(move |_, status| button::Style {
-                            background: Some(
-                                if status == button::Status::Hovered {
-                                    palette.accent
-                                } else {
-                                    Color::from_rgba(1.0, 1.0, 1.0, 0.06)
+
+                    let mut dyn_btn_text = String::new();
+                    let mut dyn_style = String::new();
+
+                    if !item.properties.button_text_file.is_empty() {
+                        let expanded = expand_path(&item.properties.button_text_file);
+                        if let Ok(content) = std::fs::read_to_string(expanded) {
+                            let trimmed = content.trim();
+                            if let Some(mapped) = item.properties.button_text_map.get(trimmed) {
+                                dyn_btn_text = mapped.clone();
+                            } else if let Some(def) = item.properties.button_text_map.get("default") {
+                                dyn_btn_text = def.clone();
+                            }
+                            if let Some(s_mapped) = item.properties.style_map.get(trimmed) {
+                                dyn_style = s_mapped.clone();
+                            }
+                        }
+                    }
+
+                    let btn_label = if !dyn_btn_text.is_empty() {
+                        dyn_btn_text
+                    } else if !item.properties.button_text.is_empty() {
+                        item.properties.button_text.clone()
+                    } else {
+                        "Run".to_string()
+                    };
+
+                    let effective_style = if !dyn_style.is_empty() {
+                        dyn_style
+                    } else {
+                        item.properties.style.clone()
+                    };
+
+                    let is_destructive = effective_style == "destructive"
+                        || item.properties.title.contains("Deploy Dotfiles")
+                        || item.properties.title.contains("Orchestra")
+                        || matches!(
+                            btn_label.as_str(),
+                            "Deploy" | "Orchestra" | "Delete" | "Purge" | "Reset" | "Diagnose"
+                        )
+                        || btn_label.contains("Deploy")
+                        || btn_label.contains("Reset")
+                        || btn_label.contains("Purge");
+
+                    let is_suggested = !is_destructive
+                        && (effective_style == "suggested"
+                            || item.item_type == "entry"
+                            || item.item_type == "secret"
+                            || matches!(
+                                btn_label.as_str(),
+                                "Apply" | "Allocate" | "Save" | "Open" | "Setup" | "Install" | "Convert" | "Update" | "Sync" | "Format"
+                            ));
+
+                    button(
+                        text(btn_label)
+                            .size(12)
+                            .font(iced::Font {
+                                weight: Weight::Semibold,
+                                ..Default::default()
+                            }),
+                    )
+                    .on_press(Message::ExecuteAction(act))
+                    .padding([5, 16])
+                    .style(move |_, status| {
+                        let is_hovered = status == button::Status::Hovered;
+                        if is_destructive {
+                            if is_hovered {
+                                button::Style {
+                                    background: Some(palette.danger.into()),
+                                    text_color: Color::from_rgb8(105, 0, 5),
+                                    border: Border {
+                                        color: palette.danger,
+                                        width: 1.0,
+                                        radius: 10.0.into(),
+                                    },
+                                    shadow: iced::Shadow {
+                                        color: Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.28),
+                                        offset: iced::Vector::new(0.0, 2.0),
+                                        blur_radius: 8.0,
+                                    },
+                                    ..Default::default()
                                 }
-                                .into(),
-                            ),
-                            border: Border {
-                                color: if status == button::Status::Hovered {
-                                    palette.accent
-                                } else {
-                                    Color::from_rgba(
-                                        palette.border.r,
-                                        palette.border.g,
-                                        palette.border.b,
-                                        0.30,
-                                    )
+                            } else {
+                                button::Style {
+                                    background: Some(Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.08).into()),
+                                    text_color: palette.danger,
+                                    border: Border {
+                                        color: Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.28),
+                                        width: 1.0,
+                                        radius: 10.0.into(),
+                                    },
+                                    ..Default::default()
+                                }
+                            }
+                        } else if is_suggested {
+                            if is_hovered {
+                                button::Style {
+                                    background: Some(palette.accent.into()),
+                                    text_color: palette.accent_fg,
+                                    border: Border {
+                                        color: palette.accent,
+                                        width: 1.0,
+                                        radius: 10.0.into(),
+                                    },
+                                    shadow: iced::Shadow {
+                                        color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.25),
+                                        offset: iced::Vector::new(0.0, 2.0),
+                                        blur_radius: 8.0,
+                                    },
+                                    ..Default::default()
+                                }
+                            } else {
+                                button::Style {
+                                    background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10).into()),
+                                    text_color: palette.accent,
+                                    border: Border {
+                                        color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.28),
+                                        width: 1.0,
+                                        radius: 10.0.into(),
+                                    },
+                                    ..Default::default()
+                                }
+                            }
+                        } else if is_hovered {
+                            button::Style {
+                                background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20).into()),
+                                text_color: palette.accent,
+                                border: Border {
+                                    color: palette.accent,
+                                    width: 1.0,
+                                    radius: 10.0.into(),
                                 },
-                                width: 1.0,
-                                radius: 6.0.into(),
-                            },
-                            ..Default::default()
-                        })
-                        .into()
+                                ..Default::default()
+                            }
+                        } else {
+                            button::Style {
+                                background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.08).into()),
+                                text_color: palette.accent,
+                                border: Border {
+                                    color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
+                                    width: 1.0,
+                                    radius: 10.0.into(),
+                                },
+                                ..Default::default()
+                            }
+                        }
+                    })
+                    .into()
                 } else {
                     container(Space::new().width(0)).into()
                 }
@@ -2379,7 +2644,7 @@ impl CenterApp {
             .spacing(12)
             .align_y(Vertical::Center);
 
-        let primary_action = if let Some(action) = &item.on_press {
+        let primary_action = if let Some(action) = item.on_press.as_ref().or(item.on_action.as_ref()) {
             Some(action.clone())
         } else if let Some(suggested) = item
             .properties
@@ -2434,6 +2699,16 @@ impl CenterApp {
                     sections: sub_sections,
                 })
                 .interaction(mouse::Interaction::Pointer);
+        } else if item.item_type == "expander" {
+            let expander_key = format!("expander:{}", key);
+            let is_expanded = self.toggle_states.get(&expander_key).copied().unwrap_or(false);
+            area = area
+                .on_press(Message::ToggleItem {
+                    key: expander_key,
+                    is_enabled: !is_expanded,
+                    on_toggle: None,
+                })
+                .interaction(mouse::Interaction::Pointer);
         } else if item.item_type == "toggle" {
             let is_active = self.toggle_states.get(&key).copied().unwrap_or(false);
             let toggle_pair = item.on_toggle.clone();
@@ -2453,7 +2728,39 @@ impl CenterApp {
                 .interaction(mouse::Interaction::Pointer);
         }
 
-        area.into()
+        let expander_key = format!("expander:{}", key);
+        let is_expanded = self.toggle_states.get(&expander_key).copied().unwrap_or(false);
+
+        if item.item_type == "expander" && is_expanded && !item.items.is_empty() {
+            let mut sub_col = column![].spacing(0);
+            for sub_item in &item.items {
+                let divider = container(Space::new().width(Length::Fill).height(1))
+                    .style(move |_| container::Style {
+                        background: Some(
+                            Color::from_rgba(
+                                palette.border.r,
+                                palette.border.g,
+                                palette.border.b,
+                                0.15,
+                            )
+                            .into(),
+                        ),
+                        ..Default::default()
+                    });
+                sub_col = sub_col.push(divider);
+                sub_col = sub_col.push(
+                    container(self.view_item_row(sub_item, "", None)).padding(Padding {
+                        top: 0.0,
+                        right: 0.0,
+                        bottom: 0.0,
+                        left: 16.0,
+                    }),
+                );
+            }
+            column![area, sub_col].into()
+        } else {
+            area.into()
+        }
     }
 }
 
@@ -2636,5 +2943,423 @@ fn make_slim_scrollable<'a>(
             s
         })
         .height(Length::Fill)
+}
+
+pub fn expand_app_config_generators(config: &mut AppConfig) {
+    for page in &mut config.pages {
+        for section in &mut page.layout {
+            expand_section_generators(section);
+        }
+    }
+}
+
+fn expand_section_generators(section: &mut SectionConfig) {
+    section.items = expand_generators(&section.items);
+    for item in &mut section.items {
+        expand_item_sub_generators(item);
+    }
+}
+
+fn expand_item_sub_generators(item: &mut ItemConfig) {
+    for sub_sec in &mut item.layout {
+        expand_section_generators(sub_sec);
+    }
+    item.items = expand_generators(&item.items);
+    for sub in &mut item.items {
+        expand_item_sub_generators(sub);
+    }
+}
+
+fn expand_generators(items: &[ItemConfig]) -> Vec<ItemConfig> {
+    let mut out = Vec::new();
+    for item in items {
+        if item.item_type == "file_generator" {
+            out.extend(expand_file_generator(item));
+        } else if item.item_type == "directory_generator" {
+            out.extend(expand_directory_generator(item));
+        } else {
+            out.push(item.clone());
+        }
+    }
+    out
+}
+
+fn expand_file_generator(generator: &ItemConfig) -> Vec<ItemConfig> {
+    let Some(template) = &generator.item_template else {
+        return Vec::new();
+    };
+
+    let path_str = &generator.properties.path;
+    if path_str.is_empty() {
+        return Vec::new();
+    }
+
+    let base_path = expand_path(path_str);
+    if !base_path.exists() {
+        return Vec::new();
+    }
+
+    let glob_ext = if generator.properties.glob.starts_with("*.") {
+        &generator.properties.glob[2..]
+    } else {
+        "conf"
+    };
+
+    let mut found_files: Vec<(PathBuf, String)> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&base_path) {
+        let mut subdirs = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() || path.is_symlink() {
+                if let Some(ext) = path.extension()
+                    && ext == glob_ext
+                {
+                    found_files.push((path, String::new()));
+                }
+            } else if generator.properties.recursive && path.is_dir() && !path.is_symlink() {
+                subdirs.push(path);
+            }
+        }
+
+        if generator.properties.recursive {
+            subdirs.sort_by_key(|p| {
+                p.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_lowercase()
+            });
+            for subdir in subdirs {
+                let subdir_name = subdir
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                if let Ok(sub_entries) = std::fs::read_dir(&subdir) {
+                    for sub_entry in sub_entries.flatten() {
+                        let path = sub_entry.path();
+                        if (path.is_file() || path.is_symlink())
+                            && path.extension().is_some_and(|ext| ext == glob_ext)
+                        {
+                            found_files.push((path, subdir_name.clone()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if found_files.is_empty() {
+        return Vec::new();
+    }
+
+    found_files.sort_by(|a, b| {
+        let a_is_sub = !a.1.is_empty();
+        let b_is_sub = !b.1.is_empty();
+        a_is_sub
+            .cmp(&b_is_sub)
+            .then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase()))
+            .then_with(|| {
+                a.0.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_lowercase()
+                    .cmp(
+                        &b.0.file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_lowercase(),
+                    )
+            })
+    });
+
+    let mut result = Vec::new();
+    for (file_path, subdir) in found_files {
+        let stem = file_path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let filename = file_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let path_str = file_path.to_string_lossy().to_string();
+        let name_pretty = to_pretty_title(&stem);
+        let relpath = if !subdir.is_empty() {
+            format!("{}/{}", subdir, filename)
+        } else {
+            filename.clone()
+        };
+
+        let mut vars = HashMap::new();
+        vars.insert("name".to_string(), stem);
+        vars.insert("filename".to_string(), filename);
+        vars.insert("path".to_string(), path_str);
+        vars.insert("name_pretty".to_string(), name_pretty);
+        vars.insert("relpath".to_string(), relpath);
+        vars.insert("subdir".to_string(), subdir);
+
+        let mut item = (**template).clone();
+        substitute_item_vars(&mut item, &vars);
+        result.push(item);
+    }
+
+    result
+}
+
+fn expand_directory_generator(generator: &ItemConfig) -> Vec<ItemConfig> {
+    let Some(template) = &generator.item_template else {
+        return Vec::new();
+    };
+
+    let path_str = &generator.properties.path;
+    if path_str.is_empty() {
+        return Vec::new();
+    }
+
+    let base_path = expand_path(path_str);
+    if !base_path.is_dir() {
+        return Vec::new();
+    }
+
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&base_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() && !path.is_symlink() {
+                dirs.push(path);
+            }
+        }
+    }
+
+    if dirs.is_empty() {
+        return Vec::new();
+    }
+
+    dirs.sort_by_key(|p| {
+        p.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase()
+    });
+
+    let mut result = Vec::new();
+    for dir in dirs {
+        let dirname = dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let path_str = dir.to_string_lossy().to_string();
+        let name_pretty = to_pretty_title(&dirname);
+
+        let mut vars = HashMap::new();
+        vars.insert("name".to_string(), dirname);
+        vars.insert("path".to_string(), path_str);
+        vars.insert("name_pretty".to_string(), name_pretty);
+
+        let mut item = (**template).clone();
+        substitute_item_vars(&mut item, &vars);
+        result.push(item);
+    }
+
+    result
+}
+
+fn to_pretty_title(s: &str) -> String {
+    let replaced = s.replace(['_', '-'], " ");
+    replaced
+        .split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn substitute_item_vars(item: &mut ItemConfig, vars: &HashMap<String, String>) {
+    let sub = |s: &str| -> String {
+        let mut out = s.to_string();
+        for (k, v) in vars {
+            let pattern = format!("{{{}}}", k);
+            out = out.replace(&pattern, v);
+        }
+        out
+    };
+
+    item.properties.title = sub(&item.properties.title);
+    item.properties.description = sub(&item.properties.description);
+    item.properties.state_command = sub(&item.properties.state_command);
+    item.properties.value_command = sub(&item.properties.value_command);
+    item.properties.key = sub(&item.properties.key);
+
+    if let Some(on_press) = &mut item.on_press {
+        substitute_action_vars(on_press, vars);
+    }
+    if let Some(on_action) = &mut item.on_action {
+        substitute_action_vars(on_action, vars);
+    }
+    if let Some(on_toggle) = &mut item.on_toggle {
+        substitute_action_vars(&mut on_toggle.enabled, vars);
+        substitute_action_vars(&mut on_toggle.disabled, vars);
+    }
+
+    for sub_item in &mut item.items {
+        substitute_item_vars(sub_item, vars);
+    }
+}
+
+fn substitute_action_vars(action: &mut ActionConfig, vars: &HashMap<String, String>) {
+    let sub = |s: &str| -> String {
+        let mut out = s.to_string();
+        for (k, v) in vars {
+            let pattern = format!("{{{}}}", k);
+            out = out.replace(&pattern, v);
+        }
+        out
+    };
+
+    match action {
+        ActionConfig::Exec { command, argv, .. } => {
+            *command = sub(command);
+            for arg in argv {
+                *arg = sub(arg);
+            }
+        }
+        ActionConfig::Argv { argv, .. } => {
+            for arg in argv {
+                *arg = sub(arg);
+            }
+        }
+        ActionConfig::Redirect { page } => {
+            *page = sub(page);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_to_pretty_title() {
+        assert_eq!(to_pretty_title("wg0"), "Wg0");
+        assert_eq!(to_pretty_title("mullvad_us-nyc"), "Mullvad Us Nyc");
+        assert_eq!(to_pretty_title("office-vpn_backup"), "Office Vpn Backup");
+    }
+
+    #[test]
+    fn test_generator_template_substitution() {
+        let temp_dir = std::env::temp_dir().join(format!("test_gen_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let file_path = temp_dir.join("test-wg.conf");
+        let _ = std::fs::write(&file_path, "[Interface]\n");
+
+        let item = ItemConfig {
+            item_type: "file_generator".to_string(),
+            properties: crate::config::ItemProperties {
+                path: temp_dir.to_string_lossy().to_string(),
+                glob: "*.conf".to_string(),
+                ..Default::default()
+            },
+            on_press: None,
+            on_toggle: None,
+            on_change: None,
+            on_action: None,
+            value: None,
+            items: Vec::new(),
+            layout: Vec::new(),
+            item_template: Some(Box::new(ItemConfig {
+                item_type: "expander".to_string(),
+                properties: crate::config::ItemProperties {
+                    title: "{name_pretty}".to_string(),
+                    description: "{filename}".to_string(),
+                    ..Default::default()
+                },
+                on_press: None,
+                on_toggle: None,
+                on_change: None,
+                on_action: None,
+                value: None,
+                items: vec![ItemConfig {
+                    item_type: "toggle".to_string(),
+                    properties: crate::config::ItemProperties {
+                        title: "Connect {name}".to_string(),
+                        state_command: "wg show {name}".to_string(),
+                        ..Default::default()
+                    },
+                    on_press: None,
+                    on_toggle: Some(ToggleActionPair {
+                        enabled: ActionConfig::Exec {
+                            command: "wg-quick up {path}".to_string(),
+                            argv: Vec::new(),
+                            terminal: false,
+                            requires_root: true,
+                            mode: String::new(),
+                            timeout: None,
+                        },
+                        disabled: ActionConfig::Exec {
+                            command: "wg-quick down {path}".to_string(),
+                            argv: Vec::new(),
+                            terminal: false,
+                            requires_root: true,
+                            mode: String::new(),
+                            timeout: None,
+                        },
+                    }),
+                    on_change: None,
+                    on_action: None,
+                    value: None,
+                    items: Vec::new(),
+                    layout: Vec::new(),
+                    item_template: None,
+                }],
+                layout: Vec::new(),
+                item_template: None,
+            })),
+        };
+
+        let generated = expand_file_generator(&item);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        assert_eq!(generated.len(), 1);
+        let first = &generated[0];
+        assert_eq!(first.properties.title, "Test Wg");
+        assert_eq!(first.properties.description, "test-wg.conf");
+        assert_eq!(first.items.len(), 1);
+        assert_eq!(first.items[0].properties.title, "Connect test-wg");
+        assert_eq!(first.items[0].properties.state_command, "wg show test-wg");
+        if let Some(toggle) = &first.items[0].on_toggle {
+            if let ActionConfig::Exec { command, .. } = &toggle.enabled {
+                assert!(command.contains("test-wg.conf"));
+            } else {
+                panic!("Expected Exec action");
+            }
+        }
+    }
+
+    #[test]
+    fn test_expand_generators_suppresses_empty_wireguard() {
+        if let Ok(mut cfg) = AppConfig::load() {
+            expand_app_config_generators(&mut cfg);
+            for page in &cfg.pages {
+                for section in &page.layout {
+                    if section.properties.title == "VPN Tunnels" {
+                        // In unprivileged test environment /etc/wireguard is inaccessible,
+                        // so generator expands to 0 items and section must be empty.
+                        if std::fs::read_dir("/etc/wireguard").is_err() {
+                            assert!(section.items.is_empty(), "VPN Tunnels section should be empty when /etc/wireguard cannot be read");
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
