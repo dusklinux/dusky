@@ -1,0 +1,3 @@
+[build]
+# Direct Cargo commands run from this project keep artifacts on /tmp to avoid SSD write amplification.
+target-dir = "/tmp/dusky-center-target"

@@ -1,0 +1,17 @@
+{
+  "bg": "{{ colors.surface_container_lowest.dark.hex }}",
+  "surface": "{{ colors.surface_container_low.dark.hex }}",
+  "card_bg": "{{ colors.surface_container.dark.hex }}",
+  "card_hover": "{{ colors.surface_container_high.dark.hex }}",
+  "border": "{{ colors.outline_variant.dark.hex }}",
+  "fg": "{{ colors.on_surface.dark.hex }}",
+  "fg_muted": "{{ colors.on_surface_variant.dark.hex }}",
+  "accent": "{{ colors.primary.dark.hex }}",
+  "accent_hover": "{{ colors.primary_fixed.dark.hex }}",
+  "accent_fg": "{{ colors.on_primary.dark.hex }}",
+  "secondary": "{{ colors.secondary.dark.hex }}",
+  "tertiary": "{{ colors.tertiary.dark.hex }}",
+  "profile_green": "{{ "#a6e3a1" | to_color | blend: {{ colors.primary.dark.hex }}, 0.12 }}",
+  "profile_blue": "{{ "#89b4fa" | to_color | blend: {{ colors.primary.dark.hex }}, 0.12 }}",
+  "profile_red": "{{ "#f38ba8" | to_color | blend: {{ colors.primary.dark.hex }}, 0.12 }}"
+}

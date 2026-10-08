@@ -213,6 +213,10 @@ post_hook   = '''
 input_path = '~/.config/matugen/templates/dusky_tray.json'
 output_path = '~/.config/matugen/generated/dusky_tray.json'
 
+[templates.dusky_center]
+input_path = '~/.config/matugen/templates/dusky_center.json'
+output_path = '~/.config/matugen/generated/dusky_center.json'
+
 [templates.dusky_tui]
 input_path  = '~/.config/matugen/templates/dusky_tui.json'
 output_path = '~/.config/matugen/generated/dusky_tui.json'

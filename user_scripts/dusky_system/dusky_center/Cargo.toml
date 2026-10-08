@@ -1,0 +1,34 @@
+[package]
+name = "dusky-center"
+version = "1.0.0"
+edition = "2024"
+authors = ["Dusk Linux"]
+description = "Dusky Center: Native Rust control center for Arch Linux / Hyprland (Iced + Wayland xdg-toplevel). Data-driven from dusky_config.toml."
+
+[dependencies]
+iced = { version = "0.14.0", default-features = false, features = ["wgpu", "wayland", "svg", "advanced", "thread-pool"] }
+iced_core = "0.14.0"
+iced_futures = { version = "0.14.0", features = ["thread-pool"] }
+iced_runtime = "0.14.0"
+iced_renderer = { version = "0.14.0", features = ["wgpu-bare", "fira-sans"] }
+iced_widget = { version = "0.14.2", features = ["advanced", "svg", "wgpu"] }
+iced_wgpu = { version = "0.14.0", default-features = false }
+# Enable Vulkan and Wayland EGL explicitly for adapter selection.
+wgpu = { version = "27.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "gles", "parking_lot"] }
+futures-timer = "3.0.4"
+chrono = "0.4.45"
+libc = "0.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+toml = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true

@@ -1,0 +1,13 @@
+[package]
+name = "window_clipboard"
+version = "0.5.1"
+edition = "2024"
+license = "MIT"
+description = "Wayland-only window_clipboard for Dusky Papers"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+raw-window-handle = { version = "0.6", features = ["std"] }
+clipboard_wayland = "0.2.2"

@@ -1,0 +1,865 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   DUSKY CONTROL CENTER — GTK4/LIBADWAITA STYLESHEET
+   Fully theme-aware • Light/Dark/HC compatible • GNOME HIG compliant
+   Refined for Hyprland + Arch Linux
+
+   AUDIT STATUS: ✓ All properties verified against GTK4 CSS parser
+   GTK CSS NOTE: GTK uses physical properties (margin-right, margin-left),
+                 NOT logical properties (margin-end, margin-inline-end).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SCROLLBAR — Minimal & Elegant
+   Ultra-thin by default, gently widens and tints on interaction.
+   ───────────────────────────────────────────────────────────────────────────── */
+scrollbar {
+    background: transparent;
+}
+
+scrollbar slider {
+    background-color: alpha(@window_fg_color, 0.10);
+    border-radius: 99px;
+    min-width: 4px;
+    min-height: 4px;
+    transition: background-color 200ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                min-width 200ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                min-height 200ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+scrollbar slider:hover {
+    background-color: alpha(@window_fg_color, 0.22);
+    min-width: 8px;
+    min-height: 8px;
+}
+
+scrollbar slider:active {
+    background-color: @accent_bg_color;
+    min-width: 8px;
+    min-height: 8px;
+}
+
+scrollbar:backdrop slider {
+    background-color: alpha(@window_fg_color, 0.06);
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SIDEBAR — Navigation Panel
+   Translucent layered surface with refined selection states.
+   ───────────────────────────────────────────────────────────────────────────── */
+.sidebar-pane,
+.sidebar-pane:dir(ltr),
+.sidebar-pane:dir(rtl),
+.sidebar-pane banner > revealer > widget,
+.content-pane,
+.content-pane:dir(ltr),
+.content-pane:dir(rtl),
+overlay-split-view > border,
+overlay-split-view > shadow,
+overlay-split-view > outline {
+    box-shadow: none;
+    border: none;
+    border-right: none;
+    border-left: none;
+    background-image: none;
+}
+
+.sidebar-container {
+    background-color: alpha(@card_bg_color, 0.30);
+    border: none;
+    border-right: none;
+    box-shadow: none;
+}
+
+.sidebar-container:backdrop {
+    background-color: alpha(@card_bg_color, 0.20);
+    border: none;
+    border-right: none;
+    box-shadow: none;
+}
+
+.sidebar-container scrollbar {
+    opacity: 0;
+    min-width: 0px;
+    margin: 0;
+    padding: 0;
+}
+
+.sidebar-header {
+    background: transparent;
+    border-bottom: 1px solid alpha(@borders, 0.15);
+    padding: 0;
+    margin: 0;
+}
+
+.sidebar-header-icon {
+    -gtk-icon-size: 20px;
+    color: @accent_color;
+    transition: opacity 200ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+.sidebar-header:backdrop .sidebar-header-icon {
+    opacity: 0.5;
+}
+
+.sidebar-listbox {
+    background: transparent;
+    padding: 8px 10px;
+}
+
+.sidebar-row {
+    border-radius: 10px;
+    padding: 8px 8px;
+    margin: 0 4px 2px 4px;
+    background: transparent;
+    border: 1px solid transparent;
+    transition: background-color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                border-color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                box-shadow 200ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+.sidebar-row:hover:not(:selected) {
+    background-color: alpha(@accent_bg_color, 0.08);
+    border-color: alpha(@accent_bg_color, 0.15);
+}
+
+.sidebar-row:focus-visible:not(:selected) {
+    border-color: alpha(@accent_bg_color, 0.5);
+    box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0.15);
+}
+
+.sidebar-row:selected {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+    border-color: alpha(shade(@accent_bg_color, 0.85), 0.4);
+    box-shadow: 0 2px 8px alpha(@accent_bg_color, 0.28);
+    font-weight: 600;
+}
+
+.sidebar-row:selected:hover {
+    background-color: shade(@accent_bg_color, 1.06);
+    box-shadow: 0 3px 10px alpha(@accent_bg_color, 0.32);
+}
+
+.sidebar-row:selected:backdrop {
+    background-color: alpha(@accent_bg_color, 0.45);
+    box-shadow: none;
+    border-color: transparent;
+}
+
+.sidebar-row:selected .sidebar-row-label,
+.sidebar-row:selected .sidebar-row-icon {
+    color: @accent_fg_color;
+}
+
+.sidebar-row-icon {
+    -gtk-icon-size: 18px;
+    min-width: 18px;
+    min-height: 18px;
+    color: @accent_color;
+    margin-right: 8px;
+    transition: color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+.sidebar-row-label {
+    font-size: 0.95em;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SEARCH BAR — Pill-Shaped Entry
+   NOTE: `searchbar > revealer > box` targets Libadwaita internals.
+   This selector may break with future library updates.
+   ───────────────────────────────────────────────────────────────────────────── */
+searchbar {
+    background: transparent;
+    padding: 8px 12px;
+}
+
+searchbar > revealer > box {
+    background: transparent;
+}
+
+searchbar entry {
+    border-radius: 99px;
+    padding: 8px 18px;
+    background-color: alpha(@card_bg_color, 0.50);
+    border: 1px solid alpha(@borders, 0.30);
+    transition: border-color 180ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                box-shadow 180ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                background-color 180ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+searchbar entry:focus {
+    border-color: @accent_color;
+    box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0.18);
+    background-color: alpha(@card_bg_color, 0.65);
+}
+
+searchbar entry image {
+    color: alpha(@window_fg_color, 0.40);
+    transition: color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+searchbar entry:focus image {
+    color: @accent_color;
+}
+
+searchbar entry:backdrop {
+    background-color: alpha(@card_bg_color, 0.30);
+    border-color: alpha(@borders, 0.15);
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CONTENT AREA — Main Panel
+   ───────────────────────────────────────────────────────────────────────────── */
+.content-header {
+    background: transparent;
+    padding: 6px 0;
+}
+
+.content-title {
+    font-weight: 800;
+    font-size: 1.25em;
+    letter-spacing: -0.01em;
+    opacity: 0.95;
+    transition: opacity 200ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+.content-title:backdrop {
+    opacity: 0.60;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PREFERENCES GROUPS — Section Headers
+   NOTE: These selectors target Libadwaita internals
+   (`preferencesgroup > box > label.title`, `preferencespage clamp > box`).
+   The internal structure of AdwPreferencesGroup may change.
+   ───────────────────────────────────────────────────────────────────────────── */
+preferencesgroup > box > label.title {
+    font-weight: 700;
+    font-size: 0.72em;
+    letter-spacing: 0.04em;
+    color: alpha(@window_fg_color, 0.42);
+    margin-bottom: 10px;
+    margin-top: 16px;
+}
+
+preferencespage clamp > box {
+    padding: 8px 12px 20px 12px;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ACTION ROWS — Grouped "Boxed List" Style
+   The "Curved Group" effect merges consecutive rows into a single
+   visual card using selective border-radius and border collapsing.
+   ───────────────────────────────────────────────────────────────────────────── */
+row.action-row {
+    background-color: alpha(@card_bg_color, 0.38);
+    border: 1px solid alpha(@borders, 0.30);
+    padding: 8px 12px;
+    transition: background-color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                border-color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+
+    /* GROUPING LOGIC — collapsed borders between siblings */
+    margin: 0;
+    border-radius: 0;
+    border-bottom-width: 0;
+}
+
+/* First item in group: round top corners */
+row.action-row:first-child {
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
+}
+
+/* Last item in group: round bottom corners, restore bottom border */
+row.action-row:last-child {
+    border-bottom-left-radius: 14px;
+    border-bottom-right-radius: 14px;
+    border-bottom-width: 1px;
+}
+
+/* Solo item: fully rounded */
+row.action-row:only-child {
+    border-radius: 14px;
+    border-bottom-width: 1px;
+}
+
+/* Interaction */
+row.action-row:hover {
+    background-color: alpha(@card_bg_color, 0.65);
+    border-color: alpha(@borders, 0.50);
+}
+
+row.action-row:active {
+    background-color: alpha(@card_bg_color, 0.80);
+}
+
+row.action-row:focus-visible {
+    border-color: alpha(@accent_bg_color, 0.6);
+    box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0.12);
+}
+
+row.action-row:backdrop {
+    background-color: alpha(@card_bg_color, 0.22);
+    border-color: alpha(@borders, 0.15);
+}
+
+/* Prefix icon pill */
+.action-row-prefix-icon {
+    -gtk-icon-size: 20px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 7px;
+    border-radius: 10px;
+    background: alpha(@accent_bg_color, 0.10);
+    color: @accent_color;
+    margin-right: 14px;
+    transition: background-color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+row.action-row:hover .action-row-prefix-icon {
+    background: alpha(@accent_bg_color, 0.16);
+}
+
+.action-row-prefix-icon:backdrop {
+    opacity: 0.55;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BUTTONS — Run Actions
+   Three semantic tiers: default, suggested, destructive.
+   Hover states use full-fill to signal actionability.
+   ───────────────────────────────────────────────────────────────────────────── */
+.run-btn {
+    border-radius: 10px;
+    padding: 5px 18px;
+    font-weight: 600;
+    font-size: 0.9em;
+    letter-spacing: 0.01em;
+    transition: background-color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                border-color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                box-shadow 180ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                color 100ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+.run-btn:disabled {
+    opacity: 0.40;
+}
+
+.run-btn:focus-visible {
+    box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0.25);
+}
+
+/* Default action */
+.run-btn.default-action {
+    background-color: alpha(@window_fg_color, 0.06);
+    color: @window_fg_color;
+    border: 1px solid alpha(@borders, 0.30);
+}
+
+.run-btn.default-action:hover {
+    background-color: alpha(@window_fg_color, 0.11);
+    border-color: alpha(@borders, 0.50);
+}
+
+.run-btn.default-action:active {
+    background-color: alpha(@window_fg_color, 0.16);
+}
+
+/* Suggested action */
+.run-btn.suggested-action {
+    background-color: alpha(@accent_bg_color, 0.10);
+    color: @accent_color;
+    border: 1px solid alpha(@accent_bg_color, 0.25);
+}
+
+.run-btn.suggested-action:hover {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+    border-color: @accent_bg_color;
+    box-shadow: 0 2px 8px alpha(@accent_bg_color, 0.25);
+}
+
+.run-btn.suggested-action:active {
+    background-color: shade(@accent_bg_color, 0.92);
+    box-shadow: 0 1px 3px alpha(@accent_bg_color, 0.20);
+}
+
+/* Destructive action */
+.run-btn.destructive-action {
+    background-color: alpha(@error_color, 0.08);
+    color: @error_color;
+    border: 1px solid alpha(@error_color, 0.22);
+}
+
+.run-btn.destructive-action:hover {
+    background-color: @error_bg_color;
+    color: @error_fg_color;
+    border-color: @error_bg_color;
+    box-shadow: 0 2px 8px alpha(@error_bg_color, 0.28);
+}
+
+.run-btn.destructive-action:active {
+    background-color: shade(@error_bg_color, 0.90);
+    box-shadow: 0 1px 3px alpha(@error_bg_color, 0.20);
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SWITCH TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+switch {
+    border-radius: 99px;
+    transition: background-color 200ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+switch:checked {
+    background-color: @accent_bg_color;
+}
+
+switch:checked:backdrop {
+    background-color: alpha(@accent_bg_color, 0.50);
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SCALE SLIDER — Smooth Track with refined knob
+   ───────────────────────────────────────────────────────────────────────────── */
+scale {
+    padding: 8px 0;
+}
+
+scale trough {
+    border-radius: 99px;
+    background-color: alpha(@window_fg_color, 0.07);
+    min-height: 6px;
+    transition: background-color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+scale:hover trough {
+    background-color: alpha(@window_fg_color, 0.10);
+}
+
+scale highlight {
+    border-radius: 99px;
+    background-color: @accent_bg_color;
+    min-height: 6px;
+}
+
+scale slider {
+    background-color: @window_bg_color;
+    border: 1px solid alpha(@borders, 0.25);
+    border-radius: 99px;
+    min-width: 20px;
+    min-height: 20px;
+    box-shadow: 0 1px 3px alpha(@window_fg_color, 0.10);
+    transition: box-shadow 200ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                border-color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+scale slider:hover {
+    border-color: alpha(@accent_bg_color, 0.35);
+    box-shadow: 0 2px 6px alpha(@window_fg_color, 0.14);
+}
+
+scale slider:active {
+    border-color: @accent_bg_color;
+    box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0.15);
+}
+
+scale:backdrop highlight {
+    background-color: alpha(@accent_bg_color, 0.45);
+}
+
+scale:backdrop slider {
+    box-shadow: 0 1px 2px alpha(@window_fg_color, 0.06);
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   HERO CARDS — Compact Interaction Grid
+   Elevated surface cards with hover lift and accent tinting.
+   ───────────────────────────────────────────────────────────────────────────── */
+flowboxchild {
+    padding: 0;
+    margin: 0;
+    background: transparent;
+}
+
+.hero-card {
+    background-color: alpha(@card_bg_color, 0.42);
+    border: 1px solid alpha(@borders, 0.30);
+    border-radius: 12px;
+    padding: 6px 8px;
+    min-height: 44px;
+    transition: background-color 180ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                border-color 180ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                box-shadow 220ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+.hero-card:hover {
+    background-color: alpha(@card_bg_color, 0.75);
+    border-color: alpha(@accent_color, 0.30);
+    box-shadow: 0 4px 14px alpha(@window_fg_color, 0.06);
+}
+
+.hero-card:active {
+    background-color: alpha(@card_bg_color, 0.90);
+    box-shadow: 0 1px 3px alpha(@window_fg_color, 0.06);
+}
+
+.hero-card:focus-visible {
+    border-color: alpha(@accent_bg_color, 0.6);
+    box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0.15);
+}
+
+.hero-card:backdrop {
+    background-color: alpha(@card_bg_color, 0.25);
+    border-color: alpha(@borders, 0.15);
+    box-shadow: none;
+}
+
+.hero-icon {
+    color: @accent_color;
+    -gtk-icon-size: 20px;
+    margin-bottom: 3px;
+    transition: color 150ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+.hero-icon:backdrop {
+    opacity: 0.50;
+}
+
+.hero-title {
+    font-weight: 700;
+    font-size: 0.82em;
+    letter-spacing: -0.005em;
+    color: @window_fg_color;
+}
+
+.hero-subtitle {
+    font-weight: 600;
+    font-size: 0.65em;
+    letter-spacing: 0.01em;
+    color: alpha(@window_fg_color, 0.50);
+    margin-top: 1px;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   HERO CARD VARIANTS — Semantic accent tinting
+   ───────────────────────────────────────────────────────────────────────────── */
+.hero-card.suggested-card {
+    border-color: alpha(@accent_bg_color, 0.25);
+    background-color: alpha(@accent_bg_color, 0.06);
+}
+
+.hero-card.suggested-card:hover {
+    background-color: alpha(@accent_bg_color, 0.13);
+    border-color: alpha(@accent_bg_color, 0.40);
+}
+
+.hero-card.destructive-card {
+    border-color: alpha(@error_color, 0.22);
+    background-color: alpha(@error_color, 0.04);
+}
+
+.hero-card.destructive-card .hero-icon {
+    color: @error_color;
+}
+
+.hero-card.destructive-card:hover {
+    background-color: alpha(@error_color, 0.09);
+    border-color: alpha(@error_color, 0.38);
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TOGGLE CARDS — Active/On state with full accent fill
+   ───────────────────────────────────────────────────────────────────────────── */
+.hero-card.toggle-active {
+    background-color: @accent_bg_color;
+    border-color: shade(@accent_bg_color, 0.88);
+    box-shadow: 0 3px 12px alpha(@accent_bg_color, 0.28);
+}
+
+.hero-card.toggle-active .hero-title,
+.hero-card.toggle-active .hero-icon,
+.hero-card.toggle-active .hero-subtitle {
+    color: @accent_fg_color;
+}
+
+.hero-card.toggle-active:hover {
+    background-color: shade(@accent_bg_color, 1.06);
+    box-shadow: 0 4px 16px alpha(@accent_bg_color, 0.32);
+}
+
+.hero-card.toggle-active:active {
+    background-color: shade(@accent_bg_color, 0.94);
+    box-shadow: 0 2px 6px alpha(@accent_bg_color, 0.22);
+}
+
+.hero-card.toggle-active:backdrop {
+    background-color: alpha(@accent_bg_color, 0.50);
+    box-shadow: none;
+    border-color: transparent;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   WARNING BANNER — Attention surface
+   ───────────────────────────────────────────────────────────────────────────── */
+.warning-banner-box {
+    background-color: alpha(@warning_color, 0.07);
+    border: 1px solid alpha(@warning_color, 0.25);
+    border-radius: 16px;
+    padding: 20px 18px;
+    margin: 6px 0;
+    transition: background-color 200ms cubic-bezier(0.0, 0.0, 0.2, 1.0),
+                border-color 200ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+.warning-banner-box:backdrop {
+    background-color: alpha(@warning_color, 0.03);
+    border-color: alpha(@warning_color, 0.12);
+}
+
+.warning-banner-icon {
+    -gtk-icon-size: 44px;
+    color: @warning_color;
+    opacity: 0.80;
+}
+
+.warning-banner-box .title-1 {
+    font-weight: 700;
+    font-size: 1.05em;
+    color: @window_fg_color;
+    margin-top: 6px;
+}
+
+.warning-banner-box .body {
+    font-size: 0.88em;
+    color: alpha(@window_fg_color, 0.70);
+    margin-top: 4px;
+}
+
+/* Compact / subtle variant — small bounding box, high-contrast readable text, optional icon */
+.warning-banner-box.compact {
+    padding: 6px 10px;
+    margin: 0;
+    border-radius: 8px;
+    background-color: alpha(@card_bg_color, 0.38);
+    border: 1px solid alpha(@borders, 0.22);
+    min-height: 0;
+}
+
+row.action-row.compact {
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+row.action-row.compact:hover {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+}
+
+.warning-banner-box.compact .warning-banner-icon {
+    -gtk-icon-size: 14px;
+    opacity: 0.70;
+    margin-right: 0;
+}
+
+.warning-banner-box.compact .heading {
+    font-size: 0.88em;
+    font-weight: 700;
+    color: @window_fg_color;
+}
+
+.warning-banner-box.compact .caption {
+    font-size: 0.88em;
+    color: alpha(@window_fg_color, 0.90);
+    font-weight: 600;
+}
+
+.warning-banner-box.compact .body {
+    font-size: 0.92em;
+    color: @window_fg_color;
+    font-weight: 600;
+}
+
+.warning-banner-box.compact .dim-label {
+    font-size: 0.88em;
+    color: alpha(@window_fg_color, 0.88);
+    font-weight: 600;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   EMPTY STATE — Graceful void
+   ───────────────────────────────────────────────────────────────────────────── */
+.empty-state-box {
+    padding: 48px 20px;
+    opacity: 0.80;
+    transition: opacity 250ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+.empty-state-box:backdrop {
+    opacity: 0.50;
+}
+
+.empty-state-icon {
+    -gtk-icon-size: 64px;
+    color: alpha(@window_fg_color, 0.20);
+    margin-bottom: 16px;
+}
+
+.empty-state-title {
+    font-weight: 700;
+    font-size: 1.2em;
+    letter-spacing: -0.01em;
+    color: alpha(@window_fg_color, 0.70);
+    margin-bottom: 6px;
+}
+
+.empty-state-subtitle {
+    font-size: 0.92em;
+    color: alpha(@window_fg_color, 0.42);
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TOAST NOTIFICATIONS — Floating feedback
+   ───────────────────────────────────────────────────────────────────────────── */
+toast {
+    background-color: mix(@card_bg_color, @window_fg_color, 0.08);
+    border: 1px solid alpha(@borders, 0.20);
+    border-radius: 12px;
+    padding: 10px 16px;
+    box-shadow: 0 6px 20px alpha(@window_fg_color, 0.10);
+    font-weight: 500;
+}
+
+toast button {
+    border-radius: 8px;
+    font-weight: 600;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   DIM LABEL
+   ───────────────────────────────────────────────────────────────────────────── */
+.dim-label {
+    color: alpha(@window_fg_color, 0.38);
+    font-style: italic;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   FLOWBOX — Grid container for hero cards
+   ───────────────────────────────────────────────────────────────────────────── */
+flowbox {
+    padding: 4px 0;
+}
+
+flowboxchild {
+    padding: 4px;
+    border-radius: 16px;
+    transition: background-color 100ms cubic-bezier(0.0, 0.0, 0.2, 1.0);
+}
+
+flowboxchild:selected {
+    background: transparent;
+    outline: none;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   LINKED BUTTONS — Segmented control
+   ───────────────────────────────────────────────────────────────────────────── */
+.linked > button {
+    border-radius: 0;
+}
+
+.linked > button:first-child {
+    border-top-left-radius: 10px;
+    border-bottom-left-radius: 10px;
+}
+
+.linked > button:last-child {
+    border-top-right-radius: 10px;
+    border-bottom-right-radius: 10px;
+}
+
+.linked > button:only-child {
+    border-radius: 10px;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ENTRY ROW — Hide Libadwaita internal icons (broken under Papirus-Dark)
+   AdwEntryRow embeds .edit-icon (pencil) + .apply-button (checkmark) inside
+   .editable-area. Under Papirus-Dark, `adw-entry-edit-symbolic` and
+   `adw-entry-apply-symbolic` are missing from the theme AND the IconTheme
+   lookup (has_icon=False), so GTK falls back to Papirus
+   `image-missing.svg` — a white circle-with-slash (prohibited) icon that
+   users mistake for an error/stop indicator next to Apply/Allocate.
+   Dusky EntryRows already provide their own custom Apply/Allocate buttons
+   via add_suffix(), so the internal icons are redundant. Hide them and
+   reclaim their allocated width.
+   Ref: AdwEntryRow template (/org/gnome/Adwaita/ui/adw-entry-row.ui),
+   CSS nodes: row.entry > box.header > .editable-area > .edit-icon/.apply-button
+   ───────────────────────────────────────────────────────────────────────────── */
+row.entry > box.header > .editable-area > .edit-icon,
+row.entry > box.header > .editable-area > .apply-button {
+    opacity: 0;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    margin-left: 0;
+    margin-right: 0;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   UTILITY CLASSES
+   ───────────────────────────────────────────────────────────────────────────── */
+.rounded-full {
+    border-radius: 99px;
+}
+
+.card-elevated {
+    box-shadow: 0 3px 12px alpha(@window_fg_color, 0.06);
+}
+
+.subtle-border {
+    border: 1px solid alpha(@borders, 0.20);
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BADGE NOTIFICATION — Compact counter pill
+   ───────────────────────────────────────────────────────────────────────────── */
+.badge-label {
+    background-color: @error_bg_color;
+    color: @error_fg_color;
+    border-radius: 99px;
+    padding: 1px 0;
+    font-size: 11px;
+    font-weight: 600;
+    min-width: 22px;
+    min-height: 22px;
+    box-shadow: 0 1px 3px alpha(black, 0.18);
+}

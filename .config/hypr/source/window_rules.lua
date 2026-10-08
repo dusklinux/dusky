@@ -1176,7 +1176,7 @@ hl.window_rule({
 hl.window_rule({
     name = "controlcenter",
     match = {
-        class = "^(com\\.github\\.dusky\\.controlcenter)$",
+        class = "^(com\\.github\\.dusky\\.controlcenter|dusky-center)$",
     },
     float = true,
     size = {670, "(monitor_h*0.90)"},
