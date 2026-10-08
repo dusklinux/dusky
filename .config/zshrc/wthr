@@ -1,14 +1,35 @@
-# Weather query via wttr.in
-# Usage: wthr [location]
-# use with "-s" flag to only get one line.
+# Weather query via wttr.in; retain its full terminal forecast and location syntax.
+# Usage: wthr [-s] [location]  (-s shows only condition and temperature)
 wthr() {
-    # Check if the first argument is '-s' (short)
-    if [[ "$1" == "-s" ]]; then
-        shift # Remove the -s from arguments
-        local location="${(j:+:)@}"
-        curl "wttr.in/${location}?format=%c+%t"
-    else
-        local location="${(j:+:)@}"
-        curl "wttr.in/${location}"
+    emulate -L zsh
+    local -a query_args=()
+    if [[ ${1-} == -s ]]; then
+        shift
+        query_args=(--url-query 'format=%c %t')
     fi
+
+    # Encode Unicode and literal spaces, preserving wttr's documented URL options.
+    local location
+    location=$(command python3 -c 'import sys; from urllib.parse import quote; print(quote(" ".join(sys.argv[1:]), safe="/@:+,?=&%").replace("%20", "+"))' "$@") || return
+
+    local host report
+    local request_status=1
+    for host in wttr.in wttr.is; do
+        # Buffer each attempt so a failed transfer cannot print half a forecast.
+        if report=$(command curl --silent --fail --globoff \
+            --connect-timeout 5 --max-time 15 \
+            "${query_args[@]}" "https://${host}/${location}" 2>/dev/null); then
+            if [[ -n $report ]]; then
+                print -r -- "$report"
+                return 0
+            fi
+            request_status=1
+        else
+            request_status=$?
+        fi
+        # SIGINT must stop the command, including when running the alternate domain.
+        (( request_status == 130 )) && return 130
+    done
+    print -u2 -r -- 'wthr: weather unavailable from wttr.in and wttr.is'
+    return $request_status
 }

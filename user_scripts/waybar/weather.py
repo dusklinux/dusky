@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 
 import argparse
-import datetime
-import fcntl
+lazy import datetime
+lazy import fcntl
 import json
 import math
 import os
 import sys
 import time
-import urllib.parse
-import subprocess
+lazy import urllib.parse
+lazy import urllib.request
+lazy import urllib.error
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+lazy from tempfile import NamedTemporaryFile
 from typing import Any, Self
 
 # Consolidated WMO weather code lookup.
@@ -95,16 +96,18 @@ WWO_TO_WMO: dict[int, int] = {
     374: 85,  # Light showers of ice pellets -> Slight snow showers
     377: 86,  # Moderate or heavy showers of ice pellets -> Heavy snow showers
     386: 95,  # Patchy light rain in area with thunder -> Thunderstorm
-    389: 99,  # Moderate or heavy rain in area with thunder -> Thunderstorm with heavy hail
+    389: 95,  # Moderate or heavy rain with thunder; WWO does not imply hail
     392: 95,  # Patchy light snow in area with thunder -> Thunderstorm
-    395: 99,  # Moderate or heavy snow in area with thunder -> Thunderstorm with heavy hail
+    395: 95,  # Moderate or heavy snow with thunder; WWO does not imply hail
 }
 
 
 IMPERIAL_COUNTRIES = {"US", "LR", "MM"}
 STATE_FILE = Path.home() / ".config" / "dusky" / "settings" / "waybar_weather"
 TIME_STATE_FILE = Path.home() / ".config" / "dusky" / "settings" / "waybar_weather_time"
-FETCH_DEADLINE = 30
+FETCH_DEADLINE = 40
+MAX_RESPONSE_BYTES = 1024 * 1024
+WTTR_HOSTS = ("wttr.in", "wttr.is")
 RETRY_INTERVAL = 60
 
 HTTP_HEADERS = {
@@ -223,11 +226,17 @@ def json_dumps(data: object) -> str:
 
 
 def normalize_country_code(value: object) -> str:
-    return value.strip().upper() if isinstance(value, str) else ""
+    code = value.strip().upper() if isinstance(value, str) else ""
+    return code if len(code) == 2 and code.isascii() and code.isalpha() else ""
 
 
 def normalize_city(value: object) -> str:
-    return value.strip() if isinstance(value, str) else ""
+    city = value.strip() if isinstance(value, str) else ""
+    try:
+        city.encode("utf-8")
+    except UnicodeError:
+        return ""
+    return city
 
 
 def normalize_payload(raw: object) -> JsonDict | None:
@@ -249,6 +258,14 @@ def normalize_payload(raw: object) -> JsonDict | None:
         css_class = [item for item in css_class if isinstance(item, str)] or ["weather"]
     elif not isinstance(css_class, str):
         css_class = "weather"
+
+    # Escaped lone surrogates are legal to Python's JSON decoder but cannot
+    # be emitted as UTF-8 or read by the Rust consumers.
+    try:
+        for value in (text, tooltip, alt, *(css_class if isinstance(css_class, list) else [css_class])):
+            value.encode("utf-8")
+    except UnicodeError:
+        return None
 
     return {
         "text": text,
@@ -304,7 +321,7 @@ def load_time_state(state: StateRecord | None, request_key: RequestKey | None = 
             raise ValueError("Invalid weather timestamps")
         now = time.time()
         return float(attempt) if 0 <= attempt <= now else 0.0, float(success) if 0 <= success <= now else 0.0
-    except (OSError, UnicodeError, ValueError, TypeError):
+    except (OSError, UnicodeError, ValueError, TypeError, RecursionError):
         if state is not None and 0 <= state.saved_at <= time.time():
             return state.saved_at, state.saved_at
         return 0.0, 0.0
@@ -316,25 +333,7 @@ def write_time_state(last_attempt: float, last_success: float, request_key: Requ
         "last_success": last_success,
         "request_key": request_key.to_json() if request_key else None,
     }
-    temp_path: Path | None = None
-    try:
-        TIME_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=TIME_STATE_FILE.parent,
-            delete=False,
-            prefix=f".{TIME_STATE_FILE.name}.",
-            suffix=".tmp",
-        ) as temp_file:
-            temp_path = Path(temp_file.name)
-            temp_file.write(json_dumps(data))
-            temp_file.flush()
-        temp_path.replace(TIME_STATE_FILE)
-    except OSError:
-        with suppress(OSError):
-            if temp_path is not None:
-                temp_path.unlink(missing_ok=True)
+    write_json_file(TIME_STATE_FILE, data)
 
 
 def spawn_background_fetch(args: argparse.Namespace) -> bool:
@@ -347,13 +346,16 @@ def spawn_background_fetch(args: argparse.Namespace) -> bool:
     elif args.celsius:
         args_to_pass.append("--celsius")
     try:
-        subprocess.Popen(
+        # This short-lived launcher deliberately detaches instead of waiting.
+        # posix_spawn avoids retaining a Popen object for a running worker.
+        os.posix_spawn(
+            "/usr/bin/timeout",
             ["/usr/bin/timeout", "--signal=KILL", str(FETCH_DEADLINE),
              sys.executable, script_path, "--background-fetch", *args_to_pass],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
+            os.environ,
+            file_actions=[(os.POSIX_SPAWN_OPEN, fd, os.devnull, os.O_RDWR, 0) for fd in (0, 1, 2)]
+                         + [(os.POSIX_SPAWN_CLOSEFROM, 3)],
+            setsid=True,
         )
         return True
     except OSError:
@@ -373,7 +375,7 @@ def load_state() -> StateRecord | None:
 
     try:
         raw = json.loads(raw_text)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
 
     # New wrapped state format.
@@ -414,7 +416,7 @@ def load_state() -> StateRecord | None:
     return StateRecord(payload=payload, saved_at=mtime)
 
 
-def write_state(record: StateRecord) -> None:
+def write_state(record: StateRecord) -> bool:
     wrapped: JsonDict = {
         "version": 2,
         "saved_at": record.saved_at,
@@ -427,36 +429,31 @@ def write_state(record: StateRecord) -> None:
         "lon": record.lon,
     }
 
-    data = json_dumps(wrapped)
+    return write_json_file(STATE_FILE, wrapped)
+
+
+def write_json_file(path: Path, data: object) -> bool:
+    """Publish complete JSON atomically; keep the old file if writing fails."""
     temp_path: Path | None = None
-
     try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-
+        path.parent.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=STATE_FILE.parent,
-            delete=False,
-            prefix=f".{STATE_FILE.name}.",
-            suffix=".tmp",
+            mode="w", encoding="utf-8", dir=path.parent, delete=False,
+            prefix=f".{path.name}.", suffix=".tmp",
         ) as temp_file:
             temp_path = Path(temp_file.name)
-            temp_file.write(data)
-            temp_file.flush()
-
-        temp_path.replace(STATE_FILE)
-
-    except OSError:
-        with suppress(OSError):
-            if temp_path is not None:
+            temp_file.write(json_dumps(data))
+        temp_path.replace(path)
+        return True
+    except (OSError, UnicodeError):
+        return False
+    finally:
+        if temp_path is not None:
+            with suppress(OSError):
                 temp_path.unlink(missing_ok=True)
 
 
 def fetch_json(url: str, params: dict[str, object] | None = None, timeout: float = 5.0) -> JsonDict | None:
-    # Cache-only queries do not need the HTTP/TLS stack.
-    import urllib.request
-
     if params:
         query = urllib.parse.urlencode(params)
         url = f"{url}?{query}"
@@ -467,7 +464,17 @@ def fetch_json(url: str, params: dict[str, object] | None = None, timeout: float
         with urllib.request.urlopen(request, timeout=timeout) as response:
             if response.status != 200:
                 return None
-            data = json.loads(response.read())
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(body) > MAX_RESPONSE_BYTES:
+                return None
+            # A bounded HTTPResponse.read() does not reject a short body itself.
+            length = response.headers.get("Content-Length")
+            if length is not None and len(body) != int(length):
+                return None
+            data = json.loads(body)
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        return None
     except Exception:
         return None
 
@@ -558,12 +565,14 @@ def parse_utc_offset_seconds(offset_str: str) -> int | None:
     if s[0] in "+-":
         sign = -1 if s[0] == "-" else 1
         s = s[1:]
-    # Remove colon: "05:30" -> "0530"
-    s = s.replace(":", "")
-    if len(s) < 3 or not s.isdigit():
+    if len(s) == 5 and s[2] == ":":
+        s = s[:2] + s[3:]
+    if len(s) != 4 or not s.isascii() or not s.isdigit():
         return None
     hours = int(s[:-2])
     minutes = int(s[-2:])
+    if hours > 23 or minutes > 59:
+        return None
     return sign * (hours * 3600 + minutes * 60)
 
 
@@ -695,7 +704,7 @@ def round_half_away_from_zero(value: float) -> int:
     return math.floor(value + 0.5) if value >= 0 else -math.floor(-value + 0.5)
 
 
-def parse_weather_data(weather_data: JsonDict) -> tuple[int, int, int, int, int]:
+def parse_weather_data(weather_data: JsonDict) -> tuple[int, int, int, int, int | None]:
     current = weather_data.get("current")
     daily = weather_data.get("daily")
 
@@ -719,62 +728,65 @@ def parse_weather_data(weather_data: JsonDict) -> tuple[int, int, int, int, int]
     else:
         temp_min = round_half_away_from_zero(as_float(daily_temp_min[0]))
 
-    if not isinstance(daily_precip, list) or not daily_precip or daily_precip[0] is None:
-        precip_prob = 0
-    else:
-        precip_prob = round_half_away_from_zero(as_float(daily_precip[0]))
+    precip_prob = parse_probability(daily_precip[0]) if isinstance(daily_precip, list) and daily_precip else None
 
     return temp, weather_code, temp_max, temp_min, precip_prob
 
 
-def parse_wttr_data(wttr_data: JsonDict, unit: str) -> tuple[int, int, int, int, int]:
-    current_cond = wttr_data.get("current_condition")
-    weather_list = wttr_data.get("weather")
+def parse_probability(value: object) -> int | None:
+    """Optional forecast fields must not invalidate a usable temperature."""
+    try:
+        if isinstance(value, str):
+            value = float(value)
+        probability = as_float(value)
+        if 0 <= probability <= 100:
+            return round_half_away_from_zero(probability)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return None
+
+
+def wttr_number(value: object) -> float:
+    # WWO uses numeric strings; reject booleans, NaN and infinity explicitly.
+    return as_float(float(value) if isinstance(value, str) else value)
+
+
+def parse_wttr_data(wttr_data: JsonDict, unit: str) -> tuple[int, int, int, int, int | None]:
+    # The WWO upstream can wrap the same j1 schema in a "data" object.
+    data = wttr_data.get("data", wttr_data)
+    if not isinstance(data, dict):
+        raise TypeError("Invalid wttr.in data wrapper.")
+    current_cond = data.get("current_condition")
+    weather_list = data.get("weather")
     if not isinstance(current_cond, list) or not current_cond or not isinstance(weather_list, list) or not weather_list:
         raise TypeError("Missing wttr.in condition or weather data.")
+    current, today = current_cond[0], weather_list[0]
+    if not isinstance(current, dict) or not isinstance(today, dict):
+        raise TypeError("Invalid wttr.in condition or weather data.")
 
-    current = current_cond[0]
-    today = weather_list[0]
-
-    # Get current temperature
     temp_key = "temp_F" if unit == "imperial" else "temp_C"
-    temp_val = current.get(temp_key)
-    if temp_val is None:
-        raise TypeError(f"Missing {temp_key} in wttr.in condition.")
-    temp = round_half_away_from_zero(float(temp_val))
-
-    # Get weather code
-    wwo_code_str = current.get("weatherCode")
-    wwo_code = int(wwo_code_str) if wwo_code_str is not None else 0
-    weather_code = WWO_TO_WMO.get(wwo_code, -1)
-
-    # Get max/min temps
     max_key = "maxtempF" if unit == "imperial" else "maxtempC"
     min_key = "mintempF" if unit == "imperial" else "mintempC"
-    max_val = today.get(max_key)
-    min_val = today.get(min_key)
-    if max_val is None or min_val is None:
-        raise TypeError("Missing maxtemp or mintemp in wttr.in weather.")
-    temp_max = round_half_away_from_zero(float(max_val))
-    temp_min = round_half_away_from_zero(float(min_val))
+    temp = round_half_away_from_zero(wttr_number(current.get(temp_key)))
+    temp_max = round_half_away_from_zero(wttr_number(today.get(max_key)))
+    temp_min = round_half_away_from_zero(wttr_number(today.get(min_key)))
+    raw_code = current.get("weatherCode")
+    wwo_code = as_int(wttr_number(raw_code)) if raw_code is not None else -1
+    weather_code = WWO_TO_WMO.get(wwo_code, -1)
 
-    # Compute max precipitation probability from hourly forecast
+    # Rain and snow are separate WWO fields; take the daily maximum of either.
+    # This is a fallback estimate, not a computed probability of their union.
+    precip_prob = None
     hourly = today.get("hourly")
-    precip_prob = 0
-    if isinstance(hourly, list) and hourly:
-        probs = []
-        for h in hourly:
-            prob_str = h.get("chanceofrain")
-            if prob_str is not None:
-                try:
-                    probs.append(int(prob_str))
-                except ValueError:
-                    pass
-        if probs:
-            precip_prob = max(probs)
-
+    if isinstance(hourly, list):
+        for hour in hourly:
+            if not isinstance(hour, dict):
+                continue
+            for key in ("chanceofrain", "chanceofsnow"):
+                probability = parse_probability(hour.get(key))
+                if probability is not None:
+                    precip_prob = probability if precip_prob is None else max(precip_prob, probability)
     return temp, weather_code, temp_max, temp_min, precip_prob
-
 
 
 def build_weather_payload(
@@ -782,17 +794,18 @@ def build_weather_payload(
     weather_code: int,
     temp_max: int,
     temp_min: int,
-    precip_prob: int,
+    precip_prob: int | None,
     unit: str,
     city: str,
 ) -> JsonDict:
     icon, weather_desc = WEATHER_CODES.get(weather_code, ("", "Unknown"))
     temp_symbol = "°F" if unit == "imperial" else "°C"
 
+    precip_text = str(precip_prob) if precip_prob is not None else "?"
     tooltip = (
         f"<span size='xx-large'>{temp}{temp_symbol}</span>\n"
         f"<big>{icon} {weather_desc}</big>\n"
-        f" {temp_max}{temp_symbol}   {temp_min}{temp_symbol}   {precip_prob}%"
+        f" {temp_max}{temp_symbol}   {temp_min}{temp_symbol}   {precip_text}%"
     )
 
     return {
@@ -870,16 +883,17 @@ def refresh_weather(args: argparse.Namespace, request_key: RequestKey, state: St
             pass
 
     if result is None:
-        wttr_data = fetch_json(
-            f"https://wttr.in/{lat},{lon}",
-            params={"format": "j1"},
-            timeout=10.0,
-        )
-        if wttr_data and not wttr_data.get("error"):
-            try:
-                result = parse_wttr_data(wttr_data, unit)
-            except (TypeError, ValueError, OverflowError, IndexError, AttributeError):
-                pass
+        for host in WTTR_HOSTS:
+            wttr_data = fetch_json(
+                f"https://{host}/{lat},{lon}",
+                params={"format": "j1"}, timeout=8.0,
+            )
+            if wttr_data and not wttr_data.get("error"):
+                try:
+                    result = parse_wttr_data(wttr_data, unit)
+                except (TypeError, ValueError, OverflowError, IndexError, AttributeError):
+                    continue
+                break
 
     if result is None:
         return
@@ -896,7 +910,7 @@ def refresh_weather(args: argparse.Namespace, request_key: RequestKey, state: St
     )
 
     completed_at = time.time()
-    write_state(
+    saved = write_state(
         StateRecord(
             payload=payload,
             saved_at=completed_at,
@@ -908,7 +922,8 @@ def refresh_weather(args: argparse.Namespace, request_key: RequestKey, state: St
             lon=lon,
         )
     )
-    write_time_state(completed_at, completed_at, request_key)
+    if saved:
+        write_time_state(completed_at, completed_at, request_key)
 
 
 def main() -> None:
@@ -941,7 +956,7 @@ def main() -> None:
     if args.background_fetch:
         try:
             STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with STATE_FILE.with_name('.waybar_weather.lock').open('a') as worker_lock:
+            with STATE_FILE.with_name('.waybar_weather.lock').open('ab') as worker_lock:
                 fcntl.flock(worker_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 refresh_weather(args, request_key, load_state())
         except OSError:
@@ -964,10 +979,17 @@ def main() -> None:
     # Cache is stale or missing/unmatched
     # Retry failed/missing requests briefly; successful data keeps its full TTL.
     if current_time - last_attempt >= min(args.interval, RETRY_INTERVAL):
-        # Debounce launches; the worker lock prevents duplicate network requests.
-        write_time_state(current_time, last_success, request_key)
-        if not spawn_background_fetch(args):
-            write_time_state(0, last_success, request_key)
+        try:
+            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with STATE_FILE.with_name(".waybar_weather.launch.lock").open("ab") as launch_lock:
+                fcntl.flock(launch_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                last_attempt, last_success = load_time_state(matching_state, request_key)
+                if time.time() - last_attempt >= min(args.interval, RETRY_INTERVAL):
+                    write_time_state(time.time(), last_success, request_key)
+                    if not spawn_background_fetch(args):
+                        write_time_state(0, last_success, request_key)
+        except OSError:
+            pass
 
     if matching_state:
         # Emit offline/stale payload
@@ -982,4 +1004,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BrokenPipeError:
+        # A stopped Waybar consumer can close the pipe before our output arrives.
+        # Redirect it so interpreter shutdown does not try to flush it again.
+        null_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(null_fd, sys.stdout.fileno())
+        os.close(null_fd)
+        sys.exit(1)
