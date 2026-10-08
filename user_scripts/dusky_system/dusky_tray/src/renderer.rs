@@ -1,6 +1,6 @@
 //! Initialize EGL only when Vulkan compositor creation fails.
 //!
-//! The layer-shell runner aborts on compositor errors, so fallback must happen
+//! The windowing runner requires a working compositor, so fallback happens
 //! here. Rendering stays with Iced's wgpu renderer; these newtypes only select
 //! its compositor through Iced's public traits and forward drawing unchanged.
 
@@ -194,7 +194,16 @@ impl Renderer {
     }
 }
 
-pub struct Compositor(iced_wgpu::window::Compositor);
+pub struct Compositor(
+    iced_wgpu::window::Compositor,
+    Option<crate::click_away::Guard>,
+);
+
+impl Drop for Compositor {
+    fn drop(&mut self) {
+        self.1.take();
+    }
+}
 
 impl compositor::Default for Renderer {
     type Compositor = Compositor;
@@ -217,7 +226,7 @@ impl graphics::Compositor for Compositor {
                 settings, display, window, shell, backend,
             )
             .await
-            .map(Self);
+            .map(|inner| Self(inner, None));
         }
 
         let mut settings = iced_wgpu::Settings::from(settings);
@@ -228,7 +237,7 @@ impl graphics::Compositor for Compositor {
         match iced_wgpu::window::Compositor::request(settings, Some(window.clone()), shell.clone())
             .await
         {
-            Ok(compositor) => Ok(Self(compositor)),
+            Ok(compositor) => Ok(Self(compositor, None)),
             Err(vulkan_error) => {
                 // The failed request has dropped its instance/surface/device.
                 // Do not mutate the environment now that workers are running.
@@ -236,7 +245,7 @@ impl graphics::Compositor for Compositor {
                 settings.backends = wgpu::Backends::GL;
                 iced_wgpu::window::Compositor::request(settings, Some(window), shell)
                     .await
-                    .map(Self)
+                    .map(|inner| Self(inner, None))
                     .map_err(|gl_error| {
                         graphics::Error::List(vec![vulkan_error.into(), gl_error.into()])
                     })
@@ -254,6 +263,12 @@ impl graphics::Compositor for Compositor {
         width: u32,
         height: u32,
     ) -> Self::Surface {
+        self.1 = Some(
+            crate::click_away::Guard::new(window.clone()).unwrap_or_else(|error| {
+                eprintln!("Could not initialize click-away: {error}");
+                std::process::exit(1);
+            }),
+        );
         self.0.create_surface(window, width, height)
     }
 
@@ -280,6 +295,11 @@ impl graphics::Compositor for Compositor {
             background,
             on_pre_present,
         );
+        if result.is_ok()
+            && let Some(grab) = self.1.as_mut()
+        {
+            grab.activate();
+        }
         if result.is_ok()
             && FIRST_PRESENT.swap(false, std::sync::atomic::Ordering::Relaxed)
             && let Some(start) = STARTUP.get()

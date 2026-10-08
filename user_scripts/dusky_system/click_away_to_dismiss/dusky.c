@@ -30,6 +30,8 @@ static struct wl_display                     *global_display = NULL;
 
 typedef void (*ClearedCallback)(void);
 static ClearedCallback py_callback = NULL;
+/* Native clients enqueue their callback directly; GTK keeps GLib dispatch. */
+static bool native_callback = false;
 
 static pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t dispatch_thread;
@@ -80,11 +82,16 @@ static int idle_callback_wrapper(void *data) {
 }
 
 static void grab_cleared(void *data, struct hyprland_focus_grab_v1 *grab) {
+    ClearedCallback cb = NULL;
     pthread_mutex_lock(&state_mutex);
-    if (active_grab == grab && g_idle_add_ptr) {
-        g_idle_add_ptr((void*)idle_callback_wrapper, NULL);
+    if (active_grab == grab) {
+        if (native_callback) cb = py_callback;
+        else if (g_idle_add_ptr)
+            g_idle_add_ptr((void*)idle_callback_wrapper, NULL);
     }
     pthread_mutex_unlock(&state_mutex);
+    /* A native callback must only enqueue work, never destroy/join this thread. */
+    if (cb) cb();
 }
 
 static const struct hyprland_focus_grab_v1_listener grab_listener = {
@@ -231,6 +238,70 @@ static bool resolve_wayland_surfaces(void *gtk_ptr,
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
+static bool start_grab_locked(struct wl_surface *wl_surface) {
+    shutdown_efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (shutdown_efd < 0) {
+        return false;
+    }
+
+    custom_queue = wl_display_create_queue(global_display);
+    struct wl_registry *registry = wl_display_get_registry(global_display);
+
+    wl_proxy_set_queue((struct wl_proxy *)registry, custom_queue);
+    wl_registry_add_listener(registry, &registry_listener, NULL);
+    wl_display_roundtrip_queue(global_display, custom_queue);
+    wl_registry_destroy(registry);
+
+    if (!grab_manager) {
+        fprintf(stderr, "[libwaylandgrab] Error: hyprland_focus_grab_manager_v1 is unsupported by compositor.\n");
+        wl_event_queue_destroy(custom_queue);
+        custom_queue = NULL;
+        close(shutdown_efd);
+        shutdown_efd = -1;
+        return false;
+    }
+
+    active_grab = hyprland_focus_grab_manager_v1_create_grab(grab_manager);
+    wl_proxy_set_queue((struct wl_proxy *)active_grab, custom_queue);
+    
+    hyprland_focus_grab_v1_add_listener(active_grab, &grab_listener, NULL);
+    hyprland_focus_grab_v1_add_surface(active_grab, wl_surface);
+    hyprland_focus_grab_v1_commit(active_grab);
+    
+    wl_display_flush(global_display);
+
+    if (pthread_create(&dispatch_thread, NULL, dispatch_thread_func, NULL) == 0) {
+        thread_running = true;
+    } else {
+        hyprland_focus_grab_v1_destroy(active_grab);
+        active_grab = NULL;
+        wl_event_queue_destroy(custom_queue);
+        custom_queue = NULL;
+        close(shutdown_efd);
+        shutdown_efd = -1;
+    }
+
+    return thread_running;
+}
+
+/* The display and surface must remain alive until destroy_wayland_grab().
+ * The callback runs on our dispatch thread and must enqueue UI work only. */
+int init_wayland_grab_raw(struct wl_display *display, struct wl_surface *surface,
+                          ClearedCallback cb) {
+    if (!display || !surface || !cb) return 0;
+    pthread_mutex_lock(&state_mutex);
+    if (thread_running) {
+        pthread_mutex_unlock(&state_mutex);
+        return 0;
+    }
+    native_callback = true;
+    py_callback = cb;
+    global_display = display;
+    bool ok = start_grab_locked(surface);
+    pthread_mutex_unlock(&state_mutex);
+    return ok;
+}
+
 void init_wayland_grab(void *gtk_window_ptr, ClearedCallback cb) {
     if (!gtk_window_ptr) return;
 
@@ -265,50 +336,8 @@ void init_wayland_grab(void *gtk_window_ptr, ClearedCallback cb) {
         }
     }
 
-    shutdown_efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-    if (shutdown_efd < 0) {
-        pthread_mutex_unlock(&state_mutex);
-        return;
-    }
-
-    custom_queue = wl_display_create_queue(global_display);
-    struct wl_registry *registry = wl_display_get_registry(global_display);
-
-    wl_proxy_set_queue((struct wl_proxy *)registry, custom_queue);
-    wl_registry_add_listener(registry, &registry_listener, NULL);
-    wl_display_roundtrip_queue(global_display, custom_queue);
-    wl_registry_destroy(registry);
-
-    if (!grab_manager) {
-        fprintf(stderr, "[libwaylandgrab] Error: hyprland_focus_grab_manager_v1 is unsupported by compositor.\n");
-        wl_event_queue_destroy(custom_queue);
-        custom_queue = NULL;
-        close(shutdown_efd);
-        shutdown_efd = -1;
-        pthread_mutex_unlock(&state_mutex);
-        return;
-    }
-
-    active_grab = hyprland_focus_grab_manager_v1_create_grab(grab_manager);
-    wl_proxy_set_queue((struct wl_proxy *)active_grab, custom_queue);
-    
-    hyprland_focus_grab_v1_add_listener(active_grab, &grab_listener, NULL);
-    hyprland_focus_grab_v1_add_surface(active_grab, wl_surface);
-    hyprland_focus_grab_v1_commit(active_grab);
-    
-    wl_display_flush(global_display);
-
-    if (pthread_create(&dispatch_thread, NULL, dispatch_thread_func, NULL) == 0) {
-        thread_running = true;
-    } else {
-        hyprland_focus_grab_v1_destroy(active_grab);
-        active_grab = NULL;
-        wl_event_queue_destroy(custom_queue);
-        custom_queue = NULL;
-        close(shutdown_efd);
-        shutdown_efd = -1;
-    }
-
+    native_callback = false;
+    start_grab_locked(wl_surface);
     pthread_mutex_unlock(&state_mutex);
 }
 
@@ -352,6 +381,7 @@ void destroy_wayland_grab() {
     
     thread_running = false;
     py_callback = NULL;
+    native_callback = false;
     global_display = NULL; 
     
     pthread_mutex_unlock(&state_mutex);

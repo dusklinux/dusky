@@ -69,11 +69,18 @@ def source_digest(project: Path) -> str:
     if src.is_dir():
         files.extend(sorted(path for path in src.rglob("*") if path.is_file()))
 
+    helper = project.parent / "click_away_to_dismiss"
+    files.extend(helper / name for name in (
+        "dusky.c",
+        "hyprland-focus-grab-v1-client-protocol.c",
+        "hyprland-focus-grab-v1-client-protocol.h",
+    ))
+
     digest = hashlib.sha256()
     digest.update(BUILD_RECIPE.encode())
     digest.update(b"\0")
     for path in files:
-        digest.update(str(path.relative_to(project)).encode())
+        digest.update(os.path.relpath(path, project).encode())
         digest.update(b"\0")
         digest.update(bytes.fromhex(sha256(path)))
     return digest.hexdigest()

@@ -1,11 +1,11 @@
 pkgname=dusky-tray
 pkgver=1.0.0
-pkgrel=5
+pkgrel=6
 pkgdesc='Dusky Tray control center for Hyprland'
 arch=('x86_64')
 license=('custom')
 depends=('glibc' 'gcc-libs' 'wayland' 'libxkbcommon' 'vulkan-icd-loader' 'mesa' 'libglvnd')
-makedepends=('cargo' 'python' 'util-linux')
+makedepends=('cargo' 'python' 'util-linux' 'gcc')
 source=()
 
 build() {
@@ -19,7 +19,9 @@ build() {
   printf '%s\n' "$build_dir" > "$srcdir/tray-build-path"
   # Keep successful output for package(); remove it if compilation fails.
   trap "status=\$?; if ((status != 0)); then rm -rf -- '$build_dir'; fi" EXIT
-  cp -a -- "$DUSKY_PACKAGE_SOURCE" "$build_dir/project"
+  cp -a -- "$DUSKY_PACKAGE_SOURCE/dusky_tray" "$build_dir/project"
+  mkdir -- "$build_dir/click_away_to_dismiss"
+  cp -- "$DUSKY_PACKAGE_SOURCE/click_away_to_dismiss/"{dusky.c,hyprland-focus-grab-v1-client-protocol.c,hyprland-focus-grab-v1-client-protocol.h} "$build_dir/click_away_to_dismiss/"
   cd "$build_dir/project"
   unset CARGO_ENCODED_RUSTFLAGS
   export RUSTFLAGS='-C target-cpu=x86-64'
@@ -46,6 +48,7 @@ package() {
     "$pkgdir/usr/share/dusky-tray/config.toml"
   python - "$build_dir/project" > "$pkgdir/usr/share/dusky-tray/source.sha256" <<'PY'
 import hashlib
+import os
 import sys
 from pathlib import Path
 
@@ -61,10 +64,16 @@ for relative in (
 if (project / "src").is_dir():
     files.extend(sorted(path for path in (project / "src").rglob("*") if path.is_file()))
 
+files.extend(project.parent / "click_away_to_dismiss" / name for name in (
+    "dusky.c",
+    "hyprland-focus-grab-v1-client-protocol.c",
+    "hyprland-focus-grab-v1-client-protocol.h",
+))
+
 # Same inputs and recipe marker as 152_dusky_tray_setup.py.
 digest = hashlib.sha256(b"tray-native-v1-frozen-tmpfs\0")
 for path in files:
-    digest.update(str(path.relative_to(project)).encode())
+    digest.update(os.path.relpath(path, project).encode())
     digest.update(b"\0")
     digest.update(hashlib.sha256(path.read_bytes()).digest())
 print(digest.hexdigest())

@@ -59,10 +59,11 @@ pub fn mako_blacklist_file() -> PathBuf {
 }
 
 /// Hyprland's named Lua rules replace themselves instead of accumulating.
-/// The alpha mask excludes the fullscreen click catcher from layer blur.
+/// The tray window keeps its background transparent outside the panel.
 pub fn configure_panel_blur(enabled: bool) {
     let rule = format!(
-        "hl.layer_rule({{name=\"dusky_tray\",match={{namespace=\"dusky-tray\"}},blur={enabled},xray=false,ignore_alpha=0.1}})"
+        "hl.window_rule({{name=\"dusky_tray_blur\",match={{class=\"^dusky-tray$\"}},no_blur={}}})",
+        !enabled
     );
     let reply = run_command(
         &["hyprctl".into(), "eval".into(), rule],
@@ -72,6 +73,65 @@ pub fn configure_panel_blur(enabled: bool) {
     if !reply.is_some_and(|reply| reply.status && reply.stdout.trim() == "ok") {
         eprintln!("Could not apply the Hyprland tray blur rule");
     }
+}
+
+#[derive(Clone, Copy)]
+pub struct PanelMonitor {
+    pub x: f32,
+    pub y: f32,
+    pub size: iced_core::Size,
+}
+impl PanelMonitor {
+    pub fn limit(self) -> iced_core::Size {
+        iced_core::Size::new(
+            320.0_f32.min((self.size.width - 40.0).max(1.0)),
+            (self.size.height * 0.85)
+                .min(self.size.height - 40.0)
+                .max(1.0),
+        )
+    }
+}
+pub fn panel_monitor() -> Option<PanelMonitor> {
+    let result = run_command(
+        &["hyprctl".into(), "-j".into(), "monitors".into()],
+        Duration::from_millis(800),
+        true,
+    )?;
+    let monitors: serde_json::Value = serde_json::from_str(&result.stdout).ok()?;
+    let monitor = monitors
+        .as_array()?
+        .iter()
+        .find(|m| m["focused"].as_bool() == Some(true))?;
+    let scale = monitor["scale"].as_f64()? as f32;
+    let mut width = monitor["width"].as_f64()? as f32;
+    let mut height = monitor["height"].as_f64()? as f32;
+    if monitor["transform"].as_u64()? % 2 == 1 {
+        std::mem::swap(&mut width, &mut height);
+    }
+    Some(PanelMonitor {
+        x: monitor["x"].as_f64()? as f32,
+        y: monitor["y"].as_f64()? as f32,
+        size: iced_core::Size::new(width / scale, height / scale),
+    })
+}
+pub fn fit_panel(monitor: PanelMonitor, size: iced_core::Size) -> bool {
+    let actions = format!(
+        "hl.dispatch(hl.dsp.window.resize({{window=\"class:^dusky-tray$\",x={},y={},relative=false}})); hl.dispatch(hl.dsp.window.move({{window=\"class:^dusky-tray$\",x={},y={},relative=false}}))",
+        size.width,
+        size.height,
+        monitor.x + monitor.size.width - size.width - 20.0,
+        monitor.y + monitor.size.height - size.height - 20.0
+    );
+    let result = run_command(
+        &["hyprctl".into(), "eval".into(), actions],
+        Duration::from_millis(800),
+        true,
+    );
+    let success = result.is_some_and(|result| result.status && result.stdout.trim() == "ok");
+    if !success {
+        eprintln!("Could not resize/position the tray window");
+    }
+    success
 }
 
 // ---------------------------------------------------------------------------

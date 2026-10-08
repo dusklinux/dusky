@@ -1,3 +1,4 @@
 package = "dusky-tray"
-source = "user_scripts/dusky_system/dusky_tray"
-tools = ["cargo", "python", "findmnt"]
+# Include the tray and its shared click-away C sources in the factory snapshot.
+source = "user_scripts/dusky_system"
+tools = ["cargo", "python", "findmnt", "cc"]

@@ -1811,14 +1811,6 @@ hl.layer_rule({
     -- animation = "slide down"
 })
 
--- Dusky Tray is a layer surface. Keep its entrance separate from the
--- application's named blur rule, which is replaced during live theme updates.
-hl.layer_rule({
-    name = "dusky_tray_entrance",
-    match = { namespace = "^dusky-tray$" },
-    animation = "slide bottom"
-})
-
 --mako rule
 hl.layer_rule({
     name = "mako",
@@ -2003,4 +1995,21 @@ hl.window_rule({
     border_size = 0,
     no_dim = true,
     no_initial_focus = true
+})
+
+-- Dusky Tray: compact regular Wayland window; content determines its size.
+-- The shared focus-grab helper handles outside clicks without a backdrop.
+hl.window_rule({
+    name = "dusky_tray_window",
+    match = { class = "^dusky-tray$" },
+    float = true,
+    move = {"monitor_w-window_w-20", "monitor_h-window_h-20"},
+    animation = "slide bottom",
+    border_size = 0,
+    rounding = 0,
+    no_shadow = true,
+    decorate = false,
+    no_dim = true,
+    persistent_size = false,
+    opacity = "1.0 override 1.0 override"
 })

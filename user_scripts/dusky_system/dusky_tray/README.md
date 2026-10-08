@@ -1,8 +1,9 @@
 # Dusky Tray
 
 An on-demand Rust control center for Linux / Hyprland / Wayland, using Iced
-and layer-shell. Escape or a click outside the panel exits the process. Nothing
-is kept running to prewarm the panel. No GTK GUI dependency is used.
+and the standard Wayland window backend. Escape or a click outside the panel
+exits the process. Nothing is kept running to prewarm the panel. No GTK GUI
+dependency is used.
 
 Sources stay in this directory. The executable lives at
 `~/.local/share/dusky/dusky_tray/dusky-tray`, with a launcher symlink at
@@ -130,12 +131,12 @@ The notification timestamp daemon runs independently.
   available controls; hardware and notification queries never gate visibility.
   Loading and empty notification labels share a fixed 56 px slot, so an empty
   result only changes the label. Sliders still appear only when available.
-  The `dusky_tray_entrance` layer rule in Hyprland's `window_rules.lua`
+  The `dusky_tray_window` window rule in Hyprland's `window_rules.lua`
   uses `slide bottom`, independently of the app's live blur rule. Panel
-  height changes use a short, retargetable critically damped spring inspired by
-  `skwd-wall-2`, keeping the bottom edge anchored while new content arrives.
-  Only size changes request animation frames; a settled panel returns to the
-  existing two-second polling cadence. No prewarm process or new service is used.
+  height changes resize the compact window and keep its bottom edge anchored.
+  Hyprland handles window animations; the application sends geometry changes
+  only when the measured content size changes. No prewarm process or new service
+  is used.
 
 ## Opacity, blur, and live themes
 
@@ -143,7 +144,7 @@ Edit `appearance.toml` next to this project's README:
 
 ```toml
 opacity = 0.94 # scales panel rendering; 0.0 = invisible, 1.0 = opaque
-blur = true   # enables this panel's Hyprland layer blur
+blur = true   # enables this panel's Hyprland window blur
 ```
 
 Both settings reload within two seconds while the panel is open. Tooltips
@@ -152,14 +153,24 @@ For an installed binary, create `$XDG_CONFIG_HOME/dusky/tray/appearance.toml`
 (or `~/.config/dusky/tray/appearance.toml`). That file takes precedence
 over the project copy. Invalid or incomplete edits retain the last valid settings.
 
-The app requests blur through the Wayland background-effect protocol and
-applies a named Hyprland Lua layer rule at launch and when blur or
-palette changes. Its alpha mask excludes the transparent click-away region;
-fully transparent desktop pixels are excluded from blur. The panel draws no
-outer shadow, keeping its blur mask inside the rounded border. The rule is
-runtime configuration, so there is no permanent Hyprland config edit or
-background helper. Hyprland's global
-`decoration:blur:enabled` setting must be enabled, as it is on this machine.
+The app uses the standard `iced_winit` Wayland backend, without a copied
+layer-shell library. Hyprland's `dusky_tray_window` rule makes the window
+floating, compact, transparent, borderless, and animated with `slide bottom`.
+The panel remains inset 20 logical pixels from the bottom right and follows its
+content height, capped to the monitor's available area. Dusky's shared
+`click_away_to_dismiss/dusky.c` helper uses Hyprland's focus-grab protocol:
+pointer movement outside keeps it open, while an outside click dismisses it.
+The helper is compiled into the executable, so no separate `.so` is needed at
+runtime. Its native entry point borrows the window's Wayland display and surface;
+the event thread only enqueues dismissal, and joins before the window is released.
+This is a regular window (listed by `hyprctl clients`), not a fullscreen state
+or a layer surface. Normal workspace, focus, and fullscreen policies apply.
+
+The app applies the named `dusky_tray_blur` window rule at launch and when
+appearance changes. It sets `no_blur` from the appearance setting; there is
+no background-effect protocol request. Hyprland's global
+`decoration:blur:enabled` setting must also be enabled. The panel draws no
+outer shadow and leaves its surrounding desktop pixels transparent.
 
 Matugen's template is `~/.config/matugen/templates/dusky_tray.json`,
 registered in `~/.config/matugen/config.toml`. It generates
@@ -202,11 +213,9 @@ Linux parent-death cleanup. Application launchers use separate systemd scopes.
 Backlight devices and Bluetooth adapters are discovered at runtime. Local
 brightness uses writable sysfs, then logind SetBrightness, then brightnessctl.
 The logind fallback uses its automatic session object, so it works without
-`XDG_SESSION_ID` and avoids a separate session lookup. Animated panel clipping
-also passes the visible viewport to children, avoiding drawing clipped content
-below the current panel height; 
-the tray retains its existing backlight ranking and DDC support.
-External
+`XDG_SESSION_ID` and avoids a separate session lookup. Panel clipping passes
+the visible viewport to children, avoiding drawing below the panel height; the
+tray retains its existing backlight ranking and DDC support. External
 DDC brightness discovery is cached for 45 seconds; brightness is scaled using
 that monitor's actual VCP maximum. The running Hyprsunset temperature is queried
 on open rather than trusting a stale panel-only cache.
@@ -218,12 +227,11 @@ Hyprland-git 0.56, WirePlumber 0.5.18, and Hyprsunset 0.4. These checks describe
 the development machine, not the final unshipped ISO package manifest.
 
 Iced widget 0.14.2 and Iced core/renderer 0.14 are current stable releases.
-`iced_exwlshell` 0.20.1 is the stable layer-shell release; its newer 0.21 release
-candidate is not used. Iced's renderer requires wgpu 27, so independently
-swapping in wgpu 30 would break the renderer interface. Vulkan-first / Wayland
+The regular-window runner is `iced_winit` 0.14.1, with only its Wayland
+feature enabled. Iced's renderer requires wgpu 27; Vulkan-first / Wayland
 EGL fallback and explicit GPU environment overrides are retained.
 See [Iced's published API](https://docs.rs/iced_widget/0.14.2/iced_widget/)
-and [layer-shell releases](https://crates.io/crates/iced_exwlshell).
+and [the window runner](https://docs.rs/iced_winit/0.14.1/iced_winit/).
 
 Run the checks without retaining generated screenshots or logs:
 

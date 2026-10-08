@@ -1,4 +1,4 @@
-//! dusky-tray: Rust-native control center (Iced + layer-shell).
+//! dusky-tray: Rust-native control center (Iced + Wayland window).
 //!
 //! Layout parity with the original compact panel. Build + runtime caches stay
 //! on tmpfs (see `scripts/build-on-tmpfs.sh` and `backend::system::runtime_dir`)
@@ -6,6 +6,7 @@
 
 mod appearance;
 mod backend;
+mod click_away;
 mod config;
 mod icons;
 mod renderer;
@@ -44,7 +45,7 @@ fn print_help() {
     println!("  --version, -v   Show version and exit");
     println!("  --help, -h      Show this help");
     println!("\nBehavior:");
-    println!("  Layer-shell panel anchored bottom-right (like GTK reposition).");
+    println!("  Borderless Wayland window with a bottom-right panel.");
     println!("  Esc closes the panel. All runtime caches live on tmpfs");
     println!("  ($XDG_RUNTIME_DIR/dusky-tray, /dev/shm, or /tmp).");
     println!("  Build with scripts/build-on-tmpfs.sh to keep intermediates on RAM.");
@@ -250,7 +251,7 @@ fn optimize_gpu_environment() {
     }
 }
 
-fn main() -> iced_exwlshell::Result {
+fn main() -> Result<(), iced_winit::Error> {
     renderer::trace_startup();
     let args: Vec<String> = env::args().collect();
     if args.len() > 2 {
@@ -283,74 +284,80 @@ fn main() -> iced_exwlshell::Result {
     optimize_gpu_environment();
     let app_config = AppConfig::load();
 
-    // Fullscreen transparent Overlay (like dusky-papers): the Iced view
-    // draws the panel bottom-right with a 20px inset; the rest is a
-    // click-catching backdrop (BackdropPressed -> exit). Only real
-    // ButtonPressed closes -- pointer movement/focus loss never does.
-    // The backend applies the configured Hyprland layer blur with an alpha
-    // mask, excluding the transparent click-away area from desktop blur.
-    let settings = iced_exwlshell::Settings {
-        // Cosmic Text's generic sans-serif/fallback families may be absent on
-        // the ISO; Fira Sans is embedded via iced_renderer's fira-sans
-        // feature. Prefer the user's GTK font when present so the panel
-        // matches the desktop typeface.
-        default_font: iced_core::Font::with_name("Atkinson Hyperlegible"),
-        layer_settings: iced_exwlshell::settings::LayerShellSettings {
-            anchor: iced_exwlshell::reexport::Anchor::all(),
-            layer: iced_exwlshell::reexport::Layer::Overlay,
-            size: iced_exwlshell::reexport::LayerSize::FILL,
-            margin: (0, 0, 0, 0),
-            exclusive_zone: -1,
-            keyboard_interactivity: iced_exwlshell::reexport::KeyboardInteractivity::Exclusive,
-            blur_option: iced_exwlshell::reexport::BlurOption::None,
-            ..Default::default()
-        },
-        keep_compositor_alive: false,
-        ..Default::default()
+    let Some(monitor) = backend::system::panel_monitor() else {
+        eprintln!("Could not determine the focused Hyprland monitor");
+        std::process::exit(1);
     };
-
-    iced_exwlshell::layershell::application(
-        move || TrayApp::new(app_config.clone()),
-        "dusky-tray",
-        TrayApp::update,
-        TrayApp::view,
-    )
-    .executor::<BackgroundExecutor>()
-    .settings(settings)
-    .subscription(TrayApp::subscription)
-    .theme(theme)
-    .style(style)
-    .run()
+    iced_winit::run(TrayProgram(app_config, monitor))
 }
 
-fn style(_: &TrayApp, theme: &iced_core::Theme) -> iced_core::theme::Style {
-    iced_core::theme::Style {
-        background_color: iced_core::Color::TRANSPARENT,
-        text_color: theme.palette().text,
+struct TrayProgram(AppConfig, backend::system::PanelMonitor);
+
+impl iced_winit::program::Program for TrayProgram {
+    type State = TrayApp;
+    type Message = ui::Message;
+    type Theme = iced_core::Theme;
+    type Renderer = renderer::Renderer;
+    type Executor = BackgroundExecutor;
+
+    fn name() -> &'static str {
+        "dusky-tray"
     }
-}
 
-fn theme(_: &TrayApp) -> iced_core::Theme {
-    iced_core::Theme::Dark
-}
+    fn settings(&self) -> iced_core::Settings {
+        iced_core::Settings {
+            default_font: iced_core::Font::with_name("Atkinson Hyperlegible"),
+            ..Default::default()
+        }
+    }
 
-// Keep the protocol blur request in sync with the user appearance settings.
-impl TryInto<iced_exwlshell::actions::ExwlShellCustomActionWithId> for ui::Message {
-    type Error = Self;
+    fn window(&self) -> Option<iced_core::window::Settings> {
+        Some(iced_core::window::Settings {
+            size: self.1.limit(),
+            transparent: true,
+            decorations: false,
+            platform_specific: iced_core::window::settings::PlatformSpecific {
+                application_id: "dusky-tray".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
 
-    fn try_into(self) -> Result<iced_exwlshell::actions::ExwlShellCustomActionWithId, Self> {
-        match self {
-            ui::Message::BlurRegion(enabled) => {
-                Ok(iced_exwlshell::actions::ExwlShellCustomActionWithId::new(
-                    None,
-                    iced_exwlshell::actions::ExwlShellCustomAction::BlurOptionChange(if enabled {
-                        iced_exwlshell::reexport::BlurOption::FullRegion
-                    } else {
-                        iced_exwlshell::reexport::BlurOption::None
-                    }),
-                ))
-            }
-            message => Err(message),
+    fn boot(&self) -> (TrayApp, iced_runtime::Task<ui::Message>) {
+        let (mut app, task) = TrayApp::new(self.0.clone());
+        app.panel_monitor = Some(self.1);
+        (app, task)
+    }
+
+    fn update(&self, state: &mut TrayApp, message: ui::Message) -> iced_runtime::Task<ui::Message> {
+        state.update(message)
+    }
+
+    fn view<'a>(
+        &self,
+        state: &'a TrayApp,
+        _: iced_core::window::Id,
+    ) -> iced_core::Element<'a, ui::Message, Self::Theme, Self::Renderer> {
+        state.view()
+    }
+
+    fn title(&self, _: &TrayApp, _: iced_core::window::Id) -> String {
+        "Dusky Tray".into()
+    }
+
+    fn subscription(&self, state: &TrayApp) -> iced_futures::Subscription<ui::Message> {
+        state.subscription()
+    }
+
+    fn theme(&self, _: &TrayApp, _: iced_core::window::Id) -> Option<Self::Theme> {
+        Some(iced_core::Theme::Dark)
+    }
+
+    fn style(&self, _: &TrayApp, theme: &Self::Theme) -> iced_core::theme::Style {
+        iced_core::theme::Style {
+            background_color: iced_core::Color::TRANSPARENT,
+            text_color: theme.palette().text,
         }
     }
 }

@@ -1,4 +1,4 @@
-//! Iced layer-shell tray: layout mirrors the original compact panel.
+//! Iced Wayland tray: layout mirrors the original compact panel.
 //!
 //! Sections (top → bottom): header (weather / clock / power), metrics,
 //! quick-toggle grid (5), power row (wifi+bt switches + TLP radios),
@@ -35,8 +35,10 @@ type Element<'a, Message> =
 #[derive(Debug, Clone)]
 pub enum Message {
     Tick,
+    PanelSize(iced_core::Size),
+    PanelFitted(iced_core::Size, bool),
+    WindowEvent(iced_core::window::Id, iced_core::window::Event),
     BlurConfigured,
-    BlurRegion(bool),
     ClockLoaded((String, String)),
     WeatherLoaded(Option<String>),
     MetricsLoaded((String, String, sys::NetState)),
@@ -149,6 +151,11 @@ pub struct TrayApp {
     slider_changed_at: HashMap<SliderKind, Instant>,
     slider_revision: u64,
     error: Option<String>,
+    pub(crate) panel_monitor: Option<sys::PanelMonitor>,
+    window_id: Option<iced_core::window::Id>,
+    panel_size: Option<iced_core::Size>,
+    panel_applied_size: Option<iced_core::Size>,
+    panel_fit_busy: bool,
 }
 
 impl TrayApp {
@@ -191,6 +198,11 @@ impl TrayApp {
             slider_changed_at: HashMap::new(),
             slider_revision: 0,
             error: None,
+            panel_monitor: None,
+            window_id: None,
+            panel_size: None,
+            panel_applied_size: None,
+            panel_fit_busy: false,
         };
         let boot = Task::batch([
             Task::done(Message::Tick),
@@ -292,8 +304,29 @@ impl TrayApp {
         // Notification refreshes also occur after actions, independently of the
         // periodic batch; their completion must not release a batch slot.
         match message {
-            Message::BlurConfigured | Message::BlurRegion(_) => {}
+            Message::PanelSize(size) => {
+                crate::renderer::trace_phase(&format!("panel-fit {}x{}", size.width, size.height));
+                self.panel_size = Some(size);
+                return self.fit_panel();
+            }
+            Message::PanelFitted(size, success) => {
+                self.panel_fit_busy = false;
+                self.panel_applied_size = success.then_some(size);
+                // Follow an in-flight resize with only the latest measured size.
+                // A failed current size retries on Tick, avoiding a busy loop.
+                if self.panel_size != Some(size) {
+                    return self.fit_panel();
+                }
+            }
+            Message::WindowEvent(id, event) => {
+                self.window_id = Some(id);
+                if matches!(event, iced_core::window::Event::Opened { .. }) {
+                    return self.fit_panel();
+                }
+            }
+            Message::BlurConfigured => {}
             Message::Tick => {
+                let panel_fit = self.fit_panel();
                 let mut blur_change = Task::none();
                 if let Some(appearance) = Appearance::load() {
                     if appearance.blur != self.appearance.blur {
@@ -308,10 +341,10 @@ impl TrayApp {
                     self.theme = theme;
                 }
                 if self.refresh_pending != 0 {
-                    return blur_change;
+                    return Task::batch([blur_change, panel_fit]);
                 }
                 self.refresh_pending = 8;
-                return Task::batch([blur_change, self.refresh_all()]);
+                return Task::batch([blur_change, panel_fit, self.refresh_all()]);
             }
             Message::ClockLoaded((t, d)) => {
                 self.time_text = t;
@@ -687,6 +720,23 @@ impl TrayApp {
         Task::none()
     }
 
+    fn fit_panel(&mut self) -> Task<Message> {
+        if self.panel_fit_busy
+            || self.window_id.is_none()
+            || self.panel_size == self.panel_applied_size
+        {
+            return Task::none();
+        }
+        let (Some(monitor), Some(size)) = (self.panel_monitor, self.panel_size) else {
+            return Task::none();
+        };
+        self.panel_fit_busy = true;
+        Task::perform(
+            async move { sys::fit_panel(monitor, size) },
+            move |success| Message::PanelFitted(size, success),
+        )
+    }
+
     fn finish_refresh(&mut self, phase: &str) {
         self.refresh_pending = self.refresh_pending.saturating_sub(1);
         if self.initial_refresh {
@@ -699,30 +749,39 @@ impl TrayApp {
     }
 
     fn configure_blur(enabled: bool) -> Task<Message> {
-        Task::batch([
-            Task::done(Message::BlurRegion(enabled)),
-            Task::perform(
-                async move {
-                    sys::configure_panel_blur(enabled);
-                },
-                |_| Message::BlurConfigured,
-            ),
-        ])
+        Task::perform(
+            async move {
+                sys::configure_panel_blur(enabled);
+            },
+            |_| Message::BlurConfigured,
+        )
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let events = iced_futures::event::listen_with(|event, status, _| match (&status, &event) {
-            (
-                iced_core::event::Status::Captured,
-                Event::Keyboard(iced_core::keyboard::Event::KeyPressed {
-                    key: Key::Named(Named::Escape),
-                    ..
-                }),
-            ) => Some(Message::EventOccurred(event)),
-            (iced_core::event::Status::Ignored, _) => Some(Message::EventOccurred(event)),
-            _ => None,
-        });
-        Subscription::batch([events, Subscription::run(Self::ticks)])
+        let events =
+            iced_futures::event::listen_with(|event, status, id| match (&status, &event) {
+                (
+                    _,
+                    Event::Window(
+                        event @ (iced_core::window::Event::Opened { .. }
+                        | iced_core::window::Event::Resized(_)),
+                    ),
+                ) => Some(Message::WindowEvent(id, event.clone())),
+                (
+                    iced_core::event::Status::Captured,
+                    Event::Keyboard(iced_core::keyboard::Event::KeyPressed {
+                        key: Key::Named(Named::Escape),
+                        ..
+                    }),
+                ) => Some(Message::EventOccurred(event)),
+                (iced_core::event::Status::Ignored, _) => Some(Message::EventOccurred(event)),
+                _ => None,
+            });
+        Subscription::batch([
+            events,
+            Subscription::run(Self::ticks),
+            Subscription::run(crate::click_away::events),
+        ])
     }
 
     fn ticks() -> impl iced_futures::futures::Stream<Item = Message> {
@@ -1623,41 +1682,27 @@ impl TrayApp {
                 .align_y(Vertical::Bottom),
             );
         }
-        let panel = container(crate::appearance::smooth_height(body.into()))
-            .width(Length::Fixed(320.0_f32.min((size.width - 40.0).max(1.0))))
-            .max_height((size.height * 0.85).min(size.height - 40.0).max(1.0))
+        let limit = self.panel_monitor.map(|m| m.limit()).unwrap_or_else(|| {
+            iced_core::Size::new(
+                320.0_f32.min((size.width - 40.0).max(1.0)),
+                (size.height * 0.85).min(size.height - 40.0).max(1.0),
+            )
+        });
+        let panel = container(body)
+            .width(Length::Fixed(limit.width))
+            .max_height(limit.height)
             .style(move |_| {
                 let mut s = Self::card(theme, 20.0);
                 s.background = Some(theme.bg.into());
                 // Outside pixels must stay transparent: a rendered shadow also
-                // extends Hyprland's alpha-based background blur beyond the border.
+                // extends the compositor's background blur beyond the border.
                 s
             });
-        // Disjoint click catchers: controls never dismiss the backdrop.
-        let catcher = || {
-            mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-                .on_press(Message::BackdropPressed)
-                .on_right_press(Message::BackdropPressed)
-        };
-        column![
-            catcher(),
-            row![
-                catcher(),
-                container(crate::appearance::reveal(
-                    panel.into(),
-                    self.appearance.opacity
-                ))
-                .padding(iced_core::Padding {
-                    right: 20.0,
-                    bottom: 20.0,
-                    ..Default::default()
-                })
-            ]
-            .height(Length::Shrink)
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        crate::appearance::fit_window(
+            crate::appearance::reveal(panel.into(), self.appearance.opacity),
+            limit,
+            Message::PanelSize,
+        )
     }
 
     fn notification_button(theme: AppTheme, status: button::Status) -> button::Style {
@@ -1765,6 +1810,84 @@ mod tests {
     fn app() -> TrayApp {
         TrayApp::new(AppConfig::parse(AppConfig::default_toml())).0
     }
+    fn window_app() -> TrayApp {
+        let mut app = app();
+        app.panel_monitor = Some(sys::PanelMonitor {
+            x: 0.0,
+            y: 0.0,
+            size: iced_core::Size::new(1280.0, 720.0),
+        });
+        app.window_id = Some(iced_core::window::Id::unique());
+        app
+    }
+
+    #[test]
+    fn panel_resize_coalesces_changes_until_current_request_finishes() {
+        let mut app = window_app();
+        let first = iced_core::Size::new(320.0, 361.0);
+        let latest = iced_core::Size::new(320.0, 612.0);
+        assert!(iced_runtime::task::into_stream(app.update(Message::PanelSize(first))).is_some());
+        for size in [iced_core::Size::new(320.0, 501.0), latest] {
+            assert!(
+                iced_runtime::task::into_stream(app.update(Message::PanelSize(size))).is_none()
+            );
+        }
+        assert!(app.panel_fit_busy);
+        assert!(
+            iced_runtime::task::into_stream(app.update(Message::PanelFitted(first, true)))
+                .is_some()
+        );
+        assert_eq!(app.panel_size, Some(latest));
+        assert_eq!(app.panel_applied_size, Some(first));
+        assert!(app.panel_fit_busy);
+        assert!(
+            iced_runtime::task::into_stream(app.update(Message::PanelFitted(latest, true)))
+                .is_none()
+        );
+        assert_eq!(app.panel_applied_size, Some(latest));
+        assert!(!app.panel_fit_busy);
+        assert!(iced_runtime::task::into_stream(app.fit_panel()).is_none());
+    }
+
+    #[test]
+    fn failed_panel_resize_retries_on_tick_even_during_refresh() {
+        let mut app = window_app();
+        let size = iced_core::Size::new(320.0, 612.0);
+        let _ = app.update(Message::PanelSize(size));
+        assert!(
+            iced_runtime::task::into_stream(app.update(Message::PanelFitted(size, false)))
+                .is_none()
+        );
+        assert!(!app.panel_fit_busy);
+        assert_eq!(app.panel_applied_size, None);
+        app.refresh_pending = 8;
+        assert!(iced_runtime::task::into_stream(app.update(Message::Tick)).is_some());
+        assert!(app.panel_fit_busy);
+        assert_eq!(app.refresh_pending, 8);
+        let _ = app.update(Message::PanelFitted(size, true));
+        let _ = app.update(Message::Tick);
+        assert!(!app.panel_fit_busy);
+        assert!(iced_runtime::task::into_stream(app.fit_panel()).is_none());
+    }
+
+    #[test]
+    fn panel_resize_restores_previous_size_if_content_changes_back_in_flight() {
+        let mut app = window_app();
+        let small = iced_core::Size::new(320.0, 361.0);
+        let large = iced_core::Size::new(320.0, 612.0);
+        let _ = app.update(Message::PanelSize(small));
+        let _ = app.update(Message::PanelFitted(small, true));
+        let _ = app.update(Message::PanelSize(large));
+        assert!(iced_runtime::task::into_stream(app.update(Message::PanelSize(small))).is_none());
+        assert!(
+            iced_runtime::task::into_stream(app.update(Message::PanelFitted(large, true)))
+                .is_some()
+        );
+        assert!(app.panel_fit_busy);
+        let _ = app.update(Message::PanelFitted(small, true));
+        assert_eq!(app.panel_applied_size, Some(small));
+    }
+
     #[test]
     fn panel_is_visible_while_initial_queries_are_pending() {
         let mut app = app();
