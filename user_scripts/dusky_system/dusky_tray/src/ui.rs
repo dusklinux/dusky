@@ -1330,7 +1330,7 @@ impl TrayApp {
                 ("performance", "Performance", ""),
             ]
             .into_iter()
-            .zip(theme.profiles)
+            .zip(theme.profiles.map(|tint| saturate(tint, 0.8)))
             {
                 let selected = self
                     .power_pending
