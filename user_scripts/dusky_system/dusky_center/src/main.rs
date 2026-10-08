@@ -74,6 +74,7 @@ impl SingleInstanceGuard {
 fn main() -> iced::Result {
     renderer::trace_startup();
     let mut initial_page = None;
+    let mut initial_hover = None;
     let mut win_width = 670.0_f32;
     let mut win_height = 720.0_f32;
     let mut args_iter = env::args().skip(1);
@@ -90,18 +91,21 @@ fn main() -> iced::Result {
             "--page" | "-p" => {
                 initial_page = args_iter.next();
             }
+            "--hover" => {
+                initial_hover = args_iter.next();
+            }
             "--width" | "-w" => {
-                if let Some(w_str) = args_iter.next() {
-                    if let Ok(w) = w_str.parse::<f32>() {
-                        win_width = w;
-                    }
+                if let Some(w_str) = args_iter.next()
+                    && let Ok(w) = w_str.parse::<f32>()
+                {
+                    win_width = w;
                 }
             }
             "--height" => {
-                if let Some(h_str) = args_iter.next() {
-                    if let Ok(h) = h_str.parse::<f32>() {
-                        win_height = h;
-                    }
+                if let Some(h_str) = args_iter.next()
+                    && let Ok(h) = h_str.parse::<f32>()
+                {
+                    win_height = h;
                 }
             }
             unknown => {
@@ -142,8 +146,9 @@ fn main() -> iced::Result {
     };
 
     let initial_page_c = initial_page.clone();
+    let initial_hover_c = initial_hover.clone();
     iced::application(
-        move || CenterApp::new(app_config.clone(), initial_page_c.clone()),
+        move || CenterApp::new(app_config.clone(), initial_page_c.clone(), initial_hover_c.clone()),
         CenterApp::update,
         CenterApp::view,
     )

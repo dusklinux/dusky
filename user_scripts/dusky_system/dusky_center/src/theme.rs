@@ -9,6 +9,7 @@ use std::{fs, path::PathBuf};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AppTheme {
     pub bg: Color,
+    pub sidebar_bg: Color,
     pub surface: Color,
     pub card_bg: Color,
     pub card_hover: Color,
@@ -26,25 +27,27 @@ pub struct AppTheme {
 
 impl Default for AppTheme {
     fn default() -> Self {
-        Self::from_colors(
-            Color::from_rgb8(12, 14, 19),
-            Color::from_rgb8(26, 27, 32),
-            Color::from_rgb8(30, 31, 37),
-            Color::from_rgb8(40, 42, 47),
-            Color::from_rgb8(68, 71, 79),
-            Color::from_rgb8(226, 226, 233),
-            Color::from_rgb8(196, 198, 208),
-            Color::from_rgb8(173, 198, 255),
-            Color::from_rgb8(216, 226, 255),
-            Color::from_rgb8(16, 47, 96),
-            Color::from_rgb8(191, 198, 220),
-            Color::from_rgb8(222, 188, 223),
-            [
+        Self {
+            bg: Color::from_rgb8(12, 14, 19),          // #0c0e13
+            sidebar_bg: Color::from_rgb8(13, 16, 20),  // #0d1014
+            surface: Color::from_rgb8(13, 16, 20),     // #0d1014
+            card_bg: Color::from_rgb8(17, 19, 24),     // #111318
+            card_hover: Color::from_rgb8(21, 24, 30),  // #15181e
+            border: Color::from_rgb8(68, 71, 79),      // #44474f
+            fg: Color::from_rgb8(226, 226, 233),       // #e2e2e9
+            fg_muted: Color::from_rgb8(196, 198, 208), // #c4c6d0
+            accent: Color::from_rgb8(173, 198, 255),   // #adc6ff
+            accent_hover: Color::from_rgb8(216, 226, 255), // #d8e2ff
+            accent_fg: Color::from_rgb8(16, 47, 96),   // #102f60
+            secondary: Color::from_rgb8(191, 198, 220),
+            tertiary: Color::from_rgb8(222, 188, 223),
+            profiles: [
                 Color::from_rgb8(158, 228, 170),
                 Color::from_rgb8(138, 180, 250),
                 Color::from_rgb8(239, 140, 179),
             ],
-        )
+            danger: Color::from_rgb8(255, 180, 171),   // #ffb4ab
+        }
     }
 }
 
@@ -61,8 +64,10 @@ pub fn hex_to_color(hex: &str) -> Option<Color> {
 }
 
 impl AppTheme {
+    #[allow(clippy::too_many_arguments)]
     pub fn from_colors(
         bg: Color,
+        sidebar_bg: Color,
         surface: Color,
         card_bg: Color,
         card_hover: Color,
@@ -75,9 +80,11 @@ impl AppTheme {
         secondary: Color,
         tertiary: Color,
         profiles: [Color; 3],
+        danger: Color,
     ) -> Self {
         Self {
             bg,
+            sidebar_bg,
             surface,
             card_bg,
             card_hover,
@@ -90,7 +97,7 @@ impl AppTheme {
             secondary,
             tertiary,
             profiles,
-            danger: profiles[2],
+            danger,
         }
     }
 
@@ -134,28 +141,26 @@ impl AppTheme {
         });
         let secondary = color("secondary")?;
         let tertiary = color("tertiary")?;
+        let danger = color("danger")
+            .or_else(|| color("error"))
+            .unwrap_or(Color::from_rgb8(255, 180, 171));
 
-        let surface = color("surface").unwrap_or_else(|| {
-            Color::from_rgb(
-                bg.r + (fg.r - bg.r) * 0.05,
-                bg.g + (fg.g - bg.g) * 0.05,
-                bg.b + (fg.b - bg.b) * 0.05,
-            )
-        });
+        let sidebar_bg = color("sidebar_bg").unwrap_or(bg);
+        let surface = color("surface").unwrap_or(sidebar_bg);
 
         let card_bg = color("card_bg").unwrap_or_else(|| {
             Color::from_rgb(
-                bg.r + (fg.r - bg.r) * 0.08,
-                bg.g + (fg.g - bg.g) * 0.08,
-                bg.b + (fg.b - bg.b) * 0.08,
+                bg.r + (fg.r - bg.r) * 0.02,
+                bg.g + (fg.g - bg.g) * 0.02,
+                bg.b + (fg.b - bg.b) * 0.02,
             )
         });
 
         let card_hover = color("card_hover").unwrap_or_else(|| {
             Color::from_rgb(
-                bg.r + (fg.r - bg.r) * 0.12,
-                bg.g + (fg.g - bg.g) * 0.12,
-                bg.b + (fg.b - bg.b) * 0.12,
+                card_bg.r + (fg.r - card_bg.r) * 0.04,
+                card_bg.g + (fg.g - card_bg.g) * 0.04,
+                card_bg.b + (fg.b - card_bg.b) * 0.04,
             )
         });
 
@@ -179,6 +184,7 @@ impl AppTheme {
 
         Some(Self::from_colors(
             bg,
+            sidebar_bg,
             surface,
             card_bg,
             card_hover,
@@ -191,6 +197,7 @@ impl AppTheme {
             secondary,
             tertiary,
             profiles,
+            danger,
         ))
     }
 }

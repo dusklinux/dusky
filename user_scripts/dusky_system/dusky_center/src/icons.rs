@@ -36,12 +36,12 @@ fn find_system_icon(name: &str) -> Option<PathBuf> {
             return Some(p);
         }
     }
-    if let Some(stripped) = name.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            let p = PathBuf::from(home).join(stripped);
-            if p.is_file() {
-                return Some(p);
-            }
+    if let Some(stripped) = name.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
+        let p = PathBuf::from(home).join(stripped);
+        if p.is_file() {
+            return Some(p);
         }
     }
 

@@ -43,10 +43,10 @@ impl AppConfig {
 }
 
 fn dirs_fallback() -> PathBuf {
-    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
-        if !config_home.is_empty() {
-            return PathBuf::from(config_home).join("dusky");
-        }
+    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME")
+        && !config_home.is_empty()
+    {
+        return PathBuf::from(config_home).join("dusky");
     }
     if let Ok(home) = std::env::var("HOME") {
         return PathBuf::from(home).join(".config/dusky");

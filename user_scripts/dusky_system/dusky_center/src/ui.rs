@@ -20,7 +20,7 @@ use iced::widget::{
     Space, button, column, container, mouse_area, pick_list, row, scrollable, slider, text,
     text_input, toggler,
 };
-use iced::{Border, Color, Event, Length, Padding, Subscription, Task};
+use iced::{Border, Color, Event, Length, Padding, Subscription, Task, mouse};
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -96,6 +96,8 @@ pub enum Message {
     Tick,
     ReloadConfig,
     CloseApp,
+    ItemEntered(String),
+    ItemExited(String),
     EventOccurred(Event),
 }
 
@@ -119,10 +121,15 @@ pub struct CenterApp {
     pub cpu_text: String,
     pub ram_text: String,
     pub active_profile: String,
+    pub hovered_item: Option<String>,
 }
 
 impl CenterApp {
-    pub fn new(config: AppConfig, initial_page: Option<String>) -> (Self, Task<Message>) {
+    pub fn new(
+        config: AppConfig,
+        initial_page: Option<String>,
+        initial_hover: Option<String>,
+    ) -> (Self, Task<Message>) {
         let (cpu, ram) = sys::cpu_ram();
         let start_page = if let Some(ref target) = initial_page {
             let target_lower = target.to_lowercase();
@@ -154,6 +161,7 @@ impl CenterApp {
             cpu_text: cpu,
             ram_text: ram,
             active_profile: "Balanced".to_string(),
+            hovered_item: initial_hover,
         };
 
         // LAZY LOADING: Only initialize active page on cold start!
@@ -225,19 +233,18 @@ impl CenterApp {
 
         // TLP active power profile
         let tlp_cmd = dirs_home().join("user_scripts/battery/tlp/tlp_mode_toggle.sh");
-        if tlp_cmd.is_file() {
-            if let Ok(out) = std::process::Command::new("bash")
+        if tlp_cmd.is_file()
+            && let Ok(out) = std::process::Command::new("bash")
                 .arg(tlp_cmd)
                 .arg("status")
                 .output()
-            {
-                let s = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
-                self.active_profile = match s.as_str() {
-                    "performance" => "Performance".into(),
-                    "power-saver" | "powersave" => "Power Saver".into(),
-                    _ => "Balanced".into(),
-                };
-            }
+        {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
+            self.active_profile = match s.as_str() {
+                "performance" => "Performance".into(),
+                "power-saver" | "powersave" => "Power Saver".into(),
+                _ => "Balanced".into(),
+            };
         }
 
         // Kernel release
@@ -406,6 +413,18 @@ impl CenterApp {
 
             Message::CloseApp => iced::exit(),
 
+            Message::ItemEntered(key) => {
+                self.hovered_item = Some(key);
+                Task::none()
+            }
+
+            Message::ItemExited(key) => {
+                if self.hovered_item.as_deref() == Some(&key) {
+                    self.hovered_item = None;
+                }
+                Task::none()
+            }
+
             Message::ReloadConfig => {
                 self.theme = AppTheme::load();
                 if let Ok(cfg) = AppConfig::load() {
@@ -552,7 +571,15 @@ impl CenterApp {
             if self.sidebar_open {
                 container(Space::new().width(1).height(Length::Fill)).style(move |_| {
                     container::Style {
-                        background: Some(palette.border.into()),
+                        background: Some(
+                            Color::from_rgba(
+                                palette.border.r,
+                                palette.border.g,
+                                palette.border.b,
+                                0.25,
+                            )
+                            .into(),
+                        ),
                         ..Default::default()
                     }
                 })
@@ -580,7 +607,7 @@ impl CenterApp {
                 .align_y(Vertical::Center),
         )
         .on_press(Message::ToggleSearch)
-        .padding([6, 7])
+        .padding([4, 6])
         .style(move |_, status| button::Style {
             background: Some(
                 if status == button::Status::Hovered || self.search_open {
@@ -591,7 +618,7 @@ impl CenterApp {
                 .into(),
             ),
             border: Border {
-                color: palette.border,
+                color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
                 width: 1.0,
                 radius: 8.0.into(),
             },
@@ -609,10 +636,10 @@ impl CenterApp {
             Space::new().width(Length::Fill),
             search_btn,
         ]
-        .padding([12, 14])
+        .padding([10, 10])
         .align_y(Vertical::Center);
 
-        let mut page_list = column![].spacing(3);
+        let mut page_list = column![].spacing(2);
 
         for (idx, page) in self.config.pages.iter().enumerate() {
             let is_active = idx == active_idx && self.search_query.is_empty();
@@ -630,7 +657,7 @@ impl CenterApp {
             };
 
             let row_content = row![
-                render_icon(icon_name, 17.0, icon_color),
+                render_icon(icon_name, 18.0, icon_color),
                 text(&page.title)
                     .size(13)
                     .font(iced::Font {
@@ -643,10 +670,10 @@ impl CenterApp {
                     })
                     .color(fg_color),
             ]
-            .spacing(11)
+            .spacing(9)
             .align_y(Vertical::Center);
 
-            let btn = button(container(row_content).padding([8, 12]).width(Length::Fill))
+            let btn = button(container(row_content).padding([5, 8]).width(Length::Fill))
                 .on_press(Message::SelectPage(idx))
                 .style(move |_, status| {
                     let bg = if is_active {
@@ -659,7 +686,7 @@ impl CenterApp {
                     button::Style {
                         background: Some(bg.into()),
                         border: Border {
-                            radius: 10.0.into(),
+                            radius: 8.0.into(),
                             ..Default::default()
                         },
                         ..Default::default()
@@ -669,18 +696,18 @@ impl CenterApp {
             page_list = page_list.push(btn);
         }
 
-        let scroll_pages = make_slim_scrollable(page_list, Padding::from([4, 8]), palette.accent);
+        let scroll_pages = make_slim_scrollable(page_list, Padding::from([2, 6]), palette.accent);
 
         let sidebar_col = column![
             mouse_area(sidebar_header).on_press(Message::DragWindow),
             scroll_pages
         ]
-        .width(185)
+        .width(158)
         .height(Length::Fill);
 
         container(sidebar_col)
             .style(move |_| container::Style {
-                background: Some(palette.surface.into()),
+                background: Some(palette.sidebar_bg.into()),
                 ..Default::default()
             })
             .into()
@@ -704,14 +731,18 @@ impl CenterApp {
             None => "Home",
         };
 
-        // Sidebar split toggle button
+        // Sidebar split toggle button (Sleek circle, perfectly centered)
         let sidebar_toggle_btn = button(
-            container(render_icon("sidebar", 15.0, palette.fg))
+            container(render_icon("sidebar", 14.0, palette.fg))
+                .width(Length::Fill)
+                .height(Length::Fill)
                 .align_x(Horizontal::Center)
                 .align_y(Vertical::Center),
         )
         .on_press(Message::ToggleSidebar)
-        .padding([6, 7])
+        .padding(0)
+        .width(26)
+        .height(26)
         .style(move |_, status| button::Style {
             background: Some(
                 if status == button::Status::Hovered {
@@ -724,7 +755,7 @@ impl CenterApp {
             border: Border {
                 color: palette.border,
                 width: 1.0,
-                radius: 8.0.into(),
+                radius: 13.0.into(),
             },
             ..Default::default()
         });
@@ -738,28 +769,35 @@ impl CenterApp {
             })
             .color(palette.fg);
 
-        // Window close button
+        // Window close button (Sleek circle, perfectly centered 12px cross)
         let close_btn = button(
-            container(render_icon("close", 14.0, palette.fg_muted))
+            container(render_icon("close", 12.0, Color::from_rgb(0.92, 0.92, 0.92)))
+                .width(Length::Fill)
+                .height(Length::Fill)
                 .align_x(Horizontal::Center)
                 .align_y(Vertical::Center),
         )
         .on_press(Message::CloseApp)
-        .padding([5, 7])
-        .style(move |_, status| button::Style {
-            background: Some(
-                if status == button::Status::Hovered {
-                    Color::from_rgba(0.9, 0.25, 0.25, 0.8)
-                } else {
-                    Color::TRANSPARENT
-                }
-                .into(),
-            ),
-            border: Border {
-                radius: 6.0.into(),
+        .padding(0)
+        .width(26)
+        .height(26)
+        .style(move |_, status| {
+            let is_hovered = status == button::Status::Hovered;
+            button::Style {
+                background: Some(
+                    if is_hovered {
+                        Color::from_rgba(0.92, 0.28, 0.28, 0.90)
+                    } else {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.06)
+                    }
+                    .into(),
+                ),
+                border: Border {
+                    radius: 13.0.into(),
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
+            }
         });
 
         // Completely seamless header: same background, no bottom border cutting across!
@@ -911,16 +949,31 @@ impl CenterApp {
     fn view_search_results<'a>(&'a self) -> Element<'a, Message> {
         let palette = self.theme;
         let query = self.search_query.to_lowercase();
-        let mut results = column![].spacing(8);
-
+        let mut results_box = column![].spacing(0);
         let mut hit_count = 0;
         for (page_idx, page) in self.config.pages.iter().enumerate() {
             for section in &page.layout {
                 for item in &section.items {
                     if item.matches_query(&query) {
+                        if hit_count > 0 {
+                            let divider = container(Space::new().width(Length::Fill).height(1))
+                                .style(move |_| container::Style {
+                                    background: Some(
+                                        Color::from_rgba(
+                                            palette.border.r,
+                                            palette.border.g,
+                                            palette.border.b,
+                                            0.20,
+                                        )
+                                        .into(),
+                                    ),
+                                    ..Default::default()
+                                });
+                            results_box = results_box.push(divider);
+                        }
                         hit_count += 1;
                         let item_view = self.view_item_row(item, &page.title, Some(page_idx));
-                        results = results.push(item_view);
+                        results_box = results_box.push(item_view);
                     }
                 }
             }
@@ -955,10 +1008,27 @@ impl CenterApp {
             .into();
         }
 
+        let results_card = container(results_box)
+            .padding([2, 10])
+            .style(move |_| container::Style {
+                background: Some(palette.card_bg.into()),
+                border: Border {
+                    color: Color::from_rgba(
+                        palette.border.r,
+                        palette.border.g,
+                        palette.border.b,
+                        0.30,
+                    ),
+                    width: 1.0,
+                    radius: 14.0.into(),
+                },
+                ..Default::default()
+            });
+
         column![
             header,
             make_slim_scrollable(
-                results,
+                column![results_card],
                 Padding {
                     top: 0.0,
                     right: 18.0,
@@ -1166,18 +1236,39 @@ impl CenterApp {
             return sec_col.into();
         }
 
-        // Boxed List Container for standard section items
-        let mut items_box = column![].spacing(8);
-        for item in &section.items {
+        // Boxed List Container for standard section items (matching GTK Adw.PreferencesGroup)
+        let mut items_box = column![].spacing(0);
+        for (idx, item) in section.items.iter().enumerate() {
+            if idx > 0 {
+                let divider = container(Space::new().width(Length::Fill).height(1))
+                    .style(move |_| container::Style {
+                        background: Some(
+                            Color::from_rgba(
+                                palette.border.r,
+                                palette.border.g,
+                                palette.border.b,
+                                0.20,
+                            )
+                            .into(),
+                        ),
+                        ..Default::default()
+                    });
+                items_box = items_box.push(divider);
+            }
             items_box = items_box.push(self.view_item_row(item, "", None));
         }
 
         let container_card = container(items_box)
-            .padding([10, 14])
+            .padding([2, 10])
             .style(move |_| container::Style {
                 background: Some(palette.card_bg.into()),
                 border: Border {
-                    color: palette.border,
+                    color: Color::from_rgba(
+                        palette.border.r,
+                        palette.border.g,
+                        palette.border.b,
+                        0.30,
+                    ),
                     width: 1.0,
                     radius: 14.0.into(),
                 },
@@ -1224,7 +1315,13 @@ impl CenterApp {
             "dot"
         };
 
-        // On active state: SOLID ACCENT BACKGROUND with DARK text/icons!
+        let is_destructive = item.properties.style == "destructive"
+            || item.properties.title == "Reload CC"
+            || item.properties.title == "Power"
+            || item.properties.title == "Reboot";
+        let is_suggested = item.properties.style == "suggested";
+
+        // Hero card styling: Active -> solid accent; Destructive -> reddish tint; Standard -> card_bg
         let (card_bg, text_fg, icon_fg, border_color) = if is_enabled {
             (
                 palette.accent,
@@ -1232,8 +1329,27 @@ impl CenterApp {
                 palette.accent_fg,
                 palette.accent,
             )
+        } else if is_destructive {
+            (
+                Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.05),
+                palette.danger,
+                palette.danger,
+                Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.28),
+            )
+        } else if is_suggested {
+            (
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.06),
+                palette.fg,
+                palette.accent,
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.25),
+            )
         } else {
-            (palette.card_bg, palette.fg, palette.accent, palette.border)
+            (
+                palette.card_bg,
+                palette.fg,
+                palette.accent,
+                Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
+            )
         };
 
         let card_content = column![
@@ -1272,22 +1388,43 @@ impl CenterApp {
         )
         .on_press(on_press_msg)
         .style(move |_, status| {
-            let bg = if is_enabled {
+            let (bg, b_color) = if is_enabled {
                 if status == button::Status::Hovered {
-                    palette.accent_hover
+                    (palette.accent_hover, palette.accent_hover)
                 } else {
-                    palette.accent
+                    (palette.accent, palette.accent)
+                }
+            } else if is_destructive {
+                if status == button::Status::Hovered {
+                    (
+                        Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.12),
+                        Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.45),
+                    )
+                } else {
+                    (card_bg, border_color)
+                }
+            } else if is_suggested {
+                if status == button::Status::Hovered {
+                    (
+                        Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.14),
+                        Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.40),
+                    )
+                } else {
+                    (card_bg, border_color)
                 }
             } else if status == button::Status::Hovered {
-                palette.card_hover
+                (
+                    palette.card_hover,
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.35),
+                )
             } else {
-                card_bg
+                (card_bg, border_color)
             };
 
             button::Style {
                 background: Some(bg.into()),
                 border: Border {
-                    color: border_color,
+                    color: b_color,
                     width: 1.0,
                     radius: 12.0.into(),
                 },
@@ -1305,18 +1442,34 @@ impl CenterApp {
 
     fn view_power_management_card<'a>(&'a self, _section: &'a SectionConfig) -> Element<'a, Message> {
         let palette = self.theme;
+        let is_hovered = self.hovered_item.as_deref() == Some("Active Profile");
+
+        let (icon_badge_bg, icon_badge_border, icon_color) = if is_hovered {
+            (
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.40),
+                palette.accent_hover,
+            )
+        } else {
+            (
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12),
+                Color::TRANSPARENT,
+                palette.accent,
+            )
+        };
 
         // Left Icon Badge Box
-        let icon_badge = container(render_icon("power-profile-balanced-symbolic", 20.0, palette.accent))
+        let icon_badge = container(render_icon("power-profile-balanced-symbolic", 20.0, icon_color))
             .width(36)
             .height(36)
             .align_x(Horizontal::Center)
             .align_y(Vertical::Center)
             .style(move |_| container::Style {
-                background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12).into()),
+                background: Some(icon_badge_bg.into()),
                 border: Border {
+                    color: icon_badge_border,
+                    width: 1.0,
                     radius: 10.0.into(),
-                    ..Default::default()
                 },
                 ..Default::default()
             });
@@ -1328,10 +1481,10 @@ impl CenterApp {
                     weight: Weight::Bold,
                     ..Default::default()
                 })
-                .color(palette.fg),
+                .color(if is_hovered { Color::WHITE } else { palette.fg }),
             text("Select performance mode")
                 .size(11)
-                .color(palette.fg_muted),
+                .color(if is_hovered { Color::from_rgb(0.85, 0.85, 0.88) } else { palette.fg_muted }),
         ]
         .spacing(2)
         .width(Length::Fill);
@@ -1357,7 +1510,7 @@ impl CenterApp {
                 palette.surface.into()
             },
             border: Border {
-                color: palette.border,
+                color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
                 width: 1.0,
                 radius: 8.0.into(),
             },
@@ -1365,7 +1518,7 @@ impl CenterApp {
         .menu_style(move |_| menu::Style {
             background: palette.card_bg.into(),
             border: Border {
-                color: palette.border,
+                color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
                 width: 1.0,
                 radius: 8.0.into(),
             },
@@ -1379,18 +1532,33 @@ impl CenterApp {
             .spacing(14)
             .align_y(Vertical::Center);
 
-        container(row_content)
+        let card_container = container(row_content)
             .padding([12, 16])
             .width(Length::Fill)
             .style(move |_| container::Style {
-                background: Some(palette.card_bg.into()),
+                background: Some(
+                    if is_hovered {
+                        palette.card_hover
+                    } else {
+                        palette.card_bg
+                    }
+                    .into(),
+                ),
                 border: Border {
-                    color: palette.border,
+                    color: if is_hovered {
+                        Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.35)
+                    } else {
+                        Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30)
+                    },
                     width: 1.0,
                     radius: 14.0.into(),
                 },
                 ..Default::default()
-            })
+            });
+
+        mouse_area(card_container)
+            .on_enter(Message::ItemEntered("Active Profile".to_string()))
+            .on_exit(Message::ItemExited("Active Profile".to_string()))
             .into()
     }
 
@@ -1421,17 +1589,34 @@ impl CenterApp {
             let key_c2 = key.clone();
             let on_change = item.on_change.clone();
 
+            let is_row_hovered = self.hovered_item.as_deref() == Some(&key);
+
+            let (icon_badge_bg, icon_badge_border, icon_color) = if is_row_hovered {
+                (
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.40),
+                    palette.accent_hover,
+                )
+            } else {
+                (
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12),
+                    Color::TRANSPARENT,
+                    palette.accent,
+                )
+            };
+
             // Left Icon Badge Box
-            let icon_badge = container(render_icon(icon_name, 18.0, palette.accent))
+            let icon_badge = container(render_icon(icon_name, 18.0, icon_color))
                 .width(36)
                 .height(36)
                 .align_x(Horizontal::Center)
                 .align_y(Vertical::Center)
                 .style(move |_| container::Style {
-                    background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12).into()),
+                    background: Some(icon_badge_bg.into()),
                     border: Border {
+                        color: icon_badge_border,
+                        width: 1.0,
                         radius: 10.0.into(),
-                        ..Default::default()
                     },
                     ..Default::default()
                 });
@@ -1473,7 +1658,7 @@ impl CenterApp {
             let val_label = text(format!("{:.0}", val.round()))
                 .size(13)
                 .font(iced::Font::MONOSPACE)
-                .color(palette.fg_muted)
+                .color(if is_row_hovered { Color::WHITE } else { palette.fg_muted })
                 .width(28)
                 .align_x(Horizontal::Right);
 
@@ -1485,7 +1670,13 @@ impl CenterApp {
             .spacing(12)
             .align_y(Vertical::Center);
 
-            controls_col = controls_col.push(ctrl_row);
+            let key_enter = key.clone();
+            let key_exit = key.clone();
+            let row_area = mouse_area(ctrl_row)
+                .on_enter(Message::ItemEntered(key_enter))
+                .on_exit(Message::ItemExited(key_exit));
+
+            controls_col = controls_col.push(row_area);
         }
 
         // 3rd slider on Quick Controls for Night Light when hyprsunset service is active
@@ -1501,18 +1692,33 @@ impl CenterApp {
             let key_c1 = key.clone();
             let key_c2 = key.clone();
 
-            let icon_badge = container(render_icon("weather-clear-night-symbolic", 18.0, palette.accent))
+            let is_row_hovered = self.hovered_item.as_deref() == Some("Night Light");
+
+            let (icon_badge_bg, icon_badge_border, icon_color) = if is_row_hovered {
+                (
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.40),
+                    palette.accent_hover,
+                )
+            } else {
+                (
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12),
+                    Color::TRANSPARENT,
+                    palette.accent,
+                )
+            };
+
+            let icon_badge = container(render_icon("weather-clear-night-symbolic", 18.0, icon_color))
                 .width(36)
                 .height(36)
                 .align_x(Horizontal::Center)
                 .align_y(Vertical::Center)
                 .style(move |_| container::Style {
-                    background: Some(
-                        Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12).into(),
-                    ),
+                    background: Some(icon_badge_bg.into()),
                     border: Border {
+                        color: icon_badge_border,
+                        width: 1.0,
                         radius: 10.0.into(),
-                        ..Default::default()
                     },
                     ..Default::default()
                 });
@@ -1552,7 +1758,7 @@ impl CenterApp {
             let val_label = text(format!("{:.0}", val.round()))
                 .size(13)
                 .font(iced::Font::MONOSPACE)
-                .color(palette.fg_muted)
+                .color(if is_row_hovered { Color::WHITE } else { palette.fg_muted })
                 .width(28)
                 .align_x(Horizontal::Right);
 
@@ -1564,7 +1770,13 @@ impl CenterApp {
             .spacing(12)
             .align_y(Vertical::Center);
 
-            controls_col = controls_col.push(ctrl_row);
+            let key_enter = key.clone();
+            let key_exit = key.clone();
+            let row_area = mouse_area(ctrl_row)
+                .on_enter(Message::ItemEntered(key_enter))
+                .on_exit(Message::ItemExited(key_exit));
+
+            controls_col = controls_col.push(row_area);
         }
 
         container(controls_col)
@@ -1573,7 +1785,7 @@ impl CenterApp {
             .style(move |_| container::Style {
                 background: Some(palette.card_bg.into()),
                 border: Border {
-                    color: palette.border,
+                    color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
                     width: 1.0,
                     radius: 14.0.into(),
                 },
@@ -1602,10 +1814,24 @@ impl CenterApp {
             title.clone()
         };
 
+        let is_row_hovered = self.hovered_item.as_deref() == Some(&key);
+
         let icon_name = if !item.properties.icon.is_empty() {
             &item.properties.icon
         } else {
             "dot"
+        };
+
+        // Title and description colors brighten on hover
+        let title_color = if is_row_hovered {
+            Color::WHITE
+        } else {
+            palette.fg
+        };
+        let desc_color = if is_row_hovered {
+            Color::from_rgb(0.85, 0.85, 0.88)
+        } else {
+            palette.fg_muted
         };
 
         // Left info container with title and description
@@ -1616,12 +1842,14 @@ impl CenterApp {
                     weight: Weight::Semibold,
                     ..Default::default()
                 })
-                .color(palette.fg),
+                .color(title_color),
             if !badge_tag.is_empty() {
                 container(text(badge_tag).size(10).color(palette.accent))
                     .padding([2, 8])
                     .style(move |_| container::Style {
-                        background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.15).into()),
+                        background: Some(
+                            Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.15).into(),
+                        ),
                         border: Border {
                             radius: 4.0.into(),
                             ..Default::default()
@@ -1636,20 +1864,36 @@ impl CenterApp {
         .align_y(Vertical::Center)];
 
         if !desc.is_empty() {
-            info_col = info_col.push(text(desc).size(11).color(palette.fg_muted));
+            info_col = info_col.push(text(desc).size(11).color(desc_color));
         }
 
+        // Icon badge lights up brighter with accent glow border on hover
+        let (icon_badge_bg, icon_badge_border, icon_color) = if is_row_hovered {
+            (
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.40),
+                palette.accent_hover,
+            )
+        } else {
+            (
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10),
+                Color::TRANSPARENT,
+                palette.accent,
+            )
+        };
+
         let left_part = row![
-            container(render_icon(icon_name, 18.0, palette.accent))
+            container(render_icon(icon_name, 18.0, icon_color))
                 .width(34)
                 .height(34)
                 .align_x(Horizontal::Center)
                 .align_y(Vertical::Center)
                 .style(move |_| container::Style {
-                    background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10).into()),
+                    background: Some(icon_badge_bg.into()),
                     border: Border {
+                        color: icon_badge_border,
+                        width: 1.0,
                         radius: 8.0.into(),
-                        ..Default::default()
                     },
                     ..Default::default()
                 }),
@@ -1707,12 +1951,9 @@ impl CenterApp {
             buttons_row = buttons_row.push(btn);
         }
 
-        // Multi-option selections (e.g. Voice Character Presets, theme selectors)
-        // render the title/description on top and flow wrapped pills underneath indented by 46px
-        if item.item_type == "selection"
-            && (item.properties.options.len() > 2
-                || item.properties.options.iter().any(|opt| opt.len() > 10))
-        {
+        // Multi-option selections for Voice Character Preset
+        // Render title/description on top and flow wrapped pills underneath indented by 46px
+        if item.item_type == "selection" && item.properties.title == "Voice Character Preset" {
             let current = self.selected_options.get(&key).cloned().unwrap_or_default();
             let mut options_row = row![].spacing(6);
 
@@ -1767,7 +2008,7 @@ impl CenterApp {
                 row![left_part]
             };
 
-            return column![
+            let row_content = column![
                 top_row,
                 container(options_row.wrap().vertical_spacing(6))
                     .padding(Padding {
@@ -1778,9 +2019,22 @@ impl CenterApp {
                     })
                     .width(Length::Fill),
             ]
-            .spacing(4)
-            .padding([4, 0])
-            .into();
+            .spacing(4);
+
+            let row_container = container(row_content)
+                .padding([8, 6])
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(Color::TRANSPARENT.into()),
+                    ..Default::default()
+                });
+
+            let key_enter = key.clone();
+            let key_exit = key.clone();
+            return mouse_area(row_container)
+                .on_enter(Message::ItemEntered(key_enter))
+                .on_exit(Message::ItemExited(key_exit))
+                .into();
         }
 
         // Right interactive widget
@@ -1874,53 +2128,78 @@ impl CenterApp {
             }
 
             "selection" => {
-                let current = self.selected_options.get(&key).cloned().unwrap_or_default();
-                let mut options_row = row![].spacing(6);
+                let current = self
+                    .selected_options
+                    .get(&key)
+                    .cloned()
+                    .or_else(|| item.properties.options.first().cloned())
+                    .unwrap_or_default();
 
-                for opt in &item.properties.options {
-                    let is_sel = current == *opt;
-                    let opt_clone = opt.clone();
-                    let key_clone = key.clone();
+                let act_map = match &item.on_change {
+                    Some(ChangeAction::Map(map)) => map.clone(),
+                    _ => HashMap::new(),
+                };
+                let direct_act = match &item.on_change {
+                    Some(ChangeAction::Direct(d)) => Some(d.clone()),
+                    _ => None,
+                };
 
-                    let act = match &item.on_change {
-                        Some(ChangeAction::Map(map)) => map.get(opt).cloned(),
-                        Some(ChangeAction::Direct(d)) => Some(d.clone()),
-                        None => None,
-                    };
+                let key_clone = key.clone();
+                let options = item.properties.options.clone();
 
-                    let pill = button(text(opt).size(11).color(if is_sel {
-                        palette.accent_fg
-                    } else {
-                        palette.fg_muted
-                    }))
-                    .on_press(Message::SelectOption {
-                        key: key_clone,
-                        option: opt_clone,
-                        action: act,
-                    })
-                    .padding([4, 10])
-                    .style(move |_, status| {
-                        let bg = if is_sel {
-                            palette.accent
-                        } else if status == button::Status::Hovered {
-                            Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                if options.is_empty() {
+                    container(Space::new().width(0)).into()
+                } else {
+                    let dropdown = pick_list(
+                        options,
+                        Some(current),
+                        move |selected| {
+                            let action = act_map
+                                .get(&selected)
+                                .cloned()
+                                .or_else(|| direct_act.clone());
+                            Message::SelectOption {
+                                key: key_clone.clone(),
+                                option: selected,
+                                action,
+                            }
+                        },
+                    )
+                    .padding([5, 10])
+                    .text_size(12)
+                    .style(move |_, status| pick_list::Style {
+                        text_color: palette.fg,
+                        placeholder_color: palette.fg_muted,
+                        handle_color: palette.accent,
+                        background: if matches!(
+                            status,
+                            pick_list::Status::Hovered | pick_list::Status::Opened { .. }
+                        ) {
+                            palette.card_hover.into()
                         } else {
-                            Color::from_rgba(1.0, 1.0, 1.0, 0.03)
-                        };
-                        button::Style {
-                            background: Some(bg.into()),
-                            border: Border {
-                                radius: 6.0.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }
+                            palette.surface.into()
+                        },
+                        border: Border {
+                            color: palette.border,
+                            width: 1.0,
+                            radius: 8.0.into(),
+                        },
+                    })
+                    .menu_style(move |_| menu::Style {
+                        background: palette.card_bg.into(),
+                        border: Border {
+                            color: palette.border,
+                            width: 1.0,
+                            radius: 8.0.into(),
+                        },
+                        selected_background: palette.accent.into(),
+                        selected_text_color: palette.accent_fg,
+                        text_color: palette.fg,
+                        shadow: iced::Shadow::default(),
                     });
 
-                    options_row = options_row.push(pill);
+                    dropdown.into()
                 }
-
-                options_row.wrap().vertical_spacing(6).into()
             }
 
             "navigation" => {
@@ -2023,14 +2302,23 @@ impl CenterApp {
                         .style(move |_, status| button::Style {
                             background: Some(
                                 if status == button::Status::Hovered {
-                                    palette.card_hover
+                                    palette.accent
                                 } else {
                                     Color::from_rgba(1.0, 1.0, 1.0, 0.06)
                                 }
                                 .into(),
                             ),
                             border: Border {
-                                color: palette.border,
+                                color: if status == button::Status::Hovered {
+                                    palette.accent
+                                } else {
+                                    Color::from_rgba(
+                                        palette.border.r,
+                                        palette.border.g,
+                                        palette.border.b,
+                                        0.30,
+                                    )
+                                },
                                 width: 1.0,
                                 radius: 6.0.into(),
                             },
@@ -2052,11 +2340,85 @@ impl CenterApp {
             right_widget
         };
 
-        row![left_part, right_container]
+        let row_content = row![left_part, right_container]
             .spacing(12)
-            .align_y(Vertical::Center)
-            .padding([4, 0])
-            .into()
+            .align_y(Vertical::Center);
+
+        let primary_action = if let Some(action) = &item.on_press {
+            Some(action.clone())
+        } else if let Some(suggested) = item
+            .properties
+            .buttons
+            .iter()
+            .find(|b| b.style == "suggested" && b.on_press.is_some())
+        {
+            suggested.on_press.clone()
+        } else if let Some(last) = item
+            .properties
+            .buttons
+            .iter()
+            .rev()
+            .find(|b| b.on_press.is_some())
+        {
+            last.on_press.clone()
+        } else {
+            None
+        };
+
+        let row_container = container(row_content)
+            .padding([8, 6])
+            .width(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(
+                    if is_row_hovered {
+                        palette.card_hover
+                    } else {
+                        Color::TRANSPARENT
+                    }
+                    .into(),
+                ),
+                border: Border {
+                    radius: 8.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+
+        let key_enter = key.clone();
+        let key_exit = key.clone();
+        let mut area = mouse_area(row_container)
+            .on_enter(Message::ItemEntered(key_enter))
+            .on_exit(Message::ItemExited(key_exit));
+
+        if item.item_type == "navigation" {
+            let sub_sections = item.layout.clone();
+            let sub_title = title.clone();
+            area = area
+                .on_press(Message::PushSubPage {
+                    title: sub_title,
+                    sections: sub_sections,
+                })
+                .interaction(mouse::Interaction::Pointer);
+        } else if item.item_type == "toggle" {
+            let is_active = self.toggle_states.get(&key).copied().unwrap_or(false);
+            let toggle_pair = item.on_toggle.clone();
+            let key_clone = key.clone();
+            area = area
+                .on_press(Message::ToggleItem {
+                    key: key_clone,
+                    is_enabled: !is_active,
+                    on_toggle: toggle_pair,
+                })
+                .interaction(mouse::Interaction::Pointer);
+        } else if (item.item_type == "button" || item.item_type.is_empty())
+            && let Some(act) = primary_action
+        {
+            area = area
+                .on_press(Message::ExecuteAction(act))
+                .interaction(mouse::Interaction::Pointer);
+        }
+
+        area.into()
     }
 }
 
@@ -2096,9 +2458,62 @@ fn collect_item_defaults(
     }
 
     if item.item_type == "selection" && !item.properties.options.is_empty() {
-        options
-            .entry(key.clone())
-            .or_insert(item.properties.options[0].clone());
+        let mut initial = None;
+
+        // 1. Check if state file exists in settings
+        let settings_file = dirs_fallback().join("settings").join(&key);
+        if settings_file.is_file()
+            && let Ok(content) = std::fs::read_to_string(&settings_file)
+        {
+            let trimmed = content.trim();
+            let lower = trimmed.to_lowercase();
+            if let Some(mapped) = item
+                .properties
+                .options_map
+                .get(trimmed)
+                .or_else(|| item.properties.options_map.get(&lower))
+            {
+                initial = Some(mapped.clone());
+            } else if let Some(found) = item
+                .properties
+                .options
+                .iter()
+                .find(|o| o.eq_ignore_ascii_case(trimmed))
+            {
+                initial = Some(found.clone());
+            }
+        }
+
+        // 2. If not found, check value_command
+        if initial.is_none() && !item.properties.value_command.is_empty() {
+            let cmd = expand_path(&item.properties.value_command);
+            if let Ok(out) = std::process::Command::new("bash")
+                .arg("-c")
+                .arg(cmd.to_string_lossy().as_ref())
+                .output()
+            {
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let lower = stdout.to_lowercase();
+                if let Some(mapped) = item
+                    .properties
+                    .options_map
+                    .get(&stdout)
+                    .or_else(|| item.properties.options_map.get(&lower))
+                {
+                    initial = Some(mapped.clone());
+                } else if let Some(found) = item
+                    .properties
+                    .options
+                    .iter()
+                    .find(|o| o.eq_ignore_ascii_case(&stdout))
+                {
+                    initial = Some(found.clone());
+                }
+            }
+        }
+
+        let val = initial.unwrap_or_else(|| item.properties.options[0].clone());
+        options.entry(key.clone()).or_insert(val);
     }
 
     for sub in &item.items {
@@ -2139,10 +2554,10 @@ fn dirs_home() -> std::path::PathBuf {
 }
 
 fn dirs_fallback() -> std::path::PathBuf {
-    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
-        if !config_home.is_empty() {
-            return std::path::PathBuf::from(config_home).join("dusky");
-        }
+    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME")
+        && !config_home.is_empty()
+    {
+        return std::path::PathBuf::from(config_home).join("dusky");
     }
     dirs_home().join(".config/dusky")
 }
