@@ -1311,7 +1311,7 @@ impl CenterApp {
             return responsive(move |size| {
                 let slot_width = (size.width - 20.0) / 3.0;
                 let side_margin = slot_width * 0.055;
-                let gap = (10.0 + side_margin * 2.0) * 0.85;
+                let gap = (10.0 + side_margin * 2.0) * 0.70;
                 let cards = grid(section.items.iter().map(|item| self.view_hero_card(item)))
                     .columns(3)
                     .height(Length::Shrink)
