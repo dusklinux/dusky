@@ -889,7 +889,7 @@ impl CenterApp {
                         ..Default::default()
                     })
                     .width(Length::Fill)
-                    .max_width(520.0),
+                    .max_width(560.0),
             )
             .width(Length::Fill)
             .align_x(Horizontal::Center)
@@ -1025,10 +1025,13 @@ impl CenterApp {
                 ..Default::default()
             });
 
+        let clamped_results = container(column![header, results_card].width(Length::Fill).max_width(560.0))
+            .width(Length::Fill)
+            .align_x(Horizontal::Center);
+
         column![
-            header,
             make_slim_scrollable(
-                column![results_card],
+                clamped_results,
                 Padding {
                     top: 0.0,
                     right: 18.0,
@@ -1053,8 +1056,12 @@ impl CenterApp {
             sections_col = sections_col.push(self.view_section(section));
         }
 
+        let clamped_content = container(sections_col.width(Length::Fill).max_width(560.0))
+            .width(Length::Fill)
+            .align_x(Horizontal::Center);
+
         make_slim_scrollable(
-            sections_col,
+            clamped_content,
             Padding {
                 top: 4.0,
                 right: 18.0,
@@ -1115,8 +1122,12 @@ impl CenterApp {
             sections_col = sections_col.push(self.view_section(section));
         }
 
+        let clamped_content = container(sections_col.width(Length::Fill).max_width(560.0))
+            .width(Length::Fill)
+            .align_x(Horizontal::Center);
+
         make_slim_scrollable(
-            sections_col,
+            clamped_content,
             Padding {
                 top: 4.0,
                 right: 18.0,
@@ -1160,14 +1171,7 @@ impl CenterApp {
                 grid_rows = grid_rows.push(current_row);
             }
 
-            let capped_grid = container(grid_rows)
-                .width(Length::Fill)
-                .max_width(520.0);
-
-            return container(capped_grid)
-                .width(Length::Fill)
-                .align_x(Horizontal::Center)
-                .into();
+            return grid_rows.width(Length::Fill).into();
         }
 
         // Warning banner / compact informational banner
@@ -1321,7 +1325,7 @@ impl CenterApp {
             || item.properties.title == "Reboot";
         let is_suggested = item.properties.style == "suggested";
 
-        // Hero card styling: Active -> solid accent; Destructive -> reddish tint; Standard -> card_bg
+        // Hero card styling: Active -> solid accent; Destructive -> subtle reddish tint; Standard -> card_bg
         let (card_bg, text_fg, icon_fg, border_color) = if is_enabled {
             (
                 palette.accent,
@@ -1331,17 +1335,25 @@ impl CenterApp {
             )
         } else if is_destructive {
             (
-                Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.05),
+                Color::from_rgb(
+                    palette.card_bg.r + (palette.danger.r - palette.card_bg.r) * 0.02,
+                    palette.card_bg.g + (palette.danger.g - palette.card_bg.g) * 0.005,
+                    palette.card_bg.b + (palette.danger.b - palette.card_bg.b) * 0.005,
+                ),
+                palette.fg,
                 palette.danger,
-                palette.danger,
-                Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.28),
+                Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.08),
             )
         } else if is_suggested {
             (
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.06),
+                Color::from_rgb(
+                    palette.card_bg.r + (palette.accent.r - palette.card_bg.r) * 0.02,
+                    palette.card_bg.g + (palette.accent.g - palette.card_bg.g) * 0.02,
+                    palette.card_bg.b + (palette.accent.b - palette.card_bg.b) * 0.02,
+                ),
                 palette.fg,
                 palette.accent,
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.25),
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20),
             )
         } else {
             (
@@ -1377,6 +1389,21 @@ impl CenterApp {
             Message::SelectPage(self.active_page_idx())
         };
 
+        let shadow = if is_enabled {
+            iced::Shadow {
+                color: Color::from_rgba(
+                    palette.accent.r,
+                    palette.accent.g,
+                    palette.accent.b,
+                    0.028,
+                ),
+                offset: iced::Vector::new(0.0, 1.5),
+                blur_radius: 6.0,
+            }
+        } else {
+            iced::Shadow::default()
+        };
+
         // Uniform 62px fixed height guarantees all rows have the exact same size!
         button(
             container(card_content)
@@ -1397,8 +1424,12 @@ impl CenterApp {
             } else if is_destructive {
                 if status == button::Status::Hovered {
                     (
-                        Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.12),
-                        Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.45),
+                        Color::from_rgb(
+                            palette.card_hover.r + (palette.danger.r - palette.card_hover.r) * 0.04,
+                            palette.card_hover.g,
+                            palette.card_hover.b,
+                        ),
+                        Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.18),
                     )
                 } else {
                     (card_bg, border_color)
@@ -1406,8 +1437,12 @@ impl CenterApp {
             } else if is_suggested {
                 if status == button::Status::Hovered {
                     (
-                        Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.14),
-                        Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.40),
+                        Color::from_rgb(
+                            palette.card_hover.r + (palette.accent.r - palette.card_hover.r) * 0.04,
+                            palette.card_hover.g + (palette.accent.g - palette.card_hover.g) * 0.04,
+                            palette.card_hover.b + (palette.accent.b - palette.card_hover.b) * 0.04,
+                        ),
+                        Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.30),
                     )
                 } else {
                     (card_bg, border_color)
@@ -1428,6 +1463,7 @@ impl CenterApp {
                     width: 1.0,
                     radius: 12.0.into(),
                 },
+                shadow,
                 ..Default::default()
             }
         })
@@ -1446,13 +1482,13 @@ impl CenterApp {
 
         let (icon_badge_bg, icon_badge_border, icon_color) = if is_hovered {
             (
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.40),
-                palette.accent_hover,
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.15),
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20),
+                palette.accent,
             )
         } else {
             (
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12),
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10),
                 Color::TRANSPARENT,
                 palette.accent,
             )
@@ -1481,10 +1517,10 @@ impl CenterApp {
                     weight: Weight::Bold,
                     ..Default::default()
                 })
-                .color(if is_hovered { Color::WHITE } else { palette.fg }),
+                .color(if is_hovered { Color::from_rgb(0.96, 0.96, 0.98) } else { palette.fg }),
             text("Select performance mode")
                 .size(11)
-                .color(if is_hovered { Color::from_rgb(0.85, 0.85, 0.88) } else { palette.fg_muted }),
+                .color(if is_hovered { Color::from_rgb(0.80, 0.82, 0.88) } else { palette.fg_muted }),
         ]
         .spacing(2)
         .width(Length::Fill);
@@ -1593,13 +1629,13 @@ impl CenterApp {
 
             let (icon_badge_bg, icon_badge_border, icon_color) = if is_row_hovered {
                 (
-                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
-                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.40),
-                    palette.accent_hover,
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.15),
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20),
+                    palette.accent,
                 )
             } else {
                 (
-                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12),
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10),
                     Color::TRANSPARENT,
                     palette.accent,
                 )
@@ -1621,7 +1657,7 @@ impl CenterApp {
                     ..Default::default()
                 });
 
-            // Dusky Tray Sliders: 12px thick rounded pill rail with solid accent fill and crisp white circle handle
+            // Slim 8px rail matching GTK scale trough, with dark subtle empty portion and dark knob
             let s = slider(min..=max, val, move |v| Message::SliderChanged {
                 key: key_c1.clone(),
                 value: v,
@@ -1638,19 +1674,19 @@ impl CenterApp {
                 rail: slider::Rail {
                     backgrounds: (
                         palette.accent.into(),
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.09).into(),
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.45).into(),
                     ),
-                    width: 12.0,
+                    width: 8.0,
                     border: Border {
-                        radius: 6.0.into(),
+                        radius: 4.0.into(),
                         ..Default::default()
                     },
                 },
                 handle: slider::Handle {
-                    shape: slider::HandleShape::Circle { radius: 7.0 },
-                    background: Color::WHITE.into(),
-                    border_width: 0.0,
-                    border_color: Color::TRANSPARENT,
+                    shape: slider::HandleShape::Circle { radius: 8.0 },
+                    background: palette.bg.into(),
+                    border_width: 1.5,
+                    border_color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.60),
                 },
             });
 
@@ -1658,7 +1694,7 @@ impl CenterApp {
             let val_label = text(format!("{:.0}", val.round()))
                 .size(13)
                 .font(iced::Font::MONOSPACE)
-                .color(if is_row_hovered { Color::WHITE } else { palette.fg_muted })
+                .color(if is_row_hovered { Color::from_rgb(0.96, 0.96, 0.98) } else { palette.fg_muted })
                 .width(28)
                 .align_x(Horizontal::Right);
 
@@ -1696,13 +1732,13 @@ impl CenterApp {
 
             let (icon_badge_bg, icon_badge_border, icon_color) = if is_row_hovered {
                 (
-                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
-                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.40),
-                    palette.accent_hover,
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.15),
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20),
+                    palette.accent,
                 )
             } else {
                 (
-                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12),
+                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10),
                     Color::TRANSPARENT,
                     palette.accent,
                 )
@@ -1739,26 +1775,26 @@ impl CenterApp {
                 rail: slider::Rail {
                     backgrounds: (
                         palette.accent.into(),
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.09).into(),
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.45).into(),
                     ),
-                    width: 12.0,
+                    width: 8.0,
                     border: Border {
-                        radius: 6.0.into(),
+                        radius: 4.0.into(),
                         ..Default::default()
                     },
                 },
                 handle: slider::Handle {
-                    shape: slider::HandleShape::Circle { radius: 7.0 },
-                    background: Color::WHITE.into(),
-                    border_width: 0.0,
-                    border_color: Color::TRANSPARENT,
+                    shape: slider::HandleShape::Circle { radius: 8.0 },
+                    background: palette.bg.into(),
+                    border_width: 1.5,
+                    border_color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.60),
                 },
             });
 
             let val_label = text(format!("{:.0}", val.round()))
                 .size(13)
                 .font(iced::Font::MONOSPACE)
-                .color(if is_row_hovered { Color::WHITE } else { palette.fg_muted })
+                .color(if is_row_hovered { Color::from_rgb(0.96, 0.96, 0.98) } else { palette.fg_muted })
                 .width(28)
                 .align_x(Horizontal::Right);
 
@@ -1822,14 +1858,14 @@ impl CenterApp {
             "dot"
         };
 
-        // Title and description colors brighten on hover
+        // Title and description colors brighten subtly on hover
         let title_color = if is_row_hovered {
-            Color::WHITE
+            Color::from_rgb(0.96, 0.96, 0.98)
         } else {
             palette.fg
         };
         let desc_color = if is_row_hovered {
-            Color::from_rgb(0.85, 0.85, 0.88)
+            Color::from_rgb(0.80, 0.82, 0.88)
         } else {
             palette.fg_muted
         };
@@ -1867,12 +1903,12 @@ impl CenterApp {
             info_col = info_col.push(text(desc).size(11).color(desc_color));
         }
 
-        // Icon badge lights up brighter with accent glow border on hover
+        // Icon badge lights up subtly with gentle glow on hover
         let (icon_badge_bg, icon_badge_border, icon_color) = if is_row_hovered {
             (
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.40),
-                palette.accent_hover,
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.15),
+                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20),
+                palette.accent,
             )
         } else {
             (
@@ -2098,19 +2134,24 @@ impl CenterApp {
                     rail: slider::Rail {
                         backgrounds: (
                             palette.accent.into(),
-                            Color::from_rgba(1.0, 1.0, 1.0, 0.09).into(),
+                            Color::from_rgba(0.0, 0.0, 0.0, 0.45).into(),
                         ),
-                        width: 10.0,
+                        width: 8.0,
                         border: Border {
-                            radius: 5.0.into(),
+                            radius: 4.0.into(),
                             ..Default::default()
                         },
                     },
                     handle: slider::Handle {
-                        shape: slider::HandleShape::Circle { radius: 6.0 },
-                        background: Color::WHITE.into(),
-                        border_width: 0.0,
-                        border_color: Color::TRANSPARENT,
+                        shape: slider::HandleShape::Circle { radius: 8.0 },
+                        background: palette.bg.into(),
+                        border_width: 1.5,
+                        border_color: Color::from_rgba(
+                            palette.border.r,
+                            palette.border.g,
+                            palette.border.b,
+                            0.60,
+                        ),
                     },
                 });
 
@@ -2280,16 +2321,10 @@ impl CenterApp {
                     .cloned()
                     .unwrap_or_else(|| "Active".into());
 
-                container(text(label_val).size(12).color(palette.fg))
-                    .padding([4, 10])
-                    .style(move |_| container::Style {
-                        background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.05).into()),
-                        border: Border {
-                            radius: 6.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    })
+                text(label_val)
+                    .size(12)
+                    .color(palette.fg_muted)
+                    .align_x(Horizontal::Right)
                     .into()
             }
 
