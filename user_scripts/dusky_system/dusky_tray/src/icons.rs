@@ -13,7 +13,8 @@ fn paths(glyph: &str) -> &'static str {
         }
         "󰓛" => "M9 3h6M12 3v3M18 7l2-2M12 10v4l3 2 M20 14a8 8 0 1 1-16 0 8 8 0 0 1 16 0",
         "󰈉" => "M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12 M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0",
-        "◐" | "◑" => "M4 5h16v14H4zM7 9h3v6H7zM13 9h4M13 12h4M13 15h4",
+        "◐" => "M4 5h16v14H4zM7 9h3v6H7zM13 9h4M13 12h4M13 15h4",
+        "◑" => "M8 4l12 8-12 8z",
         "󰇚" => "M12 3v12M7 10l5 5 5-5M5 18v3h14v-3",
         "\u{F02EC}" => {
             "M9 5a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0zM5 10v2a7 7 0 0 0 14 0v-2M12 19v3M9 22h6"
@@ -50,18 +51,20 @@ pub fn icon<Message: 'static>(
     color: Option<Color>,
 ) -> Element<'static, Message, Theme, crate::renderer::Renderer> {
     // A small map initialized once; handles and renderer caches survive redraws.
-    static HANDLES: OnceLock<std::collections::HashMap<&'static str, svg::Handle>> =
+    static HANDLES: OnceLock<std::collections::HashMap<&'static str, (svg::Handle, svg::Handle)>> =
         OnceLock::new();
     let handles = HANDLES.get_or_init(|| {
         ["󰖩", "󰖪", "󰓛", "󰈉", "◐", "◑", "󰇚", "\u{F02EC}", "\u{F02ED}", "󰂚", "󰂛", "󰂯", "󰂲", "", "󰀄", "", "⏻︎", "☁︎", "▤", "▣", "\u{F0156}", "\u{F0142}", "\u{F0140}", "󰕾", "volume-muted", "brightness-low", "󰃠", "󰡬", "⇅", "●", "…"]
             .into_iter().map(|g| {
                 let fill = if matches!(g, "\u{F0142}" | "\u{F0140}") { "white" } else { "none" };
                 let bytes = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="{}" fill="{fill}" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>"#, paths(g));
-                (g, svg::Handle::from_memory(bytes.into_bytes()))
+                let halo = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="-8 -8 40 40"><defs><filter id="halo" filterUnits="userSpaceOnUse" x="-8" y="-8" width="40" height="40"><feGaussianBlur stdDeviation="2.4"/></filter></defs><path d="{}" fill="{fill}" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" filter="url(#halo)"/></svg>"#, paths(g));
+                (g, (svg::Handle::from_memory(bytes.into_bytes()), svg::Handle::from_memory(halo.into_bytes())))
             }).collect()
     });
     Element::new(Icon {
-        handle: handles.get(glyph).unwrap_or(&handles["●"]).clone(),
+        handle: handles.get(glyph).unwrap_or(&handles["●"]).0.clone(),
+        halo: handles.get(glyph).unwrap_or(&handles["●"]).1.clone(),
         size,
         color,
     })
@@ -69,6 +72,7 @@ pub fn icon<Message: 'static>(
 
 struct Icon {
     handle: svg::Handle,
+    halo: svg::Handle,
     size: f32,
     color: Option<Color>,
 }
@@ -98,9 +102,9 @@ impl<Message> Widget<Message, Theme, crate::renderer::Renderer> for Icon {
         _: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        use svg::Renderer;
-        renderer.draw_svg(
+        renderer.draw_icon(
             svg::Svg::new(self.handle.clone()).color(self.color.unwrap_or(style.text_color)),
+            self.halo.clone(),
             layout.bounds(),
             *viewport,
         );

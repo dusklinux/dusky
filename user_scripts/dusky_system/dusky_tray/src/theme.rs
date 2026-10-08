@@ -56,11 +56,11 @@ pub fn slider_label_color(color: Color, value: f32) -> Color {
     )
 }
 
-/// Keep the low end subdued; boost the previous icon peak by another 20%.
+/// Keep the low end subdued, with a softer 140% peak for slider icons.
 pub fn slider_icon_color(color: Color, value: f32) -> Color {
     saturate(
         color,
-        0.4 + 1.28 * crate::backend::system::clamp(value, 0.0, 100.0) / 100.0,
+        0.4 + crate::backend::system::clamp(value, 0.0, 100.0) / 100.0,
     )
 }
 
@@ -171,7 +171,7 @@ mod tests {
                     .all(|v| (0.0..=1.0).contains(v))
             );
         }
-        for (value, factor) in [(0.0, 0.4), (50.0, 1.04), (100.0, 1.68)] {
+        for (value, factor) in [(0.0, 0.4), (50.0, 0.9), (100.0, 1.4)] {
             let color = slider_icon_color(base, value);
             assert!(((color.b - color.r) / color.b - 0.375 * factor).abs() < 0.00001);
         }

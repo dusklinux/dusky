@@ -9,35 +9,36 @@ show_notifications = true
 show_media = false
 # ==============================================================================
 # QUICK TOGGLES (Grid)
-# 5 Essential Modules: Wi-Fi, Idle Inhibitor, Visuals, Updates, Notifications
+# 5 Essential Modules: Animations, Idle Inhibitor, Visuals, Updates, Voice DSP
 # ==============================================================================
 [[toggles]]
-id = "wifi"
-icon = "network-wireless-symbolic"
-label = "Wi-Fi"
-tooltip = "Wi-Fi\nLMB: Network Manager"
-on_left = "foot --app-id=dusky_tui python ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/network_manager/tui_dusky_network.py"
+id = "animations"
+icon = "applications-graphics-symbolic"
+label = "Animations"
+tooltip = "Animations\nLMB: Disable / Restore last animation"
+on_left = "~/user_scripts/rofi/hypr_anim.sh --toggle"
 
 [[toggles]]
 id = "idle"
 icon = "timer-symbolic"
 label = "Hypridle"
-tooltip = "Hypridle\nLMB: Toggle | RMB: Lock Screen"
+tooltip = "Hypridle\nLMB: Toggle\nRMB: Open TUI"
 on_left = "~/user_scripts/waybar/toggle_hypridle.sh"
-on_right = "~/user_scripts/hyprlock/lock.sh"
+on_right = "foot --app-id=dusky_tui python3 ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/hypridle/tui_dusky_hypridle.py"
 
 [[toggles]]
 id = "blur"
 icon = "preferences-desktop-appearance-symbolic"
 label = "Visuals"
-tooltip = "Visuals\nLMB: Toggle Blur/Shadow"
+tooltip = "Visuals\nLMB: Toggle Blur/Shadow\nRMB: Open shaders menu"
 on_left = "~/user_scripts/hypr/hypr_blur_opacity_shadow_toggle.sh toggle"
+on_right = "~/user_scripts/rofi/shader_menu.sh"
 
 [[toggles]]
 id = "updates"
 icon = "folder-download-symbolic"
 label = "Updates"
-tooltip = "Updates\nLMB: System Update | RMB: Dusky Update"
+tooltip = "Updates\nLMB: System Update\nRMB: Dusky Update"
 on_left = "dusky-run kitty --class system_update.sh --hold sh -c '~/user_scripts/update_dusky/system_update.sh --all'"
 on_right = "dusky-run kitty --class update_dusky.py --hold sh -c '~/user_scripts/update_dusky/python/update_dusky_supervisor.py'"
 
@@ -45,6 +46,6 @@ on_right = "dusky-run kitty --class update_dusky.py --hold sh -c '~/user_scripts
 id = "audio"
 icon = "audio-input-microphone-symbolic"
 label = "Voice DSP"
-tooltip = "Voice DSP & Noise Cancellation\nLMB: Open Studio | RMB: Toggle ON/OFF"
+tooltip = "Voice DSP & Noise Cancellation\nLMB: Open Studio\nRMB: Toggle ON/OFF"
 on_left = "python3 ~/user_scripts/audio/dusky_audio_studio/dusky_audio_studio.py --gui-only"
 on_right = "python3 ~/user_scripts/audio/dusky_audio_studio/dusky_audio_studio.py --toggle"

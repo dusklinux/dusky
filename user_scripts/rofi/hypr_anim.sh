@@ -12,6 +12,7 @@ readonly ANIM_DIR="$CONFIG_DIR/hypr/source/animations"
 readonly LINK_DIR="$ANIM_DIR/active"
 readonly DEST_FILE="$LINK_DIR/active.lua"
 readonly STATE_FILE="$CONFIG_DIR/dusky/settings/dusky_animiation" 
+readonly LAST_ENABLED_FILE="${STATE_FILE}.last-enabled"
 readonly FALLBACK_ANIM="dusky.lua"
 
 # Visual Assets
@@ -115,6 +116,12 @@ apply_animation() {
         trap - EXIT # Disarm the cleanup trap since the move was successful
         
         mkdir -p -- "${STATE_FILE%/*}" 2>/dev/null
+        # Disabling must not erase the last preset selected in the Rofi menu.
+        if [[ "$target_orient" != "disabled" && "$src_file" != "$ANIM_DIR/disable.lua" ]]; then
+            printf '%s|%s\n' "$target_orient" "$src_file" > "$LAST_ENABLED_FILE"
+        elif [[ -n "$current_anim" && "$current_anim" != "$ANIM_DIR/disable.lua" && -f "$current_anim" ]]; then
+            printf '%s|%s\n' "$current_orient" "$current_anim" > "$LAST_ENABLED_FILE"
+        fi
         printf '%s|%s\n' "$target_orient" "$src_file" > "$STATE_FILE"
 
         reload_hyprland
@@ -147,6 +154,33 @@ get_current_state() {
 # -----------------------------------------------------------------------------
 # ROUTING & CLI FLAGS
 # -----------------------------------------------------------------------------
+# Serialize applies, including state reads, across tray and Rofi invocations.
+exec {animation_lock}>"${XDG_RUNTIME_DIR:-/run/user/$UID}/dusky-animation.lock"
+flock "$animation_lock"
+
+if [[ "${1:-}" == "--toggle" ]]; then
+    get_current_state
+    live_state=$(hyprctl getoption animations:enabled -j) || exit 1
+    if [[ ! "$live_state" =~ \"bool\":[[:space:]]*(true|false) ]]; then
+        printf 'Could not read Hyprland animation state.\n' >&2
+        exit 1
+    fi
+    if [[ "${BASH_REMATCH[1]}" == "true" ]]; then
+        apply_animation disabled "$ANIM_DIR/disable.lua"
+    else
+        saved_state="$current_orient|$current_anim"
+        [[ ! -f "$LAST_ENABLED_FILE" ]] || saved_state=$(<"$LAST_ENABLED_FILE")
+        target_orient="${saved_state%%|*}"
+        target_anim="${saved_state#*|}"
+        if [[ "$target_orient" != "horizontal" && "$target_orient" != "vertical" ]] || [[ ! -f "$target_anim" ]]; then
+            target_orient=horizontal
+            target_anim="$ANIM_DIR/$FALLBACK_ANIM"
+        fi
+        apply_animation "$target_orient" "$target_anim"
+    fi
+    exit 0
+fi
+
 if [[ "${1:-}" == "--current" ]]; then
     get_current_state
     

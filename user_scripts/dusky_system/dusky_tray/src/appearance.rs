@@ -13,9 +13,27 @@ pub fn reveal<'a, Message: 'a>(
     Element::new(Reveal {
         content,
         opacity,
+        glow: 0.0,
         animate_height: false,
     })
 }
+/// Glyph-edge halo without changing layout or scheduling animation frames.
+/// Zero strength returns the original widget, preserving its rendering exactly.
+pub fn glow<'a, Message: 'a>(
+    content: Element<'a, Message, Theme, Renderer>,
+    strength: f32,
+) -> Element<'a, Message, Theme, Renderer> {
+    if strength <= 0.0 {
+        return content;
+    }
+    Element::new(Reveal {
+        content,
+        opacity: 1.0,
+        glow: strength.clamp(0.0, 1.0),
+        animate_height: false,
+    })
+}
+
 /// Grow/shrink the panel as asynchronous controls and notifications arrive.
 /// First layout is immediate; only subsequent size changes animate.
 pub fn smooth_height<'a, Message: 'a>(
@@ -24,6 +42,7 @@ pub fn smooth_height<'a, Message: 'a>(
     Element::new(Reveal {
         content,
         opacity: 1.0,
+        glow: 0.0,
         animate_height: true,
     })
 }
@@ -76,6 +95,7 @@ impl Height {
 struct Reveal<'a, Message> {
     content: Element<'a, Message, Theme, Renderer>,
     opacity: f32,
+    glow: f32,
     animate_height: bool,
 }
 impl<Message> Widget<Message, Theme, Renderer> for Reveal<'_, Message> {
@@ -190,15 +210,17 @@ impl<Message> Widget<Message, Theme, Renderer> for Reveal<'_, Message> {
         };
         let draw = |renderer: &mut Renderer| {
             renderer.with_opacity(self.opacity, |renderer| {
-                self.content.as_widget().draw(
-                    &tree.children[0],
-                    renderer,
-                    theme,
-                    style,
-                    layout.children().next().unwrap(),
-                    cursor,
-                    &visible,
-                );
+                renderer.with_glow(self.glow, |renderer| {
+                    self.content.as_widget().draw(
+                        &tree.children[0],
+                        renderer,
+                        theme,
+                        style,
+                        layout.children().next().unwrap(),
+                        cursor,
+                        &visible,
+                    );
+                });
             });
         };
         if self.animate_height {

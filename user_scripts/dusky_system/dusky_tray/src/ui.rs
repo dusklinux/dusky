@@ -61,6 +61,11 @@ pub enum Message {
     SliderApplied(SliderKind),
     PowerButton,
     ClockPressed,
+    WeatherPressed,
+    WifiManager,
+    BluetoothManager,
+    VolumeControl,
+    OutputSelector,
     MetricPressed(String),
     DndToggled,
     DndSettled(Option<bool>),
@@ -86,6 +91,7 @@ pub enum SliderKind {
 
 #[derive(Debug, Clone, Default)]
 pub struct ToggleSnapshot {
+    pub animations_on: Option<bool>,
     pub wifi_connected: Option<bool>,
     pub idle_inhibited: Option<bool>,
     pub blur_on: Option<bool>,
@@ -195,6 +201,7 @@ impl TrayApp {
 
     fn refresh_all(&self) -> Task<Message> {
         let revision = self.slider_revision;
+        let has_wifi_button = self.config.toggles.iter().any(|t| t.id == "wifi");
         Task::batch(vec![
             Task::perform(
                 async move { sys::current_time_date() },
@@ -214,7 +221,12 @@ impl TrayApp {
                     let idle = sys::is_idle_active();
                     let updates = sys::updates_state();
                     ToggleSnapshot {
-                        wifi_connected: sys::wifi_connected(),
+                        animations_on: sys::animations_enabled(),
+                        wifi_connected: if has_wifi_button {
+                            sys::wifi_connected()
+                        } else {
+                            None
+                        },
                         idle_inhibited: idle.map(|active| !active),
                         blur_on: sys::is_blur_on(),
                         audio_active: sys::is_audio_active(),
@@ -484,6 +496,9 @@ impl TrayApp {
                         }
                     }
                     // Immediate visual refresh for known stateful toggles.
+                    if id == "animations" {
+                        self.toggles.animations_on = self.toggles.animations_on.map(|on| !on);
+                    }
                     if id == "blur"
                         && let Some(b) = self.toggles.blur_on
                     {
@@ -510,6 +525,9 @@ impl TrayApp {
                         );
                     } else if !cmd.is_empty() {
                         execute_detached(&cmd);
+                        if matches!(id.as_str(), "idle" | "blur") {
+                            return iced_runtime::exit();
+                        }
                     }
                 }
                 if id == "audio" {
@@ -522,6 +540,30 @@ impl TrayApp {
             }
             Message::ClockPressed => {
                 execute_detached("gnome-clocks");
+                return iced_runtime::exit();
+            }
+            Message::WeatherPressed => {
+                execute_detached(
+                    "foot --app-id=dusky_tui --hold zsh -fc 'source \"$HOME/.config/zshrc/wthr\"; wthr'",
+                );
+                return iced_runtime::exit();
+            }
+            Message::WifiManager => {
+                execute_detached(
+                    "foot --app-id=dusky_tui python3 ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/network_manager/tui_dusky_network.py",
+                );
+                return iced_runtime::exit();
+            }
+            Message::BluetoothManager => {
+                execute_detached("blueman-manager");
+                return iced_runtime::exit();
+            }
+            Message::VolumeControl => {
+                execute_detached("pavucontrol");
+                return iced_runtime::exit();
+            }
+            Message::OutputSelector => {
+                execute_detached("~/user_scripts/audio/dusky_in_out_source.sh --output");
                 return iced_runtime::exit();
             }
             Message::MetricPressed(which) => {
@@ -839,6 +881,10 @@ impl TrayApp {
                 icon_glyph(&t.icon),
                 self.toggles.wifi_connected == Some(true) && self.wifi_on != Some(false),
             ),
+            "animations" => (
+                icon_glyph(&t.icon),
+                self.toggles.animations_on == Some(true),
+            ),
             "idle" => (
                 icon_glyph(if self.toggles.idle_inhibited.unwrap_or(false) {
                     "view-reveal-symbolic"
@@ -1002,6 +1048,7 @@ impl TrayApp {
         // Leave explicit clearance around both endpoint handles, independently
         // of the neighboring icon and value cells.
         let s = container(s).padding([0, 3]).width(Length::Fill);
+        let glow = sys::clamp(value, 0.0, 100.0) / 100.0;
         let name = match kind {
             SliderKind::Volume => "Volume",
             SliderKind::Brightness => "Brightness",
@@ -1013,18 +1060,26 @@ impl TrayApp {
             .color(slider_label_color(Self::mix(tint, theme.fg, 0.18), value))
             .width(28)
             .align_x(Horizontal::Right);
+        let icon = crate::appearance::glow(Self::icon_label(glyph, 18.0, Some(label_tint)), glow);
+        let icon = if kind == SliderKind::Volume {
+            Self::hint(
+                mouse_area(
+                    button(icon)
+                        .padding(0)
+                        .on_press(Message::VolumeControl)
+                        .style(move |_, status| Self::flat(theme, status)),
+                )
+                .on_right_press(Message::OutputSelector),
+                "Volume\nLMB: Open pavucontrol\nRMB: Select output".into(),
+                theme,
+            )
+        } else {
+            Self::hint(icon, name.into(), theme)
+        };
         container(
-            row![
-                Self::hint(
-                    Self::icon_label(glyph, 18.0, Some(label_tint)),
-                    name.into(),
-                    theme
-                ),
-                s,
-                val
-            ]
-            .spacing(12)
-            .align_y(Vertical::Center),
+            row![icon, s, crate::appearance::glow(val.into(), glow)]
+                .spacing(12)
+                .align_y(Vertical::Center),
         )
         .padding([6, 10])
         .into()
@@ -1094,20 +1149,31 @@ impl TrayApp {
                 "off"
             }
         );
-        Self::hint(
-            row![
-                Self::icon_label(
-                    glyph,
-                    16.0,
-                    Some(if on { theme.accent } else { theme.muted })
-                ),
-                switch
-            ]
-            .spacing(6)
-            .align_y(Vertical::Center),
-            label,
+        let icon = Self::hint(
+            button(Self::icon_label(
+                glyph,
+                16.0,
+                Some(if on { theme.accent } else { theme.muted }),
+            ))
+            .padding(0)
+            .on_press(if wifi {
+                Message::WifiManager
+            } else {
+                Message::BluetoothManager
+            })
+            .style(move |_, status| Self::flat(theme, status)),
+            if wifi {
+                "Wi-Fi\nLMB: Open Network Manager"
+            } else {
+                "Bluetooth\nLMB: Open Blueman"
+            }
+            .into(),
             theme,
-        )
+        );
+        row![icon, Self::hint(switch, label, theme)]
+            .spacing(6)
+            .align_y(Vertical::Center)
+            .into()
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -1120,14 +1186,24 @@ impl TrayApp {
         // separate row over it; neither can push the clock off its true center.
         let clock = button(
             column![
-                text(self.time_text.clone())
-                    .size(38)
-                    .font(Font {
-                        weight: Weight::ExtraBold,
-                        ..Font::DEFAULT
-                    })
-                    .color(theme.fg),
-                text(self.date_text.clone()).size(12).color(theme.accent)
+                crate::appearance::glow(
+                    text(self.time_text.clone())
+                        .size(38)
+                        .font(Font {
+                            weight: Weight::ExtraBold,
+                            ..Font::DEFAULT
+                        })
+                        .color(theme.fg)
+                        .into(),
+                    0.242
+                ),
+                crate::appearance::glow(
+                    text(self.date_text.clone())
+                        .size(12)
+                        .color(theme.accent)
+                        .into(),
+                    0.242
+                )
             ]
             .spacing(2)
             .align_x(Horizontal::Center)
@@ -1149,20 +1225,33 @@ impl TrayApp {
                 .filter(|s| s.chars().any(|c| c.is_ascii_digit()))
                 .collect::<Vec<_>>()
                 .join(" ");
-            row![
-                Self::icon_label("☁︎", 16.0, Some(theme.fg)),
-                text(temperature).size(11).color(theme.fg)
-            ]
-            .spacing(5)
-            .align_y(Vertical::Center)
-            .into()
+            Self::hint(
+                button(crate::appearance::glow(
+                    row![
+                        Self::icon_label("☁︎", 16.0, Some(theme.fg)),
+                        text(temperature).size(11).color(theme.fg)
+                    ]
+                    .spacing(5)
+                    .align_y(Vertical::Center)
+                    .into(),
+                    0.242,
+                ))
+                .padding(0)
+                .on_press(Message::WeatherPressed)
+                .style(move |_, status| Self::flat(theme, status)),
+                "Weather\nLMB: Open terminal forecast".into(),
+                theme,
+            )
         } else {
             Space::new().into()
         };
         let power = button(
-            container(Self::icon_label("⏻︎", 17.0, None))
-                .center_x(36)
-                .center_y(36),
+            container(crate::appearance::glow(
+                Self::icon_label("⏻︎", 17.0, None),
+                0.242,
+            ))
+            .center_x(36)
+            .center_y(36),
         )
         .padding(0)
         .on_press(Message::PowerButton)
@@ -1176,6 +1265,11 @@ impl TrayApp {
                 .into(),
             ),
             text_color: Color::WHITE,
+            shadow: iced_core::Shadow {
+                color: Color::from_rgba(129.0 / 255.0, 40.0 / 255.0, 36.0 / 255.0, 0.198),
+                blur_radius: 6.5,
+                ..Default::default()
+            },
             border: Border {
                 radius: 18.0.into(),
                 ..Default::default()

@@ -1143,7 +1143,7 @@ fn parse_updates(cached: &str, behind: &str) -> UpdatesState {
             String::new()
         },
         tooltip: format!(
-            "Cached update counts\n{details}\n\nLMB: System Update | RMB: Dusky Update"
+            "Cached update counts\n{details}\n\nLMB: System Update\nRMB: Dusky Update"
         ),
     }
 }
@@ -1155,6 +1155,26 @@ pub fn updates_state() -> UpdatesState {
         &std::fs::read_to_string(base.join("waybar_update_counter_h")).unwrap_or_default(),
         &std::fs::read_to_string(base.join("dusky_update_behind_commit")).unwrap_or_default(),
     )
+}
+
+pub fn animations_enabled() -> Option<bool> {
+    let out = run_command(
+        &[
+            "hyprctl".into(),
+            "getoption".into(),
+            "animations:enabled".into(),
+            "-j".into(),
+        ],
+        Duration::from_millis(800),
+        true,
+    )?;
+    if !out.status {
+        return None;
+    }
+    serde_json::from_str::<serde_json::Value>(&out.stdout)
+        .ok()?
+        .get("bool")?
+        .as_bool()
 }
 
 pub fn is_idle_active() -> Option<bool> {

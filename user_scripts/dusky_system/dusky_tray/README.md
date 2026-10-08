@@ -67,17 +67,23 @@ The notification timestamp daemon runs independently.
   surfaces. A dedicated Matugen palette supplies the lowest dark surface,
   foreground, primary/secondary/tertiary tones, lighter hover accent, and
   harmonized green/blue/red power-profile colors.
-- The Wi-Fi quick button highlights only an active Wi-Fi connection, independently
-  of the radio switch, and continues to open the configured network TUI.
+- The Animations quick button disables all animations and restores the last enabled
+  Rofi preset, including its orientation. A plain play icon distinguishes it from
+  Visuals. Its highlight follows Hyprland's live state.
+  Visuals retains its blur/shadow toggle; right-click opens the shader picker.
+  Hypridle right-click opens its configuration TUI with app ID `dusky_tui`.
+  Each mouse action occupies its own tooltip line.
 - Five evenly spaced quick controls per row; additional configured controls
   wrap. Left, middle, and right mouse commands are supported.
 - Compact 22 × 44 px Wi-Fi / Bluetooth switches and power profile controls retain
-  the existing desktop integrations. Unknown radio states are unavailable rather than
+  the existing desktop integrations. Click the Wi-Fi icon to open the network TUI,
+  or the Bluetooth icon to open Blueman, independently of their radio switches.
+  Unknown radio states are unavailable rather than
   being reported as successful changes.
 - Volume, brightness, and night-light sliders use 12 px rails and live values.
   Rails use primary, secondary, and tertiary tones without value-dependent
-  saturation changes, boosted by 30% over the palette saturation. Icons increase
-  linearly from 40% at 0 to 168% at 100; values retain their 40–140% range.
+  saturation changes, boosted by 30% over the palette saturation. Icons and values increase
+  linearly from 40% saturation at 0 to 140% at 100.
   Saturation is capped at the color gamut; the minimum has no colored rail fill.
   Hue and maximum-channel brightness stay fixed. White handles remain visible
   without hovering, with 3 px clearance at both ends. Volume zero shows a
@@ -85,6 +91,13 @@ The notification timestamp daemon runs independently.
   The night-light scale is
   0–100 without a percent sign: 0 disables the filter; 100 is warmest (1000 K).
   The three rails share the same width and a compact three-digit value column.
+  Slider icons and numbers have a soft glyph-edge halo whose strength increases
+  linearly from no glow at 0 to a moderate glow at 100, reacting during dragging.
+  The clock, date, weather, and power button have a subtle fixed glow. Gaussian
+  masks give text and icons a continuous falloff without displaced glyph copies.
+  The renderer caches shaped text masks and filtered SVGs; each halo needs one
+  extra draw, with no GPU offscreen pass or extra animation timer.
+  Click the volume icon for pavucontrol; right-click selects playback output in Rofi.
   At most one apply operation and one latest pending value exist per slider; older
   drag positions are discarded. Stale polling results cannot roll back a drag.
 - Notification timestamps use the original GTK timestamp daemon, copied unchanged
@@ -160,15 +173,17 @@ It no longer mixes a GTK surface file with a separately generated TUI accent.
 Template generation and filters were exercised with installed Matugen 4.2.0.
 
 Weather reads the existing Dusky weather cache and does not start a Python
-weather updater. Network rates come directly from physical Linux interfaces,
+weather updater. Clicking it opens the existing `wthr` terminal forecast using
+`foot --app-id=dusky_tui --hold`; the report remains visible when the query ends.
+Network rates come directly from physical Linux interfaces,
 including virtio devices, avoiding duplicate VPN/bridge accounting and a
 Waybar network daemon dependency. The first rate sample is zero; subsequent
 samples use elapsed time. Update counts use the existing package cache plus
 `dusky_update_behind_commit`.
 
-Clock, power, memory/CPU, Wi-Fi-manager, update, and audio-studio launchers close
+Clock, weather, power, memory/CPU, radio-manager, volume, update, and audio-studio launchers close
 the panel as they hand off to the configured application. Idle and visual
-controls remain open for immediate feedback. Those external configured
+left-click controls remain open for immediate feedback; their TUI/shader launchers close the panel. Those external configured
 applications can still use Python or GTK; the panel itself does not.
 
 ## Configuration and runtime
