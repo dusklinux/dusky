@@ -24,7 +24,7 @@ use iced::{Border, Color, Event, Length, Padding, Subscription, Task, mouse};
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::backend::controls::{self, ServiceStatus, Snapshot};
 use crate::backend::system as sys;
@@ -78,6 +78,7 @@ pub enum Message {
         key: String,
         value: f32,
         on_change: Option<ChangeAction>,
+        debounce: bool,
     },
     SliderSettled {
         key: String,
@@ -88,6 +89,7 @@ pub enum Message {
         key: String,
         value: f32,
         on_change: Option<ChangeAction>,
+        debounce: bool,
     },
     ProfileSelected(String),
     SelectOption {
@@ -107,8 +109,8 @@ pub enum Message {
     EntryFinished { key: String, result: Result<(), String> },
     DragWindow,
     Tick,
-    SunsetFinished,
-    CoreLoaded { values: Vec<(String, Option<f32>, Option<f32>)>, sunset_active: bool },
+    SliderApplied { key: String, result: Result<(), String> },
+    CoreLoaded { revision: u64, values: Vec<(String, Option<f32>, Option<f32>)>, sunset_active: bool },
     ReloadConfig,
     CloseApp,
     ItemEntered(String),
@@ -140,8 +142,10 @@ pub struct CenterApp {
     pub active_slider: Option<String>,
     pub sunset_active: bool,
     pub core_loading: bool,
-    pub sunset_applying: bool,
-    pub sunset_pending: Option<f32>,
+    pub applying_sliders: HashSet<String>,
+    pub pending_sliders: HashMap<String, (f32, Option<ActionConfig>)>,
+    pub slider_changed_at: HashMap<String, Instant>,
+    pub slider_revision: u64,
     pub closing: bool,
     pub service_statuses: HashMap<String, ServiceStatus>,
     pub busy_controls: HashSet<String>,
@@ -195,8 +199,10 @@ impl CenterApp {
             active_slider: None,
             sunset_active: false,
             core_loading: false,
-            sunset_applying: false,
-            sunset_pending: None,
+            applying_sliders: HashSet::new(),
+            pending_sliders: HashMap::new(),
+            slider_changed_at: HashMap::new(),
+            slider_revision: 0,
             closing: false,
             service_statuses: HashMap::new(),
             busy_controls: HashSet::new(),
@@ -248,6 +254,7 @@ impl CenterApp {
     fn refresh_core(&mut self) -> Task<Message> {
         if self.core_loading { return Task::none(); }
         self.core_loading = true;
+        let revision = self.slider_revision;
         let previous: Vec<_> = ["Volume", "Microphone", "Brightness", "Night Light"]
             .into_iter().map(|key| (key.to_string(), self.slider_values.get(key).copied())).collect();
         Task::perform(async move {
@@ -258,19 +265,36 @@ impl CenterApp {
             let sunset = if sunset_active { sys::get_sunset() } else { None };
             let values = previous.into_iter().zip([volume, microphone, brightness, sunset])
                 .map(|((key, previous), value)| (key, previous, value)).collect();
-            Message::CoreLoaded { values, sunset_active }
+            Message::CoreLoaded { revision, values, sunset_active }
         }, |message| message)
     }
 
-    fn apply_pending_sunset(&mut self) -> Task<Message> {
-        if self.sunset_applying { return Task::none(); }
-        let Some(value) = self.sunset_pending.take() else { return Task::none(); };
-        self.sunset_applying = true;
-        Task::perform(async move { sys::apply_sunset(value); }, |_| Message::SunsetFinished)
+    fn queue_slider(&mut self, key: String, value: f32, on_change: Option<ChangeAction>) -> Task<Message> {
+        let action = match on_change {
+            Some(ChangeAction::Direct(action)) => Some(controls::with_value(&action, &(value.round() as i64).to_string())),
+            _ if key == "Night Light" => None,
+            _ => return Task::none(),
+        };
+        self.pending_sliders.insert(key.clone(), (value, action));
+        self.apply_pending_slider(key)
+    }
+
+    fn apply_pending_slider(&mut self, key: String) -> Task<Message> {
+        if self.applying_sliders.contains(&key) { return Task::none(); }
+        let Some((value, action)) = self.pending_sliders.remove(&key) else { return Task::none(); };
+        self.applying_sliders.insert(key.clone());
+        Task::perform(async move {
+            if let Some(action) = action { controls::run_action(&action) }
+            else { sys::apply_sunset(value); Ok(()) }
+        }, move |result| Message::SliderApplied { key: key.clone(), result })
     }
 
     fn sync_slider(&mut self, key: &str, value: f32) {
-        if self.active_slider.as_deref() != Some(key) {
+        let recent = self.slider_changed_at.get(key)
+            .is_some_and(|time| time.elapsed() < Duration::from_secs(3));
+        if self.active_slider.as_deref() != Some(key) && !recent
+            && !self.applying_sliders.contains(key) && !self.pending_sliders.contains_key(key)
+        {
             self.slider_values.insert(key.into(), value);
         }
     }
@@ -446,28 +470,27 @@ impl CenterApp {
                 self.refresh_controls()
             }
 
-            Message::SliderChanged { key, value, on_change } => {
+            Message::SliderChanged { key, value, on_change, debounce } => {
                 if self.closing { return Task::none(); }
-                self.active_slider = Some(key.clone());
+                self.active_slider = debounce.then(|| key.clone());
                 self.slider_values.insert(key.clone(), value);
-                if key == "Night Light" {
-                    // Coalesce IPC while retaining immediate visual feedback.
-                    self.sunset_pending = Some(value);
+                self.slider_revision += 1;
+                self.slider_changed_at.insert(key.clone(), Instant::now());
+                if !debounce {
+                    return self.queue_slider(key, value, on_change);
                 }
-                // Iced emits on_release for pointer drags, but not arrow keys or
-                // Ctrl+wheel. Commit a settled value for those interactions too.
-                let settle = Task::perform(async move {
+                // Explicitly debounced controls also commit keyboard/wheel edits.
+                Task::perform(async move {
                     futures_timer::Delay::new(Duration::from_millis(100)).await;
                     Message::SliderSettled { key, value, on_change }
-                }, |message| message);
-                Task::batch([settle, self.apply_pending_sunset()])
+                }, |message| message)
             }
 
             Message::SliderSettled { key, value, on_change } => {
                 if self.active_slider.as_deref() == Some(&key)
                     && self.slider_values.get(&key) == Some(&value)
                 {
-                    return self.update(Message::SliderReleased { key, value, on_change });
+                    return self.update(Message::SliderReleased { key, value, on_change, debounce: true });
                 }
                 Task::none()
             }
@@ -476,17 +499,13 @@ impl CenterApp {
                 key,
                 value,
                 on_change,
+                debounce,
             } => {
                 if self.closing { return Task::none(); }
                 let value = self.slider_values.get(&key).copied().unwrap_or(value);
                 self.active_slider = None;
                 self.slider_values.insert(key.clone(), value);
-                if key == "Night Light" {
-                    self.sunset_pending = Some(value);
-                    return self.apply_pending_sunset();
-                } else if let Some(ChangeAction::Direct(action)) = on_change {
-                    self.dispatch_action_with_value(&action, value);
-                }
+                if debounce { return self.queue_slider(key, value, on_change); }
                 Task::none()
             }
 
@@ -539,33 +558,36 @@ impl CenterApp {
                 Task::batch([self.refresh_core(), self.refresh_controls()])
             }
 
-            Message::SunsetFinished => {
-                self.sunset_applying = false;
-                if self.closing && self.sunset_pending.is_none() { return iced::exit(); }
-                self.apply_pending_sunset()
+            Message::SliderApplied { key, result } => {
+                self.applying_sliders.remove(&key);
+                self.slider_changed_at.insert(key.clone(), Instant::now());
+                self.slider_revision += 1;
+                if let Err(error) = result { self.action_error = Some(format!("{key}: {error}")); }
+                if self.pending_sliders.contains_key(&key) { return self.apply_pending_slider(key); }
+                if self.closing && self.applying_sliders.is_empty() { return iced::exit(); }
+                Task::none()
             }
 
-            Message::CoreLoaded { values, sunset_active } => {
+            Message::CoreLoaded { revision, values, sunset_active } => {
                 self.core_loading = false;
                 self.sunset_active = sunset_active;
-                for (key, previous, value) in values {
-                    // A read begun before a slider edit must not undo that edit,
-                    // even if the user has already released the handle.
-                    if !(key == "Night Light" && (self.sunset_applying || self.sunset_pending.is_some()))
-                        && self.slider_values.get(&key).copied() == previous
-                        && let Some(value) = value
-                    { self.sync_slider(&key, value); }
+                if revision == self.slider_revision {
+                    for (key, previous, value) in values {
+                        if self.slider_values.get(&key).copied() == previous
+                            && let Some(value) = value
+                        { self.sync_slider(&key, value); }
+                    }
                 }
                 Task::none()
             }
 
             Message::CloseApp | Message::EventOccurred(Event::Window(iced::window::Event::CloseRequested)) => {
-                // Finish the latest queued Night Light value before releasing
-                // workers; ordinary close remains immediate.
+                // Drain each slider's latest write before releasing workers.
                 self.closing = true;
-                if self.sunset_applying { Task::none() }
-                else if self.sunset_pending.is_some() { self.apply_pending_sunset() }
-                else { iced::exit() }
+                let pending: Vec<_> = self.pending_sliders.keys().cloned().collect();
+                let tasks: Vec<_> = pending.into_iter().map(|key| self.apply_pending_slider(key)).collect();
+                if self.applying_sliders.is_empty() { iced::exit() }
+                else { Task::batch(tasks) }
             },
 
             Message::ItemEntered(key) => {
@@ -641,22 +663,6 @@ impl CenterApp {
         } else if let Err(error) = controls::launch(action) {
             self.action_error = Some(error);
         }
-    }
-
-    fn dispatch_action_with_value(&mut self, action: &ActionConfig, value: f32) {
-        let mut action = action.clone();
-        let value = format!("{}", value.round() as i64);
-        match &mut action {
-            ActionConfig::Exec { command, argv, .. } => {
-                *command = command.replace("{value}", &value).replace("$VALUE", &value);
-                for arg in argv { *arg = arg.replace("{value}", &value).replace("$VALUE", &value); }
-            }
-            ActionConfig::Argv { argv, .. } => {
-                for arg in argv { *arg = arg.replace("{value}", &value).replace("$VALUE", &value); }
-            }
-            _ => (),
-        }
-        self.dispatch_action(&action);
     }
 
     fn visible_items(&self) -> Vec<ItemConfig> {
@@ -1307,7 +1313,11 @@ impl CenterApp {
             let mut in_row = 0;
 
             for item in &section.items {
-                let card = self.view_hero_card(item);
+                let card = row![
+                    Space::new().width(Length::FillPortion(11)),
+                    container(self.view_hero_card(item)).width(Length::FillPortion(178)),
+                    Space::new().width(Length::FillPortion(11)),
+                ].width(Length::FillPortion(1));
                 current_row = current_row.push(card);
                 in_row += 1;
                 // Exactly 3 columns per row!
@@ -1538,7 +1548,7 @@ impl CenterApp {
         };
 
         let mut card_content = column![
-            render_icon(icon_name, 22.0, icon_fg),
+            render_icon(icon_name, if is_service { 22.0 } else { 28.0 }, icon_fg),
             text(display_title)
                 .size(12)
                 .font(iced::Font {
@@ -1844,11 +1854,13 @@ impl CenterApp {
                 });
 
             let change_action = on_change.clone();
+            let debounce = item.properties.debounce;
             // Shared Matugen rail and handle styling.
             let s = slider(min..=max, val, move |v| Message::SliderChanged {
                 key: key_c1.clone(),
                 value: v,
                 on_change: change_action.clone(),
+                debounce,
             })
             .step(step)
             .height(24)
@@ -1857,6 +1869,7 @@ impl CenterApp {
                 key: key_c2,
                 value: val,
                 on_change,
+                debounce,
             })
             .style(move |_, status| slider_style(palette, tint, val <= min, status));
 
@@ -2162,10 +2175,12 @@ impl CenterApp {
                 let on_change = item.on_change.clone();
 
                 let change_action = on_change.clone();
+                let debounce = item.properties.debounce;
                 let s = slider(min..=max, val, move |v| Message::SliderChanged {
                     key: key_c1.clone(),
                     value: v,
                     on_change: change_action.clone(),
+                    debounce,
                 })
                 .step(step)
                 .height(24)
@@ -2174,6 +2189,7 @@ impl CenterApp {
                     key: key_c2,
                     value: val,
                     on_change,
+                    debounce,
                 })
                 .style(move |_, status| slider_style(palette, tint, val <= min, status));
 
@@ -3104,8 +3120,10 @@ mod tests {
             active_slider: Some("Microphone".into()),
             sunset_active: false,
             core_loading: false,
-            sunset_applying: false,
-            sunset_pending: None,
+            applying_sliders: HashSet::new(),
+            pending_sliders: HashMap::new(),
+            slider_changed_at: HashMap::new(),
+            slider_revision: 0,
             closing: false,
             service_statuses: HashMap::new(),
             busy_controls: HashSet::new(),
@@ -3126,7 +3144,7 @@ mod tests {
         });
         assert_eq!(app.active_slider.as_deref(), Some("Microphone"));
         let _ = app.update(Message::SliderReleased {
-            key: "Microphone".into(), value: 70.0, on_change: None,
+            key: "Microphone".into(), value: 70.0, on_change: None, debounce: false,
         });
         assert_eq!(app.slider_values["Microphone"], 80.0);
         assert_eq!(app.active_slider, None);
@@ -3173,6 +3191,7 @@ mod tests {
         assert_eq!(app.refresh_core().units(), 0, "only one hardware poll may run");
         app.slider_values.insert("Volume".into(), 80.0);
         let _ = app.update(Message::CoreLoaded {
+            revision: 0,
             values: vec![("Volume".into(), Some(50.0), Some(40.0)),
                          ("Microphone".into(), None, Some(60.0))],
             sunset_active: true,
@@ -3186,25 +3205,61 @@ mod tests {
     #[test]
     fn night_light_writes_coalesce_while_the_ui_remains_responsive() {
         let (mut app, _task) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
-        let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 20.0, on_change: None });
-        assert!(app.sunset_applying);
-        let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 30.0, on_change: None });
-        let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 40.0, on_change: None });
-        assert_eq!(app.sunset_pending, Some(40.0));
+        let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 20.0, on_change: None, debounce: false });
+        assert!(app.applying_sliders.contains("Night Light"));
+        let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 30.0, on_change: None, debounce: false });
+        let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 40.0, on_change: None, debounce: false });
+        assert_eq!(app.pending_sliders["Night Light"].0, 40.0);
         let _ = app.update(Message::CoreLoaded {
+            revision: 0,
             values: vec![("Night Light".into(), Some(40.0), Some(10.0))], sunset_active: true,
         });
         assert_eq!(app.slider_values["Night Light"], 40.0);
         let _ = app.update(Message::CloseApp);
         assert!(app.closing);
-        let _ = app.update(Message::SliderReleased { key: "Night Light".into(), value: 40.0, on_change: None });
-        assert_eq!(app.sunset_pending, Some(40.0), "release during close must not enqueue another write");
-        let _ = app.update(Message::SunsetFinished);
-        assert!(app.sunset_applying);
-        assert_eq!(app.sunset_pending, None);
-        let exit = app.update(Message::SunsetFinished);
-        assert!(!app.sunset_applying);
+        let _ = app.update(Message::SliderReleased { key: "Night Light".into(), value: 40.0, on_change: None, debounce: false });
+        assert_eq!(app.pending_sliders["Night Light"].0, 40.0, "release during close must not enqueue another write");
+        let _ = app.update(Message::SliderApplied { key: "Night Light".into(), result: Ok(()) });
+        assert!(app.applying_sliders.contains("Night Light"));
+        assert!(!app.pending_sliders.contains_key("Night Light"));
+        let exit = app.update(Message::SliderApplied { key: "Night Light".into(), result: Ok(()) });
+        assert!(!app.applying_sliders.contains("Night Light"));
         assert!(exit.units() > 0);
+    }
+
+    #[test]
+    fn close_drains_independent_sliders_and_reports_write_failure() {
+        let (mut app, _initial) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
+        let action: ActionConfig = toml::from_str("type='exec'\ncommand='true'").unwrap();
+        for key in ["Brightness", "Microphone"] {
+            let _ = app.update(Message::SliderChanged {
+                key: key.into(), value: 30.0,
+                on_change: Some(ChangeAction::Direct(action.clone())), debounce: false,
+            });
+        }
+        assert_eq!(app.applying_sliders.len(), 2);
+        let _ = app.update(Message::CloseApp);
+        let first = app.update(Message::SliderApplied { key: "Brightness".into(), result: Err("fixture failure".into()) });
+        assert_eq!(first.units(), 0, "another slider still has a write in progress");
+        assert_eq!(app.action_error.as_deref(), Some("Brightness: fixture failure"));
+        let last = app.update(Message::SliderApplied { key: "Microphone".into(), result: Ok(()) });
+        assert!(last.units() > 0);
+        assert!(app.applying_sliders.is_empty());
+    }
+
+    #[test]
+    fn explicit_debounce_waits_for_a_settled_value() {
+        let (mut app, _initial) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
+        let action = Some(ChangeAction::Direct(toml::from_str("type='exec'\ncommand='true'").unwrap()));
+        let _ = app.update(Message::SliderChanged {
+            key: "Deferred".into(), value: 30.0, on_change: action.clone(), debounce: true,
+        });
+        assert!(app.applying_sliders.is_empty());
+        let _ = app.update(Message::SliderSettled { key: "Deferred".into(), value: 20.0, on_change: action.clone() });
+        assert!(app.applying_sliders.is_empty(), "an older timer must not submit the current value");
+        let write = app.update(Message::SliderSettled { key: "Deferred".into(), value: 30.0, on_change: action });
+        assert_eq!(write.units(), 1);
+        assert!(app.applying_sliders.contains("Deferred"));
     }
 
     #[test]
@@ -3221,8 +3276,8 @@ mod tests {
             assert_eq!(app.slider_values["Volume"], 50.0);
             assert_eq!(app.slider_values["Microphone"], 50.0);
             assert!(app.sunset_active);
-            let first = app.update(Message::SliderChanged { key: "Night Light".into(), value: 20.0, on_change: None });
-            let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 40.0, on_change: None });
+            let first = app.update(Message::SliderChanged { key: "Night Light".into(), value: 20.0, on_change: None, debounce: false });
+            let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 40.0, on_change: None, debounce: false });
             let _ = app.update(Message::CloseApp);
             let actions = block_on(iced_runtime::task::into_stream(first).unwrap().collect::<Vec<_>>());
             let mut pending = Vec::new();
@@ -3234,9 +3289,56 @@ mod tests {
             for action in pending {
                 if let iced_runtime::Action::Output(message) = action { let _ = app.update(message); }
             }
-            assert!(!app.sunset_applying);
+            assert!(!app.applying_sliders.contains("Night Light"));
             assert_eq!(std::fs::read_to_string(root.join("writes")).unwrap(), "5400\n4300\n");
             assert_eq!(std::fs::read_to_string(sys::sunset_state_file()).unwrap(), "4300\n");
+            app.closing = false;
+            let brightness_action: ActionConfig = toml::from_str("type='exec'\ncommand='brightnessctl set {value}%'\n").unwrap();
+            let first = app.update(Message::SliderChanged {
+                key: "Brightness".into(), value: 10.0,
+                on_change: Some(ChangeAction::Direct(brightness_action.clone())), debounce: false,
+            });
+            assert_eq!(first.units(), 1, "live changes start one write without a settle timer");
+            assert!(app.active_slider.is_none(), "keyboard changes must not permanently suppress polling");
+            for value in 11..=80 {
+                let next = app.update(Message::SliderChanged {
+                    key: "Brightness".into(), value: value as f32,
+                    on_change: Some(ChangeAction::Direct(brightness_action.clone())), debounce: false,
+                });
+                assert_eq!(next.units(), 0, "intermediate values must not launch more workers");
+            }
+            let actions = block_on(iced_runtime::task::into_stream(first).unwrap().collect::<Vec<_>>());
+            assert_eq!(std::fs::read_to_string(root.join("brightness-writes")).unwrap(), "set 10%\n", "hardware action must run before release");
+            let release = app.update(Message::SliderReleased {
+                key: "Brightness".into(), value: 80.0,
+                on_change: Some(ChangeAction::Direct(brightness_action)), debounce: false,
+            });
+            assert_eq!(release.units(), 0, "release must not duplicate a live write");
+            let _ = app.update(Message::CloseApp);
+            for action in actions {
+                if let iced_runtime::Action::Output(message) = action
+                    && let Some(stream) = iced_runtime::task::into_stream(app.update(message))
+                {
+                    for action in block_on(stream.collect::<Vec<_>>()) {
+                        if let iced_runtime::Action::Output(message) = action { let _ = app.update(message); }
+                    }
+                }
+            }
+            assert!(app.applying_sliders.is_empty());
+            assert!(app.pending_sliders.is_empty());
+            assert_eq!(std::fs::read_to_string(root.join("brightness-writes")).unwrap(), "set 10%\nset 80%\n");
+            app.sync_slider("Brightness", 10.0);
+            assert_eq!(app.slider_values["Brightness"], 80.0, "recent writes must resist hardware readback lag");
+            let revision = app.slider_revision;
+            app.slider_changed_at.insert("Brightness".into(), Instant::now() - Duration::from_secs(4));
+            let _ = app.update(Message::CoreLoaded {
+                revision: revision - 1, values: vec![("Brightness".into(), Some(80.0), Some(10.0))], sunset_active: true,
+            });
+            assert_eq!(app.slider_values["Brightness"], 80.0, "old polls must be rejected even after the grace period");
+            let _ = app.update(Message::CoreLoaded {
+                revision, values: vec![("Brightness".into(), Some(80.0), Some(79.0))], sunset_active: true,
+            });
+            assert_eq!(app.slider_values["Brightness"], 79.0, "fresh external changes must still be observed");
             let colors = root.join("matugen/generated");
             std::fs::create_dir_all(&colors).unwrap();
             let palette = colors.join("dusky_center.json");
@@ -3264,7 +3366,9 @@ mod tests {
         let root = std::env::temp_dir().join(format!("dusky-worker-fixture-{}", std::process::id()));
         let bin = root.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink("/usr/bin/bash", bin.join("bash")).unwrap();
         for (name, body) in [
+            ("brightnessctl", "printf '%s\\n' \"$*\" >> \"$DUSKY_WORKER_FIXTURE/brightness-writes\"; /usr/bin/sleep .06"),
             ("wpctl", "printf 'Volume: 0.50\\n'"),
             ("systemctl", "printf 'active\\n'"),
             ("hyprsunset", "exit 0"),
