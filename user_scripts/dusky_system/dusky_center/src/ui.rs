@@ -17,8 +17,8 @@ use iced::keyboard::key::Named;
 use iced::overlay::menu;
 use iced::widget::operation;
 use iced::widget::{
-    Space, button, column, container, mouse_area, pick_list, row, scrollable, slider, text,
-    text_input, toggler,
+    Space, button, column, container, grid, mouse_area, pick_list, responsive, row,
+    scrollable, slider, text, text_input, toggler,
 };
 use iced::{Border, Color, Event, Length, Padding, Subscription, Task, mouse};
 
@@ -1306,36 +1306,23 @@ impl CenterApp {
     fn view_section<'a>(&'a self, section: &'a SectionConfig) -> Element<'a, Message> {
         let palette = self.theme;
 
-        // 1. Grid section: Strict 3-column top hero grid with identical tile heights
+        // Preserve tile widths and outer margins; use one gap on both axes.
         if section.section_type == "grid_section" {
-            let mut grid_rows = column![].spacing(10);
-            let mut current_row = row![].spacing(10);
-            let mut in_row = 0;
-
-            for item in &section.items {
-                let card = row![
-                    Space::new().width(Length::FillPortion(11)),
-                    container(self.view_hero_card(item)).width(Length::FillPortion(178)),
-                    Space::new().width(Length::FillPortion(11)),
-                ].width(Length::FillPortion(1));
-                current_row = current_row.push(card);
-                in_row += 1;
-                // Exactly 3 columns per row!
-                if in_row == 3 {
-                    grid_rows = grid_rows.push(current_row);
-                    current_row = row![].spacing(10);
-                    in_row = 0;
-                }
-            }
-            if in_row > 0 {
-                while in_row < 3 {
-                    current_row = current_row.push(Space::new().width(Length::FillPortion(1)));
-                    in_row += 1;
-                }
-                grid_rows = grid_rows.push(current_row);
-            }
-
-            return grid_rows.width(Length::Fill).into();
+            return responsive(move |size| {
+                let slot_width = (size.width - 20.0) / 3.0;
+                let side_margin = slot_width * 0.055;
+                let gap = 10.0 + side_margin * 2.0;
+                let cards = grid(section.items.iter().map(|item| self.view_hero_card(item)))
+                    .columns(3)
+                    .height(Length::Shrink)
+                    .spacing(gap);
+                container(cards)
+                    .width(Length::Fill)
+                    .padding([0.0, side_margin])
+                    .into()
+            })
+            .height(Length::Shrink)
+            .into();
         }
 
         // Warning banner / compact informational banner
