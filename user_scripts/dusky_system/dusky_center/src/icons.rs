@@ -176,7 +176,7 @@ fn get_svg_path(name: &str) -> &'static str {
         "dark_mode" | "weather-clear-night-symbolic" | "moon" => {
             "M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"
         }
-        "brightness" | "sun" | "preferences-color-symbolic" => {
+        "brightness" | "sun" | "preferences-color-symbolic" | "display-brightness-high-symbolic" => {
             "M12 3v2m0 14v2m9-9h-2M5 12H3m15.36-6.36l-1.41 1.41M7.05 16.95l-1.41 1.41m12.72 0l-1.41-1.41M7.05 7.05L5.64 5.64M12 8a4 4 0 100 8 4 4 0 000-8z"
         }
         "update" | "software-update-available-symbolic" => {

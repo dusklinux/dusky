@@ -120,9 +120,9 @@ type = "exec"
 command = "~/user_scripts/battery/tlp/tlp_mode_toggle.sh power-saver"
 
 [[pages.layout]]
-type = "section"
+type = "controls"
 [pages.layout.properties]
-title = "Quick Controls"
+title = "Audio"
 icon = ""
 description = ""
 
@@ -145,6 +145,27 @@ command = "wpctl set-volume @DEFAULT_AUDIO_SINK@ {value}%"
 [[pages.layout.items]]
 type = "slider"
 [pages.layout.items.properties]
+title = "Microphone"
+icon = "audio-input-microphone-symbolic"
+min = 0.0
+max = 100.0
+step = 1.0
+default = 50.0
+debounce = false
+value_command = "wpctl get-volume @DEFAULT_AUDIO_SOURCE@ | awk '{print $2 * 100}'"
+interval = 2
+[pages.layout.items.on_change]
+type = "exec"
+command = "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ {value}%"
+
+[[pages.layout]]
+type = "controls"
+[pages.layout.properties]
+title = "Display"
+
+[[pages.layout.items]]
+type = "slider"
+[pages.layout.items.properties]
 title = "Brightness"
 icon = "display-brightness-high-symbolic"
 min = 1.0
@@ -157,6 +178,16 @@ interval = 2
 [pages.layout.items.on_change]
 type = "exec"
 command = "brightnessctl set {value}%"
+
+[[pages.layout.items]]
+type = "slider"
+[pages.layout.items.properties]
+title = "Night Light"
+icon = "weather-clear-night-symbolic"
+min = 0.0
+max = 100.0
+step = 1.0
+default = 0.0
 
 [[pages.layout]]
 type = "section"

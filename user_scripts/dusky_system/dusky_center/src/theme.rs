@@ -23,6 +23,8 @@ pub struct AppTheme {
     pub tertiary: Color,
     pub profiles: [Color; 3],
     pub danger: Color,
+    pub danger_bg: Color,
+    pub danger_fg: Color,
 }
 
 impl Default for AppTheme {
@@ -47,6 +49,8 @@ impl Default for AppTheme {
                 Color::from_rgb8(239, 140, 179),
             ],
             danger: Color::from_rgb8(255, 180, 171),   // #ffb4ab
+            danger_bg: Color::from_rgb8(147, 0, 10),
+            danger_fg: Color::from_rgb8(255, 218, 214),
         }
     }
 }
@@ -98,6 +102,8 @@ impl AppTheme {
             tertiary,
             profiles,
             danger,
+            danger_bg: Self::default().danger_bg,
+            danger_fg: Self::default().danger_fg,
         }
     }
 
@@ -182,7 +188,7 @@ impl AppTheme {
             color("profile_red").unwrap_or(Color::from_rgb8(239, 140, 179)),
         ];
 
-        Some(Self::from_colors(
+        let mut theme = Self::from_colors(
             bg,
             sidebar_bg,
             surface,
@@ -198,6 +204,19 @@ impl AppTheme {
             tertiary,
             profiles,
             danger,
-        ))
+        );
+        theme.danger_bg = color("danger_bg").unwrap_or(theme.danger_bg);
+        theme.danger_fg = color("danger_fg").unwrap_or(theme.danger_fg);
+        Some(theme)
     }
+}
+
+/// An opaque sRGB mix: GPU alpha blending otherwise makes subtle GTK tints
+/// much brighter than their numerical opacity suggests.
+pub fn mix(base: Color, tint: Color, amount: f32) -> Color {
+    Color::from_rgb(
+        base.r + (tint.r - base.r) * amount,
+        base.g + (tint.g - base.g) * amount,
+        base.b + (tint.b - base.b) * amount,
+    )
 }

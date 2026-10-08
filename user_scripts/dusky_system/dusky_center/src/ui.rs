@@ -3,10 +3,10 @@
 //! Visual parity with Dusky Control Center (GTK) and Dusky Tray using Iced and wgpu.
 //! Features:
 //! - 3-column quick hero cards with uniform geometry and solid accent highlights.
-//! - Sub-15ms cold start with lazy-loading for background pages.
+//! - Lazy initialization of control defaults for background pages.
 //! - Native Wayland xdg-toplevel windowing (movable, resizable, tileable).
 //! - Dynamic wallpaper theme sync via Matugen.
-//! - Dusky Tray slider design with pill-shaped rails and white handles.
+//! - Shared Matugen slider styling with thicker pill rails.
 //! - PickList dropdown for performance profile selection.
 //! - Seamless top header bar and auto-hiding slim scrollbars.
 
@@ -26,13 +26,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::backend::cmd::{execute_detached, execute_shell_detached};
+use crate::backend::controls::{self, ServiceStatus, Snapshot};
 use crate::backend::system as sys;
 use crate::config::{
     ActionConfig, AppConfig, ChangeAction, ItemConfig, PageConfig, SectionConfig, ToggleActionPair,
 };
 use crate::icons::render_icon;
-use crate::theme::AppTheme;
+use crate::theme::{AppTheme, mix};
 
 pub type Element<'a, Message> = iced::Element<'a, Message>;
 
@@ -77,6 +77,12 @@ pub enum Message {
     SliderChanged {
         key: String,
         value: f32,
+        on_change: Option<ChangeAction>,
+    },
+    SliderSettled {
+        key: String,
+        value: f32,
+        on_change: Option<ChangeAction>,
     },
     SliderReleased {
         key: String,
@@ -93,6 +99,12 @@ pub enum Message {
         unit: String,
         scope: String,
     },
+    ControlsLoaded { generation: u64, snapshot: Snapshot },
+    ToggleFinished { key: String, previous: bool, result: Result<(), String> },
+    ServiceFinished { key: String, previous: bool, result: Result<(), String> },
+    EntryChanged { key: String, value: String },
+    SubmitEntry { key: String, action: ActionConfig },
+    EntryFinished { key: String, result: Result<(), String> },
     DragWindow,
     Tick,
     ReloadConfig,
@@ -123,6 +135,16 @@ pub struct CenterApp {
     pub ram_text: String,
     pub active_profile: String,
     pub hovered_item: Option<String>,
+    pub active_slider: Option<String>,
+    pub sunset_active: bool,
+    pub service_statuses: HashMap<String, ServiceStatus>,
+    pub busy_controls: HashSet<String>,
+    pub unavailable_controls: HashSet<String>,
+    pub control_generation: u64,
+    pub controls_loading: Option<u64>,
+    pub action_error: Option<String>,
+    pub entry_values: HashMap<String, String>,
+    pub editing_entries: HashSet<String>,
 }
 
 impl CenterApp {
@@ -164,13 +186,24 @@ impl CenterApp {
             ram_text: ram,
             active_profile: "Balanced".to_string(),
             hovered_item: initial_hover,
+            active_slider: None,
+            sunset_active: false,
+            service_statuses: HashMap::new(),
+            busy_controls: HashSet::new(),
+            unavailable_controls: HashSet::new(),
+            control_generation: 0,
+            controls_loading: None,
+            action_error: None,
+            entry_values: HashMap::new(),
+            editing_entries: HashSet::new(),
         };
 
         // LAZY LOADING: Only initialize active page on cold start!
         app.lazy_load_page(start_page);
         app.poll_core_system_states();
 
-        (app, Task::none())
+        let task = app.refresh_controls();
+        (app, task)
     }
 
     pub fn active_page_idx(&self) -> usize {
@@ -205,48 +238,19 @@ impl CenterApp {
 
     /// Poll core hardware states needed on home screen and quick tiles.
     fn poll_core_system_states(&mut self) {
-        if let Some(wifi) = sys::get_wifi() {
-            self.toggle_states.insert("Wi-Fi".into(), wifi);
-            self.toggle_states.insert("wlan".into(), wifi);
-        }
-        if let Some(bt) = sys::get_bt() {
-            self.toggle_states.insert("Bluetooth".into(), bt);
-        }
-
-        // Dark mode state check
-        if let Ok(dark_val) =
-            std::fs::read_to_string(dirs_fallback().join("settings/dusky_theme/state"))
-        {
-            let is_dark = dark_val.trim() == "true" || dark_val.trim() == "1";
-            self.toggle_states.insert("Dark Mode".into(), is_dark);
-            self.toggle_states.insert("dusky_theme/state".into(), is_dark);
-        }
-
-        // Live volume & brightness & night light
+        // Keep live values in sync without interrupting a slider drag.
         if let Some(vol) = sys::get_volume() {
-            self.slider_values.insert("Volume".into(), vol);
+            self.sync_slider("Volume", vol);
+        }
+        if let Some(mic) = sys::get_microphone_volume() {
+            self.sync_slider("Microphone", mic);
         }
         if let Some(bri) = sys::get_brightness() {
-            self.slider_values.insert("Brightness".into(), bri);
+            self.sync_slider("Brightness", bri);
         }
-        if let Some(sunset) = sys::get_sunset() {
-            self.slider_values.insert("Night Light".into(), sunset);
-        }
-
-        // TLP active power profile
-        let tlp_cmd = dirs_home().join("user_scripts/battery/tlp/tlp_mode_toggle.sh");
-        if tlp_cmd.is_file()
-            && let Ok(out) = std::process::Command::new("bash")
-                .arg(tlp_cmd)
-                .arg("status")
-                .output()
-        {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
-            self.active_profile = match s.as_str() {
-                "performance" => "Performance".into(),
-                "power-saver" | "powersave" => "Power Saver".into(),
-                _ => "Balanced".into(),
-            };
+        self.sunset_active = sys::is_sunset_active();
+        if self.sunset_active && let Some(sunset) = sys::get_sunset() {
+            self.sync_slider("Night Light", sunset);
         }
 
         // Kernel release
@@ -255,6 +259,12 @@ impl CenterApp {
         }
 
         self.live_labels.insert("Memory Used".into(), self.ram_text.clone());
+    }
+
+    fn sync_slider(&mut self, key: &str, value: f32) {
+        if self.active_slider.as_deref() != Some(key) {
+            self.slider_values.insert(key.into(), value);
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -268,26 +278,36 @@ impl CenterApp {
                     self.lazy_load_page(idx);
                     self.nav_stack = vec![NavView::Root(idx)];
                     self.search_query.clear();
+                    self.control_generation += 1;
+                    return self.refresh_controls();
                 }
                 Task::none()
             }
 
             Message::PushSubPage { title, sections } => {
                 let parent = self.active_page_idx();
+                for section in &sections {
+                    for item in &section.items {
+                        collect_item_defaults(item, &mut self.slider_values, &mut self.toggle_states,
+                            &mut self.service_states, &mut self.selected_options);
+                    }
+                }
                 self.nav_stack.push(NavView::SubPage {
                     parent_page: parent,
                     title,
                     sections,
                 });
                 self.search_query.clear();
-                Task::none()
+                self.control_generation += 1;
+                self.refresh_controls()
             }
 
             Message::PopSubPage => {
                 if self.nav_stack.len() > 1 {
                     self.nav_stack.pop();
                 }
-                Task::none()
+                self.control_generation += 1;
+                self.refresh_controls()
             }
 
             Message::ToggleSidebar => {
@@ -318,30 +338,122 @@ impl CenterApp {
 
             Message::ExecuteAction(action) => {
                 self.dispatch_action(&action);
-                Task::none()
+                if matches!(action, ActionConfig::Redirect { .. }) { self.refresh_controls() } else { Task::none() }
             }
 
-            Message::ToggleItem {
-                key,
-                is_enabled,
-                on_toggle,
-            } => {
-                self.toggle_states.insert(key, is_enabled);
-                if let Some(pair) = on_toggle {
-                    let action = if is_enabled {
-                        &pair.enabled
-                    } else {
-                        &pair.disabled
-                    };
-                    self.dispatch_action(action);
+            Message::ToggleItem { key, is_enabled, on_toggle } => {
+                if self.busy_controls.contains(&key) { return Task::none(); }
+                let previous = self.toggle_states.get(&key).copied().unwrap_or(false);
+                self.toggle_states.insert(key.clone(), is_enabled);
+                let Some(item) = self.visible_items().into_iter().find(|i| controls::item_key(i) == key) else {
+                    return Task::none(); // Local expander state.
+                };
+                self.busy_controls.insert(key.clone());
+                self.control_generation += 1;
+                self.action_error = None;
+                let action = on_toggle.map(|pair| if is_enabled { pair.enabled } else { pair.disabled });
+                Task::perform(async move {
+                    controls::set_toggle(&item, is_enabled, action.as_ref())
+                }, move |result| Message::ToggleFinished { key: key.clone(), previous, result })
+            }
+
+            Message::ToggleFinished { key, previous, result } => {
+                self.busy_controls.remove(&key);
+                if let Err(error) = result {
+                    self.toggle_states.insert(key.clone(), previous);
+                    self.action_error = Some(format!("{key}: {error}"));
+                }
+                self.control_generation += 1;
+                self.refresh_controls()
+            }
+
+            Message::ServiceFinished { key, previous, result } => {
+                self.busy_controls.remove(&key);
+                if let Err(error) = result {
+                    self.service_states.insert(key.clone(), previous);
+                    self.action_error = Some(format!("{key}: {error}"));
+                }
+                self.control_generation += 1;
+                self.refresh_controls()
+            }
+
+            Message::ControlsLoaded { generation, snapshot } => {
+                if self.controls_loading == Some(generation) { self.controls_loading = None; }
+                if self.control_generation != generation { return self.refresh_controls(); }
+                for (key, value) in snapshot.toggles {
+                    if self.busy_controls.contains(&key) { continue; }
+                    if let Some(value) = value {
+                        self.toggle_states.insert(key.clone(), value);
+                        self.unavailable_controls.remove(&key);
+                    } else { self.unavailable_controls.insert(key); }
+                }
+                for (key, status) in snapshot.services {
+                    if self.busy_controls.contains(&key) { continue; }
+                    if status.load != "unavailable" {
+                        self.service_states.insert(key.clone(), status.enabled());
+                    }
+                    self.service_statuses.insert(key, status);
+                }
+                for (key, value) in snapshot.selections {
+                    if key == "Active Profile" { self.active_profile = value.clone(); }
+                    self.selected_options.insert(key, value);
+                }
+                for (key, value) in snapshot.sliders { self.sync_slider(&key, value); }
+                for (key, value) in snapshot.entries {
+                    if !self.editing_entries.contains(&key) && !self.busy_controls.contains(&key) {
+                        self.entry_values.insert(key, value);
+                    }
                 }
                 Task::none()
             }
 
-            Message::SliderChanged { key, value } => {
+            Message::EntryChanged { key, value } => {
+                self.editing_entries.insert(key.clone());
+                self.entry_values.insert(key, value);
+                Task::none()
+            }
+
+            Message::SubmitEntry { key, action } => {
+                if self.busy_controls.contains(&key) { return Task::none(); }
+                let value = self.entry_values.get(&key).cloned().unwrap_or_default();
+                let action = controls::with_value(&action, &value);
+                self.busy_controls.insert(key.clone());
+                self.control_generation += 1;
+                self.action_error = None;
+                Task::perform(async move { controls::run_action(&action) }, move |result| {
+                    Message::EntryFinished { key: key.clone(), result }
+                })
+            }
+
+            Message::EntryFinished { key, result } => {
+                self.busy_controls.remove(&key);
+                match result {
+                    Ok(()) => { self.editing_entries.remove(&key); }
+                    Err(error) => { self.action_error = Some(format!("{key}: {error}")); }
+                }
+                self.control_generation += 1;
+                self.refresh_controls()
+            }
+
+            Message::SliderChanged { key, value, on_change } => {
+                self.active_slider = Some(key.clone());
                 self.slider_values.insert(key.clone(), value);
                 if key == "Night Light" {
                     sys::apply_sunset(value);
+                }
+                // Iced emits on_release for pointer drags, but not arrow keys or
+                // Ctrl+wheel. Commit a settled value for those interactions too.
+                Task::perform(async move {
+                    futures_timer::Delay::new(Duration::from_millis(100)).await;
+                    Message::SliderSettled { key, value, on_change }
+                }, |message| message)
+            }
+
+            Message::SliderSettled { key, value, on_change } => {
+                if self.active_slider.as_deref() == Some(&key)
+                    && self.slider_values.get(&key) == Some(&value)
+                {
+                    return self.update(Message::SliderReleased { key, value, on_change });
                 }
                 Task::none()
             }
@@ -351,6 +463,8 @@ impl CenterApp {
                 value,
                 on_change,
             } => {
+                let value = self.slider_values.get(&key).copied().unwrap_or(value);
+                self.active_slider = None;
                 self.slider_values.insert(key.clone(), value);
                 if key == "Night Light" {
                     sys::apply_sunset(value);
@@ -362,16 +476,13 @@ impl CenterApp {
 
             Message::ProfileSelected(profile) => {
                 self.active_profile = profile.clone();
-                let cmd_arg = match profile.as_str() {
-                    "Performance" => "performance",
-                    "Power Saver" => "power-saver",
-                    _ => "balanced",
-                };
-                let script = dirs_home().join("user_scripts/battery/tlp/tlp_mode_toggle.sh");
-                if script.is_file() {
-                    let cmd = format!("{} {}", script.display(), cmd_arg);
-                    execute_shell_detached(&cmd);
-                }
+                let action = self.visible_items().into_iter().find(|item| controls::item_key(item) == "Active Profile")
+                    .and_then(|item| match item.on_change {
+                        Some(ChangeAction::Map(map)) => map.get(&profile).cloned(),
+                        Some(ChangeAction::Direct(action)) => Some(action),
+                        None => None,
+                    });
+                if let Some(action) = action { self.dispatch_action(&action); }
                 Task::none()
             }
 
@@ -388,20 +499,19 @@ impl CenterApp {
             }
 
             Message::ToggleService { unit, scope } => {
-                let current = self.service_states.get(&unit).copied().unwrap_or(false);
-                let new_state = !current;
-                self.service_states.insert(unit.clone(), new_state);
-                let verb = if new_state { "start" } else { "stop" };
-                let cmd = if scope == "user" {
-                    format!("systemctl --user {verb} {unit}")
-                } else {
-                    format!("pkexec systemctl {verb} {unit}")
-                };
-                execute_shell_detached(&cmd);
-                Task::none()
+                let key = controls::service_key(&scope, &unit);
+                if self.busy_controls.contains(&key) { return Task::none(); }
+                let previous = self.service_states.get(&key).copied().unwrap_or(false);
+                self.service_states.insert(key.clone(), !previous);
+                self.busy_controls.insert(key.clone());
+                self.control_generation += 1;
+                self.action_error = None;
+                Task::perform(async move {
+                    controls::set_service(&scope, &unit, !previous)
+                }, move |result| Message::ServiceFinished { key: key.clone(), previous, result })
             }
 
-            Message::DragWindow => iced::window::drag(iced::window::Id::unique()),
+            Message::DragWindow => iced::window::latest().and_then(iced::window::drag),
 
             Message::Tick => {
                 let (cpu, ram) = sys::cpu_ram();
@@ -410,7 +520,7 @@ impl CenterApp {
                 self.poll_core_system_states();
                 // Dynamically sync theme palette with wallpaper
                 self.theme = AppTheme::load();
-                Task::none()
+                self.refresh_controls()
             }
 
             Message::CloseApp => iced::exit(),
@@ -433,10 +543,12 @@ impl CenterApp {
                     expand_app_config_generators(&mut cfg);
                     self.config = cfg;
                     self.loaded_pages.clear();
-                    self.lazy_load_page(0);
+                    self.nav_stack = vec![NavView::Root(self.active_page_idx().min(self.config.pages.len().saturating_sub(1)))];
+                    self.lazy_load_page(self.active_page_idx());
+                    self.control_generation += 1;
                     self.poll_core_system_states();
                 }
-                Task::none()
+                self.refresh_controls()
             }
 
             Message::EventOccurred(Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -451,8 +563,7 @@ impl CenterApp {
                         return Task::none();
                     }
                     if self.nav_stack.len() > 1 {
-                        self.nav_stack.pop();
-                        return Task::none();
+                        return self.update(Message::PopSubPage);
                     }
                     return iced::exit();
                 }
@@ -474,89 +585,58 @@ impl CenterApp {
         }
     }
 
-    fn dispatch_action(&self, action: &ActionConfig) {
-        match action {
-            ActionConfig::Exec {
-                command,
-                argv,
-                terminal,
-                requires_root,
-                ..
-            } => {
-                if !argv.is_empty() {
-                    let mut final_argv = argv.clone();
-                    if *requires_root {
-                        final_argv.insert(0, "pkexec".into());
-                    }
-                    let full = final_argv.join(" ");
-                    if *terminal {
-                        execute_shell_detached(&format!("kitty -e bash -c '{full}'"));
-                    } else {
-                        execute_detached(&full);
-                    }
-                } else {
-                    let mut cmd = command.clone();
-                    if *requires_root && !cmd.starts_with("pkexec") {
-                        cmd = format!("pkexec {cmd}");
-                    }
-                    if *terminal {
-                        cmd = format!("kitty -e bash -c '{cmd}'");
-                    }
-                    execute_shell_detached(&cmd);
-                }
+    fn dispatch_action(&mut self, action: &ActionConfig) {
+        if let ActionConfig::Redirect { page } = action {
+            if let Some(index) = self.config.pages.iter().position(|p| &p.id == page) {
+                self.lazy_load_page(index);
+                self.nav_stack = vec![NavView::Root(index)];
+                self.control_generation += 1;
             }
-            ActionConfig::Argv {
-                argv,
-                terminal,
-                requires_root,
-                ..
-            } => {
-                let mut final_argv = argv.clone();
-                if *requires_root {
-                    final_argv.insert(0, "pkexec".into());
-                }
-                let full = final_argv.join(" ");
-                if *terminal {
-                    execute_shell_detached(&format!("kitty -e bash -c '{full}'"));
-                } else {
-                    execute_detached(&full);
-                }
-            }
-            ActionConfig::Redirect { page } => {
-                println!("Redirecting to page: {page}");
-            }
+        } else if let Err(error) = controls::launch(action) {
+            self.action_error = Some(error);
         }
     }
 
-    fn dispatch_action_with_value(&self, action: &ActionConfig, value: f32) {
-        match action {
+    fn dispatch_action_with_value(&mut self, action: &ActionConfig, value: f32) {
+        let mut action = action.clone();
+        let value = format!("{}", value.round() as i64);
+        match &mut action {
             ActionConfig::Exec { command, argv, .. } => {
-                let val_str = format!("{}", value.round() as i64);
-                if !argv.is_empty() {
-                    let substituted: Vec<String> = argv
-                        .iter()
-                        .map(|a| a.replace("{value}", &val_str).replace("$VALUE", &val_str))
-                        .collect();
-                    let full = substituted.join(" ");
-                    execute_detached(&full);
-                } else {
-                    let substituted = command
-                        .replace("{value}", &val_str)
-                        .replace("$VALUE", &val_str);
-                    execute_shell_detached(&substituted);
-                }
+                *command = command.replace("{value}", &value).replace("$VALUE", &value);
+                for arg in argv { *arg = arg.replace("{value}", &value).replace("$VALUE", &value); }
             }
             ActionConfig::Argv { argv, .. } => {
-                let val_str = format!("{}", value.round() as i64);
-                let substituted: Vec<String> = argv
-                    .iter()
-                    .map(|a| a.replace("{value}", &val_str).replace("$VALUE", &val_str))
-                    .collect();
-                let full = substituted.join(" ");
-                execute_detached(&full);
+                for arg in argv { *arg = arg.replace("{value}", &value).replace("$VALUE", &value); }
             }
-            _ => self.dispatch_action(action),
+            _ => (),
         }
+        self.dispatch_action(&action);
+    }
+
+    fn visible_items(&self) -> Vec<ItemConfig> {
+        let sections = match self.nav_stack.last() {
+            Some(NavView::SubPage { sections, .. }) => sections.as_slice(),
+            _ => self.config.pages.get(self.active_page_idx()).map(|p| p.layout.as_slice()).unwrap_or(&[]),
+        };
+        fn collect(items: &[ItemConfig], output: &mut Vec<ItemConfig>) {
+            for item in items {
+                output.push(item.clone());
+                collect(&item.items, output);
+            }
+        }
+        let mut items = vec![];
+        for section in sections { collect(&section.items, &mut items); }
+        items
+    }
+
+    fn refresh_controls(&mut self) -> Task<Message> {
+        if self.controls_loading.is_some() { return Task::none(); }
+        let generation = self.control_generation;
+        self.controls_loading = Some(generation);
+        let items = self.visible_items();
+        Task::perform(async move { controls::query(&items) }, move |snapshot| {
+            Message::ControlsLoaded { generation, snapshot }
+        })
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -633,6 +713,8 @@ impl CenterApp {
                 .align_y(Vertical::Center),
         )
         .on_press(Message::ToggleSearch)
+        .width(26)
+        .height(26)
         .padding([4, 6])
         .style(move |_, status| button::Style {
             background: Some(
@@ -652,17 +734,19 @@ impl CenterApp {
         });
 
         let sidebar_header = row![
+            Space::new().width(26),
             text("Dusky")
                 .size(15)
                 .font(iced::Font {
                     weight: Weight::Bold,
                     ..Default::default()
                 })
-                .color(palette.fg),
-            Space::new().width(Length::Fill),
+                .color(palette.fg)
+                .width(Length::Fill)
+                .align_x(Horizontal::Center),
             search_btn,
         ]
-        .padding([10, 10])
+        .padding([8, 6])
         .align_y(Vertical::Center);
 
         let mut page_list = column![].spacing(2);
@@ -675,14 +759,15 @@ impl CenterApp {
                 &page.id
             };
 
-            // Selected item: Solid coral/peach pill background with DARK text & icon!
-            let (fg_color, icon_color) = if is_active {
-                (palette.accent_fg, palette.accent_fg)
-            } else {
-                (palette.fg, palette.accent)
-            };
+            let fg_color = palette.fg;
+            let icon_color = palette.accent;
 
             let row_content = row![
+                container(Space::new().width(3).height(16)).style(move |_| container::Style {
+                    background: Some(if is_active { palette.accent } else { Color::TRANSPARENT }.into()),
+                    border: Border { radius: 1.5.into(), ..Default::default() },
+                    ..Default::default()
+                }),
                 render_icon(icon_name, 18.0, icon_color),
                 text(&page.title)
                     .size(13)
@@ -696,31 +781,18 @@ impl CenterApp {
                     })
                     .color(fg_color),
             ]
-            .spacing(9)
+            .spacing(6)
             .align_y(Vertical::Center);
 
-            let shadow = if is_active {
-                iced::Shadow {
-                    color: Color::from_rgba(
-                        palette.accent.r,
-                        palette.accent.g,
-                        palette.accent.b,
-                        0.031,
-                    ),
-                    offset: iced::Vector::new(0.0, 1.5),
-                    blur_radius: 6.5,
-                }
-            } else {
-                iced::Shadow::default()
-            };
-
-            let btn = button(container(row_content).padding([5, 8]).width(Length::Fill))
+            let btn = button(container(row_content).padding([8, 6]).width(Length::Fill))
+                .padding(0)
                 .on_press(Message::SelectPage(idx))
                 .style(move |_, status| {
+                    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
                     let bg = if is_active {
-                        palette.accent
-                    } else if status == button::Status::Hovered {
-                        Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.08)
+                        mix(palette.sidebar_bg, palette.accent, if hovered { 0.12 } else { 0.07 })
+                    } else if hovered {
+                        mix(palette.sidebar_bg, palette.fg, 0.05)
                     } else {
                         Color::TRANSPARENT
                     };
@@ -730,7 +802,6 @@ impl CenterApp {
                             radius: 8.0.into(),
                             ..Default::default()
                         },
-                        shadow,
                         ..Default::default()
                     }
                 });
@@ -811,35 +882,19 @@ impl CenterApp {
             })
             .color(palette.fg);
 
-        // Window close button (Sleek circle, perfectly centered 12px cross)
+        // Red hover feedback without a permanent background.
         let close_btn = button(
-            container(render_icon("close", 12.0, Color::from_rgb(0.92, 0.92, 0.92)))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .align_x(Horizontal::Center)
-                .align_y(Vertical::Center),
+            container(render_icon("close", 12.0, palette.fg))
+                .width(Length::Fill).height(Length::Fill)
+                .align_x(Horizontal::Center).align_y(Vertical::Center),
         )
-        .on_press(Message::CloseApp)
-        .padding(0)
-        .width(26)
-        .height(26)
-        .style(move |_, status| {
-            let is_hovered = status == button::Status::Hovered;
-            button::Style {
-                background: Some(
-                    if is_hovered {
-                        Color::from_rgba(0.92, 0.28, 0.28, 0.90)
-                    } else {
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.06)
-                    }
-                    .into(),
-                ),
-                border: Border {
-                    radius: 13.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
+        .on_press(Message::CloseApp).padding(0).width(26).height(26)
+        .style(move |_, status| button::Style {
+            background: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                Some(palette.danger_bg.into())
+            } else { None },
+            border: Border { radius: 13.0.into(), ..Default::default() },
+            ..Default::default()
         });
 
         // Completely seamless header: same background, no bottom border cutting across!
@@ -852,9 +907,13 @@ impl CenterApp {
         ]
         .spacing(10)
         .align_y(Vertical::Center)
-        .padding([12, 18]);
+        .padding([8, 18]);
 
         let mut main_col = column![mouse_area(main_header).on_press(Message::DragWindow)];
+        if let Some(error) = &self.action_error {
+            main_col = main_col.push(container(text(error).size(12).color(palette.danger))
+                .padding([6, 18]).width(Length::Fill));
+        }
 
         // Search bar with auto-focus support and elegant capsule styling
         if self.search_open || !self.search_query.is_empty() {
@@ -886,10 +945,10 @@ impl CenterApp {
                 button(render_icon("close", 13.0, palette.fg_muted))
                     .on_press(Message::ClearSearch)
                     .padding([4, 6])
-                    .style(|_, status| button::Style {
+                    .style(move |_, status| button::Style {
                         background: Some(
                             if status == button::Status::Hovered {
-                                Color::from_rgba(1.0, 1.0, 1.0, 0.1).into()
+                                palette.card_hover.into()
                             } else {
                                 Color::TRANSPARENT.into()
                             },
@@ -991,6 +1050,11 @@ impl CenterApp {
     fn view_search_results<'a>(&'a self) -> Element<'a, Message> {
         let palette = self.theme;
         let query = self.search_query.to_lowercase();
+        let total_hits = self.config.pages.iter()
+            .flat_map(|page| &page.layout)
+            .flat_map(|section| &section.items)
+            .filter(|item| item.matches_query(&query))
+            .count();
         let mut results_box = column![].spacing(0);
         let mut hit_count = 0;
         for (page_idx, page) in self.config.pages.iter().enumerate() {
@@ -1014,7 +1078,9 @@ impl CenterApp {
                             results_box = results_box.push(divider);
                         }
                         hit_count += 1;
-                        let item_view = self.view_item_row(item, &page.title, Some(page_idx));
+                        let item_view = self.view_item_row_rounded(
+                            item, &page.title, Some(page_idx), row_radius(hit_count - 1, total_hits),
+                        );
                         results_box = results_box.push(item_view);
                     }
                 }
@@ -1051,7 +1117,7 @@ impl CenterApp {
         }
 
         let results_card = container(results_box)
-            .padding([2, 10])
+            .padding(1)
             .style(move |_| container::Style {
                 background: Some(palette.card_bg.into()),
                 border: Border {
@@ -1270,14 +1336,19 @@ impl CenterApp {
             );
         }
 
+        if !section.properties.description.is_empty() {
+            sec_col = sec_col.push(text(&section.properties.description).size(12)
+                .color(mix(palette.bg, palette.fg, 0.46)));
+        }
+
         // Special handling for Power Management (with PickList dropdown)
         if section.properties.title == "Power Management" {
             sec_col = sec_col.push(self.view_power_management_card(section));
             return sec_col.into();
         }
 
-        // Special handling for Quick Controls (with Dusky Tray sliders)
-        if section.properties.title == "Quick Controls" {
+        // Slider groups use an explicit section type so titles remain editable.
+        if section.section_type == "controls" || section.properties.title == "Quick Controls" {
             sec_col = sec_col.push(self.view_quick_controls_card(section));
             return sec_col.into();
         }
@@ -1301,11 +1372,13 @@ impl CenterApp {
                     });
                 items_box = items_box.push(divider);
             }
-            items_box = items_box.push(self.view_item_row(item, "", None));
+            items_box = items_box.push(self.view_item_row_rounded(
+                item, "", None, row_radius(idx, section.items.len()),
+            ));
         }
 
         let container_card = container(items_box)
-            .padding([2, 10])
+            .padding(1)
             .style(move |_| container::Style {
                 background: Some(palette.card_bg.into()),
                 border: Border {
@@ -1332,6 +1405,7 @@ impl CenterApp {
     fn view_hero_card<'a>(&'a self, item: &'a ItemConfig) -> Element<'a, Message> {
         let palette = self.theme;
         let is_toggle = item.item_type == "toggle_card";
+        let is_service = item.item_type == "service_card";
 
         let key = if !item.properties.key.is_empty() {
             item.properties.key.clone()
@@ -1339,14 +1413,25 @@ impl CenterApp {
             item.properties.title.clone()
         };
 
-        let is_enabled = self.toggle_states.get(&key).copied().unwrap_or(false);
+        let service_key = controls::service_key(&item.properties.scope, &item.properties.service);
+        let is_enabled = if is_service { self.service_states.get(&service_key).copied().unwrap_or(false) }
+            else { self.toggle_states.get(&key).copied().unwrap_or(false) };
+        let ready = if is_service {
+            self.service_statuses.get(&service_key).is_some_and(ServiceStatus::actionable)
+                && !self.busy_controls.contains(&service_key)
+        } else { !is_toggle || (self.toggle_states.contains_key(&key)
+            && !self.busy_controls.contains(&key) && !self.unavailable_controls.contains(&key)) };
 
         // Resolve title & button text mappings (e.g. Dusky "0" -> "Updated")
         let mut display_title = item.properties.title.clone();
+        let mut effective_style = item.properties.style.clone();
         if !item.properties.button_text_file.is_empty() {
             let expanded = expand_path(&item.properties.button_text_file);
             if let Ok(content) = std::fs::read_to_string(expanded) {
                 let trimmed = content.trim();
+                if let Some(style) = item.properties.style_map.get(trimmed).or_else(|| item.properties.style_map.get("default")) {
+                    effective_style = style.clone();
+                }
                 if let Some(mapped) = item.properties.button_text_map.get(trimmed) {
                     display_title = mapped.clone();
                 } else if let Some(def) = item.properties.button_text_map.get("default") {
@@ -1361,19 +1446,19 @@ impl CenterApp {
             "dot"
         };
 
-        let is_destructive = item.properties.style == "destructive"
-            || item.properties.title == "Reload CC"
-            || item.properties.title == "Power"
-            || item.properties.title == "Reboot";
-        let is_suggested = item.properties.style == "suggested";
+        let is_destructive = effective_style == "destructive";
+        let is_suggested = effective_style == "suggested";
+        // Keep the Matugen hue and saturation; lower active tile brightness 12%.
+        let active_bg = mix(Color::BLACK, palette.accent, 0.88);
+        let active_hover_bg = mix(Color::BLACK, palette.accent_hover, 0.88);
 
         // Hero card styling: Active -> solid accent; Destructive -> subtle reddish tint; Standard -> card_bg
         let (card_bg, text_fg, icon_fg, border_color) = if is_enabled {
             (
-                palette.accent,
+                active_bg,
                 palette.accent_fg,
                 palette.accent_fg,
-                palette.accent,
+                active_bg,
             )
         } else if is_destructive {
             (
@@ -1395,7 +1480,7 @@ impl CenterApp {
                 ),
                 palette.fg,
                 palette.accent,
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20),
+                mix(palette.card_bg, palette.accent, 0.18),
             )
         } else {
             (
@@ -1406,7 +1491,7 @@ impl CenterApp {
             )
         };
 
-        let card_content = column![
+        let mut card_content = column![
             render_icon(icon_name, 22.0, icon_fg),
             text(display_title)
                 .size(12)
@@ -1419,7 +1504,16 @@ impl CenterApp {
         .spacing(5)
         .align_x(Horizontal::Center);
 
-        let on_press_msg = if is_toggle {
+        if is_service {
+            let detail = self.service_statuses.get(&service_key).map(|s| format!("{} • {}", if s.enabled() { "On" } else { "Off" }, s.startup))
+                .unwrap_or_else(|| "Checking…".into());
+            card_content = card_content.push(text(detail).size(9)
+                .color(if is_enabled { palette.accent_fg } else { mix(palette.card_bg, palette.fg, 0.46) }));
+        }
+
+        let on_press_msg = if is_service {
+            Message::ToggleService { unit: item.properties.service.clone(), scope: item.properties.scope.clone() }
+        } else if is_toggle {
             Message::ToggleItem {
                 key,
                 is_enabled: !is_enabled,
@@ -1447,7 +1541,7 @@ impl CenterApp {
         };
 
         // Uniform 62px fixed height guarantees all rows have the exact same size!
-        button(
+        let mut card = button(
             container(card_content)
                 .padding([6, 6])
                 .width(Length::Fill)
@@ -1455,13 +1549,12 @@ impl CenterApp {
                 .align_x(Horizontal::Center)
                 .align_y(Vertical::Center),
         )
-        .on_press(on_press_msg)
         .style(move |_, status| {
             let (bg, b_color) = if is_enabled {
                 if status == button::Status::Hovered {
-                    (palette.accent_hover, palette.accent_hover)
+                    (active_hover_bg, active_hover_bg)
                 } else {
-                    (palette.accent, palette.accent)
+                    (active_bg, active_bg)
                 }
             } else if is_destructive {
                 if status == button::Status::Hovered {
@@ -1510,8 +1603,9 @@ impl CenterApp {
             }
         })
         .width(Length::FillPortion(1))
-        .height(Length::Fixed(62.0))
-        .into()
+        .height(Length::Fixed(62.0));
+        if ready { card = card.on_press(on_press_msg); }
+        card.into()
     }
 
     // ---------------------------------------------------------------------------
@@ -1524,13 +1618,13 @@ impl CenterApp {
 
         let (icon_badge_bg, icon_badge_border, icon_color) = if is_hovered {
             (
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.15),
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20),
+                mix(palette.card_hover, palette.accent, 0.12),
+                mix(palette.card_bg, palette.accent, 0.18),
                 palette.accent,
             )
         } else {
             (
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10),
+                mix(palette.card_bg, palette.accent, 0.08),
                 Color::TRANSPARENT,
                 palette.accent,
             )
@@ -1556,13 +1650,13 @@ impl CenterApp {
             text("Active Profile")
                 .size(13)
                 .font(iced::Font {
-                    weight: Weight::Bold,
-                    ..Default::default()
+                    weight: Weight::Normal,
+                    ..iced::Font::with_name("Atkinson Hyperlegible")
                 })
-                .color(if is_hovered { Color::from_rgb(0.96, 0.96, 0.98) } else { palette.fg }),
+                .color(palette.fg),
             text("Select performance mode")
-                .size(11)
-                .color(if is_hovered { Color::from_rgb(0.80, 0.82, 0.88) } else { palette.fg_muted }),
+                .size(12)
+                .color(mix(palette.card_bg, palette.fg, if is_hovered { 0.55 } else { 0.46 })),
         ]
         .spacing(2)
         .width(Length::Fill);
@@ -1641,7 +1735,7 @@ impl CenterApp {
     }
 
     // ---------------------------------------------------------------------------
-    // Quick Controls Card (Borrowed from Dusky Tray: 12px Pill Rails & White Handle)
+    // TOML Controls Card (Audio and Display on Home)
     // ---------------------------------------------------------------------------
 
     fn view_quick_controls_card<'a>(&'a self, section: &'a SectionConfig) -> Element<'a, Message> {
@@ -1655,31 +1749,35 @@ impl CenterApp {
                 item.properties.title.clone()
             };
 
-            let is_vol = key.contains("Volume") || item.properties.icon.contains("volume");
-            let icon_name = if is_vol { "audio" } else { "brightness" };
+            if key == "Night Light" && !self.sunset_active {
+                continue;
+            }
+            let icon_name = item.properties.icon.as_str();
 
             let min = item.properties.min.unwrap_or(0.0) as f32;
             let max = item.properties.max.unwrap_or(100.0) as f32;
             let step = item.properties.step.unwrap_or(1.0) as f32;
-            let val = self.slider_values.get(&key).copied().unwrap_or(50.0);
+            let val = self.slider_values.get(&key).copied()
+                .unwrap_or(item.properties.default.unwrap_or(min as f64) as f32);
 
             let key_c1 = key.clone();
             let key_c2 = key.clone();
             let on_change = item.on_change.clone();
 
             let is_row_hovered = self.hovered_item.as_deref() == Some(&key);
+            let tint = slider_tint(palette, &key);
 
             let (icon_badge_bg, icon_badge_border, icon_color) = if is_row_hovered {
                 (
-                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.15),
-                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20),
-                    palette.accent,
+                    mix(palette.card_hover, tint, 0.12),
+                    mix(palette.card_bg, tint, 0.18),
+                    tint,
                 )
             } else {
                 (
-                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10),
+                    mix(palette.card_bg, tint, 0.08),
                     Color::TRANSPARENT,
-                    palette.accent,
+                    tint,
                 )
             };
 
@@ -1699,10 +1797,12 @@ impl CenterApp {
                     ..Default::default()
                 });
 
-            // Slim 8px rail matching GTK scale trough, with dark subtle empty portion and dark knob
+            let change_action = on_change.clone();
+            // Shared Matugen rail and handle styling.
             let s = slider(min..=max, val, move |v| Message::SliderChanged {
                 key: key_c1.clone(),
                 value: v,
+                on_change: change_action.clone(),
             })
             .step(step)
             .height(24)
@@ -1712,131 +1812,13 @@ impl CenterApp {
                 value: val,
                 on_change,
             })
-            .style(move |_, _| slider::Style {
-                rail: slider::Rail {
-                    backgrounds: (
-                        palette.accent.into(),
-                        Color::from_rgba(0.0, 0.0, 0.0, 0.45).into(),
-                    ),
-                    width: 8.0,
-                    border: Border {
-                        radius: 4.0.into(),
-                        ..Default::default()
-                    },
-                },
-                handle: slider::Handle {
-                    shape: slider::HandleShape::Circle { radius: 8.0 },
-                    background: palette.bg.into(),
-                    border_width: 1.5,
-                    border_color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.60),
-                },
-            });
+            .style(move |_, status| slider_style(palette, tint, val <= min, status));
 
             // Monospace numeric value on right
             let val_label = text(format!("{:.0}", val.round()))
                 .size(13)
                 .font(iced::Font::MONOSPACE)
-                .color(if is_row_hovered { Color::from_rgb(0.96, 0.96, 0.98) } else { palette.fg_muted })
-                .width(28)
-                .align_x(Horizontal::Right);
-
-            let ctrl_row = row![
-                icon_badge,
-                container(s).width(Length::Fill).padding([0, 4]),
-                val_label,
-            ]
-            .spacing(12)
-            .align_y(Vertical::Center);
-
-            let key_enter = key.clone();
-            let key_exit = key.clone();
-            let row_area = mouse_area(ctrl_row)
-                .on_enter(Message::ItemEntered(key_enter))
-                .on_exit(Message::ItemExited(key_exit));
-
-            controls_col = controls_col.push(row_area);
-        }
-
-        // 3rd slider on Quick Controls for Night Light when hyprsunset service is active
-        if sys::is_sunset_active() {
-            let key = "Night Light".to_string();
-            let val = self
-                .slider_values
-                .get(&key)
-                .copied()
-                .or_else(sys::get_sunset)
-                .unwrap_or(0.0);
-
-            let key_c1 = key.clone();
-            let key_c2 = key.clone();
-
-            let is_row_hovered = self.hovered_item.as_deref() == Some("Night Light");
-
-            let (icon_badge_bg, icon_badge_border, icon_color) = if is_row_hovered {
-                (
-                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.15),
-                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20),
-                    palette.accent,
-                )
-            } else {
-                (
-                    Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10),
-                    Color::TRANSPARENT,
-                    palette.accent,
-                )
-            };
-
-            let icon_badge = container(render_icon("weather-clear-night-symbolic", 18.0, icon_color))
-                .width(36)
-                .height(36)
-                .align_x(Horizontal::Center)
-                .align_y(Vertical::Center)
-                .style(move |_| container::Style {
-                    background: Some(icon_badge_bg.into()),
-                    border: Border {
-                        color: icon_badge_border,
-                        width: 1.0,
-                        radius: 10.0.into(),
-                    },
-                    ..Default::default()
-                });
-
-            let s = slider(0.0..=100.0, val, move |v| Message::SliderChanged {
-                key: key_c1.clone(),
-                value: v,
-            })
-            .step(1.0_f32)
-            .height(24)
-            .width(Length::Fill)
-            .on_release(Message::SliderReleased {
-                key: key_c2,
-                value: val,
-                on_change: None,
-            })
-            .style(move |_, _| slider::Style {
-                rail: slider::Rail {
-                    backgrounds: (
-                        palette.accent.into(),
-                        Color::from_rgba(0.0, 0.0, 0.0, 0.45).into(),
-                    ),
-                    width: 8.0,
-                    border: Border {
-                        radius: 4.0.into(),
-                        ..Default::default()
-                    },
-                },
-                handle: slider::Handle {
-                    shape: slider::HandleShape::Circle { radius: 8.0 },
-                    background: palette.bg.into(),
-                    border_width: 1.5,
-                    border_color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.60),
-                },
-            });
-
-            let val_label = text(format!("{:.0}", val.round()))
-                .size(13)
-                .font(iced::Font::MONOSPACE)
-                .color(if is_row_hovered { Color::from_rgb(0.96, 0.96, 0.98) } else { palette.fg_muted })
+                .color(mix(palette.card_bg, palette.fg, if is_row_hovered { 0.72 } else { 0.60 }))
                 .width(28)
                 .align_x(Horizontal::Right);
 
@@ -1882,9 +1864,24 @@ impl CenterApp {
         badge_tag: &'a str,
         _from_page: Option<usize>,
     ) -> Element<'a, Message> {
+        self.view_item_row_rounded(item, badge_tag, _from_page, iced::border::Radius::default())
+    }
+
+    fn view_item_row_rounded<'a>(
+        &'a self,
+        item: &'a ItemConfig,
+        badge_tag: &'a str,
+        _from_page: Option<usize>,
+        radius: iced::border::Radius,
+    ) -> Element<'a, Message> {
         let palette = self.theme;
         let title = &item.properties.title;
-        let desc = &item.properties.description;
+        let service_key = controls::service_key(&item.properties.scope, &item.properties.service);
+        let desc = if item.item_type == "service" {
+            let detail = if self.busy_controls.contains(&service_key) { "Applying…".into() }
+                else { self.service_statuses.get(&service_key).map(ServiceStatus::description).unwrap_or_else(|| "Checking…".into()) };
+            format!("{} • {detail}", item.properties.description)
+        } else { item.properties.description.clone() };
 
         let key = if !item.properties.key.is_empty() {
             item.properties.key.clone()
@@ -1901,15 +1898,11 @@ impl CenterApp {
         };
 
         // Title and description colors brighten subtly on hover
-        let title_color = if is_row_hovered {
-            Color::from_rgb(0.96, 0.96, 0.98)
-        } else {
-            palette.fg
-        };
+        let title_color = palette.fg;
         let desc_color = if is_row_hovered {
-            Color::from_rgba(palette.fg.r, palette.fg.g, palette.fg.b, 0.72)
+            mix(palette.card_hover, palette.fg, 0.55)
         } else {
-            Color::from_rgba(palette.fg.r, palette.fg.g, palette.fg.b, 0.52)
+            mix(palette.card_bg, palette.fg, 0.46)
         };
 
         // Left info container with title and description
@@ -1917,8 +1910,8 @@ impl CenterApp {
             text(title)
                 .size(13)
                 .font(iced::Font {
-                    weight: Weight::Semibold,
-                    ..Default::default()
+                    weight: Weight::Normal,
+                    ..iced::Font::with_name("Atkinson Hyperlegible")
                 })
                 .color(title_color),
             if !badge_tag.is_empty() {
@@ -1926,7 +1919,7 @@ impl CenterApp {
                     .padding([2, 8])
                     .style(move |_| container::Style {
                         background: Some(
-                            Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.15).into(),
+                            mix(palette.card_hover, palette.accent, 0.12).into(),
                         ),
                         border: Border {
                             radius: 4.0.into(),
@@ -1944,11 +1937,8 @@ impl CenterApp {
         if !desc.is_empty() {
             info_col = info_col.push(
                 text(desc)
-                    .size(11)
-                    .font(iced::Font {
-                        weight: Weight::Normal,
-                        ..Default::default()
-                    })
+                    .size(12)
+                    .font(iced::Font::with_name("Atkinson Hyperlegible"))
                     .color(desc_color),
             );
         }
@@ -1956,13 +1946,13 @@ impl CenterApp {
         // Icon badge lights up subtly with gentle glow on hover
         let (icon_badge_bg, icon_badge_border, icon_color) = if is_row_hovered {
             (
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.15),
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20),
+                mix(palette.card_hover, palette.accent, 0.12),
+                mix(palette.card_bg, palette.accent, 0.18),
                 palette.accent,
             )
         } else {
             (
-                Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10),
+                mix(palette.card_bg, palette.accent, 0.08),
                 Color::TRANSPARENT,
                 palette.accent,
             )
@@ -1989,154 +1979,25 @@ impl CenterApp {
         .align_y(Vertical::Center)
         .width(Length::Fill);
 
-        // Helper action buttons (e.g. edit config, reset, launch tool)
-        let mut buttons_row = row![].spacing(6).align_y(Vertical::Center);
-        for b in &item.properties.buttons {
-            let b_title = &b.title;
-            let is_destructive = b.style == "destructive"
-                || matches!(
-                    b_title.as_str(),
-                    "Deploy" | "Orchestra" | "Delete" | "Purge" | "Reset" | "Diagnose"
-                )
-                || b_title.contains("Deploy")
-                || b_title.contains("Reset")
-                || b_title.contains("Purge");
-            let is_suggested = !is_destructive
-                && (b.style == "suggested"
-                    || matches!(
-                        b_title.as_str(),
-                        "Apply" | "Allocate" | "Save" | "Open" | "Setup" | "Install" | "Convert" | "Update" | "Sync" | "Format"
-                    )
-                    || b.style.is_empty());
-
-            let icon_idle = if is_destructive {
-                palette.danger
+        let mut buttons_row = row![].spacing(0).align_y(Vertical::Center);
+        for (index, b) in item.properties.buttons.iter().enumerate() {
+            let style = b.style.clone();
+            let is_suggested = style == "suggested";
+            let icon_color = if is_suggested { palette.accent_fg }
+                else if style == "destructive" { palette.danger } else { palette.fg };
+            let content: Element<'a, Message> = if b.icon.is_empty() {
+                text(&b.title).size(12).into()
+            } else if b.title.is_empty() {
+                render_icon(&b.icon, 16.0, icon_color)
             } else {
-                palette.accent
+                row![render_icon(&b.icon, 16.0, icon_color), text(&b.title).size(12)]
+                    .spacing(6).align_y(Vertical::Center).into()
             };
-
-            let has_icon = !b.icon.is_empty();
-            let has_title = !b.title.is_empty();
-
-            let icon_name = if has_icon {
-                &b.icon
-            } else {
-                "settings"
-            };
-
-            let btn_content: Element<'a, Message> = if has_icon && has_title {
-                row![
-                    render_icon(icon_name, 13.0, icon_idle),
-                    text(&b.title).size(11).font(iced::Font {
-                        weight: Weight::Semibold,
-                        ..Default::default()
-                    }),
-                ]
-                .spacing(5)
-                .align_y(Vertical::Center)
-                .into()
-            } else if has_icon {
-                render_icon(icon_name, 14.0, icon_idle)
-            } else {
-                text(&b.title)
-                    .size(11)
-                    .font(iced::Font {
-                        weight: Weight::Semibold,
-                        ..Default::default()
-                    })
-                    .into()
-            };
-
-            let mut btn = button(btn_content)
-                .padding(if has_title { [5, 12] } else { [5, 8] })
-                .style(move |_, status| {
-                    let is_hovered = status == button::Status::Hovered;
-                    if is_destructive {
-                        if is_hovered {
-                            button::Style {
-                                background: Some(palette.danger.into()),
-                                text_color: Color::from_rgb8(105, 0, 5),
-                                border: Border {
-                                    color: palette.danger,
-                                    width: 1.0,
-                                    radius: 6.0.into(),
-                                },
-                                shadow: iced::Shadow {
-                                    color: Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.28),
-                                    offset: iced::Vector::new(0.0, 2.0),
-                                    blur_radius: 6.0,
-                                },
-                                ..Default::default()
-                            }
-                        } else {
-                            button::Style {
-                                background: Some(Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.08).into()),
-                                text_color: palette.danger,
-                                border: Border {
-                                    color: Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.28),
-                                    width: 1.0,
-                                    radius: 6.0.into(),
-                                },
-                                ..Default::default()
-                            }
-                        }
-                    } else if is_suggested {
-                        if is_hovered {
-                            button::Style {
-                                background: Some(palette.accent.into()),
-                                text_color: palette.accent_fg,
-                                border: Border {
-                                    color: palette.accent,
-                                    width: 1.0,
-                                    radius: 6.0.into(),
-                                },
-                                shadow: iced::Shadow {
-                                    color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.25),
-                                    offset: iced::Vector::new(0.0, 2.0),
-                                    blur_radius: 6.0,
-                                },
-                                ..Default::default()
-                            }
-                        } else {
-                            button::Style {
-                                background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10).into()),
-                                text_color: palette.accent,
-                                border: Border {
-                                    color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.28),
-                                    width: 1.0,
-                                    radius: 6.0.into(),
-                                },
-                                ..Default::default()
-                            }
-                        }
-                    } else if is_hovered {
-                        button::Style {
-                            background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20).into()),
-                            text_color: palette.accent,
-                            border: Border {
-                                color: palette.accent,
-                                width: 1.0,
-                                radius: 6.0.into(),
-                            },
-                            ..Default::default()
-                        }
-                    } else {
-                        button::Style {
-                            background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.08).into()),
-                            text_color: palette.accent,
-                            border: Border {
-                                color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
-                                width: 1.0,
-                                radius: 6.0.into(),
-                            },
-                            ..Default::default()
-                        }
-                    }
-                });
-
-            if let Some(action) = &b.on_press {
-                btn = btn.on_press(Message::ExecuteAction(action.clone()));
-            }
+            let count = item.properties.buttons.len();
+            let mut btn = button(container(content).center_y(34))
+                .height(34).padding([0, 10])
+                .style(move |_, status| action_button_style(palette, &style, true, index, count, status));
+            if let Some(action) = &b.on_press { btn = btn.on_press(Message::ExecuteAction(action.clone())); }
             buttons_row = buttons_row.push(btn);
         }
 
@@ -2172,9 +2033,9 @@ impl CenterApp {
                     let bg = if is_sel {
                         palette.accent
                     } else if status == button::Status::Hovered {
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                        palette.card_hover
                     } else {
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.03)
+                        palette.card_bg
                     };
                     button::Style {
                         background: Some(bg.into()),
@@ -2211,10 +2072,11 @@ impl CenterApp {
             .spacing(4);
 
             let row_container = container(row_content)
-                .padding([8, 6])
+                .padding([8, 15])
                 .width(Length::Fill)
                 .style(move |_| container::Style {
-                    background: Some(Color::TRANSPARENT.into()),
+                    background: Some(if is_row_hovered { palette.card_hover } else { Color::TRANSPARENT }.into()),
+                    border: Border { radius, ..Default::default() },
                     ..Default::default()
                 });
 
@@ -2232,33 +2094,14 @@ impl CenterApp {
                 let is_active = self.toggle_states.get(&key).copied().unwrap_or(false);
                 let toggle_pair = item.on_toggle.clone();
                 let key_clone = key.clone();
-                toggler(is_active)
-                    .on_toggle(move |val| Message::ToggleItem {
-                        key: key_clone.clone(),
-                        is_enabled: val,
-                        on_toggle: toggle_pair.clone(),
-                    })
-                    .size(20)
-                    .style(move |_, _status| toggler::Style {
-                        background: if is_active {
-                            palette.accent.into()
-                        } else {
-                            Color::from_rgba(1.0, 1.0, 1.0, 0.1).into()
-                        },
-                        background_border_width: 0.0,
-                        background_border_color: Color::TRANSPARENT,
-                        foreground: if is_active {
-                            palette.accent_fg.into()
-                        } else {
-                            palette.fg_muted.into()
-                        },
-                        foreground_border_width: 0.0,
-                        foreground_border_color: Color::TRANSPARENT,
-                        text_color: None,
-                        border_radius: None,
-                        padding_ratio: 0.1,
-                    })
-                    .into()
+                let mut control = toggler(is_active).size(24)
+                    .style(move |_, status| toggle_style(palette, status));
+                if self.toggle_states.contains_key(&key) && !self.busy_controls.contains(&key) && !self.unavailable_controls.contains(&key) {
+                    control = control.on_toggle(move |val| Message::ToggleItem {
+                        key: key_clone.clone(), is_enabled: val, on_toggle: toggle_pair.clone(),
+                    });
+                }
+                control.into()
             }
 
             "slider" | "spin" => {
@@ -2266,14 +2109,17 @@ impl CenterApp {
                 let max = item.properties.max.unwrap_or(100.0) as f32;
                 let step = item.properties.step.unwrap_or(1.0) as f32;
                 let val = self.slider_values.get(&key).copied().unwrap_or(min);
+                let tint = slider_tint(palette, &key);
 
                 let key_c1 = key.clone();
                 let key_c2 = key.clone();
                 let on_change = item.on_change.clone();
 
+                let change_action = on_change.clone();
                 let s = slider(min..=max, val, move |v| Message::SliderChanged {
                     key: key_c1.clone(),
                     value: v,
+                    on_change: change_action.clone(),
                 })
                 .step(step)
                 .height(24)
@@ -2283,30 +2129,7 @@ impl CenterApp {
                     value: val,
                     on_change,
                 })
-                .style(move |_, _| slider::Style {
-                    rail: slider::Rail {
-                        backgrounds: (
-                            palette.accent.into(),
-                            Color::from_rgba(0.0, 0.0, 0.0, 0.45).into(),
-                        ),
-                        width: 8.0,
-                        border: Border {
-                            radius: 4.0.into(),
-                            ..Default::default()
-                        },
-                    },
-                    handle: slider::Handle {
-                        shape: slider::HandleShape::Circle { radius: 8.0 },
-                        background: palette.bg.into(),
-                        border_width: 1.5,
-                        border_color: Color::from_rgba(
-                            palette.border.r,
-                            palette.border.g,
-                            palette.border.b,
-                            0.60,
-                        ),
-                    },
-                });
+                .style(move |_, status| slider_style(palette, tint, val <= min, status));
 
                 let val_label = text(format!("{:.0}", val.round()))
                     .size(12)
@@ -2319,6 +2142,32 @@ impl CenterApp {
                     .spacing(8)
                     .align_y(Vertical::Center)
                     .into()
+            }
+
+            "entry" | "secret" => {
+                let value = self.entry_values.get(&key).map(String::as_str).unwrap_or("");
+                let change_key = key.clone();
+                let action = item.on_action.as_ref().or(item.on_press.as_ref());
+                let submit = action.map(|action| Message::SubmitEntry { key: key.clone(), action: action.clone() });
+                let ready = !self.busy_controls.contains(&key);
+                let mut input = text_input("Value", value).size(12).padding([6, 8]).width(110)
+                    .secure(item.item_type == "secret")
+                    .style(move |_, _| text_input::Style {
+                        background: palette.surface.into(),
+                        border: Border { color: mix(palette.card_bg, palette.border, 0.55), width: 1.0, radius: 6.0.into() },
+                        icon: palette.fg_muted, placeholder: mix(palette.surface, palette.fg, 0.40),
+                        value: palette.fg, selection: palette.accent,
+                    });
+                if ready {
+                    input = input.on_input(move |value| Message::EntryChanged { key: change_key.clone(), value });
+                    if let Some(message) = &submit { input = input.on_submit(message.clone()); }
+                }
+                let label = if item.properties.button_text.is_empty() { "Apply" } else { &item.properties.button_text };
+                let style = item.properties.style.clone();
+                let mut apply = button(text(label).size(12)).padding([6, 12])
+                    .style(move |_, status| action_button_style(palette, &style, false, 0, 1, status));
+                if ready && let Some(message) = submit { apply = apply.on_press(message); }
+                row![input, apply].spacing(6).align_y(Vertical::Center).into()
             }
 
             "selection" => {
@@ -2425,38 +2274,14 @@ impl CenterApp {
 
             "service" => {
                 let unit = item.properties.service.clone();
-                let scope = if item.properties.scope.is_empty() {
-                    "user".to_string()
-                } else {
-                    item.properties.scope.clone()
-                };
-                let is_active = self.service_states.get(&unit).copied().unwrap_or(false);
-
-                let btn_text = if is_active { "Active" } else { "Start" };
-                button(text(btn_text).size(11).color(palette.fg))
-                    .on_press(Message::ToggleService { unit, scope })
-                    .padding([5, 12])
-                    .style(move |_, _| {
-                        let bg = if is_active {
-                            Color::from_rgba(0.2, 0.7, 0.35, 0.4)
-                        } else {
-                            Color::from_rgba(1.0, 1.0, 1.0, 0.06)
-                        };
-                        button::Style {
-                            background: Some(bg.into()),
-                            border: Border {
-                                color: if is_active {
-                                    Color::from_rgb(0.25, 0.8, 0.4)
-                                } else {
-                                    palette.border
-                                },
-                                width: 1.0,
-                                radius: 6.0.into(),
-                            },
-                            ..Default::default()
-                        }
-                    })
-                    .into()
+                let scope = if item.properties.scope == "user" { "user" } else { "system" }.to_string();
+                let service_key = controls::service_key(&scope, &unit);
+                let active = self.service_states.get(&service_key).copied().unwrap_or(false);
+                let ready = self.service_statuses.get(&service_key).is_some_and(ServiceStatus::actionable)
+                    && !self.busy_controls.contains(&service_key);
+                let mut control = toggler(active).size(24).style(move |_, status| toggle_style(palette, status));
+                if ready { control = control.on_toggle(move |_| Message::ToggleService { unit: unit.clone(), scope: scope.clone() }); }
+                control.into()
             }
 
             "label" => {
@@ -2490,7 +2315,7 @@ impl CenterApp {
                             } else if let Some(def) = item.properties.button_text_map.get("default") {
                                 dyn_btn_text = def.clone();
                             }
-                            if let Some(s_mapped) = item.properties.style_map.get(trimmed) {
+                            if let Some(s_mapped) = item.properties.style_map.get(trimmed).or_else(|| item.properties.style_map.get("default")) {
                                 dyn_style = s_mapped.clone();
                             }
                         }
@@ -2510,120 +2335,12 @@ impl CenterApp {
                         item.properties.style.clone()
                     };
 
-                    let is_destructive = effective_style == "destructive"
-                        || item.properties.title.contains("Deploy Dotfiles")
-                        || item.properties.title.contains("Orchestra")
-                        || matches!(
-                            btn_label.as_str(),
-                            "Deploy" | "Orchestra" | "Delete" | "Purge" | "Reset" | "Diagnose"
-                        )
-                        || btn_label.contains("Deploy")
-                        || btn_label.contains("Reset")
-                        || btn_label.contains("Purge");
-
-                    let is_suggested = !is_destructive
-                        && (effective_style == "suggested"
-                            || item.item_type == "entry"
-                            || item.item_type == "secret"
-                            || matches!(
-                                btn_label.as_str(),
-                                "Apply" | "Allocate" | "Save" | "Open" | "Setup" | "Install" | "Convert" | "Update" | "Sync" | "Format"
-                            ));
-
-                    button(
-                        text(btn_label)
-                            .size(12)
-                            .font(iced::Font {
-                                weight: Weight::Semibold,
-                                ..Default::default()
-                            }),
-                    )
+                    button(text(btn_label).size(12).font(iced::Font {
+                        weight: Weight::Semibold, ..iced::Font::with_name("Atkinson Hyperlegible")
+                    }))
                     .on_press(Message::ExecuteAction(act))
-                    .padding([5, 16])
-                    .style(move |_, status| {
-                        let is_hovered = status == button::Status::Hovered;
-                        if is_destructive {
-                            if is_hovered {
-                                button::Style {
-                                    background: Some(palette.danger.into()),
-                                    text_color: Color::from_rgb8(105, 0, 5),
-                                    border: Border {
-                                        color: palette.danger,
-                                        width: 1.0,
-                                        radius: 10.0.into(),
-                                    },
-                                    shadow: iced::Shadow {
-                                        color: Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.28),
-                                        offset: iced::Vector::new(0.0, 2.0),
-                                        blur_radius: 8.0,
-                                    },
-                                    ..Default::default()
-                                }
-                            } else {
-                                button::Style {
-                                    background: Some(Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.08).into()),
-                                    text_color: palette.danger,
-                                    border: Border {
-                                        color: Color::from_rgba(palette.danger.r, palette.danger.g, palette.danger.b, 0.28),
-                                        width: 1.0,
-                                        radius: 10.0.into(),
-                                    },
-                                    ..Default::default()
-                                }
-                            }
-                        } else if is_suggested {
-                            if is_hovered {
-                                button::Style {
-                                    background: Some(palette.accent.into()),
-                                    text_color: palette.accent_fg,
-                                    border: Border {
-                                        color: palette.accent,
-                                        width: 1.0,
-                                        radius: 10.0.into(),
-                                    },
-                                    shadow: iced::Shadow {
-                                        color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.25),
-                                        offset: iced::Vector::new(0.0, 2.0),
-                                        blur_radius: 8.0,
-                                    },
-                                    ..Default::default()
-                                }
-                            } else {
-                                button::Style {
-                                    background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.10).into()),
-                                    text_color: palette.accent,
-                                    border: Border {
-                                        color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.28),
-                                        width: 1.0,
-                                        radius: 10.0.into(),
-                                    },
-                                    ..Default::default()
-                                }
-                            }
-                        } else if is_hovered {
-                            button::Style {
-                                background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.20).into()),
-                                text_color: palette.accent,
-                                border: Border {
-                                    color: palette.accent,
-                                    width: 1.0,
-                                    radius: 10.0.into(),
-                                },
-                                ..Default::default()
-                            }
-                        } else {
-                            button::Style {
-                                background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.08).into()),
-                                text_color: palette.accent,
-                                border: Border {
-                                    color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
-                                    width: 1.0,
-                                    radius: 10.0.into(),
-                                },
-                                ..Default::default()
-                            }
-                        }
-                    })
+                    .padding([6, 14])
+                    .style(move |_, status| action_button_style(palette, &effective_style, false, 0, 1, status))
                     .into()
                 } else {
                     container(Space::new().width(0)).into()
@@ -2644,29 +2361,11 @@ impl CenterApp {
             .spacing(12)
             .align_y(Vertical::Center);
 
-        let primary_action = if let Some(action) = item.on_press.as_ref().or(item.on_action.as_ref()) {
-            Some(action.clone())
-        } else if let Some(suggested) = item
-            .properties
-            .buttons
-            .iter()
-            .find(|b| b.style == "suggested" && b.on_press.is_some())
-        {
-            suggested.on_press.clone()
-        } else if let Some(last) = item
-            .properties
-            .buttons
-            .iter()
-            .rev()
-            .find(|b| b.on_press.is_some())
-        {
-            last.on_press.clone()
-        } else {
-            None
-        };
+        // Paired buttons own their actions; the row only invokes an explicit row action.
+        let primary_action = item.on_press.as_ref().or(item.on_action.as_ref()).cloned();
 
         let row_container = container(row_content)
-            .padding([8, 6])
+            .padding([8, 15])
             .width(Length::Fill)
             .style(move |_| container::Style {
                 background: Some(
@@ -2678,7 +2377,7 @@ impl CenterApp {
                     .into(),
                 ),
                 border: Border {
-                    radius: 8.0.into(),
+                    radius,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -2709,7 +2408,8 @@ impl CenterApp {
                     on_toggle: None,
                 })
                 .interaction(mouse::Interaction::Pointer);
-        } else if item.item_type == "toggle" {
+        } else if item.item_type == "toggle" && self.toggle_states.contains_key(&key) && !self.busy_controls.contains(&key)
+            && !self.unavailable_controls.contains(&key) {
             let is_active = self.toggle_states.get(&key).copied().unwrap_or(false);
             let toggle_pair = item.on_toggle.clone();
             let key_clone = key.clone();
@@ -2720,6 +2420,13 @@ impl CenterApp {
                     on_toggle: toggle_pair,
                 })
                 .interaction(mouse::Interaction::Pointer);
+        } else if item.item_type == "service" {
+            let key = controls::service_key(&item.properties.scope, &item.properties.service);
+            if self.service_statuses.get(&key).is_some_and(ServiceStatus::actionable) && !self.busy_controls.contains(&key) {
+                area = area.on_press(Message::ToggleService {
+                    unit: item.properties.service.clone(), scope: item.properties.scope.clone(),
+                }).interaction(mouse::Interaction::Pointer);
+            }
         } else if (item.item_type == "button" || item.item_type.is_empty())
             && let Some(act) = primary_action
         {
@@ -2768,6 +2475,110 @@ impl CenterApp {
 // Helpers
 // ---------------------------------------------------------------------------
 
+fn row_radius(index: usize, count: usize) -> iced::border::Radius {
+    let top = if index == 0 { 13.0 } else { 0.0 };
+    let bottom = if index + 1 == count { 13.0 } else { 0.0 };
+    iced::border::Radius {
+        top_left: top,
+        top_right: top,
+        bottom_left: bottom,
+        bottom_right: bottom,
+    }
+}
+
+fn action_button_style(
+    palette: AppTheme, kind: &str, joined: bool, index: usize, count: usize, status: button::Status,
+) -> button::Style {
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let (bg, fg, border) = match kind {
+        "destructive" => (
+            soften_red(if hovered { palette.danger_bg } else { mix(palette.card_bg, palette.danger_bg, 0.25) }),
+            if hovered { palette.danger_fg } else { palette.danger },
+            mix(palette.card_bg, palette.danger, 0.25),
+        ),
+        "suggested" => (
+            if joined {
+                // A quiet darkening keeps bright joined actions distinct on hover.
+                mix(palette.accent, palette.card_bg, if status == button::Status::Pressed { 0.14 } else if hovered { 0.08 } else { 0.0 })
+            } else if hovered { palette.accent } else { mix(palette.card_bg, palette.accent, 0.08) },
+            if hovered || joined { palette.accent_fg } else { palette.accent },
+            mix(palette.card_bg, palette.accent, 0.25),
+        ),
+        _ => (
+            mix(palette.card_bg, palette.fg, if hovered { 0.10 } else { 0.05 }),
+            palette.fg, mix(palette.card_bg, palette.border, 0.55),
+        ),
+    };
+    button::Style {
+        background: Some(bg.into()), text_color: fg,
+        border: Border {
+            color: border, width: if joined { 0.0 } else { 1.0 },
+            radius: iced::border::Radius {
+                top_left: if index == 0 { 10.0 } else { 0.0 },
+                bottom_left: if index == 0 { 10.0 } else { 0.0 },
+                top_right: if index + 1 == count { 10.0 } else { 0.0 },
+                bottom_right: if index + 1 == count { 10.0 } else { 0.0 },
+            },
+        },
+        ..Default::default()
+    }
+}
+
+/// Reduce HSV saturation by 20% while retaining the original brightness and hue.
+fn soften_red(color: Color) -> Color {
+    let peak = color.r.max(color.g).max(color.b);
+    mix(Color::from_rgb(peak, peak, peak), color, 0.8)
+}
+
+fn slider_tint(palette: AppTheme, key: &str) -> Color {
+    match key {
+        "Brightness" => palette.secondary,
+        "Night Light" => palette.tertiary,
+        _ => palette.accent,
+    }
+}
+
+fn slider_style(palette: AppTheme, tint: Color, at_minimum: bool, status: slider::Status) -> slider::Style {
+    let active = matches!(status, slider::Status::Hovered | slider::Status::Dragged);
+    let empty = mix(palette.card_bg, palette.fg, 0.09);
+    slider::Style {
+        rail: slider::Rail {
+            backgrounds: (if at_minimum { empty } else { mix(palette.card_bg, tint, 0.62) }.into(), empty.into()),
+            width: 10.0,
+            border: Border { radius: 5.0.into(), ..Default::default() },
+        },
+        handle: slider::Handle {
+            shape: slider::HandleShape::Circle { radius: 7.0 },
+            background: mix(tint, palette.fg, if active { 0.95 } else { 0.80 }).into(),
+            border_width: 0.0,
+            border_color: Color::TRANSPARENT,
+        },
+    }
+}
+
+fn toggle_style(palette: AppTheme, status: toggler::Status) -> toggler::Style {
+    let (enabled, hovered) = match status {
+        toggler::Status::Active { is_toggled } | toggler::Status::Disabled { is_toggled } =>
+            (is_toggled, false),
+        toggler::Status::Hovered { is_toggled } => (is_toggled, true),
+    };
+    toggler::Style {
+        background: if enabled {
+            if hovered { palette.accent_hover } else { palette.accent }
+        } else {
+            palette.card_hover
+        }.into(),
+        background_border_width: if enabled { 0.0 } else { 1.0 },
+        background_border_color: if hovered { palette.accent } else { palette.border },
+        foreground: if enabled { palette.fg } else { mix(palette.card_bg, palette.fg, 0.58) }.into(),
+        foreground_border_width: 0.0,
+        foreground_border_color: Color::TRANSPARENT,
+        text_color: None,
+        border_radius: None,
+        padding_ratio: 0.1,
+    }
+}
+
 fn collect_item_defaults(
     item: &ItemConfig,
     sliders: &mut HashMap<String, f32>,
@@ -2789,13 +2600,15 @@ fn collect_item_defaults(
         sliders.entry(key.clone()).or_insert(def);
     }
 
-    if item.item_type == "toggle" || item.item_type == "toggle_card" {
-        toggles.entry(key.clone()).or_insert(false);
+    if matches!(item.item_type.as_str(), "toggle" | "toggle_card") && item.properties.state_command.is_empty() {
+        let value = std::fs::read_to_string(controls::settings_dir().join(&key)).ok()
+            .and_then(|raw| controls::parse_bool(&raw)).unwrap_or(false) ^ item.properties.key_inverse;
+        toggles.entry(key.clone()).or_insert(value);
     }
 
     if !item.properties.service.is_empty() {
         services
-            .entry(item.properties.service.clone())
+            .entry(controls::service_key(&item.properties.scope, &item.properties.service))
             .or_insert(false);
     }
 
@@ -2823,34 +2636,6 @@ fn collect_item_defaults(
                 .find(|o| o.eq_ignore_ascii_case(trimmed))
             {
                 initial = Some(found.clone());
-            }
-        }
-
-        // 2. If not found, check value_command
-        if initial.is_none() && !item.properties.value_command.is_empty() {
-            let cmd = expand_path(&item.properties.value_command);
-            if let Ok(out) = std::process::Command::new("bash")
-                .arg("-c")
-                .arg(cmd.to_string_lossy().as_ref())
-                .output()
-            {
-                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                let lower = stdout.to_lowercase();
-                if let Some(mapped) = item
-                    .properties
-                    .options_map
-                    .get(&stdout)
-                    .or_else(|| item.properties.options_map.get(&lower))
-                {
-                    initial = Some(mapped.clone());
-                } else if let Some(found) = item
-                    .properties
-                    .options
-                    .iter()
-                    .find(|o| o.eq_ignore_ascii_case(&stdout))
-                {
-                    initial = Some(found.clone());
-                }
             }
         }
 
@@ -2891,7 +2676,7 @@ fn dirs_home() -> std::path::PathBuf {
     if let Ok(home) = std::env::var("HOME") {
         std::path::PathBuf::from(home)
     } else {
-        std::path::PathBuf::from("/home/dusk")
+        std::path::PathBuf::new()
     }
 }
 
@@ -2929,7 +2714,7 @@ fn make_slim_scrollable<'a>(
             );
             let mut s = scrollable::default(theme, status);
             s.vertical_rail.background = if is_hovered {
-                Some(Color::from_rgba(1.0, 1.0, 1.0, 0.04).into())
+                Some(Color::from_rgba(accent.r, accent.g, accent.b, 0.04).into())
             } else {
                 None
             };
@@ -2954,7 +2739,7 @@ pub fn expand_app_config_generators(config: &mut AppConfig) {
 }
 
 fn expand_section_generators(section: &mut SectionConfig) {
-    section.items = expand_generators(&section.items);
+    section.items = expand_generators(std::mem::take(&mut section.items));
     for item in &mut section.items {
         expand_item_sub_generators(item);
     }
@@ -2964,21 +2749,21 @@ fn expand_item_sub_generators(item: &mut ItemConfig) {
     for sub_sec in &mut item.layout {
         expand_section_generators(sub_sec);
     }
-    item.items = expand_generators(&item.items);
+    item.items = expand_generators(std::mem::take(&mut item.items));
     for sub in &mut item.items {
         expand_item_sub_generators(sub);
     }
 }
 
-fn expand_generators(items: &[ItemConfig]) -> Vec<ItemConfig> {
-    let mut out = Vec::new();
+fn expand_generators(items: Vec<ItemConfig>) -> Vec<ItemConfig> {
+    let mut out = Vec::with_capacity(items.len());
     for item in items {
         if item.item_type == "file_generator" {
-            out.extend(expand_file_generator(item));
+            out.extend(expand_file_generator(&item));
         } else if item.item_type == "directory_generator" {
-            out.extend(expand_directory_generator(item));
+            out.extend(expand_directory_generator(&item));
         } else {
-            out.push(item.clone());
+            out.push(item);
         }
     }
     out
@@ -3248,6 +3033,86 @@ mod tests {
     use super::*;
 
     #[test]
+    fn control_state_keeps_pending_values_and_rejects_stale_results() {
+        // No hardware queries or action launches: exercise the actual update loop.
+        let mut app = CenterApp {
+            config: AppConfig { pages: vec![] },
+            theme: AppTheme::default(),
+            nav_stack: vec![],
+            sidebar_open: true,
+            search_open: false,
+            search_query: String::new(),
+            loaded_pages: HashSet::new(),
+            toggle_states: HashMap::new(),
+            slider_values: HashMap::from([("Microphone".into(), 80.0)]),
+            selected_options: HashMap::new(),
+            service_states: HashMap::new(),
+            live_labels: HashMap::new(),
+            cpu_text: String::new(),
+            ram_text: String::new(),
+            active_profile: String::new(),
+            hovered_item: None,
+            active_slider: Some("Microphone".into()),
+            sunset_active: false,
+            service_statuses: HashMap::new(),
+            busy_controls: HashSet::new(),
+            unavailable_controls: HashSet::new(),
+            control_generation: 0,
+            controls_loading: None,
+            action_error: None,
+            entry_values: HashMap::new(),
+            editing_entries: HashSet::new(),
+        };
+        app.sync_slider("Microphone", 50.0);
+        assert_eq!(app.slider_values["Microphone"], 80.0);
+        app.sync_slider("Volume", 60.0);
+        assert_eq!(app.slider_values["Volume"], 60.0);
+
+        let _ = app.update(Message::SliderSettled {
+            key: "Microphone".into(), value: 70.0, on_change: None,
+        });
+        assert_eq!(app.active_slider.as_deref(), Some("Microphone"));
+        let _ = app.update(Message::SliderReleased {
+            key: "Microphone".into(), value: 70.0, on_change: None,
+        });
+        assert_eq!(app.slider_values["Microphone"], 80.0);
+        assert_eq!(app.active_slider, None);
+
+        app.active_slider = Some("Microphone".into());
+        let _ = app.update(Message::SliderSettled {
+            key: "Microphone".into(), value: 80.0, on_change: None,
+        });
+        assert_eq!(app.active_slider, None);
+        app.sync_slider("Microphone", 75.0);
+        assert_eq!(app.slider_values["Microphone"], 75.0);
+        app.toggle_states.insert("Fixture".into(), true);
+        app.busy_controls.insert("Fixture".into());
+        app.control_generation = 4;
+        app.controls_loading = Some(3);
+        let _ = app.update(Message::ToggleFinished {
+            key: "Fixture".into(), previous: false, result: Err("fixture failure".into()),
+        });
+        assert!(!app.toggle_states["Fixture"]);
+        assert!(!app.busy_controls.contains("Fixture"));
+        assert!(app.action_error.as_ref().unwrap().contains("fixture failure"));
+        let _ = app.update(Message::ControlsLoaded {
+            generation: 3, snapshot: Snapshot { toggles: vec![("Fixture".into(), Some(true))], ..Default::default() },
+        });
+        assert!(!app.toggle_states["Fixture"], "stale poll must not overwrite rollback");
+        app.service_states.insert("user:fixture.service".into(), true);
+        let _ = app.update(Message::ControlsLoaded {
+            generation: app.control_generation,
+            snapshot: Snapshot {
+                services: HashMap::from([("user:fixture.service".into(), ServiceStatus {
+                    load: "unavailable".into(), active: "unknown".into(), startup: "unknown".into(),
+                })]),
+                ..Default::default()
+            },
+        });
+        assert!(app.service_states["user:fixture.service"], "unknown is not proof of off");
+    }
+
+    #[test]
     fn test_to_pretty_title() {
         assert_eq!(to_pretty_title("wg0"), "Wg0");
         assert_eq!(to_pretty_title("mullvad_us-nyc"), "Mullvad Us Nyc");
@@ -3362,4 +3227,3 @@ mod tests {
         }
     }
 }
-

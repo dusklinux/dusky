@@ -146,9 +146,17 @@ pub fn has_volume() -> bool {
 }
 
 pub fn get_volume() -> Option<f32> {
+    get_audio_volume("@DEFAULT_AUDIO_SINK@")
+}
+
+pub fn get_microphone_volume() -> Option<f32> {
+    get_audio_volume("@DEFAULT_AUDIO_SOURCE@")
+}
+
+fn get_audio_volume(target: &str) -> Option<f32> {
     let wpctl = which("wpctl")?;
     let out = run_command(
-        &[wpctl, "get-volume".into(), "@DEFAULT_AUDIO_SINK@".into()],
+        &[wpctl, "get-volume".into(), target.into()],
         Duration::from_millis(800),
         true,
     )?;

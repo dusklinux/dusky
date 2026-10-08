@@ -169,6 +169,14 @@ fn style(app: &CenterApp, _theme: &iced_core::Theme) -> iced_core::theme::Style 
     }
 }
 
-fn theme(_: &CenterApp) -> iced_core::Theme {
-    iced_core::Theme::Dark
+fn theme(app: &CenterApp) -> iced_core::Theme {
+    let palette = app.theme;
+    iced_core::Theme::custom("Matugen", iced_core::theme::Palette {
+        background: palette.bg,
+        text: palette.fg,
+        primary: palette.accent,
+        success: palette.profiles[0],
+        warning: palette.tertiary,
+        danger: palette.danger,
+    })
 }

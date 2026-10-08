@@ -1,35 +1,64 @@
 # Dusky Center
 
-A blazing-fast, pure Rust system control center for Linux / Hyprland / Wayland.
-Built with **Iced** and **layer-shell**, driven declaratively by `dusky_config.toml`.
+Rust control center for Linux, Hyprland and Wayland, built with Iced and wgpu.
+The application uses a normal, undecorated xdg-toplevel window. Esc at the root
+page or closing the window exits the process; there is no background UI daemon.
 
-- **On-Demand & Zero Background RAM**: Esc or clicking outside the window immediately exits the process, freeing all GPU and CPU memory (no background daemon needed).
-- **100% Configurable**: Reads `dusky_config.toml` verbatim with Rust `serde`, parsing all 18 pages and 250+ controls in under 2ms.
-- **RAM-Only Compiles**: Intermediates and compiler output stay exclusively on `/tmp` tmpfs (`target-dir = "/tmp/dusky-center-target-$UID"`), protecting SSDs from write amplification.
-
----
-
-## Quick Start & Commands
+## Build and install
 
 ```bash
-# Rebuild & test exclusively on RAM (tmpfs)
 ./scripts/build-on-tmpfs.sh --check
 ./scripts/build-on-tmpfs.sh --test
+./scripts/build-on-tmpfs.sh --clippy
 ./scripts/build-on-tmpfs.sh --release
-
-# Install binary to ~/.local/share/dusky/dusky_center and link to ~/.local/bin/dusky-center
 ./scripts/install.sh
-
-# Run
 ~/.local/bin/dusky-center
 ```
 
----
+The build script verifies tmpfs and defaults to `/tmp/dusky-center-target-$UID`.
+The installer copies the release binary into `~/.local/share/dusky/dusky_center`
+and creates the `~/.local/bin/dusky-center` launcher.
 
-## Features & Controls
+## Configuration and colors
 
-- **18 Category Pages**: Home, System, Memory, Disk & Files, Network, Hardware, Display, Audio, Visuals, Components, Services, Configs, Keybinds, Tools & AI, Setup, Troubleshoot, Keylogger, and About.
-- **Instant Search**: Top search bar filters across all 18 pages in real time.
-- **Card Grids & Action Rows**: Interactive Buttons, Toggle switches, Sliders, and Service managers with live status indicators.
-- **Hot-Reload**: Press **Ctrl+R** anytime to reload `dusky_config.toml` on the fly without closing the panel.
-- **Native Wayland Layer-Shell**: Click anywhere outside the panel or press **Escape** to instantly dismiss.
+TOML is resolved in this order:
+
+1. `dusky_config.toml` in the current working directory.
+2. `$XDG_CONFIG_HOME/dusky/dusky_config.toml` (normally `~/.config/dusky/`).
+3. `$HOME/user_scripts/dusky_system/dusky_center/dusky_config.toml`.
+4. `dusky_config.toml` beside the running executable.
+
+Ctrl+R reloads configuration and colors. Ctrl+F opens search. All 18 pages are
+parsed from TOML; supported widgets are rendered by `src/ui.rs`. See
+[REVIEW.md](REVIEW.md) for migration gaps; parsing a property does not mean its
+behavior has been implemented.
+
+Home uses `type = "controls"` sections named Audio and Display. Audio contains
+output volume and microphone input level (0–100%, targeting WirePlumber's
+default sink/source). Display contains brightness and Night Light. Night Light
+appears while `hyprsunset.service` is active. Configure slider ranges, steps,
+icons and command actions in TOML. Pointer release commits immediately; a value
+that stops changing for 100 ms also commits, supporting arrow keys and Ctrl+wheel.
+
+Matugen colors come from `$XDG_CONFIG_HOME/matugen/generated/dusky_center.json`,
+falling back to `dusky_tray.json`, then the built-in palette. Rust widget styles
+use these colors; `dusky_style.css` is retained GTK legacy material and is not
+loaded by the Rust UI. The current Matugen template explicitly uses dark roles.
+
+## Controls and styling
+
+Toggle state sources, service runtime/startup queries and toggle writes run on
+executor workers. Services use enable/disable with `--now`; failed operations
+restore the previous state and show the error. Setting-file toggles support
+app-owned persistence. State refreshes on page entry, after operations and on
+the existing three-second cycle.
+
+Paired `properties.buttons` render as joined actions in their TOML order.
+Explicit `style = "suggested"` or `"destructive"` determines their appearance;
+labels do not implicitly select styles. Matugen supplies error-container colors
+for destructive actions and close-button hover. Subtle surfaces/text use opaque
+sRGB mixes to avoid the GPU alpha blending brightening them.
+
+Entries initialize from `value_command`, keep unsaved edits while polling, and
+submit through `on_action` with argument-safe value substitution. Structured
+argv actions keep each argument intact.

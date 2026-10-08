@@ -13,6 +13,8 @@
   "secondary": "{{ colors.secondary.dark.hex }}",
   "tertiary": "{{ colors.tertiary.dark.hex }}",
   "danger": "{{ colors.error.dark.hex }}",
+  "danger_bg": "{{ colors.error_container.dark.hex }}",
+  "danger_fg": "{{ colors.on_error_container.dark.hex }}",
   "profile_green": "{{ "#a6e3a1" | to_color | blend: {{ colors.primary.dark.hex }}, 0.12 }}",
   "profile_blue": "{{ "#89b4fa" | to_color | blend: {{ colors.primary.dark.hex }}, 0.12 }}",
   "profile_red": "{{ "#f38ba8" | to_color | blend: {{ colors.primary.dark.hex }}, 0.12 }}"

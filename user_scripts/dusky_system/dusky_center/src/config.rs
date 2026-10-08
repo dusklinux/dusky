@@ -21,13 +21,21 @@ impl AppConfig {
             .map_err(|e| format!("Failed to parse TOML in {}: {e}", path.display()))
     }
 
-    /// Load configuration looking in current dir, project dir, or ~/.config/dusky.
+    /// Resolve editable configuration at runtime, including relocated installations.
     pub fn load() -> Result<Self, String> {
-        let candidates = [
+        let mut candidates = vec![
             PathBuf::from("dusky_config.toml"),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dusky_config.toml"),
             dirs_fallback().join("dusky_config.toml"),
         ];
+        if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
+            candidates.push(PathBuf::from(home)
+                .join("user_scripts/dusky_system/dusky_center/dusky_config.toml"));
+        }
+        if let Ok(executable) = std::env::current_exe()
+            && let Some(parent) = executable.parent()
+        {
+            candidates.push(parent.join("dusky_config.toml"));
+        }
 
         for candidate in &candidates {
             if candidate.is_file() {
