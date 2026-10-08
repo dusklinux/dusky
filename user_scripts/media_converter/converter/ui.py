@@ -26,9 +26,10 @@ class UI:
         print(self.paint(text, code), file=sys.stderr, flush=True)
 
     def banner(self):
-        self.message("╭─ DUSKY CONVERTER ─────────────────────╮", "1;36")
-        self.message("│  GIF · Video · Premiere · Audio      │", "1;36")
-        self.message("╰──────────────────────────────────────╯", "1;36")
+        width = 38
+        self.message("╭" + "─ DUSKY CONVERTER ".ljust(width, "─") + "╮", "1;36")
+        self.message("│" + "  GIF · Video · Premiere · Audio".ljust(width) + "│", "1;36")
+        self.message("╰" + "─" * width + "╯", "1;36")
 
     def progress(self, label: str, elapsed: float, duration: float | None, speed: str):
         if not self.terminal or time.monotonic() - self.last_update < 0.15:
