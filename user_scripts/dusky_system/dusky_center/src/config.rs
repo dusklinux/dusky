@@ -13,7 +13,7 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    /// Load configuration from specified path, falling back to canonical search locations.
+    /// Load configuration from the specified path.
     pub fn load_from_path(path: &Path) -> Result<Self, String> {
         let content = fs::read_to_string(path)
             .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
@@ -36,6 +36,8 @@ impl AppConfig {
         {
             candidates.push(parent.join("dusky_config.toml"));
         }
+
+        candidates.push(PathBuf::from("/usr/share/dusky-center/dusky_config.toml"));
 
         for candidate in &candidates {
             if candidate.is_file() {
@@ -209,6 +211,8 @@ pub struct ItemConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
 pub enum ActionConfig {
+    #[serde(rename = "reload")]
+    Reload,
     #[serde(rename = "exec")]
     Exec {
         #[serde(default)]

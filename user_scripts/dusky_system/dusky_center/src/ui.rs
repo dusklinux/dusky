@@ -107,6 +107,8 @@ pub enum Message {
     EntryFinished { key: String, result: Result<(), String> },
     DragWindow,
     Tick,
+    SunsetFinished,
+    CoreLoaded { values: Vec<(String, Option<f32>, Option<f32>)>, sunset_active: bool },
     ReloadConfig,
     CloseApp,
     ItemEntered(String),
@@ -137,6 +139,10 @@ pub struct CenterApp {
     pub hovered_item: Option<String>,
     pub active_slider: Option<String>,
     pub sunset_active: bool,
+    pub core_loading: bool,
+    pub sunset_applying: bool,
+    pub sunset_pending: Option<f32>,
+    pub closing: bool,
     pub service_statuses: HashMap<String, ServiceStatus>,
     pub busy_controls: HashSet<String>,
     pub unavailable_controls: HashSet<String>,
@@ -188,6 +194,10 @@ impl CenterApp {
             hovered_item: initial_hover,
             active_slider: None,
             sunset_active: false,
+            core_loading: false,
+            sunset_applying: false,
+            sunset_pending: None,
+            closing: false,
             service_statuses: HashMap::new(),
             busy_controls: HashSet::new(),
             unavailable_controls: HashSet::new(),
@@ -200,9 +210,7 @@ impl CenterApp {
 
         // LAZY LOADING: Only initialize active page on cold start!
         app.lazy_load_page(start_page);
-        app.poll_core_system_states();
-
-        let task = app.refresh_controls();
+        let task = Task::batch([app.refresh_core(), app.refresh_controls()]);
         (app, task)
     }
 
@@ -236,29 +244,29 @@ impl CenterApp {
         }
     }
 
-    /// Poll core hardware states needed on home screen and quick tiles.
-    fn poll_core_system_states(&mut self) {
-        // Keep live values in sync without interrupting a slider drag.
-        if let Some(vol) = sys::get_volume() {
-            self.sync_slider("Volume", vol);
-        }
-        if let Some(mic) = sys::get_microphone_volume() {
-            self.sync_slider("Microphone", mic);
-        }
-        if let Some(bri) = sys::get_brightness() {
-            self.sync_slider("Brightness", bri);
-        }
-        self.sunset_active = sys::is_sunset_active();
-        if self.sunset_active && let Some(sunset) = sys::get_sunset() {
-            self.sync_slider("Night Light", sunset);
-        }
+    /// Keep blocking hardware IPC off initialization and the UI event loop.
+    fn refresh_core(&mut self) -> Task<Message> {
+        if self.core_loading { return Task::none(); }
+        self.core_loading = true;
+        let previous: Vec<_> = ["Volume", "Microphone", "Brightness", "Night Light"]
+            .into_iter().map(|key| (key.to_string(), self.slider_values.get(key).copied())).collect();
+        Task::perform(async move {
+            let volume = sys::get_volume();
+            let microphone = sys::get_microphone_volume();
+            let brightness = sys::get_brightness();
+            let sunset_active = sys::is_sunset_active();
+            let sunset = if sunset_active { sys::get_sunset() } else { None };
+            let values = previous.into_iter().zip([volume, microphone, brightness, sunset])
+                .map(|((key, previous), value)| (key, previous, value)).collect();
+            Message::CoreLoaded { values, sunset_active }
+        }, |message| message)
+    }
 
-        // Kernel release
-        if let Ok(osrelease) = std::fs::read_to_string("/proc/sys/kernel/osrelease") {
-            self.live_labels.insert("Kernel".into(), format!("Linux {}", osrelease.trim()));
-        }
-
-        self.live_labels.insert("Memory Used".into(), self.ram_text.clone());
+    fn apply_pending_sunset(&mut self) -> Task<Message> {
+        if self.sunset_applying { return Task::none(); }
+        let Some(value) = self.sunset_pending.take() else { return Task::none(); };
+        self.sunset_applying = true;
+        Task::perform(async move { sys::apply_sunset(value); }, |_| Message::SunsetFinished)
     }
 
     fn sync_slider(&mut self, key: &str, value: f32) {
@@ -336,6 +344,8 @@ impl CenterApp {
                 Task::none()
             }
 
+            Message::ExecuteAction(ActionConfig::Reload) => self.update(Message::ReloadConfig),
+
             Message::ExecuteAction(action) => {
                 self.dispatch_action(&action);
                 if matches!(action, ActionConfig::Redirect { .. }) { self.refresh_controls() } else { Task::none() }
@@ -399,6 +409,7 @@ impl CenterApp {
                     self.selected_options.insert(key, value);
                 }
                 for (key, value) in snapshot.sliders { self.sync_slider(&key, value); }
+                self.live_labels.extend(snapshot.labels);
                 for (key, value) in snapshot.entries {
                     if !self.editing_entries.contains(&key) && !self.busy_controls.contains(&key) {
                         self.entry_values.insert(key, value);
@@ -436,17 +447,20 @@ impl CenterApp {
             }
 
             Message::SliderChanged { key, value, on_change } => {
+                if self.closing { return Task::none(); }
                 self.active_slider = Some(key.clone());
                 self.slider_values.insert(key.clone(), value);
                 if key == "Night Light" {
-                    sys::apply_sunset(value);
+                    // Coalesce IPC while retaining immediate visual feedback.
+                    self.sunset_pending = Some(value);
                 }
                 // Iced emits on_release for pointer drags, but not arrow keys or
                 // Ctrl+wheel. Commit a settled value for those interactions too.
-                Task::perform(async move {
+                let settle = Task::perform(async move {
                     futures_timer::Delay::new(Duration::from_millis(100)).await;
                     Message::SliderSettled { key, value, on_change }
-                }, |message| message)
+                }, |message| message);
+                Task::batch([settle, self.apply_pending_sunset()])
             }
 
             Message::SliderSettled { key, value, on_change } => {
@@ -463,11 +477,13 @@ impl CenterApp {
                 value,
                 on_change,
             } => {
+                if self.closing { return Task::none(); }
                 let value = self.slider_values.get(&key).copied().unwrap_or(value);
                 self.active_slider = None;
                 self.slider_values.insert(key.clone(), value);
                 if key == "Night Light" {
-                    sys::apply_sunset(value);
+                    self.sunset_pending = Some(value);
+                    return self.apply_pending_sunset();
                 } else if let Some(ChangeAction::Direct(action)) = on_change {
                     self.dispatch_action_with_value(&action, value);
                 }
@@ -491,9 +507,9 @@ impl CenterApp {
                 option,
                 action,
             } => {
-                self.selected_options.insert(key, option);
+                self.selected_options.insert(key, option.clone());
                 if let Some(act) = action {
-                    self.dispatch_action(&act);
+                    self.dispatch_action(&controls::with_value(&act, &option));
                 }
                 Task::none()
             }
@@ -517,13 +533,40 @@ impl CenterApp {
                 let (cpu, ram) = sys::cpu_ram();
                 self.cpu_text = cpu;
                 self.ram_text = ram;
-                self.poll_core_system_states();
+
                 // Dynamically sync theme palette with wallpaper
-                self.theme = AppTheme::load();
-                self.refresh_controls()
+                if let Some(theme) = AppTheme::load_generated() { self.theme = theme; }
+                Task::batch([self.refresh_core(), self.refresh_controls()])
             }
 
-            Message::CloseApp => iced::exit(),
+            Message::SunsetFinished => {
+                self.sunset_applying = false;
+                if self.closing && self.sunset_pending.is_none() { return iced::exit(); }
+                self.apply_pending_sunset()
+            }
+
+            Message::CoreLoaded { values, sunset_active } => {
+                self.core_loading = false;
+                self.sunset_active = sunset_active;
+                for (key, previous, value) in values {
+                    // A read begun before a slider edit must not undo that edit,
+                    // even if the user has already released the handle.
+                    if !(key == "Night Light" && (self.sunset_applying || self.sunset_pending.is_some()))
+                        && self.slider_values.get(&key).copied() == previous
+                        && let Some(value) = value
+                    { self.sync_slider(&key, value); }
+                }
+                Task::none()
+            }
+
+            Message::CloseApp | Message::EventOccurred(Event::Window(iced::window::Event::CloseRequested)) => {
+                // Finish the latest queued Night Light value before releasing
+                // workers; ordinary close remains immediate.
+                self.closing = true;
+                if self.sunset_applying { Task::none() }
+                else if self.sunset_pending.is_some() { self.apply_pending_sunset() }
+                else { iced::exit() }
+            },
 
             Message::ItemEntered(key) => {
                 self.hovered_item = Some(key);
@@ -538,15 +581,18 @@ impl CenterApp {
             }
 
             Message::ReloadConfig => {
-                self.theme = AppTheme::load();
-                if let Ok(mut cfg) = AppConfig::load() {
-                    expand_app_config_generators(&mut cfg);
-                    self.config = cfg;
-                    self.loaded_pages.clear();
-                    self.nav_stack = vec![NavView::Root(self.active_page_idx().min(self.config.pages.len().saturating_sub(1)))];
-                    self.lazy_load_page(self.active_page_idx());
-                    self.control_generation += 1;
-                    self.poll_core_system_states();
+                if let Some(theme) = AppTheme::load_generated() { self.theme = theme; }
+                match AppConfig::load() {
+                    Ok(mut cfg) => {
+                        expand_app_config_generators(&mut cfg);
+                        self.config = cfg;
+                        self.loaded_pages.clear();
+                        self.nav_stack = vec![NavView::Root(self.active_page_idx().min(self.config.pages.len().saturating_sub(1)))];
+                        self.lazy_load_page(self.active_page_idx());
+                        self.control_generation += 1;
+                        self.action_error = None;
+                    }
+                    Err(error) => { self.action_error = Some(format!("Reload: {error}")); }
                 }
                 self.refresh_controls()
             }
@@ -565,7 +611,7 @@ impl CenterApp {
                     if self.nav_stack.len() > 1 {
                         return self.update(Message::PopSubPage);
                     }
-                    return iced::exit();
+                    return self.update(Message::CloseApp);
                 }
                 if modifiers.control()
                     && matches!(key, Key::Character(ref c) if c == "r" || c == "R")
@@ -1871,7 +1917,7 @@ impl CenterApp {
         &'a self,
         item: &'a ItemConfig,
         badge_tag: &'a str,
-        _from_page: Option<usize>,
+        from_page: Option<usize>,
         radius: iced::border::Radius,
     ) -> Element<'a, Message> {
         let palette = self.theme;
@@ -1980,7 +2026,7 @@ impl CenterApp {
         .width(Length::Fill);
 
         let mut buttons_row = row![].spacing(0).align_y(Vertical::Center);
-        for (index, b) in item.properties.buttons.iter().enumerate() {
+        for (index, b) in item.properties.buttons.iter().enumerate().filter(|_| from_page.is_none()) {
             let style = b.style.clone();
             let is_suggested = style == "suggested";
             let icon_color = if is_suggested { palette.accent_fg }
@@ -2003,7 +2049,7 @@ impl CenterApp {
 
         // Multi-option selections for Voice Character Preset
         // Render title/description on top and flow wrapped pills underneath indented by 46px
-        if item.item_type == "selection" && item.properties.title == "Voice Character Preset" {
+        if from_page.is_none() && item.item_type == "selection" && item.properties.title == "Voice Character Preset" {
             let current = self.selected_options.get(&key).cloned().unwrap_or_default();
             let mut options_row = row![].spacing(6);
 
@@ -2089,7 +2135,7 @@ impl CenterApp {
         }
 
         // Right interactive widget
-        let right_widget: Element<'a, Message> = match item.item_type.as_str() {
+        let right_widget: Element<'a, Message> = match if from_page.is_some() { "navigation" } else { item.item_type.as_str() } {
             "toggle" => {
                 let is_active = self.toggle_states.get(&key).copied().unwrap_or(false);
                 let toggle_pair = item.on_toggle.clone();
@@ -2287,9 +2333,9 @@ impl CenterApp {
             "label" => {
                 let label_val = self
                     .live_labels
-                    .get(title)
+                    .get(&key)
                     .cloned()
-                    .unwrap_or_else(|| "Active".into());
+                    .unwrap_or_else(|| "…".into());
 
                 text(label_val)
                     .size(12)
@@ -2389,7 +2435,9 @@ impl CenterApp {
             .on_enter(Message::ItemEntered(key_enter))
             .on_exit(Message::ItemExited(key_exit));
 
-        if item.item_type == "navigation" {
+        if let Some(page) = from_page {
+            area = area.on_press(Message::SelectPage(page)).interaction(mouse::Interaction::Pointer);
+        } else if item.item_type == "navigation" {
             let sub_sections = item.layout.clone();
             let sub_title = title.clone();
             area = area
@@ -2438,7 +2486,7 @@ impl CenterApp {
         let expander_key = format!("expander:{}", key);
         let is_expanded = self.toggle_states.get(&expander_key).copied().unwrap_or(false);
 
-        if item.item_type == "expander" && is_expanded && !item.items.is_empty() {
+        if from_page.is_none() && item.item_type == "expander" && is_expanded && !item.items.is_empty() {
             let mut sub_col = column![].spacing(0);
             for sub_item in &item.items {
                 let divider = container(Space::new().width(Length::Fill).height(1))
@@ -3025,6 +3073,7 @@ fn substitute_action_vars(action: &mut ActionConfig, vars: &HashMap<String, Stri
         ActionConfig::Redirect { page } => {
             *page = sub(page);
         }
+        ActionConfig::Reload => (),
     }
 }
 
@@ -3054,6 +3103,10 @@ mod tests {
             hovered_item: None,
             active_slider: Some("Microphone".into()),
             sunset_active: false,
+            core_loading: false,
+            sunset_applying: false,
+            sunset_pending: None,
+            closing: false,
             service_statuses: HashMap::new(),
             busy_controls: HashSet::new(),
             unavailable_controls: HashSet::new(),
@@ -3113,6 +3166,125 @@ mod tests {
     }
 
     #[test]
+    fn hardware_refresh_is_deferred_and_cannot_overwrite_a_released_edit() {
+        let (mut app, _task) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
+        assert!(app.core_loading);
+        assert!(app.slider_values.is_empty(), "hardware queries must be deferred to the task");
+        assert_eq!(app.refresh_core().units(), 0, "only one hardware poll may run");
+        app.slider_values.insert("Volume".into(), 80.0);
+        let _ = app.update(Message::CoreLoaded {
+            values: vec![("Volume".into(), Some(50.0), Some(40.0)),
+                         ("Microphone".into(), None, Some(60.0))],
+            sunset_active: true,
+        });
+        assert_eq!(app.slider_values["Volume"], 80.0);
+        assert_eq!(app.slider_values["Microphone"], 60.0);
+        assert!(app.sunset_active);
+        assert!(!app.core_loading);
+    }
+
+    #[test]
+    fn night_light_writes_coalesce_while_the_ui_remains_responsive() {
+        let (mut app, _task) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
+        let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 20.0, on_change: None });
+        assert!(app.sunset_applying);
+        let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 30.0, on_change: None });
+        let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 40.0, on_change: None });
+        assert_eq!(app.sunset_pending, Some(40.0));
+        let _ = app.update(Message::CoreLoaded {
+            values: vec![("Night Light".into(), Some(40.0), Some(10.0))], sunset_active: true,
+        });
+        assert_eq!(app.slider_values["Night Light"], 40.0);
+        let _ = app.update(Message::CloseApp);
+        assert!(app.closing);
+        let _ = app.update(Message::SliderReleased { key: "Night Light".into(), value: 40.0, on_change: None });
+        assert_eq!(app.sunset_pending, Some(40.0), "release during close must not enqueue another write");
+        let _ = app.update(Message::SunsetFinished);
+        assert!(app.sunset_applying);
+        assert_eq!(app.sunset_pending, None);
+        let exit = app.update(Message::SunsetFinished);
+        assert!(!app.sunset_applying);
+        assert!(exit.units() > 0);
+    }
+
+    #[test]
+    fn worker_tasks_and_reload_run_with_isolated_command_fixtures() {
+        use iced_futures::futures::{executor::block_on, StreamExt};
+        use std::os::unix::fs::PermissionsExt;
+        if let Some(root) = std::env::var_os("DUSKY_WORKER_FIXTURE") {
+            let root = std::path::PathBuf::from(root);
+            let (mut app, initial) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
+            let actions = block_on(iced_runtime::task::into_stream(initial).unwrap().collect::<Vec<_>>());
+            for action in actions {
+                if let iced_runtime::Action::Output(message) = action { let _ = app.update(message); }
+            }
+            assert_eq!(app.slider_values["Volume"], 50.0);
+            assert_eq!(app.slider_values["Microphone"], 50.0);
+            assert!(app.sunset_active);
+            let first = app.update(Message::SliderChanged { key: "Night Light".into(), value: 20.0, on_change: None });
+            let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 40.0, on_change: None });
+            let _ = app.update(Message::CloseApp);
+            let actions = block_on(iced_runtime::task::into_stream(first).unwrap().collect::<Vec<_>>());
+            let mut pending = Vec::new();
+            for action in actions {
+                if let iced_runtime::Action::Output(message) = action
+                    && let Some(stream) = iced_runtime::task::into_stream(app.update(message))
+                { pending.extend(block_on(stream.collect::<Vec<_>>())); }
+            }
+            for action in pending {
+                if let iced_runtime::Action::Output(message) = action { let _ = app.update(message); }
+            }
+            assert!(!app.sunset_applying);
+            assert_eq!(std::fs::read_to_string(root.join("writes")).unwrap(), "5400\n4300\n");
+            assert_eq!(std::fs::read_to_string(sys::sunset_state_file()).unwrap(), "4300\n");
+            let colors = root.join("matugen/generated");
+            std::fs::create_dir_all(&colors).unwrap();
+            let palette = colors.join("dusky_center.json");
+            std::fs::write(&palette, r##"{"bg":"#123456","fg":"#eeeeee","accent":"#aabbcc","secondary":"#778899","tertiary":"#8899aa"}"##).unwrap();
+            let _ = app.update(Message::Tick);
+            let valid_theme = app.theme;
+            assert_eq!(valid_theme.bg, Color::from_rgb8(0x12, 0x34, 0x56));
+            std::fs::write(&palette, "{").unwrap();
+            let _ = app.update(Message::Tick);
+            assert_eq!(app.theme, valid_theme);
+            std::fs::remove_file(&palette).unwrap();
+            let _ = app.update(Message::Tick);
+            assert_eq!(app.theme, valid_theme);
+            std::fs::write(root.join("dusky_config.toml"), "pages = [").unwrap();
+            let _ = app.update(Message::ReloadConfig);
+            assert!(app.action_error.as_ref().unwrap().starts_with("Reload:"));
+            assert!(app.config.pages.is_empty());
+            assert_eq!(app.theme, valid_theme);
+            std::fs::write(root.join("dusky_config.toml"), "[[pages]]\nid='fixture'\ntitle='Fixture'\n").unwrap();
+            let _ = app.update(Message::ExecuteAction(ActionConfig::Reload));
+            assert_eq!(app.config.pages[0].id, "fixture");
+            assert!(app.action_error.is_none());
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("dusky-worker-fixture-{}", std::process::id()));
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for (name, body) in [
+            ("wpctl", "printf 'Volume: 0.50\\n'"),
+            ("systemctl", "printf 'active\\n'"),
+            ("hyprsunset", "exit 0"),
+            ("hyprctl", "if [ \"$2\" = identity ]; then printf 'false\\n'; elif [ $# -eq 2 ]; then printf '4500\\n'; else printf '%s\\n' \"$3\" >> \"$DUSKY_WORKER_FIXTURE/writes\"; fi"),
+        ] {
+            let path = bin.join(name);
+            std::fs::write(&path, format!("#!/usr/bin/bash\n{body}\n")).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "ui::tests::worker_tasks_and_reload_run_with_isolated_command_fixtures", "--nocapture"])
+            .current_dir(&root).env("DUSKY_WORKER_FIXTURE", &root)
+            .env("PATH", &bin).env("HOME", &root).env("XDG_CONFIG_HOME", &root)
+            .env("XDG_RUNTIME_DIR", &root).env("HYPRLAND_INSTANCE_SIGNATURE", "fixture")
+            .output().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(result.status.success(), "{}{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+    }
+
+    #[test]
     fn test_to_pretty_title() {
         assert_eq!(to_pretty_title("wg0"), "Wg0");
         assert_eq!(to_pretty_title("mullvad_us-nyc"), "Mullvad Us Nyc");
@@ -3125,6 +3297,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&temp_dir);
         let file_path = temp_dir.join("test-wg.conf");
         let _ = std::fs::write(&file_path, "[Interface]\n");
+        std::fs::write(temp_dir.join("z-second.conf"), "[Interface]\n").unwrap();
 
         let item = ItemConfig {
             item_type: "file_generator".to_string(),
@@ -3156,6 +3329,7 @@ mod tests {
                     item_type: "toggle".to_string(),
                     properties: crate::config::ItemProperties {
                         title: "Connect {name}".to_string(),
+                        key: "wireguard/{name}".to_string(),
                         state_command: "wg show {name}".to_string(),
                         ..Default::default()
                     },
@@ -3193,7 +3367,9 @@ mod tests {
         let generated = expand_file_generator(&item);
         let _ = std::fs::remove_dir_all(&temp_dir);
 
-        assert_eq!(generated.len(), 1);
+        assert_eq!(generated.len(), 2);
+        assert_eq!(generated[0].items[0].properties.key, "wireguard/test-wg");
+        assert_eq!(generated[1].items[0].properties.key, "wireguard/z-second");
         let first = &generated[0];
         assert_eq!(first.properties.title, "Test Wg");
         assert_eq!(first.properties.description, "test-wg.conf");

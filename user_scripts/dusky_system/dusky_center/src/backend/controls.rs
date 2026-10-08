@@ -1,6 +1,6 @@
 //! Queries and verified writes for TOML controls. Called on executor workers.
 use super::cmd::{atomic_write_text, run_command, run_shell};
-use crate::config::{ActionConfig, ItemConfig};
+use crate::config::{ActionConfig, ItemConfig, ValueConfig};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -73,6 +73,7 @@ pub struct Snapshot {
     pub selections: Vec<(String, String)>,
     pub sliders: Vec<(String, f32)>,
     pub entries: Vec<(String, String)>,
+    pub labels: Vec<(String, String)>,
 }
 
 pub fn query(items: &[ItemConfig]) -> Snapshot {
@@ -80,6 +81,9 @@ pub fn query(items: &[ItemConfig]) -> Snapshot {
     for item in items {
         let p = &item.properties;
         let key = item_key(item);
+        if item.item_type == "label" {
+            result.labels.push((key.clone(), label_value(item.value.as_ref()).unwrap_or_else(|| "N/A".into())));
+        }
         if matches!(item.item_type.as_str(), "entry" | "secret")
             && !p.value_command.is_empty()
             && let Some(out) =
@@ -185,6 +189,36 @@ pub fn query(items: &[ItemConfig]) -> Snapshot {
     result
 }
 
+fn label_value(value: Option<&ValueConfig>) -> Option<String> {
+    match value? {
+        ValueConfig::Static { text } => Some(text.clone()),
+        ValueConfig::Exec { command } => run_shell(command, Duration::from_secs(4), true)
+            .filter(|out| out.status).map(|out| out.stdout.trim().to_string()),
+        ValueConfig::File { path } => std::fs::read_to_string(expand_arg(path))
+            .ok().map(|raw| raw.trim().to_string()),
+        ValueConfig::System { key } => match key.as_str() {
+            "kernel_version" => std::fs::read_to_string("/proc/sys/kernel/osrelease")
+                .ok().map(|raw| raw.trim().to_string()),
+            "cpu_model" => std::fs::read_to_string("/proc/cpuinfo").ok()?
+                .lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    (name.trim() == "model name").then(|| value.trim().split(" @").next().unwrap_or_default().to_string())
+                }),
+            "memory_total" | "memory_used" => {
+                let raw = std::fs::read_to_string("/proc/meminfo").ok()?;
+                let field = |name: &str| raw.lines().find_map(|line| {
+                    let (key, value) = line.split_once(':')?;
+                    (key == name).then(|| value.split_whitespace().next()?.parse::<u64>().ok()).flatten()
+                });
+                let total = field("MemTotal")?;
+                let kb = if key == "memory_used" { total.saturating_sub(field("MemAvailable")?) } else { total };
+                Some(format!("{:.1} GB", kb as f64 / 1_048_576.0))
+            }
+            _ => None,
+        },
+    }
+}
+
 fn parse_services(scope: &str, raw: &str) -> HashMap<String, ServiceStatus> {
     let mut result = HashMap::new();
     for block in raw.split("\n\n") {
@@ -279,7 +313,7 @@ pub fn action_argv(action: &ActionConfig) -> Vec<String> {
             *terminal,
             *requires_root,
         ),
-        ActionConfig::Redirect { .. } => return vec![],
+        ActionConfig::Redirect { .. } | ActionConfig::Reload => return vec![],
     };
     if root && argv.first().is_some_and(|a| a != "pkexec") {
         argv.insert(0, "pkexec".into());
@@ -402,7 +436,7 @@ pub fn run_action(action: &ActionConfig) -> Result<(), String> {
             timeout,
             ..
         } => (*terminal, mode.as_str(), timeout.unwrap_or(45)),
-        ActionConfig::Redirect { .. } => return Ok(()),
+        ActionConfig::Redirect { .. } | ActionConfig::Reload => return Ok(()),
     };
     if terminal || mode == "launch" {
         launch(action)
@@ -456,6 +490,25 @@ pub fn set_toggle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn configured_label_sources_report_values_and_query_failures() {
+        let path = std::env::temp_dir().join(format!("dusky-label-{}", std::process::id()));
+        std::fs::write(&path, "fixture version\n").unwrap();
+        let file: ItemConfig = toml::from_str(&format!("type='label'\n[properties]\ntitle='Version'\n[value]\ntype='file'\npath='{}'", path.display())).unwrap();
+        let exec: ItemConfig = toml::from_str("type='label'\n[properties]\ntitle='Status'\n[value]\ntype='exec'\ncommand='printf actual'").unwrap();
+        let failed: ItemConfig = toml::from_str("type='label'\n[properties]\ntitle='Absent'\n[value]\ntype='exec'\ncommand='exit 1'").unwrap();
+        let labels: HashMap<_, _> = query(&[file, exec, failed]).labels.into_iter().collect();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(labels["Version"], "fixture version");
+        assert_eq!(labels["Status"], "actual");
+        assert_eq!(labels["Absent"], "N/A");
+        assert_eq!(label_value(Some(&ValueConfig::Static { text: "literal".into() })), Some("literal".into()));
+        for key in ["cpu_model", "kernel_version", "memory_total", "memory_used"] {
+            let value = label_value(Some(&ValueConfig::System { key: key.into() })).unwrap();
+            assert!(!value.is_empty(), "{key}");
+        }
+    }
+
     #[test]
     fn structured_actions_preserve_arguments_and_shell_programs() {
         let action: ActionConfig =

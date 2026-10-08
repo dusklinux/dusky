@@ -64,9 +64,7 @@ title = "Reload CC"
 icon = "system-reboot-symbolic"
 style = "destructive"
 [pages.layout.items.on_press]
-type = "exec"
-command = "$HOME/user_scripts/dusky_system/reload_cc/cc_restart.sh"
-terminal = false
+type = "reload"
 
 [[pages.layout.items]]
 type = "grid_card"
@@ -282,7 +280,7 @@ style = "destructive"
 button_text = "Orchestra"
 [pages.layout.items.on_press]
 type = "exec"
-command = "kitty --class ORCHESTRA.sh --hold sh -c $HOME/user_scripts/arch_setup_scripts/ORCHESTRA.sh"
+command = 'kitty --class orchestrator --hold "$HOME/user_scripts/arch_setup_scripts/orchestrator.sh"'
 terminal = false
 
 [[pages.layout]]
@@ -1915,6 +1913,8 @@ icon = "network-vpn-symbolic"
 type = "toggle"
 [pages.layout.items.layout.items.item_template.items.properties]
 title = "Enable Tunnel"
+key = "wireguard/{name}"
+persistence = "action"
 description = "Bring tunnel up or down"
 icon = "network-vpn-symbolic"
 state_command = "$HOME/user_scripts/dusky_system/control_center/lib/wireguard_status.py {name}"
@@ -4339,7 +4339,7 @@ icon = "view-grid-symbolic"
 style = "suggested"
 [pages.layout.items.on_press]
 type = "exec"
-command = "kitty --class DuskyKeybindsCheatsheet --title \"Dusky Keybinds Cheatsheet\" -e python3.14 $HOME/user_scripts/hypr/input/keybinds_cheatsheet.py"
+command = "kitty --class DuskyKeybindsCheatsheet --title \"Dusky Keybinds Cheatsheet\" -e python3 $HOME/user_scripts/hypr/input/keybinds_cheatsheet.py"
 
 [[pages]]
 id = "tools_and_ai"
@@ -5038,7 +5038,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.on_press]
 type = "exec"
-command = "\"$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force\""
+command = "\"$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py\" --force"
 terminal = false
 
 [[pages.layout.items]]

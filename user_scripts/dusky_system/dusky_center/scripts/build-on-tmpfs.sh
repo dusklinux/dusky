@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build and check dusky-center exclusively on tmpfs (RAM) to prevent disk write amplification.
 set -euo pipefail
-readonly PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly PROJECT_DIR
 mode="${1:---check}"
 
 CARGO_TARGET_DIR="$(realpath -m -- "${CARGO_TARGET_DIR:-/tmp/dusky-center-target-$UID}")"

@@ -97,6 +97,7 @@ fn main() -> iced::Result {
             "--width" | "-w" => {
                 if let Some(w_str) = args_iter.next()
                     && let Ok(w) = w_str.parse::<f32>()
+                    && w.is_finite() && w > 0.0
                 {
                     win_width = w;
                 }
@@ -104,6 +105,7 @@ fn main() -> iced::Result {
             "--height" => {
                 if let Some(h_str) = args_iter.next()
                     && let Ok(h) = h_str.parse::<f32>()
+                    && h.is_finite() && h > 0.0
                 {
                     win_height = h;
                 }
@@ -141,7 +143,7 @@ fn main() -> iced::Result {
             application_id: "dusky-center".into(),
             override_redirect: false,
         },
-        exit_on_close_request: true,
+        exit_on_close_request: false,
         ..Default::default()
     };
 

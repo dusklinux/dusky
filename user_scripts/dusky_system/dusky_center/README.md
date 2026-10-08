@@ -70,10 +70,11 @@ TOML is resolved in this order:
 2. `$XDG_CONFIG_HOME/dusky/dusky_config.toml` (normally `~/.config/dusky/`).
 3. `$HOME/user_scripts/dusky_system/dusky_center/dusky_config.toml`.
 4. `dusky_config.toml` beside the running executable.
+5. `/usr/share/dusky-center/dusky_config.toml` (packaged defaults).
 
 Ctrl+R reloads configuration and colors. Ctrl+F opens search. All 18 pages are
 parsed from TOML; supported widgets are rendered by `src/ui.rs`. See
-[REVIEW.md](REVIEW.md) for migration gaps; parsing a property does not mean its
+[AUDIT.md](AUDIT.md) for current findings and remaining migration gaps; parsing a property does not mean its
 behavior has been implemented.
 
 Home uses `type = "controls"` sections named Audio and Display. Audio contains
@@ -105,3 +106,20 @@ sRGB mixes to avoid the GPU alpha blending brightening them.
 Entries initialize from `value_command`, keep unsaved edits while polling, and
 submit through `on_action` with argument-safe value substitution. Structured
 argv actions keep each argument intact.
+
+The native `type = "reload"` action reloads configuration and colors in place.
+Home hardware polling and Night Light IPC run on executor workers. Hardware
+polls do not overlap; older reads cannot overwrite a changed slider value.
+Night Light keeps one write in progress and the latest pending value. Closing
+waits for those bounded writes to finish, so the last requested value is retained.
+Search rows open their owning page before interaction; state queries continue
+there. Labels evaluate their configured exec/file/system/static sources on workers
+and show `N/A` when a source cannot be read.
+
+Setup preserves existing editable TOML, so source-default corrections are not
+automatically merged into previously installed configurations. In particular,
+`type = "reload"` requires a binary rebuilt from the current sources.
+
+A failed reload keeps the current configuration and displays the error. Temporary
+missing or malformed generated palettes retain the current colors during polling
+and reload; startup still uses the built-in palette if no valid colors exist.
