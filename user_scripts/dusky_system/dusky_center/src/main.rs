@@ -39,8 +39,11 @@ fn print_help() {
     println!("Dusky Center (Rust)");
     println!("Usage: dusky-center [OPTIONS]\n");
     println!("Options:");
-    println!("  --version, -v   Show version and exit");
-    println!("  --help, -h      Show this help");
+    println!("  --version, -v        Show version and exit");
+    println!("  --page, -p <PG>      Open directly to page PG (e.g. audio, system)");
+    println!("  --width, -w <WIDTH>  Set initial window width");
+    println!("  --height <HEIGHT>    Set initial window height");
+    println!("  --help, -h           Show this help");
     println!("\nBehavior:");
     println!("  Full system control center (Iced + Wayland xdg-toplevel).");
     println!("  Esc or window close exits and frees all memory.");
@@ -70,23 +73,42 @@ impl SingleInstanceGuard {
 
 fn main() -> iced::Result {
     renderer::trace_startup();
-    let args: Vec<String> = env::args().collect();
-    if args.len() > 2 {
-        eprintln!("Expected at most one option; use --help for usage");
-        std::process::exit(2);
-    }
-    let option = args.get(1).map(String::as_str);
-    if matches!(option, Some("--help" | "-h")) {
-        print_help();
-        return Ok(());
-    }
-    if matches!(option, Some("--version" | "-v" | "-V")) {
-        println!("dusky-center {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
-    }
-    if let Some(unknown) = option {
-        eprintln!("Unknown option: {unknown}; use --help for usage");
-        std::process::exit(2);
+    let mut initial_page = None;
+    let mut win_width = 670.0_f32;
+    let mut win_height = 720.0_f32;
+    let mut args_iter = env::args().skip(1);
+    while let Some(arg) = args_iter.next() {
+        match arg.as_str() {
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
+            }
+            "--version" | "-v" | "-V" => {
+                println!("dusky-center {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            "--page" | "-p" => {
+                initial_page = args_iter.next();
+            }
+            "--width" | "-w" => {
+                if let Some(w_str) = args_iter.next() {
+                    if let Ok(w) = w_str.parse::<f32>() {
+                        win_width = w;
+                    }
+                }
+            }
+            "--height" => {
+                if let Some(h_str) = args_iter.next() {
+                    if let Ok(h) = h_str.parse::<f32>() {
+                        win_height = h;
+                    }
+                }
+            }
+            unknown => {
+                eprintln!("Unknown option: {unknown}; use --help for usage");
+                std::process::exit(2);
+            }
+        }
     }
 
     let _guard = match SingleInstanceGuard::acquire() {
@@ -107,7 +129,7 @@ fn main() -> iced::Result {
     };
 
     let window_settings = iced::window::Settings {
-        size: iced::Size::new(670.0, 720.0),
+        size: iced::Size::new(win_width, win_height),
         min_size: Some(iced::Size::new(500.0, 420.0)),
         resizable: true,
         decorations: false,
@@ -119,8 +141,9 @@ fn main() -> iced::Result {
         ..Default::default()
     };
 
+    let initial_page_c = initial_page.clone();
     iced::application(
-        move || CenterApp::new(app_config.clone()),
+        move || CenterApp::new(app_config.clone(), initial_page_c.clone()),
         CenterApp::update,
         CenterApp::view,
     )

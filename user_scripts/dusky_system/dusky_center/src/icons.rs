@@ -1,14 +1,103 @@
-//! Embedded, font-independent vector icons on a 24 × 24 optical grid.
+//! Embedded and system-native vector icons on a 24 × 24 optical grid.
 //!
+//! Direct Freedesktop icon theme integration (Papirus-Dark, Papirus, Adwaita)
+//! with embedded zero-dependency fallback vector graphics.
 //! Rendered directly via Iced's Rust SVG renderer (wgpu).
-//! Guarantees crisp rendering without relying on system font glyphs.
 
 use iced_core::Color;
 use iced_widget::svg;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 type Element<'a, Message> = iced::Element<'a, Message>;
+
+fn is_embedded_control_icon(name: &str) -> bool {
+    matches!(
+        name,
+        "search"
+            | "close"
+            | "sidebar"
+            | "chevron_left"
+            | "chevron_right"
+            | "chevron_down"
+            | "check"
+    )
+}
+
+fn find_system_icon(name: &str) -> Option<PathBuf> {
+    if name.is_empty() || name == "dot" {
+        return None;
+    }
+
+    if name.starts_with('/') {
+        let p = PathBuf::from(name);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    if let Some(stripped) = name.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            let p = PathBuf::from(home).join(stripped);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+
+    let cand_with_symbolic = if name.ends_with("-symbolic") {
+        name.to_string()
+    } else {
+        format!("{name}-symbolic")
+    };
+    let cand_plain = name.trim_end_matches("-symbolic").to_string();
+
+    let candidates = [cand_with_symbolic.as_str(), cand_plain.as_str(), name];
+
+    // Priority order: Papirus-Dark, Papirus, Adwaita, hicolor
+    let themes = ["Papirus-Dark", "Papirus", "Adwaita", "hicolor"];
+    let sizes = ["24x24", "22x22", "16x16"];
+    let categories = [
+        "actions",
+        "apps",
+        "devices",
+        "categories",
+        "mimetypes",
+        "status",
+        "places",
+        "emblems",
+    ];
+
+    for cand in candidates {
+        for theme in themes {
+            for size in sizes {
+                for cat in categories {
+                    let p = PathBuf::from(format!(
+                        "/usr/share/icons/{theme}/{size}/symbolic/{cat}/{cand}.svg"
+                    ));
+                    if p.is_file() {
+                        return Some(p);
+                    }
+                }
+            }
+            // Root symbolic category (used in Adwaita)
+            for cat in categories {
+                let p = PathBuf::from(format!(
+                    "/usr/share/icons/{theme}/symbolic/{cat}/{cand}.svg"
+                ));
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+            // Direct symbolic (e.g. /usr/share/icons/{theme}/symbolic/{cand}.svg)
+            let p = PathBuf::from(format!("/usr/share/icons/{theme}/symbolic/{cand}.svg"));
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
 
 fn get_svg_path(name: &str) -> &'static str {
     match name {
@@ -22,7 +111,7 @@ fn get_svg_path(name: &str) -> &'static str {
         "memory" | "memory-symbolic" => {
             "M6 4h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2zm2 5h8M8 12h8M8 15h8"
         }
-        "disk" | "disk_and_files" | "drive-multidisk-symbolic" | "system-file-manager-symbolic" => {
+        "disk" | "disk_and_files" | "drive-multidisk-symbolic" | "system-file-manager-symbolic" | "drive-harddisk-symbolic" => {
             "M4 6h16a1 1 0 011 1v3a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1zm0 8h16a1 1 0 011 1v3a1 1 0 01-1 1H4a1 1 0 01-1-1v-3a1 1 0 011-1zm13-5h.01M17 17h.01"
         }
         "network" | "network-wireless-symbolic" | "network-workgroup-symbolic" | "wifi" => {
@@ -37,31 +126,37 @@ fn get_svg_path(name: &str) -> &'static str {
         "display" | "video-display-symbolic" | "monitor" => {
             "M4 5h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zm4 15h8m-4-4v4"
         }
-        "audio" | "audio-volume-high-symbolic" | "volume" => {
+        "audio" | "audio-volume-high-symbolic" | "volume" | "audio-card-symbolic" => {
             "M11 5L6 9H2v6h4l5 4V5zm4.5 3a5 5 0 010 8m2.5-11a9 9 0 010 14"
+        }
+        "audio-headset-symbolic" | "headset" => {
+            "M12 3a9 9 0 00-9 9v4a3 3 0 003 3h1v-7H5v-0a7 7 0 0114 0v0h-2v7h1a3 3 0 003-3v-4a9 9 0 00-9-9z"
+        }
+        "audio-input-microphone-symbolic" | "microphone" => {
+            "M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3zm5 9a5 5 0 01-10 0H5a7 7 0 006 6.92V21h2v-3.08A7 7 0 0019 11h-2z"
         }
         "visuals" | "applications-graphics-symbolic" | "palette" => {
             "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-1 0-.83.67-1.5 1.5-1.5H16c3.31 0 6-2.69 6-6 0-4.97-4.48-9-10-9z"
         }
-        "components" | "emblem-system-symbolic" | "settings" => {
+        "components" | "emblem-system-symbolic" | "settings" | "preferences-system-symbolic" => {
             "M12 8a4 4 0 100 8 4 4 0 000-8zm8 4c0-.34-.03-.68-.08-1.01l2.06-1.61-2-3.46-2.43.98a7.9 7.9 0 00-1.75-1.01L15.42 3h-4l-.38 2.89c-.62.26-1.21.6-1.75 1.01l-2.43-.98-2 3.46 2.06 1.61A8.2 8.2 0 006.84 12c0 .34.03.68.08 1.01l-2.06 1.61 2 3.46 2.43-.98c.54.41 1.13.75 1.75 1.01L11.42 21h4l.38-2.89c.62-.26 1.21-.6 1.75-1.01l2.43.98 2-3.46-2.06-1.61c.05-.33.08-.67.08-1.01z"
         }
         "services" | "system-run-symbolic" | "bolt" => {
             "M13 2L4 14h7l-1 8 10-13h-7z"
         }
-        "configs" | "emblem-documents-symbolic" | "document" => {
+        "configs" | "emblem-documents-symbolic" | "document" | "document-edit-symbolic" => {
             "M6 2h8l6 6v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2zm7 1.5V8h4.5"
         }
         "tools_and_ai" | "utilities-terminal-symbolic" | "terminal" => {
             "M4 17l6-5-6-5m8 10h6"
         }
-        "setup" | "setup_features" | "system-software-install-symbolic" | "download" => {
+        "setup" | "setup_features" | "system-software-install-symbolic" | "download" | "folder-download-symbolic" => {
             "M12 3v12m-5-5l5 5 5-5M5 19h14"
         }
         "troubleshoot" | "tools-check-spelling-symbolic" | "wrench" => {
             "M14.7 6.3a1 1 0 000 1.4l1.6 1.6-5.4 5.4a2 2 0 01-1.4.6H7a1 1 0 01-1-1v-2.5a2 2 0 01.6-1.4l5.4-5.4 1.6 1.6a1 1 0 001.4 0l.7-.7a3 3 0 00-4.2-4.2l-.7.7"
         }
-        "about" | "about_dusky" | "info" => {
+        "about" | "about_dusky" | "info" | "help-about-symbolic" | "dialog-information-symbolic" => {
             "M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
         }
 
@@ -69,7 +164,7 @@ fn get_svg_path(name: &str) -> &'static str {
         "search" | "system-search-symbolic" => {
             "M11 19a8 8 0 100-16 8 8 0 000 16zm10 2l-4.35-4.35"
         }
-        "refresh" | "system-reboot-symbolic" => {
+        "refresh" | "system-reboot-symbolic" | "view-refresh-symbolic" => {
             "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
         }
         "close" | "window-close-symbolic" => {
@@ -81,7 +176,7 @@ fn get_svg_path(name: &str) -> &'static str {
         "dark_mode" | "weather-clear-night-symbolic" | "moon" => {
             "M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"
         }
-        "brightness" | "sun" => {
+        "brightness" | "sun" | "preferences-color-symbolic" => {
             "M12 3v2m0 14v2m9-9h-2M5 12H3m15.36-6.36l-1.41 1.41M7.05 16.95l-1.41 1.41m12.72 0l-1.41-1.41M7.05 7.05L5.64 5.64M12 8a4 4 0 100 8 4 4 0 000-8z"
         }
         "update" | "software-update-available-symbolic" => {
@@ -105,7 +200,19 @@ fn get_svg_path(name: &str) -> &'static str {
         "power-profile-balanced-symbolic" | "power-profile-performance-symbolic" | "power-profile-power-saver-symbolic" | "gauge" | "speedometer" => {
             "M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16zm-1-9.5V8a1 1 0 112 0v2.5l2.12 2.12a1 1 0 01-1.41 1.41L11 11.41z"
         }
-        _ => "M12 12m-3 0a3 3 0 106 0 3 3 0 10-6 0",
+        "media-record-symbolic" | "record" => {
+            "M12 18a6 6 0 100-12 6 6 0 000 12z"
+        }
+        "drive-removable-media-usb-symbolic" | "usb" => {
+            "M7 7h10v3l-5 5-5-5V7zm5 8v5m-3 0h6"
+        }
+        "utilities-system-monitor-symbolic" | "chart" => {
+            "M3 3v18h18M7 16l4-6 4 4 5-8"
+        }
+        "dot" => {
+            "M12 12m-3 0a3 3 0 106 0 3 3 0 10-6 0"
+        }
+        _ => "M4 6a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm4 6h8m-8-3h8m-8 6h5",
     }
 }
 
@@ -117,15 +224,33 @@ pub fn render_icon<'a, Message: 'static>(
     static CACHE: OnceLock<std::sync::Mutex<HashMap<String, svg::Handle>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
 
-    let path_str = get_svg_path(name);
     let mut lock = cache.lock().unwrap();
 
-    let handle = lock.entry(name.to_string()).or_insert_with(|| {
-        let svg_bytes = format!(
-            r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="{path_str}" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
-        );
-        svg::Handle::from_memory(svg_bytes.into_bytes())
-    }).clone();
+    let handle = lock
+        .entry(name.to_string())
+        .or_insert_with(|| {
+            // 1. Controls strictly using embedded vectors
+            if is_embedded_control_icon(name) {
+                let path_str = get_svg_path(name);
+                let svg_bytes = format!(
+                    r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="{path_str}" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
+                );
+                return svg::Handle::from_memory(svg_bytes.into_bytes());
+            }
+
+            // 2. Discover system SVG icons (Papirus-Dark, Papirus, Adwaita, hicolor)
+            if let Some(sys_path) = find_system_icon(name) {
+                return svg::Handle::from_path(sys_path);
+            }
+
+            // 3. Fallback to embedded vector icon
+            let path_str = get_svg_path(name);
+            let svg_bytes = format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="{path_str}" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
+            );
+            svg::Handle::from_memory(svg_bytes.into_bytes())
+        })
+        .clone();
 
     svg(handle)
         .width(size)

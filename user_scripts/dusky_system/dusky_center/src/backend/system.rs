@@ -577,6 +577,26 @@ pub fn is_sunset_service_enabled() -> bool {
     out.map(|o| o.status).unwrap_or(false)
 }
 
+pub fn is_sunset_active() -> bool {
+    if !has_sunset() {
+        return false;
+    }
+    let Some(sys) = which("systemctl") else {
+        return false;
+    };
+    let out = run_command(
+        &[
+            sys,
+            "--user".into(),
+            "is-active".into(),
+            "hyprsunset.service".into(),
+        ],
+        Duration::from_millis(300),
+        true,
+    );
+    out.map(|o| o.status && o.stdout.trim() == "active").unwrap_or(false)
+}
+
 // Keep cache/IPC temperatures in kelvin; expose increasing warmth to the UI.
 const SUNSET_NEUTRAL: f32 = 6500.0;
 const SUNSET_WARMEST: f32 = 1000.0;

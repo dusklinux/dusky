@@ -1,19 +1,24 @@
 //! Dusky Center UI: Pure Rust native control center for Arch Linux / Hyprland.
 //!
-//! Visual parity with Dusky Control Center (GTK) using Iced and wgpu.
+//! Visual parity with Dusky Control Center (GTK) and Dusky Tray using Iced and wgpu.
 //! Features:
-//! - 3-column quick hero cards with solid accent highlights.
+//! - 3-column quick hero cards with uniform geometry and solid accent highlights.
 //! - Sub-15ms cold start with lazy-loading for background pages.
 //! - Native Wayland xdg-toplevel windowing (movable, resizable, tileable).
 //! - Dynamic wallpaper theme sync via Matugen.
+//! - Dusky Tray slider design with pill-shaped rails and white handles.
+//! - PickList dropdown for performance profile selection.
+//! - Seamless top header bar and auto-hiding slim scrollbars.
 
 use iced::alignment::{Horizontal, Vertical};
 use iced::font::Weight;
 use iced::keyboard::Key;
 use iced::keyboard::key::Named;
+use iced::overlay::menu;
+use iced::widget::operation;
 use iced::widget::{
-    Space, button, column, container, mouse_area, row, scrollable, slider, text, text_input,
-    toggler,
+    Space, button, column, container, mouse_area, pick_list, row, scrollable, slider, text,
+    text_input, toggler,
 };
 use iced::{Border, Color, Event, Length, Padding, Subscription, Task};
 
@@ -29,6 +34,8 @@ use crate::icons::render_icon;
 use crate::theme::AppTheme;
 
 pub type Element<'a, Message> = iced::Element<'a, Message>;
+
+const PROFILE_OPTIONS: [&str; 3] = ["Balanced", "Performance", "Power Saver"];
 
 // ---------------------------------------------------------------------------
 // Navigation Stack
@@ -75,7 +82,7 @@ pub enum Message {
         value: f32,
         on_change: Option<ChangeAction>,
     },
-    CycleActiveProfile,
+    ProfileSelected(String),
     SelectOption {
         key: String,
         option: String,
@@ -115,12 +122,26 @@ pub struct CenterApp {
 }
 
 impl CenterApp {
-    pub fn new(config: AppConfig) -> (Self, Task<Message>) {
+    pub fn new(config: AppConfig, initial_page: Option<String>) -> (Self, Task<Message>) {
         let (cpu, ram) = sys::cpu_ram();
+        let start_page = if let Some(ref target) = initial_page {
+            let target_lower = target.to_lowercase();
+            config
+                .pages
+                .iter()
+                .position(|p| {
+                    p.id.to_lowercase() == target_lower
+                        || p.title.to_lowercase() == target_lower
+                })
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
         let mut app = Self {
             config,
             theme: AppTheme::load(),
-            nav_stack: vec![NavView::Root(0)],
+            nav_stack: vec![NavView::Root(start_page)],
             sidebar_open: true,
             search_open: false,
             search_query: String::new(),
@@ -135,8 +156,8 @@ impl CenterApp {
             active_profile: "Balanced".to_string(),
         };
 
-        // LAZY LOADING: Only initialize page 0 ("Home") on cold start!
-        app.lazy_load_page(0);
+        // LAZY LOADING: Only initialize active page on cold start!
+        app.lazy_load_page(start_page);
         app.poll_core_system_states();
 
         (app, Task::none())
@@ -191,12 +212,15 @@ impl CenterApp {
             self.toggle_states.insert("dusky_theme/state".into(), is_dark);
         }
 
-        // Live volume & brightness
+        // Live volume & brightness & night light
         if let Some(vol) = sys::get_volume() {
             self.slider_values.insert("Volume".into(), vol);
         }
         if let Some(bri) = sys::get_brightness() {
             self.slider_values.insert("Brightness".into(), bri);
+        }
+        if let Some(sunset) = sys::get_sunset() {
+            self.slider_values.insert("Night Light".into(), sunset);
         }
 
         // TLP active power profile
@@ -264,10 +288,12 @@ impl CenterApp {
 
             Message::ToggleSearch => {
                 self.search_open = !self.search_open;
-                if !self.search_open {
+                if self.search_open {
+                    operation::focus("search_input")
+                } else {
                     self.search_query.clear();
+                    Task::none()
                 }
-                Task::none()
             }
 
             Message::SearchChanged(q) => {
@@ -304,7 +330,10 @@ impl CenterApp {
             }
 
             Message::SliderChanged { key, value } => {
-                self.slider_values.insert(key, value);
+                self.slider_values.insert(key.clone(), value);
+                if key == "Night Light" {
+                    sys::apply_sunset(value);
+                }
                 Task::none()
             }
 
@@ -313,20 +342,22 @@ impl CenterApp {
                 value,
                 on_change,
             } => {
-                self.slider_values.insert(key, value);
-                if let Some(ChangeAction::Direct(action)) = on_change {
+                self.slider_values.insert(key.clone(), value);
+                if key == "Night Light" {
+                    sys::apply_sunset(value);
+                } else if let Some(ChangeAction::Direct(action)) = on_change {
                     self.dispatch_action_with_value(&action, value);
                 }
                 Task::none()
             }
 
-            Message::CycleActiveProfile => {
-                let (next, cmd_arg) = match self.active_profile.as_str() {
-                    "Balanced" => ("Performance", "performance"),
-                    "Performance" => ("Power Saver", "power-saver"),
-                    _ => ("Balanced", "balanced"),
+            Message::ProfileSelected(profile) => {
+                self.active_profile = profile.clone();
+                let cmd_arg = match profile.as_str() {
+                    "Performance" => "performance",
+                    "Power Saver" => "power-saver",
+                    _ => "balanced",
                 };
-                self.active_profile = next.to_string();
                 let script = dirs_home().join("user_scripts/battery/tlp/tlp_mode_toggle.sh");
                 if script.is_file() {
                     let cmd = format!("{} {}", script.display(), cmd_arg);
@@ -361,10 +392,7 @@ impl CenterApp {
                 Task::none()
             }
 
-            Message::DragWindow => {
-                // Initiates native Wayland window drag
-                iced::window::drag(iced::window::Id::unique())
-            }
+            Message::DragWindow => iced::window::drag(iced::window::Id::unique()),
 
             Message::Tick => {
                 let (cpu, ram) = sys::cpu_ram();
@@ -414,7 +442,8 @@ impl CenterApp {
                 if modifiers.control()
                     && matches!(key, Key::Character(ref c) if c == "f" || c == "F")
                 {
-                    return self.update(Message::ToggleSearch);
+                    self.search_open = true;
+                    return operation::focus("search_input");
                 }
                 Task::none()
             }
@@ -508,15 +537,13 @@ impl CenterApp {
     }
 
     // ---------------------------------------------------------------------------
-    // View Root
+    // View Root: Unified, Seamless Window (No Disjoint Header Bar)
     // ---------------------------------------------------------------------------
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
         let palette = self.theme;
 
-        let top_header = self.view_header();
-
-        let body = row![
+        row![
             if self.sidebar_open {
                 self.view_sidebar()
             } else {
@@ -532,44 +559,21 @@ impl CenterApp {
             } else {
                 container(Space::new().width(0).height(0))
             },
-            self.view_main_content(),
+            self.view_main_column(),
         ]
         .width(Length::Fill)
-        .height(Length::Fill);
-
-        container(
-            column![top_header, body]
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .width(Length::Fill)
         .height(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(palette.bg.into()),
-            ..Default::default()
-        })
         .into()
     }
 
     // ---------------------------------------------------------------------------
-    // Header Bar (Matches GTK Screenshot)
+    // Sidebar: Hidden/Hover-Only Slim Scrollbar
     // ---------------------------------------------------------------------------
 
-    fn view_header<'a>(&'a self) -> Element<'a, Message> {
+    fn view_sidebar<'a>(&'a self) -> Element<'a, Message> {
         let palette = self.theme;
-        let active_title = match self.nav_stack.last() {
-            Some(NavView::SubPage { title, .. }) => title.as_str(),
-            Some(NavView::Root(idx)) => {
-                if let Some(page) = self.config.pages.get(*idx) {
-                    page.title.as_str()
-                } else {
-                    "Home"
-                }
-            }
-            None => "Home",
-        };
+        let active_idx = self.active_page_idx();
 
-        // Left brand & Search button
         let search_btn = button(
             container(render_icon("search", 15.0, palette.fg))
                 .align_x(Horizontal::Center)
@@ -594,7 +598,7 @@ impl CenterApp {
             ..Default::default()
         });
 
-        let brand_section = row![
+        let sidebar_header = row![
             text("Dusky")
                 .size(15)
                 .font(iced::Font {
@@ -602,134 +606,11 @@ impl CenterApp {
                     ..Default::default()
                 })
                 .color(palette.fg),
+            Space::new().width(Length::Fill),
             search_btn,
         ]
-        .spacing(12)
-        .align_y(Vertical::Center)
-        .width(if self.sidebar_open { Length::Fixed(185.0) } else { Length::Shrink });
-
-        // Sidebar split toggle button
-        let sidebar_toggle_btn = button(
-            container(render_icon("sidebar", 15.0, palette.fg))
-                .align_x(Horizontal::Center)
-                .align_y(Vertical::Center),
-        )
-        .on_press(Message::ToggleSidebar)
-        .padding([6, 7])
-        .style(move |_, status| button::Style {
-            background: Some(
-                if status == button::Status::Hovered {
-                    palette.card_hover
-                } else {
-                    palette.card_bg
-                }
-                .into(),
-            ),
-            border: Border {
-                color: palette.border,
-                width: 1.0,
-                radius: 8.0.into(),
-            },
-            ..Default::default()
-        });
-
-        // Main Title (Centered in main view)
-        let title_label = text(active_title)
-            .size(15)
-            .font(iced::Font {
-                weight: Weight::Bold,
-                ..Default::default()
-            })
-            .color(palette.fg);
-
-        // Window controls
-        let close_btn = button(
-            container(render_icon("close", 14.0, palette.fg_muted))
-                .align_x(Horizontal::Center)
-                .align_y(Vertical::Center),
-        )
-        .on_press(Message::CloseApp)
-        .padding([5, 7])
-        .style(move |_, status| button::Style {
-            background: Some(
-                if status == button::Status::Hovered {
-                    Color::from_rgba(0.9, 0.25, 0.25, 0.8)
-                } else {
-                    Color::TRANSPARENT
-                }
-                .into(),
-            ),
-            border: Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        let header_row = row![
-            brand_section,
-            sidebar_toggle_btn,
-            Space::new().width(Length::Fill),
-            title_label,
-            Space::new().width(Length::Fill),
-            close_btn,
-        ]
-        .spacing(10)
-        .align_y(Vertical::Center)
-        .padding([10, 16]);
-
-        let mut header_col = column![mouse_area(header_row).on_press(Message::DragWindow)];
-
-        // Optional search input row when search is toggled open
-        if self.search_open || !self.search_query.is_empty() {
-            let search_input = text_input("Search controls, services, tools...", &self.search_query)
-                .on_input(Message::SearchChanged)
-                .padding([8, 12])
-                .size(13);
-
-            let clear_btn = button(render_icon("close", 14.0, palette.fg_muted))
-                .on_press(Message::ClearSearch)
-                .padding([6, 8])
-                .style(|_, _| button::Style {
-                    background: Some(Color::TRANSPARENT.into()),
-                    ..Default::default()
-                });
-
-            let search_bar = container(
-                row![search_input, clear_btn]
-                    .spacing(8)
-                    .align_y(Vertical::Center),
-            )
-            .padding(Padding {
-                top: 4.0,
-                right: 16.0,
-                bottom: 10.0,
-                left: 16.0,
-            });
-
-            header_col = header_col.push(search_bar);
-        }
-
-        container(header_col)
-            .style(move |_| container::Style {
-                background: Some(palette.surface.into()),
-                border: Border {
-                    color: palette.border,
-                    width: 1.0,
-                    radius: 0.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
-    }
-
-    // ---------------------------------------------------------------------------
-    // Sidebar (Matches GTK Screenshot - Solid Pill Highlight)
-    // ---------------------------------------------------------------------------
-
-    fn view_sidebar<'a>(&'a self) -> Element<'a, Message> {
-        let palette = self.theme;
-        let active_idx = self.active_page_idx();
+        .padding([12, 14])
+        .align_y(Vertical::Center);
 
         let mut page_list = column![].spacing(3);
 
@@ -788,9 +669,16 @@ impl CenterApp {
             page_list = page_list.push(btn);
         }
 
-        let scroll_pages = scrollable(page_list.padding([8, 8])).height(Length::Fill);
+        let scroll_pages = make_slim_scrollable(page_list, Padding::from([4, 8]), palette.accent);
 
-        container(scroll_pages.width(185).height(Length::Fill))
+        let sidebar_col = column![
+            mouse_area(sidebar_header).on_press(Message::DragWindow),
+            scroll_pages
+        ]
+        .width(185)
+        .height(Length::Fill);
+
+        container(sidebar_col)
             .style(move |_| container::Style {
                 background: Some(palette.surface.into()),
                 ..Default::default()
@@ -799,27 +687,212 @@ impl CenterApp {
     }
 
     // ---------------------------------------------------------------------------
-    // Main Content
+    // Main Area: Seamless, Unified Header & Content
     // ---------------------------------------------------------------------------
 
-    fn view_main_content<'a>(&'a self) -> Element<'a, Message> {
-        if !self.search_query.is_empty() {
-            return self.view_search_results();
-        }
-
-        match self.nav_stack.last() {
-            Some(NavView::SubPage { title, sections, .. }) => {
-                self.view_subpage_content(title, sections)
-            }
+    fn view_main_column<'a>(&'a self) -> Element<'a, Message> {
+        let palette = self.theme;
+        let active_title = match self.nav_stack.last() {
+            Some(NavView::SubPage { title, .. }) => title.as_str(),
             Some(NavView::Root(idx)) => {
                 if let Some(page) = self.config.pages.get(*idx) {
-                    self.view_page_content(page)
+                    page.title.as_str()
                 } else {
-                    self.view_empty()
+                    "Home"
                 }
             }
-            None => self.view_empty(),
+            None => "Home",
+        };
+
+        // Sidebar split toggle button
+        let sidebar_toggle_btn = button(
+            container(render_icon("sidebar", 15.0, palette.fg))
+                .align_x(Horizontal::Center)
+                .align_y(Vertical::Center),
+        )
+        .on_press(Message::ToggleSidebar)
+        .padding([6, 7])
+        .style(move |_, status| button::Style {
+            background: Some(
+                if status == button::Status::Hovered {
+                    palette.card_hover
+                } else {
+                    palette.card_bg
+                }
+                .into(),
+            ),
+            border: Border {
+                color: palette.border,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..Default::default()
+        });
+
+        // Main Title (Seamless directly over the content background)
+        let title_label = text(active_title)
+            .size(15)
+            .font(iced::Font {
+                weight: Weight::Bold,
+                ..Default::default()
+            })
+            .color(palette.fg);
+
+        // Window close button
+        let close_btn = button(
+            container(render_icon("close", 14.0, palette.fg_muted))
+                .align_x(Horizontal::Center)
+                .align_y(Vertical::Center),
+        )
+        .on_press(Message::CloseApp)
+        .padding([5, 7])
+        .style(move |_, status| button::Style {
+            background: Some(
+                if status == button::Status::Hovered {
+                    Color::from_rgba(0.9, 0.25, 0.25, 0.8)
+                } else {
+                    Color::TRANSPARENT
+                }
+                .into(),
+            ),
+            border: Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        // Completely seamless header: same background, no bottom border cutting across!
+        let main_header = row![
+            sidebar_toggle_btn,
+            Space::new().width(Length::Fill),
+            title_label,
+            Space::new().width(Length::Fill),
+            close_btn,
+        ]
+        .spacing(10)
+        .align_y(Vertical::Center)
+        .padding([12, 18]);
+
+        let mut main_col = column![mouse_area(main_header).on_press(Message::DragWindow)];
+
+        // Search bar with auto-focus support and elegant capsule styling
+        if self.search_open || !self.search_query.is_empty() {
+            let search_icon = render_icon(
+                "search",
+                15.0,
+                if self.search_query.is_empty() {
+                    palette.fg_muted
+                } else {
+                    palette.accent
+                },
+            );
+
+            let search_input = text_input("Search controls, services, tools...", &self.search_query)
+                .id("search_input")
+                .on_input(Message::SearchChanged)
+                .padding([6, 6])
+                .size(13)
+                .style(move |_, _| text_input::Style {
+                    background: Color::TRANSPARENT.into(),
+                    border: Border::default(),
+                    icon: palette.fg_muted,
+                    placeholder: palette.fg_muted,
+                    value: palette.fg,
+                    selection: palette.accent,
+                });
+
+            let clear_btn = if !self.search_query.is_empty() {
+                button(render_icon("close", 13.0, palette.fg_muted))
+                    .on_press(Message::ClearSearch)
+                    .padding([4, 6])
+                    .style(|_, status| button::Style {
+                        background: Some(
+                            if status == button::Status::Hovered {
+                                Color::from_rgba(1.0, 1.0, 1.0, 0.1).into()
+                            } else {
+                                Color::TRANSPARENT.into()
+                            },
+                        ),
+                        border: Border {
+                            radius: 6.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+            } else {
+                button(Space::new().width(0))
+                    .padding([0, 0])
+                    .style(|_, _| button::Style::default())
+            };
+
+            let inner_row = row![
+                search_icon,
+                search_input.width(Length::Fill),
+                clear_btn,
+            ]
+            .spacing(10)
+            .align_y(Vertical::Center)
+            .padding([4, 12]);
+
+            let search_bar = container(
+                container(inner_row)
+                    .style(move |_| container::Style {
+                        background: Some(palette.card_bg.into()),
+                        border: Border {
+                            color: if self.search_query.is_empty() {
+                                palette.border
+                            } else {
+                                palette.accent
+                            },
+                            width: 1.0,
+                            radius: 10.0.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .width(Length::Fill)
+                    .max_width(520.0),
+            )
+            .width(Length::Fill)
+            .align_x(Horizontal::Center)
+            .padding(Padding {
+                top: 0.0,
+                right: 18.0,
+                bottom: 12.0,
+                left: 18.0,
+            });
+
+            main_col = main_col.push(search_bar);
         }
+
+        let content = if !self.search_query.is_empty() {
+            self.view_search_results()
+        } else {
+            match self.nav_stack.last() {
+                Some(NavView::SubPage { title, sections, .. }) => {
+                    self.view_subpage_content(title, sections)
+                }
+                Some(NavView::Root(idx)) => {
+                    if let Some(page) = self.config.pages.get(*idx) {
+                        self.view_page_content(page)
+                    } else {
+                        self.view_empty()
+                    }
+                }
+                None => self.view_empty(),
+            }
+        };
+
+        main_col = main_col.push(content);
+
+        container(main_col.width(Length::Fill).height(Length::Fill))
+            .style(move |_| container::Style {
+                background: Some(palette.bg.into()),
+                ..Default::default()
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 
     fn view_empty<'a>(&'a self) -> Element<'a, Message> {
@@ -884,12 +957,16 @@ impl CenterApp {
 
         column![
             header,
-            scrollable(results.padding(Padding {
-                top: 0.0,
-                right: 16.0,
-                bottom: 20.0,
-                left: 16.0,
-            })).height(Length::Fill)
+            make_slim_scrollable(
+                results,
+                Padding {
+                    top: 0.0,
+                    right: 18.0,
+                    bottom: 20.0,
+                    left: 18.0,
+                },
+                palette.accent,
+            ),
         ]
         .into()
     }
@@ -899,19 +976,23 @@ impl CenterApp {
     // ---------------------------------------------------------------------------
 
     fn view_page_content<'a>(&'a self, page: &'a PageConfig) -> Element<'a, Message> {
+        let palette = self.theme;
         let mut sections_col = column![].spacing(16);
 
         for section in &page.layout {
             sections_col = sections_col.push(self.view_section(section));
         }
 
-        scrollable(sections_col.padding(Padding {
-            top: 14.0,
-            right: 18.0,
-            bottom: 24.0,
-            left: 18.0,
-        }))
-        .height(Length::Fill)
+        make_slim_scrollable(
+            sections_col,
+            Padding {
+                top: 4.0,
+                right: 18.0,
+                bottom: 24.0,
+                left: 18.0,
+            },
+            palette.accent,
+        )
         .into()
     }
 
@@ -964,13 +1045,16 @@ impl CenterApp {
             sections_col = sections_col.push(self.view_section(section));
         }
 
-        scrollable(sections_col.padding(Padding {
-            top: 14.0,
-            right: 18.0,
-            bottom: 24.0,
-            left: 18.0,
-        }))
-        .height(Length::Fill)
+        make_slim_scrollable(
+            sections_col,
+            Padding {
+                top: 4.0,
+                right: 18.0,
+                bottom: 24.0,
+                left: 18.0,
+            },
+            palette.accent,
+        )
         .into()
     }
 
@@ -981,7 +1065,7 @@ impl CenterApp {
     fn view_section<'a>(&'a self, section: &'a SectionConfig) -> Element<'a, Message> {
         let palette = self.theme;
 
-        // 1. Grid section: 3-column top hero grid!
+        // 1. Grid section: Strict 3-column top hero grid with identical tile heights
         if section.section_type == "grid_section" {
             let mut grid_rows = column![].spacing(10);
             let mut current_row = row![].spacing(10);
@@ -991,7 +1075,7 @@ impl CenterApp {
                 let card = self.view_hero_card(item);
                 current_row = current_row.push(card);
                 in_row += 1;
-                // Exactly 3 columns!
+                // Exactly 3 columns per row!
                 if in_row == 3 {
                     grid_rows = grid_rows.push(current_row);
                     current_row = row![].spacing(10);
@@ -999,7 +1083,6 @@ impl CenterApp {
                 }
             }
             if in_row > 0 {
-                // Pad remaining slots with empty spaces for alignment
                 while in_row < 3 {
                     current_row = current_row.push(Space::new().width(Length::FillPortion(1)));
                     in_row += 1;
@@ -1007,7 +1090,53 @@ impl CenterApp {
                 grid_rows = grid_rows.push(current_row);
             }
 
-            return grid_rows.into();
+            let capped_grid = container(grid_rows)
+                .width(Length::Fill)
+                .max_width(520.0);
+
+            return container(capped_grid)
+                .width(Length::Fill)
+                .align_x(Horizontal::Center)
+                .into();
+        }
+
+        // Warning banner / compact informational banner
+        if section.section_type == "warning_banner" {
+            let msg = &section.properties.message;
+            let title = &section.properties.title;
+            let display_text = if !msg.is_empty() { msg } else { title };
+            if display_text.is_empty() {
+                return column![].into();
+            }
+
+            let icon_elem = render_icon("dialog-information-symbolic", 15.0, palette.accent);
+            let banner_content = row![
+                icon_elem,
+                text(display_text)
+                    .size(12)
+                    .color(palette.fg_muted),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center);
+
+            return container(banner_content)
+                .padding([8, 12])
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.08).into()),
+                    border: Border {
+                        color: Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.22),
+                        width: 1.0,
+                        radius: 10.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .into();
+        }
+
+        // Avoid rendering an empty container card if a section has 0 items
+        if section.items.is_empty() {
+            return column![].into();
         }
 
         // 2. Standard section with title and boxed-list container
@@ -1025,12 +1154,13 @@ impl CenterApp {
             );
         }
 
-        // Special handling for Power Management and Quick Controls
+        // Special handling for Power Management (with PickList dropdown)
         if section.properties.title == "Power Management" {
             sec_col = sec_col.push(self.view_power_management_card(section));
             return sec_col.into();
         }
 
+        // Special handling for Quick Controls (with Dusky Tray sliders)
         if section.properties.title == "Quick Controls" {
             sec_col = sec_col.push(self.view_quick_controls_card(section));
             return sec_col.into();
@@ -1059,7 +1189,7 @@ impl CenterApp {
     }
 
     // ---------------------------------------------------------------------------
-    // Hero Card (3-Column Layout, Parity with GTK Screenshot)
+    // Hero Card (3-Column Layout, Uniform Fixed Height for All Rows)
     // ---------------------------------------------------------------------------
 
     fn view_hero_card<'a>(&'a self, item: &'a ItemConfig) -> Element<'a, Message> {
@@ -1106,32 +1236,18 @@ impl CenterApp {
             (palette.card_bg, palette.fg, palette.accent, palette.border)
         };
 
-        let mut card_content = column![
+        let card_content = column![
             render_icon(icon_name, 22.0, icon_fg),
             text(display_title)
-                .size(13)
+                .size(12)
                 .font(iced::Font {
                     weight: Weight::Bold,
                     ..Default::default()
                 })
                 .color(text_fg),
         ]
-        .spacing(3)
+        .spacing(5)
         .align_x(Horizontal::Center);
-
-        // Subtitle ("On" / "Off") only on toggle cards
-        if is_toggle {
-            let state_str = if is_enabled { "On" } else { "Off" };
-            card_content = card_content.push(
-                text(state_str)
-                    .size(11)
-                    .color(if is_enabled {
-                        palette.accent_fg
-                    } else {
-                        palette.fg_muted
-                    }),
-            );
-        }
 
         let on_press_msg = if is_toggle {
             Message::ToggleItem {
@@ -1145,10 +1261,12 @@ impl CenterApp {
             Message::SelectPage(self.active_page_idx())
         };
 
+        // Uniform 62px fixed height guarantees all rows have the exact same size!
         button(
             container(card_content)
-                .padding([10, 8])
+                .padding([6, 6])
                 .width(Length::Fill)
+                .height(Length::Fixed(62.0))
                 .align_x(Horizontal::Center)
                 .align_y(Vertical::Center),
         )
@@ -1177,11 +1295,12 @@ impl CenterApp {
             }
         })
         .width(Length::FillPortion(1))
+        .height(Length::Fixed(62.0))
         .into()
     }
 
     // ---------------------------------------------------------------------------
-    // Power Management Card (Icon Badge + Balanced ▾ Selector)
+    // Power Management Card (Icon Badge + Interactive PickList Dropdown)
     // ---------------------------------------------------------------------------
 
     fn view_power_management_card<'a>(&'a self, _section: &'a SectionConfig) -> Element<'a, Message> {
@@ -1189,8 +1308,8 @@ impl CenterApp {
 
         // Left Icon Badge Box
         let icon_badge = container(render_icon("power-profile-balanced-symbolic", 20.0, palette.accent))
-            .width(38)
-            .height(38)
+            .width(36)
+            .height(36)
             .align_x(Horizontal::Center)
             .align_y(Vertical::Center)
             .style(move |_| container::Style {
@@ -1217,35 +1336,46 @@ impl CenterApp {
         .spacing(2)
         .width(Length::Fill);
 
-        // Selector button displaying "Balanced ▾"
-        let selector_btn = button(
-            row![
-                text(&self.active_profile).size(12).color(palette.fg),
-                render_icon("chevron_down", 12.0, palette.accent),
-            ]
-            .spacing(6)
-            .align_y(Vertical::Center),
+        // Interactive PickList Dropdown
+        let dropdown = pick_list(
+            &PROFILE_OPTIONS[..],
+            Some(self.active_profile.as_str()),
+            |selected| Message::ProfileSelected(selected.to_string()),
         )
-        .on_press(Message::CycleActiveProfile)
         .padding([6, 12])
-        .style(move |_, status| button::Style {
-            background: Some(
-                if status == button::Status::Hovered {
-                    palette.card_hover
-                } else {
-                    palette.surface
-                }
-                .into(),
-            ),
+        .text_size(12)
+        .style(move |_, status| pick_list::Style {
+            text_color: palette.fg,
+            placeholder_color: palette.fg_muted,
+            handle_color: palette.accent,
+            background: if matches!(
+                status,
+                pick_list::Status::Hovered | pick_list::Status::Opened { .. }
+            ) {
+                palette.card_hover.into()
+            } else {
+                palette.surface.into()
+            },
             border: Border {
                 color: palette.border,
                 width: 1.0,
                 radius: 8.0.into(),
             },
-            ..Default::default()
+        })
+        .menu_style(move |_| menu::Style {
+            background: palette.card_bg.into(),
+            border: Border {
+                color: palette.border,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            selected_background: palette.accent.into(),
+            selected_text_color: palette.accent_fg,
+            text_color: palette.fg,
+            shadow: iced::Shadow::default(),
         });
 
-        let row_content = row![icon_badge, text_info, selector_btn]
+        let row_content = row![icon_badge, text_info, dropdown]
             .spacing(14)
             .align_y(Vertical::Center);
 
@@ -1265,7 +1395,7 @@ impl CenterApp {
     }
 
     // ---------------------------------------------------------------------------
-    // Quick Controls Card (Volume & Brightness Sliders with Icon Badges)
+    // Quick Controls Card (Borrowed from Dusky Tray: 12px Pill Rails & White Handle)
     // ---------------------------------------------------------------------------
 
     fn view_quick_controls_card<'a>(&'a self, section: &'a SectionConfig) -> Element<'a, Message> {
@@ -1292,9 +1422,9 @@ impl CenterApp {
             let on_change = item.on_change.clone();
 
             // Left Icon Badge Box
-            let icon_badge = container(render_icon(icon_name, 20.0, palette.accent))
-                .width(38)
-                .height(38)
+            let icon_badge = container(render_icon(icon_name, 18.0, palette.accent))
+                .width(36)
+                .height(36)
                 .align_x(Horizontal::Center)
                 .align_y(Vertical::Center)
                 .style(move |_| container::Style {
@@ -1306,12 +1436,13 @@ impl CenterApp {
                     ..Default::default()
                 });
 
-            // Slider spanning full remaining width
+            // Dusky Tray Sliders: 12px thick rounded pill rail with solid accent fill and crisp white circle handle
             let s = slider(min..=max, val, move |v| Message::SliderChanged {
                 key: key_c1.clone(),
                 value: v,
             })
             .step(step)
+            .height(24)
             .width(Length::Fill)
             .on_release(Message::SliderReleased {
                 key: key_c2,
@@ -1322,25 +1453,116 @@ impl CenterApp {
                 rail: slider::Rail {
                     backgrounds: (
                         palette.accent.into(),
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.08).into(),
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.09).into(),
                     ),
-                    width: 5.0,
+                    width: 12.0,
                     border: Border {
-                        radius: 3.0.into(),
+                        radius: 6.0.into(),
                         ..Default::default()
                     },
                 },
                 handle: slider::Handle {
-                    shape: slider::HandleShape::Circle { radius: 8.0 },
-                    background: palette.accent.into(),
-                    border_width: 2.0,
-                    border_color: palette.bg,
+                    shape: slider::HandleShape::Circle { radius: 7.0 },
+                    background: Color::WHITE.into(),
+                    border_width: 0.0,
+                    border_color: Color::TRANSPARENT,
                 },
             });
 
-            let ctrl_row = row![icon_badge, s]
-                .spacing(14)
-                .align_y(Vertical::Center);
+            // Monospace numeric value on right
+            let val_label = text(format!("{:.0}", val.round()))
+                .size(13)
+                .font(iced::Font::MONOSPACE)
+                .color(palette.fg_muted)
+                .width(28)
+                .align_x(Horizontal::Right);
+
+            let ctrl_row = row![
+                icon_badge,
+                container(s).width(Length::Fill).padding([0, 4]),
+                val_label,
+            ]
+            .spacing(12)
+            .align_y(Vertical::Center);
+
+            controls_col = controls_col.push(ctrl_row);
+        }
+
+        // 3rd slider on Quick Controls for Night Light when hyprsunset service is active
+        if sys::is_sunset_active() {
+            let key = "Night Light".to_string();
+            let val = self
+                .slider_values
+                .get(&key)
+                .copied()
+                .or_else(sys::get_sunset)
+                .unwrap_or(0.0);
+
+            let key_c1 = key.clone();
+            let key_c2 = key.clone();
+
+            let icon_badge = container(render_icon("weather-clear-night-symbolic", 18.0, palette.accent))
+                .width(36)
+                .height(36)
+                .align_x(Horizontal::Center)
+                .align_y(Vertical::Center)
+                .style(move |_| container::Style {
+                    background: Some(
+                        Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12).into(),
+                    ),
+                    border: Border {
+                        radius: 10.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+
+            let s = slider(0.0..=100.0, val, move |v| Message::SliderChanged {
+                key: key_c1.clone(),
+                value: v,
+            })
+            .step(1.0_f32)
+            .height(24)
+            .width(Length::Fill)
+            .on_release(Message::SliderReleased {
+                key: key_c2,
+                value: val,
+                on_change: None,
+            })
+            .style(move |_, _| slider::Style {
+                rail: slider::Rail {
+                    backgrounds: (
+                        palette.accent.into(),
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.09).into(),
+                    ),
+                    width: 12.0,
+                    border: Border {
+                        radius: 6.0.into(),
+                        ..Default::default()
+                    },
+                },
+                handle: slider::Handle {
+                    shape: slider::HandleShape::Circle { radius: 7.0 },
+                    background: Color::WHITE.into(),
+                    border_width: 0.0,
+                    border_color: Color::TRANSPARENT,
+                },
+            });
+
+            let val_label = text(format!("{:.0}", val.round()))
+                .size(13)
+                .font(iced::Font::MONOSPACE)
+                .color(palette.fg_muted)
+                .width(28)
+                .align_x(Horizontal::Right);
+
+            let ctrl_row = row![
+                icon_badge,
+                container(s).width(Length::Fill).padding([0, 4]),
+                val_label,
+            ]
+            .spacing(12)
+            .align_y(Vertical::Center);
 
             controls_col = controls_col.push(ctrl_row);
         }
@@ -1437,6 +1659,130 @@ impl CenterApp {
         .align_y(Vertical::Center)
         .width(Length::Fill);
 
+        // Helper action buttons (e.g. edit config, reset, launch tool)
+        let mut buttons_row = row![].spacing(6).align_y(Vertical::Center);
+        for b in &item.properties.buttons {
+            let btn_icon = if !b.icon.is_empty() {
+                &b.icon
+            } else {
+                "settings"
+            };
+            let is_suggested = b.style == "suggested";
+            let mut btn = button(render_icon(
+                btn_icon,
+                14.0,
+                if is_suggested {
+                    palette.accent
+                } else {
+                    palette.fg
+                },
+            ))
+            .padding([5, 8])
+            .style(move |_, status| button::Style {
+                background: Some(
+                    if status == button::Status::Hovered {
+                        palette.card_hover
+                    } else if is_suggested {
+                        Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12)
+                    } else {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.05)
+                    }
+                    .into(),
+                ),
+                border: Border {
+                    color: if is_suggested {
+                        palette.accent
+                    } else {
+                        palette.border
+                    },
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            });
+
+            if let Some(action) = &b.on_press {
+                btn = btn.on_press(Message::ExecuteAction(action.clone()));
+            }
+            buttons_row = buttons_row.push(btn);
+        }
+
+        // Multi-option selections (e.g. Voice Character Presets, theme selectors)
+        // render the title/description on top and flow wrapped pills underneath indented by 46px
+        if item.item_type == "selection"
+            && (item.properties.options.len() > 2
+                || item.properties.options.iter().any(|opt| opt.len() > 10))
+        {
+            let current = self.selected_options.get(&key).cloned().unwrap_or_default();
+            let mut options_row = row![].spacing(6);
+
+            for opt in &item.properties.options {
+                let is_sel = current == *opt;
+                let opt_clone = opt.clone();
+                let key_clone = key.clone();
+
+                let act = match &item.on_change {
+                    Some(ChangeAction::Map(map)) => map.get(opt).cloned(),
+                    Some(ChangeAction::Direct(d)) => Some(d.clone()),
+                    None => None,
+                };
+
+                let pill = button(text(opt).size(11).color(if is_sel {
+                    palette.accent_fg
+                } else {
+                    palette.fg_muted
+                }))
+                .on_press(Message::SelectOption {
+                    key: key_clone,
+                    option: opt_clone,
+                    action: act,
+                })
+                .padding([4, 10])
+                .style(move |_, status| {
+                    let bg = if is_sel {
+                        palette.accent
+                    } else if status == button::Status::Hovered {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                    } else {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.03)
+                    };
+                    button::Style {
+                        background: Some(bg.into()),
+                        border: Border {
+                            radius: 6.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                });
+
+                options_row = options_row.push(pill);
+            }
+
+            let top_row = if !item.properties.buttons.is_empty() {
+                row![left_part, buttons_row]
+                    .spacing(8)
+                    .align_y(Vertical::Center)
+            } else {
+                row![left_part]
+            };
+
+            return column![
+                top_row,
+                container(options_row.wrap().vertical_spacing(6))
+                    .padding(Padding {
+                        top: 4.0,
+                        right: 0.0,
+                        bottom: 4.0,
+                        left: 46.0,
+                    })
+                    .width(Length::Fill),
+            ]
+            .spacing(4)
+            .padding([4, 0])
+            .into();
+        }
+
         // Right interactive widget
         let right_widget: Element<'a, Message> = match item.item_type.as_str() {
             "toggle" => {
@@ -1482,51 +1828,49 @@ impl CenterApp {
                 let key_c2 = key.clone();
                 let on_change = item.on_change.clone();
 
-                row![
-                    container(text(format!("{}%", val.round() as i64)).size(11).color(palette.accent))
-                        .padding([2, 6])
-                        .style(move |_| container::Style {
-                            background: Some(Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.12).into()),
-                            border: Border {
-                                radius: 4.0.into(),
-                                ..Default::default()
-                            },
+                let s = slider(min..=max, val, move |v| Message::SliderChanged {
+                    key: key_c1.clone(),
+                    value: v,
+                })
+                .step(step)
+                .height(24)
+                .width(130)
+                .on_release(Message::SliderReleased {
+                    key: key_c2,
+                    value: val,
+                    on_change,
+                })
+                .style(move |_, _| slider::Style {
+                    rail: slider::Rail {
+                        backgrounds: (
+                            palette.accent.into(),
+                            Color::from_rgba(1.0, 1.0, 1.0, 0.09).into(),
+                        ),
+                        width: 10.0,
+                        border: Border {
+                            radius: 5.0.into(),
                             ..Default::default()
-                        }),
-                    slider(min..=max, val, move |v| Message::SliderChanged {
-                        key: key_c1.clone(),
-                        value: v,
-                    })
-                    .step(step)
-                    .width(130)
-                    .on_release(Message::SliderReleased {
-                        key: key_c2,
-                        value: val,
-                        on_change,
-                    })
-                    .style(move |_, _| slider::Style {
-                        rail: slider::Rail {
-                            backgrounds: (
-                                palette.accent.into(),
-                                Color::from_rgba(1.0, 1.0, 1.0, 0.08).into(),
-                            ),
-                            width: 5.0,
-                            border: Border {
-                                radius: 3.0.into(),
-                                ..Default::default()
-                            },
                         },
-                        handle: slider::Handle {
-                            shape: slider::HandleShape::Circle { radius: 7.0 },
-                            background: palette.accent.into(),
-                            border_width: 2.0,
-                            border_color: palette.bg,
-                        },
-                    }),
-                ]
-                .spacing(10)
-                .align_y(Vertical::Center)
-                .into()
+                    },
+                    handle: slider::Handle {
+                        shape: slider::HandleShape::Circle { radius: 6.0 },
+                        background: Color::WHITE.into(),
+                        border_width: 0.0,
+                        border_color: Color::TRANSPARENT,
+                    },
+                });
+
+                let val_label = text(format!("{:.0}", val.round()))
+                    .size(12)
+                    .font(iced::Font::MONOSPACE)
+                    .color(palette.fg_muted)
+                    .width(26)
+                    .align_x(Horizontal::Right);
+
+                row![s, val_label]
+                    .spacing(8)
+                    .align_y(Vertical::Center)
+                    .into()
             }
 
             "selection" => {
@@ -1576,7 +1920,7 @@ impl CenterApp {
                     options_row = options_row.push(pill);
                 }
 
-                options_row.into()
+                options_row.wrap().vertical_spacing(6).into()
             }
 
             "navigation" => {
@@ -1699,7 +2043,16 @@ impl CenterApp {
             }
         };
 
-        row![left_part, right_widget]
+        let right_container = if !item.properties.buttons.is_empty() {
+            row![buttons_row, right_widget]
+                .spacing(8)
+                .align_y(Vertical::Center)
+                .into()
+        } else {
+            right_widget
+        };
+
+        row![left_part, right_container]
             .spacing(12)
             .align_y(Vertical::Center)
             .padding([4, 0])
@@ -1793,3 +2146,45 @@ fn dirs_fallback() -> std::path::PathBuf {
     }
     dirs_home().join(".config/dusky")
 }
+
+fn make_slim_scrollable<'a>(
+    content: impl Into<Element<'a, Message>>,
+    padding: Padding,
+    accent: Color,
+) -> iced::widget::Scrollable<'a, Message> {
+    scrollable(container(content).padding(padding))
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new()
+                .width(4)
+                .scroller_width(4)
+                .margin(2),
+        ))
+        .style(move |theme, status| {
+            let is_hovered = matches!(
+                status,
+                scrollable::Status::Hovered {
+                    is_vertical_scrollbar_hovered: true,
+                    ..
+                } | scrollable::Status::Dragged {
+                    is_vertical_scrollbar_dragged: true,
+                    ..
+                }
+            );
+            let mut s = scrollable::default(theme, status);
+            s.vertical_rail.background = if is_hovered {
+                Some(Color::from_rgba(1.0, 1.0, 1.0, 0.04).into())
+            } else {
+                None
+            };
+            s.vertical_rail.scroller.background = if is_hovered {
+                accent.into()
+            } else {
+                Color::TRANSPARENT.into()
+            };
+            s.horizontal_rail.background = None;
+            s.horizontal_rail.scroller.background = Color::TRANSPARENT.into();
+            s
+        })
+        .height(Length::Fill)
+}
+
