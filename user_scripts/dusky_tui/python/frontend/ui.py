@@ -3,7 +3,6 @@ import os
 import re
 lazy import json
 lazy import subprocess
-lazy import colorsys
 lazy import shlex
 lazy import shutil
 import asyncio
@@ -39,6 +38,7 @@ from textual.widget import Widget
 
 from rich.text import Text
 from rich.cells import cell_len
+lazy from python.frontend.colors import parse_literal_color, adjust_color_hue
 
 
 LOGGER = logging.getLogger(__name__)
@@ -48,8 +48,6 @@ _STATE_MISSING = sentinel("_STATE_MISSING")
 from python.frontend.core_types import (
     ConfigItem,
     BaseEngine,
-    KNOWN_COLORS,
-    KNOWN_COLORS_LOWER,
     is_theme_variable,
     is_trigger_item,
     clone_value,
@@ -65,13 +63,6 @@ _AUDIO_PLAYER_CACHE: str | None = None
 _ICON_WARNING = "\uf071"   # nf-fa-warning  (exclamation triangle)
 _ICON_PENCIL = "\uf040"    # nf-fa-pencil
 _ICON_ARROW  = "\uf061"    # nf-fa-arrow-right
-
-_RE_RGB = re.compile(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)")
-_COLOR_NUMBER = r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))"
-_RE_HSL = re.compile(rf"hsla?\(\s*{_COLOR_NUMBER}\s*,\s*{_COLOR_NUMBER}%?\s*,\s*{_COLOR_NUMBER}%?")
-_RE_OKLCH = re.compile(rf"oklch\(\s*{_COLOR_NUMBER}(%)?\s+{_COLOR_NUMBER}\s+{_COLOR_NUMBER}")
-_RE_RGBA_ALPHA = re.compile(r"rgba\([^,]+,[^,]+,[^,]+,\s*([0-9.]+)\)")
-_RE_HSLA_ALPHA = re.compile(r"hsla\([^,]+,[^,]+,[^,]+,\s*([0-9.]+)\)")
 
 # Bounded background-action execution (execute_action non-interactive path).
 _ACTION_OUTPUT_LIMIT = 8192
@@ -386,215 +377,32 @@ class PresetMatchMatrix:
 # =============================================================================
 # COLOR UTILITIES
 # =============================================================================
-CYCLE_COLORS = [
-    "Red", "Lime", "Blue", "Yellow", "Cyan", "Magenta", "White", "Black"
-]
+@lru_cache(maxsize=2048)
+def _color_preview_hex(value: str, color_field: bool = False) -> str | None:
+    # Plain rows never load the shared color module. Recognition happens only
+    # for explicit syntax or a schema-declared color field.
+    if not color_field and not value.lstrip()[:6].lower().startswith((
+        "#", "0x", "rgb(", "rgba(", "hsl(", "hsla(", "oklch(",
+    )):
+        return None
+    if color_field and is_theme_variable(value):
+        return None
+    color = parse_literal_color(value, color_field)
+    return color.hex if color is not None else None
 
 
-def _oklch_to_rgb(L: float, C: float, H: float) -> tuple[int, int, int]:
-    h = math.radians(H)
-    a, b = C * math.cos(h), C * math.sin(h)
-
-    l_ = L + 0.3963377774 * a + 0.2158037573 * b
-    m_ = L - 0.1055613458 * a - 0.0638541728 * b
-    s_ = L - 0.0894841775 * a - 1.2914855480 * b
-
-    l, m, s = l_**3, m_**3, s_**3
-
-    r = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
-    g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
-    b2 = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
-
-    def gam(c: float) -> int:
-        c = max(0.0, min(1.0, c))
-        c = 12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
-        return round(c * 255)
-
-    return (gam(r), gam(g), gam(b2))
-
-
-_RE_HYPR_HEX = re.compile(r"^rgba?\(([0-9a-fA-F]+)\)$")
-
-
-@lru_cache(maxsize=1024)
-def parse_color_format(val: str) -> str:
-    val = str(val).strip().lower()
-
-    if val.startswith("0x"):
-        return "0xhex"
-
-    if val.startswith("#"):
-        return "hex"
-
-    if _RE_HYPR_HEX.prefixmatch(val):
-        return "hypr_hex"
-
-    if val.startswith("rgba"):
-        return "rgba"
-
-    if val.startswith("rgb"):
-        return "rgb"
-
-    if val.startswith("hsla"):
-        return "hsla"
-
-    if val.startswith("hsl"):
-        return "hsl"
-
-    if val.startswith("oklch"):
-        return "oklch"
-
-    return "hex"
-
-
-@lru_cache(maxsize=1024)
-def color_to_rgb(val: str) -> tuple[int, int, int]:
-    val = str(val).strip().lower()
-
-    # 0x hex.
-    if val.startswith("0x"):
-        v = val[2:]
-        if len(v) == 8:
-            v = v[2:]
-        if len(v) >= 6:
-            try:
-                return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))
-            except ValueError:
-                pass
-
-    # Standard hex.
-    elif val.startswith("#"):
-        v = val[1:]
-        if len(v) in (3, 4):
-            try:
-                return (int(v[0] * 2, 16), int(v[1] * 2, 16), int(v[2] * 2, 16))
-            except ValueError:
-                pass
-        if len(v) >= 6:
-            try:
-                return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))
-            except ValueError:
-                pass
-
-    # Hyprland-style rgb/rgba hex.
-    if hypr_m := _RE_HYPR_HEX.prefixmatch(val):
-        v = hypr_m.group(1)
-        if len(v) >= 6:
-            try:
-                return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))
-            except ValueError:
-                pass
-
-    # Functional rgb/rgba.
-    if m_rgb := _RE_RGB.prefixmatch(val):
-        return tuple(int(min(255, float(component))) for component in m_rgb.groups())
-
-    # Functional hsl/hsla.
-    if m_hsl := _RE_HSL.prefixmatch(val):
-        hue, saturation, lightness = map(float, m_hsl.groups())
-        if not all(map(math.isfinite, (hue, saturation, lightness))):
-            return (128, 128, 128)
-        h = (hue % 360.0) / 360.0
-        s = max(0.0, min(1.0, saturation / 100.0))
-        l_ = max(0.0, min(1.0, lightness / 100.0))
-        r, g, b = colorsys.hls_to_rgb(h, l_, s)
-        return (int(r * 255), int(g * 255), int(b * 255))
-
-    # OKLCH.
-    if m_oklch := _RE_OKLCH.prefixmatch(val):
-        lightness = float(m_oklch.group(1)) / (100 if m_oklch.group(2) else 1)
-        chroma, hue = float(m_oklch.group(3)), float(m_oklch.group(4))
-        if not all(map(math.isfinite, (lightness, chroma, hue))):
-            return (128, 128, 128)
-        r, g, b = _oklch_to_rgb(max(0.0, min(1.0, lightness)), max(0.0, min(1.0, chroma)), hue % 360)
-        return (
-            max(0, min(255, int(r))),
-            max(0, min(255, int(g))),
-            max(0, min(255, int(b)))
-        )
-
-    return KNOWN_COLORS_LOWER.get(val, (128, 128, 128))
-
-
-@lru_cache(maxsize=1024)
-def get_color_name(r: int, g: int, b: int) -> str:
-    best_name = "Unknown"
-    best_dist = float("inf")
-
-    for name, color in KNOWN_COLORS.items():
-        d = (r - color[0]) ** 2 + (g - color[1]) ** 2 + (b - color[2]) ** 2
-        if d < best_dist:
-            best_dist = d
-            best_name = name
-
-    return best_name
-
-
-def format_rgb(color_name: str, fmt: str, original_val: str) -> str:
-    original_val = original_val.strip()
-    r, g, b = KNOWN_COLORS.get(color_name, (128, 128, 128))
-
-    if fmt == "hypr_hex":
-        alpha = "ff"
-        hypr_m = re.prefixmatch(r"rgba?\([0-9a-fA-F]{6}([0-9a-fA-F]{2})?\)", original_val.strip())
-        if hypr_m and hypr_m.group(1):
-            alpha = hypr_m.group(1)
-
-        is_rgba = original_val.strip().lower().startswith("rgba")
-        prefix = "rgba" if is_rgba else "rgb"
-        suffix = alpha if is_rgba else ""
-        return f"{prefix}({r:02x}{g:02x}{b:02x}{suffix})"
-
-    if fmt == "hex":
-        if len(original_val) == 5 and original_val.startswith("#"):
-            return f"#{r:02x}{g:02x}{b:02x}{original_val[-1] * 2}"
-        if len(original_val) == 9 and original_val.startswith("#"):
-            return f"#{r:02x}{g:02x}{b:02x}{original_val[7:9]}"
-        return f"#{r:02x}{g:02x}{b:02x}"
-
-    if fmt == "0xhex":
-        alpha = "ff"
-        if original_val.startswith("0x") and len(original_val) == 10:
-            alpha = original_val[2:4]
-        return f"0x{alpha}{r:02x}{g:02x}{b:02x}"
-
-    if fmt == "rgb":
-        return f"rgb({r}, {g}, {b})"
-
-    if fmt == "rgba":
-        alpha = "1.0"
-        m = _RE_RGBA_ALPHA.search(original_val)
-        if m:
-            alpha = m.group(1)
-        return f"rgba({r}, {g}, {b}, {alpha})"
-
-    if fmt in ("hsl", "hsla"):
-        h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
-        h_deg, s_pct, l_pct = int(h * 360), int(s * 100), int(l * 100)
-
-        if fmt == "hsl":
-            return f"hsl({h_deg}, {s_pct}%, {l_pct}%)"
-
-        alpha = "1.0"
-        m = _RE_HSLA_ALPHA.search(original_val)
-        if m:
-            alpha = m.group(1)
-        return f"hsla({h_deg}, {s_pct}%, {l_pct}%, {alpha})"
-
-    if fmt == "oklch":
-        oklch_map = {
-            "Red": "oklch(0.628 0.258 29.23)",
-            "Lime": "oklch(0.866 0.295 142.5)",
-            "Blue": "oklch(0.452 0.313 264.05)",
-            "Yellow": "oklch(0.968 0.211 109.77)",
-            "Cyan": "oklch(0.905 0.183 195.58)",
-            "Magenta": "oklch(0.702 0.322 328.36)",
-            "White": "oklch(1.0 0 0)",
-            "Black": "oklch(0.0 0 0)",
-        }
-        return oklch_map.get(color_name, "oklch(0.5 0.2 180)")
-
-    return f"#{r:02x}{g:02x}{b:02x}"
+def _append_value_preview(
+    text: Text, value: str, style: str = "", *, prefix: str = "",
+    color_field: bool = False, swatch_style: str | None = None,
+) -> None:
+    """Render a swatch or the unchanged text, without changing stored values."""
+    color = _color_preview_hex(value, color_field)
+    if color is None:
+        text.append(prefix + value, style=style)
+    else:
+        if prefix:
+            text.append(prefix, style=style)
+        text.append("⬤", style=swatch_style or color)
 
 
 def load_matugen_json(file_path: Path) -> dict[str, str] | None:
@@ -918,7 +726,9 @@ class HybridInputScreen(ModalScreen[str | None]):
         if self.options:
             ol = self.query_one(OptionList)
             for opt in self.options:
-                ol.add_option(Option(str(opt)))
+                txt = Text()
+                _append_value_preview(txt, str(opt))
+                ol.add_option(Option(txt))
 
             # Try to highlight the current value if it matches an option.
             for idx, opt in enumerate(self.options):
@@ -1046,7 +856,8 @@ class PickerScreen(ModalScreen[str | None]):
             hint = self.hints[i] if i < len(self.hints) else ""
 
             txt = Text()
-            txt.append(f" {opt} ", style="bold")
+            _append_value_preview(txt, str(opt), "bold", prefix=" ")
+            txt.append(" ")
             if hint:
                 txt.append(" - ")
                 txt.append(hint, style=f"italic {self.app.theme_colors['muted']}")
@@ -1286,9 +1097,14 @@ class DiffScreen(ModalScreen[None]):
                     txt = Text()
                     txt.append(f"[{self.app.tabs[tab_idx]}] ", style=self.app.theme_colors["accent"])
                     txt.append(f"{item.label}: ", style="bold")
-                    txt.append(f"{item.initial_value} ", style=f"strike {self.app.theme_colors['error']}")
+                    _append_value_preview(txt, str(item.initial_value),
+                                          f"strike {self.app.theme_colors['error']}",
+                                          color_field=item.type_ == "color")
+                    txt.append(" ")
                     txt.append(f"{_ICON_ARROW} ", style=self.app.theme_colors["muted"])
-                    txt.append(f"{item.value}", style=f"bold {self.app.theme_colors['success']}")
+                    _append_value_preview(txt, str(item.value),
+                                          f"bold {self.app.theme_colors['success']}",
+                                          color_field=item.type_ == "color")
 
                     ol.add_option(Option(txt, disabled=True))
 
@@ -2358,15 +2174,16 @@ Tooltip {
         self._preset_refresh_timer: Timer | None = None
 
         # Theme colors.
+        palette = self.get_css_variables()
         self.theme_colors = {
-            "bg": "#111318",
-            "fg": "#e1e2e9",
-            "accent": "#a8c8ff",
-            "error": "#ffb4ab",
-            "warning": "#bdc7dc",
-            "success": "#dbbce1",
-            "muted": "#43474e",
-            "info": "#a8c8ff",
+            "bg": palette["background"],
+            "fg": palette["foreground"],
+            "accent": palette["primary"],
+            "error": palette["error"],
+            "warning": palette["warning"],
+            "success": palette["success"],
+            "muted": palette["surface-lighten-2"],
+            "info": palette["primary"],
         }
 
         self.last_theme_mtime: float = 0.0
@@ -2432,9 +2249,6 @@ Tooltip {
         self._action_shutdown_done = False
         self._action_shutdown_lock: asyncio.Lock | None = None
 
-        # Color variable registry.
-        self._color_var_registry: dict[str, str] = {}
-        self._color_var_counter: int = 1
         self._deferred_started = False
 
         self._engine_info_cache: dict[tuple[str | None, str | None], tuple[str, str]] = {}
@@ -2822,6 +2636,9 @@ Tooltip {
 
         for t_idx, items in self.schema.items():
             for i_idx, item in enumerate(items):
+                # Static literal swatches can be prepared before the first
+                # frame. Plain values leave the color module unloaded.
+                self._prepare_color_preview(item)
                 self._item_refs[id(item)] = (t_idx, i_idx)
                 uid = self._get_item_uid(item)
 
@@ -3125,15 +2942,19 @@ Tooltip {
                             btn_label = "󰐊 Apply"
 
                         if not exists:
-                            txt.append(btn_label, style=f"{self.theme_colors['muted']} italic")
+                            _append_value_preview(
+                                txt, btn_label[2:], f"{self.theme_colors['muted']} italic",
+                                prefix=btn_label[:2], swatch_style=self.theme_colors['muted'],
+                            )
                         else:
-                            txt.append(
-                                btn_label,
-                                style=(
+                            _append_value_preview(
+                                txt, btn_label[2:],
+                                (
                                     f"bold {self.theme_colors['bg']} on {self.theme_colors['accent']}"
                                     if item.value
                                     else f"bold {self.theme_colors['accent']}"
-                                )
+                                ),
+                                prefix=btn_label[:2],
                             )
 
                     elif not exists:
@@ -3151,95 +2972,28 @@ Tooltip {
                     if val_str == "":
                         txt.append(f"[{_ICON_PENCIL}] Unset", style=f"italic {self.theme_colors['muted']}")
                     else:
-                        txt.append(f"[{_ICON_PENCIL}] {val_str}", style=accent)
+                        _append_value_preview(
+                            txt, val_str, accent, prefix=f"[{_ICON_PENCIL}] ",
+                            swatch_style=None if exists else self.theme_colors['muted'],
+                        )
 
                 case "picker":
-                    txt.append(f"[+] {val_str}", style=accent)
+                    _append_value_preview(
+                        txt, val_str, accent, prefix="[+] ",
+                        swatch_style=None if exists else self.theme_colors['muted'],
+                    )
 
                 case "color":
-                    resolved_color = self.theme_colors.get(val_str, val_str)
-                    r, g, b = color_to_rgb(resolved_color)
-                    hex_color = f"#{r:02x}{g:02x}{b:02x}"
-
-                    is_variable = is_theme_variable(val_str)
-                    if not is_variable:
-                        txt.append("⬤ ", style=hex_color if exists else self.theme_colors["muted"])
-
-                    if is_variable:
-                        display_name = None
-
-                        # Map to schema hints if possible.
-                        if item.options:
-                            sorted_opts = sorted(
-                                enumerate(item.options),
-                                key=lambda x: len(str(x[1])),
-                                reverse=True
-                            )
-
-                            for idx, opt in sorted_opts:
-                                if val_str.startswith(str(opt)):
-                                    if idx < len(item.hints) and item.hints[idx]:
-                                        base_hint = item.hints[idx]
-                                        suffix = val_str[len(str(opt)):].strip()
-
-                                        if suffix:
-                                            display_name = f"{base_hint} [{suffix}]"
-                                        else:
-                                            display_name = base_hint
-
-                                    break
-
-                        # Native variable extraction.
-                        if not display_name:
-                            norm_val = val_str.strip()
-                            extracted_name = None
-
-                            css_match = re.search(r"var\(--([^)]+)\)", norm_val)
-                            if css_match:
-                                extracted_name = css_match.group(1)
-
-                            elif "{{" in norm_val:
-                                mat_match = re.search(r"\{\{([^}]+)\}\}", norm_val)
-                                if mat_match:
-                                    parts = mat_match.group(1).split(".")
-                                    extracted_name = (
-                                        parts[1]
-                                        if len(parts) > 1 and parts[0] == "colors"
-                                        else parts[-1]
-                                    )
-
-                            else:
-                                prefix_match = re.search(r"[@$]([a-zA-Z0-9_-]+)", norm_val)
-                                if prefix_match:
-                                    extracted_name = prefix_match.group(1)
-
-                                elif re.fullmatch(r"[a-zA-Z0-9_-]+", norm_val):
-                                    extracted_name = norm_val
-
-                            if extracted_name:
-                                display_name = extracted_name.replace("_", " ").replace("-", " ").title()
-
-                        # Fallback unknown variables.
-                        if not display_name:
-                            norm_val = val_str.strip()
-                            if norm_val not in self._color_var_registry:
-                                self._color_var_registry[norm_val] = f"Variable {self._color_var_counter}"
-                                self._color_var_counter += 1
-
-                            display_name = self._color_var_registry[norm_val]
-
-                        txt.append(display_name, style=accent)
-
-                    else:
-                        color_name = get_color_name(r, g, b)
-
-                        if resolved_color != val_str:
-                            txt.append(f"[{val_str}] ", style=self.theme_colors["muted"])
-
-                        txt.append(f"{color_name}", style=accent)
+                    _append_value_preview(
+                        txt, val_str, accent, color_field=True,
+                        swatch_style=None if exists else self.theme_colors['muted'],
+                    )
 
                 case _:
-                    txt.append(val_str, style=fg)
+                    _append_value_preview(
+                        txt, val_str, fg,
+                        swatch_style=None if exists else self.theme_colors['muted'],
+                    )
 
         if is_modified and is_highlighted and exists:
             txt.append("   ↩ Reset", style=f"italic {self.theme_colors['error']}")
@@ -3547,16 +3301,36 @@ Tooltip {
             keys.add(self._get_item_engine_info(item))
         return keys
 
+    def _prepare_color_preview(self, item: ConfigItem, state: dict | None = None) -> None:
+        """Cache display-only colors from a schema row or a backend snapshot."""
+        if item.read_only:
+            return
+        if is_trigger_item(item):
+            option = str(item.options[0])
+            if option.lower().startswith(("trigger:", "copy:")):
+                _color_preview_hex(option.split(":", 1)[1], False)
+        elif item.type_ in ("string", "cycle", "picker", "color"):
+            raw = self._lookup_state(state, item) if state is not None else _STATE_MISSING
+            value = item.value if raw is _STATE_MISSING else item.deserialize(raw)
+            _color_preview_hex(str(value), item.type_ == "color")
+
     def _load_one_engine_sync(self, ekey: tuple[str, str]) -> Any:
         eng = self.engine_pool[ekey]
         if self.deferred_load and hasattr(eng, "load_state_for_units"):
             items = [item for _tab, _index, item in self._items_by_engine.get(ekey, ())
                      if item.type_ not in ("menu", "action", "preset")]
-            return eng.load_state_for_units(
+            state = eng.load_state_for_units(
                 [item.key for item in items if item.scope == "user"],
                 [item.key for item in items if item.scope == "system"],
             )
-        return eng.load_state()
+        else:
+            state = eng.load_state()
+        # This method runs in the existing I/O worker. Initialize color-only
+        # code and cache literal previews before handing rows to the UI thread.
+        # No widgets or model values are changed here.
+        for _tab, _index, item in self._items_by_engine.get(ekey, ()):
+            self._prepare_color_preview(item, state)
+        return state
 
     async def _load_engine_states(
         self, keys: set[tuple[str, str]], loader: Any = None
@@ -4806,6 +4580,10 @@ Tooltip {
 
                     self._update_footer_legend()
 
+        except FileNotFoundError:
+            # The generated theme is optional; retain the current palette
+            # and keep watching so a later Matugen run can supply it.
+            return
         except Exception:
             LOGGER.exception("Unexpected error while watching theme file")
 
@@ -4813,13 +4591,13 @@ Tooltip {
         self._theme_toggle = not getattr(self, "_theme_toggle", False)
         theme_name = "dusky_matugen_A" if self._theme_toggle else "dusky_matugen_B"
 
-        bg = self.theme_colors.get("background", self.theme_colors.get("bg", "#111318"))
-        fg = self.theme_colors.get("on_background", self.theme_colors.get("fg", "#e1e2e9"))
-        accent = self.theme_colors.get("primary", self.theme_colors.get("accent", "#a8c8ff"))
-        muted = self.theme_colors.get("surface_variant", self.theme_colors.get("muted", "#43474e"))
-        err = self.theme_colors.get("error", self.theme_colors.get("error", "#ffb4ab"))
-        warn = self.theme_colors.get("tertiary", self.theme_colors.get("warning", "#bdc7dc"))
-        succ = self.theme_colors.get("secondary", self.theme_colors.get("success", "#dbbce1"))
+        bg = self.theme_colors.get("background", self.theme_colors["bg"])
+        fg = self.theme_colors.get("on_background", self.theme_colors["fg"])
+        accent = self.theme_colors.get("primary", self.theme_colors["accent"])
+        muted = self.theme_colors.get("surface_variant", self.theme_colors["muted"])
+        err = self.theme_colors["error"]
+        warn = self.theme_colors.get("tertiary", self.theme_colors["warning"])
+        succ = self.theme_colors.get("secondary", self.theme_colors["success"])
         info = self.theme_colors.get("info", accent)
 
         self.theme_colors["bg"] = bg
@@ -6597,17 +6375,12 @@ Tooltip {
                 return
 
             case "color":
-                r, g, b = color_to_rgb(str(item.value))
-                current_name = get_color_name(r, g, b)
-
-                try:
-                    idx = CYCLE_COLORS.index(current_name)
-                except ValueError:
-                    idx = 0
-
-                next_name = CYCLE_COLORS[(idx + direction) % len(CYCLE_COLORS)]
-                fmt = parse_color_format(str(item.value))
-                new_val = format_rgb(next_name, fmt, str(item.value))
+                # Schema options still take precedence above. Free-form
+                # literals rotate their actual hue; unresolved variables stay.
+                step = item.step if item.step is not None else 15.0
+                new_val = adjust_color_hue(str(item.value), direction * step)
+                if new_val is None:
+                    return
 
             case _:
                 return

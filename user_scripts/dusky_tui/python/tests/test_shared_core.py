@@ -409,13 +409,13 @@ class UtilityTests(unittest.TestCase):
             copied.metadata.append("changed")
             self.assertEqual(value.metadata, ["original"])
 
-    def test_hsl_overflow_returns_neutral_color(self):
-        self.assertEqual(ui.color_to_rgb(f"hsl({'9' * 1000}, 50%, 50%)"), (128, 128, 128))
+    def test_hsl_overflow_is_not_previewed_as_a_color(self):
+        self.assertIsNone(ui.parse_literal_color(f"hsl({'9' * 1000}, 50%, 50%)"))
 
     def test_rgb_clamps_oversized_components_without_integer_conversion_failure(self):
-        self.assertEqual(ui.color_to_rgb(f"rgb({'9' * 5000}, 0, 0)"), (255, 0, 0))
-        self.assertEqual(ui.color_to_rgb(f"rgb({'0' * 5000}1, 2, 3)"), (1, 2, 3))
-        self.assertEqual(ui.color_to_rgb("rgb(٠٠٠١, ٢, ٣)"), (1, 2, 3))
+        self.assertEqual(ui.parse_literal_color(f"rgb({'9' * 5000}, 0, 0)").rgb, (255, 0, 0))
+        self.assertEqual(ui.parse_literal_color(f"rgb({'0' * 5000}1, 2, 3)").rgb, (1, 2, 3))
+        self.assertEqual(ui.parse_literal_color("rgb(٠٠٠١, ٢, ٣)").rgb, (1, 2, 3))
 
     def test_cached_option_tracks_read_only_changes(self):
         setting = ConfigItem(label="Value", key="value", type_="int", default=1)
@@ -424,10 +424,11 @@ class UtilityTests(unittest.TestCase):
         setting.read_only = True
         self.assertIn("Read only", app._build_option(setting).plain)
 
-    def test_known_color_does_not_load_optional_database(self):
+    def test_hex_and_explicit_variables_do_not_load_color_parser(self):
         core_types.is_theme_variable.cache_clear()
-        with patch.object(core_types, "_get_css_named", side_effect=AssertionError("unnecessary import")):
-            self.assertFalse(core_types.is_theme_variable("Red"))
+        with patch.object(core_types, "parse_literal_color", side_effect=AssertionError("unnecessary import")):
+            self.assertFalse(core_types.is_theme_variable("#ff0055"))
+            self.assertTrue(core_types.is_theme_variable("$primary"))
 
     def test_special_css_colors_without_webcolors(self):
         original_import = __import__
@@ -436,8 +437,8 @@ class UtilityTests(unittest.TestCase):
                 raise ModuleNotFoundError(name)
             return original_import(name, *args, **kwargs)
         core_types.is_theme_variable.cache_clear()
-        with patch.object(core_types, "_css_named_cache", None), patch("builtins.__import__", side_effect=without_webcolors):
-            for color in ("rebeccapurple", "transparent"):
+        with patch("builtins.__import__", side_effect=without_webcolors):
+            for color in ("Red", "darkslategray", "rebeccapurple", "transparent"):
                 self.assertFalse(core_types.is_theme_variable(color))
         core_types.is_theme_variable.cache_clear()
 

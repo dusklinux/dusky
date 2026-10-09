@@ -6,41 +6,12 @@ from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from abc import ABC, abstractmethod
+lazy from python.frontend.colors import parse_literal_color
 
 # =============================================================================
 # CORE UTILITIES & CONSTANTS
 # =============================================================================
-KNOWN_COLORS = frozendict({
-    "Red": (255, 0, 0), "Green": (0, 128, 0), "Lime": (0, 255, 0),
-    "Blue": (0, 0, 255), "Yellow": (255, 255, 0), "Cyan": (0, 255, 255),
-    "Magenta": (255, 0, 255), "White": (255, 255, 255), "Black": (0, 0, 0),
-    "Gray": (128, 128, 128), "Silver": (192, 192, 192), "Maroon": (128, 0, 0),
-    "Olive": (128, 128, 0), "Purple": (128, 0, 128), "Teal": (0, 128, 128),
-    "Navy": (0, 0, 128), "Orange": (255, 165, 0), "Pink": (255, 192, 203),
-    "Brown": (165, 42, 42), "Indigo": (75, 0, 130), "Violet": (238, 130, 238),
-    "Gold": (255, 215, 0), "Coral": (255, 127, 80), "Salmon": (250, 128, 114),
-    "Khaki": (240, 230, 140), "Plum": (221, 160, 221), "Turquoise": (64, 224, 208),
-    "Crimson": (220, 20, 60), "Azure": (240, 255, 255), "Beige": (245, 245, 220),
-    "Chocolate": (210, 105, 30), "Tomato": (255, 99, 71), "Lavender": (230, 230, 250)
-})
-
-KNOWN_COLORS_LOWER = frozendict({k.lower(): v for k, v in KNOWN_COLORS.items()})
-_LOWER_KNOWN_COLORS = frozenset(KNOWN_COLORS_LOWER)
-
-# Lazy-loaded CSS cache to eliminate import-time module freezing
-_css_named_cache: frozenset[str] | None = None
-
-def _get_css_named() -> frozenset[str]:
-    global _css_named_cache
-    if _css_named_cache is None:
-        try:
-            import webcolors
-            _css_named_cache = frozenset(webcolors.names(webcolors.CSS3)) | {"rebeccapurple", "transparent"}
-        except ImportError:
-            _css_named_cache = _LOWER_KNOWN_COLORS | {"rebeccapurple", "transparent"}
-    return _css_named_cache
-
-# Pre-compiled, strictly lower-cased regexes for zero-overhead validation loops
+# Fast syntax checks avoid loading color parsing for hex and explicit variables.
 _RE_THEME_VAR = re.compile(r"(\$|@|var\(|\{\{)")
 _RE_HEX = re.compile(r"^#?(?:[a-f0-9]{3}|[a-f0-9]{4}|[a-f0-9]{6}|[a-f0-9]{8})$")
 _RE_HEX_LOWER = re.compile(r"0x(?:[a-f0-9]{6}|[a-f0-9]{8})")
@@ -61,10 +32,7 @@ def is_theme_variable(val: str) -> bool:
         return False
     if _RE_CSS_FUNC.prefixmatch(val_lower):
         return False
-    if val_lower in _LOWER_KNOWN_COLORS or val_lower in _get_css_named():
-        return False
-        
-    return True
+    return parse_literal_color(val, True) is None
 
 def is_trigger_item(item: Any) -> bool:
     """Checks if a ConfigItem acts as an action trigger via pattern matching."""

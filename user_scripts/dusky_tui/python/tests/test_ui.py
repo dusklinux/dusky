@@ -864,16 +864,16 @@ class UtilityTests(unittest.TestCase):
         self.assertIn((1, 0), app.pending_commits)
 
     def test_color_malformed_does_not_raise(self):
-        self.assertEqual(ui.color_to_rgb('hsl(.., 50%, 50%)'), (128, 128, 128))
+        self.assertIsNone(ui.parse_literal_color('hsl(.., 50%, 50%)'))
 
     def test_color_rgb_clamped(self):
-        self.assertEqual(ui.color_to_rgb('rgb(999, 10, 0)'), (255, 10, 0))
+        self.assertEqual(ui.parse_literal_color('rgb(999, 10, 0)').rgb, (255, 10, 0))
 
     def test_color_negative_hue(self):
-        self.assertEqual(ui.color_to_rgb('hsl(-120, 100%, 50%)'), (0, 0, 255))
+        self.assertEqual(ui.parse_literal_color('hsl(-120, 100%, 50%)').rgb, (0, 0, 255))
 
     def test_color_short_alpha_preserved(self):
-        self.assertEqual(ui.format_rgb('Red', 'hex', '#1234'), '#ff000044')
+        self.assertEqual(ui.adjust_color_hue('#f004', 15), '#ff400044')
 
     def test_override_path_resolution_cached(self):
         app = app_for()
