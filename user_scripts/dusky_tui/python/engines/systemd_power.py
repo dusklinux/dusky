@@ -3,27 +3,23 @@
 ===============================================================================
 DUSKY TUI: SYSTEMD-LOGIND POWER ENGINE
 ===============================================================================
-Engine for Modern Arch Linux (Kernel 7.2+, systemd 257+)
+Engine for Arch Linux (kernel 7.3+, systemd 262+)
 Target: /etc/systemd/logind.conf.d/99-power.conf (drop-in)
 Base:   /etc/systemd/logind.conf
 Features:
-  - Strict POSIX atomicity (tempfile + os.replace / sudo tee fallback)
+  - Shared atomic INI commit, including sudo credential-cache writes
   - Drop-in architecture complying with modern systemd best practices
   - Compile-time default virtualization + base file bridging (zero [Missing] keys)
   - Active override isolation (drop-ins cleanly override base defaults)
-  - Automatic systemd-logind daemon configuration reload (SIGHUP / systemctl)
+  - Automatic systemd-logind configuration reload through systemctl
 ===============================================================================
 """
 
-import os
-import re
-lazy import stat
-lazy import subprocess
-lazy import tempfile
 lazy from pathlib import Path
 lazy from typing import Any
 
 from python.engines.bridged_ini import BridgedIniEngine
+from python.config_io import read_text
 
 
 class SystemdPowerEngine(BridgedIniEngine):
@@ -78,49 +74,18 @@ class SystemdPowerEngine(BridgedIniEngine):
         Parses INI entries from a path with optional dormant (commented) default recovery.
         Active entries always take precedence over commented ones.
         """
-        if not path.exists():
+        try:
+            text, _ = read_text(path)
+            return self._parse(text, include_comments=include_commented)
+        except (OSError, UnicodeError) as exc:
+            print(f'[SystemdPowerEngine] Could not parse {path}: {exc}')
             return {}
 
-        results: dict[str, Any] = {}
-        authoritative: set[str] = set()
-        current_scope = "DEFAULT"
-
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    sec_match = self._RE_SECTION.prefixmatch(line)
-                    if sec_match:
-                        current_scope = sec_match.group(1).strip()
-                        continue
-
-                    match = self._RE_KEY.prefixmatch(line.rstrip("\n"))
-                    if match:
-                        ws1, cmt, ws2, key, assign_op, val = match.groups()
-                        full_key = f"{current_scope}/{key}"
-
-                        if not include_commented and cmt:
-                            continue
-
-                        if full_key in authoritative and cmt:
-                            continue
-
-                        if assign_op is not None:
-                            v = val.strip()
-                            if v.startswith('"') and v.endswith('"') and len(v) >= 2:
-                                v = v[1:-1]
-                            results[full_key] = v
-                        else:
-                            results[full_key] = True
-
-                        if not cmt:
-                            authoritative.add(full_key)
-
-        except (OSError, IOError) as e:
-            print(f"[SystemdPowerEngine] Warning: Could not parse {path}: {e}")
-
-        return results
-
     def load_state(self) -> dict[str, Any]:
+        with self._lock:
+            return self._load_state()
+
+    def _load_state(self) -> dict[str, Any]:
         """
         Constructs the unified configuration state using a three-tier hierarchy:
           Tier 1: Upstream compile-time defaults (virtualized)
@@ -140,20 +105,18 @@ class SystemdPowerEngine(BridgedIniEngine):
             target_scope = "Login" if scope in ("DEFAULT", "Login") else scope
             state[f"{target_scope}/{k}"] = str(v)
 
-        # Tier 3: Drop-in file active overrides (only active lines supersede base)
-        if self.config_path.exists():
-            try:
-                self.file_mtime = self.config_path.stat().st_mtime
-            except OSError:
-                self.file_mtime = 0.0
-
-            dropin_entries = self._parse_ini_lines(self.config_path, include_commented=False)
-            for full_k, v in dropin_entries.items():
-                scope, _, k = full_k.partition("/")
-                target_scope = "Login" if scope in ("DEFAULT", "Login") else scope
-                state[f"{target_scope}/{k}"] = str(v)
-        else:
-            self.file_mtime = 0.0
+        # Tier 3: Record the same descriptor snapshot used to parse the target.
+        self._loaded = False
+        try:
+            text, self._snapshot = read_text(self.config_path)
+            dropin_entries = self._parse(text, include_comments=False)
+            for full_k, value in dropin_entries.items():
+                scope, _, key = full_k.partition('/')
+                target_scope = 'Login' if scope in ('DEFAULT', 'Login') else scope
+                state[f'{target_scope}/{key}'] = str(value)
+            self._loaded = True
+        except (OSError, UnicodeError) as exc:
+            print(f'[SystemdPowerEngine] Could not read target: {exc}')
 
         # Mirror bare keys for unambiguous root lookups
         for k, v in list(state.items()):
@@ -165,6 +128,10 @@ class SystemdPowerEngine(BridgedIniEngine):
         return self.cache
 
     def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
+        with self._lock:
+            return self._write_power_batch(changes)
+
+    def _write_power_batch(self, changes):
         """
         Writes batched power configuration changes strictly to the drop-in file.
         Ensures [Login] section header, applies atomic commit, and reloads systemd-logind.
@@ -184,78 +151,12 @@ class SystemdPowerEngine(BridgedIniEngine):
         if not config_changes:
             return True, "Actions processed.", ""
 
-        # Guarantee the drop-in directory exists
-        try:
-            self.dropin_dir.mkdir(parents=True, exist_ok=True)
-        except PermissionError:
-            try:
-                subprocess.run(["sudo", "-n", "mkdir", "-p", str(self.dropin_dir)], check=True, capture_output=True)
-            except Exception:
-                return False, "AUTH_REQUIRED", "Cannot create drop-in directory."
-
-        # Pre-seed drop-in header if file doesn't exist yet
-        if not self.config_path.exists():
-            header = (
-                "# =============================================================================\n"
-                "# Managed strictly by Dusky TUI - Systemd Power Manager\n"
-                "# Target: systemd-logind drop-in configuration\n"
-                "# =============================================================================\n"
-                "[Login]\n"
-            )
-            try:
-                with open(self.config_path, "w", encoding="utf-8") as f:
-                    f.write(header)
-                self.config_path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
-                self.file_mtime = self.config_path.stat().st_mtime
-            except PermissionError:
-                try:
-                    res = subprocess.run(
-                        ["sudo", "-n", "tee", str(self.config_path)],
-                        input=header.encode("utf-8"),
-                        capture_output=True,
-                        timeout=5
-                    )
-                    if res.returncode != 0:
-                        return False, "AUTH_REQUIRED", ""
-                    self.file_mtime = self.config_path.stat().st_mtime
-                except Exception:
-                    return False, "AUTH_REQUIRED", ""
-
         # Delegate atomic mutation to IniConfigEngine
         success, msg, debug = super().write_batch(config_changes)
 
         if not success:
             return False, msg, debug
 
-        # Ensure world-readable permissions (0644) for systemd drop-in
-        if self.config_path.exists():
-            try:
-                self.config_path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
-            except PermissionError:
-                try:
-                    subprocess.run(["sudo", "-n", "chmod", "0644", str(self.config_path)], check=False, capture_output=True)
-                except Exception:
-                    pass
-
-        # Reload systemd-logind daemon to enact changes immediately
-        reload_msg = self._reload_logind()
-
-        return True, f"{msg} {reload_msg}".strip(), debug
-
-    def _reload_logind(self) -> str:
-        """Reloads systemd-logind via systemctl or SIGHUP fallback."""
-        try:
-            res = subprocess.run(
-                ["systemctl", "reload", "systemd-logind.service"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if res.returncode == 0:
-                return "[systemd-logind reloaded]"
-
-            # SIGHUP fallback for non-systemctl environments or restricted polkit
-            subprocess.run(["pkill", "-HUP", "-x", "systemd-logind"], capture_output=True, timeout=5)
-            return "[systemd-logind reloaded via SIGHUP]"
-        except Exception as e:
-            return f"[reload notice: {e}]"
+        self._load_state()
+        # The parent performs the documented systemctl reload once per commit.
+        return True, msg, debug

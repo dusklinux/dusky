@@ -36,26 +36,41 @@ hl.bind("SUPER", "Q", { run = "killactive" })
   - `hl.workspace_rule({ workspace = "w[tv1]", ... })` → `scope="workspace_rule/w[tv1]"`
   - `hl.monitor({ output = "eDP-1", ... })` → `scope="monitor/eDP-1"`
   - `hl.bind("SUPER", "Q", {...})` → `scope="bind/SUPER"` (first argument only; flags table keys like `run` become the item key)
-  - If no identifier field exists, the engine falls back to a numeric index.
+  - If no identifier field exists, the engine uses its runtime insertion index.
 - Legacy `tui_*_data` tables (`tui_window_data`, `tui_workspace_data`,
   `tui_layer_data`) map to `window_rule`, `workspace_rule`, `layer_rule`.
-- Root-level variables are `scope="DEFAULT"`.
+- Direct writes target table fields; arbitrary top-level variable assignments
+  are not writable bindings.
 - **Never inject artificial `name` keys into `workspace_rule` blocks** — the
   compositor rejects them; the engine keys off the native `workspace` string.
 
 ## Types & value handling
 
 - `bool` → `true`/`false`; `int`/`float` → raw numbers; `string` → quoted.
-- Hex values (`0x...`) are written raw.
+- Hex values (`0x...`) are written raw for numeric/non-string item types.
+- Strings use Lua byte escapes, including control characters and Unicode.
+- `hl.env(name, value)` exposes `key` and `value` under `scope="env/<index>"`.
 - `"__DELETE__"` → `nil` (the key is removed from the table).
 - Color/theme variables arrive as `__VAR__...` and are re-emitted verbatim.
 
 ## Quirks
 
-- Only `.lua` files inside the config directory are loaded via `dofile`/`require`
-  (jail constraint); loaded file mtimes are tracked for concurrency checks.
+- Relative includes resolve from the configuration directory. For targets under
+  `$XDG_CONFIG_HOME/hypr` (default `~/.config/hypr`), `require` also resolves
+  root-relative modules there, after trying the target directory. `dofile` returns
+  the included chunk result. Only `.lua` files inside the configuration directory
+  are eligible for writes. Loaded-file snapshots detect external changes.
 - The mutator preserves comments, whitespace, and inline formatting; it aborts
-  the whole batch if any target value is a complex expression it can't rewrite.
+  the whole batch if a target is missing or a complex expression cannot be
+  rewritten. Generated Lua is syntax-checked before any replacement.
+- Only executed call sites are writable. Repeated calls from a loop or several
+  calls to the same method on one source line are rejected when the target cannot
+  be identified uniquely. Put independently editable calls on separate lines.
+- Successful writes re-evaluate the state so the cache follows Lua's numeric
+  semantics and runtime insertion order.
+- Each file replacement is atomic and synced. Multi-file batches are staged
+  together but cannot guarantee all-or-nothing replacement across files; a commit
+  failure reports how many files were replaced and requires a reload.
 - Multiple schema items can target the same key with different scopes; scopes
   use `/` — remember preset payloads and `parent_ref` still use the **dot**
   UID form (`input/touchpad.natural_scroll`).

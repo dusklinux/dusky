@@ -28,18 +28,20 @@ template = "..."
 ## Types & value handling
 
 - Boolean or string values; truthy strings are `true`, `1`, `yes`, `on`, `t`, `y` (case-insensitive).
-- If a key is not present in the file, it is silently skipped (nothing is appended) — schemas should only list templates that already exist in the file.
+- If a key is absent, the whole batch fails before writing. Duplicate template
+  headers also fail rather than toggling an ambiguous block.
 - If the block is already in the requested state, it is left untouched (protects inner comments).
-- If nothing changed, the engine returns `True, "No modifications required."`.
+- If nothing changed, the engine reports success without replacing the file.
 
 ## Quirks
 
 - Block boundaries are found by scanning for the next section header (with blank-line lookahead so a blank line + header also terminates the block).
 - Multiline strings are tracked with triple single quotes (`'''`) and triple double quotes (`"""`) so blocks containing them are not cut short or corrupted.
 - Commenting skips blank lines; uncommenting strips only one outer `#` / `# ` prefix, so internal block comments survive.
-- Concurrency guard: if the file's mtime changed after load, the write is refused with `File <name> was modified externally. Reload required.` — the schema UI must re-load state first.
+- Concurrency guard: if the file's inode, size, mtime or ctime changed after load, the write is refused with `File <name> was modified externally. Reload required.` — the schema UI must re-load state first.
 - If the target file does not exist, `load_state()` returns `{}` and any write fails (`Target configuration file ... does not exist.`).
-- Writes are atomic (temp file + `os.replace`) and preserve the original file permissions.
+- The active TOML document is validated before writing. Atomic commits sync the
+  file and parent directory and preserve ownership and permissions.
 
 ## Example items
 

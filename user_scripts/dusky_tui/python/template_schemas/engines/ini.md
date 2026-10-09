@@ -52,9 +52,12 @@ cached but **never written** to the file.
 
 ## Quirks
 
-- On success, runs `makoctl reload` when the target is `.../mako/config`.
-- Writes are atomic (tmpfile + `os.replace`), with `sudo -n tee` fallback that
-  returns `AUTH_REQUIRED` (the TUI prompts for a password).
+- After a changed commit, runs `makoctl reload` for `.../mako/config` or
+  `systemctl reload systemd-logind.service` for logind configuration. Reloads
+  have a timeout; failures are returned in debug output after the file is saved.
+- Writes use a shared atomic commit (temporary file, file/directory sync, and
+  `os.replace`). The sudo credential-cache path uses the same commit helper;
+  missing authorization returns `AUTH_REQUIRED` for the existing TUI password flow.
 
 ## Example items
 

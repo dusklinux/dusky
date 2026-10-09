@@ -19,7 +19,8 @@ audio.record_audio true
 
 ## Scope / key mapping
 
-- The raw key is split on the **first dot**: `record.record_options.fps` →
+- All dot boundaries have cache aliases: `record.record_options.fps` supports
+  both `scope="record"`, `key="record_options.fps"` and
   `scope="record.record_options"`, `key="fps"`.
 - Keys without a dot → `scope="DEFAULT"`, `key=<raw>`.
 - Duplicates are indexed with `:N` (`audio.track:2`); the base key binds to
@@ -34,9 +35,11 @@ audio.record_audio true
 
 ## Quirks
 
-- Preserves exact duplicate keys via index tags during writes.
+- Preserves exact duplicate keys via index tags during writes. A missing `:N`
+  can append only the next occurrence; gaps fail before writing. Base-key and
+  `:1` edits refer to the same occurrence, with the last requested value winning.
 - Atomic tmpfile + fsync commits; refuses to write if the file was modified
-  externally (nanosecond mtime check).
+  externally (inode, size, nanosecond mtime and ctime snapshot).
 
 ## Example items
 

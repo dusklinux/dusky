@@ -7,7 +7,7 @@
 
 ## Target format
 
-Standard TOML v1.0 with nested tables:
+Standard TOML, parsed by Python 3.15's `tomllib` (including TOML 1.1), with nested tables:
 
 ```toml
 [display]
@@ -22,7 +22,9 @@ color = "#a8c8ff"
 
 - `scope` = dotted table path (`"display"`, `"display.border"`; `/` accepted).
 - `key` = the table key (may itself contain dots, treated as nesting).
-- Deeply nested tables are created automatically on write.
+- Deeply nested tables are created automatically on write. Slash scopes preserve
+  literal dots in individual path components; deleting a missing path does not
+  create empty tables.
 
 ## Types & value handling
 
@@ -37,6 +39,9 @@ color = "#a8c8ff"
   error (never destroys a file with a typo).
 - Keys containing spaces/special chars are quoted automatically.
 - Output is regenerated (comments are not preserved).
+- Writes detect changes since load, refresh the cache after commit, and serialize
+  concurrent operations on the same engine. Atomic commits preserve ownership
+  and mode and sync the file and parent directory.
 
 ## Example items
 

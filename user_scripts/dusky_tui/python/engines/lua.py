@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 import os
+import re
+lazy import math
+lazy import threading
 lazy import stat
 lazy import json
 lazy import subprocess
@@ -9,27 +12,27 @@ lazy from pathlib import Path
 lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
+from python.config_io import current_stamp, stamp
 
 # =============================================================================
 # [ BLOCK 1: THE ENGINE ]
-# Optimized for Modern Python 3.14 / Arch Linux.
+# Targets Python 3.15 and the installed Lua interpreter.
 # Unified Pathlib usage, refined subprocess handling, and modernized typing.
 # =============================================================================
 
 class HyprlandLuaEngine(BaseEngine):
-    # Pre-compiled frozenset for C-speed hex validation evaluation
-    _HEX_CHARS = frozenset("0123456789abcdefABCDEF")
-    
-    # Pre-compiled set of special floats that Python parses but Lua does not naturally handle
-    _SPECIAL_FLOATS = {"inf", "-inf", "infinity", "-infinity", "nan"}
-
     def __init__(self, config_path: str = "~/Documents/hyprland.lua"):
         self.config_path = Path(config_path).expanduser().resolve()
         self.config_dir = self.config_path.parent
+        hypr_root = (Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "hypr").expanduser().resolve()
+        self.module_root = hypr_root if self.config_path.is_relative_to(hypr_root) else self.config_dir
         self.lua_bin = self._find_lua()
         self.cache: dict[str, Any] = {}
         self.loaded_files: list[str] = []
         self.file_mtimes: dict[str, float] = {}
+        self._file_stamps = {}
+        self._call_sites = []
+        self._lock = threading.RLock()
 
     @property
     def target_path(self) -> str:
@@ -43,13 +46,15 @@ class HyprlandLuaEngine(BaseEngine):
             if cmd_path:
                 try:
                     subprocess.run(
-                        [cmd_path, "-e", "assert(_VERSION:match('5%.[4-9]'))"],
+                        [cmd_path, "-E", "-e", "local major, minor = _VERSION:match('Lua (%d+)%.(%d+)'); assert(tonumber(major) > 5 or (tonumber(major) == 5 and tonumber(minor) >= 4))"],
                         capture_output=True,
                         text=True,
-                        check=True
+                        encoding='utf-8',
+                        check=True,
+                        timeout=5
                     )
                     return cmd_path
-                except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+                except (subprocess.SubprocessError, OSError):
                     continue
         raise RuntimeError("Lua 5.4+ not found in system PATH.")
 
@@ -62,17 +67,44 @@ class HyprlandLuaEngine(BaseEngine):
             return False
 
     def load_state(self) -> dict[str, Any]:
+        with self._lock:
+            try:
+                return self._load_state()
+            except (OSError, UnicodeError) as exc:
+                self.cache = {}
+                self.loaded_files = []
+                self.file_mtimes = {}
+                self._file_stamps = {}
+                self._call_sites = []
+                print(f'Failed to read Lua configuration: {exc}')
+                return self.cache
+
+    def _load_state(self) -> dict[str, Any]:
+        self.cache = {}
+        self.loaded_files = []
+        self.file_mtimes = {}
+        self._file_stamps = {}
+        self._call_sites = []
         if not self.config_path.exists(): 
             return {}
 
-        self.file_mtimes[str(self.config_path)] = self.config_path.stat().st_mtime
+        main_before = self.config_path.stat()
+        self.file_mtimes[str(self.config_path)] = main_before.st_mtime
 
         # THE HYPRLAND v0.55.0+ DYNAMIC SANDBOX
         lua_evaluator = r"""
         local main_path = arg[1]
         local config_dir = arg[2]
+        local module_root = arg[3]
         local config_root = {}
         local loaded_files = {main_path}
+        local calls = {}
+        local function record_call(method, id, info)
+            if info and info.source:sub(1, 1) == "@" then
+                calls[#calls + 1] = {file = info.source:sub(2), line = info.currentline,
+                                    method = method, id = tostring(id)}
+            end
+        end
         
         local function deep_merge(dst, src) 
             for k, v in pairs(src) do 
@@ -88,6 +120,7 @@ class HyprlandLuaEngine(BaseEngine):
             if type(tbl) == "table" then
                 if not config_root[list_name] then config_root[list_name] = {} end
                 table.insert(config_root[list_name], tbl)
+                return tbl.name or tbl.output or tbl.workspace or #config_root[list_name]
             end
         end
         
@@ -106,11 +139,17 @@ class HyprlandLuaEngine(BaseEngine):
         local hl = setmetatable({}, {
             __index = function(_, key)
                 if key == "config" then
-                    return function(tbl) if type(tbl) == "table" then deep_merge(config_root, tbl) end end
+                    return function(tbl)
+                        if type(tbl) == "table" then
+                            deep_merge(config_root, tbl)
+                            record_call(key, "", debug.getinfo(2, "Sl"))
+                        end
+                    end
                 elseif key == "bind" or key == "unbind" then
                     return function(bind_key, dispatcher, flags)
                         local entry = flags
                         if type(entry) ~= "table" then entry = {} end
+                        record_call(key, bind_key, debug.getinfo(2, "Sl"))
                         entry._bind_key = bind_key
                         if not config_root[key] then config_root[key] = {} end
                         table.insert(config_root[key], entry)
@@ -120,12 +159,16 @@ class HyprlandLuaEngine(BaseEngine):
                         if type(env_key) == "string" then
                             if not config_root["env"] then config_root["env"] = {} end
                             table.insert(config_root["env"], { key = env_key, value = env_val })
+                            record_call(key, #config_root["env"], debug.getinfo(2, "Sl"))
                         end
                     end
                 elseif key == "layout" then
                     return inert_proxy
                 else
-                    return function(tbl) append_list(key, tbl) end
+                    return function(tbl)
+                        local id = append_list(key, tbl)
+                        if id then record_call(key, id, debug.getinfo(2, "Sl")) end
+                    end
                 end
             end
         })
@@ -134,7 +177,9 @@ class HyprlandLuaEngine(BaseEngine):
             hl = hl, math = math, string = string, table = table, type = type, 
             pairs = pairs, ipairs = ipairs, tostring = tostring, tonumber = tonumber, 
             HOME = os.getenv("HOME") or "",
-            os = {getenv = function() return nil end},
+            os = {getenv = os.getenv},
+            assert = assert, error = error, pcall = pcall, select = select,
+            next = next, setmetatable = setmetatable, getmetatable = getmetatable,
             io = {
                 open = function(path, mode)
                     if mode and mode:match("w") then return nil end
@@ -166,20 +211,33 @@ class HyprlandLuaEngine(BaseEngine):
         
         safe_env.dofile = function(path) 
             if not path:match("%.lua$") then return nil end
+            if path:sub(1, 1) ~= "/" then path = config_dir .. "/" .. path end
             table.insert(loaded_files, path)
-            local chunk = loadfile(path, "t", safe_env)
-            if chunk then
-                local ok, err = pcall(chunk)
-                if not ok then
-                    io.stderr:write("[sandbox] dofile skipped: " .. tostring(err) .. "\n")
-                end
-            end
+            local chunk, err = loadfile(path, "t", safe_env)
+            if not chunk then error(err) end
+            return chunk()
         end
         
-        safe_env.require = function(path) return safe_env.dofile(path .. ".lua") end
+        local required_modules = {}
+        safe_env.require = function(path)
+            if required_modules[path] then return required_modules[path] end
+            local relative = path:gsub("%.", "/") .. ".lua"
+            local resolved = config_dir .. "/" .. relative
+            local local_file = io.open(resolved, "rb")
+            if local_file then
+                local_file:close()
+            else
+                resolved = module_root .. "/" .. relative
+            end
+            local result = safe_env.dofile(resolved)
+            if result == nil then result = true end
+            required_modules[path] = result
+            return result
+        end
         
-        local chunk = loadfile(main_path, "t", safe_env)
-        if chunk then pcall(chunk) end
+        local chunk, err = loadfile(main_path, "t", safe_env)
+        if not chunk then error(err) end
+        chunk()
         
         local out_state = {}
         local seen_keys = {}
@@ -218,13 +276,16 @@ class HyprlandLuaEngine(BaseEngine):
                             local val_str
                             if type(v) == "string" then val_str = escape_str(v)
                             elseif type(v) == "boolean" then val_str = tostring(v)
-                            elseif type(v) == "number" then val_str = tostring(v)
+                            elseif type(v) == "number" then
+                                if v ~= v or v == math.huge or v == -math.huge then val_str = escape_str(tostring(v))
+                                else val_str = math.type(v) == "integer" and tostring(v) or string.format("%.17g", v) end
                             else val_str = escape_str(tostring(v)) end
                             table.insert(out_state, escape_str(new_scope)..":"..val_str) 
                         end 
                     end
                 end 
             end 
+            seen[t] = nil
         end
         walk(config_root, "")
 
@@ -302,9 +363,8 @@ class HyprlandLuaEngine(BaseEngine):
             end
             if tok.type == "LBRACK" and tokens[i + 1] and tokens[i + 1].type == "STRING" and tokens[i + 2] and tokens[i + 2].type == "RBRACK" and tokens[i + 3] and tokens[i + 3].type == "EQUALS" then
                 local str_val = tokens[i + 1].val
-                local clean_key = str_val:match("^['\"](.-)['\"]$")
-                if not clean_key then clean_key = str_val:match("^%[=*%[(.-)%]=*%]$") end
-                return clean_key or str_val, i + 4
+                local decoder = assert(load("return " .. str_val, "key", "t", {}))
+                return decoder(), i + 4
             end
             return nil, i
         end
@@ -367,14 +427,41 @@ class HyprlandLuaEngine(BaseEngine):
             return i
         end
 
+        local active_config_lines = {}
+        for _, call in ipairs(calls) do
+            if call.method == "config" then
+                active_config_lines[call.file] = active_config_lines[call.file] or {}
+                active_config_lines[call.file][call.line] = true
+            end
+        end
         for _, fpath in ipairs(loaded_files) do
             local f = io.open(fpath, "rb")
             if f then
                 local text = f:read("*a"); f:close()
                 local tokens = tokenize(text)
+                local line, cursor = 1, 1
+                local source_counts = {}
+                for i = 1, #tokens do
+                    while cursor < tokens[i].s do
+                        local next_line = text:find("\n", cursor, true)
+                        if not next_line or next_line >= tokens[i].s then cursor = tokens[i].s; break end
+                        line, cursor = line + 1, next_line + 1
+                    end
+                    tokens[i].line = line
+                    if tokens[i].val == "hl" and tokens[i+1] and tokens[i+1].type == "DOT"
+                       and tokens[i+2] and tokens[i+2].val == "config" then
+                        source_counts[line] = (source_counts[line] or 0) + 1
+                    end
+                end
                 for i = 1, #tokens - 4 do
-                    if tokens[i].val == "hl" and tokens[i+1].type == "DOT" and tokens[i+2].val == "config" and tokens[i+3].type == "LPAREN" and tokens[i+4].type == "LBRACE" then
-                        scan_table(tokens, text, i+4, {})
+                    local line = tokens[i].line
+                    local executed = active_config_lines[fpath] and active_config_lines[fpath][line]
+                    if executed and source_counts[line] == 1 and tokens[i].val == "hl" and tokens[i+1].type == "DOT" and tokens[i+2].val == "config" then
+                        if tokens[i+3].type == "LPAREN" and tokens[i+4].type == "LBRACE" then
+                            scan_table(tokens, text, i+4, {})
+                        elseif tokens[i+3].type == "LBRACE" then
+                            scan_table(tokens, text, i+3, {})
+                        end
                     end
                 end
             end
@@ -383,60 +470,78 @@ class HyprlandLuaEngine(BaseEngine):
         local out_files = {}
         for _, f in ipairs(loaded_files) do table.insert(out_files, escape_str(f)) end
         
-        io.stdout:write('{"state": {' .. table.concat(out_state, ",") .. '}, "files": [' .. table.concat(out_files, ",") .. ']}')
+        local out_calls = {}
+        for _, call in ipairs(calls) do
+            out_calls[#out_calls + 1] = '{"file":' .. escape_str(call.file) .. ',"line":' .. call.line
+                .. ',"method":' .. escape_str(call.method) .. ',"id":' .. escape_str(call.id) .. '}'
+        end
+        io.stdout:write('{"state": {' .. table.concat(out_state, ",") .. '}, "files": ['
+            .. table.concat(out_files, ",") .. '], "calls": [' .. table.concat(out_calls, ",") .. ']}')
         """
         
         try:
             res = subprocess.run(
-                [self.lua_bin, "-", str(self.config_path), str(self.config_dir)], 
+                [self.lua_bin, "-E", "-", str(self.config_path), str(self.config_dir), str(self.module_root)],
                 input=lua_evaluator, 
                 text=True, 
                 encoding='utf-8', 
                 capture_output=True, 
-                timeout=5.0
+                timeout=5.0,
+                cwd=self.config_dir
             )
             
             if res.returncode == 0 and res.stdout.strip():
+                if current_stamp(self.config_path) != stamp(main_before):
+                    raise OSError('Main Lua configuration changed during evaluation. Reload required.')
                 data = json.loads(res.stdout)
                 self.cache = data.get("state", {})
+                self._call_sites = data.get("calls", [])
+                for call in self._call_sites:
+                    call["file"] = str(Path(call["file"]).resolve())
                 
                 raw_files = data.get("files", [str(self.config_path)])
-                self.loaded_files = [f for f in raw_files if self._is_safe_path(f)]
+                self.loaded_files = list(dict.fromkeys(str(Path(f).resolve()) for f in raw_files if self._is_safe_path(f)))
                 
                 for f in self.loaded_files:
                     path_obj = Path(f)
                     if path_obj.exists():
-                        self.file_mtimes[f] = path_obj.stat().st_mtime
+                        info = path_obj.stat()
+                        self.file_mtimes[f] = info.st_mtime
+                        self._file_stamps[f] = (info.st_mtime, stamp(info))
                         
                 return self.cache
             else:
                 print(f"Load Error (Return Code {res.returncode}): {res.stderr}")
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, UnicodeError) as e:
             print(f"Failed to parse Lua state JSON: {e}")
         except subprocess.TimeoutExpired:
             print("Load Exception: Lua evaluation timed out.")
         except (OSError, subprocess.SubprocessError) as e: 
             print(f"Load Exception: {e}")
             
-        return {}
+        self.cache = {}
+        self.loaded_files = []
+        self.file_mtimes = {}
+        return self.cache
+
+    @staticmethod
+    def _lua_string(value: str) -> str:
+        # Lua uses decimal byte escapes; JSON's \uXXXX syntax is not Lua syntax.
+        escaped = []
+        for char in value:
+            if char in {'"', '\\'}:
+                escaped.append('\\' + char)
+            elif ord(char) < 32 or ord(char) == 127:
+                escaped.append(f'\\{ord(char):03d}')
+            else:
+                escaped.append(char)
+        return '"' + ''.join(escaped) + '"'
     
     def _is_raw_lua_val(self, val: str) -> bool:
         if val in {"true", "false", "nil", "__DELETE__"}: 
             return True
         
-        # Hex validation using native set subset execution (fast C-level)
-        if val.startswith("0x") and len(val) > 2 and set(val[2:]).issubset(self._HEX_CHARS):
-            return True
-
-        # Ensure no accidental whitespace stripping or special IEEE 754 constants corrupt Lua types
-        if val == val.strip() and val.lower() not in self._SPECIAL_FLOATS:
-            try: 
-                float(val)
-                return True
-            except ValueError: 
-                pass
-            
-        return False
+        return re.fullmatch(r'[+-]?(?:0[xX][0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?(?:[pP][+-]?[0-9]+)?|(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)', val) is not None
 
     def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
         """
@@ -446,44 +551,77 @@ class HyprlandLuaEngine(BaseEngine):
         return self.write_batch([(target_key, target_scope, new_value, item_type)])
 
     def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
-        """
-        TRUE ATOMIC AST BATCHING.
-        Compiles the entire batch payload into a single Lua table and executes a SINGLE 
-        O(1) pass per configuration file. Eliminates previous Subprocess/IO bottlenecks entirely.
-        """
+        with self._lock:
+            try:
+                return self._write_batch(changes)
+            except (OSError, UnicodeError, ValueError, TypeError, OverflowError) as exc:
+                return False, f'Lua write failed: {exc}', ''
+
+    def _write_batch(self, changes):
+        """Stage and validate all files before replacing any; renames are per-file."""
         if not changes:
             return True, "No pending changes.", ""
             
-        if not self.loaded_files: 
-            self.loaded_files = [str(self.config_path)]
+        if not self.loaded_files:
+            self.load_state()
+            if not self.loaded_files:
+                return False, "Cannot evaluate Lua configuration. Reload required.", ""
 
         # Concurrency safety check
+        refresh_calls = False
         for src_file in self.loaded_files:
             target_path = Path(src_file)
             if target_path.exists():
                 cached_mtime = self.file_mtimes.get(src_file)
-                if cached_mtime and target_path.stat().st_mtime > cached_mtime:
+                if cached_mtime is not None and target_path.stat().st_mtime != cached_mtime:
                     return False, f"File {src_file} modified externally. Reload required.", ""
+                remembered = self._file_stamps.get(src_file)
+                # Derived engines maintain file_mtimes after their own source edits.
+                if remembered and remembered[0] != cached_mtime:
+                    refresh_calls = True
+                if remembered and remembered[0] == cached_mtime and current_stamp(target_path) != remembered[1]:
+                    return False, f"File {src_file} modified externally. Reload required.", ""
+            elif src_file in self.file_mtimes:
+                return False, f'File {src_file} was removed externally. Reload required.', ''
 
-        # Build secure, serialized Lua batch table
-        lua_table = "return {\n"
+        if refresh_calls:
+            self.load_state()
+            if not self.loaded_files:
+                return False, "Cannot refresh edited Lua configuration. Reload required.", ""
+
+        # Last change wins for repeated UI bindings, without inflated accounting.
+        changes = list({(key, scope): (key, scope, value, kind) for key, scope, value, kind in changes}.values())
+        payload = ['return {']
         for key, scope, new_value, item_type in changes:
-            if isinstance(new_value, str) and new_value.startswith("__VAR__"):
-                val_str = new_value[7:]
-            elif item_type == "bool":
-                val_str = "true" if str(new_value).lower() in ("true", "1", "yes", "on", "t", "y") else "false"
-            elif item_type in ("int", "float") or (item_type != "string" and self._is_raw_lua_val(str(new_value))):
-                val_str = new_value
+            if new_value is None or new_value in ('nil', '__DELETE__'):
+                value = 'nil'
+            elif isinstance(new_value, str) and new_value.startswith('__VAR__'):
+                value = new_value[7:]
+            elif item_type == 'bool':
+                value = 'true' if str(new_value).strip().lower() in {'true', '1', 'yes', 'on', 't', 'y'} else 'false'
+            elif item_type in ('int', 'float'):
+                value = str(new_value)
+                if not self._is_raw_lua_val(value) or not math.isfinite(float.fromhex(value) if '0x' in value.lower() else float(value)):
+                    raise ValueError(f'Invalid Lua {item_type}: {value!r}')
+            elif item_type != 'string' and self._is_raw_lua_val(str(new_value)):
+                value = str(new_value)
             else:
-                val_str = json.dumps(new_value, ensure_ascii=False)
-            
-            lua_table += f"  {{ key = {json.dumps(key, ensure_ascii=False)}, scope = {json.dumps(scope, ensure_ascii=False)}, val = {json.dumps(val_str, ensure_ascii=False)} }},\n"
-        lua_table += "}\n"
+                value = self._lua_string(str(new_value))
+            payload.append(f'  {{ key = {self._lua_string(key)}, scope = {self._lua_string(scope)}, val = {self._lua_string(value)} }},')
+        payload.append('  calls = {')
+        for call in self._call_sites:
+            payload.append('    {file = ' + self._lua_string(call['file'])
+                           + ', line = ' + str(call['line'])
+                           + ', method = ' + self._lua_string(call['method'])
+                           + ', id = ' + self._lua_string(call['id']) + '},')
+        lua_table = '\n'.join([*payload, '  }', '}'])
+        snapshots = {file: Path(file).stat() for file in self.loaded_files}
 
         status_msg = "Failed"
         debug_output = ""
         success = False
         
+        committed_count = 0
         pending_replacements: list[tuple[Path, Path, str]] = []
         temp_files_created: list[Path] = []
         successful_commits: set[tuple[str, str]] = set()
@@ -499,9 +637,6 @@ class HyprlandLuaEngine(BaseEngine):
             local src_path = assert(arg[1], "missing source")
             local batch_path = assert(arg[2], "missing batch file")
             local out_path = assert(arg[3], "missing out file")
-
-            local files = {}
-            for k = 4, #arg do table.insert(files, arg[k]) end
 
             local function read_file(path)
                 local f = io.open(path, "rb")
@@ -604,24 +739,7 @@ class HyprlandLuaEngine(BaseEngine):
                     return new_value
                 elseif kind == "ident" then
                     return new_value
-                elseif kind == "bool" then
-                    if new_value == "true" or new_value == "false" or new_value == "nil" then return new_value end
-                    return new_value == "0" and "false" or "true"
-                elseif kind == "number" then
-                    return new_value
-                elseif kind == "string" then
-                    local t = old_raw:gsub("^%s+", ""):gsub("%s+$", "")
-                    if t:sub(1,1) == "[" then
-                        local stripped_val = new_value:gsub('^"', ''):gsub('"$', '')
-                        local open_bracket = t:match("^(%[=*%[)")
-                        if open_bracket then
-                            local close_bracket = open_bracket:gsub("%[", "%]")
-                            if stripped_val:find(close_bracket, 1, true) then
-                                return new_value
-                            end
-                            return open_bracket .. stripped_val .. close_bracket
-                        end
-                    end
+                elseif kind == "bool" or kind == "number" or kind == "string" then
                     return new_value
                 end
                 error("Target value is a complex expression: [" .. tostring(old_raw) .. "]")
@@ -661,14 +779,14 @@ class HyprlandLuaEngine(BaseEngine):
                 end
                 if tok.type == "LBRACK" and tokens[i + 1] and tokens[i + 1].type == "STRING" and tokens[i + 2] and tokens[i + 2].type == "RBRACK" and tokens[i + 3] and tokens[i + 3].type == "EQUALS" then
                     local str_val = tokens[i + 1].val
-                    local clean_key = str_val:match("^['\"](.-)['\"]$")
-                    if not clean_key then clean_key = str_val:match("^%[=*%[(.-)%]=*%]$") end
-                    return clean_key or str_val, i + 4
+                    local decoder = assert(load("return " .. str_val, "key", "t", {}))
+                    return decoder(), i + 4
                 end
                 return nil, i
             end
 
             -- Unified pass scans for ALL batch items simultaneously
+            local peek_identifier
             local function parse_table(tokens, text, i, scope_parts, matches)
                 if not tokens[i] or tokens[i].type ~= "LBRACE" then return i end
                 i = i + 1
@@ -699,7 +817,7 @@ class HyprlandLuaEngine(BaseEngine):
                         end
                         i = next_i
                     else
-                        local key_str = tostring(array_index)
+                        local key_str = tokens[i].type == "LBRACE" and peek_identifier(tokens, i) or tostring(array_index)
                         local rhs_end, next_i = find_rhs_end(tokens, i)
                         
                         if tokens[i] and tokens[i].type == "LBRACE" then
@@ -728,23 +846,22 @@ class HyprlandLuaEngine(BaseEngine):
                 return i
             end
             
-            local function peek_identifier(tokens, start_idx)
+            peek_identifier = function(tokens, start_idx)
                 local k = start_idx + 1
-                local depth = 0
                 while k <= #tokens do
-                    local t = tokens[k].type
-                    if t == "LBRACE" then depth = depth + 1
-                    elseif t == "RBRACE" then
-                        if depth == 0 then break end
-                        depth = depth - 1
-                    elseif depth == 0 and t == "IDENT" then
-                        if (tokens[k].val == "name" or tokens[k].val == "output" or tokens[k].val == "workspace") 
-                           and tokens[k+1] and tokens[k+1].type == "EQUALS" 
-                           and tokens[k+2] and tokens[k+2].type == "STRING" then
-                            return tokens[k+2].val:match("^['\"](.-)['\"]$")
+                    local token = tokens[k]
+                    if token.type == "RBRACE" then break end
+                    if token.type == "COMMA" or token.type == "SEMI" then
+                        k = k + 1
+                    else
+                        local key, rhs = key_at(tokens, k)
+                        if (key == "name" or key == "output" or key == "workspace") and tokens[rhs]
+                           and (tokens[rhs].type == "STRING" or tokens[rhs].type == "NUMBER") then
+                            return tostring(assert(load("return " .. tokens[rhs].val, "identifier", "t", {}))())
                         end
+                        local _, next_k = find_rhs_end(tokens, key and rhs or k)
+                        k = next_k
                     end
-                    k = k + 1
                 end
                 return nil
             end
@@ -771,39 +888,93 @@ class HyprlandLuaEngine(BaseEngine):
                 return nil, nil
             end
 
-            local method_counters = {}
-            local target_tokens = nil
-            local target_text = nil
-            
-            for _, filepath in ipairs(files) do
-                local text = read_file(filepath)
-                local toks = tokenize(text)
-                
-                if filepath == src_path then
-                    target_text = text
-                    target_tokens = toks
-                    break
-                end
-                
-                local idx = 1
-                while idx <= #toks do
-                    local arg_idx, method = config_arg_index(toks, idx)
-                    if arg_idx and method ~= "config" then
-                        method_counters[method] = (method_counters[method] or 0) + 1
-                    end
-                    idx = idx + 1
+            local target_text = read_file(src_path)
+            if not target_text then os.exit(4) end
+            local target_tokens = tokenize(target_text)
+            local sites = {}
+            for _, call in ipairs(batch.calls or {}) do
+                if call.file == src_path then
+                    local key = call.line .. "\0" .. call.method
+                    sites[key] = sites[key] or {}
+                    table.insert(sites[key], call.id)
                 end
             end
-            
-            if not target_text then os.exit(4) end
-            
+            local line, cursor = 1, 1
+            local source_counts = {}
+            for index, token in ipairs(target_tokens) do
+                while cursor < token.s do
+                    local next_line = target_text:find("\n", cursor, true)
+                    if not next_line or next_line >= token.s then cursor = token.s; break end
+                    line, cursor = line + 1, next_line + 1
+                end
+                token.line = line
+                local argument, method = config_arg_index(target_tokens, index)
+                if argument and token.val == "hl" then
+                    local site = line .. "\0" .. method
+                    source_counts[site] = (source_counts[site] or 0) + 1
+                end
+            end
+
             local matches = {}
             local idx = 1
             while idx <= #target_tokens do
                 local arg_idx, method = config_arg_index(target_tokens, idx)
-                if arg_idx then
+                local line = target_tokens[idx].line
+                local site = line .. "\0" .. (method or "")
+                local ids = sites[site]
+                if arg_idx and target_tokens[idx].val ~= "hl" then
+                    -- Legacy data tables have their definition on another line.
+                    local name = peek_identifier(target_tokens, arg_idx)
+                    ids = {}
+                    for _, call in ipairs(batch.calls or {}) do
+                        if call.method == method and (not name or call.id == name) then
+                            ids[#ids + 1] = call.id
+                        end
+                    end
+                end
+                -- A source line can execute repeatedly or contain several calls.
+                -- Without a unique runtime identity, refuse a requested edit.
+                if ids and (#ids > 1 or (source_counts[site] or 0) > 1) then
+                    local ambiguous = false
+                    if method == "config" then
+                        local candidates = {}
+                        parse_table(target_tokens, target_text, arg_idx, {}, candidates)
+                        ambiguous = #candidates > 0
+                    else
+                        for _, id in ipairs(ids) do
+                            local scope = method .. "/" .. id
+                            for _, item in ipairs(batch) do
+                                if item.scope == scope or item.scope:sub(1, #scope + 1) == scope .. "/" then
+                                    ambiguous = true
+                                end
+                            end
+                        end
+                    end
+                    if ambiguous then
+                        io.stderr:write("Ambiguous repeated Lua call on line ", line, ".\n")
+                        os.exit(3)
+                    end
+                    ids = nil
+                end
+                if arg_idx and ids and #ids == 1 then
                     if method == "config" then
                         parse_table(target_tokens, target_text, arg_idx, {}, matches)
+                    elseif method == "env" then
+                        local scope = { method, ids[1] }
+                        local key_end, next_arg = find_rhs_end(target_tokens, arg_idx)
+                        local value_arg = next_arg + 1
+                        local value_end = find_rhs_end(target_tokens, value_arg)
+                        for field, range in pairs({key = {arg_idx, key_end}, value = {value_arg, value_end}}) do
+                            local lookup_key = scope_string(scope) .. "\0" .. field
+                            local target_val = batch_lookup[lookup_key]
+                            if target_val and target_tokens[range[1]] and target_tokens[range[2]] then
+                                matches[#matches + 1] = {
+                                    s = target_tokens[range[1]].s, e = target_tokens[range[2]].e,
+                                    raw = target_text:sub(target_tokens[range[1]].s, target_tokens[range[2]].e),
+                                    new_val = target_val, lookup_key = lookup_key,
+                                }
+                            end
+                        end
                     elseif method == "bind" or method == "unbind" then
                         local comma_count, k, depth, block_depth = 0, arg_idx, 0, 0
                         while k <= #target_tokens do
@@ -824,7 +995,7 @@ class HyprlandLuaEngine(BaseEngine):
                             elseif depth == 0 and block_depth == 0 and t == "COMMA" then
                                 comma_count = comma_count + 1
                                 if comma_count == 2 and target_tokens[k+1] and target_tokens[k+1].type == "LBRACE" then
-                                    local bind_key = target_tokens[arg_idx].val:match("^['\"](.-)['\"]$") or "unknown"
+                                    local bind_key = ids[1]
                                     parse_table(target_tokens, target_text, k+1, { method, bind_key }, matches)
                                     break
                                 end
@@ -832,11 +1003,7 @@ class HyprlandLuaEngine(BaseEngine):
                             k = k + 1
                         end
                     else
-                        local id = peek_identifier(target_tokens, arg_idx)
-                        if not id then 
-                            method_counters[method] = (method_counters[method] or 0) + 1
-                            id = tostring(method_counters[method])
-                        end
+                        local id = ids[1]
                         parse_table(target_tokens, target_text, arg_idx, { method, id }, matches)
                     end
                 end
@@ -849,6 +1016,7 @@ class HyprlandLuaEngine(BaseEngine):
             
             local matched_tracker = {}
             
+            table.sort(matches, function(a, b) return a.s < b.s end)
             -- Apply replacements in reverse order to preserve string indexing
             for j = #matches, 1, -1 do
                 local m = matches[j]
@@ -864,9 +1032,17 @@ class HyprlandLuaEngine(BaseEngine):
                 target_text = target_text:sub(1, m.s - 1) .. repl_or_err .. target_text:sub(m.e + 1)
             end
             
+            -- Refuse malformed output before staging a replacement.
+            local valid, syntax_error = load(target_text, "@" .. src_path, "t", {})
+            if not valid then io.stderr:write(syntax_error, "\n"); os.exit(3) end
+
             -- Inform Python specifically which keys were successfully patched
+            local function hex(value)
+                return (value:gsub(".", function(char) return string.format("%02x", char:byte()) end))
+            end
             for k, _ in pairs(matched_tracker) do
-                io.stderr:write("[MATCHED] " .. k .. "\n")
+                local scope, key = k:match("^(.-)%z(.*)$")
+                io.stderr:write("[MATCHED] " .. hex(scope) .. " " .. hex(key) .. "\n")
             end
             
             local out_f = io.open(out_path, "wb")
@@ -886,12 +1062,7 @@ class HyprlandLuaEngine(BaseEngine):
                 out_path = Path(raw_out_path)
                 temp_files_created.append(out_path)
 
-                try:
-                    out_path.chmod(stat.S_IMODE(target_path.stat().st_mode))
-                except OSError:
-                    pass
-
-                args = [self.lua_bin, "-", str(target_path), str(batch_path), str(out_path)] + self.loaded_files
+                args = [self.lua_bin, "-E", "-", str(target_path), str(batch_path), str(out_path)]
                 
                 res = subprocess.run(
                     args, 
@@ -908,8 +1079,8 @@ class HyprlandLuaEngine(BaseEngine):
                 for line in res.stderr.splitlines():
                     if line.startswith("[MATCHED] "):
                         try:
-                            scope_str, key_str = line.split("[MATCHED] ")[1].strip().split("\0", 1)
-                            successful_commits.add((key_str, scope_str))
+                            scope_hex, key_hex = line.removeprefix('[MATCHED] ').split(' ', 1)
+                            successful_commits.add((bytes.fromhex(key_hex).decode('utf-8'), bytes.fromhex(scope_hex).decode('utf-8')))
                         except ValueError:
                             pass
 
@@ -921,8 +1092,10 @@ class HyprlandLuaEngine(BaseEngine):
                     status_msg = f"Lua Mutator Error {res.returncode} in {src_file}"
                     break # Abort entire transaction immediately to prevent tearing between files
             else:
-                if pending_replacements:
+                if pending_replacements and len(successful_commits) == len(changes):
                     success = True
+                elif pending_replacements:
+                    status_msg = f'Batch aborted: found {len(successful_commits)}/{len(changes)} items.'
 
         except subprocess.TimeoutExpired:
             success = False
@@ -934,9 +1107,29 @@ class HyprlandLuaEngine(BaseEngine):
         finally:
             if success:
                 try:
+                    # Complete metadata and file sync for every staged output first.
+                    for tmp_out, trg_path, _ in pending_replacements:
+                        info = trg_path.stat()
+                        temp_info = tmp_out.stat()
+                        if (temp_info.st_uid, temp_info.st_gid) != (info.st_uid, info.st_gid):
+                            os.chown(tmp_out, info.st_uid, info.st_gid)
+                        tmp_out.chmod(stat.S_IMODE(info.st_mode))
+                        with tmp_out.open('rb') as stream:
+                            os.fsync(stream.fileno())
+                    for src_f, before in snapshots.items():
+                        if current_stamp(Path(src_f)) != stamp(before):
+                            raise OSError(f'File {src_f} changed while preparing edits. Reload required.')
                     for tmp_out, trg_path, src_f in pending_replacements:
                         tmp_out.replace(trg_path)
-                        self.file_mtimes[src_f] = trg_path.stat().st_mtime
+                        committed_count += 1
+                        info = trg_path.stat()
+                        self.file_mtimes[src_f] = info.st_mtime
+                        self._file_stamps[src_f] = (info.st_mtime, stamp(info))
+                        directory_fd = os.open(trg_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                        try:
+                            os.fsync(directory_fd)
+                        finally:
+                            os.close(directory_fd)
                     
                     if len(successful_commits) == len(changes):
                         status_msg = f"Successfully batched {len(changes)} commits."
@@ -945,16 +1138,26 @@ class HyprlandLuaEngine(BaseEngine):
                         
                 except OSError as e:
                     success = False
-                    status_msg = f"Transaction Commit Error: {e}"
+                    status_msg = f"Commit failed after {committed_count}/{len(pending_replacements)} file replacements; reload required: {e}"
 
-            # Modern Python 3.14+ file cleanup logic
+            # Clean up uncommitted outputs without hiding the original error.
             for tmp_file in temp_files_created:
-                tmp_file.unlink(missing_ok=True)
+                try:
+                    tmp_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
                     
             if batch_path:
-                batch_path.unlink(missing_ok=True)
+                try:
+                    batch_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
         if success:
+            # Re-evaluate using Lua's numeric semantics and refresh runtime identities.
+            self.load_state()
+            if not self.loaded_files:
+                return False, "Files saved, but Lua state refresh failed. Reload required.", debug_output
             return True, status_msg, debug_output
             
         if not pending_replacements and status_msg == "Failed":

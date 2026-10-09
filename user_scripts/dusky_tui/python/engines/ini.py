@@ -1,349 +1,190 @@
 #!/usr/bin/env python3
-import os
-lazy from collections import defaultdict
+"""Comment-preserving, batched INI edits and valueless configuration flags."""
 import re
-lazy import stat
-lazy import tempfile
 lazy import subprocess
+lazy import threading
+lazy from collections import Counter, defaultdict
 lazy from pathlib import Path
 lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
+from python.config_io import atomic_write, line_value, privileged_atomic_write, read_text, split_lines
+
 
 class IniConfigEngine(BaseEngine):
-    """
-    Production-grade AST-like engine for INI-style and Arch Linux configuration files 
-    (e.g., pacman.conf, makepkg.conf, mako/config).
-    
-    Provides strict atomicity, concurrency protection (mtime locks), precise 
-    preservation of structural comments, and dynamic assignment operator detection.
-    """
-    
-    # Matches a section header like [options] or [mode=do-not-disturb]
-    _RE_SECTION = re.compile(r"^\s*\[(.*?)\]\s*$")
-    
-    # Matches a key, intelligently separating it from comment prefixes, assignment operators, and values
-    # Group 1: Leading whitespace
-    # Group 2: Comment char (# or ; or empty)
-    # Group 3: Whitespace after comment char
-    # Group 4: Key
-    # Group 5: Assignment operator (e.g., ' = ', '=', or None)
-    # Group 6: Value (or None)
-    _RE_KEY = re.compile(r"^([ \t]*)([#;]?)([ \t]*)([a-zA-Z0-9_.-]+)(?:([ \t]*=[ \t]*)(.*)|[ \t]*)$")
-    
-    def __init__(self, config_path: str = "/etc/pacman.conf"):
+    _RE_SECTION = re.compile(r'^\s*\[(.*?)\]\s*(?:[#;].*)?$')
+    _RE_KEY = re.compile(r'^([ \t]*)([#;]?)([ \t]*)([a-zA-Z0-9_.-]+)(?:([ \t]*=[ \t]*)(.*)|[ \t]*)$')
+    _include_comments = False
+
+    def __init__(self, config_path: str = '/etc/pacman.conf'):
         self.config_path = Path(config_path).expanduser().resolve()
         self.cache: dict[str, Any] = {}
-        self.file_mtime: float = 0.0
+        self._snapshot = None
+        self._loaded = False
+        self._lock = threading.RLock()
 
     @property
     def target_path(self) -> str:
         return str(self.config_path)
 
+    def _parse(self, text: str, *, include_comments: bool | None = None) -> dict[str, Any]:
+        include_comments = self._include_comments if include_comments is None else include_comments
+        cache = {}
+        scope = 'DEFAULT'
+        active = set()
+        for line in split_lines(text):
+            if section := self._RE_SECTION.prefixmatch(line):
+                scope = section[1].strip()
+            elif match := self._RE_KEY.prefixmatch(line):
+                _, comment, _, key, assignment, value = match.groups()
+                full_key = f'{scope}/{key}'
+                if comment and (not include_comments or full_key in active):
+                    continue
+                if assignment is not None:
+                    value = value.strip()
+                    if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+                        value = value[1:-1]
+                else:
+                    value = True
+                cache[full_key] = value
+                if not comment:
+                    active.add(full_key)
+        return cache
+
     def load_state(self) -> dict[str, Any]:
-        """Parses active, uncommented configurations into a flat state dictionary."""
-        if not self.config_path.exists():
-            return {}
+        with self._lock:
+            self.cache = {}
+            self._loaded = False
+            try:
+                text, self._snapshot = read_text(self.config_path)
+                self.cache = self._parse(text)
+                self._loaded = True
+            except (OSError, UnicodeError) as exc:
+                print(f'Failed to read {self.config_path}: {exc}')
+            return self.cache
 
-        self.file_mtime = self.config_path.stat().st_mtime
-        self.cache = {}
-        current_scope = "DEFAULT"
-        
-        try:
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    sec_match = self._RE_SECTION.prefixmatch(line)
-                    if sec_match:
-                        current_scope = sec_match.group(1).strip()
-                        continue
-                        
-                    match = self._RE_KEY.prefixmatch(line.rstrip('\n'))
-                    if match:
-                        ws1, cmt, ws2, key, assign_op, val = match.groups()
-                        
-                        # Only load active (uncommented) keys
-                        if not cmt:
-                            if assign_op is not None:
-                                v = val.strip()
-                                # Strip standard UI string quotes if present
-                                if v.startswith('"') and v.endswith('"') and len(v) >= 2:
-                                    v = v[1:-1]
-                                self.cache[f"{current_scope}/{key}"] = v
-                            else:
-                                # Valueless flags (like 'Color', 'ILoveCandy')
-                                self.cache[f"{current_scope}/{key}"] = True
-                                
-        except (OSError, IOError) as e:
-            print(f"Failed to read config file {self.config_path}: {e}")
-            
-        return self.cache
-
-    def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
-        """Proxy method. Routes single mutations through the high-speed batch architecture."""
+    def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = 'string') -> tuple[bool, str, str]:
         return self.write_batch([(target_key, target_scope, new_value, item_type)])
 
     def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
-        """
-        O(1) pass batched mutator with atomicity and exact singularity enforcement.
-        Now featuring dynamic syntax heuristics for cross-daemon compatibility.
-        """
         if not changes:
-            return True, "No pending changes.", ""
-            
-        # Concurrency safety lock
-        if self.config_path.exists():
-            current_mtime = self.config_path.stat().st_mtime
-            if current_mtime > self.file_mtime:
-                return False, f"File {self.config_path.name} was modified externally. Reload required.", ""
+            return True, 'No pending changes.', ''
+        with self._lock:
+            try:
+                return self._write_batch(changes)
+            except PermissionError:
+                # Let the frontend retry the engine under its existing auth flow.
+                return False, 'AUTH_REQUIRED', ''
+            except (OSError, UnicodeError, ValueError, subprocess.SubprocessError) as exc:
+                return False, f'INI write failed: {exc}', ''
 
-        # Resolve dynamic scope template placeholders (e.g. app-name="{custom_app_1_target}")
-        resolved_changes = []
-        val_lookup = {k: str(v).strip() for k, s, v, _ in changes}
-        for k, s, v, itype in changes:
-            if isinstance(s, str) and "{" in s and "}" in s:
-                res_scope = s
-                for lookup_k, lookup_v in val_lookup.items():
-                    res_scope = res_scope.replace(f"{{{lookup_k}}}", lookup_v)
-                
-                # Also check cached values if not passed in current batch
-                if "{" in res_scope:
-                    for cache_k, cache_v in self.cache.items():
-                        short_k = cache_k.split("/")[-1]
-                        res_scope = res_scope.replace(f"{{{short_k}}}", str(cache_v).strip())
-                
-                if "{" in res_scope or '=""' in res_scope or "='' " in res_scope:
-                    v = "__DELETE__"
-                s = res_scope
-                
-            resolved_changes.append((k, s, v, itype))
-            
-        applied_commits = set()
-        for k, s, v, itype in changes:
-            if isinstance(s, str) and s.startswith("__"):
-                self.cache[f"{s}/{k}"] = v
-                applied_commits.add((s, k))
-
-        changes = resolved_changes
-        changes_dict = {(scope, key): val for key, scope, val, _ in changes}
-        out_lines = []
-        
-        try:
-            if self.config_path.exists():
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-            else:
-                lines = []
-        except OSError as e:
-            return False, f"Failed to open config for reading: {e}", ""
-
-        current_scope = "DEFAULT"
-        
-        # Heuristics: Analyze assignment styles to match the file's native format
-        assign_op_counts = {}
-        valueless_count = 0
-        
-        # --- PASS 1: Inline Replacement & Singularity Enforcement ---
-        for line in lines:
-            sec_match = self._RE_SECTION.prefixmatch(line)
-            if sec_match:
-                current_scope = sec_match.group(1).strip()
-                out_lines.append(line)
+    def _write_batch(self, changes):
+        text, snapshot = read_text(self.config_path)
+        if self._loaded and snapshot != self._snapshot:
+            return False, f'File {self.config_path.name} was modified externally. Reload required.', ''
+        internal = {key: value for key, value in self.cache.items() if key.startswith('__')}
+        pending = {}
+        internal_changes = set()
+        lookup = {key: str(value).strip() for key, _, value, _ in changes}
+        for cached_key, cached_value in self.cache.items():
+            lookup.setdefault(cached_key.rsplit('/', 1)[-1], str(cached_value).strip())
+        for key, scope, value, item_type in changes:
+            if scope.startswith('__'):
+                internal[f'{scope}/{key}'] = value
+                internal_changes.add((scope, key))
                 continue
-                
-            match = self._RE_KEY.prefixmatch(line.rstrip('\n'))
-            if match:
-                ws1, cmt, ws2, key, assign_op, old_val = match.groups()
-                
-                # Gather telemetry for appended keys
-                if assign_op is not None:
-                    assign_op_counts[assign_op] = assign_op_counts.get(assign_op, 0) + 1
-                else:
-                    if not cmt: # Only count active valueless flags
-                        valueless_count += 1
-                
-                lookup_key = (current_scope, key)
-                if lookup_key in changes_dict:
-                    new_val = changes_dict[lookup_key]
-                    
-                    # Strip UI Theme Variable wrappers if passed
-                    if isinstance(new_val, str) and new_val.startswith("__VAR__"):
-                        new_val = new_val[7:]
+            if '{' in scope:
+                scope = re.sub(r'\{([^{}]+)\}', lambda match: lookup.get(match[1], match[0]), scope)
+                if '{' in scope or '=""' in scope or "=''" in scope:
+                    value = '__DELETE__'
+            scope = scope or 'DEFAULT'
+            section = self._RE_SECTION.fullmatch(f'[{scope}]')
+            if (not re.fullmatch(r'[a-zA-Z0-9_.-]+', key) or any(c in scope for c in '\r\n\0')
+                    or section is None or section[1].strip() != scope):
+                raise ValueError(f'Invalid INI key or scope: {scope}/{key}')
+            pending[(scope, key)] = line_value(value, item_type)
 
-                    if lookup_key not in applied_commits:
-                        # FIRST HIT: Mutate this line to become the single active state
-                        applied_commits.add(lookup_key)
-                        
-                        is_delete_signal = str(new_val) == "__DELETE__" or str(new_val) == "nil"
-                        is_false_signal = str(new_val).lower() == "false"
-                        
-                        if is_delete_signal:
-                            if cmt:
-                                out_lines.append(line)                # Already disabled
-                            else:
-                                out_lines.append(f"{ws1}#{ws2}{key}{(assign_op or '')}{(old_val or '')}\n") # Disable safely
-                        elif is_false_signal:
-                            if assign_op is not None:
-                                out_lines.append(f"{ws1}{key}{assign_op}{new_val}\n")
-                            else:
-                                # For valueless flags, false means disable (comment out)
-                                if cmt:
-                                    out_lines.append(line)
-                                else:
-                                    out_lines.append(f"{ws1}#{ws2}{key}\n")
-                        else:
-                            # Enable / Modify
-                            if assign_op is not None:
-                                out_lines.append(f"{ws1}{key}{assign_op}{new_val}\n")
-                            else:
-                                if str(new_val).lower() == "true":
-                                    out_lines.append(f"{ws1}{key}\n")
-                                else:
-                                    dominant_op = max(assign_op_counts, key=assign_op_counts.get) if assign_op_counts else "="
-                                    out_lines.append(f"{ws1}{key}{dominant_op}{new_val}\n")
+        lines = split_lines(text)
+        newline = '\r\n' if '\r\n' in text else '\n'
+        assignments = Counter()
+        valueless = 0
+        for line in lines:
+            if match := self._RE_KEY.prefixmatch(line.rstrip('\r\n')):
+                if match[5] is not None:
+                    assignments[match[5]] += 1
+                elif not match[2]:
+                    valueless += 1
+        operator = assignments.most_common(1)[0][0] if assignments else '='
+        flags = valueless > 0
+        applied = set()
+        output = []
+        scope = 'DEFAULT'
+        for line in lines:
+            if section := self._RE_SECTION.prefixmatch(line.rstrip('\r\n')):
+                scope = section[1].strip()
+            elif match := self._RE_KEY.prefixmatch(line.rstrip('\r\n')):
+                ws, comment, after_comment, key, assignment, old_value = match.groups()
+                target = (scope, key)
+                if target in pending:
+                    value = pending[target]
+                    disabled = target in applied or value == '__DELETE__' or (assignment is None and value == 'false')
+                    applied.add(target)
+                    if disabled:
+                        output.append(line if comment else f'{ws}#{after_comment}{key}{assignment or ""}{old_value or ""}{newline}')
+                    elif assignment is None and value == 'true':
+                        output.append(f'{ws}{key}{newline}')
                     else:
-                        # SUBSEQUENT HITS: Mute duplicates to prevent overriding
-                        if cmt:
-                            out_lines.append(line)
-                        else:
-                            out_lines.append(f"{ws1}#{ws2}{key}{(assign_op or '')}{(old_val or '')}\n")
-                            
-                    continue # Bypass appending the original unmodified line
-                    
-            out_lines.append(line)
-            
-        # Determine dominant assignment operator for new keys
-        dominant_assign_op = "="
-        if assign_op_counts:
-            dominant_assign_op = max(assign_op_counts, key=assign_op_counts.get)
+                        output.append(f'{ws}{key}{assignment or operator}{value}{newline}')
+                    continue
+            output.append(line)
 
-        # --- PASS 2: Append Missing Keys ---
-        missing_changes = [k for k in changes_dict if k not in applied_commits]
-        if missing_changes:
-            missing_by_scope = defaultdict(list)
-            for scope, key in missing_changes:
-                missing_by_scope[scope].append(key)
-                
-            # Locate bottom of each scope
-            scope_end_indices = {}
-            active_scope = "DEFAULT"
-            for i, line in enumerate(out_lines):
-                if section := self._RE_SECTION.prefixmatch(line):
-                    scope_end_indices[active_scope] = i
-                    active_scope = section.group(1).strip()
-            scope_end_indices[active_scope] = len(out_lines)
-            
-            # Insert bottom-up to prevent array shifting
-            for scope in sorted(missing_by_scope.keys(), key=lambda s: scope_end_indices.get(s, 0), reverse=True):
-                if str(scope).startswith("__"):
-                    continue # Skip writing internal UI state fields to INI output
-                
-                insert_idx = scope_end_indices.get(scope, len(out_lines))
-                
-                # Create scope header if it doesn't exist
-                if scope not in scope_end_indices and scope != "DEFAULT":
-                    # Ensure preceding newline for clean formatting
-                    if insert_idx > 0 and not out_lines[insert_idx - 1].endswith('\n\n') and out_lines[insert_idx - 1] != '\n':
-                        out_lines.insert(insert_idx, "\n")
-                        insert_idx += 1
-                    out_lines.insert(insert_idx, f"[{scope}]\n")
-                    insert_idx += 1
-                    
-                lines_to_insert = []
-                for key in missing_by_scope[scope]:
-                    val = changes_dict[(scope, key)]
-                    if isinstance(val, str) and val.startswith("__VAR__"):
-                        val = val[7:]
-                        
-                    is_delete_signal = str(val) == "__DELETE__" or str(val) == "nil"
-                    is_false_signal = str(val).lower() == "false"
-                    
-                    if is_delete_signal:
-                        continue 
-                    elif is_false_signal:
-                        if valueless_count > 0:
-                            pass # We don't append a valueless flag if it's explicitly set to false
-                        else:
-                            lines_to_insert.append(f"{key}{dominant_assign_op}{val}\n")
-                    elif str(val).lower() == "true":
-                        # Smart Valueless vs Assignment resolution
-                        if valueless_count > 0:
-                            lines_to_insert.append(f"{key}\n")
-                        else:
-                            lines_to_insert.append(f"{key}{dominant_assign_op}true\n")
-                    else:
-                        lines_to_insert.append(f"{key}{dominant_assign_op}{val}\n")
-                        
-                if lines_to_insert:
-                    out_lines = out_lines[:insert_idx] + lines_to_insert + out_lines[insert_idx:]
-                    for key in missing_by_scope[scope]:
-                        applied_commits.add((scope, key))
-
-        # --- PASS 3: Safe Atomic File Commit ---
-        success = False
-        status_msg = "Failed"
-        temp_file_path = None
-        
-        try:
-            # 1. Write to isolated temporary file
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8', dir=self.config_path.parent) as tf:
-                temp_file_path = Path(tf.name)
-                tf.writelines(out_lines)
-                
-            # 2. Inherit permissions from original file (if it exists)
-            if self.config_path.exists():
-                try:
-                    temp_file_path.chmod(stat.S_IMODE(self.config_path.stat().st_mode))
-                except OSError:
-                    pass
-                    
-            # 3. Atomic replacement
-            os.replace(temp_file_path, self.config_path)
-            self.file_mtime = self.config_path.stat().st_mtime
-            success = True
-            
-        except PermissionError:
-            if temp_file_path and temp_file_path.exists():
-                try: temp_file_path.unlink()
-                except OSError: pass
+        missing = defaultdict(list)
+        for target, value in pending.items():
+            if target in applied or value == '__DELETE__' or (flags and value == 'false'):
+                continue
+            scope, key = target
+            missing[scope].append(f'{key}{newline}' if flags and value == 'true' else f'{key}{operator}{value}{newline}')
+        ends = {}
+        scope = 'DEFAULT'
+        for index, line in enumerate(output):
+            if section := self._RE_SECTION.prefixmatch(line.rstrip('\r\n')):
+                ends[scope] = index
+                scope = section[1].strip()
+        ends[scope] = len(output)
+        for scope in sorted((scope for scope in missing if scope in ends), key=ends.get, reverse=True):
+            index = ends[scope]
+            if index and not output[index - 1].endswith(('\n', '\r')):
+                output[index - 1] += newline
+            output[index:index] = missing[scope]
+        # Append new sections only after existing-scope insertions are complete.
+        for scope in missing:
+            if scope in ends:
+                continue
+            if output and not output[-1].endswith(('\n', '\r')):
+                output[-1] += newline
+            output.extend([newline, f'[{scope}]{newline}', *missing[scope]])
+        result = ''.join(output)
+        if result != text:
             try:
-                content = "".join(out_lines)
-                res = subprocess.run(
-                    ["sudo", "-n", "tee", str(self.config_path)],
-                    input=content.encode(), capture_output=True, timeout=5
-                )
-                if res.returncode == 0:
-                    self.file_mtime = self.config_path.stat().st_mtime
-                    return True, f"Successfully batched {len(changes)} INI commits (sudo).", ""
-                return False, "AUTH_REQUIRED", ""
-            except Exception:
-                return False, "AUTH_REQUIRED", ""
-        except OSError as e:
-            status_msg = f"Atomic commit failed: {e}"
-        finally:
-            # Absolute cleanup guarantee
-            if temp_file_path and temp_file_path.exists() and not success:
-                try:
-                    temp_file_path.unlink()
-                except OSError:
-                    pass
-
-        if success:
-            # Smart Reload Heuristics for Arch Linux Daemons
-            filename = self.config_path.name.lower()
+                self._snapshot = atomic_write(self.config_path, result, snapshot)
+            except PermissionError:
+                self._snapshot = privileged_atomic_write(self.config_path, result, snapshot)
+        else:
+            self._snapshot = snapshot
+        self._loaded = True
+        self.cache = self._parse(result)
+        self.cache.update(internal)
+        debug = ''
+        reload_command = None
+        if self.config_path.name == 'config' and self.config_path.parent.name == 'mako':
+            reload_command = ['makoctl', 'reload']
+        elif self.config_path.name == 'logind.conf' or self.config_path.parent.name == 'logind.conf.d':
+            reload_command = ['systemctl', 'reload', 'systemd-logind.service']
+        if result != text and reload_command is not None:
             try:
-                if filename == "config" and "mako" in str(self.config_path.parent).lower():
-                    subprocess.run(["makoctl", "reload"], check=False, capture_output=True)
-                elif "logind" in filename or "logind" in str(self.config_path.parent).lower():
-                    res = subprocess.run(["systemctl", "reload", "systemd-logind.service"], check=False, capture_output=True)
-                    if res.returncode != 0:
-                        subprocess.run(["pkill", "-HUP", "-x", "systemd-logind"], check=False, capture_output=True)
-            except Exception:
-                pass
-
-            if len(applied_commits) == len(changes):
-                return True, f"Successfully batched {len(changes)} INI commits.", ""
-            else:
-                return False, f"Partial success: saved {len(applied_commits)}/{len(changes)} INI items.", ""
-                
-        return False, status_msg, ""
+                reload = subprocess.run(reload_command, capture_output=True, text=True, encoding='utf-8', timeout=5)
+                if reload.returncode:
+                    debug = f'Configuration saved; reload failed: {reload.stderr.strip()}'
+            except (OSError, subprocess.SubprocessError) as exc:
+                debug = f'Configuration saved; reload failed: {exc}'
+        return True, f'Successfully saved {len(pending) + len(internal_changes)} INI changes.', debug

@@ -8,10 +8,8 @@ Target: Any standard TOML file (e.g. ~/.config/dusky/settings/dusky_keys/config.
 ===============================================================================
 """
 
-import os
 import re
 lazy import json
-lazy import tempfile
 lazy import threading
 lazy import tomllib
 lazy import datetime
@@ -19,74 +17,48 @@ lazy from pathlib import Path
 lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
+from python.config_io import atomic_write, boolean, read_text
 
 _RE_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
 class TomlEngine(BaseEngine):
-    """
-    Production-grade, Crash-Proof TOML Configuration Engine for Dusky TUI.
-
-    Features & Guarantees:
-    - Scoped table traversal & caching (e.g., scope='display', key='buffer_size').
-    - True recursive TOML table generation (fixes nested table layout corruption).
-    - Anti-Clobber Protection: Refuses to overwrite files with existing syntax errors.
-    - Datetime Preservation: Natively retains TOML date/time objects without mutation.
-    - Dynamic Regex key-quoting to prevent invalid syntax on space-containing keys.
-    - JSON-backed C-level string serialization for perfect control character escaping.
-    - Atomic file commit via temporary file + fsync (TOCTOU hardened).
-    - Python 3.10+ Structural Pattern Matching for O(1) type coercion.
-    - Sudo/Pkexec safe: Enforces UID/GID inheritance on virgin file creation.
-    """
+    """Nested TOML state and atomic writes; regeneration discards comments."""
 
     def __init__(self, config_path: str = ""):
         self.config_path = Path(config_path).expanduser().resolve()
         self.cache: dict[str, Any] = {}
-        self.file_mtime_ns: int = 0
-        self._lock = threading.Lock()
+        self._snapshot = None
+        self._loaded = False
+        self._lock = threading.RLock()
 
     @property
     def target_path(self) -> str:
         return str(self.config_path)
 
+    @staticmethod
+    def _state(data: dict[str, Any]) -> dict[str, Any]:
+        cache = {}
+        def flatten(mapping, dotted='', slash=''):
+            for key, value in mapping.items():
+                full = f'{dotted}.{key}' if dotted else key
+                qualified = f'{slash}/{key}' if slash else key
+                for alias in (full, qualified, key):
+                    cache.setdefault(alias, value)
+                if isinstance(value, dict):
+                    flatten(value, full, qualified)
+        flatten(data)
+        return cache
+
     def load_state(self) -> dict[str, Any]:
         with self._lock:
-            self.cache.clear()
-            if not self.config_path.exists():
-                return self.cache
-
+            self.cache = {}
+            self._loaded = False
             try:
-                # Lock timestamp precision immediately after securing the file descriptor
-                with open(self.config_path, "rb") as f:
-                    self.file_mtime_ns = os.fstat(f.fileno()).st_mtime_ns
-                    data = tomllib.load(f)
-
-                if not isinstance(data, dict):
-                    return self.cache
-
-                # Flatten nested TOML data into scope.key, scope/key, and bare key lookups
-                def _flatten(d: dict[str, Any], prefix: str = "", slash_prefix: str = ""):
-                    for k, v in d.items():
-                        full_key = f"{prefix}.{k}" if prefix else k
-                        slash_key = f"{slash_prefix}/{k}" if slash_prefix else k
-
-                        # Cache all permutation formats for robust UI binding
-                        if full_key not in self.cache:
-                            self.cache[full_key] = v
-                        if slash_key not in self.cache:
-                            self.cache[slash_key] = v
-                        if k not in self.cache:
-                            self.cache[k] = v
-
-                        if isinstance(v, dict):
-                            _flatten(v, full_key, slash_key)
-
-                _flatten(data)
-
-            except (OSError, UnicodeError) as e:
-                print(f"[TomlEngine] Disk I/O error reading ({self.config_path.name}): {e}")
-            except tomllib.TOMLDecodeError as e:
-                print(f"[TomlEngine] TOML syntax error in ({self.config_path.name}): {e}")
-
+                text, self._snapshot = read_text(self.config_path)
+                self.cache = self._state(tomllib.loads(text))
+                self._loaded = True
+            except (OSError, UnicodeError, ValueError) as exc:
+                print(f'TomlEngine: Failed to read {self.config_path}: {exc}')
             return self.cache
 
     def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
@@ -97,27 +69,21 @@ class TomlEngine(BaseEngine):
             return True, "No pending changes.", ""
 
         with self._lock:
-            data: dict[str, Any] = {}
             try:
-                with open(self.config_path, "rb") as f:
-                    data = tomllib.load(f)
-            except FileNotFoundError:
-                pass
-            except tomllib.TOMLDecodeError as e:
-                return False, f"Refusing to write: Target file has a syntax error ({e}).", ""
-            except (OSError, UnicodeError) as e:
-                return False, f"Refusing to write: Cannot read target TOML ({e}).", ""
-
-            if not isinstance(data, dict):
-                data = {}
+                text, snapshot = read_text(self.config_path)
+                if self._loaded and snapshot != self._snapshot:
+                    return False, f'File {self.config_path.name} was modified externally. Reload required.', ''
+                data = tomllib.loads(text)
+            except (OSError, UnicodeError, ValueError) as exc:
+                return False, f'Refusing to write: Cannot read target TOML ({exc}).', ''
 
             for key, scope, val, itype in changes:
-                # Absolute bleeding-edge: Structural Pattern Matching for fast type coercion
+                # Coerce UI values before changing the in-memory document.
                 match val:
                     case None | "nil" | "__DELETE__":
                         parsed_val = None
                     case _ if itype == "bool":
-                        parsed_val = val.lower() in {"true", "1", "yes", "on", "t", "y"} if isinstance(val, str) else bool(val)
+                        parsed_val = boolean(val)
                     case _ if itype in {"int", "float"}:
                         try:
                             if itype == "float":
@@ -135,74 +101,45 @@ class TomlEngine(BaseEngine):
                 # Determine table path dynamically
                 path_parts = []
                 if scope and scope != "DEFAULT":
-                    path_parts.extend(scope.replace("/", ".").split("."))
+                    path_parts.extend((scope.split("/") if "/" in scope else scope.split(".")))
 
-                path_parts.extend(key.split("."))
+                path_parts.extend((key.split('/') if '/' in key else key.split('.')))
+                if any(not part for part in path_parts):
+                    return False, f'Invalid TOML path: {scope}/{key}', ''
 
                 # Traverse/instantiate nested TOML dictionary tables dynamically
                 curr = data
                 for part in path_parts[:-1]:
+                    if parsed_val is None and part not in curr:
+                        curr = None
+                        break
                     curr = curr.setdefault(part, {})
                     if not isinstance(curr, dict):
                         return False, f"Cannot write {scope}.{key}: {part!r} is not a TOML table.", ""
 
+                if curr is None:
+                    continue
                 target_prop = path_parts[-1]
                 if parsed_val is None:
                     curr.pop(target_prop, None)
                 else:
                     curr[target_prop] = parsed_val
 
-            # Format and dump to strictly compliant TOML string
-            formatted_toml = self._dump_toml(data)
-
-            # Atomic Crash-Proof Disk Commit
             try:
-                parent_dir = self.config_path.parent
-                parent_dir.mkdir(parents=True, exist_ok=True)
-
-                with tempfile.NamedTemporaryFile("w", dir=parent_dir, delete=False, encoding="utf-8") as tmp_file:
-                    tmp_path = Path(tmp_file.name)
-                    tmp_file.write(formatted_toml)
-                    
-                    # GOLDEN STANDARD: Force OS hardware buffer sync before allowing pointer swap
-                    tmp_file.flush()
-                    os.fsync(tmp_file.fileno())
-
-                # Smart Permissions/Ownership Sync (Sudo/Pkexec safe)
-                if self.config_path.exists():
-                    try:
-                        file_stat = self.config_path.stat()
-                        os.chown(tmp_path, file_stat.st_uid, file_stat.st_gid)
-                        tmp_path.chmod(file_stat.st_mode)
-                    except OSError:
-                        pass
-                else:
-                    # Absolute fallback: If root is creating the config file for the first time natively,
-                    # forcefully inherit the UID/GID of the user's config directory to prevent permanent lockout.
-                    try:
-                        parent_stat = self.config_path.parent.stat()
-                        os.chown(tmp_path, parent_stat.st_uid, parent_stat.st_gid)
-                        tmp_path.chmod(0o644)
-                    except OSError:
-                        pass
-
-                os.replace(tmp_path, self.config_path)
-                
-                # Refresh nanosecond precision internal state immediately
-                self.file_mtime_ns = self.config_path.stat().st_mtime_ns
-
-            except (OSError, UnicodeError) as e:
-                if 'tmp_path' in locals() and tmp_path.exists():
-                    tmp_path.unlink(missing_ok=True)
-                return False, f"Atomic commit failed: {e}", ""
-
-            return True, f"Successfully saved {len(changes)} TOML changes.", ""
+                formatted_toml = self._dump_toml(data)
+                tomllib.loads(formatted_toml)
+                self._snapshot = atomic_write(self.config_path, formatted_toml, snapshot) if formatted_toml != text else snapshot
+                self._loaded = True
+                self.cache = self._state(data)
+            except (OSError, UnicodeError, ValueError) as exc:
+                return False, f'TOML commit failed: {exc}', ''
+            return True, f'Successfully saved {len(changes)} TOML changes.', ''
 
     @staticmethod
     def _quote_key(key: str) -> str:
         """
         Dynamically wraps keys in quotes if they contain spaces or special characters,
-        as mandated by the TOML v1.0.0 specification for bare keys.
+        as required by TOML for bare keys.
         """
         if not _RE_BARE_KEY.fullmatch(key):
             return json.dumps(key, ensure_ascii=False).replace("\x7f", "\\u007f")
@@ -266,7 +203,7 @@ class TomlEngine(BaseEngine):
                 # Prevent silent data mutation: Output raw TOML iso-formats, not JSON strings
                 return v.isoformat()
             case str():
-                # Exploit JSON's C-level serializer for perfect unicode and control-character escaping
+                # JSON escapes also form valid TOML basic strings, except literal DEL.
                 return json.dumps(v, ensure_ascii=False).replace("\x7f", "\\u007f")
             case list() | tuple():
                 items = [TomlEngine._format_val(x) for x in v]
