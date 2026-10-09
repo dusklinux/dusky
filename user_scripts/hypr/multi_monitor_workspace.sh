@@ -62,12 +62,24 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 # ── Determine Focused Monitor Bank Index ──────────────────────────────────────
-# Active monitors are sorted left-to-right by X offset (with Y as tiebreaker).
-# The focused monitor index determines the workspace bank:
-#   index 0 → offset 0, index 1 → offset 10, etc.
-if ! monitor_index=$(hyprctl -j monitors 2>/dev/null | jq -re '
+# Active monitors are assigned workspace banks of 10.
+# If DUSKY_PRIMARY_MONITOR is set (or configured in ~/.config/hypr/primary_monitor),
+# that monitor is assigned Bank 0 (workspaces 1–10), and all remaining monitors
+# are sorted left-to-right as Bank 1 (11–20), Bank 2 (21–30), etc.
+# Otherwise, monitors are sorted left-to-right purely by physical X position.
+primary_mon="${DUSKY_PRIMARY_MONITOR:-}"
+if [[ -z "$primary_mon" && -f "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/primary_monitor" ]]; then
+    primary_mon=$(<"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/primary_monitor")
+    primary_mon="${primary_mon%%[[:space:]]*}"
+fi
+
+if ! monitor_index=$(hyprctl -j monitors 2>/dev/null | jq -re --arg pri "$primary_mon" '
     map(select(.disabled != true))
-    | sort_by(.x, .y)
+    | if ($pri != "" and any(.[]; .name == $pri)) then
+        ([.[] | select(.name == $pri)] + ([.[] | select(.name != $pri)] | sort_by(.x, .y)))
+      else
+        sort_by(.x, .y)
+      end
     | if length == 0 then empty else (map(.focused) | index(true) // 0) end
 ' 2>/dev/null); then
     if ! hyprctl instances >/dev/null 2>&1; then

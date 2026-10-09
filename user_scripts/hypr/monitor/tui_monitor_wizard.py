@@ -106,8 +106,16 @@ def generate_schema() -> tuple[list[str], dict[int, list[ConfigItem]]]:
     schema = {}
 
     available_outputs = [m.get("name", "") for m in monitors if m.get("name")]
-    primary_output = available_outputs[0] if available_outputs else "eDP-1"
-    secondary_output = available_outputs[1] if len(available_outputs) > 1 else primary_output
+    primary_file = Path("~/.config/hypr/primary_monitor").expanduser()
+    saved_pri = ""
+    if primary_file.exists():
+        try:
+            saved_pri = primary_file.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    primary_output = saved_pri if saved_pri in available_outputs else (available_outputs[0] if available_outputs else "eDP-1")
+    remaining_outputs = [name for name in available_outputs if name != primary_output]
+    secondary_output = remaining_outputs[0] if remaining_outputs else primary_output
 
     internal_outputs = [name for name in available_outputs if is_internal_connector(name)]
     external_outputs = [name for name in available_outputs if not is_internal_connector(name)]
@@ -343,6 +351,14 @@ def generate_schema() -> tuple[list[str], dict[int, list[ConfigItem]]]:
         interleave_payload[f"workspace_rule/{w_i}.default"] = (w_i in (1, 2))
 
     strategy_items = []
+    if available_outputs:
+        strategy_items.append(
+            ConfigItem(
+                label="Primary Bank Display", key="primary_monitor", scope="DEFAULT",
+                type_="picker", default=primary_output, options=available_outputs, group="Banked Workspaces (1–10)",
+                extended_help="Selects the primary display assigned to Workspace Bank 0 (workspaces 1–10) in multi_monitor_workspace.sh. Remaining connected displays are sorted left-to-right (workspaces 11–20, 21–30, etc.)."
+            )
+        )
     if len(available_outputs) > 1:
         strategy_items.append(
             ConfigItem(

@@ -422,14 +422,44 @@ class MonitorLuaEngine(HyprlandLuaEngine):
             "render/cm_fs_passthrough": False,
             "render/cm_auto_hdr": False
         }
-        for k, v in global_defaults.items():
-            if k not in normalized_state:
-                normalized_state[k] = v
+        # -------------------------------------------------------------
+        # PRIMARY MONITOR FOR BANKED WORKSPACES (~/.config/hypr/primary_monitor)
+        # -------------------------------------------------------------
+        primary_file = Path("~/.config/hypr/primary_monitor").expanduser()
+        if primary_file.exists():
+            try:
+                cached_pri = primary_file.read_text(encoding="utf-8").strip()
+                if cached_pri:
+                    primary_monitor = cached_pri
+            except Exception:
+                pass
+        normalized_state["DEFAULT/primary_monitor"] = primary_monitor
 
         self.cache = normalized_state
         return normalized_state
 
     def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
+        standard_changes = []
+        primary_mon_to_save: str | None = None
+        for key, scope, val, itype in changes:
+            if key == "primary_monitor" and scope in ("DEFAULT", "workspace", "globals"):
+                primary_mon_to_save = str(val).strip()
+            else:
+                standard_changes.append((key, scope, val, itype))
+
+        if primary_mon_to_save is not None:
+            try:
+                pri_path = Path("~/.config/hypr/primary_monitor").expanduser()
+                pri_path.parent.mkdir(parents=True, exist_ok=True)
+                pri_path.write_text(f"{primary_mon_to_save}\n", encoding="utf-8")
+                self.cache["DEFAULT/primary_monitor"] = primary_mon_to_save
+            except Exception:
+                pass
+
+        if not standard_changes:
+            return True, "Primary monitor configuration updated", ""
+
+        changes = standard_changes
         translated_changes = []
         required_ast_scopes: set[str] = set()
         required_ws_scopes: set[str] = set()
