@@ -626,11 +626,11 @@ hl.bind(
     { description = "TTS VC" }
 )
 
--- NVIDIA Parakeet
+-- English dictation (Moonshine CPU)
 hl.bind(
     "SUPER + I",
     hl.dsp.exec_cmd(dusky_scripts .. "tts_stt/dusky_parakeet/dusky_trigger.py --push"),
-    { description = "STT Parakeet GPU" }
+    { description = "STT English to clipboard" }
 )
 
 -- FasterWhisper STT

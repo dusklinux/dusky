@@ -1,67 +1,48 @@
 #!/usr/bin/env python3
-"""Dusky STT worker (hardware-agnostic, exec-isolated).
-
-Runs under .venv-worker. Provider choice follows config hardware:
-  nvidia: CUDAExecutionProvider (strict, profile-verified) + CPU fallback
-  amd:    tries MIGraphX if available, else CPU
-  cpu:    CPUExecutionProvider only
-
-Sealed memfds are re-validated on receipt (size + seals + F_SEAL_EXEC=0x0020).
-Oversized replies return via a second sealed memfd (never truncated).
-Exits on idle timeout so discrete GPUs can reach D3cold (process exit is the
-only guaranteed CUDA teardown).
-"""
+"""Isolated Moonshine CPU / Parakeet CUDA worker; one final transcript."""
 
 import argparse
-import ctypes
 import fcntl
-import importlib.metadata
 import json
-import mmap
 import os
+import select
 import selectors
-import shutil
 import socket
 import stat
 import struct
 import sys
-import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
-MIN_PYTHON = (3, 14, 7)
+MIN_PYTHON = (3, 14)
 os.environ["ORT_DISABLE_TELEMETRY"] = "1"
+# Upstream's supported switch: otherwise each session creates a large spinning
+# thread pool. One inference thread is portable and markedly faster here.
+os.environ["MOONSHINE_ORT_SINGLE_THREAD"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+import numpy as np
 SAMPLE_RATE = 16000
 BYTES_PER_SAMPLE = 2
 MAX_PACKET = 65536
 MAX_INLINE = 57344
 
 if sys.version_info < MIN_PYTHON:
-    raise SystemExit("Worker requires CPython 3.14.7+")
+    raise SystemExit("Worker requires CPython 3.14+ (CPU backend requires 3.15+)")
 _gil = getattr(sys, "_is_gil_enabled", None)
 if _gil is None or not _gil():
     raise SystemExit("Worker requires GIL-enabled CPython")
 
 type JsonObject = dict[str, Any]
 
-# Kernel ABI values (Python 3.14 does not expose F_SEAL_EXEC / MFD_NOEXEC_SEAL).
-F_SEAL_EXEC = 0x0020
-REQUIRED_SEALS = fcntl.F_SEAL_SEAL | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_GROW | fcntl.F_SEAL_WRITE
+# Linux UAPI values: UV's managed build omits the sealing constants even
+# though the target kernel supports them. Verified against linux/fcntl.h.
+F_ADD_SEALS = getattr(fcntl, "F_ADD_SEALS", 1033)
+REQUIRED_SEALS = 0x0001 | 0x0002 | 0x0004 | 0x0008
+# The verified CPython 3.15 build omits this Linux ABI constant.
 if not hasattr(os, "MFD_NOEXEC_SEAL"):
     os.MFD_NOEXEC_SEAL = 0x0008  # type: ignore[attr-defined]
-
-CUDA_PRELOAD_ORDER = (
-    "libnvJitLink.so.13", "libcudart.so.13", "libnvrtc-builtins.so.13", "libnvrtc.so.13",
-    "libcublasLt.so.13", "libcublas.so.13", "libcufft.so.12", "libcurand.so.10",
-    "libcudnn_graph.so.9", "libcudnn_engines_precompiled.so.9", "libcudnn_ops.so.9",
-    "libcudnn_adv.so.9", "libcudnn_cnn.so.9", "libcudnn.so.9",
-)
-OPTIONAL_CUDNN = frozenset({
-    "libcudnn_graph.so.9", "libcudnn_engines_precompiled.so.9",
-    "libcudnn_ops.so.9", "libcudnn_adv.so.9", "libcudnn_cnn.so.9",
-})
-
 
 def fail(msg: str, code: int = 2) -> None:
     sys.stderr.write(f"dusky-worker: {msg}\n")
@@ -69,172 +50,199 @@ def fail(msg: str, code: int = 2) -> None:
     raise SystemExit(code)
 
 
-def assert_worker_namespace(hardware: str) -> None:
-    owners = sorted(set(importlib.metadata.packages_distributions().get("onnxruntime", [])))
-    expected = ["onnxruntime-gpu"] if hardware == "nvidia" else ["onnxruntime"]
-    # The packaged AMD path uses the CPU wheel. Custom builds must retain
-    # its distribution name to pass the namespace check.
-    if hardware == "amd" and owners == ["onnxruntime"]:
-        return
-    if owners != expected:
-        fail(f"Worker ORT namespace must be {expected}, found {owners}")
+class AsrEngine:
+    hardware = "cpu"
+    def __init__(self, config: JsonObject) -> None:
+        if sys.version_info < (3, 15):
+            raise RuntimeError("Moonshine CPU worker requires CPython 3.15+")
+        from moonshine_voice import Transcriber, ModelArch, TranscriptEventListener
+        self.listener_base = TranscriptEventListener
+        if config.get("model") not in ("small_streaming", "medium_streaming"):
+            raise ValueError("model must be small_streaming or medium_streaming (English)")
+        self.transcriber = Transcriber(
+            model_path=str(Path(config["model_dir"]).expanduser()),
+            model_arch=getattr(ModelArch, config["model"].upper()),
+            options={"ort_providers": "CPU", "decode_incomplete_lines": "false",
+                     "return_audio_data": "false"})
+
+    def recognize_fd(self, fd: int, samples: int, on_progress=None) -> str:
+        texts: list[str] = []
+        errors: list[str] = []
+        class Listener(self.listener_base):
+            def on_line_completed(self, event):
+                if event.line.text.strip():
+                    texts.append(event.line.text.strip())
+            def on_error(self, event):
+                # Moonshine catches listener exceptions, including at Stop.
+                errors.append(str(event.error))
+        # Bound input copies and retain native segmentation across blocks.
+        # Fresh stream per job prevents hypothesis/audio state leaking between
+        # recordings. return_audio_data=false releases completed VAD audio.
+        with self.transcriber.create_stream(update_interval=5.0) as stream:
+            stream.add_listener(Listener())
+            stream.start()
+            offset = 0
+            while offset < samples * BYTES_PER_SAMPLE:
+                raw = os.pread(fd, min(SAMPLE_RATE * BYTES_PER_SAMPLE * 5, samples * BYTES_PER_SAMPLE - offset), offset)
+                if not raw or len(raw) % BYTES_PER_SAMPLE:
+                    raise ValueError("Audio spool ended before the declared sample count")
+                pcm = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768
+                stream.add_audio(pcm, SAMPLE_RATE)
+                offset += len(raw)
+                if on_progress is not None:
+                    on_progress(min(0.99, offset / (samples * BYTES_PER_SAMPLE)))
+            # In 0.1.5, decode_incomplete_lines=false can leave the final VAD
+            # segment empty at Stop. A second of zero input settles its 0.5s
+            # detection window and completes recorded speech before finalizing.
+            silence = np.zeros(SAMPLE_RATE // 2, dtype=np.float32)
+            stream.add_audio(silence, SAMPLE_RATE)
+            stream.add_audio(silence, SAMPLE_RATE)
+            stream.stop()
+            if errors:
+                raise RuntimeError("Moonshine stream failed: " + "; ".join(errors))
+        return " ".join(texts)
+
+    def close(self) -> None:
+        self.transcriber.close()
+
+
+def quiet_chunk_boundary(pcm: np.ndarray) -> int:
+    """Prefer 120 ms of quiet near the end of a bounded Parakeet block."""
+    frame = 320
+    start = max(0, pcm.size - 3 * SAMPLE_RATE)
+    tail = pcm[start:].astype(np.float32)
+    frames = tail.size // frame
+    if frames < 6:
+        return pcm.size
+    power = np.mean(tail[:frames * frame].reshape(-1, frame) ** 2, axis=1)
+    quiet = np.flatnonzero(np.convolve(power, np.ones(6) / 6, mode="valid") < 300 ** 2)
+    return start + (int(quiet[-1]) + 3) * frame if quiet.size else pcm.size
 
 
 def preload_cuda13() -> None:
-    dists = ("nvidia-cuda-runtime", "nvidia-cublas", "nvidia-cudnn-cu13",
-             "nvidia-cuda-nvrtc", "nvidia-cufft", "nvidia-curand", "nvidia-nvjitlink")
-    resolved: dict[str, Path] = {}
-    for d in dists:
-        try:
-            dist = importlib.metadata.distribution(d)
-        except importlib.metadata.PackageNotFoundError:
-            continue
-        for f in dist.files or ():
-            p = Path(dist.locate_file(f)).resolve()
-            if p.is_file() and ".so" in p.name:
-                resolved.setdefault(p.name, p)
-                # also index by SONAME prefix (libfoo.so.13.0.88 -> libfoo.so.13)
-                for soname in CUDA_PRELOAD_ORDER:
-                    if p.name == soname or p.name.startswith(soname + "."):
-                        resolved.setdefault(soname, p)
-    for soname in CUDA_PRELOAD_ORDER:
-        match = resolved.get(soname)
-        if not match:
-            if soname in OPTIONAL_CUDNN:
+    """Load the GPU environment's libraries before ORT imports libcudart."""
+    import ctypes
+    import importlib.metadata
+    order = ("libnvJitLink.so.13", "libcudart.so.13", "libnvrtc-builtins.so.13", "libnvrtc.so.13",
+        "libcublasLt.so.13", "libcublas.so.13", "libcufft.so.12", "libcurand.so.10",
+        "libcudnn_graph.so.9", "libcudnn_engines_precompiled.so.9", "libcudnn_ops.so.9",
+        "libcudnn_adv.so.9", "libcudnn_cnn.so.9", "libcudnn.so.9")
+    optional = frozenset(order[8:-1])
+    resolved = {}
+    for name in ("nvidia-cuda-runtime", "nvidia-cublas", "nvidia-cudnn-cu13",
+                 "nvidia-cuda-nvrtc", "nvidia-cufft", "nvidia-curand", "nvidia-nvjitlink"):
+        distribution = importlib.metadata.distribution(name)
+        for item in distribution.files or ():
+            for soname in order:
+                if item.name == soname or item.name.startswith(soname + "."):
+                    resolved.setdefault(soname, distribution.locate_file(item))
+    for soname in order:
+        path = resolved.get(soname)
+        if path is None:
+            if soname in optional:
                 continue
-            fail(f"Missing CUDA 13 object {soname}; run 'uv pip check' in .venv-worker")
+            raise RuntimeError(f"GPU runtime library missing: {soname}")
         try:
-            ctypes.CDLL(str(match), mode=ctypes.RTLD_GLOBAL | os.RTLD_NOW)
+            ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL | os.RTLD_NOW)
         except OSError:
-            if soname not in OPTIONAL_CUDNN:
-                fail(f"Cannot preload {soname} from {match}")
-    try:
-        ctypes.CDLL("libcuda.so.1", mode=ctypes.RTLD_GLOBAL | os.RTLD_NOW)
-    except OSError:
-        fail("libcuda.so.1 missing; install nvidia-utils >= 580")
+            if soname not in optional:
+                raise
+    ctypes.CDLL("libcuda.so.1", mode=ctypes.RTLD_GLOBAL | os.RTLD_NOW)
 
 
-class AsrEngine:
-    def __init__(self, config: JsonObject, *, profiling: bool = False, profile_dir: Path | None = None) -> None:
-        import numpy as _np
-        import onnxruntime as _ort
+class ParakeetEngine:
+    hardware = "nvidia"
+
+    def __init__(self, config: JsonObject, *, profile_dir: Path | None = None) -> None:
+        preload_cuda13()
+        import onnxruntime as ort
         import onnx_asr
-        self.np = _np
-        self.ort = _ort
-        hardware = str(config.get("hardware", "cpu"))
-        opts = _ort.SessionOptions()
-        opts.execution_mode = _ort.ExecutionMode.ORT_SEQUENTIAL
-        opts.graph_optimization_level = _ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        # Avoid retaining allocation patterns for many variable audio lengths.
-        opts.enable_mem_pattern = False
-        available = _ort.get_available_providers()
-        # Quantized graphs retain CPU operators even with CUDA enabled.
-        # Intra-op CPU threads speed those operators without running concurrent
-        # GPU requests: execution_mode remains sequential and the worker serial.
-        threads = int(config.get("cpu_threads", 0))
-        if threads < 0:
-            fail("cpu_threads must be nonnegative")
-        opts.intra_op_num_threads = threads or min(8, os.process_cpu_count() or 1)
-        opts.inter_op_num_threads = 1
-        opts.log_severity_level = 3
-        if profiling:
-            opts.enable_profiling = True
-            # Direct ALL profiler dumps (one per InferenceSession inside
-            # onnx_asr, including ones we never discover) into a temp dir.
-            # Default prefix would scatter onnxruntime_profile__*.json into
-            # the caller's cwd (source tree / APP_DIR) -- the exact stray
-            # files reported. Temp + rmtree in self_test keeps this clean
-            # and also respects the ReadOnlyPaths sandbox at runtime.
-            if profile_dir is not None:
-                opts.profile_file_prefix = str(profile_dir / "dusky_worker_profile")
-        if hardware == "nvidia":
-            if "CUDAExecutionProvider" not in available:
-                fail(f"CUDAExecutionProvider missing; available={available}")
-            limit_mb = int(config.get("gpu_mem_limit_mb", 4096))
-            if limit_mb <= 0:
-                fail("gpu_mem_limit_mb must be positive")
-            providers: list[Any] = [(("CUDAExecutionProvider"), {
-                "device_id": 0, "arena_extend_strategy": "kSameAsRequested",
-                "gpu_mem_limit": limit_mb * 1024 * 1024,
-                "cudnn_conv_algo_search": "HEURISTIC",
-                # 2GB-VRAM spike killers: clamp cudnn workspace (default max
-                # can transiently cost GBs on first Run; useless for int8
-                # Gemm/Attention anyway) and use one unified stream instead
-                # of per-thread streams + graph pools (variable-T audio).
-                "cudnn_conv_use_max_workspace": "0",
-                "use_ep_level_unified_stream": "1",
-                "enable_cuda_graph": "0",
-                "use_tf32": True, "do_copy_in_default_stream": True}), "CPUExecutionProvider"]
-        elif hardware == "amd":
-            # MIGraphX is only available in a separately supplied custom wheel.
-            prefs = [ep for ep in ("MIGraphXExecutionProvider",) if ep in available]
-            providers = prefs + ["CPUExecutionProvider"] if "CPUExecutionProvider" in available else prefs
-            if not providers:
-                fail(f"No usable EP; available={available}")
-        else:
-            if "CPUExecutionProvider" not in available:
-                fail(f"CPUExecutionProvider missing; available={available}")
-            providers = ["CPUExecutionProvider"]
-        model_dir = Path(str(config["model_dir"])).expanduser()
-        if not model_dir.is_dir():
-            fail(f"model_dir missing: {model_dir}")
-        q = config.get("quantization")
-        if q in ("", "none", "fp32", "None"):
-            q = None
-        if q not in (None, "int8", "fp16"):
-            fail("quantization must be null|int8|fp16")
-        self.model = onnx_asr.load_model(str(config.get("model", "nemo-parakeet-tdt-0.6b-v2")),
-                                         str(model_dir), quantization=q, sess_options=opts,
-                                         providers=providers,
-                                         preprocessor_config={"max_concurrent_workers": 1, "use_conv_preprocessors": True})
-        self.sessions = self._discover()
-        if not self.sessions:
-            fail("No InferenceSession found in onnx-asr model")
-        if hardware == "nvidia" and not any(s.get_providers()[:1] == ["CUDAExecutionProvider"] for s in self.sessions.values()):
-            fail(f"All sessions fell back to CPU: {[s.get_providers() for s in self.sessions.values()]}")
-
-    def _discover(self) -> dict[str, Any]:
-        found: dict[str, Any] = {}
-        seen: set[int] = set()
-        def walk(node: Any, path: str, depth: int) -> None:
+        cfg = config["parakeet"]
+        options = ort.SessionOptions()
+        options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        options.enable_mem_pattern = False
+        options.intra_op_num_threads = min(8, os.process_cpu_count() or 1)
+        options.inter_op_num_threads = 1
+        # Multiple model sessions otherwise spin competing CPU thread pools.
+        options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        options.log_severity_level = 3
+        if profile_dir is not None:
+            options.enable_profiling = True
+            options.profile_file_prefix = str(profile_dir / "parakeet")
+        if "CUDAExecutionProvider" not in ort.get_available_providers():
+            raise RuntimeError("ONNX Runtime has no CUDA execution provider")
+        # The daemon maps its discovered GPU UUID to logical device zero.
+        providers = [("CUDAExecutionProvider", {
+            "device_id": 0, "arena_extend_strategy": "kSameAsRequested",
+            # Per-session arena, not a total VRAM cap. Clamp old configs too.
+            "gpu_mem_limit": min(512, max(1, int(cfg.get("gpu_mem_limit_mb", 512)))) * 1024 * 1024,
+            "cudnn_conv_algo_search": "HEURISTIC", "cudnn_conv_use_max_workspace": "0",
+            "use_ep_level_unified_stream": "1", "enable_cuda_graph": "0",
+            "do_copy_in_default_stream": "1"}), "CPUExecutionProvider"]
+        self.model = onnx_asr.load_model(cfg["model"], str(Path(cfg["model_dir"]).expanduser()),
+            quantization="int8", sess_options=options, providers=providers,
+            preprocessor_config={"max_concurrent_workers": 1, "use_conv_preprocessors": True})
+        self.sessions = []
+        seen = set()
+        def discover(node, depth=0):
             if depth > 6 or id(node) in seen:
                 return
             seen.add(id(node))
-            if isinstance(node, self.ort.InferenceSession):
-                found[path] = node
-                return
-            d = getattr(node, "__dict__", None)
-            if not isinstance(d, dict):
-                return
-            for k, v in d.items():
-                if not k.startswith("__"):
-                    walk(v, path + "." + k, depth + 1)
-        walk(self.model, "model", 0)
-        return found
+            if isinstance(node, ort.InferenceSession):
+                self.sessions.append(node)
+            else:
+                for value in getattr(node, "__dict__", {}).values():
+                    discover(value, depth + 1)
+        discover(self.model)
+        if not any(session.get_providers()[0] == "CUDAExecutionProvider" for session in self.sessions):
+            raise RuntimeError("Parakeet sessions silently fell back to CPU")
+        # Prime kernels and bounded-block allocations while capture continues.
+        # Session construction alone leaves first-inference setup until Stop.
+        self.model.recognize(np.zeros(20 * SAMPLE_RATE, dtype=np.float32), sample_rate=SAMPLE_RATE)
 
-    def recognize(self, pcm_f32: Any) -> str:
-        res = self.model.recognize(pcm_f32, sample_rate=SAMPLE_RATE)
-        if isinstance(res, list):
-            res = " ".join(str(x) for x in res)
-        return str(res or "").strip()
+    def recognize_fd(self, fd: int, samples: int, on_progress=None) -> str:
+        texts = []
+        offset = 0
+        while offset < samples:
+            raw = os.pread(fd, min(20 * SAMPLE_RATE, samples - offset) * BYTES_PER_SAMPLE,
+                           offset * BYTES_PER_SAMPLE)
+            if not raw or len(raw) % BYTES_PER_SAMPLE:
+                raise ValueError("Audio spool ended before the declared sample count")
+            pcm = np.frombuffer(raw, dtype="<i2")
+            length = quiet_chunk_boundary(pcm) if offset + pcm.size < samples else pcm.size
+            text = self.model.recognize(pcm[:length].astype(np.float32) / 32768, sample_rate=SAMPLE_RATE)
+            if text:
+                texts.append(str(text).strip())
+            offset += length
+            if on_progress is not None:
+                on_progress(min(.99, offset / samples))
+        return " ".join(texts)
+
+    def cuda_nodes(self) -> int:
+        nodes = 0
+        for session in self.sessions:
+            path = session.end_profiling()
+            if path:
+                events = json.loads(Path(path).read_text())
+                nodes += sum(event.get("args", {}).get("provider") == "CUDAExecutionProvider" for event in events)
+        return nodes
+
+    def close(self) -> None:
+        self.sessions.clear()
+        self.model = None
 
 
-def validate_memfd(fd: int, samples: int) -> None:
+def create_engine(config: JsonObject, backend: str, *, profile_dir: Path | None = None):
+    return ParakeetEngine(config, profile_dir=profile_dir) if backend == "nvidia" else AsrEngine(config)
+
+
+def validate_audio_fd(fd: int, samples: int) -> None:
     st = os.fstat(fd)
     if not stat.S_ISREG(st.st_mode):
         raise ValueError("Descriptor is not a regular file")
-    # Same-uid peer is trusted for content but not for size: cap the mmap
-    # before touching it (legit max is a 20 s file chunk = 320k samples).
-    if samples <= 0 or samples > 480000:
-        raise ValueError(f"Samples out of range: {samples}")
-    expected = samples * BYTES_PER_SAMPLE
-    if st.st_size != expected:
-        raise ValueError(f"Size mismatch: {st.st_size} != {expected}")
-    seals = fcntl.fcntl(fd, fcntl.F_GET_SEALS)
-    if (seals & REQUIRED_SEALS) != REQUIRED_SEALS:
-        raise ValueError(f"Incomplete seals: {hex(seals)}")
-    if not (seals & F_SEAL_EXEC):
-        raise ValueError("Memfd missing F_SEAL_EXEC (needs MFD_NOEXEC_SEAL)")
+    if samples <= 0 or st.st_size != samples * BYTES_PER_SAMPLE:
+        raise ValueError("Audio spool size does not match samples")
 
 
 def sealed_response(payload: JsonObject) -> tuple[bytes, int | None]:
@@ -248,7 +256,7 @@ def sealed_response(payload: JsonObject) -> tuple[bytes, int | None]:
         off = 0
         while off < len(raw):
             off += os.pwrite(fd, view[off:], off)
-        fcntl.fcntl(fd, fcntl.F_ADD_SEALS, REQUIRED_SEALS)
+        fcntl.fcntl(fd, F_ADD_SEALS, REQUIRED_SEALS)
         stub = {k: v for k, v in payload.items() if k != "text"}
         stub["payload"] = "memfd"
         return json.dumps(stub).encode(), fd
@@ -303,11 +311,19 @@ def recv_request(sock: socket.socket) -> tuple[JsonObject | None, int | None]:
     return header, (fds[0] if fds else None)
 
 
-def run_worker(fd: int, config_path: Path) -> int:
+def exit_on_disconnect(fd: int) -> None:
+    """Release native models even if the recorder dies during native inference."""
+    poller = select.poll()
+    poller.register(fd, select.POLLHUP | select.POLLRDHUP)
+    for _, flags in poller.poll():
+        if flags & (select.POLLHUP | select.POLLRDHUP):
+            os._exit(0)
+
+
+def run_worker(fd: int, config_path: Path, backend: str = "cpu") -> int:
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
-    if cfg.get("schema_version") != 2:
-        fail("config schema_version must be 2")
-    hardware = str(cfg.get("hardware", "cpu"))
+    if cfg.get("schema_version") != 3:
+        fail("config schema_version must be 3")
     sock = socket.socket(fileno=fd)
     if sock.family != socket.AF_UNIX or sock.type != socket.SOCK_SEQPACKET:
         fail("Inherited fd is not AF_UNIX SOCK_SEQPACKET")
@@ -318,20 +334,22 @@ def run_worker(fd: int, config_path: Path) -> int:
             fail("Peer verification failed")
     except OSError as exc:
         fail(f"SO_PEERCRED failed: {exc}")
-    if hardware == "nvidia":
-        preload_cuda13()
-    assert_worker_namespace(hardware)
-    engine = AsrEngine(cfg)
-    send_response(sock, {"ok": True, "event": "ready", "hardware": hardware,
-                         "providers": {k: list(v.get_providers()) for k, v in engine.sessions.items()}})
+    # A temporary recorder has no systemd cgroup to reap an orphaned worker.
+    threading.Thread(target=exit_on_disconnect, args=(fd,), daemon=True,
+                     name="dusky-parent-channel").start()
+    try:
+        engine = create_engine(cfg, backend)
+    except Exception as exc:
+        send_response(sock, {"ok": False, "event": "ready", "hardware": backend, "error": str(exc)})
+        sock.close()
+        return 2
+    send_response(sock, {"ok": True, "event": "ready", "hardware": engine.hardware})
     timeout = max(5.0, float(cfg.get("idle_timeout_seconds", 90.0)))
-    # Warm-resident service mode: the daemon sets DUSKY_WORKER_NO_IDLE_EXIT
-    # so the model stays loaded for instant dictation (no D3cold in this
-    # mode by design; use `dusky_trigger --unload` or disable the service
-    # to free the GPU).
+    # The daemon owns residency, including long on-demand recordings. Direct
+    # worker users retain the idle timeout unless they set this environment.
     no_idle_exit = os.environ.get("DUSKY_WORKER_NO_IDLE_EXIT") == "1"
     if no_idle_exit:
-        sys.stderr.write("dusky-worker: warm mode, idle exit disabled\n")
+        sys.stderr.write("dusky-worker: daemon-managed residency, idle exit disabled\n")
     sel = selectors.DefaultSelector()
     sel.register(sock, selectors.EVENT_READ)
     deadline = None if no_idle_exit else time.monotonic() + timeout
@@ -373,16 +391,10 @@ def run_worker(fd: int, config_path: Path) -> int:
                 samples = int(req.get("samples", 0))
                 if req.get("encoding") != "s16le" or samples <= 0:
                     raise ValueError("Bad encoding/samples")
-                validate_memfd(audio_fd, samples)
-                with mmap.mmap(audio_fd, samples * BYTES_PER_SAMPLE, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ) as m:
-                    pcm_view = engine.np.frombuffer(m, dtype="<i2", count=samples)
-                    f32 = pcm_view.astype(engine.np.float32) * (1.0 / 32768.0)
-                    # Release the mmap export BEFORE the with-block closes it:
-                    # mmap.close() raises BufferError if any exporter is alive,
-                    # which deterministically failed every request.
-                    del pcm_view
+                validate_audio_fd(audio_fd, samples)
                 t0 = time.monotonic()
-                text = engine.recognize(f32)
+                text = engine.recognize_fd(audio_fd, samples, lambda fraction: send_response(sock, {
+                    "event": "progress", "request_id": req.get("request_id"), "fraction": fraction}))
                 send_response(sock, {"ok": True, "request_id": req.get("request_id"), "text": text,
                                      "latency_ms": round((time.monotonic() - t0) * 1000, 1)})
             except Exception as exc:
@@ -393,49 +405,41 @@ def run_worker(fd: int, config_path: Path) -> int:
     finally:
         sel.close()
         sock.close()
+        engine.close()
 
 
-def self_test(config_path: Path) -> int:
+def self_test(config_path: Path, backend: str = "cpu") -> int:
+    import tempfile
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
-    hardware = str(cfg.get("hardware", "cpu"))
-    if hardware == "nvidia":
-        preload_cuda13()
-    assert_worker_namespace(hardware)
-    # All profiler dumps go here; removed in finally even on failure.
-    prof_dir = Path(tempfile.mkdtemp(prefix="dusky-prof-"))
+    if backend == "nvidia":
+        from dusky_hardware import detect_nvidia, select_gpu
+        gpu = select_gpu(detect_nvidia(), cfg["parakeet"].get("gpu_device"))
+        if gpu is None:
+            raise RuntimeError("No supported NVIDIA GPU is available for the smoke test")
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpu["uuid"]
+    profile_dir = tempfile.TemporaryDirectory(prefix="dusky-gpu-profile-")
+    engine = None
     try:
-        engine = AsrEngine(cfg, profiling=(hardware == "nvidia"), profile_dir=prof_dir)
-        wav = (0.3 * engine.np.sin(2 * engine.np.pi * 220.0 *
-               engine.np.linspace(0.0, 3.0, 48000, dtype=engine.np.float32))).astype(engine.np.float32)
-        t0 = time.monotonic()
-        engine.recognize(wav)
-        latency = round((time.monotonic() - t0) * 1000, 1)
-        cuda_nodes = 0
-        if hardware == "nvidia":
-            for s in engine.sessions.values():
-                try:
-                    prof = s.end_profiling()
-                except Exception:
-                    prof = None
-                if prof and Path(prof).exists():
-                    try:
-                        events = json.loads(Path(prof).read_text())
-                        cuda_nodes += sum(1 for e in (events if isinstance(events, list) else [])
-                                          if isinstance(e, dict) and (e.get("args") or {}).get("provider") == "CUDAExecutionProvider")
-                    except (OSError, json.JSONDecodeError):
-                        pass
-                    try:
-                        Path(prof).unlink()
-                    except OSError:
-                        pass
-            report = {"ok": cuda_nodes > 0, "hardware": hardware, "cuda_nodes": cuda_nodes, "latency_ms": latency}
-            print(json.dumps(report))
-            return 0 if cuda_nodes > 0 else 3
-        print(json.dumps({"ok": True, "hardware": hardware, "latency_ms": latency,
-                          "providers": [s.get_providers() for s in engine.sessions.values()]}))
+        engine = create_engine(cfg, backend, profile_dir=Path(profile_dir.name) if backend == "nvidia" else None)
+        with tempfile.TemporaryFile() as spool:
+            samples = (20 if backend == "nvidia" else 1) * SAMPLE_RATE
+            spool.write(bytes(samples * BYTES_PER_SAMPLE))
+            spool.flush()
+            start = time.monotonic()
+            text = engine.recognize_fd(spool.fileno(), samples)
+            if text:
+                raise RuntimeError(f"Silent audio produced text: {text!r}")
+        cuda_nodes = engine.cuda_nodes() if backend == "nvidia" else 0
+        if backend == "nvidia" and not cuda_nodes:
+            raise RuntimeError("GPU smoke test executed no CUDA nodes")
+        print(json.dumps({"ok": True, "hardware": backend, "cuda_nodes": cuda_nodes,
+                          "model": cfg["parakeet"]["model"] if backend == "nvidia" else cfg["model"],
+                          "latency_ms": round((time.monotonic() - start) * 1000, 1)}))
         return 0
     finally:
-        shutil.rmtree(prof_dir, ignore_errors=True)
+        if engine is not None:
+            engine.close()
+        profile_dir.cleanup()
 
 
 def main() -> int:
@@ -443,12 +447,13 @@ def main() -> int:
     ap.add_argument("--config", required=True, type=Path)
     ap.add_argument("--fd", type=int, default=-1)
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--backend", choices=("cpu", "nvidia"), default="cpu")
     args = ap.parse_args()
     if args.self_test:
-        return self_test(args.config)
+        return self_test(args.config, args.backend)
     if args.fd < 0:
         fail("--fd required outside --self-test")
-    return run_worker(args.fd, args.config)
+    return run_worker(args.fd, args.config, args.backend)
 
 
 if __name__ == "__main__":

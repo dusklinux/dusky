@@ -1,0 +1,13 @@
+flatbuffers==25.12.19
+huggingface-hub==2.0.0
+numpy==2.5.3
+onnx-asr==0.12.0
+packaging==26.3
+protobuf==7.36.2
+nvidia-cuda-runtime==13.0.88
+nvidia-cublas==13.0.2.14
+nvidia-cudnn-cu13==9.13.1.26
+nvidia-cuda-nvrtc==13.0.88
+nvidia-cufft==12.0.0.15
+nvidia-curand==10.4.0.35
+nvidia-nvjitlink==13.0.88
