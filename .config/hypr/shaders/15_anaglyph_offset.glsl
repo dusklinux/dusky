@@ -7,6 +7,8 @@ in vec2 v_texcoord;
 uniform sampler2D tex;
 out vec4 fragColor;
 
+// dusky: full-redraw
+
 // Single-image red/cyan pseudo-anaglyph.
 // This does not reconstruct scene depth.
 // Input/output: SDR, opaque or premultiplied alpha.

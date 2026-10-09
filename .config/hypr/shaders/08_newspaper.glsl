@@ -7,6 +7,8 @@ in vec2 v_texcoord;
 uniform sampler2D tex;
 out vec4 fragColor;
 
+// dusky: full-redraw
+
 // Monochrome newspaper halftone.
 // Input/output: SDR, opaque or premultiplied alpha.
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);

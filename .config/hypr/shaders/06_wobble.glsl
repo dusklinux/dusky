@@ -5,9 +5,10 @@ precision highp sampler2D;
 
 in vec2 v_texcoord;
 uniform sampler2D tex;
-uniform float TIME;
+uniform float time;
 out vec4 fragColor;
 
+// dusky: animated
 // Spatial warp: sampled RGBA travels together.
 const float TAU = 6.283185307179586;
 
@@ -32,7 +33,7 @@ void main() {
 
     // Bounds shader arithmetic, but cannot restore precision already
     // lost when the host converted a large timestamp to float.
-    float phase = mod(TIME, LOOP_SECONDS)
+    float phase = mod(time, LOOP_SECONDS)
         * (TAU / LOOP_SECONDS);
 
     vec2 position = (v_texcoord - 0.5) * size / shortSide;

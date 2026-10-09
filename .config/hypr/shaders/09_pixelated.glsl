@@ -7,6 +7,8 @@ in vec2 v_texcoord;
 uniform sampler2D tex;
 out vec4 fragColor;
 
+// dusky: full-redraw
+
 // Approximate number of blocks across the shorter texture dimension.
 // Must be positive. Blocks use integer source-pixel dimensions.
 const float PIXEL_COUNT = 350.0;

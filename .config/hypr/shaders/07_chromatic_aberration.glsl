@@ -7,6 +7,8 @@ in vec2 v_texcoord;
 uniform sampler2D tex;
 out vec4 fragColor;
 
+// dusky: full-redraw
+
 // Input/output: SDR, opaque or premultiplied alpha.
 const float STRENGTH = 0.010; // Nonnegative; keep small.
 const bool QUADRATIC_FALLOFF = true;

@@ -7,6 +7,8 @@ in vec2 v_texcoord;
 uniform sampler2D tex;
 out vec4 fragColor;
 
+// dusky: full-redraw
+
 // Static artistic CRT.
 // Input/output: SDR, opaque or premultiplied alpha.
 // Outside the curved image is an intentionally opaque black bezel.
