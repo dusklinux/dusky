@@ -1,4 +1,4 @@
-"""Real PipeWire/PortAudio capture through a disposable virtual mic.
+"""Real native PipeWire capture through a disposable virtual mic.
 Run with .venv/bin/python stress_microphone.py APP SPEECH.wav.
 Does not change the physical microphone or global default device.
 """
@@ -15,17 +15,20 @@ def stress(app,audio):
     app=app.resolve();audio=audio.resolve()
     sink=f'dusky_stt_test_{os.getpid()}'
     module=subprocess.run(['pactl','load-module','module-null-sink',f'sink_name={sink}'],capture_output=True,text=True,check=True).stdout.strip()
+    source=f'{sink}_mic'
+    source_module=None
     try:
+        source_module=subprocess.run(['pactl','load-module','module-remap-source',f'master={sink}.monitor',f'source_name={source}'],capture_output=True,text=True,check=True).stdout.strip()
         with tempfile.TemporaryDirectory(prefix='dusky-microphone-') as td:
             root=Path(td);config=root/'config.json';cfg=json.loads((app/'config.json').read_text())
             if (app/'.venv-gpu').is_dir():
                 (root/'.venv-gpu').symlink_to(app/'.venv-gpu',target_is_directory=True)
-            cfg.update(state_dir=str(root/'state'),notifications=False,input_device='pulse',
+            cfg.update(state_dir=str(root/'state'),notifications=False,capture_target=source,
                        worker_python=str(app/'.venv/bin/python'),worker_script=str(ROOT/'dusky_worker.py'))
             config.write_text(json.dumps(cfg))
             (root/'dusky-rec-indicator').symlink_to(app/'dusky-rec-indicator')
             real_runtime=os.environ['XDG_RUNTIME_DIR']
-            env=dict(os.environ,XDG_RUNTIME_DIR=str(root/'runtime'),PULSE_SERVER=f'unix:{real_runtime}/pulse/native',PULSE_SOURCE=f'{sink}.monitor')
+            env=dict(os.environ,PIPEWIRE_REMOTE=str(Path(real_runtime)/'pipewire-0'),XDG_RUNTIME_DIR=str(root/'runtime'),PULSE_SERVER=f'unix:{real_runtime}/pulse/native',PULSE_SOURCE=f'{sink}.monitor')
             env['WAYLAND_DISPLAY']=str(Path(real_runtime)/os.environ['WAYLAND_DISPLAY'])
             env['DUSKY_REAL_RUNTIME_DIR']=real_runtime
             env.pop('NOTIFY_SOCKET',None);env.pop('WATCHDOG_USEC',None)
@@ -58,7 +61,7 @@ def stress(app,audio):
                     if status['state']=='finalizing':
                         progress.append(status['progress'])
                         layers=json.loads(subprocess.check_output(['hyprctl','layers','-j']))
-                        processing_pill_seen |= any(x.get('namespace')=='dusky-stt'
+                        processing_pill_seen |= any(x.get('namespace')=='dusky-stt' and x.get('alpha',0)>0
                             for output in layers.values() for entries in output['levels'].values() for x in entries)
                 job=json.loads(result.read_text());assert job['ok'],job
                 assert progress and max(progress)>0,'processing progress not reported'
@@ -72,7 +75,7 @@ def stress(app,audio):
                 assert not Path(f'/proc/{worker_pid}').exists(),'worker retained after on-demand capture'
                 backend=request(endpoint,{'command':'status'})['hardware']
                 model=cfg['parakeet']['model'] if backend=='nvidia' else cfg['model']
-                print(json.dumps({'backend':backend,'model':model,'checks':['real PipeWire/PortAudio capture','paused speech excluded',
+                print(json.dumps({'backend':backend,'model':model,'checks':['real native PipeWire capture','paused speech excluded',
                     'worker loaded during capture; recorded audio waits for Stop','processing progress reported','pill retained during transcription',
                     'one complete utterance transcribed','on-demand worker reaped'],
                     'max_processing_progress':max(progress),'transcript':text.strip()},indent=2))
@@ -82,6 +85,8 @@ def stress(app,audio):
                 except subprocess.TimeoutExpired:proc.kill();proc.wait()
                 log.seek(0);logs=log.read();log.close()
                 if sys.exc_info()[0]:print(logs,file=sys.stderr)
-    finally:subprocess.run(['pactl','unload-module',module],check=True)
+    finally:
+        if source_module:subprocess.run(['pactl','unload-module',source_module],check=True)
+        subprocess.run(['pactl','unload-module',module],check=True)
 
 if __name__=='__main__':stress(Path(sys.argv[1]),Path(sys.argv[2]))

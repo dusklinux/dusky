@@ -20,8 +20,8 @@ python3.15 dusky_installer.py --yes --offline
 
 Use the actual Python 3.15+ interpreter installed on your ISO. `/usr/bin/python`
 on the development machine is still 3.14; the installer does not download Python.
-Requires Linux 7.3+, systemd 262+, Hyprland/Wayland, PipeWire, PortAudio, ffmpeg,
-wl-clipboard, libnotify, uv, GTK4 4.12+, gtk4-layer-shell, Rust and pkgconf. Missing system
+Requires Linux 7.3+, systemd 262+, Hyprland/Wayland, PipeWire, ffmpeg,
+wl-clipboard, libnotify, uv, GTK4 4.16+, gtk4-layer-shell, Rust and pkgconf. Missing system
 packages are installed using pacman during online setup. CPU-only installs need
 no CUDA, cuDNN, PyTorch or Python ONNX Runtime. Moonshine's wheel contains its
 native C++/ONNX CPU inference runtime. That runtime itself supports CPU only; see
@@ -170,7 +170,7 @@ and retains no completed audio. Stop explicitly flushes pending speech. Parakeet
 uses bounded blocks up to 20 seconds, preferring quiet boundaries; continuous
 speech can still reach the maximum block boundary. Long
 transcripts still require memory proportional to their text/segment metadata.
-Input overflows, capture failures and clipboard failures are reported.
+Capture termination, startup failures and clipboard failures are reported.
 Transcripts and exact job results remain under `state_dir/transcripts` and
 `state_dir/jobs`. No speech leaves your computer.
 
@@ -194,7 +194,25 @@ terminates its worker, including during model loading/native inference.
 
 The Moonshine runtime uses `MOONSHINE_ORT_SINGLE_THREAD=1`; NumPy's BLAS thread
 count is also one. Parakeet retains up to eight inference threads and disables
-ONNX intra-op spinning. The Rust pill, pause, timer and processing UI are unchanged.
+ONNX intra-op spinning. The Rust pill retains its pause, timer and processing UI.
+It starts alongside native PipeWire capture, showing STARTING until the first
+samples arrive, then REC. Capture uses `pw-record` with 20 ms requested latency,
+without importing sounddevice/PortAudio or enumerating ALSA devices. Moonshine
+still declares sounddevice as a package dependency; it stays installed but is
+not imported by the recorder. Audio is
+saved before the first NumPy meter update; the meter cannot delay audio startup.
+Pause drains and excludes input; Stop terminates capture and drains buffered PCM
+before transcription. `--input-device` now accepts a PipeWire source node name or
+serial, stored as `capture_target`; `auto` follows the default microphone. Legacy
+PortAudio device overrides are not portable PipeWire targets: reselect them with
+`--input-device` after migration if needed.
+
+The indicator uses GPU rendering through Wayland EGL, borrowing the tray and
+wallpaper's primary-device selection from `AQ_DRM_DEVICES`, with a firmware
+boot-device hint when it is unset. Intel/AMD primaries select their Mesa EGL
+vendor and PCI device without probing NVIDIA's graphics driver. NVIDIA primaries
+use the driver defaults. Explicit renderer/offload settings remain respected.
+Microphone capture, UI rendering and CUDA model loading are independent.
 `--kill` cancels and exits the current recorder. `--logs` follows `runtime.log`
 in the configured state directory. `--status` never launches a process.
 

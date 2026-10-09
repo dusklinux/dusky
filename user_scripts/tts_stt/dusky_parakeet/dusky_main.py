@@ -41,7 +41,6 @@ os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 os.environ["ORT_DISABLE_TELEMETRY"] = "1"  # Avoid background uploads/device-ID writes.
 
 lazy import numpy as np
-lazy import sounddevice as sd
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s dusky[%(process)d]: %(message)s")
 LOG = logging.getLogger("dusky")
@@ -566,24 +565,75 @@ class RecordingSession:
         return text
 
     def _capture_loop(self, spool) -> None:
-        # The default PortAudio device follows PipeWire's selected source.
-        with sd.RawInputStream(samplerate=SAMPLE_RATE, blocksize=1024, channels=1,
-                               dtype="int16", latency="high", device=self.config.get("input_device")) as stream:
-            self.ready.set()
-            while not self.stop_event.is_set():
-                raw, overflowed = stream.read(1024)
-                if overflowed:
-                    self.dropped_samples += 1024
-                    if not self.errors:
-                        self.errors.append("Microphone overflow: some audio was lost")
-                    LOG.warning("Microphone input overflow")
-                if self.paused.is_set():
-                    self.level = 0.0
-                    continue
-                pcm = np.frombuffer(raw, dtype="<i2")
-                self.level = min(1.0, float(np.sqrt(np.mean(pcm.astype(np.float32) ** 2))) / 6000)
-                spool.write(raw)
-                self.samples += len(raw) // BYTES_PER_SAMPLE
+        # Native PipeWire capture avoids PortAudio's slow ALSA device scan.
+        command = ["pw-record", "--raw", "--rate", str(SAMPLE_RATE),
+                   "--channels", "1", "--format", "s16", "--latency", "20ms"]
+        target = self.config.get("capture_target")
+        if target:
+            command.extend(["--target", str(target)])
+        command.append("-")
+        with tempfile.TemporaryFile() as errors:
+            proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors)
+            assert proc.stdout is not None
+            fd = proc.stdout.fileno()
+            os.set_blocking(fd, False)
+            selector = selectors.DefaultSelector()
+            selector.register(fd, selectors.EVENT_READ)
+            pending = b""
+            startup_deadline = time.monotonic() + 10
+            stopping = False
+            stop_deadline = 0.0
+            try:
+                while True:
+                    if self.stop_event.is_set() and not stopping:
+                        stopping = True
+                        stop_deadline = time.monotonic() + 3
+                        proc.terminate()
+                    if not selector.select(timeout=0.02):
+                        if stopping and time.monotonic() >= stop_deadline:
+                            raise TimeoutError("PipeWire capture did not stop")
+                        if not self.ready.is_set() and time.monotonic() >= startup_deadline:
+                            raise TimeoutError("PipeWire microphone produced no audio for 10 seconds")
+                        continue
+                    try:
+                        raw = os.read(fd, 4096)
+                    except BlockingIOError:
+                        continue
+                    if not raw:
+                        break
+                    # Pipes need not split on sample boundaries.
+                    raw = pending + raw
+                    length = len(raw) & ~1
+                    pending = raw[length:]
+                    raw = raw[:length]
+                    if not raw:
+                        continue
+                    self.ready.set()
+                    if self.paused.is_set():
+                        self.level = 0.0
+                        continue
+                    # Save before importing NumPy for the first meter update.
+                    spool.write(raw)
+                    self.samples += len(raw) // BYTES_PER_SAMPLE
+                    pcm = np.frombuffer(raw, dtype="<i2")
+                    self.level = min(1.0, float(np.sqrt(np.mean(pcm.astype(np.float32) ** 2))) / 6000)
+                rc = proc.wait(timeout=3)
+                if not stopping:
+                    errors.seek(0)
+                    detail = errors.read(2000).decode(errors="replace").strip()
+                    raise RuntimeError(f"PipeWire capture ended unexpectedly ({rc}): {detail}")
+                if pending:
+                    raise RuntimeError("PipeWire capture ended with an incomplete sample")
+            finally:
+                selector.close()
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                proc.stdout.close()
 
     def _recognize(self, spool, cancel: threading.Event) -> str:
         spool.flush()
@@ -720,6 +770,7 @@ class DuskyDaemon:
                     "available_backends": ["cpu", "nvidia"] if self.config.get("parakeet") else ["cpu"],
                     "fallback_reason": self.worker.fallback_reason,
                     "worker_ready": self.worker.ready,
+                    "capture_ready": bool(sess and sess.ready.is_set()),
                     "session": sess.session_id[:8] if sess is not None else None,
                     "paused": bool(sess.paused.is_set()) if sess is not None else False,
                     "uptime_seconds": round(time.monotonic() - self._start_time, 1),
@@ -928,13 +979,15 @@ class DuskyDaemon:
         self.state = "transcribing" if is_file else "recording"
         indicator: subprocess.Popen | None = None
         error: str | None = None
+        if not is_file:
+            with self._lock:
+                if not sess.stop_event.is_set():
+                    sess._indicator = self._spawn_indicator(sess)
         def prepare_worker() -> None:
             if not is_file:
                 sess.ready.wait()
                 with self._lock:
-                    if self.state == "recording" and not sess.stop_event.is_set():
-                        sess._indicator = self._spawn_indicator(sess)
-                    else:
+                    if self.state != "recording" or sess.stop_event.is_set():
                         return
             self._prewarm_worker()
         preload = threading.Thread(target=prepare_worker, daemon=True, name="dusky-session-preload")

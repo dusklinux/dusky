@@ -31,7 +31,7 @@ SOURCE_DIR = Path(__file__).resolve().parent
 REQUIRED_SOURCES = ("dusky_main.py", "dusky_worker.py", "dusky_hardware.py", "dusky_trigger.py", "dusky_verify.sh",
                     "README.md", "requirements.txt", "requirements-gpu.txt")
 BASE_PACKAGES = ("pipewire", "pipewire-audio", "pipewire-alsa", "pipewire-pulse", "wireplumber",
-                 "portaudio", "ffmpeg", "wl-clipboard", "libnotify", "uv", "gtk4", "gtk4-layer-shell", "rust", "pkgconf")
+                 "ffmpeg", "wl-clipboard", "libnotify", "uv", "gtk4", "gtk4-layer-shell", "rust", "pkgconf")
 type JsonObject = dict[str, Any]
 
 RESET = "\033[0m"
@@ -329,7 +329,7 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--gpu-device", type=int, help="NVIDIA index; otherwise choose a supported GPU automatically")
     p.add_argument("--model", choices=("small_streaming", "medium_streaming"))
     p.add_argument("--model-dir", help="Existing native Moonshine .ort model directory")
-    p.add_argument("--input-device", help="PortAudio device name; auto selects the default")
+    p.add_argument("--input-device", help="PipeWire source node name or serial; auto follows the default microphone")
     p.add_argument("--state-dir")
     p.add_argument("--offline", action="store_true", help="Use preinstalled packages and cached wheels, Rust crates and model")
     p.add_argument("--skip-pacman", action="store_true")
@@ -473,7 +473,7 @@ def main(argv: list[str]) -> int:
         model_dir = prepare_model(py, model, args.model_dir, previous)
         config = {
             "schema_version": 3, "hardware": "cpu", "backend": backend, "model": model, "model_dir": str(model_dir),
-            "input_device": previous.get("input_device") if args.input_device is None else
+            "capture_target": previous.get("capture_target") if args.input_device is None else
                             None if args.input_device == "auto" else args.input_device,
             "state_dir": str(Path(args.state_dir or previous.get("state_dir", DEFAULT_STATE_DIR)).expanduser().resolve()),
             "notifications": previous.get("notifications", True), "output_mode": "clipboard",

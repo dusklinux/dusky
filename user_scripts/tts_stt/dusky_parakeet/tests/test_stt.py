@@ -102,35 +102,58 @@ class RecordingTests(unittest.TestCase):
             _lock=threading.RLock(),state='recording')
         return main.RecordingSession(daemon)
 
+    def capture_fixture(self, sess, spool, read):
+        read_fd,write_fd=os.pipe();os.write(write_fd,b'x')
+        output=os.fdopen(read_fd,'rb');proc=Mock(stdout=output)
+        proc.poll.return_value=0;proc.wait.return_value=0
+        try:
+            with patch.object(main.subprocess,'Popen',return_value=proc) as launch,patch.object(main.os,'read',side_effect=read):
+                sess._capture_loop(spool)
+            self.assertEqual(launch.call_args.args[0][0],'pw-record')
+            proc.terminate.assert_called_once()
+        finally:
+            os.close(write_fd)
+            if not output.closed:output.close()
+
     def test_capture_is_lossless_and_does_not_recognize(self):
-        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryFile() as spool:
+        with tempfile.TemporaryDirectory() as td,tempfile.TemporaryFile() as spool:
             sess=self.session(td)
-            frames=[main.np.full(1024,i,dtype='<i2').tobytes() for i in range(100)]
-            reference=b''.join(frames)
-            stream=Mock();stream.__enter__=Mock(return_value=stream);stream.__exit__=Mock(return_value=False)
-            def read(_):
-                data=frames.pop(0)
-                if not frames:sess.stop_event.set()
-                return data,False
-            stream.read.side_effect=read
-            with patch.object(main.sd,'RawInputStream',return_value=stream):sess._capture_loop(spool)
-            spool.seek(0)
-            self.assertEqual(spool.read(),reference)
+            reference=b''.join(main.np.full(1024,i,dtype='<i2').tobytes() for i in range(100))
+            frames=[reference[i:i+777] for i in range(0,len(reference),777)]
+            def read(*_):
+                if frames:
+                    data=frames.pop(0)
+                    if not frames:sess.stop_event.set()
+                    return data
+                return b''
+            self.capture_fixture(sess,spool,read)
+            spool.seek(0);self.assertEqual(spool.read(),reference)
+            self.assertEqual(sess.samples,len(reference)//2)
             sess.daemon.worker.submit_fd.assert_not_called()
 
     def test_paused_audio_is_excluded_and_stream_keeps_draining(self):
         with tempfile.TemporaryDirectory() as td,tempfile.TemporaryFile() as spool:
-            sess=self.session(td);stream=Mock();stream.__enter__=Mock(return_value=stream);stream.__exit__=Mock(return_value=False)
-            calls=0
-            def read(_):
+            sess=self.session(td);calls=0
+            def read(*_):
                 nonlocal calls
                 calls+=1
                 if calls==2:sess.paused.set()
                 if calls==3:sess.paused.clear();sess.stop_event.set()
-                return bytes([calls,0])*1024,False
-            stream.read.side_effect=read
-            with patch.object(main.sd,'RawInputStream',return_value=stream):sess._capture_loop(spool)
+                return bytes([calls,0])*1024 if calls<=3 else b''
+            self.capture_fixture(sess,spool,read)
             spool.seek(0);self.assertEqual(spool.read(),bytes([1,0])*1024+bytes([3,0])*1024)
+
+    def test_pipewire_error_is_reported_and_pipe_closed(self):
+        with tempfile.TemporaryDirectory() as td,tempfile.TemporaryFile() as spool:
+            sess=self.session(td)
+            read_fd,write_fd=os.pipe();os.close(write_fd)
+            output=os.fdopen(read_fd,'rb');proc=Mock(stdout=output)
+            proc.poll.return_value=1;proc.wait.return_value=1
+            with patch.object(main.subprocess,'Popen',return_value=proc):
+                with self.assertRaisesRegex(RuntimeError,'capture ended unexpectedly'):
+                    sess._capture_loop(spool)
+            self.assertTrue(output.closed)
+            self.assertFalse(sess.ready.is_set())
 
     def test_old_typing_settings_cannot_enable_typing(self):
         with tempfile.TemporaryDirectory() as td:
@@ -200,6 +223,25 @@ class RecordingTests(unittest.TestCase):
             self.assertEqual(list(Path(td).iterdir()),[])
 
 class RuntimeTests(unittest.TestCase):
+    def test_pill_launch_does_not_wait_for_microphone_initialization(self):
+        with tempfile.TemporaryDirectory() as td:
+            daemon=object.__new__(main.DuskyDaemon)
+            daemon.config={'state_dir':td,'notifications':False}
+            daemon._lock=threading.RLock();daemon._stop=threading.Event()
+            daemon.worker=SimpleNamespace(stop=Mock())
+            sess=main.RecordingSession(daemon);daemon._session=sess
+            preloaded=threading.Event()
+            def record():
+                self.assertFalse(sess.ready.is_set())
+                show.assert_called_once_with(sess)
+                self.assertFalse(preloaded.is_set())
+                sess.ready.set()
+                self.assertTrue(preloaded.wait(2))
+                sess.stop_event.set()
+            with patch.object(sess,'run',side_effect=record),patch.object(daemon,'_spawn_indicator',return_value=None) as show,patch.object(daemon,'_prewarm_worker',side_effect=preloaded.set):
+                daemon._run_session(sess,False,None)
+            self.assertTrue(daemon._stop.is_set())
+
     def test_shutdown_acknowledges_before_process_exit(self):
         daemon=object.__new__(main.DuskyDaemon)
         daemon._lock=threading.RLock();daemon._stop=threading.Event();daemon.state='idle'

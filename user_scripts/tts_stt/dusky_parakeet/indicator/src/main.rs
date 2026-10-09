@@ -74,11 +74,89 @@ fn request(path: &CString, command: &str, session: &str) -> Option<Value> {
     }
 }
 
-fn main() {
-    // Wayland only, including GTK's backend selection.
+fn primary_card() -> Option<std::path::PathBuf> {
+    let card = |path: &std::path::Path| {
+        let resolved = path.canonicalize().ok()?;
+        let name = resolved.file_name()?.to_str()?;
+        name.strip_prefix("card")?.parse::<u32>().ok()?;
+        Some(std::path::Path::new("/sys/class/drm").join(name))
+    };
+    if let Ok(devices) = env::var("AQ_DRM_DEVICES")
+        && let Some(first) = devices.split(':').next()
+        && let Some(path) = card(std::path::Path::new(first.trim()))
+    {
+        return Some(path);
+    }
+    let mut cards: Vec<_> = std::fs::read_dir("/sys/class/drm")
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let index = name.to_str()?.strip_prefix("card")?.parse::<u32>().ok()?;
+            Some((index, entry.path()))
+        })
+        .collect();
+    cards.sort_by_key(|(index, _)| *index);
+    cards
+        .iter()
+        .find(|(_, path)| {
+            std::fs::read_to_string(path.join("device/boot_vga"))
+                .is_ok_and(|value| value.trim() == "1")
+        })
+        .or_else(|| cards.first())
+        .map(|(_, path)| path.clone())
+}
+
+fn configure_renderer() {
+    // Match the tray/wallpaper's display GPU choice, using Wayland EGL.
+    // All environment changes happen before GTK or background threads start.
     unsafe {
         env::set_var("GDK_BACKEND", "wayland");
+        if env::var_os("GSK_RENDERER").is_none() {
+            env::set_var("GSK_RENDERER", "gl");
+        }
     }
+    if [
+        "DRI_PRIME",
+        "__NV_PRIME_RENDER_OFFLOAD",
+        "__NV_PRIME_RENDER_OFFLOAD_PROVIDER",
+        "__EGL_VENDOR_LIBRARY_FILENAMES",
+        "__EGL_VENDOR_LIBRARY_DIRS",
+        "MESA_LOADER_DRIVER_OVERRIDE",
+    ]
+    .iter()
+    .any(|name| env::var_os(name).is_some())
+    {
+        return;
+    }
+    let Some(card) = primary_card() else {
+        return;
+    };
+    let vendor = std::fs::read_to_string(card.join("device/vendor")).unwrap_or_default();
+    if matches!(vendor.trim(), "0x8086" | "0x1002" | "0x1af4") {
+        let mesa = "/usr/share/glvnd/egl_vendor.d/50_mesa.json";
+        if std::path::Path::new(mesa).is_file() {
+            unsafe {
+                env::set_var("__EGL_VENDOR_LIBRARY_FILENAMES", mesa);
+            }
+        }
+        if matches!(vendor.trim(), "0x8086" | "0x1002")
+            && let Ok(device) = card.join("device").canonicalize()
+            && let Some(pci) = device.file_name().and_then(|name| name.to_str())
+            && pci.split([':', '.']).count() == 4
+            && pci
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.')
+        {
+            unsafe {
+                env::set_var("DRI_PRIME", format!("pci-{}", pci.replace([':', '.'], "_")));
+            }
+        }
+    }
+}
+
+fn main() {
+    configure_renderer();
     let session = env::args().nth(1).unwrap_or_default();
     let runtime = env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR unset");
     let path = CString::new(format!("{runtime}/dusky-stt/control.sock")).unwrap();
@@ -170,7 +248,7 @@ fn main() {
         row.set_margin_end(8);
         let dot = gtk::Label::new(Some("●"));
         dot.add_css_class("dusky-dot");
-        let label = gtk::Label::new(Some("REC"));
+        let label = gtk::Label::new(Some("STARTING"));
         label.add_css_class("dusky-state");
         let clock = gtk::Label::new(Some("00:00"));
         clock.add_css_class("dusky-clock");
@@ -214,6 +292,7 @@ fn main() {
             }
         });
         let pause = gtk::Button::with_label("Ⅱ");
+        pause.set_sensitive(false);
         pause.set_tooltip_text(Some("Pause recording"));
         let stop = gtk::Button::with_label("■");
         stop.add_css_class("stop");
@@ -260,6 +339,7 @@ fn main() {
                     return glib::ControlFlow::Break;
                 }
                 let finalizing = status["state"] == "finalizing";
+                let capture_ready = status["capture_ready"].as_bool().unwrap_or(false);
                 processing.set(finalizing);
                 let paused = status["paused"].as_bool().unwrap_or(false);
                 let secs = status[if finalizing {
@@ -280,9 +360,15 @@ fn main() {
                         label.set_text(&format!("PROCESSING {}%", (fraction * 100.0) as u32));
                     }
                 } else {
-                    label.set_text(if paused { "PAUSED" } else { "REC" });
+                    label.set_text(if !capture_ready {
+                        "STARTING"
+                    } else if paused {
+                        "PAUSED"
+                    } else {
+                        "REC"
+                    });
                 }
-                pause.set_sensitive(!finalizing);
+                pause.set_sensitive(capture_ready && !finalizing);
                 stop.set_tooltip_text(Some(if finalizing {
                     "Cancel transcription"
                 } else {
