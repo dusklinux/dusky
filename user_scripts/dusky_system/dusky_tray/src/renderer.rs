@@ -49,11 +49,9 @@ impl GlowCache {
         &mut self,
         paragraph: &graphics::text::Paragraph,
     ) -> (iced_core::svg::Handle, Rectangle) {
-        if let Some((_, handle, bounds)) = self
-            .paragraphs
-            .iter()
-            .find(|(cached, _, _)| cached == paragraph)
-        {
+        if let Some((_, handle, bounds)) = self.paragraphs.iter().find(|(cached, _, _)| {
+            cached == paragraph && mask_glyphs(cached).eq(mask_glyphs(paragraph))
+        }) {
             return (handle.clone(), *bounds);
         }
         // Rasterize the already shaped text using Iced's exact fonts. Group
@@ -117,6 +115,25 @@ impl GlowCache {
             .push_back((paragraph.clone(), handle.clone(), bounds));
         (handle, bounds)
     }
+}
+
+// Iced's Paragraph equality compares layout properties, not text content.
+// Match the exact raster inputs too: equal-width digits must never share a
+// stale mask. Iterators avoid allocating or reshaping text on cache hits.
+fn mask_glyphs(
+    paragraph: &graphics::text::Paragraph,
+) -> impl Iterator<Item = (graphics::text::cosmic_text::CacheKey, i32, i32, u8)> + '_ {
+    paragraph.buffer().layout_runs().flat_map(|run| {
+        run.glyphs.iter().map(move |glyph| {
+            let physical = glyph.physical((0.0, 0.0), 1.0);
+            (
+                physical.cache_key,
+                physical.x,
+                run.line_y as i32 + physical.y,
+                glyph.color_opt.map_or(255, |color| color.a()),
+            )
+        })
+    })
 }
 
 impl Renderer {
@@ -469,6 +486,106 @@ impl iced_core::svg::Renderer for Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn paragraph(content: &str) -> graphics::text::Paragraph {
+        use iced_core::text::Paragraph as _;
+        graphics::text::Paragraph::with_text(text::Text {
+            content,
+            bounds: Size::new(240.0, 60.0),
+            size: Pixels(38.0),
+            line_height: text::LineHeight::default(),
+            font: Font::MONOSPACE,
+            align_x: text::Alignment::Default,
+            align_y: iced_core::alignment::Vertical::Top,
+            shaping: text::Shaping::Advanced,
+            wrapping: text::Wrapping::None,
+        })
+    }
+
+    #[test]
+    fn glow_cache_distinguishes_equal_width_digits_and_reuses_identical_masks() {
+        let mut cache = GlowCache::default();
+        for (before, after) in [("08:40", "08:41"), ("80", "81")] {
+            let before = paragraph(before);
+            let after = paragraph(after);
+            use iced_core::text::Paragraph as _;
+            assert_eq!(
+                before.min_bounds(),
+                after.min_bounds(),
+                "fixture must use equal-width digits"
+            );
+            let old = cache.paragraph(&before).0;
+            let new = cache.paragraph(&after).0;
+            assert_ne!(old, new, "changed digits must get a new glow mask");
+            assert_eq!(
+                new,
+                cache
+                    .paragraph(&paragraph(after.buffer().lines[0].text()))
+                    .0
+            );
+            assert_eq!(old, cache.paragraph(&before).0);
+        }
+        assert_eq!(cache.paragraphs.len(), 4);
+        let mut masks = std::collections::HashSet::new();
+        for value in 0..=100 {
+            let mask = cache.paragraph(&paragraph(&value.to_string())).0;
+            assert!(
+                masks.insert(mask.id()),
+                "slider value {value} must have a distinct mask"
+            );
+        }
+        assert_eq!(cache.paragraphs.len(), 32, "mask history stays bounded");
+    }
+
+    #[test]
+    #[ignore = "requires a working Vulkan or Wayland EGL adapter"]
+    fn updated_glow_pixels_match_a_fresh_mask() {
+        use iced_core::{Renderer as _, renderer::Headless as _, text::Renderer as _};
+        let mut renderer = iced_futures::futures::executor::block_on(Renderer::new(
+            Font::MONOSPACE,
+            Pixels(38.0),
+            None,
+        ))
+        .expect("a render adapter is required for this pixel test");
+        let render = |renderer: &mut Renderer, caption: &str, scale: f32| {
+            let paragraph = paragraph(caption);
+            let viewport = Rectangle::with_size(Size::new(260.0, 80.0));
+            renderer.reset(viewport);
+            renderer.with_glow(1.0, |renderer| {
+                renderer.fill_paragraph(
+                    &paragraph,
+                    Point::new(10.0, 10.0),
+                    Color::from_rgb(0.5, 0.7, 0.9),
+                    viewport,
+                );
+            });
+            renderer.screenshot(
+                Size::new((260.0 * scale).ceil() as u32, (80.0 * scale).ceil() as u32),
+                scale,
+                Color::BLACK,
+            )
+        };
+        for scale in [1.0, 1.6, 2.0] {
+            for (before, after) in [
+                ("08:40", "08:41"),
+                ("09:59", "10:00"),
+                ("0", "1"),
+                ("80", "81"),
+                ("100", "99"),
+                ("99", "100"),
+            ] {
+                let old = render(&mut renderer, before, scale);
+                let updated = render(&mut renderer, after, scale);
+                assert_ne!(old, updated);
+                renderer.3 = GlowCache::default();
+                let fresh = render(&mut renderer, after, scale);
+                assert_eq!(
+                    updated, fresh,
+                    "updated {after} must have no stale {before} glow at scale {scale}"
+                );
+            }
+        }
+    }
 
     #[test]
     #[ignore = "requires a working Vulkan or Wayland EGL adapter"]

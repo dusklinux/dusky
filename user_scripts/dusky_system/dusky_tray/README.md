@@ -97,7 +97,9 @@ The notification timestamp daemon runs independently.
   The clock, date, weather, and power button have a subtle fixed glow. Gaussian
   masks give text and icons a continuous falloff without displaced glyph copies.
   The renderer caches shaped text masks and filtered SVGs; each halo needs one
-  extra draw, with no GPU offscreen pass or extra animation timer.
+  extra draw, with no GPU offscreen pass or extra animation timer. Cache hits
+  verify raster glyph identities, positions, and alpha so changing equal-width
+  digits cannot retain an earlier number’s halo.
   Click the volume icon for pavucontrol; right-click selects playback output in Rofi.
   At most one apply operation and one latest pending value exist per slider; older
   drag positions are discarded. Stale polling results cannot roll back a drag.
@@ -119,16 +121,16 @@ The notification timestamp daemon runs independently.
   expansion, with approximately 30% less space to the close action. Groups expand independently. DND, item dismissal, group dismissal,
   and clear-all use Mako. Historical items resolve desktop entries and use
   `gio launch`; active items invoke their Mako action.
-- One scroll area is capped to 85% of the output height. A 64 px bottom fade
-  hides clipped content, with an 8 px feather into the bottom inset to avoid
-  a rectangular opacity seam. It disappears at the end of the list and allows
-  pointer/scroll events through.
+- One scroll area is capped to 85% of the output height. Its viewport reaches
+  the top and bottom panel edges; vertical content padding scrolls with the list,
+  while the 12 px side insets remain fixed. No bottom overlay obscures content.
   Escape has keyboard focus immediately after opening.
 - Power saver's tooltip uses two lines: `Power saver` and `RMB: Powertop auto-tune`.
 - The power button uses muted red (`#812824`) regardless of the wallpaper accent.
   Network metrics use the whole module width without an up/down icon.
 - The panel appears on the first rendered frame with its current clock and
   available controls; hardware and notification queries never gate visibility.
+  The clock updates on each two-second tick independently of hardware refreshes.
   Loading and empty notification labels share a fixed 56 px slot, so an empty
   result only changes the label. Sliders still appear only when available.
   The `dusky_tray_window` window rule in Hyprland's `window_rules.lua`
@@ -239,6 +241,14 @@ Run the checks without retaining generated screenshots or logs:
 ./scripts/build-on-tmpfs.sh --test
 ./scripts/build-on-tmpfs.sh --clippy
 cargo fmt --check
+```
+
+GPU-dependent tests are ignored by default. On a machine with working adapters,
+also exercise rendering, fractional scaling, and wheel scrolling on both backends:
+
+```sh
+WGPU_BACKEND=vulkan cargo test --locked --offline -- --include-ignored
+WGPU_BACKEND=gl cargo test --locked --offline -- --ignored
 ```
 
 For a first-frame submission timestamp without verbose Wayland logging:

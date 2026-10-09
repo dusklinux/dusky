@@ -314,12 +314,12 @@ fn sysfs_backlights() -> Vec<BacklightDevice> {
 
 fn preferred_backlight() -> Option<BacklightDevice> {
     // Prefer writable device.
-    for d in sysfs_backlights() {
-        if access_ok(&d.path.join("brightness"), libc::W_OK) {
-            return Some(d);
-        }
-    }
-    sysfs_backlights().into_iter().next()
+    let devices = sysfs_backlights();
+    let index = devices
+        .iter()
+        .position(|d| access_ok(&d.path.join("brightness"), libc::W_OK))
+        .unwrap_or(0);
+    devices.into_iter().nth(index)
 }
 
 pub fn has_local_brightness() -> bool {
@@ -1085,7 +1085,7 @@ fn network_totals(text: &str, interfaces: &[String]) -> (u64, u64) {
 pub fn net_state() -> NetState {
     // Physical interfaces avoid double-counting VPN/bridge traffic. Virtio
     // devices also expose a device link. No Waybar helper or daemon is needed.
-    let interfaces: Vec<String> = std::fs::read_dir("/sys/class/net")
+    let mut interfaces: Vec<String> = std::fs::read_dir("/sys/class/net")
         .into_iter()
         .flatten()
         .flatten()
@@ -1096,6 +1096,8 @@ pub fn net_state() -> NetState {
         })
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
+    // read_dir order is unspecified; compare stable sets across rate samples.
+    interfaces.sort_unstable();
     let totals = network_totals(
         &std::fs::read_to_string("/proc/net/dev").unwrap_or_default(),
         &interfaces,

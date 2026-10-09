@@ -39,7 +39,6 @@ pub enum Message {
     PanelFitted(iced_core::Size, bool),
     WindowEvent(iced_core::window::Id, iced_core::window::Event),
     BlurConfigured,
-    ClockLoaded((String, String)),
     WeatherLoaded(Option<String>),
     MetricsLoaded((String, String, sys::NetState)),
     TogglesLoaded(ToggleSnapshot),
@@ -79,7 +78,6 @@ pub enum Message {
     StackClosed(String),
     NotificationHovered(String),
     NotificationLeft(String),
-    PanelScrolled(scrollable::Viewport),
     BackdropPressed,
     EventOccurred(Event),
 }
@@ -142,7 +140,6 @@ pub struct TrayApp {
     dnd_pending: bool,
     expanded: HashSet<String>,
     hovered_notification: Option<String>,
-    fade_bottom: bool,
     refresh_pending: usize,
     initial_refresh: bool,
     notifications_loaded: bool,
@@ -189,7 +186,6 @@ impl TrayApp {
             dnd_pending: false,
             expanded: HashSet::new(),
             hovered_notification: None,
-            fade_bottom: false,
             refresh_pending: 0,
             initial_refresh: true,
             notifications_loaded: false,
@@ -215,10 +211,6 @@ impl TrayApp {
         let revision = self.slider_revision;
         let has_wifi_button = self.config.toggles.iter().any(|t| t.id == "wifi");
         Task::batch(vec![
-            Task::perform(
-                async move { sys::current_time_date() },
-                Message::ClockLoaded,
-            ),
             Task::perform(async move { sys::weather_text() }, Message::WeatherLoaded),
             Task::perform(
                 async move {
@@ -289,7 +281,6 @@ impl TrayApp {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let phase = match &message {
-            Message::ClockLoaded(_) => Some("clock-ready"),
             Message::WeatherLoaded(_) => Some("weather-ready"),
             Message::MetricsLoaded(_) => Some("metrics-ready"),
             Message::TogglesLoaded(_) => Some("toggles-ready"),
@@ -326,6 +317,9 @@ impl TrayApp {
             }
             Message::BlurConfigured => {}
             Message::Tick => {
+                // Local time is cheap to read and must not wait for slow DDC
+                // discovery or occupied hardware-query workers.
+                (self.time_text, self.date_text) = sys::current_time_date();
                 let panel_fit = self.fit_panel();
                 let mut blur_change = Task::none();
                 if let Some(appearance) = Appearance::load() {
@@ -343,12 +337,8 @@ impl TrayApp {
                 if self.refresh_pending != 0 {
                     return Task::batch([blur_change, panel_fit]);
                 }
-                self.refresh_pending = 8;
+                self.refresh_pending = 7;
                 return Task::batch([blur_change, panel_fit, self.refresh_all()]);
-            }
-            Message::ClockLoaded((t, d)) => {
-                self.time_text = t;
-                self.date_text = d;
             }
             Message::WeatherLoaded(w) => {
                 self.weather = w;
@@ -402,13 +392,6 @@ impl TrayApp {
             }
             Message::NotifsLoaded((notifs, dnd)) => {
                 self.notifications_loaded = true;
-                if !self.notifications.iter().map(|n| n.id).eq(notifs
-                    .iter()
-                    .filter(|n| !self.dismissed.contains(&n.id))
-                    .map(|n| n.id))
-                {
-                    self.fade_bottom = false;
-                }
                 self.notifications = notifs
                     .into_iter()
                     .filter(|n| !self.dismissed.contains(&n.id))
@@ -626,7 +609,6 @@ impl TrayApp {
                 self.dnd = observed;
             }
             Message::ClearNotifs => {
-                self.fade_bottom = false;
                 self.dismissed
                     .extend(self.notifications.iter().map(|n| n.id));
                 self.notifications.clear();
@@ -644,7 +626,6 @@ impl TrayApp {
                 );
             }
             Message::NotifDismiss(id) => {
-                self.fade_bottom = false;
                 self.dismissed.insert(id);
                 self.notifications.retain(|n| n.id != id);
                 std::thread::Builder::new()
@@ -653,7 +634,6 @@ impl TrayApp {
                     .ok();
             }
             Message::NotifInvoke(id) => {
-                self.fade_bottom = false;
                 let notification = self.notifications.iter().find(|n| n.id == id).cloned();
                 self.dismissed.insert(id);
                 self.notifications.retain(|n| n.id != id);
@@ -670,18 +650,12 @@ impl TrayApp {
                     self.hovered_notification = None;
                 }
             }
-            Message::PanelScrolled(viewport) => {
-                self.fade_bottom = viewport.absolute_offset().y + viewport.bounds().height
-                    < viewport.content_bounds().height - 1.0;
-            }
             Message::StackToggled(app) => {
-                self.fade_bottom = false;
                 if !self.expanded.remove(&app) {
                     self.expanded.insert(app);
                 }
             }
             Message::StackClosed(app) => {
-                self.fade_bottom = false;
                 let ids: Vec<i32> = self
                     .notifications
                     .iter()
@@ -1633,55 +1607,14 @@ impl TrayApp {
         if let Some(error) = &self.error {
             content = content.push(text(error.clone()).size(11).color(theme.danger));
         }
-        let scroller = scrollable(content)
-            .on_scroll(Message::PanelScrolled)
-            .direction(scrollable::Direction::Vertical(
+        // Vertical padding belongs to the content, so it scrolls away instead
+        // of forming fixed strips at the viewport's top and bottom edges.
+        let scroller = scrollable(container(content).padding([12, 0])).direction(
+            scrollable::Direction::Vertical(
                 scrollable::Scrollbar::new().width(0).scroller_width(0),
-            ));
-        // The overlay draws only; pointer and wheel events reach the scroller.
-        let mut body = stack![container(scroller).padding(12)];
-        if self.fade_bottom {
-            // 64 px over the scrolling content, then an 8 px feather into
-            // the bottom inset. The tail returns to the panel's own opacity
-            // instead of ending in a more opaque rectangular strip.
-            let gradient = iced_core::gradient::Linear::new(std::f32::consts::PI)
-                .add_stop(0.0, Color { a: 0.0, ..theme.bg })
-                .add_stop(
-                    0.30,
-                    Color {
-                        a: 0.22,
-                        ..theme.bg
-                    },
-                )
-                .add_stop(
-                    0.60,
-                    Color {
-                        a: 0.70,
-                        ..theme.bg
-                    },
-                )
-                .add_stop(64.0 / 72.0, theme.bg)
-                .add_stop(1.0, Color { a: 0.0, ..theme.bg });
-            body = body.push(
-                container(
-                    container(Space::new().width(Length::Fill).height(72)).style(move |_| {
-                        container::Style {
-                            background: Some(gradient.into()),
-                            ..Default::default()
-                        }
-                    }),
-                )
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding(iced_core::Padding {
-                    left: 12.0,
-                    right: 12.0,
-                    bottom: 4.0,
-                    ..Default::default()
-                })
-                .align_y(Vertical::Bottom),
-            );
-        }
+            ),
+        );
+        let body = container(scroller).padding([0, 12]);
         let limit = self.panel_monitor.map(|m| m.limit()).unwrap_or_else(|| {
             iced_core::Size::new(
                 320.0_f32.min((size.width - 40.0).max(1.0)),
@@ -1822,6 +1755,104 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a working Vulkan or Wayland EGL adapter"]
+    fn scroll_viewport_reaches_both_panel_edges_and_final_item_is_visible() {
+        use iced_core::renderer::Headless as _;
+        use iced_core::{Layout, Point, Rectangle, Size, Vector, layout, widget};
+        use widget::operation::{Operation, Scrollable};
+        let renderer = iced_futures::futures::executor::block_on(crate::renderer::Renderer::new(
+            Font::DEFAULT,
+            iced_core::Pixels(16.0),
+            None,
+        ))
+        .expect("a render adapter is required for this layout test");
+        let mut app = window_app();
+        app.notifications = (0..20)
+            .map(|id| Notification {
+                id,
+                app: format!("App {id}"),
+                summary: format!("Notification {id}"),
+                body: "Notification body".into(),
+                source: "active".into(),
+                desktop_entry: String::new(),
+                time: String::new(),
+            })
+            .collect();
+        let mut view = app.view_at(Size::new(1280.0, 720.0));
+        let mut tree = widget::Tree::new(&view);
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(320.0, 612.0)),
+        );
+        #[derive(Default)]
+        struct Probe {
+            viewport: Option<Rectangle>,
+            translation: Vector,
+            last_text: Option<Rectangle>,
+        }
+        impl Operation for Probe {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+            fn scrollable(
+                &mut self,
+                _: Option<&widget::Id>,
+                bounds: Rectangle,
+                content: Rectangle,
+                translation: Vector,
+                _: &mut dyn Scrollable,
+            ) {
+                assert!(content.height > bounds.height, "fixture must overflow");
+                self.viewport = Some(bounds);
+                self.translation = translation;
+            }
+            fn text(&mut self, _: Option<&widget::Id>, bounds: Rectangle, caption: &str) {
+                if caption == "Notification body" {
+                    self.last_text = Some(bounds);
+                }
+            }
+        }
+        let mut probe = Probe::default();
+        view.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut probe);
+        assert_eq!(probe.translation.y, 0.0);
+        let mut messages = Vec::new();
+        let mut shell = iced_core::Shell::new(&mut messages);
+        view.as_widget_mut().update(
+            &mut tree,
+            &Event::Mouse(iced_core::mouse::Event::WheelScrolled {
+                delta: iced_core::mouse::ScrollDelta::Pixels {
+                    x: 0.0,
+                    y: -10000.0,
+                },
+            }),
+            Layout::new(&node),
+            iced_core::mouse::Cursor::Available(Point::new(160.0, 300.0)),
+            &renderer,
+            &mut iced_core::clipboard::Null,
+            &mut shell,
+            &Rectangle::with_size(node.size()),
+        );
+        view.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut probe);
+        assert!(
+            probe.translation.y > 0.0,
+            "wheel input must scroll the list"
+        );
+        let viewport = probe.viewport.unwrap();
+        assert_eq!(viewport.y, 0.0);
+        assert_eq!(viewport.height, node.size().height);
+        assert_eq!(viewport.x, 12.0);
+        assert_eq!(viewport.width, node.size().width - 24.0);
+        let last = probe.last_text.unwrap();
+        let visible_y = last.y - probe.translation.y;
+        assert!(visible_y >= viewport.y);
+        assert!(visible_y + last.height <= viewport.y + viewport.height);
+        assert_eq!(node.bounds().position(), Point::ORIGIN);
+    }
+
+    #[test]
     fn panel_resize_coalesces_changes_until_current_request_finishes() {
         let mut app = window_app();
         let first = iced_core::Size::new(320.0, 361.0);
@@ -1860,10 +1891,10 @@ mod tests {
         );
         assert!(!app.panel_fit_busy);
         assert_eq!(app.panel_applied_size, None);
-        app.refresh_pending = 8;
+        app.refresh_pending = 7;
         assert!(iced_runtime::task::into_stream(app.update(Message::Tick)).is_some());
         assert!(app.panel_fit_busy);
-        assert_eq!(app.refresh_pending, 8);
+        assert_eq!(app.refresh_pending, 7);
         let _ = app.update(Message::PanelFitted(size, true));
         let _ = app.update(Message::Tick);
         assert!(!app.panel_fit_busy);
@@ -1893,14 +1924,14 @@ mod tests {
         let mut app = app();
         assert_ne!(app.time_text, "--:--");
         let _ = app.update(Message::Tick);
-        assert_eq!(app.refresh_pending, 8);
+        assert_eq!(app.refresh_pending, 7);
         assert!(!app.notifications_loaded);
         let view = app.view_at(iced_core::Size::new(1920.0, 1080.0));
         assert!(!view.as_widget().children().is_empty());
         drop(view);
         let _ = app.update(Message::NotifsRefreshed((vec![], None)));
         assert!(app.notifications_loaded);
-        assert_eq!(app.refresh_pending, 7);
+        assert_eq!(app.refresh_pending, 6);
     }
 
     #[test]
@@ -1946,16 +1977,28 @@ mod tests {
         assert_eq!(app.volume, Some(69.0));
     }
     #[test]
+    fn clock_updates_even_when_hardware_refresh_is_pending() {
+        let mut app = app();
+        app.time_text = "stale".into();
+        app.date_text = "stale".into();
+        app.refresh_pending = 7;
+        let _ = app.update(Message::Tick);
+        assert_ne!(app.time_text, "stale");
+        assert_ne!(app.date_text, "stale");
+        assert_eq!(app.refresh_pending, 7);
+    }
+
+    #[test]
     fn periodic_refresh_cannot_queue_overlapping_batches() {
         let mut app = app();
         let _ = app.update(Message::Tick);
-        assert_eq!(app.refresh_pending, 8);
-        let _ = app.update(Message::Tick);
-        assert_eq!(app.refresh_pending, 8);
-        let _ = app.update(Message::NotifsLoaded((vec![], None)));
-        assert_eq!(app.refresh_pending, 8);
-        let _ = app.update(Message::NotifsRefreshed((vec![], None)));
         assert_eq!(app.refresh_pending, 7);
+        let _ = app.update(Message::Tick);
+        assert_eq!(app.refresh_pending, 7);
+        let _ = app.update(Message::NotifsLoaded((vec![], None)));
+        assert_eq!(app.refresh_pending, 7);
+        let _ = app.update(Message::NotifsRefreshed((vec![], None)));
+        assert_eq!(app.refresh_pending, 6);
     }
     #[test]
     fn stale_notification_snapshot_does_not_restore_dismissed_items() {
