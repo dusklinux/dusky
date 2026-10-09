@@ -6,7 +6,7 @@ lazy import tomllib
 lazy from pathlib import Path
 from typing import override
 from python.frontend.core_types import BaseEngine
-from python.config_io import atomic_write, boolean, read_text, split_lines
+from python.shared.config_io import atomic_write, boolean, read_text, split_lines
 
 type ChangeTuple = tuple[str, str, str, str]
 

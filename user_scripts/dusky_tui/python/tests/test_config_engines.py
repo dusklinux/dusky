@@ -435,8 +435,25 @@ input_path = "b"
         self.assertTrue(engine.write_value('run', 'bind/SUPER', 'new', 'string')[0])
         self.assertEqual(engine.cache['bind/SUPER/run'], 'new')
 
+    def test_privileged_helper_import_from_unrelated_directory(self):
+        import subprocess
+        from python.shared.config_io import privileged_atomic_write, current_stamp
+        run = subprocess.run
+
+        def without_sudo(command, **kwargs):
+            self.assertEqual(command[:2], ['sudo', '-n'])
+            self.assertEqual(Path(command[-1]), Path(__file__).resolve().parents[2])
+            return run(command[2:], cwd=self.directory.name, **kwargs)
+
+        # Exercise the real child interpreter and its import bootstrap; bypass
+        # only authorization so this fixture never requires root privileges.
+        with patch('subprocess.run', side_effect=without_sudo):
+            result = privileged_atomic_write(self.path, 'new file\n', None)
+        self.assertEqual(result, current_stamp(self.path))
+        self.assertEqual(self.path.read_text(encoding='utf-8'), 'new file\n')
+
     def test_new_file_keeps_creator_ownership_in_shared_directory(self):
-        from python.config_io import atomic_write
+        from python.shared.config_io import atomic_write
         descriptor, name = tempfile.mkstemp(prefix='dusky-engine-audit-')
         os.close(descriptor)
         path = Path(name)

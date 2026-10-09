@@ -86,7 +86,7 @@ def privileged_atomic_write(path: Path, text: str, expected: FileStamp | None) -
     code = '''import json, sys
 sys.path.insert(0, sys.argv[1])
 from pathlib import Path
-from python.config_io import atomic_write
+from python.shared.config_io import atomic_write
 payload = json.load(sys.stdin)
 try:
     expected = tuple(payload["expected"]) if payload["expected"] is not None else None
@@ -96,7 +96,7 @@ except (OSError, UnicodeError) as exc:
 print(json.dumps(result))
 '''
     result = subprocess.run(
-        ['sudo', '-n', sys.executable, '-c', code, str(Path(__file__).resolve().parent.parent)],
+        ['sudo', '-n', sys.executable, '-c', code, str(Path(__file__).resolve().parents[2])],
         input=json.dumps({'path': str(path), 'text': text, 'expected': expected}),
         text=True, encoding='utf-8', capture_output=True, timeout=10,
     )

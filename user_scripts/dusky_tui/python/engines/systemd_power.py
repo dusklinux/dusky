@@ -19,7 +19,7 @@ lazy from pathlib import Path
 lazy from typing import Any
 
 from python.engines.bridged_ini import BridgedIniEngine
-from python.config_io import read_text
+from python.shared.config_io import read_text
 
 
 class SystemdPowerEngine(BridgedIniEngine):

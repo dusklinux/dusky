@@ -12,7 +12,7 @@ lazy from pathlib import Path
 lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
-from python.config_io import current_stamp, stamp
+from python.shared.config_io import current_stamp, stamp
 
 # =============================================================================
 # [ BLOCK 1: THE ENGINE ]

@@ -10,7 +10,7 @@ source code.
 - **Frontend contract:** `python/frontend/core_types.py` (ConfigItem), `python/frontend/ui.py` (rendering)
 - **Shared color handling:** `python/frontend/colors.py` (literal parsing, hue adjustment)
 - **Router:** `python/main/main.py` (loading, routing, CLI)
-- **File I/O shared by the audited engines:** `python/config_io.py`
+- **File I/O shared by the audited engines:** `python/shared/config_io.py`
 - **Engine list:** see the [Engine Routing Table](#5-engine-routing-table) below
 
 ---
@@ -229,7 +229,7 @@ The public engine contract remains `target_path`, `load_state()`,
 that configuration was saved but a subsequent service reload failed.
 
 INI, Bridged INI, FlatDotConfig, Matugen, and TOML use the shared
-`python/config_io.py` read/commit helpers. Lua uses its snapshot helpers and
+`python/shared/config_io.py` read/commit helpers. Lua uses its snapshot helpers and
 separate staging for multiple files. Schemas do not import this helper or
 implement their own save routines; the router supplies the engine instances.
 Other engines retain their own implementations and guarantees.

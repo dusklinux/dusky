@@ -17,7 +17,7 @@ lazy from pathlib import Path
 lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
-from python.config_io import atomic_write, boolean, read_text
+from python.shared.config_io import atomic_write, boolean, read_text
 
 _RE_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 

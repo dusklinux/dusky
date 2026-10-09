@@ -4,7 +4,7 @@ lazy import threading
 lazy from pathlib import Path
 lazy from typing import Any
 from python.frontend.core_types import BaseEngine
-from python.config_io import atomic_write, line_value, read_text, split_lines
+from python.shared.config_io import atomic_write, line_value, read_text, split_lines
 
 
 class FlatDotConfigEngine(BaseEngine):
