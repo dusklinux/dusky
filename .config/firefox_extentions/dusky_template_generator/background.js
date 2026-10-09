@@ -1,5 +1,5 @@
 /*
- * Dusky Template Generator — background.js (MV3 ES-module event page, Gecko 156+)
+ * Dusky Template Generator — background.js (MV3 ES-module event page, Gecko 157.0.1+)
  *
  * The only privileged broker.
  *   1. ONE long-lived native host process (runtime.connectNative), id-correlated,
@@ -10,8 +10,8 @@
  *   4. For tab-originated messages the domain is ALWAYS derived from sender.url
  *      and the sender MUST be the top frame, so no page (and no embedded frame)
  *      can write another site's template.
- *   5. Host calls are serialised PER DOMAIN; a stuck write on one site can never
- *      block a read on another.
+ *   5. Broker calls are serialised PER DOMAIN, so unrelated sites do not wait
+ *      in the same broker queue. The native host processes its stream in order.
  *   6. Every successful mutation is announced with the originator's nonce, so a
  *      view can tell "someone else changed the file" from "that was me".
  */

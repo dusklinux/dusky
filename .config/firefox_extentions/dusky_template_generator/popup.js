@@ -1,5 +1,5 @@
 /*
- * Dusky Template Generator — popup.js (ES module, Gecko 156+)
+ * Dusky Template Generator — popup.js (ES module, Gecko 157.0.1+)
  *
  * A view over exactly one file: $XDG_CONFIG_HOME/dusky_sites/<domain>.css
  *   open      → read from disk (disk is the only source of truth)
@@ -9,8 +9,8 @@
  *   Reload    → discard local edits, re-read disk
  *   Copy / Delete
  *
- * Every mutating call carries base_rev, so a write can never silently overwrite
- * a change made by the picker (or by your editor) since this popup last read.
+ * Mutating calls carry base_rev, except an explicitly confirmed overwrite,
+ * so an ordinary write cannot replace a change since this popup last read.
  * Every mutating call also carries an opaque `origin` nonce which the broker
  * echoes in "dusky:changed", so this view can tell its own writes from foreign
  * ones without the (ambiguous) rev comparison v3 used.
@@ -28,7 +28,8 @@ const ORIGIN = crypto.randomUUID();
 
 const view = {
   tab: null, domain: "", saved: "", exists: false, path: "", rev: 0,
-  busy: false, pickerOn: false, delArm: 0, autoArm: 0, force: false, timer: 0, ready: false,
+  busy: false, pickerOn: false, delArm: 0, autoArm: 0, delTimer: 0, autoTimer: 0,
+  force: false, timer: 0, ready: false, docEpoch: 0,
 };
 
 function domainOf(url) {
@@ -43,6 +44,18 @@ const dirty = () => ui.css.value !== view.saved;
 function label(btn, title, sub) {
   btn.querySelector(".t").textContent = title;
   if (sub !== undefined) btn.querySelector(".s").textContent = sub;
+}
+
+function disarmAuto() {
+  clearTimeout(view.autoTimer);
+  view.autoTimer = view.autoArm = 0;
+  label(ui.auto, "⚡ Auto-map", "scan this site's colour tokens");
+}
+
+function disarmDelete() {
+  clearTimeout(view.delTimer);
+  view.delTimer = view.delArm = 0;
+  label(ui.del, "🗑 Delete", "remove this file from disk");
 }
 
 function say(text, kind = "") {
@@ -66,12 +79,16 @@ const pg = (msg) => bg({ type: "page", tabId: view.tab.id, msg });
 
 function setDoc(reply, keepDirty = false) {
   const wasDirty = dirty();
+  const changed = (reply.rev ?? 0) !== view.rev;
+  const conflict = keepDirty && wasDirty && (view.force || changed);
+  if (changed) disarmDelete();
+  view.docEpoch++;
   view.saved = reply.css ?? "";
   view.exists = !!reply.exists;
   view.rev = reply.rev ?? 0;
-  view.force = false;
   if (reply.path) view.path = reply.path;
   if (!(keepDirty && wasDirty)) ui.css.value = view.saved;
+  view.force = conflict && dirty();
   refresh();
 }
 
@@ -107,10 +124,14 @@ function busy(on) {
 async function run(task) {
   if (view.busy || !view.ready) return;
   view.busy = true;
+  view.docEpoch++;
   busy(true);
   try { await task(); }
   catch (err) { say(err.message ?? String(err), "err"); }
-  finally { view.busy = false; busy(false); }
+  finally {
+    view.busy = false; busy(false);
+    if (syncPending) void syncFromDisk();
+  }
 }
 
 async function save() {
@@ -131,7 +152,11 @@ async function save() {
 }
 
 async function flushEdits() {
-  if (!dirty() && !view.force) return true;
+  if (view.force) {
+    say("Resolve the disk conflict with Overwrite or Reload first.", "warn");
+    return false;
+  }
+  if (!dirty()) return true;
   return save();
 }
 
@@ -163,18 +188,15 @@ ui.auto.addEventListener("click", () => run(async () => {
     return;
   }
   if (scan.kind === "structural" && Date.now() - view.autoArm > 6000) {
+    clearTimeout(view.autoTimer);
     view.autoArm = Date.now();
     label(ui.auto, "⚡ Confirm Auto-map", "applies the broad structural theme");
-    setTimeout(() => {
-      view.autoArm = 0;
-      label(ui.auto, "⚡ Auto-map", "scan this site's colour tokens");
-    }, 6000);
+    view.autoTimer = setTimeout(disarmAuto, 6000);
     say(`${view.domain} exposes no usable colour tokens (${scan.found} found). Auto-map would install a broad ` +
       "structural theme that repaints nearly every element. Click again within 6 s to apply it.", "warn");
     return;
   }
-  view.autoArm = 0;
-  label(ui.auto, "⚡ Auto-map", "scan this site's colour tokens");
+  disarmAuto();
   await spliceRegion("auto", scan.body);
   const how = scan.kind === "structural" ? "structural theme" : `${scan.mapped} of ${scan.found} tokens`;
   say(`Mapped ${how} → saved ${fileName()}${scan.palette ? "" : "  (palette variables not visible on this page)"}`, "ok");
@@ -208,17 +230,14 @@ ui.copy.addEventListener("click", () => run(async () => {
 
 ui.del.addEventListener("click", () => run(async () => {
   if (Date.now() - view.delArm > 3000) {
+    clearTimeout(view.delTimer);
     view.delArm = Date.now();
     label(ui.del, "🗑 Confirm delete", "click again to remove the file");
     say(`Click again within 3 s to delete ${fileName()} from disk.`, "warn");
-    setTimeout(() => {
-      view.delArm = 0;
-      label(ui.del, "🗑 Delete", "remove this file from disk");
-    }, 3000);
+    view.delTimer = setTimeout(disarmDelete, 3000);
     return;
   }
-  view.delArm = 0;
-  label(ui.del, "🗑 Delete", "remove this file from disk");
+  disarmDelete();
   const reply = await bg({ type: "delete", domain: view.domain, base_rev: view.rev, tabId: view.tab.id }, true);
   if (reply.conflict) {
     setDoc(reply, true);
@@ -238,15 +257,29 @@ document.addEventListener("keydown", (e) => {
 });
 
 /* ── Live sync: the background announces every successful mutation ────── */
+let syncPending = false, syncRunning = false;
+async function syncFromDisk() {
+  syncPending = true;
+  if (view.busy || syncRunning) return;
+  syncRunning = true;
+  try {
+    while (syncPending && !view.busy) {
+      syncPending = false;
+      const epoch = view.docEpoch;
+      const reply = await readDisk();
+      // A local operation started while this snapshot was in flight. Read
+      // again after it finishes rather than rewinding a successful save.
+      if (epoch !== view.docEpoch || view.busy) { syncPending = true; continue; }
+      setDoc(reply, true);
+      if (view.force) say("The file changed on disk. Your unsaved edits are kept — Overwrite replaces it, ↻ Reload discards your edits.", "warn");
+      else say("Updated from disk", "ok");
+    }
+  } catch (err) { say(err.message ?? String(err), "err"); }
+  finally { syncRunning = false; }
+}
 browser.runtime.onMessage.addListener((msg) => {
   if (msg?.type !== "dusky:changed" || msg.domain !== view.domain || !view.ready) return;
-  if (msg.origin === ORIGIN) return;                       /* our own write */
-  readDisk().then((reply) => {
-    const wasDirty = dirty();
-    setDoc(reply, true);
-    if (wasDirty) say("The file changed on disk. Your unsaved edits are kept — Save overwrites, ↻ Reload discards.", "warn");
-    else say("Updated from disk", "ok");
-  }).catch(() => {});
+  if (msg.origin !== ORIGIN) void syncFromDisk();
 });
 
 /* ── Init ─────────────────────────────────────────────────────────────── */

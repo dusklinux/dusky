@@ -1,5 +1,5 @@
 /*
- * Dusky Template Generator — content.js (Gecko 156+)
+ * Dusky Template Generator — content.js (Gecko 157.0.1+)
  *
  * Two jobs, one file:
  *   1. scan()  — colour-token scanner behind the popup's Auto-map button;
@@ -93,7 +93,7 @@
   const skipVar = (name) => {
     if (typeof name !== "string" || !name.startsWith("--")) return true;
     if (NOISE_RE.test(name)) return true;
-    return PALETTE_OWNED.has(name.slice(2).toLowerCase().replace(PALETTE_SUFFIX, ""));
+    return PALETTE_OWNED.has(name.slice(2).replace(PALETTE_SUFFIX, ""));
   };
 
   const paletteLoaded = () =>
@@ -122,7 +122,7 @@
   const RGB_TRIPLET = /^(\d{1,3})[,\s]+(\d{1,3})[,\s]+(\d{1,3})$/;
   const KEYWORDISH = /^(inherit|initial|unset|revert|revert-layer|transparent|currentcolor|none)$/i;
 
-  function parseCssColor(raw) {
+  function parseCssColor(raw, context = document.documentElement) {
     if (typeof raw !== "string") return null;
     const v = raw.trim();
     if (!v || KEYWORDISH.test(v)) return null;
@@ -150,7 +150,7 @@
         colorSpace: "srgb", willReadFrequently: true,
       }));
       ctx.clearRect(0, 0, 1, 1);
-      ctx.fillStyle = resolveViaRoot(serialised);
+      ctx.fillStyle = resolveViaRoot(serialised, context);
       ctx.fillRect(0, 0, 1, 1);
       const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
       return { r, g, b, a: a / 255, shape: hsl ? "hsl-triplet" : "color" };
@@ -165,7 +165,7 @@
 
   /* Resolve context-dependent colours before canvas converts their colour space. */
   let resolver = null;
-  function resolveViaRoot(value) {
+  function resolveViaRoot(value, context) {
     if (!resolver) {
       resolver = document.createElement("i");
       resolver.style.cssText = "display:none!important";
@@ -174,9 +174,12 @@
     const detached = !hostEl.isConnected;
     if (detached) document.documentElement.append(hostEl);
     try {
-      resolver.style.color = "";
-      resolver.style.color = value;
-      return getComputedStyle(resolver).color;
+      const cs = getComputedStyle(context);
+      resolver.style.color = cs.color;
+      resolver.style.colorScheme = cs.colorScheme;
+      resolver.style.backgroundColor = "";
+      resolver.style.backgroundColor = value;
+      return getComputedStyle(resolver).backgroundColor;
     } finally {
       if (detached) hostEl.remove();
     }
@@ -329,13 +332,33 @@
   }
 
   function classifyByValueAndName(name, col) {
-    const n = name.slice(2).toLowerCase().replaceAll(/[_.]/g, "-");
+    const n = name.slice(2).replace(/([a-z\d])([A-Z])/g, "$1-$2").toLowerCase().replaceAll(/[_.]/g, "-");
     const lum = luminance(col.r, col.g, col.b);
     const { chroma, hue } = chromaHue(col.r, col.g, col.b);
+    const fg = /(?:^|-)(?:fg|foreground|text|ink)(?:-|$)/.test(n);
+    const bg = /(?:^|-)(?:bg|background|canvas|surface)(?:-|$)/.test(n);
+    const muted = /(?:muted|secondary|dim|subtle|caption|hint|disabled|placeholder)/.test(n);
 
+    // Material has no success/warning roles. Preserve those status colours automatically.
+    if (/(?:^|-)(?:success|positive|warning|attention)(?:-|$)/.test(n)) return "";
     if (/(error|danger|destructive|critical|invalid)/.test(n)) return "error";
     if (/(border|divider|separator|rule|stroke)/.test(n)) return lum > 0.3 ? "outline" : "outline_variant";
     if (/outline/.test(n)) return "outline";
+    if (fg) {
+      if (/(?:^|-)on-(?:primary|accent|emphasis)(?:-|$)/.test(n) ||
+          (/(button|btn|badge|control)/.test(n) && /primary/.test(n))) return "on_primary";
+      if (/(link|accent|brand)/.test(n)) return "primary";
+      return muted ? "on_surface_variant" : "on_surface";
+    }
+    if (bg) {
+      if (/(primary|brand|accent)/.test(n)) return muted || /container/.test(n) ? "primary_container" : "primary";
+      if (/(inset|sunken|lowest)/.test(n)) return "surface_container_lowest";
+      if (/(hover|active|bright|emphasis)/.test(n)) return "surface_bright";
+      if (/(modal|dialog|popover|dropdown|elevated|overlay)/.test(n)) return "surface_container_high";
+      if (muted) return "surface_container_low";
+      if (/(card|panel|container|sidebar|menu)/.test(n)) return "surface_container";
+      return "background";
+    }
     if (/(link|primary|brand|accent|cta)/.test(n) && chroma >= 0.1) return "primary";
 
     if (chroma >= 0.15) {
@@ -369,21 +392,153 @@
       if (rule.cssRules) {
         try { walkRules(rule.cssRules, onStyleRule); } catch { /* opaque */ }
       }
-      if (rule.selectorText && rule.style) onStyleRule(rule);
+      if (rule.style && (rule.selectorText || rule instanceof CSSNestedDeclarations)) onStyleRule(rule);
     }
   }
+
+  const COLOR_PROP = /^(?:background(?:-color|-image)?|color|border(?:-(?:top|right|bottom|left|block(?:-start|-end)?|inline(?:-start|-end)?))?(?:-color)?|fill|stroke|box-shadow|text-shadow|outline(?:-color)?|caret-color|accent-color|text-decoration(?:-color)?|column-rule(?:-color)?)$/;
+  const VAR_NAME = /^--(?:[-\w\u0080-\u{10FFFF}]|\\(?:[\da-fA-F]{1,6}[\t\n\f\r ]?|[^\n\r\f]))+/u;
+  function variableReferences(value) {
+    const refs = [];
+    for (let i = 0; i < value.length; i++) {
+      if (value.startsWith("/*", i)) {
+        const end = value.indexOf("*/", i + 2);
+        if (end < 0) break;
+        i = end + 1;
+        continue;
+      }
+      if (value[i] === '"' || value[i] === "'") {
+        const quote = value[i++];
+        for (; i < value.length; i++) {
+          if (value[i] === "\\") i++;
+          else if (value[i] === quote) break;
+        }
+        continue;
+      }
+      if (value[i] === "\\") { i++; continue; }
+      if (value.slice(i, i + 4).toLowerCase() !== "var(" ||
+          (i && /[-\w\u0080-\uFFFF]/u.test(value[i - 1]))) continue;
+      let start = i + 4;
+      while (start < value.length) {
+        if (/[\t\n\f\r ]/.test(value[start])) { start++; continue; }
+        if (!value.startsWith("/*", start)) break;
+        const end = value.indexOf("*/", start + 2);
+        if (end < 0) break;
+        start = end + 2;
+      }
+      const raw = VAR_NAME.exec(value.slice(start))?.[0];
+      if (!raw) continue;
+      const name = raw.replace(/\\([\da-fA-F]{1,6})[\t\n\f\r ]?|\\(.)/gu, (_, hex, char) => {
+        if (!hex) return char;
+        const cp = Number.parseInt(hex, 16);
+        return String.fromCodePoint(cp && cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF) ? cp : 0xFFFD);
+      });
+      refs.push({ name, start, end: start + raw.length });
+      i = start + raw.length - 1;
+    }
+    return refs;
+  }
+  const varRefs = (value) => variableReferences(value).map((ref) => ref.name);
+
+  /* Pending-substitution shorthands can enumerate empty longhands in CSSOM.
+   * Read their authored shorthand values as well. */
+  const COLOR_SHORTHANDS = ["background", "border", "border-color", "border-top",
+    "border-right", "border-bottom", "border-left", "border-block", "border-inline",
+    "border-block-start", "border-block-end", "border-inline-start", "border-inline-end",
+    "outline", "text-decoration", "column-rule"];
+  const INHERITED_COLOR_PROP = /^(?:color|fill|stroke|caret-color|text-shadow)$/;
+  function colorReferences(style) {
+    const refs = new Set(), inheritedRefs = new Set(), pending = new Set();
+    const collect = (p, value) => {
+      for (const name of varRefs(value)) {
+        refs.add(name);
+        if (INHERITED_COLOR_PROP.test(p)) inheritedRefs.add(name);
+      }
+    };
+    for (const p of style) {
+      if (!COLOR_PROP.test(p)) continue;
+      const value = style.getPropertyValue(p);
+      if (value) collect(p, value);
+      else {
+        // Only inspect shorthands when CSSOM exposes an unresolved longhand.
+        const family = p.split("-")[0];
+        for (const shorthand of COLOR_SHORTHANDS) if (shorthand.startsWith(family)) pending.add(shorthand);
+      }
+    }
+    for (const p of pending) collect(p, style.getPropertyValue(p));
+    return { refs: [...refs], inheritedRefs: [...inheritedRefs] };
+  }
+  const colorRefs = (style, inheritedOnly = false) => colorReferences(style)[inheritedOnly ? "inheritedRefs" : "refs"];
 
   let customPropIndex = null;
   let indexWatermark = -1;
 
+  function expandNesting(selector, outer) {
+    let result = "", quote = "", nested = false;
+    for (let i = 0; i < selector.length; i++) {
+      const c = selector[i];
+      if (c === "\\") { result += c + (selector[++i] ?? ""); continue; }
+      if (quote) {
+        result += c;
+        if (c === quote) quote = "";
+      } else if (c === '"' || c === "'") {
+        quote = c; result += c;
+      } else if (selector.startsWith("/*", i)) {
+        const end = selector.indexOf("*/", i + 2);
+        if (end < 0) return selector;
+        result += selector.slice(i, end + 2); i = end + 1;
+      } else if (c === "&") {
+        result += outer; nested = true;
+      } else result += c;
+    }
+    return nested ? result : outer + " :is(" + result + ")";
+  }
+
+  function ruleSelector(rule) {
+    if (rule instanceof CSSNestedDeclarations) {
+      for (let parent = rule.parentRule; parent; parent = parent.parentRule) {
+        if (parent.selectorText) return ruleSelector(parent);
+      }
+      return "";
+    }
+    let sel = rule.selectorText;
+    for (let parent = rule.parentRule; parent; parent = parent.parentRule) {
+      if (!parent.selectorText) continue;
+      const outer = ":is(" + parent.selectorText + ")";
+      sel = expandNesting(sel, outer);
+    }
+    return sel;
+  }
+
+  function ruleActive(rule) {
+    for (let sheet = rule.parentStyleSheet; sheet; sheet = sheet.parentStyleSheet) {
+      if (sheet.disabled || (sheet.media.length && !matchMedia(sheet.media.mediaText).matches)) return false;
+      const imported = sheet.ownerRule;
+      if (imported instanceof CSSImportRule &&
+          ((imported.media.length && !matchMedia(imported.media.mediaText).matches) ||
+           (imported.supportsText && !CSS.supports(`(${imported.supportsText})`)))) return false;
+    }
+    for (let parent = rule.parentRule; parent; parent = parent.parentRule) {
+      if (parent instanceof CSSMediaRule && !matchMedia(parent.conditionText).matches) return false;
+      if (parent instanceof CSSSupportsRule && !CSS.supports(parent.conditionText)) return false;
+      // There is no CSSOM API to evaluate container conditions for an element.
+      // Keep computed-token discovery, without inventing a declaration owner.
+      if (parent instanceof CSSContainerRule || parent instanceof CSSStartingStyleRule) return false;
+    }
+    return true;
+  }
+
   function buildCustomPropIndex() {
     const index = [];
-    for (const sheet of document.styleSheets) {
+    for (const sheet of [...document.styleSheets, ...document.adoptedStyleSheets]) {
+      if (sheet === SHEET) continue; // our own live mappings are not site definitions
       try {
         walkRules(sheet.cssRules, (rule) => {
           const props = [];
           for (const p of rule.style) if (p.startsWith("--")) props.push(p);
-          if (props.length) index.push({ sel: rule.selectorText, props });
+          const { refs, inheritedRefs } = colorReferences(rule.style);
+          if (props.length || refs.length) index.push({ sel: ruleSelector(rule), props, refs,
+            inheritedRefs, rule });
         });
       } catch { /* cross-origin */ }
     }
@@ -392,33 +547,65 @@
 
   /* Invalidate when the document gains or loses a stylesheet (SPA chunks). */
   function propIndex() {
-    if (customPropIndex === null || indexWatermark !== document.styleSheets.length) {
+    const count = document.styleSheets.length + document.adoptedStyleSheets.filter((sheet) => sheet !== SHEET).length;
+    if (customPropIndex === null || indexWatermark !== count) {
       customPropIndex = buildCustomPropIndex();
-      indexWatermark = document.styleSheets.length;
+      indexWatermark = count;
     }
-    return customPropIndex;
+    return customPropIndex.filter((entry) => ruleActive(entry.rule));
   }
   const dropIndex = () => { customPropIndex = null; indexWatermark = -1; };
 
+  function ruleMatches(node, entry) {
+    try {
+      for (let parent = entry.rule.parentRule; parent; parent = parent.parentRule) {
+        if (!(parent instanceof CSSScopeRule)) continue;
+        const scope = parent.start ? node.closest(parent.start) : entry.rule.parentStyleSheet.ownerNode?.parentElement;
+        if (!scope) return false;
+        for (let n = node; n && n !== scope; n = n.parentElement) {
+          if (parent.end && n.matches(parent.end)) return false;
+        }
+        // Relative scoping selectors need scope-aware matching, not Element.matches().
+        if (entry.sel.includes(":scope") || entry.sel.includes("&")) return false;
+      }
+      return node.matches(entry.sel);
+    } catch { return false; }
+  }
+
+  function closestRule(node, entry) {
+    // A nearer selector match can be outside @scope's limit while a further
+    // ancestor still owns the inherited token. Keep searching after that miss.
+    for (let match = node?.closest(entry.sel); match;
+         match = match.parentElement?.closest(entry.sel)) {
+      if (ruleMatches(match, entry)) return match;
+    }
+    return null;
+  }
+
+  const componentSuffix = (col) => col.shape === "rgb-comma" ? "_rgb_comma"
+    : col.shape === "rgb-triplet" ? "_rgb" : col.shape === "hsl-triplet" ? "_hsl" : "";
+  function paletteValue(token, col) {
+    const value = `var(--${token}${componentSuffix(col)})`;
+    return !componentSuffix(col) && col.a < 1
+      ? `color-mix(in srgb, ${value} ${+(col.a * 100).toFixed(4)}%, transparent)` : value;
+  }
+
   /* Escape for use inside a quoted CSS attribute value. CSS.escape() is the
    * wrong tool here — it escapes identifiers, not string contents. */
-  const cssString = (v) => `"${String(v).replaceAll(/["\\]/g, "\\$&")}"`;
+  const cssString = (v) => `"${String(v).replaceAll(/["\\]/g, "\\$&")
+    .replaceAll(/[\n\r\f]/g, (c) => `\\${c.charCodeAt(0).toString(16)} `)}"`;
 
-  function detectRootScopes() {
-    const inner = new Set();
-    for (const el of [document.documentElement, document.body].filter(Boolean)) {
-      for (const cls of el.classList) {
-        if (/^(dark|dark-theme|theme-dark|dark-mode|night)$/i.test(cls)) inner.add(`.${CSS.escape(cls)}`);
-      }
-      for (const attr of el.getAttributeNames()) {
-        if (/^(data-theme|data-color-mode|data-bs-theme|theme|dark)$/i.test(attr)) {
-          const val = el.getAttribute(attr);
-          inner.add(val ? `[${attr}=${cssString(val)}]` : `[${attr}]`);
-        }
-      }
-    }
-    inner.add("[dark]").add(".dark").add('[data-theme="dark"]');
-    return `:root, :where(${[...inner].join(", ")})`;
+  function bodyTokenNames() {
+    const names = new Set();
+    const body = document.body;
+    if (!body) return names;
+    const collect = (style, props) => {
+      for (const name of props) if (name.startsWith("--") &&
+          !/^(?:inherit|unset)$/i.test(style.getPropertyValue(name).trim())) names.add(name);
+    };
+    collect(body.style, body.style);
+    for (const r of propIndex()) if (r.props.length && ruleMatches(body, r)) collect(r.rule.style, r.props);
+    return names;
   }
 
   function collectVariables() {
@@ -434,14 +621,14 @@
     }
     const out = new Map();
     for (const n of names) {
-      const v = (rootCs.getPropertyValue(n) || bodyCs.getPropertyValue(n)).trim();
-      if (v) out.set(n, v);
+      const rootValue = rootCs.getPropertyValue(n).trim();
+      const value = rootValue || bodyCs.getPropertyValue(n).trim();
+      if (value) out.set(n, { value, context: rootValue ? document.documentElement : document.body });
     }
     return out;
   }
 
-  /* Broad structural repaint, used ONLY when the page exposes fewer than three
-   * mappable tokens (the popup double-confirms before this is written). */
+  /* Broad structural repaint, used only when there are no mappable tokens. */
   function structuralFallback() {
     return [
       "/* Structural theme — this page exposes no usable design tokens. */",
@@ -450,8 +637,8 @@
       "    color: var(--on_surface) !important;",
       "    color-scheme: dark !important;",
       "}",
-      ":not(a):not(button):not(input):not(select):not(textarea):not(code):not(pre)",
-      ":not(table):not(svg):not(img):not(video):not([class*='icon']):not([class*='badge']):not([class*='btn']) {",
+      ":where(:not(a):not(button):not(input):not(select):not(textarea):not(code):not(pre)" +
+        ":not(table):not(svg):not(img):not(video):not([class*='icon']):not([class*='badge']):not([class*='btn'])) {",
       "    background-color: transparent !important;",
       "    color: inherit !important;",
       "}",
@@ -501,20 +688,26 @@
     dropIndex();
     const groups = new Map();
     const unmapped = [];
+    const variables = [];
     let found = 0;
 
-    for (const [name, rawValue] of collectVariables()) {
+    for (const [name, { value, context }] of collectVariables()) {
       if (skipVar(name) || !isSemanticThemeVar(name)) continue;
-      const col = parseCssColor(rawValue);
+      const col = parseCssColor(value, context);
       if (!col || col.a === 0) continue;
       found++;
       const token = matchKnownFramework(name) || classifyByValueAndName(name, col);
       if (!token || !TOKEN_NAMES.has(token)) { unmapped.push(name); continue; }
       if (`--${token}` === name) continue;
+      variables.push({ name, col, token, global: true });
+    }
+    verifyVariableInheritance(variables, () => "");
+    for (const { name, col, token, local } of variables) {
+      if (local) { unmapped.push(name); continue; }
       const key = col.shape === "rgb-comma" ? `${token}\u0000rgb_comma`
         : col.shape === "rgb-triplet" ? `${token}\u0000rgb`
         : col.shape === "hsl-triplet" ? `${token}\u0000hsl` : token;
-      (groups.get(key) ?? groups.set(key, []).get(key)).push(name);
+      (groups.get(key) ?? groups.set(key, []).get(key)).push({ name, col });
     }
 
     const body = [];
@@ -522,12 +715,10 @@
     let variableCount = 0;
     for (const list of groups.values()) variableCount += list.length;
 
-    /* Fewer than three mappable variables means the page is not variable
-     * driven; only then do we reach for the (very broad) structural theme. */
-    const kind = variableCount >= 3 ? "tokens" : "structural";
+    const kind = variableCount ? "tokens" : "structural";
 
     if (kind === "tokens") {
-      body.push(`${detectRootScopes()} {`, "    color-scheme: dark !important;");
+      body.push(":root {", "    color-scheme: dark !important;");
       for (const [token] of TOKENS) {
         for (const suffix of ["", "\u0000rgb", "\u0000rgb_comma", "\u0000hsl"]) {
           const names = groups.get(token + suffix);
@@ -535,14 +726,24 @@
           const label = suffix === "\u0000rgb" ? `${token} (rgb components)`
             : suffix === "\u0000hsl" ? `${token} (hsl components)` : token;
           body.push(`    /* ${label} */`);
-          for (const n of names.toSorted()) {
-            const paletteName = token + (suffix ? `_${suffix.slice(1)}` : "");
-            body.push(`    ${n}: var(--${paletteName}) !important;`);
+          for (const { name, col } of names.toSorted((a, b) => a.name.localeCompare(b.name))) {
+            body.push(`    ${CSS.escape(name)}: ${paletteValue(token, col)} !important;`);
             mapped++;
           }
         }
       }
       body.push("}");
+      // Inheritance cannot override a declaration on body. Override only its
+      // own tokens there; root tokens continue to resolve at the page root.
+      const bodyNames = bodyTokenNames();
+      const bodyCs = document.body && getComputedStyle(document.body);
+      const bodyMappings = [];
+      for (const { name, token, local } of variables) {
+        if (local || !bodyNames.has(name)) continue;
+        const col = parseCssColor(bodyCs.getPropertyValue(name), document.body);
+        if (col && col.a > 0) bodyMappings.push(`    ${CSS.escape(name)}: ${paletteValue(token, col)} !important;`);
+      }
+      if (bodyMappings.length) body.push("", "body {", ...bodyMappings, "}");
     } else {
       body.push(structuralFallback());
       mapped = variableCount || 1;
@@ -569,7 +770,7 @@
     active: false, hydrated: false, note: "", rev: 0, warnings: [],
     rules: Object.freeze([]), undo: [], redo: [], stack: [], depth: 0,
     locked: false, targetMode: "selector", group: "bg",
-    elementVars: [], panelPos: null, raf: 0, editKey: null, generation: 0,
+    elementVars: [], raf: 0, editKey: null, generation: 0,
   };
 
   const US = "\u001F";
@@ -583,13 +784,14 @@
   const enc = (s) => encodeURIComponent(String(s))
     .replaceAll(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
-  const KEY_RE = /\/\*\s*dusky\s+key=([^\s*|]+)\s*(?:\|\s*([^*]*?)\s*)?\*\/\s*$/;
+  const KEY_RE = /\/\*\s*dusky\s+key=([^\s*|]+)\s*(?:\|\s*(.*?)\s*)?\*\/\s*$/;
 
   const oneLine = (s) => String(s ?? "").replaceAll(/\s*[\r\n]+\s*/g, " ").trim();
   const safeMeta = (s) => oneLine(s).replaceAll("*/", "* /").slice(0, 160);
 
   const selKey = (sel, group) => `sel${US}${sel}${US}${group}`;
-  const varKey = (scope, name) => `var${US}${scope}${US}${name}`;
+  // Earlier picker versions wrote the same root target with repeated specificity.
+  const varKey = (scope, name) => `var${US}${scope === ROOT_ARMOR ? ":root" : scope}${US}${name}`;
   const rawKey = (css) => `raw${US}${css}`;
 
   /* One parser for every key shape — no more positional indexing. */
@@ -614,11 +816,27 @@
   function groupOfDecl(decl) {
     const props = propsOf(decl);
     if (props.length === 1 && props[0].startsWith("--")) return "var";
+    if (props.some((p) => !COLOR_PROP.test(p) && p !== "display")) return `custom:${props.join(",")}`;
     if (props.includes("fill")) return "fill";
     for (const [re, g] of PROP_GROUP) if (props.some((p) => re.test(p))) return g;
     return `custom:${props.join(",")}`;
   }
-  const tokenOf = (decl) => /var\(\s*--([a-z0-9_]+)/i.exec(String(decl ?? ""))?.[1] ?? "";
+  const tokenOf = (decl) => varRefs(String(decl ?? "")).find((name) =>
+    PALETTE_OWNED.has(name.slice(2).replace(PALETTE_SUFFIX, "")))?.slice(2) ?? "";
+  function remapPalette(decl, token) {
+    let result = String(decl ?? "");
+    for (const { name, start, end } of variableReferences(result).reverse()) {
+      if (!PALETTE_OWNED.has(name.slice(2).replace(PALETTE_SUFFIX, ""))) continue;
+      result = result.slice(0, start) + `--${token}${name.match(/_(?:rgb_comma|rgb|hsl)$/)?.[0] ?? ""}` + result.slice(end);
+    }
+    return result;
+  }
+  function remapVariable(name, decl, token) {
+    if (tokenOf(decl)) return remapPalette(decl, token);
+    declStyle.cssText = decl;
+    const col = parseCssColor(declStyle.getPropertyValue(name));
+    return `${CSS.escape(name)}: ${paletteValue(token, col ?? { shape: "color", a: 1 })} !important;`;
+  }
 
   function splitRule(text) {
     let depth = 0, inStr = 0, selEnd = -1, bodyStart = -1, bodyEnd = -1;
@@ -640,6 +858,7 @@
     return { sel: text.slice(0, selEnd).trim(), decl: text.slice(bodyStart, bodyEnd).trim() };
   }
 
+  let ruleProbe = null;
   function parseRule(line) {
     const trimmed = line.trim();
     if (!trimmed) return null;
@@ -650,8 +869,17 @@
     if (!css) return null;
 
     const parts = css.includes("\n") ? null : splitRule(css);
-    if (!parts?.sel || !parts?.decl) {
+    if (!parts?.sel || !parts?.decl || parts.sel.startsWith("@") || !propsOf(parts.decl).length) {
       return { raw: css, meta: meta0 || "manual", key: rawKey(css) };
+    }
+    if (parts.decl.includes("{")) {
+      // Braces may introduce nested rules or simply belong to a string/custom
+      // property. Let Gecko distinguish them; nested CSS needs the raw editor.
+      (ruleProbe ??= new CSSStyleSheet()).replaceSync(css);
+      if (ruleProbe.cssRules.length !== 1 || !(ruleProbe.cssRules[0] instanceof CSSStyleRule) ||
+          ruleProbe.cssRules[0].cssRules.length) {
+        return { raw: css, meta: meta0 || "manual", key: rawKey(css) };
+      }
     }
     const decl = oneLine(parts.decl);
     const group = groupOfDecl(decl);
@@ -662,7 +890,8 @@
     const keep = stored.kind === "var"
       ? group === "var" && stored.scope === parts.sel && stored.name === propsOf(decl)[0]
       : stored.kind === "sel" && group !== "var" && stored.sel === parts.sel && stored.group === group;
-    return { sel: parts.sel, decl, meta: meta0 || "restored", key: keep ? storedKey : derived };
+    return { sel: parts.sel, decl, meta: meta0 || "restored",
+      key: keep && stored.kind === "var" ? varKey(stored.scope, stored.name) : keep ? storedKey : derived };
   }
   /* Split only at top-level newlines. A rule inside a multiline comment must
    * never acquire metadata that would prematurely close the comment. */
@@ -749,34 +978,144 @@
     return important(probe.style.cssText);
   }
 
+  function verifyVariableInheritance(variables, localScope) {
+    const candidates = variables.filter((v) => !v.local);
+    if (!candidates.length) return;
+    // Let Gecko resolve inheritance, including properties registered from page JS.
+    // Two values distinguish inheritance from a matching registered initial value.
+    const parent = document.createElement("span");
+    const child = document.createElement("span");
+    parent.style.setProperty("display", "none", "important");
+    parent.append(child);
+    root.append(parent);
+    const detached = !hostEl.isConnected;
+    if (detached) document.documentElement.append(hostEl);
+    const marker = (v, second) => {
+      if (v.col.shape === "rgb-comma") return second ? "4, 5, 6" : "1, 2, 3";
+      if (v.col.shape === "rgb-triplet") return second ? "4 5 6" : "1 2 3";
+      if (v.col.shape === "hsl-triplet") return second ? "120 50% 40%" : "240 50% 40%";
+      return second ? "rgb(4, 5, 6)" : "rgb(1, 2, 3)";
+    };
+    try {
+      for (const v of candidates) parent.style.setProperty(v.name, marker(v, false));
+      const firstParent = getComputedStyle(parent), firstChild = getComputedStyle(child);
+      const first = candidates.map((v) => [firstParent.getPropertyValue(v.name), firstChild.getPropertyValue(v.name)]);
+      for (const v of candidates) parent.style.setProperty(v.name, marker(v, true));
+      const secondParent = getComputedStyle(parent), secondChild = getComputedStyle(child);
+      candidates.forEach((v, i) => {
+        const value = secondParent.getPropertyValue(v.name);
+        if (value !== first[i][0] && first[i][0] === first[i][1] && value === secondChild.getPropertyValue(v.name)) return;
+        v.global = false;
+        v.local = true;
+        v.scope = localScope();
+      });
+    } finally {
+      parent.remove();
+      if (detached) hostEl.remove();
+    }
+  }
+
   function getElementVars(elm) {
     if (elm?.nodeType !== 1) return [];
     const cs = getComputedStyle(elm);
-    const seen = new Set();
-    const out = [];
-    const add = (prop) => {
-      if (!prop?.startsWith("--") || skipVar(prop) || seen.has(prop)) return;
-      const v = cs.getPropertyValue(prop).trim();
-      if (!v) return;
-      seen.add(prop);
-      out.push({ name: prop, value: v.length > 44 ? `${v.slice(0, 41)}…` : v });
+    const rootCs = getComputedStyle(document.documentElement);
+    const out = new Map();
+    const index = propIndex();
+    const owners = new Map();
+    const scopes = new Map();
+    const directRefs = new Set(colorRefs(elm.style));
+    const inheritedRefs = new Set();
+    const depth = new Map();
+    for (let node = elm; node; node = node.parentElement) {
+      depth.set(node, depth.size);
+      const own = node !== document.documentElement;
+      for (const name of node.style) {
+        if (own && name.startsWith("--") && !/^(?:inherit|unset)$/i.test(node.style.getPropertyValue(name).trim()) && !owners.has(name)) owners.set(name, node);
+      }
+      if (node !== elm) for (const name of colorRefs(node.style, true)) inheritedRefs.add(name);
+    }
+    for (const r of index) {
+      if (r.refs.length && ruleMatches(elm, r)) for (const name of r.refs) directRefs.add(name);
+      // closest() performs the selector search in Gecko; scope checks can skip
+      // a nearer match excluded by a limit without losing the inherited owner.
+      let owner, ancestor;
+      try {
+        if (r.props.length) owner = closestRule(elm, r);
+        if (r.inheritedRefs.length) ancestor = closestRule(elm.parentElement, r);
+      } catch { continue; }
+      if (ancestor) for (const name of r.inheritedRefs) inheritedRefs.add(name);
+      if (!owner || owner === document.documentElement) continue;
+      for (const name of r.props) {
+        if (/^(?:inherit|unset)$/i.test(r.rule.style.getPropertyValue(name).trim())) continue;
+        if (!owners.has(name) || depth.get(owner) < depth.get(owners.get(name))) owners.set(name, owner);
+      }
+    }
+    const rootScope = ":root";
+    const scopeFor = (node) => {
+      if (!scopes.has(node)) scopes.set(node, candidates(node).at(0)?.sel || selected());
+      return scopes.get(node);
     };
+    const add = (name, used = false) => {
+      if (skipVar(name)) return;
+      if (out.has(name)) { out.get(name).used ||= used; return; }
+      const value = cs.getPropertyValue(name).trim();
+      const col = parseCssColor(value, elm);
+      if (!col || col.a === 0) return;
+      /* A child declaration beats an inherited root declaration, regardless
+       * of the root selector's specificity. Suggest the nearest owner. */
+      const owner = owners.get(name);
+      const global = !owner && rootCs.getPropertyValue(name).trim() === value;
+      const scope = global ? rootScope : scopeFor(owner ?? elm);
+      out.set(name, { name, value: value.length > 44 ? value.slice(0, 41) + "…" : value,
+        used, scope: scope || selected(), global, local: owner === elm,
+        col });
+    };
+    /* Read authored declarations: computed colours have lost their var() references. */
+    for (const name of directRefs) add(name, true);
+    // Text and SVG colours can be inherited without a declaration on the clicked node.
+    for (const name of inheritedRefs) add(name, true);
     for (const cls of elm.classList) {
-      add(/^[a-z-]+-\((--[\w-]+)\)$/.exec(cls)?.[1]);
+      const name = /^[a-z-]+-\((--[\w-]+)\)$/.exec(cls)?.[1];
+      if (name) add(name, true);
       const tok = /^[a-z-]+-token-([\w-]+)$/.exec(cls)?.[1];
-      if (tok) add(`--${tok}`);
+      if (tok) add("--" + tok, true);
     }
-    for (const p of elm.style) add(p);
-    for (const { sel, props } of propIndex()) {
-      let hit = false;
-      try { hit = elm.matches(sel); } catch { continue; }
-      if (hit) for (const p of props) add(p);
-    }
-    for (const prop of ["background-color", "color", "border-color", "fill"]) {
-      add(/var\((--[\w-]+)/.exec(cs.getPropertyValue(prop))?.[1]);
-    }
-    return out;
+    /* Computed custom properties remain available even for opaque CDN sheets.
+     * Offer their colour tokens after directly referenced ones. */
+    for (const name of cs) if (name.startsWith("--")) add(name);
+    verifyVariableInheritance([...out.values()], () => scopeFor(elm));
+    dropProbe();
+    return [...out.values()].sort((a, b) => Number(b.used) - Number(a.used) ||
+      Number(isSemanticThemeVar(b.name)) - Number(isSemanticThemeVar(a.name)) || a.name.localeCompare(b.name));
   }
+
+  function resetVarSelection() {
+    const variable = q("pvar");
+    const scope = q("pvarscope");
+    if (variable) variable.value = "";
+    if (scope) scope.dataset.variable = "";
+  }
+
+  function refreshVarScope() {
+    const variable = S.elementVars.find((v) => v.name === q("pvar")?.value);
+    const box = q("pvarscope");
+    const previous = box.dataset.variable === variable?.name ? box.value : "";
+    box.dataset.variable = variable?.name ?? "";
+    box.textContent = "";
+    if (!variable) return;
+    const scopes = new Map([[variable.scope, variable.global ? "Page theme (root)" : "Variable owner"]]);
+    scopes.set(":root", "Page theme (root)");
+    const sel = selected();
+    if (sel && !scopes.has(sel)) scopes.set(sel, "Selected elements");
+    for (const [scope, label] of scopes) {
+      box.append(el("option", { value: scope, text: label }));
+    }
+    box.value = scopes.has(previous) ? previous : variable.scope;
+  }
+
+  const variableScope = () => q("pvarscope")?.value || ":root";
+  const variablePalette = (token) => paletteValue(token,
+    S.elementVars.find((v) => v.name === q("pvar")?.value)?.col ?? { shape: "color", a: 1 });
 
   /* ══ STYLE ENGINE — one adopted sheet, two cascade layers ═══════════ */
   /* @layer dusky.preview, dusky.live;  ⇒ for !important declarations the
@@ -785,20 +1124,40 @@
    * Inline important and earlier page layers retain their CSS-defined priority. */
   const SHEET = new CSSStyleSheet();
   let liveCss = "";
-  let previewCss = "";
+  let previewRules = [];
+  let appliedLive = null, appliedPreview = null;
+  let previewLayer = null;
 
   function flushSheet() {
-    SHEET.replaceSync(
-      "@layer dusky.preview, dusky.live;\n" +
-      `@layer dusky.live{\n${liveCss}\n}\n` +
-      `@layer dusky.preview{\n${previewCss}\n}\n`,
-    );
+    if (!S.active) return;
+    const previewCss = previewRules.join("\n");
+    if (liveCss !== appliedLive) {
+      SHEET.replaceSync(
+        "@layer dusky.preview, dusky.live;\n" +
+        `@layer dusky.live{\n${liveCss}\n}\n`,
+      );
+      // Parse manual live CSS first. Its EOF recovery (an unfinished comment
+      // or brace) must never consume the independently inserted preview layer.
+      const index = SHEET.insertRule("@layer dusky.preview {}", SHEET.cssRules.length);
+      previewLayer = SHEET.cssRules[index];
+      appliedLive = liveCss;
+      appliedPreview = null;
+    }
+    if (previewCss !== appliedPreview) {
+      // Hover changes at most an outline and a mapping. Keep the live rules
+      // parsed instead of rebuilding the entire picked stylesheet each time.
+      while (previewLayer.cssRules.length) previewLayer.deleteRule(previewLayer.cssRules.length - 1);
+      for (const css of previewRules) previewLayer.insertRule(css, previewLayer.cssRules.length);
+      appliedPreview = previewCss;
+    }
     if (!document.adoptedStyleSheets.includes(SHEET)) {
       document.adoptedStyleSheets = [...document.adoptedStyleSheets, SHEET];
     }
   }
   function detachSheet() {
-    liveCss = previewCss = "";
+    liveCss = ""; previewRules = [];
+    appliedLive = appliedPreview = null;
+    previewLayer = null;
     document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== SHEET);
   }
 
@@ -816,10 +1175,10 @@
         chunks.push(`${spec.highlight}{${OUTLINE}}`);
       }
       if (spec.css) chunks.push(spec.css);
-      previewCss = chunks.join("\n");
+      previewRules = chunks;
       flushSheet();
     },
-    clear() { previewCss = ""; flushSheet(); },
+    clear() { previewRules = []; flushSheet(); },
   };
 
   /* Build a preview spec for ANY rule key + token. Used by edit mode. */
@@ -827,12 +1186,14 @@
     const k = decodeKey(key);
     if (k.kind === "var") {
       const scope = sel || k.scope || ROOT_ARMOR;
+      if (!validSelector(scope)) return { highlight: "", css: "" };
       return token
-        ? { highlight: scope === ROOT_ARMOR ? "" : scope, css: `${scope}{${k.name}: var(--${token}) !important}` }
+        ? { highlight: scope === ROOT_ARMOR ? "" : scope, css: `${scope}{${remapVariable(k.name, decl, token)}}` }
         : { highlight: scope === ROOT_ARMOR ? "" : scope, css: "" };
     }
     if (k.kind === "raw") return { highlight: "", css: "" };
     const useSel = sel || k.sel;
+    if (!validSelector(useSel)) return { highlight: "", css: "" };
     if (!token) return { highlight: useSel, css: "" };
     if (k.group === "display") {
       /* A hidden element cannot show a colour: preview the un-hide instead. */
@@ -841,7 +1202,7 @@
     if (k.group?.startsWith("custom:")) {
       /* Substitute the token into the existing var() if the rule has one,
        * otherwise just highlight — never lie with an unrelated background. */
-      const swapped = String(decl ?? "").replaceAll(/var\(\s*--[a-z0-9_]+/gi, `var(--${token}`);
+      const swapped = remapPalette(decl, token);
       return { highlight: useSel, css: swapped === decl ? "" : `${useSel}{${swapped}}` };
     }
     return { highlight: useSel, css: `${useSel}{${declFor(colourGroup(k.group), token)}}` };
@@ -857,8 +1218,8 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
 .panel.ghost{opacity:.25}
 .panel.ghost:hover,.panel.ghost:focus-within{opacity:1}
 .bar{top:10px;left:50%;transform:translateX(-50%);flex-direction:row;align-items:center;gap:6px;padding:6px 8px;max-width:min(96vw,980px)}
-.dlg{top:64px;right:16px;width:440px;max-height:calc(100vh - 88px);overflow:auto}
-.drawer{right:16px;bottom:16px;width:420px;max-height:62vh;overflow:hidden}
+.dlg{top:var(--dusky-dialog-top,64px);right:16px;width:440px;max-width:calc(100vw - 32px);max-height:calc(100vh - var(--dusky-dialog-top,64px) - 24px);overflow:auto}
+.drawer{right:16px;bottom:16px;width:420px;max-width:calc(100vw - 32px);max-height:62vh;overflow:hidden}
 .head{display:flex;align-items:center;gap:6px;cursor:grab;user-select:none}
 .head:active{cursor:grabbing}
 .grip{color:#6d645a;font-size:12px}
@@ -956,6 +1317,10 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
   <span class="lbl">Variable</span>
   <select id="pvar" title="Custom properties found on this element"></select>
 </div>
+<div class="row" id="pvarscope-row" hidden>
+  <span class="lbl">Scope</span>
+  <select id="pvarscope" title="Override this token for the page theme, its owner, or the selected elements"></select>
+</div>
 <div class="row" id="pseg-row">
   <span class="lbl">Part</span>
   <div class="seg" id="pseg">
@@ -1048,7 +1413,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
 
   function setState(text, kind = "") {
     const n = q("bstate");
-    if (!n) { S.note = text; return; }
+    if (!n) return;
     n.textContent = text;
     n.className = `state ${kind}`;
   }
@@ -1088,7 +1453,6 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       node.style.right = "auto";
       node.style.bottom = "auto";
       node.style.transform = "none";
-      S.panelPos = { x, y };
     });
     handle.addEventListener("pointerup", () => { dragging = false; });
   }
@@ -1192,7 +1556,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     if (S.targetMode === "variable") {
       const name = q("pvar")?.value;
       return token && name
-        ? { highlight: "", css: `${ROOT_ARMOR}{${name}: var(--${token}) !important}` }
+        ? { highlight: "", css: `${variableScope()}{${CSS.escape(name)}: ${variablePalette(token)} !important}` }
         : { highlight: selected(), css: "" };
     }
     const sel = selected();
@@ -1294,12 +1658,16 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     else if (panelKind === "edit") refreshEdit();
   }
 
+  function positionDialog() {
+    if (panel && bar) panel.style.setProperty("--dusky-dialog-top", `${Math.max(64, bar.getBoundingClientRect().bottom + 8)}px`);
+  }
+
   function refreshPick(rebuildSels = false) {
     if (panelKind !== "pick" || !panel) return;
     const t = target();
     q("ptitle").textContent = t ? `Theme <${t.localName}>` : "Theme this element";
     q("pinfo").textContent = t
-      ? `${describe(t)} — pick a unique selector, a part, then a colour.`
+      ? `${describe(t)} — choose a colour variable or theme this element directly.`
       : "Click anything on the page.";
 
     const stackBox = q("pstack");
@@ -1339,6 +1707,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     q("pvarbtn").setAttribute("aria-pressed", String(varMode));
     q("pvarbtn").disabled = S.elementVars.length === 0;
     q("pvar-row").hidden = !varMode;
+    q("pvarscope-row").hidden = !varMode;
     q("pseg-row").hidden = varMode;
     q("psel-row").hidden = varMode;
 
@@ -1349,10 +1718,11 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       for (const v of S.elementVars) {
         const opt = document.createElement("option");
         opt.value = v.name;
-        opt.textContent = `${v.name}  =  ${v.value}`;
+        opt.textContent = `${v.used ? "Referenced: " : ""}${v.name}  =  ${v.value}`;
         box.append(opt);
       }
       if ([...box.options].some((o) => o.value === prev)) box.value = prev;
+      refreshVarScope();
     }
 
     for (const b of q("pseg").children) {
@@ -1362,20 +1732,22 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     q("pextra").textContent = extra?.label ?? "";
     q("pextra").hidden = varMode || !extra;
     q("phint").textContent = varMode
-      ? "Hover a swatch to preview remapping this variable across the page; click saves."
+      ? "Choose page theme or local scope. Hover previews; click saves the variable mapping."
       : "Hover previews · click saves · Shift+click hides.";
     pickGrid?.setActive("");
+    positionDialog();
   }
 
   function applyPick(token) {
     if (S.targetMode === "variable") {
       const name = q("pvar")?.value;
       if (!name) { flash("pick a CSS variable first", "err"); return; }
+      const scope = variableScope();
       upsert({
-        sel: ROOT_ARMOR,
-        decl: `${name}: var(--${token}) !important;`,
+        sel: scope,
+        decl: `${CSS.escape(name)}: ${variablePalette(token)} !important;`,
         meta: `var ${name} → ${token}`,
-        key: varKey(ROOT_ARMOR, name),
+        key: varKey(scope, name),
       });
       flash(`✓ ${name} → ${token}`);
       return;
@@ -1433,7 +1805,8 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     });
     q("pslider").addEventListener("change", () => { retarget(); });
     q("psel").addEventListener("change", () => Preview.show(previewOf(null)));
-    q("pvar").addEventListener("change", () => Preview.show(previewOf(null)));
+    q("pvar").addEventListener("change", () => { refreshVarScope(); Preview.show(previewOf(null)); });
+    q("pvarscope").addEventListener("change", () => Preview.show(previewOf(null)));
     q("pmode-sel").addEventListener("click", () => {
       S.targetMode = "selector";
       refreshPick(false);
@@ -1503,8 +1876,10 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
 
   function openPick() {
     S.locked = true;
+    dropIndex();
     S.elementVars = getElementVars(target());
-    if (!S.elementVars.length) S.targetMode = "selector";
+    resetVarSelection();
+    S.targetMode = S.elementVars.length ? "variable" : "selector";
     if (panelKind !== "pick" || !panel) {
       panel?.remove();
       editGrid = null;
@@ -1587,7 +1962,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     if (k.kind === "var") {
       writeRule(r.key, {
         sel: r.sel,
-        decl: `${k.name}: var(--${token}) !important;`,
+        decl: remapVariable(k.name, r.decl, token),
         meta: `var ${k.name} → ${token}`,
         key: varKey(r.sel, k.name),
       });
@@ -1595,13 +1970,15 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       return;
     }
     if (r.raw !== undefined || k.kind === "raw") return;
+    if (k.group === "display") return;
     if (k.kind === "sel" && typeof k.group === "string" && k.group.startsWith("custom:")) {
-      const swapped = String(r.decl ?? "").replaceAll(/var\(\s*--[a-z0-9_]+/gi, `var(--${token}`);
+      const swapped = remapPalette(r.decl, token);
+      if (swapped === r.decl) return;
       writeRule(r.key, {
         sel: r.sel,
-        decl: swapped === r.decl ? declFor("bg", token) : important(swapped),
+        decl: important(swapped),
         meta: `${k.group}: ${token}`,
-        key: swapped === r.decl ? selKey(r.sel, "bg") : r.key,
+        key: r.key,
       });
       flash(`✓ ${token}`);
       return;
@@ -1631,19 +2008,12 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     if (!r || r.raw !== undefined) return;
     const decl = normaliseDecl(q("ecustom").value);
     if (!decl) { flash("that is not a valid declaration", "err"); return; }
-    const k = decodeKey(r.key);
-    if (k.kind === "var") {
-      const first = propsOf(decl)[0] ?? "";
-      const name = first.startsWith("--") ? first : k.name;
-      writeRule(r.key, {
-        sel: r.sel, decl, meta: `var ${name} → ${tokenOf(decl) || "custom"}`, key: varKey(r.sel, name),
-      });
-    } else {
-      const group = groupOfDecl(decl);
-      writeRule(r.key, {
-        sel: r.sel, decl, meta: `${group}: ${tokenOf(decl) || "custom"}`, key: selKey(r.sel, group),
-      });
-    }
+    const group = groupOfDecl(decl);
+    const name = group === "var" ? propsOf(decl)[0] : "";
+    writeRule(r.key, {
+      sel: r.sel, decl, meta: `${group}: ${tokenOf(decl) || "custom"}`,
+      key: group === "var" ? varKey(r.sel, name) : selKey(r.sel, group),
+    });
     flash("✓ declaration updated");
   }
 
@@ -1675,11 +2045,13 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     if (isRaw && q("eraw") !== root.activeElement) q("eraw").value = r.raw;
     q("ecustom-row").hidden = isRaw;
     if (!isRaw && q("ecustom") !== root.activeElement) q("ecustom").value = r.decl;
-    q("egrid").hidden = isRaw;
+    q("egrid").hidden = isRaw || k.group === "display" ||
+      (k.group?.startsWith("custom:") && !tokenOf(r.decl));
 
     const group = k.kind === "sel" ? colourGroup(k.group) : "";
     for (const b of q("eseg").children) b.setAttribute("aria-pressed", String(b.dataset.group === group));
-    editGrid?.setActive(tokenOf(r.decl));
+    editGrid?.setActive(tokenOf(r.decl).replace(PALETTE_SUFFIX, ""));
+    positionDialog();
 
     q("ehint").textContent = isRaw
       ? "Hand-written rule — edit the CSS and press Tab/Enter to save it."
@@ -1713,7 +2085,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       return;
     }
     for (const r of S.rules) {
-      const tok = tokenOf(r.decl);
+      const tok = tokenOf(r.decl).replace(PALETTE_SUFFIX, "");
       const open = el("button", { class: "open", type: "button", title: ruleLine(r), onclick: () => openEdit(r) },
         el("i", { class: "dot", style: { background: tok ? `var(--${tok}, transparent)` : "transparent" } }),
         el("span", { class: "sel", text: r.raw !== undefined ? r.raw : r.sel }),
@@ -1741,6 +2113,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
 
   function commit() {
     S.generation++;
+    previewRules = [];
     renderLive();
     refreshBar();
     refreshDrawer();
@@ -1761,7 +2134,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     const i = S.rules.findIndex((r) => r.key === rule.key);
     if (i < 0 && S.rules.length >= LIMITS.RULES) { flash(`rule limit (${LIMITS.RULES}) reached`, "err"); return; }
     snapshot();
-    const next = S.rules.slice();
+    const next = S.rules.filter((r, at) => r.key !== rule.key || at === i);
     if (i >= 0) next[i] = rule; else next.push(rule);
     S.rules = Object.freeze(next);
     commit();
@@ -1802,16 +2175,40 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     const base = new Map(diskRules.map((r) => [r.key, ruleCss(r)]));
     const mine = new Map(S.rules.map((r) => [r.key, r]));
     const foreign = parseLines(foreignPicks);
+    const rawCounts = (rules) => {
+      const counts = new Map();
+      for (const rule of rules) if (rule.raw !== undefined) counts.set(rule.key, (counts.get(rule.key) ?? 0) + 1);
+      return counts;
+    };
+    const baseRaw = rawCounts(diskRules), mineRaw = rawCounts(S.rules);
+    const remaining = rawCounts(foreign);
+    // Raw identity is its CSS text, so equal copies share a key. A local
+    // count change is an edit to that key; unchanged counts adopt disk.
+    for (const key of new Set([...baseRaw.keys(), ...mineRaw.keys()])) {
+      const count = mineRaw.get(key) ?? 0;
+      if (count !== (baseRaw.get(key) ?? 0)) remaining.set(key, count);
+    }
     const merged = [];
     const seen = new Set();
     for (const rule of foreign) {
+      if (rule.raw !== undefined) {
+        const count = remaining.get(rule.key) ?? 0;
+        if (count) { merged.push(rule); remaining.set(rule.key, count - 1); }
+        continue;
+      }
       const local = mine.get(rule.key);
       if (!local && base.has(rule.key)) continue;  /* deleted locally */
       merged.push(local && base.get(rule.key) !== ruleCss(local) ? local : rule);
       seen.add(rule.key);
     }
-    for (const [key, rule] of mine) {
-      if (!seen.has(key) && base.get(key) !== ruleCss(rule)) merged.push(rule);
+    for (const rule of S.rules) {
+      const key = rule.key;
+      if (rule.raw !== undefined) {
+        const count = remaining.get(key) ?? 0;
+        if (count) { merged.push(rule); remaining.set(key, count - 1); }
+      } else if (!seen.has(key) && base.get(key) !== ruleCss(mine.get(key))) {
+        merged.push(mine.get(key)); seen.add(key);
+      }
     }
     diskRules = Object.freeze(foreign);
     S.rules = Object.freeze(merged);               /* preserve repeated raw lines */
@@ -1827,6 +2224,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     if (saveInFlight) return;                   /* generation loop picks it up */
     saveInFlight = (async () => {
       try {
+        await Promise.resolve(); // combine synchronous edits before the first native write
         let written = -1;
         while (written !== S.generation) {
           const generation = S.generation;
@@ -1848,9 +2246,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       const writtenRules = S.rules;
       const body = serialise();
       if (new TextEncoder().encode(body).length > LIMITS.BODY) {
-        S.note = "picks region exceeds 512 KiB — remove some rules";
-        setState(`⚠ NOT SAVED: ${S.note}`, "err");
-        return;
+        throw new Error("picks region exceeds 512 KiB — remove some rules");
       }
       const reply = await send({ type: "splice", region: "picks", body, base_rev: S.rev });
       if (reply?.ok) {
@@ -1861,9 +2257,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
         return;
       }
       if (!reply?.conflict) {
-        S.note = reply?.error ?? "no reply";
-        setState(`⚠ NOT SAVED: ${S.note}`, "err");
-        return;
+        throw new Error(reply?.error ?? "no reply");
       }
       /* Someone else wrote the file: adopt their rules, keep ours, retry. */
       const fresh = await send({ type: "read" });
@@ -1871,17 +2265,17 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
         S.rev = fresh.rev ?? 0;
         mergeForeign(fresh.picks);
         renderLive(); refreshBar(); refreshDrawer(); refreshPanel();
-      }
-      await sleep(40 + Math.random() * 120 * (attempt + 1));
+      } else throw new Error(fresh?.error ?? "cannot refresh after a save conflict");
+      if (attempt < 2) await sleep(40 + Math.random() * 120 * (attempt + 1));
     }
-    S.note = "the file keeps changing on disk";
-    setState(`⚠ NOT SAVED: ${S.note} — press ⟲`, "err");
+    throw new Error("the file keeps changing on disk — press ⟲");
   }
 
   async function hydrate(force = false) {
     if (S.hydrated && !force) return true;
     const reply = await send({ type: "read" });
     if (!reply?.ok) {
+      S.hydrated = false;
       S.note = reply?.error ?? "cannot reach the native host";
       return false;
     }
@@ -1896,9 +2290,17 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
 
   /* Re-read disk and re-apply anything we have locally that disk lacks. */
   async function recover(manual = false) {
-    await saveInFlight?.catch(() => {});
-    const reply = await send({ type: "read" });
+    let reply;
+    for (;;) {
+      await saveInFlight?.catch(() => {});
+      const rev = S.rev;
+      reply = await send({ type: "read" });
+      // A save or another resync can complete while this snapshot travels
+      // back. Merge only against the disk baseline that produced the read.
+      if (!saveInFlight && S.rev === rev) break;
+    }
     if (!reply?.ok) {
+      S.hydrated = false;
       S.note = reply?.error ?? "cannot reach the native host";
       baseState();
       return false;
@@ -1915,31 +2317,45 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
   }
 
   /* Adopt disk changes while preserving any edits still awaiting a commit. */
-  async function rehydrate() {
-    const before = S.rules;
-    const beforeText = serialise();
-    if (!await recover()) return;
-    if (serialise() !== beforeText) {
-      S.undo.push(before);
-      if (S.undo.length > 100) S.undo.shift();
-      S.redo = [];
-      refreshBar();
-    }
-    flash("↻ reloaded from disk");
+  let rehydratePending = false, rehydrateInFlight = null;
+  function rehydrate() {
+    rehydratePending = true;
+    if (rehydrateInFlight) return rehydrateInFlight;
+    rehydrateInFlight = (async () => {
+      // Coalesce synchronous notifications and request one fresh snapshot if
+      // more arrive during a read. Concurrent reads otherwise amplify retries.
+      await Promise.resolve();
+      while (rehydratePending) {
+        rehydratePending = false;
+        const before = S.rules;
+        const beforeText = serialise();
+        if (!await recover()) return;
+        if (serialise() !== beforeText) {
+          S.undo.push(before);
+          if (S.undo.length > 100) S.undo.shift();
+          S.redo = [];
+          refreshBar();
+        }
+        flash("↻ reloaded from disk");
+      }
+    })().finally(() => { rehydrateInFlight = null; });
+    return rehydrateInFlight;
   }
 
   /* ══ Targeting ══════════════════════════════════════════════════════ */
-  function setStack(elm) {
+  function setStack(elm, refresh = true) {
     const chain = [];
     for (let n = elm; n?.nodeType === 1; n = n.parentElement) chain.push(n);
     S.stack = chain;
     S.depth = 0;
-    retarget();
+    if (refresh) retarget();
   }
   function retarget() {
     drawMask();
     refreshBar();
     if (panelKind === "pick") {
+      dropIndex();
+      resetVarSelection();
       S.elementVars = getElementVars(target());
       q("pvarbtn").disabled = S.elementVars.length === 0;
       if (!S.elementVars.length) S.targetMode = "selector";
@@ -1982,7 +2398,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     }
     if (panelKind === "edit") closePanel();
     S.locked = false;
-    setStack(e.target);
+    setStack(e.target, false);
     openPick();
   }
 
@@ -2032,7 +2448,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       const opts = { capture: true, signal };
       for (const [type, fn] of LISTENERS) window.addEventListener(type, fn, opts);
       window.addEventListener("scroll", scheduleMask, { capture: true, passive: true, signal });
-      window.addEventListener("resize", scheduleMask, { passive: true, signal });
+      window.addEventListener("resize", () => { positionDialog(); scheduleMask(); }, { passive: true, signal });
       /* SPA route changes leave the stack pointing at detached nodes. */
       globalThis.navigation?.addEventListener("navigate", () => {
         S.stack = []; S.depth = 0; dropIndex(); closePanel();
