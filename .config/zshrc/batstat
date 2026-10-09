@@ -4,7 +4,7 @@
 #   batstat [live|static] [human|json|terse] [TARGET|all] [-i SECONDS]
 #   bare `batstat` prints help.  TARGET is a /sys/class/power_supply node name.
 #
-#   Sourced from ~/.zshrc [6] — SOURCED, never executed.  $HOME/sysfs only.
+#   Sourced from ~/.zshrc [6] — SOURCED, never executed.  Linux sysfs only.
 #
 #   Forks: 0 in every mode, including the live TUI's inter-frame wait.
 #   Floats: none.  ALL arithmetic is 64-bit integer (energy µWh, power µW,
@@ -19,14 +19,11 @@
 #       type, scope(System|Device), present, status, capacity,
 #       power_now[µW], current_now[µA], voltage_now[µV],
 #       energy_now/full[µWh], charge_now/full[µAh]
-#     zshbuiltins(1)  typeset/local, read -k/-s/-u, print -r
+#     zshbuiltins(1)  typeset/local, read -r/-u, print -r
 #     zshexpn(1)      glob qualifiers (N - /), numeric glob <->, (l:n::0:)
 #     zshmodules(1)   zsh/zselect (zselect -t, hundredths of a second)
 #     zshmisc(1)      { try } always { cleanup }
 # =============================================================================
-
-zmodload zsh/parameter 2>/dev/null        # $builtins
-zmodload zsh/zselect   2>/dev/null        # fork-free timer for live mode
 
 typeset -g BATSTAT_SYSFS=${BATSTAT_SYSFS:-/sys/class/power_supply}
 typeset -g BATSTAT_INTERVAL=${BATSTAT_INTERVAL:-1}
@@ -46,7 +43,7 @@ _batstat_help() {
         $'  \e[32mhelp\e[0m      this page (also shown when called with no argument)'
         $'  \e[32mstatic\e[0m    print one reading and exit (default)'
         $'  \e[32mlive\e[0m      flicker-free single-line TUI'
-        '            quit with  q  ENTER  ·  ESC ENTER  ·  Ctrl-C'
+        '            quit with  ENTER  ·  q ENTER  ·  ESC ENTER  ·  Ctrl-C'
         ''
         $'\e[1mFORMATS\e[0m'
         $'  \e[32mhuman\e[0m     readable line (default; forced in live mode)'
@@ -71,18 +68,19 @@ _batstat_help() {
 }
 
 # -----------------------------------------------------------------------------
-# Read one integer sysfs attribute into REPLY (absolute value).
-# rc 1 = absent / unreadable / non-numeric.  Zero forks.
+# Read one nonnegative integer into REPLY; optional "magnitude" accepts a sign.
+# rc 1 = absent / unreadable / non-numeric. Caller uses emulate -L zsh.
 # stderr is redirected BEFORE the input redirection so a device that vanishes
 # between the -r test and the open cannot print to the terminal.
 # -----------------------------------------------------------------------------
 _batstat_int() {
-    local v
+    local v IFS=$' \t\n'
     REPLY=0
     [[ -r $1 ]] || return 1
     read -r v 2>/dev/null < "$1" || return 1
-    [[ $v == (-|)<-> ]] || return 1
-    (( REPLY = v < 0 ? -v : v ))
+    if [[ $2 == magnitude ]]; then v=${v#-}; fi
+    [[ $v == <-> && ${#v} -le 18 ]] || return 1
+    (( REPLY = 10#$v ))
     return 0
 }
 
@@ -94,7 +92,7 @@ _batstat_jesc() {
     local s=$1
     s=${s//\\/\\\\}
     s=${s//\"/\\\"}
-    s=${s//[$'\n\r\t']/ }
+    s=${s//[[:cntrl:]]/ }
     REPLY=$s
 }
 
@@ -104,16 +102,17 @@ _batstat_jesc() {
 # -----------------------------------------------------------------------------
 _batstat_cs() {
     emulate -L zsh
+    setopt extendedglob
     local v=$1 ip fp
     REPLY=0
     [[ $v == (<->(.<->|)|.<->) ]] || return 1
     ip=${v%%.*}
     fp=''
     [[ $v == *.* ]] && fp=${v#*.}
-    ip=${ip:-0}
+    ip=${${ip##0#}:-0}
     fp=${(r:2::0:)fp[1,2]}          # "" -> 00 · "5" -> 50 · "05" -> 05
     (( ${#ip} > 6 )) && return 1    # >999999 s: reject before the multiply
-    (( REPLY = ip * 100 + fp ))
+    (( REPLY = 10#$ip * 100 + 10#$fp ))
     (( REPLY >= 5 && REPLY <= 8640000 )) || return 1   # 0.05 s .. 1 day
     return 0
 }
@@ -125,10 +124,11 @@ _batstat_cs() {
 _batstat_nodes() {
     emulate -L zsh
     setopt localoptions extendedglob
-    local target=$1 d t s
+    local target=$1 d t s REPLY IFS=$' \t\n'
     nodes=()
 
     if [[ -n $target && $target != all ]]; then
+        [[ $target != */* && $target != (.|..) ]] || return 1
         d=$BATSTAT_SYSFS/$target
         [[ -d $d ]] || return 1
         t=''
@@ -146,6 +146,7 @@ _batstat_nodes() {
         s=''
         [[ -r $d/scope ]] && read -r s 2>/dev/null < "$d/scope"
         [[ ${s:-System} == System ]] || continue   # skip mice / pads / headsets
+        _batstat_int "$d/present" && (( REPLY == 0 )) && continue
         nodes+=( "$d" )
         [[ $target == all ]] || break
     done
@@ -154,62 +155,66 @@ _batstat_nodes() {
 
 # -----------------------------------------------------------------------------
 # Probe ONE node.  Writes the caller's locals (dynamic scope, by contract):
-#   _bp_name _bp_status _bp_scope _bp_present _bp_cap _bp_enow _bp_efull _bp_power
+#   _bp_name _bp_status _bp_present _bp_cap _bp_enow _bp_efull _bp_power
 # Energy is normalised to µWh and power to µW so that any mixture of
 # energy_*/charge_* and power_now/current_now still produces a time estimate.
 # -----------------------------------------------------------------------------
 _batstat_probe() {
     emulate -L zsh
-    local p=$1 s f REPLY
-    local -i volt=0
+    local p=$1 s f family REPLY IFS=$' \t\n'
+    local -i volt=0 qnow=-1 qfull=-1
 
     _bp_name=${p:t}
     _bp_status=Unknown
-    _bp_scope=System
     _bp_present=1
     _bp_cap=-1
-    _bp_enow=0
-    _bp_efull=0
-    _bp_power=0
+    _bp_enow=-1
+    _bp_efull=-1
+    _bp_power=-1
 
-    if [[ -r $p/scope ]]; then
-        s=''; read -r s 2>/dev/null < "$p/scope"; [[ -n $s ]] && _bp_scope=$s
-    fi
     if [[ -r $p/status ]]; then
         s=''; read -r s 2>/dev/null < "$p/status"; [[ -n $s ]] && _bp_status=$s
     fi
-    _batstat_int "$p/present" && (( REPLY == 0 )) && _bp_present=0
+    if _batstat_int "$p/present" && (( REPLY == 0 )); then
+        _bp_present=0
+        return 0
+    fi
 
     for f in voltage_now voltage_avg voltage_min_design voltage_max_design; do
         if _batstat_int "$p/$f" && (( REPLY > 0 )); then volt=$REPLY; break; fi
     done
 
-    # remaining energy (µWh)
-    if _batstat_int "$p/energy_now" && (( REPLY > 0 )); then
+    # Use matching now/full attributes; zero is valid, missing is -1.
+    family=energy
+    if _batstat_int "$p/energy_now"; then
         _bp_enow=$REPLY
-    elif (( volt > 0 )) && _batstat_int "$p/charge_now" && (( REPLY > 0 )); then
-        (( _bp_enow = REPLY * volt / 1000000 ))
+    elif _batstat_int "$p/charge_now"; then
+        family=charge
+        qnow=$REPLY
+        (( volt > 0 )) && (( _bp_enow = qnow * volt / 1000000 ))
     fi
+    for f in ${family}_full ${family}_full_design; do
+        if _batstat_int "$p/$f" && (( REPLY > 0 )); then
+            if [[ $family == charge ]]; then
+                qfull=$REPLY
+                (( volt > 0 )) && (( _bp_efull = qfull * volt / 1000000 ))
+            else
+                _bp_efull=$REPLY
+            fi
+            break
+        fi
+    done
 
-    # full energy (µWh)
-    if _batstat_int "$p/energy_full" && (( REPLY > 0 )); then
-        _bp_efull=$REPLY
-    elif _batstat_int "$p/energy_full_design" && (( REPLY > 0 )); then
-        _bp_efull=$REPLY
-    elif (( volt > 0 )) && _batstat_int "$p/charge_full" && (( REPLY > 0 )); then
-        (( _bp_efull = REPLY * volt / 1000000 ))
-    elif (( volt > 0 )) && _batstat_int "$p/charge_full_design" && (( REPLY > 0 )); then
-        (( _bp_efull = REPLY * volt / 1000000 ))
-    fi
-
-    # instantaneous power (µW)
-    if _batstat_int "$p/power_now" && (( REPLY > 0 )); then
-        _bp_power=$REPLY
-    elif _batstat_int "$p/power_avg" && (( REPLY > 0 )); then
-        _bp_power=$REPLY
-    elif (( volt > 0 )); then
+    # Keep an instantaneous zero instead of substituting a stale average.
+    for f in power_now power_avg; do
+        if _batstat_int "$p/$f" magnitude; then
+            _bp_power=$REPLY
+            break
+        fi
+    done
+    if (( _bp_power < 0 && volt > 0 )); then
         for f in current_now current_avg; do
-            if _batstat_int "$p/$f" && (( REPLY > 0 )); then
+            if _batstat_int "$p/$f" magnitude; then
                 (( _bp_power = REPLY * volt / 1000000 ))
                 break
             fi
@@ -219,8 +224,10 @@ _batstat_probe() {
     # capacity (%)
     if _batstat_int "$p/capacity" && (( REPLY <= 100 )); then
         _bp_cap=$REPLY
-    elif (( _bp_efull > 0 )); then
+    elif (( _bp_enow >= 0 && _bp_efull > 0 )); then
         (( _bp_cap = (_bp_enow * 100 + _bp_efull / 2) / _bp_efull ))
+    elif (( qnow >= 0 && qfull > 0 )); then
+        (( _bp_cap = (qnow * 100 + qfull / 2) / qfull ))
     fi
     (( _bp_cap > 100 )) && _bp_cap=100
     return 0
@@ -234,22 +241,30 @@ _batstat_render() {
     setopt localoptions extendedglob
     local fmt=$1; shift
     local node names='' state=Unknown st tstr='N/A' capstr='N/A' jcap=null
-    local cls=unknown wstr jn js REPLY
+    local cls=unknown wstr=N/A jpower=null jn js REPLY
     local -i n=0 csum=0 ccnt=0 cap=-1 esum=0 efsum=0 psum=0 secs=0 hrs=0 mins=0 cw=0
-    local _bp_name _bp_status _bp_scope
-    local -i _bp_present=1 _bp_cap=-1 _bp_enow=0 _bp_efull=0 _bp_power=0
+    local -i ecnt=0 efcnt=0 pcnt=0 net=0 charging=0 discharging=0 estimated=0 time_ok=1
+    local _bp_name _bp_status
+    local -i _bp_present=1 _bp_cap=-1 _bp_enow=-1 _bp_efull=-1 _bp_power=-1
 
     for node in "$@"; do
         _batstat_probe "$node"
         (( _bp_present )) || continue
-        # hot-unplug: a node with NO readable data at all is a vanished device,
-        # not a real battery (real batteries always expose capacity + status)
-        (( _bp_cap >= 0 || _bp_enow > 0 || _bp_efull > 0 || _bp_power > 0 || _bp_status != Unknown )) || continue
+        # The type attribute identifies a battery even if telemetry is absent.
+        [[ -r $node/type ]] || continue
         (( n++ ))
         names+="${names:+ + }${_bp_name}"
-        (( esum  += _bp_enow  ))
-        (( efsum += _bp_efull ))
-        (( psum  += _bp_power ))
+        (( _bp_enow >= 0 )) && (( esum += _bp_enow, ecnt++ ))
+        (( _bp_efull > 0 )) && (( efsum += _bp_efull, efcnt++ ))
+        (( _bp_power >= 0 )) && (( psum += _bp_power, pcnt++ ))
+        case $_bp_status in
+            Charging)
+                charging=1
+                (( _bp_power >= 0 )) && (( net += _bp_power )) ;;
+            Discharging)
+                discharging=1
+                (( _bp_power >= 0 )) && (( net -= _bp_power )) ;;
+        esac
         (( _bp_cap >= 0 )) && (( csum += _bp_cap, ccnt++ ))
         st=$_bp_status
         case $st in
@@ -257,7 +272,7 @@ _batstat_render() {
             Discharging)    [[ $state == Charging ]] || state=Discharging ;;
             'Not charging') [[ $state == (Charging|Discharging) ]] || state='Not charging' ;;
             Full)           [[ $state == (Charging|Discharging|'Not charging') ]] || state=Full ;;
-            *)              [[ $state == Unknown && -n $st ]] && state=$st ;;
+            *)              time_ok=0; [[ $state == Unknown && -n $st ]] && state=$st ;;
         esac
     done
 
@@ -266,25 +281,40 @@ _batstat_render() {
         return 1
     fi
 
+    # Opposing flows need net power; with incomplete rates the state is mixed.
+    if (( charging && discharging )); then
+        state=Mixed
+        if (( pcnt == n )); then
+            (( net > 0 )) && state=Charging
+            (( net < 0 )) && state=Discharging
+            (( psum = net < 0 ? -net : net ))
+        fi
+    fi
+
+    # Only combine complete telemetry; partial sums misrepresent the pack.
     # capacity
     if (( n == 1 && ccnt == 1 )); then
         cap=$csum
-    elif (( efsum > 0 )); then
+    elif (( ecnt == n && efcnt == n && efsum > 0 )); then
         (( cap = (esum * 100 + efsum / 2) / efsum ))
-    elif (( ccnt > 0 )); then
+    elif (( ccnt == n )); then
         (( cap = (csum + ccnt / 2) / ccnt ))
     fi
     (( cap > 100 )) && cap=100
     if (( cap >= 0 )); then capstr=$cap; jcap=$cap; fi
 
     # remaining time (pure integer seconds)
-    if (( psum > 0 )); then
+    if (( time_ok && pcnt == n && ecnt == n && psum > 0 )); then
         case $state in
-            Discharging) (( secs = esum * 3600 / psum )) ;;
-            Charging)    (( efsum > esum )) && (( secs = (efsum - esum) * 3600 / psum )) ;;
+            Discharging) (( secs = esum * 3600 / psum )); estimated=1 ;;
+            Charging)
+                if (( efcnt == n )); then
+                    (( secs = (efsum > esum ? efsum - esum : 0) * 3600 / psum ))
+                    estimated=1
+                fi ;;
         esac
     fi
-    if (( secs > 0 )); then
+    if (( estimated )); then
         (( hrs  = secs / 3600 ))
         (( mins = (secs % 3600 + 30) / 60 ))
         (( mins >= 60 )) && (( hrs++, mins -= 60 ))
@@ -297,8 +327,11 @@ _batstat_render() {
     fi
 
     # watts, assembled from integer centiwatts — no printf, no float, no locale
-    (( cw = (psum + 5000) / 10000 ))
-    wstr="$(( cw / 100 )).${(l:2::0:)$(( cw % 100 ))}"
+    if (( pcnt == n )); then
+        (( cw = (psum + 5000) / 10000 ))
+        wstr="$(( cw / 100 )).${(l:2::0:)$(( cw % 100 ))}"
+        jpower=$wstr
+    fi
 
     case $state in
         Charging)       cls=charging ;;
@@ -312,7 +345,7 @@ _batstat_render() {
         json)
             _batstat_jesc "$names";  jn=$REPLY
             _batstat_jesc "$state"; js=$REPLY
-            print -rn -- "{\"name\":\"$jn\",\"capacity\":$jcap,\"power_w\":$wstr,\"status\":\"$js\",\"remaining\":\"$tstr\",\"seconds\":$secs,\"class\":\"$cls\",\"text\":\"$capstr%\",\"tooltip\":\"$jn | $js | $wstr W | $tstr\"}"
+            print -rn -- "{\"name\":\"$jn\",\"capacity\":$jcap,\"power_w\":$jpower,\"status\":\"$js\",\"remaining\":\"$tstr\",\"seconds\":$secs,\"class\":\"$cls\",\"text\":\"$capstr%\",\"tooltip\":\"$jn | $js | $wstr W | $tstr\"}"
             ;;
         terse)
             print -rn -- "$capstr $wstr $state $tstr"
@@ -331,8 +364,8 @@ batstat() {
     emulate -L zsh
     setopt localoptions extendedglob
     local arg target='' mode=static fmt=human key REPLY
-    local -a nodes avail
-    local -i want_iv=0 cs=100 rc=0 tty_in=0 tty_out=0 _bs_code=0
+    local -a nodes avail reply
+    local -i want_iv=0 cs=100 rc=0 tty_in=0 tty_out=0 interrupted=0 left=0 tick=0 wait_rc=0
 
     (( $# == 0 )) && { _batstat_help; return 0 }
 
@@ -384,7 +417,7 @@ batstat() {
 
     # ---- static --------------------------------------------------------------
     if [[ $mode != live ]]; then
-        _batstat_render $fmt "${nodes[@]}"
+        _batstat_render "$fmt" "${nodes[@]}"
         rc=$?
         (( rc == 0 )) && print
         return $rc
@@ -395,52 +428,60 @@ batstat() {
         print -ru2 -- "batstat: '$fmt' is a scripting format — live mode renders 'human'."
         fmt=human
     fi
-    if (( ! $+builtins[zselect] )); then
+    if ! zmodload -F zsh/zselect b:zselect 2>/dev/null; then
         print -ru2 -- 'batstat: live mode needs the zsh/zselect module (zmodload zsh/zselect)'
         return 1
     fi
     [[ -t 0 ]] && tty_in=1
     [[ -t 1 ]] && tty_out=1
 
-    # Ctrl-C / SIGTERM: set a flag instead of letting the default handler kill
-    # the shell mid-frame (which would skip the always block below and leave
-    # the terminal cursor hidden).  `trap - INT TERM` in the cleanup restores
-    # the stock interactive disposition.
-    typeset -g _bs_interrupt=0
-    trap 'typeset -g _bs_interrupt=1' INT TERM
+    # emulate -L restores the caller's traps on return. Keep flags local.
+    trap 'interrupted=130' INT
+    trap 'interrupted=143' TERM
 
-    (( tty_out )) && print -rn -- $'\e[?25l'
     {
+        (( tty_out )) && print -rn -- $'\e[?25l'
         while true; do
-            (( _bs_interrupt )) && break
-            if (( tty_out )); then
-                print -rn -- $'\r\e[2K'
-                _batstat_render $fmt "${nodes[@]}" || break
-            else
-                _batstat_render $fmt "${nodes[@]}" || break
-                print
-            fi
+            (( interrupted )) && break
+            _batstat_nodes "$target" || {
+                print -ru2 -- 'batstat: no battery available'
+                rc=1
+                break
+            }
+            (( tty_out )) && print -rn -- $'\r\e[2K'
+            _batstat_render "$fmt" "${nodes[@]}"
+            rc=$?
+            (( rc )) && break
+            (( tty_out )) || print
 
-            if (( tty_in )); then
-                # zselect is the timer (it cannot return early), -r 0 also
-                # reports a waiting keystroke; a failed read means EOF -> quit,
-                # so this loop can never busy-spin.
-                if zselect -t $cs -r 0 2>/dev/null; then
-                    key=''
-                    read -s -k 1 -u 0 key 2>/dev/null || break
-                    [[ $key == (q|Q|$'\e') ]] && break
+            # zselect defers traps until its timeout expires. Bound each
+            # wait to one second so even a day-long interval can be stopped.
+            left=$cs
+            while (( left > 0 && ! interrupted )); do
+                (( tick = left > 100 ? 100 : left ))
+                if (( tty_in )); then
+                    zselect -t $tick -r 0
+                    wait_rc=$?
+                    (( interrupted )) && break
+                    if (( wait_rc == 0 )); then
+                        # Canonical input is ready after ENTER. Consume the
+                        # line so no quit newline reaches the shell prompt.
+                        key=''
+                        IFS= read -r -u 0 key 2>/dev/null || break 2
+                        [[ $key == (''|q|Q|$'\e') ]] && break 2
+                    fi
+                else
+                    zselect -t $tick
+                    wait_rc=$?
                 fi
-            else
-                zselect -t $cs 2>/dev/null
-            fi
+                (( wait_rc > 1 )) && { rc=1; break 2 }
+                (( left -= tick ))
+            done
         done
     } always {
         (( tty_out )) && print -rn -- $'\e[?25h'
-        print
-        trap - INT TERM
-        _bs_code=$_bs_interrupt
-        unset _bs_interrupt
+        (( tty_out )) && print
     }
-    (( _bs_code )) && return 130
-    return 0
+    (( interrupted )) && return $interrupted
+    return $rc
 }
