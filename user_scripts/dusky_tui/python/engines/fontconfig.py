@@ -2,7 +2,6 @@ lazy import ast
 from contextlib import ExitStack, contextmanager
 lazy import fcntl
 lazy import xml.etree.ElementTree as ET
-lazy from xml.dom import minidom
 from pathlib import Path
 lazy from typing import Any
 lazy import subprocess
@@ -35,16 +34,19 @@ class FontconfigEngine(BaseEngine):
         "antialias", "hinting", "autohint", "embeddedbitmap",
         "hintstyle", "rgba", "lcdfilter",
     }
-    DIR_KEYS = {"font_dir", "font_dirs"}
+    DIR_KEYS = ("font_dir", "font_dirs")
     IGNORED_PATTERN_EDIT_NAMES = {"family", "familylang"}
 
     @staticmethod
     def _is_bitmap_rule(match: ET.Element, enabled: bool) -> bool:
         """Recognize only the engine's single-test, single-edit bitmap rules."""
         tests, edits = match.findall("test"), match.findall("edit")
-        if match.get("target", "pattern") != "font" or len(tests) != 1 or len(edits) != 1:
+        if (match.get("target", "pattern") != "font" or len(match) != 2
+                or len(tests) != 1 or len(edits) != 1):
             return False
         test, edit = tests[0], edits[0]
+        if len(test) != 1 or len(edit) != 1 or test.get("qual", "any") != "any":
+            return False
         if (edit.get("name") != "embeddedbitmap" or edit.get("mode") != "assign"
                 or edit.findtext("bool") != str(enabled).lower()):
             return False
@@ -53,25 +55,26 @@ class FontconfigEngine(BaseEngine):
         return ((test.get("name") == "color" and test.findtext("bool") == "true")
                 or (test.get("name") == "family" and test.findtext("string") == "Noto Color Emoji"))
 
-    _KNOWN_CONSTS = {
-        "none", "rgb", "bgr", "vrgb", "vbgr",
-        "hintnone", "hintslight", "hintmedium", "hintfull",
-        "lcdnone", "lcddefault", "lcdlight", "lcdlegacy",
-    }
+    _RENDER_CONSTANTS = frozendict({
+        "rgba": ("none", "rgb", "bgr", "vrgb", "vbgr"),
+        "hintstyle": ("hintnone", "hintslight", "hintmedium", "hintfull"),
+        "lcdfilter": ("lcdnone", "lcddefault", "lcdlight", "lcdlegacy"),
+    })
+    _KNOWN_CONSTS = frozenset({*values for values in _RENDER_CONSTANTS.values()})
 
-    FAMILY_REWRITES = {
+    FAMILY_REWRITES = frozendict({
         "Arial": "sans-serif", "Helvetica": "sans-serif", "Verdana": "sans-serif",
         "Times New Roman": "serif", "Courier New": "monospace",
         "Segoe UI Emoji": "emoji", "Apple Color Emoji": "emoji", "Twemoji Mozilla": "emoji",
-    }
+    })
 
     def __init__(self, config_path: str | None = None, defaults: dict[str, Any] | None = None):
         self.config_path = (Path(config_path).expanduser() if config_path else
                             self._config_dir() / "fontconfig/conf.d/99-dusky-fonts.conf").resolve()
         self.defaults = dict(defaults or {})
         self.cache: dict[str, Any] = {}
-        self._match_layout: list[tuple[str, str | None]] = []
-        self._preserved_elements: list[str] = []
+        self._element_layout: list[tuple[str, str | None]] = []
+        self._root_attributes: dict[str, str] = {}
         self._write_lock = threading.RLock()
         # None means idle; False/True request a normal/forced cache refresh.
         self._cache_refresh_pending: bool | None = None
@@ -80,7 +83,7 @@ class FontconfigEngine(BaseEngine):
     def _file_lock(self):
         """Serialize writes and toolkit sync across TUI/setup processes."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.config_path.with_name(f".{self.config_path.name}.lock").open("a") as lock:
+        with self.config_path.with_name(f".{self.config_path.name}.lock").open("ab") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
                 yield
@@ -99,8 +102,8 @@ class FontconfigEngine(BaseEngine):
             return self._load_state()
 
     def _load_state(self) -> dict[str, Any]:
-        self._match_layout = []
-        self._preserved_elements = []
+        self._element_layout = []
+        self._root_attributes = {}
         if not self.config_path.exists() or self.config_path.stat().st_size == 0:
             self.cache = {}
             return {}
@@ -111,31 +114,32 @@ class FontconfigEngine(BaseEngine):
             root = tree.getroot()
             if root.tag != "fontconfig":
                 raise ValueError("Expected a <fontconfig> root element")
-            self._preserved_elements = [ET.tostring(child, encoding="unicode")
-                                        for child in root if child.tag not in ("dir", "alias", "match")]
+            self._root_attributes = dict(root.attrib)
 
             dir_values: list[str] = []
-            for dir_el in root.findall("dir"):
-                if dir_el.text and dir_el.text.strip():
-                    dir_values.append(dir_el.text.strip())
-            if dir_values:
-                state["font_dir"] = dir_values[0] if len(dir_values) == 1 else dir_values
-
-            for alias in root.findall("alias"):
-                family_el = alias.find("family")
-                if family_el is None or not family_el.text:
+            for child in root:
+                raw = ET.tostring(child, encoding="unicode")
+                if child.tag == "dir":
+                    directory = self.resolve_font_dir(child, self.config_path)
+                    if directory is not None:
+                        dir_values.append(str(directory))
+                    self._element_layout.append(("dir", raw))
                     continue
-                family = family_el.text.strip()
-                if family not in self.ALIAS_CLASSES:
-                    self._preserved_elements.append(ET.tostring(alias, encoding="unicode"))
-                    continue
-                prefer = alias.findall("prefer/family")
-                if prefer:
-                    fonts = [pf.text.strip() for pf in prefer if pf.text]
+                if child.tag == "alias":
+                    family = self._managed_alias_family(child)
+                    if family is None:
+                        self._element_layout.append(("rule", raw))
+                        continue
+                    fonts = [node.text.strip() for node in child.findall("prefer/family")
+                             if node.text and node.text.strip()]
                     if fonts:
                         state[family] = fonts[0] if len(fonts) == 1 else fonts
-
-            for match in root.findall("match"):
+                    self._element_layout.append(("alias", family))
+                    continue
+                if child.tag != "match":
+                    self._element_layout.append(("rule", raw))
+                    continue
+                match = child
                 target = match.get("target", "pattern")
                 has_tests = bool(match.findall("test"))
                 has_unmanaged_edits = any(
@@ -148,12 +152,12 @@ class FontconfigEngine(BaseEngine):
                 is_emoji_force = self._is_bitmap_rule(match, True)
                 is_pattern_rewrite = (target != "font" or has_tests or has_unmanaged_edits) and not is_emoji_guard and not is_emoji_force
                 if is_pattern_rewrite:
-                    self._match_layout.append(("rule", ET.tostring(match, encoding="unicode")))
+                    self._element_layout.append(("rule", ET.tostring(match, encoding="unicode")))
                     continue
 
                 # Keep each rendering rule at its position among custom rules.
                 slot = "bitmap_guard" if is_emoji_guard else "bitmap_force" if is_emoji_force else "render"
-                self._match_layout.append((slot, ET.tostring(match, encoding="unicode") if slot == "render" else None))
+                self._element_layout.append((slot, ET.tostring(match, encoding="unicode") if slot == "render" else None))
                 if is_emoji_force:
                     continue
 
@@ -165,10 +169,44 @@ class FontconfigEngine(BaseEngine):
                     if val is not None:
                         state[name] = val
 
+            if dir_values:
+                state["font_dir"] = dir_values[0] if len(dir_values) == 1 else dir_values
             self.cache = state
             return state
-        except Exception as e:
+        except (OSError, ET.ParseError, ValueError) as e:
             raise ValueError(f"Cannot read font configuration {self.config_path}: {e}") from e
+
+    @staticmethod
+    def resolve_font_dir(element: ET.Element, config_path: Path) -> Path | None:
+        """Resolve fontconfig's documented directory prefixes."""
+        value = (element.text or "").strip()
+        if not value:
+            return None
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            prefix = element.get("prefix", "default")
+            if prefix == "xdg":
+                base = Path(os.environ.get("XDG_DATA_HOME", ""))
+                if not base.is_absolute():
+                    base = Path.home() / ".local/share"
+                path = base / path
+            elif prefix == "relative":
+                path = config_path.parent / path
+        return path.resolve()
+
+    @classmethod
+    def _managed_alias_family(cls, alias: ET.Element) -> str | None:
+        """Manage simple preference aliases; retain custom accept/default forms."""
+        if [child.tag for child in alias] != ["family", "prefer"]:
+            return None
+        if alias.attrib not in ({}, {"binding": "strong"}):
+            return None
+        family = alias.findtext("family", "").strip()
+        prefer = alias.find("prefer")
+        if (family in cls.ALIAS_CLASSES and prefer is not None and not prefer.attrib
+                and all(node.tag == "family" and not node.attrib for node in prefer)):
+            return family
+        return None
 
     def _extract_edit_value(self, edit: ET.Element) -> Any:
         bool_node = edit.find("bool")
@@ -214,17 +252,19 @@ class FontconfigEngine(BaseEngine):
             return val
         return str(val).lower() in cls._TRUTHY
 
-    @classmethod
-    def _is_numeric_string(cls, s: str) -> bool:
-        if s.count(".") > 1 or s.startswith("-"):
-            return s.count(".") <= 1 and s.lstrip("-").replace(".", "", 1).isdigit()
-        return s.replace(".", "", 1).isdigit()
-
     def coerce_write_value(self, key: str, val: Any, item_type: str) -> Any:
         if val is None or val == "":
             return None
-        if item_type == "bool" or isinstance(val, bool):
-            return self.as_bool(val)
+        if key in self._RENDER_CONSTANTS:
+            value = str(val).strip().lower()
+            if value not in self._RENDER_CONSTANTS[key]:
+                raise ValueError(f"Invalid {key}: {val!r}")
+            return value
+        if key in self.RENDER_PROP_WHITELIST or item_type == "bool" or isinstance(val, bool):
+            value = str(val).strip().lower()
+            if value not in (*self._TRUTHY, "false", "0", "no", "off", "f", "n"):
+                raise ValueError(f"Invalid boolean {key}: {val!r}")
+            return value in self._TRUTHY
         if item_type == "int":
             try:
                 return int(val)
@@ -236,17 +276,6 @@ class FontconfigEngine(BaseEngine):
             except (ValueError, TypeError):
                 return val
         return val
-
-    def render_edit_data_type(self, name: str, val: Any, item_type: str) -> str:
-        if isinstance(val, bool) or item_type == "bool":
-            return "bool"
-        if isinstance(val, int):
-            return "int"
-        if isinstance(val, float):
-            return "float"
-        if isinstance(val, str) and self._is_numeric_string(val):
-            return "float" if "." in val else "int"
-        return "const" if str(val).lower() in self._KNOWN_CONSTS else "string"
 
     # ------------------------------------------------------------------
     # Mutation paths
@@ -268,23 +297,26 @@ class FontconfigEngine(BaseEngine):
                 if val is None or val == "":
                     state.pop(key, None)
                 else:
-                    state[key] = self.coerce_write_value(key, val, itype)
+                    try:
+                        state[key] = self.coerce_write_value(key, val, itype)
+                    except ValueError as exc:
+                        return False, str(exc), ""
 
+            saved = False
             try:
                 dirs_changed = old_dirs != {key: state.get(key) for key in self.DIR_KEYS}
                 selected = {key: state[key] for key in self.ALIAS_CLASSES
                             if key in state and (dirs_changed or key not in loaded or any(change[0] == key for change in changes))}
                 self.config_path.parent.mkdir(parents=True, exist_ok=True)
 
-                root = ET.Element("fontconfig")
-
-                for raw in self._preserved_elements:
-                    root.append(ET.fromstring(raw))
+                root = ET.Element("fontconfig", self._root_attributes)
+                aliases: dict[str, ET.Element] = {}
                 for fc in self.ALIAS_CLASSES:
                     value = state.get(fc)
                     if not value:
                         continue
-                    alias = ET.SubElement(root, "alias", {"binding": "strong"})
+                    alias = ET.Element("alias", {"binding": "strong"})
+                    aliases[fc] = alias
                     fam = ET.SubElement(alias, "family")
                     fam.text = fc
                     pref = ET.SubElement(alias, "prefer")
@@ -311,8 +343,10 @@ class FontconfigEngine(BaseEngine):
                             expanded = expanded.resolve()
                         dirs.append(str(expanded))
 
-                for d in sorted(set(dirs)):
-                    node = ET.SubElement(root, "dir")
+                directories: dict[str, ET.Element] = {}
+                for d in dict.fromkeys(dirs):
+                    node = ET.Element("dir")
+                    directories[d] = node
                     node.text = d
 
                 render_keys = [k for k in state
@@ -331,7 +365,7 @@ class FontconfigEngine(BaseEngine):
                 # Update each property's final scalar assignment in place;
                 # earlier assignments retain their precedence around custom rules.
                 last_edits: dict[str, tuple[int, int]] = {}
-                for index, (slot, raw) in enumerate(self._match_layout):
+                for index, (slot, raw) in enumerate(self._element_layout):
                     if slot == "render":
                         for edit_index, edit in enumerate(ET.fromstring(raw).findall("edit")):
                             last_edits[edit.get("name")] = (index, edit_index)
@@ -345,7 +379,7 @@ class FontconfigEngine(BaseEngine):
                     self._append_bitmap_rule(rendering["bitmap_guard"], False)
                     self._append_bitmap_rule(rendering["bitmap_force"], True)
 
-                render_slots = {slot for slot, _raw in self._match_layout if slot != "rule"}
+                render_slots = {slot for slot, _raw in self._element_layout if slot in rendering}
                 rendered: set[str] = set()
 
                 def emit_render(slot: str) -> None:
@@ -374,7 +408,23 @@ class FontconfigEngine(BaseEngine):
                     for family in value if isinstance(value, list) else [value]:
                         ET.SubElement(edit, "string").text = str(family)
 
-                for index, (slot, raw) in enumerate(self._match_layout):
+                emitted_dirs: set[str] = set()
+                for index, (slot, raw) in enumerate(self._element_layout):
+                    if slot == "alias":
+                        alias = aliases.pop(raw, None)
+                        if alias is not None:
+                            root.append(alias)
+                        continue
+                    if slot == "dir":
+                        directory = ET.fromstring(raw)
+                        path = str(self.resolve_font_dir(directory, self.config_path))
+                        if path in directories:
+                            # Prefixes have already been resolved to absolute paths.
+                            directory.attrib.pop("prefix", None)
+                            directory.text = path
+                            root.append(directory)
+                            emitted_dirs.add(path)
+                        continue
                     if slot != "rule":
                         emit_render(slot)
                         if slot == "render":
@@ -399,36 +449,20 @@ class FontconfigEngine(BaseEngine):
                     else:
                         root.append(parsed)
 
+                root.extend(aliases.values())
+                root.extend(node for path, node in directories.items() if path not in emitted_dirs)
                 for name in self.FAMILY_REWRITES:
                     if name not in emitted_rewrites:
                         emit_rewrite(name)
 
-                xmlstr = minidom.parseString(ET.tostring(root)).toprettyxml(indent="  ")
-                xmlstr = re.sub(
-                    r'^\s*<\?xml[^>]*\?>',
-                    '<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">',
-                    xmlstr,
-                    count=1,
-                )
-                clean_xml = "\n".join(ln for ln in xmlstr.splitlines() if ln.strip()) + "\n"
-                if selected:
+                ET.indent(root)
+                clean_xml = ('<?xml version="1.0"?>\n'
+                             '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n'
+                             + ET.tostring(root, encoding="unicode") + "\n")
+                if selected or dirs_changed:
                     self._validate_families(selected, clean_xml)
-
-                temp_path = self.config_path.with_name(
-                    f".{self.config_path.name}.tmp-{os.getpid()}-{threading.get_ident()}-{time.monotonic_ns()}"
-                )
-                try:
-                    with open(temp_path, "w", encoding="utf-8") as f:
-                        f.write(clean_xml)
-                        f.flush()
-                        os.fsync(f.fileno())
-                    temp_path.replace(self.config_path)
-                finally:
-                    if temp_path.exists():
-                        try:
-                            temp_path.unlink()
-                        except OSError:
-                            pass
+                self._atomic_write(self.config_path, clean_xml)
+                saved = True
 
                 self.cache = state
 
@@ -444,7 +478,8 @@ class FontconfigEngine(BaseEngine):
 
                 return True, f"Successfully applied {len(changes)} font settings.", ""
             except Exception as e:
-                return False, f"Font configuration failed: {e}", ""
+                context = "Fontconfig saved, but post-apply work failed" if saved else "Font configuration failed"
+                return False, f"{context}: {e}", ""
 
     def _validate_families(self, selected: dict[str, Any], candidate_xml: str) -> None:
         """Ask fontconfig about the prospective config without changing live files.
@@ -485,9 +520,10 @@ class FontconfigEngine(BaseEngine):
             source = environment.get("FONTCONFIG_FILE")
             if source and Path(source).expanduser().resolve() == self.config_path:
                 environment["FONTCONFIG_FILE"] = str(candidate)
+            font_format = "%{[]family{%{family}\n}}" if selected else ""
             proc = subprocess.run(
-                ["fc-list", "--format=%{[]family{%{family}\n}}", ":"],
-                env=environment, check=True, capture_output=True, text=True, timeout=30,
+                ["fc-list", f"--format={font_format}", ":"],
+                env=environment, check=True, capture_output=True, text=True, encoding="utf-8", timeout=30,
             )
             if proc.stderr.strip():
                 raise ValueError(proc.stderr.strip())
@@ -503,7 +539,7 @@ class FontconfigEngine(BaseEngine):
         if match.get("target", "pattern") != "pattern":
             return None
         tests, edits = match.findall("test"), match.findall("edit")
-        if len(tests) != 1 or len(edits) != 1:
+        if len(match) != 2 or len(tests) != 1 or len(edits) != 1:
             return None
         test, edit = tests[0], edits[0]
         name = test.findtext("string", "").strip()
@@ -543,7 +579,7 @@ class FontconfigEngine(BaseEngine):
 
     @staticmethod
     def refresh_cache(force: bool = False) -> None:
-        subprocess.run(["fc-cache", *(["-f"] if force else [])], check=True, timeout=120)
+        subprocess.run(["fc-cache", *(["--force"] if force else [])], check=True, timeout=120)
 
     def sync_system_fonts(self, quiet: bool = False) -> bool:
         try:
@@ -566,21 +602,14 @@ class FontconfigEngine(BaseEngine):
         Reads families straight from self.cache (fresh after write_batch),
         reusing existing sizes when present.
         """
-        family = ""
-        mono = ""
-        for key in ("sans-serif", "monospace"):
-            val = self.cache.get(key)
-            if not (isinstance(val, str) and val.strip()):
-                state = self.load_state()
-                val = state.get(key)
-            if isinstance(val, list):
-                val = val[0] if val else ""
-            if isinstance(val, str):
-                value = val.strip()
-                if key == "sans-serif":
-                    family = value
-                else:
-                    mono = value
+        def first_family(key: str) -> str:
+            value = self.cache.get(key, "")
+            if isinstance(value, list):
+                value = value[0] if value else ""
+            return value.strip() if isinstance(value, str) else ""
+
+        family = first_family("sans-serif")
+        mono = first_family("monospace")
 
         if not family:
             if not quiet:
@@ -638,14 +667,14 @@ class FontconfigEngine(BaseEngine):
                     if not fam:
                         continue
                     written = subprocess.run(
-                        [gs, "set", "org.gnome.desktop.interface", key, f"{fam} {fsize}"],
-                        check=True, capture_output=True, text=True, timeout=10,
+                        [gs, "set", "org.gnome.desktop.interface", key, repr(f"{fam} {fsize}")],
+                        check=True, capture_output=True, text=True, encoding="utf-8", timeout=10,
                     )
                     if written.stderr.strip():
                         raise RuntimeError(written.stderr.strip())
                     readback = subprocess.run(
                         [gs, "get", "org.gnome.desktop.interface", key],
-                        check=True, capture_output=True, text=True, timeout=5,
+                        check=True, capture_output=True, text=True, encoding="utf-8", timeout=5,
                     )
                     if ast.literal_eval(readback.stdout.strip()) != f"{fam} {fsize}":
                         raise RuntimeError("gsettings did not persist the requested font")
@@ -662,10 +691,10 @@ class FontconfigEngine(BaseEngine):
     # ------------------------------------------------------------------
     # Qt (qt5ct / qt6ct)
     # ------------------------------------------------------------------
-    _QT_FONT_TEMPLATES = {
+    _QT_FONT_TEMPLATES = frozendict({
         "qt5": "family,size,-1,5,50,0,0,0,0,0",
         "qt6": "family,size,-1,5,400,0,0,0,0,0,0,0,0,0,0,1",
-    }
+    })
     _QT_DEFAULT_SIZE = 12
 
     @staticmethod
@@ -706,7 +735,7 @@ class FontconfigEngine(BaseEngine):
             return {}
         slots: dict[str, str] = {}
         in_fonts = False
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if stripped.startswith("["):
                 in_fonts = stripped == "[Fonts]"
@@ -724,16 +753,15 @@ class FontconfigEngine(BaseEngine):
     @staticmethod
     def _qt_write(path: Path, slots: dict[str, str]) -> None:
         """Rewrite a qt5ct/qt6ct.conf with updated [Fonts] general/fixed,
-        preserving all other sections byte-for-byte (atomic tmp+rename so
+        preserving all other section entries (atomic tmp+rename so
         concurrent readers never see a half-written file)."""
-        content = path.read_text() if path.is_file() else ""
+        content = path.read_text(encoding="utf-8") if path.is_file() else ""
         lines = content.splitlines()
         out: list[str] = []
         in_fonts = False
         def encode(value: str) -> str:
             return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
-        gen_val = encode(slots.get("general", ""))
-        fix_val = encode(slots.get("fixed", ""))
+        font_lines = [f'{key}="{encode(value)}"' for key, value in slots.items()]
         for line in lines:
             stripped = line.strip()
             if stripped.startswith("["):
@@ -742,8 +770,7 @@ class FontconfigEngine(BaseEngine):
                 if stripped == "[Fonts]":
                     in_fonts = True
                     out.append("[Fonts]")
-                    out.append(f'general="{gen_val}"')
-                    out.append(f'fixed="{fix_val}"')
+                    out.extend(font_lines)
                     continue
                 out.append(line)
                 continue
@@ -754,22 +781,8 @@ class FontconfigEngine(BaseEngine):
             if out:
                 out.append("")
             out.append("[Fonts]")
-            out.append(f'general="{gen_val}"')
-            out.append(f'fixed="{fix_val}"')
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}-{threading.get_ident()}-{time.monotonic_ns()}")
-        try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write("\n".join(out).rstrip("\n") + "\n")
-                f.flush()
-                os.fsync(f.fileno())
-            tmp.replace(path)
-        finally:
-            if tmp.exists():
-                try:
-                    tmp.unlink()
-                except OSError:
-                    pass
+            out.extend(font_lines)
+        FontconfigEngine._atomic_write(path, "\n".join(out).rstrip("\n") + "\n")
 
     def _patch_qt_conf(self, conf: Path, version: str, sans: str, mono: str, quiet: bool) -> bool:
         """Update [Fonts] general/fixed in a qt5ct/qt6ct.conf file.
@@ -782,8 +795,9 @@ class FontconfigEngine(BaseEngine):
             general = slots.get("general", "")
             size = self._qt_size_from(general)
             slots["general"] = self._qt_swap_family(general, sans) if general else self._qt_make_serial(version, sans, size)
-            fixed = slots.get("fixed", "")
-            slots["fixed"] = self._qt_swap_family(fixed, mono) if fixed else self._qt_make_serial(version, mono, size)
+            if mono:
+                fixed = slots.get("fixed", "")
+                slots["fixed"] = self._qt_swap_family(fixed, mono) if fixed else self._qt_make_serial(version, mono, size)
             self._qt_write(conf, slots)
             if not quiet:
                 print(f"[+] {conf}: general={slots['general']}")
@@ -825,7 +839,7 @@ class FontconfigEngine(BaseEngine):
                 continue
             try:
                 in_settings = False
-                for line in ini.read_text().splitlines():
+                for line in ini.read_text(encoding="utf-8").splitlines():
                     stripped = line.strip()
                     if stripped.startswith("["):
                         in_settings = stripped == "[Settings]"
@@ -842,7 +856,7 @@ class FontconfigEngine(BaseEngine):
 
     @classmethod
     def _patch_gtk_ini(cls, path: Path, entries: dict[str, str], remove_keys: set[str] | None = None) -> None:
-        content = path.read_text() if path.is_file() else ""
+        content = path.read_text(encoding="utf-8") if path.is_file() else ""
         out: list[str] = []
         replaced: set[str] = set()
         to_remove = remove_keys or set()
@@ -876,33 +890,41 @@ class FontconfigEngine(BaseEngine):
                     out.pop()
                 out.append("[Settings]")
                 out.extend(f"{k}={entries[k]}" for k in entries)
+        cls._atomic_write(path, "\n".join(out) + "\n")
+
+    @staticmethod
+    def _atomic_write(path: Path, content: str) -> None:
+        """Flush a complete UTF-8 file before atomically replacing its target."""
+        path = path.resolve()
+        try:
+            mode = path.stat().st_mode & 0o7777
+        except FileNotFoundError:
+            mode = None
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}-{threading.get_ident()}-{time.monotonic_ns()}")
         try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write("\n".join(out) + "\n")
-                f.flush()
-                os.fsync(f.fileno())
+            with tmp.open("w", encoding="utf-8") as stream:
+                if mode is not None:
+                    os.fchmod(stream.fileno(), mode)
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
             tmp.replace(path)
         finally:
-            if tmp.exists():
-                try:
-                    tmp.unlink()
-                except OSError:
-                    pass
+            tmp.unlink(missing_ok=True)
 
     @staticmethod
     def _gsettings_font_size(gs: str, key: str) -> str:
         try:
             out = subprocess.run(
                 [gs, "get", "org.gnome.desktop.interface", key],
-                capture_output=True, text=True, timeout=5,
+                check=True, capture_output=True, text=True, encoding="utf-8", timeout=5,
             )
-            val = out.stdout.strip().strip("'")
+            val = ast.literal_eval(out.stdout.strip())
             parts = val.rsplit(" ", 1)
             if len(parts) == 2 and FontconfigEngine._is_valid_size(parts[1]):
                 return parts[1]
-        except Exception:
+        except (OSError, ValueError, SyntaxError, subprocess.SubprocessError):
             pass
         return str(FontconfigEngine._DEFAULT_GTK_SIZE)
 

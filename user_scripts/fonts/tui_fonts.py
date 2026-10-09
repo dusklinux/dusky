@@ -16,6 +16,8 @@ import sys
 import os
 import shlex
 import re
+import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 # Inject Dusky TUI root into Python path for standalone execution
@@ -25,6 +27,7 @@ if str(_DUSKY_TUI_ROOT) not in sys.path:
     sys.path.insert(0, str(_DUSKY_TUI_ROOT))
 
 from python.frontend.core_types import ConfigItem
+from python.engines.fontconfig import FontconfigEngine
 
 # =============================================================================
 # 1. CORE APPLICATION ROUTING
@@ -68,9 +71,7 @@ TABS = [
 # 4. INSTALLED-FAMILY DISCOVERY (runtime, not hardcoded)
 # -----------------------------------------------------------------------------
 # Families are discovered from fontconfig and the configured archive.
-import subprocess
-
-_FAMILY_HINTS = {
+_FAMILY_HINTS = frozendict({
     "Atkinson Hyperlegible": "High legibility",
     "Liberation Sans": "Metric-compatible Arial",
     "Adwaita Sans": "GNOME default",
@@ -88,7 +89,7 @@ _FAMILY_HINTS = {
     "Symbols Nerd Font": "Nerd Font icon symbols (regular metrics)",
     "Font Awesome 7 Free": "Font Awesome icon set",
     "Font Awesome 7 Brands": "Font Awesome brand icons",
-}
+})
 
 # =============================================================================
 # # 4b. FONT ARCHIVE DIRECTORIES
@@ -129,28 +130,36 @@ def _scan_families() -> dict[str, str]:
     try:
         proc = subprocess.run(
             ["fc-list", "--format=%{family[0]}\t%{spacing}\n", ":"],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, text=True, encoding="utf-8", timeout=20,
         )
         proc.check_returncode()
+        if proc.stderr.strip():
+            raise RuntimeError(proc.stderr.strip())
         ingest(proc.stdout)
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(f"Cannot discover installed fonts: {exc}") from exc
 
-    import xml.etree.ElementTree as ET
-    root = Path(FONT_ARCHIVE_DIR).expanduser()
+    roots = [Path(FONT_ARCHIVE_DIR).expanduser()]
     config = Path(TARGET_FILE)
     if config.is_file() and config.stat().st_size:
-        configured = ET.parse(config).getroot().findtext("dir")
-        if configured:
-            root = Path(configured).expanduser()
-    if root.is_dir():
-        proc = subprocess.run(
-            ["fc-scan", "--format=%{family[0]}\t%{spacing}\n", str(root)],
-            capture_output=True, text=True, timeout=30,
-        )
-        # fc-scan returns nonzero for an empty directory; fonts it did scan
-        # remain usable. Scanning the directory avoids ARG_MAX on large archives.
-        ingest(proc.stdout)
+        roots = [directory for element in ET.parse(config).getroot().findall("dir")
+                 if (directory := FontconfigEngine.resolve_font_dir(element, config)) is not None] or roots
+    for root in dict.fromkeys(roots):
+        if not root.is_dir():
+            continue
+        try:
+            proc = subprocess.run(
+                ["fc-scan", "--format=%{family[0]}\t%{spacing}\n", str(root)],
+                capture_output=True, text=True, encoding="utf-8", timeout=30,
+            )
+            # Exit 1 means no fonts found, including an empty archive.
+            if proc.returncode not in (0, 1):
+                proc.check_returncode()
+            if proc.stderr.strip():
+                raise RuntimeError(proc.stderr.strip())
+            ingest(proc.stdout)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(f"Cannot scan font archive {root}: {exc}") from exc
 
     return meta
 
@@ -192,8 +201,7 @@ def _scan_installed_families() -> dict[str, list[str]]:
 
     Returns {bucket: [family,...]}; requires working fontconfig tools.
     """
-    buckets = _classify_families(_scan_families())
-    return buckets
+    return _classify_families(_scan_families())
 
 
 _INSTALLED = _scan_installed_families()
@@ -204,8 +212,7 @@ def _picker_options(bucket_key: str, default: str) -> tuple[list[str], list[str]
     if bucket_key in ("sans", "serif"):
         # Names cannot reliably identify serif genres. Keep every text family
         # selectable, with the suggested genre first.
-        fams += sorted({f for key in ("sans", "serif", "mono")
-                        for f in _INSTALLED[key]} - set(fams))
+        fams += sorted({*_INSTALLED[key] for key in ("sans", "serif", "mono")} - set(fams))
     available = set(fams)
     if default not in fams:
         fams.insert(0, default)
@@ -361,11 +368,11 @@ SCHEMA = {
             key="trigger_refresh",
             scope="DEFAULT",
             type_="action",
-            default="fc-cache -fv",
+            default="fc-cache --force --verbose",
             options=["trigger"],
             force_interactive=True,
             confirm_message="Are you sure you want to manually rebuild the font cache? This may take several seconds.",
-            extended_help="Executes `fc-cache -fv` to force an immediate, verbose rebuild of the system font cache, including newly added font files."
+            extended_help="Executes `fc-cache --force --verbose` to force an immediate, verbose rebuild of the system font cache, including newly added font files."
         ),
         ConfigItem(
             label="Verify Sans-Serif Resolution (fc-match)",
@@ -378,7 +385,7 @@ SCHEMA = {
             extended_help="Executes `fc-match sans-serif` to verify which exact font file fontconfig resolves for sans-serif requests."
         ),
         ConfigItem(
-            label="Verify Monospace Font Resolution (fc-match) ",
+            label="Verify Monospace Font Resolution (fc-match)",
             key="trigger_verify_mono",
             scope="DEFAULT",
             type_="action",
@@ -508,9 +515,6 @@ SCHEMA = {
 # DIRECT EXECUTION HANDLER
 # =============================================================================
 if __name__ == "__main__":
-    import sys, subprocess
-    from pathlib import Path
-
     script_path = Path(__file__).resolve()
     # Route execution to the main Dusky TUI router
     main_router = _DUSKY_TUI_ROOT / "python/main/main.py"

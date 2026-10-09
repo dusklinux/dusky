@@ -6,8 +6,6 @@ Run as the desktop user; missing required packages are installed with pacman.
 --font-family (or DUSKY_DEFAULT_SANS) overrides the sans-serif default. Missing fonts,
 cache errors, toolkit sync errors, and incorrect aliases exit nonzero.
 """
-from __future__ import annotations
-
 import argparse
 import importlib.util
 import os
@@ -22,12 +20,12 @@ SCHEMA_PATH = USER_SCRIPTS / "fonts/tui_fonts.py"
 
 # Official Arch packages required by the default font deployment. Install before
 # schema discovery or D-Bus startup so a fresh system can bootstrap both.
-FONT_PACKAGES = {
+FONT_PACKAGES = frozendict({
     "Atkinson Hyperlegible": "ttf-atkinson-hyperlegible",
     "JetBrainsMono Nerd Font Mono": "ttf-jetbrains-mono-nerd",
     "Noto Color Emoji": "noto-fonts-emoji",
     "Liberation Serif": "ttf-liberation",
-}
+})
 REQUIRED_PACKAGES = (
     "fontconfig", "glib2", "dconf", "gsettings-desktop-schemas", "dbus",
     *FONT_PACKAGES.values(),
@@ -37,7 +35,7 @@ REQUIRED_PACKAGES = (
 def ensure_packages() -> None:
     query = subprocess.run(
         ["pacman", "--query", "--quiet", "--", *REQUIRED_PACKAGES],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     if query.returncode not in (0, 1):
         raise RuntimeError(f"Cannot query installed packages: {query.stderr.strip()}")
@@ -66,7 +64,7 @@ def ensure_font_cache() -> None:
     # the engine's post-write rebuild happens too late for missing families.
     proc = subprocess.run(
         ["fc-list", "--format=%{[]family{%{family}\n}}", ":"],
-        check=True, capture_output=True, text=True, timeout=30,
+        check=True, capture_output=True, text=True, encoding="utf-8", timeout=30,
     )
     if proc.stderr.strip():
         raise RuntimeError(proc.stderr.strip())
@@ -90,7 +88,7 @@ def _load_schema():
 def resolve_match(family: str) -> set[str]:
     proc = subprocess.run(
         ["fc-match", "--format=%{[]family{%{family}\n}}", family],
-        check=True, capture_output=True, text=True, timeout=15,
+        check=True, capture_output=True, text=True, encoding="utf-8", timeout=15,
     )
     if proc.stderr.strip():
         raise RuntimeError(proc.stderr.strip())
