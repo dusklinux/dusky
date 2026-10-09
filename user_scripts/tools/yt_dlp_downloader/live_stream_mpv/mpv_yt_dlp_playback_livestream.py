@@ -974,9 +974,11 @@ end)
 def rumble_dvr_playlist(url: str, headers: dict):
     """Expose Rumble's append-only DVR as EVENT HLS; media stays on the CDN.
 
-    FFmpeg 9 rejects seeks in unfinished HLS without an EVENT declaration.
+    EVENT HLS enables seeking and exposes the retained playlist duration.
     Only the playlist is adapted, preserving live reloads and segment timestamps.
     Refuse a sliding window rather than presenting an incorrect timeline.
+    Yield the local URL and the duration of the last three segments, matching
+    FFmpeg's normal live-start delay after initializing from the first segment.
     """
     def fetch():
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=5) as response:
@@ -992,6 +994,11 @@ def rumble_dvr_playlist(url: str, headers: dict):
         segments = tuple(urljoin(base, line) for line in lines if line and not line.startswith('#'))
         if sequence not in (0, 1) or not segments:
             raise ValueError('playlist does not retain the broadcast beginning')
+        durations = [float(line.split(':', 1)[1].split(',', 1)[0]) for line in lines
+                     if line.startswith('#EXTINF:')]
+        if len(durations) != len(segments) or any(not math.isfinite(value) or value <= 0
+                                                for value in durations):
+            raise ValueError('playlist has invalid segment durations')
         output = ['#EXTM3U', '#EXT-X-PLAYLIST-TYPE:EVENT']
         for line in lines[1:]:
             if line == '#EXT-X-PLAYLIST-TYPE:EVENT':
@@ -1002,9 +1009,9 @@ def rumble_dvr_playlist(url: str, headers: dict):
                 line = re.sub(r'URI="([^"]*)"',
                               lambda match: 'URI="' + urljoin(base, match[1]) + '"', line)
             output.append(line)
-        return sequence, segments, ('\n'.join(output) + '\n').encode()
+        return sequence, segments, ('\n'.join(output) + '\n').encode(), sum(durations[-3:])
 
-    initial_sequence, initial_segments, initial_body = fetch()
+    initial_sequence, initial_segments, initial_body, live_delay = fetch()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -1016,7 +1023,7 @@ def rumble_dvr_playlist(url: str, headers: dict):
                 if initial_body is not None:
                     body, initial_body = initial_body, None
                 else:
-                    sequence, segments, body = fetch()
+                    sequence, segments, body, _ = fetch()
                     if sequence != initial_sequence or segments[:len(initial_segments)] != initial_segments:
                         raise ValueError('DVR playlist removed or replaced earlier segments')
                     initial_segments = segments
@@ -1040,7 +1047,7 @@ def rumble_dvr_playlist(url: str, headers: dict):
         worker = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.1}, daemon=True)
         worker.start()
         try:
-            yield f'http://127.0.0.1:{server.server_port}/dvr.m3u8'
+            yield f'http://127.0.0.1:{server.server_port}/dvr.m3u8', live_delay
         finally:
             server.shutdown()
             worker.join()
@@ -1670,13 +1677,14 @@ def main() -> int:
                 check_free(pool, max(args.min_free, floor_mb + 1))
 
         server_rewind = False
+        dvr_start_opt = []
         if rumble_dvr and len(tracks) == 1 and not fragmented:
             track = tracks[0]
             source = track.get("url", "")
             if urlsplit(source).path.endswith("_DVR.m3u8"):
                 headers = {**(info.get("http_headers") or {}), **(track.get("http_headers") or {})}
                 try:
-                    adapted = stack.enter_context(rumble_dvr_playlist(source, headers))
+                    adapted, live_delay = stack.enter_context(rumble_dvr_playlist(source, headers))
                 except (OSError, ValueError, http.client.HTTPException) as error:
                     print(f"NOTE: server rewind unavailable: {error}. Using normal playback.", file=sys.stderr)
                 else:
@@ -1693,6 +1701,7 @@ def main() -> int:
                         json.dump(playback_info, file)
                     raw_opts.append(f"load-info-json={replay_metadata}")
                     server_rewind = True
+                    dvr_start_opt = [f"--start=-{live_delay}"]
                     print("Rewind: the stream's earlier footage is available on the seek bar.", file=sys.stderr)
 
         if mode == "plain" and fmts and not server_rewind:
@@ -1705,6 +1714,11 @@ def main() -> int:
         if record or server_rewind:
             url_flags += ["--script-opts-append=ytdl_hook-all_formats=no",
                           f"--script-opts-append=ytdl_hook-use_manifests={'yes' if server_rewind else 'no'}"]
+        if server_rewind:
+            # Opening near live breaks EVENT rewind with FFmpeg 9.0.2. Establish
+            # the timestamp origin at segment zero, then seek to the user's
+            # start or the usual three-segment live delay.
+            url_flags.append("--demuxer-lavf-o-append=live_start_index=0")
         common = ["--no-save-position-on-quit", "--no-resume-playback", "--cache-on-disk=no"]
         player = [mpv_bin] + common + BUFFER_PRESETS[bufmode] + [f"--speed={args.speed}"]
         if info.get("is_live") and mode in ("live", "plain"):
@@ -1747,7 +1761,7 @@ def main() -> int:
                            "video": any(t.get("vcodec") != "none" for t in expected),
                            "audio": any(t.get("acodec") != "none" for t in expected),
                            "fallback": "" if server_rewind else https_fallback(info, expected)}, f)
-            cmd = (player + url_flags + start_opt
+            cmd = (player + url_flags + (start_opt or dvr_start_opt)
                    + ["--network-timeout=15", f"--scripts-append={recovery}"]
                    + extra_player + ["--", url])
             show(cmd)
@@ -1779,7 +1793,7 @@ def main() -> int:
             if server_rewind:
                 base_cmd.append("--script-opts-append=travel-server_seek=yes")
             base_cmd += extra_player
-            open_start = start_opt
+            open_start = start_opt or dvr_start_opt
             state_path = os.path.join(session, "position.json")
             print("Travel: Ctrl+Left/Right = ±60s; Shift+Left/Right = ±10min. "
                   "Uses your buffer or the stream’s rewind timeline; reopens only when needed.", file=sys.stderr)
@@ -1822,10 +1836,10 @@ def main() -> int:
                     return rc
                 if not isinstance(position, (int, float)) or not math.isfinite(position):
                     print("WARNING: playback position unavailable; reopening at the live edge.", file=sys.stderr)
-                    open_start = []
+                    open_start = dvr_start_opt
                 else:
                     target = max(0, position + TRAVEL_DELTAS[rc])
-                    open_start = [] if edge and target >= edge - 5 else [f"--start={target}"]
+                    open_start = dvr_start_opt if edge and target >= edge - 5 else [f"--start={target}"]
                 for key in ("speed", "mute", "fullscreen"):
                     if key in state:
                         value = state[key]

@@ -563,6 +563,8 @@ class ServerDVR(unittest.TestCase):
         with patch.object(player.urllib.request, 'urlopen', side_effect=fetch), \
                 contextlib.redirect_stderr(io.StringIO()), \
                 player.rumble_dvr_playlist(url, {'Referer': 'test'}) as adapted:
+            adapted, live_delay = adapted
+            self.assertEqual(live_delay, 2)
             with urlopen(adapted, timeout=3) as response:
                 body = response.read().decode()
             self.assertIn('#EXT-X-PLAYLIST-TYPE:EVENT', body)
@@ -593,7 +595,7 @@ class ServerDVR(unittest.TestCase):
                     patch.object(player, 'run_yt_dlp_json', return_value=info), \
                     patch.object(player.subprocess, 'run', return_value=Mock(returncode=0, stdout=json.dumps(info))), \
                     patch.object(player, 'rumble_dvr_playlist',
-                                 return_value=contextlib.nullcontext('http://127.0.0.1:1234/dvr.m3u8')) as adapt, \
+                                 return_value=contextlib.nullcontext(('http://127.0.0.1:1234/dvr.m3u8', 6.0))) as adapt, \
                     patch.object(player.json, 'dump', wraps=json.dump) as dump, \
                     patch.dict(os.environ, {}, clear=True), \
                     contextlib.redirect_stderr(io.StringIO()) as diagnostics:
@@ -604,9 +606,16 @@ class ServerDVR(unittest.TestCase):
                 self.assertEqual(metadata['url'], 'http://127.0.0.1:1234/dvr.m3u8')
                 self.assertEqual(metadata['manifest_url'], metadata['url'])
                 self.assertIn('ytdl_hook-use_manifests=yes', diagnostics.getvalue())
+                self.assertIn('--demuxer-lavf-o-append=live_start_index=0', diagnostics.getvalue())
+                self.assertIn('--start=-6.0', diagnostics.getvalue())
                 self.assertNotIn('requested_downloads', metadata)
                 self.assertIn('load-info-json=', diagnostics.getvalue())
                 self.assertEqual('travel-server_seek=yes' in diagnostics.getvalue(), mode == 'live')
+                with patch.object(player.sys, 'argv', player.sys.argv + ['--start', '30']), \
+                        contextlib.redirect_stderr(io.StringIO()) as explicit:
+                    self.assertEqual(player.main(), 0)
+                self.assertIn('--start=30', explicit.getvalue())
+                self.assertNotIn('--start=-6.0', explicit.getvalue())
 
     def test_real_mpv_server_rewind_outside_local_cache(self):
         with tempfile.TemporaryDirectory(dir='/dev/shm') as directory:
@@ -684,21 +693,62 @@ end)
                 before = original.stdout + original.stderr
                 self.assertIn('Not seekable, but enabling seeking', before)
                 self.assertNotIn('AFTER_SEEK 10', before)
-                with player.rumble_dvr_playlist(source, {}) as adapted:
-                    # Establish the synthetic MPEG-TS timestamp origin at segment 0.
-                    # The harness then jumps to 114s before rewinding outside the cache.
-                    fixed = subprocess.run(command + ['--demuxer-lavf-o=live_start_index=0',
+                # Exercise the launcher settings: initialize the origin, start
+                # near live, then rewind beyond the small local cache.
+                harness.write_text(harness.read_text().replace(
+                    "    mp.commandv('seek', '114', 'absolute+exact')\n", ''))
+                with player.rumble_dvr_playlist(source, {}) as (adapted, live_delay):
+                    fixed = subprocess.run(command + ['--demuxer-lavf-o-append=live_start_index=0',
+                                                       f'--start=-{live_delay}',
                                                        f'--scripts-append={travel}',
                                                        '--script-opts-append=travel-server_seek=yes', adapted],
                                            capture_output=True, text=True, timeout=15)
                 after = fixed.stdout + fixed.stderr
                 self.assertEqual(fixed.returncode, 0, after)
-                self.assertRegex(after, r'EDGE 11[34]')
+                edge = float(player.re.search(r'EDGE ([0-9.]+)', after)[1])
                 window = float(player.re.search(r'WINDOW ([0-9.]+)', after)[1])
                 self.assertGreaterEqual(window, 120)
-                self.assertRegex(after, r'SERVER_KEY 5[34]')
+                self.assertAlmostEqual(edge, window - live_delay, delta=1)
+                key_position = float(player.re.search(r'SERVER_KEY ([0-9.]+)', after)[1])
+                self.assertAlmostEqual(key_position, edge - 60, delta=1)
                 self.assertIn('AFTER_SEEK 10', after)
                 self.assertRegex(after, r'SERVER_DATA 1[0-9]\.', after + str(requests))
+
+                # Run the actual launcher and yt-dlp hook too, not just a hand
+                # assembled mpv command. Only site extraction is substituted.
+                info = {'id': 'test', 'title': 'DVR test', 'extractor_key': 'RumbleEmbed',
+                        'is_live': True, 'live_status': 'is_live', 'webpage_url': source,
+                        'formats': [{'format_id': 'hls-2', 'url': source, 'ext': 'mp4',
+                                     'protocol': 'm3u8_native', 'vcodec': 'h264', 'acodec': 'aac'}]}
+                real_popen = subprocess.Popen
+                for mode in ('plain', 'live'):
+                    with self.subTest(launcher_mode=mode), tempfile.TemporaryFile(mode='w+') as log:
+                        def launch(cmd, **kwargs):
+                            if Path(cmd[0]).name == 'mpv':
+                                kwargs.update(stdout=log, stderr=log)
+                            return real_popen(cmd, **kwargs)
+
+                        extra = ['--no-config', '--vo=null', '--ao=null', '--pause',
+                                 '--input-terminal=no', '--demuxer-max-bytes=1M',
+                                 '--demuxer-max-back-bytes=1M', f'--scripts-append={harness}']
+                        if mode == 'plain':
+                            extra += [f'--scripts-append={travel}', '--script-opts-append=travel-server_seek=yes']
+                        with patch.object(player.sys, 'argv', ['vid', source, '--mode', mode,
+                                                               '-f', 'best', '--buffer', 'near',
+                                                               '--player-args', player.shlex.join(extra)]), \
+                                patch.object(player, 'load_config', return_value={}), \
+                                patch.object(player, '_cfg_dir', return_value=str(root / 'prefs')), \
+                                patch.object(player, 'HISTORY_FILE', str(root / 'prefs/history.toml')), \
+                                patch.object(player, 'pick_tmpfs', return_value=directory), \
+                                patch.object(player, 'run_yt_dlp_json', return_value=info), \
+                                patch.object(player.subprocess, 'Popen', side_effect=launch), \
+                                patch.dict(os.environ, {}, clear=True), \
+                                contextlib.redirect_stderr(io.StringIO()):
+                            self.assertEqual(player.main(), 0)
+                        log.seek(0)
+                        output = log.read()
+                        self.assertIn('AFTER_SEEK 10', output)
+                        self.assertRegex(output, r'SERVER_DATA 1[0-9]\.', output)
 
 
 if __name__ == '__main__':
