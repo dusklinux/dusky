@@ -1,15 +1,11 @@
 # =============================================================================
-# Dusky Command Atlas v4.1 — zero-fork environment ledger + fzf router
+# Dusky Command Atlas — builtin environment ledger + fzf router
 #
 #   atlas | cmd_atlas   interactive fuzzy index of the live shell environment
 #   The selection is injected into the ZLE buffer with `print -z`.
 #
-#   Requires zsh 5.9+ and fzf >= 0.61
-#     --ghost        fzf 0.61.0
-#     --accept-nth   fzf 0.60.0
-#     --style/--list-border/--input-border  fzf 0.58.0
-#
-#   Forks: 1 (fzf) + 1 once per session (version probe, memoised).
+#   Requires zsh 5.9+ and the ISO baseline of fzf >= 0.74.4.
+#   External commands: one fzf invocation per selection.
 #   Locale: untouched — fzf needs the user's UTF-8 LC_CTYPE to measure the
 #   widths of │, ❯, ✔ and the Nerd-Font label glyph correctly.
 #
@@ -18,9 +14,6 @@
 #   `+=` below means a re-source never destroys sibling registrations.
 # =============================================================================
 
-zmodload zsh/parameter 2>/dev/null
-
-typeset -g  DUSKY_ATLAS_MIN_FZF=${DUSKY_ATLAS_MIN_FZF:-0.61.0}
 typeset -gA ZSH_DOCS
 
 ZSH_DOCS+=(
@@ -87,47 +80,24 @@ ZSH_DOCS+=(
 )
 
 # -----------------------------------------------------------------------------
-# fzf capability gate — exactly one fork per shell session, then memoised.
-# -----------------------------------------------------------------------------
-_atlas_fzf_ok() {
-    emulate -L zsh
-    local v
-
-    if (( ! $+commands[fzf] )); then
-        print -ru2 -- 'atlas: fzf is not installed  (pacman -S fzf)'
-        return 1
-    fi
-    if [[ -z ${_DUSKY_FZF_VERSION-} ]]; then
-        v=$(fzf --version 2>/dev/null)
-        v=${v%% *}
-        typeset -g _DUSKY_FZF_VERSION=${v:-0}
-    fi
-    (( $+functions[is-at-least] )) || autoload -Uz is-at-least
-    if ! is-at-least $DUSKY_ATLAS_MIN_FZF $_DUSKY_FZF_VERSION; then
-        print -ru2 -- "atlas: fzf $_DUSKY_FZF_VERSION is too old — need >= $DUSKY_ATLAS_MIN_FZF (--ghost, --accept-nth)"
-        return 1
-    fi
-    return 0
-}
-
-# -----------------------------------------------------------------------------
 # The atlas
 # -----------------------------------------------------------------------------
-cmd_atlas() {
+function cmd_atlas() {
     emulate -L zsh
-    setopt localoptions extendedglob no_nomatch
+    setopt extendedglob
 
-    zmodload zsh/parameter 2>/dev/null
-    if (( ! $+aliases )); then
+    if ! zmodload zsh/parameter 2>/dev/null; then
         print -ru2 -- 'atlas: zsh/parameter is unavailable — cannot enumerate the environment.'
         return 1
     fi
-    _atlas_fzf_ok || return 1
+    if (( ! $+commands[fzf] )); then
+        print -ru2 -- 'atlas: fzf is not installed (pacman -S fzf)'
+        return 1
+    fi
 
-    local -A kind
-    local -a anames gnames snames fnames rows opts
-    local name desc k choice header
-    local -i pad=7 hpad=0 rc=0
+    local -a names kinds rows opts
+    local name display desc k choice header
+    local -i i width pad=7 hpad=0 rc=0
     local TAB=$'\t' R=$'\e[0m' DIM=$'\e[38;5;242m' BOLD=$'\e[1;37m' TXT=$'\e[38;5;250m'
     local -A col=(
         'Alias' $'\e[38;5;114m'
@@ -139,42 +109,49 @@ cmd_atlas() {
     # --- ledger: aliases are STRICT (documented entries only) -----------------
     for name in "${(@ok)aliases}"; do
         [[ -n ${ZSH_DOCS[$name]+x} ]] || continue
-        anames+=( "$name" ); kind[$name]='Alias'
+        names+=( "$name" ); kinds+=( 'Alias' )
     done
     for name in "${(@ok)galiases}"; do
         [[ -n ${ZSH_DOCS[$name]+x} ]] || continue
-        gnames+=( "$name" ); kind[$name]='Glob '
+        names+=( "$name" ); kinds+=( 'Glob ' )
     done
     for name in "${(@ok)saliases}"; do
         [[ -n ${ZSH_DOCS[$name]+x} ]] || continue
-        snames+=( "$name" ); kind[$name]='Sufx '
+        names+=( "$name" ); kinds+=( 'Sufx ' )
     done
 
     # --- ledger: functions, documented OR public ------------------------------
     for name in "${(@ok)functions}"; do
         if [[ -z ${ZSH_DOCS[$name]+x} ]]; then
             [[ $name == [_.+]* ]] && continue
-            [[ $name == (*:zle-*|*zle-*|*-widget|TRAP*|*precmd*|*preexec*|azhw:*|prompt_*|comp*) ]] && continue
-            [[ $name == (chpwd|periodic|zshaddhistory|zshexit|is-at-least|add-zsh-hook|edit-command-line) ]] && continue
+            [[ $name == (*:zle-*|*zle-*|*-widget|TRAP*|*precmd*|*preexec*|azhw:*|prompt_*) ]] && continue
+            [[ $name == (chpwd|periodic|zshaddhistory|zshexit|is-at-least|add-zsh-hook|edit-command-line|compaudit|compdef|compdump|compinit|compinstall) ]] && continue
         fi
-        fnames+=( "$name" ); kind[$name]='Func '
+        names+=( "$name" ); kinds+=( 'Func ' )
     done
 
-    if (( ! $#kind )); then
+    if (( ! $#names )); then
         print -ru2 -- 'atlas: nothing to display (ZSH_DOCS is empty and no public functions exist).'
         return 1
     fi
 
-    for name in "${(@k)kind}"; do (( $#name > pad )) && pad=$#name; done
-    (( pad > 35 )) && pad=35
+    for name in "${names[@]}"; do
+        display=${(V)name}
+        width=${(m)#display}
+        (( width > pad )) && pad=$width
+    done
     (( hpad = pad - 7 ))
 
-    # --- rows: "RAW<TAB>VISUAL"; TAB cannot occur inside a command word -------
-    for name in "${anames[@]}" "${gnames[@]}" "${snames[@]}" "${fnames[@]}"; do
-        k=${kind[$name]}
+    # Numeric identities keep names independent of fzf field/line parsing.
+    # Preserve each category when an alias and function share a name.
+    for (( i=1; i <= $#names; ++i )); do
+        name=$names[i]
+        display=${(V)name}
+        k=$kinds[i]
         desc=${ZSH_DOCS[$name]:-'— no description registered —'}
         desc=${desc//[$'\t\n\r']/ }
-        rows+=( "${name}${TAB}${DIM}[${R}${col[$k]}${k}${R}${DIM}]${R}  ${BOLD}${(r:pad:)${name[1,pad]}}${R}  ${DIM}│${R}  ${TXT}${desc}${R}" )
+        desc=${(V)desc}
+        rows+=( "${i}${TAB}${DIM}[${R}${col[$k]}${k}${R}${DIM}]${R}  ${BOLD}${(mr:pad:)display}${R}  ${DIM}│${R}  ${TXT}${desc}${R}" )
     done
 
     header="   TYPE  COMMAND${(l:hpad:):-}  │  DESCRIPTION"
@@ -201,18 +178,36 @@ cmd_atlas() {
         --color="${DUSKY_FZF_COLORS:-bg+:#1e1e2e,bg:#11111b,fg:#cdd6f4}"
     )
 
-    # print -rl : raw, so a description can never be escape-processed.
-    choice=$(print -rl -- "${rows[@]}" | fzf "${opts[@]}")
+    # This picker owns its output protocol; global fzf defaults may enable
+    # --multi, --print-query, --expect, or a different record separator.
+    choice=$(print -rl -- "${rows[@]}" |
+        FZF_DEFAULT_OPTS= FZF_DEFAULT_OPTS_FILE= command fzf "${opts[@]}")
     rc=$?
     case $rc in
         0)      ;;
         1|130)  return 0 ;;                       # no match / aborted
-        *)      print -ru2 -- "atlas: fzf exited $rc (this module needs fzf >= $DUSKY_ATLAS_MIN_FZF)"
+        *)      print -ru2 -- "atlas: fzf exited $rc"
                 return $rc ;;
     esac
 
-    [[ -n $choice ]] && print -rz -- "$choice"
-    return 0
+    if [[ $choice != <1-> ]] || (( choice > $#names )); then
+        print -ru2 -- 'atlas: fzf returned an invalid selection.'
+        return 1
+    fi
+    name=$names[choice]
+    if [[ $kinds[choice] == 'Func ' ]]; then
+        # Functions need one literal command word. Quote alias collisions and
+        # reserved words too, so the selected function actually gets invoked.
+        if (( $+aliases[$name] || $+galiases[$name] || ${reswords[(Ie)$name]} )); then
+            choice=${(qq)name}
+        else
+            choice=${(q)name}
+        fi
+    else
+        # Quoting an alias token would suppress its expansion.
+        choice=$name
+    fi
+    print -rz -- "$choice"
 }
 
 alias atlas='cmd_atlas'
