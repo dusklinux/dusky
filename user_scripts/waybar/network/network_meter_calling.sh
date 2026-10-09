@@ -23,12 +23,11 @@ case "$ARG" in
     --horizontal|horizontal|*) FLAG="horizontal" ;;
 esac
 
-for _b in stat mkdir; do
-    if [[ -f "/usr/lib/bash/$_b" ]]; then
-        enable -f "/usr/lib/bash/$_b" "$_b" 2>/dev/null || true
-    fi
-done
-unset _b
+# Keep the fast stat builtin. The loadable mkdir tries to chmod existing
+# ancestors with -p (including /run), so use GNU mkdir for directory creation.
+if [[ -f /usr/lib/bash/stat ]]; then
+    enable -f /usr/lib/bash/stat stat 2>/dev/null || true
+fi
 
 [[ -d "$STATE_DIR" ]] || command mkdir -p "$STATE_DIR" 2>/dev/null
 : > "$HEARTBEAT_FILE" 2>/dev/null
@@ -45,7 +44,7 @@ if [[ -f "$CACHE_FILE" && -f "$STATE_FILE" ]] && ! [[ "$STATE_FILE" -nt "$CACHE_
         (( now - c_mtime <= 1 )) && cache_fresh=1
     fi
     if (( cache_fresh == 1 )); then
-        if read -r -d '' _cached < "$CACHE_FILE" 2>/dev/null; then
+        if IFS= read -r _cached < "$CACHE_FILE" 2>/dev/null; then
             printf '%s\n' "$_cached"
             exit 0
         fi
@@ -204,5 +203,8 @@ case "$FLAG" in
 esac
 OUT=$(printf '{"text":"%s","class":"%s","tooltip":"%s"}\n' "$TEXT" "$CLASS" "$TT")
 [[ -d "$CACHE_DIR" ]] || command mkdir -p "$CACHE_DIR" 2>/dev/null
-printf '%s\n' "$OUT" > "$CACHE_FILE.tmp" 2>/dev/null && mv -f "$CACHE_FILE.tmp" "$CACHE_FILE" 2>/dev/null || true
+CACHE_TMP="$CACHE_FILE.$BASHPID.tmp"
+if ! { printf '%s\n' "$OUT" > "$CACHE_TMP" && mv -fT -- "$CACHE_TMP" "$CACHE_FILE"; } 2>/dev/null; then
+    rm -f -- "$CACHE_TMP" 2>/dev/null || true
+fi
 printf '%s\n' "$OUT"
