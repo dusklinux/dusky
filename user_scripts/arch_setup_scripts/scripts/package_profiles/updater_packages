@@ -34,6 +34,7 @@ python-evdev
 python-pyudev
 python-textual
 python-pillow
+python-opengl
 papirus-icon-theme
 ufw
 wayvnc
