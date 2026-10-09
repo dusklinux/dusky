@@ -1,24 +1,14 @@
 #!/usr/bin/env python3
-"""
-Convert a regular directory into an isolated top-level Btrfs subvolume (subvolid=5),
-or UNDO the conversion to return it back to a normal directory inside /home.
+"""Convert directories to independently mounted, top-level Btrfs subvolumes.
 
-Borrowing battle-tested safety logic from Dusky Snapshot Manager (v3.2.0) and
-snapper setup script (137):
-  * Process/host-wide exclusive locking via fcntl.flock (/run/dusky/dusky.lock)
-  * Signal-blocked critical section across activation and directory swap
-  * Private subvolid=5 mount with rprivate propagation and UUID/subvolid verification
-  * Data migration using cp -a (preserves mode, ownership, timestamps, symlinks, xattrs)
-  * Durable /etc/fstab write (write -> fsync -> replace -> fsync dir) & findmnt --verify
-  * Live mount verification using kernel subvolume query and findmnt
-  * Full atomic unwind / rollback if any step fails
+Stop applications writing to the target before conversion or undo. Copying is
+not a snapshot: open file descriptors and concurrent writers cannot be migrated.
+The shared Dusky lock serializes cooperating filesystem operations only.
+Handled failures restore the directory and fstab; failed rollback retains recovery
+copies. SIGKILL and power loss require manual recovery from those copies.
 """
-
-from __future__ import annotations
 
 import argparse
-import ctypes
-import ctypes.util
 import fcntl
 import json
 import os
@@ -30,16 +20,16 @@ import subprocess
 import sys
 import tempfile
 import time
-from contextlib import ExitStack, contextmanager, suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Iterator
 
-DUSKY_VERSION = "3.2.0-converter"
 BTRFS_FS_TREE_OBJECTID = 5
 
 RUN_DIR = Path("/run/dusky")
 MNT_ROOT = RUN_DIR / "mnt"
 LOCK_PATH = RUN_DIR / "dusky.lock"
+FSTAB_PATH = Path("/etc/fstab")
 
 SAFE_NAME_RE = re.compile(r"\A@[A-Za-z0-9_.-]{1,180}\Z")
 MOUNT_DIR_RE = re.compile(r"\Atop_(?P<pid>\d+)_(?P<tag>[A-Za-z0-9_]+)\Z")
@@ -50,13 +40,12 @@ TRANSIENT_PATTERNS = ("_to_delete_", "_dusky_new_", ".tmp_send_", ".dusky_probe_
 PROTECTED_SUBVOLUMES = {"@", "@home", "@snapshots", "@home_snapshots", "@var_log", "@var_cache", "@var_tmp", "@swap"}
 
 _ENV_PASSTHROUGH = ("TERM", "TERMINFO", "COLORTERM", "TZ")
-SUBPROCESS_ENV = {
+SUBPROCESS_ENV = frozendict({
     **{k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ},
     "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
     "LC_ALL": "C.UTF-8",
     "LANG": "C.UTF-8",
-    "HOME": "/root",
-}
+})
 
 
 class ConversionError(RuntimeError):
@@ -88,13 +77,13 @@ def run(*argv: str, check: bool = True, timeout: float | None = 300.0) -> subpro
             capture_output=True,
             text=True,
             encoding="utf-8",
-            errors="replace",
+            errors="surrogateescape",
             env=SUBPROCESS_ENV,
             timeout=timeout,
             check=False,
         )
-    except FileNotFoundError as exc:
-        raise ConversionError(f"Missing executable: {cmd[0]} ({exc})") from exc
+    except OSError as exc:
+        raise ConversionError(f"Could not execute {cmd[0]} ({exc})") from exc
     except subprocess.TimeoutExpired as exc:
         raise ConversionError(f"Timed out after {timeout}s: {shlex.join(cmd)}") from exc
 
@@ -141,7 +130,7 @@ def dusky_lock(*, wait: bool = True) -> Iterator[None]:
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+        except BlockingIOError:
             if not wait:
                 die("Another Dusky operation holds the lock. Refusing to queue.")
             holder = ""
@@ -177,27 +166,30 @@ def critical_section() -> Iterator[None]:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
-def fsync_path(path: Path, *, is_dir: bool = False) -> None:
-    flags = os.O_RDONLY | os.O_CLOEXEC | (os.O_DIRECTORY if is_dir else 0)
-    with suppress(OSError):
-        fd = os.open(path, flags)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-
-
-def write_file_durable(path: Path, content: str, mode: int = 0o644) -> None:
-    tmp = path.with_name(f".{path.name}.dusky-tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, mode)
+def fsync_path(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     try:
-        os.write(fd, content.encode("utf-8"))
         os.fsync(fd)
     finally:
         os.close(fd)
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
-    fsync_path(path.parent, is_dir=True)
+
+
+def write_file_durable(path: Path, content: bytes) -> None:
+    """Replace a file atomically, preserving its owner and permission bits."""
+    original = path.stat()
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.dusky-", dir=path.parent)
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            os.fchown(stream.fileno(), original.st_uid, original.st_gid)
+            os.fchmod(stream.fileno(), original.st_mode & 0o7777)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+        fsync_path(path.parent)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 # =============================================================================
@@ -216,32 +208,22 @@ def _pid_alive(pid: int) -> bool:
 
 
 def is_mountpoint(path: Path) -> bool:
-    return run("mountpoint", "-q", "--", str(path), check=False).returncode == 0
+    proc = run("mountpoint", "--quiet", "--", str(path), check=False)
+    if proc.returncode not in (0, 32):
+        raise ConversionError(f"Cannot inspect mountpoint {path}: {proc.stderr.strip()}")
+    return proc.returncode == 0
 
 
 def path_is_subvolume(path: Path) -> bool:
     return run("btrfs", "subvolume", "show", "--", str(path), check=False).returncode == 0
 
 
-def get_subvolume_id(path: Path) -> int | None:
-    proc = run("btrfs", "subvolume", "show", "--", str(path), check=False)
-    if proc.returncode != 0:
-        return None
-    match = re.search(r"Subvolume ID:\s+(\d+)", proc.stdout)
-    return int(match.group(1)) if match else None
-
-
-def get_subvolume_name_from_mount(path: Path) -> str | None:
-    proc = run("btrfs", "subvolume", "show", "--", str(path), check=False)
-    if proc.returncode != 0:
-        return None
-    lines = proc.stdout.splitlines()
-    if lines:
-        name = lines[0].strip()
-        if name and not name.startswith("Subvolume"):
-            return name.strip("/")
-    match = re.search(r"^\s*Name:\s+(.+)$", proc.stdout, re.MULTILINE)
-    return match.group(1).strip() if match else None
+def get_subvolume_id(path: Path) -> int:
+    value = run("btrfs", "inspect-internal", "rootid", "--", str(path)).stdout.strip()
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ConversionError(f"Invalid subvolume ID for {path}: {value!r}") from exc
 
 
 def sweep_stale_mounts() -> None:
@@ -254,8 +236,9 @@ def sweep_stale_mounts() -> None:
         if _pid_alive(int(match.group("pid"))):
             continue
         if is_mountpoint(child):
-            if run("umount", "--", str(child), check=False).returncode != 0:
-                run("umount", "--lazy", "--", str(child), check=False)
+            if run("umount", "--", str(child), check=False, timeout=None).returncode != 0:
+                warn(f"Stale mount remains busy: {child}")
+                continue
         with suppress(OSError):
             child.rmdir()
 
@@ -264,387 +247,415 @@ def _ensure_private_mnt_root() -> None:
     MNT_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(MNT_ROOT, 0o700)
     if not is_mountpoint(MNT_ROOT):
-        run("mount", "--bind", str(MNT_ROOT), str(MNT_ROOT))
-    run("mount", "--make-rprivate", str(MNT_ROOT))
+        run("mount", "--bind", str(MNT_ROOT), str(MNT_ROOT), timeout=None)
+    run("mount", "--make-rprivate", str(MNT_ROOT), timeout=None)
 
 
 @contextmanager
-def top_level(fs_uuid: str) -> Iterator[Path]:
-    if not UUID_RE.match(fs_uuid):
-        die(f"Refusing to mount malformed filesystem UUID {fs_uuid!r}.")
+def top_level(fs_uuid: str, base_opts: str = "") -> Iterator[Path]:
+    if not UUID_RE.fullmatch(fs_uuid):
+        raise ConversionError(f"Malformed filesystem UUID {fs_uuid!r}.")
 
     _ensure_private_mnt_root()
     sweep_stale_mounts()
 
     mnt = Path(tempfile.mkdtemp(prefix=f"top_{os.getpid()}_", dir=str(MNT_ROOT)))
     opts = "subvolid=5,nodev,nosuid,noexec,noatime"
+    if "degraded" in base_opts.split(","):
+        opts += ",degraded"
     src = f"UUID={fs_uuid}"
 
-    mounted = run("mount", "-t", "btrfs", "-o", opts, src, str(mnt), check=False, timeout=60.0)
-    if mounted.returncode != 0:
-        with suppress(OSError):
-            mnt.rmdir()
-        die(f"Failed to mount subvolid=5 for UUID={fs_uuid}:\n    {mounted.stderr}")
-
     try:
+        run("mount", "--types", "btrfs", "--options", opts, "--", src, str(mnt), timeout=None)
         seen_uuid = get_mount_info(mnt).get("uuid", "")
-        if seen_uuid and seen_uuid != fs_uuid:
-            die(f"REFUSING TO CONTINUE: mounted UUID={seen_uuid} but expected UUID={fs_uuid}.")
+        if seen_uuid.lower() != fs_uuid.lower():
+            raise ConversionError(f"Mounted UUID={seen_uuid}, expected UUID={fs_uuid}.")
         sid = get_subvolume_id(mnt)
         if sid != BTRFS_FS_TREE_OBJECTID:
-            die(f"{mnt} reports subvolume id {sid}, not 5. Refusing to operate.")
+            raise ConversionError(f"{mnt} reports subvolume id {sid}, expected 5.")
         yield mnt
     finally:
-        detached = False
-        for attempt in range(5):
-            if run("umount", "--", str(mnt), check=False).returncode == 0:
-                detached = True
-                break
-            time.sleep(0.2 * (attempt + 1))
-        if not detached:
-            run("umount", "--lazy", "--", str(mnt), check=False)
-        with suppress(OSError):
-            mnt.rmdir()
+        with critical_section():
+            try:
+                if is_mountpoint(mnt):
+                    for attempt in range(5):
+                        if run("umount", "--", str(mnt), check=False, timeout=None).returncode == 0:
+                            break
+                        time.sleep(0.2 * (attempt + 1))
+                    else:
+                        warn(f"Temporary mount remains busy; unmount it manually: {mnt}")
+                mnt.rmdir()
+            except (OSError, ConversionError) as exc:
+                warn(f"Temporary mount cleanup incomplete at {mnt}: {exc}")
+
+
+def mount_records(*args: str) -> list[dict[str, str]]:
+    proc = run("findmnt", "--json", "--list", "--output",
+               "TARGET,FSTYPE,OPTIONS,UUID,FSROOT", *args)
+    try:
+        records = json.loads(proc.stdout)["filesystems"]
+        if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
+            raise ValueError("invalid filesystem records")
+        return [{k: str(v or "") for k, v in record.items()} for record in records]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ConversionError("Could not parse findmnt output") from exc
 
 
 def get_mount_info(target: Path) -> dict[str, str]:
-    proc = run("findmnt", "-T", str(target), "--json", "-o", "SOURCE,TARGET,FSTYPE,OPTIONS,UUID", check=False)
-    if proc.returncode != 0 or not proc.stdout:
-        return {}
-    try:
-        data = json.loads(proc.stdout)
-        filesystems = data.get("filesystems", [])
-        if not filesystems:
-            return {}
-        fs = filesystems[-1]
-        return {
-            "source": str(fs.get("source") or ""),
-            "target": str(fs.get("target") or ""),
-            "fstype": str(fs.get("fstype") or ""),
-            "options": str(fs.get("options") or ""),
-            "uuid": str(fs.get("uuid") or ""),
-        }
-    except (json.JSONDecodeError, KeyError, IndexError):
-        return {}
+    records = mount_records("--target", str(target))
+    if len(records) != 1:
+        raise ConversionError(f"Expected one filesystem for {target}, got {len(records)}")
+    return records[0]
 
 
 def clean_mount_opts(opts: str) -> str:
-    parts = opts.split(",")
-    kept = []
-    for opt in parts:
-        opt_str = opt.strip()
-        if opt_str.startswith(("subvol=", "subvolid=", "ro")):
-            continue
-        if opt_str:
-            kept.append(opt_str)
-    return ",".join(kept)
+    return ",".join(opt for part in opts.split(",")
+                    if (opt := part.strip()) and opt not in {"ro", "rw"}
+                    and not opt.startswith(("subvol=", "subvolid=")))
 
 
 def derive_subvol_name(target_path: Path) -> str:
-    clean_parts = [p for p in target_path.parts if p not in ("/", "\\")]
-    subvol_name = "@" + "_".join(clean_parts)
-    if not SAFE_NAME_RE.fullmatch(subvol_name):
-        subvol_name = "@" + re.sub(r"[^A-Za-z0-9_.-]", "_", "_".join(clean_parts))
-    return subvol_name
+    return "@" + re.sub(r"[^A-Za-z0-9_.-]", "_", "_".join(target_path.parts[1:]))
 
 
-def datetime_stamp() -> str:
-    return time.strftime("%Y%m%d_%H%M%S")
+def fstab_escape(value: str) -> str:
+    return (value.replace("\\", r"\134").replace(" ", r"\040")
+            .replace("\t", r"\011").replace("\n", r"\012"))
 
 
-def update_fstab_add(fs_uuid: str, mountpoint: Path, subvol_name: str, base_opts: str) -> None:
-    fstab_path = Path("/etc/fstab")
-    cleaned_opts = clean_mount_opts(base_opts)
-    if cleaned_opts:
-        cleaned_opts += ","
-    mount_opts = f"{cleaned_opts}subvol=/{subvol_name.lstrip('/')}"
-    canonical_target = str(mountpoint.resolve())
+def fstab_unescape(value: str) -> str:
+    return re.sub(r"\\(040|011|012|134)", lambda m: chr(int(m[1], 8)), value)
 
-    newline = f"UUID={fs_uuid} {canonical_target} btrfs {mount_opts} 0 0"
 
-    content = fstab_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    new_lines = []
-    replaced = False
-
-    for line in content:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            new_lines.append(line)
-            continue
-        parts = stripped.split()
-        if len(parts) >= 2:
-            mp = parts[1].rstrip("/") or "/"
-            if mp == canonical_target:
-                if not replaced:
-                    new_lines.append(newline)
-                    replaced = True
+def fstab_content(original: bytes, target: Path, entry: str | None) -> bytes:
+    lines = []
+    inserted = False
+    # fstab separates fields with ASCII spaces/tabs; Unicode filename characters
+    # and unrelated lines must survive an add/remove cycle unchanged.
+    for raw_line in original.splitlines(keepends=True):
+        line = raw_line.decode("utf-8", errors="surrogateescape")
+        fields = re.split(r"[ \t]+", line.strip(" \t\r\n"))
+        if not line.lstrip(" \t").startswith("#") and len(fields) >= 2:
+            mount_target = fstab_unescape(fields[1]).rstrip("/") or "/"
+            # Insert a new parent before child entries, as mount -a uses file order.
+            if (entry is not None and not inserted
+                    and (mount_target == str(target) or mount_target.startswith(f"{target}/"))):
+                lines.append(entry + "\n")
+                inserted = True
+            if mount_target == str(target):
                 continue
-        new_lines.append(line)
-
-    if not replaced:
-        new_lines.append(newline)
-
-    full_text = "\n".join(new_lines) + "\n"
-
-    tmp_fstab = fstab_path.with_name(".fstab.dusky-tmp")
-    tmp_fstab.write_text(full_text, encoding="utf-8")
-    os.chmod(tmp_fstab, 0o644)
-
-    val_proc = run("findmnt", "--verify", "--tab-file", str(tmp_fstab), check=False)
-    tmp_fstab.unlink(missing_ok=True)
-    if val_proc.returncode != 0:
-        raise ConversionError(f"Generated fstab failed findmnt validation:\n{val_proc.stderr}")
-
-    stamp = datetime_stamp()
-    backup_fstab = fstab_path.with_name(f"fstab.bak.{stamp}")
-    shutil.copy2(fstab_path, backup_fstab)
-
-    write_file_durable(fstab_path, full_text, 0o644)
-    run("systemctl", "daemon-reload")
-    info(f"Updated /etc/fstab for {canonical_target}")
+        lines.append(line)
+    content = "".join(lines)
+    if entry is not None and not inserted:
+        if content and not content.endswith("\n"):
+            content += "\n"
+        content += entry + "\n"
+    return content.encode("utf-8", errors="surrogateescape")
 
 
-def update_fstab_remove(mountpoint: Path) -> None:
-    fstab_path = Path("/etc/fstab")
-    canonical_target = str(mountpoint.resolve())
-
-    content = fstab_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    new_lines = []
-    removed = False
-
-    for line in content:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            new_lines.append(line)
-            continue
-        parts = stripped.split()
-        if len(parts) >= 2:
-            mp = parts[1].rstrip("/") or "/"
-            if mp == canonical_target:
-                removed = True
-                continue
-        new_lines.append(line)
-
-    if not removed:
+@contextmanager
+def fstab_transaction(target: Path, entry: str | None) -> Iterator[None]:
+    """Keep a durable backup; roll back even if daemon-reload or activation fails."""
+    original = FSTAB_PATH.read_bytes()
+    updated = fstab_content(original, target, entry)
+    if updated == original:
+        yield
         return
+    fd, name = tempfile.mkstemp(prefix=".fstab.check-", dir=FSTAB_PATH.parent)
+    candidate = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(updated)
+        proc = run("findmnt", "--verify", "--tab-file", str(candidate), check=False)
+        if proc.returncode:
+            raise ConversionError(f"Generated fstab failed validation:\n{proc.stdout}{proc.stderr}")
+    finally:
+        candidate.unlink(missing_ok=True)
 
-    full_text = "\n".join(new_lines) + "\n"
-
-    tmp_fstab = fstab_path.with_name(".fstab.dusky-tmp")
-    tmp_fstab.write_text(full_text, encoding="utf-8")
-    os.chmod(tmp_fstab, 0o644)
-
-    val_proc = run("findmnt", "--verify", "--tab-file", str(tmp_fstab), check=False)
-    tmp_fstab.unlink(missing_ok=True)
-    if val_proc.returncode != 0:
-        raise ConversionError(f"Generated fstab failed findmnt validation after entry removal:\n{val_proc.stderr}")
-
-    stamp = datetime_stamp()
-    backup_fstab = fstab_path.with_name(f"fstab.bak.{stamp}")
-    shutil.copy2(fstab_path, backup_fstab)
-
-    write_file_durable(fstab_path, full_text, 0o644)
-    run("systemctl", "daemon-reload")
-    info(f"Removed /etc/fstab entry for {canonical_target}")
-
-
-# =============================================================================
-# CONVERT ENGINE
-# =============================================================================
-def convert_directory(target_path: Path, custom_subvol_name: str | None = None) -> None:
-    target_path = target_path.resolve()
-    info(f"Inspecting target directory: {target_path}")
-
-    if not target_path.exists():
-        die(f"Target path does not exist: {target_path}")
-    if not target_path.is_dir():
-        die(f"Target path is not a directory: {target_path}")
-    if is_mountpoint(target_path):
-        die(f"Target path {target_path} is already a mount point.")
-    if path_is_subvolume(target_path):
-        die(f"Target path {target_path} is already a Btrfs subvolume.")
-
-    stat_info = target_path.stat()
-    uid, gid, mode = stat_info.st_uid, stat_info.st_gid, stat_info.st_mode & 0o7777
-
-    mnt_info = get_mount_info(target_path)
-    if not mnt_info or mnt_info.get("fstype") != "btrfs":
-        die(f"Target path {target_path} is on fstype={mnt_info.get('fstype')!r}, not Btrfs.")
-
-    fs_uuid = mnt_info["uuid"]
-    if not fs_uuid or not UUID_RE.match(fs_uuid):
-        die(f"Could not resolve valid Btrfs filesystem UUID for {target_path}.")
-
-    subvol_name = custom_subvol_name or derive_subvol_name(target_path)
-    if not SAFE_NAME_RE.fullmatch(subvol_name):
-        die(f"Invalid subvolume name: {subvol_name!r}. Must match @[A-Za-z0-9_.-]+")
-
-    if any(pat in subvol_name for pat in TRANSIENT_PATTERNS):
-        die(f"Subvolume name {subvol_name!r} collides with Dusky transient grammar.")
-
-    info(f"Filesystem UUID : {fs_uuid}")
-    info(f"Subvolume Name  : {subvol_name}")
-    info(f"Target Directory: {target_path}")
-
-    subvol_created = False
-    backup_dir: Path | None = None
-
-    with dusky_lock():
-        with top_level(fs_uuid) as top_dir:
-            target_subvol = top_dir / subvol_name.lstrip("/")
-            if target_subvol.exists():
-                die(f"Top-level subvolume {subvol_name} already exists on FS_TREE.")
-
-            info(f"Creating top-level subvolume {subvol_name}...")
-            run("btrfs", "subvolume", "create", "--", str(target_subvol))
-            subvol_created = True
-
-            os.chown(target_subvol, uid, gid)
-            os.chmod(target_subvol, mode)
-
-            entries = list(target_path.iterdir())
-            if entries:
-                info(f"Migrating {len(entries)} item(s) into {subvol_name} (cp -a)...")
-                run("cp", "-a", "--", *[str(e) for e in entries], str(target_subvol))
-
-            run("btrfs", "filesystem", "sync", str(top_dir))
-
+    fd, name = tempfile.mkstemp(prefix="fstab.bak.", dir=FSTAB_PATH.parent)
+    os.close(fd)
+    backup = Path(name)
+    shutil.copy2(FSTAB_PATH, backup)
+    fd = os.open(backup, os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    fsync_path(backup.parent)
+    info(f"Fstab backup: {backup}")
+    try:
+        write_file_durable(FSTAB_PATH, updated)
+        run("systemctl", "daemon-reload")
+        yield
+    except BaseException as exc:
         try:
-            with critical_section():
-                stamp = datetime_stamp()
-                backup_dir = target_path.with_name(f"{target_path.name}.bak.{stamp}")
-                info(f"Renaming original directory to {backup_dir.name}...")
-                target_path.rename(backup_dir)
-
-                target_path.mkdir(parents=True, exist_ok=True, mode=mode)
-                os.chown(target_path, uid, gid)
-
-                update_fstab_add(fs_uuid, target_path, subvol_name, mnt_info["options"])
-                info(f"Mounting {target_path}...")
-                run("mount", str(target_path))
-
-            if not is_mountpoint(target_path):
-                raise ConversionError(f"Failed to mount {target_path} after updating /etc/fstab.")
-
-            mounted_subvol_id = get_subvolume_id(target_path)
-            if mounted_subvol_id == BTRFS_FS_TREE_OBJECTID:
-                raise ConversionError(f"{target_path} mounted as subvolid=5 instead of {subvol_name}.")
-
-            info(f"Mounted subvol=/{subvol_name} (id {mounted_subvol_id}) at {target_path}.")
-            info("Cleaning up temporary directory backup...")
-            if backup_dir and backup_dir.exists():
-                shutil.rmtree(backup_dir, ignore_errors=True)
-
-            good(f"[+] SUCCESS: Converted {target_path} into top-level subvolume {subvol_name}.")
-        except Exception as exc:
-            warn(f"Error during activation/mount: {exc}. Rolling back changes...")
-            with suppress(Exception):
-                if is_mountpoint(target_path):
-                    run("umount", str(target_path), check=False)
-                if target_path.exists():
-                    shutil.rmtree(target_path, ignore_errors=True)
-                if backup_dir and backup_dir.exists():
-                    backup_dir.rename(target_path)
-
-                if subvol_created:
-                    with top_level(fs_uuid) as top_dir:
-                        sub_path = top_dir / subvol_name.lstrip("/")
-                        if sub_path.exists():
-                            run("btrfs", "subvolume", "delete", "--", str(sub_path), check=False)
-
-            raise
+            write_file_durable(FSTAB_PATH, original)
+            run("systemctl", "daemon-reload")
+        except BaseException as rollback_error:
+            raise ConversionError(
+                f"{exc}; fstab rollback failed: {rollback_error}. Restore {backup} manually."
+            ) from exc
+        raise
 
 
-# =============================================================================
-# REVERT / UNDO ENGINE
-# =============================================================================
-def revert_directory(target_path: Path) -> None:
-    target_path = target_path.resolve()
-    info(f"Inspecting target directory for UNDO: {target_path}")
+def validate_name(name: str) -> None:
+    if not SAFE_NAME_RE.fullmatch(name):
+        raise ConversionError(f"Invalid top-level name {name!r}; use @ plus 1–180 ASCII letters, digits, _, . or -.")
+    if name in PROTECTED_SUBVOLUMES or any(pat in name for pat in TRANSIENT_PATTERNS):
+        raise ConversionError(f"Reserved Dusky subvolume name: {name!r}")
 
-    if not target_path.exists():
-        die(f"Target path does not exist: {target_path}")
-    if not is_mountpoint(target_path):
-        die(f"Target path {target_path} is NOT currently a mount point; nothing to undo.")
-    if not path_is_subvolume(target_path):
-        die(f"Target path {target_path} is not a Btrfs subvolume.")
 
-    subvol_id = get_subvolume_id(target_path)
-    if subvol_id == BTRFS_FS_TREE_OBJECTID:
-        die(f"Refusing to undo {target_path}: it is subvolid=5.")
+def inspect_target(target: Path, *, undo: bool) -> dict[str, str]:
+    if not target.is_dir():
+        raise ConversionError(f"Target is not an existing directory: {target}")
+    mounted = is_mountpoint(target)
+    if mounted != undo:
+        raise ConversionError(f"Target must {'be' if undo else 'not be'} a mountpoint: {target}")
+    data = get_mount_info(target)
+    if data["fstype"] != "btrfs" or not UUID_RE.fullmatch(data["uuid"]):
+        raise ConversionError(f"Target must be on a Btrfs filesystem with a valid UUID: {target}")
+    if not undo and "ro" in data["options"].split(","):
+        raise ConversionError(f"Target filesystem is read-only: {target}")
+    if path_is_subvolume(target) != undo:
+        raise ConversionError(f"Target must {'be' if undo else 'not be'} a subvolume root: {target}")
+    for record in mount_records():
+        if Path(record["target"]).is_relative_to(target) and record["target"] != str(target):
+            raise ConversionError(f"Unmount nested mount {record['target']} before proceeding.")
+    # Subvolume roots have inode 256; do not follow symlinked directories.
+    def walk_error(exc: OSError) -> None:
+        raise exc
+    for root, dirs, _ in os.walk(target, onerror=walk_error):
+        for name in dirs:
+            child = Path(root) / name
+            if child.lstat().st_ino == 256 and path_is_subvolume(child):
+                raise ConversionError(f"Nested subvolume must be handled separately: {child}")
+    return data
 
-    subvol_name = get_subvolume_name_from_mount(target_path)
-    if not subvol_name:
-        die(f"Could not resolve subvolume name for mount {target_path}.")
 
-    if subvol_name in PROTECTED_SUBVOLUMES:
-        die(f"Refusing to undo protected subvolume {subvol_name!r}.")
+def copy_directory(source: Path, destination: Path) -> None:
+    # Copy the directory itself to preserve root metadata and avoid ARG_MAX.
+    # Unlike --archive alone, explicit xattr preservation makes failures fatal.
+    run("cp", "--archive", "--preserve=xattr", "--reflink=auto", "--no-target-directory",
+        "--", str(source), str(destination), timeout=None)
+    run("btrfs", "filesystem", "sync", "--", str(destination), timeout=None)
 
-    mnt_info = get_mount_info(target_path)
-    fs_uuid = mnt_info.get("uuid", "")
-    if not fs_uuid or not UUID_RE.match(fs_uuid):
-        die(f"Could not resolve valid Btrfs filesystem UUID for {target_path}.")
 
-    stat_info = target_path.stat()
-    uid, gid, mode = stat_info.st_uid, stat_info.st_gid, stat_info.st_mode & 0o7777
+def temporary_sibling(target: Path, tag: str) -> Path:
+    return Path(tempfile.mkdtemp(prefix=f".dusky-{tag}-", dir=target.parent))
 
-    info(f"Filesystem UUID : {fs_uuid}")
-    info(f"Subvolume Name  : {subvol_name} (id {subvol_id})")
-    info(f"Target Directory: {target_path}")
 
-    stamp = datetime_stamp()
-    tmp_backup = target_path.with_name(f"{target_path.name}.tmp_undo_{stamp}")
+def verify_mount(target: Path, fs_uuid: str, name: str, sid: int) -> None:
+    data = get_mount_info(target)
+    if (data["target"] != str(target) or data["fstype"] != "btrfs"
+            or data["uuid"].lower() != fs_uuid.lower() or data["fsroot"] != f"/{name}"
+            or not path_is_subvolume(target) or get_subvolume_id(target) != sid):
+        raise ConversionError(f"Mounted filesystem/subvolume does not match {name} (ID {sid}) at {target}")
 
+
+def remove_copy(path: Path, *, subvolume: bool = False) -> None:
+    if subvolume:
+        run("btrfs", "subvolume", "delete", "--commit-after", "--", str(path), timeout=None)
+    else:
+        shutil.rmtree(path)
+
+
+def convert_directory(target_path: Path, custom_subvol_name: str | None = None) -> None:
+    target = target_path.resolve(strict=True)
+    name = custom_subvol_name if custom_subvol_name is not None else derive_subvol_name(target)
+    validate_name(name)
     with dusky_lock():
-        info("Extracting subvolume contents into temporary buffer...")
-        entries = list(target_path.iterdir())
-        if entries:
-            tmp_backup.mkdir(parents=True, exist_ok=True, mode=mode)
-            os.chown(tmp_backup, uid, gid)
-            run("cp", "-a", "--", *[str(e) for e in entries], str(tmp_backup))
-        else:
-            tmp_backup.mkdir(parents=True, exist_ok=True, mode=mode)
-            os.chown(tmp_backup, uid, gid)
+        data = inspect_target(target, undo=False)
+        fs_uuid = data["uuid"]
+        warn("Stop all writers to this directory before proceeding; copying is not a snapshot.")
+        with top_level(fs_uuid, data["options"]) as top:
+            subvol = top / name
+            if subvol.exists() or subvol.is_symlink():
+                raise ConversionError(f"Top-level path already exists: {name}")
+            backup = None
+            created = False
+            mount_dir_created = False
+            committed = False
+            try:
+                with critical_section():
+                    run("btrfs", "subvolume", "create", "--", str(subvol), timeout=None)
+                    created = True
+                info(f"Copying {target} into {name}...")
+                copy_directory(target, subvol)
+                sid = get_subvolume_id(subvol)
+                opts = clean_mount_opts(data["options"])
+                entry = (f"UUID={fs_uuid} {fstab_escape(str(target))} btrfs "
+                         f"{opts + ',' if opts else ''}subvol=/{name} 0 0")
+                with critical_section():
+                    try:
+                        reserved = temporary_sibling(target, "original")
+                        try:
+                            target.rename(reserved)
+                        except BaseException:
+                            reserved.rmdir()
+                            raise
+                        backup = reserved
+                        info(f"Original directory recovery copy: {backup}")
+                        target.mkdir(mode=0o755)
+                        mount_dir_created = True
+                        fsync_path(target.parent)
+                        with fstab_transaction(target, entry):
+                            run("mount", "--", str(target), timeout=None)
+                            verify_mount(target, fs_uuid, name, sid)
+                        committed = True
+                    except BaseException:
+                        # Never recurse into a mount or delete its files on rollback.
+                        if backup is not None:
+                            if is_mountpoint(target):
+                                run("umount", "--", str(target), timeout=None)
+                            if mount_dir_created:
+                                target.rmdir()
+                            backup.rename(target)
+                            backup = None
+                            fsync_path(target.parent)
+                        raise
+            except BaseException as exc:
+                with critical_section():
+                    if committed:
+                        warn(f"Conversion committed before interruption; original backup retained at {backup}.")
+                        raise
+                    if backup is not None:
+                        raise ConversionError(
+                            f"{exc}; directory rollback incomplete. Original retained at {backup}; "
+                            f"subvolume {name} retained."
+                        ) from exc
+                    if created:
+                        try:
+                            remove_copy(subvol, subvolume=True)
+                        except BaseException as cleanup_error:
+                            raise ConversionError(f"{exc}; remove leftover subvolume {name}: {cleanup_error}") from exc
+                raise
+            # Activation has committed. Cleanup failure must not undo a working mount.
+            try:
+                remove_copy(backup)
+                fsync_path(target.parent)
+            except OSError as exc:
+                warn(f"Conversion committed; original backup cleanup failed at {backup}: {exc}")
+    good(f"[+] SUCCESS: {target} is mounted as top-level subvolume {name}.")
 
-        with critical_section():
-            info(f"Unmounting {target_path}...")
-            run("umount", str(target_path))
-            update_fstab_remove(target_path)
 
-            # Replace empty mountpoint dir with restored contents
-            shutil.rmtree(target_path, ignore_errors=True)
-            tmp_backup.rename(target_path)
-            os.chown(target_path, uid, gid)
-            os.chmod(target_path, mode)
-
-        info(f"Deleting top-level subvolume {subvol_name} from FS_TREE...")
-        with top_level(fs_uuid) as top_dir:
-            target_subvol = top_dir / subvol_name.lstrip("/")
-            if target_subvol.exists():
-                run("btrfs", "subvolume", "delete", "--", str(target_subvol))
-            run("btrfs", "filesystem", "sync", str(top_dir))
-
-    good(f"[+] UNDO COMPLETE: {target_path} is now a standard directory in /home.")
+def revert_directory(target_path: Path) -> None:
+    target = target_path.resolve(strict=True)
+    with dusky_lock():
+        data = inspect_target(target, undo=True)
+        name = data["fsroot"].removeprefix("/")
+        validate_name(name)
+        fs_uuid = data["uuid"]
+        sid = get_subvolume_id(target)
+        if sid == BTRFS_FS_TREE_OBJECTID:
+            raise ConversionError("Cannot undo filesystem tree root (ID 5).")
+        for record in mount_records():
+            if (record["uuid"].lower() == fs_uuid.lower() and record["target"] != str(target)
+                    and (record["fsroot"] == f"/{name}" or record["fsroot"].startswith(f"/{name}/"))):
+                raise ConversionError(f"Subvolume also mounted at {record['target']}; unmount it first.")
+        warn("Stop all writers to this directory before proceeding; copying is not a snapshot.")
+        with top_level(fs_uuid, data["options"]) as top:
+            subvol = top / name
+            if not path_is_subvolume(subvol) or get_subvolume_id(subvol) != sid:
+                raise ConversionError(f"Top-level subvolume {name} does not match the mounted ID {sid}.")
+            default = run("btrfs", "subvolume", "get-default", str(top)).stdout
+            default_id = re.search(r"\bID\s+(\d+)\b", default)
+            if default_id is None:
+                raise ConversionError(f"Cannot parse the filesystem's default subvolume: {default!r}")
+            if int(default_id[1]) == sid:
+                raise ConversionError(f"Cannot undo the filesystem's default subvolume {name}.")
+            staging = temporary_sibling(target, "undo")
+            underlying = None
+            unmounted = False
+            installed = False
+            committed = False
+            try:
+                copy_directory(target, staging)
+                with critical_section():
+                    try:
+                        run("umount", "--", str(target), timeout=None)
+                        unmounted = True
+                        underlying = temporary_sibling(target, "mountpoint")
+                        try:
+                            target.rename(underlying)
+                        except BaseException:
+                            underlying.rmdir()
+                            underlying = None
+                            raise
+                        staging.rename(target)
+                        installed = True
+                        fsync_path(target.parent)
+                        with fstab_transaction(target, None):
+                            if is_mountpoint(target) or path_is_subvolume(target):
+                                raise ConversionError(f"Undo did not produce a regular directory: {target}")
+                        committed = True
+                    except BaseException:
+                        if installed:
+                            target.rename(staging)
+                            installed = False
+                        if underlying is not None:
+                            underlying.rename(target)
+                            underlying = None
+                        if unmounted:
+                            # Explicit source/options also work if fstab had no entry.
+                            run("mount", "--types", "btrfs", "--options", data["options"],
+                                "--", f"UUID={fs_uuid}", str(target), timeout=None)
+                            verify_mount(target, fs_uuid, name, sid)
+                            unmounted = False
+                        fsync_path(target.parent)
+                        raise
+            except BaseException as exc:
+                if committed:
+                    warn(f"Undo committed before interruption; old subvolume {name} and mountpoint backup {underlying} retained.")
+                    raise
+                if unmounted or installed or underlying is not None:
+                    raise ConversionError(
+                        f"{exc}; undo rollback incomplete. Data retained in subvolume {name}, "
+                        f"buffer {staging}, mountpoint backup {underlying}."
+                    ) from exc
+                try:
+                    remove_copy(staging)
+                except OSError as cleanup_error:
+                    warn(f"Undo buffer retained at {staging}: {cleanup_error}")
+                raise
+            try:
+                remove_copy(subvol, subvolume=True)
+            except ConversionError as exc:
+                warn(f"Undo committed; old subvolume {name} retained: {exc}")
+            try:
+                underlying.rmdir()  # Preserve any previously hidden mountpoint data.
+                fsync_path(target.parent)
+            except OSError as exc:
+                warn(f"Old mountpoint contents retained at {underlying}: {exc}")
+    good(f"[+] UNDO COMPLETE: {target} is now a regular directory.")
 
 
 def main() -> None:
-    ensure_root()
-
     parser = argparse.ArgumentParser(
-        description="Convert a regular directory into an isolated top-level Btrfs subvolume, or UNDO a conversion."
+        description="Convert a directory to a mounted top-level Btrfs subvolume, or undo it.",
+        epilog="Stop all applications writing to the directory first. Power loss/SIGKILL require manual recovery.",
+        allow_abbrev=False,
     )
     parser.add_argument("path", type=Path, help="Directory path to convert or undo")
-    parser.add_argument("-n", "--name", help="Custom top-level subvolume name (e.g., @home_user_dir)")
-    parser.add_argument("-u", "--undo", action="store_true", help="Undo conversion: return subvolume to normal directory")
-
+    parser.add_argument("-n", "--name", help="Custom top-level name (e.g., @home_user_dir)")
+    parser.add_argument("-u", "--undo", action="store_true", help="Return a mounted subvolume to a regular directory")
     args = parser.parse_args()
+    if args.undo and args.name is not None:
+        parser.error("--name cannot be combined with --undo")
+    ensure_root()
 
+    def interrupted(signum: int, _frame: object) -> None:
+        raise ConversionError(f"Interrupted by {signal.Signals(signum).name}")
+
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
+        signal.signal(sig, interrupted)
     try:
         if args.undo:
             revert_directory(args.path)
         else:
             convert_directory(args.path, custom_subvol_name=args.name)
-    except ConversionError as exc:
+    except KeyboardInterrupt:
+        die("Interrupted", 130)
+    except (ConversionError, OSError, UnicodeError) as exc:
         die(str(exc))
 
 
