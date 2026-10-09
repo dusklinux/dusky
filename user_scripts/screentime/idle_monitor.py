@@ -2,6 +2,7 @@
 
 Only registry, seat and idle objects are bound. These interfaces transfer no
 file descriptors. Messages use the documented native-endian Wayland wire format.
+Each new connection waits for fresh input before reporting an active session.
 """
 
 import os
@@ -15,6 +16,7 @@ from pathlib import Path
 class IdleMonitor:
     def __init__(self, timeout_seconds: float) -> None:
         self.idle = False
+        self._activity_seen = False
         self._buffer = bytearray()
         self._globals: dict[str, tuple[int, int]] = {}
         self._notifications: set[int] = set()
@@ -42,10 +44,14 @@ class IdleMonitor:
                 raise RuntimeError("input idle notifications require ext-idle-notify-v1 version 2")
             self._bind("wl_seat", 4, 1)
             self._bind("ext_idle_notifier_v1", 5, 2)
-            milliseconds = int(timeout_seconds * 1000)
+            milliseconds = max(1, int(timeout_seconds * 1000))
             # Input-only notifications ignore application idle inhibitors.
             self._send(5, 2, struct.pack("=III", 6, milliseconds, 4))
             self._notifications.add(6)
+            # A new notification starts its timer now, regardless of prior idle
+            # time. Wait for fresh input before trusting that initial state.
+            # Hyprland's zero-timeout notifications never emit resumed.
+            self._send(5, 2, struct.pack("=III", 7, 1, 4))
             self._socket.setblocking(False)
         except BaseException:
             self.close()
@@ -72,8 +78,7 @@ class IdleMonitor:
                 raise RuntimeError("invalid Wayland message")
             if len(self._buffer) < size:
                 break
-            payload = bytes(self._buffer[8:size])
-            del self._buffer[:size]
+            payload = self._buffer.take_bytes(size)[8:]
             if object_id == 1 and opcode == 0:
                 raise RuntimeError(f"Wayland protocol error: {payload!r}")
             if object_id == 2 and opcode == 0:
@@ -87,6 +92,9 @@ class IdleMonitor:
                     raise ConnectionError("Wayland idle global removed")
             elif object_id == 3 and opcode == 0:
                 self._sync_done = True
+            elif object_id == 7 and opcode == 1 and not self._activity_seen:
+                self._activity_seen = True
+                self._send(7, 0, b"")  # destroy the startup-only notification
             elif object_id in self._notifications:
                 if opcode == 0:
                     self.idle = True
@@ -96,7 +104,7 @@ class IdleMonitor:
     def poll(self) -> bool:
         while select.select([self._socket], [], [], 0)[0]:
             self._receive()
-        return self.idle
+        return self.idle or not self._activity_seen
 
     def close(self) -> None:
         self._socket.close()

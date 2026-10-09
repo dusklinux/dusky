@@ -19,12 +19,12 @@ from desktop_resolver import DesktopResolver
 from idle_monitor import IdleMonitor
 from screentime_common import CONFIG_FILE, DATA_DIR, DATA_FILE, HyprlandIPC, validate_data, valid_number
 
-DEFAULT_CONFIG: dict[str, Any] = {
+DEFAULT_CONFIG = frozendict({
     "enabled": True,
     "save_interval_seconds": 5,
     "idle_threshold_seconds": 300,
-    "ignore_classes": ["hyprlock", "swaylock", "gdm", "sddm"],
-}
+    "ignore_classes": ("hyprlock", "swaylock", "gdm", "sddm"),
+})
 LOCKSCREEN_NAMES = {"hyprlock", "swaylock", "swaylock-effects", "gtklock", "waylock"}
 
 
@@ -39,19 +39,19 @@ class ScreentimeDaemon:
         except BlockingIOError:
             self._instance_lock.close()
             raise RuntimeError("a screentime daemon is already running") from None
-        self.config = DEFAULT_CONFIG.copy()
+        self.config = dict(DEFAULT_CONFIG)
         self.data: dict[str, dict[str, Any]] = {}
         self.resolver = DesktopResolver()
         self.ipc = HyprlandIPC()
         self.last_save_time = time.monotonic()
-        self.last_window_key = ""
+        self.last_window_key: tuple[str, str] | None = None
         self.running = True
         self._dirty = False
-        self._config_stamp: int | None = None
+        self._config_stamp: tuple[int, int, int] | None = None
         self._idle_monitor: IdleMonitor | None = None
         self._idle_retry = 0.0
         self._dbus_bus: Any = None
-        self._session_props: Any = None
+        self._session_path: str | None = None
         self._dbus_retry = 0.0
         try:
             self._load_config()
@@ -64,14 +64,17 @@ class ScreentimeDaemon:
         try:
             if not CONFIG_FILE.exists():
                 CONFIG_FILE.write_text(json.dumps(DEFAULT_CONFIG, indent=4) + "\n", encoding="utf-8")
-            stamp = CONFIG_FILE.stat().st_mtime_ns
+            stat = CONFIG_FILE.stat()
+            stamp = stat.st_mtime_ns, stat.st_size, stat.st_ino
             if stamp == self._config_stamp:
                 return
+            contents = CONFIG_FILE.read_text(encoding="utf-8")
             self._config_stamp = stamp
-            user_config = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            user_config = json.loads(contents)
             if not isinstance(user_config, dict):
                 raise ValueError("configuration must be an object")
-            config = DEFAULT_CONFIG.copy()
+            config = dict(DEFAULT_CONFIG)
+            config["ignore_classes"] = list(config["ignore_classes"])
             config.update({key: value for key, value in user_config.items() if key in config})
             if type(config["enabled"]) is not bool:
                 raise ValueError("enabled must be a boolean")
@@ -79,7 +82,7 @@ class ScreentimeDaemon:
                 value = config[key]
                 if not valid_number(value) or value <= 0:
                     raise ValueError(f"{key} must be positive and finite")
-            if config["idle_threshold_seconds"] * 1000 > 0xFFFFFFFF:
+            if config["idle_threshold_seconds"] > 0xFFFFFFFF / 1000:
                 raise ValueError("idle threshold exceeds the Wayland timeout range")
             ignored = config["ignore_classes"]
             if not isinstance(ignored, list) or not all(isinstance(cls, str) for cls in ignored):
@@ -111,8 +114,13 @@ class ScreentimeDaemon:
                 output.flush()
                 os.fsync(output.fileno())
             os.replace(temp_path, DATA_FILE)
+            # Persist the rename as well as the file contents across power loss.
+            directory_fd = os.open(DATA_DIR, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
             self._dirty = False
-            self.last_save_time = time.monotonic()
         except (OSError, ValueError) as error:
             print(f"[!] Error saving history: {error}", file=sys.stderr)
         finally:
@@ -161,30 +169,43 @@ class ScreentimeDaemon:
         if now < self._dbus_retry:
             return False
         try:
-            import dbus
+            from gi.repository import Gio, GLib
         except ImportError:
             self._dbus_retry = float("inf")
-            print("[!] dbus-python unavailable; using compositor idle and locker status", file=sys.stderr)
+            print("[!] GIO bindings unavailable; using compositor idle and locker status", file=sys.stderr)
             return False
         try:
-            if self._session_props is None:
-                self._dbus_bus = dbus.SystemBus()
-                manager = self._dbus_bus.get_object("org.freedesktop.login1", "/org/freedesktop/login1", introspect=False)
+            if self._session_path is None:
+                self._dbus_bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
                 session_id = os.environ.get("XDG_SESSION_ID")
                 if session_id:
-                    path = manager.GetSession(session_id, dbus_interface="org.freedesktop.login1.Manager", timeout=0.5)
+                    path, = self._dbus_bus.call_sync(
+                        "org.freedesktop.login1", "/org/freedesktop/login1",
+                        "org.freedesktop.login1.Manager", "GetSession",
+                        GLib.Variant("(s)", (session_id,)), GLib.VariantType.new("(o)"),
+                        Gio.DBusCallFlags.NONE, 500, None,
+                    ).unpack()
                 else:
                     # User services live outside login sessions; use the user's graphical session.
-                    user = self._dbus_bus.get_object("org.freedesktop.login1", f"/org/freedesktop/login1/user/_{os.getuid()}", introspect=False)
-                    _, path = user.Get("org.freedesktop.login1.User", "Display", dbus_interface="org.freedesktop.DBus.Properties", timeout=0.5)
+                    display, = self._dbus_bus.call_sync(
+                        "org.freedesktop.login1", f"/org/freedesktop/login1/user/_{os.getuid()}",
+                        "org.freedesktop.DBus.Properties", "Get",
+                        GLib.Variant("(ss)", ("org.freedesktop.login1.User", "Display")),
+                        GLib.VariantType.new("(v)"), Gio.DBusCallFlags.NONE, 500, None,
+                    ).unpack()
+                    _, path = display
                     if path == "/":
                         raise RuntimeError("no graphical logind session")
-                session = self._dbus_bus.get_object("org.freedesktop.login1", path, introspect=False)
-                self._session_props = dbus.Interface(session, "org.freedesktop.DBus.Properties")
-            props = self._session_props.GetAll("org.freedesktop.login1.Session", timeout=0.5)
+                self._session_path = path
+            props, = self._dbus_bus.call_sync(
+                "org.freedesktop.login1", self._session_path,
+                "org.freedesktop.DBus.Properties", "GetAll",
+                GLib.Variant("(s)", ("org.freedesktop.login1.Session",)),
+                GLib.VariantType.new("(a{sv})"), Gio.DBusCallFlags.NONE, 500, None,
+            ).unpack()
             return bool(props.get("LockedHint") or props.get("IdleHint") or not props.get("Active", True))
-        except (RuntimeError, dbus.DBusException) as error:
-            self._session_props = None
+        except (RuntimeError, GLib.Error) as error:
+            self._session_path = None
             self._dbus_bus = None
             self._dbus_retry = now + 30.0
             print(f"[!] logind session status unavailable: {error}", file=sys.stderr)
@@ -209,7 +230,7 @@ class ScreentimeDaemon:
     def _record_tick(self, window: dict[str, Any], seconds: float = 1.0, timestamp: float | None = None) -> None:
         cls = window.get("class", "").strip()
         if not cls or cls.lower() in self.config["ignore_classes"]:
-            self.last_window_key = ""
+            self.last_window_key = None
             return
         title = window.get("title", "").strip() or cls
         timestamp = time.time() if timestamp is None else timestamp
@@ -220,13 +241,14 @@ class ScreentimeDaemon:
         if new_record:
             apps[cls] = {"duration": 0, "first_seen": int(timestamp), "sessions": 0, "titles": {}}
         record = apps[cls]
-        record.update(name=info.name, category=info.category, icon=info.icon, last_active=int(timestamp))
+        record.update(name=info.name, category=info.category, icon=info.icon, last_active=int(timestamp + seconds))
         record["duration"] += seconds
-        if new_record or cls != self.last_window_key:
+        window_key = cls, window.get("address", "")
+        if new_record or window_key != self.last_window_key:
             record["sessions"] = record.get("sessions", 0) + 1
-        self.last_window_key = cls
+        self.last_window_key = window_key
         titles = record["titles"]
-        if title not in titles and len(titles) >= 50:
+        if title not in titles and len(titles) >= 49:
             title = "Other / Miscellaneous"
         titles[title] = titles.get(title, 0) + seconds
         self._dirty = True
@@ -267,7 +289,7 @@ class ScreentimeDaemon:
                 if previous_window and window and continuous:
                     self._record_interval(previous_window, wall_end - elapsed, wall_end)
                 else:
-                    self.last_window_key = ""
+                    self.last_window_key = None
                 previous_window, previous_time = window, now
                 previous_wall = wall_end
                 previous_awake = awake

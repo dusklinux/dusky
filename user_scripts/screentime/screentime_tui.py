@@ -4,12 +4,12 @@
 import argparse
 import json
 import os
-import select
-import shlex
-import signal
-import subprocess
+lazy import select
+lazy import shlex
+lazy import signal
+lazy import subprocess
 import sys
-import termios
+lazy import termios
 import time
 import traceback
 from datetime import datetime, timedelta
@@ -18,12 +18,12 @@ from typing import Any
 
 from screentime_common import DATA_DIR, DATA_FILE, THEME_FILE, HyprlandIPC, validate_data, valid_number
 
-from rich.console import Console
-from rich.live import Live
-from rich.markup import escape
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
+lazy from rich.console import Console
+lazy from rich.live import Live
+lazy from rich.markup import escape
+lazy from rich.panel import Panel
+lazy from rich.table import Table
+lazy from rich.text import Text
 
 LOG_FILE = DATA_DIR / "screentime_error.log"
 _IPC = HyprlandIPC(timeout=0.1)
@@ -39,13 +39,13 @@ DEFAULT_COLORS: dict[str, str] = {
     "cursor_bg": "#1c2528",
 }
 
-PERIOD_KEYS: dict[str, str] = {
+PERIOD_KEYS = frozendict({
     "period_today": "today",
     "period_yesterday": "yesterday",
     "period_week": "week",
     "period_month": "month",
     "period_all": "all",
-}
+})
 
 PERIOD_LIST: list[str] = ["today", "yesterday", "week", "month", "all"]
 
@@ -467,7 +467,11 @@ def run_fzf_explorer(range_key: str = "today") -> bool:
 
     input_data = ("\0".join(lines) + "\0").encode("utf-8")
     try:
-        proc = subprocess.run(fzf_cmd, input=input_data, capture_output=True)
+        # This embedded UI owns its input format, bindings and terminal layout.
+        environment = os.environ.copy()
+        environment.pop("FZF_DEFAULT_OPTS", None)
+        environment.pop("FZF_DEFAULT_OPTS_FILE", None)
+        proc = subprocess.run(fzf_cmd, input=input_data, capture_output=True, env=environment)
         if proc.returncode not in (0, 1, 130):
             message = proc.stderr.decode("utf-8", errors="replace").strip()
             log_error(f"fzf exited {proc.returncode}: {message}")
@@ -914,7 +918,7 @@ def _write_tty(data: str) -> None:
         pass
 
 
-def parse_input_sequence(buf: bytes) -> tuple[str | None, int]:
+def parse_input_sequence(buf: bytes | bytearray) -> tuple[str | None, int]:
     """Parse one command from the front of *buf*."""
     if not buf:
         return None, 0
@@ -1096,27 +1100,32 @@ class _DashCache:
             self.summaries[range_key] = aggregate_by_range(self.raw_data, range_key)
         return self.summaries[range_key]
 
-    def reload(self, force: bool = False, now: float | None = None) -> None:
+    def reload(self, force: bool = False, now: float | None = None) -> bool:
         t = now if now is not None else time.monotonic()
+        changed = False
         if force or (t - self.raw_ts) >= 2.0:
             stamp = None
             try:
                 stamp = self._stamp(DATA_FILE)
-                if force or stamp != self.raw_stamp or (stamp is None and self.error):
-                    self.raw_stamp = stamp
+                if force or stamp != self.raw_stamp or self.error:
                     self.raw_data = load_screentime_data()
+                    self.raw_stamp = stamp
                     self.summaries.clear()
                     self.error = ""
+                    changed = True
             except (OSError, ValueError) as error:
                 if stamp is None:
                     self.raw_stamp = None
                 message = str(error)
                 if message != self.error:
                     log_error(message)
+                    changed = True
                 self.error = message
             self.raw_ts = t
         if force or (t - self.active_ts) >= 1.0:
-            self.active = get_active_hypr_window()
+            active = get_active_hypr_window()
+            changed |= active != self.active
+            self.active = active
             self.active_ts = t
         if force or (t - self.colors_ts) >= 5.0:
             try:
@@ -1124,9 +1133,16 @@ class _DashCache:
                 if force or stamp != self.colors_stamp:
                     self.colors_stamp = stamp
                     self.colors = load_theme_colors()
+                    changed = True
             except OSError as error:
                 log_error(f"Cannot read theme: {error}")
             self.colors_ts = t
+        today = datetime.now().date()
+        if today != self.summary_date:
+            self.summaries.clear()
+            self.summary_date = today
+            changed = True
+        return changed
 
 
 def _pause_live(live: Live, fd: int, old_settings: list[Any]) -> None:
@@ -1245,6 +1261,7 @@ def run_live_dashboard() -> None:
         ) as live:
             input_buf = bytearray()
             running = True
+            previous_size = console.size
 
             while running:
                 try:
@@ -1253,6 +1270,7 @@ def run_live_dashboard() -> None:
                     ready = []
 
                 got_keys = False
+                input_pending = bool(input_buf)
                 if ready:
                     try:
                         chunk = os.read(fd, 4096)
@@ -1282,7 +1300,7 @@ def run_live_dashboard() -> None:
                     input_buf.clear()
 
                 while input_buf:
-                    cmd, consumed = parse_input_sequence(bytes(input_buf))
+                    cmd, consumed = parse_input_sequence(input_buf)
                     if consumed <= 0:
                         if input_buf[0] == 0x1B and len(input_buf) > 48:
                             del input_buf[0]
@@ -1417,9 +1435,11 @@ def run_live_dashboard() -> None:
                 if not running:
                     break
 
-                cache.reload(force=False)
-
-                push_frame(live)
+                changed = cache.reload(force=False)
+                size = console.size
+                if got_keys or input_pending or changed or size != previous_size:
+                    push_frame(live)
+                previous_size = size
 
     except KeyboardInterrupt:
         pass

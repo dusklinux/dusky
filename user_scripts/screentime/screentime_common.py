@@ -22,7 +22,12 @@ THEME_FILE = xdg_path("XDG_CONFIG_HOME", ".config") / "matugen/generated/dusky_t
 
 
 def valid_number(value: Any) -> bool:
-    return (type(value) is int and value >= 0) or (type(value) is float and math.isfinite(value) and value >= 0)
+    if type(value) not in (int, float) or value < 0:
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def validate_data(data: Any) -> dict[str, dict[str, Any]]:
@@ -30,10 +35,10 @@ def validate_data(data: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(data, dict):
         raise ValueError("history must be an object")
     for day, apps in data.items():
-        if date.fromisoformat(day).isoformat() != day or not isinstance(apps, dict):
+        if not isinstance(day, str) or date.fromisoformat(day).isoformat() != day or not isinstance(apps, dict):
             raise ValueError(f"invalid day: {day!r}")
         for cls, record in apps.items():
-            if not cls or not isinstance(record, dict):
+            if not isinstance(cls, str) or not cls.strip() or not isinstance(record, dict):
                 raise ValueError(f"invalid application: {cls!r}")
             if not valid_number(record.get("duration")):
                 raise ValueError(f"invalid duration: {day}/{cls}")
@@ -41,7 +46,7 @@ def validate_data(data: Any) -> dict[str, dict[str, Any]]:
                 if key in record and not valid_number(record[key]):
                     raise ValueError(f"invalid {key}: {day}/{cls}")
             titles = record.get("titles", {})
-            if not isinstance(titles, dict) or not all(valid_number(v) for v in titles.values()):
+            if not isinstance(titles, dict) or not all(isinstance(k, str) and valid_number(v) for k, v in titles.items()):
                 raise ValueError(f"invalid titles: {day}/{cls}")
             record.setdefault("titles", {})
     return data

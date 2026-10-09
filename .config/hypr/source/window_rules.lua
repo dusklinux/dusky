@@ -514,7 +514,7 @@ hl.window_rule({
 --- Dusky Screentime TUI ---
 hl.window_rule({
   name = "dusky_screentime_tui",
-  match = { class = "^(dusky_screentime_tui|screentime_tui\\.py)$" },
+  match = { class = "^(dusky_screentime|dusky_screentime_tui|screentime_tui\\.py)$" },
   float = true,
   size = {"(monitor_w*0.95)", "(monitor_h*0.95)"},
   center = true,

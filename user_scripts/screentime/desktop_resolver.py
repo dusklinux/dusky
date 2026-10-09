@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ===============================================================================
-DUSKY SCREENTIME: DESKTOP ENTRY RESOLVER (Python 3.14 Bleeding-Edge)
+DUSKY SCREENTIME: DESKTOP ENTRY RESOLVER
 ===============================================================================
 Resolve Hyprland application classes from XDG desktop entries. User entries
 take precedence, including Hidden overrides. Application names stay stable;
@@ -69,7 +69,7 @@ class DesktopResolver:
         self._by_exec: dict[str, AppInfo] = {}
 
         # Cache for previously resolved window_classes during runtime
-        self._resolved_cache: OrderedDict[tuple[str, str], AppInfo] = OrderedDict()
+        self._resolved_cache: OrderedDict[str, AppInfo] = OrderedDict()
         self.reload()
 
     def reload(self) -> None:
@@ -149,12 +149,6 @@ class DesktopResolver:
 
         name, generic_name, icon, wm_class = map(_unescape, (name, generic_name, icon, wm_class))
 
-        # Clean up XML/Pango entities if present
-        name = name.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-        generic_name = (
-            generic_name.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-        )
-
         # Determine best category description
         category_desc = generic_name
         if not category_desc and categories:
@@ -216,7 +210,7 @@ class DesktopResolver:
         # Index by Exec command (handle quotes and path basenames cleanly)
         if exec_cmd:
             try:
-                words = shlex.split(exec_cmd)
+                words = shlex.split(_unescape(exec_cmd))
             except ValueError:
                 words = []
             if words and Path(words[0]).name == "env":
@@ -226,7 +220,7 @@ class DesktopResolver:
             if words and not words[0].startswith("-"):
                 self._by_exec.setdefault(Path(words[0]).name.lower(), info)
 
-    def _cache(self, key: tuple[str, str], info: AppInfo) -> AppInfo:
+    def _cache(self, key: str, info: AppInfo) -> AppInfo:
         self._resolved_cache[key] = info
         self._resolved_cache.move_to_end(key)
         if len(self._resolved_cache) > 512:
@@ -246,7 +240,7 @@ class DesktopResolver:
                 window_class="desktop",
             )
 
-        cache_key = (window_class.lower(), "")
+        cache_key = window_class.lower()
         if cache_key in self._resolved_cache:
             self._resolved_cache.move_to_end(cache_key)
             return self._resolved_cache[cache_key]
