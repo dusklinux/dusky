@@ -2546,6 +2546,9 @@ impl CenterApp {
                     .into())
             }
 
+            // Explicit action buttons replace the default button, as in GTK.
+            _ if !item.properties.buttons.is_empty() => None,
+
             _ => {
                 let opt_action = item.on_press.as_ref().or(item.on_action.as_ref());
                 if let Some(action) = opt_action {
