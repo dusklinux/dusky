@@ -6,6 +6,7 @@
 #   pacman, expac, gawk, GNU coreutils
 #   fzf for interactive mode
 #   wl-copy optionally, for Wayland clipboard integration
+#   python optionally, for the generated Matugen theme
 #
 # Without count: interactive browser; default is newest first.
 # With count:    CLI listing; default is largest first.
@@ -98,6 +99,9 @@ Notes:
 
   Clipboard support requires wl-copy and a working Wayland connection.
 
+  A generated Matugen theme is optional; built-in colors are used if it
+  is missing, invalid, or Python is unavailable.
+
   --desktop does not create a terminal. A desktop launcher must use
   Terminal=true or explicitly run this script in a terminal emulator.
 
@@ -167,7 +171,6 @@ _pkg_require() {
 
 _pkg_fetch() (
     set -o pipefail
-    export LC_ALL=C
 
     local target="$1"
     local names
@@ -175,7 +178,7 @@ _pkg_fetch() (
     # Raw fields: package name | version | install timestamp | bytes.
     if [[ "$target" == explicit ]]; then
         # Check pacman separately so expac cannot hide its failure.
-        names=$(pacman -Qeq) || return 1
+        names=$(LC_ALL=C pacman -Qeq) || return 1
 
         # Do not pass an empty target stream to expac.
         [[ -n "$names" ]] || return 0
@@ -216,13 +219,24 @@ _pkg_sort() {
 }
 
 _pkg_theme() {
-    local theme_file="$HOME/.config/matugen/generated/dusky_tui.json"
+    local theme_file="${XDG_CONFIG_HOME:-$HOME/.config}/matugen/generated/dusky_tui.json"
     local values key hex rgb
 
-    _pkg_require python || return 1
+    # A missing/generated theme must not prevent package queries.
+    local defaults='BG #11111b
+FG #cdd6f4
+ACCENT #89b4fa
+ERROR #f38ba8
+WARNING #f9e2af
+SUCCESS #a6e3a1
+MUTED #45475a'
+    values=$defaults
 
-    if ! values=$(
-        python - "$theme_file" <<'PY'
+    if [[ -e "$theme_file" ]]; then
+        if ! command -v python >/dev/null 2>&1; then
+            printf 'Warning: Python unavailable; using built-in colors.\n' >&2
+        elif ! values=$(
+            python - "$theme_file" <<'PY'
 import json
 import re
 import sys
@@ -244,11 +258,13 @@ try:
     for key in keys:
         print(key.upper(), data[key])
 except (OSError, UnicodeError, ValueError) as exc:
-    print(f"Error: cannot load theme {path}: {exc}", file=sys.stderr)
+    print(f"Warning: cannot load theme {path}: {exc}", file=sys.stderr)
     sys.exit(1)
 PY
-    ); then
-        return 1
+        ); then
+            printf 'Warning: using built-in colors.\n' >&2
+            values=$defaults
+        fi
     fi
 
     while read -r key hex; do
@@ -541,7 +557,7 @@ _pkg_interactive() {
     fi
 
     choice=$(
-        FZF_DEFAULT_OPTS= FZF_DEFAULT_OPTS_FILE=/dev/null \
+        FZF_DEFAULT_OPTS='' FZF_DEFAULT_OPTS_FILE=/dev/null \
         fzf \
             --with-shell='bash -c' \
             --ansi \
