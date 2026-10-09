@@ -1,389 +1,306 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# Target: Arch Linux (Rolling Release) / Hyprland (Wayland)
-# Description: Ultra-reliable, stateless battery charge threshold optimizer.
-# Validation: Tolerates write-only kernel drivers that return EOF on read.
-# Integration: Safely bridges root execution to update unprivileged Waybar state.
-# ==============================================================================
+# Set supported sysfs charge thresholds and optionally restore them at boot.
+# Target: Linux 7.3+, Bash 5.3+, systemd 262+, Arch Linux.
 
 set -euo pipefail
 
-# ------------------------------------------------------------------------------
-# Constants & Environment Setup
-# ------------------------------------------------------------------------------
-readonly SERVICE_NAME="battery-charge-limit.service"
-readonly SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
+readonly SERVICE_NAME=battery-charge-limit.service
+readonly SERVICE_FILE=/etc/systemd/system/${SERVICE_NAME}
+readonly LOCK_FILE=/run/lock/battery-charge-limit.lock
 readonly DEFAULT_LIMIT=80
 
-# Detect TTY for safe automation logging
 if [[ -t 1 && -t 2 ]]; then
-    readonly RED=$'\033[1;31m'
-    readonly GREEN=$'\033[1;32m'
-    readonly YELLOW=$'\033[1;33m'
-    readonly BLUE=$'\033[1;34m'
-    readonly BOLD=$'\033[1m'
-    readonly NC=$'\033[0m'
+    readonly RED=$'\033[1;31m' GREEN=$'\033[1;32m' YELLOW=$'\033[1;33m'
+    readonly BLUE=$'\033[1;34m' BOLD=$'\033[1m' NC=$'\033[0m'
 else
-    readonly RED=''
-    readonly GREEN=''
-    readonly YELLOW=''
-    readonly BLUE=''
-    readonly BOLD=''
-    readonly NC=''
+    readonly RED='' GREEN='' YELLOW='' BLUE='' BOLD='' NC=''
 fi
 
-# Globals for argument parsing and state
-declare -g ACTION="interactive"
-declare -g LIMIT=""
-declare -g PERSIST=""
+ACTION=interactive LIMIT='' PERSIST=''
+TARGET_USER='' STATE_DIR='' STATE_FILE='' SERVICE_TMP=''
 declare -a TARGET_FILES=()
 
-declare -g TARGET_USER=""
-declare -g STATE_DIR=""
-declare -g STATE_FILE=""
-
-# ------------------------------------------------------------------------------
-# Logging Utilities
-# ------------------------------------------------------------------------------
-info()    { printf "${BLUE}::${NC} ${BOLD}%s${NC}\n" "$*"; }
-success() { printf "${GREEN}==>${NC} ${BOLD}%s${NC}\n" "$*"; }
-warn()    { printf "${YELLOW}WARNING:${NC} %s\n" "$*" >&2; }
-error()   { printf "${RED}ERROR:${NC} %s\n" "$*" >&2; }
+info()    { printf '%s::%s %s%s%s\n' "$BLUE" "$NC" "$BOLD" "$*" "$NC"; }
+success() { printf '%s==>%s %s%s%s\n' "$GREEN" "$NC" "$BOLD" "$*" "$NC"; }
+warn()    { printf '%sWARNING:%s %s\n' "$YELLOW" "$NC" "$*" >&2; }
+error()   { printf '%sERROR:%s %s\n' "$RED" "$NC" "$*" >&2; }
 die()     { error "$*"; exit 1; }
 
-# ------------------------------------------------------------------------------
-# Privilege Escalation & User Context
-# ------------------------------------------------------------------------------
 require_root() {
     if (( EUID != 0 )); then
-        command -v sudo >/dev/null 2>&1 || die "sudo is required to escalate privileges."
-        command -v realpath >/dev/null 2>&1 || die "realpath is required for safe re-execution."
-        
         local abs_path
-        abs_path=$(realpath "$0") || die "Failed to resolve absolute path of script."
-        
-        info "Escalating privileges via sudo..."
-        exec sudo "${abs_path}" "$@"
+        abs_path=$(realpath -e -- "$0") || die 'Cannot resolve script path.'
+        info 'Escalating privileges via sudo...'
+        exec sudo -- "$abs_path" "$@"
     fi
 }
 
 resolve_user_context() {
-    TARGET_USER="${SUDO_USER:-${USER:-root}}"
-    
-    local user_home
-    user_home=$(getent passwd "${TARGET_USER}" | cut -d: -f6 || true)
-    user_home=${user_home:-/root}
-
-    STATE_DIR="${user_home}/.config/dusky/settings"
-    STATE_FILE="${STATE_DIR}/battery_limiter"
+    # Direct root execution belongs to root; do not trust an inherited USER.
+    TARGET_USER=${SUDO_USER:-$(id -un)}
+    local entry user_home
+    entry=$(getent passwd "$TARGET_USER") || die "No passwd entry for ${TARGET_USER}."
+    IFS=: read -r TARGET_USER _ _ _ _ user_home _ <<< "$entry"
+    [[ $user_home == /* ]] || die "Invalid home directory for ${TARGET_USER}."
+    STATE_DIR=${user_home}/.config/dusky/settings
+    STATE_FILE=${STATE_DIR}/battery_limiter
 }
 
-# ------------------------------------------------------------------------------
-# Hardware Detection
-# ------------------------------------------------------------------------------
 detect_batteries() {
-    local -i found_battery=0
-    
-    shopt -s nullglob
-    for bat in /sys/class/power_supply/BAT*; do
-        found_battery=1
-        if [[ -f "${bat}/charge_control_end_threshold" ]]; then
-            TARGET_FILES+=( "${bat}/charge_control_end_threshold" )
-        elif [[ -f "${bat}/stop_charge_thresh" ]]; then
-            TARGET_FILES+=( "${bat}/stop_charge_thresh" )
+    local supply type found_battery=0
+    TARGET_FILES=()
+    # Thresholds may belong to a charger, and battery names need not begin BAT.
+    for supply in /sys/class/power_supply/*; do
+        [[ -d $supply ]] || continue
+        type=''
+        { read -r type < "$supply/type"; } 2>/dev/null || true
+        [[ $type != Battery ]] || found_battery=1
+        if [[ -f $supply/charge_control_end_threshold ]]; then
+            TARGET_FILES+=("$supply/charge_control_end_threshold")
+        elif [[ -f $supply/stop_charge_thresh ]]; then
+            TARGET_FILES+=("$supply/stop_charge_thresh")
         fi
     done
-    shopt -u nullglob
-
-    (( found_battery == 1 )) || die "No batteries detected in /sys/class/power_supply/"
-    (( ${#TARGET_FILES[@]} > 0 )) || die "Your hardware/kernel lacks standard sysfs threshold support."
+    if (( ${#TARGET_FILES[@]} == 0 )); then
+        (( found_battery )) || die 'No batteries or charge-threshold devices detected.'
+        die 'Your hardware/kernel exposes no supported sysfs charge threshold.'
+    fi
 }
 
-# ------------------------------------------------------------------------------
-# Core Logic
-# ------------------------------------------------------------------------------
+read_threshold() {
+    # cat distinguishes successful EOF from a kernel read error; read alone cannot.
+    REPLY=$(cat -- "$1") || return 1
+    REPLY=${REPLY//[[:space:]]/}
+}
+
 display_status() {
-    info "Current Hardware Thresholds:"
+    local file name cached=''
+    if [[ -f $STATE_FILE ]]; then
+        { read -r cached < "$STATE_FILE"; } 2>/dev/null || true
+        [[ $cached =~ ^([1-9][0-9]?|100)%$ ]] || cached=''
+    fi
+    info 'Current hardware thresholds:'
     for file in "${TARGET_FILES[@]}"; do
-        local bat_name current_val=""
-        bat_name=$(basename "$(dirname "${file}")")
-        
-        if [[ -r "${file}" ]]; then
-            read -r current_val < "${file}" 2>/dev/null || true
-            current_val="${current_val//[$'\t\r\n ']/}" # Strip all whitespace
-        fi
-        
-        if [[ -n "${current_val}" ]]; then
-            printf "    ${BOLD}%s${NC} -> ${GREEN}%s%%${NC}\n" "${bat_name}" "${current_val}"
-        elif [[ ! -r "${file}" ]]; then
-            printf "    ${BOLD}%s${NC} -> ${RED}[Requires Root or Unreadable]${NC}\n" "${bat_name}"
+        name=${file%/*}
+        name=${name##*/}
+        if ! read_threshold "$file"; then
+            printf '    %s -> [Unreadable; hardware state unknown]\n' "$name"
+        elif [[ -n $REPLY ]]; then
+            printf '    %s -> %s%%\n' "$name" "$REPLY"
         else
-            if [[ -f "${STATE_FILE}" ]]; then
-                local cached_val=""
-                read -r cached_val < "${STATE_FILE}" 2>/dev/null || true
-                cached_val="${cached_val//[$'\t\r\n ']/}"
-                
-                if [[ -n "${cached_val}" ]]; then
-                    printf "    ${BOLD}%s${NC} -> ${YELLOW}%s (Cached / Write-Only Driver)${NC}\n" "${bat_name}" "${cached_val}"
-                else
-                    printf "    ${BOLD}%s${NC} -> ${YELLOW}[Driver returns empty / Write-Only]${NC}\n" "${bat_name}"
-                fi
-            else
-                printf "    ${BOLD}%s${NC} -> ${YELLOW}[Driver returns empty / Write-Only]${NC}\n" "${bat_name}"
-            fi
+            printf '    %s -> [Empty readback; hardware state unverified]\n' "$name"
+            [[ -z $cached ]] || printf '        Last successful request: %s (cached)\n' "$cached"
         fi
     done
-    printf "\n"
+    printf '\n'
 }
 
 update_user_state() {
-    local limit=$1
-    info "Syncing Waybar state to target context (${TARGET_USER})..."
-
-    # Switched to heavily simplified single-quotes and echo to bypass bash escaping bugs
-    local snippet="mkdir -p '${STATE_DIR}' && echo '${limit}%' > '${STATE_FILE}' && chmod 644 '${STATE_FILE}'"
-    
-    if runuser -u "${TARGET_USER}" -- /bin/bash -c "${snippet}"; then
-        success "Dusky state updated: ${STATE_FILE} -> ${limit}%"
-        return 0
+    # Keep paths in argv instead of interpolating them into shell source.
+    # Rename within the same directory so Waybar never reads a truncated value.
+    # shellcheck disable=SC2016
+    if runuser -u "$TARGET_USER" -- /usr/bin/bash -c '
+        set -euo pipefail
+        mkdir -p -- "$1"
+        tmp=$(mktemp -- "$2.XXXXXX")
+        trap '\''rm -f -- "$tmp"'\'' EXIT
+        printf "%s%%\n" "$3" > "$tmp"
+        chmod 644 -- "$tmp"
+        mv -fT -- "$tmp" "$2"
+    ' battery-limiter-state "$STATE_DIR" "$STATE_FILE" "$1"; then
+        success "Dusky state updated: ${STATE_FILE} -> $1%"
     else
-        error "Failed to write Waybar state to ${STATE_FILE}"
+        error "Hardware was updated, but the Dusky state write failed: ${STATE_FILE}"
         return 1
     fi
 }
 
 apply_limits_live() {
-    local limit=$1
-    local -i failures=0
-
+    local limit=$1 file name failures=0
     info "Applying ${limit}% charge limit..."
-
     for file in "${TARGET_FILES[@]}"; do
-        local bat_name current_val="" verify_val=""
-        bat_name=$(basename "$(dirname "${file}")")
-
-        # Skip if already set
-        if [[ -r "${file}" ]]; then
-            read -r current_val < "${file}" 2>/dev/null || true
-            current_val="${current_val//[$'\t\r\n ']/}"
-            if [[ "${current_val}" == "${limit}" ]]; then
-                success "[${bat_name}] Already set to ${limit}%"
-                continue
-            fi
+        name=${file%/*}
+        name=${name##*/}
+        if read_threshold "$file" && [[ $REPLY == "$limit" ]]; then
+            success "[${name}] Already set to ${limit}%"
+            continue
         fi
-
-        # Write to kernel
-        if printf "%s" "${limit}" > "${file}" 2>/dev/null; then
-            if [[ -r "${file}" ]]; then
-                read -r verify_val < "${file}" 2>/dev/null || true
-                verify_val="${verify_val//[$'\t\r\n ']/}"
-            fi
-            
-            # Validation Logic
-            if [[ "${verify_val}" == "${limit}" ]]; then
-                success "[${bat_name}] Successfully locked at ${limit}%"
-            elif [[ -z "${verify_val}" ]]; then
-                warn "[${bat_name}] Hardware accepted write, but driver read-back is empty."
-                success "[${bat_name}] Assumed locked at ${limit}% (Write-Only Driver)"
-            else
-                error "[${bat_name}] Kernel state mismatch. Wrote ${limit}, read back '${verify_val}'."
-                failures=1
-            fi
+        if ! printf '%s\n' "$limit" > "$file"; then
+            error "[${name}] Kernel rejected ${limit}%; the requested value may be unsupported."
+            failures=1
+        elif ! read_threshold "$file"; then
+            error "[${name}] Write accepted, but readback failed; hardware state is unknown."
+            failures=1
+        elif [[ $REPLY == "$limit" ]]; then
+            success "[${name}] Verified at ${limit}%"
+        elif [[ -z $REPLY ]]; then
+            warn "[${name}] Write accepted with empty readback; ${limit}% is unverified."
         else
-            error "[${bat_name}] Kernel rejected write. The limit ${limit}% may be unsupported by your hardware."
+            error "[${name}] Requested ${limit}%, but hardware reports '${REPLY}'."
             failures=1
         fi
     done
+    (( failures == 0 ))
+}
 
-    if (( failures == 0 )); then
-        update_user_state "${limit}" || failures=1
-    fi
+write_service() {
+    # Standalone boot command: no dependency on a user script or mounted home.
+    # ':' disables systemd's dollar expansion; '%%' escapes its percent expansion.
+    # Discover devices each boot, attempt all writes, and tolerate successful EOF.
+    cat <<EOF
+# Managed by battery_limiter.sh
+[Unit]
+Description=Hardware Battery Charge Limit ($1%%)
+StartLimitIntervalSec=30
+StartLimitBurst=5
 
-    return "${failures}"
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
+EOF
+    cat <<'EOF'
+ExecStart=:/usr/bin/flock --no-fork /run/lock/battery-charge-limit.lock /usr/bin/bash -c '\
+    found=0; failed=0; \
+    for supply in /sys/class/power_supply/*; do \
+        file="$supply/charge_control_end_threshold"; \
+        [[ -f "$file" ]] || file="$supply/stop_charge_thresh"; \
+        [[ -f "$file" ]] || continue; \
+        found=1; \
+        if ! printf "%%s\\n" "$1" > "$file"; then failed=1; continue; fi; \
+        if ! value=$(cat -- "$file"); then failed=1; continue; fi; \
+        value=${value//[[:space:]]/}; \
+        if [[ -z "$value" ]]; then \
+            printf "Write accepted; empty readback for %%s (unverified)\\n" "$file" >&2; \
+        elif [[ "$value" != "$1" ]]; then \
+            printf "Threshold mismatch for %%s: requested %%s, read %%s\\n" "$file" "$1" "$value" >&2; \
+            failed=1; \
+        fi; \
+    done; \
+    (( found && ! failed ))' battery-charge-limit \
+EOF
+    printf ' %s\n\n[Install]\nWantedBy=multi-user.target\n' "$1"
 }
 
 setup_persistence() {
-    local limit=$1
-    local tmp_service="${SERVICE_FILE}.tmp"
-    local exec_starts=""
-
-    info "Configuring stateless systemd persistence..."
-
-    # Systemd boot loop. Strict read-back omitted to prevent boot failure on write-only drivers
-    for file in "${TARGET_FILES[@]}"; do
-        exec_starts+="ExecStart=/bin/bash -c 'printf \"%%s\" \"${limit}\" > \"${file}\"'\n"
-    done
-    
-    # Sync state to user context on boot. '%%' becomes '%' during systemd evaluation.
-    exec_starts+="ExecStartPost=/usr/bin/runuser -u ${TARGET_USER} -- /bin/bash -c 'mkdir -p \"${STATE_DIR}\" && echo \"${limit}%%\" > \"${STATE_FILE}\" && chmod 644 \"${STATE_FILE}\"'\n"
-
-    # Atomic write
-    printf "%s\n" \
-"# Managed statelessly by the Arch Battery Optimizer" \
-"[Unit]" \
-"Description=Hardware Battery Charge Limit (${limit}%%)" \
-"After=multi-user.target" \
-"StartLimitIntervalSec=30" \
-"StartLimitBurst=5" \
-"" \
-"[Service]" \
-"Type=oneshot" \
-"RemainAfterExit=yes" \
-"Restart=on-failure" \
-"RestartSec=2" \
-> "${tmp_service}"
-
-    printf "%b" "${exec_starts}" >> "${tmp_service}"
-
-    printf "%s\n" \
-"" \
-"[Install]" \
-"WantedBy=multi-user.target" \
->> "${tmp_service}"
-
-    mv -f "${tmp_service}" "${SERVICE_FILE}"
-    chmod 644 "${SERVICE_FILE}"
-
-    systemctl daemon-reload
-    systemctl enable "${SERVICE_NAME}" >/dev/null 2>&1
-    
-    success "Persistence bound to systemd (Hardware Tolerant)."
+    SERVICE_TMP=$(mktemp -- "/etc/systemd/system/.${SERVICE_NAME}.XXXXXX")
+    write_service "$1" > "$SERVICE_TMP"
+    chmod 644 -- "$SERVICE_TMP"
+    mv -fT -- "$SERVICE_TMP" "$SERVICE_FILE"
+    SERVICE_TMP=''
+    # enable already performs daemon-reload; hardware was applied live above.
+    systemctl enable "$SERVICE_NAME"
+    success 'Charge limit will be restored at boot.'
 }
 
 remove_persistence() {
-    if [[ -f "${SERVICE_FILE}" ]]; then
-        info "Purging persistence configuration..."
-        systemctl disable --now "${SERVICE_NAME}" >/dev/null 2>&1 || true
-        rm -f "${SERVICE_FILE}"
+    if [[ -e $SERVICE_FILE || -L $SERVICE_FILE ]]; then
+        # Stop retries before deleting the unit; propagate failures to the caller.
+        systemctl disable --now "$SERVICE_NAME"
+        rm -f -- "$SERVICE_FILE"
         systemctl daemon-reload
-        success "Systemd configuration cleanly removed."
+        success 'Systemd persistence removed; current hardware limits are unchanged.'
     else
-        info "No active persistence found. Nothing to remove."
+        info 'No managed persistence configuration found.'
     fi
 }
 
-# ------------------------------------------------------------------------------
-# User Input & CLI Parsing
-# ------------------------------------------------------------------------------
 print_usage() {
-    printf "Usage: %s [OPTIONS]\n\n" "${0##*/}"
-    printf "Options:\n"
-    printf "  -l, --limit <1-100>   Set charge threshold\n"
-    printf "  -p, --persist         Persist limit across reboots (Requires -l)\n"
-    printf "  -n, --no-persist      Apply for current session only (Requires -l)\n"
-    printf "  -s, --status          Display current battery thresholds\n"
-    printf "  -r, --remove          Remove systemd persistence\n"
-    printf "  -h, --help            Show this help menu\n\n"
-    printf "Run without arguments for interactive mode.\n"
-    exit 0
+    printf 'Usage: %s [OPTIONS]\n\n' "${0##*/}"
+    cat <<'EOF'
+  -l, --limit <1-100>   Set charge threshold (hardware may restrict values)
+  -p, --persist         Restore limit at boot (requires --limit)
+  -n, --no-persist      Remove persistence and apply live (requires --limit)
+  -s, --status          Display current battery thresholds
+  -r, --remove          Remove persistence without changing live thresholds
+  -h, --help            Show help
+
+Without -p, --limit removes existing persistence. No arguments: interactive mode.
+EOF
 }
+
+validate_limit_input() { [[ $1 =~ ^([1-9][0-9]?|100)$ ]]; }
 
 parse_args() {
-    while (( $# > 0 )); do
-        case "$1" in
+    while (( $# )); do
+        case $1 in
             -l|--limit)
-                [[ -n "${2:-}" ]] || die "Missing value for $1"
-                LIMIT="$2"
-                ACTION="apply"
-                shift 2
-                ;;
-            -p|--persist)
-                PERSIST="y"
-                shift
-                ;;
-            -n|--no-persist)
-                PERSIST="n"
-                shift
-                ;;
-            -s|--status)
-                ACTION="status"
-                shift
-                ;;
-            -r|--remove)
-                ACTION="remove"
-                shift
-                ;;
-            -h|--help)
-                print_usage
-                ;;
-            *)
-                die "Unknown parameter: $1"
-                ;;
+                [[ $ACTION == interactive ]] || die 'Choose only one action: limit, status, or remove.'
+                [[ -n ${2:-} ]] || die "Missing value for $1"
+                validate_limit_input "$2" || die "Invalid limit: $2 (expected 1-100)."
+                ACTION=apply LIMIT=$2
+                shift 2 ;;
+            -p|--persist|-n|--no-persist)
+                [[ -z $PERSIST ]] || die 'Specify only one persistence flag.'
+                if [[ $1 == -p || $1 == --persist ]]; then PERSIST=y; else PERSIST=n; fi
+                shift ;;
+            -s|--status|-r|--remove)
+                [[ $ACTION == interactive ]] || die 'Choose only one action: limit, status, or remove.'
+                if [[ $1 == -s || $1 == --status ]]; then ACTION=status; else ACTION=remove; fi
+                shift ;;
+            -h|--help) print_usage; exit 0 ;;
+            *) die "Unknown parameter: $1" ;;
         esac
     done
-
-    if [[ -n "${PERSIST}" && "${ACTION}" != "apply" ]]; then
-        die "--persist and --no-persist flags require the --limit flag."
-    fi
+    [[ -z $PERSIST || $ACTION == apply ]] || die 'Persistence flags require --limit.'
 }
 
-validate_limit_input() {
-    local val=$1
-    [[ "${val}" =~ ^([1-9][0-9]?|100)$ ]]
+cleanup() {
+    [[ -z $SERVICE_TMP ]] || rm -f -- "$SERVICE_TMP"
 }
 
-# ------------------------------------------------------------------------------
-# Main Execution Flow
-# ------------------------------------------------------------------------------
 main() {
     parse_args "$@"
-    
-    if [[ "${ACTION}" == "status" ]]; then
+    if [[ $ACTION == status ]]; then
         resolve_user_context
         detect_batteries
         display_status
-        exit 0
+        return
     fi
-
-    if [[ "${ACTION}" == "remove" ]]; then
-        require_root "$@"
-        remove_persistence
-        exit 0
-    fi
-
     require_root "$@"
+    trap cleanup EXIT
+    if [[ $ACTION == remove ]]; then
+        exec {lock_fd}> "$LOCK_FILE"
+        flock "$lock_fd"
+        remove_persistence
+        return
+    fi
     resolve_user_context
     detect_batteries
-
-    if [[ "${ACTION}" == "interactive" ]]; then
+    if [[ $ACTION == interactive ]]; then
         display_status
-        
         while true; do
-            printf "${YELLOW}?>${NC} Target charge limit (1-100) [Default: %s]: " "${DEFAULT_LIMIT}"
-            read -r LIMIT || die "Input aborted."
-            LIMIT=${LIMIT:-${DEFAULT_LIMIT}}
-            validate_limit_input "${LIMIT}" && break
-            warn "Invalid integer. Must be between 1 and 100."
+            printf '%s?>%s Target charge limit (1-100) [Default: %s]: ' "$YELLOW" "$NC" "$DEFAULT_LIMIT"
+            read -r LIMIT || die 'Input aborted.'
+            LIMIT=${LIMIT:-$DEFAULT_LIMIT}
+            validate_limit_input "$LIMIT" && break
+            warn 'Invalid integer. Must be between 1 and 100.'
         done
-
         while true; do
-            printf "${YELLOW}?>${NC} Persist across reboots? (y/n) [Default: y]: "
-            read -r PERSIST || die "Input aborted."
+            printf '%s?>%s Persist across reboots? (y/n) [Default: y]: ' "$YELLOW" "$NC"
+            read -r PERSIST || die 'Input aborted.'
             PERSIST=${PERSIST:-y}
-            [[ "${PERSIST,,}" =~ ^(y|n|yes|no)$ ]] && break
-            warn "Please answer 'y' or 'n'."
+            case ${PERSIST,,} in
+                y|yes) PERSIST=y; break ;;
+                n|no) PERSIST=n; break ;;
+                *) warn "Please answer 'y' or 'n'." ;;
+            esac
         done
-        
-        [[ "${PERSIST,,}" =~ ^y ]] && PERSIST="y" || PERSIST="n"
-        printf "\n"
     fi
-
-    validate_limit_input "${LIMIT}" || die "Invalid limit specified: ${LIMIT}"
-
-    if ! apply_limits_live "${LIMIT}"; then
-        warn "Failed applying thresholds. Ensure your hardware supports custom limits."
-        exit 1
-    fi
-
-    if [[ "${PERSIST}" == "y" ]]; then
-        setup_persistence "${LIMIT}"
+    # Serialize live writes, service installation/removal, and cache updates.
+    exec {lock_fd}> "$LOCK_FILE"
+    flock "$lock_fd"
+    apply_limits_live "$LIMIT" || die 'Not all thresholds were applied; some devices may have changed.'
+    if [[ $PERSIST == y ]]; then
+        setup_persistence "$LIMIT"
     else
         remove_persistence
-        info "Configuration is ephemeral. Will reset upon reboot."
+        info 'No boot restoration is configured; firmware may retain the live threshold.'
     fi
-
-    printf "\n"
-    success "Battery limits successfully enforced."
+    update_user_state "$LIMIT" || return 1
+    success 'Charge-limit request completed (see any readback warnings above).'
 }
 
 main "$@"
