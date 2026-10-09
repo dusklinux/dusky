@@ -70,7 +70,8 @@ impl ServiceStatus {
 pub struct Snapshot {
     pub toggles: Vec<(String, Option<bool>)>,
     pub services: HashMap<String, ServiceStatus>,
-    pub selections: Vec<(String, String)>,
+    pub selections: Vec<(String, Option<String>)>,
+    pub options: Vec<(String, Vec<String>)>,
     pub sliders: Vec<(String, f32)>,
     pub entries: Vec<(String, String)>,
     pub labels: Vec<(String, String)>,
@@ -85,33 +86,30 @@ pub fn query(items: &[ItemConfig]) -> Snapshot {
             result.labels.push((key.clone(), label_value(item.value.as_ref()).unwrap_or_else(|| "N/A".into())));
         }
         if matches!(item.item_type.as_str(), "entry" | "secret")
-            && !p.value_command.is_empty()
-            && let Some(out) =
-                run_shell(&p.value_command, Duration::from_secs(4), true).filter(|out| out.status)
-        {
-            result
-                .entries
-                .push((key.clone(), out.stdout.trim().to_string()));
+            && let Some(raw) = scalar_value(item) {
+            result.entries.push((key.clone(), raw));
         }
-        if item.item_type == "selection"
-            && !p.value_command.is_empty()
-            && let Some(out) =
-                run_shell(&p.value_command, Duration::from_secs(4), true).filter(|out| out.status)
-        {
-            let raw = out.stdout.trim();
-            let value = p
-                .options_map
-                .get(raw)
-                .or_else(|| p.options_map.get(&raw.to_lowercase()))
-                .cloned()
-                .or_else(|| {
-                    p.options
-                        .iter()
-                        .find(|s| s.eq_ignore_ascii_case(raw))
-                        .cloned()
-                });
-            if let Some(value) = value {
-                result.selections.push((key.clone(), value));
+        if item.item_type == "selection" {
+            let options = if p.options_command.is_empty() {
+                Some(p.options.clone())
+            } else {
+                run_shell(&p.options_command, Duration::from_secs(5), true)
+                    .filter(|out| out.status)
+                    .map(|out| out.stdout.lines().map(str::trim).filter(|s| !s.is_empty())
+                        .map(str::to_string).collect::<Vec<_>>())
+            };
+            if let Some(options) = options {
+                if !p.options_command.is_empty() {
+                    result.options.push((key.clone(), options.clone()));
+                }
+                if !p.value_command.is_empty() || !p.key.is_empty() {
+                    let value = scalar_value(item).and_then(|raw| {
+                        let mapped = p.options_map.iter().find(|(k, _)| k.eq_ignore_ascii_case(&raw))
+                            .map(|(_, v)| v.as_str()).unwrap_or(&raw);
+                        options.iter().find(|s| s.eq_ignore_ascii_case(mapped)).cloned()
+                    });
+                    result.selections.push((key.clone(), value));
+                }
             }
         }
         if matches!(item.item_type.as_str(), "slider" | "spin")
@@ -119,10 +117,8 @@ pub fn query(items: &[ItemConfig]) -> Snapshot {
                 key.as_str(),
                 "Volume" | "Microphone" | "Brightness" | "Night Light"
             )
-            && !p.value_command.is_empty()
-            && let Some(out) =
-                run_shell(&p.value_command, Duration::from_secs(4), true).filter(|out| out.status)
-            && let Ok(value) = out.stdout.trim().parse::<f32>()
+            && let Some(raw) = scalar_value(item)
+            && let Ok(value) = raw.parse::<f32>()
             && value.is_finite()
         {
             result.sliders.push((key.clone(), value));
@@ -187,6 +183,37 @@ pub fn query(items: &[ItemConfig]) -> Snapshot {
         }
     }
     result
+}
+
+fn scalar_value(item: &ItemConfig) -> Option<String> {
+    let p = &item.properties;
+    if !p.value_command.is_empty() {
+        run_shell(&p.value_command, Duration::from_secs(4), true)
+            .filter(|out| out.status).map(|out| out.stdout.trim().to_string())
+    } else if !p.key.is_empty() {
+        std::fs::read_to_string(settings_dir().join(&p.key)).ok()
+            .map(|raw| raw.trim().to_string())
+    } else { None }
+}
+
+/// Persist only after a finite action succeeds. Launches are confirmed by readback.
+pub fn set_scalar(item: &ItemConfig, value: &str, action: Option<&ActionConfig>) -> Result<(), String> {
+    if let Some(action) = action { run_action(action)?; }
+    if item.properties.persistence == "app" && !item.properties.key.is_empty() {
+        let raw = if item.item_type == "selection" {
+            item.properties.options_map.iter().filter(|(_, v)| v.as_str() == value)
+                .map(|(k, _)| k.as_str()).min().unwrap_or(value)
+        } else { value };
+        if !atomic_write_text(&settings_dir().join(&item.properties.key), raw) {
+            return Err("Could not save setting".into());
+        }
+    }
+    Ok(())
+}
+
+pub fn is_launch(action: &ActionConfig) -> bool {
+    matches!(action, ActionConfig::Exec { terminal: true, .. } | ActionConfig::Argv { terminal: true, .. })
+        || matches!(action, ActionConfig::Exec { mode, .. } | ActionConfig::Argv { mode, .. } if mode == "launch")
 }
 
 fn label_value(value: Option<&ValueConfig>) -> Option<String> {
@@ -285,6 +312,7 @@ pub fn action_argv(action: &ActionConfig) -> Vec<String> {
         ActionConfig::Exec {
             command,
             argv,
+            expanded_argv,
             terminal,
             requires_root,
             ..
@@ -295,21 +323,25 @@ pub fn action_argv(action: &ActionConfig) -> Vec<String> {
                 let command = if *requires_root {
                     expand_shell_home(command, &home)
                 } else {
-                    command.clone()
+                    // Leave ordinary shell variables to Bash. Only normalize
+                    // a leading executable path, as the GTK launcher did.
+                    normalize_shell_command(command, &home)
                 };
                 vec!["bash".into(), "-c".into(), command]
             } else {
-                argv.iter().map(|a| expand_arg(a)).collect()
+                if *expanded_argv { argv.clone() }
+                else { argv.iter().map(|a| expand_arg(a)).collect() }
             };
             (args, *terminal, *requires_root)
         }
         ActionConfig::Argv {
             argv,
+            expanded_argv,
             terminal,
             requires_root,
             ..
         } => (
-            argv.iter().map(|a| expand_arg(a)).collect(),
+            if *expanded_argv { argv.clone() } else { argv.iter().map(|a| expand_arg(a)).collect() },
             *terminal,
             *requires_root,
         ),
@@ -326,24 +358,86 @@ pub fn action_argv(action: &ActionConfig) -> Vec<String> {
 
 pub fn with_value(action: &ActionConfig, value: &str) -> ActionConfig {
     let mut action = action.clone();
-    let quoted = format!("'{}'", value.replace('\'', "'\\''"));
     match &mut action {
-        ActionConfig::Exec { command, argv, .. } => {
-            *command = command
-                .replace("{value}", &quoted)
-                .replace("$VALUE", &quoted);
+        ActionConfig::Exec { command, argv, expanded_argv, .. } => {
+            *command = replace_shell_value(command, value);
             for arg in argv {
-                *arg = arg.replace("{value}", value).replace("$VALUE", value);
+                let raw = if *expanded_argv { arg.clone() } else { expand_arg(arg) };
+                *arg = replace_argv_value(&raw, value);
             }
+            *expanded_argv = true;
         }
-        ActionConfig::Argv { argv, .. } => {
+        ActionConfig::Argv { argv, expanded_argv, .. } => {
             for arg in argv {
-                *arg = arg.replace("{value}", value).replace("$VALUE", value);
+                let raw = if *expanded_argv { arg.clone() } else { expand_arg(arg) };
+                *arg = replace_argv_value(&raw, value);
             }
+            *expanded_argv = true;
         }
         _ => (),
     }
     action
+}
+
+fn normalize_shell_command(raw: &str, home: &str) -> String {
+    let raw = raw.trim();
+    if let Some(rest) = raw.strip_prefix("$HOME/").or_else(|| raw.strip_prefix("~/")) {
+        format!("{}/{rest}", shell_literal(home, None))
+    } else { raw.into() }
+}
+
+fn value_token_length(raw: &str) -> Option<usize> {
+    ["{value}", "${VALUE}", "$VALUE"].into_iter()
+        .find(|token| raw.starts_with(token) && (*token != "$VALUE" || raw[token.len()..]
+            .chars().next().is_none_or(|c| !c.is_alphanumeric() && c != '_')))
+        .map(str::len)
+}
+
+fn replace_argv_value(raw: &str, value: &str) -> String {
+    let mut result = String::new();
+    let mut rest = raw;
+    while !rest.is_empty() {
+        if let Some(length) = value_token_length(rest) {
+            result.push_str(value);
+            rest = &rest[length..];
+        } else {
+            let c = rest.chars().next().unwrap();
+            result.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    result
+}
+
+fn shell_literal(value: &str, quote: Option<char>) -> String {
+    match quote {
+        Some('"') => value.replace('\\', "\\\\").replace('"', "\\\"")
+            .replace('$', "\\$").replace('`', "\\`"),
+        Some('\'') => value.replace('\'', "'\\''"),
+        _ => format!("'{}'", value.replace('\'', "'\\''")),
+    }
+}
+
+fn replace_shell_value(raw: &str, value: &str) -> String {
+    let mut output = String::new();
+    let mut rest = raw;
+    let mut quote = None;
+    while !rest.is_empty() {
+        if let Some(length) = value_token_length(rest)
+        {
+            output.push_str(&shell_literal(value, quote));
+            rest = &rest[length..];
+            continue;
+        }
+        let c = rest.chars().next().unwrap();
+        rest = &rest[c.len_utf8()..];
+        output.push(c);
+        if c == '\\' && quote != Some('\'') {
+            if let Some(next) = rest.chars().next() { output.push(next); rest = &rest[next.len_utf8()..]; }
+        } else if Some(c) == quote { quote = None; }
+        else if quote.is_none() && matches!(c, '\'' | '"') { quote = Some(c); }
+    }
+    output
 }
 
 fn expand_shell_home(raw: &str, home: &str) -> String {
@@ -351,7 +445,9 @@ fn expand_shell_home(raw: &str, home: &str) -> String {
     let mut rest = raw;
     let mut quote = None;
     while !rest.is_empty() {
-        let token = if rest.starts_with("${HOME}") {
+        let token = if quote == Some('\'') {
+            None
+        } else if rest.starts_with("${HOME}") {
             Some(7)
         } else if rest.starts_with("$HOME")
             && rest[5..]
@@ -360,21 +456,14 @@ fn expand_shell_home(raw: &str, home: &str) -> String {
                 .is_none_or(|c| !c.is_alphanumeric() && c != '_')
         {
             Some(5)
-        } else if rest.starts_with("~/") && quote.is_none() {
+        } else if rest.starts_with("~/") && quote.is_none()
+            && output.chars().last().is_none_or(|c| c.is_whitespace() || "=;|&(".contains(c)) {
             Some(1)
         } else {
             None
         };
         if let Some(length) = token {
-            output.push_str(&match quote {
-                Some('"') => home
-                    .replace('\\', "\\\\")
-                    .replace('"', "\\\"")
-                    .replace('$', "\\$")
-                    .replace('`', "\\`"),
-                Some('\'') => home.replace('\'', "'\\''"),
-                _ => format!("'{}'", home.replace('\'', "'\\''")),
-            });
+            output.push_str(&shell_literal(home, quote));
             rest = &rest[length..];
             continue;
         }
@@ -435,7 +524,7 @@ pub fn run_action(action: &ActionConfig) -> Result<(), String> {
             mode,
             timeout,
             ..
-        } => (*terminal, mode.as_str(), timeout.unwrap_or(45)),
+        } => (*terminal, mode.as_str(), timeout.unwrap_or(90)),
         ActionConfig::Redirect { .. } | ActionConfig::Reload => return Ok(()),
     };
     if terminal || mode == "launch" {
@@ -490,6 +579,75 @@ pub fn set_toggle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dynamic_options_and_scalar_files_follow_external_changes() {
+        let path = std::env::temp_dir().join(format!("dusky-selection-{}", std::process::id()));
+        let mut item: ItemConfig = toml::from_str("type='selection'\n[properties]\ntitle='Fixture'\npersistence='app'\noptions_command=\"printf 'RAM\\nDisk\\n'\"\n[properties.options_map]\nfalse='RAM'\ntrue='Disk'").unwrap();
+        item.properties.key = path.to_string_lossy().into_owned();
+        let missing = query(&[item.clone()]);
+        assert_eq!(missing.options[0].1, ["RAM", "Disk"]);
+        assert_eq!(missing.selections[0].1, None);
+        set_scalar(&item, "Disk", None).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "true");
+        assert_eq!(query(&[item.clone()]).selections[0].1.as_deref(), Some("Disk"));
+        std::fs::write(&path, "FALSE\n").unwrap();
+        assert_eq!(query(&[item.clone()]).selections[0].1.as_deref(), Some("RAM"));
+        let failure: ActionConfig = toml::from_str("type='exec'\ncommand='exit 7'").unwrap();
+        assert!(set_scalar(&item, "Disk", Some(&failure)).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "FALSE\n");
+        std::fs::write(&path, "unexpected").unwrap();
+        assert_eq!(query(&[item.clone()]).selections[0].1, None);
+        item.properties.options_command = "exit 1".into();
+        let failed = query(&[item]);
+        assert!(failed.options.is_empty(), "failed discovery must retain the previous list");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn substitutions_preserve_values_in_each_shell_quote_context() {
+        let value = "6 GB's $HOME/\\path \"quoted\"; $(exit 7) `literal`";
+        for template in ["printf %s {value}", "printf %s \"{value}\"", "printf %s '{value}'", "printf %s $VALUE"] {
+            let action = ActionConfig::Exec { command: template.into(), argv: vec![], expanded_argv: false, terminal: false,
+                requires_root: false, mode: String::new(), timeout: None };
+            let action = with_value(&action, value);
+            let output = run_command(&action_argv(&action), Duration::from_secs(2), true).unwrap();
+            assert!(output.status, "{}", output.stderr);
+            assert_eq!(output.stdout, value, "{template}");
+        }
+        assert_eq!(expand_shell_home("printf %s '$HOME/literal'", "/tmp/other"), "printf %s '$HOME/literal'");
+        assert_eq!(replace_shell_value("printf %s $VALUE_SUFFIX", value), "printf %s $VALUE_SUFFIX");
+    }
+
+    #[test]
+    fn substituted_argv_values_stay_literal_and_shell_home_remains_dynamic() {
+        for kind in ["argv", "exec"] {
+            let action: ActionConfig = toml::from_str(&format!("type='{kind}'\nargv=['printf','%s','{{value}}']")).unwrap();
+            for value in ["~/literal", "$HOME/literal", "$VALUE", "${VALUE}", "{value}", "two words'\\quoted"] {
+                let substituted = with_value(&action, value);
+                let output = run_command(&action_argv(&substituted), Duration::from_secs(2), true).unwrap();
+                assert!(output.status);
+                assert_eq!(output.stdout, value);
+            }
+        }
+        let action: ActionConfig = toml::from_str("type='exec'\ncommand='HOME=/tmp/dusky-command-local; printf %s \"$HOME\"'").unwrap();
+        let output = run_command(&action_argv(&action), Duration::from_secs(2), true).unwrap();
+        assert_eq!(output.stdout, "/tmp/dusky-command-local");
+        assert_eq!(normalize_shell_command("$HOME/script --flag", "/tmp/two words"), "'/tmp/two words'/script --flag");
+    }
+
+    #[test]
+    fn entries_and_numeric_settings_persist_and_read_back() {
+        let path = std::env::temp_dir().join(format!("dusky-scalar-{}", std::process::id()));
+        for kind in ["entry", "slider"] {
+            let mut item: ItemConfig = toml::from_str(&format!("type='{kind}'\n[properties]\ntitle='Scalar'\npersistence='app'")).unwrap();
+            item.properties.key = path.to_string_lossy().into_owned();
+            set_scalar(&item, "0.25", None).unwrap();
+            let snapshot = query(&[item]);
+            if kind == "entry" { assert_eq!(snapshot.entries[0].1, "0.25"); }
+            else { assert_eq!(snapshot.sliders[0].1, 0.25); }
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
     #[test]
     fn configured_label_sources_report_values_and_query_failures() {
         let path = std::env::temp_dir().join(format!("dusky-label-{}", std::process::id()));

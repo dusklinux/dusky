@@ -91,11 +91,15 @@ loaded by the Rust UI. The current Matugen template explicitly uses dark roles.
 
 ## Controls and styling
 
-Toggle state sources, service runtime/startup queries and toggle writes run on
-executor workers. Services use enable/disable with `--now`; failed operations
+Toggle state sources, dynamic selection options, scalar setting reads, service
+runtime/startup queries and setting writes run on executor workers. Services use
+enable/disable with `--now`; failed operations
 restore the previous state and show the error. Setting-file toggles support
 app-owned persistence. State refreshes on page entry, after operations and on
-the existing three-second cycle.
+the existing three-second cycle. Configured intervals are rounded up to its next
+tick. One shot labels/entries and collapsed expander children avoid repeated
+command polling. Selections observe finite apply results, roll back failures and
+refresh saved setting files. App owned scalar settings save after success.
 
 Paired `properties.buttons` render as joined actions in their TOML order.
 Explicit `style = "suggested"` or `"destructive"` determines their appearance;
@@ -111,15 +115,18 @@ The native `type = "reload"` action reloads configuration and colors in place.
 Home hardware polling and Night Light IPC run on executor workers. Hardware
 polls do not overlap; older reads cannot overwrite a changed slider value.
 Night Light keeps one write in progress and the latest pending value. Closing
-waits for those bounded writes to finish, so the last requested value is retained.
-Search rows open their owning page before interaction; state queries continue
-there. Labels evaluate their configured exec/file/system/static sources on workers
+waits for bounded setting and service writes to finish, including pending slider
+debounce values. Page changes and reload flush deferred slider edits; fractional
+values are retained. Search includes nested/generated controls and opens their
+owning subpage/expander before interaction; state queries continue there.
+Labels evaluate their configured exec/file/system/static sources on workers
 and show `N/A` when a source cannot be read.
 
 Setup preserves existing editable TOML, so source-default corrections are not
 automatically merged into previously installed configurations. In particular,
 `type = "reload"` requires a binary rebuilt from the current sources.
 
-A failed reload keeps the current configuration and displays the error. Temporary
+A failed parse or semantic validation keeps the current configuration and
+displays the error. Reload preserves the selected page by ID. Temporary
 missing or malformed generated palettes retain the current colors during polling
 and reload; startup still uses the built-in palette if no valid colors exist.

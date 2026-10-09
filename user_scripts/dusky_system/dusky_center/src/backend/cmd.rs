@@ -262,12 +262,43 @@ pub fn atomic_write_text(path: &std::path::Path, text: &str) -> bool {
         let _ = std::fs::remove_file(&tmp);
         return false;
     }
+    // Persist the renamed directory entry as well as the file's contents.
+    // Some filesystems do not support directory fsync; match the GTK writer's
+    // best effort there after the setting has already been published.
+    if let Ok(directory) = std::fs::File::open(parent) {
+        let _ = directory.sync_all();
+    }
     true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timeout_stress_reaps_children_and_continuous_writers() {
+        let root = std::env::temp_dir().join(format!("dusky-command-stress-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        for iteration in 0..20 {
+            let pidfile = root.join(iteration.to_string());
+            let command = format!("/usr/bin/sleep 10 & printf '%s' $! > '{}'; while :; do printf '%8192s' x; printf '%8192s' y >&2; done", pidfile.display());
+            let start = std::time::Instant::now();
+            assert!(run_shell(&command, Duration::from_millis(50), true).is_none());
+            assert!(start.elapsed() < Duration::from_secs(2));
+            let pid = std::fs::read_to_string(pidfile).unwrap();
+            let stat = std::path::PathBuf::from(format!("/proc/{pid}/stat"));
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            loop {
+                // A killed grandchild may remain briefly as a zombie until
+                // the system's subreaper collects it; it is no longer running.
+                if std::fs::read_to_string(&stat).map(|raw| raw.split(')').nth(1)
+                    .is_some_and(|tail| tail.trim_start().starts_with('Z'))).unwrap_or(true) { break; }
+                assert!(std::time::Instant::now() < deadline, "child {pid} survived timeout");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn echo_returns_output() {

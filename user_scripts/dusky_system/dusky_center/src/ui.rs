@@ -52,6 +52,21 @@ pub enum NavView {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct SearchLocation {
+    page: usize,
+    navigation: Vec<Vec<usize>>,
+    expanders: Vec<String>,
+    key: String,
+}
+
+struct SearchHit<'a> {
+    item: &'a ItemConfig,
+    breadcrumb: String,
+    location: SearchLocation,
+    score: u32,
+}
+
 // ---------------------------------------------------------------------------
 // Messages
 // ---------------------------------------------------------------------------
@@ -59,6 +74,7 @@ pub enum NavView {
 #[derive(Debug, Clone)]
 pub enum Message {
     SelectPage(usize),
+    OpenSearchResult(SearchLocation),
     PushSubPage {
         title: String,
         sections: Vec<SectionConfig>,
@@ -84,6 +100,7 @@ pub enum Message {
         key: String,
         value: f32,
         on_change: Option<ChangeAction>,
+        changed_at: Instant,
     },
     SliderReleased {
         key: String,
@@ -101,12 +118,13 @@ pub enum Message {
         unit: String,
         scope: String,
     },
-    ControlsLoaded { generation: u64, snapshot: Snapshot },
+    ControlsLoaded { generation: u64, slider_revision: u64, snapshot: Snapshot },
     ToggleFinished { key: String, previous: bool, result: Result<(), String> },
     ServiceFinished { key: String, previous: bool, result: Result<(), String> },
     EntryChanged { key: String, value: String },
-    SubmitEntry { key: String, action: ActionConfig },
-    EntryFinished { key: String, result: Result<(), String> },
+    SubmitEntry { key: String, action: Option<ActionConfig> },
+    EntryFinished { key: String, value: String, result: Result<(), String> },
+    SelectionFinished { key: String, previous: Option<String>, result: Result<(), String> },
     DragWindow,
     Tick,
     SliderApplied { key: String, result: Result<(), String> },
@@ -133,6 +151,7 @@ pub struct CenterApp {
     pub toggle_states: HashMap<String, bool>,
     pub slider_values: HashMap<String, f32>,
     pub selected_options: HashMap<String, String>,
+    pub dynamic_options: HashMap<String, Vec<String>>,
     pub service_states: HashMap<String, bool>,
     pub live_labels: HashMap<String, String>,
     pub cpu_text: String,
@@ -143,7 +162,9 @@ pub struct CenterApp {
     pub sunset_active: bool,
     pub core_loading: bool,
     pub applying_sliders: HashSet<String>,
-    pub pending_sliders: HashMap<String, (f32, Option<ActionConfig>)>,
+    pub pending_sliders: HashMap<String, (f32, Option<ActionConfig>, Option<ItemConfig>)>,
+    pub deferred_sliders: HashMap<String, (f32, Option<ChangeAction>, Instant)>,
+    // Readback grace is independent of each deferred edit's timer identity.
     pub slider_changed_at: HashMap<String, Instant>,
     pub slider_revision: u64,
     pub closing: bool,
@@ -152,6 +173,8 @@ pub struct CenterApp {
     pub unavailable_controls: HashSet<String>,
     pub control_generation: u64,
     pub controls_loading: Option<u64>,
+    pub control_polled_at: HashMap<String, Instant>,
+    pub polled_generation: Option<u64>,
     pub action_error: Option<String>,
     pub entry_values: HashMap<String, String>,
     pub editing_entries: HashSet<String>,
@@ -190,6 +213,7 @@ impl CenterApp {
             toggle_states: HashMap::new(),
             slider_values: HashMap::new(),
             selected_options: HashMap::new(),
+            dynamic_options: HashMap::new(),
             service_states: HashMap::new(),
             live_labels: HashMap::new(),
             cpu_text: cpu,
@@ -201,6 +225,7 @@ impl CenterApp {
             core_loading: false,
             applying_sliders: HashSet::new(),
             pending_sliders: HashMap::new(),
+            deferred_sliders: HashMap::new(),
             slider_changed_at: HashMap::new(),
             slider_revision: 0,
             closing: false,
@@ -209,6 +234,8 @@ impl CenterApp {
             unavailable_controls: HashSet::new(),
             control_generation: 0,
             controls_loading: None,
+            control_polled_at: HashMap::new(),
+            polled_generation: None,
             action_error: None,
             entry_values: HashMap::new(),
             editing_entries: HashSet::new(),
@@ -271,21 +298,34 @@ impl CenterApp {
 
     fn queue_slider(&mut self, key: String, value: f32, on_change: Option<ChangeAction>) -> Task<Message> {
         let action = match on_change {
-            Some(ChangeAction::Direct(action)) => Some(controls::with_value(&action, &(value.round() as i64).to_string())),
+            Some(ChangeAction::Direct(action)) => {
+                let mut action = controls::with_value(&action, &value.to_string());
+                if let ActionConfig::Exec { timeout, .. } | ActionConfig::Argv { timeout, .. } = &mut action
+                    && timeout.is_none() {
+                    *timeout = Some(15);
+                }
+                Some(action)
+            }
             _ if key == "Night Light" => None,
+            _ if self.visible_items().iter().any(|item| controls::item_key(item) == key
+                && item.properties.persistence == "app" && !item.properties.key.is_empty()) => None,
             _ => return Task::none(),
         };
-        self.pending_sliders.insert(key.clone(), (value, action));
+        let item = self.visible_items().into_iter().find(|item| controls::item_key(item) == key).cloned();
+        self.pending_sliders.insert(key.clone(), (value, action, item));
         self.apply_pending_slider(key)
     }
 
     fn apply_pending_slider(&mut self, key: String) -> Task<Message> {
         if self.applying_sliders.contains(&key) { return Task::none(); }
-        let Some((value, action)) = self.pending_sliders.remove(&key) else { return Task::none(); };
+        let Some((value, action, item)) = self.pending_sliders.remove(&key) else { return Task::none(); };
         self.applying_sliders.insert(key.clone());
+        let sunset = key == "Night Light";
         Task::perform(async move {
-            if let Some(action) = action { controls::run_action(&action) }
-            else { sys::apply_sunset(value); Ok(()) }
+            if action.is_none() && sunset { sys::apply_sunset(value) }
+            else if let Some(item) = item { controls::set_scalar(&item, &value.to_string(), action.as_ref()) }
+            else if let Some(action) = action { controls::run_action(&action) }
+            else { Ok(()) }
         }, move |result| Message::SliderApplied { key: key.clone(), result })
     }
 
@@ -294,6 +334,7 @@ impl CenterApp {
             .is_some_and(|time| time.elapsed() < Duration::from_secs(3));
         if self.active_slider.as_deref() != Some(key) && !recent
             && !self.applying_sliders.contains(key) && !self.pending_sliders.contains_key(key)
+            && !self.deferred_sliders.contains_key(key)
         {
             self.slider_values.insert(key.into(), value);
         }
@@ -305,18 +346,45 @@ impl CenterApp {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::OpenSearchResult(location) => {
+                let pending = self.flush_deferred_sliders();
+                self.lazy_load_page(location.page);
+                self.nav_stack = vec![NavView::Root(location.page)];
+                for path in location.navigation {
+                    let sections = match self.nav_stack.last() {
+                        Some(NavView::SubPage { sections, .. }) => sections.as_slice(),
+                        _ => self.config.pages.get(location.page).map(|p| p.layout.as_slice()).unwrap_or(&[]),
+                    };
+                    let Some((title, sections)) = navigation_at(sections, &path).map(|item| (item.properties.title.clone(), item.layout.clone())) else { break; };
+                    for section in &sections {
+                        for item in &section.items {
+                            collect_item_defaults(item, &mut self.slider_values, &mut self.toggle_states,
+                                &mut self.service_states, &mut self.selected_options);
+                        }
+                    }
+                    self.nav_stack.push(NavView::SubPage { parent_page: location.page, title, sections });
+                }
+                for key in location.expanders { self.toggle_states.insert(key, true); }
+                self.hovered_item = Some(location.key);
+                self.search_query.clear();
+                self.search_open = false;
+                self.control_generation += 1;
+                Task::batch([pending, self.refresh_controls()])
+            }
             Message::SelectPage(idx) => {
                 if idx < self.config.pages.len() {
+                    let pending = self.flush_deferred_sliders();
                     self.lazy_load_page(idx);
                     self.nav_stack = vec![NavView::Root(idx)];
                     self.search_query.clear();
                     self.control_generation += 1;
-                    return self.refresh_controls();
+                    return Task::batch([pending, self.refresh_controls()]);
                 }
                 Task::none()
             }
 
             Message::PushSubPage { title, sections } => {
+                let pending = self.flush_deferred_sliders();
                 let parent = self.active_page_idx();
                 for section in &sections {
                     for item in &section.items {
@@ -331,15 +399,16 @@ impl CenterApp {
                 });
                 self.search_query.clear();
                 self.control_generation += 1;
-                self.refresh_controls()
+                Task::batch([pending, self.refresh_controls()])
             }
 
             Message::PopSubPage => {
+                let pending = self.flush_deferred_sliders();
                 if self.nav_stack.len() > 1 {
                     self.nav_stack.pop();
                 }
                 self.control_generation += 1;
-                self.refresh_controls()
+                Task::batch([pending, self.refresh_controls()])
             }
 
             Message::ToggleSidebar => {
@@ -371,17 +440,28 @@ impl CenterApp {
             Message::ExecuteAction(ActionConfig::Reload) => self.update(Message::ReloadConfig),
 
             Message::ExecuteAction(action) => {
-                self.dispatch_action(&action);
-                if matches!(action, ActionConfig::Redirect { .. }) { self.refresh_controls() } else { Task::none() }
+                if self.closing { return Task::none(); }
+                if let ActionConfig::Redirect { page } = &action {
+                    if let Some(index) = self.config.pages.iter().position(|p| &p.id == page) {
+                        return self.update(Message::SelectPage(index));
+                    }
+                } else if let Err(error) = controls::launch(&action) {
+                    self.action_error = Some(error);
+                }
+                Task::none()
             }
 
             Message::ToggleItem { key, is_enabled, on_toggle } => {
-                if self.busy_controls.contains(&key) { return Task::none(); }
+                if self.closing || self.busy_controls.contains(&key) { return Task::none(); }
                 let previous = self.toggle_states.get(&key).copied().unwrap_or(false);
-                self.toggle_states.insert(key.clone(), is_enabled);
-                let Some(item) = self.visible_items().into_iter().find(|i| controls::item_key(i) == key) else {
-                    return Task::none(); // Local expander state.
+                let item = self.visible_items().into_iter().find(|i| controls::item_key(i) == key).cloned();
+                let Some(item) = item else {
+                    let pending = self.flush_deferred_sliders();
+                    self.toggle_states.insert(key.clone(), is_enabled);
+                    self.control_generation += 1;
+                    return Task::batch([pending, self.refresh_controls()]); // Local expander state.
                 };
+                self.toggle_states.insert(key.clone(), is_enabled);
                 self.busy_controls.insert(key.clone());
                 self.control_generation += 1;
                 self.action_error = None;
@@ -398,7 +478,7 @@ impl CenterApp {
                     self.action_error = Some(format!("{key}: {error}"));
                 }
                 self.control_generation += 1;
-                self.refresh_controls()
+                self.finish_or_refresh()
             }
 
             Message::ServiceFinished { key, previous, result } => {
@@ -408,10 +488,10 @@ impl CenterApp {
                     self.action_error = Some(format!("{key}: {error}"));
                 }
                 self.control_generation += 1;
-                self.refresh_controls()
+                self.finish_or_refresh()
             }
 
-            Message::ControlsLoaded { generation, snapshot } => {
+            Message::ControlsLoaded { generation, slider_revision, snapshot } => {
                 if self.controls_loading == Some(generation) { self.controls_loading = None; }
                 if self.control_generation != generation { return self.refresh_controls(); }
                 for (key, value) in snapshot.toggles {
@@ -429,10 +509,27 @@ impl CenterApp {
                     self.service_statuses.insert(key, status);
                 }
                 for (key, value) in snapshot.selections {
-                    if key == "Active Profile" { self.active_profile = value.clone(); }
-                    self.selected_options.insert(key, value);
+                    if self.busy_controls.contains(&key) { continue; }
+                    if let Some(value) = value {
+                        if key == "Active Profile" { self.active_profile = value.clone(); }
+                        self.selected_options.insert(key.clone(), value);
+                        self.unavailable_controls.remove(&key);
+                    } else {
+                        self.selected_options.remove(&key);
+                        if key == "Active Profile" { self.active_profile.clear(); }
+                        self.unavailable_controls.insert(key);
+                    }
                 }
-                for (key, value) in snapshot.sliders { self.sync_slider(&key, value); }
+                for (key, options) in snapshot.options {
+                    if self.selected_options.get(&key).is_some_and(|current| !options.contains(current)) {
+                        self.selected_options.remove(&key);
+                    }
+                    self.dynamic_options.insert(key, options);
+                }
+                // Generic queries can finish after an edit and its grace period.
+                if slider_revision == self.slider_revision {
+                    for (key, value) in snapshot.sliders { self.sync_slider(&key, value); }
+                }
                 self.live_labels.extend(snapshot.labels);
                 for (key, value) in snapshot.entries {
                     if !self.editing_entries.contains(&key) && !self.busy_controls.contains(&key) {
@@ -449,25 +546,29 @@ impl CenterApp {
             }
 
             Message::SubmitEntry { key, action } => {
-                if self.busy_controls.contains(&key) { return Task::none(); }
+                if self.closing || self.busy_controls.contains(&key) { return Task::none(); }
                 let value = self.entry_values.get(&key).cloned().unwrap_or_default();
-                let action = controls::with_value(&action, &value);
+                let action = action.map(|action| controls::with_value(&action, &value));
+                let Some(item) = self.visible_items().into_iter().find(|i| controls::item_key(i) == key).cloned() else { return Task::none(); };
                 self.busy_controls.insert(key.clone());
                 self.control_generation += 1;
                 self.action_error = None;
-                Task::perform(async move { controls::run_action(&action) }, move |result| {
-                    Message::EntryFinished { key: key.clone(), result }
-                })
+                Task::perform(async move {
+                    let result = controls::set_scalar(&item, &value, action.as_ref());
+                    Message::EntryFinished { key, value, result }
+                }, |message| message)
             }
 
-            Message::EntryFinished { key, result } => {
+            Message::EntryFinished { key, value, result } => {
                 self.busy_controls.remove(&key);
                 match result {
-                    Ok(()) => { self.editing_entries.remove(&key); }
+                    Ok(()) => {
+                        if self.entry_values.get(&key) == Some(&value) { self.editing_entries.remove(&key); }
+                    }
                     Err(error) => { self.action_error = Some(format!("{key}: {error}")); }
                 }
                 self.control_generation += 1;
-                self.refresh_controls()
+                self.finish_or_refresh()
             }
 
             Message::SliderChanged { key, value, on_change, debounce } => {
@@ -475,20 +576,22 @@ impl CenterApp {
                 self.active_slider = debounce.then(|| key.clone());
                 self.slider_values.insert(key.clone(), value);
                 self.slider_revision += 1;
-                self.slider_changed_at.insert(key.clone(), Instant::now());
+                let changed_at = Instant::now();
+                self.slider_changed_at.insert(key.clone(), changed_at);
                 if !debounce {
                     return self.queue_slider(key, value, on_change);
                 }
+                self.deferred_sliders.insert(key.clone(), (value, on_change.clone(), changed_at));
                 // Explicitly debounced controls also commit keyboard/wheel edits.
                 Task::perform(async move {
                     futures_timer::Delay::new(Duration::from_millis(100)).await;
-                    Message::SliderSettled { key, value, on_change }
+                    Message::SliderSettled { key, value, on_change, changed_at }
                 }, |message| message)
             }
 
-            Message::SliderSettled { key, value, on_change } => {
-                if self.active_slider.as_deref() == Some(&key)
-                    && self.slider_values.get(&key) == Some(&value)
+            Message::SliderSettled { key, value, on_change, changed_at } => {
+                if self.deferred_sliders.get(&key).is_some_and(|(pending, _, scheduled)|
+                    *pending == value && *scheduled == changed_at)
                 {
                     return self.update(Message::SliderReleased { key, value, on_change, debounce: true });
                 }
@@ -505,20 +608,20 @@ impl CenterApp {
                 let value = self.slider_values.get(&key).copied().unwrap_or(value);
                 self.active_slider = None;
                 self.slider_values.insert(key.clone(), value);
-                if debounce { return self.queue_slider(key, value, on_change); }
+                if debounce && self.deferred_sliders.remove(&key).is_some() {
+                    return self.queue_slider(key, value, on_change);
+                }
                 Task::none()
             }
 
             Message::ProfileSelected(profile) => {
-                self.active_profile = profile.clone();
                 let action = self.visible_items().into_iter().find(|item| controls::item_key(item) == "Active Profile")
-                    .and_then(|item| match item.on_change {
+                    .and_then(|item| match &item.on_change {
                         Some(ChangeAction::Map(map)) => map.get(&profile).cloned(),
-                        Some(ChangeAction::Direct(action)) => Some(action),
+                        Some(ChangeAction::Direct(action)) => Some(action.clone()),
                         None => None,
                     });
-                if let Some(action) = action { self.dispatch_action(&action); }
-                Task::none()
+                self.update(Message::SelectOption { key: "Active Profile".into(), option: profile, action })
             }
 
             Message::SelectOption {
@@ -526,16 +629,38 @@ impl CenterApp {
                 option,
                 action,
             } => {
-                self.selected_options.insert(key, option.clone());
-                if let Some(act) = action {
-                    self.dispatch_action(&controls::with_value(&act, &option));
+                if self.closing || self.busy_controls.contains(&key) { return Task::none(); }
+                let Some(item) = self.visible_items().into_iter().find(|i| controls::item_key(i) == key).cloned() else { return Task::none(); };
+                let previous = self.selected_options.get(&key).cloned();
+                let launched = action.as_ref().is_some_and(controls::is_launch);
+                if !launched {
+                    self.selected_options.insert(key.clone(), option.clone());
+                    if key == "Active Profile" { self.active_profile = option.clone(); }
                 }
-                Task::none()
+                self.busy_controls.insert(key.clone());
+                self.control_generation += 1;
+                self.action_error = None;
+                Task::perform(async move {
+                    let action = action.map(|act| controls::with_value(&act, &option));
+                    controls::set_scalar(&item, &option, action.as_ref())
+                }, move |result| Message::SelectionFinished { key: key.clone(), previous: previous.clone(), result })
+            }
+
+            Message::SelectionFinished { key, previous, result } => {
+                self.busy_controls.remove(&key);
+                if let Err(error) = result {
+                    if key == "Active Profile" { self.active_profile = previous.clone().unwrap_or_default(); }
+                    if let Some(value) = previous { self.selected_options.insert(key.clone(), value); }
+                    else { self.selected_options.remove(&key); }
+                    self.action_error = Some(format!("{key}: {error}"));
+                }
+                self.control_generation += 1;
+                self.finish_or_refresh()
             }
 
             Message::ToggleService { unit, scope } => {
                 let key = controls::service_key(&scope, &unit);
-                if self.busy_controls.contains(&key) { return Task::none(); }
+                if self.closing || self.busy_controls.contains(&key) { return Task::none(); }
                 let previous = self.service_states.get(&key).copied().unwrap_or(false);
                 self.service_states.insert(key.clone(), !previous);
                 self.busy_controls.insert(key.clone());
@@ -549,6 +674,7 @@ impl CenterApp {
             Message::DragWindow => iced::window::latest().and_then(iced::window::drag),
 
             Message::Tick => {
+                if self.closing { return Task::none(); }
                 let (cpu, ram) = sys::cpu_ram();
                 self.cpu_text = cpu;
                 self.ram_text = ram;
@@ -564,7 +690,7 @@ impl CenterApp {
                 self.slider_revision += 1;
                 if let Err(error) = result { self.action_error = Some(format!("{key}: {error}")); }
                 if self.pending_sliders.contains_key(&key) { return self.apply_pending_slider(key); }
-                if self.closing && self.applying_sliders.is_empty() { return iced::exit(); }
+                if self.closing && self.writes_finished() { return iced::exit(); }
                 Task::none()
             }
 
@@ -583,10 +709,12 @@ impl CenterApp {
 
             Message::CloseApp | Message::EventOccurred(Event::Window(iced::window::Event::CloseRequested)) => {
                 // Drain each slider's latest write before releasing workers.
+                let deferred = std::mem::take(&mut self.deferred_sliders);
+                let mut tasks: Vec<_> = deferred.into_iter().map(|(key, (value, action, _))| self.queue_slider(key, value, action)).collect();
                 self.closing = true;
                 let pending: Vec<_> = self.pending_sliders.keys().cloned().collect();
-                let tasks: Vec<_> = pending.into_iter().map(|key| self.apply_pending_slider(key)).collect();
-                if self.applying_sliders.is_empty() { iced::exit() }
+                tasks.extend(pending.into_iter().map(|key| self.apply_pending_slider(key)));
+                if self.writes_finished() { iced::exit() }
                 else { Task::batch(tasks) }
             },
 
@@ -603,20 +731,28 @@ impl CenterApp {
             }
 
             Message::ReloadConfig => {
+                if self.closing { return Task::none(); }
                 if let Some(theme) = AppTheme::load_generated() { self.theme = theme; }
+                let mut tasks = vec![];
                 match AppConfig::load() {
                     Ok(mut cfg) => {
+                        let page_id = self.config.pages.get(self.active_page_idx()).map(|page| page.id.clone());
+                        let deferred = std::mem::take(&mut self.deferred_sliders);
+                        tasks.extend(deferred.into_iter().map(|(key, (value, action, _))| self.queue_slider(key, value, action)));
                         expand_app_config_generators(&mut cfg);
+                        let index = page_id.and_then(|id| cfg.pages.iter().position(|page| page.id == id)).unwrap_or(0);
                         self.config = cfg;
+                        self.dynamic_options.clear();
                         self.loaded_pages.clear();
-                        self.nav_stack = vec![NavView::Root(self.active_page_idx().min(self.config.pages.len().saturating_sub(1)))];
+                        self.nav_stack = vec![NavView::Root(index)];
                         self.lazy_load_page(self.active_page_idx());
                         self.control_generation += 1;
                         self.action_error = None;
                     }
                     Err(error) => { self.action_error = Some(format!("Reload: {error}")); }
                 }
-                self.refresh_controls()
+                tasks.push(self.refresh_controls());
+                Task::batch(tasks)
             }
 
             Message::EventOccurred(Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -653,42 +789,73 @@ impl CenterApp {
         }
     }
 
-    fn dispatch_action(&mut self, action: &ActionConfig) {
-        if let ActionConfig::Redirect { page } = action {
-            if let Some(index) = self.config.pages.iter().position(|p| &p.id == page) {
-                self.lazy_load_page(index);
-                self.nav_stack = vec![NavView::Root(index)];
-                self.control_generation += 1;
-            }
-        } else if let Err(error) = controls::launch(action) {
-            self.action_error = Some(error);
-        }
-    }
-
-    fn visible_items(&self) -> Vec<ItemConfig> {
+    fn visible_items(&self) -> Vec<&ItemConfig> {
         let sections = match self.nav_stack.last() {
             Some(NavView::SubPage { sections, .. }) => sections.as_slice(),
             _ => self.config.pages.get(self.active_page_idx()).map(|p| p.layout.as_slice()).unwrap_or(&[]),
         };
-        fn collect(items: &[ItemConfig], output: &mut Vec<ItemConfig>) {
+        fn collect<'a>(items: &'a [ItemConfig], states: &HashMap<String, bool>, output: &mut Vec<&'a ItemConfig>) {
             for item in items {
-                output.push(item.clone());
-                collect(&item.items, output);
+                output.push(item);
+                if item.item_type != "expander" || states.get(&format!("expander:{}", controls::item_key(item))).copied().unwrap_or(false) {
+                    collect(&item.items, states, output);
+                }
             }
         }
         let mut items = vec![];
-        for section in sections { collect(&section.items, &mut items); }
+        for section in sections { collect(&section.items, &self.toggle_states, &mut items); }
         items
     }
 
     fn refresh_controls(&mut self) -> Task<Message> {
+        if self.closing { return Task::none(); }
         if self.controls_loading.is_some() { return Task::none(); }
         let generation = self.control_generation;
         self.controls_loading = Some(generation);
-        let items = self.visible_items();
+        let force = self.polled_generation != Some(generation);
+        self.polled_generation = Some(generation);
+        let now = Instant::now();
+        let items = self.visible_items().into_iter().filter(|item| {
+            if !matches!(item.item_type.as_str(), "toggle" | "toggle_card" | "selection" |
+                "entry" | "secret" | "label" | "slider" | "spin" | "service" | "service_card") { return false; }
+            let key = if item.properties.service.is_empty() { controls::item_key(item) }
+                else { controls::service_key(&item.properties.scope, &item.properties.service) };
+            if self.busy_controls.contains(&key) { return false; }
+            let interval = item.properties.interval.unwrap_or(
+                if item.properties.key.is_empty() && matches!(item.item_type.as_str(), "entry" | "secret" | "label") { 0 } else { 3 });
+            let poll_key = format!("{}:{key}", item.item_type);
+            if !force && self.control_polled_at.get(&poll_key).is_some_and(|last|
+                interval == 0 || now.duration_since(*last) < Duration::from_secs(interval)) { return false; }
+            true
+        }).cloned().collect::<Vec<_>>();
+        for item in &items {
+            let key = if item.properties.service.is_empty() { controls::item_key(item) }
+                else { controls::service_key(&item.properties.scope, &item.properties.service) };
+            self.control_polled_at.insert(format!("{}:{key}", item.item_type), now);
+        }
+        if items.is_empty() {
+            self.controls_loading = None;
+            return Task::none();
+        }
+        let slider_revision = self.slider_revision;
         Task::perform(async move { controls::query(&items) }, move |snapshot| {
-            Message::ControlsLoaded { generation, snapshot }
+            Message::ControlsLoaded { generation, slider_revision, snapshot }
         })
+    }
+
+    fn writes_finished(&self) -> bool {
+        self.applying_sliders.is_empty() && self.pending_sliders.is_empty() && self.busy_controls.is_empty()
+    }
+
+    fn flush_deferred_sliders(&mut self) -> Task<Message> {
+        let deferred = std::mem::take(&mut self.deferred_sliders);
+        Task::batch(deferred.into_iter().map(|(key, (value, action, _))| self.queue_slider(key, value, action)))
+    }
+
+    fn finish_or_refresh(&mut self) -> Task<Message> {
+        if self.closing {
+            if self.writes_finished() { iced::exit() } else { Task::none() }
+        } else { self.refresh_controls() }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -1102,45 +1269,37 @@ impl CenterApp {
     fn view_search_results<'a>(&'a self) -> Element<'a, Message> {
         let palette = self.theme;
         let query = self.search_query.to_lowercase();
-        let total_hits = self.config.pages.iter()
-            .flat_map(|page| &page.layout)
-            .flat_map(|section| &section.items)
-            .filter(|item| item.matches_query(&query))
-            .count();
+        let hits = search_hits(&self.config, &query);
+        let total_hits = hits.len().min(50);
         let mut results_box = column![].spacing(0);
         let mut hit_count = 0;
-        for (page_idx, page) in self.config.pages.iter().enumerate() {
-            for section in &page.layout {
-                for item in &section.items {
-                    if item.matches_query(&query) {
-                        if hit_count > 0 {
-                            let divider = container(Space::new().width(Length::Fill).height(1))
-                                .style(move |_| container::Style {
-                                    background: Some(
-                                        Color::from_rgba(
-                                            palette.border.r,
-                                            palette.border.g,
-                                            palette.border.b,
-                                            0.20,
-                                        )
-                                        .into(),
-                                    ),
-                                    ..Default::default()
-                                });
-                            results_box = results_box.push(divider);
-                        }
-                        hit_count += 1;
-                        let item_view = self.view_item_row_rounded(
-                            item, &page.title, Some(page_idx), row_radius(hit_count - 1, total_hits),
-                        );
-                        results_box = results_box.push(item_view);
-                    }
-                }
+        for hit in hits.iter().take(50) {
+            if hit_count > 0 {
+                let divider = container(Space::new().width(Length::Fill).height(1))
+                    .style(move |_| container::Style {
+                        background: Some(
+                            Color::from_rgba(
+                                palette.border.r,
+                                palette.border.g,
+                                palette.border.b,
+                                0.20,
+                            )
+                            .into(),
+                        ),
+                        ..Default::default()
+                    });
+                results_box = results_box.push(divider);
             }
+            hit_count += 1;
+            let item_view = self.view_item_row_rounded(
+                hit.item, &hit.breadcrumb, Some(hit.location.clone()), row_radius(hit_count - 1, total_hits),
+            );
+            results_box = results_box.push(item_view);
         }
-
         let header = container(
-            row![text(format!("Found {hit_count} results for \"{}\"", self.search_query))
+            row![text(if hits.len() > hit_count {
+                format!("Showing {hit_count} of {} results for \"{}\"", hits.len(), self.search_query)
+            } else { format!("Found {hit_count} results for \"{}\"", self.search_query) })
                 .size(13)
                 .font(iced::Font {
                     weight: Weight::Semibold,
@@ -1710,9 +1869,10 @@ impl CenterApp {
         // Interactive PickList Dropdown
         let dropdown = pick_list(
             &PROFILE_OPTIONS[..],
-            Some(self.active_profile.as_str()),
+            (!self.active_profile.is_empty()).then_some(self.active_profile.as_str()),
             |selected| Message::ProfileSelected(selected.to_string()),
         )
+        .placeholder("Unknown")
         .padding([6, 12])
         .text_size(12)
         .style(move |_, status| pick_list::Style {
@@ -1920,8 +2080,8 @@ impl CenterApp {
     fn view_item_row<'a>(
         &'a self,
         item: &'a ItemConfig,
-        badge_tag: &'a str,
-        _from_page: Option<usize>,
+        badge_tag: &str,
+        _from_page: Option<SearchLocation>,
     ) -> Element<'a, Message> {
         self.view_item_row_rounded(item, badge_tag, _from_page, iced::border::Radius::default())
     }
@@ -1929,8 +2089,8 @@ impl CenterApp {
     fn view_item_row_rounded<'a>(
         &'a self,
         item: &'a ItemConfig,
-        badge_tag: &'a str,
-        from_page: Option<usize>,
+        badge_tag: &str,
+        from_page: Option<SearchLocation>,
         radius: iced::border::Radius,
     ) -> Element<'a, Message> {
         let palette = self.theme;
@@ -1974,7 +2134,7 @@ impl CenterApp {
                 })
                 .color(title_color),
             if !badge_tag.is_empty() {
-                container(text(badge_tag).size(10).color(palette.accent))
+                container(text(badge_tag.to_string()).size(10).color(palette.accent))
                     .padding([2, 8])
                     .style(move |_| container::Style {
                         background: Some(
@@ -2210,7 +2370,8 @@ impl CenterApp {
                 let value = self.entry_values.get(&key).map(String::as_str).unwrap_or("");
                 let change_key = key.clone();
                 let action = item.on_action.as_ref().or(item.on_press.as_ref());
-                let submit = action.map(|action| Message::SubmitEntry { key: key.clone(), action: action.clone() });
+                let submit = (action.is_some() || (item.properties.persistence == "app" && !item.properties.key.is_empty()))
+                    .then(|| Message::SubmitEntry { key: key.clone(), action: action.cloned() });
                 let ready = !self.busy_controls.contains(&key);
                 let mut input = text_input("Value", value).size(12).padding([6, 8]).width(110)
                     .secure(item.item_type == "secret")
@@ -2233,13 +2394,6 @@ impl CenterApp {
             }
 
             "selection" => {
-                let current = self
-                    .selected_options
-                    .get(&key)
-                    .cloned()
-                    .or_else(|| item.properties.options.first().cloned())
-                    .unwrap_or_default();
-
                 let act_map = match &item.on_change {
                     Some(ChangeAction::Map(map)) => map.clone(),
                     _ => HashMap::new(),
@@ -2250,14 +2404,15 @@ impl CenterApp {
                 };
 
                 let key_clone = key.clone();
-                let options = item.properties.options.clone();
+                let options = self.dynamic_options.get(&key).unwrap_or(&item.properties.options).clone();
+                let current = self.selected_options.get(&key).filter(|value| options.contains(value)).cloned();
 
                 if options.is_empty() {
                     container(Space::new().width(0)).into()
                 } else {
                     let dropdown = pick_list(
                         options,
-                        Some(current),
+                        current,
                         move |selected| {
                             let action = act_map
                                 .get(&selected)
@@ -2270,6 +2425,7 @@ impl CenterApp {
                             }
                         },
                     )
+                    .placeholder("Unknown")
                     .padding([5, 10])
                     .text_size(12)
                     .style(move |_, status| pick_list::Style {
@@ -2451,8 +2607,8 @@ impl CenterApp {
             .on_enter(Message::ItemEntered(key_enter))
             .on_exit(Message::ItemExited(key_exit));
 
-        if let Some(page) = from_page {
-            area = area.on_press(Message::SelectPage(page)).interaction(mouse::Interaction::Pointer);
+        if let Some(location) = &from_page {
+            area = area.on_press(Message::OpenSearchResult(location.clone())).interaction(mouse::Interaction::Pointer);
         } else if item.item_type == "navigation" {
             let sub_sections = item.layout.clone();
             let sub_title = title.clone();
@@ -2538,6 +2694,88 @@ impl CenterApp {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn navigation_at<'a>(sections: &'a [SectionConfig], path: &[usize]) -> Option<&'a ItemConfig> {
+    let (&section, path) = path.split_first()?;
+    let (&index, path) = path.split_first()?;
+    let mut item = sections.get(section)?.items.get(index)?;
+    for &index in path { item = item.items.get(index)?; }
+    (item.item_type == "navigation").then_some(item)
+}
+
+fn search_hits<'a>(config: &'a AppConfig, query: &str) -> Vec<SearchHit<'a>> {
+    fn visit<'a>(items: &'a [ItemConfig], breadcrumb: &str, location: &SearchLocation,
+        path: &[usize], query: &str, hits: &mut Vec<SearchHit<'a>>) {
+        for (index, item) in items.iter().enumerate() {
+            let mut item_path = path.to_vec();
+            item_path.push(index);
+            let mut target = location.clone();
+            target.key = controls::item_key(item);
+            let score = search_score(item, query);
+            if score > 0 {
+                hits.push(SearchHit { item, breadcrumb: breadcrumb.into(), location: target.clone(), score });
+            }
+            let breadcrumb = format!("{breadcrumb} › {}", item.properties.title);
+            if item.item_type == "navigation" {
+                target.navigation.push(item_path.clone());
+                for (section, layout) in item.layout.iter().enumerate() {
+                    visit(&layout.items, &breadcrumb, &target, &[section], query, hits);
+                }
+            }
+            if item.item_type == "expander" {
+                target.expanders.push(format!("expander:{}", controls::item_key(item)));
+            }
+            visit(&item.items, &breadcrumb, &target, &item_path, query, hits);
+        }
+    }
+    let mut hits = vec![];
+    for (page, config) in config.pages.iter().enumerate() {
+        let location = SearchLocation { page, navigation: vec![], expanders: vec![], key: String::new() };
+        for (section, layout) in config.layout.iter().enumerate() {
+            visit(&layout.items, &config.title, &location, &[section], query, &mut hits);
+        }
+    }
+    hits.sort_by_key(|hit| std::cmp::Reverse(hit.score));
+    hits
+}
+
+fn search_score(item: &ItemConfig, query: &str) -> u32 {
+    let query = query.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    if query.is_empty() { return 0; }
+    let title = item.properties.title.to_lowercase();
+    if title == query { return 1000; }
+    if title.starts_with(&query) { return 900; }
+    if title.contains(&query) { return 800; }
+    let terms: Vec<_> = query.split_whitespace().collect();
+    if terms.len() > 1 {
+        let scores: Vec<_> = terms.iter().map(|term| search_score(item, term)).collect();
+        return if scores.contains(&0) { 0 } else { (scores.iter().sum::<u32>() / scores.len() as u32).saturating_sub(25) };
+    }
+    let clean = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>();
+    let q = clean(&query);
+    let t = clean(&title);
+    if !q.is_empty() {
+        if t == q { return 950; }
+        if t.starts_with(&q) { return 850; }
+        if t.contains(&q) { return 750; }
+    }
+    let prefix = |s: &str| s.split(|c: char| !c.is_alphanumeric()).any(|word| word.starts_with(&query));
+    let fuzzy = |s: &str| {
+        if query.chars().count() < 3 { return false; }
+        let mut chars = s.chars();
+        query.chars().all(|c| chars.any(|next| next == c))
+    };
+    if prefix(&title) { return 500; }
+    if fuzzy(&title) { return 300; }
+    if item.properties.key.to_lowercase().contains(&query) || item.properties.service.to_lowercase().contains(&query) { return 250; }
+    let description = item.properties.description.to_lowercase();
+    if description.contains(&query) { return 200; }
+    if !q.is_empty() && clean(&description).contains(&q) { return 175; }
+    if prefix(&description) { return 150; }
+    if fuzzy(&description) { return 100; }
+    if item.properties.options.iter().any(|option| option.to_lowercase().contains(&query)) { return 75; }
+    0
+}
 
 fn row_radius(index: usize, count: usize) -> iced::border::Radius {
     let top = if index == 0 { 13.0 } else { 0.0 };
@@ -2676,53 +2914,15 @@ fn collect_item_defaults(
             .or_insert(false);
     }
 
-    if item.item_type == "selection" && !item.properties.options.is_empty() {
-        let mut initial = None;
-
-        // 1. Check if state file exists in settings
-        let settings_file = dirs_fallback().join("settings").join(&key);
-        if settings_file.is_file()
-            && let Ok(content) = std::fs::read_to_string(&settings_file)
-        {
-            let trimmed = content.trim();
-            let lower = trimmed.to_lowercase();
-            if let Some(mapped) = item
-                .properties
-                .options_map
-                .get(trimmed)
-                .or_else(|| item.properties.options_map.get(&lower))
-            {
-                initial = Some(mapped.clone());
-            } else if let Some(found) = item
-                .properties
-                .options
-                .iter()
-                .find(|o| o.eq_ignore_ascii_case(trimmed))
-            {
-                initial = Some(found.clone());
-            }
-        }
-
-        let val = initial.unwrap_or_else(|| item.properties.options[0].clone());
-        options.entry(key.clone()).or_insert(val);
+    if item.item_type == "selection" && !item.properties.options.is_empty()
+        && item.properties.key.is_empty() && item.properties.value_command.is_empty()
+        && item.properties.options_command.is_empty()
+    {
+        options.entry(key.clone()).or_insert_with(|| item.properties.options[0].clone());
     }
 
     for sub in &item.items {
         collect_item_defaults(sub, sliders, toggles, services, options);
-    }
-}
-
-impl ItemConfig {
-    pub fn matches_query(&self, query: &str) -> bool {
-        self.properties.title.to_lowercase().contains(query)
-            || self.properties.description.to_lowercase().contains(query)
-            || self.properties.service.to_lowercase().contains(query)
-            || self.properties.key.to_lowercase().contains(query)
-            || self
-                .properties
-                .options
-                .iter()
-                .any(|o| o.to_lowercase().contains(query))
     }
 }
 
@@ -2742,15 +2942,6 @@ fn dirs_home() -> std::path::PathBuf {
     } else {
         std::path::PathBuf::new()
     }
-}
-
-fn dirs_fallback() -> std::path::PathBuf {
-    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME")
-        && !config_home.is_empty()
-    {
-        return std::path::PathBuf::from(config_home).join("dusky");
-    }
-    dirs_home().join(".config/dusky")
 }
 
 fn make_slim_scrollable<'a>(
@@ -2977,7 +3168,7 @@ fn expand_directory_generator(generator: &ItemConfig) -> Vec<ItemConfig> {
     if let Ok(entries) = std::fs::read_dir(&base_path) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() && !path.is_symlink() {
+            if path.is_dir() {
                 dirs.push(path);
             }
         }
@@ -3033,69 +3224,216 @@ fn to_pretty_title(s: &str) -> String {
 }
 
 fn substitute_item_vars(item: &mut ItemConfig, vars: &HashMap<String, String>) {
-    let sub = |s: &str| -> String {
-        let mut out = s.to_string();
-        for (k, v) in vars {
-            let pattern = format!("{{{}}}", k);
-            out = out.replace(&pattern, v);
-        }
-        out
-    };
-
-    item.properties.title = sub(&item.properties.title);
-    item.properties.description = sub(&item.properties.description);
-    item.properties.state_command = sub(&item.properties.state_command);
-    item.properties.value_command = sub(&item.properties.value_command);
-    item.properties.key = sub(&item.properties.key);
-
-    if let Some(on_press) = &mut item.on_press {
-        substitute_action_vars(on_press, vars);
-    }
-    if let Some(on_action) = &mut item.on_action {
-        substitute_action_vars(on_action, vars);
-    }
-    if let Some(on_toggle) = &mut item.on_toggle {
-        substitute_action_vars(&mut on_toggle.enabled, vars);
-        substitute_action_vars(&mut on_toggle.disabled, vars);
-    }
-
-    for sub_item in &mut item.items {
-        substitute_item_vars(sub_item, vars);
-    }
-}
-
-fn substitute_action_vars(action: &mut ActionConfig, vars: &HashMap<String, String>) {
-    let sub = |s: &str| -> String {
-        let mut out = s.to_string();
-        for (k, v) in vars {
-            let pattern = format!("{{{}}}", k);
-            out = out.replace(&pattern, v);
-        }
-        out
-    };
-
-    match action {
-        ActionConfig::Exec { command, argv, .. } => {
-            *command = sub(command);
-            for arg in argv {
-                *arg = sub(arg);
+    // Walk the schema so nested layouts, buttons, services and value sources
+    // receive substitution too. Inserted names are never re-expanded.
+    fn visit(value: &mut serde_json::Value, vars: &[(String, &str)]) {
+        match value {
+            serde_json::Value::String(text) => {
+                let raw = std::mem::take(text);
+                let mut rest = raw.as_str();
+                while !rest.is_empty() {
+                    let replacement = vars.iter().find_map(|(token, value)|
+                        rest.starts_with(token).then_some((token.len(), *value)));
+                    if let Some((length, value)) = replacement {
+                        text.push_str(value);
+                        rest = &rest[length..];
+                    } else {
+                        let ch = rest.chars().next().unwrap();
+                        text.push(ch);
+                        rest = &rest[ch.len_utf8()..];
+                    }
+                }
             }
-        }
-        ActionConfig::Argv { argv, .. } => {
-            for arg in argv {
-                *arg = sub(arg);
+            serde_json::Value::Array(values) => {
+                for value in values { visit(value, vars); }
             }
+            serde_json::Value::Object(fields) => {
+                for value in fields.values_mut() { visit(value, vars); }
+            }
+            _ => (),
         }
-        ActionConfig::Redirect { page } => {
-            *page = sub(page);
-        }
-        ActionConfig::Reload => (),
     }
+    let mut value = serde_json::to_value(&*item).expect("configuration is serializable");
+    let tokens: Vec<_> = vars.iter().map(|(key, value)| (format!("{{{key}}}"), value.as_str())).collect();
+    visit(&mut value, &tokens);
+    *item = serde_json::from_value(value).expect("substitution preserves configuration types");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn complete(app: &mut CenterApp, task: Task<Message>) {
+        use iced_futures::futures::{executor::block_on, StreamExt};
+        let Some(stream) = iced_runtime::task::into_stream(task) else { return; };
+        for action in block_on(stream.collect::<Vec<_>>()) {
+            if let iced_runtime::Action::Output(message) = action {
+                let task = app.update(message);
+                complete(app, task);
+            }
+        }
+    }
+
+    #[test]
+    fn selection_workers_rollback_and_resist_stale_polls() {
+        let config: AppConfig = toml::from_str("[[pages]]\nid='fixture'\ntitle='Fixture'\n[[pages.layout]]\ntype='section'\n[[pages.layout.items]]\ntype='selection'\n[pages.layout.items.properties]\ntitle='Choice'\noptions=['Old','New']\n[pages.layout.items.on_change.New]\ntype='exec'\ncommand='printf broken >&2; exit 7'").unwrap();
+        let (mut app, _initial) = CenterApp::new(config, None, None);
+        app.controls_loading = None;
+        app.selected_options.insert("Choice".into(), "Old".into());
+        let action = match app.config.pages[0].layout[0].items[0].on_change.as_ref().unwrap() {
+            ChangeAction::Map(map) => map["New"].clone(), _ => unreachable!(),
+        };
+        let task = app.update(Message::SelectOption { key: "Choice".into(), option: "New".into(), action: Some(action) });
+        assert_eq!(app.selected_options["Choice"], "New");
+        assert!(app.busy_controls.contains("Choice"));
+        let duplicate = app.update(Message::SelectOption { key: "Choice".into(), option: "Old".into(), action: None });
+        assert_eq!(duplicate.units(), 0);
+        let _ = app.update(Message::ControlsLoaded { slider_revision: app.slider_revision, generation: 0,
+            snapshot: Snapshot { selections: vec![("Choice".into(), Some("Old".into()))], ..Default::default() } });
+        assert_eq!(app.selected_options["Choice"], "New");
+        complete(&mut app, task);
+        assert_eq!(app.selected_options["Choice"], "Old");
+        assert!(app.action_error.as_ref().unwrap().contains("broken"));
+        assert!(!app.busy_controls.contains("Choice"));
+    }
+
+    #[test]
+    fn close_waits_for_setting_workers_and_flushes_fractional_debounce() {
+        let path = std::env::temp_dir().join(format!("dusky-fractional-{}", std::process::id()));
+        let config: AppConfig = toml::from_str("[[pages]]\nid='fixture'\ntitle='Fixture'\n[[pages.layout]]\ntype='section'\n[[pages.layout.items]]\ntype='slider'\n[pages.layout.items.properties]\ntitle='Fraction'\nmin=0.0\nmax=1.0\nstep=0.01").unwrap();
+        let (mut app, _initial) = CenterApp::new(config, None, None);
+        let command = format!("printf '%s\\n' {{value}} >> '{}'", path.display());
+        let action = Some(ChangeAction::Direct(ActionConfig::Exec { command, argv: vec![], expanded_argv: false, terminal: false,
+            requires_root: false, mode: String::new(), timeout: None }));
+        for i in 0..1000 {
+            let _ = app.update(Message::SliderChanged { key: "Fraction".into(), value: i as f32 / 1000.0,
+                on_change: action.clone(), debounce: true });
+        }
+        assert!(app.applying_sliders.is_empty());
+        assert_eq!(app.deferred_sliders.len(), 1);
+        app.busy_controls.insert("user:fixture.service".into());
+        let close = app.update(Message::CloseApp);
+        assert!(app.closing);
+        assert!(app.deferred_sliders.is_empty());
+        complete(&mut app, close);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "0.999\n");
+        std::fs::remove_file(path).unwrap();
+        assert!(!app.writes_finished());
+        let exit = app.update(Message::ServiceFinished { key: "user:fixture.service".into(), previous: false, result: Ok(()) });
+        assert!(app.writes_finished());
+        assert!(exit.units() > 0);
+    }
+
+    #[test]
+    fn entry_completion_keeps_edits_made_after_submission() {
+        let (mut app, _initial) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
+        let _ = app.update(Message::EntryChanged { key: "Entry".into(), value: "new edit".into() });
+        app.busy_controls.insert("Entry".into());
+        let _ = app.update(Message::EntryFinished { key: "Entry".into(), value: "submitted".into(), result: Ok(()) });
+        let _ = app.update(Message::ControlsLoaded { slider_revision: app.slider_revision, generation: app.control_generation,
+            snapshot: Snapshot { entries: vec![("Entry".into(), "submitted".into())], ..Default::default() } });
+        assert_eq!(app.entry_values["Entry"], "new edit");
+        assert!(app.editing_entries.contains("Entry"));
+    }
+
+    #[test]
+    fn polling_skips_one_shot_and_not_yet_due_commands() {
+        let path = std::env::temp_dir().join(format!("dusky-poll-count-{}", std::process::id()));
+        let mut config: AppConfig = toml::from_str("[[pages]]\nid='fixture'\ntitle='Fixture'\n[[pages.layout]]\ntype='section'\n[[pages.layout.items]]\ntype='entry'\n[pages.layout.items.properties]\ntitle='Once'\nvalue_command='true'\n[[pages.layout.items]]\ntype='selection'\n[pages.layout.items.properties]\ntitle='Periodic'\ninterval=10\noptions=['ok']\nvalue_command='true'").unwrap();
+        for item in &mut config.pages[0].layout[0].items {
+            item.properties.value_command = format!("printf '%s\\n' '{}' >> '{}'; printf ok", item.properties.title, path.display());
+        }
+        let (mut app, _initial) = CenterApp::new(config, None, None);
+        app.controls_loading = None;
+        app.polled_generation = None;
+        let first = app.refresh_controls();
+        complete(&mut app, first);
+        for _ in 0..20 {
+            let task = app.refresh_controls();
+            complete(&mut app, task);
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Once\nPeriodic\n");
+        app.control_polled_at.insert("selection:Periodic".into(), Instant::now() - Duration::from_secs(11));
+        let task = app.refresh_controls();
+        complete(&mut app, task);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Once\nPeriodic\nPeriodic\n");
+        app.control_generation += 1;
+        let task = app.refresh_controls();
+        complete(&mut app, task);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Once\nPeriodic\nPeriodic\nOnce\nPeriodic\n");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn every_configured_page_and_nested_view_constructs() {
+        let config = AppConfig::load_from_path(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dusky_config.toml")).unwrap();
+        let (mut app, _initial) = CenterApp::new(config, None, None);
+        fn collect(items: &[ItemConfig], views: &mut Vec<(String, Vec<SectionConfig>)>, expanders: &mut Vec<String>) {
+            for item in items {
+                if item.item_type == "navigation" { views.push((item.properties.title.clone(), item.layout.clone())); }
+                if item.item_type == "expander" { expanders.push(format!("expander:{}", controls::item_key(item))); }
+                collect(&item.items, views, expanders);
+                for section in &item.layout { collect(&section.items, views, expanders); }
+            }
+        }
+        let mut views = vec![];
+        let mut expanders = vec![];
+        for page in &app.config.pages { for section in &page.layout { collect(&section.items, &mut views, &mut expanders); } }
+        for key in expanders { app.toggle_states.insert(key, true); }
+        assert_eq!(app.config.pages.len(), 18);
+        for index in 0..app.config.pages.len() {
+            let _ = app.update(Message::SelectPage(index));
+            let _ = app.view();
+        }
+        assert!(views.len() >= 27);
+        for (title, sections) in views {
+            let _ = app.update(Message::PushSubPage { title, sections });
+            let _ = app.view();
+            let _ = app.update(Message::PopSubPage);
+        }
+        app.search_query = "config".into();
+        let _ = app.view();
+    }
+
+    #[test]
+    fn search_reaches_nested_controls_and_opens_their_expanders() {
+        let config = AppConfig::load_from_path(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dusky_config.toml")).unwrap();
+        let hits = search_hits(&config, "Active Waybar");
+        assert_eq!(hits[0].item.properties.title, "Active Waybar");
+        assert!(!hits[0].location.navigation.is_empty());
+        let location = hits[0].location.clone();
+        let (mut app, _initial) = CenterApp::new(config, None, None);
+        let _ = app.update(Message::OpenSearchResult(location));
+        assert!(app.visible_items().iter().any(|item| item.properties.title == "Active Waybar"));
+        let config: AppConfig = toml::from_str("[[pages]]\nid='fixture'\ntitle='Fixture'\n[[pages.layout]]\ntype='section'\n[[pages.layout.items]]\ntype='expander'\n[pages.layout.items.properties]\ntitle='Group'\n[[pages.layout.items.items]]\ntype='label'\n[pages.layout.items.items.properties]\ntitle='Nested Target'\n[pages.layout.items.items.value]\ntype='static'\ntext='ok'").unwrap();
+        let location = search_hits(&config, "target")[0].location.clone();
+        let (mut app, _initial) = CenterApp::new(config, None, None);
+        assert_eq!(app.visible_items().len(), 1);
+        let _ = app.update(Message::OpenSearchResult(location));
+        assert_eq!(app.visible_items().len(), 2);
+        assert!(app.toggle_states["expander:Group"]);
+    }
+
+    #[test]
+    fn generated_nested_fields_and_symlinked_themes_are_preserved() {
+        let mut item: ItemConfig = toml::from_str("type='navigation'\n[properties]\ntitle='{name}'\n[[layout]]\ntype='section'\n[[layout.items]]\ntype='selection'\n[layout.items.properties]\ntitle='{name_pretty}'\nservice='{name}.service'\nvalue_command='printf {name}'\n[layout.items.on_change]\ntype='argv'\nargv=['printf','{path}']").unwrap();
+        let vars = HashMap::from([("name".into(), "literal{path}".into()), ("name_pretty".into(), "Literal".into()), ("path".into(), "/tmp/a b".into())]);
+        substitute_item_vars(&mut item, &vars);
+        assert_eq!(item.properties.title, "literal{path}", "inserted filenames must not be re-expanded");
+        let child = &item.layout[0].items[0];
+        assert_eq!(child.properties.service, "literal{path}.service");
+        if let Some(ChangeAction::Direct(action)) = &child.on_change {
+            assert_eq!(controls::action_argv(action), ["printf", "/tmp/a b"]);
+        } else { panic!("missing change action"); }
+        let root = std::env::temp_dir().join(format!("dusky-theme-links-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("real")).unwrap();
+        std::os::unix::fs::symlink(root.join("real"), root.join("linked")).unwrap();
+        let mut generator: ItemConfig = toml::from_str("type='directory_generator'\n[item_template]\ntype='button'\n[item_template.properties]\ntitle='{name}'").unwrap();
+        generator.properties.path = root.to_string_lossy().into_owned();
+        let items = expand_directory_generator(&generator);
+        assert_eq!(items.len(), 2);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn control_state_keeps_pending_values_and_rejects_stale_results() {
@@ -3111,6 +3449,7 @@ mod tests {
             toggle_states: HashMap::new(),
             slider_values: HashMap::from([("Microphone".into(), 80.0)]),
             selected_options: HashMap::new(),
+            dynamic_options: HashMap::new(),
             service_states: HashMap::new(),
             live_labels: HashMap::new(),
             cpu_text: String::new(),
@@ -3122,6 +3461,7 @@ mod tests {
             core_loading: false,
             applying_sliders: HashSet::new(),
             pending_sliders: HashMap::new(),
+            deferred_sliders: HashMap::new(),
             slider_changed_at: HashMap::new(),
             slider_revision: 0,
             closing: false,
@@ -3130,6 +3470,8 @@ mod tests {
             unavailable_controls: HashSet::new(),
             control_generation: 0,
             controls_loading: None,
+            control_polled_at: HashMap::new(),
+            polled_generation: None,
             action_error: None,
             entry_values: HashMap::new(),
             editing_entries: HashSet::new(),
@@ -3140,7 +3482,7 @@ mod tests {
         assert_eq!(app.slider_values["Volume"], 60.0);
 
         let _ = app.update(Message::SliderSettled {
-            key: "Microphone".into(), value: 70.0, on_change: None,
+            key: "Microphone".into(), value: 70.0, on_change: None, changed_at: Instant::now(),
         });
         assert_eq!(app.active_slider.as_deref(), Some("Microphone"));
         let _ = app.update(Message::SliderReleased {
@@ -3150,10 +3492,14 @@ mod tests {
         assert_eq!(app.active_slider, None);
 
         app.active_slider = Some("Microphone".into());
+        let changed_at = Instant::now();
+        app.deferred_sliders.insert("Microphone".into(), (80.0, None, changed_at));
+        app.slider_changed_at.insert("Microphone".into(), changed_at);
         let _ = app.update(Message::SliderSettled {
-            key: "Microphone".into(), value: 80.0, on_change: None,
+            key: "Microphone".into(), value: 80.0, on_change: None, changed_at,
         });
         assert_eq!(app.active_slider, None);
+        app.slider_changed_at.insert("Microphone".into(), Instant::now() - Duration::from_secs(4));
         app.sync_slider("Microphone", 75.0);
         assert_eq!(app.slider_values["Microphone"], 75.0);
         app.toggle_states.insert("Fixture".into(), true);
@@ -3166,12 +3512,12 @@ mod tests {
         assert!(!app.toggle_states["Fixture"]);
         assert!(!app.busy_controls.contains("Fixture"));
         assert!(app.action_error.as_ref().unwrap().contains("fixture failure"));
-        let _ = app.update(Message::ControlsLoaded {
+        let _ = app.update(Message::ControlsLoaded { slider_revision: app.slider_revision,
             generation: 3, snapshot: Snapshot { toggles: vec![("Fixture".into(), Some(true))], ..Default::default() },
         });
         assert!(!app.toggle_states["Fixture"], "stale poll must not overwrite rollback");
         app.service_states.insert("user:fixture.service".into(), true);
-        let _ = app.update(Message::ControlsLoaded {
+        let _ = app.update(Message::ControlsLoaded { slider_revision: app.slider_revision,
             generation: app.control_generation,
             snapshot: Snapshot {
                 services: HashMap::from([("user:fixture.service".into(), ServiceStatus {
@@ -3248,6 +3594,142 @@ mod tests {
     }
 
     #[test]
+    fn collapsing_expander_keeps_pending_scalar_and_file_entries_refresh() {
+        let path = std::env::temp_dir().join(format!("dusky-collapse-{}", std::process::id()));
+        let mut config: AppConfig = toml::from_str("[[pages]]\nid='fixture'\ntitle='Fixture'\n[[pages.layout]]\ntype='section'\n[[pages.layout.items]]\ntype='expander'\n[pages.layout.items.properties]\ntitle='Group'\n[[pages.layout.items.items]]\ntype='slider'\n[pages.layout.items.items.properties]\ntitle='Scalar'\npersistence='app'").unwrap();
+        config.pages[0].layout[0].items[0].items[0].properties.key = path.to_string_lossy().into_owned();
+        let key = path.to_string_lossy().into_owned();
+        let (mut app, _) = CenterApp::new(config, None, None);
+        let _ = app.update(Message::ToggleItem { key: "expander:Group".into(), is_enabled: true, on_toggle: None });
+        let _ = app.update(Message::SliderChanged { key: key.clone(), value: 0.25, on_change: None, debounce: true });
+        let collapse = app.update(Message::ToggleItem { key: "expander:Group".into(), is_enabled: false, on_toggle: None });
+        complete(&mut app, collapse);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "0.25");
+        assert_eq!(app.visible_items().len(), 1);
+        app.config.pages[0].layout[0].items[0].items[0].item_type = "entry".into();
+        app.toggle_states.insert("expander:Group".into(), true);
+        app.controls_loading = None;
+        app.control_generation += 1;
+        let initial = app.refresh_controls();
+        complete(&mut app, initial);
+        std::fs::write(&path, "externally changed").unwrap();
+        app.control_polled_at.insert(format!("entry:{key}"), Instant::now() - Duration::from_secs(4));
+        let refresh = app.refresh_controls();
+        complete(&mut app, refresh);
+        assert_eq!(app.entry_values[&key], "externally changed");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn sourced_selections_stay_unknown_and_removed_options_clear_the_value() {
+        let config: AppConfig = toml::from_str("[[pages]]\nid='fixture'\ntitle='Fixture'\n[[pages.layout]]\ntype='section'\n[[pages.layout.items]]\ntype='selection'\n[pages.layout.items.properties]\ntitle='Choice'\noptions=['Old','New']\nvalue_command='printf New'").unwrap();
+        let (mut app, _) = CenterApp::new(config, None, None);
+        assert!(!app.selected_options.contains_key("Choice"));
+        app.selected_options.insert("Choice".into(), "Old".into());
+        let _ = app.update(Message::ControlsLoaded { slider_revision: app.slider_revision, generation: app.control_generation,
+            snapshot: Snapshot { options: vec![("Choice".into(), vec!["New".into()])], ..Default::default() } });
+        assert!(!app.selected_options.contains_key("Choice"));
+    }
+
+    #[test]
+    fn search_routes_distinguish_identically_named_subpages() {
+        let mut config: AppConfig = toml::from_str("[[pages]]\nid='fixture'\ntitle='Fixture'\n[[pages.layout]]\ntype='section'\n[[pages.layout.items]]\ntype='navigation'\n[pages.layout.items.properties]\ntitle='Same'\n[[pages.layout.items.layout]]\ntype='section'\n[[pages.layout.items.layout.items]]\ntype='label'\n[pages.layout.items.layout.items.properties]\ntitle='First'").unwrap();
+        let mut second = config.pages[0].layout[0].items[0].clone();
+        second.layout[0].items[0].properties.title = "Second Unique".into();
+        config.pages[0].layout[0].items.push(second);
+        let location = search_hits(&config, "Second Unique")[0].location.clone();
+        let (mut app, _) = CenterApp::new(config, None, None);
+        let _ = app.update(Message::OpenSearchResult(location));
+        assert_eq!(app.visible_items()[0].properties.title, "Second Unique");
+    }
+
+    #[test]
+    fn final_integration_write_completion_does_not_cancel_a_later_debounce() {
+        let (mut app, _) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
+        let action = Some(ChangeAction::Direct(toml::from_str("type='exec'\ncommand='true'").unwrap()));
+        app.applying_sliders.insert("Deferred".into());
+        let _ = app.update(Message::SliderChanged { key: "Deferred".into(), value: 40.0, on_change: action.clone(), debounce: true });
+        let changed_at = app.slider_changed_at["Deferred"];
+        let _ = app.update(Message::SliderApplied { key: "Deferred".into(), result: Ok(()) });
+        let settled = app.update(Message::SliderSettled { key: "Deferred".into(), value: 40.0, on_change: action, changed_at });
+        assert_eq!(settled.units(), 1, "completion of an earlier write must not invalidate the newer edit's timer");
+        assert!(!app.deferred_sliders.contains_key("Deferred"));
+    }
+
+    #[test]
+    fn final_integration_slow_control_snapshot_does_not_overwrite_a_completed_edit() {
+        use iced_futures::futures::{executor::block_on, StreamExt};
+        let mut config: AppConfig = toml::from_str("[[pages]]\nid='fixture'\ntitle='Fixture'\n[[pages.layout]]\ntype='section'\n[[pages.layout.items]]\ntype='slider'\n[pages.layout.items.properties]\ntitle='Scalar'\nvalue_command='printf 10'").unwrap();
+        config.pages[0].layout[0].items.push(toml::from_str("type='toggle'\n[properties]\ntitle='Unrelated Toggle'\nstate_command='printf true'").unwrap());
+        config.pages[0].layout[0].items.push(toml::from_str("type='entry'\n[properties]\ntitle='Unrelated Entry'\nvalue_command='printf observed'").unwrap());
+        let (mut app, _) = CenterApp::new(config, None, None);
+        app.controls_loading = None;
+        app.polled_generation = None;
+        let poll = app.refresh_controls();
+        let replies = block_on(iced_runtime::task::into_stream(poll).unwrap().collect::<Vec<_>>());
+        let action = Some(ChangeAction::Direct(toml::from_str("type='exec'\ncommand='true'").unwrap()));
+        let _ = app.update(Message::SliderChanged { key: "Scalar".into(), value: 40.0, on_change: action, debounce: false });
+        let _ = app.update(Message::SliderApplied { key: "Scalar".into(), result: Ok(()) });
+        app.slider_changed_at.insert("Scalar".into(), Instant::now() - Duration::from_secs(4));
+        for reply in replies {
+            if let iced_runtime::Action::Output(message) = reply { let _ = app.update(message); }
+        }
+        assert_eq!(app.slider_values["Scalar"], 40.0, "a delayed generic query must reject observations from before an edit");
+        assert!(app.toggle_states["Unrelated Toggle"], "rejecting an old slider observation must preserve other control reads");
+        assert_eq!(app.entry_values["Unrelated Entry"], "observed");
+        let _ = app.update(Message::ControlsLoaded { generation: app.control_generation, slider_revision: app.slider_revision,
+            snapshot: Snapshot { sliders: vec![("Scalar".into(), 41.0)], ..Default::default() } });
+        assert_eq!(app.slider_values["Scalar"], 41.0, "fresh external observations must still apply");
+    }
+
+    #[test]
+    fn final_integration_navigation_drains_the_original_setting_metadata() {
+        let path = std::env::temp_dir().join(format!("dusky-navigation-write-{}", std::process::id()));
+        let mut config: AppConfig = toml::from_str("[[pages]]\nid='old'\ntitle='Old'\n[[pages.layout]]\ntype='section'\n[[pages.layout.items]]\ntype='slider'\n[pages.layout.items.properties]\ntitle='Scalar'\npersistence='app'\n[[pages]]\nid='new'\ntitle='New'").unwrap();
+        let key = path.to_string_lossy().into_owned();
+        config.pages[0].layout[0].items[0].properties.key = key.clone();
+        let (mut app, _) = CenterApp::new(config, None, None);
+        let first = app.update(Message::SliderChanged { key: key.clone(), value: 10.0, on_change: None, debounce: false });
+        let _ = app.update(Message::SliderChanged { key: key.clone(), value: 40.25, on_change: None, debounce: true });
+        let navigation = app.update(Message::SelectPage(1));
+        assert!(app.deferred_sliders.is_empty());
+        assert_eq!(app.active_page_idx(), 1);
+        complete(&mut app, navigation);
+        complete(&mut app, first);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "40.25");
+        assert!(app.pending_sliders.is_empty());
+        assert!(app.applying_sliders.is_empty());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn repeated_slider_value_does_not_accept_an_older_timer() {
+        let (mut app, _) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
+        let action = Some(ChangeAction::Direct(toml::from_str("type='exec'\ncommand='true'").unwrap()));
+        let mut old = Instant::now();
+        for (index, value) in [30.0, 20.0, 30.0].into_iter().enumerate() {
+            let _ = app.update(Message::SliderChanged { key: "Repeated".into(), value, on_change: action.clone(), debounce: true });
+            if index == 0 { old = app.slider_changed_at["Repeated"]; }
+        }
+        let current = app.slider_changed_at["Repeated"];
+        assert_ne!(old, current);
+        let stale = app.update(Message::SliderSettled { key: "Repeated".into(), value: 30.0, on_change: action.clone(), changed_at: old });
+        assert_eq!(stale.units(), 0);
+        assert!(app.deferred_sliders.contains_key("Repeated"));
+        let valid = app.update(Message::SliderSettled { key: "Repeated".into(), value: 30.0, on_change: action, changed_at: current });
+        assert_eq!(valid.units(), 1);
+    }
+
+    #[test]
+    fn generator_substitution_handles_shell_braces_without_expanding_inserted_names() {
+        let mut item: ItemConfig = toml::from_str("type='button'\n[properties]\ntitle='{name}'\n[on_press]\ntype='exec'\ncommand='{ printf %s {name}; }'").unwrap();
+        substitute_item_vars(&mut item, &HashMap::from([("name".into(), "{path}".into()), ("path".into(), "wrong".into())]));
+        assert_eq!(item.properties.title, "{path}");
+        let Some(ActionConfig::Exec { command, .. }) = item.on_press else { panic!() };
+        assert_eq!(command, "{ printf %s {path}; }");
+    }
+
+    #[test]
     fn explicit_debounce_waits_for_a_settled_value() {
         let (mut app, _initial) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
         let action = Some(ChangeAction::Direct(toml::from_str("type='exec'\ncommand='true'").unwrap()));
@@ -3255,9 +3737,10 @@ mod tests {
             key: "Deferred".into(), value: 30.0, on_change: action.clone(), debounce: true,
         });
         assert!(app.applying_sliders.is_empty());
-        let _ = app.update(Message::SliderSettled { key: "Deferred".into(), value: 20.0, on_change: action.clone() });
+        let changed_at = app.slider_changed_at["Deferred"];
+        let _ = app.update(Message::SliderSettled { key: "Deferred".into(), value: 20.0, on_change: action.clone(), changed_at });
         assert!(app.applying_sliders.is_empty(), "an older timer must not submit the current value");
-        let write = app.update(Message::SliderSettled { key: "Deferred".into(), value: 30.0, on_change: action });
+        let write = app.update(Message::SliderSettled { key: "Deferred".into(), value: 30.0, on_change: action, changed_at });
         assert_eq!(write.units(), 1);
         assert!(app.applying_sliders.contains("Deferred"));
     }
@@ -3339,6 +3822,8 @@ mod tests {
                 revision, values: vec![("Brightness".into(), Some(80.0), Some(79.0))], sunset_active: true,
             });
             assert_eq!(app.slider_values["Brightness"], 79.0, "fresh external changes must still be observed");
+            // Simulate reopening after the completed close before testing reload.
+            app.closing = false;
             let colors = root.join("matugen/generated");
             std::fs::create_dir_all(&colors).unwrap();
             let palette = colors.join("dusky_center.json");
@@ -3352,15 +3837,27 @@ mod tests {
             std::fs::remove_file(&palette).unwrap();
             let _ = app.update(Message::Tick);
             assert_eq!(app.theme, valid_theme);
+            app.dynamic_options.insert("Choice".into(), vec!["Old dynamic".into()]);
             std::fs::write(root.join("dusky_config.toml"), "pages = [").unwrap();
             let _ = app.update(Message::ReloadConfig);
             assert!(app.action_error.as_ref().unwrap().starts_with("Reload:"));
             assert!(app.config.pages.is_empty());
+            assert_eq!(app.dynamic_options["Choice"], ["Old dynamic"]);
             assert_eq!(app.theme, valid_theme);
             std::fs::write(root.join("dusky_config.toml"), "[[pages]]\nid='fixture'\ntitle='Fixture'\n").unwrap();
             let _ = app.update(Message::ExecuteAction(ActionConfig::Reload));
             assert_eq!(app.config.pages[0].id, "fixture");
+            assert!(app.dynamic_options.is_empty(), "successful reload must discard old option sources");
             assert!(app.action_error.is_none());
+            std::fs::write(root.join("dusky_config.toml"), "[[pages]]\nid='first'\ntitle='First'\n[[pages]]\nid='second'\ntitle='Second'\n").unwrap();
+            let _ = app.update(Message::ReloadConfig);
+            let _ = app.update(Message::SelectPage(1));
+            std::fs::write(root.join("dusky_config.toml"), "[[pages]]\nid='second'\ntitle='Second'\n[[pages]]\nid='first'\ntitle='First'\n").unwrap();
+            let _ = app.update(Message::ReloadConfig);
+            assert_eq!(app.active_page_idx(), 0, "reload must preserve the page id when pages are reordered");
+            std::fs::write(root.join("bin/hyprctl"), "#!/usr/bin/bash\nexit 1\n").unwrap();
+            assert!(sys::apply_sunset(90.0).is_err());
+            assert_eq!(std::fs::read_to_string(sys::sunset_state_file()).unwrap(), "4300\n", "failed IPC must not publish a false cached state");
             return;
         }
         let root = std::env::temp_dir().join(format!("dusky-worker-fixture-{}", std::process::id()));
@@ -3442,6 +3939,7 @@ mod tests {
                         enabled: ActionConfig::Exec {
                             command: "wg-quick up {path}".to_string(),
                             argv: Vec::new(),
+                            expanded_argv: false,
                             terminal: false,
                             requires_root: true,
                             mode: String::new(),
@@ -3450,6 +3948,7 @@ mod tests {
                         disabled: ActionConfig::Exec {
                             command: "wg-quick down {path}".to_string(),
                             argv: Vec::new(),
+                            expanded_argv: false,
                             terminal: false,
                             requires_root: true,
                             mode: String::new(),

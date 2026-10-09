@@ -655,7 +655,7 @@ pub fn get_sunset() -> Option<f32> {
     Some(sunset_percent(4500.0))
 }
 
-pub fn apply_sunset(value: f32) {
+pub fn apply_sunset(value: f32) -> Result<(), String> {
     let target = sunset_temperature(value);
     let request = if target == SUNSET_NEUTRAL as i32 {
         vec!["hyprsunset".into(), "identity".into()]
@@ -676,7 +676,7 @@ pub fn apply_sunset(value: f32) {
         .unwrap_or(false);
         if ok {
             let _ = atomic_write_text(&sunset_state_file(), &format!("{target}\n"));
-            return;
+            return Ok(());
         }
     }
     // Fallback: ensure service / process, then retry once.
@@ -703,8 +703,10 @@ pub fn apply_sunset(value: f32) {
         .unwrap_or(false);
         if ok {
             let _ = atomic_write_text(&sunset_state_file(), &format!("{target}\n"));
+            return Ok(());
         }
     }
+    Err("Could not apply Night Light through hyprsunset".into())
 }
 
 // ---------------------------------------------------------------------------

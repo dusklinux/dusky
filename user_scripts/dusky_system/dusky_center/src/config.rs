@@ -17,8 +17,78 @@ impl AppConfig {
     pub fn load_from_path(path: &Path) -> Result<Self, String> {
         let content = fs::read_to_string(path)
             .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-        toml::from_str(&content)
-            .map_err(|e| format!("Failed to parse TOML in {}: {e}", path.display()))
+        let config: Self = toml::from_str(&content)
+            .map_err(|e| format!("Failed to parse TOML in {}: {e}", path.display()))?;
+        config.validate().map_err(|e| format!("Invalid configuration in {}: {e}", path.display()))?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        use std::collections::HashSet;
+        let mut ids = HashSet::new();
+        for page in &self.pages {
+            if page.id.trim().is_empty() || page.title.trim().is_empty() {
+                return Err("Pages require a nonempty id and title".into());
+            }
+            if !ids.insert(page.id.as_str()) { return Err(format!("Duplicate page id: {}", page.id)); }
+        }
+        fn action(action: &ActionConfig, ids: &HashSet<&str>) -> Result<(), String> {
+            match action {
+                ActionConfig::Exec { command, argv, mode, timeout, .. } => {
+                    if command.trim().is_empty() == argv.is_empty() {
+                        return Err("Specify exactly one nonempty command or argv".into());
+                    }
+                    if argv.first().is_some_and(|s| s.is_empty()) { return Err("argv requires an executable".into()); }
+                    if !matches!(mode.as_str(), "" | "apply" | "launch") || *timeout == Some(0) {
+                        return Err("Invalid action mode or timeout".into());
+                    }
+                }
+                ActionConfig::Argv { argv, mode, timeout, .. } => {
+                    if argv.first().is_none_or(|s| s.is_empty()) { return Err("argv requires an executable".into()); }
+                    if !matches!(mode.as_str(), "" | "apply" | "launch") || *timeout == Some(0) {
+                        return Err("Invalid action mode or timeout".into());
+                    }
+                }
+                ActionConfig::Redirect { page } if !ids.contains(page.as_str()) => {
+                    return Err(format!("Unknown redirect page: {page}"));
+                }
+                _ => (),
+            }
+            Ok(())
+        }
+        fn item(item: &ItemConfig, ids: &HashSet<&str>) -> Result<(), String> {
+            let p = &item.properties;
+            if p.interval == Some(0) { return Err("Interval must be positive".into()); }
+            if !matches!(p.persistence.as_str(), "" | "app" | "action") { return Err("Invalid persistence mode".into()); }
+            if matches!(item.item_type.as_str(), "slider" | "spin") {
+                let (min, max, step) = (p.min.unwrap_or(0.0), p.max.unwrap_or(100.0), p.step.unwrap_or(1.0));
+                let default = p.default.unwrap_or(min);
+                if [min, max, step, default].iter().any(|v| !(*v as f32).is_finite())
+                    || min as f32 >= max as f32 || step as f32 <= 0.0 || !(min..=max).contains(&default) {
+                    return Err("Numeric controls require finite min < max, step > 0 and a default in range".into());
+                }
+            }
+            for value in [&item.on_press, &item.on_action].into_iter().flatten() { action(value, ids)?; }
+            if let Some(pair) = &item.on_toggle { action(&pair.enabled, ids)?; action(&pair.disabled, ids)?; }
+            if let Some(change) = &item.on_change {
+                match change {
+                    ChangeAction::Direct(value) => action(value, ids)?,
+                    ChangeAction::Map(map) => { for value in map.values() { action(value, ids)?; } }
+                }
+            }
+            for button in &p.buttons { if let Some(value) = &button.on_press { action(value, ids)?; } }
+            for child in &item.items { check_item(child, ids)?; }
+            for section in &item.layout { for child in &section.items { check_item(child, ids)?; } }
+            if let Some(template) = &item.item_template { check_item(template, ids)?; }
+            Ok(())
+        }
+        fn check_item(value: &ItemConfig, ids: &HashSet<&str>) -> Result<(), String> {
+            item(value, ids).map_err(|e| format!("{}: {e}", value.properties.title))
+        }
+        for page in &self.pages {
+            for section in &page.layout { for value in &section.items { check_item(value, &ids)?; } }
+        }
+        Ok(())
     }
 
     /// Resolve editable configuration at runtime, including relocated installations.
@@ -219,6 +289,9 @@ pub enum ActionConfig {
         command: String,
         #[serde(default)]
         argv: Vec<String>,
+        // Configured paths are expanded before inserting literal submitted values.
+        #[serde(skip)]
+        expanded_argv: bool,
         #[serde(default)]
         terminal: bool,
         #[serde(default)]
@@ -232,6 +305,9 @@ pub enum ActionConfig {
     Argv {
         #[serde(default)]
         argv: Vec<String>,
+        // Configured paths are expanded before inserting literal submitted values.
+        #[serde(skip)]
+        expanded_argv: bool,
         #[serde(default)]
         terminal: bool,
         #[serde(default)]
@@ -275,6 +351,21 @@ pub enum ValueConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn semantic_validation_rejects_broken_reload_inputs() {
+        for (tail, expected) in [
+            ("[[pages.layout.items]]\ntype='slider'\n[pages.layout.items.properties]\nmin=100\nmax=1", "Numeric"),
+            ("[[pages.layout.items]]\ntype='button'\n[pages.layout.items.on_press]\ntype='exec'", "command or argv"),
+            ("[[pages.layout.items]]\ntype='button'\n[pages.layout.items.on_press]\ntype='redirect'\npage='absent'", "Unknown redirect"),
+            ("[[pages]]\nid='home'\ntitle='Duplicate'", "Duplicate page"),
+        ] {
+            let config: AppConfig = toml::from_str(&format!("[[pages]]\nid='home'\ntitle='Home'\n[[pages.layout]]\ntype='section'\n{tail}")).unwrap();
+            assert!(config.validate().unwrap_err().contains(expected));
+        }
+        let config = AppConfig::load_from_path(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dusky_config.toml")).unwrap();
+        config.validate().unwrap();
+    }
 
     #[test]
     fn test_load_full_config() {
