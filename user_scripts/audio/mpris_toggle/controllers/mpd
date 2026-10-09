@@ -5,10 +5,14 @@ set -euo pipefail
 readonly SEP=$'\x1f'
 case ${1:-} in
     now)
-        current=$(mpc --format "[%title%]${SEP}[%artist%]${SEP}[%file%]" current) || exit $?
-        info=$(LC_ALL=C mpc status) || exit $?
-        current=${current//[$'\r\n']/ }
-        IFS=$SEP read -r title artist file <<< "$current"
+        # One client call gets the active song and playback state together.
+        info=$(LC_ALL=C.UTF-8 mpc --format "[%title%]${SEP}[%artist%]${SEP}[%file%]" status) || exit $?
+        current=${info%%$'\n'*}
+        title='' artist='' file=''
+        if [[ $current == *"$SEP"* ]]; then
+            current=${current//$'\r'/ }
+            IFS=$SEP read -r title artist file <<< "$current"
+        fi
         title=${title:-${file##*/}}
         status=Stopped pos='' dur=''
         state_pattern='^\[(playing|paused)\]'

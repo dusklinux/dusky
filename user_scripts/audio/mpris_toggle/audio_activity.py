@@ -5,12 +5,12 @@ A running node can carry silence. Brief, read-only per-stream monitor captures
 provide actual signal activity without recording or retaining audio files.
 """
 
-import asyncio
+lazy import asyncio
 import json
-import math
+lazy import math
 import signal
-import struct
-import subprocess
+lazy import struct
+lazy import subprocess
 import sys
 
 WINDOW_SECONDS = 0.4
@@ -33,23 +33,28 @@ async def measure(stream: dict, monitors: dict) -> tuple[str, str]:
     monitor = monitors.get(stream.get("sink"))
     if monitor is None:
         return index, "unknown"
-    process = await asyncio.create_subprocess_exec(
-        "parec",
-        "--raw",
-        "--format=float32le",
-        "--rate=48000",
-        "--channels=2",
-        "--latency-msec=20",
-        f"--device={monitor}",
-        f"--monitor-stream={index}",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "parec",
+            "--raw",
+            "--format=float32le",
+            "--rate=48000",
+            "--channels=2",
+            "--latency-msec=20",
+            f"--device={monitor}",
+            f"--monitor-stream={index}",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        # One failed monitor must not discard successful measurements elsewhere.
+        return index, "unknown"
     # Keep one reader alive when the capture window ends: cancelling communicate
     # would discard buffered samples. Always reap the monitor process.
     reader = asyncio.create_task(process.communicate())
     try:
-        await asyncio.sleep(WINDOW_SECONDS)
+        await asyncio.wait({reader}, timeout=WINDOW_SECONDS)
     finally:
         if process.returncode is None:
             try:
@@ -69,20 +74,20 @@ async def measure(stream: dict, monitors: dict) -> tuple[str, str]:
     if has_signal(data):
         return index, "yes"
     # A failed capture or no samples is inconclusive, not proof of silence.
-    if not data or process.returncode not in (0, -signal.SIGTERM):
+    if len(data) < 4 or process.returncode not in (0, -signal.SIGTERM):
         return index, "unknown"
     return index, "no"
 
 
-async def sample(streams: list, monitors: dict) -> dict:
+async def sample(streams: list[dict], monitors: dict) -> dict[str, str]:
     results = await asyncio.gather(*(measure(stream, monitors) for stream in streams))
     return dict(results)
 
 
 def main() -> int:
     streams = json.load(sys.stdin)
-    if not streams:
-        print("{}")
+    if not any(not stream.get("corked") and not stream.get("mute") for stream in streams):
+        print(json.dumps({str(stream["index"]): "no" for stream in streams}))
         return 0
     try:
         sinks = json.loads(
