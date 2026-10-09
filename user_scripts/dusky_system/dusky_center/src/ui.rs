@@ -37,6 +37,13 @@ use crate::theme::{AppTheme, mix};
 pub type Element<'a, Message> = iced::Element<'a, Message>;
 
 const PROFILE_OPTIONS: [&str; 3] = ["Balanced", "Performance", "Power Saver"];
+const GROUP_BACKGROUND_MIX: f32 = 0.05;
+const HOVER_HIGHLIGHT_MIX: f32 = 0.12;
+const ICON_HOVER_HIGHLIGHT_MIX: f32 = 0.1;
+const TILE_BACKGROUND_MIX: f32 = GROUP_BACKGROUND_MIX * 1.15;
+const TILE_HOVER_HIGHLIGHT_MIX: f32 = HOVER_HIGHLIGHT_MIX * 1.1 * 1.2;
+const ENABLED_TILE_HOVER_HIGHLIGHT_MIX: f32 = TILE_HOVER_HIGHLIGHT_MIX * 1.15;
+const TILE_GLOW_ALPHA: f32 = 0.034875;
 
 // ---------------------------------------------------------------------------
 // Navigation Stack
@@ -1330,7 +1337,7 @@ impl CenterApp {
         let results_card = container(results_box)
             .padding(1)
             .style(move |_| container::Style {
-                background: Some(palette.card_bg.into()),
+                background: Some(module_background(palette, false).into()),
                 border: Border {
                     color: Color::from_rgba(
                         palette.border.r,
@@ -1582,7 +1589,7 @@ impl CenterApp {
         let container_card = container(items_box)
             .padding(1)
             .style(move |_| container::Style {
-                background: Some(palette.card_bg.into()),
+                background: Some(module_background(palette, false).into()),
                 border: Border {
                     color: Color::from_rgba(
                         palette.border.r,
@@ -1729,19 +1736,11 @@ impl CenterApp {
             Message::SelectPage(self.active_page_idx())
         };
 
-        let shadow = if is_enabled {
-            iced::Shadow {
-                color: Color::from_rgba(
-                    palette.accent.r,
-                    palette.accent.g,
-                    palette.accent.b,
-                    0.031,
-                ),
-                offset: iced::Vector::new(0.0, 1.5),
-                blur_radius: 6.5,
-            }
-        } else {
-            iced::Shadow::default()
+        let glow_color = if is_destructive && !is_enabled { palette.danger } else { palette.accent };
+        let glow = iced::Shadow {
+            color: Color::from_rgba(glow_color.r, glow_color.g, glow_color.b, TILE_GLOW_ALPHA),
+            offset: iced::Vector::new(0.0, 1.5),
+            blur_radius: 6.5,
         };
 
         // Uniform 62px fixed height guarantees all rows have the exact same size!
@@ -1796,6 +1795,21 @@ impl CenterApp {
                 (card_bg, border_color)
             };
 
+            let idle_bg = if is_enabled { card_bg }
+                else { mix(palette.bg, card_bg, TILE_BACKGROUND_MIX) };
+            let bg = if is_enabled { bg }
+                else { mix(palette.bg, bg, TILE_BACKGROUND_MIX) };
+            let (bg, b_color) = if status == button::Status::Hovered {
+                let strength = if is_enabled { ENABLED_TILE_HOVER_HIGHLIGHT_MIX }
+                    else { TILE_HOVER_HIGHLIGHT_MIX };
+                (blend_hover(idle_bg, bg, strength), blend_hover(border_color, b_color, strength))
+            } else { (bg, b_color) };
+            let shadow = if status == button::Status::Hovered {
+                // Add the same hover glow above each state's idle glow.
+                let alpha = TILE_GLOW_ALPHA * 1.2 + if is_enabled { TILE_GLOW_ALPHA } else { 0.0 };
+                iced::Shadow { color: Color { a: alpha, ..glow.color }, ..glow }
+            } else if is_enabled { glow } else { iced::Shadow::default() };
+
             button::Style {
                 background: Some(bg.into()),
                 border: Border {
@@ -1823,8 +1837,8 @@ impl CenterApp {
 
         let (icon_badge_bg, icon_badge_border, icon_color) = if is_hovered {
             (
-                mix(palette.card_hover, palette.accent, 0.12),
-                mix(palette.card_bg, palette.accent, 0.18),
+                mix(mix(palette.card_bg, palette.accent, 0.08), mix(palette.card_hover, palette.accent, 0.12), ICON_HOVER_HIGHLIGHT_MIX),
+                Color { a: ICON_HOVER_HIGHLIGHT_MIX, ..mix(palette.card_bg, palette.accent, 0.18) },
                 palette.accent,
             )
         } else {
@@ -1861,7 +1875,7 @@ impl CenterApp {
                 .color(palette.fg),
             text("Select performance mode")
                 .size(12)
-                .color(mix(palette.card_bg, palette.fg, if is_hovered { 0.55 } else { 0.46 })),
+                .color(mix(palette.card_bg, palette.fg, if is_hovered { 0.46 + (0.55 - 0.46) * HOVER_HIGHLIGHT_MIX } else { 0.46 })),
         ]
         .spacing(2)
         .width(Length::Fill);
@@ -1914,17 +1928,13 @@ impl CenterApp {
             .padding([12, 16])
             .width(Length::Fill)
             .style(move |_| container::Style {
-                background: Some(
-                    if is_hovered {
-                        palette.card_hover
-                    } else {
-                        palette.card_bg
-                    }
-                    .into(),
-                ),
+                background: Some(module_background(palette, is_hovered).into()),
                 border: Border {
                     color: if is_hovered {
-                        Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.35)
+                        subtle_hover(
+                            Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
+                            Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.35),
+                        )
                     } else {
                         Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30)
                     },
@@ -1946,18 +1956,20 @@ impl CenterApp {
 
     fn view_quick_controls_card<'a>(&'a self, section: &'a SectionConfig) -> Element<'a, Message> {
         let palette = self.theme;
-        let mut controls_col = column![].spacing(14);
+        let mut controls_col = column![].spacing(0);
+        let visible_items = section.items.iter().filter(|item| {
+            let key = if item.properties.key.is_empty() { &item.properties.title } else { &item.properties.key };
+            key != "Night Light" || self.sunset_active
+        });
+        let item_count = visible_items.clone().count();
 
-        for item in &section.items {
+        for (index, item) in visible_items.enumerate() {
             let key = if !item.properties.key.is_empty() {
                 item.properties.key.clone()
             } else {
                 item.properties.title.clone()
             };
 
-            if key == "Night Light" && !self.sunset_active {
-                continue;
-            }
             let icon_name = item.properties.icon.as_str();
 
             let min = item.properties.min.unwrap_or(0.0) as f32;
@@ -1975,8 +1987,8 @@ impl CenterApp {
 
             let (icon_badge_bg, icon_badge_border, icon_color) = if is_row_hovered {
                 (
-                    mix(palette.card_hover, tint, 0.12),
-                    mix(palette.card_bg, tint, 0.18),
+                    mix(mix(palette.card_bg, tint, 0.08), mix(palette.card_hover, tint, 0.12), ICON_HOVER_HIGHLIGHT_MIX),
+                    Color { a: ICON_HOVER_HIGHLIGHT_MIX, ..mix(palette.card_bg, tint, 0.18) },
                     tint,
                 )
             } else {
@@ -2027,7 +2039,7 @@ impl CenterApp {
             let val_label = text(format!("{:.0}", val.round()))
                 .size(13)
                 .font(iced::Font::MONOSPACE)
-                .color(mix(palette.card_bg, palette.fg, if is_row_hovered { 0.72 } else { 0.60 }))
+                .color(mix(palette.card_bg, palette.fg, if is_row_hovered { 0.60 + (0.72 - 0.60) * HOVER_HIGHLIGHT_MIX } else { 0.60 }))
                 .width(28)
                 .align_x(Horizontal::Right);
 
@@ -2051,7 +2063,23 @@ impl CenterApp {
 
             let key_enter = key.clone();
             let key_exit = key.clone();
-            let row_area = mouse_area(ctrl_row)
+            let row_container = container(ctrl_row)
+                // Move the group's inset/gaps into each row's hover bounds.
+                .padding(Padding {
+                    top: if index == 0 { 13.0 } else { 7.0 },
+                    right: 15.0,
+                    bottom: if index + 1 == item_count { 13.0 } else { 7.0 },
+                    left: 15.0,
+                })
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(if is_row_hovered {
+                        module_background(palette, true)
+                    } else { Color::TRANSPARENT }.into()),
+                    border: Border { radius: row_radius(index, item_count), ..Default::default() },
+                    ..Default::default()
+                });
+            let row_area = mouse_area(row_container)
                 .on_enter(Message::ItemEntered(key_enter))
                 .on_exit(Message::ItemExited(key_exit));
 
@@ -2059,10 +2087,10 @@ impl CenterApp {
         }
 
         container(controls_col)
-            .padding([14, 16])
+            .padding(1)
             .width(Length::Fill)
             .style(move |_| container::Style {
-                background: Some(palette.card_bg.into()),
+                background: Some(module_background(palette, false).into()),
                 border: Border {
                     color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
                     width: 1.0,
@@ -2119,7 +2147,7 @@ impl CenterApp {
         // Title and description colors brighten subtly on hover
         let title_color = palette.fg;
         let desc_color = if is_row_hovered {
-            mix(palette.card_hover, palette.fg, 0.55)
+            subtle_hover(mix(palette.card_bg, palette.fg, 0.46), mix(palette.card_hover, palette.fg, 0.55))
         } else {
             mix(palette.card_bg, palette.fg, 0.46)
         };
@@ -2165,8 +2193,8 @@ impl CenterApp {
         // Icon badge lights up subtly with gentle glow on hover
         let (icon_badge_bg, icon_badge_border, icon_color) = if is_row_hovered {
             (
-                mix(palette.card_hover, palette.accent, 0.12),
-                mix(palette.card_bg, palette.accent, 0.18),
+                mix(mix(palette.card_bg, palette.accent, 0.08), mix(palette.card_hover, palette.accent, 0.12), ICON_HOVER_HIGHLIGHT_MIX),
+                Color { a: ICON_HOVER_HIGHLIGHT_MIX, ..mix(palette.card_bg, palette.accent, 0.18) },
                 palette.accent,
             )
         } else {
@@ -2294,7 +2322,9 @@ impl CenterApp {
                 .padding([8, 15])
                 .width(Length::Fill)
                 .style(move |_| container::Style {
-                    background: Some(if is_row_hovered { palette.card_hover } else { Color::TRANSPARENT }.into()),
+                    background: Some(if is_row_hovered {
+                        module_background(palette, true)
+                    } else { Color::TRANSPARENT }.into()),
                     border: Border { radius, ..Default::default() },
                     ..Default::default()
                 });
@@ -2588,7 +2618,7 @@ impl CenterApp {
             .style(move |_| container::Style {
                 background: Some(
                     if is_row_hovered {
-                        palette.card_hover
+                        module_background(palette, true)
                     } else {
                         Color::TRANSPARENT
                     }
@@ -2775,6 +2805,22 @@ fn search_score(item: &ItemConfig, query: &str) -> u32 {
     if fuzzy(&description) { return 100; }
     if item.properties.options.iter().any(|option| option.to_lowercase().contains(&query)) { return 75; }
     0
+}
+
+fn module_background(palette: AppTheme, hovered: bool) -> Color {
+    let base = mix(palette.bg, palette.card_bg, GROUP_BACKGROUND_MIX);
+    if hovered { subtle_hover(base, palette.card_hover) } else { base }
+}
+
+fn subtle_hover(base: Color, highlighted: Color) -> Color {
+    blend_hover(base, highlighted, HOVER_HIGHLIGHT_MIX)
+}
+
+fn blend_hover(base: Color, highlighted: Color, strength: f32) -> Color {
+    Color {
+        a: base.a + (highlighted.a - base.a) * strength,
+        ..mix(base, highlighted, strength)
+    }
 }
 
 fn row_radius(index: usize, count: usize) -> iced::border::Radius {
