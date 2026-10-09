@@ -2338,7 +2338,7 @@ impl CenterApp {
         }
 
         // Right interactive widget
-        let right_widget: Element<'a, Message> = match if from_page.is_some() { "navigation" } else { item.item_type.as_str() } {
+        let right_widget: Option<Element<'a, Message>> = match if from_page.is_some() { "navigation" } else { item.item_type.as_str() } {
             "toggle" => {
                 let is_active = self.toggle_states.get(&key).copied().unwrap_or(false);
                 let toggle_pair = item.on_toggle.clone();
@@ -2350,7 +2350,7 @@ impl CenterApp {
                         key: key_clone.clone(), is_enabled: val, on_toggle: toggle_pair.clone(),
                     });
                 }
-                control.into()
+                Some(control.into())
             }
 
             "slider" | "spin" => {
@@ -2390,10 +2390,10 @@ impl CenterApp {
                     .width(26)
                     .align_x(Horizontal::Right);
 
-                row![s, val_label]
+                Some(row![s, val_label]
                     .spacing(8)
                     .align_y(Vertical::Center)
-                    .into()
+                    .into())
             }
 
             "entry" | "secret" => {
@@ -2420,7 +2420,7 @@ impl CenterApp {
                 let mut apply = button(text(label).size(12)).padding([6, 12])
                     .style(move |_, status| action_button_style(palette, &style, false, 0, 1, status));
                 if ready && let Some(message) = submit { apply = apply.on_press(message); }
-                row![input, apply].spacing(6).align_y(Vertical::Center).into()
+                Some(row![input, apply].spacing(6).align_y(Vertical::Center).into())
             }
 
             "selection" => {
@@ -2438,7 +2438,7 @@ impl CenterApp {
                 let current = self.selected_options.get(&key).filter(|value| options.contains(value)).cloned();
 
                 if options.is_empty() {
-                    container(Space::new().width(0)).into()
+                    None
                 } else {
                     let dropdown = pick_list(
                         options,
@@ -2489,7 +2489,7 @@ impl CenterApp {
                         shadow: iced::Shadow::default(),
                     });
 
-                    dropdown.into()
+                    Some(dropdown.into())
                 }
             }
 
@@ -2499,10 +2499,10 @@ impl CenterApp {
                 } else {
                     Color::from_rgba(palette.fg.r, palette.fg.g, palette.fg.b, 0.45)
                 };
-                container(render_icon("chevron_right", 16.0, icon_color))
+                Some(container(render_icon("chevron_right", 16.0, icon_color))
                     .padding([4, 6])
                     .align_y(Vertical::Center)
-                    .into()
+                    .into())
             }
 
             "expander" => {
@@ -2514,10 +2514,10 @@ impl CenterApp {
                 } else {
                     Color::from_rgba(palette.fg.r, palette.fg.g, palette.fg.b, 0.45)
                 };
-                container(render_icon(chevron_icon, 16.0, icon_color))
+                Some(container(render_icon(chevron_icon, 16.0, icon_color))
                     .padding([4, 6])
                     .align_y(Vertical::Center)
-                    .into()
+                    .into())
             }
 
             "service" => {
@@ -2529,7 +2529,7 @@ impl CenterApp {
                     && !self.busy_controls.contains(&service_key);
                 let mut control = toggler(active).size(24).style(move |_, status| toggle_style(palette, status));
                 if ready { control = control.on_toggle(move |_| Message::ToggleService { unit: unit.clone(), scope: scope.clone() }); }
-                control.into()
+                Some(control.into())
             }
 
             "label" => {
@@ -2539,11 +2539,11 @@ impl CenterApp {
                     .cloned()
                     .unwrap_or_else(|| "…".into());
 
-                text(label_val)
+                Some(text(label_val)
                     .size(12)
                     .color(palette.fg_muted)
                     .align_x(Horizontal::Right)
-                    .into()
+                    .into())
             }
 
             _ => {
@@ -2583,31 +2583,35 @@ impl CenterApp {
                         item.properties.style.clone()
                     };
 
-                    button(text(btn_label).size(12).font(iced::Font {
+                    Some(button(text(btn_label).size(12).font(iced::Font {
                         weight: Weight::Semibold, ..iced::Font::with_name("Atkinson Hyperlegible")
                     }))
                     .on_press(Message::ExecuteAction(act))
                     .padding([6, 14])
                     .style(move |_, status| action_button_style(palette, &effective_style, false, 0, 1, status))
-                    .into()
+                    .into())
                 } else {
-                    container(Space::new().width(0)).into()
+                    None
                 }
             }
         };
 
-        let right_container = if !item.properties.buttons.is_empty() {
-            row![buttons_row, right_widget]
-                .spacing(8)
-                .align_y(Vertical::Center)
-                .into()
+        // Missing widgets must not leave a trailing gap after paired actions.
+        let right_container: Option<Element<'a, Message>> = if from_page.is_none() && !item.properties.buttons.is_empty() {
+            let mut controls = row![buttons_row].spacing(8).align_y(Vertical::Center);
+            if let Some(widget) = right_widget { controls = controls.push(widget); }
+            Some(controls.into())
         } else {
             right_widget
         };
 
-        let row_content = row![left_part, right_container]
+        let mut row_content = row![left_part]
             .spacing(12)
-            .align_y(Vertical::Center);
+            .align_y(Vertical::Center)
+            .width(Length::Fill);
+        if let Some(controls) = right_container {
+            row_content = row_content.push(container(controls).width(Length::Shrink).align_x(Horizontal::Right));
+        }
 
         // Paired buttons own their actions; the row only invokes an explicit row action.
         let primary_action = item.on_press.as_ref().or(item.on_action.as_ref()).cloned();
