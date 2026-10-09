@@ -12,4 +12,10 @@
     .z-20 { background-color: var(--surface_container_lowest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1F.z-20%1Fbg | bg: surface_container_lowest */
     article { background-color: var(--surface_dim) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Farticle%1Fbg | bg: surface_dim */
     /* <<< dusky:picks */
+
+    :root {
+  --color-background-composer-surface : var(--surface_container_low) !important;
+  --color-surface : var(--surface) !important;
+  --color-background-panel : var(--surface) !important;
+  }
 }
