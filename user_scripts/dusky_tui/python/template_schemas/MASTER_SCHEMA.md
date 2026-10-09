@@ -8,6 +8,7 @@ semantics, key catalog, and quirks, so you do **not** need to read the engine
 source code.
 
 - **Frontend contract:** `python/frontend/core_types.py` (ConfigItem), `python/frontend/ui.py` (rendering)
+- **Shared color handling:** `python/frontend/colors.py` (literal parsing, hue adjustment)
 - **Router:** `python/main/main.py` (loading, routing, CLI)
 - **Engine list:** see the [Engine Routing Table](#engine-routing-table) below
 
@@ -75,7 +76,7 @@ Source of truth: `frontend/core_types.py`. All fields except `label`, `key`,
 | `scope` | `str` | | `"DEFAULT"` for root/global keys. Engine-specific otherwise (section name, block name, dotted path, `/`-joined path…). See per-engine docs. |
 | `options` | `list` | | `cycle`/`picker` require it. On `int`/`float`/`string`/`color` it turns the row into a hybrid dropdown. Elements may be non-strings (ints are fine). |
 | `hints` | `list[str]` | | Subtitles for `picker` modals, positionally aligned with `options` (missing entries render without a subtitle; extras are ignored). |
-| `min_val` / `max_val` / `step` | `float\|None` | | Numeric bounds / arrow-key step for `int`/`float`. |
+| `min_val` / `max_val` / `step` | `float\|None` | | Numeric bounds / arrow-key step for `int`/`float`. For `color` without options, `step` is the hue adjustment in degrees (default 15); min/max do not apply. |
 | `group` | `str\|None` | | Renders a section header (uppercased). Same-group items MUST be contiguous. **Reserved: `"User Presets"`** — do not use it in your schema. |
 | `extended_help` | `str\|None` | | Markdown shown in the `?` help panel. Include it on every item. |
 | `preset_payload` | `dict\|None` | | For `preset`. Keys are exact item UIDs (`scope.key`, dots even when scope has slashes) with **Python-native values** matching the target item's `type_` (e.g. `True` not `"true"`, `5` not `"5"`); unlisted keys are FORCED back to their `default` on apply. `{"__ALL_DEFAULTS__": True}` resets everything. |
@@ -116,7 +117,7 @@ identifier) → prefixed `__VAR__<val>`; `None` → `"nil"`. `deserialize` strip
 | `string` | Free text input; `options` → hybrid dropdown. | `str` | options |
 | `cycle` | Left/right instant cycling through `options`. | `str` | options (required) |
 | `picker` | Fullscreen modal list over `options` with `hints` subtitles (arrow-key navigation; not searchable — that's the global Ctrl+F `SearchScreen`). | `str` | options (required), hints |
-| `color` | Hex/RGB/HSL/oklch/CSS-named/theme-variable. Theme variables serialize with `__VAR__`. | `str` | options (hybrid) |
+| `color` | Literal colors render as swatches; unresolved variables remain text and serialize with `__VAR__`. Arrows cycle `options`, or adjust hue when no options are supplied. | `str` | options (hybrid), step (hue degrees) |
 | `menu` | Pure UI folder, no backend value. | `None` | `is_parent=True` (required) |
 | `action` | Runs `default` as a shell command. Interactive commands (vim, ssh, tui…) run with TTY suspended; set `force_interactive` to override. 15s timeout for non-interactive. | shell command string | confirm_message, force_interactive, popup_message |
 | `preset` | Applies a strict state snapshot from `preset_payload`; omitted keys revert to defaults. | `None` | preset_payload, confirm_message |
@@ -134,6 +135,34 @@ or starts with `"trigger:"`/`"copy:"` (the suffix becomes the button label, e.g.
 `copy` triggers are a convention for engine-updated status rows: the engine
 (e.g. `network`'s `clipboard` scope) reads the row label and copies its value
 part to the clipboard — the copy itself is engine-side, not generic UI.
+
+### Color previews and editing
+
+The shared frontend automatically replaces recognized literal color values
+with a colored `⬤` in value rows, picker/hybrid options, and the change preview.
+Trigger/copy labels such as `options=["trigger:#FF0055"]` also get a swatch.
+Schemas do not need their own preview code. Stored values, serialization,
+picker selections, and editable input text retain the actual value.
+
+Recognized explicit formats include `#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`,
+`0xRRGGBB`, `0xAARRGGBB`, Hyprland `rgb(RRGGBB)` / `rgba(RRGGBBAA)`,
+comma-separated RGB/RGBA and HSL/HSLA (for example `rgb(255, 0, 85)` and
+`hsla(340, 100%, 50%, .5)`), and OKLCH (for example
+`oklch(60% 0.2 30deg / 50%)`). The preview shows RGB; opacity remains in the
+stored value. Unsupported or malformed values remain visible as text.
+
+Bare hex and CSS color names are recognized in `type_="color"` value rows.
+Other row types and picker/hybrid option lists require explicit color syntax,
+so ordinary strings such as `fade`, `deadbeef`, or `Red` remain text there.
+Unresolved variables such as `$primary`, `rgba($primary)`, `var(--primary)`,
+and `{{colors.primary.default.hex}}` display their original text.
+
+For `color` rows, schema `options` take precedence when using arrow keys.
+Without options, arrows rotate the current hue by `step` degrees (default 15),
+preserving opacity and the color format family. HSL/OKLCH retain their
+saturation/chroma and lightness; named colors become hex, and short hex may
+expand. Achromatic RGB/hex values and unresolved variables stay unchanged.
+Parsing is lazy and cached; plain TUIs do not load the shared color module.
 
 ### Info/label rows
 
@@ -158,7 +187,12 @@ network engine's status/speed-test/hotspot tabs).
 3. **Theme file axiom** — `THEME_FILE` must stay
    `~/.config/matugen/generated/dusky_tui.json`; the TUI reads keys like
    `bg`, `fg`, `accent`, `error`, `warning`, `success`, `muted`, `info` from it
-   (with hardcoded fallbacks).
+   over a complete fallback palette derived from Textual's built-in theme.
+   No fixed hex fallback palette is maintained in the frontend. A missing or
+   unreadable generated file leaves that palette usable at startup. At startup,
+   missing keys in a partial theme retain their fallback values. Theme updates are
+   watched automatically. If the file disappears or contains malformed JSON,
+   the current palette stays active; a later valid file is loaded normally.
 4. **Contiguity** — items sharing a `group` must be adjacent; a parent and all
    its `parent_ref` children must form one unbroken block.
 5. **Hybrid folders** — `is_parent=True` works on any real type (the header
@@ -261,7 +295,7 @@ ConfigItem(
     hints          = [],                   # picker subtitles (positionally aligned with options)
     min_val        = None,                 # int/float lower bound
     max_val        = None,                 # int/float upper bound
-    step           = None,                 # int/float arrow step
+    step           = None,                 # int/float arrow step; color hue degrees (default 15)
     group          = "OneWord",            # section header; contiguous blocks
     extended_help  = "**Help**\\n\\nMarkdown explaining the setting.",
     is_parent      = False,                # True -> expandable hybrid folder (any type)
