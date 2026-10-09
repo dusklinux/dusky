@@ -40,7 +40,6 @@ import os
 import select
 import sys
 import termios
-import threading
 import time
 import traceback
 from datetime import datetime
@@ -48,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
+from rich.color import Color, ColorParseError
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
@@ -62,11 +62,13 @@ if __package__ in {None, ""}:
     from dusky_keylogger.stats import card_totals, hourly_series, summarize, period_range
     from dusky_keylogger.storage import KeyStore
     from dusky_keylogger import keycodes as kc
+    from dusky_keylogger import __version__
 else:
     from .daemon import default_data_dir
     from .stats import card_totals, hourly_series, summarize, period_range
     from .storage import KeyStore
     from . import keycodes as kc
+    from . import __version__
 
 # ---------------------------------------------------------------------------
 # Theme / paths — never hardcode username, always Path.home() / expanduser
@@ -258,19 +260,6 @@ def log_error(msg: str) -> None:
         pass
 
 
-def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
-    """Never leak thread crashes onto the Live TTY; log instead."""
-    try:
-        tb = "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
-        name = getattr(args.thread, "name", "?")
-        log_error(f"threading.excepthook in {name}: {args.exc_type} {args.exc_value}\n{tb}")
-    except Exception:
-        pass
-
-
-threading.excepthook = _thread_excepthook
-
-
 def _safe_color(value: Any, fallback: str) -> str:
     """Validate a color string; reject Rich markup / ANSI injection."""
     if not isinstance(value, str):
@@ -278,10 +267,11 @@ def _safe_color(value: Any, fallback: str) -> str:
     v = value.strip()
     if not v or "[" in v or "]" in v or "\n" in v or "\x1b" in v:
         return fallback
-    if v.startswith("#"):
-        hexpart = v[1:]
-        if len(hexpart) in (3, 6, 8) and all(c in "0123456789abcdefABCDEF" for c in hexpart):
-            return v
+    if v.startswith("#") and len(v) == 4:
+        v = "#" + "".join(c * 2 for c in v[1:])
+    try:
+        Color.parse(v)
+    except ColorParseError:
         return fallback
     return v
 
@@ -424,7 +414,8 @@ def _cached(store: Any, key: tuple, compute: Any) -> Any:
     if store is None:
         return compute()
     try:
-        ver = (store.max_id(), datetime.now().date())
+        stat = store.path.stat()
+        ver = (stat.st_dev, stat.st_ino, store.max_id(), datetime.now().date())
     except Exception:
         return compute()
     ck = (str(getattr(store, "path", "")), key)
@@ -1742,11 +1733,7 @@ def main(store_path: str | Path | None = None) -> None:
             print(f"  DB:    {Path.home() / '.config' / 'dusky' / 'settings' / 'keylogger' / 'data' / 'keys.db'}")
             return
         if arg in ("--version", "-v"):
-            try:
-                from . import __version__  # type: ignore
-                print(__version__)
-            except Exception:
-                print("0.1.0")
+            print(__version__)
             return
 
     # Resolve store_path if passed as file path from cli's dashboard command

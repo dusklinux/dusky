@@ -484,7 +484,7 @@ def classify_key(key_code: int) -> Kind:
 # ---------------------------------------------------------------------------
 # US English + keypad character maps
 # ---------------------------------------------------------------------------
-_BASE: dict[int, str] = {
+_BASE: frozendict[int, str] = frozendict({
     KEY_1: "1",
     KEY_2: "2",
     KEY_3: "3",
@@ -508,9 +508,9 @@ _BASE: dict[int, str] = {
     KEY_SLASH: "/",
     KEY_SPACE: " ",
     KEY_102ND: "\\",
-}
+})
 
-_SHIFTED: dict[int, str] = {
+_SHIFTED: frozendict[int, str] = frozendict({
     KEY_1: "!",
     KEY_2: "@",
     KEY_3: "#",
@@ -534,9 +534,9 @@ _SHIFTED: dict[int, str] = {
     KEY_SLASH: "?",
     KEY_SPACE: " ",
     KEY_102ND: "|",
-}
+})
 
-_LETTERS: dict[int, str] = {
+_LETTERS: frozendict[int, str] = frozendict({
     KEY_Q: "q",
     KEY_W: "w",
     KEY_E: "e",
@@ -563,10 +563,10 @@ _LETTERS: dict[int, str] = {
     KEY_B: "b",
     KEY_N: "n",
     KEY_M: "m",
-}
+})
 
 # Produced when NumLock is on. Operators are always produced.
-_KP_NUM: dict[int, str] = {
+_KP_NUM: frozendict[int, str] = frozendict({
     KEY_KP0: "0",
     KEY_KP1: "1",
     KEY_KP2: "2",
@@ -586,7 +586,7 @@ _KP_NUM: dict[int, str] = {
     KEY_KPCOMMA: ",",
     KEY_KPLEFTPAREN: "(",
     KEY_KPRIGHTPAREN: ")",
-}
+})
 
 _KP_ALWAYS: frozenset[int] = frozenset(
     {
@@ -601,7 +601,7 @@ _KP_ALWAYS: frozenset[int] = frozenset(
     }
 )
 
-KEY_CHARS: dict[int, str] = {**_BASE, **_LETTERS, **_KP_NUM}
+KEY_CHARS: frozendict[int, str] = frozendict({**_BASE, **_LETTERS, **_KP_NUM})
 
 
 def base_char(key_code: int) -> str | None:
@@ -645,7 +645,7 @@ def _build_names() -> dict[int, str]:
     return names
 
 
-KEY_NAMES: dict[int, str] = _build_names()
+KEY_NAMES: frozendict[int, str] = frozendict(_build_names())
 
 
 def key_name(keycode: int) -> str:

@@ -233,7 +233,7 @@ class KeyStore:
     @contextmanager
     def collector_lock(self) -> Iterator[int]:
         """One collector per database; purge uses the same ownership lock."""
-        self._db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700, parent_mode=0o700)
         # Keep the lock file in place: unlinking it allows a second inode/owner.
         fd = os.open(
             self._db_path.with_name(self._db_path.name + '.lock'),
@@ -250,7 +250,7 @@ class KeyStore:
             os.close(fd)
 
     def init_db(self) -> None:
-        self._db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700, parent_mode=0o700)
         # If DB already exists, ensure its permissions are tight before opening.
         if self._db_path.exists():
             try:
@@ -315,7 +315,7 @@ class KeyStore:
     def open_writer(self) -> sqlite3.Connection:
         """Open a long-lived writer connection. Caller owns the lifetime."""
         # Ensure parent exists so sqlite can create the file; chmod will be done in init_db.
-        self._db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700, parent_mode=0o700)
         conn = sqlite3.connect(self._db_path, timeout=10.0)
         try:
             _configure(conn)

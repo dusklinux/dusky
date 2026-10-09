@@ -3,7 +3,7 @@ name = "dusky-keylogger"
 version = "2.0.0"
 description = "Dusky Keylogger -- always-on keystroke statistics daemon with live dashboard"
 readme = "README.md"
-requires-python = ">=3.14.7"
+requires-python = ">=3.15"
 dependencies = [
     "evdev>=2.0.0",
     "rich>=14.0",

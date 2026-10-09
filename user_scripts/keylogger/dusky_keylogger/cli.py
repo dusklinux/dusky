@@ -12,22 +12,22 @@ Subcommands:
 """
 
 import argparse
-import asyncio
-import json
+lazy import asyncio
+lazy import json
 import os
-import random
-import sqlite3
+lazy import random
+lazy import sqlite3
 import sys
-from datetime import datetime, timedelta
-from pathlib import Path
+lazy from datetime import datetime, timedelta
+lazy from pathlib import Path
 
-from rich import box
-from rich.console import Console
-from rich.table import Table
+lazy from rich import box
+lazy from rich.console import Console
+lazy from rich.table import Table
 
 from . import __version__
-from . import keycodes as kc
-from .daemon import (
+lazy from . import keycodes as kc
+lazy from .daemon import (
     Daemon,
     default_data_dir,
     get_transcript_dir,
@@ -35,18 +35,23 @@ from .daemon import (
     load_config,
     resolve_path,
 )
-from .listener import KeyListener, KeyPress
-from .stats import daily_series, period_range, summarize
-from .storage import SCHEMA_VERSION, EventRow, KeyStore, row_from_press
+lazy from .listener import KeyListener, KeyPress
+lazy from .stats import daily_series, period_range, summarize
+lazy from .storage import SCHEMA_VERSION, EventRow, KeyStore, row_from_press
 
-console = Console()
+lazy from rich import get_console
+lazy import grp
+lazy import re
+lazy import subprocess
+lazy from .maintenance import ensure_input_group
+lazy from .dashboard_tui import main as dashboard_main
 
 
 def _get_store(args: argparse.Namespace) -> KeyStore:
     data_dir = getattr(args, "data_dir", None)
     # Resolve via env/default; allow explicit override for testing.
     base = resolve_path(data_dir) if data_dir else default_data_dir()
-    base.mkdir(parents=True, exist_ok=True, mode=0o700)
+    base.mkdir(parents=True, exist_ok=True, mode=0o700, parent_mode=0o700)
     db_path = base / "keys.db"
     store = KeyStore(db_path)
     if not store.path.exists():
@@ -54,7 +59,6 @@ def _get_store(args: argparse.Namespace) -> KeyStore:
     else:
         # Ensure existing DB has correct restrictive permissions (defense in depth).
         try:
-            import os
             os.chmod(store.path, 0o600)
         except OSError:
             pass
@@ -73,12 +77,9 @@ def _get_store(args: argparse.Namespace) -> KeyStore:
 
 
 def cmd_daemon(args: argparse.Namespace) -> int:
-    import grp
-    import os
     if os.geteuid() != 0 and grp.getgrnam("input").gr_gid not in {os.getgid(), *os.getgroups()}:
-        from .maintenance import ensure_input_group
         ensure_input_group()
-        console.print("Log out/in, then run the foreground daemon again.")
+        get_console().print("Log out/in, then run the foreground daemon again.")
         return 1
 
     async def _run() -> int:
@@ -96,7 +97,7 @@ def _render_stats(store: KeyStore, period: str, top: int) -> None:
     stats = summarize(store, period, limit_keys=top)
     start_s = stats.start.strftime("%Y-%m-%d %H:%M")
     end_s = stats.end.strftime("%Y-%m-%d %H:%M")
-    console.print(
+    get_console().print(
         f"[bold cyan]Dusky Keylogger[/] -- {period} stats ({start_s} -> {end_s})"
     )
 
@@ -123,7 +124,7 @@ def _render_stats(store: KeyStore, period: str, top: int) -> None:
     ]
     for label, value in rows:
         table.add_row(label, value)
-    console.print(table)
+    get_console().print(table)
 
     if stats.top_keys:
         keys_table = Table(title="Most used keys", box=box.SIMPLE)
@@ -131,7 +132,7 @@ def _render_stats(store: KeyStore, period: str, top: int) -> None:
         keys_table.add_column("Count", justify="right")
         for name, count in stats.top_keys:
             keys_table.add_row(name, f"{count:,}")
-        console.print(keys_table)
+        get_console().print(keys_table)
 
     if stats.top_chars:
         chars_table = Table(title="Most typed characters", box=box.SIMPLE)
@@ -140,14 +141,14 @@ def _render_stats(store: KeyStore, period: str, top: int) -> None:
         for char, count in stats.top_chars:
             display = char if char != " " else "(space)"
             chars_table.add_row(display, f"{count:,}")
-        console.print(chars_table)
+        get_console().print(chars_table)
 
     day_table = Table(title="Daily totals (last 14 days)", box=box.SIMPLE)
     day_table.add_column("Date", style="bold")
     day_table.add_column("Keys", justify="right")
     for day, count in daily_series(store, 14):
         day_table.add_row(day, f"{count:,}")
-    console.print(day_table)
+    get_console().print(day_table)
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
@@ -185,8 +186,6 @@ def cmd_stats(args: argparse.Namespace) -> int:
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
-    from .dashboard_tui import main as dashboard_main
-
     store = _get_store(args)
     dashboard_main(store.path)
     return 0
@@ -208,7 +207,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     tdir = get_transcript_dir(cfg)
     tformat = get_transcript_format(cfg)
 
-    console.print("[bold cyan]Dusky Keylogger -- status[/]")
+    get_console().print("[bold cyan]Dusky Keylogger -- status[/]")
     status = Table(box=box.SIMPLE_HEAVY)
     status.add_column("Item", style="bold")
     status.add_column("Value")
@@ -226,11 +225,9 @@ def cmd_status(args: argparse.Namespace) -> int:
             "Last event",
             datetime.fromtimestamp(last / 1000).strftime("%Y-%m-%d %H:%M:%S"),
         )
-    console.print(status)
+    get_console().print(status)
 
     try:
-        import subprocess
-
         active = subprocess.run(
             ["systemctl", "is-active", "dusky_keylogger"],
             capture_output=True,
@@ -241,7 +238,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             capture_output=True,
             text=True,
         ).stdout.strip()
-        console.print(f"Service: [bold]{active}[/] (enabled: {enabled})")
+        get_console().print(f"Service: [bold]{active}[/] (enabled: {enabled})")
     except OSError:
         pass
     return 0
@@ -251,7 +248,7 @@ def cmd_devices(_args: argparse.Namespace) -> int:
     listener = KeyListener()
     devices = listener._find_keyboards()
     if not devices:
-        console.print("[yellow]No keyboards found.[/]")
+        get_console().print("[yellow]No keyboards found.[/]")
         return 1
     table = Table(title="Discovered keyboards", box=box.SIMPLE_HEAVY)
     table.add_column("Device", style="bold")
@@ -259,7 +256,7 @@ def cmd_devices(_args: argparse.Namespace) -> int:
     for device in devices:
         table.add_row(device.name, device.path)
         device.close()
-    console.print(table)
+    get_console().print(table)
     return 0
 
 
@@ -267,7 +264,7 @@ def cmd_events(args: argparse.Namespace) -> int:
     store = _get_store(args)
     rows = store.recent(args.limit)
     if not rows:
-        console.print("[yellow]No events recorded yet.[/]")
+        get_console().print("[yellow]No events recorded yet.[/]")
         return 0
     table = Table(title=f"Recent {len(rows)} events", box=box.SIMPLE_HEAVY)
     for col in ("Time", "Key", "Char", "Kind", "Device"):
@@ -275,7 +272,7 @@ def cmd_events(args: argparse.Namespace) -> int:
     for row in rows:
         dt = datetime.fromtimestamp(row.ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
         table.add_row(dt, row.key_name, row.char or "", row.kind, row.device)
-    console.print(table)
+    get_console().print(table)
     return 0
 
 
@@ -326,7 +323,6 @@ def _format_markdown(
         f"---\n\n"
     )
     # Choose a longer fence without altering any recorded text.
-    import re
     fence = "`" * max(3, 1 + max((len(m.group()) for m in re.finditer(r"`+", text)), default=0))
     return header + fence + "text\n" + text + "\n" + fence + "\n"
 
@@ -348,13 +344,13 @@ def cmd_text(args: argparse.Namespace) -> int:
     """
     cfg = load_config()
     if not cfg["ephemeral_enabled"] and not getattr(args, "out", None):
-        console.print("Transcript generation is disabled; use --out to export explicitly.")
+        get_console().print("Transcript generation is disabled; use --out to export explicitly.")
         return 0
     store = _get_store(args)
     try:
         start, end = period_range(args.period)
     except ValueError as exc:
-        console.print(f"[red]Invalid period: {exc}[/]")
+        get_console().print(f"[red]Invalid period: {exc}[/]")
         return 2
 
     # Resolve format: CLI > env > config
@@ -388,8 +384,7 @@ def cmd_text(args: argparse.Namespace) -> int:
     try:
         # Auto-create transcript dir for fresh installs; don't chmod the system
         # tmp root itself, only the file (and leaf dir if we created it).
-        out_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        import os
+        out_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700, parent_mode=0o700)
         # Create with 0600 from the start: no world-readable window, and
         # O_NOFOLLOW refuses to write through a pre-planted symlink in /tmp.
         fd = os.open(
@@ -401,7 +396,7 @@ def cmd_text(args: argparse.Namespace) -> int:
             os.fchmod(fh.fileno(), 0o600)
             fh.write(output_text)
     except OSError as exc:
-        console.print(f"[red]Could not write transcript to {out_path}: {exc}[/]")
+        get_console().print(f"[red]Could not write transcript to {out_path}: {exc}[/]")
         return 1
     Console(stderr=True).print(
         f"Typed transcript ({args.period}, {fmt}) — {len(raw_text):,} chars → {out_path}",
@@ -425,7 +420,7 @@ def _synthetic_press(keycode: int, ts_us: int) -> KeyPress:
 
 def cmd_seed(args: argparse.Namespace) -> int:
     if args.days < 1 or args.days > 365:
-        console.print("[red]--days must be between 1 and 365[/]")
+        get_console().print("[red]--days must be between 1 and 365[/]")
         return 2
     store = _get_store(args)
     store.init_db()
@@ -471,7 +466,7 @@ def cmd_seed(args: argparse.Namespace) -> int:
     CHUNK = 2000
     for i in range(0, len(rows), CHUNK):
         inserted += store.insert_many(rows[i : i + CHUNK])
-    console.print(
+    get_console().print(
         f"[green]Seeded {inserted:,} demo events across {args.days} day(s).[/]\n"
         f"[dim]These are synthetic test records. Remove them with: "
         f"rm {store.path}[/]"

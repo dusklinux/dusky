@@ -27,7 +27,6 @@ Architecture (Kernel 7.3+ input subsystem, python-evdev):
 import asyncio
 import contextlib
 import ctypes
-import ctypes.util
 import fcntl
 import glob
 import logging
@@ -39,8 +38,10 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from . import keycodes as kc
+lazy from evdev import InputDevice
 
 logger = logging.getLogger(__name__)
+MAX_READ_BATCHES = 16
 
 # ---------------------------------------------------------------------------
 # Event model
@@ -103,7 +104,10 @@ class KeyEventClassifier:
             self._devices.pop(device_id, None)
 
     def state_for(self, device_id: str) -> _DeviceState:
-        return self._devices.setdefault(device_id, _DeviceState())
+        state = self._devices.get(device_id)
+        if state is None:
+            state = self._devices[device_id] = _DeviceState()
+        return state
 
     def sync_from_kernel(
         self,
@@ -267,34 +271,28 @@ def apply_event_mask(fd: int) -> None:
 # inotify on /dev/input
 # ---------------------------------------------------------------------------
 
-_IN_CLOEXEC = 0x80000
-_IN_NONBLOCK = 0x800
+_IN_CLOEXEC = os.O_CLOEXEC
+_IN_NONBLOCK = os.O_NONBLOCK
 _IN_CREATE = 0x00000100
 _IN_DELETE = 0x00000200
 _IN_MOVED_TO = 0x00000080
 _IN_MOVED_FROM = 0x00000040
 _IN_ATTRIB = 0x00000004
 _IN_Q_OVERFLOW = 0x00004000
+_IN_IGNORED = 0x00008000
+_IN_DELETE_SELF = 0x00000400
+_IN_MOVE_SELF = 0x00000800
 _IN_WATCH_MASK = (
     _IN_CREATE | _IN_DELETE | _IN_MOVED_TO | _IN_MOVED_FROM | _IN_ATTRIB
+    | _IN_DELETE_SELF | _IN_MOVE_SELF
 )
 _INOTIFY_HDR = struct.Struct("iIII")  # wd, mask, cookie, len
 
 
 def _libc() -> ctypes.CDLL:
-    cname = ctypes.util.find_library("c")
-    # On musl or minimal containers find_library may return None; fallback to "libc.so.6".
-    if not cname:
-        for cand in ("libc.so.6", "libc.so"):
-            try:
-                lib = ctypes.CDLL(cand, use_errno=True)
-                break
-            except OSError:
-                continue
-        else:
-            raise OSError("Could not locate C library for inotify")
-    else:
-        lib = ctypes.CDLL(cname, use_errno=True)
+    # Linux exposes libc symbols through the current process handle; no
+    # library-name guessing or external discovery command is needed.
+    lib = ctypes.CDLL(None, use_errno=True)
     lib.inotify_init1.argtypes = [ctypes.c_int]
     lib.inotify_init1.restype = ctypes.c_int
     lib.inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
@@ -373,8 +371,6 @@ class KeyListener:
     """Owns evdev devices, inotify hot-plug, and the asyncio readers."""
 
     def __init__(self) -> None:
-        from evdev import InputDevice
-
         self._InputDevice = InputDevice
         self.classifier = KeyEventClassifier()
         self._devices: dict[str, _LiveDevice] = {}
@@ -436,7 +432,7 @@ class KeyListener:
         caps_led: bool | None = None
         num_led: bool | None = None
         try:
-            active = list(live.device.active_keys(verbose=False))  # type: ignore[call-arg]
+            active = live.device.active_keys()
         except OSError as exc:
             logger.debug("EVIOCGKEY failed on %s: %s", live.path, exc)
         try:
@@ -522,8 +518,11 @@ class KeyListener:
         if live is None:
             return
         try:
-            for event in live.device.read():
-                self._dispatch(live, event)
+            # Drain pending batches, but yield to timers/other devices under
+            # continuous input. The level-triggered reader will wake us again.
+            for _ in range(MAX_READ_BATCHES):
+                for event in live.device.read():
+                    self._dispatch(live, event)
         except BlockingIOError:
             return
         except OSError:
@@ -579,12 +578,17 @@ class KeyListener:
             return
         except OSError:
             logger.exception("inotify read failed")
+            self._close_inotify()
             return
         if not data:
             return
         overflow = False
         names: list[tuple[int, str]] = []
         for mask, name in _parse_inotify(data):
+            if mask & (_IN_IGNORED | _IN_DELETE_SELF | _IN_MOVE_SELF):
+                self._close_inotify()
+                self._rescan()
+                return
             if mask & _IN_Q_OVERFLOW:
                 overflow = True
                 continue
@@ -600,9 +604,8 @@ class KeyListener:
             if mask & (_IN_DELETE | _IN_MOVED_FROM):
                 self._detach(path)
             else:
-                # For CREATE / ATTRIB / MOVED_TO, give udev a tiny window to
-                # fix up permissions before we try to open (avoids EACCES race).
-                # ATTRIB already implies permissions may have just changed.
+                # CREATE can precede udev permissions; ATTRIB retries after
+                # they change, and the safety rescan covers missed changes.
                 self._try_attach_path(path)
 
     def _rescan(self) -> None:
@@ -613,7 +616,26 @@ class KeyListener:
         for path in list(self._devices):
             if path not in current:
                 self._detach(path)
+        self._watch_input()
         self._arm_rescan()
+
+    def _close_inotify(self) -> None:
+        if self._inotify_fd is not None:
+            if self._loop is not None:
+                self._loop.remove_reader(self._inotify_fd)
+            os.close(self._inotify_fd)
+            self._inotify_fd = None
+
+    def _watch_input(self) -> None:
+        if self._inotify_fd is not None or self._loop is None:
+            return
+        try:
+            self._inotify_fd = _open_inotify("/dev/input")
+            self._loop.add_reader(self._inotify_fd, self._on_inotify)
+            logger.info("inotify watching /dev/input")
+        except OSError as exc:
+            self._close_inotify()
+            logger.warning("inotify unavailable; retrying on safety rescan: %s", exc)
 
     def _arm_rescan(self) -> None:
         if self._loop is None:
@@ -637,27 +659,14 @@ class KeyListener:
                 "inotify will keep looking. If you are not in the 'input' "
                 "group, run: sudo usermod -aG input $USER"
             )
-        try:
-            self._inotify_fd = _open_inotify("/dev/input")
-            self._loop.add_reader(self._inotify_fd, self._on_inotify)
-            logger.info("inotify watching /dev/input")
-        except OSError:
-            logger.exception(
-                "inotify on /dev/input failed -- falling back to 30s rescan only"
-            )
-            self._inotify_fd = None
+        self._watch_input()
         self._arm_rescan()
 
     async def stop(self) -> None:
         if self._rescan_handle is not None:
             self._rescan_handle.cancel()
             self._rescan_handle = None
-        if self._loop is not None and self._inotify_fd is not None:
-            with contextlib.suppress(Exception):
-                self._loop.remove_reader(self._inotify_fd)
-            with contextlib.suppress(OSError):
-                os.close(self._inotify_fd)
-            self._inotify_fd = None
+        self._close_inotify()
         for path in list(self._devices):
             self._detach(path)
         self.classifier.reset()

@@ -34,6 +34,7 @@ import string
 import json
 import subprocess
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 
 INSTALL_DIR = Path(__file__).resolve().parent
@@ -48,7 +49,7 @@ C_CYAN = "\033[1;36m"
 C_DIM = "\033[2m"
 C_RESET = "\033[0m"
 
-REQUIRED_PYTHON = (3, 14, 7)
+REQUIRED_PYTHON = (3, 15, 0)
 
 
 def log(msg: str) -> None:
@@ -294,33 +295,53 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         )
         if state.returncode != 0 or state.stdout.strip() != "not-found":
             fail(f"Could not stop {SERVICE_NAME}; uninstall aborted.\n{stopped.stderr}")
-    run(["systemctl", "disable", SERVICE_NAME], check=False)
-    if SERVICE_FILE.exists():
-        try:
-            SERVICE_FILE.unlink()
-        except OSError as exc:
-            fail(f"Could not remove {SERVICE_FILE}: {exc}")
-        run(["systemctl", "daemon-reload"])
-        ok(f"Removed {SERVICE_FILE}")
-    else:
-        print(f"{C_DIM}Service file not present -- skipping.{C_RESET}")
-    venv = venv_dir(home)
-    if venv.exists():
-        shutil.rmtree(venv)
-        ok(f"Removed venv ({venv})")
-    if args.purge:
-        data_dir = Path(home) / ".local" / "share" / "dusky-keylogger"
-        old_config = Path(home) / ".config" / "dusky-keylogger"
-        new_config = Path(home) / ".config" / "dusky" / "settings" / "keylogger"
-        for path in (data_dir, old_config, new_config):
-            if path.exists():
-                shutil.rmtree(path)
-                ok(f"Removed {path}")
-        # Also clean ephemeral transcripts in default /tmp locations (optional, not required)
-        # but leave /tmp as is (cleared on reboot)
-    else:
-        # Without --purge we keep data/config, but ensure permissions stay tight.
-        pass
+    with ExitStack() as locks:
+        if args.purge:
+            data_dir = Path(home) / ".local" / "share" / "dusky-keylogger"
+            old_config = Path(home) / ".config" / "dusky-keylogger"
+            new_config = Path(home) / ".config" / "dusky" / "settings" / "keylogger"
+            from dusky_keylogger.storage import KeyStore
+            record = pwd.getpwnam(user)
+            try:
+                data_paths = [p for p in (data_dir, new_config / "data") if p.exists()]
+                for path in data_paths:
+                    fd = locks.enter_context(KeyStore(path / "keys.db").collector_lock())
+                    os.fchown(fd, record.pw_uid, record.pw_gid)
+            except RuntimeError as exc:
+                fail(f"Purge refused: {exc}")
+        run(["systemctl", "disable", SERVICE_NAME], check=False)
+        if SERVICE_FILE.exists():
+            try:
+                SERVICE_FILE.unlink()
+            except OSError as exc:
+                fail(f"Could not remove {SERVICE_FILE}: {exc}")
+            run(["systemctl", "daemon-reload"])
+            ok(f"Removed {SERVICE_FILE}")
+        else:
+            print(f"{C_DIM}Service file not present -- skipping.{C_RESET}")
+        venv = venv_dir(home)
+        if venv.exists():
+            shutil.rmtree(venv)
+            ok(f"Removed venv ({venv})")
+        if args.purge:
+            # Keep lock inodes and their parents in place. Removing them
+            # would let a concurrent collector acquire a different lock.
+            for path in data_paths:
+                for child in path.iterdir():
+                    if child.name != "keys.db.lock":
+                        if child.is_dir() and not child.is_symlink():
+                            shutil.rmtree(child)
+                        else:
+                            child.unlink()
+                ok(f"Purged {path} (ownership lock retained)")
+            if old_config.exists():
+                shutil.rmtree(old_config)
+                ok(f"Removed {old_config}")
+            if new_config.exists():
+                # A custom data directory may live beside config.json. Only
+                # remove the known configuration file, not arbitrary stores.
+                (new_config / "config.json").unlink(missing_ok=True)
+                ok(f"Purged configuration in {new_config}")
     print(f"{C_GREEN}Done. The 'input' group membership was left untouched.{C_RESET}")
     return 0
 
@@ -356,17 +377,19 @@ def build_venv(user: str, home: str, *, offline: bool = False) -> str:
     venv_py = venv / "bin" / "python"
     vver = python_version(str(venv_py))
     if not vver or vver < REQUIRED_PYTHON:
-        fail(f"Venv Python is {vver}, need >= {REQUIRED_PYTHON}")
+        fail(f"Venv Python is {vver}, need >= {REQUIRED_PYTHON}. "
+             f"Recreate {venv} with the installed system Python, then rerun the installer.")
     ok(f"Venv ready: {venv} (Python {version_str(vver)})")
 
     step("Installing Dusky Keylogger + dependencies from pyproject.toml...")
     if has_uv():
-        command = ["uv", "pip", "install", "--python", str(venv_py), "-e", str(INSTALL_DIR)]
+        command = ["uv", "pip", "install", "--python", str(venv_py),
+                   "--reinstall-package", "dusky-keylogger", str(INSTALL_DIR)]
         if offline:
             command.append("--offline")
         run(command)
     else:
-        command = [str(venv_py), "-m", "pip", "install", "-e", str(INSTALL_DIR)]
+        command = [str(venv_py), "-m", "pip", "install", str(INSTALL_DIR)]
         if offline:
             command.append("--no-index")
         run(command)
@@ -457,6 +480,11 @@ def cmd_install(args: argparse.Namespace) -> int:
         record = pwd.getpwnam(user)
         os.chown(cfg_file, record.pw_uid, record.pw_gid)
 
+    active = run(["systemctl", "is-active", SERVICE_NAME], check=False, capture=True)
+    was_active = active.returncode == 0
+    if was_active:
+        step("Stopping the running service before updating its package and unit...")
+        run(["systemctl", "stop", SERVICE_NAME])
     venv_py = build_venv(user, home, offline=args.offline)
     install_service(venv_py, user, home)
 
@@ -464,6 +492,9 @@ def cmd_install(args: argparse.Namespace) -> int:
         step("Enabling and starting service...")
         run(["systemctl", "enable", "--now", SERVICE_NAME])
         ok("Service enabled and started")
+    elif was_active:
+        run(["systemctl", "start", SERVICE_NAME])
+        ok("Previously running service restarted with the updated package")
 
     print(f"\n{C_GREEN}Installation complete!{C_RESET}")
     print("  Control the daemon:")

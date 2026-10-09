@@ -10,7 +10,7 @@ Persistence vs Ephemeral model:
   - Persistent: SQLite DB + config JSON in ~/.config/dusky/settings/keylogger/
     (survives reboot, mode 0700/0600, manual delete only). Auto-created on
     fresh install if it doesn't already exist (json engine mkdir parents).
-  - Ephemeral: Transcripts in /tmp or /temp (cleared on reboot, mode 0600).
+  - Ephemeral: Transcripts in /tmp (cleared on reboot, mode 0600).
     Configurable via transcript_dir/format; directory auto-created on first
     `dusky text` (fresh install).
 Intelligent logic: atomic writes, perms, env overrides, old->new migration,
@@ -36,13 +36,23 @@ import shlex
 load_config()
 
 
-def _maintenance_action(command: str) -> str:
+def _python_action(script: str, *args: str, pause: bool = True) -> str:
     venv_python = Path.home() / "contained_apps/uv/dusky_key_logger/bin/python"
     python = str(venv_python) if venv_python.is_file() else sys.executable
-    script = Path(__file__).resolve().parent / "dusky_keylogger/maintenance.py"
-    action = shlex.join([python, str(script), command])
+    script_path = Path(__file__).resolve().parent / script
+    action = shlex.join([python, str(script_path), *args])
+    if not pause:
+        return action
     shell = action + '; result=$?; read -r -p "Press Enter to close..."; exit "$result"'
     return shlex.join(["bash", "-c", shell])
+
+
+def _maintenance_action(command: str) -> str:
+    return _python_action("dusky_keylogger/maintenance.py", command)
+
+
+def _cli_action(*args: str, pause: bool = True) -> str:
+    return _python_action("__main__.py", *args, pause=pause)
 
 # =============================================================================
 # 1. CORE APPLICATION ROUTING
@@ -79,7 +89,7 @@ TAB_NOTICES = {
     1: {
         "level": "warning",
         "position": "top",
-        "message": "⚠️ **Ephemeral** — Transcripts in `/tmp`/`/temp` (cleared on reboot, `0600`). Change `Transcript Dir` to `~/tmp` or custom. Persistent stats stay in DB until you manually `rm` it.",
+        "message": "⚠️ **Ephemeral** — Transcripts in `/tmp` (cleared on reboot, `0600`). Change `Transcript Dir` to `~/tmp` or custom. Persistent stats stay in DB until you manually `rm` it.",
     },
     2: {
         "level": "info",
@@ -189,7 +199,7 @@ SCHEMA = {
                 "Ephemeral tmpfs (cleared on reboot, 1777) — the only ephemeral location",
             ],
             group="Ephemeral",
-            extended_help="**Transcript Directory**\n\nEphemeral — where `dusky text --period today` writes `dusky-typed-<period>-<date>.[txt|md]` (default `/tmp`, cleared on reboot, `0600`).\n- Supports `~`, `$HOME`, relative (relative → `Path.home()/...`), and env `DUSKY_TRANSCRIPT_DIR` (highest priority).\n- Auto-created on first `dusky text` if missing (`mkdir -p`). Fresh install dir doesn't exist — TUI ensures creation.\n- Persistent stats stay in `data_dir` (`~/.config/dusky/settings/keylogger/data`) regardless.\n\nIntelligent: `/tmp` leaf not chmodded (keep `1777`).",
+            extended_help="**Transcript Directory**\n\nEphemeral — where `dusky text --period today` writes `dusky-typed-<period>-<date>-<uid>.[txt|md]` (default `/tmp`, cleared on reboot, `0600`).\n- Supports `~`, `$HOME`, relative (relative → `Path.home()/...`), and env `DUSKY_TRANSCRIPT_DIR` (highest priority).\n- Auto-created on first `dusky text` if missing (`mkdir -p`). Fresh install dir doesn't exist — TUI ensures creation.\n- Persistent stats stay in `data_dir` (`~/.config/dusky/settings/keylogger/data`) regardless.\n\nIntelligent: `/tmp` leaf not chmodded (keep `1777`).",
             popup_message="Transcript dir changed. Next `dusky text` will use new ephemeral location (old transcripts remain until reboot).",
         ),
         ConfigItem(
@@ -295,7 +305,7 @@ SCHEMA = {
             key="action_list_keyboards",
             scope="DEFAULT",
             type_="action",
-            default="bash -c 'VENVPY=\"$HOME/contained_apps/uv/dusky_key_logger/bin/python\"; if [ -x \"$VENVPY\" ]; then \"$VENVPY\" -m dusky_keylogger devices; else python3 -m dusky_keylogger devices; fi; read -p \"Press Enter...\"'",
+            default=_cli_action("devices"),
             group="Diagnostics",
             extended_help="**List Keyboards**\n\nRuns `dusky devices` via venv python (discovers `EV_KEY <256` keyboards, respects `DUSKY_DEVICE_FILTER`).",
             force_interactive=True,
@@ -311,9 +321,9 @@ SCHEMA = {
             key="action_gen_text",
             scope="DEFAULT",
             type_="action",
-            default="bash -c 'set -e; VENVPY=\"$HOME/contained_apps/uv/dusky_key_logger/bin/python\"; if [ ! -x \"$VENVPY\" ]; then VENVPY=python3; fi; echo \"Period: today (change in CLI with --period week/month/all)\"; \"$VENVPY\" -m dusky_keylogger text --period today --format text; echo \"---\"; ls -lh /tmp/dusky-typed-today* /temp/dusky-typed-today* 2>/dev/null | head; read -p \"Press Enter...\"'",
+            default=_cli_action("text", "--period", "today", "--format", "text"),
             group="Ephemeral Tools",
-            extended_help="**Generate Transcript (Text)**\n\nRuns `dusky text --period today --format text` → ephemeral `transcript_dir/dusky-typed-today-<date>.txt` (`0600`, cleared on reboot). Persistent DB untouched. Change dir/format in Ephemeral tab or via `--transcript-dir`/`--format`.",
+            extended_help="**Generate Transcript (Text)**\n\nRuns `dusky text --period today --format text` → ephemeral `transcript_dir/dusky-typed-today-<date>-<uid>.txt` (`0600`, cleared on reboot). Persistent DB untouched. Change dir/format in Ephemeral tab or via `--transcript-dir`/`--format`.",
             force_interactive=True,
         ),
         ConfigItem(
@@ -321,7 +331,7 @@ SCHEMA = {
             key="action_gen_markdown",
             scope="DEFAULT",
             type_="action",
-            default="bash -c 'set -e; VENVPY=\"$HOME/contained_apps/uv/dusky_key_logger/bin/python\"; if [ ! -x \"$VENVPY\" ]; then VENVPY=python3; fi; \"$VENVPY\" -m dusky_keylogger text --period today --format markdown; echo \"---\"; ls -lh /tmp/dusky-typed-today* 2>/dev/null | head; read -p \"Press Enter...\"'",
+            default=_cli_action("text", "--period", "today", "--format", "markdown"),
             group="Ephemeral Tools",
             extended_help="**Generate Markdown**\n\nRuns `dusky text --period today --format markdown` → `... .md` with header (`Period`, `Range`, `Generated`, `Characters`, note about ephemeral `/tmp` vs persistent `keys.db`) + ````text` fence.",
             force_interactive=True,
@@ -331,7 +341,7 @@ SCHEMA = {
             key="action_dashboard",
             scope="DEFAULT",
             type_="action",
-            default="bash -c 'VENVPY=\"$HOME/contained_apps/uv/dusky_key_logger/bin/python\"; if [ -x \"$VENVPY\" ]; then exec \"$VENVPY\" -m dusky_keylogger dashboard; else exec python3 -m dusky_keylogger dashboard; fi'",
+            default=_cli_action("dashboard", pause=False),
             group="Persistent Tools",
             extended_help="**Dashboard**\n\nLaunches `dusky dashboard` (Rich Live + matugen) — period tabs `1:Today 2:Week 3:Month 4:All`, view tabs `Tab: Overview → Keys → Chars → Transcript → Recent`. Shows human-readable keys (Space vs KEY_SPACE), detailed metrics with % + bars, hourly/daily trends, transcript preview (same text as `dusky text` terminal, ephemeral /tmp), and recent events. `q` quit, `r` refresh, `1-4` period, `Tab` view.",
             force_interactive=True,
@@ -341,7 +351,7 @@ SCHEMA = {
             key="action_stats_today",
             scope="DEFAULT",
             type_="action",
-            default="bash -c 'VENVPY=\"$HOME/contained_apps/uv/dusky_key_logger/bin/python\"; if [ -x \"$VENVPY\" ]; then \"$VENVPY\" -m dusky_keylogger stats --period today; else python3 -m dusky_keylogger stats --period today; fi; read -p \"Press Enter...\"'",
+            default=_cli_action("stats", "--period", "today"),
             group="Persistent Tools",
             extended_help="**Stats Today**\n\nRuns `dusky stats --period today` — totals, printable/backspace, keys/min, WPM, top keys/chars, daily 14d. Persistent DB (`keys.db`) survives reboot until manual `rm`.",
             force_interactive=True,
@@ -351,7 +361,7 @@ SCHEMA = {
             key="action_stats_week",
             scope="DEFAULT",
             type_="action",
-            default="bash -c 'VENVPY=\"$HOME/contained_apps/uv/dusky_key_logger/bin/python\"; if [ -x \"$VENVPY\" ]; then \"$VENVPY\" -m dusky_keylogger stats --period week --top 12; else python3 -m dusky_keylogger stats --period week --top 12; fi; read -p \"Press Enter...\"'",
+            default=_cli_action("stats", "--period", "week", "--top", "12"),
             group="Persistent Tools",
             extended_help="**Stats Week**\n\nRuns `dusky stats --period week` (ISO week, Mon–Sun).",
             force_interactive=True,
@@ -361,7 +371,7 @@ SCHEMA = {
             key="action_recent",
             scope="DEFAULT",
             type_="action",
-            default="bash -c 'VENVPY=\"$HOME/contained_apps/uv/dusky_key_logger/bin/python\"; if [ -x \"$VENVPY\" ]; then \"$VENVPY\" -m dusky_keylogger events --limit 30; else python3 -m dusky_keylogger events --limit 30; fi; read -p \"Press Enter...\"'",
+            default=_cli_action("events", "--limit", "30"),
             group="Persistent Tools",
             extended_help="**Recent Events**\n\nRuns `dusky events --limit 30` — last 30 `Time Key Char Kind Device` from `keys.db` (persistent).",
             force_interactive=True,
@@ -371,7 +381,7 @@ SCHEMA = {
             key="action_seed",
             scope="DEFAULT",
             type_="action",
-            default="bash -c 'set -e; VENVPY=\"$HOME/contained_apps/uv/dusky_key_logger/bin/python\"; if [ ! -x \"$VENVPY\" ]; then VENVPY=python3; fi; read -p \"Seed 7 days of synthetic data? (persists in DB until purge) [y/N]: \" ans; if [ \"$ans\" = \"y\" ]; then \"$VENVPY\" -m dusky_keylogger seed --days 7; echo \"Seeded.\"; fi; read -p \"Press Enter...\"'",
+            default=_cli_action("seed", "--days", "7"),
             group="Maintenance",
             confirm_message="Seed synthetic demo data into persistent DB (7 days, ~200-1200 events/day)? Will persist until you Purge DB.",
             extended_help="**Seed**\n\nRuns `dusky seed --days 7` — synthetic `Test Keyboard` events (clearly labeled) for testing stats/dashboard without typing. Inserts in 2k chunks. Remove with `Purge Persistent DB`.",

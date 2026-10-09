@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         transcript_dir = get_transcript_dir(config)
         if args.command in {"ensure-data", "ensure-transcripts"}:
             directory = data_dir if args.command == "ensure-data" else transcript_dir
-            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700, parent_mode=0o700)
             print(f"Directory ready: {directory} (mode {directory.stat().st_mode & 0o7777:04o})")
         elif args.command == "purge":
             # Removing live WAL/SHM files can corrupt the store. Stop its system

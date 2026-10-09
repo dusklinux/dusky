@@ -8,12 +8,14 @@ under systemd Type=notify, stopping cleanly on SIGINT/SIGTERM.
 import asyncio
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import math
 import os
 import signal
 import socket
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 from . import __version__
@@ -24,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_FLUSH_INTERVAL = 0.5
 MAX_BUFFER = 256
+MAX_PENDING_ROWS = 20_000
 
 
 def resolve_path(raw: str | Path) -> Path:
@@ -50,7 +53,9 @@ def get_data_dir(config: dict | None = None) -> Path:
         # Avoid recursion: directly check env + config file minimally
         return default_data_dir()
     raw = os.environ.get("DUSKY_KEYLOGGER_DATA_DIR") or config.get("data_dir")
-    return resolve_path(raw or "~/.config/dusky/settings/keylogger/data")
+    if not isinstance(raw, (str, Path)) or not str(raw).strip():
+        raw = DEFAULT_CONFIG["data_dir"]
+    return resolve_path(raw)
 
 
 def default_config_path() -> Path:
@@ -109,7 +114,7 @@ def load_config(path: Path | None = None) -> dict:
             else:
                 logger.warning("Config %s is not a JSON object; using defaults", cfg_path)
         else:
-            cfg_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            cfg_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700, parent_mode=0o700)
             try:
                 fd = os.open(cfg_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -122,7 +127,7 @@ def load_config(path: Path | None = None) -> dict:
         # readers must not replace a concurrent TUI edit with stale values.
         if path is None and not os.environ.get("DUSKY_KEYLOGGER_CONFIG") and cfg_path == _old_config_path():
             new_path = Path.home() / ".config/dusky/settings/keylogger/config.json"
-            new_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            new_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700, parent_mode=0o700)
             try:
                 fd = os.open(new_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -136,7 +141,7 @@ def load_config(path: Path | None = None) -> dict:
     try:
         fi = float(config["flush_interval"])
         config["flush_interval"] = max(0.05, min(fi, 5.0)) if math.isfinite(fi) else DEFAULT_FLUSH_INTERVAL
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         config["flush_interval"] = DEFAULT_FLUSH_INTERVAL
     level = str(config["log_level"]).lower()
     config["log_level"] = level if level in {"debug", "info", "warning", "error"} else "info"
@@ -157,7 +162,9 @@ def get_transcript_dir(config: dict | None = None) -> Path:
     Auto-creates on first use (caller should mkdir) but this helper just resolves.
     """
     cfg = config if config is not None else load_config()
-    raw = str(cfg.get("transcript_dir", "/tmp") or "/tmp")
+    raw = cfg.get("transcript_dir")
+    if not isinstance(raw, (str, Path)) or not str(raw).strip():
+        raw = DEFAULT_CONFIG["transcript_dir"]
     # env already folded in load_config, but respect direct env if config was passed in
     env = os.environ.get("DUSKY_TRANSCRIPT_DIR")
     if env:
@@ -204,17 +211,7 @@ def _setup_logging(level: str, data_dir: Path) -> None:
         "error": logging.ERROR,
     }
     lvl = level_map.get(str(level).lower(), logging.INFO)
-    # Avoid duplicate handlers if run() is somehow invoked twice in same process (tests).
-    root = logging.getLogger()
-    # Remove stale dusky handlers that we previously added (idempotent setup).
-    for h in list(root.handlers):
-        if getattr(h, "_dusky", False):
-            root.removeHandler(h)
-            try:
-                h.close()
-            except Exception:
-                pass
-    # Use force=True on 3.8+ to reconfigure without duplicate StreamHandlers.
+    # force=True closes prior handlers, including the rotating file handler.
     logging.basicConfig(
         level=lvl,
         force=True,
@@ -222,22 +219,16 @@ def _setup_logging(level: str, data_dir: Path) -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stderr)],
     )
-    root.setLevel(lvl)
-    # Mark the stream handler we just added so we can find it next time.
-    for h in root.handlers:
-        h._dusky = True  # type: ignore[attr-defined]
+    root = logging.getLogger()
     try:
         log_dir = data_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        from logging.handlers import RotatingFileHandler
-
+        log_dir.mkdir(parents=True, exist_ok=True, mode=0o700, parent_mode=0o700)
         file_handler = RotatingFileHandler(
             log_dir / "daemon.log",
             maxBytes=5 * 1024 * 1024,
             backupCount=3,
             encoding="utf-8",
         )
-        file_handler._dusky = True  # type: ignore[attr-defined]
         file_handler.setLevel(lvl)
         file_handler.setFormatter(
             logging.Formatter(
@@ -262,7 +253,8 @@ class Daemon:
         self._store = KeyStore(self._data_dir / "keys.db")
         self._writer = EventWriter(self._store)
         self._listener: KeyListener | None = None
-        self._buffer: list[EventRow] = []
+        self._buffer: deque[EventRow] = deque(maxlen=MAX_PENDING_ROWS)
+        self._discarded = 0
         # Clamp flush interval to avoid tight loops if config is malformed.
         try:
             fi = float(self._config.get("flush_interval", DEFAULT_FLUSH_INTERVAL))
@@ -278,30 +270,32 @@ class Daemon:
         # (ephemeral transcripts still possible via CLI if enabled, but DB stays quiet).
         if not self._config.get("persistent_enabled", True):
             return
-        self._buffer.append(row_from_press(press))
-        if len(self._buffer) >= MAX_BUFFER:
+        row = row_from_press(press)
+        if len(self._buffer) == MAX_PENDING_ROWS:
+            self._discarded += 1
+        self._buffer.append(row)
+        # A rejected batch stays buffered. Retry it on the timer, rather than
+        # copying and logging the growing backlog on every subsequent press.
+        if len(self._buffer) == MAX_BUFFER:
             self._kick_flush()
 
     def _kick_flush(self) -> None:
         if not self._buffer:
             return
-        # Soft cap: if buffer grows beyond 20k (writer stuck ~80 flush cycles),
-        # warn and keep newest events to avoid unbounded memory, but never silently
-        # drop without logging. Normal steady state never hits this.
-        if len(self._buffer) > 20000:
+        if self._discarded:
             logger.error(
-                "Buffer grew to %d -- writer appears stuck; truncating oldest",
-                len(self._buffer),
+                "Producer buffer full -- discarded %d oldest events",
+                self._discarded,
             )
-            self._buffer = self._buffer[-20000:]
-        rows, self._buffer = self._buffer, []
-        if not self._writer.submit(rows):
+            self._discarded = 0
+        rows = list(self._buffer)
+        if self._writer.submit(rows):
+            self._buffer.clear()
+        else:
             logger.error(
                 "Writer queue saturated -- holding %d events in memory",
                 len(rows),
             )
-            # Preserve order: unsent rows go in front of any new arrivals.
-            self._buffer = rows + self._buffer
 
     async def _flush_loop(self) -> None:
         try:
@@ -316,7 +310,7 @@ class Daemon:
                     if err is not None:
                         logger.error("Writer error: %s", err)
                     if not self._writer.is_alive:
-                        self._stop.set()
+                        raise RuntimeError("SQLite writer stopped unexpectedly") from err
         except asyncio.CancelledError:
             raise
 
@@ -338,7 +332,6 @@ class Daemon:
         self._store.init_db()
         self._writer.start(ownership_fd=ownership_fd)
         listener = None
-        tasks: list[asyncio.Task] = []
         loop = asyncio.get_running_loop()
         self._loop = loop
         registered_signals: list[signal.Signals] = []
@@ -350,47 +343,44 @@ class Daemon:
             self._listener = listener
             listener.on_key = self._handle_press
             await listener.start()
-            tasks.append(asyncio.create_task(self._flush_loop(), name="dusky-flush"))
-            wd_usec = int(os.environ.get("WATCHDOG_USEC", "0"))
-            if wd_usec > 0:
-                tasks.append(asyncio.create_task(
-                    self._watchdog_loop(wd_usec / 2_000_000), name="dusky-watchdog"
-                ))
-            sd_notify(f"READY=1\nSTATUS=dusky v{__version__} listening\n")
-            logger.info("Dusky Keylogger v%s started (data: %s)", __version__, self._store.path)
-            await self._stop.wait()
+            async with asyncio.TaskGroup() as tasks:
+                tasks.create_task(self._flush_loop(), name="dusky-flush")
+                wd_usec = int(os.environ.get("WATCHDOG_USEC", "0"))
+                if wd_usec > 0:
+                    tasks.create_task(
+                        self._watchdog_loop(wd_usec / 2_000_000), name="dusky-watchdog"
+                    )
+                sd_notify(f"READY=1\nSTATUS=dusky v{__version__} listening\n")
+                logger.info("Dusky Keylogger v%s started (data: %s)", __version__, self._store.path)
+                await self._stop.wait()
+                tasks.cancel()
         finally:
             sd_notify("STOPPING=1\nSTATUS=flushing\n")
-            for task in tasks:
-                task.cancel()
             try:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                if listener is not None:
+                    await listener.stop()
             finally:
-                try:
-                    if listener is not None:
-                        await listener.stop()
-                finally:
-                    for sig in registered_signals:
-                        loop.remove_signal_handler(sig)
-                    self._loop = None
-                    self._kick_flush()
-                    # A timed-out worker still owns its connection and retry rows.
-                    # Never start a competing synchronous flush in that case.
-                    closed = await asyncio.to_thread(self._writer.close, timeout=8.0)
-                    if not closed:
-                        raise RuntimeError("SQLite writer did not stop; pending data may be lost")
-                    pending = self._writer.take_pending() + self._buffer
-                    self._buffer = []
-                    final_written = 0
-                    if pending:
-                        final_written = await asyncio.to_thread(self._store.insert_many, pending)
-                    elif self._writer.last_error is not None:
-                        raise RuntimeError("SQLite writer failed") from self._writer.last_error
-                    logger.info(
-                        "Shutdown complete: %d rows persisted, uptime %.1fs",
-                        self._writer.written + final_written,
-                        time.monotonic() - self._started_at,
-                    )
+                for sig in registered_signals:
+                    loop.remove_signal_handler(sig)
+                self._loop = None
+                self._kick_flush()
+                # A timed-out worker still owns its connection and retry rows.
+                # Never start a competing synchronous flush in that case.
+                closed = await asyncio.to_thread(self._writer.close, timeout=8.0)
+                if not closed:
+                    raise RuntimeError("SQLite writer did not stop; pending data may be lost")
+                pending = self._writer.take_pending() + list(self._buffer)
+                self._buffer.clear()
+                final_written = 0
+                if pending:
+                    final_written = await asyncio.to_thread(self._store.insert_many, pending)
+                elif self._writer.last_error is not None:
+                    raise RuntimeError("SQLite writer failed") from self._writer.last_error
+                logger.info(
+                    "Shutdown complete: %d rows persisted, uptime %.1fs",
+                    self._writer.written + final_written,
+                    time.monotonic() - self._started_at,
+                )
 
     async def stop(self) -> None:
         self.stop_sync()
