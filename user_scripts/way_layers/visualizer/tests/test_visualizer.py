@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -55,6 +55,21 @@ class VisualizerTests(unittest.TestCase):
         self.assertFalse(self.app.fallback_pending)
         self.assertIsNone(m.GLib.MainContext.default().find_source_by_id(source))
 
+    def test_gpu_fallback_runs_while_default_priority_work_is_ready(self):
+        recovered = []
+        def fallback():
+            recovered.append(True)
+            return False
+        self.app.fallback_to_cairo = fallback
+        busy = m.GLib.timeout_add(0, lambda: True)
+        try:
+            self.app.schedule_cairo_fallback()
+            for _ in range(10):
+                m.GLib.MainContext.default().iteration(False)
+            self.assertTrue(recovered, "GPU recovery was starved by normal event-loop work")
+        finally:
+            self.app.remove_glib_source(busy)
+
     def test_bar_count_change_recalculates_window_geometry(self):
         old = self.app.config
         self.app.config = m.replace(old, bars=16)
@@ -87,11 +102,157 @@ class VisualizerTests(unittest.TestCase):
         self.assertEqual(config.cava_source, "")
         self.assertEqual(config, m.Config.from_dict(config.to_dict()))
 
+    def test_save_preserves_extensions_and_refuses_invalid_document(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            with patch.object(m, "CONFIG_FILE", path):
+                extension = {"text": " keep whitespace ", "nested": [1, 2]}
+                path.write_text(json.dumps({"extension": extension}))
+                self.app.save_config()
+                self.assertEqual(json.loads(path.read_text())["extension"], extension)
+                path.write_text("broken")
+                self.app.save_config()
+                self.assertEqual(path.read_text(), "broken")
+
+    def test_toggle_preserves_pending_external_settings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            self.app.config.enabled = False
+            path.write_text(json.dumps({"enabled": False, "gain": 3, "bars": 16}))
+            with patch.object(m, "CONFIG_FILE", path), patch.object(self.app, "apply_config_changes"):
+                self.app.toggle_enabled()
+            saved = json.loads(path.read_text())
+            self.assertTrue(saved["enabled"])
+            self.assertEqual((saved["gain"], saved["bars"]), (3, 16))
+            self.assertEqual(len(self.app.cava_shared_data), 16)
+
+    def test_enable_is_idempotent_across_pending_external_edit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            self.app.config.enabled = False
+            path.write_text(json.dumps({"enabled": True, "gain": 3}))
+            r, w = os.pipe()
+            try:
+                with patch.object(m, "CONFIG_FILE", path), patch.object(self.app, "apply_config_changes") as apply:
+                    os.write(w, b"enable\nenable\n")
+                    self.app.on_fifo_read(r, m.GLib.IOCondition.IN)
+                    apply.assert_called_once()
+            finally:
+                os.close(r)
+                os.close(w)
+            self.assertTrue(self.app.config.enabled)
+            self.assertEqual(self.app.config.gain, 3)
+
+    def test_commands_persist_when_pending_edit_returns_to_current_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            for enabled in (False, True):
+                with self.subTest(enabled=enabled):
+                    self.app.config.enabled = enabled
+                    saved = self.app.config.to_dict()
+                    saved["enabled"] = not enabled
+                    path.write_text(json.dumps(saved))
+                    with patch.object(m, "CONFIG_FILE", path), patch.object(self.app, "apply_config_changes") as apply:
+                        if enabled:
+                            self.app.set_enabled(True)
+                        else:
+                            self.app.toggle_enabled()
+                        apply.assert_not_called()
+                    self.assertEqual(json.loads(path.read_text())["enabled"], enabled)
+
+    def test_save_removes_known_aliases_without_changing_extensions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps({"enabled": True, " enabled ": False, " extension ": " keep "}))
+            with patch.object(m, "CONFIG_FILE", path), patch.object(self.app, "apply_config_changes"):
+                self.app.config = m.Config.from_dict(m.load_json_dict(path))
+                self.app.toggle_enabled()
+                saved = json.loads(path.read_text())
+                self.assertTrue(m.Config.from_dict(saved).enabled)
+                self.assertNotIn(" enabled ", saved)
+                self.assertEqual(saved[" extension "], " keep ")
+
+    def test_deploy_removes_known_aliases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps({"enabled": True, " enabled ": False}))
+            with patch.object(m, "CONFIG_DIR", path.parent), patch.object(m, "CONFIG_FILE", path):
+                m.deploy_config()
+            saved = json.loads(path.read_text())
+            self.assertFalse(saved["enabled"])
+            self.assertNotIn(" enabled ", saved)
+
+    def test_shutdown_removes_signal_sources(self):
+        self.app.install_signal_handlers()
+        sources = self.app.signal_sources[:]
+        self.assertEqual(len(sources), 3)
+        self.app.shutdown()
+        self.assertEqual(self.app.signal_sources, [])
+        for source in sources:
+            self.assertIsNone(m.GLib.MainContext.default().find_source_by_id(source))
+
+    def test_model_fields_still_accept_whitespace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "values.json"
+            path.write_text(json.dumps({" style ": " dots ", " c1 ": " #123456 "}))
+            raw = m.load_json_dict(path)
+            self.assertEqual(m.Config.from_dict(raw).style, m.Style.DOTS)
+            self.assertEqual(m.Colors.from_dict(raw).c1, "#123456")
+
+    def test_gl_ramp_upload_only_on_change(self):
+        widget = Mock()
+        widget.get_allocated_width.return_value = 320
+        widget.get_allocated_height.return_value = 180
+        self.app.gl_program = 1
+        self.app.gl_uniforms = {"u_ramp": 2}
+        self.app.prepare_render_data = lambda: [0.5] * self.app.config.bars
+        self.app.upload_gl_data = lambda data, n: None
+        def upload():
+            self.app.ramp_dirty = False
+        self.app.upload_gl_ramp = upload
+        # Avoid needing a hardware context or an installed optional package.
+        self.app.gl_ramp_array = object()
+        with patch.object(m, "GL") as gl:
+            self.app.on_gl_render(widget, None)
+            self.app.on_gl_render(widget, None)
+            self.assertEqual(gl.glUniform4fv.call_count, 1)
+            self.app.ramp_dirty = True
+            self.app.on_gl_render(widget, None)
+            self.assertEqual(gl.glUniform4fv.call_count, 2)
+        self.app.gl_program = None
+
+    def test_gain_saturates_audio_within_surface(self):
+        self.app.config.gain = 5
+        r, w = os.pipe()
+        try:
+            os.write(w, b"1000;" * self.app.config.bars + b"\n")
+            self.app.on_cava_stdout(r, m.GLib.IOCondition.IN)
+            self.assertEqual(self.app.cava_shared_data, [1.0] * self.app.config.bars)
+        finally:
+            os.close(r)
+            os.close(w)
+
+    def test_perimeter_uses_last_band_when_count_not_divisible_by_four(self):
+        self.app.config.bars = 18
+        self.app.config.style = m.Style.PERIMETER
+        self.app.content_height = 100
+        def render(last):
+            surface = m.cairo.ImageSurface(m.cairo.FORMAT_ARGB32, 320, 180)
+            self.app.draw_cairo(m.cairo.Context(surface), 320, 180, [0.0] * 17 + [last])
+            surface.flush()
+            return bytes(surface.get_data())
+        self.assertTrue(render(0.0) != render(1.0), "Last spectrum band was ignored")
+
     def test_fifo_fragmentation_batch_and_idempotent_enable(self):
         read_fd, write_fd = os.pipe()
         calls = []
         self.app.toggle_enabled = lambda: calls.append("toggle")
         self.app.toggle_overlay = lambda: calls.append("overlay")
+        def enable(enabled):
+            if not self.app.config.enabled:
+                calls.append("enable")
+            self.app.config.enabled = enabled
+        self.app.set_enabled = enable
         try:
             os.write(write_fd, b"tog")
             self.app.on_fifo_read(read_fd, m.GLib.IOCondition.IN)
@@ -102,7 +263,7 @@ class VisualizerTests(unittest.TestCase):
             self.app.config.enabled = False
             os.write(write_fd, b"enable\n")
             self.app.on_fifo_read(read_fd, m.GLib.IOCondition.IN)
-            self.assertEqual(calls[-1], "toggle")
+            self.assertEqual(calls[-1], "enable")
         finally:
             os.close(read_fd)
             os.close(write_fd)

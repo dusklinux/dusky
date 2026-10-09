@@ -336,14 +336,11 @@ SCHEMA = {
 # DIRECT EXECUTION HANDLER
 # =============================================================================
 if __name__ == "__main__":
-    import sys, subprocess
-    from pathlib import Path
-
     script_path = Path(__file__).resolve()
     main_router = Path.home() / "user_scripts" / "dusky_tui" / "python" / "main" / "main.py"
 
     if main_router.exists():
-        sys.exit(subprocess.run([sys.executable, str(main_router), str(script_path)] + sys.argv[1:]).returncode)
+        os.execv(sys.executable, [sys.executable, str(main_router), str(script_path), *sys.argv[1:]])
     else:
         print(f"[-] Error: Main Dusky TUI router not found at {main_router}", file=sys.stderr)
         sys.exit(1)

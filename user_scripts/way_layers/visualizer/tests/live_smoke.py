@@ -37,6 +37,11 @@ def main():
 
         def render(widget, context):
             result = original_gl(widget, context)
+            key = str(app.config.style)
+            # One visible sample per style verifies rendering without continuous
+            # GPU readback and large temporary allocations on every frame.
+            if pixels_by_style.get(key, 0):
+                return result
             try:
                 widget.make_current()
                 widget.attach_buffers()
@@ -44,9 +49,7 @@ def main():
                 pixels = m.GL.glReadPixels(0, 0, widget.get_allocated_width() * scale,
                     widget.get_allocated_height() * scale, m.GL.GL_RGBA, m.GL.GL_UNSIGNED_BYTE)
                 assert m.GL.glGetError() == m.GL.GL_NO_ERROR
-                key = str(app.config.style)
-                pixels_by_style[key] = max(pixels_by_style.get(key, 0),
-                    sum(1 for value in pixels[3::4] if value))
+                pixels_by_style[key] = sum(1 for value in pixels[3::4] if value)
             except Exception as exc:
                 failures.append(exc)
             return result

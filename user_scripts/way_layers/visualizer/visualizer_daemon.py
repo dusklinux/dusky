@@ -23,7 +23,8 @@ Design goals:
 
 from __future__ import annotations
 
-import ctypes
+lazy import argparse
+lazy import ctypes
 import fcntl
 import json
 import logging
@@ -132,12 +133,7 @@ except ImportError:
     GL = None
     HAS_OPENGL = False
 
-from gi.repository import Gdk, Gio, GLib, Gtk, GtkLayerShell
-
-try:
-    from gi.repository import GLibUnix
-except ImportError:
-    GLibUnix = None
+from gi.repository import Gdk, Gio, GLib, GLibUnix, Gtk, GtkLayerShell
 
 # -----------------------------------------------------------------------------
 # Constants and XDG paths
@@ -202,6 +198,21 @@ class FadeDirection(StrEnum):
     FADE_TO_BASE = "fade_to_base"
     FADE_TO_TIP = "fade_to_tip"
     SOLID = "solid"
+
+
+# Shader IDs are fixed; do not rebuild these mappings on every frame.
+STYLE_IDS = frozendict({
+    Style.BARS: 0, Style.SEGMENTS: 1, Style.DOTS: 2,
+    Style.WAVE: 3, Style.LINE: 4, Style.MONITOR: 4,
+    Style.RADIAL: 5, Style.CIRCLE: 6, Style.SPECTRUM: 7,
+    Style.AURORA: 8, Style.PSYCHEDELIC: 9, Style.KALEIDOSCOPE: 10,
+    Style.LIGHTNING: 12, Style.PERIMETER: 13,
+})
+POSITION_IDS = frozendict({Position.TOP: 0, Position.CENTER: 1, Position.BOTTOM: 2})
+FADE_IDS = frozendict({
+    FadeDirection.FADE_TO_BASE: 0, FadeDirection.FADE_TO_TIP: 1,
+    FadeDirection.SOLID: 2,
+})
 
 
 # -----------------------------------------------------------------------------
@@ -503,6 +514,7 @@ class Colors:
     def from_dict(cls, raw: dict[str, Any]) -> Colors:
         defaults = cls()
         obj = cls()
+        raw = {key.strip(): value for key, value in raw.items()}
 
         for name in ("c1", "c2", "c3", "c4", "c5", "c6", "accent"):
             value = raw.get(name, getattr(defaults, name))
@@ -525,6 +537,12 @@ class Colors:
 # -----------------------------------------------------------------------------
 # Atomic file IO
 # -----------------------------------------------------------------------------
+
+
+def merge_config_document(existing: dict[str, Any], config: Config) -> dict[str, Any]:
+    settings = config.to_dict()
+    # Keep extension data, but emit exactly one canonical key for each setting.
+    return {key: value for key, value in existing.items() if key.strip() not in settings} | settings
 
 
 def atomic_write_text(path: Path, text: str) -> None:
@@ -561,12 +579,8 @@ def load_json_dict(path: Path) -> dict[str, Any] | None:
             logging.error("JSON file %s is not an object; retaining current settings.", path)
             return None
 
-        normalized: dict[str, Any] = {}
-        for k, v in data.items():
-            key = str(k).strip()
-            normalized[key] = v.strip() if isinstance(v, str) else v
-
-        return normalized
+        # Models normalize their own fields; extension data must round-trip intact.
+        return data
 
     except (OSError, ValueError, UnicodeError) as exc:
         logging.error("Failed loading %s: %s", path, exc)
@@ -1387,6 +1401,7 @@ class Visualizer:
         self.fifo_identity: tuple[int, int] | None = None
 
         self.lock_fd: int | None = None
+        self.signal_sources: list[int] = []
 
         self.tick_source: int | None = None
 
@@ -1417,17 +1432,11 @@ class Visualizer:
             Gio.FileMonitorEvent.CREATED,
             Gio.FileMonitorEvent.CHANGED,
             Gio.FileMonitorEvent.ATTRIBUTE_CHANGED,
+            Gio.FileMonitorEvent.RENAMED,
+            Gio.FileMonitorEvent.MOVED_IN,
         }
-        if hasattr(Gio.FileMonitorEvent, "MOVED"):
-            self.reload_events.add(Gio.FileMonitorEvent.MOVED)
-        if hasattr(Gio.FileMonitorEvent, "RENAMED"):
-            self.reload_events.add(Gio.FileMonitorEvent.RENAMED)
-        if hasattr(Gio.FileMonitorEvent, "MOVED_IN"):
-            self.reload_events.add(Gio.FileMonitorEvent.MOVED_IN)
 
-        self.monitor_flags = Gio.FileMonitorFlags.NONE
-        if hasattr(Gio.FileMonitorFlags, "WATCH_MOVES"):
-            self.monitor_flags = Gio.FileMonitorFlags.WATCH_MOVES
+        self.monitor_flags = Gio.FileMonitorFlags.WATCH_MOVES
 
     # -------------------------------------------------------------------------
     # Lifecycle / locking / environment
@@ -1531,7 +1540,11 @@ class Visualizer:
 
     def save_config(self) -> None:
         try:
-            atomic_write_json(CONFIG_FILE, self.config.to_dict())
+            existing = load_json_dict(CONFIG_FILE)
+            if existing is None and CONFIG_FILE.exists():
+                self.log.error("Refusing to overwrite unreadable configuration: %s", CONFIG_FILE)
+                return
+            atomic_write_json(CONFIG_FILE, merge_config_document(existing or {}, self.config))
         except OSError as exc:
             self.log.error("Failed saving config: %s", exc)
 
@@ -1760,8 +1773,8 @@ class Visualizer:
                 cmd = line.strip().lower()
                 if cmd == b"toggle":
                     self.toggle_enabled()
-                elif cmd == b"enable" and not self.config.enabled:
-                    self.toggle_enabled()
+                elif cmd == b"enable":
+                    self.set_enabled(True)
                 elif cmd == b"overlay":
                     self.toggle_overlay()
             if len(self.fifo_buffer) > 4096:
@@ -1776,12 +1789,23 @@ class Visualizer:
         return True
 
     def toggle_enabled(self) -> None:
+        self.set_enabled(None)
+
+    def set_enabled(self, enabled: bool | None) -> None:
+        """Apply an explicit state, or toggle the latest saved state when None."""
         old_config = self.config
-        new_config = replace(self.config, enabled=not self.config.enabled)
+        # A shortcut can arrive before the debounced external edit is applied.
+        raw = load_json_dict(CONFIG_FILE)
+        current = Config.from_dict(raw) if raw is not None else old_config
+        new_config = replace(current, enabled=not current.enabled if enabled is None else enabled)
         new_config.normalize()
 
         self.config = new_config
-        self.save_config()
+        if new_config != current:
+            self.save_config()
+        if new_config == old_config:
+            return
+        self.ensure_data_arrays()
         self.apply_config_changes(old_config)
 
     def toggle_overlay(self) -> None:
@@ -1911,8 +1935,7 @@ noise_reduction = {noise}
             assert self.cava_proc.stdout is not None
 
             fd = self.cava_proc.stdout.fileno()
-            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-            fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            os.set_blocking(fd, False)
 
             self.cava_buffer = b""
             self.cava_watch = GLib.io_add_watch(
@@ -2051,7 +2074,7 @@ noise_reduction = {noise}
 
                 if part:
                     try:
-                        value = (int(part) / 1000.0) * gain
+                        value = min(1.0, (int(part) / 1000.0) * gain)
                     except ValueError:
                         value = 0.0
 
@@ -2638,10 +2661,12 @@ noise_reduction = {noise}
                         cr.translate(0.0, h)
                         cr.rotate(-math.pi / 2.0)
                         length = h
-                    count = max(1, n // 4)
+                    start = edge * n // 4
+                    end = (edge + 1) * n // 4
+                    count = end - start
                     pitch = length / count
                     for i in range(count):
-                        idx = min(n - 1, edge * count + i)
+                        idx = start + i
                         depth = content_h * 0.45 * max(0.0, data[idx]) + 4.0
                         x = i * pitch
                         cr.rectangle(x, 0.0, pitch + 0.5, depth)
@@ -2810,7 +2835,10 @@ noise_reduction = {noise}
             return
 
         self.fallback_pending = True
-        self.fallback_source = GLib.idle_add(self.fallback_to_cairo)
+        # Recovery must run even when rendering keeps normal-priority work ready.
+        self.fallback_source = GLib.idle_add(
+            self.fallback_to_cairo, priority=GLib.PRIORITY_DEFAULT,
+        )
 
     def fallback_to_cairo(self) -> bool:
         self.fallback_pending = False
@@ -2838,10 +2866,7 @@ noise_reduction = {noise}
             return
 
         ramp = self.get_color_ramp()
-        flat: list[float] = []
-
-        for color in ramp[:RAMP_LEN]:
-            flat.extend(color)
+        flat = [*color for color in ramp[:RAMP_LEN]]
 
         while len(flat) < RAMP_LEN * 4:
             flat.append(1.0)
@@ -2892,43 +2917,17 @@ noise_reduction = {noise}
 
             if self.ramp_dirty:
                 self.upload_gl_ramp()
+                ramp_loc = self.gl_uniforms.get("u_ramp", -1)
+                if ramp_loc != -1 and self.gl_ramp_array is not None:
+                    GL.glUniform4fv(ramp_loc, RAMP_LEN, self.gl_ramp_array)
 
-            style_map = {
-                Style.BARS: 0,
-                Style.SEGMENTS: 1,
-                Style.DOTS: 2,
-                Style.WAVE: 3,
-                Style.LINE: 4,
-                Style.MONITOR: 4,
-                Style.RADIAL: 5,
-                Style.CIRCLE: 6,
-                Style.SPECTRUM: 7,
-                Style.AURORA: 8,
-                Style.PSYCHEDELIC: 9,
-                Style.KALEIDOSCOPE: 10,
-                Style.LIGHTNING: 12,
-                Style.PERIMETER: 13,
-            }
-
-            pos_map = {
-                Position.TOP: 0,
-                Position.CENTER: 1,
-                Position.BOTTOM: 2,
-            }
-
-            fade_map = {
-                FadeDirection.FADE_TO_BASE: 0,
-                FadeDirection.FADE_TO_TIP: 1,
-                FadeDirection.SOLID: 2,
-            }
-
-            self.set_uniform_int("u_style", style_map.get(self.config.style, 0))
+            self.set_uniform_int("u_style", STYLE_IDS[self.config.style])
             self.set_uniform_int("u_bars", n)
             self.set_uniform_int("u_segments_count", self.config.segments_count)
             self.set_uniform_float("u_thickness", self.config.thickness)
             self.set_uniform_int("u_shape_rounded", 1 if self.config.shape_rounded else 0)
-            self.set_uniform_int("u_position", pos_map.get(self.config.position, 0))
-            self.set_uniform_int("u_fade_direction", fade_map.get(self.config.fade_direction, 0))
+            self.set_uniform_int("u_position", POSITION_IDS[self.config.position])
+            self.set_uniform_int("u_fade_direction", FADE_IDS[self.config.fade_direction])
             self.set_uniform_float("u_fade_amount", self.config.fade_amount)
             self.set_uniform_float("u_bloom", self.config.bloom)
             self.set_uniform_float("u_inner_glow", self.config.inner_glow)
@@ -2943,10 +2942,6 @@ noise_reduction = {noise}
             data_loc = self.gl_uniforms.get("u_data", -1)
             if data_loc != -1 and self.gl_data_array is not None:
                 GL.glUniform1fv(data_loc, MAX_BARS, self.gl_data_array)
-
-            ramp_loc = self.gl_uniforms.get("u_ramp", -1)
-            if ramp_loc != -1 and self.gl_ramp_array is not None:
-                GL.glUniform4fv(ramp_loc, RAMP_LEN, self.gl_ramp_array)
 
             GL.glBindVertexArray(self.gl_vao)
             GL.glDrawArrays(GL.GL_TRIANGLES, 0, 6)
@@ -3163,15 +3158,17 @@ noise_reduction = {noise}
     # -------------------------------------------------------------------------
 
     def install_signal_handlers(self) -> None:
+        if self.signal_sources:
+            return
         try:
-            if GLibUnix is not None:
-                signal_add = GLibUnix.signal_add
-            else:
-                signal_add = GLib.unix_signal_add
-
-            signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, self.on_quit_signal)
-            signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, self.on_quit_signal)
-            signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self.on_reload_signal)
+            for signum, handler in (
+                (signal.SIGTERM, self.on_quit_signal),
+                (signal.SIGINT, self.on_quit_signal),
+                (signal.SIGUSR1, self.on_reload_signal),
+            ):
+                self.signal_sources.append(
+                    GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signum, handler)
+                )
         except Exception:
             self.log.exception("Failed installing UNIX signal handlers.")
 
@@ -3202,6 +3199,10 @@ noise_reduction = {noise}
 
     def shutdown(self) -> None:
         self.log.info("Shutting down.")
+
+        for source in self.signal_sources:
+            self.remove_glib_source(source)
+        self.signal_sources.clear()
 
         self.stop_cava()
         self.remove_tick()
@@ -3273,14 +3274,12 @@ def deploy_config(force: bool = False) -> None:
         existing = load_json_dict(CONFIG_FILE)
         if existing is None:
             raise ValueError(f"Refusing to overwrite invalid configuration: {CONFIG_FILE}")
-        merged = {**existing, **Config.from_dict(existing).to_dict()}
+        merged = merge_config_document(existing, Config.from_dict(existing))
         atomic_write_json(CONFIG_FILE, merged)
         print(f"[SUCCESS] Dusky Visualizer configuration merged & verified at {CONFIG_FILE}")
 
 
 def main() -> int:
-    import argparse
-
     parser = argparse.ArgumentParser(description="Dusky Wayland Audio Visualizer Daemon")
     parser.add_argument("--setup", "--deploy", action="store_true", help="Deploy default configuration and exit cleanly.")
     parser.add_argument("--reset", action="store_true", help="Reset configuration file to factory defaults and exit.")
