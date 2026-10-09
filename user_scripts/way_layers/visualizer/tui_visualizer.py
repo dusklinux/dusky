@@ -51,6 +51,16 @@ SCHEMA = {
     # -------------------------------------------------------------------------
     0: [
         ConfigItem(
+            label="Toggle Visualizer",
+            key="dusky_visualizer.service",
+            scope="user",
+            type_="bool",
+            default=False,
+            engine_type_override="systemd",
+            group="Service",
+            extended_help="Enable and start the visualizer service, or disable and stop it. Enabled services start with your graphical session.",
+        ),
+        ConfigItem(
             label="Style Mode",
             key="style",
             scope="DEFAULT",
@@ -276,13 +286,13 @@ SCHEMA = {
     # -------------------------------------------------------------------------
     3: [
         ConfigItem(
-            label="Master Toggle",
+            label="Rendering Enabled",
             key="enabled",
             scope="DEFAULT",
             type_="bool",
             default=True,
             group="System",
-            extended_help="Enable or disable the visualizer completely.",
+            extended_help="Show or hide the visualizer while its service is running. This setting does not start or stop the service.",
         ),
         ConfigItem(
             label="GPU Acceleration (OpenGL)",
