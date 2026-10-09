@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import os
 import sys
-import json
-import time
-import shutil
-import subprocess
+lazy import json
+lazy import time
+lazy import shutil
+lazy import subprocess
 from pathlib import Path
 
 # Dynamically resolve Dusky TUI root
@@ -72,7 +72,7 @@ if has_pl1:
             min_val=0,
             max_val=max(1000, pl1_def * 4),
             step=1,
-            extended_help="Sustained long-term CPU package power limit envelope (in Watts). Applies under continuous high workloads."
+            extended_help="Average CPU package power in Watts over the PL1 time window. Short samples can exceed PL1, especially when PL2 is higher. This does not cap CPU usage, frequency, or temperature."
         )
     )
 
@@ -100,7 +100,7 @@ if has_pl4:
             min_val=0,
             max_val=max(1000, pl4_def * 4),
             step=5,
-            extended_help="Absolute physical hardware power spike clamp (in Watts). Prevents PSU protection triggers on rapid power transitions."
+            extended_help="Hardware peak power constraint in Watts, where supported. Its exact enforcement is platform dependent; it is not a guarantee for a software telemetry sample."
         )
     )
 
@@ -155,13 +155,12 @@ if time_items:
 TABS.append("Presets")
 USER_PRESETS_TAB = "Presets"
 
-TAB_NOTICES: dict[int, dict[str, str]] = {}
-if has_pl4:
-    TAB_NOTICES[0] = {
-        "level": "warning",
-        "position": "bottom",
-        "message": "Setting PL4 too low can trigger a failsafe hardware lock (minimum clock throttle) to protect voltage regulators. Keep PL4 at its BIOS default unless you explicitly need to clamp peak currents."
-    }
+POWER_NOTICE = (
+    "PL1 and PL2 are averaged power limits, not instantaneous ceilings. "
+    "For reduced bursts, set both (e.g. set 35 sets PL1 and supported PL2 to 35 W). "
+    "Firmware and other power managers can change these settings after a write or resume."
+)
+TAB_NOTICES = {0: {"level": "info", "position": "top", "message": POWER_NOTICE}}
 
 # ==============================================================================
 # CLI HELPERS & STATUS REPORTING
@@ -194,7 +193,7 @@ def parse_set_args(args_list: list[str]) -> list[tuple[str, str]]:
         val = args_list[0].strip().rstrip("wW")
         try:
             float(val)
-            return [("pl1", val), ("pl2", val)]
+            return [("pl1", val), ("pl2", val)] if has_pl2 else [("pl1", val)]
         except ValueError:
             pass
 
@@ -233,6 +232,12 @@ def display_status_table() -> None:
     limits = info["limits"]
     windows = info["time_windows"]
     telemetry = engine.get_telemetry()
+    package_lines = []
+    for name, settings in info["packages"].items():
+        enabled = info["enforcement"][name]
+        enforcement = "on" if enabled == 1 else "OFF" if enabled == 0 else "unknown"
+        values = ", ".join(f"{k}={v:g}{'s' if k.endswith('_time') else 'W'}" for k, v in settings.items())
+        package_lines.append(f"{name}: enforcement {enforcement}; {values}")
 
     try:
         from rich.console import Console
@@ -246,7 +251,7 @@ def display_status_table() -> None:
         print(f"RAPL Domain : {domain_name} ({domain_path})")
         print(f"Modified    : {is_modified} | Persisted: {persisted_data}")
         print("-" * 65)
-        print(f"{'PARAMETER':<12} | {'CURRENT':<12} | {'BOOT DEFAULT':<14} | {'STATUS':<10}")
+        print(f"{'PARAMETER':<12} | {'CURRENT':<12} | {'BASELINE':<14} | {'STATUS':<10}")
         print("-" * 65)
         for k, v in limits.items():
             if v["supported"]:
@@ -263,6 +268,8 @@ def display_status_table() -> None:
             print(f"{vendor}: Sustained (PL1) = {plat_info.get('pl1')} W | Burst (PL2) = {plat_info.get('pl2')} W")
             print("-" * 65)
         print(telemetry)
+        print("\n".join(package_lines))
+        print(POWER_NOTICE)
         return
 
     console = Console()
@@ -326,23 +333,28 @@ def display_status_table() -> None:
         p2 = plat_info.get("pl2", "N/A")
         summary_lines.append(f"[bold cyan]{vendor}:[/bold cyan] Sustained (PL1) = [bold green]{p1} W[/bold green]  •  Burst (PL2) = [bold green]{p2} W[/bold green]")
     summary_lines.append(f"[dim]Telemetry:[/dim] {telemetry}")
+    summary_lines.extend(package_lines)
     persisted_str = ", ".join(f"{k}: {v}" for k, v in persisted_data.items()) if persisted_data else "None"
     summary_lines.append(f"[dim]Persistence ({persisted_file}):[/dim] [cyan]{persisted_str}[/cyan]")
     console.print(Panel("\n".join(summary_lines), border_style="dim cyan", expand=True))
+    console.print(POWER_NOTICE, markup=False)
 
 def monitor_telemetry() -> None:
     """Continuously prints live power consumption until interrupted."""
     ensure_root(sys.argv)
     engine = PkgThrottleEngine()
     print("[*] Monitoring CPU Package Power Telemetry (Press Ctrl+C to stop)...")
+    print(POWER_NOTICE)
     try:
         while True:
             t = engine.get_telemetry()
-            print(f"\r{t}", end="", flush=True)
+            print(f"\r\x1b[2K{t}", end="", flush=True)
             time.sleep(0.5)
     except KeyboardInterrupt:
         print("\n[*] Monitoring stopped.")
         sys.exit(0)
+    finally:
+        engine.shutdown()
 
 # ==============================================================================
 # ENTRY POINT & CLI DISPATCHER
@@ -364,7 +376,7 @@ if __name__ == "__main__":
         elif cmd in ("--export-docs", "export-docs"):
             print(f"# Configuration Reference: {APP_TITLE}\n")
             for tab_idx, items in SCHEMA.items():
-                tab_name = TABS[tab_idx] if isinstance(TABS, dict) else TABS[tab_idx]
+                tab_name = TABS[tab_idx]
                 print(f"## {tab_name}")
                 for item in items:
                     if item.type_ in ("action", "preset", "menu"):
@@ -437,6 +449,7 @@ if __name__ == "__main__":
             print("Commands:")
             print("  status                  Display comprehensive power limits, baseline, and telemetry")
             print("  set <k=v ...>           Apply power limits (e.g. set pl1=65 pl2=90 pl1_time=28.0)")
+            print("  set 35                  Set PL1 and supported PL2 to 35 W (averaged limits)")
             print("  default                 Restore the captured baseline limits")
             print("  restore                 Restore saved persistent configuration (dusky_pkg_power)")
             print("  monitor                 Continuously monitor live CPU package power draw")

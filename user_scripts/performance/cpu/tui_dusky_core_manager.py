@@ -5,6 +5,9 @@ High-Performance Core Hotplug and Systemd CPU Affinity Manager for Arch Linux (K
 """
 import os
 import sys
+lazy import shutil
+lazy import subprocess
+lazy import argparse
 from pathlib import Path
 
 _tui_root = Path(__file__).resolve().parents[2] / "dusky_tui"
@@ -157,7 +160,6 @@ def ensure_root(argv: list[str]) -> None:
     """Seamlessly escalates to root via sudo if unprivileged."""
     if os.geteuid() == 0:
         return
-    import shutil
     sudo_bin = shutil.which("sudo")
     if not sudo_bin:
         print("[-] Error: Root privileges required, but sudo is not installed.")
@@ -176,6 +178,8 @@ def parse_core_args(args_list: list[str], valid_cores: list[int]) -> list[int]:
     Returns a sorted list of unique validated core IDs.
     """
     ok, msg, parsed = parse_cpu_list(" ".join(args_list), max(valid_cores) if valid_cores else 0)
+    if ok and msg == "all":
+        parsed = set(valid_cores)
     if not ok or not parsed or parsed - set(valid_cores):
         print(f"[-] Invalid CPU selection: {msg if not ok else 'select existing CPU IDs'}")
         sys.exit(1)
@@ -253,18 +257,19 @@ def batch_process_cores(cores_list: list[int], enable: bool, action_name: str) -
 
 
 if __name__ == "__main__":
-    import subprocess
-    import argparse
-
     # The service restores both independent components, even if one fails.
     if sys.argv[1:] in (["--restore"], ["--restore-all"]):
         ensure_root(sys.argv)
+        ok = CpuCoreEngine().restore_state()
+        print("[OK] CPU core restore completed (or no saved state)." if ok else "[-] CPU core restore failed.")
         power_ok = True
         if sys.argv[1:] == ["--restore-all"]:
             power_script = Path(__file__).with_name("tui_dusky_power_throttle.py")
-            power_ok = subprocess.run([sys.executable, str(power_script), "--restore"]).returncode == 0
-        ok = CpuCoreEngine().restore_state()
-        print("[OK] CPU core restore completed (or no saved state)." if ok else "[-] CPU core restore failed.")
+            try:
+                power_ok = subprocess.run([sys.executable, str(power_script), "--restore"]).returncode == 0
+            except OSError as exc:
+                print(f"[-] Cannot launch power restore: {exc}")
+                power_ok = False
         sys.exit(0 if ok and power_ok else 1)
 
     # 2. Check for dusky_tui delegation
@@ -356,15 +361,17 @@ if __name__ == "__main__":
             if not e_cores:
                 print("[-] Error: ecores-only requires a hybrid CPU topology with Efficient Cores.")
                 sys.exit(1)
-            all_ok = batch_process_cores(e_cores, enable=True, action_name="E-Core Wakeup") and all_ok
-            all_ok = batch_process_cores(p_cores, enable=False, action_name="P-Core Shutdown") and all_ok
+            all_ok = batch_process_cores(e_cores, enable=True, action_name="E-Core Wakeup")
+            if all_ok:
+                all_ok = batch_process_cores(p_cores, enable=False, action_name="P-Core Shutdown")
 
         elif args.command == "pcores-only":
             if not e_cores:
                 print("[-] Error: pcores-only requires a hybrid CPU topology.")
                 sys.exit(1)
-            all_ok = batch_process_cores(p_cores, enable=True, action_name="P-Core Wakeup") and all_ok
-            all_ok = batch_process_cores(e_cores, enable=False, action_name="E-Core Shutdown") and all_ok
+            all_ok = batch_process_cores(p_cores, enable=True, action_name="P-Core Wakeup")
+            if all_ok:
+                all_ok = batch_process_cores(e_cores, enable=False, action_name="E-Core Shutdown")
 
         elif args.command == "all-cores":
             all_ok = batch_process_cores(all_known_cores, enable=True, action_name="Global Wakeup") and all_ok
