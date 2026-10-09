@@ -252,7 +252,7 @@ local conf_dir="$HOME/.config/zshrc"
 local -a my_modules=(
     batstat git kvm lmstudio logs logs_old mon_info
     pkg pkg_search res_mon vfio waydroid win10 wthr cmd_atlas
-    sshfile scripts neovim_delta core zoxide gemini stt_dusky
+    sshfile scripts neovim_delta core gemini stt_dusky
 )
 
 for mod in "${my_modules[@]}"; do
@@ -311,7 +311,8 @@ _dusky_load_matugen_fzf() {
 _dusky_load_matugen_fzf
 
 
-# --- Zoxide: lives in ~/.config/zshrc/zoxide (sourced via [6] modules) ---
+# --- Zoxide: load after its fzf theme is available ---
+[[ -f "$HOME/.config/zshrc/zoxide" ]] && source "$HOME/.config/zshrc/zoxide"
 
 # Cleanup
 unset _starship_cache _starship_bin _fzf_cache _fzf_bin
