@@ -1,339 +1,314 @@
 #!/usr/bin/env bash
 #d: Set up Waydroid for Android apps
 
-set -euo pipefail
-shopt -s inherit_errexit 2>/dev/null || true
+set -Eeuo pipefail
+shopt -s inherit_errexit nullglob
 
-# --- Configuration & Colors ---
-readonly C_RESET=$'\033[0m'
-readonly C_GREEN=$'\033[1;32m'
-readonly C_BLUE=$'\033[1;34m'
-readonly C_RED=$'\033[1;31m'
-readonly C_YELLOW=$'\033[1;33m'
-readonly DEST_DIR="/etc/waydroid-extra/images"
-readonly SERVICE_TIMEOUT=30
-readonly TMP_SUDOERS="/etc/sudoers.d/99-waydroid-setup-temp"
+readonly C_RESET=$'\033[0m' C_GREEN=$'\033[1;32m' C_BLUE=$'\033[1;34m'
+readonly C_RED=$'\033[1;31m' C_YELLOW=$'\033[1;33m'
+readonly DEST_DIR=/etc/waydroid-extra/images
+readonly WORK_DIR=/var/lib/waydroid
+readonly SERVICE=waydroid-container.service
+STAGE_DIR=''
+TEMP_DIR=''
 
-# State Tracking
-IMAGES_UPDATED=0
-
-# --- Helper Functions ---
-log_info()    { printf "${C_BLUE}[INFO]${C_RESET} %s\n" "$*"; }
-log_success() { printf "${C_GREEN}[OK]${C_RESET} %s\n" "$*"; }
-log_warn()    { printf "${C_YELLOW}[WARN]${C_RESET} %s\n" "$*"; }
-log_error()   { printf "${C_RED}[ERROR]${C_RESET} %s\n" "$*" >&2; exit 1; }
+log_info()    { printf '%s[INFO]%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
+log_success() { printf '%s[OK]%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+log_warn()    { printf '%s[WARN]%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
+log_error()   { printf '%s[ERROR]%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
 
 cleanup() {
-    local exit_code=$?
-    # Strip the temporary NOPASSWD rule immediately upon exit
-    if [[ -f "$TMP_SUDOERS" ]]; then
-        rm -f "$TMP_SUDOERS"
-    fi
-    if [[ -n "${TEMP_DIR:-}" ]] && [[ -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
-    fi
-    exit "$exit_code"
+    local status=$?
+    trap - EXIT
+    [[ -z "$STAGE_DIR" ]] || rm -rf -- "$STAGE_DIR" || status=1
+    [[ -z "$TEMP_DIR" ]] || rm -rf -- "$TEMP_DIR" || status=1
+    exit "$status"
 }
-trap cleanup EXIT
 
-# --- 0. Smart User Consent ---
-# Prevents the double-prompt when the script re-executes itself via sudo
-if [[ -z "${WAYDROID_SETUP_RUNNING:-}" ]]; then
-    echo ""
-    log_info "Waydroid is a hardware-accelerated Android environment."
-    log_info "NOTE: Requires MANUAL image downloads from SourceForge first."
-    read -r -p "Proceed with Waydroid installation? [y/N] " _install_choice
+ask_yes() {
+    local answer
+    read -r -p "$1 [y/N] " answer || return 1
+    [[ "$answer" == [Yy] ]]
+}
 
-    if [[ ! "${_install_choice}" =~ ^[Yy]$ ]]; then
-        log_info "Skipping Waydroid installation."
-        exit 0
-    fi
-fi
+expand_user_path() {
+    # Quoted tildes are intentional: expand against the invoking user's home.
+    # shellcheck disable=SC2088
+    case "$1" in
+        '~') printf '%s\n' "$REAL_HOME" ;;
+        '~/'*) printf '%s/%s\n' "$REAL_HOME" "${1:2}" ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
 
-# --- 1. Root Privilege & User Strategy ---
-if [[ "${EUID}" -ne 0 ]]; then
-    log_info "Elevating to root privileges..."
-    exec sudo WAYDROID_SETUP_RUNNING=1 "$0" "$@"
-fi
-
-# Safely extract the invoking user to drop privileges for AUR/Makepkg tasks
-REAL_USER="${SUDO_USER:-${DOAS_USER:-$(logname 2>/dev/null || echo "")}}"
-if [[ -z "$REAL_USER" ]] || [[ "$REAL_USER" == "root" ]]; then
-    log_error "Could not determine normal user. Run this script via 'sudo' from your standard user account to permit AUR operations."
-fi
-readonly REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
-
-log_info "Running as root. AUR operations scoped to: $REAL_USER"
-
-# Create a temporary sudoers rule to prevent AUR helpers from double-prompting for passwords
-echo "${REAL_USER} ALL=(ALL) NOPASSWD: /usr/bin/pacman" > "$TMP_SUDOERS"
-chmod 0440 "$TMP_SUDOERS"
-
-# --- 2. Kernel Module & Core Utility Verification ---
-log_info "Verifying core dependencies and kernel modules..."
-
-# Install strictly required host utilities
-pacman -S --noconfirm --needed git unzip lzip squashfs-tools
-
-# Waydroid utilizes memfd natively on modern kernels; ashmem is obsolete.
-if grep -qE "binder" /proc/filesystems; then
-    log_success "BinderFS detected natively."
-else
-    log_warn "Binder not explicitly found in /proc/filesystems. Probing module..."
-    modprobe binder_linux 2>/dev/null || true
-    
-    if lsmod | grep -qE "^binder_linux"; then
-         log_success "binder_linux module loaded."
-    else
-         log_error "Binder missing. Ensure you are running linux-zen or have binder_linux-dkms installed."
-    fi
-fi
-
-# --- 3. Package Installation (AUR) ---
-if ! command -v waydroid &>/dev/null; then
-    log_info "Waydroid missing. Initiating AUR install..."
-    
-    AUR_HELPER=""
-    if sudo -u "$REAL_USER" bash -c "command -v paru" &>/dev/null; then
-        AUR_HELPER="paru"
-    elif sudo -u "$REAL_USER" bash -c "command -v yay" &>/dev/null; then
-        AUR_HELPER="yay"
-    else
-        log_error "Neither 'paru' nor 'yay' found. Install an AUR helper to proceed."
-    fi
-    
-    log_info "Deploying waydroid using $AUR_HELPER..."
-    sudo -u "$REAL_USER" "$AUR_HELPER" -S --noconfirm --needed waydroid
-else
-    log_success "Waydroid core is already present."
-fi
-
-# --- 4. Image Handling & Smart Pathing ---
-log_info "Preparing Waydroid Images..."
-
-if [[ -f "$DEST_DIR/system.img" ]] && [[ -f "$DEST_DIR/vendor.img" ]]; then
-    log_info "Existing images mapped in $DEST_DIR."
-else
-    printf "\n${C_YELLOW}--- MANUAL DOWNLOAD REQUIRED ---${C_RESET}\n"
-    printf "1. System: https://sourceforge.net/projects/waydroid/files/images/system/lineage/waydroid_x86_64/\n"
-    printf "2. Vendor: https://sourceforge.net/projects/waydroid/files/images/vendor/waydroid_x86_64/\n\n"
-fi
-
-read -r -p "Are System and Vendor files downloaded? [y/N] " confirm
-if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-    if [[ -f "$DEST_DIR/system.img" ]]; then
-        log_info "Skipping download prompt (existing assets found)."
-    else
-        log_info "Download required assets and re-run."
-        exit 0
-    fi
-else
-    # Dynamic Search Path Logic
-    SEARCH_PATHS=(
-        "$REAL_HOME/Downloads/Waydroid"
-        "$REAL_HOME/Downloads"
-        "/mnt/zram1"
-    )
-    
-    DETECTED_SRC=""
-    for p in "${SEARCH_PATHS[@]}"; do
-        if [[ -d "$p" ]]; then
-            if find "$p" -maxdepth 1 -type f \( -name "*system*.zip" -o -name "system.img" \) | grep -q .; then
-                DETECTED_SRC="$p"
-                break
-            fi
-        fi
+ensure_packages() {
+    local package
+    local -a missing=()
+    for package in "$@"; do
+        pacman -Qq "$package" >/dev/null 2>&1 || missing+=("$package")
     done
-    
-    DEFAULT_SRC_DIR="${DETECTED_SRC:-/mnt/zram1}"
-
-    read -r -e -p "Enter directory containing downloaded files [Default: $DEFAULT_SRC_DIR]: " INPUT_SRC_DIR
-    INPUT_SRC_DIR="${INPUT_SRC_DIR/#\~/$REAL_HOME}"
-    SRC_DIR="${INPUT_SRC_DIR:-$DEFAULT_SRC_DIR}"
-
-    [[ ! -d "$SRC_DIR" ]] && log_error "Directory $SRC_DIR does not exist."
-
-    # Robust file detection via mapfile
-    mapfile -t sys_files < <(find "$SRC_DIR" -maxdepth 1 \( -name "*system*.zip" -o -name "system.img" \))
-    mapfile -t ven_files < <(find "$SRC_DIR" -maxdepth 1 \( -name "*vendor*.zip" -o -name "vendor.img" \))
-
-    SYSTEM_FILE="${sys_files[0]:-}"
-    VENDOR_FILE="${ven_files[0]:-}"
-
-    if [[ -z "$SYSTEM_FILE" ]]; then
-        read -r -e -p "System archive not auto-detected. Full path: " SYSTEM_FILE
-        SYSTEM_FILE="${SYSTEM_FILE/#\~/$REAL_HOME}"
+    if (( ${#missing[@]} )); then
+        pacman -S --noconfirm --needed "${missing[@]}"
     fi
-    if [[ -z "$VENDOR_FILE" ]]; then
-        read -r -e -p "Vendor archive not auto-detected. Full path: " VENDOR_FILE
-        VENDOR_FILE="${VENDOR_FILE/#\~/$REAL_HOME}"
-    fi
+}
 
-    [[ -f "$SYSTEM_FILE" ]] || log_error "Target missing: $SYSTEM_FILE"
-    [[ -f "$VENDOR_FILE" ]] || log_error "Target missing: $VENDOR_FILE"
+images_ready() {
+    [[ -f "$DEST_DIR/system.img" && -s "$DEST_DIR/system.img" &&
+       -f "$DEST_DIR/vendor.img" && -s "$DEST_DIR/vendor.img" ]]
+}
 
-    log_info "Targets acquired:"
-    echo "   System: $SYSTEM_FILE"
-    echo "   Vendor: $VENDOR_FILE"
-
-    mkdir -p "$DEST_DIR"
-
-    process_image() {
-        local input="$1"
-        local output_name="$2"
-        local dest_path="$DEST_DIR/$output_name"
-
-        if [[ -s "$dest_path" ]]; then
-            log_warn "Asset exists: $dest_path"
-            read -r -p "Overwrite? [y/N] " ow
-            if [[ ! "$ow" =~ ^[Yy]$ ]]; then
-                log_info "Skipping $output_name."
-                return 0
-            fi
-        fi
-
-        IMAGES_UPDATED=1
-
-        if [[ "$input" == *.zip ]]; then
-            log_info "Streaming $(basename "$input") to $dest_path..."
-            
-            local internal_img
-            internal_img=$(unzip -Z -1 "$input" | grep -F "$output_name" | head -n 1)
-            
-            if [[ -z "$internal_img" ]]; then
-                 internal_img=$(unzip -Z -1 "$input" | grep -F ".img" | head -n 1)
-            fi
-
-            [[ -z "$internal_img" ]] && log_error "No internal .img found in $input"
-
-            unzip -p "$input" "$internal_img" > "$dest_path"
-            log_success "Extraction complete."
-
-        elif [[ "$input" == *.img ]]; then
-            read -r -p "For $(basename "$input"): (k)eep original or (m)ove to free space? [k/m] " action
-            if [[ "$action" =~ ^[Mm]$ ]]; then
-                mv "$input" "$dest_path"
-                log_success "Moved."
-            else
-                cp "$input" "$dest_path"
-                log_success "Copied."
-            fi
-        fi
-    }
-
-    process_image "$SYSTEM_FILE" "system.img"
-    process_image "$VENDOR_FILE" "vendor.img"
-fi
-
-# --- 5. Container Initialization ---
-if [[ $IMAGES_UPDATED -eq 1 ]] || [[ ! -f "/var/lib/waydroid/images/system.img" ]]; then
-    log_info "Initializing container filesystem..."
-    waydroid init -f -i "$DEST_DIR"
-else
-    log_success "Container initialized and parity maintained. Skipping 'init'."
-fi
-
-# --- 6. Systemd Orchestration ---
-log_info "Deploying Waydroid systemd container..."
-systemctl enable --now waydroid-container
-
-log_info "Polling container telemetry..."
-elapsed=0
-while (( elapsed < SERVICE_TIMEOUT )); do
-    if systemctl is-active --quiet waydroid-container; then
-        log_success "Container telemetry active."
-        break
-    fi
-    sleep 1
-    # FIX: Pre-increment to prevent set -e termination on math evaluating to 0
-    ((++elapsed))
-done
-
-if ! systemctl is-active --quiet waydroid-container; then
-    log_error "Container boot timeout. Inspect 'systemctl status waydroid-container'."
-fi
-
-# --- 7. UWSM/Hyprland Optimizations & Networking ---
-log_info "Injecting Wayland/Multi-window parameters..."
-
-PROP_FILE="/var/lib/waydroid/waydroid_base.prop"
-if [[ -f "$PROP_FILE" ]]; then
-    if grep -q "persist.waydroid.multi_windows=" "$PROP_FILE"; then
-        sed -i 's/persist.waydroid.multi_windows=.*/persist.waydroid.multi_windows=true/' "$PROP_FILE"
+# Auto-select only an unambiguous regular file; never silently choose an old ZIP.
+select_image() {
+    local directory=$1 kind=$2 candidate input
+    local -a matches=()
+    local -n selected=$3
+    for candidate in "$directory/$kind.img" "$directory/"*"$kind"*.zip; do
+        [[ -f "$candidate" ]] && matches+=("$candidate")
+    done
+    if (( ${#matches[@]} == 1 )); then
+        selected=${matches[0]}
     else
-        echo "persist.waydroid.multi_windows=true" >> "$PROP_FILE"
+        if (( ${#matches[@]} > 1 )); then
+            log_warn "Multiple $kind files found; select the intended image."
+            printf '  %s\n' "${matches[@]}"
+        fi
+        read -r -e -p "Full path to $kind.img or its ZIP archive: " input || log_error 'Input ended.'
+        selected=$(expand_user_path "$input")
     fi
-    log_success "Multi-window forced natively."
-else
-    log_warn "Base prop file missing. Multi-window must be set via UI later."
-fi
+    [[ -f "$selected" && -s "$selected" ]] || log_error "Missing or empty image: $selected"
+    # Absolute paths keep leading '-' and archive names independent of the cwd.
+    selected=$(realpath -e -- "$selected")
+}
 
-log_info "Auditing Networking Stack..."
+stage_image() {
+    local input=$1 name=$2 listing member internal=''
+    local count=0 output
+    output=$(mktemp "$STAGE_DIR/.image.XXXXXXXX")
+    case "$input" in
+        *.zip)
+            listing=$(unzip -Z -1 "$input") || log_error "Cannot list archive: $input"
+            while IFS= read -r member; do
+                if [[ "${member##*/}" == "$name" ]]; then
+                    internal=$member
+                    ((++count))
+                fi
+            done <<< "$listing"
+            (( count == 1 )) || log_error "Archive must contain exactly one $name: $input"
+            # unzip treats member arguments as patterns; refuse ambiguous names.
+            [[ "$internal" != *[\[\]\*\?]* ]] || log_error "Unsupported ZIP member name: $internal"
+            log_info "Extracting $name from ${input##*/}..."
+            unzip -p "$input" "$internal" > "$output" || log_error "Extraction/CRC check failed: $input"
+            ;;
+        *.img)
+            log_info "Copying $name (original retained)..."
+            cp --reflink=auto --sparse=auto -- "$input" "$output"
+            ;;
+        *) log_error "Expected a .zip or .img file: $input" ;;
+    esac
+    [[ -s "$output" ]] || log_error "Extracted image is empty: $name"
+    chmod 0644 -- "$output"
+    mv -fT -- "$output" "$STAGE_DIR/$name"
+}
 
-# IP Forwarding
-if [[ "$(sysctl -n net.ipv4.ip_forward)" -eq 0 ]]; then
-    echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-waydroid.conf
-    sysctl -p /etc/sysctl.d/99-waydroid.conf
-    log_success "IPv4 forwarding activated."
-fi
+import_images() {
+    local downloads source_dir input system_file vendor_file directory
+    local real_user=${SUDO_USER:-${DOAS_USER:-root}}
+    local passwd_entry
+    passwd_entry=$(getent passwd "$real_user") || log_error "Cannot resolve user: $real_user"
+    IFS=: read -r _ _ _ _ _ REAL_HOME _ <<< "$passwd_entry"
+    [[ -d "$REAL_HOME" ]] || log_error "User home does not exist: $REAL_HOME"
+    downloads="$REAL_HOME/Downloads"
+    if command -v xdg-user-dir >/dev/null; then
+        downloads=$(sudo -H -u "$real_user" -- xdg-user-dir DOWNLOAD)
+        [[ -d "$downloads" ]] || downloads="$REAL_HOME/Downloads"
+    fi
+    source_dir=$downloads
+    for directory in "$downloads/Waydroid" "$downloads"; do
+        [[ -d "$directory" ]] || continue
+        for input in "$directory/system.img" "$directory/"*system*.zip; do
+            if [[ -f "$input" ]]; then
+                source_dir=$directory
+                break 2
+            fi
+        done
+    done
+    log_info "Use matching system/vendor images for the host architecture ($(uname -m))."
+    printf '%s\n' \
+        'System: https://sourceforge.net/projects/waydroid/files/images/system/lineage/' \
+        'Vendor: https://sourceforge.net/projects/waydroid/files/images/vendor/'
+    read -r -e -p "Directory containing downloaded images [$source_dir]: " input || log_error 'Input ended.'
+    source_dir=$(expand_user_path "${input:-$source_dir}")
+    [[ -d "$source_dir" ]] || log_error "Directory does not exist: $source_dir"
+    select_image "$source_dir" system system_file
+    select_image "$source_dir" vendor vendor_file
 
-# Poll for waydroid0 interface
-log_info "Waiting for network bridge topology..."
-net_elapsed=0
-while ! ip link show waydroid0 &>/dev/null && (( net_elapsed < 10 )); do
-    sleep 1
-    # FIX: Pre-increment to prevent set -e termination on math evaluating to 0
-    ((++net_elapsed))
-done
+    install -d -m 0755 -- "$DEST_DIR"
+    STAGE_DIR=$(mktemp -d "${DEST_DIR%/*}/.images-setup.XXXXXXXX")
+    # Preserve auxiliary files without copying existing multi-gigabyte images.
+    # stage_image replaces these hard links rather than writing through them.
+    cp -al -- "$DEST_DIR/." "$STAGE_DIR"
+    stage_image "$system_file" system.img
+    stage_image "$vendor_file" vendor.img
+    # Commit the image pair and its recovery request together. An interrupted
+    # or failed exchange must not request reinitialization of the old pair.
+    : > "$STAGE_DIR/.setup-init-pending"
+    # Keep mounted images intact until both replacement files have passed extraction.
+    systemctl stop "$SERVICE"
+    # Exchange the directories in one atomic rename: never expose a mixed pair.
+    if ! mv --exchange --no-copy -T -- "$STAGE_DIR" "$DEST_DIR"; then
+        log_error 'Image exchange failed; the existing image pair was retained.'
+    fi
+    rm -rf -- "$STAGE_DIR"
+    STAGE_DIR=''
+    log_success 'Both images installed; source files retained.'
+}
 
-# Docker Iptables Mitigation
-if command -v docker &>/dev/null && command -v iptables &>/dev/null; then
-    iptables -C FORWARD -i waydroid0 -j ACCEPT 2>/dev/null || iptables -I FORWARD 1 -i waydroid0 -j ACCEPT
-    iptables -C FORWARD -o waydroid0 -j ACCEPT 2>/dev/null || iptables -I FORWARD 1 -o waydroid0 -j ACCEPT
-    log_success "Docker iptables FORWARD drop mitigations applied."
-fi
+# Use Waydroid's persistent INI overrides, not its generated base properties.
+# Print whether initialization and a property refresh are needed, respectively.
+configure_waydroid() {
+    python3 - "$WORK_DIR" "$DEST_DIR" <<'PY'
+import configparser
+import os
+from pathlib import Path
+import sys
+import tempfile
 
-# Routing & Firewall Configuration
-if systemctl is-active --quiet firewalld; then
-    firewall-cmd --zone=trusted --add-interface=waydroid0 --permanent >/dev/null
-    firewall-cmd --zone=trusted --add-masquerade --permanent >/dev/null
-    firewall-cmd --reload >/dev/null
-    log_success "Firewalld topography mapped."
-elif command -v ufw &>/dev/null && systemctl is-active --quiet ufw; then
-    ufw allow in on waydroid0 >/dev/null 2>&1 || true
-    ufw route allow in on waydroid0 >/dev/null 2>&1 || true
-    log_success "UFW inbound/routing rules applied."
-else
-    log_info "No specific firewall manager active. Assuming pure nftables/iptables logic."
-fi
+work, images = map(Path, sys.argv[1:])
+path = work / 'waydroid.cfg'
+cfg = configparser.ConfigParser()
+if path.exists():
+    with path.open(encoding='utf-8') as handle:
+        cfg.read_file(handle)
+required_keys = ('arch', 'vendor_type', 'binder', 'vndbinder', 'hwbinder',
+                 'system_ota', 'vendor_ota')
+lxc_config = work / 'lxc/waydroid/config'
+needs_init = (
+    any(not cfg.get('waydroid', key, fallback='').strip() for key in required_keys)
+    or Path(cfg.get('waydroid', 'images_path', fallback='')).resolve() != images.resolve()
+    or not (work / 'rootfs').is_dir()
+    or not lxc_config.is_file()
+    or lxc_config.stat().st_size == 0
+)
+key = 'persist.waydroid.multi_windows'
+changed = cfg.get('properties', key, fallback='') != 'true'
+if changed:
+    if not cfg.has_section('properties'):
+        cfg.add_section('properties')
+    cfg.set('properties', key, 'true')
+    work.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=work, delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            cfg.write(handle)
+            handle.flush()
+            temporary.chmod(path.stat().st_mode & 0o777 if path.exists() else 0o600)
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+base = work / 'waydroid_base.prop'
+refresh = changed or not base.is_file() or f'{key}=true' not in base.read_text(encoding='utf-8').splitlines()
+print(int(needs_init), int(refresh))
+PY
+}
 
-# --- 8. ARM Translation (Libhoudini) / casualsnek ---
-printf "\n${C_BLUE}--- ARM Translation & Subsystems ---${C_RESET}\n"
-read -r -p "Execute casualsnek's waydroid_script (Libhoudini/Magisk)? [y/N] " run_script
+configure_firewall() {
+    if systemctl is-active --quiet firewalld.service; then
+        # Apply both states directly: reload would discard unrelated runtime rules.
+        firewall-cmd --zone=trusted --change-interface=waydroid0 --permanent
+        firewall-cmd --zone=trusted --change-interface=waydroid0
+        log_success 'Firewalld configured for waydroid0 (runtime and permanent).'
+    elif command -v ufw >/dev/null; then
+        local status
+        status=$(ufw status)
+        if [[ "$status" == 'Status: active'$'\n'* || "$status" == 'Status: active' ]]; then
+            ufw allow in on waydroid0
+            ufw route allow in on waydroid0
+            log_success 'UFW inbound and forwarding rules configured for waydroid0.'
+        fi
+    fi
+    # Waydroid owns forwarding, NAT and its iptables/nftables rules on session start.
+}
 
-if [[ "$run_script" =~ ^[Yy]$ ]]; then
-    log_info "Staging Python 3 subsystem..."
+run_addons() {
+    ask_yes "Run casualsnek's optional Waydroid add-on installer (requires internet)?" || return 0
+    ensure_packages git lzip
     TEMP_DIR=$(mktemp -d)
-    
-    git clone https://github.com/casualsnek/waydroid_script "$TEMP_DIR"
-    
-    if ! python3 -m venv "$TEMP_DIR/venv"; then
-        log_error "VENV creation failed. Ensure 'python' is installed."
-    fi
-    
-    log_info "Synchronizing dependencies (InquirerPy, tqdm)..."
-    "$TEMP_DIR/venv/bin/pip" install -U pip wheel >/dev/null 2>&1
-    if ! "$TEMP_DIR/venv/bin/pip" install -r "$TEMP_DIR/requirements.txt" >/dev/null; then
-        log_error "Pip dependency fetch failed. Verify network connectivity."
-    fi
-    
-    log_info "Executing python runtime (Root Context)..."
-    (cd "$TEMP_DIR" && "$TEMP_DIR/venv/bin/python" main.py)
-fi
+    git clone --depth=1 https://github.com/casualsnek/waydroid_script "$TEMP_DIR/addons"
+    python3 -m venv "$TEMP_DIR/venv"
+    "$TEMP_DIR/venv/bin/python" -m pip install -r "$TEMP_DIR/addons/requirements.txt"
+    (cd "$TEMP_DIR/addons" && "$TEMP_DIR/venv/bin/python" main.py)
+}
 
-printf "\n${C_GREEN}===========================================${C_RESET}\n"
-printf "${C_GREEN}   Waydroid Topology Complete! ${C_RESET}\n"
-printf "${C_GREEN}===========================================${C_RESET}\n"
-printf "1. Reboot if core kernel modules were just injected.\n"
-printf "2. Launch via user session: waydroid session start\n"
-printf "===========================================\n"
+main() {
+    if [[ ${WAYDROID_SETUP_RUNNING:-} != 1 ]]; then
+        log_info 'Set up Waydroid using manually downloaded Android images.'
+        ask_yes 'Proceed with Waydroid installation?' || { log_info 'Skipped.'; return 0; }
+    fi
+    if (( EUID != 0 )); then
+        exec sudo WAYDROID_SETUP_RUNNING=1 bash "$(realpath -e -- "${BASH_SOURCE[0]}")" "$@"
+    fi
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'printf "[ERROR] Setup failed at line %s.\n" "$LINENO" >&2' ERR
+    export LC_ALL=C
+    umask 022
+    exec {setup_lock}>/run/lock/waydroid-setup.lock
+    flock --nonblock "$setup_lock" || log_error 'Another Waydroid setup is running.'
+
+    log_info 'Checking Binder support in the running kernel...'
+    if ! grep -qw binder /proc/filesystems; then
+        modprobe binder_linux || log_error 'Binder unavailable. Boot a kernel with CONFIG_ANDROID_BINDER_IPC and CONFIG_ANDROID_BINDERFS, or install a matching binder_linux module.'
+        grep -qw binder /proc/filesystems || log_error 'The running kernel does not expose BinderFS.'
+    fi
+    # Waydroid is in Arch extra. Pacman can also use its cache for offline installs.
+    ensure_packages waydroid unzip
+    command -v waydroid >/dev/null || log_error 'Waydroid command missing after package installation.'
+
+    if images_ready; then
+        log_info "Existing image pair found in $DEST_DIR."
+        if ask_yes 'Replace both images with downloaded files?'; then
+            import_images
+        fi
+    else
+        if ! ask_yes 'Are matching system and vendor images downloaded?'; then
+            log_info 'Download both images and rerun this script.'
+            return 0
+        fi
+        import_images
+    fi
+    images_ready || log_error 'Both nonempty image files are required.'
+
+    local state needs_init refresh
+    state=$(configure_waydroid)
+    read -r needs_init refresh <<< "$state"
+    if (( needs_init )) || [[ -e "$WORK_DIR/.setup-init-pending" || -e "$DEST_DIR/.setup-init-pending" ]]; then
+        systemctl stop "$SERVICE"
+        : > "$WORK_DIR/.setup-init-pending"
+        log_info 'Initializing Waydroid with the local image pair...'
+        waydroid init --force --images_path "$DEST_DIR"
+    elif (( refresh )); then
+        systemctl stop "$SERVICE"
+        log_info 'Refreshing configuration without downloading images or resetting overlays...'
+        waydroid upgrade --offline
+    else
+        log_success 'Existing initialization and multi-window configuration reused.'
+    fi
+    # Check the resulting configuration as well as the CLI's exit status before
+    # clearing recovery state or reporting success.
+    state=$(configure_waydroid)
+    [[ "$state" == '0 0' ]] || log_error 'Waydroid initialization or multi-window configuration is incomplete.'
+    rm -f -- "$WORK_DIR/.setup-init-pending" "$DEST_DIR/.setup-init-pending"
+
+    configure_firewall
+    run_addons
+    systemctl enable --now "$SERVICE"
+    systemctl is-active --quiet "$SERVICE" || log_error "Management service failed. Inspect: journalctl -u $SERVICE -b"
+    log_success 'Waydroid setup complete; management service active.'
+    log_info 'In your Hyprland user session, run: waydroid session start'
+    log_info 'Then launch an installed Android app, or run: waydroid show-full-ui'
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    main "$@"
+fi
