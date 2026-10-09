@@ -401,7 +401,7 @@ show_display_menu() {
                 run_app "$SCRIPTS_DIR/theme_matugen/theme_ctl.sh" next
                 ;;
             '  Theme Presets')
-                run_term "dusky_matugen_presets.sh" "$SCRIPTS_DIR/theme_matugen/dusky_matugen_presets.sh"
+                run_term "dusky_tui" python3 "$SCRIPTS_DIR/theme_matugen/tui_color_presets.py"
                 ;;
             '  Theme Settings')
                 run_app "$SCRIPTS_DIR/rofi/rofi_theme.sh"

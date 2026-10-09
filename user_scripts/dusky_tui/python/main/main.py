@@ -679,6 +679,10 @@ EXAMPLES:
             from python.engines.matugen import MatugenEngine
             return MatugenEngine(config_path=config_path)
 
+        elif e_type in ("matugen_presets", "matugen_color", "color_presets", "theme_presets"):
+            from python.engines.matugen_presets import MatugenPresetsEngine
+            return MatugenPresetsEngine(config_path=config_path)
+
         elif e_type == "fontconfig":
             from python.engines.fontconfig import FontconfigEngine
             defaults = {

@@ -2699,7 +2699,7 @@ title = "Presets"
 icon = "view-grid-symbolic"
 [pages.layout.items.on_press]
 type = "exec"
-command = "kitty --class dusky_matugen_presets.sh -e ~/user_scripts/theme_matugen/dusky_matugen_presets.sh"
+command = "foot --app-id=dusky_tui python3 $HOME/user_scripts/theme_matugen/tui_color_presets.py"
 terminal = false
 
 [[pages.layout.items]]

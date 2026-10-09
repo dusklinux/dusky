@@ -1,10 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=Dusky Matugen Presets
-Comment=Vibrant Material Design Theme Switcher
-Exec=kitty --class dusky_matugen_presets.sh -e /home/dusk/user_scripts/theme_matugen/dusky_matugen_presets.sh
+Name=Dusky Color Presets
+GenericName=Theme Presets & Palette Manager
+Comment=Vibrant Material Design Color Presets & Palette Manager
+Exec=foot --app-id=dusky_tui python3 /home/dusk/user_scripts/theme_matugen/tui_color_presets.py
 Icon=preferences-desktop-theme
 Terminal=false
-Categories=Settings;Utility;System;
-Keywords=dusky;presets;theme;color;matugen;material;dusky;
-StartupNotify=false
+Categories=Settings;DesktopSettings;Utility;
+Keywords=dusky;presets;theme;color;matugen;material;palette;vivid;
+StartupNotify=true
+StartupWMClass=dusky_tui
