@@ -23,85 +23,75 @@
 
 set -euo pipefail
 
-# ── Args ──────────────────────────────────────────────────────────────────────
-ACTION="${1:-}"
-REQUESTED_WS="${2:-}"
+# ── Help & Usage ──────────────────────────────────────────────────────────────
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    printf 'Usage: %s <workspace|movetoworkspace|movetoworkspacesilent> <1-10>\n' "${0##*/}"
+    exit 0
+fi
 
-if [[ -z "$ACTION" || -z "$REQUESTED_WS" ]]; then
-    printf 'Usage: %s <workspace|movetoworkspace|movetoworkspacesilent> <1-10>\n' \
-        "${0##*/}" >&2
+if [[ $# -ne 2 ]]; then
+    printf 'Usage: %s <workspace|movetoworkspace|movetoworkspacesilent> <1-10>\n' "${0##*/}" >&2
     exit 1
 fi
 
-if ! [[ "$REQUESTED_WS" =~ ^([1-9]|10)$ ]]; then
-    printf 'Error: workspace number must be 1–10, got: %s\n' "$REQUESTED_WS" >&2
+# ── Argument Validation ───────────────────────────────────────────────────────
+case "$1" in
+    workspace|movetoworkspace|movetoworkspacesilent) ;;
+    *)
+        printf 'Error: invalid action "%s".\n' "$1" >&2
+        printf 'Valid actions: workspace, movetoworkspace, movetoworkspacesilent\n' >&2
+        exit 1
+        ;;
+esac
+
+requested_ws="$2"
+if ! [[ "$requested_ws" =~ ^([1-9]|10)$ ]]; then
+    printf 'Error: workspace number must be 1–10, got: %s\n' "$requested_ws" >&2
     exit 1
 fi
 
-# ── Dependency check ──────────────────────────────────────────────────────────
+# ── Dependency Check ──────────────────────────────────────────────────────────
+if ! command -v hyprctl >/dev/null 2>&1; then
+    printf 'Error: hyprctl is required but not installed.\n' >&2
+    exit 1
+fi
+
 if ! command -v jq >/dev/null 2>&1; then
     printf 'Error: jq is required but not installed.\n' >&2
     exit 1
 fi
 
-# ── Determine active monitor and its bank offset ──────────────────────────────
-monitor_data=$(hyprctl -j monitors 2>/dev/null) || {
-    printf 'Error: hyprctl failed — is Hyprland running?\n' >&2
-    exit 1
-}
-
-# Name of the currently-focused monitor
-focused_name=$(printf '%s' "$monitor_data" \
-    | jq -r '.[] | select(.focused == true) | .name')
-
-if [[ -z "$focused_name" ]]; then
-    printf 'Error: could not determine focused monitor.\n' >&2
-    exit 1
-fi
-
-# Sort monitors by their X offset, then find the index of the focused one.
-# Monitors with the same X are sorted by Y (top-to-bottom as tiebreak).
-monitor_index=$(printf '%s' "$monitor_data" \
-    | jq -r --arg name "$focused_name" '
-        sort_by(.x, .y)
-        | to_entries[]
-        | select(.value.name == $name)
-        | .key
-    ')
-
-if ! [[ "$monitor_index" =~ ^[0-9]+$ ]]; then
-    printf 'Error: could not determine monitor index (got: "%s").\n' \
-        "$monitor_index" >&2
+# ── Determine Focused Monitor Bank Index ──────────────────────────────────────
+# Active monitors are sorted left-to-right by X offset (with Y as tiebreaker).
+# The focused monitor index determines the workspace bank:
+#   index 0 → offset 0, index 1 → offset 10, etc.
+if ! monitor_index=$(hyprctl -j monitors 2>/dev/null | jq -re '
+    map(select(.disabled != true))
+    | sort_by(.x, .y)
+    | if length == 0 then empty else (map(.focused) | index(true) // 0) end
+' 2>/dev/null); then
+    if ! hyprctl instances >/dev/null 2>&1; then
+        printf 'Error: Hyprland is not running or unreachable.\n' >&2
+    else
+        printf 'Error: could not determine focused monitor index.\n' >&2
+    fi
     exit 1
 fi
 
-# Bank offset: index 0 → offset 0, index 1 → offset 10, etc.
-bank_offset=$(( monitor_index * 10 ))
-target_ws=$(( bank_offset + REQUESTED_WS ))
+target_ws=$(( monitor_index * 10 + requested_ws ))
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 # hyprctl dispatch in Hyprland 0.55+ (Lua config) requires a Lua expression.
-# The old "hyprctl dispatch workspace N" form no longer works.
-#
-# Native Lua dispatcher forms used below:
-#   focus({ workspace = "N" })                        → switch to workspace
-#   window.move({ workspace = "N" })                  → move window, follow focus
-#   window.move({ workspace = "N", follow = false })  → move window, stay here
-
-case "$ACTION" in
+# The quiet flag (-q) suppresses standard output ('ok') from compositor logs.
+# exec replaces the shell process directly to minimize resource overhead.
+case "$1" in
     workspace)
-        hyprctl dispatch "hl.dsp.focus({ workspace = \"${target_ws}\" })"
+        exec hyprctl -q dispatch "hl.dsp.focus({ workspace = \"${target_ws}\" })"
         ;;
     movetoworkspace)
-        hyprctl dispatch "hl.dsp.window.move({ workspace = \"${target_ws}\" })"
+        exec hyprctl -q dispatch "hl.dsp.window.move({ workspace = \"${target_ws}\" })"
         ;;
     movetoworkspacesilent)
-        hyprctl dispatch \
-            "hl.dsp.window.move({ workspace = \"${target_ws}\", follow = false })"
-        ;;
-    *)
-        printf 'Error: unknown action "%s".\n' "$ACTION" >&2
-        printf 'Valid actions: workspace, movetoworkspace, movetoworkspacesilent\n' >&2
-        exit 1
+        exec hyprctl -q dispatch "hl.dsp.window.move({ workspace = \"${target_ws}\", follow = false })"
         ;;
 esac
