@@ -1,432 +1,400 @@
 #!/usr/bin/env python3
+"""Waybar theme selection, persistent state, and serialized process restarts."""
 import os
-lazy import json
-import time
 import re
-lazy import asyncio
-lazy import subprocess
+from pathlib import Path
+from contextlib import contextmanager
+lazy from contextlib import ExitStack
 lazy import fcntl
-lazy import signal
+lazy import json
+lazy import select
 lazy import shutil
-lazy from pathlib import Path
+lazy import signal
+lazy import subprocess
+lazy import tempfile
+lazy import threading
+lazy import time
 lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 
-def _is_pid_running(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+# Strings are tokens, so comment markers and braces inside them stay untouched.
+_JSONC_TOKEN = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|[{}\[\]:,]|[^\s{}\[\]:,]+', re.DOTALL)
+_OPPOSITE = frozendict(top="bottom", bottom="top", left="right", right="left")
+type Change = tuple[str, str, str, str]
+type WriteResult = tuple[bool, str, str]
+
+
+def discover_themes(root: Path) -> list[Path]:
+    return sorted(path.parent for path in root.glob("*/config.jsonc") if path.is_file())
+
+
+def _position_token(content: str) -> re.Match[str]:
+    """Find only the first bar's own explicit position, ignoring nested settings."""
+    tokens = (token for token in _JSONC_TOKEN.finditer(content)
+              if not token.group().startswith(("//", "/*")))
+    stack = []
+    bar_depth = None
+    previous = ""
+    for token in tokens:
+        value = token.group()
+        if value in ("{", "["):
+            stack.append(value)
+            if value == "{" and bar_depth is None:
+                bar_depth = len(stack)
+        elif value in ("}", "]"):
+            if len(stack) == bar_depth and value == "}":
+                break  # Never toggle a later bar if the first has no position.
+            if stack:
+                stack.pop()
+        elif (len(stack) == bar_depth and value.startswith('"')
+              and previous in ("{", ",") and json.loads(value) == "position"):
+            colon = next(tokens, None)
+            position = next(tokens, None)
+            if (colon is not None and colon.group() == ":" and position is not None
+                    and position.group().startswith('"') and json.loads(position.group()) in _OPPOSITE):
+                return position
+            raise ValueError("The first bar has an invalid position; expected top, bottom, left, or right.")
+        previous = value
+    raise ValueError("The first bar needs an explicit position in config.jsonc to toggle it.")
+
 
 def _get_active_waybar_pids() -> list[int]:
     pids = []
-    my_pid = os.getpid()
-    my_uid = os.getuid()
-    try:
-        for pid_str in os.listdir("/proc"):
-            if not pid_str.isdigit():
-                continue
-            pid = int(pid_str)
-            if pid == my_pid:
+    uid = os.getuid()
+    with os.scandir("/proc") as entries:
+        for entry in entries:
+            if not entry.name.isdecimal():
                 continue
             try:
-                if os.stat(f"/proc/{pid}").st_uid != my_uid:
+                if entry.stat().st_uid != uid:
                     continue
-                with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as f:
-                    stat_line = f.read()
-                state = stat_line.rpartition(")")[2].strip().split()[0]
-                if state == 'Z':
+                proc = Path(entry.path)
+                if (proc / "comm").read_bytes() != b"waybar\n":
                     continue
-                with open(f"/proc/{pid}/comm", "r", encoding="utf-8") as f:
-                    if f.read().strip() == "waybar":
-                        pids.append(pid)
-            except (OSError, IOError, IndexError):
-                pass
-    except OSError:
-        pass
+                state = (proc / "stat").read_bytes().rpartition(b")")[2].split()[0]
+                if state not in (b"Z", b"X"):
+                    pids.append(int(entry.name))
+            except (FileNotFoundError, ProcessLookupError, PermissionError, IndexError):
+                continue  # Process exited or became unreadable during the scan.
     return pids
 
 
-# =============================================================================
-# [ WAYBAR ENGINE - v4.8.9 PARITY ]
-# Fully isolated Python process controller with UI-Cache synchronization.
-# Resolves Headless Async Destruction, AST Regex Position Mutators,
-# Double-Waybar Concurrency, and Atomic File Operations.
-# =============================================================================
+def _stop_waybars() -> None:
+    """Wait on process descriptors, including after SIGKILL; never poll zombies."""
+    poller = select.poll()
+    descriptors = set()
+    try:
+        for pid in _get_active_waybar_pids():
+            try:
+                fd = os.pidfd_open(pid)
+            except ProcessLookupError:
+                continue
+            descriptors.add(fd)
+            # Verify identity after opening the descriptor, closing the scan/open race.
+            try:
+                if Path(f"/proc/{pid}/comm").read_bytes() != b"waybar\n":
+                    descriptors.remove(fd)
+                    os.close(fd)
+                    continue
+            except FileNotFoundError:
+                descriptors.remove(fd)
+                os.close(fd)
+                continue
+            poller.register(fd, select.POLLIN)
+            try:
+                signal.pidfd_send_signal(fd, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        for timeout, sig in ((150, signal.SIGKILL), (1000, None)):
+            deadline = time.monotonic() + timeout / 1000
+            while descriptors:
+                remaining = max(0, deadline - time.monotonic())
+                for fd, _event in poller.poll(remaining * 1000):
+                    poller.unregister(fd)
+                    descriptors.remove(fd)
+                    os.close(fd)
+                if not descriptors or time.monotonic() >= deadline:
+                    break
+            if sig is not None:
+                for fd in descriptors:
+                    try:
+                        signal.pidfd_send_signal(fd, sig)
+                    except ProcessLookupError:
+                        pass
+        if descriptors:
+            raise RuntimeError("Waybar did not exit after SIGKILL; restart aborted.")
+    finally:
+        for fd in descriptors:
+            os.close(fd)
+
+
+def _atomic_text(path: Path, content: str) -> None:
+    """Replace a file without truncation, preserving existing permissions."""
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False,
+                                     mode="w", encoding="utf-8", newline="") as stream:
+        temporary = Path(stream.name)
+        try:
+            stream.write(content)
+            stream.flush()
+            if path.exists():
+                os.fchmod(stream.fileno(), path.stat().st_mode & 0o777)
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def _atomic_symlink(path: Path, target: Path) -> None:
+    # A private same-filesystem directory avoids collisions and stale temp links.
+    with tempfile.TemporaryDirectory(dir=path.parent, prefix=".waybar-link-") as directory:
+        temporary = Path(directory) / "link"
+        temporary.symlink_to(target)
+        os.replace(temporary, path)
+
+
+@contextmanager
+def _rollback_files(paths: list[Path]):
+    """Restore the previous files if a configuration write fails midway."""
+    with ExitStack() as stack:
+        originals = []
+        directories = []
+        failures = []
+        for path in dict.fromkeys(paths):
+            directory = tempfile.TemporaryDirectory(dir=path.parent, prefix=".waybar-backup-", delete=False)
+            directories.append(directory.name)
+            # Keep recovery copies if restoring a file also fails.
+            stack.callback(lambda directory=directory: directory.cleanup() if not failures else None)
+            backup = Path(directory.name) / "original"
+            if path.is_symlink() or path.exists():
+                shutil.copy2(path, backup, follow_symlinks=False)
+                originals.append((path, backup))
+            else:
+                originals.append((path, None))
+        try:
+            yield
+        except BaseException as exc:
+            for path, backup in reversed(originals):
+                try:
+                    if backup is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        os.replace(backup, path)
+                except OSError as restore_error:
+                    failures.append(f"{path}: {restore_error}")
+            if failures:
+                raise RuntimeError(f"{exc}; could not restore: {'; '.join(failures)}. "
+                                   f"Recovery copies retained in: {', '.join(directories)}") from exc
+            raise
+
 
 class WaybarEngine(BaseEngine):
+    refresh_after_write = True
+
     def __init__(self, config_path: str = "~/.config/waybar"):
-        self.config_path = Path(config_path).expanduser().absolute()
-        
-        if self.config_path.name == "config.jsonc":
-            self.config_root = self.config_path.parent
-        else:
-            self.config_root = self.config_path
-            self.config_path = self.config_root / "config.jsonc"
-            
+        path = Path(config_path).expanduser().absolute()
+        # Resolve the directory, preserving the active configuration symlink itself.
+        self.config_root = (path.parent if path.name == "config.jsonc" else path).resolve()
+        self.config_path = self.config_root / "config.jsonc"
         self.style_path = self.config_root / "style.css"
-        
-        # --- NEW STATE FILE LOCATION ---
-        state_dir = Path("~/.config/dusky/settings/waybar").expanduser().resolve()
-        state_dir.mkdir(parents=True, exist_ok=True)
-        self.state_file = state_dir / ".dusky_waybar_state.json"
-        
+        config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config").expanduser()
+        self.state_file = config_home / "dusky/settings/waybar/.dusky_waybar_state.json"
+        runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+        self.lock_file = runtime / "dusky_waybar_restart.lock"
+        state_home = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state").expanduser()
+        self.log_file = state_home / "dusky/waybar.log"
         self.cache: dict[str, Any] = {}
         self.theme_dirs: list[Path] = []
         self.theme_names: list[str] = []
-        self._preview_task = None
-        
-        # Regex to replicate the bash `sed` position replacer strictly
-        self.pos_regex = re.compile(r'("position"\s*:\s*)"([^"]+)"')
+        self._mutex = threading.RLock()
+        self._process: subprocess.Popen | None = None
 
     @property
     def target_path(self) -> str:
-        # CRITICAL FIX: We pass the DIRECTORY to the UI File Watcher, not the symlink.
-        # This guarantees that our asynchronous os.utime() trigger below successfully 
-        # forces the UI to reload and wipe the old states.
+        # The TUI watches directory metadata, including replaced symlinks.
         return str(self.config_root)
 
-    def _refresh_themes(self) -> None:
-        themes = sorted(self.config_root.glob("*/config.jsonc"))
-        self.theme_dirs = [t.parent for t in themes]
-        self.theme_names = [t.parent.name for t in themes]
-
-    def _get_theme_position(self, config_file: Path) -> str:
-        resolved_file = config_file.resolve()
-        if not resolved_file.exists():
-            return "unknown"
+    def _saved_index(self) -> int:
         try:
-            content = resolved_file.read_text(encoding="utf-8")
-            match = self.pos_regex.search(content)
-            return match.group(2).lower() if match else "unknown"
-        except OSError:
-            return "unknown"
-
-    def _set_theme_position(self, config_file: Path, new_pos: str) -> bool:
-        resolved_file = config_file.resolve()
-        if not resolved_file.exists():
-            return False
-        try:
-            content = resolved_file.read_text(encoding="utf-8")
-            if not self.pos_regex.search(content):
-                return False 
-                
-            # Safely replace only the FIRST occurrence (main bar), preserving module positions
-            # \g<1> safely backreferences the regex group in Python
-            new_content = self.pos_regex.sub(rf'\g<1>"{new_pos}"', content, count=1)
-            resolved_file.write_text(new_content, encoding="utf-8")
-            return True
-        except OSError:
-            return False
+            data = json.loads(self.state_file.read_text(encoding="utf-8"),
+                              object_pairs_hook=frozendict, array_hook=tuple)
+        except (FileNotFoundError, UnicodeError, json.JSONDecodeError):
+            return -1
+        if not isinstance(data, frozendict):
+            return -1
+        name = data.get("active_theme_name")
+        if name in self.theme_names:
+            return self.theme_names.index(name)
+        index = data.get("active_theme_index")
+        return index if type(index) is int and 0 <= index < len(self.theme_names) else -1
 
     def load_state(self) -> dict[str, Any]:
-        self._refresh_themes()
-        
-        active_idx = -1
-        active_name = "unknown"
-        
-        if self.config_path.is_symlink():
-            target = self.config_path.resolve()
-            # Failsafe: evaluate target.parent even if config.jsonc is missing inside it
-            if target.parent in self.theme_dirs:
-                active_idx = self.theme_dirs.index(target.parent)
-                active_name = self.theme_names[active_idx]
-                
-        # Critical patch: Check the state file if symlink failed to match (e.g., folder was renamed).
-        # We DO NOT apply symlinks here. We simply recover the index so the UI knows where we left off.
-        # This stops the "automatic symlink changing" behavior and allows the manual "Heal" action to do its job.
-        if active_idx == -1 and self.state_file.exists():
-            try:
-                state_data = json.loads(self.state_file.read_text(encoding="utf-8"))
-                saved_idx = state_data.get("active_theme_index", -1)
-                
-                if 0 <= saved_idx < len(self.theme_names):
-                    active_name = self.theme_names[saved_idx]
-                    active_idx = saved_idx
-            except (OSError, json.JSONDecodeError):
-                pass
-        
-        active_number = active_idx + 1 if active_idx >= 0 else 1
-
-        # PREVENTING [Missing] STRIKETHROUGH:
-        # We explicitly lock the momentary push-button states to False on every load.
-        # This brilliantly ensures the UI Preset engine never thinks they are "Active"
-        # and always shows the "Apply" button ready to be clicked again.
-        self.cache = {
-            "active_theme_index": active_idx,
-            "active_theme_name": active_name,
-            "active_theme_number": active_number,
-            "waybar": active_number,
-            "DEFAULT/active_theme_index": active_idx,
-            "DEFAULT/active_theme_name": active_name,
-            "DEFAULT/active_theme_number": active_number,
-            "DEFAULT/waybar": active_number,
-            
-            "action_invert_pos": False,
-            "DEFAULT/action_invert_pos": False,
-            
-            "action_heal_state": False,
-            "DEFAULT/action_heal_state": False,
-        }
-        
-        return self.cache
-
-    def _apply_symlinks_sync(self, target_dir: Path) -> None:
-        # ATOMIC SYMLINK REPLACEMENT
-        # Prevents FileExistsError race conditions when spammed concurrently
-        target_conf = target_dir / "config.jsonc"
-        tmp_conf = self.config_path.with_suffix('.tmp_link')
-        
-        try:
-            tmp_conf.symlink_to(target_conf)
-            os.replace(tmp_conf, self.config_path)
-            
-            target_style = target_dir / "style.css"
-            if target_style.exists():
-                tmp_style = self.style_path.with_suffix('.tmp_link')
-                tmp_style.symlink_to(target_style)
-                os.replace(tmp_style, self.style_path)
-            else:
-                self.style_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-    async def _async_restart_waybar(self, target_dir: Path, set_sid: bool = True):
-        self._apply_symlinks_sync(target_dir)
-        
-        # --- PREVENT DOUBLE WAYBARS CONCURRENCY LOCK ---
-        runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
-        lock_file = runtime_dir / "dusky_waybar_restart.lock"
-        
-        fd = open(lock_file, "w")
-        locked = False
-        try:
-            # Non-blocking lock attempt with ultra-fast retry
-            for _ in range(5):
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    locked = True
-                    break
-                except BlockingIOError:
-                    await asyncio.sleep(0.01)
-                    
-            if not locked:
-                fd.close()
-                return
-
-            # Check if another process (e.g. rapid --next presses) superseded our target symlink
+        with self._mutex:
+            self.theme_dirs = discover_themes(self.config_root)
+            self.theme_names = [directory.name for directory in self.theme_dirs]
+            index = -1
             if self.config_path.is_symlink():
-                try:
-                    current_symlink = self.config_path.resolve()
-                    target_symlink = (target_dir / "config.jsonc").resolve()
-                    if current_symlink != target_symlink:
-                        return
-                except OSError:
-                    pass
-
-            # 1. Fast process termination via /proc scan and OS signals
-            pids = _get_active_waybar_pids()
-            for pid in pids:
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except OSError:
-                    pass
-            
-            if pids:
-                # High-frequency polling (up to 150ms) for graceful SIGTERM termination
-                for _ in range(15):
-                    await asyncio.sleep(0.01)
-                    pids = [p for p in pids if _is_pid_running(p)]
-                    if not pids:
+                target = self.config_path.resolve()
+                for i, directory in enumerate(self.theme_dirs):
+                    if target == (directory / "config.jsonc").resolve():
+                        index = i
                         break
-                
-                # SIGKILL fallback for any remaining hung processes
-                for pid in pids:
+            if index < 0:
+                index = self._saved_index()
+            number = index + 1 if index >= 0 else 1
+            state = {
+                "active_theme_index": index,
+                "active_theme_name": self.theme_names[index] if index >= 0 else "unknown",
+                "active_theme_number": number,
+                "waybar": number,
+                "action_invert_pos": False,
+                "action_heal_state": False,
+            }
+            self.cache = state | {f"DEFAULT/{key}": value for key, value in state.items()}
+            return self.cache
+
+    def _restart_waybar(self, command: list[str]) -> None:
+        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        with self.log_file.open("w", encoding="utf-8") as log:
+            _stop_waybars()
+            if self._process is not None:
+                self._process.poll()  # Reap our previous launcher when applicable.
+            self._process = subprocess.Popen(command, start_new_session=True,
+                                             stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+            process = self._process
+            confirmed = False
+            try:
+                # Both dusky-run (systemd-run --scope) and direct launch exec Waybar
+                # in this PID. Check our child instead of scanning all processes.
+                comm = Path(f"/proc/{process.pid}/comm")
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    code = process.poll()
+                    if code is not None:
+                        raise RuntimeError(f"Waybar launcher exited with status {code}; see {self.log_file}")
                     try:
-                        os.kill(pid, signal.SIGKILL)
-                    except OSError:
-                        pass
-                
-            # 2. Launch Waybar via dusky-run (if available) or fallback to waybar
-            cmd = ["dusky-run", "waybar"] if shutil.which("dusky-run") else ["waybar"]
-            try:
-                subprocess.Popen(
-                    cmd,
-                    start_new_session=set_sid,       
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    stdin=subprocess.DEVNULL
-                )
-            except OSError:
-                pass
+                        started = comm.read_bytes() == b"waybar\n"
+                    except FileNotFoundError:
+                        continue  # Reap and report the exit on the next iteration.
+                    # Python 3.15 waits on pidfds: exits wake us immediately.
+                    try:
+                        code = process.wait(timeout=0.1 if started else 0.01)
+                    except subprocess.TimeoutExpired:
+                        if started:
+                            # Keep child ownership until exit, including after engine disposal.
+                            threading.Thread(target=process.wait, daemon=True).start()
+                            confirmed = True
+                            return
+                    else:
+                        raise RuntimeError(f"Waybar launcher exited with status {code}; see {self.log_file}")
+                raise RuntimeError(f"Waybar did not start within 2 seconds; see {self.log_file}")
+            finally:
+                if not confirmed and process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
 
-            # 3. Touch config root mtime instantly to notify file watcher
-            try:
-                os.utime(self.config_root, None)
-            except OSError:
-                pass
-
-        finally:
-            if locked:
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-                except OSError:
-                    pass
-            try:
-                fd.close()
-            except OSError:
-                pass
-
-    def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
+    def write_value(self, target_key: str, target_scope: str, new_value: str,
+                    item_type: str = "string") -> WriteResult:
         return self.write_batch([(target_key, target_scope, new_value, item_type)])
 
-    def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
-        self.load_state()
-        
-        if not self.theme_dirs:
-            return False, "No valid themes found in ~/.config/waybar/", ""
-
-        # PREVENT NEGATIVE INDEXING BUG: If symlinks are broken, fallback to 0. 
-        # This prevents the script from accidentally altering the very last theme in the folder.
-        current_idx = self.cache.get("active_theme_index", -1)
-        if current_idx < 0:
-            current_idx = 0
-            
-        target_idx = current_idx
-        requires_restart = False
-        requires_detached = True 
-        status_msg = ""
-        
-        for key, scope, val, itype in changes:
-            str_val = str(val).lower()
-            
-            match key:
-                case "active_theme_number" | "waybar":
-                    try:
-                        target_idx = int(val) - 1
-                        if 0 <= target_idx < len(self.theme_dirs):
-                            requires_restart = True
-                            requires_detached = True
-                        else:
-                            return False, f"Theme number {val} is out of bounds.", ""
-                    except ValueError:
-                        return False, f"Invalid theme number: {val}", ""
-
-                case "active_theme_name":
-                    target_name = str(val)
-                    if target_name in self.theme_names:
-                        target_idx = self.theme_names.index(target_name)
-                        requires_restart = True
-                        requires_detached = True  # Survives terminal closure
-                    else:
-                        # Fallback parsing to allow chronological index passing directly via strings (e.g., CLI --apply 10)
-                        try:
-                            target_idx = int(target_name) - 1
-                            if 0 <= target_idx < len(self.theme_dirs):
-                                requires_restart = True
-                                requires_detached = True
-                            else:
-                                return False, f"Theme number '{val}' out of bounds.", ""
-                        except ValueError:
-                            return False, f"Theme '{target_name}' not found.", ""
-                        
-                case "toggle_forward" if str_val == "true":
-                    target_idx = (current_idx + 1) % len(self.theme_dirs)
-                    requires_restart = True
-                    
-                case "toggle_backward" if str_val == "true":
-                    target_idx = (current_idx - 1 + len(self.theme_dirs)) % len(self.theme_dirs)
-                    requires_restart = True
-                    
-                case "active_theme_index":
-                    try:
-                        target_idx = int(val)
-                        requires_restart = True
-                        requires_detached = True
-                    except ValueError:
-                        return False, f"Invalid numeric index: {val}", ""
-                        
-                case "action_invert_pos" if str_val == "true":
-                    resolved_target = self.theme_dirs[target_idx] / "config.jsonc"
-                    current_pos = self._get_theme_position(resolved_target)
-                    
-                    if current_pos == "top": target_pos = "bottom"
-                    elif current_pos == "bottom": target_pos = "top"
-                    elif current_pos == "left": target_pos = "right"
-                    elif current_pos == "right": target_pos = "left"
-                    else: target_pos = "bottom"
-                    
-                    if self._set_theme_position(resolved_target, target_pos):
-                        requires_restart = True
-                        requires_detached = True
-                        status_msg = f"Position inverted to {target_pos.upper()}."
-                    else:
-                        return False, "Position key not found in target config.jsonc", ""
-                        
-                case "action_heal_state" if str_val == "true":
-                    # Forcefully read the state file to override the symlink
-                    if self.state_file.exists():
-                        try:
-                            state_data = json.loads(self.state_file.read_text(encoding="utf-8"))
-                            saved_name = state_data.get("active_theme_name")
-                            saved_idx = state_data.get("active_theme_index", -1)
-                            
-                            if saved_name and saved_name in self.theme_names:
-                                target_idx = self.theme_names.index(saved_name)
-                            elif 0 <= saved_idx < len(self.theme_dirs):
-                                target_idx = saved_idx
-                        except (OSError, json.JSONDecodeError):
-                            pass
-                            
-                    requires_restart = True 
-                    requires_detached = True
-                    status_msg = "State restored from file and symlinks healed."
-
-        if target_idx < 0 or target_idx >= len(self.theme_dirs):
-            return False, f"Index {target_idx} is out of bounds.", ""
-
-        selected_dir = self.theme_dirs[target_idx]
-        selected_name = self.theme_names[target_idx]
-        selected_number = target_idx + 1
-
-        self.cache.update({
-            "active_theme_index": target_idx,
-            "active_theme_name": selected_name,
-            "active_theme_number": selected_number,
-            "waybar": selected_number,
-            "DEFAULT/active_theme_index": target_idx,
-            "DEFAULT/active_theme_name": selected_name,
-            "DEFAULT/active_theme_number": selected_number,
-            "DEFAULT/waybar": selected_number,
-        })
-
-        if requires_restart:
-            # Atomic State Save to prevent corruption
+    def write_batch(self, changes: list[Change]) -> WriteResult:
+        if not changes:
+            return True, "No changes requested.", ""
+        try:
+            with self._mutex, self.lock_file.open("a", encoding="utf-8") as lock:
+                # Serialize selection, file writes, termination, and confirmed launch.
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                return self._write_locked(changes)
+        except (OSError, ValueError, RuntimeError) as exc:
+            # Reflect actual disk state after a failed or partially completed operation.
             try:
-                state_data = {
-                    "active_theme_name": selected_name,
-                    "active_theme_index": target_idx
-                }
-                tmp_state = self.state_file.with_suffix('.tmp')
-                tmp_state.write_text(json.dumps(state_data, indent=4), encoding="utf-8")
-                os.replace(tmp_state, self.state_file)
+                self.load_state()
             except OSError:
-                pass
-            
-            try:
-                try:
-                    loop = asyncio.get_running_loop()
-                    if self._preview_task and not self._preview_task.done():
-                        self._preview_task.cancel()
-                    self._preview_task = loop.create_task(self._async_restart_waybar(selected_dir, set_sid=requires_detached))
-                except RuntimeError:
-                    asyncio.run(self._async_restart_waybar(selected_dir, set_sid=requires_detached))
-                
-                if not status_msg:
-                    status_msg = f"Applied theme: {selected_name}"
-            except Exception as e:
-                return False, f"Symlinks created but failed to restart waybar: {e}", ""
+                self.cache = {}
+            return False, str(exc), ""
 
-        return True, status_msg, ""
+    def _write_locked(self, changes: list[Change]) -> WriteResult:
+        self.load_state()
+        if not self.theme_dirs:
+            raise ValueError(f"No valid themes found in {self.config_root}")
+        index = self.cache["active_theme_index"]
+        edits: dict[Path, str] = {}
+        restart = False
+        message = ""
+        for key, scope, value, _kind in changes:
+            if scope != "DEFAULT":
+                raise ValueError(f"Unsupported Waybar scope: {scope}")
+            match key:
+                case "active_theme_number" | "waybar" | "active_theme_index":
+                    number = int(value)
+                    index = number if key == "active_theme_index" else number - 1
+                case "active_theme_name":
+                    if value in self.theme_names:
+                        index = self.theme_names.index(value)
+                    else:
+                        try:
+                            index = int(value) - 1
+                        except ValueError:
+                            raise ValueError(f"Theme {value!r} was not found.") from None
+                case "toggle_forward" | "toggle_backward" | "action_invert_pos" | "action_heal_state":
+                    if str(value).lower() == "false":
+                        continue
+                    if str(value).lower() != "true":
+                        raise ValueError(f"Invalid trigger value: {value}")
+                    if key == "toggle_forward":
+                        index = (index + 1) % len(self.theme_dirs)
+                    elif key == "toggle_backward":
+                        index = (index - 1) % len(self.theme_dirs) if index >= 0 else len(self.theme_dirs) - 1
+                    elif key == "action_heal_state":
+                        saved = self._saved_index()
+                        index = saved if saved >= 0 else max(index, 0)
+                        message = "Configuration links restored."
+                    else:
+                        index = max(index, 0)
+                        path = (self.theme_dirs[index] / "config.jsonc").resolve()
+                        content = edits[path] if path in edits else path.read_text(encoding="utf-8", newline="")
+                        token = _position_token(content)
+                        position = _OPPOSITE[json.loads(token.group())]
+                        edits[path] = content[:token.start()] + json.dumps(position) + content[token.end():]
+                        message = f"First bar position changed to {position}."
+                case _:
+                    raise ValueError(f"Unsupported Waybar setting: {key}")
+            if not 0 <= index < len(self.theme_dirs):
+                raise ValueError(f"Theme index {index} is out of bounds (1–{len(self.theme_dirs)} for theme numbers).")
+            restart = True
+        if not restart:
+            return True, "No changes requested.", ""
+
+        waybar = shutil.which("waybar")
+        if waybar is None:
+            raise RuntimeError("Waybar executable was not found in PATH.")
+        if not os.environ.get("WAYLAND_DISPLAY"):
+            raise RuntimeError("A running Wayland session is required to restart Waybar.")
+        launcher = shutil.which("dusky-run")
+        command = ([launcher, waybar] if launcher else [waybar]) + ["--config", str(self.config_path)]
+        directory = self.theme_dirs[index]
+        style = directory / "style.css"
+        if style.is_file():
+            command.extend(["--style", str(self.style_path)])
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        # Validate the whole batch, then back up files before any mutation.
+        with _rollback_files([*edits, self.config_path, self.style_path, self.state_file]):
+            for path, content in edits.items():
+                _atomic_text(path, content)
+            _atomic_symlink(self.config_path, directory / "config.jsonc")
+            if style.is_file():
+                _atomic_symlink(self.style_path, style)
+            else:
+                self.style_path.unlink(missing_ok=True)
+            _atomic_text(self.state_file, json.dumps({"active_theme_name": directory.name,
+                                                    "active_theme_index": index}, indent=2) + "\n")
+            os.utime(self.config_root, None)
+        self.load_state()
+        try:
+            self._restart_waybar(command)
+        except (OSError, RuntimeError) as exc:
+            raise RuntimeError(f"Configuration saved, but Waybar restart failed: {exc}") from exc
+        return True, message or f"Applied theme: {directory.name}", ""
